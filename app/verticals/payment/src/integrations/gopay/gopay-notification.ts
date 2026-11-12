@@ -1,7 +1,7 @@
 import { DateTime, Effect, Option } from 'effect';
 
 import { DELIVERY_IDENTITY_MAX_LENGTH } from '../psp/notification-envelope.ts';
-import type { RawProviderNotification, VerifiedNotificationTrigger } from '../psp/notification-envelope.ts';
+import type { RawProviderNotification, VerifiedNotificationCapture } from '../psp/notification-envelope.ts';
 import { GatewayNotificationRejected } from '../psp/psp-errors.ts';
 import type { GatewayNotificationRejectedError, GatewayNotificationRejectionReason } from '../psp/psp-errors.ts';
 import type { GatewayExecutionTarget } from '../psp/psp-request.ts';
@@ -63,7 +63,7 @@ export const verifyGopayNotification = Effect.fn('GopayNotification.verifyGopayN
       return yield* Effect.fail(reject('MALFORMED'));
     }
     const verifiedAt = yield* DateTime.now;
-    const trigger: VerifiedNotificationTrigger = {
+    const trigger: VerifiedNotificationCapture = {
       actionable: !recurring,
       authenticity: 'LOOKUP_REQUIRED',
       claimedStatus: Option.none(),
@@ -72,6 +72,8 @@ export const verifyGopayNotification = Effect.fn('GopayNotification.verifyGopayN
       providerEventAt: Option.none(),
       providerOccurrenceId: Option.none(),
       providerRefs: [{ _tag: 'GOPAY_PAYMENT', id: paymentRef }],
+      // A GoPay callback has no body (a non-empty one is MALFORMED); everything it carries is in the query.
+      retainedBody: new Uint8Array(0),
       signedObject: Option.none(),
       verifiedAt,
     };

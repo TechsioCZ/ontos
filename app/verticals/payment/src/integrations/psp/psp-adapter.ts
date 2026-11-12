@@ -3,7 +3,7 @@ import type { Effect, Option } from 'effect';
 
 import type { PaymentGatewayProviderFamilySchema } from '../../../shared/domain/payment-vocabulary.ts';
 import type { GatewayCapabilityRow } from './capability-matrix.ts';
-import type { RawProviderNotification, VerifiedNotificationTrigger } from './notification-envelope.ts';
+import type { RawProviderNotification, VerifiedNotificationCapture } from './notification-envelope.ts';
 import type { GatewayOrderReference } from './psp-correlation.ts';
 import type {
   GatewayNotificationRejectedError,
@@ -100,11 +100,14 @@ export interface GatewayProviderAdapter {
     prepared: PreparedProviderRequest,
     expected: GatewayExpectedEffect,
   ) => Effect.Effect<ProviderDispatchResponse, SendFailure>;
-  /** Authenticates a raw notification for the binding it was addressed to; `verifiedAt` comes from the Effect clock. */
+  /**
+   * Authenticates a raw notification for the binding it was addressed to; `verifiedAt` comes from the Effect
+   * clock. The result names the only body bytes the capture may store (`retainedBody`), never a credential.
+   */
   readonly verifyNotification: (
     target: GatewayExecutionTarget,
     notification: RawProviderNotification,
-  ) => Effect.Effect<VerifiedNotificationTrigger, GatewayNotificationRejectedError | GatewayProviderUnavailableError>;
+  ) => Effect.Effect<VerifiedNotificationCapture, GatewayNotificationRejectedError | GatewayProviderUnavailableError>;
 }
 
 export interface GatewayProviderAdaptersContract {

@@ -11,15 +11,16 @@ import { ProviderNotificationStateSchema } from '../../shared/domain/psp-vocabul
 import { pspProviderNotifications } from '../database/schema.ts';
 import type {
   RawProviderNotification,
-  VerifiedNotificationTrigger,
+  VerifiedNotificationCapture,
 } from '../integrations/psp/notification-envelope.ts';
 import { ProviderObjectRefSchema } from '../integrations/psp/psp-request.ts';
 
 /**
  * Action-side persistence of captured provider notifications (#1157), over the Core-installed
  * `ScopedTransactionExecutor` of `capture-provider-notification`. The row carries the capture Action's
- * provenance and the exact received envelope; its processing columns are advanced later only by the worker
- * routines. One row per (Tenant, Selling Legal Entity, binding, delivery identity): a repeated delivery finds
+ * provenance, the allow-listed parts of the received envelope and only the body bytes its verifier declared
+ * (`retainedBody`): never the received body itself, which may carry a gateway credential (#1155). Its
+ * processing columns are advanced later only by the worker routines. One row per (Tenant, Selling Legal Entity, binding, delivery identity): a repeated delivery finds
  * the stored row and writes nothing.
  */
 
@@ -32,7 +33,7 @@ export interface CaptureProviderNotificationInput {
   readonly notification: RawProviderNotification;
   readonly provenance: PaymentExecutionProvenance;
   readonly state: CapturedNotificationState;
-  readonly trigger: VerifiedNotificationTrigger;
+  readonly trigger: VerifiedNotificationCapture;
 }
 
 /** INSERTED: this capture stored the row. EXISTING: the delivery was already stored; nothing was written. */
@@ -112,8 +113,8 @@ export const pspNotificationCapturePersistenceForTransaction = (
     function* captureNotification(input: CaptureProviderNotificationInput) {
       const scope = yield* ownerScope;
       const { notification, trigger } = input;
-      const [providerRefs, rawBodyBase64] = yield* Effect.all(
-        [encodeProviderRefs(trigger.providerRefs), encodeBase64(notification.rawBody)],
+      const [providerRefs, retainedBodyBase64] = yield* Effect.all(
+        [encodeProviderRefs(trigger.providerRefs), encodeBase64(trigger.retainedBody)],
         { concurrency: 1 },
       ).pipe(Effect.mapError(encodeFailure));
       const inserted = yield* transaction
@@ -135,7 +136,7 @@ export const pspNotificationCapturePersistenceForTransaction = (
           providerOccurrenceId: Option.getOrNull(trigger.providerOccurrenceId),
           providerRefs,
           query: queryDocumentOf(notification),
-          rawBody: sql`decode(${rawBodyBase64}, 'base64')`,
+          rawBody: sql`decode(${retainedBodyBase64}, 'base64')`,
           receivedAt: toDate(notification.receivedAt),
           state: input.state,
           tenantId: scope.tenantId,

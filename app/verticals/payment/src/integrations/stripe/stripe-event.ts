@@ -229,6 +229,14 @@ export const decodeStripeEvent = Effect.fn('StripeEvent.decodeStripeEvent')(func
   return trigger;
 });
 
+/**
+ * The body bytes a Stripe capture keeps (#1155, #1157): the exact signed body of an actionable event, from
+ * which the notification worker re-reads `data.object`; none for an IGNORED event, which nothing reads again.
+ * A Stripe event body carries no credential.
+ */
+export const stripeRetainedBodyOf = (trigger: VerifiedNotificationTrigger, rawBody: Uint8Array): Uint8Array =>
+  trigger.actionable ? rawBody : new Uint8Array(0);
+
 const SignedObjectMetadataSchema = Schema.Struct({
   metadata: Schema.OptionFromOptionalNullOr(Schema.Record(Schema.String, Schema.String)),
 });

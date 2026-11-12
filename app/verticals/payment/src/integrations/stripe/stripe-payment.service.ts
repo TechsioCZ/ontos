@@ -57,7 +57,7 @@ import {
   STRIPE_REPLAY_WINDOW_MS,
   STRIPE_SIGNATURE_TOLERANCE_SECONDS,
 } from './stripe-capabilities.ts';
-import { decodeStripeEvent } from './stripe-event.ts';
+import { decodeStripeEvent, stripeRetainedBodyOf } from './stripe-event.ts';
 import {
   mapStripeCheckoutSession,
   mapStripeExpireResponse,
@@ -1037,7 +1037,7 @@ const makeStripePaymentService = Effect.gen(function* buildStripePaymentService(
       rawBody: notification.rawBody,
       verifiedAt,
     });
-    return trigger;
+    return { ...trigger, retainedBody: stripeRetainedBodyOf(trigger, notification.rawBody) };
   });
 
   return {

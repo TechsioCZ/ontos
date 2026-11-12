@@ -69,3 +69,16 @@ export const VerifiedNotificationTriggerSchema = Schema.Struct({
   verifiedAt: Schema.DateTimeUtc,
 });
 export type VerifiedNotificationTrigger = typeof VerifiedNotificationTriggerSchema.Type;
+
+/**
+ * What a verifier hands to the capture (#1155, #1157): the trigger plus `retainedBody`, the only body bytes
+ * the capture may store. The verifier declares them because only it knows what the body carries: the exact
+ * signed bytes where later processing re-reads the signed object (an actionable Stripe event), and no bytes
+ * where the body carries a gateway credential (the Comgate shop `secret`) or nothing later processing reads.
+ * The received body itself is never stored.
+ */
+export const VerifiedNotificationCaptureSchema = Schema.Struct({
+  ...VerifiedNotificationTriggerSchema.fields,
+  retainedBody: Schema.Uint8Array.check(Schema.isMaxLength(RAW_PROVIDER_NOTIFICATION_MAXIMUM_BYTES)),
+});
+export type VerifiedNotificationCapture = typeof VerifiedNotificationCaptureSchema.Type;

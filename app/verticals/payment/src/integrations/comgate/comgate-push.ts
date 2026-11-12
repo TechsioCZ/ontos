@@ -8,7 +8,7 @@ import type {
   GatewayNotificationRejectionReason,
   GatewayProviderUnavailableError,
 } from '../psp/psp-errors.ts';
-import type { RawProviderNotification, VerifiedNotificationTrigger } from '../psp/notification-envelope.ts';
+import type { RawProviderNotification, VerifiedNotificationCapture } from '../psp/notification-envelope.ts';
 import type { GatewayExecutionTarget } from '../psp/psp-request.ts';
 import { comgateBindingOf } from './comgate-evidence.ts';
 import { ComgatePaymentStatusSchema, ComgatePushSchema } from './comgate-wire.ts';
@@ -27,8 +27,10 @@ import type { ComgatePaymentStatus, ComgatePush } from './comgate-wire.ts';
  *    (ENVIRONMENT_MISMATCH).
  * The trigger is SHARED_SECRET_VERIFIED but never proves a fact: the status is always re-read through
  * lookup, the lookup wins, and a pushed status different from the lookup is recorded (claimedStatus)
- * and never rejected (donor gap C-6). The secret never leaves this module; `signedObject` is None so
- * no body (which contains the secret) is stored.
+ * and never rejected (donor gap C-6). The secret never leaves this module: `signedObject` is None and
+ * `retainedBody` is empty, so the capture stores no byte of the body (#1155). Nothing later reads it: the
+ * transaction is looked up through the binding by `transId`, kept in `providerRefs` and the delivery
+ * identity, and the pushed status is kept as `claimedStatus`.
  */
 
 const FAMILY = 'COMGATE';
@@ -116,7 +118,7 @@ export interface VerifyComgatePushInput {
 
 export const verifyComgatePush: (
   input: VerifyComgatePushInput,
-) => Effect.Effect<VerifiedNotificationTrigger, GatewayNotificationRejectedError | GatewayProviderUnavailableError> =
+) => Effect.Effect<VerifiedNotificationCapture, GatewayNotificationRejectedError | GatewayProviderUnavailableError> =
   Effect.fn('ComgatePush.verifyComgatePush')(function* verifyPush(input: VerifyComgatePushInput) {
     const { notification } = input;
     if (notification.family !== FAMILY) {
@@ -146,9 +148,10 @@ export const verifyComgatePush: (
       providerEventAt: Option.none(),
       providerOccurrenceId: Option.none(),
       providerRefs: [{ _tag: 'COMGATE_TRANSACTION', transId: push.transId }],
+      retainedBody: new Uint8Array(0),
       signedObject: Option.none(),
       verifiedAt: input.verifiedAt,
-    } satisfies VerifiedNotificationTrigger;
+    } satisfies VerifiedNotificationCapture;
   });
 
 /**

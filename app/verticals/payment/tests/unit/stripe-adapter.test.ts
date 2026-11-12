@@ -765,6 +765,8 @@ describe('#1157 Stripe notification verification', () => {
       );
 
       expect(trigger).toMatchObject({ actionable: true, authenticity: 'SIGNATURE_VERIFIED', family: 'STRIPE' });
+      // The worker re-reads the signed object from the exact signed bytes, so an actionable event keeps them.
+      expect(trigger.retainedBody).toEqual(rawBody);
       expect(foreign).toMatchObject({ code: 'gateway_notification_rejected', reason: 'BINDING_UNKNOWN' });
       expect(tampered).toMatchObject({ code: 'gateway_notification_rejected', reason: 'SIGNATURE_INVALID' });
       expect(sent).toHaveLength(0);
