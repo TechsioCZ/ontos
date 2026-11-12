@@ -38,14 +38,6 @@ const moduleKey = 'demo.sales-pipeline';
 const recordsPageKey = 'demo.sales-pipeline.page.records';
 /** AI level C approvals (opportunities + orders); only principals with write_all see the page. */
 const aiPageKey = 'demo.sales-pipeline.page.ai';
-const aiEntrypoint = {
-  access: 'read',
-  authorization: { kind: 'protected' },
-  entrypointKey: aiPageKey,
-  moduleKey,
-  role: 'page',
-  scope: 'tenant',
-} as const;
 
 const salesFamily = {
   icon: 'icon-[mdi--handshake-outline]',
@@ -130,7 +122,14 @@ export const salesPipelineRuntimeManifest: VerticalRuntimeRegistrationInput['man
             selectors: [],
           },
           contributionKey: 'demo.sales-pipeline.navigation.ai',
-          entrypoint: aiEntrypoint,
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'protected' },
+            entrypointKey: aiPageKey,
+            moduleKey,
+            role: 'page',
+            scope: 'tenant',
+          },
           groupKey: 'shell.navigation.agent-approvals',
           icon: 'icon-[mdi--robot-outline]',
           label: { cs: 'AI změny ke schválení', en: 'AI changes for approval' },
@@ -174,7 +173,14 @@ export const salesPipelineRuntimeManifest: VerticalRuntimeRegistrationInput['man
           },
           componentKey: 'demo.sales-pipeline.page-ai-approvals',
           contributionKey: aiPageKey,
-          entrypoint: aiEntrypoint,
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'protected' },
+            entrypointKey: aiPageKey,
+            moduleKey,
+            role: 'page',
+            scope: 'tenant',
+          },
           expose: './PageAiApprovals',
           routePath: '/prodej/schvalovani-ai',
         }),

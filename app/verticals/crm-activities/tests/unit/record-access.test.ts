@@ -10,6 +10,7 @@ import { recordsCarrier, applyCommandCarrier } from '../../shared/access-declara
 import { recordReachSql, recordVisible, validRecordPredicate } from '../../src/services/record-reach.ts';
 import { crmActivitiesRecordsGrants } from '../../src/services/persistence.service.ts';
 import { recordsRead } from '../../src/api/records.read.ts';
+import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
 import { crmActivitiesRegistration } from '../../vertical.registration.ts';
 import { ActivityRefSchema } from '../../shared/resources/activity.ts';
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
@@ -41,6 +42,7 @@ const team = Schema.decodeSync(ListAccessConditionSchema)({ _tag: 'TeamMemberOf'
 it('shares the exact declaration with the registered owner read', () => {
   expect(crmActivitiesRegistration.moduleId).toBe(recordsRead.descriptor.owningModuleKey);
   expect(recordsCarrier.accessDeclaration).toEqual(recordsRead.descriptor.accessDeclaration);
+  expect(applyCommandCarrier.accessDeclaration).toEqual(applyCommandAction.descriptor.accessDeclaration);
   expect(recordsRead.descriptor.accessDeclaration?.selectors.length).toBeGreaterThan(0);
 });
 it.effect('selector reads use list, preserve the full predicate and never treat approval as write', () =>

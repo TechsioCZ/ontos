@@ -2,7 +2,6 @@
 // @ontos-action-owner demo.merchandise
 // @ontos-action-slug change-order-status
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { changeOrderStatusDeclaration } from '../../shared/access-declarations.ts';
 import {
   ChangeOrderStatusPayloadSchema,
   ApplyCommandResultSchema,
@@ -15,7 +14,14 @@ import { persistenceService } from '../services/persistence.service.ts';
 export { prepareApplyCommandServices } from './command-execution.ts';
 export const changeOrderStatusAction = defineAction(
   {
-    accessDeclaration: changeOrderStatusDeclaration,
+    accessDeclaration: {
+      key: 'demo.merchandise.order-status.change',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'order-status', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'demo.merchandise.change-order-status.access.v1' },
     actionKey: 'demo.merchandise.change-order-status',
     auditProfile: 'standard',

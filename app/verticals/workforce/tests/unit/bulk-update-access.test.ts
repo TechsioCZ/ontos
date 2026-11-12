@@ -32,7 +32,7 @@ import { updateEmployeeAction } from '../../src/actions/update-employee.action.t
 import { recordsRead } from '../../src/api/records.read.ts';
 import { evolveEmployeeState } from '../../src/services/persistence.service.ts';
 import { workforceRegistration } from '../../vertical.registration.ts';
-import { recordsDeclaration } from '../../shared/access-declarations.ts';
+import { recordsCarrier } from '../../shared/access-declarations.ts';
 import { employee, employeeId, otherEmployeeId, scope } from './workforce-search-fixtures.ts';
 
 const thirdId = '50000000-0000-4000-8000-000000000003';
@@ -264,7 +264,7 @@ for (const outcome of ['DENIED', 'UNAVAILABLE'] as const) {
         const gate = makeTestBoundAccessGate({
           answers: {
             'demo.workforce.employee.update': { outcome: 'ALLOWED' },
-            [recordsDeclaration.key]: { outcome },
+            [recordsCarrier.accessDeclaration.key]: { outcome },
           },
         });
         const harness = yield* makeActionTestHarness({

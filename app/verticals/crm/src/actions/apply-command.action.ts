@@ -20,7 +20,6 @@ import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts'
 import { assignmentPolicy, evaluateAssignmentPolicy } from '../services/assignment-policy.ts';
 import { persistenceService, prepareCrmCommand } from '../services/persistence.service.ts';
 
-import { crmApplyCommandDeclaration, crmClientOwnerAssignGroup } from '../../shared/domain/access-declarations.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/demo-crm-search-changed-v1.ts';
 import { createApplyCommandDemoCrmSearchChangedV1OutboxMessage } from './apply-command-demo-crm-search-changed-v1.outbox-message.ts';
 
@@ -98,13 +97,31 @@ export const prepareApplyCommandServices = Effect.fn('Crm.prepareApplyCommandSer
 
 export const applyCommandAction = defineAction(
   {
-    accessDeclaration: crmApplyCommandDeclaration,
+    accessDeclaration: {
+      key: 'demo.crm.apply-command.write',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'crm', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'demo.crm.apply-command.access.v1',
     },
     // Reassignment names a new client owner, which asks for its own authority on top of the write.
-    accessFieldGroups: [crmClientOwnerAssignGroup],
+    accessFieldGroups: [
+      {
+        fieldClass: 'authority_metadata',
+        fields: ['command.toSalespersonId'],
+        key: 'demo.crm.client-owner.assign',
+        kind: 'field_write',
+        modes: ['run', 'propose', 'approve'],
+        placement: { group: 'crm', level: 'manage' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     actionKey: 'demo.crm.apply-command',
     auditProfile: 'standard',
     domainErrorSchema: CrmErrorSchema,

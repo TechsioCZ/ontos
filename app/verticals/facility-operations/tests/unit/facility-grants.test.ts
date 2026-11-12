@@ -9,6 +9,8 @@ import { NodeCrypto } from '@effect/platform-node';
 import { runFacilitySearchScenario } from './facility-search-harness.ts';
 
 import {
+  facilityOperationsApplyCommandDeclaration,
+  facilityOperationsOverviewReadDeclaration,
   facilityOperationsRecordsReadDeclaration,
   facilityOperationsRecordsRestrictedGroup,
   facilityOperationsRestrictedAgendaFields,
@@ -17,6 +19,16 @@ import { facilityGrantsOf } from '../../shared/domain/access-grants.ts';
 import { facilityOperationsGrants, finishFacilityRecords } from '../../src/services/persistence.service.ts';
 import { seedMetersState } from '../../scripts/seed/meters.mts';
 import { recordsRead } from '../../src/api/records.read.ts';
+import { overviewRead } from '../../src/api/overview.read.ts';
+import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
+
+it('asks the gate exactly what the registered descriptors declare', () => {
+  // The descriptors carry closed inline literals for the catalog; these owner copies must not drift.
+  expect(recordsRead.descriptor.accessDeclaration).toMatchObject(facilityOperationsRecordsReadDeclaration);
+  expect(recordsRead.descriptor.accessFieldGroups).toMatchObject([facilityOperationsRecordsRestrictedGroup]);
+  expect(overviewRead.descriptor.accessDeclaration).toMatchObject(facilityOperationsOverviewReadDeclaration);
+  expect(applyCommandAction.descriptor.accessDeclaration).toMatchObject(facilityOperationsApplyCommandDeclaration);
+});
 
 it('keeps the restricted agendas out of the parent read, as its own field group', () => {
   expect(facilityOperationsRecordsReadDeclaration).toMatchObject({
