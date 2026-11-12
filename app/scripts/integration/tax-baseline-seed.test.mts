@@ -132,13 +132,15 @@ const makeCapabilityGate = (companyIds: readonly string[], grants: Set<string>) 
     grants.has(grantKey(scopeOf(input), input.carrier.accessDeclaration?.key ?? ''))
       ? allowedDecision()
       : seamRefusal('deny.insufficient_grant');
+  const listed = (input: ListGateInput) => {
+    const decision = answer(input);
+    return decision.outcome === 'ALLOWED' ? { decision, predicate: { groups: [] } } : { decision };
+  };
   const gate: AccessDecisionService = {
     decide: (input) => Effect.succeed(answer(input)),
     decideMany: (input) => Effect.succeed(input.map(answer)),
-    list: (input) => {
-      const decision = answer(input);
-      return Effect.succeed(decision.outcome === 'ALLOWED' ? { decision, predicate: { groups: [] } } : { decision });
-    },
+    list: (input) => Effect.succeed(listed(input)),
+    listMany: (inputs) => Effect.succeed(inputs.map(listed)),
     selectableLegalEntities: () => Effect.succeed(companyIds.map((id) => LegalEntityIdSchema.make(id))),
   };
   const ports = inertAccessEnforcementPorts();
