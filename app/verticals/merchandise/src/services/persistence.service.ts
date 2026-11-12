@@ -1518,17 +1518,37 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
   };
 });
 
-const describeLine = (line: OrderLine, pricesIncludeVat: boolean, currency: MarketCurrency) => {
+const describeLine = (line: OrderLine, pricesIncludeVat: boolean, currency: MarketCurrency, withVat: boolean) => {
   const variant = line.variantName === undefined ? '' : ` (${line.variantName})`;
   const net = pricesIncludeVat ? '' : ' bez DPH';
-  return `${line.quantity}× ${line.productName}${variant} á ${money(line.unitPriceMinor, currency)}${net}`;
+  const vat = withVat ? `, DPH ${String(line.vatRate)} %` : '';
+  return `${line.quantity}× ${line.productName}${variant} á ${money(line.unitPriceMinor, currency)}${net}${vat}`;
 };
-export const describeLines = (order: {
-  readonly lines: readonly OrderLine[];
-  readonly market?: OrderMarket | undefined;
-  readonly pricesIncludeVat?: boolean | undefined;
-}) =>
-  order.lines.map((line) => describeLine(line, order.pricesIncludeVat === true, currencyOf(order.market))).join('; ');
+/** The order's lines in words; `withVat` adds each line's VAT rate (for an edit that changes only rates). */
+export const describeLines = (
+  order: {
+    readonly lines: readonly OrderLine[];
+    readonly market?: OrderMarket | undefined;
+    readonly pricesIncludeVat?: boolean | undefined;
+  },
+  withVat = false,
+) =>
+  order.lines
+    .map((line) => describeLine(line, order.pricesIncludeVat === true, currencyOf(order.market), withVat))
+    .join('; ');
+
+/** Whether two line lists carry the same VAT snapshot (rate, classification and Tax rule revision) line by line. */
+const sameLineTax = (left: readonly OrderLine[], right: readonly OrderLine[]) =>
+  left.length === right.length &&
+  left.every((line, index) => {
+    const other = right[index];
+    return (
+      other !== undefined &&
+      other.vatRate === line.vatRate &&
+      other.taxClassificationCode === line.taxClassificationCode &&
+      other.taxRuleRevisionId === line.taxRuleRevisionId
+    );
+  });
 export const describeAddress = (address: Order['deliveryAddress']) => {
   if (address === undefined) {
     return 'bez adresy';
@@ -1778,12 +1798,13 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
   let { movements } = state;
   if (value.lines !== undefined) {
     const nextLines = yield* editedOrderLines(state, existing, value.lines, input);
-    const before = describeLines(existing);
-    const after = describeLines({
-      lines: nextLines,
-      market: existing.market,
-      pricesIncludeVat: existing.pricesIncludeVat,
-    });
+    // A line priced again as new (removed and added back) can keep its words and still take another VAT snapshot.
+    const withVat = !sameLineTax(existing.lines, nextLines);
+    const before = describeLines(existing, withVat);
+    const after = describeLines(
+      { lines: nextLines, market: existing.market, pricesIncludeVat: existing.pricesIncludeVat },
+      withVat,
+    );
     if (before !== after) {
       if (orderMovesStock(state, existing)) {
         movements = yield* reconciledOrderMovements(state, existing, nextLines, input);

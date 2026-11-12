@@ -283,3 +283,25 @@ it.effect('a line removed and added again in one edit is priced as a new line, a
     expect(linesOf(edited.state)).toEqual([['ETH-250', 28_900, 12]]);
   }),
 );
+
+it.effect('a line added back with the same quantity and price still takes the VAT the editor showed', () =>
+  Effect.gen(function* sameWords() {
+    const seededState = yield* seeded;
+    // The 250 g line was snapshotted before the reduced rate was 12 %: it carries 10 % and no classification.
+    const older: MerchandiseState = {
+      ...seededState,
+      orders: seededState.orders.map((order) => ({
+        ...order,
+        lines: order.lines.map(({ taxClassificationCode: _code, taxRuleRevisionId: _rule, ...line }) => ({
+          ...line,
+          vatRate: 10,
+        })),
+      })),
+    };
+    // Removed and picked again at the same 289 Kč and quantity: priced as a new line, at today's 12 %.
+    const edited = yield* editOf(older, [{ ...existingLine, offeredUnitPriceMinor: 28_900 }], 'edit-same-words');
+    const [line] = edited.state.orders[0]?.lines ?? [];
+    expect([line?.unitPriceMinor, line?.vatRate, line?.taxClassificationCode]).toEqual([28_900, 12, 'cz.vat.reduced']);
+    expect(edited.state.orders[0]?.history?.at(-1)?.after).toContain('DPH 12 %');
+  }),
+);
