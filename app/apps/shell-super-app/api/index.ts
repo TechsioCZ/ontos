@@ -3566,7 +3566,7 @@ const corePersistenceLive = CorePersistenceLive.pipe(Layer.provide(DatabaseConfi
 /**
  * The Shell's own database identity enrollment, owner-neutral for the API process: it declares only the
  * published identity contracts this process issues owner-scoped gateway grants for. Every Core access port
- * and store reads it beside `CoreDatabase`, so it is provided explicitly here and in the worker host.
+ * and store reads it beside Core persistence, so it is provided explicitly here and in the worker host.
  */
 const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(SHELL_DATABASE_IDENTITY_ENROLLMENT);
 /**
