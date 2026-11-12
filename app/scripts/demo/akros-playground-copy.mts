@@ -485,8 +485,8 @@ export const BootstrapCopyCatalogSchema = Schema.Struct({
   ),
 });
 const metadataSchema = Schema.toEncoded(ProductMetadataSchema);
-const productDocument = Schema.toEncoded(ProductSchema);
-export const productCopyFields = (product: typeof productDocument.Type) =>
+/** The copyable catalog content of a product document or a staff product record (both carry its metadata). */
+export const productCopyFields = (product: typeof metadataSchema.Type) =>
   Schema.decodeUnknownEffect(metadataSchema)(product);
 export const copyStock = (product: CopyProduct) =>
   (product.variantRecords ?? []).length === 0
