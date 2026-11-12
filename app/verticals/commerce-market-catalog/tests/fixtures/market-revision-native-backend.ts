@@ -35,7 +35,6 @@ import {
   grantTestTenantOwnerAccess,
   grantTestTenantRoleAccess,
   liveFixtureSpiceDb,
-  markServicePrincipal,
 } from '@app/core-runtime/testing/tenant-access';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices, NodeHttpServer } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
@@ -380,7 +379,7 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   };
   yield* registry.migrate(connections);
   yield* customerContext.migrate(connections);
-  if (shell.relaySourceProviderUserId === undefined) {
+  if (shell.readerProviderUserId === undefined) {
     return yield* unavailable();
   }
   const baseConfiguration = {
@@ -403,7 +402,7 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
     makeLiveOperationFixture({
       ...baseConfiguration,
       managerProviderSubjectId: shell.providerUserId,
-      readerProviderSubjectId: shell.relaySourceProviderUserId,
+      readerProviderSubjectId: shell.readerProviderUserId,
     }),
     (value) => value.close().pipe(Effect.orDie),
   );
@@ -540,11 +539,7 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
     authorize: (_transaction, input) =>
       Effect.succeed(
         input.scope.tenantId === fixture.tenantId &&
-          (input.scope.principalId === fixture.manager.principalId ||
-            (input.scope.principalId === fixture.reader.principalId &&
-              input.owningModuleKey === identityModuleId &&
-              input.operationKey === bindSelfApiKeyAction.descriptor.actionKey &&
-              input.scope.legalEntityId === undefined)) &&
+          input.scope.principalId === fixture.manager.principalId &&
           (input.scope.legalEntityId === fixture.legalEntityId || input.scope.legalEntityId === undefined) &&
           ((input.owningModuleKey === moduleKey &&
             input.scope.legalEntityId === fixture.legalEntityId &&
@@ -575,11 +570,8 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   // Build scoped Core clients once; retained Registry callbacks use this same live context.
   const baseContext = yield* Layer.build(fixture.layer.pipe(Layer.provideMerge(authorization)));
   const binding = yield* shell.issueAndBind(principal).pipe(Effect.provideContext(baseContext));
-  const relayBinding = yield* shell.issueRelaySourceAndBind(fixture.reader).pipe(Effect.provideContext(baseContext));
-  yield* admin.execute(
-    markServicePrincipal({ principalId: fixture.reader.principalId, tenantId: fixture.tenantId }),
-    'objects',
-  );
+  // Market's own module credential, provisioned by the platform as on every environment.
+  const relayBinding = yield* shell.provisionRelaySource();
   const context = Context.add(
     baseContext,
     ConfigProvider.ConfigProvider,

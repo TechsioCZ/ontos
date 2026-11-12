@@ -342,6 +342,7 @@ it.effect('resolves through a delegated Assertion subject and the authorized Par
     expect(admissions).toEqual([
       {
         audience: 'party-registry',
+        callingAppId: 'commerce-customer-context',
         legalEntityScope: 'subject',
         requestCorrelation: serverScope.requestCorrelation,
         subject: { _tag: 'Assertion', scope: verifiedOperationalScope },

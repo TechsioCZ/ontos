@@ -220,6 +220,7 @@ export const manufacturerTargetResolverForCoreRead = (
           acquireDelegatedGatewayContext(
             {
               audience: 'party-registry',
+              callingAppId: 'catalog',
               legalEntityScope: 'subject',
               requestCorrelation: scope.correlationId,
               subject: { _tag: 'Assertion', scope },

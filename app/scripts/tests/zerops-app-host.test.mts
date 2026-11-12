@@ -11,8 +11,8 @@ import {
   hostControlApplication,
   processEnvironment,
   relayResponseHeaders,
+  moduleCredentialCallersOf,
   routeRequest,
-  shellModuleEnrolment,
 } from '../zerops/app-host.mts';
 import { hostedUnits } from '../zerops/hosted-units.mts';
 import type { ReleaseIntent, Topology } from '../zerops/hosted-units.mts';
@@ -392,11 +392,13 @@ describe('derivedEnvironment', () => {
 });
 
 describe('ownerEntrySource', () => {
+  const createUnitServer = '  const app = await createProdServer(prodServerOptions);';
   const generated = [
     "import app from '/abs/app/node_modules/x/y.js';",
     "import { thing } from 'pkg/sub';",
     "import { createRequire } from 'node:module';",
     'async function main() {',
+    createUnitServer,
     '  const port = process.env.PORT || 8080;',
     '  await app.listen({',
     '    port,',
@@ -406,9 +408,9 @@ describe('ownerEntrySource', () => {
     '',
   ].join('\n');
 
-  it('exports start(port) without the trailing main call', () => {
+  it('exports start(port, configureServer) without the trailing main call', () => {
     const source = ownerEntrySource(generated, DIST, resolvePackage);
-    expect(source).toContain('export async function start(port) {');
+    expect(source).toContain('export async function start(port, configureServer) {');
     expect(source).not.toContain('main();');
     expect(source).not.toContain('const port = process.env.PORT');
   });
@@ -425,32 +427,27 @@ describe('ownerEntrySource', () => {
     expect(source).toContain("import { createRequire } from 'node:module';");
   });
 
+  it('hands the unit server to configureServer before it listens', () => {
+    const source = ownerEntrySource(generated, DIST, resolvePackage) ?? '';
+    const configured = source.indexOf('configureServer(app);');
+    expect(configured).toBeGreaterThan(source.indexOf(createUnitServer.trim()));
+    expect(configured).toBeLessThan(source.indexOf('app.listen('));
+  });
+
   it('returns undefined for an unexpected entry shape', () => {
     expect(ownerEntrySource('export const unrelated = 1;\n', DIST, resolvePackage)).toBeUndefined();
+    // Without the server construction the host could not configure its keep-alive.
+    expect(ownerEntrySource(generated.replace(`${createUnitServer}\n`, ''), DIST, resolvePackage)).toBeUndefined();
   });
 });
 
-describe('shellModuleEnrolment', () => {
-  it('gives the Shell the explicit empty enrolment when no operator value exists', () => {
-    expect(shellModuleEnrolment(undefined, Option.none())).toEqual({ ONTOS_GATEWAY_MODULE_BINDINGS: '[]' });
-    expect(shellModuleEnrolment({ OTHER_SECRET: 'x' }, Option.none())).toEqual({
-      ONTOS_GATEWAY_MODULE_BINDINGS: '[]',
-    });
-  });
-
-  it('yields to a value the operator stored with the Shell or set on the container, even a malformed one', () => {
-    const stored = { ONTOS_GATEWAY_MODULE_BINDINGS: '[{"sourceAppId":"commerce-order"}]' };
-    expect(shellModuleEnrolment(stored, Option.none())).toEqual({});
-    expect(shellModuleEnrolment(undefined, Option.some('[]'))).toEqual({});
-    expect(shellModuleEnrolment(undefined, Option.some('{not json'))).toEqual({});
-  });
-
-  it('never overrides the Shell secret that processEnvironment passes through', () => {
-    const secrets = { [SHELL_ID]: { ONTOS_GATEWAY_MODULE_BINDINGS: '[{"sourceAppId":"crm"}]' } };
-    const { conflicts, environment } = processEnvironment([SHELL_ID], secrets, {});
-    expect(conflicts).toEqual([]);
-    expect({ ...shellModuleEnrolment(secrets[SHELL_ID], Option.none()), ...environment }).toMatchObject({
-      ONTOS_GATEWAY_MODULE_BINDINGS: '[{"sourceAppId":"crm"}]',
-    });
+describe('moduleCredentialCallersOf', () => {
+  it('gives a module credential only to hosted owners that call other modules', () => {
+    const commerceOrder = 'commerce-order';
+    expect(moduleCredentialCallersOf([commerceOrder, 'workforce', PARTY_REGISTRY, 'tagging'])).toEqual([
+      commerceOrder,
+      PARTY_REGISTRY,
+    ]);
+    expect(moduleCredentialCallersOf([SHELL_ID])).toEqual([]);
   });
 });

@@ -47,6 +47,7 @@ import type {
 import { BetterAuthRuntime } from './better-auth-runtime.ts';
 import { OAuthConnectionHooks } from './oauth-server/connection-hooks.ts';
 import { OAuthGuardSessionsLive } from './oauth-server/guard-sessions.ts';
+import { refusePlatformKeyOwnerSession } from './platform-key-owner.ts';
 
 export const FORBIDDEN_IDENTITY_CODE = 'ONTOS_IDENTITY_FORBIDDEN';
 export const IDENTITY_UNAVAILABLE_CODE = 'ONTOS_IDENTITY_UNAVAILABLE';
@@ -417,7 +418,15 @@ const makeBetterAuthFramework = Effect.fn('BetterAuthFramework.make')(function* 
   const runtime = yield* BetterAuthRuntime;
   const allowFixtureSignUp = options.allowFixtureSignUp === true;
   const prepareCreatedSession = <Session extends { readonly userId: string }>(session: Session) =>
-    resolver.resolveDefaultBetterAuthUser(session.userId).pipe(
+    refusePlatformKeyOwnerSession(
+      session.userId,
+      () =>
+        new APIError('FORBIDDEN', {
+          code: FORBIDDEN_IDENTITY_CODE,
+          message: 'The authenticated identity cannot access OntOS',
+        }),
+    ).pipe(
+      Effect.andThen(resolver.resolveDefaultBetterAuthUser(session.userId).pipe(Effect.mapError(mapResolverApiError))),
       Effect.map((principal) => ({
         data: {
           ...session,
@@ -426,7 +435,6 @@ const makeBetterAuthFramework = Effect.fn('BetterAuthFramework.make')(function* 
           activeTenantId: principal.tenantId,
         },
       })),
-      Effect.mapError(mapResolverApiError),
       observeSignInPhase('session-principal-resolution'),
       Effect.tap(() =>
         Clock.monotonicTimeNanos.pipe(

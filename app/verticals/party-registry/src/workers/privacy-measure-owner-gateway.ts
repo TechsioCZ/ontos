@@ -101,6 +101,7 @@ const makeGateway = (
     acquireDelegatedGatewayContext(
       {
         audience,
+        callingAppId: 'party-registry',
         legalEntityScope: 'subject',
         requestCorrelation: correlation,
         subject: {
