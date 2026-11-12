@@ -348,4 +348,41 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
       }),
     ),
   );
+
+  suite.effect('refuses a module whose intrinsic dependency is not active, and writes nothing', () =>
+    withProjectionTenant({ activeModules: [SELLING] }, (tenantId, admin) =>
+      Effect.gen(function* dependencyRefused() {
+        yield* bootstrapOwner(tenantId);
+        const base = makeModuleContractFixture({ appId: 'tax', moduleId: TAX });
+        // The tax module needs `crm.notes`, which the composition publishes but the Tenant has not installed.
+        const needsNotes = makeInstalledCatalogFixture(
+          makeModuleContractFixture({ appId: 'billing', moduleId: SELLING }),
+          makeModuleContractFixture({ appId: 'notes', moduleId: OTHER }),
+          {
+            ...base,
+            manifest: {
+              ...base.manifest,
+              requirements: {
+                coreCapabilities: [],
+                intrinsic: [{ moduleId: OTHER, requiredOperations: [] }],
+                operations: [],
+                schemaVersion: '1',
+              },
+            },
+          },
+        );
+        const refused = yield* installReleaseTenantModules({
+          catalog: needsNotes,
+          modules: [{ moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }],
+          reconcileRetrySpacing: Duration.zero,
+          runReference: RUN,
+        });
+        expect(refused.modules[0]).toMatchObject({ outcome: 'failed' });
+        expect(refused.modules[0]?.detail).toContain('a module it needs is not active');
+        expect(refused.reconciles).toEqual([]);
+        expect(yield* historyOf(admin, tenantId)).toEqual([]);
+        expect(yield* wakeUpsOf(admin, tenantId)).toEqual([]);
+      }),
+    ),
+  );
 });

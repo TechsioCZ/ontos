@@ -115,3 +115,40 @@ it('the migrator stops a child gracefully and takes SIGTERM as an interrupt itse
   expect(migrator).toContain('NodeRuntime.runMain(main');
   expect(migrator).not.toContain('Effect.runPromiseExit(main)');
 });
+
+it.live('the release module step does nothing outside stage and never reaches the database there', () =>
+  Effect.scoped(
+    Effect.gen(function* otherEnvironments() {
+      for (const environment of ['production', 'development']) {
+        const { connected, port } = yield* silentServer;
+        const silent = `127.0.0.1:${String(port)}`;
+        const child = spawn(process.execPath, ['scripts/demo/release-tenant-modules.mts'], {
+          cwd: appDirectory,
+          env: {
+            DATABASE_URL: `postgresql://ontos_runtime:silent@${silent}/ontos`,
+            ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: `http://${silent}/_host/composition`,
+            SPICEDB_CA_CERT: PEM,
+            SPICEDB_ENDPOINT: silent,
+            SPICEDB_PRESHARED_KEY: 'silent',
+            ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: environment,
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        const chunks: string[] = [];
+        const collect = (chunk: Buffer) => {
+          chunks.push(chunk.toString('utf-8'));
+        };
+        child.stdout.on('data', collect);
+        child.stderr.on('data', collect);
+        const code = yield* Effect.callback<number | null>((resume) => {
+          child.once('exit', (exitCode) => resume(Effect.succeed(exitCode)));
+        });
+        expect({ code, output: chunks.join('') }).toEqual({
+          code: 0,
+          output: `[release-modules] ${environment} declares no Tenant modules; nothing to do\n`,
+        });
+        expect(yield* Deferred.isDone(connected)).toBe(false);
+      }
+    }),
+  ),
+);
