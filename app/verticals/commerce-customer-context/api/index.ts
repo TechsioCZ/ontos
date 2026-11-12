@@ -39,8 +39,10 @@ import {
 } from './portal-auth/verification-http/problems.ts';
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
-import type { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
-import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
+} from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { EmailDeliveryService } from '@app/email-delivery/server';
@@ -87,7 +89,10 @@ import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Context, Layer as GovernedReadLayer, Logger, Option, Redacted, References, Schema, Tracer } from 'effect';
-import { RetailPartyDetailExecutor } from '../src/integrations/retail-party-detail-executor.ts';
+import {
+  PartyRegistryRetailPartyResolverFactory,
+  preparedRetailPartyResolution,
+} from '../src/integrations/party-registry-retail-party-resolver.ts';
 import { retailEnrollmentTargetIdentityLive } from '../src/integrations/retail-enrollment-binding-live.ts';
 import { CommercePortalAuthDatabaseLive } from '../src/portal-auth/persistence/portal-auth-database.ts';
 import { CommercePortalAuthAuditLive } from '../src/portal-auth/audit/audit.ts';
@@ -678,7 +683,6 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
   | ActionAuthorizationPreflight
   | CommerceEnrollmentOwnerTransitionPreparation
   | ActiveApplicationCompositionService
-  | RetailPartyDetailExecutor
   | Layer.Services<ReturnType<typeof makeActionRuntimeLive>>
 > = Layer.effect(
   ActionRuntime,
@@ -686,8 +690,8 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
     const existingRuntime = yield* ActionRuntime;
     const existingPreflight = yield* ActionAuthorizationPreflight;
     const preparation = yield* CommerceEnrollmentOwnerTransitionPreparation;
+    const compositions = yield* ActiveApplicationCompositionService;
     const dispatcher = yield* ActionMandateDispatcher;
-    const retailPartyTransport = yield* RetailPartyDetailExecutor;
     const dependencies = yield* Effect.context<
       Layer.Services<ReturnType<typeof makeActionRuntimeLive>> | ActionMandateDispatcher
     >();
@@ -700,9 +704,14 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
             scope,
           ).pipe(Effect.provideService(CommerceEnrollmentOwnerTransitionPreparation, preparation));
           const execution = Context.get(executionContext, CommerceEnrollmentPreparedOwnerExecutionService);
-          // Retail Party evidence is acquired once by the Action's registered prepareServices,
-          // after authorization and before Core opens the business transaction.
-          const preflight = composeActionAuthorizationPreflights([execution.preflight, existingPreflight]);
+          const retailParty = yield* preparedRetailPartyResolution.pipe(
+            Effect.provideService(ActiveApplicationCompositionService, compositions),
+          );
+          const preflight = composeActionAuthorizationPreflights([
+            execution.preflight,
+            retailParty.preflight,
+            existingPreflight,
+          ]);
           const runtimeContext = yield* Layer.buildWithScope(
             Layer.fresh(makeActionRuntimeLive(ultramodernDeliveryUnit, commerceCustomerContextRegistration)),
             scope,
@@ -714,7 +723,7 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
             .runAction(input)
             .pipe(
               Effect.provideService(CommerceEnrollmentPreparedOwnerCapability, execution.capability),
-              Effect.provideService(RetailPartyDetailExecutor, retailPartyTransport),
+              Effect.provideService(PartyRegistryRetailPartyResolverFactory, retailParty.factory),
             );
         }),
       );

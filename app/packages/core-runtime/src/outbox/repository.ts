@@ -17,7 +17,6 @@ import {
   workerCheckpoints,
 } from '../db/schema.ts';
 import type { CoreTransaction, CoreDbExecutor } from '../db/types.ts';
-import { isGenuineCoreOutboxWorker } from '../modules/module-operation-execution.ts';
 import { tenantStatesAllowingAccess } from '../modules/module-state-gate.ts';
 import {
   ApplicationCompositionAuthorityError,
@@ -193,15 +192,12 @@ const hasDueDelivery = Effect.fnUntraced(
     claimable: SQL | undefined,
     workerKeys: readonly string[],
     now: Date,
-    coreOnly: boolean,
   ) {
-    const query = executor
+    const rows = yield* executor
       .select({ deliveryId: outboxDeliveries.outboxDeliveryId })
       .from(outboxDeliveries)
       .innerJoin(outboxMessages, eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId))
-      .$dynamic();
-    const eligible = coreOnly ? query : query.innerJoin(tenantModuleStates, backgroundEligibleConsumer);
-    const rows = yield* eligible
+      .innerJoin(tenantModuleStates, backgroundEligibleConsumer)
       .where(
         and(inArray(outboxDeliveries.workerKey, [...workerKeys]), claimable, activeMessageTenant, dueDelivery(now)),
       )
@@ -303,26 +299,15 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
               }),
           ),
         );
-        const coreWorkers = yield* Effect.forEach(registrations, isGenuineCoreOutboxWorker, { concurrency: 1 }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ApplicationCompositionAuthorityError({
-                cause,
-                code: 'application_composition_authority_unavailable',
-                reason: 'The Core worker identity could not be verified',
-              }),
-          ),
-        );
-        const coreOnly = coreWorkers.every(Boolean);
         const claimable = intrinsicProvidersActive(registrations, admission.intrinsic);
-        if (!(yield* hasDueDelivery(executor, claimable, [...byWorkerKey.keys()], now, coreOnly))) {
+        if (!(yield* hasDueDelivery(executor, claimable, [...byWorkerKey.keys()], now))) {
           return Option.none<OutboxClaim>();
         }
         return yield* executor
           .transaction(
             Effect.fn('claimNextEffect')(function* claimNextEffect(transaction: CoreTransaction) {
               yield* lockApplicationCompositionAuthority(transaction, compositionRevision, 'worker');
-              const query = transaction
+              const candidates = yield* transaction
                 .select({
                   actionInvocationId: domainEvents.actionInvocationId,
                   attemptsCount: outboxDeliveries.attemptsCount,
@@ -341,11 +326,7 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
                 .from(outboxDeliveries)
                 .innerJoin(outboxMessages, eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId))
                 .innerJoin(domainEvents, eq(domainEvents.domainEventId, outboxMessages.domainEventId))
-                .$dynamic();
-              // Shipped Core workers are Shell capabilities, not tenant-installed modules.
-              // Other workers retain their consumer-state join and its row lock.
-              const eligible = coreOnly ? query : query.innerJoin(tenantModuleStates, backgroundEligibleConsumer);
-              const candidates = yield* eligible
+                .innerJoin(tenantModuleStates, backgroundEligibleConsumer)
                 .where(
                   and(
                     inArray(outboxDeliveries.workerKey, [...byWorkerKey.keys()]),

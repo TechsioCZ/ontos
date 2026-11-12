@@ -18144,14 +18144,6 @@ const hasNativeEmptyReadLoad = (source: string, callback: string, scopedFactory:
   );
 };
 
-/** A staged Read may need no transaction-scoped services, represented by an empty record or native void. */
-const hasNativeEmptyReadServiceFactory = (source: string, factory: string | undefined): boolean =>
-  hasExactValueImport(source, 'Effect', 'effect') &&
-  hasStableReadFactoryBindings(source, new Map([['Effect', 0]]), '') &&
-  ['() => Effect.succeed({})', '() => Effect.void'].some((native) =>
-    hasExactSourceTokens(tokenizeGovernedClient(factory ?? ''), native),
-  );
-
 const hasNativeSucceedReadPhase = (owner: ReadPhaseOwner, source: string, phaseSource: string): boolean => {
   const returned = readPhaseReturnedExpression(phaseSource);
   const args = returned === undefined ? undefined : wholeCallArguments(returned, /^Effect\.succeed\(/u, true);
@@ -18820,7 +18812,10 @@ const hasReadCallbacks = (
         handler,
         hasOriginalNativeReadFactory(phaseOwner, source, readExpression),
         phaseOwner,
-        hasNativeEmptyReadServiceFactory(source, callArgument(readExpression, /^defineRead\(/u, 2)),
+        hasExactSourceTokens(
+          tokenizeGovernedClient(callArgument(readExpression, /^defineRead\(/u, 2) ?? ''),
+          '() => Effect.succeed({})',
+        ),
       ) ||
       isOwnerLocalImportedFactoryResult(handler)) &&
     callbacks.every((index) => {

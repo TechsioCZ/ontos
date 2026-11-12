@@ -140,6 +140,9 @@ const previousNote = (report: CatalogReleaseActivationReport): string =>
   report.previousEntries === undefined ? '' : ` (previous release ${String(report.previousEntries)})`;
 
 const tenantLine = (tenant: CatalogReleaseActivationReport['tenants'][number]): string => {
+  if (tenant.outcome === 'skipped') {
+    return `[access-release] tenant ${tenant.tenantId}: skipped; ${tenant.reason ?? 'nothing to follow'}`;
+  }
   const parts = [
     `tenant ${tenant.tenantId}: ${tenant.outcome}`,
     tenant.presetFound

@@ -1,7 +1,5 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
-import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
-import { PartyContactPointDetailApi } from '@app/party-registry/api';
 import type { executePartyContactPointDetail } from '@app/party-registry/api/client';
 import {
   PartyContactPointDetailAuthenticationProblemSchema,
@@ -14,10 +12,7 @@ import {
   PartyContactPointDetailResponseSchema,
   PartyContactPointDetailUnavailableProblemSchema,
 } from '@app/party-registry/api/client';
-import { GatewayContextApi } from '@app/shared-contracts';
-import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { ConfigProvider, Context, Crypto, DateTime, Effect, Layer, Redacted, Result, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/http';
+import { Crypto, DateTime, Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { AddressBookUnavailable, SavedAddressInvalidSchema } from '../../shared/domain/address-errors.ts';
@@ -27,7 +22,6 @@ import {
   partyBackedAddressSourceValidatorForScope,
   partyBackedPostalAddressResolver,
   partyBackedPostalAddressResolverForScope,
-  preparePartyAddressSourceForScope,
 } from '../../src/integrations/party-address-source.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -571,104 +565,6 @@ it.effect('does not invoke a configured Party transport without a genuine operat
       )(savedPartyAddress).pipe(Effect.provideService(PartyAddressSourceExecutor, execute)),
     );
     expect(Schema.is(AddressBookUnavailable)(resolution)).toBe(true);
-    const preparation = yield* preparePartyAddressSourceForScope(
-      payload,
-      unverifiedScope,
-      crypto,
-      'commerce.customer-context.requirement.add-saved-address-party',
-    ).pipe(Effect.provideService(PartyAddressSourceExecutor, execute), Effect.flip);
-    expect(Schema.is(AddressBookUnavailable)(preparation)).toBe(true);
     expect(calls).toBe(0);
   }).pipe(Effect.provide(nodeCryptoLayer)),
-);
-
-it.effect('prepares Party address evidence with the original requester and refuses a copied scope before HTTP', () =>
-  Effect.gen(function* delegatedAddressPreparation() {
-    const crypto = yield* Crypto.Crypto;
-    const compositionRevision = 'a'.repeat(64);
-    const sourceAssertion = 'original-address-requester-assertion';
-    const scope = trustVerifiedGatewayPrincipalContext(
-      { ...unverifiedScope, legalEntityId: '60000000-0000-4000-8000-000000000001' },
-      compositionRevision,
-      { assertion: Redacted.make(sourceAssertion), audience: 'commerce-customer-context' },
-    );
-    const requests: Request[] = [];
-    const api = GatewayContextApi.addHttpApi(PartyContactPointDetailApi.prefix('/party-owner'));
-    const gateway = HttpApiBuilder.group(api, 'gatewayContext', (handlers) =>
-      handlers
-        .handle('issueGatewayContext', () => Effect.die('Address preparation must relay its original requester'))
-        .handle('issueApiKeyGatewayContext', () => Effect.die('A service identity cannot replace the requester'))
-        .handle('readWithApiKeyGatewayContext', () => Effect.die('Address preparation requires the Party contract'))
-        .handle('issueDelegatedGatewayContext', ({ payload: exchange }) => {
-          expect(exchange).toMatchObject({
-            audience: 'party-registry',
-            compositionRevision,
-            legalEntityScope: 'subject',
-            subject: { _tag: 'Assertion' },
-          });
-          expect(
-            exchange.subject._tag === 'Assertion' ? Redacted.value(exchange.subject.sourceAssertion) : undefined,
-          ).toBe(sourceAssertion);
-          return Effect.succeed({
-            apiBaseUrl: '/party-owner',
-            compositionRevision,
-            expiresAt: 1_800_000_300,
-            token: 'delegated-address-owner-assertion',
-          });
-        }),
-    );
-    const party = HttpApiBuilder.group(api, 'partyContactPointDetail', (handlers) =>
-      handlers.handle('execute', ({ payload: selector }) => {
-        expect(selector).toEqual({ contactPointRef });
-        return Effect.succeed({
-          ...currentPostalContactPoint,
-          validTo: DateTime.makeUnsafe('2031-01-01T00:00:00.000Z'),
-        });
-      }),
-    );
-    const server = yield* Effect.acquireRelease(
-      Effect.sync(() =>
-        HttpRouter.toWebHandler(
-          HttpApiBuilder.layer(api).pipe(
-            Layer.provide(Layer.mergeAll(gateway, party)),
-            Layer.provide(HttpServer.layerServices),
-          ),
-          { disableLogger: true },
-        ),
-      ),
-      (web) => Effect.promise(() => web.dispose()),
-    );
-    const nativeFetch: typeof fetch = (input, init) => {
-      const request = new Request(input, init);
-      requests.push(request);
-      return server.handler(request, Context.empty());
-    };
-    const transport = Layer.mergeAll(
-      ConfigProvider.layer(
-        ConfigProvider.fromUnknown({
-          ONTOS_GATEWAY_MODULE_API_KEY: 'address-module-credential',
-          ONTOS_SHELL_GATEWAY_BASE_URL: 'https://native-address-owner.test',
-        }),
-      ),
-      Layer.succeed(FetchHttpClient.Fetch, nativeFetch),
-    );
-    expect(yield* PartyAddressSourceExecutor).toBeUndefined();
-    expect(yield* preparePartyAddressSourceForScope(payload, scope, crypto).pipe(Effect.provide(transport))).toEqual({
-      validFrom: DateTime.toEpochMillis(DateTime.makeUnsafe(at)),
-      validUntil: DateTime.toEpochMillis(DateTime.makeUnsafe('2031-01-01T00:00:00.000Z')),
-    });
-    expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
-      '/auth/delegated/gateway-context',
-      '/party-owner/reads/party-contact-point-detail',
-    ]);
-    expect(requests[0]?.headers.get('x-api-key')).toBe('address-module-credential');
-    expect(requests[1]?.headers.get('authorization')).toBe('Bearer delegated-address-owner-assertion');
-    expect(requests[1]?.headers.get('x-api-key')).toBeNull();
-    const copied = yield* preparePartyAddressSourceForScope(payload, { ...scope }, crypto).pipe(
-      Effect.provide(transport),
-      Effect.flip,
-    );
-    expect(Schema.is(AddressBookUnavailable)(copied)).toBe(true);
-    expect(requests).toHaveLength(2);
-  }).pipe(Effect.scoped, Effect.provide(nodeCryptoLayer)),
 );

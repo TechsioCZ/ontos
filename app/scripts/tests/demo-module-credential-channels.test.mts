@@ -21,8 +21,7 @@ PID_DIR="$(mktemp -d)"
 printf 'dir=%s\\n' "$CHANNEL_DIR"
 
 channel_open dead
-# Reap a completed child before testing a dead PID; immediate kill can race Bash child startup.
-( exit 0 ) & dead=$!; wait "$dead"; echo "$dead" > "$PID_DIR/dead.pid"
+sleep 30 & dead=$!; echo "$dead" > "$PID_DIR/dead.pid"; kill "$dead"; wait "$dead" 2>/dev/null || true
 if hand_over dead 'dead-line'; then echo dead=delivered; else echo dead=refused; fi
 
 channel_open idle

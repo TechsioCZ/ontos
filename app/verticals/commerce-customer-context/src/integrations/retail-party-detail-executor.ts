@@ -1,9 +1,5 @@
 import { executePartyDetailWithAuthorization } from '@app/party-registry/api/client';
 import type { OperationalScope } from '@app/core-runtime';
-import {
-  readVerifiedGatewayCompositionRevision,
-  readVerifiedGatewayScopeAssertion,
-} from '@app/core-runtime/auth/system-principal-context-provenance';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { ProfilePersistenceDependencyFailure } from '../persistence/profile-persistence.ts';
 import { Context, Crypto, Effect, Layer, Schema } from 'effect';
@@ -48,16 +44,6 @@ export const makeRetailPartyDetailExecutor = (
 ): RetailPartyDetailExecutorService => ({
   execute: Effect.fn('RetailPartyDetail.execute')(
     function* execute(payload, requestCorrelation, authority) {
-      const { scope } = authority;
-      if (
-        readVerifiedGatewayScopeAssertion(scope)?.audience !== 'commerce-customer-context' ||
-        readVerifiedGatewayCompositionRevision(scope) !== authority.compositionRevision ||
-        scope.legalEntityId === undefined ||
-        scope.correlationId !== requestCorrelation ||
-        payload.partyRef.tenantId !== scope.tenantId
-      ) {
-        return yield* transportUnavailable('Retail Party read authority does not match the verified requester');
-      }
       const issued = yield* acquire(
         {
           audience: 'party-registry',

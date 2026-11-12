@@ -66,7 +66,6 @@ const payloadFor = (registration: CoreWorker) =>
 interface FixtureOptions {
   readonly authority?: 'expired' | 'revision-changed' | 'unavailable';
   readonly deployment?: typeof OntosDeploymentIdentitySchema.Type;
-  readonly due?: boolean;
   readonly registrations?: readonly CoreWorker[];
   readonly selected?: CoreWorker;
   readonly sqlAuthority?: 'expired' | 'sealed' | 'stale';
@@ -84,28 +83,6 @@ const runEntry = Effect.fn('TestCoreOutbox.runEntry')(function* runEntry(options
   let claimed = false;
   let completed = false;
   let authorityLoads = 0;
-  const candidateRows = () => {
-    if (selected === undefined || claimed) {
-      return [];
-    }
-    return [
-      {
-        actionInvocationId: invocationId,
-        attemptsCount: 0,
-        consumerModuleKey: selected.descriptor.consumerModuleKey,
-        deliveryId: 'delivery-1',
-        domainEventId: 'event-1',
-        messageId: 'message-1',
-        payloadJson: payloadFor(selected),
-        producerModuleKey: selected.descriptor.producerModuleKey,
-        status: 'pending',
-        tenantId,
-        tenantSequenceNo: 1n,
-        topic: selected.descriptor.topic,
-        workerKey: selected.descriptor.workerKey,
-      },
-    ];
-  };
   const database = yield* makeTestDatabase((statement, params) =>
     Effect.sync(() => {
       statements.push({ params, sql: statement });
@@ -131,14 +108,26 @@ const runEntry = Effect.fn('TestCoreOutbox.runEntry')(function* runEntry(options
         ];
       }
       if (statement.includes('skip locked')) {
-        // This fixture has no Core consumer module row. Never fabricate a
-        // candidate that a required installation join would have discarded.
-        expect(statement).not.toContain('inner join "core"."tenant_module_states"');
-        return candidateRows();
-      }
-      if (statement.startsWith('select "core"."outbox_deliveries"."outbox_delivery_id" from')) {
-        expect(statement).not.toContain('inner join "core"."tenant_module_states"');
-        return options.due === false ? [] : [{ deliveryId: 'delivery-1' }];
+        if (selected === undefined || claimed) {
+          return [];
+        }
+        return [
+          {
+            actionInvocationId: invocationId,
+            attemptsCount: 0,
+            consumerModuleKey: selected.descriptor.consumerModuleKey,
+            deliveryId: 'delivery-1',
+            domainEventId: 'event-1',
+            messageId: 'message-1',
+            payloadJson: payloadFor(selected),
+            producerModuleKey: selected.descriptor.producerModuleKey,
+            status: 'pending',
+            tenantId,
+            tenantSequenceNo: 1n,
+            topic: selected.descriptor.topic,
+            workerKey: selected.descriptor.workerKey,
+          },
+        ];
       }
       if (statement.startsWith('update "core"."outbox_deliveries"')) {
         if (!claimed) {
@@ -403,37 +392,6 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
       );
       expect(admission.intrinsic.get(moduleKey)).toEqual(['provider.tenant-control']);
       expect(yield* isGenuineCoreOutboxWorker(tenantWorker)).toBe(false);
-      const statements: string[] = [];
-      const database = yield* makeTestDatabase((statement) =>
-        Effect.sync(() => {
-          statements.push(statement);
-          if (statement.includes("current_setting('transaction_isolation')")) {
-            return [{ isolation: 'read committed' }];
-          }
-          if (statement.includes('from "core"."application_composition_authority"')) {
-            return [{ phase: 'active', revision: fixture.revision, subscriptionsJson: [], unexpired: true }];
-          }
-          if (statement.includes('from "core"."outbox_deliveries"') && !statement.includes('skip locked')) {
-            expect(statement).toContain('inner join "core"."tenant_module_states"');
-            return [{ deliveryId: 'delivery-1' }];
-          }
-          return [];
-        }),
-      );
-      const repository = makeOutboxRepository(database, yield* Crypto.Crypto);
-      yield* fixture.bind(
-        [tenantWorker],
-        repository.claimNext(
-          [tenantWorker],
-          'tenant-worker-control',
-          DateTime.toDateUtc(DateTime.makeUnsafe(0)),
-          fixture.revision,
-        ),
-      );
-      const claim = statements.find((statement) => statement.includes('skip locked'));
-      expect(claim).toContain('inner join "core"."tenant_module_states"');
-      expect(claim).toContain('for update skip locked');
-      expect(claim).toContain('exists (select 1 from "core"."tenant_module_states"');
       const recreated = defineOutboxWorker(tenantWorker.descriptor, () => Effect.void);
       const refusal = yield* fixture.bind(
         [tenantWorker],
@@ -450,9 +408,9 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
       expect(fixture.failures).toEqual([]);
       expect(fixture.results[0]?.claimed).toBe(0);
       const claim = fixture.statements.find(({ sql }) => sql.includes('skip locked'));
-      expect(claim?.sql).not.toContain('inner join "core"."tenant_module_states"');
+      expect(claim?.sql).toContain('inner join "core"."tenant_module_states"');
       expect(claim?.sql).toContain('from "core"."tenants"');
-      expect(claim?.sql).toContain('"core"."tenants"."status" = \'active\'');
+      expect(claim?.params).toContain('active');
       for (const worker of workers) {
         expect(claim?.params).toContain(worker.descriptor.workerKey);
       }
@@ -464,17 +422,6 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
       expect(lock).toBeGreaterThanOrEqual(0);
       expect(authority).toBeGreaterThan(lock);
       expect(candidates).toBeGreaterThan(authority);
-    }),
-  );
-
-  suite.effect('an idle Core worker probes without a consumer installation and does not take the claim fence', () =>
-    Effect.gen(function* idleCoreWorker() {
-      const fixture = yield* runEntry({ due: false });
-      expect(fixture.outcome).toBe('succeeded');
-      expect(fixture.failures).toEqual([]);
-      expect(fixture.statements.some(({ sql }) => sql.includes('from "core"."outbox_deliveries"'))).toBe(true);
-      expect(fixture.statements.some(({ sql }) => sql.includes('skip locked'))).toBe(false);
-      expect(fixture.statements.some(({ sql }) => sql.includes('pg_advisory_xact_lock_shared'))).toBe(false);
     }),
   );
 
