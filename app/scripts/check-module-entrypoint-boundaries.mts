@@ -61,6 +61,8 @@ import {
   hasValidActionGateway,
 } from './published-outbox-contracts.mts';
 import { isAllowedCompositionSeam } from './check-lean-core-dependencies.mts';
+import { publicComponentEntry, publicComponentImportViolations } from './public-component-boundary.mts';
+import type { PublicComponentOwner } from './public-component-boundary.mts';
 import { isProblemDetailsFactory } from './api-contract-schema-rules.mts';
 import {
   PublicContractOwnerAppIdSchema,
@@ -3809,6 +3811,45 @@ const foreignPrivateOrigin = (
   return undefined;
 };
 
+// ---------------------------------------------------------------------------------------------------------------
+// Demo-only exception 5: build-time public components (proof in ./public-component-boundary.mts).
+// Main's mechanism is Module Federation; build-time inline controls are a deliberate divergence to raise with the
+// owner. Returns undefined when the specifier does not select a declared public-component entry.
+// ---------------------------------------------------------------------------------------------------------------
+const publicComponentImportViolationsFor = (
+  state: BoundaryCheckState,
+  consumer: string,
+  specifier: string,
+): readonly string[] | undefined => {
+  const pkg = [...state.ownershipPackages.values()].find(
+    ({ metadata }) => metadata.name !== undefined && specifier.startsWith(`${metadata.name}/`),
+  );
+  if (pkg?.metadata.name === undefined) {
+    return undefined;
+  }
+  const owner: PublicComponentOwner = {
+    directory: pkg.directory,
+    exports: Object.fromEntries(
+      Object.entries(pkg.metadata.exports ?? {}).filter((entry): entry is [string, string] =>
+        Schema.is(Schema.String)(entry[1]),
+      ),
+    ),
+    packageName: pkg.metadata.name,
+  };
+  if (publicComponentEntry(owner, specifier, state.sourceMap) === undefined) {
+    return undefined;
+  }
+  return publicComponentImportViolations({
+    consumer,
+    consumerDependencies: new Set(
+      Object.keys(findConsumerOwnershipPackage(state, consumer)?.metadata.dependencies ?? {}),
+    ),
+    owner,
+    sources: state.sourceMap,
+    specifier,
+  });
+};
+
 const validateResolvedOwnerImports = (state: BoundaryCheckState, file: string, source: string) =>
   Effect.gen(function* validateResolvedOwnerImportsEffect() {
     const consumerOwner = deploymentOwner(state, file);
@@ -3829,8 +3870,20 @@ const validateResolvedOwnerImports = (state: BoundaryCheckState, file: string, s
     if (specifiers.length === 0) {
       return;
     }
+    // Demo-only exception 5: an import of a declared public-component entry is decided only by its proof.
+    const componentImports = new Map(
+      specifiers.flatMap((specifier) => {
+        const violations = publicComponentImportViolationsFor(state, file, specifier);
+        return violations === undefined ? [] : [[specifier, violations] as const];
+      }),
+    );
+    for (const [specifier, violations] of componentImports) {
+      for (const violation of violations) {
+        yield* fail(file, `public component ${specifier}: ${violation}`);
+      }
+    }
     const origins = nativeOwnershipOrigins(state, file);
-    for (const specifier of specifiers) {
+    for (const specifier of specifiers.filter((candidate) => !componentImports.has(candidate))) {
       const direct = ownershipDeclarationTarget(state, file, specifier);
       if (direct !== undefined && isApprovedOwnerContract(state, file, direct, specifier)) {
         continue;
