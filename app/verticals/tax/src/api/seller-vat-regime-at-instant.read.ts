@@ -58,9 +58,9 @@ export const readSellerVatRegimeAtInstant = (
 export const sellerVatRegimeAtInstantRead = defineRead(
   {
     accessActor: {
-      callers: ['merchandise'],
+      callers: ['merchandise', 'finance-billing'],
       reason:
-        'Merchandise reads the VAT regime of the selling company for the staff member or registered Storefront it already admitted, so a non-payer company never sells with VAT.',
+        'Merchandise (and Finance for its clerks) reads the VAT regime of the selling company for the staff member or registered Storefront it already admitted, so a non-payer company never sells with VAT.',
       subject: 'identity',
       subjectWorkloads: ['demo.storefront-client'],
     },

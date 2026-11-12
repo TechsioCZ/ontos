@@ -53,10 +53,11 @@ export const readTaxRuleHistory = (
 export const taxRuleHistoryRead = defineRead(
   {
     accessActor: {
-      callers: ['merchandise'],
+      callers: ['merchandise', 'finance-billing'],
       reason:
-        'Merchandise reads the scheduled revisions of an applicable Tax rule to show staff the upcoming rates of their own company.',
+        'Merchandise (and Finance for its clerks) reads the dated revisions of an applicable Tax rule for the staff member or registered Storefront it already admitted, so the rate at any instant is known.',
       subject: 'identity',
+      subjectWorkloads: ['demo.storefront-client'],
     },
     accessDeclaration: {
       key: 'commerce.tax.tax-rule.read-history',

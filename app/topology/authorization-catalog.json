@@ -13421,6 +13421,7 @@
           },
           "actor": {
             "callers": [
+              "finance-billing",
               "merchandise"
             ],
             "subject": "identity",
@@ -13644,6 +13645,7 @@
           },
           "actor": {
             "callers": [
+              "finance-billing",
               "merchandise"
             ],
             "subject": "identity",
@@ -13707,9 +13709,13 @@
           },
           "actor": {
             "callers": [
+              "finance-billing",
               "merchandise"
             ],
-            "subject": "identity"
+            "subject": "identity",
+            "subjectWorkloads": [
+              "demo.storefront-client"
+            ]
           }
         }
       ],
