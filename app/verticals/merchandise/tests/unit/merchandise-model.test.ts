@@ -63,9 +63,9 @@ const product = () =>
     sku: 'CABLE',
     stockOnHand: 0,
     stockValueMinor: 0,
+    taxClassificationCode: 'cz.vat.standard',
     unit: 'ks',
     updatedAt: '2026-10-05T10:00:00Z',
-    vatRate: 21,
   });
 
 it('preserves an optional compact storefront preview without requiring it on old product records', () => {

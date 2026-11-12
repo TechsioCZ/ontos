@@ -33,6 +33,8 @@ import {
 } from '../database/schema.ts';
 import { stockLevelsOf, toProductRecord } from './stock-levels.ts';
 import type { StockLevels } from './stock-levels.ts';
+import { CompanyTaxRatesSchema } from './tax-rates.ts';
+import type { CompanyTaxRates, SellableVatRates } from './tax-rates.ts';
 import { normalizeSearchText } from './storefront-catalog.ts';
 
 export class MerchandiseStoreFailure extends Data.TaggedError('MerchandiseStoreFailure')<{
@@ -131,8 +133,8 @@ type VariantRow = typeof productVariants.$inferInsert;
 type TierRow = typeof priceTiers.$inferInsert;
 
 /** Derived projection columns of one product at the given stock. */
-const derivedColumns = (product: Product, stock: StockLevels) => {
-  const record = toProductRecord(product, stock);
+const derivedColumns = (product: Product, stock: StockLevels, rates: SellableVatRates) => {
+  const record = toProductRecord(product, stock, rates);
   return {
     availability: record.availability ?? 'UNKNOWN',
     grossPriceMinor: record.grossPriceMinor ?? null,
@@ -163,13 +165,15 @@ export const productRowsOf = Effect.fn('MerchandiseStore.productRowsOf')(functio
   scope: StoreScope,
   product: Product,
   stock: StockLevels,
+  rates: SellableVatRates,
 ) {
+  const rate = rates[product.taxClassificationCode];
   const encoded = yield* encodeProduct(product);
   const { priceTiers: _tiers, variants: encodedVariants, ...document } = encoded;
   void _tiers;
   const row: ProductRow = {
     ...scope,
-    ...derivedColumns(product, stock),
+    ...derivedColumns(product, stock, rates),
     active: product.active,
     archived: product.demoArchive !== undefined,
     category: product.category,
@@ -193,6 +197,7 @@ export const productRowsOf = Effect.fn('MerchandiseStore.productRowsOf')(functio
     skuKey: skuKeyOf(product.sku),
     slug: product.slug ?? null,
     sourceGroupId: product.sourceGroupId ?? null,
+    taxClassificationCode: product.taxClassificationCode,
     updatedAt: date(product.updatedAt),
   };
   const variants: VariantRow[] = (product.variants ?? []).map((variant, position) => {
@@ -203,9 +208,9 @@ export const productRowsOf = Effect.fn('MerchandiseStore.productRowsOf')(functio
       active: variant.active !== false,
       document: variantDocument,
       grossPriceMinor:
-        variant.priceMinor === undefined
+        variant.priceMinor === undefined || rate === undefined
           ? null
-          : (variant.priceTiers?.[0]?.priceMinor ?? grossUnitPriceMinor(variant.priceMinor, product.vatRate)),
+          : (variant.priceTiers?.[0]?.priceMinor ?? grossUnitPriceMinor(variant.priceMinor, rate)),
       name: variant.name,
       position,
       priceMinor: variant.priceMinor ?? null,
@@ -473,6 +478,7 @@ export const insertSnapshotPart = Effect.fn('MerchandiseStore.insertSnapshotPart
   db: MerchandiseDb,
   scope: StoreScope,
   part: MerchandiseState,
+  rates: SellableVatRates,
 ) {
   const byProduct = new Map<string, StockMovement[]>();
   for (const movement of part.movements) {
@@ -489,7 +495,7 @@ export const insertSnapshotPart = Effect.fn('MerchandiseStore.insertSnapshotPart
       const orderRows = yield* Effect.forEach(part.orders, (order) => orderRowOf(scope, order), { concurrency: 1 });
       const productRows = yield* Effect.forEach(
         part.products,
-        (product) => productRowsOf(scope, product, stockLevelsOf(byProduct.get(product.id) ?? [], product.id)),
+        (product) => productRowsOf(scope, product, stockLevelsOf(byProduct.get(product.id) ?? [], product.id), rates),
         { concurrency: 1 },
       );
       return { categories: categoryRows, movements: movementRows, orders: orderRows, products: productRows };
@@ -539,14 +545,36 @@ export const writeSnapshotHead = Effect.fn('MerchandiseStore.writeSnapshotHead')
   return heads[0]?.revision ?? 0;
 });
 
+/** The stored `tax_rates` document, decoded; null before the company's first sync. */
+const decodeTaxRates = (value: (typeof catalogHeads.$inferSelect)['taxRates']) =>
+  value === null
+    ? Effect.succeed(Option.getOrUndefined(Option.none<CompanyTaxRates>()))
+    : query(Schema.decodeUnknownEffect(CompanyTaxRatesSchema)(value), 'Company tax rates do not decode');
+
+/** The rates the company's stored gross prices were computed with (none before its first Tax sync). */
+export const pricedRatesOf = Effect.fn('MerchandiseStore.pricedRatesOf')(function* pricedRatesOf(
+  db: MerchandiseDb,
+  scope: StoreScope,
+) {
+  const rows = yield* query(
+    db.select({ taxRates: catalogHeads.taxRates }).from(catalogHeads).where(whereScope(catalogHeads, scope)).limit(1),
+    'Company tax rates could not be read',
+  );
+  const stored = yield* decodeTaxRates(rows[0]?.taxRates ?? null);
+  return stored?.priced ?? {};
+});
+
 /** Replaces the whole company's merchandise with `state` in batched inserts (seeds); returns the new revision. */
 export const replaceSnapshot = Effect.fn('MerchandiseStore.replaceSnapshot')(function* replaceSnapshot(
   db: MerchandiseDb,
   scope: StoreScope,
   state: MerchandiseState,
+  /** The rates to price at; by default the company's synced rates, which the head row keeps across a replace. */
+  pricedAt?: SellableVatRates,
 ) {
+  const rates = pricedAt ?? (yield* pricedRatesOf(db, scope));
   yield* deleteScope(db, scope);
-  yield* insertSnapshotPart(db, scope, state);
+  yield* insertSnapshotPart(db, scope, state, rates);
   return yield* writeSnapshotHead(db, scope, state);
 });
 
@@ -628,6 +656,8 @@ export interface CatalogHead {
   readonly aiChanges: MerchandiseAiSlice | undefined;
   readonly homepageFeaturedProductIds: readonly (typeof ProductIdReferenceSchema.Type)[];
   readonly revision: number;
+  /** The company's VAT rates as last synced from Tax; absent before the first sync. */
+  readonly taxRates: CompanyTaxRates | undefined;
 }
 
 /**
@@ -638,6 +668,125 @@ export const EMPTY_CATALOG_HEAD: CatalogHead = Object.freeze({
   aiChanges: Option.getOrUndefined(Option.none<MerchandiseAiSlice>()),
   homepageFeaturedProductIds: [],
   revision: 0,
+  taxRates: Option.getOrUndefined(Option.none<CompanyTaxRates>()),
+});
+
+const encodeTaxRates = Schema.encodeEffect(CompanyTaxRatesSchema);
+
+/** Records a sync with Tax on the company's (locked) head row; the command's own write advances the revision. */
+export const writeTaxRates = Effect.fn('MerchandiseStore.writeTaxRates')(function* writeTaxRates(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  value: CompanyTaxRates,
+) {
+  const encoded = yield* query(encodeTaxRates(value), 'Company tax rates do not encode');
+  yield* query(
+    db.update(catalogHeads).set({ taxRates: encoded }).where(whereScope(catalogHeads, scope)),
+    'Company tax rates could not be written',
+  );
+});
+
+/** Advances the (locked) head revision of a write that changed only synced rates and prices; returns it. */
+export const advanceHeadRevision = Effect.fn('MerchandiseStore.advanceHeadRevision')(function* advanceHeadRevision(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  revision: number,
+  now: DateTime.Utc,
+) {
+  const heads = yield* query(
+    db
+      .update(catalogHeads)
+      .set({ revision: revision + 1, updatedAt: date(now) })
+      .where(and(whereScope(catalogHeads, scope), eq(catalogHeads.revision, revision)))
+      .returning({ revision: catalogHeads.revision }),
+    'Merchandise head could not be written',
+  );
+  return heads.length === 1 ? revision + 1 : undefined;
+});
+
+/** Rows of a priced table that belong to the product row being updated. */
+const sameProduct = (table: typeof priceTiers | typeof productVariants) =>
+  and(
+    eq(table.tenantId, products.tenantId),
+    eq(table.legalEntityId, products.legalEntityId),
+    eq(table.productId, products.id),
+  );
+
+/** The real (priced, identified) variants of the product row being updated, as alias `v`. */
+const realVariantsOfProduct = sql`v.tenant_id = ${products.tenantId} and v.legal_entity_id = ${products.legalEntityId}
+  and v.product_id = ${products.id} and v.variant_id is not null and v.price_minor is not null`;
+
+/** `amount` plus VAT at `rate`, rounded half-up like {@link grossUnitPriceMinor}, in SQL. */
+const grossSql = (amount: AnyPgColumn, rate: number) => sql`${amount} + floor((${amount} * ${rate} + 50) / 100)`;
+
+/**
+ * Recomputes every stored gross price of one classification from its net price at `rate` (tiers, variant and
+ * product gross columns), or clears the gross columns when the classification is no longer sellable. Three
+ * set-based statements for the whole company; nothing is loaded into the process.
+ */
+export const repriceClassification = Effect.fn('MerchandiseStore.repriceClassification')(function* reprice(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  code: Product['taxClassificationCode'],
+  rate: number | undefined,
+) {
+  const ofClass = and(whereScope(products, scope), eq(products.taxClassificationCode, code));
+  if (rate === undefined) {
+    yield* query(
+      db
+        .update(productVariants)
+        .set({ grossPriceMinor: null })
+        .from(products)
+        .where(and(ofClass, sameProduct(productVariants))),
+      'Variant gross prices could not be cleared',
+    );
+    yield* query(
+      db.update(products).set({ grossPriceMinor: null }).where(ofClass),
+      'Product gross prices could not be cleared',
+    );
+    return;
+  }
+  yield* query(
+    db
+      .update(priceTiers)
+      .set({ priceMinor: grossSql(priceTiers.priceExcludingVatMinor, rate) })
+      .from(products)
+      .where(and(ofClass, sameProduct(priceTiers))),
+    'Price tiers could not be repriced',
+  );
+  yield* query(
+    db
+      .update(productVariants)
+      .set({
+        grossPriceMinor: sql`coalesce(
+          (select t.price_minor from ${priceTiers} as t
+            where t.tenant_id = ${productVariants.tenantId} and t.legal_entity_id = ${productVariants.legalEntityId}
+              and t.product_id = ${productVariants.productId} and t.variant_position = ${productVariants.position}
+              and t.position = 0),
+          ${grossSql(productVariants.priceMinor, rate)})`,
+      })
+      .from(products)
+      .where(and(ofClass, sameProduct(productVariants), sql`${productVariants.priceMinor} is not null`)),
+    'Variant gross prices could not be repriced',
+  );
+  yield* query(
+    db
+      .update(products)
+      .set({
+        grossPriceMinor: sql`case
+          when exists (select 1 from ${productVariants} as v where ${realVariantsOfProduct})
+          then (select min(v.gross_price_minor) from ${productVariants} as v where ${realVariantsOfProduct}
+            and (v.active or not exists (select 1 from ${productVariants} as v where ${realVariantsOfProduct} and v.active)))
+          else coalesce(
+            (select t.price_minor from ${priceTiers} as t
+              where t.tenant_id = ${products.tenantId} and t.legal_entity_id = ${products.legalEntityId}
+                and t.product_id = ${products.id} and t.variant_position = -1 and t.position = 0),
+            ${grossSql(products.currentPriceMinor, rate)})
+          end`,
+      })
+      .where(ofClass),
+    'Product gross prices could not be repriced',
+  );
 });
 
 /** The company's head row; `lock` serializes writers of the company (SELECT … FOR UPDATE). */
@@ -656,6 +805,7 @@ export const loadHead = Effect.fn('MerchandiseStore.loadHead')(function* loadHea
       bootstrapCheckpoint: catalogHeads.bootstrapCheckpoint,
       homepageFeaturedProductIds: catalogHeads.homepageFeaturedProductIds,
       revision: catalogHeads.revision,
+      taxRates: catalogHeads.taxRates,
     })
     .from(catalogHeads)
     .where(whereScope(catalogHeads, scope))
@@ -671,17 +821,18 @@ export const loadHead = Effect.fn('MerchandiseStore.loadHead')(function* loadHea
   ) {
     return yield* new MerchandiseStoreFailure({ reason: 'Catalog initialization has not been verified' });
   }
-  const [aiChanges, homepageFeaturedProductIds] = yield* Effect.all(
+  const [aiChanges, homepageFeaturedProductIds, taxRates] = yield* Effect.all(
     [
       query(decodeAiSlice(row.aiChanges), 'AI changes do not decode'),
       query(
         Schema.decodeUnknownEffect(Schema.Array(ProductIdReferenceSchema))(row.homepageFeaturedProductIds),
         'AI changes do not decode',
       ),
+      decodeTaxRates(row.taxRates),
     ],
     { concurrency: 1 },
   );
-  return { aiChanges, homepageFeaturedProductIds, revision: row.revision } satisfies CatalogHead;
+  return { aiChanges, homepageFeaturedProductIds, revision: row.revision, taxRates } satisfies CatalogHead;
 });
 
 /**
@@ -1042,12 +1193,13 @@ const persistStockUpdates = Effect.fn('MerchandiseStore.persistStockUpdates')(fu
   db: MerchandiseDb,
   scope: StoreScope,
   { deltas, stockAfter, stockOnly }: StockChanges,
+  rates: SellableVatRates,
 ) {
   yield* Effect.forEach(
     stockOnly,
     Effect.fn('MerchandiseStore.persistProductStock')(function* persistProductStock(product: Product) {
       const stock = stockAfter(product.id);
-      const derived = yield* attempt('Stock projection failed', () => derivedColumns(product, stock));
+      const derived = yield* attempt('Stock projection failed', () => derivedColumns(product, stock, rates));
       yield* query(
         db
           .update(products)
@@ -1136,6 +1288,7 @@ export const persistChange = Effect.fn('MerchandiseStore.persistChange')(functio
   working: WorkingSet,
   after: MerchandiseState,
   now: DateTime.Utc,
+  rates: SellableVatRates,
 ) {
   const before = working.state;
   const changes = stockChangesOf(working, after);
@@ -1144,7 +1297,7 @@ export const persistChange = Effect.fn('MerchandiseStore.persistChange')(functio
     return yield* new MerchandiseStoreFailure({ reason: `Stock movement for an unloaded product ${unknownStock[0]}` });
   }
   const rewritten = yield* query(
-    Effect.forEach(changedProducts, (product) => productRowsOf(scope, product, stockAfter(product.id)), {
+    Effect.forEach(changedProducts, (product) => productRowsOf(scope, product, stockAfter(product.id), rates), {
       concurrency: 1,
     }),
     'Changed products do not encode',
@@ -1155,7 +1308,7 @@ export const persistChange = Effect.fn('MerchandiseStore.persistChange')(functio
     (batch) => query(db.insert(stockMovements).values([...batch]), 'Stock movements could not be written'),
   );
   yield* persistRewrittenProducts(db, scope, rewritten);
-  yield* persistStockUpdates(db, scope, changes);
+  yield* persistStockUpdates(db, scope, changes, rates);
   const changedOrders = yield* query(
     Effect.forEach(changedEntities(before.orders, after.orders), (order) => orderRowOf(scope, order), {
       concurrency: 1,

@@ -11,9 +11,10 @@ import { assertStorefrontScope } from '../../shared/actions/command-guard.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
 import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
 import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
+import { TEST_RATES, TEST_TAX, testTaxBook } from '../support/tax-fixtures.ts';
 
 const recordOf = (product: Parameters<typeof toProductRecord>[0], movements: Parameters<typeof stockLevelsOf>[0]) =>
-  toProductRecord(product, stockLevelsOf(movements, product.id));
+  toProductRecord(product, stockLevelsOf(movements, product.id), TEST_RATES);
 
 const actor = {
   principalId: '20000000-0000-4000-8000-000000000002',
@@ -25,8 +26,11 @@ const decodeCommand = Schema.decodeUnknownSync(MerchandiseCommandSchema);
 const isConflict = Schema.is(MerchandiseLifecycleConflict);
 type CommandInput = typeof MerchandiseCommandSchema.Encoded;
 
-const apply = (state: MerchandiseState, command: CommandInput, resourceId: string) =>
-  evolveMerchandiseState(state, decodeCommand(command), { actor, now: t0, resourceId });
+const apply = (state: MerchandiseState, command: CommandInput, resourceId: string, tax = TEST_TAX) =>
+  evolveMerchandiseState(state, decodeCommand(command), { actor, now: t0, resourceId, tax });
+
+/** A non-payer sells without VAT: Tax's regime, not a 0 % product rate. */
+const NON_PAYER_TAX = { book: testTaxBook({}, 'NON_PAYER'), priced: { 'cz.vat.reduced': 0, 'cz.vat.standard': 0 } };
 
 /** Coffee (12 % VAT) with two real variants: 250 g at net 25 804 (gross 289 Kč) and 1 kg at net 88 304 (989 Kč). */
 const seeded = Effect.gen(function* seedCoffee() {
@@ -40,8 +44,8 @@ const seeded = Effect.gen(function* seedCoffee() {
       name: 'Etiopie',
       priceMinor: 25_804,
       sku: 'ETH',
+      taxClassificationCode: 'cz.vat.reduced',
       unit: 'ks',
-      vatRate: 12,
     },
     'p1',
   );
@@ -140,15 +144,17 @@ it.effect('PlaceStorefrontOrder rounds fractional draft line totals consistently
         name: 'Měřené zboží',
         priceMinor: 101,
         sku: 'LENGTH',
+        taxClassificationCode: 'cz.vat.standard',
         unit: 'm',
-        vatRate: 0,
       },
       'p2',
+      NON_PAYER_TAX,
     );
     const stocked = yield* apply(
       created.state,
       { _tag: 'RecordStockMovement', delta: 10, productId: 'p2', reason: 'RECEIPT' },
       'm2',
+      NON_PAYER_TAX,
     );
     for (const [quantity, lineTotalMinor] of [
       [1.25, 126],
@@ -162,6 +168,7 @@ it.effect('PlaceStorefrontOrder rounds fractional draft line totals consistently
           stocked.state,
           guestOrder({ dryRun: true, expectedShippingPriceMinor, lines }),
           'inv-draft',
+          NON_PAYER_TAX,
         );
         const result = Schema.decodeUnknownSync(StorefrontOrderResultSchema)(draft.storefrontOrder);
         expect(result.outcome).toBe(expectedShippingPriceMinor === 0 ? 'REJECTED' : 'VALID');
@@ -170,8 +177,8 @@ it.effect('PlaceStorefrontOrder rounds fractional draft line totals consistently
         expect(result.totalMinor).toBe(lineTotalMinor + 7900);
         expect(draft.state).toBe(stocked.state);
       }
-      const placed = yield* apply(stocked.state, command, 'inv-placed');
-      const replayed = yield* apply(placed.state, command, 'inv-replayed');
+      const placed = yield* apply(stocked.state, command, 'inv-placed', NON_PAYER_TAX);
+      const replayed = yield* apply(placed.state, command, 'inv-replayed', NON_PAYER_TAX);
       for (const change of [placed, replayed]) {
         const result = Schema.decodeUnknownSync(StorefrontOrderResultSchema)(change.storefrontOrder);
         expect(result.lines[0]?.lineTotalMinor).toBe(lineTotalMinor);
@@ -209,8 +216,8 @@ it.effect('PlaceStorefrontOrder rejects a zero owner price even when the storefr
         name: 'Vzorek bez ceny',
         priceMinor: 0,
         sku: 'FREE',
+        taxClassificationCode: 'cz.vat.reduced',
         unit: 'ks',
-        vatRate: 12,
       },
       'p0',
     );
@@ -418,8 +425,8 @@ it.effect('CreateProduct generates a public, unique slug without extra storefron
       name: 'Šroub DIN 933 / nerez M8',
       priceMinor: 1200,
       sku: 'AKR-M8',
+      taxClassificationCode: 'cz.vat.standard',
       unit: 'ks',
-      vatRate: 21,
     };
     const first = yield* apply(empty, command, 'p1');
     const second = yield* apply(first.state, { ...command, sku: 'AKR-M8-2' }, 'p2');
@@ -450,8 +457,8 @@ it.effect('generated slugs stay URL-safe and bounded even for punctuation or lon
       category: source.category,
       lowStockThreshold: 0,
       priceMinor: 100,
+      taxClassificationCode: 'cz.vat.standard' as const,
       unit: 'ks' as const,
-      vatRate: 21 as const,
     };
     const punctuation = yield* apply(state, { ...command, name: '🔩', sku: 'M8/Č' }, 'p2');
     expect(punctuation.state.products[1]?.slug).toBe('m8-c');
@@ -483,8 +490,8 @@ it.effect('UpdateProduct and CreateProduct refuse a storefront slug another prod
         name: 'Keňa',
         priceMinor: 25_804,
         sku: 'KEN',
+        taxClassificationCode: 'cz.vat.reduced',
         unit: 'ks',
-        vatRate: 12,
       },
       'p2',
     );

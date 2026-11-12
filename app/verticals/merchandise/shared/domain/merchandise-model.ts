@@ -2,6 +2,7 @@
 // Money is integer CZK minor units. Order lines snapshot name, sku, price and VAT at creation and never
 // re-read the current product afterwards (brief requirement 7d).
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
+import { CzVatClassificationCodeSchema } from '@app/shared-contracts/cz-vat-classifications';
 import { Schema } from 'effect';
 import { currencyOf, MarketCurrencySchema, OrderMarketSchema } from './market-offers.ts';
 import type { MarketCurrency } from './market-offers.ts';
@@ -39,8 +40,17 @@ export const CustomerAccountIdSchema = Schema.String.check(Schema.isMinLength(1)
 
 export const ProductUnitSchema = Schema.Literals(['ks', 'bal', 'hod', 'lic', 'm', 'tab', 'set', '0', '1']);
 export type ProductUnit = typeof ProductUnitSchema.Type;
-export const VatRateSchema = Schema.Literals([0, 10, 12, 21]);
-export type VatRate = typeof VatRateSchema.Type;
+/**
+ * A VAT percentage as an order snapshots it. Rates themselves come only from Tax (`commerce.tax`): a product names
+ * its VAT classification, never a rate.
+ */
+export const VatPercentSchema = Schema.Int.check(Schema.isBetween({ maximum: 100, minimum: 0 }));
+/** The Tax rule revision (`commerce.tax.tax-rule-revision`) an order line's rate came from; never shown to people. */
+export const TaxRuleRevisionIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
+  Schema.brand('MerchandiseTaxRuleRevisionId'),
+);
+export type TaxRuleRevisionId = typeof TaxRuleRevisionIdSchema.Type;
+export type VatPercent = typeof VatPercentSchema.Type;
 export const StockMovementReasonSchema = Schema.Literals(['RECEIPT', 'ISSUE', 'ADJUSTMENT', 'ORDER']);
 export type StockMovementReason = typeof StockMovementReasonSchema.Type;
 /** Order workflow states recorded by staff. No carrier tracking or delivery ETA is implied. */
@@ -232,7 +242,8 @@ export const ProductSchema = Schema.Struct({
   sku: TextSchema(64),
   unit: ProductUnitSchema,
   updatedAt: Schema.DateTimeUtcFromString,
-  vatRate: VatRateSchema,
+  /** The VAT classification; its rate is the company's rule in Tax at the instant of sale. */
+  taxClassificationCode: CzVatClassificationCodeSchema,
 });
 export type Product = typeof ProductSchema.Type;
 
@@ -251,7 +262,8 @@ export const VariantRecordSchema = Schema.Struct({
   active: Schema.Boolean,
   attributes: Schema.String,
   availability: AvailabilitySchema,
-  grossPriceMinor: MinorAmountSchema,
+  /** Absent when the product's classification is not sellable now (staff reads only). */
+  grossPriceMinor: Schema.optionalKey(MinorAmountSchema),
   id: VariantIdSchema,
   name: Schema.String,
   priceHistory: Schema.Array(PriceHistoryEntrySchema),
@@ -315,6 +327,10 @@ export const ProductRecordSchema = Schema.Struct({
   lowStock: Schema.Boolean,
   stockOnHand: Schema.Finite,
   stockValueMinor: Schema.Int,
+  /** Staff reads; storefront reads replace it with `vatRate`. */
+  taxClassificationCode: Schema.optionalKey(CzVatClassificationCodeSchema),
+  /** Storefront reads: the rate the product's prices include. Unsellable products are never on the storefront. */
+  vatRate: Schema.optionalKey(VatPercentSchema),
   /** Nonblank storefront search only; verified on current owner rows within the governed read. */
   searchMatch: Schema.optionalKey(SearchMatchSchema),
   variantRecords: Schema.optionalKey(Schema.Array(VariantRecordSchema)),
@@ -354,14 +370,19 @@ export const OrderLineSchema = Schema.Struct({
   unitPriceMinor: MinorAmountSchema,
   variantId: Schema.optionalKey(VariantIdSchema),
   variantName: Schema.optionalKey(Schema.String),
-  vatRate: VatRateSchema,
+  /** The rate in force when the line was created; history keeps it whatever Tax says later. */
+  vatRate: VatPercentSchema,
+  /** The product's classification then; absent only on lines older than classifications that carried 0 %. */
+  taxClassificationCode: Schema.optionalKey(CzVatClassificationCodeSchema),
+  /** The Tax rule revision the rate came from; absent for a non-payer and for lines older than Tax. */
+  taxRuleRevisionId: Schema.optionalKey(TaxRuleRevisionIdSchema),
 });
 export type OrderLine = typeof OrderLineSchema.Type;
 
 export const ShippingMethodSchema = Schema.Literals(['ZASILKOVNA', 'PPL', 'CESKA_POSTA', 'OSOBNI_ODBER']);
 export type ShippingMethod = typeof ShippingMethodSchema.Type;
 
-/** Owner shipping tariffs, gross (incl. 21 % VAT). Carrier booking is not implemented. */
+/** Owner shipping tariffs, gross (VAT at the standard rate included). Carrier booking is not implemented. */
 export const shippingMethods = {
   CESKA_POSTA: { grossPriceMinor: 11_900, label: 'Česká pošta – doručení na adresu' },
   OSOBNI_ODBER: { grossPriceMinor: 0, label: 'Osobní odběr' },
@@ -383,7 +404,8 @@ export const OrderShippingSchema = Schema.Struct({
   method: ShippingMethodSchema,
   /** Gross shipping price (incl. VAT). */
   priceMinor: MinorAmountSchema,
-  vatRate: VatRateSchema,
+  /** The standard rate in force when the order was placed (0 for a non-payer). */
+  vatRate: VatPercentSchema,
 });
 export type OrderShipping = typeof OrderShippingSchema.Type;
 

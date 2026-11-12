@@ -10,6 +10,7 @@ import {
 import { productRowsOf } from '../../src/services/merchandise-store.ts';
 import { bootstrapStateForBatch } from '../../src/services/playground-catalog-bootstrap.ts';
 import { stockLevelsOf } from '../../src/services/stock-levels.ts';
+import { TEST_RATES } from '../support/tax-fixtures.ts';
 
 const sourceAt = '2026-10-01T08:00:00.000Z';
 const at = DateTime.makeUnsafe('2026-11-02T10:00:00.000Z');
@@ -25,9 +26,9 @@ const simple = {
   name: 'Washer',
   priceHistory: [],
   sku: 'WASHER',
+  taxClassificationCode: 'cz.vat.standard',
   unit: 'ks',
   updatedAt: sourceAt,
-  vatRate: 21,
 } satisfies typeof ProductSchema.Encoded;
 const variantProduct = {
   ...simple,
@@ -86,7 +87,9 @@ it.effect('projects simple and variant opening balances into native product and 
       },
     ]);
     const rows = yield* Effect.all(
-      state.products.map((product) => productRowsOf(scope, product, stockLevelsOf(state.movements, product.id))),
+      state.products.map((product) =>
+        productRowsOf(scope, product, stockLevelsOf(state.movements, product.id), TEST_RATES),
+      ),
     );
     expect(rows).toMatchObject([
       {
@@ -116,7 +119,9 @@ it.effect('keeps native identities scoped by tenant and company without rewritin
     ];
     for (const storeScope of scopes) {
       const rows = yield* Effect.all(
-        state.products.map((product) => productRowsOf(storeScope, product, stockLevelsOf(state.movements, product.id))),
+        state.products.map((product) =>
+          productRowsOf(storeScope, product, stockLevelsOf(state.movements, product.id), TEST_RATES),
+        ),
       );
       expect(rows.map(({ row }) => [row.tenantId, row.legalEntityId, row.id])).toEqual([
         [storeScope.tenantId, storeScope.legalEntityId, simple.id],
@@ -201,7 +206,9 @@ it.effect('adds only current opening movements, not source audit actors, history
       );
     }
     const rows = yield* Effect.all(
-      state.products.map((product) => productRowsOf(scope, product, stockLevelsOf(state.movements, product.id))),
+      state.products.map((product) =>
+        productRowsOf(scope, product, stockLevelsOf(state.movements, product.id), TEST_RATES),
+      ),
     );
     for (const { row, variants } of rows) {
       expect(row.document).not.toHaveProperty('contentHistory');

@@ -47,6 +47,7 @@
     "test:integration": "rstest --project integration",
     "test:unit": "rstest --project unit",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
+    "vat:preflight": "node scripts/vat-classification-preflight.mts",
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },
   "dependencies": {
@@ -58,6 +59,7 @@
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
     "@app/tagging": "workspace:*",
+    "@app/tax": "workspace:*",
     "@effect/opentelemetry": "4.0.7",
     "@effect/platform-node": "4.0.7",
     "@effect/sql-pg": "4.0.7",

@@ -50,6 +50,7 @@ import {
   encodeState,
   withMerchandise,
 } from './support/merchandise-database.ts';
+import { TEST_RATES, TEST_TAX } from '../support/tax-fixtures.ts';
 
 const encodeOrder = Schema.encodeSync(OrderSchema);
 const now = DateTime.makeUnsafe('2026-10-22T10:00:00.000Z');
@@ -133,11 +134,11 @@ const runCommand = (
           head,
           workingSetRequestOf(command, resourceId),
         );
-        const change = yield* evolveMerchandiseState(working.state, command, { actor, now, resourceId });
+        const change = yield* evolveMerchandiseState(working.state, command, { actor, now, resourceId, tax: TEST_TAX });
         const revision =
           change.state === working.state
             ? working.revision
-            : yield* persistChange(transaction, fixture.scope, working, change.state, now);
+            : yield* persistChange(transaction, fixture.scope, working, change.state, now, TEST_RATES);
         return { change, revision, working };
       }),
     );
@@ -477,9 +478,14 @@ it.live('persistChange against a stale revision reports a conflict instead of a 
           Effect.gen(function* staleRevisionTransaction() {
             const head = yield* requiredFixtureValue(yield* loadHead(transaction, fixture.scope, { lock: true }));
             const working = yield* loadWorkingSet(transaction, fixture.scope, head, workingSetRequestOf(command, 'x'));
-            const change = yield* evolveMerchandiseState(working.state, command, { actor, now, resourceId: 'x' });
+            const change = yield* evolveMerchandiseState(working.state, command, {
+              actor,
+              now,
+              resourceId: 'x',
+              tax: TEST_TAX,
+            });
             const stale = { ...working, revision: working.revision + 7 };
-            const revision = yield* persistChange(transaction, fixture.scope, stale, change.state, now);
+            const revision = yield* persistChange(transaction, fixture.scope, stale, change.state, now, TEST_RATES);
             // Persistence turns `undefined` into a revision conflict, which rolls the transaction back.
             return revision ?? (yield* Effect.fail('conflict'));
           }),

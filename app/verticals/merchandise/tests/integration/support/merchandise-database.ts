@@ -24,6 +24,8 @@ import {
 } from '../../../src/database/schema.ts';
 import { replaceSnapshot, whereScope } from '../../../src/services/merchandise-store.ts';
 import type { StoreScope } from '../../../src/services/merchandise-store.ts';
+import { CompanyTaxRatesSchema } from '../../../src/services/tax-rates.ts';
+import { TEST_COMPANY_TAX_RATES, TEST_RATES } from '../../support/tax-fixtures.ts';
 
 export type MerchandiseTestDatabase = TestDatabaseFromClient<typeof merchandiseRelations>;
 const MerchandiseDatabase = Context.Service<MerchandiseTestDatabase>('MerchandiseTests.Database');
@@ -70,7 +72,10 @@ export const withMerchandise = <A, E>(
       const db = Context.get(services, MerchandiseDatabase);
       const scope: StoreScope = { legalEntityId: randomUUID(), tenantId: randomUUID() };
       yield* Effect.addFinalizer(() => deleteScope(db, scope).pipe(Effect.orDie));
-      const revision = yield* db.transaction((transaction) => replaceSnapshot(transaction, scope, state));
+      // The company synced with Tax's Czech baseline, as every selling company is before its catalog is read.
+      const revision = yield* db.transaction((transaction) => replaceSnapshot(transaction, scope, state, TEST_RATES));
+      const taxRates = yield* Schema.encodeEffect(CompanyTaxRatesSchema)(TEST_COMPANY_TAX_RATES);
+      yield* db.update(catalogHeads).set({ taxRates }).where(whereScope(catalogHeads, scope));
       return yield* run({ db, revision, scope });
     }),
   );
@@ -82,9 +87,9 @@ const base = {
   createdAt: at,
   lowStockThreshold: 0,
   priceHistory: [],
+  taxClassificationCode: 'cz.vat.standard',
   unit: 'ks',
   updatedAt: at,
-  vatRate: 21,
 };
 
 /** Encoded catalog used by the storefront read tests (two categories, four products, two storefront orders). */

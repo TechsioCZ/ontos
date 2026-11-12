@@ -58,6 +58,7 @@ import type {
   Order,
   OrderHistoryEntry,
   OrderLine,
+  OrderShipping,
   OrderStatus,
   Product,
   ProductVariant,
@@ -92,8 +93,30 @@ import {
   storefrontProducts,
 } from './merchandise-queries.ts';
 import { PLAYGROUND_COMPANY, PLAYGROUND_TENANT } from '../../shared/domain/playground-catalog-bootstrap.ts';
-import { EMPTY_CATALOG_HEAD, loadHead, loadWorkingSet, lockHeadForWrite, persistChange } from './merchandise-store.ts';
-import type { StoreScope, WorkingSet, WorkingSetRequest } from './merchandise-store.ts';
+import {
+  EMPTY_CATALOG_HEAD,
+  loadHead,
+  loadWorkingSet,
+  lockHeadForWrite,
+  persistChange,
+  advanceHeadRevision,
+  repriceClassification,
+  writeTaxRates,
+} from './merchandise-store.ts';
+import type { CatalogHead, StoreScope, WorkingSet, WorkingSetRequest } from './merchandise-store.ts';
+import {
+  cachedTaxRateBook,
+  freshTaxRateBook,
+  NO_SELLABLE_RATES,
+  notSellableMessage,
+  resolveVatRate,
+  sameSellableRates,
+  sellableRatesAt,
+  taxRateViews,
+} from './tax-rates.ts';
+import type { SellableVatRates, TaxRateBook, TaxRatesFailure } from './tax-rates.ts';
+import { CZ_VAT_STANDARD, czVatClassificationCodes } from '@app/shared-contracts/cz-vat-classifications';
+import type { CzVatClassificationCode, TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
 import { realVariantsOf, stockLevelsOf, stockOnHandOf, toProductRecord, variantStockOf } from './stock-levels.ts';
 import { normalizeSearchText } from './storefront-catalog.ts';
 import { orderCustomerReferenceEligible } from '../../shared/order-customer-reference.ts';
@@ -181,6 +204,16 @@ export interface MerchandiseChange {
 /** Errors command logic raises from the state alone. Persistence adds its own around this. */
 export type MerchandiseCommandError = MerchandiseLifecycleConflict | MerchandiseNotFound;
 
+/**
+ * The company's VAT as one command sees it: `priced` are the rates its stored gross prices are computed with (the
+ * head row's, after this command's sync), `book` is what Tax answered for this command, absent when Tax could not be
+ * read. Order lines take their rate from the book only; without it no line can be priced.
+ */
+export interface CommandTax {
+  readonly book: TaxRateBook | undefined;
+  readonly priced: SellableVatRates;
+}
+
 export interface MerchandiseCommandInput {
   readonly actor: PrincipalRef;
   /** PlaceStorefrontOrder with `marketId`: the market's price list and offer, resolved by persistence. */
@@ -190,6 +223,8 @@ export interface MerchandiseCommandInput {
   readonly resourceId: string;
   /** The company's e-shop brand (`storefrontBrandOf`), set by persistence; names personal pickup. */
   readonly storefrontBrand?: string;
+  /** The company's VAT rates for this command. */
+  readonly tax: CommandTax;
   /** Set only by persistence after Core Media already applied the gallery change. */
   readonly trustedGallery?: boolean;
 }
@@ -255,6 +290,47 @@ export const orderStatusLabels = {
 const conflict = (reason: string) =>
   new MerchandiseLifecycleConflict({ code: 'merchandise_lifecycle_conflict', reason });
 
+type LineTax = Pick<OrderLine, 'taxClassificationCode' | 'taxRuleRevisionId' | 'vatRate'>;
+
+/** The rate, classification and Tax rule revision a new order line snapshots, or why the product cannot be sold. */
+const lineTaxResolution = (
+  tax: CommandTax,
+  code: CzVatClassificationCode,
+  now: DateTime.Utc,
+): { readonly message: string } | { readonly tax: LineTax } => {
+  if (tax.book === undefined) {
+    return { message: notSellableMessage(code, 'TAX_NOT_SYNCED') };
+  }
+  return Match.value(resolveVatRate(tax.book, code, now)).pipe(
+    Match.tag('NotSellable', ({ reason }) => ({ message: notSellableMessage(code, reason) })),
+    Match.tag('Rate', ({ ratePercent, taxRuleRevisionId }) => ({
+      tax:
+        taxRuleRevisionId === undefined
+          ? { taxClassificationCode: code, vatRate: ratePercent }
+          : { taxClassificationCode: code, taxRuleRevisionId, vatRate: ratePercent },
+    })),
+    Match.exhaustive,
+  );
+};
+
+const lineTaxOf = (input: MerchandiseCommandInput, product: Product) => {
+  const resolved = lineTaxResolution(input.tax, product.taxClassificationCode, input.now);
+  return 'message' in resolved ? Effect.fail(conflict(resolved.message)) : Effect.succeed(resolved.tax);
+};
+
+/** Shipping carries the standard rate (none for a non-payer). */
+const shippingVatResolution = (input: MerchandiseCommandInput) => {
+  const resolved = lineTaxResolution(input.tax, CZ_VAT_STANDARD, input.now);
+  return 'message' in resolved
+    ? { message: resolved.message.replace('Produkt nelze prodat', 'Dopravu nelze účtovat') }
+    : { vatRate: resolved.tax.vatRate };
+};
+
+const shippingVatOf = (input: MerchandiseCommandInput) => {
+  const resolved = shippingVatResolution(input);
+  return 'message' in resolved ? Effect.fail(conflict(resolved.message)) : Effect.succeed(resolved.vatRate);
+};
+
 /**
  * Brands an id the server produced. A value that fails its schema is a server defect, not a client error,
  * so it dies instead of joining the typed error channel.
@@ -296,7 +372,7 @@ const repriceTiers = (
   tiers: NonNullable<Product['priceTiers']>,
   oldNet: number | undefined,
   newNet: number | undefined,
-  vat: number,
+  vat: number | undefined,
 ) => {
   if (tiers.length === 0 || oldNet === newNet || newNet === undefined) {
     return tiers;
@@ -306,7 +382,8 @@ const repriceTiers = (
     return tiers;
   }
   const baseGross = firstTier.priceMinor;
-  const nextGross = grossUnitPriceMinor(newNet, vat);
+  // Without a sellable rate a zero gross base stays zero: no gross price is invented at 0 %.
+  const nextGross = vat === undefined ? baseGross : grossUnitPriceMinor(newNet, vat);
   return tiers.map((tier) => ({
     ...tier,
     priceExcludingVatMinor:
@@ -335,7 +412,12 @@ const repriced = (product: Product, priceMinor: number, input: MerchandiseComman
     updatedAt: input.now,
   };
   if (product.priceTiers !== undefined) {
-    updated.priceTiers = repriceTiers(product.priceTiers, product.currentPriceMinor, priceMinor, product.vatRate);
+    updated.priceTiers = repriceTiers(
+      product.priceTiers,
+      product.currentPriceMinor,
+      priceMinor,
+      input.tax.priced[product.taxClassificationCode],
+    );
   }
   return updated;
 };
@@ -436,7 +518,7 @@ const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* n
           previous.priceTiers,
           previous.priceMinor,
           variant.priceMinor,
-          product.vatRate,
+          input.tax.priced[product.taxClassificationCode],
         );
       }
       if (id !== undefined) {
@@ -593,7 +675,12 @@ const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
       priceMinor: value.priceMinor,
     };
     if (entry.priceTiers !== undefined) {
-      updated.priceTiers = repriceTiers(entry.priceTiers, entry.priceMinor, value.priceMinor, product.vatRate);
+      updated.priceTiers = repriceTiers(
+        entry.priceTiers,
+        entry.priceMinor,
+        value.priceMinor,
+        input.tax.priced[product.taxClassificationCode],
+      );
     }
     return updated;
   });
@@ -730,7 +817,7 @@ const addOrderLine = Effect.fn('Merchandise.addOrderLine')(function* addOrderLin
     sku: variant?.sku ?? product.sku,
     unitPriceMinor: variant?.priceMinor ?? product.currentPriceMinor,
     ...variantFields(variant?.id, variant?.name),
-    vatRate: product.vatRate,
+    ...(yield* lineTaxOf(context.input, product)),
   };
   const movement: StockMovement = {
     at: context.input.now,
@@ -940,13 +1027,21 @@ const sellableUnitOf = (
   products: readonly Product[],
   movements: readonly StockMovement[],
   line: CommandOf<'PlaceStorefrontOrder'>['lines'][number],
-): { readonly issue: StorefrontIssue } | { readonly product: Product; readonly unit: PricedUnit } => {
+  input: MerchandiseCommandInput,
+):
+  | { readonly issue: StorefrontIssue }
+  | { readonly product: Product; readonly tax: LineTax; readonly unit: PricedUnit } => {
   const product = products.find((entry) => entry.id === line.productId);
   const ids = { productId: line.productId, ...stockVariantFields(line.variantId) };
   if (product === undefined || !product.active || product.published === false) {
     return { issue: { ...ids, code: 'NOT_AVAILABLE', message: 'Produkt už není v nabídce.' } };
   }
-  const record = toProductRecord(product, stockLevelsOf(movements, product.id));
+  const taxed = lineTaxResolution(input.tax, product.taxClassificationCode, input.now);
+  if ('message' in taxed) {
+    return { issue: { ...ids, code: 'PRICE_UNAVAILABLE', message: `${product.name}: ${taxed.message}` } };
+  }
+  const { tax } = taxed;
+  const record = toProductRecord(product, stockLevelsOf(movements, product.id), input.tax.priced);
   const variants = record.variantRecords ?? [];
   if (variants.length > 0) {
     const variant = variants.find((entry) => entry.id === line.variantId);
@@ -962,9 +1057,10 @@ const sellableUnitOf = (
     }
     return {
       product,
+      tax,
       unit: {
         availability: variant.availability,
-        grossPriceMinor: tierPriceForQuantity(variant.priceTiers, line.quantity) ?? variant.grossPriceMinor,
+        grossPriceMinor: tierPriceForQuantity(variant.priceTiers, line.quantity) ?? variant.grossPriceMinor ?? 0,
         minimumQuantity: variant.minimumQuantity ?? 1,
         name: product.name,
         packageQuantity: variant.packageQuantity,
@@ -978,12 +1074,11 @@ const sellableUnitOf = (
   }
   return {
     product,
+    tax,
     unit: {
       availability: record.availability ?? 'UNKNOWN',
-      grossPriceMinor:
-        tierPriceForQuantity(product.priceTiers, line.quantity) ??
-        record.grossPriceMinor ??
-        grossUnitPriceMinor(product.currentPriceMinor, product.vatRate),
+      // A missing gross price is refused below as PRICE_UNAVAILABLE, never sold at 0 %.
+      grossPriceMinor: tierPriceForQuantity(product.priceTiers, line.quantity) ?? record.grossPriceMinor ?? 0,
       minimumQuantity: product.minimumQuantity ?? 1,
       name: product.name,
       packageQuantity: product.packageQuantity,
@@ -1000,8 +1095,9 @@ const checkedStorefrontUnit = (
   line: StorefrontLineRequest,
   requested: Map<string, number>,
   market: OrderMarket | undefined,
+  input: MerchandiseCommandInput,
 ): ReturnType<typeof sellableUnitOf> => {
-  const sellable = sellableUnitOf(state.products, state.movements, line);
+  const sellable = sellableUnitOf(state.products, state.movements, line, input);
   if ('issue' in sellable) {
     return sellable;
   }
@@ -1134,14 +1230,20 @@ const storefrontShippingOf = (
   state: MerchandiseState,
   market: OrderMarket | undefined,
   input: MerchandiseCommandInput,
-) => {
+): { readonly issue: StorefrontIssue } | { readonly shipping: OrderShipping } => {
   const method = shippingMethodFor(value.shippingMethod, pickupBrandOf(state, input));
+  const vat = shippingVatResolution(input);
+  if ('message' in vat) {
+    return { issue: { code: 'PRICE_UNAVAILABLE', message: vat.message } };
+  }
   return {
-    label: method.label,
-    method: value.shippingMethod,
-    priceMinor: market === undefined ? method.grossPriceMinor : convertGrossMinor(method.grossPriceMinor, market),
-    vatRate: 21,
-  } as const;
+    shipping: {
+      label: method.label,
+      method: value.shippingMethod,
+      priceMinor: market === undefined ? method.grossPriceMinor : convertGrossMinor(method.grossPriceMinor, market),
+      vatRate: vat.vatRate,
+    },
+  };
 };
 
 const shippingIssueOf = (
@@ -1157,6 +1259,29 @@ const shippingIssueOf = (
         expectedUnitPriceMinor: value.expectedShippingPriceMinor,
         message: `Cena dopravy se změnila na ${money(priceMinor, currencyOf(market))}.`,
       };
+
+/**
+ * The order's shipping, adding its issues: no rate from Tax (the order is refused, its totals carry no shipping VAT
+ * guess) or a price the storefront did not expect.
+ */
+const checkedStorefrontShipping = (
+  value: CommandOf<'PlaceStorefrontOrder'>,
+  state: MerchandiseState,
+  market: OrderMarket | undefined,
+  input: MerchandiseCommandInput,
+  issues: StorefrontIssue[],
+): OrderShipping => {
+  const priced = storefrontShippingOf(value, state, market, input);
+  if ('issue' in priced) {
+    issues.push(priced.issue);
+    return { label: '', method: value.shippingMethod, priceMinor: 0, vatRate: 0 };
+  }
+  const shippingIssue = shippingIssueOf(value, priced.shipping.priceMinor, market);
+  if (shippingIssue !== undefined) {
+    issues.push(shippingIssue);
+  }
+  return priced.shipping;
+};
 
 const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(function* placeStorefrontOrder(
   state: MerchandiseState,
@@ -1186,19 +1311,19 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
         issues.push(notOfferedIssue(state, line));
         return;
       }
-      const resolved = checkedStorefrontUnit(state, line, requested, market);
+      const resolved = checkedStorefrontUnit(state, line, requested, market, input);
       if ('issue' in resolved) {
         issues.push(resolved.issue);
         return;
       }
-      const { product, unit } = resolved;
+      const { product, tax, unit } = resolved;
       const snapshot: Mutable<OrderLine> = {
         productId: product.id,
         productName: product.name,
         quantity: line.quantity,
         sku: unit.sku,
         unitPriceMinor: unit.grossPriceMinor,
-        vatRate: product.vatRate,
+        ...tax,
       };
       if (unit.variantId !== undefined) {
         snapshot.variantId = yield* mintId(VariantIdSchema, unit.variantId);
@@ -1210,11 +1335,7 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
     }),
     { concurrency: 1, discard: true },
   );
-  const shipping = storefrontShippingOf(value, state, market, input);
-  const shippingIssue = shippingIssueOf(value, shipping.priceMinor, market);
-  if (shippingIssue !== undefined) {
-    issues.push(shippingIssue);
-  }
+  const shipping = checkedStorefrontShipping(value, state, market, input, issues);
   const draftTotals = fullOrderTotals({ lines, pricesIncludeVat: true, shipping });
   const draftLines = storefrontLines({ lines, pricesIncludeVat: true });
   if (issues.length > 0 || value.dryRun === true) {
@@ -1340,10 +1461,11 @@ const validateEditedStorefrontQuantity = Effect.fn('Merchandise.validateEditedSt
     existing: Order,
     request: EditLineRequest,
     kept: OrderLine | undefined,
+    input: MerchandiseCommandInput,
   ) {
     if (existing.channel === 'STOREFRONT' && kept?.quantity !== request.quantity) {
       const product = yield* findProduct(state.products, request.productId);
-      const record = toProductRecord(product, stockLevelsOf(state.movements, product.id));
+      const record = toProductRecord(product, stockLevelsOf(state.movements, product.id), input.tax.priced);
       const unit =
         request.variantId === undefined
           ? record
@@ -1364,6 +1486,7 @@ const editedOrderLines = Effect.fn('Merchandise.editedOrderLines')(function* edi
   state: MerchandiseState,
   existing: Order,
   incoming: readonly EditLineRequest[],
+  input: MerchandiseCommandInput,
 ) {
   const previous = new Map(existing.lines.map((line) => [lineKey(line), line] as const));
   const seen = new Set<string>();
@@ -1376,7 +1499,7 @@ const editedOrderLines = Effect.fn('Merchandise.editedOrderLines')(function* edi
       }
       seen.add(key);
       const kept = previous.get(key);
-      yield* validateEditedStorefrontQuantity(state, existing, request, kept);
+      yield* validateEditedStorefrontQuantity(state, existing, request, kept, input);
       if (kept !== undefined) {
         return {
           ...kept,
@@ -1389,8 +1512,9 @@ const editedOrderLines = Effect.fn('Merchandise.editedOrderLines')(function* edi
       if (variant === undefined && realVariantsOf(product).length > 0) {
         return yield* conflict(`Choose a variant of ${product.sku}`);
       }
+      const tax = yield* lineTaxOf(input, product);
       const netPrice = variant?.priceMinor ?? product.currentPriceMinor;
-      const czkPrice = existing.pricesIncludeVat === true ? grossUnitPriceMinor(netPrice, product.vatRate) : netPrice;
+      const czkPrice = existing.pricesIncludeVat === true ? grossUnitPriceMinor(netPrice, tax.vatRate) : netPrice;
       // A market order keeps its own price list (snapshot on the order) for lines added later.
       const currentPrice = existing.market === undefined ? czkPrice : convertGrossMinor(czkPrice, existing.market);
       return {
@@ -1400,7 +1524,7 @@ const editedOrderLines = Effect.fn('Merchandise.editedOrderLines')(function* edi
         sku: variant?.sku ?? product.sku,
         unitPriceMinor: request.unitPriceMinor ?? currentPrice,
         ...variantFields(variant?.id, variant?.name),
-        vatRate: product.vatRate,
+        ...tax,
       };
     }),
     { concurrency: 1 },
@@ -1458,6 +1582,7 @@ const editedOrderDetails = (
   initial: Order,
   value: CommandOf<'EditOrder'>,
   input: MerchandiseCommandInput,
+  shippingVatRate: number,
 ) => {
   let order = initial;
   const history: OrderHistoryEntry[] = [];
@@ -1468,7 +1593,7 @@ const editedOrderDetails = (
       label: method.label,
       method: value.shipping.method,
       priceMinor: value.shipping.priceMinor,
-      vatRate: 21,
+      vatRate: shippingVatRate,
     } as const;
     const currency = currencyOf(existing.market);
     const before = describeShipping(existing.shipping, currency);
@@ -1530,7 +1655,7 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
   let order = existing;
   let { movements } = state;
   if (value.lines !== undefined) {
-    const nextLines = yield* editedOrderLines(state, existing, value.lines);
+    const nextLines = yield* editedOrderLines(state, existing, value.lines, input);
     const before = describeLines(existing);
     const after = describeLines({
       lines: nextLines,
@@ -1545,7 +1670,9 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
       history.push(historyEntry(input, { after, before, kind: 'LINES', ...reason }));
     }
   }
-  const details = editedOrderDetails(state, existing, order, value, input);
+  const shippingVatRate =
+    value.shipping === undefined ? (existing.shipping?.vatRate ?? 0) : yield* shippingVatOf(input);
+  const details = editedOrderDetails(state, existing, order, value, input, shippingVatRate);
   history.push(...details.history);
   const entity = yield* entityIdOf(existing.id);
   if (history.length === 0) {
@@ -1739,6 +1866,8 @@ export const evolveMerchandiseState = (
     Match.tag('AiProposeChanges', 'AiDecideChanges', 'AiRevertBatch', () =>
       Effect.fail(conflict('AI approval commands run only through persistence')),
     ),
+    // A sync changes only stored rates and gross prices, which persistence does before any command.
+    Match.tag('SyncTaxRates', () => Effect.fail(conflict('A VAT rate sync runs only through persistence'))),
     Match.exhaustive,
   );
 
@@ -1871,6 +2000,8 @@ export const workingSetRequestOf = (
       }),
       RecordStockMovement: (value): WorkingSetRequest => ({ movements: true, productIds: [value.productId] }),
       RemoveDemoOrder: (value): WorkingSetRequest => ({ movements: true, orderIds: [value.id] }),
+      // A sync touches only the head row and the stored prices, which persistence reprices in place.
+      SyncTaxRates: (): WorkingSetRequest => ({}),
       UpdateCategory: (value): WorkingSetRequest => ({ categoryIds: [value.id] }),
       UpdateProduct: (value): WorkingSetRequest => {
         const request: Mutable<WorkingSetRequest> = { productIds: [value.id] };
@@ -2001,6 +2132,80 @@ export const merchandiseRecordsGrants = Effect.fn('Merchandise.recordsGrants')(f
 });
 const sameCommand = Schema.toEquivalence(MerchandiseCommandSchema);
 
+/** Commands whose new order lines or shipping need a rate from Tax: without Tax's answer they cannot run. */
+const ratesRequired = (command: MerchandiseCommand) =>
+  Predicate.isTagged(command, 'PlaceStorefrontOrder') ||
+  Predicate.isTagged(command, 'CreateOrder') ||
+  Predicate.isTagged(command, 'SyncTaxRates') ||
+  Predicate.isTagged(command, 'AiDecideChanges') ||
+  (Predicate.isTagged(command, 'EditOrder') && (command.lines !== undefined || command.shipping !== undefined));
+
+/** A real storefront order and an explicit sync ask Tax now; everything else reuses the company's rates ≤ 60 s. */
+const freshRatesRequired = (command: MerchandiseCommand) =>
+  (Predicate.isTagged(command, 'PlaceStorefrontOrder') && command.dryRun !== true) ||
+  Predicate.isTagged(command, 'SyncTaxRates');
+
+const TAX_REFUSED_REASON =
+  'Prodej není možný: daně firmy nejsou dostupné (modul Daně není pro firmu aktivní nebo dotaz odmítl).';
+
+const taxUnavailable = (failure: TaxRatesFailure) =>
+  Object.defineProperty(
+    new MerchandiseReferenceUnavailable({
+      code: 'merchandise_reference_unavailable',
+      reason: 'VAT rates are temporarily unavailable',
+    }),
+    'cause',
+    { enumerable: false, value: failure },
+  );
+
+const taxFailure = (failure: TaxRatesFailure) =>
+  failure.kind === 'REFUSED' ? conflict(TAX_REFUSED_REASON) : taxUnavailable(failure);
+
+/**
+ * Reads the company's VAT rates from Tax before the owner transaction opens (a remote call never runs inside it).
+ * A command that prices order lines fails without them; any other command syncs when Tax answers and otherwise keeps
+ * the stored rates.
+ */
+export const prepareCommandTax = Effect.fn('Merchandise.prepareCommandTax')(function* prepareCommandTax(
+  command: MerchandiseCommand,
+  scope: OperationalScope,
+) {
+  const read = freshRatesRequired(command) ? freshTaxRateBook(scope) : cachedTaxRateBook(scope);
+  const outcome = yield* Effect.result(read);
+  if (Result.isSuccess(outcome)) {
+    return outcome.success;
+  }
+  if (ratesRequired(command)) {
+    return yield* taxFailure(outcome.failure);
+  }
+  yield* Effect.logWarning('Merchandise keeps the stored VAT rates: Tax did not answer').pipe(
+    Effect.annotateLogs({ reason: outcome.failure.kind }),
+  );
+  return Option.getOrUndefined(Option.none<TaxRateBook>());
+});
+
+/** What a staff records read shows of Tax: the company's current and scheduled rates and its regime. */
+export interface StaffTaxRates {
+  /** Absent when Tax does not know the company. */
+  readonly regime?: TaxRateBook['regime'];
+  readonly views: readonly TaxRateView[];
+}
+
+export const prepareStaffTaxRates = Effect.fn('Merchandise.prepareStaffTaxRates')(function* prepareStaffTaxRates(
+  scope: OperationalScope,
+) {
+  const outcome = yield* Effect.result(cachedTaxRateBook(scope));
+  if (Result.isSuccess(outcome)) {
+    const now = yield* DateTime.now;
+    return { regime: outcome.success.regime, views: taxRateViews(outcome.success, now) } satisfies StaffTaxRates;
+  }
+  if (outcome.failure.kind === 'REFUSED') {
+    // Tax is not installed for the company (or refuses Merchandise): no rate exists, nothing is sellable.
+    return { views: [] } satisfies StaffTaxRates;
+  }
+  return yield* taxUnavailable(outcome.failure);
+});
+
 /** Cross-owner reference verification happens after Core admission but before the owner transaction opens. */
 export const prepareMerchandiseCommand = Effect.fn('Merchandise.prepareCommandReferences')(function* prepareCommand(
   command: MerchandiseCommand,
@@ -2041,6 +2246,7 @@ const ownRevisionGuard = (command: Exclude<MerchandiseCommand, AiCommand>): bool
   isOrderScopedEdit(command) ||
   isMarketCommand(command) ||
   Predicate.isTagged(command, 'PlaceStorefrontOrder') ||
+  Predicate.isTagged(command, 'SyncTaxRates') ||
   (Predicate.isTagged(command, 'ChangeProductImages') && !Predicate.isTagged(command.change, 'Set'));
 
 export const persistenceService = Effect.fn('Merchandise.persistenceService')(
@@ -2051,7 +2257,12 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       scope,
     }: {
       /** Write rights resolved before the Action's SQL transaction opened; writes never check remotely from here. */
-      readonly prepared?: { readonly actionInvocationId: string; readonly payload: MerchandiseCommandPayload };
+      readonly prepared?: {
+        readonly actionInvocationId: string;
+        readonly payload: MerchandiseCommandPayload;
+        /** What Tax answered before the transaction opened; absent when Tax could not be read. */
+        readonly taxBook: TaxRateBook | undefined;
+      };
       readonly scope: OperationalScope;
     },
   ) {
@@ -2075,15 +2286,52 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       }
       return yield* lockHeadForWrite(transaction, store, { aiChanges }).pipe(Effect.mapError(unavailable));
     });
+    /**
+     * Brings the company's stored VAT rates in line with what Tax answered for this command: the head row records the
+     * book, and every classification whose sellable rate changed is repriced from net in place (set-based, under the
+     * head lock). Without an answer the stored rates stay as they are.
+     */
+    const syncTax = Effect.fn('Merchandise.syncTax')(function* syncTax(head: CatalogHead) {
+      const book = prepared?.taxBook;
+      const stored = head.taxRates;
+      const previous = stored?.priced ?? NO_SELLABLE_RATES;
+      if (book === undefined) {
+        return { head, synced: false, tax: { book, priced: previous } satisfies CommandTax };
+      }
+      const now = yield* DateTime.now;
+      const priced = sellableRatesAt(book, now);
+      if (stored?.book?.fingerprint === book.fingerprint && sameSellableRates(previous, priced)) {
+        return { head, synced: false, tax: { book, priced } satisfies CommandTax };
+      }
+      yield* Effect.forEach(
+        czVatClassificationCodes.filter((code) => previous[code] !== priced[code]),
+        (code) => repriceClassification(transaction, store, code, priced[code]),
+        { concurrency: 1, discard: true },
+      ).pipe(Effect.mapError(unavailable));
+      const taxRates = { book, priced, syncedAt: now };
+      yield* writeTaxRates(transaction, store, taxRates).pipe(Effect.mapError(unavailable));
+      return { head: { ...head, taxRates }, synced: true, tax: { book, priced } satisfies CommandTax };
+    });
     const persist = Effect.fn('Merchandise.persist')(function* persist(
       working: WorkingSet,
       next: MerchandiseState,
       now: DateTime.Utc,
+      tax: CommandTax,
+      synced: boolean,
     ) {
       if (next === working.state) {
-        return working.revision;
+        // A sync that repriced the catalog is a change of its own: readers keyed on the revision must see it.
+        if (!synced) {
+          return working.revision;
+        }
+        const advanced = yield* advanceHeadRevision(transaction, store, working.revision, now).pipe(
+          Effect.mapError(unavailable),
+        );
+        return advanced ?? (yield* revisionConflict());
       }
-      const revision = yield* persistChange(transaction, store, working, next, now).pipe(Effect.mapError(unavailable));
+      const revision = yield* persistChange(transaction, store, working, next, now, tax.priced).pipe(
+        Effect.mapError(unavailable),
+      );
       return revision ?? (yield* revisionConflict());
     });
     const applyOnce = Effect.fn('Merchandise.applyOnce')(function* applyOnce(
@@ -2092,9 +2340,23 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       resourceId: string,
     ) {
       // The head row lock serializes every write of this company; reads never wait for it.
-      const head = yield* lockedHead(false);
-      if (!ownRevisionGuard(command) && head.revision !== expectedRevision) {
+      const locked = yield* lockedHead(false);
+      if (!ownRevisionGuard(command) && locked.revision !== expectedRevision) {
         return yield* revisionConflict();
+      }
+      const { head, synced, tax } = yield* syncTax(locked);
+      /** The revision of a command that writes no catalog rows itself: advanced once when the sync repriced. */
+      const revisionAfterSync = Effect.fn('Merchandise.revisionAfterSync')(function* revisionAfterSync() {
+        if (!synced) {
+          return head.revision;
+        }
+        const advanced = yield* advanceHeadRevision(transaction, store, head.revision, yield* DateTime.now).pipe(
+          Effect.mapError(unavailable),
+        );
+        return advanced ?? (yield* revisionConflict());
+      });
+      if (Predicate.isTagged(command, 'SyncTaxRates')) {
+        return { entityIds: [], revision: yield* revisionAfterSync() };
       }
       if (Predicate.isTagged(command, 'ResetDemoData')) {
         // Scoped by tenant + legal entity: no other company's rows are read or written.
@@ -2103,12 +2365,16 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       }
       if (isMarketCommand(command)) {
         const now = yield* DateTime.now;
-        const outcome = yield* applyMarketCommand(transaction, store, command, now).pipe(
+        // The head revision advances (for a sync) only after the market write succeeded, under the same head lock.
+        const { outcome, revision } = yield* applyMarketCommand(transaction, store, command, now).pipe(
           Effect.catchTag('MerchandiseStoreFailure', (failure) => Effect.fail(unavailable(failure))),
+          Effect.flatMap((applied) =>
+            revisionAfterSync().pipe(Effect.map((advanced) => ({ outcome: applied, revision: advanced }))),
+          ),
         );
         return outcome.marketRevision === undefined
-          ? { entityIds: [...outcome.entityIds], revision: head.revision }
-          : { entityIds: [...outcome.entityIds], marketRevision: outcome.marketRevision, revision: head.revision };
+          ? { entityIds: [...outcome.entityIds], revision }
+          : { entityIds: [...outcome.entityIds], marketRevision: outcome.marketRevision, revision };
       }
       const working = yield* loadWorkingSet(transaction, store, head, workingSetRequestOf(command, resourceId)).pipe(
         Effect.mapError(unavailable),
@@ -2134,14 +2400,14 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         });
         if (Predicate.isTagged(command.change, 'Stage')) {
           // Stored for the draft only: the product, its public gallery and the catalog revision stay as they are.
-          return { entityIds: [], image: mediaImageReference(resourceId), revision: head.revision };
+          return { entityIds: [], image: mediaImageReference(resourceId), revision: yield* revisionAfterSync() };
         }
         const gallery = yield* evolveMerchandiseState(
           working.state,
           { _tag: 'UpdateProduct', id: command.id, patch: { images } },
-          { actor, now, resourceId, trustedGallery: true },
+          { actor, now, resourceId, tax, trustedGallery: true },
         );
-        const revision = yield* persist(working, gallery.state, now);
+        const revision = yield* persist(working, gallery.state, now, tax, synced);
         const uploaded = images.find((image) => !(product.images ?? []).includes(image));
         return Predicate.isTagged(command.change, 'Upload') && uploaded !== undefined
           ? { entityIds: [...gallery.entityIds], image: uploaded, revision }
@@ -2156,7 +2422,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
               command.lines.map((line) => line.productId),
             ).pipe(Effect.mapError(unavailable))
           : undefined;
-      const commandInput: Mutable<MerchandiseCommandInput> = { actor, now, resourceId };
+      const commandInput: Mutable<MerchandiseCommandInput> = { actor, now, resourceId, tax };
       if (market !== undefined) {
         commandInput.market = market;
       }
@@ -2165,7 +2431,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         commandInput.storefrontBrand = storefrontBrand;
       }
       const change = yield* evolveMerchandiseState(working.state, command, commandInput);
-      const revision = yield* persist(working, change.state, now);
+      const revision = yield* persist(working, change.state, now, tax, synced);
       return change.storefrontOrder === undefined
         ? { entityIds: [...change.entityIds], revision }
         : { entityIds: [...change.entityIds], revision, storefrontOrder: change.storefrontOrder };
@@ -2179,10 +2445,11 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       expectedRevision: number,
       resourceId: string,
     ) {
-      const head = yield* lockedHead(true);
-      if (head.revision !== expectedRevision) {
+      const locked = yield* lockedHead(true);
+      if (locked.revision !== expectedRevision) {
         return yield* revisionConflict();
       }
+      const { head, synced, tax } = yield* syncTax(locked);
       const working = yield* loadWorkingSet(
         transaction,
         store,
@@ -2197,6 +2464,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           actor: { principalId: scope.principalId, tenantId: scope.tenantId },
           invocationId: resourceId,
           now,
+          tax,
         },
         {
           describeAddress,
@@ -2211,7 +2479,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           failure.kind === 'not_found' ? notFound(failure.message) : conflict(failure.message),
         ),
       );
-      const revision = yield* persist(working, outcome.state, now);
+      const revision = yield* persist(working, outcome.state, now, tax, synced);
       const entityIds = yield* Effect.forEach(outcome.entityIds, entityIdOf, { concurrency: 1 });
       return { entityIds, revision };
     });
@@ -2428,7 +2696,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
     const records = Effect.fn('Merchandise.records')(function* records(
       request: RecordsRequest,
       grants: MerchandiseRecordsGrants,
-      options: { readonly detailLimit?: number } = {},
+      options: { readonly detailLimit?: number; readonly tax?: StaffTaxRates } = {},
     ) {
       const view = request.view ?? {};
       const storefront = view.storefront === true;
@@ -2504,6 +2772,12 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       }
       if (orderList.total !== undefined) {
         response.totalOrders = orderList.total;
+      }
+      if (staff && options.tax !== undefined) {
+        response.taxRates = [...options.tax.views];
+        if (options.tax.regime !== undefined) {
+          response.taxRegime = options.tax.regime;
+        }
       }
       return storefrontOrigin === undefined ? response : { ...response, storefrontOrigin };
     });

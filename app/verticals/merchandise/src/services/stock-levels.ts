@@ -10,6 +10,7 @@ import type {
   StockMovement,
   VariantRecord,
 } from '../../shared/domain/merchandise-model.ts';
+import type { SellableVatRates } from './tax-rates.ts';
 
 /** Stock on hand of one product: the ledger total and each variant's own sum. */
 export interface StockLevels {
@@ -91,14 +92,23 @@ const availabilityRank = {
 
 export const realVariantsOf = (product: Product) => (product.variants ?? []).filter(isRealVariant);
 
+/**
+ * Gross unit price at the company's priced rate: the first tier, else net plus VAT. A classification that is not
+ * sellable has no gross price at all, never a price at 0 %.
+ */
+const grossPriceOf = (net: number, tiers: Product['priceTiers'], rate: number | undefined) =>
+  rate === undefined ? undefined : (tiers?.[0]?.priceMinor ?? grossUnitPriceMinor(net, rate));
+
 const toVariantRecord = (
   product: Product,
   variant: ProductVariant & { readonly id: VariantRecord['id']; readonly priceMinor: number },
   stock: StockLevels,
+  rate: number | undefined,
 ): VariantRecord => {
   const stockOnHand = stock.variants.get(variant.id) ?? 0;
   const active = product.active && variant.active !== false;
-  return {
+  const grossPriceMinor = grossPriceOf(variant.priceMinor, variant.priceTiers, rate);
+  const record: VariantRecord = {
     ...variant,
     active: variant.active !== false,
     attributes: variant.attributes,
@@ -108,7 +118,6 @@ const toVariantRecord = (
       stockTracked: product.stockTracked !== false,
       threshold: product.lowStockThreshold,
     }),
-    grossPriceMinor: variant.priceTiers?.[0]?.priceMinor ?? grossUnitPriceMinor(variant.priceMinor, product.vatRate),
     id: variant.id,
     name: variant.name,
     priceHistory: variant.priceHistory ?? [],
@@ -117,6 +126,7 @@ const toVariantRecord = (
     stockOnHand,
     unit: variant.unit ?? variant.sourceUnit ?? product.unit,
   };
+  return grossPriceMinor === undefined ? record : { ...record, grossPriceMinor };
 };
 
 /**
@@ -124,11 +134,13 @@ const toVariantRecord = (
  * Variant availability stays truthful even when the product is catalogue-only (minimum zero).
  * Products with real variants derive value, availability and the lowest active price from those variants.
  */
-export const toProductRecord = (product: Product, stock: StockLevels): ProductRecord => {
+export const toProductRecord = (product: Product, stock: StockLevels, rates: SellableVatRates): ProductRecord => {
   const stockOnHand = stock.total;
-  const variants = realVariantsOf(product).map((variant) => toVariantRecord(product, variant, stock));
+  const rate = rates[product.taxClassificationCode];
+  const variants = realVariantsOf(product).map((variant) => toVariantRecord(product, variant, stock, rate));
   if (variants.length === 0) {
-    return {
+    const grossPriceMinor = grossPriceOf(product.currentPriceMinor, product.priceTiers, rate);
+    const record: ProductRecord = {
       ...product,
       availability: availabilityOf({
         active: product.active,
@@ -136,12 +148,11 @@ export const toProductRecord = (product: Product, stock: StockLevels): ProductRe
         stockTracked: product.stockTracked !== false,
         threshold: product.lowStockThreshold,
       }),
-      grossPriceMinor:
-        product.priceTiers?.[0]?.priceMinor ?? grossUnitPriceMinor(product.currentPriceMinor, product.vatRate),
       lowStock: product.lowStockThreshold > 0 && stockOnHand < product.lowStockThreshold,
       stockOnHand,
       stockValueMinor: Math.round(stockOnHand * product.currentPriceMinor),
     };
+    return grossPriceMinor === undefined ? record : { ...record, grossPriceMinor };
   }
   const sellable = variants.filter((variant) => variant.active);
   let best: Availability = 'OUT_OF_STOCK';
@@ -151,11 +162,12 @@ export const toProductRecord = (product: Product, stock: StockLevels): ProductRe
     }
   }
   const variantStock = sumOf(variants, (variant) => variant.stockOnHand);
-  const grossPrices = (sellable.length > 0 ? sellable : variants).map((variant) => variant.grossPriceMinor);
-  return {
+  const grossPrices = (sellable.length > 0 ? sellable : variants).flatMap((variant) =>
+    variant.grossPriceMinor === undefined ? [] : [variant.grossPriceMinor],
+  );
+  const record: ProductRecord = {
     ...product,
     availability: product.active ? best : 'OUT_OF_STOCK',
-    grossPriceMinor: Math.min(...grossPrices),
     lowStock: product.lowStockThreshold > 0 && stockOnHand < product.lowStockThreshold,
     stockOnHand,
     stockValueMinor: Math.round(
@@ -164,10 +176,11 @@ export const toProductRecord = (product: Product, stock: StockLevels): ProductRe
     ),
     variantRecords: variants,
   };
+  return grossPrices.length === 0 ? record : { ...record, grossPriceMinor: Math.min(...grossPrices) };
 };
 
 /** All product records of one state; movements are partitioned once so large catalogs stay linear. */
-export const computeProductRecords = (state: MerchandiseState): readonly ProductRecord[] => {
+export const computeProductRecords = (state: MerchandiseState, rates: SellableVatRates): readonly ProductRecord[] => {
   const byProduct = new Map<string, StockMovement[]>();
   for (const movement of state.movements) {
     const bucket = byProduct.get(movement.productId) ?? [];
@@ -175,6 +188,6 @@ export const computeProductRecords = (state: MerchandiseState): readonly Product
     byProduct.set(movement.productId, bucket);
   }
   return state.products.map((product) =>
-    toProductRecord(product, stockLevelsOf(byProduct.get(product.id) ?? [], product.id)),
+    toProductRecord(product, stockLevelsOf(byProduct.get(product.id) ?? [], product.id), rates),
   );
 };

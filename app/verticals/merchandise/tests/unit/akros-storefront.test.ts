@@ -6,6 +6,7 @@ import { MerchandiseCommandSchema, MerchandisePermissionDenied } from '../../sha
 import { AKROS_LEGAL_ENTITY_ID, assertStorefrontScope } from '../../shared/actions/command-guard.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
 import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
+import { TEST_RATES, TEST_TAX } from '../support/tax-fixtures.ts';
 
 /** A missing fixture value fails the test before its fields are read. */
 const requireFixture = <T>(value: T | null | undefined): T => {
@@ -16,7 +17,7 @@ const requireFixture = <T>(value: T | null | undefined): T => {
 };
 
 const recordOf = (product: Parameters<typeof toProductRecord>[0], movements: Parameters<typeof stockLevelsOf>[0]) =>
-  toProductRecord(product, stockLevelsOf(movements, product.id));
+  toProductRecord(product, stockLevelsOf(movements, product.id), TEST_RATES);
 
 const actor = { principalId: '20000000-0000-4000-8000-000000000002', tenantId: '20000000-0000-4000-8000-000000000001' };
 const at = '2026-10-19T08:00:00.000Z';
@@ -34,6 +35,7 @@ const state = Schema.decodeUnknownSync(MerchandiseStateSchema)({
       name: 'Nerezový šroub',
       priceHistory: [],
       sku: 'DIN933',
+      taxClassificationCode: 'cz.vat.standard',
       unit: 'ks',
       updatedAt: at,
       variants: [
@@ -54,7 +56,6 @@ const state = Schema.decodeUnknownSync(MerchandiseStateSchema)({
           sourceUnit: 'ks',
         },
       ],
-      vatRate: 21,
     },
   ],
 });
@@ -70,7 +71,7 @@ const place = (quantity: number, expectedUnitPriceMinor: number, inputState = st
       partyId: 'test-customer-party',
       shippingMethod: 'OSOBNI_ODBER',
     }),
-    { actor, now: DateTime.makeUnsafe(at), resourceId: 'order-1' },
+    { actor, now: DateTime.makeUnsafe(at), resourceId: 'order-1', tax: TEST_TAX },
   );
 
 it('retains exact source gross price, tiers and minimum in the read projection', () => {
@@ -122,7 +123,7 @@ it.effect('staff price edits update live tier prices without losing source metad
         priceMinor: 16,
         variantId: 'item-1',
       }),
-      { actor, now: DateTime.makeUnsafe(at), resourceId: 'price-1' },
+      { actor, now: DateTime.makeUnsafe(at), resourceId: 'price-1', tax: TEST_TAX },
     );
     const variant = recordOf(changed.state.products[0], changed.state.movements).variantRecords?.[0];
     expect(variant?.grossPriceMinor).toBe(19);
@@ -147,7 +148,7 @@ it.effect('UpdateProduct applies supplied variant tiers including an empty repla
             id: 'product-1',
             patch: { variants: [{ ...variant, priceMinor, priceTiers }] },
           }),
-          { actor, now: DateTime.makeUnsafe(at), resourceId: 'replace-tiers' },
+          { actor, now: DateTime.makeUnsafe(at), resourceId: 'replace-tiers', tax: TEST_TAX },
         );
         expect(changed.state.products[0]?.variants?.[0]?.priceTiers).toEqual(priceTiers);
         const expectedPrice = priceTiers.at(-1)?.priceMinor ?? (priceMinor === 8 ? 10 : 19);
@@ -170,7 +171,7 @@ it.effect('UpdateProduct retains and reprices variant tiers only when no replace
           id: 'product-1',
           patch: { variants: [{ ...variant, priceMinor }] },
         }),
-        { actor, now: DateTime.makeUnsafe(at), resourceId: 'retain-tiers' },
+        { actor, now: DateTime.makeUnsafe(at), resourceId: 'retain-tiers', tax: TEST_TAX },
       );
       const tiers = changed.state.products[0]?.variants?.[0]?.priceTiers;
       if (priceMinor === 8) {
@@ -198,7 +199,7 @@ it.effect('first seeded variant edit snapshots its existing price through both s
       const changed = yield* evolveMerchandiseState(
         state,
         Schema.decodeUnknownSync(MerchandiseCommandSchema)(command),
-        { actor, now: DateTime.makeUnsafe(at), resourceId: 'first-price' },
+        { actor, now: DateTime.makeUnsafe(at), resourceId: 'first-price', tax: TEST_TAX },
       );
       const history = recordOf(changed.state.products[0], changed.state.movements).variantRecords?.[0]?.priceHistory;
       expect(history).toHaveLength(1);
@@ -229,7 +230,7 @@ it.effect('AKROS pickup retains company identity when editing shipping and persi
           shipping: { method: 'OSOBNI_ODBER', priceMinor: 1000 },
         }),
         // Persistence supplies the company's e-shop brand; only an imported source catalog names pickup with it.
-        { actor, now: DateTime.makeUnsafe(at), resourceId: 'shipping-edit', storefrontBrand: 'AKROS' },
+        { actor, now: DateTime.makeUnsafe(at), resourceId: 'shipping-edit', storefrontBrand: 'AKROS', tax: TEST_TAX },
       );
       const [order] = edited.state.orders;
       const company = akros ? 'Osobní odběr – AKROS' : 'Osobní odběr';

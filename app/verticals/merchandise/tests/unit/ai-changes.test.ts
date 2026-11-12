@@ -21,6 +21,7 @@ import {
   orderStatusLabels,
 } from '../../src/services/persistence.service.ts';
 import { stockOnHandOf } from '../../src/services/stock-levels.ts';
+import { TEST_TAX } from '../support/tax-fixtures.ts';
 
 /** A real asynchronous boundary with no timing assertion or external I/O. */
 const nextMicrotask = Effect.promise(Promise.resolve.bind(Promise));
@@ -45,7 +46,9 @@ const stock = (state: MerchandiseState) => stockOnHandOf(state.movements, Produc
 const run = (state: MerchandiseState, input: CommandInput, resourceId: string) =>
   decode(input).pipe(
     Effect.orDie,
-    Effect.flatMap((command) => evolveMerchandiseState(state, command, { actor: approver, now, resourceId })),
+    Effect.flatMap((command) =>
+      evolveMerchandiseState(state, command, { actor: approver, now, resourceId, tax: TEST_TAX }),
+    ),
     Effect.flatMap((change) => roundTrip(change.state)),
   );
 const ai = (state: MerchandiseState, input: AiCommandInput, invocationId: string, actor = approver) =>
@@ -55,7 +58,7 @@ const ai = (state: MerchandiseState, input: AiCommandInput, invocationId: string
       applyMerchandiseAiCommand(
         state,
         command,
-        { actor, invocationId, now },
+        { actor, invocationId, now, tax: TEST_TAX },
         {
           describeAddress,
           describeContact,
@@ -82,8 +85,8 @@ const seeded = Effect.gen(function* seed() {
       name: 'Switch 24 portů',
       priceMinor: 450_000,
       sku: 'SW-24',
+      taxClassificationCode: 'cz.vat.standard',
       unit: 'ks',
-      vatRate: 21,
     },
     'product-1',
   );
@@ -214,7 +217,7 @@ it.live('order description awaits the owner reducer without starting a nested ru
         ],
         instruction: 'Stornuj objednávku zákazníka.',
       }),
-      { actor: agent, invocationId: 'async-order-description', now },
+      { actor: agent, invocationId: 'async-order-description', now, tax: TEST_TAX },
       {
         describeAddress,
         describeContact,

@@ -36,6 +36,8 @@ import {
 import type { StoredMarket } from '../../src/services/market-store.ts';
 import { describeLines, evolveMerchandiseState } from '../../src/services/persistence.service.ts';
 import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
+import type { SellableVariantRecord } from '../../src/services/market-pricing.ts';
+import { TEST_RATES, TEST_TAX } from '../support/tax-fixtures.ts';
 
 const MARKET_ID = Schema.decodeUnknownSync(MarketIdSchema)('6a000000-0000-4000-8000-0000000000a1');
 const decodeCommand = Schema.decodeUnknownSync(MerchandiseCommandSchema);
@@ -296,7 +298,9 @@ const apply = (
   evolveMerchandiseState(
     state,
     decodeCommand(command),
-    market === undefined ? { actor, now: t0, resourceId } : { actor, market, now: t0, resourceId },
+    market === undefined
+      ? { actor, now: t0, resourceId, tax: TEST_TAX }
+      : { actor, market, now: t0, resourceId, tax: TEST_TAX },
   );
 
 /** Coffee (12 % VAT) with two real variants: 250 g at gross 289 Kč (11.60 €) and 1 kg at 989 Kč (39.60 €). */
@@ -311,8 +315,8 @@ const seeded = Effect.gen(function* seedCoffee() {
       name: 'Etiopie',
       priceMinor: 25_804,
       sku: 'ETH',
+      taxClassificationCode: 'cz.vat.reduced',
       unit: 'ks',
-      vatRate: 12,
     },
     'p1',
   );
@@ -365,7 +369,7 @@ it.effect('converts every storefront price of a product into the market currency
   Effect.gen(function* marketRecord() {
     const state = yield* seeded;
     const product = requireFixture(state.products[0]);
-    const record = toProductRecord(product, stockLevelsOf(state.movements, product.id));
+    const record = toProductRecord(product, stockLevelsOf(state.movements, product.id), TEST_RATES);
     const converted = productInMarketCurrency(record, orderMarket);
     expect(converted.grossPriceMinor).toBe(1160);
     expect(converted.variantRecords?.map((variant) => variant.grossPriceMinor)).toEqual([1160, 3960]);
@@ -378,7 +382,7 @@ it.effect('converts every storefront price of a product into the market currency
   }),
 );
 
-const searchLeaf = Schema.decodeUnknownSync(VariantRecordSchema)({
+const searchLeafRecord = Schema.decodeUnknownSync(VariantRecordSchema)({
   active: true,
   attributes: 'Private attributes',
   availability: 'UNKNOWN',
@@ -401,6 +405,11 @@ const searchLeaf = Schema.decodeUnknownSync(VariantRecordSchema)({
   stockOnHand: 47,
   unit: 'm',
 });
+/** A sellable leaf: the storefront only ever offers variants with a gross price. */
+const searchLeaf: SellableVariantRecord = {
+  ...searchLeafRecord,
+  grossPriceMinor: searchLeafRecord.grossPriceMinor ?? 0,
+};
 
 it('projects only compact current singleton presentation, preserving unknown stock and raw quantity constraints', () => {
   const offer = searchVariantOffer(searchLeaf, Option.none());

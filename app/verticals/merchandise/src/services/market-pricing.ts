@@ -14,19 +14,19 @@ const tiersIn = (tiers: PriceTiers, pricing: MarketPricing): PriceTiers =>
     priceMinor: convertGrossMinor(tier.priceMinor, pricing),
   }));
 
-const variantIn = (variant: VariantRecord, pricing: MarketPricing): VariantRecord => {
-  const converted: VariantRecord = {
-    ...variant,
-    grossPriceMinor: convertGrossMinor(variant.grossPriceMinor, pricing),
-    priceMinor: convertGrossMinor(variant.priceMinor, pricing),
-  };
+const variantIn = <Variant extends VariantRecord>(variant: Variant, pricing: MarketPricing): Variant => {
+  const net: Variant = { ...variant, priceMinor: convertGrossMinor(variant.priceMinor, pricing) };
+  const converted: Variant =
+    variant.grossPriceMinor === undefined
+      ? net
+      : { ...net, grossPriceMinor: convertGrossMinor(variant.grossPriceMinor, pricing) };
   return variant.priceTiers === undefined
     ? converted
     : { ...converted, priceTiers: tiersIn(variant.priceTiers, pricing) };
 };
 
 /** Match the storefront's minimum-key deduplication and displayed-gross tier lookup AFTER conversion. */
-const displayNetOf = (variant: VariantRecord) => {
+const displayNetOf = (variant: SellableVariantRecord) => {
   if (variant.grossPriceMinor <= 0 || variant.priceMinor <= 0) {
     return Option.none<number>();
   }
@@ -45,9 +45,12 @@ const displayNetOf = (variant: VariantRecord) => {
   );
 };
 
+/** A variant whose classification is sellable: it has a gross price. Only such variants reach the storefront. */
+export type SellableVariantRecord = VariantRecord & { readonly grossPriceMinor: number };
+
 /** Canonical CZK singleton -> one market-priced offer. Call once, before attaching it to the public product. */
 export const searchVariantOffer = (
-  source: VariantRecord,
+  source: SellableVariantRecord,
   pricing: Option.Option<MarketPricing>,
 ): SearchVariantOffer => {
   const variant = Option.match(pricing, { onNone: () => source, onSome: (market) => variantIn(source, market) });
@@ -118,8 +121,8 @@ export const productGrossCzk = (record: ProductRecord): Option.Option<number> =>
   }
   let lowest = Option.none<number>();
   for (const variant of record.variantRecords ?? []) {
-    if (variant.active) {
-      const price = variant.grossPriceMinor;
+    const price = variant.grossPriceMinor;
+    if (variant.active && price !== undefined) {
       lowest = Option.some(Option.match(lowest, { onNone: () => price, onSome: (other) => Math.min(other, price) }));
     }
   }

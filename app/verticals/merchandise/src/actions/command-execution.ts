@@ -13,7 +13,7 @@ import { AKROS_LEGAL_ENTITY_ID } from '../../shared/actions/command-guard.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/demo-merchandise-search-refresh-requested-v1.ts';
 import { createApplyCommandDemoMerchandiseSearchRefreshRequestedV1OutboxMessage } from './apply-command-demo-merchandise-search-refresh-requested-v1.outbox-message.ts';
 import { merchandiseSearchRefreshTarget } from '../services/merchandise-search-projection.ts';
-import { persistenceService, prepareMerchandiseCommand } from '../services/persistence.service.ts';
+import { persistenceService, prepareCommandTax, prepareMerchandiseCommand } from '../services/persistence.service.ts';
 
 const MODULE = 'demo.merchandise';
 const SEARCH_REFRESH_EVENT = 'demo.merchandise.search-refresh-requested.v1';
@@ -65,6 +65,7 @@ export const prepareApplyCommandServices = Effect.fn('Merchandise.prepareApplyCo
     }
     const preparedAt = yield* DateTime.now;
     yield* prepareMerchandiseCommand(payload.command, context.scope);
+    const taxBook = yield* prepareCommandTax(payload.command, context.scope);
     return Effect.fn('Merchandise.revalidatePreparedGrants')(function* revalidatePreparedGrants(
       transaction: ScopedTransactionExecutor,
       scope: OperationalScope,
@@ -86,7 +87,7 @@ export const prepareApplyCommandServices = Effect.fn('Merchandise.prepareApplyCo
         });
       }
       return yield* persistenceService(transaction, {
-        prepared: { actionInvocationId: context.actionInvocationId, payload },
+        prepared: { actionInvocationId: context.actionInvocationId, payload, taxBook },
         scope,
       });
     });

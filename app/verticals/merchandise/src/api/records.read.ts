@@ -7,10 +7,11 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import { Effect, Match } from 'effect';
+import { Effect, Match, Option } from 'effect';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import type { RecordsRequest } from '../../shared/apis/records.ts';
-import { merchandiseRecordsGrants, persistenceService } from '../services/persistence.service.ts';
+import { merchandiseRecordsGrants, persistenceService, prepareStaffTaxRates } from '../services/persistence.service.ts';
+import type { StaffTaxRates } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { isAkrosCompany, storefrontReadRequest } from '../../shared/actions/command-guard.ts';
 
@@ -52,6 +53,23 @@ const akrosServiceKeyGuard = (input: RecordsRequest, scope: OperationalScope) =>
         }),
       )
     : Effect.void;
+/** Rights for the read and, for staff, the company's rates from Tax; storefront reads stay local to Merchandise. */
+const prepareRecords = Effect.fn('Merchandise.prepareRecords')(function* prepareRecords(
+  input: RecordsRequest,
+  scope: OperationalScope,
+) {
+  yield* akrosServiceKeyGuard(input, scope);
+  const grants = yield* merchandiseRecordsGrants(
+    scope,
+    storefrontReadRequest(scope.authMethod, scope.legalEntityId, input),
+  ).pipe(Effect.mapError(readFailure));
+  const staff = input.view?.storefront !== true && input.agentHistory === undefined;
+  const tax = staff
+    ? Option.some(yield* prepareStaffTaxRates(scope).pipe(Effect.mapError(readFailure)))
+    : Option.none<StaffTaxRates>();
+  return { grants, tax };
+});
+
 const recordsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'protected' },
@@ -93,18 +111,14 @@ export const recordsRead = defineRead(
     schemaVersion: '1',
   },
   {
-    prepare: (input: RecordsRequest, context) =>
-      akrosServiceKeyGuard(input, context.scope).pipe(
-        Effect.andThen(
-          merchandiseRecordsGrants(
-            context.scope,
-            storefrontReadRequest(context.scope.authMethod, context.scope.legalEntityId, input),
-          ).pipe(Effect.mapError(readFailure)),
-        ),
-      ),
+    prepare: (input: RecordsRequest, context) => prepareRecords(input, context.scope),
     load: (input: RecordsRequest, context) =>
       context.services
-        .records(storefrontReadRequest(context.scope.authMethod, context.scope.legalEntityId, input), context.prepared)
+        .records(
+          storefrontReadRequest(context.scope.authMethod, context.scope.legalEntityId, input),
+          context.prepared.grants,
+          Option.match(context.prepared.tax, { onNone: () => ({}), onSome: (tax) => ({ tax }) }),
+        )
         .pipe(
           Effect.mapError(readFailure),
           Effect.map((result) => ({ evidence: { resultCount: result.products.length }, result })),

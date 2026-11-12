@@ -57,6 +57,9 @@ import {
   whereScope,
 } from './merchandise-store.ts';
 import type { MerchandiseDb, StoreScope } from './merchandise-store.ts';
+import { CompanyTaxRatesSchema, NO_SELLABLE_RATES, sellableRatesOf } from './tax-rates.ts';
+import type { SellableVariantRecord } from './market-pricing.ts';
+import type { CompanyTaxRates, SellableVatRates } from './tax-rates.ts';
 import { toProductRecord } from './stock-levels.ts';
 import { czkBoundsForMarket } from '../../shared/domain/market-offers.ts';
 import { NO_CATALOG_MARKET } from './market-store.ts';
@@ -162,13 +165,41 @@ type StorefrontHeadEncoded = typeof StorefrontHeadSchema.Encoded;
 interface ProductPage {
   readonly head: StorefrontHead | null;
   readonly products: readonly ProductRecord[];
+  /** The company's synced VAT rates, read in the same statement as the page. */
+  readonly taxRates: CompanyTaxRates | undefined;
   readonly total: number;
 }
+
+/**
+ * Only products whose classification the company can sell now: its priced rates, once Tax confirmed them
+ * (`catalog_heads.tax_rates` holds a book). Same snapshot as the page; no call to Tax.
+ */
+export const sellableClassificationFilter = (scope: StoreScope) =>
+  sql`${products.taxClassificationCode} in (select jsonb_object_keys(h.tax_rates -> 'priced')
+    from ${catalogHeads} as h
+    where h.tenant_id = ${scope.tenantId}::uuid and h.legal_entity_id = ${scope.legalEntityId}::uuid
+      and h.tax_rates ? 'book')`;
+
+/** A product as the storefront sees it: the rate its prices include instead of its classification. */
+export const withStorefrontVat = (record: ProductRecord, rates: SellableVatRates): ProductRecord => {
+  const { taxClassificationCode, ...rest } = record;
+  const vatRate = taxClassificationCode === undefined ? undefined : rates[taxClassificationCode];
+  return vatRate === undefined ? rest : { ...rest, vatRate };
+};
 
 /**
  * One page of product records. `variants: false` (list rows) leaves variants out and takes the derived stock
  * fields from their stored columns; detail pages hydrate variants and derive records exactly like a write does.
  */
+/** The rates the page's stored prices were computed with (none before the company's first sync). */
+const pricedRatesOfPage = (page: Pick<ProductPage, 'taxRates'>): SellableVatRates =>
+  page.taxRates?.priced ?? NO_SELLABLE_RATES;
+
+const decodePageTaxRates = (stored: (typeof catalogHeads.$inferSelect)['taxRates']) =>
+  stored === null
+    ? Effect.succeed(Option.getOrUndefined(Option.none<CompanyTaxRates>()))
+    : Schema.decodeUnknownEffect(CompanyTaxRatesSchema)(stored).pipe(Effect.mapError(storedRowsFailure));
+
 const productPage = Effect.fn('MerchandiseQueries.productPage')(function* productPage(
   db: MerchandiseDb,
   scope: StoreScope,
@@ -201,6 +232,8 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
               then json_build_object('revision', ${EMPTY_CATALOG_HEAD.revision}::int,
                 'homepageFeaturedProductIds', ${featuredProductIdsOf(scope)}) end)`.as('head')
           : sql<StorefrontHeadEncoded | null>`null::json`.as('head'),
+      taxRates: sql<unknown>`(select ${catalogHeads.taxRates} from ${catalogHeads}
+        where ${whereScope(catalogHeads, scope)})`.as('tax_rates'),
       total: sql<number>`count(*)::int`.as('total'),
     })
     .from(products)
@@ -278,6 +311,7 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
           variantRows: selected.variantRows,
           variantSummary: selected.variantSummary,
         },
+        taxRates: counted.taxRates,
         total: counted.total,
       })
       .from(counted)
@@ -286,6 +320,8 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
     'Products could not be read',
   );
   const total = result[0]?.total ?? 0;
+  const taxRates = yield* decodePageTaxRates(result[0]?.taxRates ?? null);
+  const pricedRates = pricedRatesOfPage({ taxRates });
   const rows = result.flatMap(({ product }) => (product === null ? [] : [product]));
   const variantRows = rows.flatMap((row) => row.variantRows);
   const tierRows = rows.flatMap((row) => row.tierRows);
@@ -309,7 +345,7 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
       ).pipe(Effect.mapError(storedRowsFailure));
       let record: ProductRecord;
       if (input.variants) {
-        record = toProductRecord(product, stock);
+        record = toProductRecord(product, stock, pricedRates);
       } else {
         const { variants: _variants, ...rest } = product;
         void _variants;
@@ -348,12 +384,12 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
     rawHead === undefined || rawHead === null
       ? null
       : yield* Schema.decodeEffect(StorefrontHeadSchema)(rawHead).pipe(Effect.mapError(storedRowsFailure));
-  return { head, products: records, total } satisfies ProductPage;
+  return { head, products: records, taxRates, total } satisfies ProductPage;
 });
 
-const staffProductFilters = (view: RecordsView, storefront: boolean): (SQL | undefined)[] => [
+const staffProductFilters = (view: RecordsView, storefront: boolean, scope: StoreScope): (SQL | undefined)[] => [
   eq(products.archived, false),
-  ...(storefront ? [eq(products.active, true), eq(products.published, true)] : []),
+  ...(storefront ? [eq(products.active, true), eq(products.published, true), sellableClassificationFilter(scope)] : []),
   view.productId === undefined ? undefined : eq(products.id, view.productId),
   view.productIds === undefined ? undefined : idsFilter(products.id, view.productIds),
   view.taggedProductIds === undefined ? undefined : idsFilter(products.id, view.taggedProductIds),
@@ -388,7 +424,7 @@ export const staffProducts = (
   input: { readonly detailLimit?: number } = {},
 ) =>
   productPage(db, scope, {
-    filters: staffProductFilters(view, storefront),
+    filters: staffProductFilters(view, storefront, scope),
     limit:
       view.summary === true
         ? (view.limit ?? DEFAULT_PRODUCT_LIMIT)
@@ -405,7 +441,8 @@ export const staffProducts = (
         if (view.summary === true) {
           const { contentHistory: _history, ...summary } = record;
           void _history;
-          return { ...summary, priceHistory: [] };
+          const row = { ...summary, priceHistory: [] };
+          return storefront ? withStorefrontVat(row, sellableRatesOf(page.taxRates)) : row;
         }
         if (!storefront) {
           return record;
@@ -413,7 +450,7 @@ export const staffProducts = (
         const { contentHistory: _content, variants: _raw, ...publicProduct } = record;
         void _raw;
         void _content;
-        const projected = { ...publicProduct, priceHistory: [] };
+        const projected = withStorefrontVat({ ...publicProduct, priceHistory: [] }, sellableRatesOf(page.taxRates));
         return record.variantRecords === undefined
           ? projected
           : {
@@ -969,10 +1006,19 @@ const selectedSearchRows = Effect.fn('MerchandiseQueries.selectedSearchRows')(fu
   return { inlineVariants, tiers, variants };
 });
 
+/** The selected leaf of a single-variant search record when it is still active and priced, else nothing. */
+const sellableLeafOf = (record: ProductRecord, id: string): SellableVariantRecord | undefined => {
+  const leaf = record.variantRecords?.[0];
+  return leaf?.id === id && leaf.active && leaf.grossPriceMinor !== undefined
+    ? { ...leaf, grossPriceMinor: leaf.grossPriceMinor }
+    : undefined;
+};
+
 const searchMatchOf = Effect.fn('MerchandiseQueries.searchMatchOf')(function* searchMatchOf(
   plan: SearchPlan,
   selected: Effect.Success<ReturnType<typeof selectedSearchRows>>,
   pricing: Option.Option<StoredMarket>,
+  rates: SellableVatRates,
 ): Effect.fn.Return<SearchMatch, MerchandiseStoreFailure> {
   if (plan.kind === 'multiple') {
     return { count: plan.count, kind: 'multiple' };
@@ -1007,8 +1053,12 @@ const searchMatchOf = Effect.fn('MerchandiseQueries.searchMatchOf')(function* se
           : [],
       );
   const variant = tiers.length === 0 ? decoded : { ...decoded, priceTiers: tiers };
+  const { taxClassificationCode } = plan.product;
+  if (taxClassificationCode === undefined) {
+    return yield* new MerchandiseStoreFailure({ reason: 'A selected search product has no VAT classification' });
+  }
   const record = toProductRecord(
-    { ...plan.product, variants: [variant] },
+    { ...plan.product, taxClassificationCode, variants: [variant] },
     {
       total: plan.product.stockOnHand,
       // No normalized variant row exists for a historical inline leaf, so the owner hydrator has no stock entry for
@@ -1016,9 +1066,10 @@ const searchMatchOf = Effect.fn('MerchandiseQueries.searchMatchOf')(function* se
       variants:
         normalized === undefined ? new Map<string, number>() : new Map([[plan.selected.id, normalized.stockOnHand]]),
     },
+    rates,
   );
-  const leaf = record.variantRecords?.[0];
-  if (leaf === undefined || leaf.id !== plan.selected.id || !leaf.active) {
+  const leaf = sellableLeafOf(record, plan.selected.id);
+  if (leaf === undefined) {
     return yield* new MerchandiseStoreFailure({ reason: 'A selected search variant is no longer sellable' });
   }
   const offer = searchVariantOffer(leaf, pricing);
@@ -1033,6 +1084,7 @@ const currentSearchMatches = Effect.fn('MerchandiseQueries.currentSearchMatches'
   page: readonly ProductRecord[],
   needle: string,
   pricing: Option.Option<StoredMarket>,
+  rates: SellableVatRates,
 ) {
   if (needle === '' || page.length === 0) {
     return new Map<string, SearchMatch>();
@@ -1042,7 +1094,8 @@ const currentSearchMatches = Effect.fn('MerchandiseQueries.currentSearchMatches'
   const selected = yield* selectedSearchRows(db, scope, plans);
   const matches = yield* Effect.forEach(
     plans,
-    (plan) => searchMatchOf(plan, selected, pricing).pipe(Effect.map((match) => [plan.product.id, match] as const)),
+    (plan) =>
+      searchMatchOf(plan, selected, pricing, rates).pipe(Effect.map((match) => [plan.product.id, match] as const)),
     { concurrency: 1 },
   );
   return new Map(matches);
@@ -1084,7 +1137,11 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
   const categoryId = catalog.categorySlug === undefined ? undefined : categoryIdBySlug(db, scope, catalog.categorySlug);
   const words = wordsOf(catalog.q);
   const needle = normalizeSearchText(catalog.q ?? '');
-  const baseFilters = [...storefrontFilters(catalog, featuredIds, categoryId), Option.getOrUndefined(offer)];
+  const baseFilters = [
+    ...storefrontFilters(catalog, featuredIds, categoryId),
+    sellableClassificationFilter(scope),
+    Option.getOrUndefined(offer),
+  ];
   const inclusion = words.length === 0 ? undefined : yield* currentProductInclusion(db, scope, baseFilters, words);
   const filters = inclusion === undefined ? baseFilters : [...baseFilters, inclusion.filter];
   const nameSku = sql`${products.nameKey} || ' ' || ${products.skuKey}`;
@@ -1127,7 +1184,7 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
   if (inclusion !== undefined && inclusion.revision !== result.head.revision) {
     return yield* new MerchandiseStoreFailure({ reason: 'The catalog changed during the search read' });
   }
-  const matches = yield* currentSearchMatches(db, scope, result.products, needle, pricing);
+  const matches = yield* currentSearchMatches(db, scope, result.products, needle, pricing, pricedRatesOfPage(result));
   yield* verifySearchRevision(db, scope, result.head, needle, result.products.length);
   return {
     head: result.head,
@@ -1135,9 +1192,12 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
     pageSize,
     products: result.products.map((record) => {
       const product = toStorefrontProduct(
-        variantIds === undefined || record.variantRecords === undefined
-          ? record
-          : { ...record, variantRecords: record.variantRecords.filter((variant) => variantIds.has(variant.id)) },
+        withStorefrontVat(
+          variantIds === undefined || record.variantRecords === undefined
+            ? record
+            : { ...record, variantRecords: record.variantRecords.filter((variant) => variantIds.has(variant.id)) },
+          sellableRatesOf(result.taxRates),
+        ),
         fields,
       );
       const converted = Option.match(pricing, {

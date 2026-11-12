@@ -6,6 +6,7 @@ import { MerchandiseCommandSchema, MerchandiseLifecycleConflict } from '../../sh
 import { OrderStatusSchema, VariantIdSchema } from '../../shared/domain/merchandise-model.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
 import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
+import { TEST_RATES, TEST_TAX } from '../support/tax-fixtures.ts';
 
 /** A missing fixture value fails the test before its fields are read. */
 const requireFixture = <T>(value: T | null | undefined): T => {
@@ -16,7 +17,7 @@ const requireFixture = <T>(value: T | null | undefined): T => {
 };
 
 const recordOf = (product: Parameters<typeof toProductRecord>[0], movements: Parameters<typeof stockLevelsOf>[0]) =>
-  toProductRecord(product, stockLevelsOf(movements, product.id));
+  toProductRecord(product, stockLevelsOf(movements, product.id), TEST_RATES);
 
 const actor = { principalId: '20000000-0000-4000-8000-000000000002', tenantId: '20000000-0000-4000-8000-000000000001' };
 const at = '2026-10-19T08:00:00.000Z';
@@ -34,6 +35,7 @@ const state = Schema.decodeUnknownSync(MerchandiseStateSchema)({
       name: 'Nerezový šroub',
       priceHistory: [],
       sku: 'DIN933',
+      taxClassificationCode: 'cz.vat.standard',
       unit: 'ks',
       updatedAt: at,
       variants: [
@@ -54,7 +56,6 @@ const state = Schema.decodeUnknownSync(MerchandiseStateSchema)({
           sourceUnit: 'ks',
         },
       ],
-      vatRate: 21,
     },
   ],
 });
@@ -64,6 +65,7 @@ const run = (current: MerchandiseState, command: typeof MerchandiseCommandSchema
     actor,
     now: DateTime.makeUnsafe(at),
     resourceId,
+    tax: TEST_TAX,
   });
 const order = (
   quantity: number,
@@ -326,12 +328,18 @@ it.effect('dry-run validates actual cart without fake contact or address and sav
 it('replenishment uses the product minimum, independently of variant availability', () => {
   const [product] = state.products;
   const { variants: _variants, ...base } = requireFixture(product);
-  expect(toProductRecord({ ...base, lowStockThreshold: 0 }, { total: 0, variants: new Map() })).toMatchObject({
+  expect(
+    toProductRecord({ ...base, lowStockThreshold: 0 }, { total: 0, variants: new Map() }, TEST_RATES),
+  ).toMatchObject({
     availability: 'OUT_OF_STOCK',
     lowStock: false,
   });
-  expect(toProductRecord({ ...base, lowStockThreshold: 5 }, { total: 5, variants: new Map() }).lowStock).toBe(false);
-  expect(toProductRecord({ ...base, lowStockThreshold: 5 }, { total: 4, variants: new Map() }).lowStock).toBe(true);
+  expect(
+    toProductRecord({ ...base, lowStockThreshold: 5 }, { total: 5, variants: new Map() }, TEST_RATES).lowStock,
+  ).toBe(false);
+  expect(
+    toProductRecord({ ...base, lowStockThreshold: 5 }, { total: 4, variants: new Map() }, TEST_RATES).lowStock,
+  ).toBe(true);
   const mixed = {
     ...product,
     variants: [
@@ -339,7 +347,7 @@ it('replenishment uses the product minimum, independently of variant availabilit
       { ...requireFixture(product.variants)[0], id: Schema.decodeUnknownSync(VariantIdSchema)('empty-variant') },
     ],
   };
-  const record = toProductRecord(mixed, { total: 500, variants: new Map([['item-1', 500]]) });
+  const record = toProductRecord(mixed, { total: 500, variants: new Map([['item-1', 500]]) }, TEST_RATES);
   expect(record.lowStock).toBe(false);
   expect(record.variantRecords?.find((variant) => variant.id === 'empty-variant')?.availability).toBe('OUT_OF_STOCK');
 });

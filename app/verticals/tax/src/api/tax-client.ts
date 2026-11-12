@@ -12,6 +12,9 @@ export * from './end-tax-rule-revision-action-client.ts';
 export * from './finalize-order-tax-action-client.ts';
 export * from './import-seller-vat-regime-declarations-action-client.ts';
 // </generated-action-http-client-exports>
+export * from './applicable-tax-rule-set-client.ts';
+export * from './seller-vat-regime-at-instant-client.ts';
+export * from './tax-rule-history-client.ts';
 export * from './tax-correction-preview-client.ts';
 export * from './final-order-tax-client.ts';
 

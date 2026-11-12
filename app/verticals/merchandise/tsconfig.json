@@ -40,6 +40,9 @@
     },
     {
       "path": "../../verticals/party-registry"
+    },
+    {
+      "path": "../../verticals/tax"
     }
   ]
 }

@@ -16,6 +16,7 @@ import {
   decodeCategoryRow,
   deleteScope,
   insertSnapshotPart,
+  pricedRatesOf,
   loadProducts,
   query,
   whereScope,
@@ -139,13 +140,15 @@ export const resetToAkrosBaseline = Effect.fn('Merchandise.resetToAkrosBaseline'
     yield* Effect.forEach(categoryRows, decodeCategoryRow, { concurrency: 1 }),
   );
   const head = keepLinkedPhotos(yield* decodeAkrosBaselinePart(first), linked);
+  // The company keeps its synced VAT rates; the baseline is priced at them.
+  const rates = yield* pricedRatesOf(db, scope);
   yield* deleteScope(db, scope);
-  yield* insertSnapshotPart(db, scope, head);
+  yield* insertSnapshotPart(db, scope, head, rates);
   yield* Effect.forEach(
     rest,
     (part) =>
       decodeAkrosBaselinePart(part).pipe(
-        Effect.flatMap((state) => insertSnapshotPart(db, scope, keepLinkedPhotos(state, linked))),
+        Effect.flatMap((state) => insertSnapshotPart(db, scope, keepLinkedPhotos(state, linked), rates)),
       ),
     { concurrency: 1, discard: true },
   );

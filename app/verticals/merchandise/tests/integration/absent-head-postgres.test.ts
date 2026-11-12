@@ -27,6 +27,7 @@ import { persistenceService } from '../../src/services/persistence.service.ts';
 import type { MerchandiseRecordsGrants } from '../../src/services/persistence.service.ts';
 import type { MerchandiseFixture } from './support/merchandise-database.ts';
 import { catalogState, withMerchandise } from './support/merchandise-database.ts';
+import { TEST_TAX_BOOK } from '../support/tax-fixtures.ts';
 
 type RuntimeDb = Effect.Success<ReturnType<typeof makeTestDatabaseFromClient<typeof merchandiseRelations>>>;
 
@@ -83,7 +84,9 @@ const owner = <A, E>(
       const resourceId = randomUUID();
       const services = yield* persistenceService(
         scoped,
-        prepared === undefined ? { scope } : { prepared: { actionInvocationId: resourceId, payload: prepared }, scope },
+        prepared === undefined
+          ? { scope }
+          : { prepared: { actionInvocationId: resourceId, payload: prepared, taxBook: TEST_TAX_BOOK }, scope },
       );
       return yield* body(services, resourceId, scoped);
     }),

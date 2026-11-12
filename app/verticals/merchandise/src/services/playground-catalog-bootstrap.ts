@@ -27,7 +27,7 @@ import {
   productVariants,
   stockMovements,
 } from '../database/schema.ts';
-import { insertSnapshotPart, query, whereScope } from './merchandise-store.ts';
+import { insertSnapshotPart, pricedRatesOf, query, whereScope } from './merchandise-store.ts';
 
 type Payload = typeof BootstrapPlaygroundCatalogPayloadSchema.Type;
 const unavailable = <Cause>(cause: Cause) =>
@@ -206,8 +206,16 @@ export const playgroundBootstrapServices = Effect.fn('Merchandise.playgroundBoot
   };
   const append: BootstrapTransaction['append'] = Effect.fn('Merchandise.appendBootstrap')(
     function* append(batch, index, invocationId) {
-      const state = yield* bootstrapStateForBatch(batch, index, invocationId, yield* DateTime.now);
-      yield* insertSnapshotPart(db, store, state).pipe(Effect.mapError(unavailable));
+      // Imported products are priced at the company's synced VAT rates (none before its first sync with Tax).
+      const { rates, state } = yield* bootstrapStateForBatch(batch, index, invocationId, yield* DateTime.now).pipe(
+        Effect.flatMap((built) =>
+          pricedRatesOf(db, store).pipe(
+            Effect.mapError(unavailable),
+            Effect.map((priced) => ({ rates: priced, state: built })),
+          ),
+        ),
+      );
+      yield* insertSnapshotPart(db, store, state, rates).pipe(Effect.mapError(unavailable));
     },
   );
   const verify: BootstrapTransaction['verify'] = Effect.fn('Merchandise.verifyBootstrap')(function* verify(state) {

@@ -15,6 +15,7 @@ import { merchandiseRelations } from '../../src/database/schema.ts';
 import { assertMerchandiseSearchPublished } from '../../src/search/catalog-publication.ts';
 import { EMPTY_CATALOG_HEAD, lockHeadForWrite } from '../../src/services/merchandise-store.ts';
 import { persistenceService } from '../../src/services/persistence.service.ts';
+import { TEST_TAX_BOOK } from '../support/tax-fixtures.ts';
 
 /*
  * A company whose catalog head row was never written. Real Drizzle SQL runs against a scripted connection holding
@@ -59,7 +60,8 @@ const harness = (options: { readonly concurrentWinner?: boolean; readonly initia
               return Effect.succeed([]);
             }
             if (sql.startsWith('select') && sql.includes(headTable)) {
-              // Values mode follows SELECT order: aiChanges, bootstrapCheckpoint, homepageFeaturedProductIds, revision.
+              // Values mode follows SELECT order: aiChanges, bootstrapCheckpoint, homepageFeaturedProductIds, revision,
+              // taxRates.
               return Effect.succeed(
                 head === undefined
                   ? []
@@ -69,6 +71,7 @@ const harness = (options: { readonly concurrentWinner?: boolean; readonly initia
                         bootstrapCheckpoint: head.checkpoint,
                         homepageFeaturedProductIds: [],
                         revision: head.revision,
+                        taxRates: null,
                       },
                     ],
               );
@@ -177,7 +180,7 @@ const writeOnHead = (
       const resourceId = randomUUID();
       const payload = createCategoryAt(expectedRevision);
       const services = yield* persistenceService(scoped, {
-        prepared: { actionInvocationId: resourceId, payload },
+        prepared: { actionInvocationId: resourceId, payload, taxBook: TEST_TAX_BOOK },
         scope,
       });
       return yield* services.apply(payload.command, expectedRevision, resourceId);
