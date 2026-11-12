@@ -17,6 +17,7 @@ import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 import { getActionServicePreflight } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { ManufacturerTargetSchema } from '../../shared/domain/manufacturer-relation.ts';
+import { ManufacturerMutationOutcomeSchema } from '../../src/persistence/manufacturer-persistence.ts';
 import {
   ManufacturerTargetForbidden,
   ManufacturerTargetUnavailable,
@@ -31,6 +32,7 @@ import {
   prepareChangeProductManufacturerServices,
 } from '../../src/actions/change-product-manufacturer.action.ts';
 
+const [, NotFoundOutcome] = ManufacturerMutationOutcomeSchema.members;
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const target = Schema.decodeUnknownSync(ManufacturerTargetSchema)({
   kind: 'LEGAL_ENTITY',
@@ -207,7 +209,7 @@ it.effect(
               principalId: operationScope.principalId,
             };
             const result = yield* kind === 'set' ? services.set(input) : services.change(input);
-            expect(result._tag).toBe('not_found');
+            expect(result).toEqual(NotFoundOutcome.make({}));
           }).pipe(
             insideDatabaseTransaction('commerce.catalog.manufacturer-preflight-test'),
             Effect.provideService(ReadRuntime, {
