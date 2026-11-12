@@ -19,7 +19,7 @@ import { Argument, Command } from 'effect/cli';
 
 import { UNIT_ENTRY, readHostedUnits, workspaceRoot } from './hosted-units.mts';
 import type { HostedUnit } from './hosted-units.mts';
-import { receiveModuleCredentialHandover } from './module-credentials.mts';
+import { moduleCredentialChannelLost, receiveModuleCredentialHandover } from './module-credentials.mts';
 import { NoSubprocessServicesLive } from './no-subprocess-services.mts';
 import { ownerWarmState } from './owner-warm-state.mts';
 
@@ -76,8 +76,9 @@ const command = Command.make('serve-units', { ids: Argument.String('app-id').pip
       return yield* new ServeUnitsError({ reason: `unknown units: ${unknown.join(', ')}` });
     }
     yield* Effect.forEach(selected.filter(Predicate.isNotUndefined), serveUnit, { discard: true });
-    // The listening servers keep serving; this process ends only when the host stops it.
-    return yield* Effect.never;
+    // The listening servers keep serving; this process ends when the host stops it, or when its module credential
+    // channel can no longer be read (the host then stops and the container restarts with fresh keys).
+    return yield* moduleCredentialChannelLost;
   }),
 );
 

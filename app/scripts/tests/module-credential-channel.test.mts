@@ -24,6 +24,7 @@ import {
   noProvisionedCredentials,
   providerKeyIdsOf,
   ProvisioningOutputJsonSchema,
+  watchModuleCredentialChannel,
 } from '../zerops/module-credentials.mts';
 import type { ProvisioningOutput } from '../zerops/module-credentials.mts';
 
@@ -134,6 +135,41 @@ describe('a process receiving handovers on its channel', () => {
         expect(yield* readOwnerCredential(PARTY)).toBe('party-registry-module-key');
         expect(yield* readOwnerCredential('pricing')).toBeUndefined();
       }),
+  );
+});
+
+describe('a process watching its channel', () => {
+  it.effect('leaves when the channel can no longer be read, and not for a malformed line or a closed channel', () =>
+    Effect.gen(function* watching() {
+      // This process already claimed its store in another test; a receiver that counts what it is handed stands in.
+      const accepted: string[] = [];
+      const receiver = {
+        accept: (handover: { readonly credentials: Readonly<Record<string, Redacted.Redacted>> }) =>
+          Effect.sync(() => {
+            accepted.push(...Object.keys(handover.credentials));
+            return { accepted: Object.keys(handover.credentials), refused: [] };
+          }),
+        owners: [ORDER],
+      };
+      const lost: string[] = [];
+      const leave = (reason: string) => Effect.sync(() => lost.push(reason));
+      const line = yield* encodeModuleCredentialHandover({ [ORDER]: Redacted.make(ORDER_KEY) }, [ORDER]);
+      // Read once and closed (the local demo's Outbox pipe), with a malformed line on the way: the process stays.
+      yield* watchModuleCredentialChannel(
+        receiver,
+        Stream.make(new TextEncoder().encode('not a handover\n'), line),
+        leave,
+      );
+      expect(lost).toEqual([]);
+      // A channel that fails while the host still hands keys over: the process leaves rather than go stale.
+      yield* watchModuleCredentialChannel(
+        receiver,
+        Stream.concat(Stream.make(line), Stream.fail('unreadable descriptor')),
+        leave,
+      );
+      expect(lost).toEqual(['the handover channel could not be read']);
+      expect(accepted).toEqual([ORDER, ORDER]);
+    }),
   );
 });
 

@@ -14,3 +14,6 @@ export const startZeropsOutboxHost = () =>
       Effect.andThen(startEmailDispatchTrigger(), startSearchDerivedStampSweep()),
     ),
   );
+
+/** Fails once this process's module credential channel can no longer be read; the Outbox Worker host then stops. */
+export { moduleCredentialChannelLost as watchZeropsOutboxHost } from './module-credentials.mts';

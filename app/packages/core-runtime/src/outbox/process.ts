@@ -120,6 +120,11 @@ export interface RunOutboxWorkerHostInput<
   readonly health?: boolean;
   /** Additional process services share the host Scope and its existing runtime adapter. */
   readonly startup?: () => Effect.Effect<void, StartupError, Scope.Scope>;
+  /**
+   * A process condition the host cannot run without (its module credential channel): when it fails, the host stops
+   * like a failed loop, and exits non-zero.
+   */
+  readonly watch?: Effect.Effect<never, StartupError>;
 }
 
 export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegistration, LayerError>(
@@ -401,6 +406,7 @@ export const runOutboxWorkerHost = <
       );
       const signal = yield* waitForShutdownSignal.pipe(
         Effect.raceFirst(runLoops.pipe(Effect.as<ShutdownSignal>('SIGTERM'))),
+        Effect.raceFirst(input.watch ?? Effect.never),
       );
       yield* Effect.logInfo(`Outbox Worker host received ${signal}; shutting down`);
     }),

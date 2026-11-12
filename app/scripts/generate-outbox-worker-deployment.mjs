@@ -81,7 +81,7 @@ export const renderOutboxWorkerHostEntry = (host) => {
   const bindings = host.owners.map((owner) => `${camelCase(owner.ownerId)}OutboxWorkerEntry`);
   return [
     HOST_ENTRY_HEADER,
-    "import { startZeropsOutboxHost } from './zerops/outbox-host-startup.mts';",
+    "import { startZeropsOutboxHost, watchZeropsOutboxHost } from './zerops/outbox-host-startup.mts';",
     "import { startOutboxWorkerHost } from '@app/core-runtime/outbox/worker';",
     `import { outboxWorkerEntry as coreSystemOutboxWorkerEntry } from '${host.coreOwner.hostExport}';`,
     ...host.owners.map(
@@ -95,6 +95,7 @@ export const renderOutboxWorkerHostEntry = (host) => {
     '  ],',
     '  health: true,',
     '  startup: startZeropsOutboxHost,',
+    '  watch: watchZeropsOutboxHost,',
     '});',
     '',
   ].join('\n');

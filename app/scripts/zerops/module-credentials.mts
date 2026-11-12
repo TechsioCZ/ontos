@@ -7,7 +7,7 @@
 import { Socket } from 'node:net';
 
 import { fromReadable } from '@effect/platform-node/NodeStream';
-import { Config, Console, DateTime, Duration, Effect, Option, Schema, Stream } from 'effect';
+import { Config, Console, DateTime, Deferred, Duration, Effect, Exit, Option, Schema, Stream } from 'effect';
 import type { Redacted } from 'effect';
 
 import { claimHostedModuleCredentials } from '../../packages/core-runtime/src/auth/hosted-module-credential-store.ts';
@@ -101,6 +101,38 @@ export const applyModuleCredentialHandovers = <E,>(
   );
 
 /**
+ * Reads one process's channel for as long as it is open. A malformed line is refused and the channel still counts,
+ * and its end (a launcher that handed over once and closed it, as the local demo's Outbox pipe does) is not a failure.
+ * A channel that can no longer be read is: the host keeps renewing and rotating keys and retires the replaced ones,
+ * so a process that silently stopped reading would soon hold only retired keys. It runs `lost` instead.
+ */
+export const watchModuleCredentialChannel = <E, R>(
+  receiver: HostedModuleCredentialReceiver,
+  channel: Stream.Stream<Uint8Array, E>,
+  lost: (reason: string) => Effect.Effect<void, never, R>,
+) =>
+  applyModuleCredentialHandovers(receiver, channel).pipe(
+    Effect.exit,
+    Effect.flatMap((read) => (Exit.isSuccess(read) ? Effect.void : lost('the handover channel could not be read'))),
+  );
+
+/**
+ * Fails once this process's channel can no longer be read. The process's entry stops on it (the owners process's
+ * command, the Outbox Worker host's watch), the app host treats that process's exit as fatal and stops, and Zerops
+ * restarts the container: a restart, with fresh keys on a fresh channel, rather than a process whose delegated calls
+ * fail closed once the host retires the keys it still holds. Until then it never completes.
+ */
+const channelLost = Deferred.makeUnsafe<never, ModuleCredentialHandoverError>();
+export const moduleCredentialChannelLost: Effect.Effect<never, ModuleCredentialHandoverError> =
+  Deferred.await(channelLost);
+
+const leaveProcess = (reason: string) =>
+  Console.error(`[module-credentials] HANDOVER CHANNEL LOST (${reason}); this process stops so the host restarts`).pipe(
+    Effect.andThen(Deferred.fail(channelLost, new ModuleCredentialHandoverError({ reason }))),
+    Effect.asVoid,
+  );
+
+/**
  * Claims this multi-owner process for `owners` before any owner runs. With the handover switch it keeps reading its
  * private channel (file descriptor 3) in the background, so the host can hand over keys at start and replace them
  * later (a late key, a fresh key after a revocation, a rotation), without a restart; without it, no owner ever holds
@@ -123,12 +155,7 @@ export const receiveModuleCredentialHandover = Effect.fn('ModuleCredentials.rece
     evaluate: () => new Socket({ fd: MODULE_CREDENTIAL_CHANNEL_FD, readable: true, writable: false }),
     onError: () => new ModuleCredentialHandoverError({ reason: 'The handover channel could not be read' }),
   });
-  yield* applyModuleCredentialHandovers(receiver, channel).pipe(
-    Effect.catchTag('ModuleCredentialHandoverError', (problem) =>
-      Console.error(`[module-credentials] ${problem.reason}`),
-    ),
-    Effect.forkScoped,
-  );
+  yield* watchModuleCredentialChannel(receiver, channel, leaveProcess).pipe(Effect.forkScoped);
   return yield* Effect.void;
 });
 
