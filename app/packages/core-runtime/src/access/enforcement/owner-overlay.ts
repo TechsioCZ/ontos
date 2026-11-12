@@ -84,11 +84,42 @@ export interface OwnerAuthorizationInput {
   readonly targets: readonly OwnerAuthorizationTarget[];
 }
 
+/**
+ * A decided owner-rule refusal that says why. `reasons` are the owner's stable, non-secret codes
+ * (`deny.owner.*`, then `requires.<owner right>` naming the owner-local right the actor lacks). The
+ * v2 gate and "Proč?" cannot see an owner rule, so these codes are the only way the refused person
+ * and the operator learn which rule refused; Core puts them on the 403 and on its refusal warning.
+ */
+export interface OwnerAuthorizationDenial {
+  readonly decision: 'denied';
+  readonly reasons: readonly [string, ...string[]];
+}
+
+/** What an owner overlay answers: a bare decision, or a refusal that names its reasons. */
+export type OwnerAuthorizationOutcome = OwnerAuthorizationDecision | OwnerAuthorizationDenial;
+
+/** The reason Core reports when an owner overlay refuses without naming one. */
+export const OWNER_RULE_DENIED_REASON = 'deny.owner_rule';
+
+const isBareOwnerDecision = Schema.is(OwnerAuthorizationDecisionSchema);
+
+export const ownerAuthorizationDecisionOf = (outcome: OwnerAuthorizationOutcome): OwnerAuthorizationDecision =>
+  isBareOwnerDecision(outcome) ? outcome : outcome.decision;
+
+/** The reason codes of a refusal; a bare `denied` reports the generic owner-rule code. */
+export const ownerAuthorizationDenialReasons = (outcome: OwnerAuthorizationOutcome): readonly string[] =>
+  isBareOwnerDecision(outcome) ? [OWNER_RULE_DENIED_REASON] : outcome.reasons;
+
+export const ownerAuthorizationDenial = (reason: string, ...more: readonly string[]): OwnerAuthorizationDenial => ({
+  decision: 'denied',
+  reasons: [reason, ...more],
+});
+
 export interface OwnerAuthorizationOverlayService {
   readonly authorize: (
     transaction: ScopedTransactionExecutor,
     input: OwnerAuthorizationInput,
-  ) => Effect.Effect<OwnerAuthorizationDecision>;
+  ) => Effect.Effect<OwnerAuthorizationOutcome>;
 }
 
 export class OwnerAuthorizationOverlay extends Context.Service<

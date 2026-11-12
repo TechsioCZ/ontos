@@ -43,7 +43,13 @@ import type {
   ActionProposalParked,
   MandatePrepared,
 } from '../access/approvals/action-mandate-dispatch.ts';
-import { CapabilityKeySchema, ModuleKeySchema, RecordKeySchema } from '../access/ids.ts';
+import {
+  CapabilityKeySchema,
+  LegalEntityIdSchema,
+  ModuleKeySchema,
+  RecordKeySchema,
+  TenantIdSchema,
+} from '../access/ids.ts';
 import type { BoundAccessGate, PreparedAccessDecision } from '../operations/access-gate.ts';
 import type { GateInput } from '../access/enforcement/contract.ts';
 import { seamUnavailable } from '../access/enforcement/decisions.ts';
@@ -89,10 +95,15 @@ import { ActionAuthorizationPreflight } from './owner-proof-preflight.ts';
 import { ActionProposalAcceptedSchema } from './proposal-accepted.ts';
 import type { ActionProposalAccepted, ActionProposalSuccess, ActionSuccessContract } from './proposal-accepted.ts';
 import type { ActionAuthorizationPreflightService } from './owner-proof-preflight.ts';
-import { OwnerAuthorizationOverlay, failClosedOwnerAuthorizationOverlay } from '../access/enforcement/owner-overlay.ts';
+import {
+  OwnerAuthorizationOverlay,
+  failClosedOwnerAuthorizationOverlay,
+  ownerAuthorizationDecisionOf,
+  ownerAuthorizationDenialReasons,
+} from '../access/enforcement/owner-overlay.ts';
 import type {
   OwnerAccessFacts,
-  OwnerAuthorizationDecision,
+  OwnerAuthorizationOutcome,
   OwnerAuthorizationTarget,
 } from '../access/enforcement/owner-overlay.ts';
 import type { ActionPermissionService } from '../permissions/service.ts';
@@ -680,17 +691,58 @@ const resolveOwnerAccessFacts = <Payload>(
 const NO_OWNER_PERMISSION_TARGETS: readonly ActionOwnerPermissionTarget[] = Object.freeze([]);
 const NO_OWNER_AUTHORIZATION_TARGETS: readonly OwnerAuthorizationTarget[] = Object.freeze([]);
 
-const ownerAuthorizationFailure = (decision: Exclude<OwnerAuthorizationDecision, 'allowed'>) => {
-  if (decision === 'denied') {
-    return Effect.fail(
-      new ActionPermissionDenied({
-        code: 'action_permission_denied',
-        reason: 'The owner-local authorization state denies this Action',
-      }),
-    );
+/**
+ * The owner overlay's answers for every owner target, as one: any unavailable answer is unavailable
+ * (never a denial, never an allow), otherwise the first refusal, with the owner's own reason codes so
+ * the 403 and the refusal warning say which owner rule refused (the gate and "Proč?" cannot see it).
+ */
+const ownerAuthorizationFailure = (outcomes: readonly OwnerAuthorizationOutcome[]) => {
+  if (outcomes.some((outcome) => ownerAuthorizationDecisionOf(outcome) === 'unavailable')) {
+    return Effect.fail(permissionUnavailable());
   }
-  return Effect.fail(permissionUnavailable());
+  const refusal = outcomes.find((outcome) => ownerAuthorizationDecisionOf(outcome) === 'denied');
+  return refusal === undefined
+    ? Effect.void
+    : Effect.fail(
+        new ActionPermissionDenied({
+          code: 'action_permission_denied',
+          reason: 'The owner-local authorization state denies this Action',
+          reasons: ownerAuthorizationDenialReasons(refusal),
+        }),
+      );
 };
+
+/** The tenant and company a refusal names, parsed from the trusted principal; never payload values. */
+const RefusalScopeSchema = Schema.Struct({
+  legalEntityId: Schema.optional(LegalEntityIdSchema),
+  tenantId: TenantIdSchema,
+});
+type RefusalScope = typeof RefusalScopeSchema.Type;
+const isActionPermissionDenied = Schema.is(ActionPermissionDenied);
+
+/**
+ * One warning per refused Action: which Action, in which tenant and company, and which check refused
+ * (its static reason and stable codes). It never carries payload values, tokens or record content.
+ */
+const logActionRefusal = (
+  descriptor: { readonly accessDeclaration?: { readonly key: string } | undefined; readonly actionKey: string },
+  scope: Option.Option<RefusalScope>,
+  failure: ActionPermissionDenied,
+): Effect.Effect<void> =>
+  Effect.logWarning('Action refused').pipe(
+    Effect.annotateLogs({
+      code: failure.code,
+      reason: failure.reason,
+      reasons: (failure.reasons ?? []).join(','),
+      refusalCompany: Option.match(scope, {
+        onNone: () => 'unverified',
+        onSome: ({ legalEntityId }) => legalEntityId ?? 'none',
+      }),
+      refusalTenant: Option.match(scope, { onNone: () => 'unverified', onSome: ({ tenantId }) => tenantId }),
+      refusedAction: descriptor.actionKey,
+      refusedCapability: descriptor.accessDeclaration?.key ?? descriptor.actionKey,
+    }),
+  );
 
 const resolveActionTenantPermission = <Payload>(
   payload: Payload,
@@ -2858,12 +2910,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                 ),
               { concurrency: 1 },
             );
-            const ownerAuthorizationDecision = ownerAuthorizationDecisions.includes('unavailable')
-              ? 'unavailable'
-              : ownerAuthorizationDecisions.find((decision) => decision !== 'allowed');
-            if (ownerAuthorizationDecision !== undefined) {
-              return yield* ownerAuthorizationFailure(ownerAuthorizationDecision);
-            }
+            yield* ownerAuthorizationFailure(ownerAuthorizationDecisions);
             const runningInvocation = yield* repository
               .transitionInvocationToRunning(scopedTransaction, invocation.actionInvocationId)
               .pipe(
@@ -3104,11 +3151,13 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             ),
           );
           if (Exit.isFailure(transactionOutcomeExit)) {
-            const ownerDenied = transactionOutcomeExit.cause.reasons.some(
-              (reason) => Cause.isFailReason(reason) && Schema.is(ActionPermissionDenied)(reason.error),
+            // The in-transaction refusal (the gate recheck or the owner rule) is recorded with its own reason codes.
+            const ownerDenied = transactionOutcomeExit.cause.reasons.flatMap((reason) =>
+              Cause.isFailReason(reason) && isActionPermissionDenied(reason.error) ? [reason.error] : [],
             );
-            if (ownerDenied) {
-              return yield* rejectPermission(permissionDeniedFailure());
+            const [refusal] = ownerDenied;
+            if (refusal !== undefined) {
+              return yield* rejectPermission(refusal);
             }
             return yield* Effect.failCause(transactionOutcomeExit.cause);
           }
@@ -3224,8 +3273,15 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         return result;
       },
     );
+    const refusalScope = Schema.decodeUnknownOption(RefusalScopeSchema)(input.principal);
+    const warnedAttempt = () =>
+      executeAttempt().pipe(
+        Effect.tapError((failure) =>
+          isActionPermissionDenied(failure) ? logActionRefusal(declaredCarrier, refusalScope, failure) : Effect.void,
+        ),
+      );
     if (postAttemptHook === undefined) {
-      return yield* executeAttempt();
+      return yield* warnedAttempt();
     }
     return yield* Effect.uninterruptibleMask(
       Effect.fn('ActionRuntime.settleActionAttempt')(function* settleActionAttempt(
@@ -3233,7 +3289,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           effect: Effect.Effect<Value, Failure, Requirements>,
         ) => Effect.Effect<Value, Failure, Requirements>,
       ) {
-        const executionExit = yield* Effect.exit(restore(executeAttempt()));
+        const executionExit = yield* Effect.exit(restore(warnedAttempt()));
         const { original } = attempt;
         // A parked proposal ran no owner command, so there is no attempt for the owner to settle (O85).
         if (

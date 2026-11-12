@@ -55,7 +55,12 @@ import {
   toContextPermissionAccessKey,
 } from '../permissions/context-access.ts';
 import { LEGAL_ENTITY_PERMISSION_KEYS } from '../permissions/context-permissions.ts';
-import { OwnerAuthorizationOverlay, failClosedOwnerAuthorizationOverlay } from '../access/enforcement/owner-overlay.ts';
+import {
+  OwnerAuthorizationOverlay,
+  failClosedOwnerAuthorizationOverlay,
+  ownerAuthorizationDecisionOf,
+  ownerAuthorizationDenialReasons,
+} from '../access/enforcement/owner-overlay.ts';
 import type { OwnerAccessFacts, OwnerAuthorizationTarget } from '../access/enforcement/owner-overlay.ts';
 import { validateReadEvidenceMetadata } from './context.ts';
 import type { ReadOwnerTransaction } from './context.ts';
@@ -1800,7 +1805,7 @@ const readRuntimeFromDependencies = <
           const scoped = yield* installOperationalScope(transaction, scope, options.databaseIdentities);
           stage('scope_installed');
           const operationAt = yield* trustedTransactionTime(transaction);
-          const ownerAuthorizationDecision = yield* ownerAuthorizationOverlay.authorize(
+          const ownerAuthorizationOutcome = yield* ownerAuthorizationOverlay.authorize(
             scoped,
             Object.freeze(
               withOptionalProperty(
@@ -1826,7 +1831,19 @@ const readRuntimeFromDependencies = <
               ),
             ),
           );
+          const ownerAuthorizationDecision = ownerAuthorizationDecisionOf(ownerAuthorizationOutcome);
           if (ownerAuthorizationDecision === 'denied') {
+            // The gate and "Proč?" cannot see an owner rule, so the refusal names the owner's reason codes.
+            yield* Effect.logWarning('Read refused').pipe(
+              Effect.annotateLogs({
+                reason: 'The owner-local authorization state denies this Read',
+                reasons: ownerAuthorizationDenialReasons(ownerAuthorizationOutcome).join(','),
+                refusalCompany: scope.legalEntityId ?? 'none',
+                refusalTenant: scope.tenantId,
+                refusedCapability: descriptor.accessDeclaration?.key ?? descriptor.readKey,
+                refusedRead: descriptor.readKey,
+              }),
+            );
             return yield* new ReadPermissionDenied({
               code: 'read_permission_denied',
               reason: 'The owner-local authorization state denies this Read',

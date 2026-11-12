@@ -423,16 +423,22 @@ export type {
 } from './permissions/context-access.ts';
 export type { LegalEntityPermissionKey, TenantPermissionKey } from './permissions/context-permissions.ts';
 export {
+  OWNER_RULE_DENIED_REASON,
   OwnerAuthorizationDecisionSchema,
   OwnerAuthorizationOverlay,
   OwnerAuthorizationOverlayAllowLive,
   allowOwnerAuthorizationOverlay,
   failClosedOwnerAuthorizationDecision,
   failClosedOwnerAuthorizationOverlay,
+  ownerAuthorizationDecisionOf,
+  ownerAuthorizationDenial,
+  ownerAuthorizationDenialReasons,
 } from './access/enforcement/owner-overlay.ts';
 export type {
   OwnerAccessFacts,
   OwnerAuthorizationDecision,
+  OwnerAuthorizationDenial,
+  OwnerAuthorizationOutcome,
   OwnerAuthorizationInput,
   OwnerAuthorizationOverlayService,
   OwnerAuthorizationTarget,
