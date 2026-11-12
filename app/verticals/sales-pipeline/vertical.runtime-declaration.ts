@@ -35,7 +35,6 @@ const searchContribution = (value: typeof ShellSearchContributionSchema.Encoded)
 
 const placementGroup = 'sales-pipeline';
 const moduleKey = 'demo.sales-pipeline';
-const searchEntrypointKey = 'demo.sales-pipeline.search.opportunities';
 const recordsPageKey = 'demo.sales-pipeline.page.records';
 /** AI level C approvals (opportunities + orders); only principals with write_all see the page. */
 const aiPageKey = 'demo.sales-pipeline.page.ai';
@@ -201,12 +200,12 @@ export const salesPipelineRuntimeManifest: VerticalRuntimeRegistrationInput['man
             risk: 'routine',
             selectors: [],
           },
-          contributionKey: searchEntrypointKey,
+          contributionKey: 'demo.sales-pipeline.search.opportunities',
           entrypoint: {
             access: 'read',
             authorization: { kind: 'protected' },
-            entrypointKey: searchEntrypointKey,
-            moduleKey,
+            entrypointKey: 'demo.sales-pipeline.search.opportunities',
+            moduleKey: 'demo.sales-pipeline',
             role: 'search',
             scope: 'tenant',
           },
