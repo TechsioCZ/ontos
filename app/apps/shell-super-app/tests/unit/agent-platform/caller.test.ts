@@ -1110,6 +1110,74 @@ it.effect('answers an Action key that two modules declare exactly as asking ever
   }),
 );
 
+/** The members of `set` that are in `kept`. */
+const keptOf = (set: ReadonlySet<string>, kept: ReadonlySet<string>) => new Set([...set].filter((id) => kept.has(id)));
+
+/** Hints restricted to `kept`: each set of `hints` without the modules outside it. */
+const restrictedTo = (
+  hints: {
+    readonly access: ReadonlySet<string>;
+    readonly propose: ReadonlySet<string>;
+    readonly run: ReadonlySet<string>;
+  },
+  kept: ReadonlySet<string>,
+) => ({ access: keptOf(hints.access, kept), propose: keptOf(hints.propose, kept), run: keptOf(hints.run, kept) });
+
+/** A capability read hook that records every key asked about in `asked`. */
+const recordedIn = (asked: Set<string>) => (key: string) =>
+  Effect.sync(() => {
+    asked.add(key);
+  });
+
+/** An `askable` lookup that keeps only `kept` of the composed modules. */
+const askableOnly = (kept: ReadonlySet<string>) => (moduleIds: readonly string[]) =>
+  Effect.succeed(keptOf(new Set(moduleIds), kept));
+
+it.effect('asks only the askable modules and answers them exactly as asking every module does', () =>
+  Effect.gen(function* askableModules() {
+    // gamma is not askable (say, not installed); beta repeats alpha's Action; gamma has a record-scoped read.
+    const shared = moduleAction('alpha.mod', 'alpha.mod.shared');
+    const { installed, keyOf, snapshot } = yield* actionModulesCatalog({
+      'alpha.mod': [shared, moduleAction('alpha.mod', 'alpha.mod.second')],
+      'beta.mod': [shared, moduleAction('beta.mod', 'beta.mod.own')],
+      'gamma.mod': [moduleAction('gamma.mod', 'gamma.mod.first'), moduleAction('gamma.mod', 'gamma.mod.second')],
+    });
+    const granted = ['alpha.mod.shared', 'beta.mod.own', 'gamma.mod.second'].map((name) => ({
+      key: keyOf.get(name) ?? '',
+      modes: ['run'] as const,
+    }));
+    const askable = new Set(['alpha.mod', 'beta.mod']);
+    const describe = (only?: ReadonlySet<string>) =>
+      Effect.gen(function* describeWith() {
+        const asked = new Set<string>();
+        const inspection = subjectInspectionFixture({
+          capabilities: granted,
+          onCapabilityRead: recordedIn(asked),
+          snapshot,
+          subjects: [{ legalEntityId, principalId, tenantId }],
+        });
+        const hints = yield* subjectModuleAccess(
+          humanRequest,
+          undefined,
+          only === undefined ? undefined : askableOnly(only),
+        ).pipe(
+          Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+          Effect.provide(inspection.layer),
+        );
+        return { asked, hints, rows: inspection.reads.evidenceRows };
+      });
+    const everything = yield* describe();
+    const restricted = yield* describe(askable);
+    expect(sortedHints(restricted.hints)).toEqual(sortedHints(restrictedTo(everything.hints, askable)));
+    expect(sortedHints(everything.hints).run).toContain('gamma.mod');
+    // No question about gamma reaches the gate, so it reads nothing for it and leaves no evidence about it.
+    const gammaKeys = [keyOf.get('gamma.mod.first') ?? '', keyOf.get('gamma.mod.second') ?? ''];
+    expect(gammaKeys.some((key) => everything.asked.has(key))).toBe(true);
+    expect(gammaKeys.some((key) => restricted.asked.has(key))).toBe(false);
+    expect(restricted.rows).toBeLessThan(everything.rows);
+  }),
+);
+
 /** The same batch answer with one Action's run answer replaced by `unavailable`. */
 type BatchAnswer = Effect.Success<ReturnType<(typeof SubjectAccessInspection)['Service']['capabilities']>>;
 

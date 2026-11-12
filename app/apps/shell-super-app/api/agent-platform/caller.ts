@@ -388,20 +388,24 @@ const askInStages = Effect.fn('AgentPlatform.subjectAccessStages')(function* ask
   readonly access: Set<string>;
   readonly input: SubjectInspectionInput;
   readonly installed: ShellInstalledCatalog;
+  /** Only these modules are asked about; another one's answer could never reach the hints. */
+  readonly modules: ReadonlySet<string>;
   readonly progress: Ref.Ref<SubjectAccessTrace>;
   readonly propose: Set<string>;
   readonly run: Set<string>;
   readonly stages: SubjectInspectionStages;
 }) {
-  const { access, installed, progress, propose, run, stages } = context;
+  const { access, installed, modules, progress, propose, run, stages } = context;
   // The questions come from the installed catalogue; the stages answer them in the release they verify. Both must be
   // one release, or the hints would name modules of one release with answers of another.
   if (stages.revision !== installed.composition.revision) {
     return yield* new SubjectInspectionUnavailable({ reason: 'Composition changed during subject inspection' });
   }
-  const carriers = moduleCarriers(installed);
+  const carriers = moduleCarriers(installed).filter(({ moduleId }) => modules.has(moduleId));
   const actions = installed.contracts.flatMap(({ manifest }) =>
-    manifest.publicSurface.actions.filter((action) => action.legalEntityScope !== 'forbidden'),
+    manifest.publicSurface.actions.filter(
+      (action) => action.legalEntityScope !== 'forbidden' && modules.has(action.owningModuleId),
+    ),
   );
   yield* countInspection(progress, {});
   // While the scope is inspected, the subject is resolved in every company context the batches may ask in; nothing
@@ -521,9 +525,17 @@ const askInStages = Effect.fn('AgentPlatform.subjectAccessStages')(function* ask
  * calls, whatever the catalog size: the subject's scope and one or two capability batches. Executing an Action never
  * relies on these hints; the gate decides it on its own.
  */
-export const subjectModuleAccess = Effect.fn('AgentPlatform.subjectModuleAccess')(function* subjectModuleAccessEffect(
+export const subjectModuleAccess = Effect.fn('AgentPlatform.subjectModuleAccess')(function* subjectModuleAccessEffect<
+  AskableFailure = never,
+  AskableRequirements = never,
+>(
   input: SubjectInspectionInput,
   trace?: Ref.Ref<SubjectAccessTrace>,
+  /**
+   * Narrows the questions to the composed modules whose hints can still be used (a module the tenant has not
+   * installed, say). The sets are then those of asking everything, restricted to these modules; by default all.
+   */
+  askable?: (moduleIds: readonly string[]) => Effect.Effect<ReadonlySet<string>, AskableFailure, AskableRequirements>,
 ) {
   const progress = trace ?? (yield* Ref.make(emptySubjectAccessTrace));
   const inspection = yield* SubjectAccessInspection;
@@ -532,13 +544,15 @@ export const subjectModuleAccess = Effect.fn('AgentPlatform.subjectModuleAccess'
     'modules',
     (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError((cause) => new AgentStoreUnavailable({ cause }))),
   );
+  const composed = installed.contracts.map(({ manifest }) => manifest.module.id);
+  const modules = askable === undefined ? new Set(composed) : yield* askable(composed);
   const access = new Set<string>();
   const propose = new Set<string>();
   const run = new Set<string>();
   // The scope and both batches are stages of ONE inspection: one subject resolution per company context and one
   // composition-revision check for the whole description, as when everything was asked in one batch.
   yield* inspection.staged(input, (stages) =>
-    askInStages({ access, input, installed, progress, propose, run, stages }),
+    askInStages({ access, input, installed, modules, progress, propose, run, stages }),
   );
   return { access, inspectionOnly: true as const, installed, propose, run };
 });
