@@ -122,6 +122,7 @@ export const customerProfileOrganizationIcoFactsServices: ReadServiceFactory<
         const issued = yield* acquireDelegatedGatewayContext(
           {
             audience: 'party-registry',
+            callingAppId: 'commerce-customer-context',
             legalEntityScope: 'subject',
             requestCorrelation: scope.correlationId,
             subject: commerceSourceDelegationSubject(

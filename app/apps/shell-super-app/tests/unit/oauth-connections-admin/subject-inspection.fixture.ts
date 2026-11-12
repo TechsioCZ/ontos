@@ -1,4 +1,9 @@
-import type { ActiveApplicationCompositionSnapshot, ApplicationComposition, OperationalScope } from '@app/core-runtime';
+import type {
+  ActiveApplicationCompositionSnapshot,
+  ApplicationComposition,
+  OperationalScope,
+  TenantModuleState,
+} from '@app/core-runtime';
 import { ONTOS_SHELL_CONTRIBUTION_ABI, OntosModuleIdSchema, TenantModuleStateService } from '@app/core-runtime';
 import {
   AccessDecisionLogBatch,
@@ -46,10 +51,11 @@ const publishedShellRuntime = {
 };
 
 /**
- * One read-page carrier per module, each under its own declaration key, in the order the modules are given. The
- * snapshot is what the inspection reads; the installed catalog is what the caller loads.
+ * One read-page carrier per module, each under its own declaration key, in the order the modules are given; with
+ * `selectors`, each page is a record-scoped read (a LIST question). The snapshot is what the inspection reads; the
+ * installed catalog is what the caller loads.
  */
-export const pageCarrierCatalog = (moduleIds: readonly string[]) =>
+export const pageCarrierCatalog = (moduleIds: readonly string[], selectors: readonly ('assigned' | 'team')[] = []) =>
   Effect.gen(function* pageCarrierCatalogEffect() {
     const snapshot = yield* makePublishedApplicationCompositionSnapshotFixture({
       contractInputs: moduleIds.map((id) => {
@@ -72,7 +78,7 @@ export const pageCarrierCatalog = (moduleIds: readonly string[]) =>
                       modes: ['run'],
                       placement: { group: 'pages', level: 'basic' },
                       risk: 'routine',
-                      selectors: [],
+                      selectors: [...selectors],
                     },
                     componentKey: `${id}.page-home`,
                     contributionKey: `${id}.page.home`,
@@ -149,9 +155,25 @@ export const subjectInspectionFixture = (input: {
   readonly capabilities?: readonly InspectionFixtureCapability[];
   /** The modules the tenant has installed (active); by default every module of the composition. */
   readonly installedModules?: readonly string[];
+  /** The composition each load answers (1-based load); by default `snapshot` every time. */
+  readonly loadedSnapshot?: (load: number) => ActiveApplicationCompositionSnapshot;
+  /**
+   * The state each module state read (1-based) answers for a module, none for no state row; overrides
+   * `installedModules`, so a state can change between two reads of one description.
+   */
+  readonly moduleStateAt?: (read: number, moduleKey: string) => TenantModuleState | undefined;
   /** Runs before each capability read: a test can hold it (to observe overlap) or fail it (an unreadable carrier). */
   readonly onCapabilityRead?: (capabilityKey: string) => Effect.Effect<void, AccessDecisionUnavailable>;
-  readonly onScopeRead?: (principalId: string) => Effect.Effect<void>;
+  /**
+   * Runs before an evidence write is counted (writes numbered from 1): a test can hold it or fail it. A write that
+   * fails or is interrupted here counts nothing.
+   */
+  readonly onEvidenceWrite?: (write: number) => Effect.Effect<void, AccessDecisionUnavailable>;
+  /** Runs before each scope read of a person, with the company asked (none: the tenant context); may hold or fail it. */
+  readonly onScopeRead?: (
+    principalId: string,
+    legalEntityId: string | undefined,
+  ) => Effect.Effect<void, AccessDecisionUnavailable>;
   /** Tenant owners: Core answers their configure authority with the `Owner` basis, as for a stage tenant's owner. */
   readonly owners?: readonly string[];
   readonly snapshot: ActiveApplicationCompositionSnapshot;
@@ -160,6 +182,12 @@ export const subjectInspectionFixture = (input: {
   const requesterScopes: OperationalScope[] = [];
   /** Every scripted port call, so a test can bound the round trips one inspection makes. */
   const reads = { cells: 0, engine: 0, evidenceRows: 0, evidenceWrites: 0, facts: 0, kind: 0, scope: 0 };
+  let writeAttempts = 0;
+  let compositionLoads = 0;
+  /** The rows of each evidence write that completed, by the order writes were started (1-based attempt). */
+  const writtenRows = new Map<number, number>();
+  /** Every evidence row written: its capability, mode, outcome and reasons. */
+  const evidence: string[] = [];
   const subjectOf = (principalId: string) => input.subjects.find((subject) => subject.principalId === principalId);
   const companyScopeId = AccessScopeIdSchema.make('00000000-0000-4000-8000-000000000018');
   const tenantScopeId = AccessScopeIdSchema.make('00000000-0000-4000-8000-000000000019');
@@ -202,7 +230,7 @@ export const subjectInspectionFixture = (input: {
               Predicate.isTagged(principal, 'Principal') &&
               input.onScopeRead !== undefined
             ) {
-              yield* input.onScopeRead(principal.principalId);
+              yield* input.onScopeRead(principal.principalId, query.legalEntityId);
             }
             if (!inScope) {
               return Option.none();
@@ -226,21 +254,31 @@ export const subjectInspectionFixture = (input: {
   const installed = new Set(
     input.installedModules ?? input.snapshot.composition.modules.map(({ moduleId }) => moduleId),
   );
+  /** An installed module is active; any other has no state row. */
+  const defaultStateOf = (moduleKey: string): TenantModuleState | undefined =>
+    input.moduleStateAt === undefined && installed.has(moduleKey) ? 'active' : undefined;
   /** Every tenant module state read: the tenant and the module keys asked about. */
   const stateReads: { readonly moduleKeys: readonly string[]; readonly tenantId: string }[] = [];
   const moduleStates = Layer.mock(TenantModuleStateService, {
     getTenantModuleStates: (tenantId, moduleKeys) =>
       Effect.sync(() => {
         stateReads.push({ moduleKeys: [...moduleKeys], tenantId });
-        return moduleKeys
-          .filter((moduleKey) => installed.has(moduleKey))
-          .map((moduleKey) => ({ moduleKey: OntosModuleIdSchema.make(moduleKey), state: 'active' as const }));
+        const read = stateReads.length;
+        return moduleKeys.flatMap((moduleKey) => {
+          const state = input.moduleStateAt?.(read, moduleKey) ?? defaultStateOf(moduleKey);
+          return state === undefined ? [] : [{ moduleKey: OntosModuleIdSchema.make(moduleKey), state }];
+        });
       }),
   });
   const inspectionLayer = SubjectAccessInspectionLive.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(input.snapshot) }),
+        Layer.succeed(ActiveApplicationCompositionService, {
+          load: Effect.sync(() => {
+            compositionLoads += 1;
+            return input.loadedSnapshot?.(compositionLoads) ?? input.snapshot;
+          }),
+        }),
         Layer.succeed(AccessIntent, intent),
         Layer.succeed(AccessPrincipalKindSource, {
           readKind: ({ principalId, scope, tenantId }) => {
@@ -282,16 +320,37 @@ export const subjectInspectionFixture = (input: {
         }),
         Layer.succeed(AccessDecisionLogBatch, {
           recordAll: (entries) =>
-            Effect.sync(() => {
-              reads.evidenceWrites += 1;
-              reads.evidenceRows += entries.length;
-              for (const { scope } of entries) {
-                requesterScopes.push(scope);
-              }
-            }),
+            Effect.suspend(() => {
+              writeAttempts += 1;
+              const attempt = writeAttempts;
+              return (input.onEvidenceWrite?.(attempt) ?? Effect.void).pipe(Effect.as(attempt));
+            }).pipe(
+              Effect.flatMap((attempt) =>
+                Effect.sync(() => {
+                  writtenRows.set(attempt, entries.length);
+                  reads.evidenceWrites += 1;
+                  reads.evidenceRows += entries.length;
+                  for (const entry of entries) {
+                    requesterScopes.push(entry.scope);
+                    evidence.push(
+                      [entry.capability.capabilityKey, entry.mode, entry.outcome, JSON.stringify(entry.reasons)].join(
+                        '|',
+                      ),
+                    );
+                  }
+                }),
+              ),
+            ),
         }),
       ),
     ),
   );
-  return { layer: Layer.merge(inspectionLayer, moduleStates), reads, requesterScopes, stateReads };
+  return {
+    evidence,
+    layer: Layer.merge(inspectionLayer, moduleStates),
+    reads,
+    requesterScopes,
+    stateReads,
+    writtenRows,
+  };
 };

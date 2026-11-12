@@ -8,6 +8,7 @@
 import { Duration, Effect, Function as Fn, Schema } from 'effect';
 import { HttpServerResponse } from 'effect/http';
 
+import type { DescriptionTiming } from './describe-timing.ts';
 import type { ToolSpec } from './types.ts';
 
 /** Bounds the one-time local load of the MCP SDK and server factory, as Core bounds its lazy health module. */
@@ -29,7 +30,12 @@ export interface McpEndpointConfig {
 /** The tools of an authenticated connection, described live for one request. */
 export type McpConnectionTools =
   | { readonly kind: 'invalid' }
-  | { readonly kind: 'ok'; readonly tools: readonly ToolSpec[] }
+  | {
+      readonly kind: 'ok';
+      /** Where the description spent its time (logged on the request line); absent when not measured. */
+      readonly timing?: DescriptionTiming;
+      readonly tools: readonly ToolSpec[];
+    }
   | { readonly kind: 'unavailable' };
 
 export type McpAuthentication =
@@ -48,6 +54,19 @@ export type McpAuthentication =
  * that passed its protocol checks, and only after it has matched the required `Mcp-Method` header to the body's
  * method, so the factory may read the method from that header.
  */
+/** The request line's description fields, all null when the request described nothing. */
+const describedFields = (timing: DescriptionTiming | undefined) => ({
+  describedCellsMs: timing?.cellsMs ?? null,
+  describedCompositionMs: timing?.compositionMs ?? null,
+  describedConfigureMs: timing?.configureMs ?? null,
+  describedEvidenceMs: timing?.evidenceMs ?? null,
+  describedResolutionMs: timing?.resolutionMs ?? null,
+  describedSpicedbCalls: timing?.spicedbCalls ?? null,
+  describedSpicedbMs: timing?.spicedbMs ?? null,
+  describedStatements: timing?.statements ?? null,
+  describedTransactions: timing?.transactions ?? null,
+});
+
 export const MCP_TOOL_METHODS: ReadonlySet<string> = new Set(['tools/call', 'tools/list']);
 
 /** Per-request inputs of the endpoint; the Shell transport reads them from the request's services. */
@@ -211,6 +230,7 @@ export const serveMcp = <Failure, Requirements>(deps: McpEndpointDeps<Failure, R
     // the endpoint answers HTTP 401/503 below in place of the SDK's answer: an expected refusal, not an error.
     let refused: 'invalid' | 'unavailable' | undefined;
     let describedMs: number | undefined;
+    let describedTiming: DescriptionTiming | undefined;
     const describedServer = Effect.gen(function* describeServer() {
       const [elapsed, described] = yield* Effect.timed(authentication.tools);
       describedMs = Duration.toMillis(elapsed);
@@ -218,6 +238,7 @@ export const serveMcp = <Failure, Requirements>(deps: McpEndpointDeps<Failure, R
         refused = described.kind;
         return buildMcpServer([], { run, sdk });
       }
+      describedTiming = described.timing;
       return buildMcpServer(described.tools, { run, sdk });
     });
     const handler = sdk.createMcpHandler(
@@ -269,6 +290,8 @@ export const serveMcp = <Failure, Requirements>(deps: McpEndpointDeps<Failure, R
       Effect.annotateLogs({
         authMs: Duration.toMillis(authenticated),
         describedMs: describedMs ?? null,
+        // The description's parts: counts and summed milliseconds (parts that ran concurrently can sum past it).
+        ...describedFields(describedTiming),
         grantId: authentication.grantId,
         mcpMethod: request.headers.get('mcp-method') ?? null,
         method: request.method,

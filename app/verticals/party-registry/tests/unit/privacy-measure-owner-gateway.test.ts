@@ -85,6 +85,7 @@ it.layer(gatewayLive)('privacy measure owner gateway', (suite) => {
       const request = acquiredRequests.at(-1);
       expect(request).toMatchObject({
         audience: 'privacy',
+        callingAppId: 'party-registry',
         legalEntityScope: 'subject',
         requestCorrelation: 'correlation:1',
         subject: {

@@ -223,16 +223,38 @@ interface AuthorityCase {
   /** The case database's administrator client, for reading back the evidence rows a read wrote. */
   readonly admin: PgClient.PgClient;
   readonly companyId: string;
+  /** Gives `person` a role with every `run` capability of `moduleKey` in that company, projected at once. */
+  readonly grant: (moduleKey: string, legalEntityId: string) => Effect.Effect<void>;
+  /** The tenant's second company, where `person` is a member holding nothing until granted. */
+  readonly otherCompanyId: string;
   readonly owner: string;
   readonly person: string;
+  /** Leaves exactly these modules installed for the tenant and reprojects its graph through the Core writer. */
+  readonly reinstall: (moduleKeys: readonly string[]) => Effect.Effect<void>;
   readonly runtime: DatabaseConnectionPair['runtime'];
   readonly tenantId: string;
 }
 
 /**
- * One cloned database with one tenant, one company, its bootstrapped owner and one person who holds a role with every
- * `run` capability of `moduleId` in that company, projected into SpiceDB by the one Core writer.
+ * One cloned database with one tenant, two companies, its bootstrapped owner and one person who is a member of both
+ * and holds a role with every `run` capability of `moduleId` in the first, projected into SpiceDB by the one Core writer.
  */
+/** The access scope of `legalEntityId` among the tenant's scopes. */
+const scopeIdOf = (
+  scopeIds: readonly { readonly legal_entity_id: string | null; readonly scope_id: string }[],
+  legalEntityId: string,
+) => scopeIds.find(({ legal_entity_id: scoped }) => scoped === legalEntityId)?.scope_id;
+
+/** One `run` cell over everything for each `run` capability `moduleKey` declares. */
+const runCellsOf = (catalog: typeof AccessCatalogModulesSchema.Type, moduleKey: string) =>
+  catalog
+    .flatMap(({ descriptors }) => descriptors.map(({ accessDeclaration }) => accessDeclaration))
+    .flatMap((declaration) =>
+      declaration !== undefined && declaration.key.startsWith(`${moduleKey}.`) && declaration.modes.includes('run')
+        ? [{ capabilityKey: declaration.key, mode: 'run', selector: { _tag: 'all' } }]
+        : [],
+    );
+
 const withAuthorityCase = <A, E>(moduleId: string, run: (authorityCase: AuthorityCase) => Effect.Effect<A, E>) =>
   Effect.scoped(
     Effect.gen(function* authorityCase() {
@@ -262,17 +284,21 @@ const withAuthorityCase = <A, E>(moduleId: string, run: (authorityCase: Authorit
       const catalog = yield* publishedCatalog;
       const tenantId = yield* crypto.randomUUIDv4();
       const companyId = yield* crypto.randomUUIDv4();
+      const otherCompanyId = yield* crypto.randomUUIDv4();
       const owner = yield* crypto.randomUUIDv4();
       const person = yield* crypto.randomUUIDv4();
       yield* admin.unsafe(
         `insert into core.tenants (tenant_id, slug, name, status, default_locale)
          values ('${tenantId}', 'acting-${tenantId.slice(0, 8)}', 'Acting authority tenant', 'active', 'cs')`,
       );
-      yield* admin.unsafe(
-        `insert into core.legal_entities
-           (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status)
-         values ('${companyId}', '${tenantId}', 'Acting authority company', 'CZ', '${companyId.slice(-8)}', 'active')`,
-      );
+      for (const legalEntityId of [companyId, otherCompanyId]) {
+        yield* admin.unsafe(
+          `insert into core.legal_entities
+             (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status)
+           values ('${legalEntityId}', '${tenantId}', 'Acting authority company', 'CZ', '${legalEntityId.slice(-8)}',
+                   'active')`,
+        );
+      }
       for (const principalId of [owner, person]) {
         yield* admin.unsafe(
           `insert into core.principals (principal_id, tenant_id, kind, display_name, status)
@@ -288,7 +314,7 @@ const withAuthorityCase = <A, E>(moduleId: string, run: (authorityCase: Authorit
       const graph = yield* buildAccessGraph({ adminUrl: databases.runtime.connectionString, configuration });
       const ownerScope = yield* sessionScope({ correlationId: 'acting-authority-seed', principalId: owner, tenantId });
       const bootstrap = yield* graph.bootstrap.bootstrapTenantAccess({
-        legalEntityIds: [LegalEntityIdSchema.make(companyId)],
+        legalEntityIds: [LegalEntityIdSchema.make(companyId), LegalEntityIdSchema.make(otherCompanyId)],
         modules: catalog,
         scope: ownerScope,
       });
@@ -303,44 +329,68 @@ const withAuthorityCase = <A, E>(moduleId: string, run: (authorityCase: Authorit
                    now() - interval '1 day', '${owner}')`,
         );
       }
-      const companyScopeId = scopeIds.find(
-        ({ legal_entity_id: legalEntityId }) => legalEntityId === companyId,
-      )?.scope_id;
-      const cells = catalog
-        .flatMap(({ descriptors }) => descriptors.map(({ accessDeclaration }) => accessDeclaration))
-        .flatMap((declaration) =>
-          declaration !== undefined && declaration.key.startsWith(`${moduleId}.`) && declaration.modes.includes('run')
-            ? [{ capabilityKey: declaration.key, mode: 'run', selector: { _tag: 'all' } }]
-            : [],
-        );
-      const roleId = yield* crypto.randomUUIDv4();
-      const roleRevisionId = yield* crypto.randomUUIDv4();
-      yield* admin.unsafe(
-        `insert into core.access_roles (role_id, tenant_id, created_by, name)
-         values ('${roleId}', '${tenantId}', '${owner}', 'Module ${moduleId}')`,
-      );
-      yield* admin.unsafe(
-        `insert into core.access_role_revisions
-           (role_revision_id, tenant_id, role_id, revision, catalog_snapshot_id, cells_json, created_by, provenance)
-         values ('${roleRevisionId}', '${tenantId}', '${roleId}', 1, '${bootstrap.catalogSnapshotId}',
-                 '${jsonText(cells)}'::jsonb, '${owner}', 'manual')`,
-      );
-      for (const cell of cells) {
-        yield* admin.unsafe(
-          `insert into core.access_grant_incarnations
-             (grant_incarnation_id, tenant_id, scope_id, role_id, capability_key, mode, slot, cell_json, status)
-           values (gen_random_uuid(), '${tenantId}', '${companyScopeId}', '${roleId}', '${cell.capabilityKey}',
-                   'run', 'all', '${jsonText(cell)}'::jsonb, 'active')`,
-        );
-      }
-      yield* admin.unsafe(
-        `insert into core.access_assignments
-           (incarnation_id, tenant_id, scope_id, principal_id, role_id, role_revision_id, status, assigned_by, valid_from)
-         values (gen_random_uuid(), '${tenantId}', '${companyScopeId}', '${person}', '${roleId}',
-                 '${roleRevisionId}', 'active', '${owner}', now() - interval '1 day')`,
-      );
+      const grantRole = (moduleKey: string, legalEntityId: string) =>
+        Effect.gen(function* grantRoleOf() {
+          const grantScopeId = scopeIdOf(scopeIds, legalEntityId);
+          const cells = runCellsOf(catalog, moduleKey);
+          const roleId = yield* crypto.randomUUIDv4();
+          const roleRevisionId = yield* crypto.randomUUIDv4();
+          yield* admin.unsafe(
+            `insert into core.access_roles (role_id, tenant_id, created_by, name)
+             values ('${roleId}', '${tenantId}', '${owner}', 'Module ${moduleKey} ${legalEntityId.slice(-4)}')`,
+          );
+          yield* admin.unsafe(
+            `insert into core.access_role_revisions
+               (role_revision_id, tenant_id, role_id, revision, catalog_snapshot_id, cells_json, created_by, provenance)
+             values ('${roleRevisionId}', '${tenantId}', '${roleId}', 1, '${bootstrap.catalogSnapshotId}',
+                     '${jsonText(cells)}'::jsonb, '${owner}', 'manual')`,
+          );
+          for (const cell of cells) {
+            yield* admin.unsafe(
+              `insert into core.access_grant_incarnations
+                 (grant_incarnation_id, tenant_id, scope_id, role_id, capability_key, mode, slot, cell_json, status)
+               values (gen_random_uuid(), '${tenantId}', '${grantScopeId}', '${roleId}', '${cell.capabilityKey}',
+                       'run', 'all', '${jsonText(cell)}'::jsonb, 'active')`,
+            );
+          }
+          yield* admin.unsafe(
+            `insert into core.access_assignments
+               (incarnation_id, tenant_id, scope_id, principal_id, role_id, role_revision_id, status, assigned_by,
+                valid_from)
+             values (gen_random_uuid(), '${tenantId}', '${grantScopeId}', '${person}', '${roleId}',
+                     '${roleRevisionId}', 'active', '${owner}', now() - interval '1 day')`,
+          );
+        });
+      yield* grantRole(moduleId, companyId);
       yield* graph.writer.reconcileTenant({ scope: ownerScope });
-      return yield* run({ admin, companyId, owner, person, runtime: databases.runtime, tenantId });
+      const reinstall = (moduleKeys: readonly string[]) =>
+        Effect.gen(function* reinstallModules() {
+          yield* admin.unsafe(`delete from core.tenant_module_states where tenant_id = '${tenantId}'`);
+          for (const moduleKey of moduleKeys) {
+            yield* admin.unsafe(
+              `insert into core.tenant_module_states (tenant_module_state_id, tenant_id, module_key, state)
+               values (gen_random_uuid(), '${tenantId}', '${moduleKey}', 'active')`,
+            );
+          }
+          yield* graph.writer.reconcileTenant({ scope: ownerScope });
+        }).pipe(Effect.orDie);
+      const grant = (moduleKey: string, legalEntityId: string) =>
+        grantRole(moduleKey, legalEntityId).pipe(
+          Effect.andThen(graph.writer.reconcileTenant({ scope: ownerScope })),
+          Effect.asVoid,
+          Effect.orDie,
+        );
+      return yield* run({
+        admin,
+        companyId,
+        grant,
+        otherCompanyId,
+        owner,
+        person,
+        reinstall,
+        runtime: databases.runtime,
+        tenantId,
+      });
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
@@ -514,9 +564,78 @@ const queueReadActionKeys = Effect.gen(function* queueReadActionKeys() {
   );
 });
 
+/** Each separately asked batch's answers, in asking order. */
+const valuesOfEach = <A>(results: readonly { readonly value: readonly A[] }[]) => results.flatMap(({ value }) => value);
+
+/** Each separately asked batch's evidence rows, sorted as one measured read sorts its own. */
+const rowsOfEach = (results: readonly { readonly decisionRowContents: readonly string[] }[]) =>
+  results.flatMap(({ decisionRowContents }) => decisionRowContents).toSorted();
+
+/**
+ * The Action keys a person's `run` grant over everything admits without naming a record: those whose carrier declares a
+ * `run` capability of its own with no selector (a selected capability needs a target).
+ */
+const personRunnableActionKeys = Effect.gen(function* personRunnableActionKeys() {
+  const installed = yield* (yield* ShellInstalledModuleCatalog).load;
+  return installed.contracts.flatMap(({ manifest }) =>
+    manifest.publicSurface.actions.flatMap((action) =>
+      action.owningModuleId === manifest.module.id &&
+      action.legalEntityScope !== 'forbidden' &&
+      action.accessDeclaration?.modes.includes('run') === true &&
+      action.accessDeclaration.selectors.length === 0
+        ? [action.actionKey]
+        : [],
+    ),
+  );
+});
+
+/** The first Action key of each of `modules`, in that order. */
+const firstActionsOf = (keys: readonly string[], modules: readonly string[]) =>
+  modules.flatMap((moduleKey) => keys.filter((key) => key.startsWith(`${moduleKey}.`)).slice(0, 1));
+
+/**
+ * The first person-runnable Action of each of `modules`, asked of the real gate in one batch by `person` in
+ * `legalEntityId`.
+ */
+const firstActionsAsked = (input: {
+  readonly authorityCase: AuthorityCase;
+  readonly correlationId: string;
+  readonly legalEntityId: string;
+  readonly modules: readonly string[];
+  readonly snapshot: ActiveApplicationCompositionSnapshot;
+}) =>
+  measured({
+    authorityCase: input.authorityCase,
+    correlationId: input.correlationId,
+    read: Effect.gen(function* askActions() {
+      const actionKeys = firstActionsOf(yield* personRunnableActionKeys, input.modules);
+      const scope = yield* sessionScope({
+        correlationId: input.correlationId,
+        legalEntityId: input.legalEntityId,
+        principalId: input.authorityCase.person,
+        tenantId: input.authorityCase.tenantId,
+      });
+      return yield* (yield* ActionAuthority).checkActionAuthorities({ actionKeys, scope });
+    }),
+    snapshot: input.snapshot,
+  });
+
+/** The first work-tasks Action key: what one work-tasks proposal batch names. */
+const firstTaskAction = (keys: readonly string[]) => keys.filter((key) => key.startsWith('work.tasks.')).slice(0, 1);
+
 const sorted = (values: Iterable<string>) => [...values].toSorted();
 
+/** The members of `modules` that are in `kept`, sorted. */
+const keptIn = (kept: readonly string[], modules: ReadonlySet<string>) => sorted(kept.filter((id) => modules.has(id)));
+
 const reportPath = Config.option(Config.String('CALLER_AUTHORITY_REPORT'));
+
+/**
+ * Bounds of a stage tenant's caller authority load: one engine snapshot each for the carriers, the LISTs and the
+ * Actions, with one kind and scope read for all LISTs. Asking every composed module took 86 transactions; one LIST
+ * call at a time, 36 and 6 snapshots; one call with a preamble per LIST, 30.
+ */
+const CALLER_INSTALLED_BOUNDS = { checkBulk: 3, transactions: 20 };
 
 it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '900 seconds' })(
   'agent platform caller authority over the installed release',
@@ -599,6 +718,137 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '900 secon
           }).pipe(Effect.provide(NodeServices.layer)),
         ),
       900_000,
+    );
+
+    suite.effect(
+      "asks a stage tenant owner's caller authority only about the modules the tenant installed",
+      () =>
+        withAuthorityCase('work.tasks', (authorityCase) =>
+          Effect.gen(function* installedCallerAuthority() {
+            const snapshot = yield* installedComposition;
+            const { companyId, owner, tenantId } = authorityCase;
+            // Stage's N1 demo tenant: 6 of the release's modules installed, the owner holding full access.
+            const installed = [
+              'commerce.customer-context',
+              'commerce.market-catalog',
+              'commerce.storefront-registry',
+              'demo.merchandise',
+              'party.registry',
+              'work.tasks',
+            ];
+            yield* authorityCase.reinstall(installed);
+            const ownerScope = (correlationId: string) =>
+              sessionScope({ correlationId, legalEntityId: companyId, principalId: owner, tenantId });
+            const trace = yield* Ref.make(emptyCallerAccessTrace);
+            const caller = yield* measured({
+              authorityCase,
+              correlationId: 'installed-caller-authority',
+              read: callerModuleAccess({ scope: yield* ownerScope('installed-caller-authority') }, trace),
+              snapshot,
+            });
+            // Asking every composed module, as before, then dropping the uninstalled ones (all installed ones are
+            // active, which admits reads and writes) gives the same rights.
+            const everything = yield* measured({
+              authorityCase,
+              correlationId: 'installed-caller-reference',
+              read: callerAccessOneAtATime(yield* ownerScope('installed-caller-reference')),
+              snapshot,
+            });
+            expect(sorted(caller.value.access)).toEqual(keptIn(installed, everything.value.access));
+            expect(sorted(caller.value.propose)).toEqual(keptIn(installed, everything.value.propose));
+            expect(sorted(caller.value.write)).toEqual(keptIn(installed, everything.value.write));
+            const remaining = [...everything.decisionRowContents];
+            for (const row of caller.decisionRowContents) {
+              const at = remaining.indexOf(row);
+              expect(at).toBeGreaterThanOrEqual(0);
+              remaining.splice(at, 1);
+            }
+            // One exact proposal batch read's Action authority: every Action of the release (as it asked before) or
+            // only the one its rows name (a work-tasks proposal), as an approval's five batch reads now ask it.
+            const batchScope = yield* ownerScope('installed-batch-authority');
+            const everyAction = yield* measured({
+              authorityCase,
+              correlationId: 'installed-batch-every-action',
+              read: Effect.gen(function* everyActionAuthority() {
+                const actionKeys = yield* queueReadActionKeys;
+                return yield* (yield* ActionAuthority).checkActionAuthorities({ actionKeys, scope: batchScope });
+              }),
+              snapshot,
+            });
+            const oneAction = yield* measured({
+              authorityCase,
+              correlationId: 'installed-batch-one-action',
+              read: Effect.gen(function* oneActionAuthority() {
+                const actionKeys = firstTaskAction(yield* queueReadActionKeys);
+                return yield* (yield* ActionAuthority).checkActionAuthorities({ actionKeys, scope: batchScope });
+              }),
+              snapshot,
+            });
+            const [taskAction] = oneAction.value;
+            expect(oneAction.value).toEqual(
+              everyAction.value.filter(({ actionKey }) => actionKey === taskAction?.actionKey),
+            );
+            expect(oneAction.counters.checkItems).toBeLessThan(everyAction.counters.checkItems);
+            const path = yield* reportPath;
+            if (Option.isSome(path)) {
+              yield* (yield* FileSystem.FileSystem).writeFileString(
+                `${path.value}.installed.json`,
+                yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+                  after: reportOf(caller),
+                  batchAuthorityEvery: reportOf(everyAction),
+                  batchAuthorityOne: reportOf(oneAction),
+                  everything: reportOf(everything),
+                  trace: yield* Ref.get(trace),
+                }),
+              );
+            }
+            // Asking every composed module: 16 SpiceDB calls (14 of them one LIST each) and 478 evidence rows.
+            expect(caller.counters.checkBulk).toBeLessThanOrEqual(CALLER_INSTALLED_BOUNDS.checkBulk);
+            expect(caller.transactions).toBeLessThanOrEqual(CALLER_INSTALLED_BOUNDS.transactions);
+            expect(caller.decisionRows).toBeLessThan(everything.decisionRows);
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ),
+      300_000,
+    );
+
+    suite.effect(
+      'gives every Action the same allow/deny answer through the real gate batch as when asked alone, with the same rows',
+      () =>
+        withAuthorityCase('work.tasks', (authorityCase) =>
+          Effect.gen(function* independentAnswers() {
+            const snapshot = yield* installedComposition;
+            const { companyId, otherCompanyId } = authorityCase;
+            yield* authorityCase.reinstall([
+              'commerce.customer-context',
+              'commerce.market-catalog',
+              'commerce.storefront-registry',
+              'demo.merchandise',
+              'party.registry',
+              'work.tasks',
+            ]);
+            // Granted in this company but its module is not installed (never projected), and granted only in the other.
+            yield* authorityCase.grant('facility.operations', companyId);
+            yield* authorityCase.grant('party.registry', otherCompanyId);
+            const askIn = (legalEntityId: string, correlationId: string, modules: readonly string[]) =>
+              firstActionsAsked({ authorityCase, correlationId, legalEntityId, modules, snapshot });
+            const modules = ['work.tasks', 'facility.operations', 'party.registry'];
+            const together = yield* askIn(companyId, 'independent-together', modules);
+            const alone = yield* Effect.forEach(
+              modules,
+              (moduleKey) => askIn(companyId, `independent-${moduleKey}`, [moduleKey]),
+              { concurrency: 1 },
+            );
+            expect(together.value).toEqual(valuesOfEach(alone));
+            expect(together.value.map(({ execute }) => execute)).toEqual(['allowed', 'denied', 'denied']);
+            // The same evidence rows, row for row: each denial is recorded whatever was asked beside it.
+            expect(together.decisionRowContents).toEqual(rowsOfEach(alone));
+            expect(together.decisionRowContents.filter((row) => row.includes('|DENIED|'))).toHaveLength(2);
+            // The other company's grant is real: there the same Action runs.
+            const elsewhere = yield* askIn(otherCompanyId, 'independent-elsewhere', ['party.registry']);
+            expect(elsewhere.value.map(({ execute }) => execute)).toEqual(['allowed']);
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ),
+      300_000,
     );
   },
 );

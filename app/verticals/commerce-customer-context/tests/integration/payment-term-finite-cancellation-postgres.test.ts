@@ -44,6 +44,7 @@ import type { RemoveCustomerPaymentTermPayload } from '../../shared/actions/remo
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import {
   delegatedGatewayConfiguration,
+  holdDelegatedCallerKey,
   delegatedGatewayRoute,
   serveDelegatedGatewayContext,
 } from '../support/delegated-gateway-shell.fixture.ts';
@@ -557,6 +558,7 @@ const scenario = Effect.fn('FiniteEntitlement.nativeScenario')(function* nativeS
       fixture.layer.pipe(Layer.provide(deniedAccess.layer)),
       FetchHttpClient.layer,
       ConfigProvider.layer(delegatedGatewayConfiguration(origin)),
+      Layer.effectDiscard(holdDelegatedCallerKey),
     ),
   );
   const counterpartyRef = {

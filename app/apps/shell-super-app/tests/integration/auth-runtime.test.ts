@@ -3059,8 +3059,6 @@ const prepareTenantPartyReceivers = Effect.fn('TenantPartyGatewayTest.receivers'
         BETTER_AUTH_SECRET: configuration.secret,
         BETTER_AUTH_TRUSTED_ORIGINS: configuration.trustedOrigins.join(','),
         BETTER_AUTH_URL: configuration.baseUrl,
-        // No module credential is enrolled: the staff API key is never a module deployment credential.
-        ONTOS_GATEWAY_MODULE_BINDINGS: '[]',
         ONTOS_GATEWAY_PRIVATE_JWK: JSON.stringify({ ...privateJwk, alg: 'EdDSA', kid, use: 'sig' }),
         SHELL_GATEWAY_ISSUER_DATABASE_URL: issuerConnections.runtime.connectionString,
       },

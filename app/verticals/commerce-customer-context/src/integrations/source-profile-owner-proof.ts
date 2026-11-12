@@ -81,6 +81,7 @@ export const commerceSourceProfileOwnerProofLive = Layer.effect(
           const issued = yield* acquireDelegatedGatewayContext(
             {
               audience: 'party-registry',
+              callingAppId: 'commerce-customer-context',
               legalEntityScope: 'subject',
               requestCorrelation: scope.correlationId,
               subject: commerceSourceDelegationSubject(
@@ -130,6 +131,7 @@ export const commerceSourceProfileOwnerProofLive = Layer.effect(
           const issued = yield* acquireDelegatedGatewayContext(
             {
               audience: 'party-registry',
+              callingAppId: 'commerce-customer-context',
               legalEntityScope: 'subject',
               requestCorrelation: scope.correlationId,
               subject: commerceSourceDelegationSubject(

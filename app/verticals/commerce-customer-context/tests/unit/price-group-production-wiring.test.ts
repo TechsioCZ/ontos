@@ -34,7 +34,7 @@ import {
 } from '../../src/api/customer-price-group-resolution.read.ts';
 import type { PriceGroupRoutineInvoker } from '../../src/persistence/price-group-persistence.ts';
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
-import { delegatedGatewayConfiguration } from '../support/delegated-gateway-shell.fixture.ts';
+import { delegatedGatewayConfiguration, holdDelegatedCallerKey } from '../support/delegated-gateway-shell.fixture.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -73,7 +73,10 @@ const constructionWithoutDelegation = Layer.mergeAll(
   ConfigProvider.layer(ConfigProvider.fromUnknown({})),
 );
 const shellOrigin = new URL('https://shell.example.test');
-const delegatedCallerConfiguration = ConfigProvider.layer(delegatedGatewayConfiguration(shellOrigin));
+const delegatedCallerConfiguration = Layer.merge(
+  ConfigProvider.layer(delegatedGatewayConfiguration(shellOrigin)),
+  Layer.effectDiscard(holdDelegatedCallerKey),
+);
 const priceGroupRef = Schema.decodeSync(PriceGroupRefSchema)({
   moduleId: 'pricing.price-group-catalog',
   resourceId: '30000000-0000-4000-8000-000000000001',

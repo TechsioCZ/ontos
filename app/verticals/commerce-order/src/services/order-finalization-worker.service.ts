@@ -127,6 +127,7 @@ export const OrderFinalizationWorkerLive = Layer.effect(
       const issued = yield* acquireDelegatedGatewayContext(
         {
           audience: 'commerce-order',
+          callingAppId: 'commerce-order',
           legalEntityScope: 'subject',
           requestCorrelation: context.correlationId ?? context.messageId,
           subject: delegationSubject(originator, {

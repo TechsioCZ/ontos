@@ -1,6 +1,5 @@
 import { Effect, Layer, Option } from 'effect';
 import type { Scope } from 'effect';
-import { v1 } from '@authzed/authzed-node';
 
 import { openSpiceDbRpc } from '../../permissions/spicedb-transaction-guard.ts';
 import { loadSpiceDbConfig } from '../../permissions/config.ts';
@@ -8,9 +7,9 @@ import type { SpiceDbConfigValue } from '../../permissions/config.ts';
 import { SPICEDB_CHECK_TIMEOUT_MS } from '../../permissions/client.ts';
 import type { SpiceDbRpc } from '../../permissions/spicedb-rpc.ts';
 import { DecisionCheck } from '../decision/engine.ts';
-import type { AccessCheckPermissionship, DecisionCheckPort } from '../decision/engine.ts';
+import type { DecisionCheckPort } from '../decision/engine.ts';
 import { accessDecisionUnavailable } from '../decision/errors.ts';
-import { toCheckBulkRequest } from '../decision/spicedb-check-port.ts';
+import { checkBulkInRequests } from '../decision/spicedb-check-port.ts';
 
 /**
  * The engine port of the enforcement seam: one `CheckBulkPermissions` snapshot per decision, over the
@@ -25,33 +24,15 @@ const unavailableCheck = (reason: string): DecisionCheckPort => ({
   checkBulk: () => Effect.fail(accessDecisionUnavailable(reason)),
 });
 
-/**
- * One pair's answer. Only an explicit HAS or NO is an answer: a caveat the engine could not evaluate
- * is `conditional` (fail closed) and anything else — including an unspecified arm — is a per-item
- * error, which the decision engine turns into UNAVAILABLE rather than a denial.
- */
-const permissionshipOf = (response: v1.CheckBulkPermissionsPair['response']): AccessCheckPermissionship => {
-  if (response.oneofKind !== 'item') {
-    return 'error';
-  }
-  const { permissionship } = response.item;
-  if (permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION) {
-    return 'has';
-  }
-  if (permissionship === v1.CheckPermissionResponse_Permissionship.NO_PERMISSION) {
-    return 'none';
-  }
-  return permissionship === v1.CheckPermissionResponse_Permissionship.CONDITIONAL_PERMISSION ? 'conditional' : 'error';
-};
+/** The engine port over one transport; `checkBulkInRequests` owns the request shape and the server's item limit. */
+/** The span of one SpiceDB bulk check call. */
+export const SPICEDB_CHECK_SPAN = 'AccessDecision.spicedbCheckBulk';
 
-/** The engine port over one transport; `toCheckBulkRequest` is the compiler-owned request shape. */
 export const enginePortOf = (rpc: SpiceDbRpc): DecisionCheckPort => ({
   checkBulk: (items) =>
-    rpc.checkBulkPermissions(toCheckBulkRequest(items)).pipe(
-      Effect.mapError((cause) => accessDecisionUnavailable('The authorization engine did not answer', cause)),
-      Effect.map((response): readonly { readonly permissionship: AccessCheckPermissionship }[] =>
-        response.pairs.map(({ response: item }) => ({ permissionship: permissionshipOf(item) })),
-      ),
+    checkBulkInRequests(items, (request) =>
+      // One span per engine round trip, so a request can count and time its SpiceDB calls.
+      rpc.checkBulkPermissions(request).pipe(Effect.withSpan(SPICEDB_CHECK_SPAN)),
     ),
 });
 

@@ -20,15 +20,61 @@ import { serve } from '../support/preproposal-basis-identity.fixture.ts';
 const fixture = rs.hoisted(() => {
   const calls: string[] = [];
   const frames: string[] = [];
+  let coreDatabase: Context.Service<{ readonly executor: object }, { readonly executor: object }> | undefined;
   return {
     calls,
+    /** The one Core client tag both mocks share; created on first use, once the mock factories run. */
+    coreDatabase: () => {
+      coreDatabase ??= Context.Service<{ readonly executor: object }>('PreproposalContextTest/CoreDatabase');
+      return coreDatabase;
+    },
     database: `ontos_test_party_gateway_${'a'.repeat(32)}`,
     frames,
+    /** The calling modules the identity child asks the platform to provision, and their platform principals. */
+    modules: [
+      ['catalog', '77777777-7777-4777-8777-777777777777'],
+      ['commerce-customer-context', '33333333-3333-4333-8333-333333333333'],
+      ['commerce-market-catalog', '66666666-6666-4666-8666-666666666666'],
+      ['pricing', '44444444-4444-4444-8444-444444444444'],
+    ] as const,
     principalId: '11111111-1111-4111-8111-111111111111',
     tenantId: '22222222-2222-4222-8222-222222222222',
   };
 });
 
+rs.mock('@app/core-runtime/db/client', () => ({ CoreDatabase: fixture.coreDatabase() }));
+rs.mock('@app/core-runtime/auth/module-credentials', () => ({
+  loadModuleCredentialEnrolment: () =>
+    Effect.sync(() => {
+      fixture.calls.push('load-module-credential-enrolment');
+      return fixture.modules.map(([appId, principalId]) => ({
+        appId,
+        authBindingId: '99999999-9999-4999-8999-999999999999',
+        boundAt: new Date(0),
+        principalId,
+        providerKeyId: `fixture-${appId}-provider-key`,
+      }));
+    }),
+}));
+rs.mock('../../api/auth/module-credential-provisioning.service.ts', () => ({
+  provisionModuleCredentials: ({
+    appIds,
+    release,
+  }: {
+    readonly appIds: readonly string[];
+    readonly release: { readonly compositionRevision: string };
+  }) =>
+    Effect.sync(() => {
+      expect(appIds).toEqual(fixture.modules.map(([appId]) => appId));
+      expect(release.compositionRevision).toBe('a'.repeat(64));
+      fixture.calls.push('provision-module-credentials');
+      return {
+        credentials: new Map(appIds.map((appId) => [appId, Redacted.make(`inert-${appId}-key`)] as const)),
+        failedAppIds: [],
+        providerKeyIds: new Set(appIds.map((appId) => `fixture-${appId}-provider-key`)),
+      };
+    }),
+}));
 rs.mock('@app/core-runtime', () => {
   const actionRuntime = Context.Service<object>('PreproposalContextTest/ActionRuntime');
   const legalEntityContext = Context.Service<object>('PreproposalContextTest/LegalEntityContext');
@@ -36,7 +82,8 @@ rs.mock('@app/core-runtime', () => {
   return {
     ActionRuntime: actionRuntime,
     ContextAccessLive: Layer.empty,
-    CorePersistenceLive: Layer.empty,
+    // Core persistence provides the one CoreDatabase the identity child reads.
+    CorePersistenceLive: Layer.succeed(fixture.coreDatabase(), { executor: {} }),
     DatabaseConfig: Context.Service<object>('PreproposalContextTest/DatabaseConfig'),
     defineDatabaseIdentityEnrollment: () => ({}),
     LegalEntityContext: legalEntityContext,
@@ -95,6 +142,11 @@ rs.mock('@app/core-runtime/actions/runtime-wiring', () => ({
   ModuleEntrypointGatewayLive: Layer.empty,
   ModuleStateGateLive: Layer.empty,
   OperationalScopeResolverLive: Layer.empty,
+}));
+rs.mock('../../api/modules/installed-module-catalog.ts', () => ({
+  // The release the fixture's composition serves; the platform attests each module credential for it.
+  installedModuleCatalog: Effect.succeed({ composition: { revision: 'a'.repeat(64) }, contracts: [] }),
+  ShellInstalledModuleCatalogLive: Layer.empty,
 }));
 rs.mock('@app/core-runtime/modules/active-application-composition', () => ({
   ActiveApplicationCompositionConfigLive: Layer.empty,
@@ -174,9 +226,9 @@ rs.mock('../../api/auth/service.ts', () => ({
       }),
     ),
 }));
-rs.mock('../../api/auth/api-key-service.ts', () => ({ makeApiKeyService: () => Effect.succeed({}) }));
 rs.mock('../support/shell-authentication.ts', () => ({ shellAuthenticationFrameworkLive: () => Layer.empty }));
 rs.mock('../../api/auth/api-key-service.ts', () => ({
+  ApiKeyService: Context.Service<object>('PreproposalContextTest/ApiKeyService'),
   makeApiKeyService: () =>
     Effect.succeed({
       verify: (rawKey) =>
@@ -185,41 +237,21 @@ rs.mock('../../api/auth/api-key-service.ts', () => ({
             fixture.calls.push('verify-buyer-key');
             return { providerKeyId: 'fixture-buyer-provider-key' };
           }
-          const service = /^inert-(?<name>[a-z-]+)-key$/u.exec(rawKey)?.groups?.['name'];
-          expect(service).toBeDefined();
-          fixture.calls.push(`verify-${service}-key`);
-          return { providerKeyId: `fixture-${service}-provider-key` };
+          // No module key is ever verified here: the platform issued and bound them.
+          return expect.unreachable(`unexpected key verification for ${rawKey.length} characters`);
         }),
     } satisfies Pick<ApiKeyServiceContract, 'verify'>),
 }));
 
 rs.mock('../../api/auth/identity-lifecycle.ts', () => ({
   makeIdentityLifecycleService: () => ({
-    createNonHumanPrincipal: ({ payload }: { payload: { displayName: string } }) =>
-      requireCommandContext('create').pipe(
-        Effect.map(() => {
-          if (payload.displayName.endsWith('ccc-reader')) {
-            return { principalId: '33333333-3333-4333-8333-333333333333' };
-          }
-          if (payload.displayName.endsWith('pricing-issuer')) {
-            return { principalId: '44444444-4444-4444-8444-444444444444' };
-          }
-          if (payload.displayName.endsWith('catalog')) {
-            return { principalId: '77777777-7777-4777-8777-777777777777' };
-          }
-          return { principalId: '66666666-6666-4666-8666-666666666666' };
-        }),
-      ),
     issue: ({ managedPrincipalId, name }: Parameters<IdentityLifecycleService['issue']>[0]) =>
       requireCommandContext('issue').pipe(
         Effect.andThen(
           Effect.sync(() => {
-            if (name === 'Preproposal original buyer') {
-              expect(managedPrincipalId).toBeUndefined();
-            } else {
-              expect(managedPrincipalId).not.toBe(fixture.principalId);
-              expect(managedPrincipalId).toBeDefined();
-            }
+            // Only the buyer's own key is issued through the identity lifecycle.
+            expect(name).toBe('Preproposal original buyer');
+            expect(managedPrincipalId).toBeUndefined();
             return {
               authBindingId: '55555555-5555-4555-8555-555555555555',
               cleanupPending: false,
@@ -270,7 +302,7 @@ rs.mock('@effect/platform-node', () => ({
   },
 }));
 
-it.effect('retains the supported staff registry in the runtime used by both identity lifecycle commands', () =>
+it.effect('retains the staff registry for the buyer and asks the platform for every calling module credential', () =>
   Effect.gen(function* actualFixtureContext() {
     fixture.calls.length = 0;
     fixture.frames.length = 0;
@@ -280,31 +312,18 @@ it.effect('retains the supported staff registry in the runtime used by both iden
       'issue',
       'verify-buyer-key',
       'resolve-buyer-binding',
-      'create',
-      'issue',
-      'verify-ccc-reader-key',
-      'create',
-      'issue',
-      'verify-pricing-issuer-key',
-      'create',
-      'issue',
-      'verify-catalog-key',
-      'create',
-      'issue',
-      'verify-market-relay-key',
+      'provision-module-credentials',
+      'load-module-credential-enrolment',
     ]);
     expect(fixture.frames).toHaveLength(3);
     expect(fixture.frames[1]).toContain('SERVICE_KEYS_CREATED');
     expect(fixture.frames[1]).toContain(
       `"buyer":{"authBindingId":"55555555-5555-4555-8555-555555555555","principalId":"${fixture.principalId}"`,
     );
-    for (const service of ['ccc-reader', 'pricing-issuer', 'catalog', 'market-relay']) {
-      expect(fixture.frames[1]).toContain(`fixture-${service}-provider-key`);
+    for (const [appId, principalId] of fixture.modules) {
+      expect(fixture.frames[1]).toContain(`fixture-${appId}-provider-key`);
+      expect(fixture.frames[1]).toContain(principalId);
     }
-    expect(fixture.frames[1]).toContain('33333333-3333-4333-8333-333333333333');
-    expect(fixture.frames[1]).toContain('44444444-4444-4444-8444-444444444444');
-    expect(fixture.frames[1]).toContain('77777777-7777-4777-8777-777777777777');
-    expect(fixture.frames[1]).toContain('66666666-6666-4666-8666-666666666666');
   }).pipe(
     Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer, FetchHttpClient.layer)),
     Effect.provideService(
@@ -327,6 +346,9 @@ it.effect('retains the supported staff registry in the runtime used by both iden
 // modules they replaced, so the next file evaluates the real implementations.
 afterAll(() => {
   rs.doUnmock('@app/core-runtime');
+  rs.doUnmock('@app/core-runtime/db/client');
+  rs.doUnmock('@app/core-runtime/auth/module-credentials');
+  rs.doUnmock('../../api/auth/module-credential-provisioning.service.ts');
   rs.doUnmock('@app/core-runtime/actions/runtime-wiring');
   rs.doUnmock('@app/core-runtime/modules/active-application-composition');
   rs.doUnmock('@app/core-runtime/modules/active-application-composition-source');

@@ -206,12 +206,18 @@ export const bundleMarketRevisionNativeChild = Effect.fn('MarketRevisionNativeLa
     }
     const artifact = `${temporary}/owner.mjs`;
     const identity = yield* resolveOwnerBuildIdentity(directory);
+    // The child holds Market's key in the same credential store copy its owner code reads through the external
+    // `@app/core-runtime`: the store stays an external file, never a second inlined copy nobody reads.
+    const credentialStore = yield* fs.realPath(
+      path.join(workspaceRoot, 'packages/core-runtime/src/auth/hosted-module-credential-store.ts'),
+    );
     yield* runBundle([
       'tests/support/market-revision-native-child.ts',
       '--bundle',
       '--platform=node',
       '--format=esm',
       '--packages=external',
+      `--external:${credentialStore}`,
       ...aliases,
       `--define:ULTRAMODERN_BUILD_MARKER=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(identity.buildMarker)}`,
       `--define:ULTRAMODERN_SOURCE_REVISION=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(identity.sourceRevision)}`,

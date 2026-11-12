@@ -55,6 +55,7 @@ export const commerceSourceProcessingEligibilityLive = Layer.effect(
           const response = yield* acquireDelegatedGatewayContext(
             {
               audience: 'privacy',
+              callingAppId: 'commerce-customer-context',
               legalEntityScope: 'subject',
               requestCorrelation: scope.correlationId,
               subject: commerceSourceDelegationSubject(

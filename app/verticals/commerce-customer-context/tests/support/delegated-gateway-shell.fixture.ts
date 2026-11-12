@@ -2,18 +2,21 @@ import { GatewayDelegatedContextRequestSchema, shellGatewayContextContract } fro
 import { ConfigProvider, Effect, Match, Schema } from 'effect';
 import { HttpServerRequest, HttpServerResponse } from 'effect/http';
 
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
+
 /** The Shell route the delegated client calls. Fixtures serve it on their own origin. */
 export const delegatedGatewayRoute = shellGatewayContextContract.issueDelegatedGatewayContextPath;
 
-/**
- * Caller-side configuration of the delegated client: this deployment's module key, and the Shell base
- * URL the client prepends to the delegated route.
- */
+/** Caller-side configuration of the delegated client: the Shell base URL it prepends to the delegated route. */
 export const delegatedGatewayConfiguration = (shellOrigin: URL) =>
   ConfigProvider.fromUnknown({
-    ONTOS_GATEWAY_MODULE_API_KEY: 'fixture-module-api-key',
     ONTOS_SHELL_GATEWAY_BASE_URL: new URL(shellGatewayContextContract.apiPrefix, shellOrigin).toString(),
   });
+
+/** The calling module's own key, handed over the way the host does; the fixture Shell admits any key. */
+export const holdDelegatedCallerKey = holdTestModuleCredentials({
+  'commerce-customer-context': 'fixture-module-api-key',
+});
 
 export interface DelegatedGatewayGrant {
   /** Relative path the Shell returns. The client resolves it against the Shell base URL. */

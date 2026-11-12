@@ -161,6 +161,7 @@ export const PurchaseApprovalFinalBindingAuthorityLive = Layer.effect(
       const assertion = yield* acquireDelegatedGatewayContext(
         {
           audience: 'commerce-order',
+          callingAppId: 'commerce-customer-context',
           legalEntityScope: 'subject',
           requestCorrelation: correlation,
           subject: { _tag: 'Assertion', scope },

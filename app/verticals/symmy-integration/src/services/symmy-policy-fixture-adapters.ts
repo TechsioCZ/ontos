@@ -112,7 +112,7 @@ const makePolicyFixtureAdapter = (
         ? baseSubject
         : { ...baseSubject, expectedPrincipalId: input.originalExecutorPrincipalId };
     const gateway = yield* acquireDelegatedGatewayContext(
-      { audience, legalEntityScope: 'subject', requestCorrelation, subject },
+      { audience, callingAppId: 'symmy-integration', legalEntityScope: 'subject', requestCorrelation, subject },
       crypto,
     ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
     const machine = 'machineContext' in gateway ? gateway.machineContext : undefined;

@@ -1,6 +1,7 @@
 import { attestNativeOutboxClaim, prepareNativeOutboxClaimAdmission } from './worker-runtime-binding.ts';
 import { and, asc, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
+import type { SQL } from 'drizzle-orm';
 import { Context, Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { isSqlError } from 'effect/sql/SqlError';
 
@@ -152,6 +153,26 @@ const dueDelivery = (now: Date) =>
     and(eq(outboxDeliveries.status, 'processing'), lte(outboxDeliveries.claimExpiresAt, now)),
   );
 
+/**
+ * Each worker's intrinsic providers are active for the message's tenant. The claim and its idle probe share this, so a
+ * delivery held back by an inactive provider is not work: it neither makes every poll take the fence nor is claimed.
+ */
+const intrinsicProvidersActive = (
+  registrations: readonly AnyOutboxWorkerRegistration[],
+  intrinsic: ReadonlyMap<string, readonly string[]>,
+) =>
+  or(
+    ...registrations.map((registration) =>
+      and(
+        eq(outboxDeliveries.workerKey, registration.descriptor.workerKey),
+        ...(intrinsic.get(registration.descriptor.consumerModuleKey) ?? []).map(
+          (provider) =>
+            sql`exists (select 1 from ${tenantModuleStates} where ${tenantModuleStates.tenantId} = ${outboxMessages.tenantId} and ${tenantModuleStates.moduleKey} = ${provider} and ${tenantModuleStates.state} = 'active')`,
+        ),
+      ),
+    ),
+  );
+
 const probeFailure = <Value, Failure, Requirements>(effect: Effect.Effect<Value, Failure, Requirements>) =>
   effect.pipe(
     Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
@@ -159,20 +180,28 @@ const probeFailure = <Value, Failure, Requirements>(effect: Effect.Effect<Value,
   );
 
 /**
- * Whether any of these workers' deliveries could be claimed now. It reads committed rows without the composition fence,
- * so an idle poll costs this one statement instead of a fenced transaction. It only decides whether to attempt a claim:
- * it is a superset of the claim's candidates (the claim also requires each intrinsic provider to be active), and every
- * claim still takes the fence, admits the revision and re-checks every predicate under its row lock. A delivery that
- * becomes due after the probe is claimed by the next poll.
+ * Whether any of these admitted workers' deliveries could be claimed now. It reads committed rows without the
+ * composition fence, so an idle poll costs this one statement instead of a fenced transaction. It asks exactly the
+ * claim's question without its row lock and order: a delivery the claim would refuse (an inactive tenant, consumer or
+ * intrinsic provider) must not keep every poll on the fenced path. Every claim still takes the fence, admits the
+ * revision and re-checks every predicate under its row lock. A delivery that becomes due after the probe is claimed by
+ * the next poll.
  */
 const hasDueDelivery = Effect.fnUntraced(
-  function* hasDueDelivery(executor: CoreDbExecutor, workerKeys: readonly string[], now: Date) {
+  function* hasDueDelivery(
+    executor: CoreDbExecutor,
+    claimable: SQL | undefined,
+    workerKeys: readonly string[],
+    now: Date,
+  ) {
     const rows = yield* executor
       .select({ deliveryId: outboxDeliveries.outboxDeliveryId })
       .from(outboxDeliveries)
       .innerJoin(outboxMessages, eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId))
       .innerJoin(tenantModuleStates, backgroundEligibleConsumer)
-      .where(and(inArray(outboxDeliveries.workerKey, [...workerKeys]), activeMessageTenant, dueDelivery(now)))
+      .where(
+        and(inArray(outboxDeliveries.workerKey, [...workerKeys]), claimable, activeMessageTenant, dueDelivery(now)),
+      )
       .limit(1);
     return rows.length > 0;
   },
@@ -271,7 +300,8 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
               }),
           ),
         );
-        if (!(yield* hasDueDelivery(executor, [...byWorkerKey.keys()], now))) {
+        const claimable = intrinsicProvidersActive(registrations, admission.intrinsic);
+        if (!(yield* hasDueDelivery(executor, claimable, [...byWorkerKey.keys()], now))) {
           return Option.none<OutboxClaim>();
         }
         return yield* executor
@@ -301,17 +331,7 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
                 .where(
                   and(
                     inArray(outboxDeliveries.workerKey, [...byWorkerKey.keys()]),
-                    or(
-                      ...registrations.map((registration) =>
-                        and(
-                          eq(outboxDeliveries.workerKey, registration.descriptor.workerKey),
-                          ...(admission.intrinsic.get(registration.descriptor.consumerModuleKey) ?? []).map(
-                            (provider) =>
-                              sql`exists (select 1 from ${tenantModuleStates} where ${tenantModuleStates.tenantId} = ${outboxMessages.tenantId} and ${tenantModuleStates.moduleKey} = ${provider} and ${tenantModuleStates.state} = 'active')`,
-                          ),
-                        ),
-                      ),
-                    ),
+                    claimable,
                     activeMessageTenant,
                     dueDelivery(now),
                   ),
@@ -325,6 +345,11 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
                 .for('update', { skipLocked: true });
               const [candidate] = candidates;
               if (candidate === undefined) {
+                // The probe saw due work the locked claim did not get: another claimer holds it, or the two
+                // questions drifted apart. Either way this poll paid for the fence; name the workers.
+                yield* Effect.annotateLogs(Effect.logWarning('Outbox claim found no delivery the probe saw due'), {
+                  workerKeys: [...byWorkerKey.keys()].join(','),
+                });
                 return Option.none();
               }
               const registration = byWorkerKey.get(candidate.workerKey);

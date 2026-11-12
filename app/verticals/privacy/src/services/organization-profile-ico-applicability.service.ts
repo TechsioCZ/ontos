@@ -190,6 +190,7 @@ const publicOwnerFacts = Effect.fn('Privacy.organizationProfileIcoPublicOwnerFac
   const issued = yield* acquireDelegatedGatewayContext(
     {
       audience: 'commerce-customer-context',
+      callingAppId: 'privacy',
       legalEntityScope: 'subject',
       requestCorrelation: scope.correlationId,
       subject:

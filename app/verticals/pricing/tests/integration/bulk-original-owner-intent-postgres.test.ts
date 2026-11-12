@@ -1,5 +1,6 @@
 import { Hex } from 'effect/encoding';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { pricingRegistration } from '../../vertical.registration.ts';
 import { pricingManifest } from '../../vertical.manifest.ts';
 // @effect-diagnostics strictEffectProvide:off -- Integration test entrypoint composes its layers once; expires: 2027-03-31.
@@ -1328,9 +1329,10 @@ const makeRegisteredBulkHttp = Effect.fn('BulkOriginalIntent.makeRegisteredHttp'
     }),
   );
   const shellAddress = yield* Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Int }))(shell.address);
+  // Pricing's own module key, handed over the way the host does.
+  yield* holdTestModuleCredentials({ pricing: 'pricing-module-api-key-1278' });
   const callerShell = ConfigProvider.layerAdd(
     ConfigProvider.fromUnknown({
-      ONTOS_GATEWAY_MODULE_API_KEY: 'pricing-module-api-key-1278',
       ONTOS_SHELL_GATEWAY_BASE_URL: new URL(
         shellGatewayContextContract.apiPrefix,
         `http://127.0.0.1:${shellAddress.port}`,

@@ -34,6 +34,7 @@ const acquire = Effect.fn('Privacy.customerIntakeOrganizationAuthority')(functio
   return yield* acquireDelegatedGatewayContext(
     {
       audience,
+      callingAppId: 'privacy',
       legalEntityScope: 'subject',
       requestCorrelation: scope.correlationId,
       subject: { _tag: 'Assertion', scope },

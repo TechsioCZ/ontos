@@ -30,11 +30,7 @@ import { makeLiveOperationFixture, makeLiveOperationFixtureRuntime } from '@app/
 import { privacyRegistration } from '../../vertical.registration.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
-import {
-  grantTestTenantOwnerAccess,
-  liveFixtureSpiceDb,
-  markServicePrincipal,
-} from '@app/core-runtime/testing/tenant-access';
+import { grantTestTenantOwnerAccess, liveFixtureSpiceDb } from '@app/core-runtime/testing/tenant-access';
 import { CreatePartyPayloadSchema, partyRegistryApiContract } from '@app/party-registry/api';
 import {
   createPartyWithAuthorization,
@@ -49,8 +45,7 @@ import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-
 import { shellGatewayContextContract } from '@app/shared-contracts';
 import type { GatewayContextRequestSchema } from '@app/shared-contracts';
 import {
-  ShellNativeRelaySourceBoundCommandSchema,
-  ShellNativeRelaySourceIssueCommandSchema,
+  ShellNativeRelaySourceProvisionCommandSchema,
   ShellNativeSessionGatewayCommandSchema,
   ShellNativeSessionGatewayResponseSchema,
 } from '@app/shell-super-app/testing/api-key-gateway-native';
@@ -104,6 +99,10 @@ import { Socket } from 'effect/socket';
 import { expect, it } from 'effect-rstest';
 import { base64url, exportJWK, generateKeyPair } from 'jose';
 
+import {
+  encodeModuleCredentialHandover,
+  MODULE_CREDENTIAL_HANDOVER_VARIABLE,
+} from '../../../../scripts/zerops/module-credentials.mts';
 import { requireExecutedAction, requireExecutionResult } from '../support/action-execution-result.ts';
 import {
   RetainedConsentAccountTransportSchema,
@@ -232,7 +231,7 @@ const accountReadySchema = Schema.Struct({
 const shellReadySchema = Schema.Struct({
   baseUrl: Schema.String,
   providerUserId: ProviderSubjectIdSchema,
-  relaySourceProviderUserId: ProviderSubjectIdSchema,
+  readerProviderUserId: ProviderSubjectIdSchema,
 });
 const enrolledReplySchema = Schema.TaggedStruct('enrolled', {
   attemptId: uuid.pipe(Schema.brand('EnrollmentAttemptId')),
@@ -401,8 +400,15 @@ const issuedReplySchema = Schema.TaggedStruct('issued', {
   secret: Schema.RedactedFromValue(Schema.String),
 });
 const ackReplySchema = Schema.TaggedStruct('ack', {});
+/** Commerce's module credential as the platform provisioned it: its service principal, key id and key. */
+const provisionedReplySchema = Schema.TaggedStruct('provisioned', {
+  principalId: uuid.pipe(Schema.brand('PrincipalId')),
+  providerKeyId: ProviderSubjectIdSchema,
+  secret: Schema.RedactedFromValue(Schema.String),
+});
 const shellReplySchema = Schema.Union([
   issuedReplySchema,
+  provisionedReplySchema,
   ackReplySchema,
   ShellNativeSessionGatewayResponseSchema,
   Schema.TaggedStruct('unavailable', {}),
@@ -421,8 +427,7 @@ const ownerControlCommandSchema = Schema.Union([
     tenantId: uuid.pipe(Schema.brand('TenantId')),
   }),
   Schema.TaggedStruct('bound', {}),
-  ShellNativeRelaySourceIssueCommandSchema,
-  ShellNativeRelaySourceBoundCommandSchema,
+  ShellNativeRelaySourceProvisionCommandSchema,
   Schema.TaggedStruct('enroll', {
     authorization: Schema.RedactedFromValue(Schema.String),
     partyRef: nonempty.pipe(Schema.brand('EnrollmentResourceId')),
@@ -783,6 +788,12 @@ const resolvePublishedOwnerEntry = Effect.fn('RetainedAccount.resolvePublishedEn
     return { entry, ownerRoot };
   },
 );
+/**
+ * The credential store stays an external file in every owner bundle: owner code reads it through the external
+ * `@app/core-runtime`, so an inlined second copy would hold a handed-over key where nobody reads it.
+ */
+const credentialStoreOf = (fs: FileSystem.FileSystem) =>
+  fs.realPath(`${appRoot}packages/core-runtime/src/auth/hosted-module-credential-store.ts`);
 const bundleOwner = Effect.fn('RetainedAccount.bundleOwner')(function* bundleOwner(
   specifier: string,
   identity: OwnerBuildIdentity,
@@ -807,6 +818,7 @@ const bundleOwner = Effect.fn('RetainedAccount.bundleOwner')(function* bundleOwn
     '--platform=node',
     '--format=esm',
     '--packages=external',
+    `--external:${yield* credentialStoreOf(fs)}`,
     ...(yield* ownerBuildDefines(identity)),
     `--define:import.meta.url=${originalUrl}`,
     `--outfile=${artifact}`,
@@ -827,10 +839,25 @@ const bundlePublishedWorker = Effect.fn('RetainedAccount.bundlePublishedWorker')
   yield* fs.symlink(path.join(ownerRoot, 'node_modules'), path.join(directory, 'node_modules'));
   const source = path.join(directory, 'worker.ts');
   const artifact = path.join(directory, 'worker.mjs');
+  const moduleCredentials = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(
+    path.join(appRoot, 'scripts/zerops/module-credentials.mts'),
+  );
+  // As the Outbox Worker host does: claim the store copy the workers read and take Commerce's key from the private
+  // channel before any worker runs.
   yield* fs.writeFileString(
     source,
-    `import { startOutboxWorkerHost } from '@app/core-runtime/outbox/worker';
+    `import { Effect, Scope } from 'effect';
+import { startOutboxWorkerHost } from '@app/core-runtime/outbox/worker';
 import { outboxWorkerEntry } from '@app/commerce-customer-context/outbox-worker-host';
+import { holdOwnStoreCopy, receiveModuleCredentialHandover } from ${moduleCredentials};
+const owners = ['commerce-customer-context'];
+// The scope stays open for the process's life, so the channel is read until the launcher closes it.
+Effect.runFork(
+  receiveModuleCredentialHandover(owners).pipe(
+    Effect.flatMap((holders) => holdOwnStoreCopy(holders, owners)),
+    Scope.provide(Scope.makeUnsafe()),
+  ),
+);
 startOutboxWorkerHost({ entries: [outboxWorkerEntry], health: true });
 `,
   );
@@ -843,6 +870,7 @@ startOutboxWorkerHost({ entries: [outboxWorkerEntry], health: true });
     '--platform=node',
     '--format=esm',
     '--packages=external',
+    `--external:${yield* credentialStoreOf(fs)}`,
     ...(yield* ownerBuildDefines(identity)),
     `--alias:${specifier}=${entry}`,
     `--outfile=${artifact}`,
@@ -901,6 +929,8 @@ const openRetainedPrivateChannel = Effect.fn('RetainedAccount.privateChannel')(f
 const startOwner = Effect.fn('RetainedAccount.startOwner')(function* startOwner(
   artifact: string,
   environment: Readonly<Record<string, string>>,
+  /** One module credential handover line, delivered on the child's private channel (fd 3) as a host delivers it. */
+  credentialHandover?: Uint8Array,
 ) {
   const channel = yield* openRetainedPrivateChannel();
   const transport = yield* Config.all({
@@ -909,7 +939,14 @@ const startOwner = Effect.fn('RetainedAccount.startOwner')(function* startOwner(
     SPICEDB_ENDPOINT: Config.String('SPICEDB_ENDPOINT'),
     SPICEDB_PRESHARED_KEY: Config.Redacted('SPICEDB_PRESHARED_KEY'),
   });
+  let handoverEnvironment = {};
+  const additionalFds: Record<`fd${number}`, ChildProcess.AdditionalFdConfig> = {};
+  if (credentialHandover !== undefined) {
+    handoverEnvironment = { [MODULE_CREDENTIAL_HANDOVER_VARIABLE]: 'fd3' };
+    additionalFds.fd3 = { stream: Stream.make(credentialHandover), type: 'input' };
+  }
   const child = yield* ChildProcess.make(process.execPath, [artifact], {
+    additionalFds,
     cwd: appRoot,
     env: {
       PATH: transport.PATH,
@@ -917,6 +954,7 @@ const startOwner = Effect.fn('RetainedAccount.startOwner')(function* startOwner(
       SPICEDB_ENDPOINT: transport.SPICEDB_ENDPOINT,
       SPICEDB_PRESHARED_KEY: Redacted.value(transport.SPICEDB_PRESHARED_KEY),
       ...environment,
+      ...handoverEnvironment,
       APP_ENV_PATH: '/dev/null',
       ONTOS_RETAINED_CONSENT_SOCKET: channel.socketPath,
       ONTOS_SHELL_NATIVE_SOCKET: channel.socketPath,
@@ -959,7 +997,14 @@ const startOwner = Effect.fn('RetainedAccount.startOwner')(function* startOwner(
 const firstLine = Effect.fn('RetainedAccount.firstLine')(function* firstLine(
   stream: Stream.Stream<Uint8Array, unknown>,
 ) {
-  const line = yield* Stream.runHead(stream.pipe(Stream.decodeText(), Stream.splitLines)).pipe(
+  // A process that receives module credentials reports each handover on stdout; it is not a readiness line.
+  const line = yield* Stream.runHead(
+    stream.pipe(
+      Stream.decodeText(),
+      Stream.splitLines,
+      Stream.filter((text) => !text.startsWith('[module-credentials]')),
+    ),
+  ).pipe(
     Effect.timeoutOrElse({ duration: '20 seconds', orElse: () => Effect.fail(failed('deadline')) }),
     Effect.mapError(() => failed('owner-readiness')),
   );
@@ -996,8 +1041,7 @@ const privateExchange = <A, I>(
         Match.tag('observe-binding', () => knownFailure.success.command === 'observe-binding'),
         Match.tag('issue', () => false),
         Match.tag('bound', () => false),
-        Match.tag('relay-source-issue', () => false),
-        Match.tag('relay-source-bound', () => false),
+        Match.tag('relay-source-provision', () => false),
         Match.tag('session-gateway', () => false),
         Match.exhaustive,
       );
@@ -1457,7 +1501,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       managerProvisioningNamespaces: [COMMERCE_AUTHENTICATION_NAMESPACE_ID],
       moduleAccess: 'configured-modules',
       moduleKeys: ['core.identity', 'commerce.customer-context', 'party.registry', 'privacy.core'],
-      readerProviderSubjectId: bootstrapReady.relaySourceProviderUserId,
+      readerProviderSubjectId: bootstrapReady.readerProviderUserId,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (value) => value.close().pipe(Effect.orDie),
@@ -1555,39 +1599,16 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     }),
     (value) => value.close().pipe(Effect.orDie),
   );
-  // The fixture reader becomes Commerce's service principal: it binds the module key, then is marked service.
-  const commerceModule = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(fixture.reader);
+  // Commerce's module credential, provisioned by the platform as on every environment.
   const moduleIssued = yield* privateExchange(
     shellReplySchema,
     nativeClock,
     bootstrap,
-    yield* Schema.decodeUnknownEffect(Schema.toType(ownerControlCommandSchema))({
-      _tag: 'relay-source-issue',
-      principalId: commerceModule.principalId,
-      tenantId: commerceModule.tenantId,
-    }),
+    yield* Schema.decodeUnknownEffect(Schema.toType(ownerControlCommandSchema))({ _tag: 'relay-source-provision' }),
   );
-  if (!Schema.is(issuedReplySchema)(moduleIssued)) {
+  if (!Schema.is(provisionedReplySchema)(moduleIssued)) {
     return yield* failed('commerce-module-key');
   }
-  yield* action
-    .runAction({
-      payload: { providerSubjectId: moduleIssued.providerKeyId },
-      principal: commerceModule,
-      registration: bindSelfApiKeyAction,
-      transport: { correlationId: `retained-module-bind:${suffix}`, idempotencyKey: `retained-module-bind:${suffix}` },
-    })
-    .pipe(Effect.provideContext(context));
-  yield* coreEvidenceExecutor.execute(
-    markServicePrincipal({ principalId: commerceModule.principalId, tenantId: commerceModule.tenantId }),
-  );
-  const moduleBound = yield* privateExchange(shellReplySchema, nativeClock, bootstrap, { _tag: 'relay-source-bound' });
-  if (!Schema.is(ackReplySchema)(moduleBound)) {
-    return yield* failed('commerce-module-key-binding');
-  }
-  const gatewayModuleBindings = JSON.stringify([
-    { ...commerceModuleSource, providerKeyId: moduleIssued.providerKeyId },
-  ]);
   const party = yield* startOwner(partyArtifact, {
     ...environment,
     PARTY_REGISTRY_DATABASE_URL: nativeIdentityUrls.PARTY_REGISTRY_DATABASE_URL,
@@ -1616,9 +1637,6 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
         gatewayApiKey: Redacted.value(issued.secret),
       },
     }),
-    // Commerce's own module credential, which the Shell attests to Commerce's release: the Ensure Action reads
-    // the Party through delegated gateway context before its transaction.
-    ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(moduleIssued.secret),
     ONTOS_RETAINED_CONSENT_SERVER_SCOPE: JSON.stringify({
       compositionRevision: initialSnapshot.composition.revision,
       legalEntityId: fixture.legalEntityId,
@@ -1648,7 +1666,13 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   }
   expect(accountDescription.marker).toEqual(accountContract.deployment);
   expect(accountDescription.subscriptions).toEqual(accountContract.runtime.outboxSubscriptions);
-  const account = yield* startOwner(accountArtifact, commerceEnvironment);
+  // Commerce's own module credential, which the Shell attests to Commerce's release: the Ensure Action reads the
+  // Party through delegated gateway context before its transaction. It reaches Commerce only over its private channel.
+  const commerceCredentialHandover = yield* encodeModuleCredentialHandover(
+    { 'commerce-customer-context': moduleIssued.secret },
+    ['commerce-customer-context'],
+  );
+  const account = yield* startOwner(accountArtifact, commerceEnvironment, commerceCredentialHandover);
   const accountReady = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(accountReadySchema))(
     yield* firstLine(account.child.stdout),
   );
@@ -1676,7 +1700,6 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       grants,
       providerEndpointAudience: 'commerce-customer-context',
     }),
-    ONTOS_GATEWAY_MODULE_BINDINGS: gatewayModuleBindings,
     SHELL_GATEWAY_ISSUER_DATABASE_URL: nativeIdentityUrls.SHELL_GATEWAY_ISSUER_DATABASE_URL,
   });
   const shellReady = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(readySchema))(
@@ -1687,7 +1710,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   yield* Ref.set(coreRoute.target, Option.some(`http://127.0.0.1:${shellReady.port}`));
   yield* Ref.set(commerceRoute.target, Option.some(accountReady.baseUrl));
   yield* Ref.set(partyRoute.target, Option.some(`http://127.0.0.1:${partyReady.port}`));
-  const worker = yield* startOwner(workerArtifact, commerceEnvironment);
+  const worker = yield* startOwner(workerArtifact, commerceEnvironment, commerceCredentialHandover);
   yield* Effect.forkScoped(Stream.runDrain(worker.child.stdout));
   const issueManagerSessionGateway = Effect.fn('RetainedAccount.managerSessionGateway')(function* managerSessionGateway(
     request: typeof GatewayContextRequestSchema.Encoded,

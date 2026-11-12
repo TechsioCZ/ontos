@@ -60,7 +60,13 @@ export const symmyJobPrivacyService = () =>
           source: { _tag: 'Assertion' as const, scope },
         };
         const credential = yield* acquireDelegatedGatewayContext(
-          { audience: 'privacy', legalEntityScope: 'subject', requestCorrelation: scope.correlationId, subject },
+          {
+            audience: 'privacy',
+            callingAppId: 'symmy-integration',
+            legalEntityScope: 'subject',
+            requestCorrelation: scope.correlationId,
+            subject,
+          },
           crypto,
         ).pipe(Effect.mapError(unavailable));
         return yield* executeMeasureExecutionEligibilityWithAuthorization(

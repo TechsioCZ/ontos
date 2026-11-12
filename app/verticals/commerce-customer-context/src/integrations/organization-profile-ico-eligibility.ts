@@ -51,6 +51,7 @@ export const commerceOrganizationProfileIcoEligibilityLive = Layer.effect(
         const issued = yield* acquireDelegatedGatewayContext(
           {
             audience: 'privacy',
+            callingAppId: 'commerce-customer-context',
             legalEntityScope: 'subject',
             requestCorrelation: scope.correlationId,
             subject: commerceSourceDelegationSubject(

@@ -15,6 +15,9 @@ import { executeSymmyJobPrivacyExecutionWithAuthorization } from '../api/symmy-j
 import { symmyJobPrivacyDigest } from './symmy-job-privacy-fingerprint.ts';
 import { SymmyJobPrivacyDispatchError } from './symmy-job-privacy-dispatch-error.ts';
 
+/** Symmy's own app id: the audience of its own dispatch and the module whose credential presents it. */
+const SYMMY_APP_ID = 'symmy-integration';
+
 export interface SymmyJobPrivacyDispatchGatewayService {
   readonly execute: (
     handoff: PrivacyMeasureHandoff,
@@ -79,11 +82,11 @@ const credential = Effect.fn('SymmyJobPrivacyDispatchGateway.credential')(functi
   const source: PrivacyDispatchSubject['source'] = { _tag: 'Worker', context };
   const intent = Match.value(operation).pipe(
     Match.tag('SymmyRetention', (exact): DelegationIntent => ({
-      audience: 'symmy-integration',
+      audience: SYMMY_APP_ID,
       subject: { _tag: 'PrivacyDispatch', operation: exact, source },
     })),
     Match.tag('SymmyReceipt', (exact): DelegationIntent => ({
-      audience: 'symmy-integration',
+      audience: SYMMY_APP_ID,
       subject: { _tag: 'PrivacyDispatch', operation: exact, source },
     })),
     Match.tag('PrivacyOutcome', (exact): DelegationIntent => ({
@@ -101,6 +104,7 @@ const credential = Effect.fn('SymmyJobPrivacyDispatchGateway.credential')(functi
   return yield* acquireDelegatedGatewayContext(
     {
       ...intent,
+      callingAppId: SYMMY_APP_ID,
       legalEntityScope: 'subject',
       requestCorrelation: context.correlationId ?? context.messageId,
     },

@@ -19,6 +19,7 @@ import type { TestAccessDecision, TestAccessDecisionSpec } from '../access/enfor
 import { accessDecisionUnavailable } from '../access/decision/errors.ts';
 import type { AccessDecision } from '../access/decision/contract.ts';
 import { DecisionCheck } from '../access/decision/engine.ts';
+import type { ListAccessResolution } from '../access/decision/engine.ts';
 import { LegalEntityIdSchema } from '../access/ids.ts';
 import type { BoundAccessGate, AccessEnforcementPorts } from '../operations/access-gate.ts';
 import { bindAccessGate } from '../operations/access-gate.ts';
@@ -292,20 +293,23 @@ export const makeTestAccessGateLayers = (options: TestAccessGateScript = {}): Te
     return scopeAccess?.decide(input) ?? scripted.decide(input);
   };
 
+  const listOf = (input: ListGateInput): Effect.Effect<ListAccessResolution> => {
+    if (unavailable) {
+      return Effect.succeed({ decision: scopeDecisionOf('unavailable') });
+    }
+    if (refusedThisCapability(input.scope.principalId)) {
+      // A refusal carries no owner predicate: it never widens into an unfiltered read (O25).
+      return Effect.succeed({ decision: scopeDecisionOf('denied') });
+    }
+    return scripted.list(input);
+  };
+
   // A scripted gate reads no ports, so it states its rebind: a prepared Action authority needs one to prove currentness.
   const gate = withScriptedRebind({
     decide: decideOf,
     decideMany: (input) => Effect.forEach(input, decideOf, { concurrency: 1 }),
-    list: (input: ListGateInput) => {
-      if (unavailable) {
-        return Effect.succeed({ decision: scopeDecisionOf('unavailable') });
-      }
-      if (refusedThisCapability(input.scope.principalId)) {
-        // A refusal carries no owner predicate: it never widens into an unfiltered read (O25).
-        return Effect.succeed({ decision: scopeDecisionOf('denied') });
-      }
-      return scripted.list(input);
-    },
+    list: listOf,
+    listMany: (input: readonly ListGateInput[]) => Effect.forEach(input, listOf, { concurrency: 1 }),
     selectableLegalEntities: (input: SelectableLegalEntitiesInput) => {
       if (unavailable) {
         // An unreadable authority stays a typed failure, so the caller answers a retryable 503.

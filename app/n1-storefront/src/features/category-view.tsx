@@ -35,7 +35,8 @@ export const CategoryView = ({
   const browseTree = useRef<HTMLElement>(null);
   useEffect(() => {
     if (browseOpen) {
-      browseTree.current?.querySelector<HTMLElement>('[role="treeitem"][tabindex="0"]')?.focus();
+      // Native tree branches focus their control, while leaves focus the treeitem.
+      browseTree.current?.querySelector<HTMLElement>('[tabindex="0"]')?.focus();
     }
   }, [browseOpen]);
   const trail = categoryTrail(catalog.categories, slug);

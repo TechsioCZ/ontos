@@ -25,6 +25,9 @@ import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-co
 import { Context, Crypto, Effect, Layer, Option, Schema } from 'effect';
 import { CustomerProfileIcoMigrationRejected } from '../../shared/domain/customer-profile-ico-migration.ts';
 
+/** Delegated calls present this module's own credential. */
+const OWN_APP_ID = 'commerce-customer-context';
+
 const partyAudience = 'party-registry';
 
 type InventoryOptions = Readonly<{
@@ -103,6 +106,7 @@ export const commerceLegacyIcoInventoryLive = Layer.effect(
               const issued = yield* acquireDelegatedGatewayContext(
                 {
                   audience: partyAudience,
+                  callingAppId: OWN_APP_ID,
                   legalEntityScope: 'subject',
                   requestCorrelation: scope.correlationId,
                   subject: commerceSourceDelegationSubject(
@@ -155,6 +159,7 @@ export const commerceLegacyIcoInventoryLive = Layer.effect(
               const issued = yield* acquireDelegatedGatewayContext(
                 {
                   audience: partyAudience,
+                  callingAppId: OWN_APP_ID,
                   legalEntityScope: 'subject',
                   requestCorrelation: scope.correlationId,
                   subject:
@@ -220,6 +225,7 @@ export const commerceLegacyIcoInventoryLive = Layer.effect(
         const response = yield* acquireDelegatedGatewayContext(
           {
             audience: partyAudience,
+            callingAppId: OWN_APP_ID,
             legalEntityScope: 'subject',
             requestCorrelation: scope.correlationId,
             subject:

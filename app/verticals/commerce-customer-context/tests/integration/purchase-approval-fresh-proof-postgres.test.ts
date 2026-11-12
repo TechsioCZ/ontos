@@ -1,3 +1,4 @@
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { consumeOrderPurchaseApprovalAction } from '../../src/actions/consume-order-purchase-approval.action.ts';
 import { ConsumeOrderPurchaseApprovalPayloadSchema } from '../../shared/actions/consume-order-purchase-approval.ts';
 import { CommittedOrderApprovalEvidenceResponseSchema } from '@app/commerce-order-contracts/committed-order-approval-evidence';
@@ -1119,12 +1120,13 @@ it.live(
         const sourceUrl = 'https://composition.order-consumption.test/active';
         const shellUrl = 'https://shell.order-consumption.test';
         const orderUrl = 'https://order.order-consumption.test';
+        // Commerce's own module key, handed over the way the host does.
+        yield* holdTestModuleCredentials({ 'commerce-customer-context': 'test-owned-customer-context-module-key' });
         const environment = ConfigProvider.orElse(
           ConfigProvider.fromUnknown({
             ONTOS_ACTION_TRANSACTION_IO_GUARD: true,
             ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: sourceUrl,
             ONTOS_COMMERCE_ORDER_API_BASE_URL: `${orderUrl}/commerce-order-api`,
-            ONTOS_GATEWAY_MODULE_API_KEY: 'test-owned-customer-context-module-key',
             ONTOS_SHELL_GATEWAY_BASE_URL: `${shellUrl}/shell-super-app-api`,
           }),
           ConfigProvider.fromEnv(),

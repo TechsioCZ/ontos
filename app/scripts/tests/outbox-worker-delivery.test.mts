@@ -154,7 +154,11 @@ const makeFixture = () =>
     yield* Effect.tryPromise(() =>
       writeFile(
         path.join(root, 'scripts/zerops/outbox-host-startup.mts'),
-        'export const startZeropsOutboxHost = () => { throw new Error("Artifact fixtures must never execute email startup"); };\n',
+        [
+          'export const startZeropsOutboxHost = () => { throw new Error("Artifact fixtures must never execute email startup"); };',
+          'export const watchZeropsOutboxHost = undefined;',
+          '',
+        ].join('\n'),
       ),
     );
     // Runtime installs pin transitive versions to the workspace lockfile, so the fixture workspace has one.
@@ -229,6 +233,8 @@ it.live('generates the Outbox Worker host entry that hosts every owner and the C
     const hostEntry = (yield* Effect.tryPromise(() => generateOutboxWorkerHostEntry(root))) ?? '';
     expect(hostEntry).toContain("import { startOutboxWorkerHost } from '@app/core-runtime/outbox/worker';");
     expect(hostEntry).toContain('  startup: startZeropsOutboxHost,\n');
+    // The host stops when its module credential channel can no longer be read.
+    expect(hostEntry).toContain('  watch: watchZeropsOutboxHost,\n');
     expect(hostEntry).not.toContain('startZeropsOutboxHost();');
     expect(hostEntry).toContain(
       "import { outboxWorkerEntry as ledgerOutboxWorkerEntry } from '@app/ledger/outbox-worker-host';",

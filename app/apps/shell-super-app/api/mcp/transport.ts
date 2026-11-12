@@ -22,6 +22,7 @@ import { loadMcpCatalog } from './catalog.ts';
 import { authenticateMcpRequest, connectionPrincipalContext } from './connection.ts';
 import { serveMcp, serveMcpMetadata } from './http.ts';
 import type { McpAuthentication, McpConnectionTools, McpEndpointConfig } from './http.ts';
+import { timedDescription } from './describe-timing.ts';
 import { buildConnectionTools } from './tools.ts';
 import type { McpBackend } from './types.ts';
 import { ModuleUnavailable } from './module-unavailable.ts';
@@ -128,8 +129,8 @@ const authenticate = Effect.fn('Mcp.authenticateRequest')(function* authenticate
     AgentReadRequestIdentity,
     readIdentity.value,
   );
-  const tools = describeConnection(checked.live).pipe(
-    Effect.map(({ catalog, installed, live }): McpConnectionTools => {
+  const tools = timedDescription(describeConnection(checked.live)).pipe(
+    Effect.map(([{ catalog, installed, live }, timing]): McpConnectionTools => {
       const principal = connectionPrincipalContext(live);
       // The caller's own resolved scope: the persisted grant's acting principal, never a scalar identity
       // rebuilt at the call site, so every gate question of this MCP request runs in one trusted scope (O66).
@@ -179,6 +180,7 @@ const authenticate = Effect.fn('Mcp.authenticateRequest')(function* authenticate
       };
       return {
         kind: 'ok',
+        timing,
         tools: buildConnectionTools({
           backend,
           catalog,

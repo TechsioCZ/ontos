@@ -159,7 +159,7 @@ const main = Effect.scoped(
       )({ operation: request.operation, result });
     }).pipe(Effect.provideContext(context));
     // Secret-bearing input and all child output use dedicated private parent IPC, never logs/stdout.
-    yield* Effect.sync(() => writeSync(3, `${line}\n`));
+    yield* Effect.sync(() => writeSync(5, `${line}\n`));
     return yield* Effect.void;
   }),
 ).pipe(

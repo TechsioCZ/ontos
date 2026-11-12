@@ -312,6 +312,7 @@ const cs = {
   parameterValue: "Hodnota",
   passwordRecovery: {
     backToLogin: "Zpět na přihlášení",
+    completedNextStep: "Nyní se přihlaste novým heslem.",
     missingToken: "Pro změnu hesla otevřete odkaz z e-mailu. Pokud již neplatí, vyžádejte si nový.",
     newPassword: "Nové heslo",
     request: "Poslat odkaz pro obnovu hesla",
@@ -323,7 +324,7 @@ const cs = {
     resetHeading: "Obnova hesla",
     resetting: "Ukládáme nové heslo…",
     states: {
-      completed: "Heslo bylo změněné. Nyní se přihlaste novým heslem.",
+      completed: "Heslo bylo změněné.",
       forbidden: "Obnovu hesla nyní nelze provést. Kontaktujte nás prosím.",
       invalid:
         "Zkontrolujte zadané údaje. Nové heslo musí mít 12 až 128 znaků a obě hesla se musí shodovat.",
@@ -754,6 +755,7 @@ const en: typeof cs = {
   parameterValue: "Value",
   passwordRecovery: {
     backToLogin: "Back to sign in",
+    completedNextStep: "Sign in with your new password.",
     missingToken:
       "Open the link in your email to change your password. Request a new link if it has expired.",
     newPassword: "New password",
@@ -766,7 +768,7 @@ const en: typeof cs = {
     resetHeading: "Password recovery",
     resetting: "Saving new password…",
     states: {
-      completed: "Your password has changed. Sign in with your new password.",
+      completed: "Your password has changed.",
       forbidden: "Password recovery cannot be completed right now. Please contact us.",
       invalid:
         "Check your details. Your new password must contain 12 to 128 characters and both passwords must match.",

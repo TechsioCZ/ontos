@@ -43,6 +43,7 @@ import type { TenantIntentLoader } from '../../packages/core-runtime/src/access/
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { loadDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
+import { tenantServesPeople } from '../../packages/core-runtime/src/auth/module-credentials.ts';
 import { accessMemberships, tenants } from '../../packages/core-runtime/src/db/schema.ts';
 import { stageScopeOf } from '../../packages/core-runtime/src/install/stage-context-bootstrap.ts';
 import { parseSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
@@ -253,8 +254,9 @@ export const verifyReleaseAccessWith = <Requirements,>(input: {
   ) => Effect.Effect<{ readonly tuples: number }, ReleaseAccessVerificationError, Requirements>;
 }) =>
   Effect.gen(function* verifyAllTenants() {
+    // The platform tenant serves no person (`tenantServesPeople`): no owner, scope or Role to prove.
     const active = EffectArray.sortWith(
-      input.inventory.tenants.filter(({ status }) => status === 'active'),
+      input.inventory.tenants.filter(({ status, tenantId }) => status === 'active' && tenantServesPeople(tenantId)),
       ({ tenantId }) => tenantId,
       Order.String,
     );

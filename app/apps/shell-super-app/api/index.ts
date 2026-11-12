@@ -15,13 +15,19 @@ import { delegationUnavailable } from './auth/gateway-delegation-errors.ts';
 import { authenticationRequestId } from './auth/observability.ts';
 import { withShellGatewayReleaseDiagnostic } from './auth/gateway-release-diagnostic.ts';
 import { GatewayDelegationVerificationLive } from './auth/gateway-delegation-verification.ts';
+import { gatewayReleaseRefusal } from './auth/gateway-release-refusal.ts';
+import type { GatewayReleaseRefusalHeaders } from './auth/gateway-release-refusal.ts';
 import {
   staffAuthenticationNamespaceRegistration,
   STAFF_AUTHENTICATION_NAMESPACE_ID,
 } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { GatewayDelegationExchangeLedgerLive } from './auth/gateway-delegation-exchanges.service.ts';
 import { issueDelegatedGatewayContextAssertion } from './auth/gateway-delegation-issuer.ts';
-import { admitIntegrationCredential, loadGatewayModuleBindings } from './auth/gateway-delegation-policy.ts';
+import {
+  admitIntegrationCredential,
+  loadGatewayModuleBindings,
+  ModuleCredentialEnrolmentSourceLive,
+} from './auth/gateway-delegation-policy.ts';
 import {
   acquireSymmyRouteScopeProof,
   issueSymmyRouteScopeAssertion,
@@ -187,6 +193,7 @@ import {
 import { AccessPeopleWritesProvenLive } from './access-admin/people-write-gate.ts';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import { dispatchModuleApiRequest } from '../src/module-api/transport.ts';
+import { withRoundTripLog } from './mcp/describe-timing.ts';
 import { mcpRequestIdentityMiddleware } from './mcp/request-identity.ts';
 import { McpEndpointTransportLive } from './mcp/transport.ts';
 import { ShellTransportLive } from './shell-transport.ts';
@@ -2462,7 +2469,9 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
 });
 
 const requireGatewayRelease = Effect.fn('ShellGateway.requireRelease')(function* requireGatewayReleaseEffect(
-  compositionRevision?: string,
+  compositionRevision: string | undefined,
+  /** For a browser-session endpoint: what to log when its document's release is refused. */
+  caller?: { readonly endpoint: string; readonly headers: GatewayReleaseRefusalHeaders },
 ) {
   const authority = yield* ShellInstalledModuleCatalog;
   const catalog = yield* authority.load.pipe(
@@ -2485,6 +2494,19 @@ const requireGatewayRelease = Effect.fn('ShellGateway.requireRelease')(function*
     catalog.composition.shell.deployment.appId !== ultramodernDeliveryUnit.appId ||
     catalog.composition.shell.deployment.buildMarker !== ultramodernDeliveryUnit.buildMarker
   ) {
+    if (caller !== undefined) {
+      yield* Effect.logInfo('gateway release refused').pipe(
+        Effect.annotateLogs({
+          ...gatewayReleaseRefusal({
+            currentRevision: catalog.composition.revision,
+            endpoint: caller.endpoint,
+            headers: caller.headers,
+            sentRevision: compositionRevision ?? null,
+          }),
+          shellBuildCurrent: catalog.composition.shell.deployment.buildMarker === ultramodernDeliveryUnit.buildMarker,
+        }),
+      );
+    }
     return yield* withShellGatewayReleaseDiagnostic(
       compositionRevision !== undefined && compositionRevision !== catalog.composition.revision
         ? 'composition_revision_mismatch'
@@ -2784,7 +2806,10 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
     .handle('issueGatewayContext', ({ payload, request }) =>
       Effect.gen(function* issueGatewayContextHandler() {
         yield* noStore;
-        yield* requireGatewayRelease(payload.compositionRevision);
+        yield* requireGatewayRelease(payload.compositionRevision, {
+          endpoint: 'auth/gateway-context',
+          headers: { referer: request.headers['referer'], 'user-agent': request.headers['user-agent'] },
+        });
         const authentication = yield* AuthenticationService;
         const sessionResult = yield* authentication
           .resolveShellContext(requestHeaders(request.headers))
@@ -2952,7 +2977,10 @@ const documentGatewayGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'd
   handlers.handle('issueDocumentGatewayContexts', ({ payload, request }) =>
     Effect.gen(function* issueDocumentGatewayContextsHandler() {
       yield* noStore;
-      yield* requireGatewayRelease(payload.compositionRevision);
+      yield* requireGatewayRelease(payload.compositionRevision, {
+        endpoint: 'auth/gateway-contexts',
+        headers: { referer: request.headers['referer'], 'user-agent': request.headers['user-agent'] },
+      });
       const authentication = yield* AuthenticationService;
       const sessionResult = yield* authentication
         .resolveShellContext(requestHeaders(request.headers))
@@ -3214,7 +3242,7 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
     .handle('agentQueue', ({ payload, request }) =>
       Effect.gen(function* agentQueueHandler() {
         const caller = yield* agentPlatformSessionCaller(request);
-        const response = yield* loadAgentQueue(caller, payload).pipe(
+        const response = yield* withRoundTripLog('queue', loadAgentQueue(caller, payload)).pipe(
           Effect.provideService(AgentReadRequestIdentity, { correlationId: correlationFromRequest(request) }),
           Effect.catch(agentPlatformFailure),
         );
@@ -3230,7 +3258,7 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
           correlationId: correlationFromRequest(request),
           idempotencyKey: yield* requiredIdempotencyKey(headers),
         };
-        const response = yield* decideAgentItems(caller, payload).pipe(
+        const response = yield* withRoundTripLog('decide', decideAgentItems(caller, payload)).pipe(
           Effect.provideService(AgentReadRequestIdentity, transport),
           Effect.provideService(AgentActionRequestIdentity, transport),
           Effect.catch(agentPlatformFailure),
@@ -3247,7 +3275,7 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
           correlationId: correlationFromRequest(request),
           idempotencyKey: yield* requiredIdempotencyKey(headers),
         };
-        const response = yield* revertAgentBatch(caller, payload).pipe(
+        const response = yield* withRoundTripLog('revert', revertAgentBatch(caller, payload)).pipe(
           Effect.provideService(AgentReadRequestIdentity, transport),
           Effect.provideService(AgentActionRequestIdentity, transport),
           Effect.catch(agentPlatformFailure),
@@ -3261,7 +3289,7 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
         const caller = yield* agentPlatformSessionCaller(request);
         const transport = { correlationId: correlationFromRequest(request) };
         const services = yield* Layer.build(CompanyDirectoryLive({ principal: caller.principal, transport }));
-        const response = yield* loadAgentActivity(caller, payload).pipe(
+        const response = yield* withRoundTripLog('activity', loadAgentActivity(caller, payload)).pipe(
           Effect.provideService(AgentReadRequestIdentity, transport),
           Effect.provide(services),
           Effect.catch(agentPlatformFailure),
@@ -4200,6 +4228,9 @@ export const makeShellAuthenticationApiRuntime = (
   const originatorEvidenceLayer = GatewayOriginatorEvidenceLive.pipe(
     Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive)),
   );
+  const moduleCredentialEnrolmentLayer = ModuleCredentialEnrolmentSourceLive.pipe(
+    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive)),
+  );
   const handlerDependenciesLive = Layer.mergeAll(
     emailDeliveryRequestsLive,
     authenticationIsolateLive,
@@ -4217,6 +4248,7 @@ export const makeShellAuthenticationApiRuntime = (
     delegationScopeResolverLayer,
     delegationLedgerLayer,
     originatorEvidenceLayer,
+    moduleCredentialEnrolmentLayer,
     GatewayDelegationVerificationLive,
     authenticationLayer,
     runtimeAuthPersistenceLive,
@@ -4237,7 +4269,7 @@ export const makeShellAuthenticationApiRuntime = (
     shellGovernedReadsLayer,
     readRuntimeLayer,
     runtimeObservabilityLive,
-    externalIdentityWorkloadAuthorizationLive,
+    externalIdentityWorkloadAuthorizationLive.pipe(Layer.provide(moduleCredentialEnrolmentLayer)),
     externalIdentityDeploymentLayer,
     OAuthFlowLive.pipe(Layer.provide(authPersistenceLive)),
   ).pipe(Layer.provideMerge(Layer.mergeAll(ShellCryptoLive, accessEnforcementLive, activeApplicationCompositionLive)));

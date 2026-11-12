@@ -476,12 +476,18 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
             const statement = Schema.decodeUnknownOption(Schema.String)(span.attributes.get('db.query.text'));
             return Option.toArray(statement.pipe(Option.filter((text) => text.includes('tenant_module_states'))));
           });
-          // The unlocked idle probe, then the one locked claim query that also checks every intrinsic provider.
-          expect(stateQueries).toHaveLength(2);
-          expect(stateQueries.filter((text) => text.includes('skip locked'))).toHaveLength(1);
-          for (const text of stateQueries) {
-            expect(text).toContain('outbox_deliveries');
-          }
+          // A delivery held back by an inactive intrinsic provider is not work: the unlocked probe, which checks
+          // every intrinsic provider like the claim, answers no, so the poll never takes the fence.
+          expect(stateQueries).toHaveLength(1);
+          expect(stateQueries[0]).toContain('outbox_deliveries');
+          expect(stateQueries[0]).not.toContain('skip locked');
+          expect(
+            spans.some((span) =>
+              Option.exists(Schema.decodeUnknownOption(Schema.String)(span.attributes.get('db.query.text')), (text) =>
+                text.includes('pg_advisory_xact_lock_shared'),
+              ),
+            ),
+          ).toBe(false);
           const [delivery] = yield* database
             .select()
             .from(outboxDeliveries)

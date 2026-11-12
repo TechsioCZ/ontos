@@ -273,6 +273,7 @@ const purchaseProposalBasisRemote = (scope: OperationalScope, compositionRevisio
         const issued = yield* acquireDelegatedGatewayContext(
           {
             audience,
+            callingAppId: 'commerce-customer-context',
             legalEntityScope: 'subject',
             requestCorrelation: scope.correlationId,
             subject: { _tag: 'Assertion', scope },

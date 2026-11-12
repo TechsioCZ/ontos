@@ -19,7 +19,11 @@ import type {
   EnsureRetailCustomerProfileResult,
 } from '../../shared/actions/ensure-retail-customer-profile.ts';
 import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
-import { makePartyRegistryRetailPartyResolver } from '../integrations/party-registry-retail-party-resolver.ts';
+import {
+  makePartyRegistryRetailPartyResolver,
+  missingPartyTransport,
+  PartyRegistryRetailPartyResolverFactory,
+} from '../integrations/party-registry-retail-party-resolver.ts';
 import { RetailPartyDetailExecutor } from '../integrations/retail-party-detail-executor.ts';
 import type { ProfilePersistenceDependencies } from '../persistence/profile-persistence.ts';
 import {
@@ -159,23 +163,36 @@ export const prepareRetailProfileServices: ActionServicePreflight<
     partyResourceId: preparedPayload.subject.partyRef.resourceId,
     tenantId: scope.tenantId,
   };
+  // One actor-bound Party read per invocation. The owner preflight normally read it already, for the Action's own
+  // actor and before any SQL, so this consumes that prepared evidence (once). Only without prepared evidence does it
+  // read Party itself, through the same actor-bound delegated transport; without that transport it fails closed.
+  const scopeInput = {
+    legalEntityId,
+    principalId: scope.principalId,
+    requestCorrelation: scope.correlationId,
+    tenantId: scope.tenantId,
+  };
+  const prepared = yield* Effect.serviceOption(PartyRegistryRetailPartyResolverFactory);
   const transport = yield* Effect.serviceOption(RetailPartyDetailExecutor);
-  const outcome = yield* makePartyRegistryRetailPartyResolver(
-    {
-      legalEntityId,
-      principalId: scope.principalId,
-      requestCorrelation: scope.correlationId,
-      tenantId: scope.tenantId,
-    },
+  // Built only when used, so a prepared invocation never calls the transport at all.
+  const readOnce = Effect.suspend(() =>
     Option.isNone(transport)
-      ? undefined
-      : (detailRequest, correlation) =>
+      ? missingPartyTransport()
+      : makePartyRegistryRetailPartyResolver(scopeInput, (detailRequest, correlation) =>
           transport.value.execute(detailRequest, correlation, {
             actionInvocationId: context.actionInvocationId,
             compositionRevision: context.compositionRevision,
             scope,
           }),
-  )(request).pipe(
+        )(request),
+  );
+  const outcome = yield* (
+    Option.isNone(prepared)
+      ? readOnce
+      : prepared.value
+          .make(scopeInput)(request)
+          .pipe(Effect.catchTag('ProfilePersistenceDependencyFailure', () => readOnce))
+  ).pipe(
     Effect.mapError((cause) =>
       Object.defineProperty(
         new EnsureRetailCustomerProfileRejected({

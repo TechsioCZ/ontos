@@ -244,6 +244,7 @@ export const requireSymmyCustomerIntakePrivacy = Effect.fn('SymmyCustomerIntakeP
         const gateway = yield* acquireDelegatedGatewayContext(
           {
             audience: 'privacy',
+            callingAppId: 'symmy-integration',
             legalEntityScope: 'subject',
             requestCorrelation,
             subject: { _tag: 'Assertion', scope },

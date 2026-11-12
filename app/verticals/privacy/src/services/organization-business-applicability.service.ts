@@ -381,6 +381,7 @@ const providerContext = Effect.fn('Privacy.organizationBusinessProviderContext')
   return yield* acquireDelegatedGatewayContext(
     {
       audience: target.audience,
+      callingAppId: 'privacy',
       legalEntityScope: 'subject',
       requestCorrelation: scope.correlationId,
       subject,

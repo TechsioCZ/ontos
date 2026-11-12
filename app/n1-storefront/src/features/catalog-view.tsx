@@ -86,7 +86,7 @@ export const CatalogView = ({
             : "grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4"
         }
       >
-        {catalog.products.map((product) => (
+        {catalog.products.map((product, index) => (
           <ProductCard key={product.id} layout="column" presentation="featured" shadow={false}>
             <div className="text-center md:h-n1-card-name">
               <ProductCard.Name>
@@ -111,7 +111,7 @@ export const CatalogView = ({
                     alt={product.name}
                     as={NextImage}
                     height={256}
-                    loading="lazy"
+                    loading={presentation === "listing" && index === 0 ? "eager" : "lazy"}
                     objectFit="contain"
                     src={product.image}
                     width={256}

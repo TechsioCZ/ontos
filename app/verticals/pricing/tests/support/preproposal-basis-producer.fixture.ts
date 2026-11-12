@@ -99,7 +99,7 @@ const describe = Effect.sync(() =>
   ),
 );
 
-/** One closed command over private stdin, one actual owner receipt over private fd 3. */
+/** One closed command over private stdin, one actual owner receipt over private fd 5. */
 const execute = Effect.gen(function* executePreproposalPricingSetup() {
   const document = yield* Effect.sync(() => readFileSync(0, 'utf-8'));
   if (new TextEncoder().encode(document).length > 262_144) {
@@ -178,7 +178,7 @@ const execute = Effect.gen(function* executePreproposalPricingSetup() {
     return { operation: command.operation, protocol, result };
   });
   const encoded = yield* Schema.encodeUnknownEffect(Schema.fromJsonString(ReceiptSchema))(receipt);
-  return yield* Effect.sync(() => writeSync(3, `${encoded}\n`));
+  return yield* Effect.sync(() => writeSync(5, `${encoded}\n`));
 });
 
 if (process.argv.includes('--describe-preproposal-basis')) {

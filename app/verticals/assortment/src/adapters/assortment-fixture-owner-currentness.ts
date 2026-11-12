@@ -79,6 +79,7 @@ const ownerClient = <ApiId extends string, Groups extends HttpApiGroup.Constrain
   acquireDelegatedGatewayContext(
     {
       audience: owner.appId,
+      callingAppId: 'assortment',
       legalEntityScope: owner.scope,
       requestCorrelation: scope.correlationId,
       subject: {

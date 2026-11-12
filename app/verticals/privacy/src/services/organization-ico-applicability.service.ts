@@ -132,6 +132,7 @@ export const fetchOrganizationIcoOwnerFacts = Effect.fn('Privacy.fetchOrganizati
   const issued = yield* acquireDelegatedGatewayContext(
     {
       audience: 'party-registry',
+      callingAppId: 'privacy',
       legalEntityScope: 'subject',
       requestCorrelation: scope.correlationId,
       subject:

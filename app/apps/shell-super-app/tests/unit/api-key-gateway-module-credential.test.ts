@@ -2,7 +2,7 @@ import { LegalEntityContext, OperationalScopeResolver, PrincipalResolver } from 
 import type { OperationalScope } from '@app/core-runtime';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { NodeCrypto } from '@effect/platform-node';
-import { ConfigProvider, Effect, Layer, Predicate, Result } from 'effect';
+import { Effect, Layer, Predicate, Result } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
@@ -14,6 +14,10 @@ import {
   ShellInstalledModuleCatalog,
 } from '../../api/modules/installed-module-catalog.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import {
+  enrolledModuleCredentials,
+  unreadableModuleCredentialEnrolment,
+} from '../support/module-credential-enrolment.ts';
 import { makeApiKeyServiceDouble, makePrincipalResolverDouble } from '../support/identity-service-doubles.ts';
 
 const MODULE_KEY = 'commerce-module-key';
@@ -28,16 +32,10 @@ const identity = {
 
 const issue = Effect.fn('test.apiKeyGatewayContext')(function* issue(
   providerKeyId: string,
-  options: { readonly enrolment?: string } = {},
+  options: { readonly enrolmentUnreadable?: boolean } = {},
 ) {
   const snapshot = yield* makeCompositionSnapshot([]);
   const catalog = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
-  const binding = {
-    compositionRevision: catalog.composition.revision,
-    providerKeyId: MODULE_KEY,
-    sourceAppId: 'commerce-customer-context',
-    sourceBuildMarker: 'commerce-build',
-  };
   const events: string[] = [];
   const scopeResolver: (typeof OperationalScopeResolver)['Service'] = {
     resolve: (input) => {
@@ -54,6 +52,9 @@ const issue = Effect.fn('test.apiKeyGatewayContext')(function* issue(
     Effect.provide(
       Layer.mergeAll(
         NodeCrypto.layer,
+        options.enrolmentUnreadable === true
+          ? unreadableModuleCredentialEnrolment
+          : enrolledModuleCredentials([{ appId: 'commerce-customer-context', providerKeyId: MODULE_KEY }]),
         Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
         Layer.succeed(ApiKeyService, makeApiKeyServiceDouble({ verify: () => Effect.succeed({ providerKeyId }) })),
         Layer.succeed(
@@ -85,10 +86,6 @@ const issue = Effect.fn('test.apiKeyGatewayContext')(function* issue(
         }),
       ),
     ),
-    Effect.provideService(
-      ConfigProvider.ConfigProvider,
-      ConfigProvider.fromUnknown({ ONTOS_GATEWAY_MODULE_BINDINGS: options.enrolment ?? JSON.stringify([binding]) }),
-    ),
     Effect.result,
   );
   return { events, result };
@@ -116,7 +113,7 @@ it.effect('mints a subject context for an integration key that is not a module c
 
 it.effect('answers an unreadable module enrolment as unavailable instead of admitting the key', () =>
   Effect.gen(function* enrolmentUnavailable() {
-    const { events, result } = yield* issue(INTEGRATION_KEY, { enrolment: '{not json' });
+    const { events, result } = yield* issue(INTEGRATION_KEY, { enrolmentUnreadable: true });
     expect(Result.isFailure(result)).toBe(true);
     if (Result.isFailure(result)) {
       expect(Predicate.isTagged(result.failure, 'GatewayUnavailableProblem')).toBe(true);

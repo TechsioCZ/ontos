@@ -158,6 +158,7 @@ export const SymmyOwnerExecutionAuthorityLive = Layer.effect(
         const issued = yield* acquireDelegatedGatewayContext(
           {
             audience: 'symmy-integration',
+            callingAppId: 'privacy',
             legalEntityScope: 'subject',
             requestCorrelation: context.scope.correlationId,
             subject,

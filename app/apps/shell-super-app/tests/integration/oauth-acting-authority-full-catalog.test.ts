@@ -3,11 +3,14 @@ import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionSnapshotSchema,
+  decideModuleStateAccess,
   loadDatabaseConnectionPair,
   makeDatabaseIdentityEnrollmentLive,
+  OAuthConnectionCompaniesLive,
   OntosDeploymentAppIdSchema,
   ONTOS_SHELL_CONTRIBUTION_ABI,
   parseDatabaseConnectionPair,
+  TenantModuleStateService,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import type { ActiveApplicationCompositionSnapshot, DatabaseConnectionPair } from '@app/core-runtime';
@@ -31,7 +34,7 @@ import {
 import { CoreDatabase, makeCoreDatabase } from '@app/core-runtime/db/client';
 import { loadSpiceDbConfig } from '@app/core-runtime/access/spicedb-config';
 import type { PgClient } from '@effect/sql-pg';
-import { Config, Crypto, Effect, FileSystem, Layer, Option, Path, Ref, Schema, Tracer } from 'effect';
+import { Config, Crypto, DateTime, Effect, FileSystem, Layer, Option, Path, Ref, Schema, Tracer } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { withOptional } from '../../../../packages/core-runtime/src/access/decision/optional.ts';
@@ -54,8 +57,9 @@ import {
   ShellInstalledModuleCatalog,
   ShellInstalledModuleCatalogLive,
 } from '../../api/modules/installed-module-catalog.ts';
-import { loadActingAuthority } from '../../api/oauth-connections/connection-service.ts';
+import { describeLiveGrant, loadActingAuthority } from '../../api/oauth-connections/connection-service.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { delayedTcpProxy } from '../support/delayed-tcp-proxy.ts';
 import {
   buildAccessGraph,
   replacedDatabase,
@@ -99,7 +103,26 @@ const installedComposition = Effect.gen(function* installedComposition() {
 interface SpanRecord {
   readonly ms: number;
   readonly name: string;
+  /** The names of the span's ancestors, nearest first (test diagnostics only). */
+  readonly parents: readonly string[];
+  /** Start instant in milliseconds, process-relative; only differences between records are meaningful. */
+  readonly startMs: number;
 }
+
+/** The named ancestors of a span, nearest first, at most eight. */
+const ancestorsOf = (parent: Option.Option<Tracer.AnySpan>): readonly string[] => {
+  const names: string[] = [];
+  let current = parent;
+  while (Option.isSome(current) && names.length < 8) {
+    const span = current.value;
+    if (span._tag !== 'Span') {
+      break;
+    }
+    names.push(span.name);
+    current = span.parent;
+  }
+  return names;
+};
 
 /** A tracer that keeps every finished span's name and duration; database and engine calls are spans of their own. */
 const recordingTracer = (records: SpanRecord[]) =>
@@ -109,7 +132,12 @@ const recordingTracer = (records: SpanRecord[]) =>
       const end = span.end.bind(span);
       span.end = (endTime, exit) => {
         end(endTime, exit);
-        records.push({ ms: Number(endTime - options.startTime) / 1e6, name: options.name });
+        records.push({
+          ms: Number(endTime - options.startTime) / 1e6,
+          name: options.name,
+          parents: ancestorsOf(options.parent),
+          startMs: Number(options.startTime) / 1e6,
+        });
       };
       return span;
     },
@@ -126,20 +154,69 @@ const countedCheck = (port: DecisionCheckPort, counters: Counters): DecisionChec
     Effect.suspend(() => {
       counters.checkBulk += 1;
       counters.checkItems += items.length;
-      return port.checkBulk(items);
+      return port.checkBulk(items).pipe(Effect.withSpan('spicedb.checkBulk'));
     }),
 });
+
+/** `staged` answered by the plain scope and capability calls, each resolving the subject and writing on its own. */
+const unsharedStages = Layer.effect(
+  SubjectAccessInspection,
+  Effect.gen(function* unsharedInspection() {
+    const service = yield* SubjectAccessInspection;
+    return {
+      ...service,
+      // The plain calls; only the verified revision is taken from a staged inspection.
+      staged: (input, body) =>
+        service.staged(input, ({ revision }) =>
+          body({
+            capabilities: (asked) => service.capabilities({ ...input, ...asked }),
+            prepare: () => Effect.void,
+            revision,
+            scope: service.scope(input),
+          }),
+        ),
+    };
+  }),
+);
 
 /** The Shell's inspection composition over this case's runtime database role, SpiceDB and the installed release. */
 const inspectionLayer = (input: {
   readonly authorityCase: AuthorityCase;
   readonly counters: Counters;
+  /** Test-only network latency: PostgreSQL and SpiceDB reached through a proxy adding this delay per round trip. */
+  readonly delayMs?: number;
+  /** The published stages without sharing: `staged` answered by the plain calls (the equivalence reference). */
+  readonly plainStages?: boolean;
   readonly snapshot: ActiveApplicationCompositionSnapshot;
 }) =>
   Layer.unwrap(
     Effect.gen(function* buildInspection() {
-      const database = yield* makeCoreDatabase(input.authorityCase.runtime);
-      const configuration = yield* loadSpiceDbConfig();
+      const direct = yield* loadSpiceDbConfig();
+      let { runtime } = input.authorityCase;
+      let configuration = direct;
+      if (input.delayMs !== undefined) {
+        const { delayMs } = input;
+        const databaseUrl = new URL(runtime.connectionString);
+        const databasePort = yield* delayedTcpProxy({
+          delayMs,
+          host: databaseUrl.hostname,
+          port: Number(databaseUrl.port),
+        });
+        databaseUrl.hostname = '127.0.0.1';
+        databaseUrl.port = String(databasePort);
+        // Only the runtime side is used; the pair still needs a distinct administrator identity to parse.
+        const adminUrl = new URL(databaseUrl.href);
+        adminUrl.username = 'delayed_proxy_admin';
+        const pair = yield* parseDatabaseConnectionPair({
+          DATABASE_ADMIN_URL: adminUrl.href,
+          DATABASE_URL: databaseUrl.href,
+        });
+        ({ runtime } = pair);
+        const [spiceHost = 'localhost', spicePort = '50051'] = direct.endpoint.split(':');
+        const spiceDbPort = yield* delayedTcpProxy({ delayMs, host: spiceHost, port: Number(spicePort) });
+        configuration = { ...direct, endpoint: `localhost:${spiceDbPort}` };
+      }
+      const database = yield* makeCoreDatabase(runtime);
       const rpc = yield* Effect.acquireRelease(
         Effect.sync(() => spiceDbTransport.open(configuration, SPICEDB_CHECK_TIMEOUT_MS)),
         (opened) => Effect.sync(() => opened.close()),
@@ -172,10 +249,12 @@ const inspectionLayer = (input: {
         Layer.succeed(DecisionCheck, countedCheck(enginePortOf(rpc), input.counters)),
         composition,
       ).pipe(Layer.provideMerge(base));
+      const inspection = SubjectAccessInspectionLive.pipe(Layer.provide(ports));
       return Layer.mergeAll(
-        SubjectAccessInspectionLive.pipe(Layer.provide(ports)),
+        input.plainStages === true ? unsharedStages.pipe(Layer.provide(inspection)) : inspection,
         ShellInstalledModuleCatalogLive.pipe(Layer.provide(composition)),
         TenantModuleStateServiceLive.pipe(Layer.provide(base)),
+        OAuthConnectionCompaniesLive.pipe(Layer.provide(base)),
       );
     }),
   );
@@ -226,6 +305,11 @@ interface AuthorityCase {
   readonly companyIds: readonly string[];
   readonly owner: string;
   readonly person: string;
+  /**
+   * Leaves exactly these modules installed for the tenant and reprojects its graph through the Core writer; with
+   * `project: false` the states change but the projection does not follow yet.
+   */
+  readonly reinstall: (moduleKeys: readonly string[], options?: { readonly project?: boolean }) => Effect.Effect<void>;
   readonly runtime: DatabaseConnectionPair['runtime'];
   readonly tenantId: string;
 }
@@ -353,7 +437,29 @@ const withAuthorityCase = <A, E>(
                  '${roleRevisionId}', 'active', '${owner}', now() - interval '1 day')`,
       );
       yield* graph.writer.reconcileTenant({ scope: ownerScope });
-      return yield* run({ admin, companyId, companyIds, owner, person, runtime: databases.runtime, tenantId });
+      const reinstall = (moduleKeys: readonly string[], options?: { readonly project?: boolean }) =>
+        Effect.gen(function* reinstallModules() {
+          yield* admin.unsafe(`delete from core.tenant_module_states where tenant_id = '${tenantId}'`);
+          for (const moduleKey of moduleKeys) {
+            yield* admin.unsafe(
+              `insert into core.tenant_module_states (tenant_module_state_id, tenant_id, module_key, state)
+               values (gen_random_uuid(), '${tenantId}', '${moduleKey}', 'active')`,
+            );
+          }
+          if (options?.project !== false) {
+            yield* graph.writer.reconcileTenant({ scope: ownerScope });
+          }
+        }).pipe(Effect.orDie);
+      return yield* run({
+        admin,
+        companyId,
+        companyIds,
+        owner,
+        person,
+        reinstall,
+        runtime: databases.runtime,
+        tenantId,
+      });
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
@@ -372,6 +478,9 @@ const countOf = (spans: ReadonlyMap<string, { readonly count: number }>, name: s
 const measured = <A, E, R>(input: {
   readonly authorityCase: AuthorityCase;
   readonly correlationId: string;
+  /** Test-only per-round-trip delay to PostgreSQL and SpiceDB; absent, both are reached directly. */
+  readonly delayMs?: number;
+  readonly plainStages?: boolean;
   readonly read: Effect.Effect<A, E, R>;
   readonly snapshot: ActiveApplicationCompositionSnapshot;
 }) =>
@@ -383,11 +492,29 @@ const measured = <A, E, R>(input: {
     const value = yield* input.read.pipe(
       Effect.withSpan('measured.read'),
       Effect.withTracer(recordingTracer(records)),
-      Effect.provide(inspectionLayer({ authorityCase: input.authorityCase, counters, snapshot: input.snapshot })),
+      Effect.provide(
+        inspectionLayer({
+          authorityCase: input.authorityCase,
+          counters,
+          ...withOptional(
+            { plainStages: input.plainStages === true, snapshot: input.snapshot },
+            'delayMs',
+            input.delayMs,
+          ),
+        }),
+      ),
     );
     const cpu = process.cpuUsage(cpuBefore);
     const [rows] = yield* input.authorityCase.admin.unsafe<{ readonly count: number }>(
       `select count(*)::int as count from core.access_decision_logs where correlation_id = '${input.correlationId}'`,
+    );
+    // Every row's content: all columns except its own id, the correlation it was tagged with and its instant.
+    const contents = yield* input.authorityCase.admin.unsafe<{ readonly content: string }>(
+      `select concat_ws('|', actor_principal_id, actor_json::text, capability_key, mode, outcome, reasons_json::text,
+                        scope_id, coalesce(target::text, '-'), tenant_id, coalesce(admission_deadline::text, '-'),
+                        coalesce(delegate_app_id::text, '-'), coalesce(delegate_principal_id::text, '-'),
+                        coalesce(on_behalf_of_principal_id::text, '-'), coalesce(operation_id::text, '-')) as content
+         from core.access_decision_logs where correlation_id = '${input.correlationId}' order by content`,
     );
     const spans = tally(records);
     return {
@@ -395,9 +522,11 @@ const measured = <A, E, R>(input: {
       cellReads: countOf(spans, 'TenantIntentLoader.loadAuthorityCells'),
       counters,
       cpuMs: Math.round((cpu.user + cpu.system) / 1000),
+      decisionRowContents: contents.map(({ content }) => content),
       decisionRows: rows?.count ?? -1,
       // Wall time of the read itself, from the span the recording tracer closed around it.
       ms: Math.round(spans.get('measured.read')?.ms ?? -1),
+      records,
       spans,
       statements: countOf(spans, 'postgres'),
       transactions: countOf(spans, 'sql.transaction'),
@@ -555,11 +684,305 @@ const expectSameHints = (input: {
     expect(sortedSet(hints.value.run)).toEqual(sortedSet(reference.value.run));
     expect(sortedSet(hints.value.propose)).toEqual(sortedSet(reference.value.propose));
     expect(hints.decisionRows).toBeLessThanOrEqual(reference.decisionRows);
+    // The staged description against the same stages asked one call at a time (no shared resolution, each batch
+    // writing before it answers): the same hints, and the same evidence rows, row for row.
+    const unshared = yield* measured({
+      authorityCase: input.authorityCase,
+      correlationId: `unshared-${input.principalId}`,
+      plainStages: true,
+      read: subjectModuleAccess(yield* inspectionOf(`unshared-${input.principalId}`)),
+      snapshot: input.snapshot,
+    });
+    expect(sortedSet(hints.value.access)).toEqual(sortedSet(unshared.value.access));
+    expect(sortedSet(hints.value.run)).toEqual(sortedSet(unshared.value.run));
+    expect(sortedSet(hints.value.propose)).toEqual(sortedSet(unshared.value.propose));
+    expect(hints.decisionRows).toBe(unshared.decisionRows);
+    expect(hints.decisionRowContents).toEqual(unshared.decisionRowContents);
     return { hints, reference };
   });
 
+/** The owner's connection description, measured with `delayMs` added to every round trip. */
+const describeOwnerAt = Effect.fn('test.describeOwnerAt')(function* describeOwnerAt(input: {
+  readonly authorityCase: AuthorityCase;
+  readonly delayMs: number;
+  readonly snapshot: ActiveApplicationCompositionSnapshot;
+}) {
+  const { companyId, owner, tenantId } = input.authorityCase;
+  const correlationId = `owner-round-trips-${input.delayMs}`;
+  const asker = yield* sessionScope({ correlationId, legalEntityId: companyId, principalId: owner, tenantId });
+  return yield* measured({
+    authorityCase: input.authorityCase,
+    correlationId,
+    delayMs: input.delayMs,
+    read: loadActingAuthority(asker, {
+      actingKind: 'human',
+      actingPrincipalId: owner,
+      legalEntityId: companyId,
+      tenantId,
+    }),
+    snapshot: input.snapshot,
+  });
+});
+
+/** What one MCP request times: the live grant's description and the installed catalogue (`describeConnection`). */
+const describeConnectionOf = (input: {
+  readonly authorityCase: AuthorityCase;
+  readonly correlationId: string;
+  readonly principalId: string;
+}) =>
+  Effect.gen(function* describeConnectionOfCase() {
+    const { companyId, tenantId } = input.authorityCase;
+    const requesterScope = yield* sessionScope({
+      correlationId: input.correlationId,
+      legalEntityId: companyId,
+      principalId: input.principalId,
+      tenantId,
+    });
+    const at = yield* DateTime.nowAsDate;
+    const live = yield* describeLiveGrant({
+      grant: {
+        actingKind: 'human',
+        actingPrincipalId: input.principalId,
+        authBindingId: null,
+        clientHost: 'localhost',
+        clientId: 'stage-shape-client',
+        clientKind: 'loopback',
+        clientLogoUri: null,
+        clientName: 'Stage shape',
+        consentedAt: at,
+        consentId: null,
+        createdAt: at,
+        grantId: input.correlationId,
+        lastUsedAt: null,
+        legalEntityId: companyId,
+        modules: 'all',
+        profileId: input.correlationId,
+        revokedAt: null,
+        revokedByPrincipalId: null,
+        revokeReason: null,
+        sessionId: null,
+        status: 'active',
+        tenantId,
+        userId: input.principalId,
+        userPrincipalId: input.principalId,
+        writePolicy: 'approval',
+      },
+      names: new Map(),
+      requesterScope,
+    });
+    const installed = yield* (yield* ShellInstalledModuleCatalog).load;
+    return { installed, live };
+  });
+
+/** The phase a round trip belongs to: the innermost of these spans around it (or a capability batch by time). */
+const PHASE_SPANS = [
+  'AccessDecision.list',
+  'AccessDecisionLog.recordAll',
+  'SubjectInspection.scope',
+  'SubjectInspection.prepare',
+  'SubjectInspection.current',
+  'OAuthConnectionCompanies.names',
+  'AgentPlatform.subjectCapabilityBatch',
+] as const;
+
+const PHASE_SPAN_NAMES = new Set<string>(PHASE_SPANS);
+
+/** The round trips counted per phase, by the span that records each. */
+const ROUND_TRIP_KIND = new Map<string, 'spicedb' | 'statements' | 'transactions'>([
+  ['AccessDecision.spicedbCheckBulk', 'spicedb'],
+  ['postgres', 'statements'],
+  ['sql.transaction', 'transactions'],
+]);
+
+/** The capability key of one evidence row's content (`decisionRowContents`). */
+const keyOfRow = (row: string) => row.split('|')[2] ?? '';
+
+/** Each capability key's owning module, from the published catalogue. */
+const owningModules = (catalog: Effect.Success<typeof publishedCatalog>) =>
+  new Map<string, string>(
+    catalog.flatMap(({ descriptors, moduleId }) =>
+      descriptors.flatMap(({ accessDeclaration }) =>
+        accessDeclaration === undefined ? [] : [[accessDeclaration.key, moduleId] as const],
+      ),
+    ),
+  );
+
+const phaseBreakdown = (records: readonly SpanRecord[]) => {
+  const batches = records
+    .filter(({ name }) => name === 'AgentPlatform.subjectCapabilityBatch')
+    .toSorted((left, right) => left.startMs - right.startMs);
+  const batchOf = (startMs: number) =>
+    batches.findIndex((batch) => startMs >= batch.startMs && startMs <= batch.startMs + batch.ms) + 1;
+  const phases = new Map<string, { spicedb: number; statements: number; transactions: number }>();
+  for (const record of records) {
+    const kind = ROUND_TRIP_KIND.get(record.name);
+    if (kind === undefined) {
+      continue;
+    }
+    const nearest = record.parents.find((name) => PHASE_SPAN_NAMES.has(name)) ?? 'other';
+    const phase = nearest === 'AgentPlatform.subjectCapabilityBatch' ? `batch ${batchOf(record.startMs)}` : nearest;
+    const entry = phases.get(phase) ?? { spicedb: 0, statements: 0, transactions: 0 };
+    entry[kind] += 1;
+    phases.set(phase, entry);
+  }
+  return Object.fromEntries([...phases].toSorted(([left], [right]) => left.localeCompare(right)));
+};
+
+/**
+ * The connection's acting authority as it was computed before the questions were narrowed to installed modules:
+ * every composed module asked, then everything outside the tenant's module states dropped.
+ */
+const referenceActingAuthority = (input: SubjectInspectionInput) =>
+  Effect.gen(function* referenceAuthority() {
+    const sets = yield* subjectModuleAccess(input);
+    const answered = [...new Set([...sets.access, ...sets.run, ...sets.propose])];
+    const states = yield* (yield* TenantModuleStateService).getTenantModuleStates(input.subject.tenantId, answered);
+    const stateOf = new Map(states.map(({ moduleKey, state }) => [moduleKey, state]));
+    const admitted = (modules: ReadonlySet<string>, access: 'read' | 'write') =>
+      [...modules].filter((moduleId) => decideModuleStateAccess(stateOf.get(moduleId) ?? null, access) === 'allow');
+    const run = admitted(sets.run, 'write');
+    const propose = admitted(sets.propose, 'write');
+    return {
+      policyCap: propose.some((moduleId) => !run.includes(moduleId)) ? 'approval' : 'direct',
+      read: new Set(admitted(sets.access, 'read')),
+      write: new Set([...run, ...propose]),
+    };
+  });
+
+const descriptionReportPath = Config.option(Config.String('STAGE_SHAPE_REPORT'));
+
+/** The modules stage's N1 demo tenant installs that the release composes (it installs one more it does not). */
+const N1_MODULES = [
+  'commerce.customer-context',
+  'commerce.market-catalog',
+  'commerce.storefront-registry',
+  'demo.merchandise',
+  'party.registry',
+  'work.tasks',
+];
+
+/** A main demo tenant's 21 installed modules: every module the release composes but the five demo verticals. */
+const MAIN_DEMO_MODULES = [
+  'commerce.assortment',
+  'commerce.catalog',
+  'commerce.customer-context',
+  'commerce.inventory',
+  'commerce.market-catalog',
+  'commerce.pricing',
+  'commerce.storefront-registry',
+  'commerce.tax',
+  'crm.activities',
+  'demo.merchandise',
+  'facility.operations',
+  'finance.billing',
+  'legal.agreements',
+  'party.registry',
+  'payment.term-catalog',
+  'pricing.price-group-catalog',
+  'privacy.core',
+  'projects.core',
+  'property.leasing',
+  'property.portfolio',
+  'work.tasks',
+];
+
+/** The CI proof shape's round-trip bounds; before they were 13 transactions, 102 statements and 5 SpiceDB calls. */
+const CI_BOUNDS = { spicedb: 4, statements: 96, transactions: 12 };
+
+/**
+ * One connection description as stage runs it, with `installed` the tenant's modules: its round trips per phase, and
+ * its equivalence with the reference that asks every composed module (same acting authority; every evidence row
+ * one the reference writes, the reference's others all about modules the tenant has not installed).
+ */
+const describedOnStage = Effect.fn('test.describedOnStage')(function* describedOnStage(input: {
+  readonly authorityCase: AuthorityCase;
+  readonly installed: readonly string[];
+  readonly label: string;
+  readonly principalId: string;
+  /** Modules installed after the projection: their states are active, their rights not projected yet. */
+  readonly unprojected?: readonly string[];
+}) {
+  const { authorityCase, installed, label, principalId } = input;
+  const { companyId, tenantId } = authorityCase;
+  const snapshot = yield* installedComposition;
+  yield* authorityCase.reinstall(installed);
+  if (input.unprojected !== undefined) {
+    yield* authorityCase.reinstall([...installed, ...input.unprojected], { project: false });
+  }
+  const describe = (correlationId: string) =>
+    measured({
+      authorityCase,
+      correlationId,
+      read: describeConnectionOf({ authorityCase, correlationId, principalId }),
+      snapshot,
+    });
+  yield* describe(`stage-${label}-warm-up`);
+  const described = yield* describe(`stage-${label}`);
+  const referenceScope = yield* sessionScope({
+    correlationId: `stage-${label}-reference`,
+    legalEntityId: companyId,
+    principalId,
+    tenantId,
+  });
+  const reference = yield* measured({
+    authorityCase,
+    correlationId: `stage-${label}-reference`,
+    read: referenceActingAuthority({
+      queryScope: { legalEntityId: companyId, tenantId },
+      requesterScope: referenceScope,
+      subject: { principalId, tenantId },
+    }),
+    snapshot,
+  });
+  const report = {
+    checkItems: described.counters.checkItems,
+    decisionRows: described.decisionRows,
+    ms: described.ms,
+    phases: phaseBreakdown(described.records),
+    referenceRows: reference.decisionRows,
+    referenceSpicedb: countOf(reference.spans, 'AccessDecision.spicedbCheckBulk'),
+    referenceStatements: reference.statements,
+    referenceTransactions: reference.transactions,
+    spicedb: countOf(described.spans, 'AccessDecision.spicedbCheckBulk'),
+    statements: described.statements,
+    transactions: described.transactions,
+  };
+  const path = yield* descriptionReportPath;
+  if (Option.isSome(path)) {
+    yield* (yield* FileSystem.FileSystem).writeFileString(
+      `${path.value}.${label}.json`,
+      yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(report),
+    );
+  }
+  const { live, policyCap } = (yield* measured({
+    authorityCase,
+    correlationId: `stage-${label}-authority`,
+    read: loadActingAuthority(referenceScope, {
+      actingKind: 'human',
+      actingPrincipalId: principalId,
+      legalEntityId: companyId,
+      tenantId,
+    }),
+    snapshot,
+  })).value;
+  expect(sortedSet(live.read)).toEqual(sortedSet(reference.value.read));
+  expect(sortedSet(live.write)).toEqual(sortedSet(reference.value.write));
+  expect(policyCap).toBe(reference.value.policyCap);
+  const ownerOf = owningModules(yield* publishedCatalog);
+  const remaining = [...reference.decisionRowContents];
+  for (const row of described.decisionRowContents) {
+    const at = remaining.indexOf(row);
+    expect(at).toBeGreaterThanOrEqual(0);
+    remaining.splice(at, 1);
+  }
+  const asked = new Set([...installed, ...(input.unprojected ?? [])]);
+  expect(remaining.every((row) => !asked.has(ownerOf.get(keyOfRow(row)) ?? ''))).toBe(true);
+  return { ...report, liveRead: sortedSet(live.read) };
+});
+
 const reportPath = Config.option(Config.String('ACTING_AUTHORITY_REPORT'));
 const ownerReportPath = Config.option(Config.String('OWNER_AUTHORITY_REPORT'));
+const roundTripReportPath = Config.option(Config.String('ROUND_TRIP_REPORT'));
 
 it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 seconds' })(
   'acting authority over the installed release',
@@ -608,11 +1031,12 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
             expect(traced.carriers).toBeLessThanOrEqual(carriers.length);
             expect(traced.inspectionCalls).toBeLessThanOrEqual(3);
             expect(batch.counters.compositionLoads).toBeLessThanOrEqual(9);
-            expect(batch.counters.checkBulk).toBeLessThanOrEqual(2 + listCarriers);
-            expect(batch.transactions - batch.cellReads).toBeLessThanOrEqual(24);
-            // Every cell set of a capability batch is read in ONE transaction; only a LIST question reads its own.
-            expect(batch.cellBatches).toBeLessThanOrEqual(2);
-            expect(batch.cellReads).toBeLessThanOrEqual(listCarriers);
+            // One engine snapshot per capability batch and one for its LISTs together, however many LISTs it asks.
+            expect(batch.counters.checkBulk).toBeLessThanOrEqual(4);
+            expect(batch.transactions).toBeLessThanOrEqual(24);
+            // Every cell set of a capability batch is read in ONE transaction, and its LISTs' in one more.
+            expect(batch.cellBatches).toBeLessThanOrEqual(4);
+            expect(batch.cellReads).toBe(0);
             expect(capabilityKeys.size).toBeGreaterThan(100);
 
             // The same questions one at a time, as the Shell asked them before: identical modules, identical
@@ -698,13 +1122,14 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               expect(owned.value.offered.length).toBe(owned.value.live.read.size);
               expect((yield* Ref.get(trace)).inspectionCalls).toBeLessThanOrEqual(3);
               const { reference } = yield* expectSameHints({ authorityCase, principalId: owner, snapshot });
-              expect(owned.counters.checkBulk).toBeLessThanOrEqual(2 + listCarriers);
-              // The work does not grow with the rights the catalog declares (hundreds): one batched cell read, one
-              // read per LIST question, a fixed number of identity, scope and evidence transactions. Before the batch,
-              // this owner cost one transaction per capability and mode: 463 transactions, 3 252 statements.
-              expect(owned.cellBatches).toBeLessThanOrEqual(2);
-              expect(owned.cellReads).toBeLessThanOrEqual(listCarriers);
-              expect(owned.transactions - owned.cellReads).toBeLessThanOrEqual(24);
+              expect(owned.counters.checkBulk).toBeLessThanOrEqual(4);
+              // The work does not grow with the rights the catalog declares (hundreds): one batched cell read per
+              // capability batch and one for its LISTs, a fixed number of identity, scope and evidence transactions.
+              // Before the batch, this owner cost one transaction per capability and mode: 463 transactions, 3 252
+              // statements.
+              expect(owned.cellBatches).toBeLessThanOrEqual(4);
+              expect(owned.cellReads).toBe(0);
+              expect(owned.transactions).toBeLessThanOrEqual(24);
               expect(owned.statements).toBeLessThanOrEqual(300);
 
               const path = yield* ownerReportPath;
@@ -749,6 +1174,153 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
             }).pipe(Effect.provide(NodeServices.layer)),
           1,
           'propose',
+        ),
+      300_000,
+    );
+
+    // Stage reaches PostgreSQL and SpiceDB over the network: every round trip that waits on the one before it adds
+    // the network delay. Measured through a delaying proxy at 0 ms and 5 ms per round trip, the difference divided by
+    // the delay is the number of sequential round trips one description makes.
+    suite.effect(
+      "counts the sequential round trips of a full-access owner's connection description",
+      () =>
+        withAuthorityCase(
+          'work.tasks',
+          (authorityCase) =>
+            Effect.gen(function* ownerRoundTrips() {
+              const snapshot = yield* installedComposition;
+              const describeAt = (delayMs: number) => describeOwnerAt({ authorityCase, delayMs, snapshot });
+              // A warm-up through the proxy, so connection setup is not counted as a round trip of the description.
+              yield* describeAt(0);
+              const at0 = yield* describeAt(0);
+              const at5 = yield* describeAt(5);
+              const sequentialRoundTrips = Math.round((at5.ms - at0.ms) / 5);
+              expect(at5.value.live.read).toEqual(at0.value.live.read);
+              const path = yield* roundTripReportPath;
+              if (Option.isSome(path)) {
+                const origin = Math.min(...at5.records.map(({ startMs }) => startMs));
+                const fileSystem = yield* FileSystem.FileSystem;
+                yield* fileSystem.writeFileString(
+                  path.value,
+                  yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+                    at0: reportOf(at0),
+                    at5: reportOf(at5),
+                    sequentialRoundTrips,
+                    timeline: at5.records
+                      .filter(({ name }) => !name.startsWith('Schema') && !name.startsWith('measured'))
+                      .toSorted((left, right) => left.startMs - right.startMs)
+                      .map(({ ms, name, parents, startMs }) => ({
+                        ms: Math.round(ms),
+                        name,
+                        parents,
+                        t: Math.round(startMs - origin),
+                      })),
+                  }),
+                );
+              }
+              // Before the shared stages this description made about 200 sequential round trips, then about 105; with
+              // every LIST of a batch answered together, 85. The bound leaves room for timing noise, never for a stage,
+              // a per-context resolution or a per-LIST read that waits again.
+              expect(sequentialRoundTrips).toBeLessThanOrEqual(100);
+              expect(at5.transactions).toBeLessThanOrEqual(14);
+            }).pipe(Effect.provide(NodeServices.layer)),
+          3,
+        ),
+      300_000,
+    );
+
+    suite.effect(
+      "reproduces the stage owner's connection description: one company, approval policy",
+      () =>
+        withAuthorityCase(
+          'work.tasks',
+          (authorityCase) =>
+            Effect.gen(function* stageOwnerDescription() {
+              // Stage's N1 demo tenant installs these (plus one module the release does not compose); the owner holds
+              // the full-access preset over the whole catalogue, but SpiceDB carries only installed modules' rights.
+              const report = yield* describedOnStage({
+                authorityCase,
+                installed: N1_MODULES,
+                label: 'owner',
+                principalId: authorityCase.owner,
+              });
+              // Before: 23 transactions, 158 statements, 15 SpiceDB calls (12 LIST questions each with its own cell
+              // read and snapshot) and 517 evidence rows; stage measured 24 / 164 / 16 with one more LIST.
+              expect(report.transactions).toBeLessThanOrEqual(12);
+              expect(report.statements).toBeLessThanOrEqual(82);
+              expect(report.spicedb).toBeLessThanOrEqual(4);
+            }).pipe(Effect.provide(NodeServices.layer)),
+          1,
+        ),
+      300_000,
+    );
+
+    suite.effect(
+      'never offers a module installed in the database before its rights are projected',
+      () =>
+        withAuthorityCase(
+          'work.tasks',
+          (authorityCase) =>
+            Effect.gen(function* unprojectedModule() {
+              // facility.operations is installed (active) after the last projection: the owner's full-access cells
+              // for it exist, but SpiceDB holds no relationship for them yet, so every question about it is denied.
+              const report = yield* describedOnStage({
+                authorityCase,
+                installed: N1_MODULES,
+                label: 'unprojected',
+                principalId: authorityCase.owner,
+                unprojected: ['facility.operations'],
+              });
+              expect(report.liveRead).not.toContain('facility.operations');
+              expect(report.liveRead).toContain('work.tasks');
+            }).pipe(Effect.provide(NodeServices.layer)),
+          1,
+        ),
+      300_000,
+    );
+
+    suite.effect(
+      "reproduces the CI proof's connection description: a company administrator of one of six companies",
+      () =>
+        withAuthorityCase(
+          'work.tasks',
+          (authorityCase) =>
+            Effect.gen(function* companyAdministratorDescription() {
+              const { admin, companyId, owner, person, tenantId } = authorityCase;
+              // The person administers one company and holds the tenant's full-access preset there only.
+              const [preset] = yield* admin.unsafe<{ readonly role_id: string; readonly role_revision_id: string }>(
+                `select role_id, role_revision_id from core.access_role_revisions
+                  where tenant_id = '${tenantId}' and template_key = 'full_access' order by revision desc limit 1`,
+              );
+              const [companyScope] = yield* admin.unsafe<{ readonly scope_id: string }>(
+                `select scope_id from core.access_scopes where tenant_id = '${tenantId}' and legal_entity_id = '${companyId}'`,
+              );
+              expect(preset).toBeDefined();
+              yield* admin.unsafe(
+                `insert into core.access_memberships
+                   (membership_id, tenant_id, scope_id, principal_id, kind, status, valid_from, recorded_by)
+                 values (gen_random_uuid(), '${tenantId}', '${companyScope?.scope_id}', '${person}', 'access_admin',
+                         'active', now() - interval '1 day', '${owner}')`,
+              );
+              yield* admin.unsafe(
+                `insert into core.access_assignments
+                   (incarnation_id, tenant_id, scope_id, principal_id, role_id, role_revision_id, status, assigned_by,
+                    valid_from)
+                 values (gen_random_uuid(), '${tenantId}', '${companyScope?.scope_id}', '${person}',
+                         '${preset?.role_id}', '${preset?.role_revision_id}', 'active', '${owner}',
+                         now() - interval '1 day')`,
+              );
+              const report = yield* describedOnStage({
+                authorityCase,
+                installed: MAIN_DEMO_MODULES,
+                label: 'company-administrator',
+                principalId: person,
+              });
+              expect(report.transactions).toBeLessThanOrEqual(CI_BOUNDS.transactions);
+              expect(report.statements).toBeLessThanOrEqual(CI_BOUNDS.statements);
+              expect(report.spicedb).toBeLessThanOrEqual(CI_BOUNDS.spicedb);
+            }).pipe(Effect.provide(NodeServices.layer)),
+          6,
         ),
       300_000,
     );

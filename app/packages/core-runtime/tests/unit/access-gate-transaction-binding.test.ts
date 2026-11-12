@@ -1,5 +1,5 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Option, Schema } from 'effect';
+import { Context, Crypto, Effect, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { AccessDecisionLogEntry } from '../../src/access/enforcement/decision-log.ts';
@@ -7,11 +7,16 @@ import { makeDrizzleAccessDecisionLog } from '../../src/access/enforcement/decis
 import { makeDrizzleAccessPrincipalKinds } from '../../src/access/enforcement/actor.ts';
 import { capabilityPolicyOf } from '../../src/access/enforcement/capability.ts';
 import type { AccessDecisionPorts, GateInput } from '../../src/access/enforcement/contract.ts';
-import { decisionAuthorityOf } from '../../src/access/enforcement/intent-reader.ts';
+import { AccessIntentLive, decisionAuthorityOf } from '../../src/access/enforcement/intent-reader.ts';
+import { AccessIntent } from '../../src/access/decision/authority.ts';
 import type { AccessIntentSource } from '../../src/access/decision/authority.ts';
 import { makeDrizzleLegalEntityCandidates } from '../../src/access/enforcement/legal-entities.ts';
 import { makeAccessDecisionService } from '../../src/access/enforcement/service.ts';
-import { makeJoinedTenantIntentLoader, makeTenantIntentLoader } from '../../src/access/intent/tenant-intent-loader.ts';
+import {
+  TenantIntentLoader,
+  makeJoinedTenantIntentLoader,
+  makeTenantIntentLoader,
+} from '../../src/access/intent/tenant-intent-loader.ts';
 import { makeDrizzleAccessWorkloadBindings } from '../../src/access/workloads/bindings.ts';
 import { AccessScopeIdSchema } from '../../src/access/ids.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -182,6 +187,23 @@ it.effect('a joined intent read opens no transaction of its own, while the reque
     // isolation level, which is exactly the statement PostgreSQL refused after the owner fence query.
     expect(ownerReads.some((statement) => statement.includes('set transaction isolation level'))).toBe(false);
     expect(ownerReads.some(opensOwnTransaction)).toBe(false);
+  }),
+);
+
+it.effect("marks only a joined intent source as reading through a caller's transaction", () =>
+  Effect.gen(function* joinedMarker() {
+    const executor = yield* makeTestDatabase(scripted([]));
+    const loader = makeTenantIntentLoader({ enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT, executor });
+    const intent = yield* Layer.build(
+      AccessIntentLive.pipe(Layer.provide(Layer.succeed(TenantIntentLoader, loader))),
+    ).pipe(Effect.map(Context.get(AccessIntent)), Effect.scoped);
+    // The request source reads on the shared pool and may overlap; the engine serialises the joined one.
+    expect(intent.authorityFor(scope).readsThroughCallerTransaction).toBeUndefined();
+    yield* executor.transaction((transaction) =>
+      Effect.sync(() => {
+        expect(intent.joined?.(transaction).authorityFor(scope).readsThroughCallerTransaction).toBe(true);
+      }),
+    );
   }),
 );
 

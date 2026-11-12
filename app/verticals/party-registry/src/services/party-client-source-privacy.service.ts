@@ -211,7 +211,7 @@ const executeOrganizationPrivacy = Effect.fn('PartyClientSourcePrivacy.executeOr
     .pipe(Effect.catch((error) => failUnavailable('crypto', error)));
   yield* tracePartyPrivacyCarrier(scope, subject, operationRequirementKey);
   const credential = yield* acquireDelegatedGatewayContext(
-    { audience: 'privacy', legalEntityScope: 'subject', requestCorrelation, subject },
+    { audience: 'privacy', callingAppId: 'party-registry', legalEntityScope: 'subject', requestCorrelation, subject },
     crypto,
   ).pipe(Effect.catch((error) => failUnavailable('delegation', error)));
   const result = yield* executeOrganizationBusinessApplicabilityWithAuthorization(
@@ -763,6 +763,7 @@ export const checkPartyClientSourcePrivacy = Effect.fn('PartyClientSourcePrivacy
   const credential = yield* acquireDelegatedGatewayContext(
     {
       audience: 'privacy',
+      callingAppId: 'party-registry',
       legalEntityScope: 'subject',
       requestCorrelation,
       subject,

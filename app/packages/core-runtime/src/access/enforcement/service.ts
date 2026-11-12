@@ -19,11 +19,18 @@ import { legalEntityObjectId, objectTypeOf } from '../compiler/object-id.ts';
 import { AccessIntent } from '../decision/authority.ts';
 import type { ActorContextInput } from '../decision/authority.ts';
 import type { AccessDecision, AccessDecisionRequest, DecisionCapabilityPolicy } from '../decision/contract.ts';
-import { DecisionCheck, decideAccess, decideAccessMany, resolveListAccess } from '../decision/engine.ts';
+import {
+  DecisionCheck,
+  decideAccess,
+  decideAccessMany,
+  resolveListAccess,
+  resolveListAccessMany,
+} from '../decision/engine.ts';
 import type { ListAccessResolution } from '../decision/engine.ts';
 import type { ListAccessPredicate } from '../decision/list-access.ts';
 import { accessDecisionUnavailable } from '../decision/errors.ts';
 import { withOptional } from '../decision/optional.ts';
+import { holderIdOf } from '../decision/selector.ts';
 import {
   AccessScopeIdSchema,
   CapabilityKeySchema,
@@ -647,6 +654,52 @@ const evidenceOfOne = (params: {
 };
 
 /**
+ * What one LIST of a batch answers once its evidence row (if it owes one) is kept: `keep` builds the answer from the
+ * decision the row was kept for, exactly as `list` does after `recordDecision`.
+ */
+interface SettledList {
+  readonly answered: { readonly decision: AccessDecision; readonly evidence?: EvidenceParams };
+  readonly keep: (recorded: AccessDecision) => ListAccessResolution;
+}
+
+/** One LIST of a batch that reaches the engine, with everything its evidence row needs afterwards. */
+interface EngineList {
+  readonly actor: GateActor;
+  readonly capability: DecisionCapabilityPolicy;
+  readonly delegation?: AccessDecisionDelegation | undefined;
+  readonly index: number;
+  readonly legalEntityId?: LegalEntityId | undefined;
+  readonly one: ListGateInput;
+  readonly scopeId: AccessScopeId;
+}
+
+/** The engine's answers to one request scope's LISTs, each with the evidence row `list` writes for it. */
+const engineListsSettled = (
+  entries: readonly EngineList[],
+  listings: readonly ListAccessResolution[],
+): readonly (readonly [number, SettledList])[] =>
+  entries.map((entry, position) => {
+    const listing = listings[position] ?? { decision: seamUnavailable(IDENTITY_UNAVAILABLE) };
+    return [
+      entry.index,
+      {
+        answered: {
+          decision: listing.decision,
+          evidence: {
+            actor: entry.actor,
+            capability: entry.capability,
+            decision: listing.decision,
+            delegation: entry.delegation,
+            entry: { mode: DEFAULT_MODE, scope: entry.one.scope, scopeId: entry.scopeId },
+            now: entry.one.now,
+          },
+        },
+        keep: (recorded: AccessDecision) => (recorded === listing.decision ? listing : { decision: recorded }),
+      },
+    ] as const;
+  });
+
+/**
  * One instance per process, built once from its ports: every call carries its own trusted
  * `OperationalScope` (O66), and no method asks the caller for a collaborator.
  */
@@ -732,7 +785,76 @@ const registeredWorkloadCarrierMatches = (input: ExactGatewayCarrierInput): bool
   );
 };
 
-export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDecisionService => {
+/** One read answered once per distinct key; the first caller's answer (or failure) is every later caller's. */
+const sharedPerKey = <Key, A, E>(keyOf: (key: Key) => string, read: (key: Key) => Effect.Effect<A, E>) => {
+  const answered = new Map<string, Effect.Effect<A, E>>();
+  return (key: Key): Effect.Effect<A, E> =>
+    Effect.suspend(() => {
+      const id = keyOf(key);
+      const known = answered.get(id);
+      if (known !== undefined) {
+        return known;
+      }
+      return Effect.cached(read(key)).pipe(
+        Effect.flatMap((once) => {
+          answered.set(id, once);
+          return once;
+        }),
+      );
+    });
+};
+
+/**
+ * The same ports, reading each acting principal's kind and each gate scope once: what the LISTs of one `listMany` call
+ * ask about one subject in one request scope at one instant. Built per call and dropped with it, never shared. A read
+ * through a caller's transaction (a joined port, or a kind read naming the transaction) is never shared at all.
+ */
+const sharedPreambleReads = (ports: AccessDecisionPorts): AccessDecisionPorts => {
+  const readKind = sharedPerKey(
+    (query: Parameters<AccessDecisionPorts['principalKinds']['readKind']>[0]) =>
+      [query.tenantId, query.principalId, scopeKeyOf(query.scope)].join('\u0000'),
+    (query) => ports.principalKinds.readKind(query),
+  );
+  const authorities = new Map<string, ReturnType<AccessDecisionPorts['authorityFor']>>();
+  return {
+    ...ports,
+    authorityFor: (scope) => {
+      const key = scopeKeyOf(scope);
+      const known = authorities.get(key);
+      if (known !== undefined) {
+        return known;
+      }
+      const port = ports.authorityFor(scope);
+      if (port.readsThroughCallerTransaction === true) {
+        // A read through a caller's transaction is that caller's own, never shared.
+        authorities.set(key, port);
+        return port;
+      }
+      const shared = {
+        ...port,
+        readScope: sharedPerKey(
+          (query: Parameters<typeof port.readScope>[0]) =>
+            [query.tenantId, query.legalEntityId ?? '', ...query.holders.map(holderIdOf)].join('\u0000'),
+          (query) => port.readScope(query),
+        ),
+      };
+      authorities.set(key, shared);
+      return shared;
+    },
+    principalKinds: {
+      ...ports.principalKinds,
+      // A read through a caller's transaction is that caller's own, never shared.
+      readKind: (query, transaction) =>
+        transaction === undefined ? readKind(query) : ports.principalKinds.readKind(query, transaction),
+    },
+  };
+};
+
+export const makeAccessDecisionService = (
+  ports: AccessDecisionPorts,
+  /** The ports of one `listMany` call already share its preamble reads. */
+  preambleReadsShared = false,
+): AccessDecisionService => {
   const resolveGateScope = Effect.fn('AccessDecisionGate.resolveScope')(function* resolveGateScopeEffect(
     scope: OperationalScope,
     legalEntityId: LegalEntityId | undefined,
@@ -1711,10 +1833,126 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
       });
     });
   };
+  /**
+   * Many LISTs, one answer each, each exactly as `list` answers it alone: its own preamble (workload, delegated and
+   * identity admissions unchanged), then every LIST that reaches the engine answered with the others of its request
+   * scope from one cell read and one engine snapshot, and every evidence row written by request scope.
+   */
+  const listManyOwn = Effect.fn('AccessDecisionGate.listMany')(function* listManyGate(input: readonly ListGateInput[]) {
+    const preambles: readonly GatePreamble[] = yield* Effect.forEach(input, (one) => preambleOf(one), {
+      concurrency: 1,
+    });
+    const settled = new Map<number, SettledList>();
+    const engine: EngineList[] = [];
+    for (const [index, one] of input.entries()) {
+      const preamble = preambles[index] ?? { decision: seamUnavailable(IDENTITY_UNAVAILABLE) };
+      const declaration = one.carrier.accessDeclaration;
+      if (preamble.workloadAdmitted === true) {
+        const decision = preamble.decision ?? seamAdmission(ALLOW_WORKLOAD);
+        settled.set(index, { answered: { decision }, keep: () => ({ decision, predicate: ALL_IN_SCOPE }) });
+      } else if (preamble.answer !== undefined) {
+        const { answer } = preamble;
+        settled.set(index, {
+          answered: {
+            decision: answer.decision,
+            evidence: {
+              actor: answer.actor,
+              capability: evidenceCapabilityOf(declaration),
+              decision: answer.decision,
+              delegation: answer.delegation,
+              entry: { mode: DEFAULT_MODE, scope: one.scope, scopeId: answer.scopeId },
+              now: one.now,
+            },
+          },
+          keep: (recorded) =>
+            answer.identityAdmitted === true && recorded === answer.decision
+              ? { decision: recorded, predicate: ALL_IN_SCOPE }
+              : { decision: recorded },
+        });
+      } else if (preamble.decision !== undefined || declaration === undefined) {
+        const decision = preamble.decision ?? seamRefusal(DECLARATION_MISSING);
+        settled.set(index, { answered: { decision }, keep: () => ({ decision }) });
+      } else if (preamble.actor === undefined || preamble.scopeId === undefined) {
+        const decision = seamUnavailable(IDENTITY_UNAVAILABLE);
+        settled.set(index, { answered: { decision }, keep: () => ({ decision }) });
+      } else {
+        engine.push(
+          withOptional(
+            withOptional(
+              {
+                actor: preamble.actor,
+                capability: capabilityPolicyOf(declaration),
+                index,
+                one,
+                scopeId: preamble.scopeId,
+              },
+              'legalEntityId',
+              preamble.legalEntityId,
+            ),
+            'delegation',
+            preamble.delegation,
+          ),
+        );
+      }
+    }
+    // One engine call per request scope (O66): a call never mixes two intent scopes in one read.
+    const byScope = new Map<string, EngineList[]>();
+    for (const entry of engine) {
+      const key = scopeKeyOf(entry.one.scope);
+      byScope.set(key, [...(byScope.get(key) ?? []), entry]);
+    }
+    const answeredByScope = yield* Effect.forEach(
+      [...byScope.values()],
+      (entries) => {
+        const [first] = entries;
+        if (first === undefined) {
+          return Effect.succeed([]);
+        }
+        const { scope } = first.one;
+        return resolveListAccessMany(
+          ports.authorityFor(scope),
+          ports.check,
+          entries.map(({ actor, capability, legalEntityId, one }) => ({
+            actor: actorInputOf(scope, legalEntityId, actor),
+            capability,
+            mode: DEFAULT_MODE,
+            now: one.now,
+          })),
+        ).pipe(Effect.map((listings) => engineListsSettled(entries, listings)));
+      },
+      // One request scope after another, each one engine call over the shared pool.
+      { concurrency: 1 },
+    );
+    for (const [index, settledEntry] of answeredByScope.flat()) {
+      settled.set(index, settledEntry);
+    }
+    const ordered = input.map((_, index) => settled.get(index));
+    const recorded = yield* recordBatchEvidence(
+      ordered.map((one) => one?.answered ?? { decision: seamUnavailable(IDENTITY_UNAVAILABLE) }),
+    );
+    return ordered.map((one, index): ListAccessResolution => {
+      const decision = recorded[index] ?? seamUnavailable(IDENTITY_UNAVAILABLE);
+      return one === undefined ? { decision } : one.keep(decision);
+    });
+  });
+
+  // Every LIST of one call asks the same subject's kind and scope at one instant: those reads are taken once per call.
+  // A finite gateway read or Privacy dispatch has its own exact decision: a page holding one answers every LIST through
+  // `list`, one at a time, exactly as `decideMany` hands those to `decide`.
+  const listMany = (input: readonly ListGateInput[]): Effect.Effect<readonly ListAccessResolution[]> => {
+    if (input.some((one) => hasFiniteGatewayReadOrDispatch(one.scope))) {
+      return Effect.forEach(input, (one) => list(one), { concurrency: 1 });
+    }
+    return preambleReadsShared
+      ? listManyOwn(input)
+      : Effect.suspend(() => makeAccessDecisionService(sharedPreambleReads(ports), true).listMany(input));
+  };
+
   return {
     decide,
     decideMany,
     list,
+    listMany,
     // The same seam over other ports (O75): a transaction-aware binding rebinds the gate to ports
     // that join the caller's transaction instead of opening a second connection.
     rebind: (nextPorts: AccessDecisionPorts) => makeAccessDecisionService(nextPorts),

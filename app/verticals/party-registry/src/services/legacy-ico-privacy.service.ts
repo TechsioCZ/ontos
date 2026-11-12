@@ -137,7 +137,13 @@ export const checkLegacyIcoPrivacy = Effect.fn('PartyLegacyIcoPrivacy.check')(fu
         .randomUUIDv4()
         .pipe(Effect.catch((error) => failUnavailable('crypto', error)));
       const credential = yield* acquireDelegatedGatewayContext(
-        { audience: 'privacy', legalEntityScope: 'subject', requestCorrelation, subject: { _tag: 'Assertion', scope } },
+        {
+          audience: 'privacy',
+          callingAppId: 'party-registry',
+          legalEntityScope: 'subject',
+          requestCorrelation,
+          subject: { _tag: 'Assertion', scope },
+        },
         crypto.value,
       ).pipe(Effect.catch((error) => failUnavailable('delegation', error)));
       const organization = organizations.find((item) => item.partyId === partyId);

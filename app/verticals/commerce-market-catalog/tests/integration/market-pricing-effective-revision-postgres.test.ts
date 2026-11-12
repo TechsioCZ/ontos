@@ -27,11 +27,7 @@ import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import {
-  grantTestTenantOwnerAccess,
-  liveFixtureSpiceDb,
-  markServicePrincipal,
-} from '@app/core-runtime/testing/tenant-access';
+import { grantTestTenantOwnerAccess, liveFixtureSpiceDb } from '@app/core-runtime/testing/tenant-access';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { eq, sql } from 'drizzle-orm';
@@ -65,6 +61,7 @@ import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect, it } from 'effect-rstest';
 
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { marketSourceComponentContracts } from '../fixtures/market-source-components.ts';
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
 import {
@@ -365,7 +362,7 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
         : {
             ...baseConfiguration,
             managerProviderSubjectId: shell.providerUserId,
-            readerProviderSubjectId: shell.relaySourceProviderUserId,
+            readerProviderSubjectId: shell.readerProviderUserId,
           },
     ),
     (value) => value.close().pipe(Effect.orDie),
@@ -423,19 +420,13 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   // company at all, so a read that requires one is refused while the trusted scope resolves (O28);
   // `legalEntityOnly` selects the company but holds no capability for this read, and the owner
   // overlay refuses exactly that capability for that principal (never a SpiceDB tuple).
-  // The reader binds only the relay-source key it was issued, tenant-wide and nothing else.
-  const relaySourceBind = (input: OwnerAuthorizationInput): boolean =>
-    input.scope.principalId === fixture.reader.principalId &&
-    input.owningModuleKey === 'core.identity' &&
-    input.operationKey === bindSelfApiKeyAction.descriptor.actionKey &&
-    input.scope.legalEntityId === undefined;
   const managerAdmission = (input: OwnerAuthorizationInput): OwnerAuthorizationDecision => {
     if (input.scope.principalId === fixture.legalEntityOnly.principalId && input.owningModuleKey === moduleKey) {
       return 'denied';
     }
     const managerScoped =
       input.scope.tenantId === fixture.tenantId &&
-      (input.scope.principalId === fixture.manager.principalId || relaySourceBind(input)) &&
+      input.scope.principalId === fixture.manager.principalId &&
       (input.scope.legalEntityId === fixture.legalEntityId || input.scope.legalEntityId === undefined);
     const admittedTarget =
       (input.owningModuleKey === moduleKey &&
@@ -475,16 +466,13 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
           ),
       };
     }
-    const relayBinding = yield* shell.issueRelaySourceAndBind(fixture.reader).pipe(Effect.provideContext(baseContext));
-    yield* admin.execute(
-      markServicePrincipal({ principalId: fixture.reader.principalId, tenantId: fixture.tenantId }),
-      'objects',
-    );
+    // Market's own module credential, provisioned by the platform and handed over by the host, as on every environment.
+    const relayBinding = yield* shell.provisionRelaySource();
+    yield* holdTestModuleCredentials({ 'commerce-market-catalog': Redacted.value(relayBinding.secret) });
     const provider = ConfigProvider.orElse(
       ConfigProvider.fromEnvRecord({
         ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: shell.compositionSourceUrl,
         ONTOS_GATEWAY_ISSUER: shell.issuer,
-        ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(relayBinding.secret),
         ONTOS_GATEWAY_PUBLIC_JWKS: shell.publicJwks,
         ONTOS_SHELL_GATEWAY_BASE_URL: shell.baseUrl,
       }),

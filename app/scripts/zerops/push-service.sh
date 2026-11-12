@@ -50,8 +50,11 @@ process="$(jq -n --rawfile yaml app/zerops.yaml --arg setup "$setup" '{zeropsYam
   curl -fsS -X PUT "${auth[@]}" -H 'content-type: application/json' "$api/app-version/$version_id/build-and-deploy" -d @-)"
 process_id="$(jq -er '.id' <<<"$process")"
 echo "build and deploy process $process_id for app version $version_id"
+# Polling only reads, so a transient answer (408, 429, 5xx, a timeout) is asked again with back-off; Zerops finishes the
+# deploy regardless. The deadline bounds the whole wait (DEPLOY_LIMIT_SECONDS, default one hour).
+deadline=$((SECONDS + ${DEPLOY_LIMIT_SECONDS:-3600}))
 while true; do
-  state="$(curl -fsS "${auth[@]}" "$api/process/$process_id")"
+  state="$(curl -fsS --retry 6 --retry-max-time 180 "${auth[@]}" "$api/process/$process_id")"
   status="$(jq -r '.status' <<<"$state")"
   case "$status" in
     FINISHED) echo "$setup deployed in $(($(date +%s) - started))s"; exit 0 ;;
@@ -62,5 +65,9 @@ while true; do
       exit 1
       ;;
   esac
+  if ((SECONDS >= deadline)); then
+    echo "service $service_id ($setup): build and deploy process $process_id still $status after ${DEPLOY_LIMIT_SECONDS:-3600}s" >&2
+    exit 1
+  fi
   sleep 15
 done

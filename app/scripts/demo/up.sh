@@ -192,6 +192,22 @@ for id in "${failed[@]}"; do
 done
 [ ${#failed[@]} -eq 0 ] || die "build failed: ${failed[*]} (logs: $LOG_DIR/build-<id>.log)"
 
+# 4b. Module credentials. The platform issues every calling module its own key on each start, with the same program
+#     the stage app host runs on each boot, once the local composition is published (step 5): each key is attested
+#     for that module's build and the composition revision. The keys stay in this shell's memory (never exported) and
+#     reach each process only on its private channel, file descriptor 3: a private FIFO for a calling module's server,
+#     a pipe for the Outbox host. No key is ever in an environment variable, an argument or a file.
+MODULE_CALLERS=" $(node -e 'import("./scripts/zerops/module-credentials.mts").then((m) => console.log(m.MODULE_CREDENTIAL_CALLERS.join(" ")))') "
+# shellcheck source=module-credential-channels.sh
+. "$APP/scripts/demo/module-credential-channels.sh"
+is_caller() { case "$MODULE_CALLERS" in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+hand_over_credential() { # hand_over_credential <app-id>: that module's handover line from this shell's memory
+  local line
+  line="$(printf '%s' "$MODULE_CREDENTIALS" | "${WITH_ENV[@]}" node scripts/zerops/module-credential-handover.mts handover "$1")" ||
+    { say "WARN no module credential issued for $1"; return 1; }
+  hand_over "$1" "$line"
+}
+
 # 5. Servers. Each runs in its own process group so down.sh can stop the whole tree.
 set -m
 start() { # start <name> <command...>
@@ -201,6 +217,18 @@ start() { # start <name> <command...>
     ONTOS_DEMO_VERTICALS="$(IFS=,; echo "${VERTICALS[*]}")" \
     nohup "$@" >"$LOG_DIR/$name.log" 2>&1 </dev/null &
   echo $! >"$PID_DIR/$name.pid"
+}
+start_module() { # start_module <app-id> <directory>: a module's own server; a calling module holds only its own key
+  if is_caller "$1"; then
+    # Its API bundle carries its own credential store copy; expose that copy's claim for serve-module (idempotent).
+    node scripts/zerops/hosted-credential-claim-cli.mts expose "$2" >/dev/null || die "credential claim of $1 not exposable"
+    # The server keeps its channel open (read-write, so it never sees an end); hand_over fills it later.
+    channel_open "$1"
+    ONTOS_MODULE_CREDENTIAL_HANDOVER=fd3 start "$1" "${WITH_ENV[@]}" node scripts/demo/serve-module.mts "$1" "$2" \
+      3<>"$CHANNEL_DIR/$1"
+  else
+    start "$1" "${WITH_ENV[@]}" pnpm --dir "$2" exec modern serve
+  fi
 }
 assert_free() {
   if lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; then
@@ -215,7 +243,7 @@ for id in "${VERTICALS[@]}"; do assert_free "$(port_of "$id")" "$id"; done
 say "starting shell-super-app on :$SHELL_PORT and ${#VERTICALS[@]} verticals"
 start shell-super-app "${WITH_ENV[@]}" pnpm --dir apps/shell-super-app exec modern serve
 for id in "${VERTICALS[@]}"; do
-  start "$id" "${WITH_ENV[@]}" pnpm --dir "verticals/$id" exec modern serve
+  start_module "$id" "verticals/$id"
 done
 wait_http "http://127.0.0.1:$SHELL_PORT/.well-known/ontos-shell-runtime.json" 180 shell-super-app
 for id in "${VERTICALS[@]}"; do
@@ -226,6 +254,17 @@ say "publishing the development composition on :$COMPOSITION_PORT"
 start composition "${NO_GIT[@]}" "${WITH_ENV[@]}" node scripts/siampark/development-composition.mts \
   --environment development --port "$COMPOSITION_PORT"
 wait_http "http://127.0.0.1:$COMPOSITION_PORT/active" 180 composition
+
+say "provisioning module credentials for the published composition"
+# The pass writes its output to file descriptor 3, captured here into memory; its logs go to the terminal.
+MODULE_CREDENTIALS="$(ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="http://127.0.0.1:$COMPOSITION_PORT/active" \
+  "${WITH_ENV[@]}" node scripts/zerops/provision-module-credentials.mts issue-installed \
+  --operation="$(uuidgen | tr '[:upper:]' '[:lower:]')" --host="local-demo:$(hostname -s)" \
+  --boot="$(uuidgen | tr '[:upper:]' '[:lower:]')" 3>&1 1>&2)" ||
+  die "module credential provisioning failed"
+for id in "${VERTICALS[@]}"; do
+  if is_caller "$id"; then hand_over_credential "$id" || true; fi
+done
 
 # Sales reset discovers native Action ownership from the published composition, including its
 # permissions step after Workforce. Cold starts must publish first; no cached or guessed Action set.
@@ -245,7 +284,13 @@ else
 fi
 
 say "starting the outbox worker host"
-start outbox-worker-host "${WITH_ENV[@]}" node --experimental-strip-types ./scripts/outbox-worker-host.generated.mts
+# It hosts every owner's workers, so it receives their keys on its private channel and holds each in its owner's slot.
+ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="http://127.0.0.1:$COMPOSITION_PORT/active" \
+  ONTOS_DEMO_VERTICALS="$(IFS=,; echo "${VERTICALS[*]}")" ONTOS_MODULE_CREDENTIAL_HANDOVER=fd3 \
+  nohup "${WITH_ENV[@]}" node --experimental-strip-types ./scripts/outbox-worker-host.generated.mts \
+  >"$LOG_DIR/outbox-worker-host.log" 2>&1 </dev/null \
+  3< <(printf '%s' "$MODULE_CREDENTIALS" | "${WITH_ENV[@]}" node scripts/zerops/module-credential-handover.mts handover) &
+echo $! >"$PID_DIR/outbox-worker-host.pid"
 sleep 3
 kill -0 "$(cat "$PID_DIR/outbox-worker-host.pid")" 2>/dev/null ||
   say "WARN outbox worker host exited; see $LOG_DIR/outbox-worker-host.log"
@@ -260,6 +305,17 @@ curl -fsS -o /dev/null --max-time 10 "http://localhost:$SHELL_PORT/" || say "WAR
 
 # 6. Sales-demo accounts, role grants and the agent-bot API key (needs the running shell; idempotent).
 step demo-permissions "${WITH_ENV[@]}" node scripts/demo/reset-permissions.mts
+# The permissions registered the modules' internal workloads (CRM's Party intake): issue their keys now and hand them
+# to the running callers, beside fresh module keys, exactly as the app host does. Nobody issues such a key by hand.
+say "provisioning module and internal workload credentials after the permissions"
+MODULE_CREDENTIALS="$(ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="http://127.0.0.1:$COMPOSITION_PORT/active" \
+  "${WITH_ENV[@]}" node scripts/zerops/provision-module-credentials.mts issue-installed \
+  --operation="$(uuidgen | tr '[:upper:]' '[:lower:]')" --host="local-demo:$(hostname -s)" \
+  --boot="$(uuidgen | tr '[:upper:]' '[:lower:]')" 3>&1 1>&2)" ||
+  die "module credential provisioning failed"
+for id in "${VERTICALS[@]}"; do
+  if is_caller "$id"; then hand_over_credential "$id" || true; fi
+done
 # The access catalog release activation the stage migrator runs: "Plný přístup" follows the workspace catalog and
 # every other role gets Novinky (scripts/activate-access-catalog-release.mts).
 step access-release "${WITH_ENV[@]}" node scripts/activate-access-catalog-release.mts
@@ -280,8 +336,6 @@ step seed-agent-entities env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" 
 step agent-operators env ONTOS_AGENT_SETUP_EMAIL=obchod@demo.ontos \
   "ONTOS_AGENT_SETUP_PASSWORD=${ONTOS_DEMO_PASSWORD:-password1234}" \
   "${WITH_ENV[@]}" node scripts/demo/setup-agent-operators.mts --mode apply
-# CRM.md §3: key of the CRM's Party Registry intake principal (read by the crm server per intake, no restart).
-step crm-party-intake pnpm_ demo:crm-party-intake
 # ŠroubShop customer accounts: publish the two workload identities/keys and Shell provider configuration first.
 step commerce-portal pnpm_ demo:commerce-portal
 reload_env_keys COMMERCE_CORE_IDENTITY_BASE_URL COMMERCE_TENANT_CREDENTIALS ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT \
@@ -293,7 +347,8 @@ restart_server() { # restart_server <name> <directory>
     kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
     for _ in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || break; sleep .3; done
   fi
-  start "$1" "${WITH_ENV[@]}" pnpm --dir "$2" exec modern serve
+  start_module "$1" "$2"
+  if is_caller "$1"; then hand_over_credential "$1" || true; fi
 }
 restart_server shell-super-app apps/shell-super-app
 wait_http "http://127.0.0.1:$SHELL_PORT/.well-known/ontos-shell-runtime.json" 180 shell-super-app

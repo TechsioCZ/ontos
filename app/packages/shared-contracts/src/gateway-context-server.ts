@@ -6,6 +6,7 @@ import {
 } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime/outbox/worker';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
+import { ownModuleCredential, ownWorkloadCredential } from '@app/core-runtime/auth/owner-module-credential';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import {
   readVerifiedGatewayCompositionRevision,
@@ -17,7 +18,7 @@ import {
   readVerifiedGatewayOrganizationProcessingRead,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { Crypto } from 'effect';
-import { Config, Effect, Match, Redacted, Schema } from 'effect';
+import { Config, ConfigProvider, Effect, Match, Option, Redacted, Schema } from 'effect';
 
 import {
   GatewayCapabilityKeySchema,
@@ -27,7 +28,7 @@ import {
   organizationGovernanceReadOperationContract,
   privacyDispatchOperationContract,
 } from './gateway-context.ts';
-import { issueDelegatedGatewayContext } from './gateway-context-api-key.ts';
+import { issueApiKeyGatewayContext, issueDelegatedGatewayContext } from './gateway-context-api-key.ts';
 import type { GatewayContextResponse, GatewayDelegatedContextRequest } from './gateway-context.ts';
 
 export class GatewayDelegationSourceError extends Schema.TaggedError<GatewayDelegationSourceError>()(
@@ -170,6 +171,11 @@ const checkConditionalWorkerRequirement = Effect.fn('GatewayDelegation.checkCond
 
 export interface GatewayDelegationRequest {
   readonly audience: string;
+  /**
+   * The module making the call. Its own module credential authenticates the call: in a process that hosts several
+   * owners, the one the host handed this module, never another owner's and never the shared environment's.
+   */
+  readonly callingAppId: string;
   readonly legalEntityScope: 'subject' | 'tenant';
   readonly requestCorrelation: string;
   readonly subject: GatewayDelegationSubject;
@@ -519,30 +525,48 @@ const subjectWireOf = (
     Match.exhaustive,
   );
 
+/** Hosts a module may reach the Shell on over plain HTTP: the same machine (the app host's loopback relay, a dev box). */
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** Where a module's keys are presented: HTTPS, or plain HTTP to the same machine only. */
+const ShellGatewayBaseUrl = Config.schema(
+  Schema.URLFromString.check(
+    Schema.makeFilter((url) =>
+      (url.protocol === 'https:' || (url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname))) &&
+      url.username === '' &&
+      url.password === '' &&
+      url.hash === ''
+        ? undefined
+        : 'Gateway transport requires HTTPS (plain HTTP only to a loopback host) without credentials or fragment',
+    ),
+  ),
+  'ONTOS_SHELL_GATEWAY_BASE_URL',
+);
+
 /** Requests a fresh module-to-module context authenticated by this deployment's own module credential. */
 export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acquire')(function* acquire(
   request: GatewayDelegationRequest,
   crypto: Crypto.Crypto,
 ) {
-  const configuration = yield* Config.all({
-    apiKey: Config.Redacted('ONTOS_GATEWAY_MODULE_API_KEY'),
-    baseUrl: Config.schema(
-      Schema.URLFromString.check(
-        Schema.makeFilter((url) =>
-          (url.protocol === 'http:' || url.protocol === 'https:') &&
-          url.username === '' &&
-          url.password === '' &&
-          url.hash === ''
-            ? undefined
-            : 'Gateway transport requires an HTTP URL without credentials or fragment',
+  // Every delegated call reads its caller's own key from the slot the host claimed for that module, whichever
+  // runtime, worker or background fiber it runs in; nothing else in a process reads a module credential.
+  const apiKey = yield* ownModuleCredential(request.callingAppId);
+  if (Option.isNone(apiKey)) {
+    const reason = `No module credential of ${request.callingAppId} in this process: the host has not handed one over`;
+    // Owners turn this into a generic unavailable problem; the log keeps the cause visible to the operator.
+    yield* Effect.logWarning(reason);
+    return yield* new GatewayDelegationSourceError({ reason });
+  }
+  const [baseUrl, source] = yield* Effect.all(
+    [
+      ShellGatewayBaseUrl.parse(yield* ConfigProvider.ConfigProvider).pipe(
+        Effect.mapError(
+          (cause) => new GatewayDelegationSourceError({ cause, reason: 'Gateway delegation transport is unavailable' }),
         ),
       ),
-      'ONTOS_SHELL_GATEWAY_BASE_URL',
-    ),
-  }).pipe(
-    Effect.mapError(
-      (cause) => new GatewayDelegationSourceError({ cause, reason: 'Gateway delegation transport is unavailable' }),
-    ),
+      subjectWireOf(request.subject),
+    ],
+    { concurrency: 1 },
   );
   yield* Match.value(request.subject).pipe(
     Match.tag('OrganizationGovernanceRead', () =>
@@ -640,7 +664,6 @@ export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acqui
     ),
     Match.orElse(() => Effect.void),
   );
-  const source = yield* subjectWireOf(request.subject);
   const exchangeId = yield* crypto
     .randomUUIDv4()
     .pipe(
@@ -657,8 +680,8 @@ export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acqui
     subject: source.subject,
   };
   const response = yield* issueDelegatedGatewayContext(payload, {
-    apiKey: configuration.apiKey,
-    baseUrl: configuration.baseUrl,
+    apiKey: apiKey.value,
+    baseUrl,
     requestCorrelation: request.requestCorrelation,
   });
   if (response.compositionRevision !== source.compositionRevision) {
@@ -666,7 +689,7 @@ export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acqui
   }
   const authorization: `Bearer ${string}` = `Bearer ${response.token}`;
   const destination = {
-    apiBaseUrl: new URL(response.apiBaseUrl, configuration.baseUrl).toString(),
+    apiBaseUrl: new URL(response.apiBaseUrl, baseUrl).toString(),
     authorization,
     compositionRevision: response.compositionRevision,
     expiresAt: response.expiresAt,
@@ -679,6 +702,63 @@ export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acqui
     metadata = { ...metadata, recovery: response.recovery };
   }
   return { ...destination, ...metadata };
+});
+
+/** One internal workload context request: the calling module, its own workload and the tenant and company. */
+export interface WorkloadGatewayRequest {
+  readonly audience: string;
+  /** The module whose own internal workload acts; it holds that workload's key for the tenant. */
+  readonly callingAppId: string;
+  readonly compositionRevision: string;
+  readonly legalEntityId: string;
+  readonly requestCorrelation: string;
+  readonly tenantId: string;
+  readonly workloadKey: string;
+}
+
+/**
+ * Requests a gateway context AS a module's internal workload (O73): the principal the operator registered for that
+ * workload in the tenant, authenticated by its own key, which the platform issued and the host handed to this module
+ * (never an environment variable). The Shell admits it exactly as any API key of that principal: through the
+ * workload's binding and the carriers that declare it. Without a key for that tenant it fails closed.
+ */
+export const acquireWorkloadGatewayContext = Effect.fn('GatewayWorkload.acquire')(function* acquireWorkload(
+  request: WorkloadGatewayRequest,
+) {
+  const key = yield* ownWorkloadCredential({
+    appId: request.callingAppId,
+    tenantId: request.tenantId,
+    workloadKey: request.workloadKey,
+  });
+  if (Option.isNone(key)) {
+    return yield* new GatewayDelegationSourceError({
+      reason: `No credential of ${request.workloadKey} for this tenant: the workload is not registered, or not provisioned yet`,
+    });
+  }
+  const baseUrl = yield* ShellGatewayBaseUrl.parse(yield* ConfigProvider.ConfigProvider).pipe(
+    Effect.mapError(
+      (cause) => new GatewayDelegationSourceError({ cause, reason: 'Gateway workload transport is unavailable' }),
+    ),
+  );
+  const response = yield* issueApiKeyGatewayContext(
+    {
+      audience: request.audience,
+      compositionRevision: request.compositionRevision,
+      legalEntityId: request.legalEntityId,
+    },
+    { apiKey: key.value, baseUrl, requestCorrelation: request.requestCorrelation },
+  ).pipe(
+    Effect.mapError(
+      (cause) => new GatewayDelegationSourceError({ cause, reason: 'The workload gateway context was not issued' }),
+    ),
+  );
+  const authorization: `Bearer ${string}` = `Bearer ${response.token}`;
+  return {
+    apiBaseUrl: new URL(response.apiBaseUrl, baseUrl).toString(),
+    authorization,
+    compositionRevision: response.compositionRevision,
+    expiresAt: response.expiresAt,
+  };
 });
 
 export { GatewayCapabilityKeySchema } from './gateway-context.ts';

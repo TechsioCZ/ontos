@@ -131,6 +131,8 @@ for (const filepath of [
   'app/zerops-import.yaml',
   'app/scripts/run-zerops-migrator.mjs',
   'app/scripts/zerops/owner-entry.mts',
+  'app/scripts/zerops/hosted-credential-claim.mts',
+  'app/scripts/zerops/hosted-credential-claim-proof.mts',
   '.github/workflows/zerops-stage.yml',
   '.github/actions/install-app/action.yml',
   'app/verticals/crm/shared/api.ts',
