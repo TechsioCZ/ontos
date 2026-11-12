@@ -1806,34 +1806,40 @@ const readRuntimeFromDependencies = <
           const operationAt = yield* trustedTransactionTime(transaction);
           // Decoded through the closed owner contract: an answer outside it is unavailable (fail closed).
           const ownerAuthorizationExit = yield* Effect.exit(
-            ownerAuthorizationOverlay.authorize(
-              scoped,
-              Object.freeze(
-                withOptionalProperty(
+            Effect.suspend(() =>
+              ownerAuthorizationOverlay.authorize(
+                scoped,
+                Object.freeze(
                   withOptionalProperty(
-                    {
-                      capabilityKey: descriptor.accessDeclaration?.key ?? descriptor.readKey,
-                      operation: 'read' as const,
-                      operationAt,
-                      operationKey: input.registration.descriptor.readKey,
-                      owningModuleKey: input.registration.descriptor.owningModuleKey,
-                      scope,
-                      targets: ownerAuthorizationTargets,
-                    },
-                    Option.isSome(accessTarget),
-                    'target',
-                    Option.getOrUndefined(accessTarget),
+                    withOptionalProperty(
+                      {
+                        capabilityKey: descriptor.accessDeclaration?.key ?? descriptor.readKey,
+                        operation: 'read' as const,
+                        operationAt,
+                        operationKey: input.registration.descriptor.readKey,
+                        owningModuleKey: input.registration.descriptor.owningModuleKey,
+                        scope,
+                        targets: ownerAuthorizationTargets,
+                      },
+                      Option.isSome(accessTarget),
+                      'target',
+                      Option.getOrUndefined(accessTarget),
+                      {},
+                    ),
+                    Option.isSome(accessOwnerFacts),
+                    'ownerFacts',
+                    Option.getOrUndefined(accessOwnerFacts),
                     {},
                   ),
-                  Option.isSome(accessOwnerFacts),
-                  'ownerFacts',
-                  Option.getOrUndefined(accessOwnerFacts),
-                  {},
                 ),
               ),
             ),
           );
-          const ownerAuthorization = yield* ownerAuthorizationFromExit(ownerAuthorizationExit);
+          const ownerAuthorization = yield* ownerAuthorizationFromExit({
+            capabilityKey: descriptor.accessDeclaration?.key ?? descriptor.readKey,
+            operationKey: input.registration.descriptor.readKey,
+            owningModuleKey: input.registration.descriptor.owningModuleKey,
+          })(ownerAuthorizationExit);
           if (ownerAuthorization.decision === 'denied') {
             // The gate and "Proč?" cannot see an owner rule, so the refusal names the owner's reason codes.
             yield* Effect.logWarning('Read refused').pipe(

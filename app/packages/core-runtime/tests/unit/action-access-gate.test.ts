@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Option, Predicate, Schema } from 'effect';
+import { Cause, Effect, Exit, Logger, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { AccessPrincipalKind, AccessPrincipalKinds } from '../../src/access/enforcement/actor.ts';
@@ -232,6 +232,34 @@ it.effect('a person the central gate refuses gets the gate codes, never an owner
     expect((failure.reasons ?? []).some((code) => code.startsWith('deny.owner'))).toBe(false);
     expect(ownerQuestions).toBe(0);
     expect(harness.snapshot().stages).not.toContain('handler_executed');
+  }),
+);
+
+it.effect('a central-gate refusal writes one warning with its gate codes and no payload values', () =>
+  Effect.gen(function* gateRefusalWarning() {
+    const entries: string[] = [];
+    const harness = yield* makeActionTestHarness({
+      accessDecision: boundGate({ authority: { cells: [] } }),
+      ownerRegistration: shellOwner,
+    });
+    yield* Effect.exit(
+      harness.runtime.runAction({
+        payload: { amount: 31_337 },
+        principal,
+        registration: declaredAction,
+        transport: { correlationId: 'access-gate-warning', idempotencyKey: 'access-gate-warning-1' },
+      }),
+    ).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- Test-owned diagnostic logger capture.
+      Effect.provide(
+        Logger.layer([Logger.make((options) => entries.push(JSON.stringify(Logger.formatStructured.log(options))))]),
+      ),
+    );
+    const warnings = entries.filter((entry) => entry.includes('Action refused'));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('"reasons":"deny.insufficient_grant"');
+    expect(warnings[0]).toContain(`"refusedAction":"${DECLARED}"`);
+    expect(warnings[0]).not.toContain('31337');
   }),
 );
 
