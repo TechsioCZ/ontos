@@ -5,8 +5,8 @@ import {
   makeDatabaseIdentityEnrollmentLive,
   CoreSearchWorkerSnapshotLive,
   CoreSearchProjectionStoreLive,
+  defineDatabaseIdentityEnrollment,
 } from '@app/core-runtime';
-import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 import { Layer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import {

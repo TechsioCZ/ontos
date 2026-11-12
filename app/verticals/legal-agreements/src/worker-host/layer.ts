@@ -4,8 +4,7 @@ import { Layer } from 'effect';
 import type { OutboxRuntime } from '@app/core-runtime';
 import { SearchProjectorLive } from '../services/search-projection.ts';
 import type { SearchProjector } from '../services/search-projection.ts';
-import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
-import { makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
+import { defineDatabaseIdentityEnrollment, makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
 import { OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
 
 export { CorePersistenceLive as outboxWorkerCorePersistenceLive } from '@app/core-runtime/outbox/worker';
