@@ -19,7 +19,7 @@ import {
   recordHostBoot,
   retireAfterHandoverWith,
 } from '../zerops/app-host.mts';
-import type { HandoverChannel } from '../zerops/app-host.mts';
+import type { HandoverChannel, ModuleCredentialHealingStreaks } from '../zerops/app-host.mts';
 import {
   applyModuleCredentialHandovers,
   encodeModuleCredentialHandover,
@@ -204,22 +204,29 @@ describe('module credential healing', () => {
   const held = output({ [ORDER]: ORDER_KEY_ONE }, [PARTY]);
 
   it('renews when a held key was revoked or its keys near their end, fills callers without a key, and otherwise does nothing', () => {
-    expect(planModuleCredentialHealing(held, new Set(), 0)).toEqual({ kind: 'renew', reason: 'revoked' });
-    expect(planModuleCredentialHealing(held, new Set([ORDER_PROVIDER_KEY]), 0)).toEqual({
+    expect(planModuleCredentialHealing(held, Option.some(new Set()), 0)).toEqual({ kind: 'renew', reason: 'revoked' });
+    expect(planModuleCredentialHealing(held, Option.some(new Set([ORDER_PROVIDER_KEY])), 0)).toEqual({
       appIds: [PARTY],
       kind: 'fill',
     });
     const whole = output({ [ORDER]: ORDER_KEY_ONE });
-    expect(planModuleCredentialHealing(whole, new Set([ORDER_PROVIDER_KEY]), 15 * HOUR)).toEqual({ kind: 'none' });
+    expect(planModuleCredentialHealing(whole, Option.some(new Set([ORDER_PROVIDER_KEY])), 15 * HOUR)).toEqual({
+      kind: 'none',
+    });
     // Eight hours before a 24-hour key ends it is rotated, whatever else the host holds.
-    expect(planModuleCredentialHealing(whole, new Set([ORDER_PROVIDER_KEY]), 16 * HOUR)).toEqual({
+    expect(planModuleCredentialHealing(whole, Option.some(new Set([ORDER_PROVIDER_KEY])), 16 * HOUR)).toEqual({
       kind: 'renew',
       reason: 'expiring',
     });
-    expect(planModuleCredentialHealing(noProvisionedCredentials([ORDER]), new Set(), 0)).toEqual({
+    expect(planModuleCredentialHealing(noProvisionedCredentials([ORDER]), Option.some(new Set()), 0)).toEqual({
       appIds: [ORDER],
       kind: 'fill',
     });
+    // Without a liveness read nothing is filled or renewed for a revocation, but rotation by end of life still is:
+    // the ends are held locally.
+    expect(planModuleCredentialHealing(whole, Option.none(), 15 * HOUR)).toEqual({ kind: 'none' });
+    expect(planModuleCredentialHealing(held, Option.none(), 0)).toEqual({ kind: 'none' });
+    expect(planModuleCredentialHealing(whole, Option.none(), 16 * HOUR)).toEqual({ kind: 'renew', reason: 'expiring' });
   });
 
   const healing = (
@@ -227,6 +234,7 @@ describe('module credential healing', () => {
     issued: ProvisioningOutput,
     start: ProvisioningOutput = held,
     nowMillis = 0,
+    streaks: Ref.Ref<ModuleCredentialHealingStreaks> = Ref.makeUnsafe({ unreadable: 0 }),
   ) =>
     Effect.gen(function* healOnce() {
       yield* TestClock.setTime(nowMillis);
@@ -237,16 +245,19 @@ describe('module credential healing', () => {
       const holder = {
         handOver: (message: Uint8Array) => Effect.sync(() => messages.push(decoder.decode(message))),
       };
-      const healthy = yield* healModuleCredentialsOnce({
-        activeProviderKeyIds: active,
-        callers: [ORDER, PARTY],
-        held: state,
-        holders: Effect.succeed([holder, holder]),
-        issue: (appIds) => Effect.sync(() => issues.push(appIds)).pipe(Effect.as(issued)),
-        retireOwn: (keep) => Effect.sync(() => retirements.push(keep)),
-        serving: Effect.succeed(true),
-      });
-      return { healthy, held: yield* Ref.get(state), issues, messages, retirements };
+      const healthy = yield* healModuleCredentialsOnce(
+        {
+          activeProviderKeyIds: active,
+          callers: [ORDER, PARTY],
+          held: state,
+          holders: Effect.succeed([holder, holder]),
+          issue: (appIds) => Effect.sync(() => issues.push(appIds)).pipe(Effect.as(issued)),
+          retireOwn: (keep) => Effect.sync(() => retirements.push(keep)),
+          serving: Effect.succeed(true),
+        },
+        streaks,
+      );
+      return { healthy, held: yield* Ref.get(state), issues, messages, retirements, streaks: yield* Ref.get(streaks) };
     });
 
   it.effect('hands fresh keys to every holder when its own keys were revoked, then retires what they replaced', () =>
@@ -316,12 +327,26 @@ describe('module credential healing', () => {
     }),
   );
 
-  it.effect('treats an unreadable enrolment as no evidence and changes nothing', () =>
+  it.effect('treats an unreadable enrolment as no evidence of a revocation and changes nothing else', () =>
     Effect.gen(function* unreadable() {
       const result = yield* healing(Effect.fail('unreadable'), output({}));
       expect(result.issues).toEqual([]);
       expect(result.messages).toEqual([]);
       expect(result.held).toEqual(held);
+      expect(result.streaks.unreadable).toBe(1);
+    }),
+  );
+
+  it.effect('still rotates keys before they end while liveness stays unreadable', () =>
+    Effect.gen(function* rotationWithoutRead() {
+      const current = output({ [ORDER]: ORDER_KEY_ONE, [PARTY]: PARTY_KEY_ONE });
+      const rotated = output({ [ORDER]: ORDER_KEY_TWO, [PARTY]: PARTY_KEY_TWO }, [], GENERATION_TWO, 40 * HOUR);
+      const streaks = Ref.makeUnsafe<ModuleCredentialHealingStreaks>({ unreadable: 3 });
+      const result = yield* healing(Effect.fail('unreadable'), rotated, current, 17 * HOUR, streaks);
+      expect(result.issues).toEqual([[ORDER, PARTY]]);
+      expect(result.held).toEqual(rotated);
+      expect(result.retirements).toEqual([providerKeyIdsOf(current)]);
+      expect(result.streaks.unreadable).toBe(4);
     }),
   );
 

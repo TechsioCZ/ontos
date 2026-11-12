@@ -725,21 +725,40 @@ export type ModuleCredentialHealing =
   | { readonly kind: 'none' }
   | { readonly kind: 'renew'; readonly reason: 'expiring' | 'revoked' };
 
-/** What healing does next, given what the host holds, which module credentials are still active, and the time. */
+/** Whether the keys the host holds end within `MODULE_CREDENTIAL_ROTATION_LEAD`: known locally, no read needed. */
+const nearTheirEnd = (held: ProvisioningOutput, nowMillis: number) => {
+  const earliest = earliestExpiryOf(held);
+  return earliest !== undefined && earliest - Duration.toMillis(MODULE_CREDENTIAL_ROTATION_LEAD) <= nowMillis;
+};
+
+/**
+ * What healing does next, given what the host holds, which module credentials are still active (`none` when that
+ * could not be read), and the time. Without the read only rotation by end of life is decided: it needs nothing but
+ * the ends the host holds, so an unreadable store never lets keys run out.
+ */
 export const planModuleCredentialHealing = (
   held: ProvisioningOutput,
-  activeProviderKeyIds: ReadonlySet<string>,
+  activeProviderKeyIds: Option.Option<ReadonlySet<string>>,
   nowMillis: number,
 ): ModuleCredentialHealing => {
-  if (providerKeyIdsOf(held).some((providerKeyId) => !activeProviderKeyIds.has(providerKeyId))) {
+  if (
+    Option.isSome(activeProviderKeyIds) &&
+    providerKeyIdsOf(held).some((providerKeyId) => !activeProviderKeyIds.value.has(providerKeyId))
+  ) {
     return { kind: 'renew', reason: 'revoked' };
   }
-  const earliest = earliestExpiryOf(held);
-  if (earliest !== undefined && earliest - Duration.toMillis(MODULE_CREDENTIAL_ROTATION_LEAD) <= nowMillis) {
+  if (nearTheirEnd(held, nowMillis)) {
     return { kind: 'renew', reason: 'expiring' };
   }
-  return held.failedAppIds.length === 0 ? { kind: 'none' } : { appIds: held.failedAppIds, kind: 'fill' };
+  return Option.isNone(activeProviderKeyIds) || held.failedAppIds.length === 0
+    ? { kind: 'none' }
+    : { appIds: held.failedAppIds, kind: 'fill' };
 };
+
+/** How many healing steps in a row could not read liveness. */
+export interface ModuleCredentialHealingStreaks {
+  readonly unreadable: number;
+}
 
 const HEALING_INTERVAL = Duration.minutes(1);
 const HEALING_BACKOFF_CAP = Duration.minutes(15);
@@ -766,18 +785,30 @@ export interface ModuleCredentialHealingInput<Requirements> {
  */
 export const healModuleCredentialsOnce = Effect.fn('AppHost.healModuleCredentialsOnce')(function* healOnce<
   Requirements,
->(input: ModuleCredentialHealingInput<Requirements>) {
+>(input: ModuleCredentialHealingInput<Requirements>, streaks: Ref.Ref<ModuleCredentialHealingStreaks>) {
   const active = yield* input.activeProviderKeyIds.pipe(Effect.option);
-  if (Option.isNone(active)) {
-    return true;
+  const before = yield* Ref.getAndUpdate(streaks, (counted) => ({
+    ...counted,
+    unreadable: Option.isNone(active) ? counted.unreadable + 1 : 0,
+  }));
+  if (Option.isNone(active) && before.unreadable === 0) {
+    yield* Console.error(
+      '[app-host] module credential liveness could not be read; keys are still rotated before they end, revocations are noticed once it can be read again',
+    );
+  }
+  if (Option.isSome(active) && before.unreadable > 0) {
+    yield* Console.log(
+      `[app-host] module credential liveness readable again after ${String(before.unreadable)} step(s)`,
+    );
   }
   const held = yield* Ref.get(input.held);
-  const plan = planModuleCredentialHealing(held, active.value, yield* Clock.currentTimeMillis);
+  const plan = planModuleCredentialHealing(held, active, yield* Clock.currentTimeMillis);
+  const revoked = plan.kind === 'renew' && plan.reason === 'revoked';
   if (plan.kind === 'none') {
     return true;
   }
   if (plan.kind === 'renew') {
-    yield* plan.reason === 'revoked'
+    yield* revoked
       ? Console.error('[app-host] MODULE CREDENTIALS OF THIS HOST WERE REVOKED; issuing and handing over fresh ones')
       : Console.log('[app-host] module credentials near their end; rotating them');
   }
@@ -806,8 +837,9 @@ export const healModuleCredentialsOnce = Effect.fn('AppHost.healModuleCredential
 export const healModuleCredentials = <Requirements,>(input: ModuleCredentialHealingInput<Requirements>) =>
   Effect.gen(function* healCredentials() {
     let backoff = HEALING_INTERVAL;
+    const streaks = yield* Ref.make<ModuleCredentialHealingStreaks>({ unreadable: 0 });
     while (yield* input.serving.pipe(Effect.delay(backoff))) {
-      const healthy = yield* healModuleCredentialsOnce(input);
+      const healthy = yield* healModuleCredentialsOnce(input, streaks);
       backoff = healthy ? HEALING_INTERVAL : Duration.min(Duration.times(backoff, 2), HEALING_BACKOFF_CAP);
     }
     return yield* Console.log('[app-host] superseded; module credential healing stops');
