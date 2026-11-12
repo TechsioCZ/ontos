@@ -4,7 +4,7 @@ import { DateTime } from 'effect';
 
 import { TaxRuleRevisionIdSchema } from '../../shared/domain/merchandise-model.ts';
 import type { CommandTax } from '../../src/services/persistence.service.ts';
-import type { CompanyTaxRates, SellableVatRates, TaxRateBook } from '../../src/services/tax-rates.ts';
+import type { CompanyTaxRates, FetchedTaxRates, SellableVatRates, TaxRateBook } from '../../src/services/tax-rates.ts';
 
 export const TEST_SINCE = DateTime.makeUnsafe('2000-01-01T00:00:00.000Z');
 
@@ -46,6 +46,11 @@ export const testTaxBook = (
 
 export const TEST_TAX_BOOK = testTaxBook();
 export const TEST_RATES: SellableVatRates = { 'cz.vat.reduced': 12, 'cz.vat.standard': 21 };
+/** Tax's answer as a write prepared it before its transaction opened (given after {@link TEST_COMPANY_TAX_RATES}). */
+export const TEST_FETCHED_TAX: FetchedTaxRates = {
+  book: TEST_TAX_BOOK,
+  fetchedAt: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
+};
 export const TEST_TAX: CommandTax = { book: TEST_TAX_BOOK, held: {}, rates: TEST_RATES, refused: false };
 export const TEST_COMPANY_TAX_RATES: CompanyTaxRates = {
   book: TEST_TAX_BOOK,

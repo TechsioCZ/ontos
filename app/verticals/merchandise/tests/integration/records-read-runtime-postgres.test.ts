@@ -40,7 +40,7 @@ import type { StoreScope } from '../../src/services/merchandise-store.ts';
 import { persistenceService } from '../../src/services/persistence.service.ts';
 import { merchandiseRegistration } from '../../vertical.registration.ts';
 import { catalogState } from './support/merchandise-database.ts';
-import { TEST_COMPANY_TAX_RATES, TEST_RATES, TEST_TAX_BOOK } from '../support/tax-fixtures.ts';
+import { TEST_COMPANY_TAX_RATES, TEST_FETCHED_TAX, TEST_RATES, TEST_TAX_BOOK } from '../support/tax-fixtures.ts';
 import { CompanyTaxRatesSchema, TaxRateSource } from '../../src/services/tax-rates.ts';
 
 type Fixture = Effect.Success<ReturnType<typeof makeNativeReadTestContext>>;
@@ -195,7 +195,7 @@ it.live(
               prepared: {
                 actionInvocationId: scope.correlationId,
                 payload,
-                tax: { book: TEST_TAX_BOOK, refused: false },
+                tax: { fetched: TEST_FETCHED_TAX, refused: false },
               },
               scope,
             });

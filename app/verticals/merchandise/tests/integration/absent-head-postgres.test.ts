@@ -27,7 +27,7 @@ import { persistenceService } from '../../src/services/persistence.service.ts';
 import type { MerchandiseRecordsGrants } from '../../src/services/persistence.service.ts';
 import type { MerchandiseFixture } from './support/merchandise-database.ts';
 import { catalogState, withMerchandise } from './support/merchandise-database.ts';
-import { TEST_TAX_BOOK } from '../support/tax-fixtures.ts';
+import { TEST_FETCHED_TAX } from '../support/tax-fixtures.ts';
 
 type RuntimeDb = Effect.Success<ReturnType<typeof makeTestDatabaseFromClient<typeof merchandiseRelations>>>;
 
@@ -90,7 +90,7 @@ const owner = <A, E>(
               prepared: {
                 actionInvocationId: resourceId,
                 payload: prepared,
-                tax: { book: TEST_TAX_BOOK, refused: false },
+                tax: { fetched: TEST_FETCHED_TAX, refused: false },
               },
               scope,
             },

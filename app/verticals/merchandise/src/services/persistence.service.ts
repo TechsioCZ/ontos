@@ -116,7 +116,7 @@ import {
   sellableRatesAt,
   taxRateViews,
 } from './tax-rates.ts';
-import type { CompanyTaxRates, HeldProductRates, SellableVatRates, TaxRateBook } from './tax-rates.ts';
+import type { CompanyTaxRates, FetchedTaxRates, HeldProductRates, SellableVatRates, TaxRateBook } from './tax-rates.ts';
 import { CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import {
@@ -230,9 +230,9 @@ export interface CommandTax {
   readonly unreachable?: boolean;
 }
 
-/** What Tax answered before the owner transaction opened: its book, or none (and why not). */
+/** What Tax answered before the owner transaction opened: its fresh answer, or none (and why not). */
 export interface PreparedTax {
-  readonly book: TaxRateBook | undefined;
+  readonly fetched: FetchedTaxRates | undefined;
   readonly refused: boolean;
   /** Tax could not be reached (or the module credentials are not configured yet). */
   readonly unavailable?: boolean;
@@ -2257,20 +2257,18 @@ export const prepareCommandTax = Effect.fn('Merchandise.prepareCommandTax')(func
 ) {
   if (!Predicate.isTagged(command, 'SyncTaxRates') && !currentRatesWanted(command)) {
     const known = yield* knownTaxRateBook(scope);
-    return known.book === undefined
-      ? ({ book: Option.getOrUndefined(Option.none<TaxRateBook>()), refused: known.refused } satisfies PreparedTax)
-      : ({ book: known.book, refused: false } satisfies PreparedTax);
+    return { fetched: known.fetched, refused: known.refused } satisfies PreparedTax;
   }
   const read = Predicate.isTagged(command, 'SyncTaxRates') ? refreshedTaxRateBook(scope) : currentTaxRateBook(scope);
   const outcome = yield* Effect.result(read);
   if (Result.isSuccess(outcome)) {
-    return { book: outcome.success, refused: false } satisfies PreparedTax;
+    return { fetched: outcome.success, refused: false } satisfies PreparedTax;
   }
   yield* Effect.logWarning('Merchandise could not read VAT rates from Tax').pipe(
     Effect.annotateLogs({ reason: outcome.failure.kind }),
   );
   return {
-    book: Option.getOrUndefined(Option.none<TaxRateBook>()),
+    fetched: Option.getOrUndefined(Option.none<FetchedTaxRates>()),
     refused: outcome.failure.kind === 'REFUSED',
     unavailable: outcome.failure.kind === 'UNAVAILABLE',
   } satisfies PreparedTax;
@@ -2297,9 +2295,7 @@ export const prepareStaffTaxRates = Effect.fn('Merchandise.prepareStaffTaxRates'
   scope: OperationalScope,
 ) {
   const known = yield* knownTaxRateBook(scope);
-  return known.book === undefined
-    ? ({ book: Option.getOrUndefined(Option.none<TaxRateBook>()), refused: known.refused } satisfies PreparedTax)
-    : ({ book: known.book, refused: false } satisfies PreparedTax);
+  return { fetched: known.fetched, refused: known.refused } satisfies PreparedTax;
 });
 
 /** Cross-owner reference verification happens after Core admission but before the owner transaction opens. */
@@ -2391,14 +2387,10 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
     const syncTax = Effect.fn('Merchandise.syncTax')(function* syncTax(head: CatalogHead, command: MerchandiseCommand) {
       const refused = prepared?.tax.refused === true;
       const now = yield* DateTime.now;
-      const answer = prepared?.tax.book;
-      const decision = decideTaxRates(
-        head.taxRates,
-        answer === undefined ? { refused } : { book: answer, refused },
-        now,
-      );
+      const fetched = prepared?.tax.fetched;
+      const decision = decideTaxRates(head.taxRates, fetched === undefined ? { refused } : { fetched, refused }, now);
       // An explicit sync reports a Tax that did not answer instead of keeping the stored rates silently.
-      if (Predicate.isTagged(command, 'SyncTaxRates') && answer === undefined) {
+      if (Predicate.isTagged(command, 'SyncTaxRates') && fetched === undefined) {
         return yield* refused ? conflict(TAX_REFUSED_REASON) : taxUnavailable();
       }
       const usable = decision.usable ? decision.book : undefined;
@@ -2808,7 +2800,8 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       tax: PreparedTax,
     ) {
       const now = yield* DateTime.now;
-      const answer = tax.book === undefined ? { refused: tax.refused } : { book: tax.book, refused: tax.refused };
+      const answer =
+        tax.fetched === undefined ? { refused: tax.refused } : { fetched: tax.fetched, refused: tax.refused };
       const decision = decideTaxRates(loaded?.taxRates, answer, now);
       if (loaded === undefined || decision.materialise === undefined) {
         return { book: decision.book, head: loaded, state: loaded?.taxRates };

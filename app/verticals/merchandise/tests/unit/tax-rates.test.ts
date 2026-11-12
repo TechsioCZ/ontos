@@ -191,14 +191,14 @@ it.effect('asks Tax once per company however many reads and writes want its answ
     );
     // Staff reads meanwhile join nothing and wait for nothing: they answer from the materialised rates.
     expect(yield* knownTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source))).toEqual({
-      fresh: false,
       refused: false,
       waiting: false,
     });
     yield* Effect.yieldNow;
     expect(yield* Ref.get(calls)).toBe(1);
     yield* Deferred.succeed(release, TEST_TAX_BOOK);
-    expect(yield* Fiber.join(waiting)).toEqual([TEST_TAX_BOOK, TEST_TAX_BOOK, TEST_TAX_BOOK]);
+    const fetched = { book: TEST_TAX_BOOK, fetchedAt: yield* DateTime.now };
+    expect(yield* Fiber.join(waiting)).toEqual([fetched, fetched, fetched]);
     expect(yield* Ref.get(calls)).toBe(1);
   }),
 );
@@ -215,8 +215,7 @@ it.effect('a write waits for Tax at most 3 seconds; the refresh still lands for 
     yield* Deferred.succeed(release, TEST_TAX_BOOK);
     yield* Effect.yieldNow;
     expect(yield* knownTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source))).toEqual({
-      book: TEST_TAX_BOOK,
-      fresh: true,
+      fetched: { book: TEST_TAX_BOOK, fetchedAt: yield* DateTime.now },
       refused: false,
       waiting: false,
     });
@@ -234,24 +233,26 @@ it.effect('reuses Tax answer for 12 minutes per company and refreshes it afterwa
       currentTaxRateBook(scope).pipe(Effect.provideService(TaxRateSource, source));
     const read = (scope: OperationalScope) =>
       knownTaxRateBook(scope).pipe(Effect.provideService(TaxRateSource, source));
-    expect(yield* write(company)).toEqual(TEST_TAX_BOOK);
+    const answeredAt = yield* DateTime.now;
+    expect(yield* write(company)).toEqual({ book: TEST_TAX_BOOK, fetchedAt: answeredAt });
     yield* TestClock.adjust('11 minutes');
     yield* write(company);
-    expect(yield* read(company)).toMatchObject({ book: TEST_TAX_BOOK, fresh: true });
+    // Within the window the answer keeps the time Tax gave it.
+    expect(yield* read(company)).toMatchObject({ fetched: { book: TEST_TAX_BOOK, fetchedAt: answeredAt } });
     expect(yield* Ref.get(calls)).toBe(1);
     // Another company has its own entry.
     yield* write(other);
     expect(yield* Ref.get(calls)).toBe(2);
-    // Past the window a read still answers with the last answer and starts one refresh.
+    // Past the window a read gets no answer from Tax (the stored rates serve) and starts one refresh.
     yield* TestClock.adjust('1 minute');
-    expect(yield* read(company)).toMatchObject({ book: TEST_TAX_BOOK, fresh: false });
+    expect(yield* read(company)).toEqual({ refused: false, waiting: false });
     yield* Effect.yieldNow;
     expect(yield* Ref.get(calls)).toBe(3);
-    expect(yield* read(company)).toMatchObject({ fresh: true });
+    expect(yield* read(company)).toMatchObject({ fetched: { fetchedAt: yield* DateTime.now } });
   }),
 );
 
-it.effect('keeps the last answer through an outage and drops it when Tax refuses the company', () =>
+it.effect('never hands over an answer older than 12 minutes, and drops it when Tax refuses the company', () =>
   Effect.gen(function* outage() {
     const outcome = yield* Ref.make<Effect.Effect<TaxRateBook, TaxRatesFailure>>(Effect.succeed(TEST_TAX_BOOK));
     const source = { read: () => Effect.flatten(Ref.get(outcome)) };
@@ -261,12 +262,13 @@ it.effect('keeps the last answer through an outage and drops it when Tax refuses
     yield* write;
     yield* TestClock.adjust('13 minutes');
     yield* Ref.set(outcome, Effect.fail(new TaxRatesFailure({ kind: 'UNAVAILABLE' })));
-    yield* write;
-    expect(yield* read).toMatchObject({ book: TEST_TAX_BOOK, refused: false });
+    // The refresh fails: the 13-minute-old answer is not Tax's answer any more.
+    expect(Result.isFailure(yield* write)).toBe(true);
+    expect(yield* read).toEqual({ refused: false, waiting: true });
     yield* Ref.set(outcome, Effect.fail(new TaxRatesFailure({ kind: 'REFUSED' })));
     yield* TestClock.adjust('1 minute');
     yield* write;
-    expect(yield* read).toEqual({ fresh: false, refused: true, waiting: true });
+    expect(yield* read).toEqual({ refused: true, waiting: true });
   }),
 );
 
@@ -362,7 +364,11 @@ const confirmedMinutesAgo = (minutes: number): CompanyTaxRates => ({
   syncedAt: DateTime.subtract(NOW, { minutes }),
 });
 
-const answered = (book: TaxRateBook) => ({ book, refused: false });
+/** Tax's answer given at `fetchedAt` (by default now). */
+const answered = (book: TaxRateBook, fetchedAt: DateTime.Utc = NOW) => ({
+  fetched: { book, fetchedAt },
+  refused: false,
+});
 const unreachable = { refused: false };
 const refusedByTax = { refused: true };
 
@@ -396,14 +402,15 @@ it('the migrated state keeps selling until Tax prices the company, and holds BOO
 });
 
 it('once Tax is in charge its answer rules: a gap fails closed, an outage keeps a recently confirmed answer', () => {
-  expect(decideTaxRates(CONFIRMED, answered(TEST_TAX_BOOK), NOW)).toEqual({
+  expect(decideTaxRates(confirmedMinutesAgo(5), answered(TEST_TAX_BOOK), NOW)).toEqual({
     book: TEST_TAX_BOOK,
     changed: false,
     held: {},
+    materialise: CONFIRMED,
     usable: true,
   });
   const standardOnly = testTaxBook({ standard: '21' });
-  const gap = decideTaxRates(CONFIRMED, answered(standardOnly), NOW);
+  const gap = decideTaxRates(confirmedMinutesAgo(5), answered(standardOnly), NOW);
   expect([gap.book, gap.changed, gap.materialise?.source]).toEqual([standardOnly, true, 'TAX']);
   expect(resolveVatRate(standardOnly, 'cz.vat.reduced', NOW)).toEqual({ _tag: 'NotSellable', reason: 'NO_RULE' });
   // Tax unreachable: rates it confirmed within 24 hours still price new lines; older ones are shown, never used.
@@ -420,13 +427,28 @@ it('once Tax is in charge its answer rules: a gap fails closed, an outage keeps 
   expect(decideTaxRates(undefined, refusedByTax, NOW)).toEqual({ changed: false, held: {}, usable: false });
 });
 
-it('the same answer again only renews the confirmation time, once per freshness window', () => {
-  expect(decideTaxRates(confirmedMinutesAgo(5), answered(TEST_TAX_BOOK), NOW).materialise).toBeUndefined();
-  expect(decideTaxRates(confirmedMinutesAgo(13), answered(TEST_TAX_BOOK), NOW)).toEqual({
+it('the confirmation time is when Tax gave the answer, and an older answer never replaces a newer one', () => {
+  // The same answer again moves the confirmation to when Tax gave it, not to when it was used.
+  const givenAt = DateTime.subtract(NOW, { minutes: 3 });
+  expect(decideTaxRates(confirmedMinutesAgo(13), answered(TEST_TAX_BOOK, givenAt), NOW)).toEqual({
     book: TEST_TAX_BOOK,
     changed: false,
     held: {},
-    materialise: { book: TEST_TAX_BOOK, source: 'TAX', syncedAt: NOW },
+    materialise: { book: TEST_TAX_BOOK, source: 'TAX', syncedAt: givenAt },
+    usable: true,
+  });
+  // The stored state is already that answer, or a later one (another process stored it): nothing changes.
+  expect(decideTaxRates(CONFIRMED, answered(TEST_TAX_BOOK), NOW)).toEqual({
+    book: TEST_TAX_BOOK,
+    changed: false,
+    held: {},
+    usable: true,
+  });
+  const standardOnly = testTaxBook({ standard: '21' });
+  expect(decideTaxRates(CONFIRMED, answered(standardOnly, givenAt), NOW)).toEqual({
+    book: TEST_TAX_BOOK,
+    changed: false,
+    held: {},
     usable: true,
   });
 });
