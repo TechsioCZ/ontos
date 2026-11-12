@@ -249,7 +249,11 @@ const makeCrmShellFixture = Effect.fn('CrmIntakeWorkloadNative.makeShellFixture'
     status: 'active',
     tenantId: core.tenantId,
   });
-  yield* writeTestTenantScopes(database, {
+  // Scopes are written as the runtime role, the only role a tenant scope is installed for.
+  const scopeWriter = yield* PgClient.make({ url: Redacted.make(connections.runtime.connectionString) }).pipe(
+    Effect.flatMap((runtime) => testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, runtime))),
+  );
+  yield* writeTestTenantScopes(scopeWriter, {
     databaseIdentities: SHELL_DATABASE_IDENTITY_ENROLLMENT,
     legalEntityIds: [core.legalEntityId, secondLegalEntityId],
     principalId: core.manager.principalId,
@@ -401,7 +405,16 @@ const issuePersonalKey = Effect.fn('CrmIntakeWorkloadNative.issuePersonalKey')(f
     headers: { cookie: Redacted.value(cookie), origin: fixture.origin },
   });
   expect(session.status).toBe(200);
-  const view = yield* session.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(AuthenticatedSessionSchema)));
+  // The person works in two companies, so its session has selected none yet; only its principal matters here.
+  const view = yield* session.json.pipe(
+    Effect.flatMap(
+      Schema.decodeUnknownEffect(
+        Schema.Struct({
+          identity: Schema.Struct({ principalId: AuthenticatedSessionSchema.fields.identity.fields.principalId }),
+        }),
+      ),
+    ),
+  );
   expect(view.identity.principalId).toBe(fixture.core.manager.principalId);
   const issued = yield* client.post(`${fixture.origin}${prefix}/auth/identity/api-keys/self`, {
     body: yield* HttpBody.json({ name: 'CRM client writer' }),
@@ -616,14 +629,18 @@ it.live(
 
             // No manual registration: the platform's release step registers CRM's intake workload in this Tenant,
             // where CRM is installed, once per company, as the app host runs it before its boot's key provisioning.
+            // The release step and the provisioning pass run as the shared runtime role, as on the app host.
+            const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+            const runtime = yield* PgClient.make({ url: Redacted.make(connections.runtime.connectionString) });
+            const runtimeDatabase = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, runtime));
             const companyA = core.legalEntityId;
             const companyB = fixture.secondLegalEntityId;
             const registrationRuntime = Layer.mergeAll(
-              Layer.succeed(CoreDatabase, { executor: database }),
+              Layer.succeed(CoreDatabase, { executor: runtimeDatabase }),
               AccessReleaseStoreLive.pipe(
                 Layer.provide(
                   Layer.mergeAll(
-                    Layer.succeed(CoreDatabase, { executor: database }),
+                    Layer.succeed(CoreDatabase, { executor: runtimeDatabase }),
                     makeDatabaseIdentityEnrollmentLive(SHELL_DATABASE_IDENTITY_ENROLLMENT),
                   ),
                 ),
@@ -631,7 +648,7 @@ it.live(
             );
             const registerRelease = (runReference: string) =>
               registerReleaseInternalWorkloads(
-                { enrollment: SHELL_DATABASE_IDENTITY_ENROLLMENT, executor: database },
+                { enrollment: SHELL_DATABASE_IDENTITY_ENROLLMENT, executor: runtimeDatabase },
                 {
                   declarations: internalWorkloadDeclarations(MODULE_INTERNAL_WORKLOADS, new Set([INTAKE_WORKLOAD])),
                   runReference,
@@ -658,9 +675,6 @@ it.live(
 
             // The platform's provisioning pass, exactly as a host boot runs it: CRM's and Party Registry's module
             // keys and the intake workload's key, for this Tenant only, attested for this release.
-            const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
-            const runtime = yield* PgClient.make({ url: Redacted.make(connections.runtime.connectionString) });
-            const runtimeDatabase = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, runtime));
             const keys = yield* makeApiKeyService().pipe(
               Effect.provideService(AuthConfig, fixture.configuration),
               Effect.provideService(AuthDatabase, fixture.persistence),
