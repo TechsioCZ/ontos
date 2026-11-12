@@ -21,7 +21,8 @@
  * the same message. Apply needs the dry-run's plan fingerprint, which covers every write.
  *
  * Environment: ONTOS_DEMO_SEED_URL, ONTOS_DEMO_SEED_EMAIL, ONTOS_DEMO_SEED_PASSWORD, ONTOS_DEMO_SEED_TENANT_ID.
- * The password is never printed. Only the three selling stage Tenants are accepted.
+ * The password is never printed. Any Tenant that serves people is accepted (the release installs Tax wherever Finance
+ * Billing or Merchandise is active); the platform's own Tenant never is.
  */
 import { createHash, randomUUID } from 'node:crypto';
 
@@ -50,6 +51,7 @@ import {
 } from '../../apps/shell-super-app/shared/access-admin-api.ts';
 import { AvailableLegalEntitiesResponseSchema, SignInPayloadSchema } from '../../apps/shell-super-app/shared/api.ts';
 import { LegalEntityIdSchema, PrincipalIdSchema, TenantIdSchema } from '../../packages/core-runtime/src/access/ids.ts';
+import { tenantServesPeople } from '../../packages/core-runtime/src/auth/module-credentials.ts';
 import type { CreateTaxRulePayload } from '../../verticals/tax/shared/actions/create-tax-rule.ts';
 import type { DeclareSellerVatRegimePayload } from '../../verticals/tax/shared/actions/declare-seller-vat-regime.ts';
 import { executeApplicableTaxRuleSetWithAuthorization } from '../../verticals/tax/src/api/applicable-tax-rule-set-client.ts';
@@ -103,6 +105,7 @@ const RULE_REASON = 'Výchozí sazba DPH ukázkových dat (sazby zákona o DPH o
 const REGIME_REASON = 'Výchozí stav ukázkových dat: plátce DPH od 1. 1. 2024';
 
 /** The selling stage Tenants this seed may write to, with the label the human output uses instead of an id. */
+/** The names the summary gives the stage Tenants it knows; any other Tenant is named by the operator's session. */
 export const taxBaselineTenants: ReadonlyMap<string, string> = new Map([
   [demoTenantId, 'Prodejní demo'],
   [N1_TENANT_ID, 'N1 demo'],
@@ -445,7 +448,7 @@ const stateMark = { differs: 'LIŠÍ SE', missing: 'chybí', present: 'ok' } as 
 
 /** The human table: display names only, never an id. */
 export const renderTaxBaseline = (tenantId: string, reports: readonly CompanyReport[]): string => {
-  const lines = [`Tenant: ${taxBaselineTenants.get(tenantId) ?? 'neznámý tenant'}`];
+  const lines = [`Tenant: ${taxBaselineTenants.get(tenantId) ?? 'Tenant operátora'}`];
   for (const report of reports.toSorted((left, right) => left.name.localeCompare(right.name, 'cs'))) {
     lines.push(`  ${report.name}`, `    režim DPH: ${report.regime.detail} [${stateMark[report.regime.state]}]`);
     for (const rule of report.rules) {
@@ -676,8 +679,12 @@ export const runTaxBaseline = Effect.fn('TaxBaseline.run')(function* runTaxBasel
   reviewed: Option.Option<string>,
   options: TaxBaselineRunOptions = {},
 ) {
-  if (!(options.allowedTenants ?? taxBaselineTenants).has(tenant.tenantId)) {
-    return yield* fail('The tax baseline is seeded only in the three selling stage Tenants');
+  const allowed =
+    options.allowedTenants === undefined
+      ? tenantServesPeople(tenant.tenantId)
+      : options.allowedTenants.has(tenant.tenantId);
+  if (!allowed) {
+    return yield* fail('The tax baseline is seeded only in a Tenant that serves people, never the platform Tenant');
   }
   if (tenant.companies.length === 0) {
     return yield* fail('The operator can select no company in this Tenant');
@@ -787,8 +794,8 @@ export const validateSeedOrigin = (shellUrl: string, tenantId: string) =>
     const tenant = yield* Schema.decodeUnknownEffect(TenantIdSchema)(tenantId).pipe(
       Effect.mapError(() => fail('ONTOS_DEMO_SEED_TENANT_ID is not a Tenant id')),
     );
-    if (!taxBaselineTenants.has(tenant)) {
-      return yield* fail('ONTOS_DEMO_SEED_TENANT_ID is not one of the three selling stage Tenants');
+    if (!tenantServesPeople(tenant)) {
+      return yield* fail('ONTOS_DEMO_SEED_TENANT_ID names the platform Tenant, which serves no people');
     }
     return { origin: url.origin, tenantId: tenant };
   });

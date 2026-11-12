@@ -1,7 +1,8 @@
-import { DateTime, Duration, Effect, Option, Schema } from 'effect';
+import { DateTime, Duration, Effect, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { LegalEntityIdSchema, PrincipalIdSchema, TenantIdSchema } from '../../packages/core-runtime/src/access/ids.ts';
+import { PLATFORM_TENANT } from '../../packages/core-runtime/src/auth/module-credentials.ts';
 import { createTaxRuleAction } from '../../verticals/tax/src/actions/create-tax-rule.action.ts';
 import { declareSellerVatRegimeAction } from '../../verticals/tax/src/actions/declare-seller-vat-regime.action.ts';
 import { applicableTaxRuleSetRead } from '../../verticals/tax/src/api/applicable-tax-rule-set.read.ts';
@@ -454,22 +455,28 @@ it.effect('the human table names companies only; ids appear in the JSON plan alo
   }),
 );
 
-it.effect('accepts only the three selling stage Tenants and a bare HTTPS or loopback origin', () =>
-  Effect.gen(function* targets() {
-    const stage = 'https://ontos-stage.web-revolution.cz';
-    expect((yield* validateSeedOrigin(stage, AKROS_PLAYGROUND_TENANT_ID)).origin).toBe(stage);
-    for (const [url, tenant] of [
-      [stage, '70000000-0000-4000-8000-000000000010'],
-      [stage, '70000000-0000-4000-8000-000000000090'],
-      [`${stage}/cs`, demoTenantId],
-      ['https://user:secret@ontos-stage.web-revolution.cz', demoTenantId],
-    ] as const) {
-      expect(yield* failureReason(validateSeedOrigin(url, tenant))).not.toBe('');
-    }
-    const { tenant } = makeFakeTax();
-    const foreign = { ...tenant, tenantId: TenantIdSchema.make('70000000-0000-4000-8000-000000000090') };
-    expect(yield* failureReason(dryRun(foreign))).toContain('three selling stage Tenants');
-  }),
+it.effect(
+  'accepts any Tenant that serves people, never the platform Tenant, and only a bare HTTPS or loopback origin',
+  () =>
+    Effect.gen(function* targets() {
+      const stage = 'https://ontos-stage.web-revolution.cz';
+      // The release installs Tax wherever Finance Billing or Merchandise is active, so any such Tenant is seeded.
+      for (const accepted of [AKROS_PLAYGROUND_TENANT_ID, '70000000-0000-4000-8000-000000000010']) {
+        expect((yield* validateSeedOrigin(stage, accepted)).origin).toBe(stage);
+      }
+      for (const [url, tenant] of [
+        [stage, PLATFORM_TENANT.tenantId],
+        [`${stage}/cs`, demoTenantId],
+        ['https://user:secret@ontos-stage.web-revolution.cz', demoTenantId],
+      ] as const) {
+        expect(yield* failureReason(validateSeedOrigin(url, tenant))).not.toBe('');
+      }
+      const { tenant } = makeFakeTax();
+      const platform = { ...tenant, tenantId: TenantIdSchema.make(PLATFORM_TENANT.tenantId) };
+      expect(yield* failureReason(dryRun(platform))).toContain('never the platform Tenant');
+      const other = { ...tenant, tenantId: TenantIdSchema.make('70000000-0000-4000-8000-000000000090') };
+      expect(Result.isSuccess(yield* dryRun(other).pipe(Effect.result))).toBe(true);
+    }),
 );
 
 const problem = (status: number, code?: string) =>
