@@ -30,11 +30,13 @@ const COMMONJS_CONTRACTS = '@app/commonjs-contracts';
 const TOP_LEVEL_RETURN_CONTRACTS = '@app/top-level-return-contracts';
 const PATTERN_CONTRACTS = '@app/pattern-contracts';
 const NESTED_SCOPE_CONTRACTS = '@app/nested-scope-contracts';
+const SELECTION_CONTRACTS = '@app/selection-contracts';
 const BOOTSTRAP_SOURCE = 'src/bootstrap.cjs';
 const BOOTSTRAP_IMPORT = "import bootstrap from './bootstrap.cjs'; export const origin = bootstrap.origin;\n";
 
 /** A traced workspace package manifest, as this step reads it. */
 interface WorkspacePackageManifest {
+  readonly dependencies?: Readonly<Record<string, string>>;
   readonly exports: Readonly<Record<string, string>>;
   readonly imports?: Readonly<Record<string, string | Readonly<Record<string, string>>>>;
   readonly name: string;
@@ -422,6 +424,97 @@ it.effect('completes a partial trace from matching build inputs and runs with th
     const observed = Result.getOrThrow(Schema.decodeUnknownResult(OriginObservation)(after.stdout));
     expect(observed.origin).toBe('completed-at-build');
     expect(resolvedInsidePackaged(observed.resolved, packaged)).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('carries a workspace package that only a traced package declares and imports from TypeScript', () =>
+  Effect.gen(function* carriesDeclaredWorkspaceImport() {
+    const root = yield* temporaryRoot;
+    const unit = unitUnder(root);
+    const packaged = path.join(unit, PACKAGED_DIRECTORY);
+    const entry = "export { origin } from '@app/selection-contracts/reference';\n";
+    const installed = yield* Effect.promise(() =>
+      writeWorkspacePackage(
+        path.join(unit, 'node_modules'),
+        {
+          ...manifestOf(TRACED_CONTRACTS, { '.': ENTRY_SUBPATH }),
+          dependencies: { [SELECTION_CONTRACTS]: 'workspace:*' },
+        },
+        { [ENTRY_SOURCE]: entry },
+      ),
+    );
+    // Only the traced package resolves the selection contracts: the unit does not declare them.
+    const selection = yield* Effect.promise(() =>
+      writeWorkspacePackage(
+        path.join(installed, 'node_modules'),
+        manifestOf(SELECTION_CONTRACTS, { '.': ENTRY_SUBPATH, './reference': './src/reference.ts' }),
+        {
+          [ENTRY_SOURCE]: "export const unused: string = 'root entry';\n",
+          'src/origin.ts': "export const origin: string = 'carried-selection';\n",
+          'src/reference.ts': "export { origin } from './origin.ts';\n",
+        },
+      ),
+    );
+    yield* Effect.promise(() =>
+      writeWorkspacePackage(packagedNodeModules(unit), manifestOf(TRACED_CONTRACTS, { '.': ENTRY_SUBPATH }), {
+        [ENTRY_SOURCE]: entry,
+      }),
+    );
+    yield* Effect.promise(() => writeProbe(packaged, originProbe(TRACED_CONTRACTS)));
+
+    const compilation = yield* compilePackagedWorkspacePackages(unit);
+
+    const carried = path.join(packagedNodeModules(unit), SELECTION_CONTRACTS);
+    expect(compilation.packages.map((report) => report.name)).toEqual(['selection-contracts', 'traced-contracts']);
+    expect(compilation.packages[0]?.compiled).toEqual(['src/origin.js', 'src/reference.js']);
+    // Only the imported entry and its relative graph are carried, never the package's other entries.
+    expect(existsSync(path.join(carried, ENTRY_SOURCE))).toBe(false);
+    expect(yield* Effect.promise(() => readExports(carried))).toEqual({
+      '.': ENTRY_SUBPATH,
+      './reference': './src/reference.js',
+    });
+    yield* Effect.promise(() => rename(selection, `${selection}-retired-build-input`));
+    yield* Effect.promise(() => rename(installed, `${installed}-retired-build-input`));
+    const after = runProbe(packaged);
+    expect(after.stderr).toBe('');
+    expect(after.status).toBe(0);
+    expect(Result.getOrThrow(Schema.decodeUnknownResult(OriginObservation)(after.stdout)).origin).toBe(
+      'carried-selection',
+    );
+    const again = yield* compilePackagedWorkspacePackages(unit).pipe(Effect.exit);
+    expect(Exit.isSuccess(again) ? 'idempotent' : refusalOf(again)).toBe('idempotent');
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('refuses a traced workspace import its importing package does not declare', () =>
+  Effect.gen(function* refusesUndeclaredWorkspaceImport() {
+    const root = yield* temporaryRoot;
+    const unit = unitUnder(root);
+    const entry = "export { origin } from '@app/selection-contracts';\n";
+    const installed = yield* Effect.promise(() =>
+      writeWorkspacePackage(path.join(unit, 'node_modules'), manifestOf(TRACED_CONTRACTS, { '.': ENTRY_SUBPATH }), {
+        [ENTRY_SOURCE]: entry,
+      }),
+    );
+    yield* Effect.promise(() =>
+      writeWorkspacePackage(
+        path.join(installed, 'node_modules'),
+        manifestOf(SELECTION_CONTRACTS, { '.': ENTRY_SUBPATH }),
+        {
+          [ENTRY_SOURCE]: "export const origin = 'undeclared';\n",
+        },
+      ),
+    );
+    yield* Effect.promise(() =>
+      writeWorkspacePackage(packagedNodeModules(unit), manifestOf(TRACED_CONTRACTS, { '.': ENTRY_SUBPATH }), {
+        [ENTRY_SOURCE]: entry,
+      }),
+    );
+
+    const exit = yield* compilePackagedWorkspacePackages(unit).pipe(Effect.exit);
+
+    expect(refusalOf(exit)).toContain(`${TRACED_CONTRACTS} declares no install of ${SELECTION_CONTRACTS}`);
+    expect(existsSync(path.join(packagedNodeModules(unit), SELECTION_CONTRACTS))).toBe(false);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
