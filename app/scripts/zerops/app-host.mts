@@ -9,6 +9,7 @@ import {
 import { startProcessObservability } from './process-observability.mts';
 import { heapLimitArguments, heapLimitMiB, readContainerMemoryBytes } from './heap-limits.mts';
 import { withKeepAlive } from './http-keep-alive.mts';
+import { compositionSnapshotResponse } from './composition-source-response.mts';
 import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
 import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
 import { authenticationQueryRedactions, credentialSubmissionRedirect } from '@app/shared-contracts/credential-url';
@@ -524,10 +525,7 @@ const compositionSourceResponse = <Failure, Requirements>(
     }
     const current = yield* load.pipe(Effect.option, Effect.map(Option.flatten));
     return Option.isSome(current)
-      ? HttpServerResponse.text(current.value, {
-          contentType: 'application/json',
-          headers: { 'cache-control': 'no-store' },
-        })
+      ? compositionSnapshotResponse(current.value, request.headers['if-none-match'])
       : HttpServerResponse.empty({ status: 503 });
   });
 
