@@ -113,6 +113,12 @@ export const ProductVariantSchema = Schema.Struct({
   ...CatalogFlagsSchema.fields,
   active: Schema.optionalKey(Schema.Boolean),
   attributes: Schema.Trim.check(Schema.isMaxLength(1000)),
+  /**
+   * The stored gross unit price (VAT included) when the variant has no tiers: set by the server when the price is
+   * entered, at the rate Tax gives the classification then. A later rate change never moves it; a value a client sends
+   * is ignored.
+   */
+  grossPriceMinor: Schema.optionalKey(MinorAmountSchema),
   id: Schema.optionalKey(VariantIdSchema),
   name: TextSchema(100),
   priceHistory: Schema.optionalKey(Schema.Array(PriceHistoryEntrySchema)),
@@ -235,6 +241,11 @@ export const ProductSchema = Schema.Struct({
   category: TextSchema(120),
   createdAt: Schema.DateTimeUtcFromString,
   currentPriceMinor: MinorAmountSchema,
+  /**
+   * The stored gross unit price (VAT included) of a product without variants or tiers: set by the server when the
+   * price is entered, at the rate Tax gives the classification then. A later rate change never moves it.
+   */
+  grossPriceMinor: Schema.optionalKey(MinorAmountSchema),
   id: ProductIdSchema,
   lowStockThreshold: MinorAmountSchema,
   name: TextSchema(200),

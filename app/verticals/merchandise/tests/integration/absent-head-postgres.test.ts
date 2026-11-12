@@ -86,7 +86,14 @@ const owner = <A, E>(
         scoped,
         prepared === undefined
           ? { scope }
-          : { prepared: { actionInvocationId: resourceId, payload: prepared, taxBook: TEST_TAX_BOOK }, scope },
+          : {
+              prepared: {
+                actionInvocationId: resourceId,
+                payload: prepared,
+                tax: { book: TEST_TAX_BOOK, refused: false },
+              },
+              scope,
+            },
       );
       return yield* body(services, resourceId, scoped);
     }),
@@ -157,13 +164,13 @@ const absentHeadChecks = (fixture: MerchandiseFixture) =>
       const headA = yield* headOf(fixture, fixture.scope);
 
       // Reads: an empty catalog at revision 0 for staff and the storefront, and no row is created.
-      const staff = yield* owner(runtime, companyB, (services) => services.records(staffRead, grants));
+      const staff = yield* owner(runtime, companyB, (services) => services.records(staffRead, { grants }));
       expect({ products: staff.products, revision: staff.revision, total: staff.totalProducts }).toEqual({
         products: [],
         revision: 0,
         total: 0,
       });
-      const storefront = yield* owner(runtime, companyB, (services) => services.records(storefrontRead, grants));
+      const storefront = yield* owner(runtime, companyB, (services) => services.records(storefrontRead, { grants }));
       expect({ products: storefront.products, revision: storefront.revision }).toEqual({ products: [], revision: 0 });
       expect(yield* headOf(fixture, companyB)).toBeUndefined();
 
@@ -173,7 +180,7 @@ const absentHeadChecks = (fixture: MerchandiseFixture) =>
       const stale = yield* write(runtime, companyB, createCategoryAt('druha', 0)).pipe(Effect.flip);
       expect(Schema.is(MerchandiseRevisionConflict)(stale)).toBe(true);
       expect((yield* write(runtime, companyB, createCategoryAt('druha', 1))).revision).toBe(2);
-      const afterWrites = yield* owner(runtime, companyB, (services) => services.records(staffRead, grants));
+      const afterWrites = yield* owner(runtime, companyB, (services) => services.records(staffRead, { grants }));
       expect(afterWrites.revision).toBe(2);
 
       // Concurrent first writes in C: the winner holds its new head uncommitted while the loser's insert waits.
@@ -204,7 +211,7 @@ const absentHeadChecks = (fixture: MerchandiseFixture) =>
 
       // Company A, which already had a head, kept its revision and rows.
       expect(yield* headOf(fixture, fixture.scope)).toEqual(headA);
-      const readA = yield* owner(runtime, fixture.scope, (services) => services.records(staffRead, grants));
+      const readA = yield* owner(runtime, fixture.scope, (services) => services.records(staffRead, { grants }));
       expect(readA.revision).toBe(headA?.revision);
       expect(readA.totalProducts).toBeGreaterThan(0);
     }),

@@ -192,7 +192,11 @@ it.live(
           Effect.gen(function* firstWrite() {
             const scoped = yield* installOperationalScope(tx, scope, defineDatabaseIdentityEnrollment([]));
             const services = yield* persistenceService(scoped, {
-              prepared: { actionInvocationId: scope.correlationId, payload, taxBook: TEST_TAX_BOOK },
+              prepared: {
+                actionInvocationId: scope.correlationId,
+                payload,
+                tax: { book: TEST_TAX_BOOK, refused: false },
+              },
               scope,
             });
             return yield* services.apply(payload.command, payload.expectedRevision, scope.correlationId);

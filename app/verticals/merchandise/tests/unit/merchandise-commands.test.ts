@@ -95,13 +95,16 @@ it.effect('CreateProduct normalizes priced variants and preserves informational 
     const created = yield* apply(empty, command, 'variant-product');
     const variants = created.state.products[0]?.variants;
     expect(variants).toEqual([
+      // Each priced variant stores the gross entered with it at the standard rate then (1050 + 21 % = 1271).
       {
         ...command.variants?.[0],
+        grossPriceMinor: 1271,
         id: 'variant-product-v1',
         priceHistory: [{ changedBy: actor, effectiveFrom: t0, priceMinor: 1050 }],
       },
       {
         ...command.variants?.[1],
+        grossPriceMinor: 0,
         priceHistory: [{ changedBy: actor, effectiveFrom: t0, priceMinor: 0 }],
       },
       command.variants?.[2],

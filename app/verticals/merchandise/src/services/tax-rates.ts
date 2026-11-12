@@ -48,40 +48,33 @@ export const TaxRateBookSchema = Schema.Struct({
 });
 export type TaxRateBook = typeof TaxRateBookSchema.Type;
 
-/**
- * The integer rate each classification is sold at; a classification without an entry is not sellable. These are the
- * rates the company's stored gross prices were computed with.
- */
+/** The integer rate each classification sells at, at one instant; a classification without an entry is not sellable. */
 export const SellableVatRatesSchema = Schema.Struct({
   [CZ_VAT_REDUCED]: Schema.optionalKey(VatPercentSchema),
   [CZ_VAT_STANDARD]: Schema.optionalKey(VatPercentSchema),
 });
 export type SellableVatRates = typeof SellableVatRatesSchema.Type;
 
-/** No classification is sellable: what a company that never synced with Tax prices with. */
+/** No classification is sellable: a company that never synced with Tax. */
 export const NO_SELLABLE_RATES: SellableVatRates = {};
 
 /**
- * What Merchandise keeps of Tax per company (`catalog_heads.tax_rates`): the rates its stored gross prices were
- * computed with, and the book they were last confirmed against. Without a book nothing is sellable: the rates a
- * migration recorded only say what the stored prices contain until the first sync confirms them with Tax.
+ * What Merchandise keeps of Tax per company (`catalog_heads.tax_rates`): the book of its last sync, so storefront reads
+ * resolve the rate at any instant locally. Stored prices are never derived from it again: a rate entered with a price
+ * stays in that price.
  */
 export const CompanyTaxRatesSchema = Schema.Struct({
-  book: Schema.optionalKey(TaxRateBookSchema),
-  priced: SellableVatRatesSchema,
-  syncedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+  book: TaxRateBookSchema,
+  syncedAt: Schema.DateTimeUtcFromString,
 });
 export type CompanyTaxRates = typeof CompanyTaxRatesSchema.Type;
-
-/** The rates a company sells at now: its priced rates once Tax confirmed them, otherwise none. */
-export const sellableRatesOf = (stored: CompanyTaxRates | undefined): SellableVatRates =>
-  stored?.book === undefined ? NO_SELLABLE_RATES : stored.priced;
 
 export const NotSellableReasonSchema = Schema.Literals([
   'NO_RULE',
   'NOT_INTEGER',
   'REGIME_NOT_DECLARED',
   'RULE_CONFLICT',
+  'TAX_NOT_AVAILABLE',
   'TAX_NOT_SYNCED',
 ]);
 export type NotSellableReason = typeof NotSellableReasonSchema.Type;
@@ -149,8 +142,9 @@ export const sellableRatesAt = (book: TaxRateBook, at: DateTime.Utc): SellableVa
     ),
   );
 
-export const sameSellableRates = (left: SellableVatRates, right: SellableVatRates) =>
-  czVatClassificationCodes.every((code) => left[code] === right[code]);
+/** The rates a company sells at, at one instant, from its last sync with Tax (none before the first sync). */
+export const sellableRatesOf = (stored: CompanyTaxRates | undefined, at: DateTime.Utc): SellableVatRates =>
+  stored === undefined ? NO_SELLABLE_RATES : sellableRatesAt(stored.book, at);
 
 const classificationLabels = {
   [CZ_VAT_REDUCED]: 'snížená sazba DPH',
@@ -165,6 +159,10 @@ export const notSellableMessage = (code: CzVatClassificationCode, reason: NotSel
     Match.when('NOT_INTEGER', () => `Produkt nelze prodat: ${label} v daních firmy není celé procento.`),
     Match.when('REGIME_NOT_DECLARED', () => 'Produkt nelze prodat: firma nemá v daních určený režim plátce DPH.'),
     Match.when('RULE_CONFLICT', () => `Produkt nelze prodat: pro ${label} platí v daních firmy více pravidel zároveň.`),
+    Match.when(
+      'TAX_NOT_AVAILABLE',
+      () => 'Produkt nelze prodat: daně firmy nejsou dostupné (modul Daně není pro firmu aktivní).',
+    ),
     Match.when('TAX_NOT_SYNCED', () => 'Produkt nelze prodat: sazby DPH firmy ještě nebyly načteny z daní.'),
     Match.exhaustive,
   );

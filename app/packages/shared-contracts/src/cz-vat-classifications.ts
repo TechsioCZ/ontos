@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { DateTime, Schema } from 'effect';
 
 /**
  * The Czech VAT classifications a selling company's goods carry. Tax (`commerce.tax`) holds the rate of each one
@@ -26,3 +26,38 @@ export const TaxRateViewSchema = Schema.Struct({
 });
 export type TaxRateView = typeof TaxRateViewSchema.Type;
 export type TaxRateViewEncoded = typeof TaxRateViewSchema.Encoded;
+
+/** The VAT regime of the selling company in Tax; `null` when none is declared. */
+export const SellerVatRegimeSchema = Schema.NullOr(Schema.Literals(['VAT_PAYER', 'NON_PAYER']));
+export type SellerVatRegime = typeof SellerVatRegimeSchema.Type;
+
+/** What a staff read carries about the selling company's VAT: its regime and its dated rates. */
+export interface SellerVatRates {
+  readonly sellerVatRegime?: SellerVatRegime | undefined;
+  readonly taxRates?: readonly TaxRateView[] | undefined;
+}
+
+/**
+ * The VAT rate goods of a classification are sold at, at an instant, by the one rule every package shares: a non-payer
+ * sells everything at 0 %; a payer at the integer rate in force for the classification. `undefined` means the goods
+ * cannot be sold: no regime declared, no classification, or no whole-number rate in force for it at that instant.
+ */
+export const vatRateAt = (
+  seller: SellerVatRates,
+  code: CzVatClassificationCode | undefined,
+  at: DateTime.Utc,
+): number | undefined => {
+  if (seller.sellerVatRegime === 'NON_PAYER') {
+    return 0;
+  }
+  if (seller.sellerVatRegime !== 'VAT_PAYER' || code === undefined) {
+    return undefined;
+  }
+  const rate = (seller.taxRates ?? []).find(
+    (entry) =>
+      entry.code === code &&
+      !DateTime.isLessThan(at, entry.effectiveFrom) &&
+      (entry.effectiveTo === undefined || DateTime.isLessThan(at, entry.effectiveTo)),
+  )?.ratePercent;
+  return rate !== undefined && Number.isInteger(rate) ? rate : undefined;
+};

@@ -65,7 +65,7 @@ export const prepareApplyCommandServices = Effect.fn('Merchandise.prepareApplyCo
     }
     const preparedAt = yield* DateTime.now;
     yield* prepareMerchandiseCommand(payload.command, context.scope);
-    const taxBook = yield* prepareCommandTax(payload.command, context.scope);
+    const tax = yield* prepareCommandTax(payload.command, context.scope);
     return Effect.fn('Merchandise.revalidatePreparedGrants')(function* revalidatePreparedGrants(
       transaction: ScopedTransactionExecutor,
       scope: OperationalScope,
@@ -87,7 +87,7 @@ export const prepareApplyCommandServices = Effect.fn('Merchandise.prepareApplyCo
         });
       }
       return yield* persistenceService(transaction, {
-        prepared: { actionInvocationId: context.actionInvocationId, payload, taxBook },
+        prepared: { actionInvocationId: context.actionInvocationId, payload, tax },
         scope,
       });
     });

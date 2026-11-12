@@ -1,5 +1,6 @@
 import { documentNavigationModules } from '@app/shared-contracts';
-import { listProductsWithVat } from '@app/merchandise/clients/records';
+import { vatRateAt } from '@app/shared-contracts/cz-vat-classifications';
+import { executeRecords } from '@app/merchandise/clients/records';
 import type { ProductRecord } from '@app/merchandise/contracts/records';
 import { listCustomers } from '@app/party-registry/api/client';
 import type { CustomerListItem } from '@app/party-registry/api/client';
@@ -8,7 +9,7 @@ import { SubjectIdSchema } from '@app/tagging/contracts/records';
 import type { SubjectId, SubjectKind, TagId } from '@app/tagging/contracts/records';
 import { listEmployees } from '@app/workforce/clients/records';
 import type { Employee } from '@app/workforce/contracts/records';
-import { Effect, Option, Random, Schema } from 'effect';
+import { DateTime, Effect, Option, Random, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { VatRateSchema } from '../../../../../shared/model/opportunity.ts';
@@ -116,8 +117,18 @@ const loadProducts = catalogReadable.pipe(
   Effect.flatMap((readable) =>
     readable
       ? correlated('products').pipe(
-          Effect.flatMap((id) => listProductsWithVat(id, { limit: 250, ordersLimit: 0, summary: true })),
-          Effect.map((items) => items.flatMap((item) => Option.toArray(toProductOption(item)))),
+          Effect.flatMap((id) => executeRecords({ view: { limit: 250, ordersLimit: 0, summary: true } }, id)),
+          Effect.flatMap((response) =>
+            DateTime.now.pipe(
+              Effect.map((now) =>
+                response.products.flatMap((product) =>
+                  Option.toArray(
+                    toProductOption({ product, vatRate: vatRateAt(response, product.taxClassificationCode, now) }),
+                  ),
+                ),
+              ),
+            ),
+          ),
         )
       : Effect.succeed<readonly ProductOption[]>([]),
   ),

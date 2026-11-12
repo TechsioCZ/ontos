@@ -100,7 +100,7 @@ import {
   lockHeadForWrite,
   persistChange,
   advanceHeadRevision,
-  repriceClassification,
+  storeMissingGrossPrices,
   writeTaxRates,
 } from './merchandise-store.ts';
 import type { CatalogHead, StoreScope, WorkingSet, WorkingSetRequest } from './merchandise-store.ts';
@@ -110,14 +110,20 @@ import {
   NO_SELLABLE_RATES,
   notSellableMessage,
   resolveVatRate,
-  sameSellableRates,
   sellableRatesAt,
   taxRateViews,
 } from './tax-rates.ts';
 import type { SellableVatRates, TaxRateBook, TaxRatesFailure } from './tax-rates.ts';
-import { CZ_VAT_STANDARD, czVatClassificationCodes } from '@app/shared-contracts/cz-vat-classifications';
+import { CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
 import type { CzVatClassificationCode, TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
-import { realVariantsOf, stockLevelsOf, stockOnHandOf, toProductRecord, variantStockOf } from './stock-levels.ts';
+import {
+  storedGrossOf,
+  realVariantsOf,
+  stockLevelsOf,
+  stockOnHandOf,
+  toProductRecord,
+  variantStockOf,
+} from './stock-levels.ts';
 import { normalizeSearchText } from './storefront-catalog.ts';
 import { orderCustomerReferenceEligible } from '../../shared/order-customer-reference.ts';
 import { isMediaImageReference, mediaImageReference } from '../../shared/domain/product-images.ts';
@@ -205,13 +211,21 @@ export interface MerchandiseChange {
 export type MerchandiseCommandError = MerchandiseLifecycleConflict | MerchandiseNotFound;
 
 /**
- * The company's VAT as one command sees it: `priced` are the rates its stored gross prices are computed with (the
- * head row's, after this command's sync), `book` is what Tax answered for this command, absent when Tax could not be
- * read. Order lines take their rate from the book only; without it no line can be priced.
+ * The company's VAT as one command sees it: `book` is what Tax answered for this command (absent when Tax could not be
+ * read), `rates` the rates in force now (from that book, else from the company's last sync). A price entered by this
+ * command stores its gross at these rates; order lines take their rate from the book only.
  */
 export interface CommandTax {
   readonly book: TaxRateBook | undefined;
-  readonly priced: SellableVatRates;
+  readonly rates: SellableVatRates;
+  /** Tax refused this company (not installed for it): nothing sells, and the storefront is told why. */
+  readonly refused: boolean;
+}
+
+/** What Tax answered before the owner transaction opened: its book, or none (and whether Tax refused). */
+export interface PreparedTax {
+  readonly book: TaxRateBook | undefined;
+  readonly refused: boolean;
 }
 
 export interface MerchandiseCommandInput {
@@ -299,7 +313,7 @@ const lineTaxResolution = (
   now: DateTime.Utc,
 ): { readonly message: string } | { readonly tax: LineTax } => {
   if (tax.book === undefined) {
-    return { message: notSellableMessage(code, 'TAX_NOT_SYNCED') };
+    return { message: notSellableMessage(code, tax.refused ? 'TAX_NOT_AVAILABLE' : 'TAX_NOT_SYNCED') };
   }
   return Match.value(resolveVatRate(tax.book, code, now)).pipe(
     Match.tag('NotSellable', ({ reason }) => ({ message: notSellableMessage(code, reason) })),
@@ -392,13 +406,39 @@ const repriceTiers = (
   }));
 };
 
+/**
+ * The gross price stored with a net price entered now: net plus VAT at the rate Tax gives the classification now. A
+ * classification without a rate stores none (the product cannot be sold until its rate exists).
+ */
+/** The priced value without its stored gross, before a newly entered price stores its own. */
+const withoutGross = <Priced extends { readonly grossPriceMinor?: number }>({
+  grossPriceMinor: _replaced,
+  ...rest
+}: Priced): Omit<Priced, 'grossPriceMinor'> => {
+  void _replaced;
+  return rest;
+};
+
+/**
+ * The priced value with a newly entered net price's gross stored: net plus VAT at the classification's rate now.
+ * Without a sellable rate no gross is stored; the value then sells at nothing until a price is entered again.
+ */
+const withEnteredGross = <Priced extends { readonly grossPriceMinor?: number }>(
+  priced: Priced,
+  net: number,
+  rate: number | undefined,
+): Omit<Priced, 'grossPriceMinor'> & { readonly grossPriceMinor?: number } => {
+  const rest = withoutGross(priced);
+  return rate === undefined ? rest : { ...rest, grossPriceMinor: grossUnitPriceMinor(net, rate) };
+};
+
 /** Appends an effective-dated price entry. A price equal to the current one is not a change and adds no entry. */
 const repriced = (product: Product, priceMinor: number, input: MerchandiseCommandInput): Product => {
   if (product.currentPriceMinor === priceMinor) {
     return product;
   }
   const updated: Mutable<Product> = {
-    ...product,
+    ...withEnteredGross(product, priceMinor, input.tax.rates[product.taxClassificationCode]),
     currentPriceMinor: priceMinor,
     priceHistory: [
       ...product.priceHistory,
@@ -416,7 +456,7 @@ const repriced = (product: Product, priceMinor: number, input: MerchandiseComman
       product.priceTiers,
       product.currentPriceMinor,
       priceMinor,
-      input.tax.priced[product.taxClassificationCode],
+      input.tax.rates[product.taxClassificationCode],
     );
   }
   return updated;
@@ -509,16 +549,26 @@ const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* n
       }
       const previous = id === undefined ? undefined : existing.get(id);
       const history = nextVariantPriceHistory(previous, variant, input);
-      const { id: _id, priceHistory: _ignored, ...rest } = variant;
+      const { grossPriceMinor: _clientGross, id: _id, priceHistory: _ignored, ...rest } = variant;
       void _ignored;
       void _id;
+      void _clientGross;
+      // The stored gross is the server's: kept while the price stays, entered anew with a new price.
+      const kept =
+        previous !== undefined && previous.priceMinor === variant.priceMinor ? previous.grossPriceMinor : undefined;
+      const rate = input.tax.rates[product.taxClassificationCode];
       const updated: Mutable<ProductVariant> = { ...rest };
+      if (kept !== undefined) {
+        updated.grossPriceMinor = kept;
+      } else if (variant.priceMinor !== undefined && rate !== undefined) {
+        updated.grossPriceMinor = grossUnitPriceMinor(variant.priceMinor, rate);
+      }
       if (variant.priceTiers === undefined && previous?.priceTiers !== undefined) {
         updated.priceTiers = repriceTiers(
           previous.priceTiers,
           previous.priceMinor,
           variant.priceMinor,
-          input.tax.priced[product.taxClassificationCode],
+          input.tax.rates[product.taxClassificationCode],
         );
       }
       if (id !== undefined) {
@@ -552,7 +602,9 @@ const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
   }
   const { _tag, additionalCategoryIds, priceMinor, variants, ...fields } = value;
   void _tag;
-  let product: Mutable<Product> = {
+  // A product priced through its variants stores no gross of its own; each priced variant stores its gross.
+  const pricedByVariants = variants?.some((variant) => variant.priceMinor !== undefined) === true;
+  const base: Product = {
     ...fields,
     createdAt: input.now,
     currentPriceMinor: priceMinor,
@@ -561,6 +613,9 @@ const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
     slug: value.slug ?? newProductSlug(state.products, value.name, value.sku),
     updatedAt: input.now,
   };
+  let product: Mutable<Product> = pricedByVariants
+    ? base
+    : { ...withEnteredGross(base, priceMinor, input.tax.rates[value.taxClassificationCode]) };
   if (additionalCategoryIds !== undefined) {
     if (value.categoryId === undefined) {
       return yield* conflict(missingPrimaryCategoryReason);
@@ -662,7 +717,7 @@ const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
       return entry;
     }
     const updated: Mutable<ProductVariant> = {
-      ...entry,
+      ...withEnteredGross(entry, value.priceMinor, input.tax.rates[product.taxClassificationCode]),
       priceHistory: [
         ...(entry.priceHistory ?? []),
         {
@@ -679,7 +734,7 @@ const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
         entry.priceTiers,
         entry.priceMinor,
         value.priceMinor,
-        input.tax.priced[product.taxClassificationCode],
+        input.tax.rates[product.taxClassificationCode],
       );
     }
     return updated;
@@ -1041,7 +1096,7 @@ const sellableUnitOf = (
     return { issue: { ...ids, code: 'PRICE_UNAVAILABLE', message: `${product.name}: ${taxed.message}` } };
   }
   const { tax } = taxed;
-  const record = toProductRecord(product, stockLevelsOf(movements, product.id), input.tax.priced);
+  const record = toProductRecord(product, stockLevelsOf(movements, product.id), input.tax.rates);
   const variants = record.variantRecords ?? [];
   if (variants.length > 0) {
     const variant = variants.find((entry) => entry.id === line.variantId);
@@ -1465,7 +1520,7 @@ const validateEditedStorefrontQuantity = Effect.fn('Merchandise.validateEditedSt
   ) {
     if (existing.channel === 'STOREFRONT' && kept?.quantity !== request.quantity) {
       const product = yield* findProduct(state.products, request.productId);
-      const record = toProductRecord(product, stockLevelsOf(state.movements, product.id), input.tax.priced);
+      const record = toProductRecord(product, stockLevelsOf(state.movements, product.id), input.tax.rates);
       const unit =
         request.variantId === undefined
           ? record
@@ -1514,7 +1569,11 @@ const editedOrderLines = Effect.fn('Merchandise.editedOrderLines')(function* edi
       }
       const tax = yield* lineTaxOf(input, product);
       const netPrice = variant?.priceMinor ?? product.currentPriceMinor;
-      const czkPrice = existing.pricesIncludeVat === true ? grossUnitPriceMinor(netPrice, tax.vatRate) : netPrice;
+      // A gross-priced order takes the stored gross price (as the storefront sells it), never one recomputed from net.
+      const czkPrice =
+        existing.pricesIncludeVat === true
+          ? (storedGrossOf(variant ?? product) ?? grossUnitPriceMinor(netPrice, tax.vatRate))
+          : netPrice;
       // A market order keeps its own price list (snapshot on the order) for lines added later.
       const currentPrice = existing.market === undefined ? czkPrice : convertGrossMinor(czkPrice, existing.market);
       return {
@@ -2173,7 +2232,12 @@ export const prepareCommandTax = Effect.fn('Merchandise.prepareCommandTax')(func
   const read = freshRatesRequired(command) ? freshTaxRateBook(scope) : cachedTaxRateBook(scope);
   const outcome = yield* Effect.result(read);
   if (Result.isSuccess(outcome)) {
-    return outcome.success;
+    return { book: outcome.success, refused: false } satisfies PreparedTax;
+  }
+  const refused = outcome.failure.kind === 'REFUSED';
+  // A storefront order states a refusal as readable issues on its lines; a retryable outage stays an error.
+  if (refused && Predicate.isTagged(command, 'PlaceStorefrontOrder')) {
+    return { book: Option.getOrUndefined(Option.none<TaxRateBook>()), refused } satisfies PreparedTax;
   }
   if (ratesRequired(command)) {
     return yield* taxFailure(outcome.failure);
@@ -2181,14 +2245,20 @@ export const prepareCommandTax = Effect.fn('Merchandise.prepareCommandTax')(func
   yield* Effect.logWarning('Merchandise keeps the stored VAT rates: Tax did not answer').pipe(
     Effect.annotateLogs({ reason: outcome.failure.kind }),
   );
-  return Option.getOrUndefined(Option.none<TaxRateBook>());
+  return { book: Option.getOrUndefined(Option.none<TaxRateBook>()), refused } satisfies PreparedTax;
 });
 
 /** What a staff records read shows of Tax: the company's current and scheduled rates and its regime. */
 export interface StaffTaxRates {
-  /** Absent when Tax does not know the company. */
-  readonly regime?: TaxRateBook['regime'];
+  /** Null when no regime is declared or Tax does not know the company. */
+  readonly regime: 'NON_PAYER' | 'VAT_PAYER' | null;
   readonly views: readonly TaxRateView[];
+}
+
+/** What the records read prepares outside its transaction: the caller's rights and, for staff reads, Tax's rates. */
+export interface RecordsPrepared {
+  readonly grants: MerchandiseRecordsGrants;
+  readonly tax?: StaffTaxRates;
 }
 
 export const prepareStaffTaxRates = Effect.fn('Merchandise.prepareStaffTaxRates')(function* prepareStaffTaxRates(
@@ -2197,11 +2267,15 @@ export const prepareStaffTaxRates = Effect.fn('Merchandise.prepareStaffTaxRates'
   const outcome = yield* Effect.result(cachedTaxRateBook(scope));
   if (Result.isSuccess(outcome)) {
     const now = yield* DateTime.now;
-    return { regime: outcome.success.regime, views: taxRateViews(outcome.success, now) } satisfies StaffTaxRates;
+    const { regime } = outcome.success;
+    return {
+      regime: regime === 'NOT_DECLARED' ? null : regime,
+      views: taxRateViews(outcome.success, now),
+    } satisfies StaffTaxRates;
   }
   if (outcome.failure.kind === 'REFUSED') {
     // Tax is not installed for the company (or refuses Merchandise): no rate exists, nothing is sellable.
-    return { views: [] } satisfies StaffTaxRates;
+    return { regime: null, views: [] } satisfies StaffTaxRates;
   }
   return yield* taxUnavailable(outcome.failure);
 });
@@ -2261,7 +2335,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         readonly actionInvocationId: string;
         readonly payload: MerchandiseCommandPayload;
         /** What Tax answered before the transaction opened; absent when Tax could not be read. */
-        readonly taxBook: TaxRateBook | undefined;
+        readonly tax: PreparedTax;
       };
       readonly scope: OperationalScope;
     },
@@ -2287,30 +2361,28 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       return yield* lockHeadForWrite(transaction, store, { aiChanges }).pipe(Effect.mapError(unavailable));
     });
     /**
-     * Brings the company's stored VAT rates in line with what Tax answered for this command: the head row records the
-     * book, and every classification whose sellable rate changed is repriced from net in place (set-based, under the
-     * head lock). Without an answer the stored rates stay as they are.
+     * Records what Tax answered for this command on the company's head row when it changed (storefront reads resolve
+     * rates from it locally). Stored prices are never touched. Without an answer the last sync stays.
      */
     const syncTax = Effect.fn('Merchandise.syncTax')(function* syncTax(head: CatalogHead) {
-      const book = prepared?.taxBook;
-      const stored = head.taxRates;
-      const previous = stored?.priced ?? NO_SELLABLE_RATES;
-      if (book === undefined) {
-        return { head, synced: false, tax: { book, priced: previous } satisfies CommandTax };
-      }
+      const answered = prepared?.tax.book;
+      const refused = prepared?.tax.refused === true;
       const now = yield* DateTime.now;
-      const priced = sellableRatesAt(book, now);
-      if (stored?.book?.fingerprint === book.fingerprint && sameSellableRates(previous, priced)) {
-        return { head, synced: false, tax: { book, priced } satisfies CommandTax };
+      if (answered === undefined || head.taxRates?.book.fingerprint === answered.fingerprint) {
+        const book = answered ?? head.taxRates?.book;
+        const rates = book === undefined ? NO_SELLABLE_RATES : sellableRatesAt(book, now);
+        return { head, synced: false, tax: { book: answered, rates, refused } satisfies CommandTax };
       }
-      yield* Effect.forEach(
-        czVatClassificationCodes.filter((code) => previous[code] !== priced[code]),
-        (code) => repriceClassification(transaction, store, code, priced[code]),
-        { concurrency: 1, discard: true },
-      ).pipe(Effect.mapError(unavailable));
-      const taxRates = { book, priced, syncedAt: now };
+      const taxRates = { book: answered, syncedAt: now };
+      const rates = sellableRatesAt(answered, now);
       yield* writeTaxRates(transaction, store, taxRates).pipe(Effect.mapError(unavailable));
-      return { head: { ...head, taxRates }, synced: true, tax: { book, priced } satisfies CommandTax };
+      // What was priced while its classification had no rate gets its first gross now; stored prices stay.
+      yield* storeMissingGrossPrices(transaction, store, rates).pipe(Effect.mapError(unavailable));
+      return {
+        head: { ...head, taxRates },
+        synced: true,
+        tax: { book: answered, rates, refused } satisfies CommandTax,
+      };
     });
     const persist = Effect.fn('Merchandise.persist')(function* persist(
       working: WorkingSet,
@@ -2320,7 +2392,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       synced: boolean,
     ) {
       if (next === working.state) {
-        // A sync that repriced the catalog is a change of its own: readers keyed on the revision must see it.
+        // A sync that changed the company's rates is a change of its own: readers keyed on the revision must see it.
         if (!synced) {
           return working.revision;
         }
@@ -2329,7 +2401,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         );
         return advanced ?? (yield* revisionConflict());
       }
-      const revision = yield* persistChange(transaction, store, working, next, now, tax.priced).pipe(
+      const revision = yield* persistChange(transaction, store, working, next, now, tax.rates).pipe(
         Effect.mapError(unavailable),
       );
       return revision ?? (yield* revisionConflict());
@@ -2345,7 +2417,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         return yield* revisionConflict();
       }
       const { head, synced, tax } = yield* syncTax(locked);
-      /** The revision of a command that writes no catalog rows itself: advanced once when the sync repriced. */
+      /** The revision of a command that writes no catalog rows itself: advanced once when the sync changed rates. */
       const revisionAfterSync = Effect.fn('Merchandise.revisionAfterSync')(function* revisionAfterSync() {
         if (!synced) {
           return head.revision;
@@ -2691,13 +2763,17 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       }
       return metadata;
     });
-    /** `detailLimit` lifts the 2-product cap of variant-carrying pages for in-process callers (agent review). */
-    /** The records read's transaction step: database queries only; rights come from {@link merchandiseRecordsGrants}. */
+    /**
+     * The records read's transaction step: database queries only; rights come from {@link merchandiseRecordsGrants}
+     * and, for staff, the company's rates from Tax ({@link prepareStaffTaxRates}), both prepared before it.
+     * `detailLimit` lifts the 2-product cap of variant-carrying pages for in-process callers (agent review).
+     */
     const records = Effect.fn('Merchandise.records')(function* records(
       request: RecordsRequest,
-      grants: MerchandiseRecordsGrants,
-      options: { readonly detailLimit?: number; readonly tax?: StaffTaxRates } = {},
+      readPrepared: RecordsPrepared,
+      options: { readonly detailLimit?: number } = {},
     ) {
+      const { grants, tax } = readPrepared;
       const view = request.view ?? {};
       const storefront = view.storefront === true;
       const staff = !storefront;
@@ -2773,11 +2849,9 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       if (orderList.total !== undefined) {
         response.totalOrders = orderList.total;
       }
-      if (staff && options.tax !== undefined) {
-        response.taxRates = [...options.tax.views];
-        if (options.tax.regime !== undefined) {
-          response.taxRegime = options.tax.regime;
-        }
+      if (staff && tax !== undefined) {
+        response.taxRates = [...tax.views];
+        response.sellerVatRegime = tax.regime;
       }
       return storefrontOrigin === undefined ? response : { ...response, storefrontOrigin };
     });

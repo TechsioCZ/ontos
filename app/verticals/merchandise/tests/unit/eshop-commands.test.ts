@@ -30,7 +30,11 @@ const apply = (state: MerchandiseState, command: CommandInput, resourceId: strin
   evolveMerchandiseState(state, decodeCommand(command), { actor, now: t0, resourceId, tax });
 
 /** A non-payer sells without VAT: Tax's regime, not a 0 % product rate. */
-const NON_PAYER_TAX = { book: testTaxBook({}, 'NON_PAYER'), priced: { 'cz.vat.reduced': 0, 'cz.vat.standard': 0 } };
+const NON_PAYER_TAX = {
+  book: testTaxBook({}, 'NON_PAYER'),
+  rates: { 'cz.vat.reduced': 0, 'cz.vat.standard': 0 },
+  refused: false,
+};
 
 /** Coffee (12 % VAT) with two real variants: 250 g at net 25 804 (gross 289 Kč) and 1 kg at net 88 304 (989 Kč). */
 const seeded = Effect.gen(function* seedCoffee() {

@@ -93,11 +93,20 @@ const availabilityRank = {
 export const realVariantsOf = (product: Product) => (product.variants ?? []).filter(isRealVariant);
 
 /**
- * Gross unit price at the company's priced rate: the first tier, else net plus VAT. A classification that is not
- * sellable has no gross price at all, never a price at 0 %.
+ * Gross unit price as stored: the first tier, else the stored gross entered with the price. Only a price stored without
+ * one (data from before stored gross prices) is derived, net plus VAT at the rate Tax gives the classification now; a
+ * classification that is not sellable then has no gross price, never one at 0 %.
  */
-const grossPriceOf = (net: number, tiers: Product['priceTiers'], rate: number | undefined) =>
-  rate === undefined ? undefined : (tiers?.[0]?.priceMinor ?? grossUnitPriceMinor(net, rate));
+interface GrossPriced {
+  readonly grossPriceMinor?: number | undefined;
+  readonly priceTiers?: Product['priceTiers'];
+}
+
+/** The gross unit price as stored (first tier, else the stored gross); `undefined` when none is stored. */
+export const storedGrossOf = (priced: GrossPriced) => priced.priceTiers?.[0]?.priceMinor ?? priced.grossPriceMinor;
+
+export const grossPriceOf = (priced: GrossPriced, net: number, rate: number | undefined) =>
+  storedGrossOf(priced) ?? (rate === undefined ? undefined : grossUnitPriceMinor(net, rate));
 
 const toVariantRecord = (
   product: Product,
@@ -107,7 +116,7 @@ const toVariantRecord = (
 ): VariantRecord => {
   const stockOnHand = stock.variants.get(variant.id) ?? 0;
   const active = product.active && variant.active !== false;
-  const grossPriceMinor = grossPriceOf(variant.priceMinor, variant.priceTiers, rate);
+  const grossPriceMinor = grossPriceOf(variant, variant.priceMinor, rate);
   const record: VariantRecord = {
     ...variant,
     active: variant.active !== false,
@@ -139,7 +148,7 @@ export const toProductRecord = (product: Product, stock: StockLevels, rates: Sel
   const rate = rates[product.taxClassificationCode];
   const variants = realVariantsOf(product).map((variant) => toVariantRecord(product, variant, stock, rate));
   if (variants.length === 0) {
-    const grossPriceMinor = grossPriceOf(product.currentPriceMinor, product.priceTiers, rate);
+    const grossPriceMinor = grossPriceOf(product, product.currentPriceMinor, rate);
     const record: ProductRecord = {
       ...product,
       availability: availabilityOf({

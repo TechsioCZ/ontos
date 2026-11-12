@@ -542,6 +542,7 @@ export const ManageCatalogPayloadSchema = Schema.Struct({
     ApplyCreateOrderCommandSchema,
     ApplyEditOrderCommandSchema,
     ApplyLinkOrderCustomerCommandSchema,
+    ApplySyncTaxRatesCommandSchema,
   ]),
   expectedRevision: MerchandiseCommandPayloadSchema.fields.expectedRevision,
 });

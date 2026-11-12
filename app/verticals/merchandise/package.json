@@ -47,7 +47,6 @@
     "test:integration": "rstest --project integration",
     "test:unit": "rstest --project unit",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
-    "vat:preflight": "node scripts/vat-classification-preflight.mts",
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },
   "dependencies": {

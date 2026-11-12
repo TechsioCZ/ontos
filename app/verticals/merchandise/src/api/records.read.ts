@@ -7,11 +7,11 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import { Effect, Match, Option } from 'effect';
+import { Effect, Match } from 'effect';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import type { RecordsRequest } from '../../shared/apis/records.ts';
 import { merchandiseRecordsGrants, persistenceService, prepareStaffTaxRates } from '../services/persistence.service.ts';
-import type { StaffTaxRates } from '../services/persistence.service.ts';
+import type { RecordsPrepared } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { isAkrosCompany, storefrontReadRequest } from '../../shared/actions/command-guard.ts';
 
@@ -64,10 +64,11 @@ const prepareRecords = Effect.fn('Merchandise.prepareRecords')(function* prepare
     storefrontReadRequest(scope.authMethod, scope.legalEntityId, input),
   ).pipe(Effect.mapError(readFailure));
   const staff = input.view?.storefront !== true && input.agentHistory === undefined;
-  const tax = staff
-    ? Option.some(yield* prepareStaffTaxRates(scope).pipe(Effect.mapError(readFailure)))
-    : Option.none<StaffTaxRates>();
-  return { grants, tax };
+  if (!staff) {
+    return { grants } satisfies RecordsPrepared;
+  }
+  const tax = yield* prepareStaffTaxRates(scope).pipe(Effect.mapError(readFailure));
+  return { grants, tax } satisfies RecordsPrepared;
 });
 
 const recordsEntrypoint = defineTenantModuleEntrypoint({
@@ -114,11 +115,7 @@ export const recordsRead = defineRead(
     prepare: (input: RecordsRequest, context) => prepareRecords(input, context.scope),
     load: (input: RecordsRequest, context) =>
       context.services
-        .records(
-          storefrontReadRequest(context.scope.authMethod, context.scope.legalEntityId, input),
-          context.prepared.grants,
-          Option.match(context.prepared.tax, { onNone: () => ({}), onSome: (tax) => ({ tax }) }),
-        )
+        .records(storefrontReadRequest(context.scope.authMethod, context.scope.legalEntityId, input), context.prepared)
         .pipe(
           Effect.mapError(readFailure),
           Effect.map((result) => ({ evidence: { resultCount: result.products.length }, result })),

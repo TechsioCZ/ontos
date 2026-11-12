@@ -46,9 +46,8 @@ export const testTaxBook = (
 
 export const TEST_TAX_BOOK = testTaxBook();
 export const TEST_RATES: SellableVatRates = { 'cz.vat.reduced': 12, 'cz.vat.standard': 21 };
-export const TEST_TAX: CommandTax = { book: TEST_TAX_BOOK, priced: TEST_RATES };
+export const TEST_TAX: CommandTax = { book: TEST_TAX_BOOK, rates: TEST_RATES, refused: false };
 export const TEST_COMPANY_TAX_RATES: CompanyTaxRates = {
   book: TEST_TAX_BOOK,
-  priced: TEST_RATES,
   syncedAt: TEST_SINCE,
 };

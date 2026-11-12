@@ -4,7 +4,7 @@ import { and, asc, desc, eq, gt, inArray, like, mapColumnsInSQLToAlias, or, sql 
 import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
-import { Effect, Match, Option, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Schema } from 'effect';
 import { PRODUCT_DETAIL_PAGE_LIMIT } from '../../shared/apis/records.ts';
 import type {
   CategoryTrail,
@@ -57,7 +57,7 @@ import {
   whereScope,
 } from './merchandise-store.ts';
 import type { MerchandiseDb, StoreScope } from './merchandise-store.ts';
-import { CompanyTaxRatesSchema, NO_SELLABLE_RATES, sellableRatesOf } from './tax-rates.ts';
+import { CompanyTaxRatesSchema, sellableRatesOf } from './tax-rates.ts';
 import type { SellableVariantRecord } from './market-pricing.ts';
 import type { CompanyTaxRates, SellableVatRates } from './tax-rates.ts';
 import { toProductRecord } from './stock-levels.ts';
@@ -165,20 +165,34 @@ type StorefrontHeadEncoded = typeof StorefrontHeadSchema.Encoded;
 interface ProductPage {
   readonly head: StorefrontHead | null;
   readonly products: readonly ProductRecord[];
-  /** The company's synced VAT rates, read in the same statement as the page. */
-  readonly taxRates: CompanyTaxRates | undefined;
+  /** The rates the company sells at now, from its last sync with Tax read in the same statement as the page. */
+  readonly rates: SellableVatRates;
   readonly total: number;
 }
 
 /**
- * Only products whose classification the company can sell now: its priced rates, once Tax confirmed them
- * (`catalog_heads.tax_rates` holds a book). Same snapshot as the page; no call to Tax.
+ * Only products whose classification the company can sell now, from the book of its last sync with Tax (same
+ * snapshot as the page; no call to Tax): a non-payer sells everything without VAT; a payer sells a classification with
+ * exactly one integer rate in force; an undeclared regime or no sync sells nothing.
  */
 export const sellableClassificationFilter = (scope: StoreScope) =>
-  sql`${products.taxClassificationCode} in (select jsonb_object_keys(h.tax_rates -> 'priced')
+  sql`${products.taxClassificationCode} in (select classification.code
     from ${catalogHeads} as h
+    cross join (values ('cz.vat.standard'), ('cz.vat.reduced')) as classification (code)
     where h.tenant_id = ${scope.tenantId}::uuid and h.legal_entity_id = ${scope.legalEntityId}::uuid
-      and h.tax_rates ? 'book')`;
+      and (h.tax_rates -> 'book' ->> 'regime' = 'NON_PAYER'
+        or (h.tax_rates -> 'book' ->> 'regime' = 'VAT_PAYER'
+          and (select count(*) from jsonb_array_elements(h.tax_rates -> 'book' -> 'periods') as period (value)
+            where period.value ->> 'code' = classification.code
+              and (period.value ->> 'effectiveFrom')::timestamptz <= statement_timestamp()
+              and (period.value ->> 'effectiveTo' is null
+                or statement_timestamp() < (period.value ->> 'effectiveTo')::timestamptz)) = 1
+          and (select bool_and(period.value ->> 'ratePercent' ~ '^(100|[1-9][0-9]?)(\\.0+)?$')
+            from jsonb_array_elements(h.tax_rates -> 'book' -> 'periods') as period (value)
+            where period.value ->> 'code' = classification.code
+              and (period.value ->> 'effectiveFrom')::timestamptz <= statement_timestamp()
+              and (period.value ->> 'effectiveTo' is null
+                or statement_timestamp() < (period.value ->> 'effectiveTo')::timestamptz)))))`;
 
 /** A product as the storefront sees it: the rate its prices include instead of its classification. */
 export const withStorefrontVat = (record: ProductRecord, rates: SellableVatRates): ProductRecord => {
@@ -191,10 +205,6 @@ export const withStorefrontVat = (record: ProductRecord, rates: SellableVatRates
  * One page of product records. `variants: false` (list rows) leaves variants out and takes the derived stock
  * fields from their stored columns; detail pages hydrate variants and derive records exactly like a write does.
  */
-/** The rates the page's stored prices were computed with (none before the company's first sync). */
-const pricedRatesOfPage = (page: Pick<ProductPage, 'taxRates'>): SellableVatRates =>
-  page.taxRates?.priced ?? NO_SELLABLE_RATES;
-
 const decodePageTaxRates = (stored: (typeof catalogHeads.$inferSelect)['taxRates']) =>
   stored === null
     ? Effect.succeed(Option.getOrUndefined(Option.none<CompanyTaxRates>()))
@@ -276,7 +286,8 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
           : sql<typeof StorefrontVariantPreviewSchema.Encoded.variants | null>`null::json`.as('variant_preview'),
       variantRows: input.variants
         ? sql<Parameters<typeof hydrateProducts>[1]>`(select coalesce(json_agg(json_build_object(
-            'document', v.document, 'position', v.position, 'productId', v.product_id,
+            'document', v.document, 'grossPriceMinor', v.gross_price_minor, 'position', v.position,
+            'productId', v.product_id,
             'stockOnHand', v.stock_on_hand, 'variantId', v.variant_id)), '[]'::json)
           from ${productVariants} v
           where v.tenant_id = ${scope.tenantId}::uuid and v.legal_entity_id = ${scope.legalEntityId}::uuid
@@ -321,7 +332,7 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
   );
   const total = result[0]?.total ?? 0;
   const taxRates = yield* decodePageTaxRates(result[0]?.taxRates ?? null);
-  const pricedRates = pricedRatesOfPage({ taxRates });
+  const pricedRates = sellableRatesOf(taxRates, yield* DateTime.now);
   const rows = result.flatMap(({ product }) => (product === null ? [] : [product]));
   const variantRows = rows.flatMap((row) => row.variantRows);
   const tierRows = rows.flatMap((row) => row.tierRows);
@@ -384,7 +395,7 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
     rawHead === undefined || rawHead === null
       ? null
       : yield* Schema.decodeEffect(StorefrontHeadSchema)(rawHead).pipe(Effect.mapError(storedRowsFailure));
-  return { head, products: records, taxRates, total } satisfies ProductPage;
+  return { head, products: records, rates: pricedRates, total } satisfies ProductPage;
 });
 
 const staffProductFilters = (view: RecordsView, storefront: boolean, scope: StoreScope): (SQL | undefined)[] => [
@@ -442,7 +453,7 @@ export const staffProducts = (
           const { contentHistory: _history, ...summary } = record;
           void _history;
           const row = { ...summary, priceHistory: [] };
-          return storefront ? withStorefrontVat(row, sellableRatesOf(page.taxRates)) : row;
+          return storefront ? withStorefrontVat(row, page.rates) : row;
         }
         if (!storefront) {
           return record;
@@ -450,7 +461,7 @@ export const staffProducts = (
         const { contentHistory: _content, variants: _raw, ...publicProduct } = record;
         void _raw;
         void _content;
-        const projected = withStorefrontVat({ ...publicProduct, priceHistory: [] }, sellableRatesOf(page.taxRates));
+        const projected = withStorefrontVat({ ...publicProduct, priceHistory: [] }, page.rates);
         return record.variantRecords === undefined
           ? projected
           : {
@@ -1184,7 +1195,7 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
   if (inclusion !== undefined && inclusion.revision !== result.head.revision) {
     return yield* new MerchandiseStoreFailure({ reason: 'The catalog changed during the search read' });
   }
-  const matches = yield* currentSearchMatches(db, scope, result.products, needle, pricing, pricedRatesOfPage(result));
+  const matches = yield* currentSearchMatches(db, scope, result.products, needle, pricing, result.rates);
   yield* verifySearchRevision(db, scope, result.head, needle, result.products.length);
   return {
     head: result.head,
@@ -1196,7 +1207,7 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
           variantIds === undefined || record.variantRecords === undefined
             ? record
             : { ...record, variantRecords: record.variantRecords.filter((variant) => variantIds.has(variant.id)) },
-          sellableRatesOf(result.taxRates),
+          result.rates,
         ),
         fields,
       );

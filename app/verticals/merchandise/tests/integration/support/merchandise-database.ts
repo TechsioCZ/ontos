@@ -23,6 +23,7 @@ import {
   stockMovements,
 } from '../../../src/database/schema.ts';
 import { replaceSnapshot, whereScope } from '../../../src/services/merchandise-store.ts';
+import { grossPriceOf, realVariantsOf } from '../../../src/services/stock-levels.ts';
 import type { StoreScope } from '../../../src/services/merchandise-store.ts';
 import { CompanyTaxRatesSchema } from '../../../src/services/tax-rates.ts';
 import { TEST_COMPANY_TAX_RATES, TEST_RATES } from '../../support/tax-fixtures.ts';
@@ -215,3 +216,22 @@ export const catalogInput = {
 };
 
 export const catalogState = decodeState(catalogInput);
+
+/**
+ * The catalog as Merchandise stores it today: every priced product and variant carries the gross entered with its
+ * price (at the Czech baseline rates). Legacy rows without one are covered where that is the point of the test.
+ */
+export const withStoredGross = (state: MerchandiseState): MerchandiseState => ({
+  ...state,
+  products: state.products.map((product) => {
+    const rate = TEST_RATES[product.taxClassificationCode];
+    const variants = product.variants?.map((variant) => {
+      const gross = variant.priceMinor === undefined ? undefined : grossPriceOf(variant, variant.priceMinor, rate);
+      return gross === undefined ? variant : { ...variant, grossPriceMinor: gross };
+    });
+    const gross =
+      realVariantsOf(product).length > 0 ? undefined : grossPriceOf(product, product.currentPriceMinor, rate);
+    const priced = gross === undefined ? product : { ...product, grossPriceMinor: gross };
+    return variants === undefined ? priced : { ...priced, variants };
+  }),
+});

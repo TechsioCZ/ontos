@@ -180,7 +180,7 @@ const writeOnHead = (
       const resourceId = randomUUID();
       const payload = createCategoryAt(expectedRevision);
       const services = yield* persistenceService(scoped, {
-        prepared: { actionInvocationId: resourceId, payload, taxBook: TEST_TAX_BOOK },
+        prepared: { actionInvocationId: resourceId, payload, tax: { book: TEST_TAX_BOOK, refused: false } },
         scope,
       });
       return yield* services.apply(payload.command, expectedRevision, resourceId);

@@ -4,7 +4,7 @@ import type { AgentHistoryRequest } from '@app/shared-contracts/agent-proposals'
 // three write paths: replace a company snapshot (seeds, demo reset), load a command's working set, and persist
 // only the rows a command changed. Bounded reads live in merchandise-queries.ts.
 import type { ReadServiceFactory } from '@app/core-runtime';
-import { and, asc, desc, eq, inArray, like, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, like, notInArray, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { Data, DateTime, Effect, Option, Schema } from 'effect';
@@ -13,7 +13,6 @@ import { MerchandiseAiSliceSchema } from '../../shared/apis/records.ts';
 import {
   CatalogCategorySchema,
   CatalogChangeSchema,
-  grossUnitPriceMinor,
   OrderSchema,
   ProductSchema,
   ProductIdReferenceSchema,
@@ -31,11 +30,12 @@ import {
   products,
   stockMovements,
 } from '../database/schema.ts';
-import { stockLevelsOf, toProductRecord } from './stock-levels.ts';
+import { grossPriceOf, stockLevelsOf, toProductRecord } from './stock-levels.ts';
 import type { StockLevels } from './stock-levels.ts';
-import { CompanyTaxRatesSchema } from './tax-rates.ts';
+import { CompanyTaxRatesSchema, sellableRatesOf } from './tax-rates.ts';
 import type { CompanyTaxRates, SellableVatRates } from './tax-rates.ts';
 import { normalizeSearchText } from './storefront-catalog.ts';
+import { czVatClassificationCodes } from '@app/shared-contracts/cz-vat-classifications';
 
 export class MerchandiseStoreFailure extends Data.TaggedError('MerchandiseStoreFailure')<{
   readonly cause?: unknown;
@@ -208,9 +208,7 @@ export const productRowsOf = Effect.fn('MerchandiseStore.productRowsOf')(functio
       active: variant.active !== false,
       document: variantDocument,
       grossPriceMinor:
-        variant.priceMinor === undefined || rate === undefined
-          ? null
-          : (variant.priceTiers?.[0]?.priceMinor ?? grossUnitPriceMinor(variant.priceMinor, rate)),
+        variant.priceMinor === undefined ? null : (grossPriceOf(variant, variant.priceMinor, rate) ?? null),
       name: variant.name,
       position,
       priceMinor: variant.priceMinor ?? null,
@@ -230,10 +228,10 @@ export const productRowsOf = Effect.fn('MerchandiseStore.productRowsOf')(functio
   return { row, tiers, variants };
 });
 
-type StoredProduct = Pick<typeof products.$inferSelect, 'document' | 'id' | 'stockOnHand'>;
+type StoredProduct = Pick<typeof products.$inferSelect, 'document' | 'grossPriceMinor' | 'id' | 'stockOnHand'>;
 type StoredVariant = Pick<
   typeof productVariants.$inferSelect,
-  'document' | 'position' | 'productId' | 'stockOnHand' | 'variantId'
+  'document' | 'grossPriceMinor' | 'position' | 'productId' | 'stockOnHand' | 'variantId'
 >;
 type StoredTier = Pick<
   typeof priceTiers.$inferSelect,
@@ -270,9 +268,15 @@ const hydrateStoredVariant = Effect.fn('MerchandiseStore.hydrateVariant')(functi
   tiers: ReadonlyMap<string, readonly StoredTier[]>,
 ) {
   const variantTiers = tiersFor(tiers, variant.productId, variant.position);
-  const document = yield* Schema.decodeUnknownEffect(
+  const decoded = yield* Schema.decodeUnknownEffect(
     variantTiers.length === 0 ? fullVariantDocumentSchema : variantDocumentSchema,
   )(variant.document);
+  // The stored gross column is the variant's price as it was entered; documents written before stored gross carry it
+  // only there.
+  const document =
+    decoded.grossPriceMinor === undefined && variant.grossPriceMinor !== null
+      ? { ...decoded, grossPriceMinor: variant.grossPriceMinor }
+      : decoded;
   return variantTiers.length === 0 ? document : { ...document, priceTiers: variantTiers };
 });
 const hydrateStoredProduct = Effect.fn('MerchandiseStore.hydrateProduct')(function* hydrateProduct(
@@ -282,7 +286,15 @@ const hydrateStoredProduct = Effect.fn('MerchandiseStore.hydrateProduct')(functi
 ) {
   const variants = (variantRows.get(row.id) ?? []).toSorted((a, b) => a.position - b.position);
   const productTiers = tiersFor(tiers, row.id, -1);
-  const stored = yield* decodeStoredProduct(row, variants.length === 0, productTiers.length === 0);
+  const decoded = yield* decodeStoredProduct(row, variants.length === 0, productTiers.length === 0);
+  // A product without real variants: its stored gross column is its price as entered (with real variants the column
+  // is their lowest price, never the product's own).
+  const stored =
+    decoded.grossPriceMinor === undefined &&
+    row.grossPriceMinor !== null &&
+    !variants.some((variant) => variant.variantId !== null)
+      ? { ...decoded, grossPriceMinor: row.grossPriceMinor }
+      : decoded;
   const document = productTiers.length === 0 ? stored : { ...stored, priceTiers: productTiers };
   const variantDocuments =
     variants.length === 0
@@ -551,8 +563,8 @@ const decodeTaxRates = (value: (typeof catalogHeads.$inferSelect)['taxRates']) =
     ? Effect.succeed(Option.getOrUndefined(Option.none<CompanyTaxRates>()))
     : query(Schema.decodeUnknownEffect(CompanyTaxRatesSchema)(value), 'Company tax rates do not decode');
 
-/** The rates the company's stored gross prices were computed with (none before its first Tax sync). */
-export const pricedRatesOf = Effect.fn('MerchandiseStore.pricedRatesOf')(function* pricedRatesOf(
+/** The rates the company sells at now, from its last sync with Tax (none before the first sync). */
+export const currentRatesOf = Effect.fn('MerchandiseStore.currentRatesOf')(function* currentRatesOf(
   db: MerchandiseDb,
   scope: StoreScope,
 ) {
@@ -561,7 +573,7 @@ export const pricedRatesOf = Effect.fn('MerchandiseStore.pricedRatesOf')(functio
     'Company tax rates could not be read',
   );
   const stored = yield* decodeTaxRates(rows[0]?.taxRates ?? null);
-  return stored?.priced ?? {};
+  return sellableRatesOf(stored, yield* DateTime.now);
 });
 
 /** Replaces the whole company's merchandise with `state` in batched inserts (seeds); returns the new revision. */
@@ -569,10 +581,10 @@ export const replaceSnapshot = Effect.fn('MerchandiseStore.replaceSnapshot')(fun
   db: MerchandiseDb,
   scope: StoreScope,
   state: MerchandiseState,
-  /** The rates to price at; by default the company's synced rates, which the head row keeps across a replace. */
-  pricedAt?: SellableVatRates,
+  /** The rates new prices without a stored gross are derived at; by default the company's current rates. */
+  ratesNow?: SellableVatRates,
 ) {
-  const rates = pricedAt ?? (yield* pricedRatesOf(db, scope));
+  const rates = ratesNow ?? (yield* currentRatesOf(db, scope));
   yield* deleteScope(db, scope);
   yield* insertSnapshotPart(db, scope, state, rates);
   return yield* writeSnapshotHead(db, scope, state);
@@ -582,11 +594,13 @@ export const replaceSnapshot = Effect.fn('MerchandiseStore.replaceSnapshot')(fun
 
 const productColumns = {
   document: products.document,
+  grossPriceMinor: products.grossPriceMinor,
   id: products.id,
   stockOnHand: products.stockOnHand,
 };
 const variantColumns = {
   document: productVariants.document,
+  grossPriceMinor: productVariants.grossPriceMinor,
   position: productVariants.position,
   productId: productVariants.productId,
   stockOnHand: productVariants.stockOnHand,
@@ -686,6 +700,97 @@ export const writeTaxRates = Effect.fn('MerchandiseStore.writeTaxRates')(functio
   );
 });
 
+/** The lowest stored gross of a product's real variants matching `which`, for an update of that product row. */
+const lowestVariantGross = (which: SQL) =>
+  sql`(select min(${productVariants.grossPriceMinor}) from ${productVariants}
+    where ${productVariants.tenantId} = ${products.tenantId}
+      and ${productVariants.legalEntityId} = ${products.legalEntityId}
+      and ${productVariants.productId} = ${products.id}
+      and ${productVariants.variantId} is not null
+      and ${which})`;
+const activeVariant = sql`${productVariants.active}`;
+const anyVariant = sql`true`;
+
+/** Net plus VAT in SQL, rounded exactly as `grossUnitPriceMinor` rounds it. */
+const grossOfNet = (net: AnyPgColumn, rate: number) => sql<number>`${net} + (${net} * ${rate}::integer + 50) / 100`;
+
+/**
+ * Stores the first gross price of what was priced while its classification had no rate (nothing was stored then):
+ * net plus VAT at the rate the classification has now. A stored gross is never touched; a product with real variants
+ * takes the lowest gross of its active variants (of all of them when none is active), as its projection does.
+ */
+export const storeMissingGrossPrices = Effect.fn('MerchandiseStore.storeMissingGrossPrices')(
+  function* storeMissingGrossPrices(db: MerchandiseDb, scope: StoreScope, rates: SellableVatRates) {
+    const priced = czVatClassificationCodes.flatMap((code) => {
+      const rate = rates[code];
+      return rate === undefined ? [] : [{ code, rate }];
+    });
+    yield* Effect.forEach(
+      priced,
+      ({ code, rate }) => {
+        const classified = db
+          .select({ id: products.id })
+          .from(products)
+          .where(and(whereScope(products, scope), eq(products.taxClassificationCode, code)));
+        const realVariants = db
+          .select({ productId: productVariants.productId })
+          .from(productVariants)
+          .where(and(whereScope(productVariants, scope), isNotNull(productVariants.variantId)));
+        return query(
+          db
+            .update(productVariants)
+            .set({ grossPriceMinor: grossOfNet(productVariants.priceMinor, rate) })
+            .where(
+              and(
+                whereScope(productVariants, scope),
+                isNull(productVariants.grossPriceMinor),
+                isNotNull(productVariants.priceMinor),
+                inArray(productVariants.productId, classified),
+              ),
+            ),
+          'Variant gross prices could not be stored',
+        ).pipe(
+          Effect.andThen(
+            query(
+              db
+                .update(products)
+                .set({ grossPriceMinor: grossOfNet(products.currentPriceMinor, rate) })
+                .where(
+                  and(
+                    whereScope(products, scope),
+                    eq(products.taxClassificationCode, code),
+                    isNull(products.grossPriceMinor),
+                    notInArray(products.id, realVariants),
+                  ),
+                ),
+              'Product gross prices could not be stored',
+            ),
+          ),
+          Effect.andThen(
+            query(
+              db
+                .update(products)
+                .set({
+                  grossPriceMinor: sql`coalesce(${lowestVariantGross(activeVariant)}, ${lowestVariantGross(anyVariant)})`,
+                })
+                .where(
+                  and(
+                    whereScope(products, scope),
+                    eq(products.taxClassificationCode, code),
+                    isNull(products.grossPriceMinor),
+                    inArray(products.id, realVariants),
+                  ),
+                ),
+              'Product gross prices could not be stored',
+            ),
+          ),
+        );
+      },
+      { concurrency: 1, discard: true },
+    );
+  },
+);
+
 /** Advances the (locked) head revision of a write that changed only synced rates and prices; returns it. */
 export const advanceHeadRevision = Effect.fn('MerchandiseStore.advanceHeadRevision')(function* advanceHeadRevision(
   db: MerchandiseDb,
@@ -702,91 +807,6 @@ export const advanceHeadRevision = Effect.fn('MerchandiseStore.advanceHeadRevisi
     'Merchandise head could not be written',
   );
   return heads.length === 1 ? revision + 1 : undefined;
-});
-
-/** Rows of a priced table that belong to the product row being updated. */
-const sameProduct = (table: typeof priceTiers | typeof productVariants) =>
-  and(
-    eq(table.tenantId, products.tenantId),
-    eq(table.legalEntityId, products.legalEntityId),
-    eq(table.productId, products.id),
-  );
-
-/** The real (priced, identified) variants of the product row being updated, as alias `v`. */
-const realVariantsOfProduct = sql`v.tenant_id = ${products.tenantId} and v.legal_entity_id = ${products.legalEntityId}
-  and v.product_id = ${products.id} and v.variant_id is not null and v.price_minor is not null`;
-
-/** `amount` plus VAT at `rate`, rounded half-up like {@link grossUnitPriceMinor}, in SQL. */
-const grossSql = (amount: AnyPgColumn, rate: number) => sql`${amount} + floor((${amount} * ${rate} + 50) / 100)`;
-
-/**
- * Recomputes every stored gross price of one classification from its net price at `rate` (tiers, variant and
- * product gross columns), or clears the gross columns when the classification is no longer sellable. Three
- * set-based statements for the whole company; nothing is loaded into the process.
- */
-export const repriceClassification = Effect.fn('MerchandiseStore.repriceClassification')(function* reprice(
-  db: MerchandiseDb,
-  scope: StoreScope,
-  code: Product['taxClassificationCode'],
-  rate: number | undefined,
-) {
-  const ofClass = and(whereScope(products, scope), eq(products.taxClassificationCode, code));
-  if (rate === undefined) {
-    yield* query(
-      db
-        .update(productVariants)
-        .set({ grossPriceMinor: null })
-        .from(products)
-        .where(and(ofClass, sameProduct(productVariants))),
-      'Variant gross prices could not be cleared',
-    );
-    yield* query(
-      db.update(products).set({ grossPriceMinor: null }).where(ofClass),
-      'Product gross prices could not be cleared',
-    );
-    return;
-  }
-  yield* query(
-    db
-      .update(priceTiers)
-      .set({ priceMinor: grossSql(priceTiers.priceExcludingVatMinor, rate) })
-      .from(products)
-      .where(and(ofClass, sameProduct(priceTiers))),
-    'Price tiers could not be repriced',
-  );
-  yield* query(
-    db
-      .update(productVariants)
-      .set({
-        grossPriceMinor: sql`coalesce(
-          (select t.price_minor from ${priceTiers} as t
-            where t.tenant_id = ${productVariants.tenantId} and t.legal_entity_id = ${productVariants.legalEntityId}
-              and t.product_id = ${productVariants.productId} and t.variant_position = ${productVariants.position}
-              and t.position = 0),
-          ${grossSql(productVariants.priceMinor, rate)})`,
-      })
-      .from(products)
-      .where(and(ofClass, sameProduct(productVariants), sql`${productVariants.priceMinor} is not null`)),
-    'Variant gross prices could not be repriced',
-  );
-  yield* query(
-    db
-      .update(products)
-      .set({
-        grossPriceMinor: sql`case
-          when exists (select 1 from ${productVariants} as v where ${realVariantsOfProduct})
-          then (select min(v.gross_price_minor) from ${productVariants} as v where ${realVariantsOfProduct}
-            and (v.active or not exists (select 1 from ${productVariants} as v where ${realVariantsOfProduct} and v.active)))
-          else coalesce(
-            (select t.price_minor from ${priceTiers} as t
-              where t.tenant_id = ${products.tenantId} and t.legal_entity_id = ${products.legalEntityId}
-                and t.product_id = ${products.id} and t.variant_position = -1 and t.position = 0),
-            ${grossSql(products.currentPriceMinor, rate)})
-          end`,
-      })
-      .where(ofClass),
-    'Product gross prices could not be repriced',
-  );
 });
 
 /** The company's head row; `lock` serializes writers of the company (SELECT … FOR UPDATE). */

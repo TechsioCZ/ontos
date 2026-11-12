@@ -46,6 +46,7 @@ import {
   at,
   catalogInput,
   catalogState,
+  withStoredGross,
   decodeState,
   encodeState,
   withMerchandise,
@@ -199,7 +200,7 @@ const richInput = {
 };
 
 it.live('readSnapshot returns exactly what replaceSnapshot wrote', () => {
-  const state = decodeState(richInput);
+  const state = withStoredGross(decodeState(richInput));
   return withMerchandise(state, (fixture) =>
     Effect.gen(function* snapshotRoundTrip() {
       expect(fixture.revision).toBe(0);
@@ -231,14 +232,16 @@ it.live('readSnapshot returns exactly what replaceSnapshot wrote', () => {
   );
 });
 
+const storedCatalog = withStoredGross(catalogState);
+
 it.live('replaceSnapshot replaces the whole company and advances the revision', () =>
-  withMerchandise(decodeState(richInput), (fixture) =>
+  withMerchandise(withStoredGross(decodeState(richInput)), (fixture) =>
     Effect.gen(function* replaceCompanySnapshot() {
       const smaller: MerchandiseState = {
-        ...catalogState,
+        ...storedCatalog,
         movements: [],
         orders: [],
-        products: catalogState.products.slice(1, 2),
+        products: storedCatalog.products.slice(1, 2),
       };
       const revision = yield* fixture.db.transaction((transaction) =>
         replaceSnapshot(transaction, fixture.scope, smaller),
@@ -608,7 +611,7 @@ it.live('UpdateCategory without a rename leaves every product row alone', () =>
 );
 
 it.live('secondary membership persists through locked working sets and filters without duplicate products', () =>
-  withMerchandise(decodeState(richInput), (fixture) =>
+  withMerchandise(withStoredGross(decodeState(richInput)), (fixture) =>
     Effect.gen(function* categoryMembershipPersistence() {
       yield* runCommand(fixture, {
         _tag: 'CreateCategory',
@@ -655,7 +658,7 @@ it.live('secondary membership persists through locked working sets and filters w
 );
 
 it.live('Bulk native memberships commit one scoped delta and roll back entirely on a later invalid primary', () =>
-  withMerchandise(decodeState(richInput), (fixture) =>
+  withMerchandise(withStoredGross(decodeState(richInput)), (fixture) =>
     Effect.gen(function* bulkCategoryMembershipPersistence() {
       yield* runCommand(fixture, {
         _tag: 'CreateCategory',
