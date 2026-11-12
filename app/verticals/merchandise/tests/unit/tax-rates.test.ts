@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import type { OperationalScope } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { vatRateAt } from '@app/shared-contracts/cz-vat-classifications';
-import { DateTime, Effect, Option, Ref, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Fiber, Option, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -14,9 +14,10 @@ import { TaxRuleRevisionIdSchema } from '../../shared/domain/merchandise-model.t
 import { grossPriceOf } from '../../src/services/stock-levels.ts';
 import {
   TaxRateSource,
-  cachedTaxRateBook,
+  TaxRatesFailure,
+  currentTaxRateBook,
   decideTaxRates,
-  freshTaxRateBook,
+  knownTaxRateBook,
   pricesCompany,
   resolveVatRate,
   sellableRatesAt,
@@ -171,28 +172,98 @@ const scopeOf = (tenantId: string): OperationalScope => ({
   correlationId: 'tax-rate-cache',
 });
 
-it.effect('reuses Tax answer for 60 seconds per company and asks again afterwards', () =>
-  Effect.gen(function* cacheWindow() {
+/** A Tax that answers only when the test releases it, counting how often it was asked. */
+const gatedSource = Effect.gen(function* gatedSource() {
+  const calls = yield* Ref.make(0);
+  const release = yield* Deferred.make<TaxRateBook>();
+  const source = { read: () => Ref.update(calls, (count) => count + 1).pipe(Effect.andThen(Deferred.await(release))) };
+  return { calls, release, source };
+});
+
+it.effect('asks Tax once per company however many reads and writes want its answer at the same time', () =>
+  Effect.gen(function* singleFlight() {
+    const { calls, release, source } = yield* gatedSource;
+    const company = scopeOf(randomUUID());
+    const waiting = yield* Effect.forkChild(
+      Effect.all([currentTaxRateBook(company), currentTaxRateBook(company), currentTaxRateBook(company)], {
+        concurrency: 'unbounded',
+      }).pipe(Effect.provideService(TaxRateSource, source)),
+    );
+    // Staff reads meanwhile join nothing and wait for nothing: they answer from the materialised rates.
+    expect(yield* knownTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source))).toEqual({
+      fresh: false,
+      refused: false,
+    });
+    yield* Effect.yieldNow;
+    expect(yield* Ref.get(calls)).toBe(1);
+    yield* Deferred.succeed(release, TEST_TAX_BOOK);
+    expect(yield* Fiber.join(waiting)).toEqual([TEST_TAX_BOOK, TEST_TAX_BOOK, TEST_TAX_BOOK]);
+    expect(yield* Ref.get(calls)).toBe(1);
+  }),
+);
+
+it.effect('a write waits for Tax at most 3 seconds; the refresh still lands for the next caller', () =>
+  Effect.gen(function* timeout() {
+    const { calls, release, source } = yield* gatedSource;
+    const company = scopeOf(randomUUID());
+    const write = yield* Effect.forkChild(
+      currentTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source), Effect.flip),
+    );
+    yield* TestClock.adjust('3 seconds');
+    expect((yield* Fiber.join(write)).kind).toBe('UNAVAILABLE');
+    yield* Deferred.succeed(release, TEST_TAX_BOOK);
+    yield* Effect.yieldNow;
+    expect(yield* knownTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source))).toEqual({
+      book: TEST_TAX_BOOK,
+      fresh: true,
+      refused: false,
+    });
+    expect(yield* Ref.get(calls)).toBe(1);
+  }),
+);
+
+it.effect('reuses Tax answer for 12 minutes per company and refreshes it afterwards in the background', () =>
+  Effect.gen(function* freshness() {
     const calls = yield* Ref.make(0);
     const source = { read: () => Ref.update(calls, (count) => count + 1).pipe(Effect.as(TEST_TAX_BOOK)) };
     const company = scopeOf(randomUUID());
     const other = scopeOf(randomUUID());
+    const write = (scope: OperationalScope) =>
+      currentTaxRateBook(scope).pipe(Effect.provideService(TaxRateSource, source));
     const read = (scope: OperationalScope) =>
-      cachedTaxRateBook(scope).pipe(Effect.provideService(TaxRateSource, source));
-    expect(yield* read(company)).toEqual(TEST_TAX_BOOK);
-    yield* TestClock.adjust('59 seconds');
-    yield* read(company);
+      knownTaxRateBook(scope).pipe(Effect.provideService(TaxRateSource, source));
+    expect(yield* write(company)).toEqual(TEST_TAX_BOOK);
+    yield* TestClock.adjust('11 minutes');
+    yield* write(company);
+    expect(yield* read(company)).toMatchObject({ book: TEST_TAX_BOOK, fresh: true });
     expect(yield* Ref.get(calls)).toBe(1);
     // Another company has its own entry.
-    yield* read(other);
+    yield* write(other);
     expect(yield* Ref.get(calls)).toBe(2);
-    yield* TestClock.adjust('1 second');
-    yield* read(company);
+    // Past the window a read still answers with the last answer and starts one refresh.
+    yield* TestClock.adjust('1 minute');
+    expect(yield* read(company)).toMatchObject({ book: TEST_TAX_BOOK, fresh: false });
+    yield* Effect.yieldNow;
     expect(yield* Ref.get(calls)).toBe(3);
-    // A placement always asks Tax and refreshes the entry the next cached read uses.
-    yield* freshTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source));
-    yield* read(company);
-    expect(yield* Ref.get(calls)).toBe(4);
+    expect(yield* read(company)).toMatchObject({ fresh: true });
+  }),
+);
+
+it.effect('keeps the last answer through an outage and drops it when Tax refuses the company', () =>
+  Effect.gen(function* outage() {
+    const outcome = yield* Ref.make<Effect.Effect<TaxRateBook, TaxRatesFailure>>(Effect.succeed(TEST_TAX_BOOK));
+    const source = { read: () => Effect.flatten(Ref.get(outcome)) };
+    const company = scopeOf(randomUUID());
+    const write = currentTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source), Effect.result);
+    const read = knownTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source));
+    yield* write;
+    yield* TestClock.adjust('13 minutes');
+    yield* Ref.set(outcome, Effect.fail(new TaxRatesFailure({ kind: 'UNAVAILABLE' })));
+    yield* write;
+    expect(yield* read).toMatchObject({ book: TEST_TAX_BOOK, refused: false });
+    yield* Ref.set(outcome, Effect.fail(new TaxRatesFailure({ kind: 'REFUSED' })));
+    yield* write;
+    expect(yield* read).toEqual({ fresh: false, refused: true });
   }),
 );
 
@@ -210,39 +281,78 @@ const MIGRATED: CompanyTaxRates = {
   syncedAt: at('2026-11-12T00:00:00.000Z'),
 };
 const CONFIRMED: CompanyTaxRates = { book: TEST_TAX_BOOK, source: 'TAX', syncedAt: NOW };
+const confirmedMinutesAgo = (minutes: number): CompanyTaxRates => ({
+  ...CONFIRMED,
+  syncedAt: DateTime.subtract(NOW, { minutes }),
+});
+
+const answered = (book: TaxRateBook) => ({ book, refused: false });
+const unreachable = { refused: false };
+const refusedByTax = { refused: true };
 
 it('the migrated state keeps selling until Tax prices the company, and holds BOOK-IT at its stored 10 %', () => {
   // Tax not installed, unreachable, or installed without a regime or without every rule yet: the stored rates serve.
-  for (const answer of [undefined, testTaxBook(undefined, 'NOT_DECLARED'), testTaxBook({ standard: '21' })]) {
-    expect(decideTaxRates(MIGRATED, answer, false, NOW)).toEqual({ book: MIGRATED.book, held: { 'book-it': 10 } });
+  for (const answer of [
+    unreachable,
+    refusedByTax,
+    answered(testTaxBook(undefined, 'NOT_DECLARED')),
+    answered(testTaxBook({ standard: '21' })),
+  ]) {
+    expect(decideTaxRates(MIGRATED, answer, NOW)).toEqual({
+      book: MIGRATED.book,
+      changed: false,
+      held: { 'book-it': 10 },
+      usable: true,
+    });
   }
-  expect(decideTaxRates(MIGRATED, undefined, true, NOW)).toEqual({ book: MIGRATED.book, held: { 'book-it': 10 } });
   // The migrated periods name no Tax rule: lines sell at 21 / 12 % without a rule revision.
   expect(resolveVatRate(MIGRATED.book, 'cz.vat.reduced', NOW)).toEqual({ _tag: 'Rate', ratePercent: 12 });
   // Tax's first answer that prices the company replaces it, held rates included.
-  expect(decideTaxRates(MIGRATED, TEST_TAX_BOOK, false, NOW)).toEqual({
+  expect(decideTaxRates(MIGRATED, answered(TEST_TAX_BOOK), NOW)).toEqual({
     book: TEST_TAX_BOOK,
+    changed: true,
     held: {},
     materialise: { book: TEST_TAX_BOOK, source: 'TAX', syncedAt: NOW },
+    usable: true,
   });
   const nonPayer = testTaxBook({}, 'NON_PAYER');
-  expect(decideTaxRates(MIGRATED, nonPayer, false, NOW).materialise?.book).toBe(nonPayer);
+  expect(decideTaxRates(MIGRATED, answered(nonPayer), NOW).materialise?.book).toBe(nonPayer);
 });
 
-it('once Tax is in charge its answer rules: a gap fails closed, an outage keeps Tax last answer', () => {
-  expect(decideTaxRates(CONFIRMED, TEST_TAX_BOOK, false, NOW)).toEqual({ book: TEST_TAX_BOOK, held: {} });
+it('once Tax is in charge its answer rules: a gap fails closed, an outage keeps a recently confirmed answer', () => {
+  expect(decideTaxRates(CONFIRMED, answered(TEST_TAX_BOOK), NOW)).toEqual({
+    book: TEST_TAX_BOOK,
+    changed: false,
+    held: {},
+    usable: true,
+  });
   const standardOnly = testTaxBook({ standard: '21' });
-  const gap = decideTaxRates(CONFIRMED, standardOnly, false, NOW);
-  expect(gap.book).toBe(standardOnly);
-  expect(gap.materialise?.source).toBe('TAX');
+  const gap = decideTaxRates(CONFIRMED, answered(standardOnly), NOW);
+  expect([gap.book, gap.changed, gap.materialise?.source]).toEqual([standardOnly, true, 'TAX']);
   expect(resolveVatRate(standardOnly, 'cz.vat.reduced', NOW)).toEqual({ _tag: 'NotSellable', reason: 'NO_RULE' });
-  // Tax unreachable: its last answer (dated periods, scheduled changes included) keeps serving.
-  expect(decideTaxRates(CONFIRMED, undefined, false, NOW)).toEqual({ book: TEST_TAX_BOOK, held: {} });
+  // Tax unreachable: rates it confirmed within 24 hours still price new lines; older ones are shown, never used.
+  const confirmedAt = (hoursAgo: number): CompanyTaxRates => ({
+    ...CONFIRMED,
+    syncedAt: DateTime.subtract(NOW, { hours: hoursAgo }),
+  });
+  expect(decideTaxRates(confirmedAt(23), unreachable, NOW)).toMatchObject({ book: TEST_TAX_BOOK, usable: true });
+  expect(decideTaxRates(confirmedAt(25), unreachable, NOW)).toMatchObject({ book: TEST_TAX_BOOK, usable: false });
   // Tax refusing a company it was in charge of: nothing is sellable.
-  expect(decideTaxRates(CONFIRMED, undefined, true, NOW)).toEqual({ held: {} });
+  expect(decideTaxRates(CONFIRMED, refusedByTax, NOW)).toEqual({ changed: false, held: {}, usable: false });
   // A company that never had rates takes whatever Tax answers.
-  expect(decideTaxRates(undefined, standardOnly, false, NOW).materialise?.book).toBe(standardOnly);
-  expect(decideTaxRates(undefined, undefined, true, NOW)).toEqual({ held: {} });
+  expect(decideTaxRates(undefined, answered(standardOnly), NOW).materialise?.book).toBe(standardOnly);
+  expect(decideTaxRates(undefined, refusedByTax, NOW)).toEqual({ changed: false, held: {}, usable: false });
+});
+
+it('the same answer again only renews the confirmation time, once per freshness window', () => {
+  expect(decideTaxRates(confirmedMinutesAgo(5), answered(TEST_TAX_BOOK), NOW).materialise).toBeUndefined();
+  expect(decideTaxRates(confirmedMinutesAgo(13), answered(TEST_TAX_BOOK), NOW)).toEqual({
+    book: TEST_TAX_BOOK,
+    changed: false,
+    held: {},
+    materialise: { book: TEST_TAX_BOOK, source: 'TAX', syncedAt: NOW },
+    usable: true,
+  });
 });
 
 it('prices the company only with a non-payer regime or a usable rate for every classification', () => {

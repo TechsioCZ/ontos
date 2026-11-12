@@ -17,13 +17,33 @@ import {
   executeSellerVatRegimeAtInstantWithAuthorization,
   executeTaxRuleHistoryWithAuthorization,
 } from '@app/tax/api/client';
-import { Clock, Context, Crypto, DateTime, Effect, Match, Option, Redacted, Ref, Schema } from 'effect';
+import {
+  Context,
+  Crypto,
+  DateTime,
+  Deferred,
+  Duration,
+  Effect,
+  Match,
+  Option,
+  Redacted,
+  Ref,
+  Result,
+  Schema,
+} from 'effect';
 
 import { TaxRuleRevisionIdSchema, VatPercentSchema } from '../../shared/domain/merchandise-model.ts';
 
 const TAX_AUDIENCE = 'tax';
-/** How long one company's rates are reused before Tax is asked again. */
-export const TAX_RATE_CACHE_MILLIS = 60_000;
+/**
+ * How long Tax's answer for a company is used before it is asked again. Rates change by declaration, and a scheduled
+ * change is already in the answer's dated periods, so the rate at any instant stays exact in between.
+ */
+export const TAX_RATE_FRESHNESS = Duration.minutes(12);
+/** How long a write that prices something new waits for the company's refresh from Tax. */
+export const TAX_REFRESH_TIMEOUT = Duration.seconds(3);
+/** While Tax is unreachable, rates it confirmed at most this long ago still price new lines and prices. */
+export const CONFIRMED_RATES_MAX_AGE = Duration.hours(24);
 /** Both classifications and the regime are read side by side; nothing else fans out. */
 const TAX_READ_CONCURRENCY = 3;
 
@@ -93,6 +113,7 @@ export const NotSellableReasonSchema = Schema.Literals([
   'RULE_CONFLICT',
   'TAX_NOT_AVAILABLE',
   'TAX_NOT_SYNCED',
+  'TAX_UNREACHABLE',
 ]);
 export type NotSellableReason = typeof NotSellableReasonSchema.Type;
 
@@ -179,40 +200,73 @@ export const pricesCompany = (book: TaxRateBook, at: DateTime.Utc): boolean =>
   (book.regime === 'VAT_PAYER' &&
     czVatClassificationCodes.every((code) => Option.isSome(rateOf(resolveVatRate(book, code, at)))));
 
-/** The company's rates a read or a write works with, and the state to materialise when Tax's answer takes over. */
+/** The company's rates a read or a write works with, and the state to materialise from Tax's answer. */
 export interface TaxRatesDecision {
   /** Absent when no rates exist (nothing stored and no answer, or Tax refused a company it was in charge of). */
   readonly book?: TaxRateBook;
+  /** The rates or the regime change with this decision (a new revision of the catalog). */
+  readonly changed: boolean;
   readonly held: HeldProductRates;
-  /** Present when the stored state must become this one (Tax's answer is in charge and differs from what is stored). */
+  /** Present when the stored state must become this one: Tax's answer took over, or confirmed it again. */
   readonly materialise?: CompanyTaxRates;
+  /**
+   * Whether `book` may price something new (a new order line, a new product price): Tax's answer, the migrated rates
+   * (not yet confirmed), or rates Tax confirmed within {@link CONFIRMED_RATES_MAX_AGE} while Tax is unreachable.
+   */
+  readonly usable: boolean;
 }
+
+/** What Merchandise got from Tax for this read or write. */
+export interface TaxAnswer {
+  readonly book?: TaxRateBook;
+  /** Tax refused the company (not installed for it, or no longer admits Merchandise). */
+  readonly refused: boolean;
+}
+
+const ageOf = (since: DateTime.Utc, at: DateTime.Utc) => DateTime.distance(since, at);
+const confirmedRecently = (stored: CompanyTaxRates, at: DateTime.Utc) =>
+  Duration.isLessThanOrEqualTo(ageOf(stored.syncedAt, at), CONFIRMED_RATES_MAX_AGE);
+
+const keptStored = (stored: CompanyTaxRates | undefined, at: DateTime.Utc): TaxRatesDecision =>
+  stored === undefined
+    ? { changed: false, held: NO_HELD_RATES, usable: false }
+    : {
+        book: stored.book,
+        changed: false,
+        held: heldRatesOf(stored),
+        usable: stored.source === 'MIGRATION' || confirmedRecently(stored, at),
+      };
 
 /**
  * Tax's answer is in charge once it prices the company or once Tax has been in charge before (a later gap then fails
  * closed); a company without any stored state takes whatever Tax answers. Otherwise the stored state keeps serving:
- * the migrated rates while Tax is not installed, not reachable or not seeded yet, and Tax's last answer (its dated
- * periods, scheduled changes included) while Tax is unreachable. Tax refusing a company it was in charge of leaves
- * nothing sellable.
+ * the migrated rates while Tax is not installed, not reachable or not seeded yet, and Tax's last confirmed answer
+ * while Tax is unreachable (for pricing new things only while that confirmation is recent). Tax refusing a company it
+ * was in charge of leaves nothing sellable. The same answer again refreshes the confirmation time once per freshness
+ * window.
  */
 export const decideTaxRates = (
   stored: CompanyTaxRates | undefined,
-  answer: TaxRateBook | undefined,
-  refused: boolean,
+  answer: TaxAnswer,
   at: DateTime.Utc,
 ): TaxRatesDecision => {
-  if (answer === undefined && refused && stored?.source === 'TAX') {
-    return { held: NO_HELD_RATES };
+  const { book } = answer;
+  if (book === undefined) {
+    return answer.refused && stored?.source === 'TAX'
+      ? { changed: false, held: NO_HELD_RATES, usable: false }
+      : keptStored(stored, at);
   }
-  const inCharge =
-    answer !== undefined && (stored === undefined || stored.source === 'TAX' || pricesCompany(answer, at));
-  if (answer === undefined || !inCharge) {
-    return stored === undefined ? { held: NO_HELD_RATES } : { book: stored.book, held: heldRatesOf(stored) };
+  if (!(stored === undefined || stored.source === 'TAX' || pricesCompany(book, at))) {
+    return keptStored(stored, at);
   }
-  const unchanged = stored?.source === 'TAX' && stored.book.fingerprint === answer.fingerprint;
-  return unchanged
-    ? { book: answer, held: NO_HELD_RATES }
-    : { book: answer, held: NO_HELD_RATES, materialise: { book: answer, source: 'TAX', syncedAt: at } };
+  const confirmed = { book, source: 'TAX', syncedAt: at } satisfies CompanyTaxRates;
+  if (stored?.source !== 'TAX' || stored.book.fingerprint !== book.fingerprint) {
+    return { book, changed: true, held: NO_HELD_RATES, materialise: confirmed, usable: true };
+  }
+  const due = Duration.isGreaterThanOrEqualTo(ageOf(stored.syncedAt, at), TAX_RATE_FRESHNESS);
+  return due
+    ? { book, changed: false, held: NO_HELD_RATES, materialise: confirmed, usable: true }
+    : { book, changed: false, held: NO_HELD_RATES, usable: true };
 };
 
 const classificationLabels = {
@@ -233,6 +287,11 @@ export const notSellableMessage = (code: CzVatClassificationCode, reason: NotSel
       () => 'Produkt nelze prodat: daně firmy nejsou dostupné (modul Daně není pro firmu aktivní).',
     ),
     Match.when('TAX_NOT_SYNCED', () => 'Produkt nelze prodat: sazby DPH firmy ještě nebyly načteny z daní.'),
+    Match.when(
+      'TAX_UNREACHABLE',
+      () =>
+        'Produkt teď nelze prodat: daně firmy nejsou dostupné a jejich poslední ověřené sazby jsou starší než 24 hodin. Zkuste to prosím za chvíli.',
+    ),
     Match.exhaustive,
   );
 };
@@ -430,46 +489,152 @@ export const TaxRateSource = Context.Reference<TaxRateSourceService>('@app/merch
   defaultValue: () => ({ read: fetchTaxRateBook }),
 });
 
-interface CachedBook {
-  readonly book: TaxRateBook;
-  readonly fetchedAtMillis: number;
-  /** The source that answered; another source never reuses the entry. */
-  readonly source: TaxRateSourceService;
+/** What this process last learned from Tax about one company, and the refresh in flight, if any. */
+interface CompanyTaxAnswer {
+  /** Tax's last answer and when it arrived (kept through a later outage, dropped by a refusal). */
+  readonly book?: TaxRateBook;
+  readonly fetchedAt?: DateTime.Utc;
+  /** The single refresh of this company in flight; every caller joins it instead of asking Tax again. */
+  readonly inflight?: Deferred.Deferred<TaxRateBook, TaxRatesFailure>;
+  /** Tax refused the company at the last refresh (not installed for it, or no longer admits Merchandise). */
+  readonly refused: boolean;
 }
 
-/** Per process: one entry per company, replaced on every fetch. Immutable maps, so readers never see a torn entry. */
-const cachedBooks = Ref.makeUnsafe<ReadonlyMap<string, CachedBook>>(new Map());
+/** Per process: one entry per company. Immutable maps, so readers never see a torn entry. */
+const companyAnswers = Ref.makeUnsafe<ReadonlyMap<string, CompanyTaxAnswer>>(new Map());
 const companyKey = (scope: OperationalScope) => `${scope.tenantId}|${scope.legalEntityId ?? ''}`;
+const NO_ANSWER: CompanyTaxAnswer = { refused: false };
+const entryOf = (answers: ReadonlyMap<string, CompanyTaxAnswer>, key: string) => answers.get(key) ?? NO_ANSWER;
 
-/** Always asks Tax (storefront order placement), and refreshes the cache with the answer. */
-export const freshTaxRateBook = Effect.fn('Merchandise.freshTaxRateBook')(function* freshTaxRateBook(
+/** The company's entry after one refresh: the new answer, a refusal, or (an outage) the answer it had before. */
+const answerAfter = (
+  kept: CompanyTaxAnswer,
+  result: Result.Result<TaxRateBook, TaxRatesFailure>,
+  at: DateTime.Utc,
+): CompanyTaxAnswer => {
+  if (Result.isSuccess(result)) {
+    return { book: result.success, fetchedAt: at, refused: false };
+  }
+  if (result.failure.kind === 'REFUSED') {
+    return { refused: true };
+  }
+  return kept.book === undefined || kept.fetchedAt === undefined
+    ? { refused: kept.refused }
+    : { book: kept.book, fetchedAt: kept.fetchedAt, refused: false };
+};
+
+/** Forgets a refresh that ended without an answer (a defect), so the next caller starts a new one. */
+const releaseRefresh = (key: string, done: Deferred.Deferred<TaxRateBook, TaxRatesFailure>) =>
+  Deferred.interrupt(done).pipe(
+    Effect.andThen(
+      Ref.update(companyAnswers, (answers) => {
+        const entry = entryOf(answers, key);
+        if (entry.inflight !== done) {
+          return answers;
+        }
+        const { inflight: _ended, ...rest } = entry;
+        void _ended;
+        return new Map([...answers, [key, rest]]);
+      }),
+    ),
+  );
+
+/** The leader of a refresh: asks Tax once, records the outcome and releases every caller waiting for it. */
+const runRefresh = Effect.fn('Merchandise.runTaxRatesRefresh')(function* runRefresh(
   scope: OperationalScope,
+  done: Deferred.Deferred<TaxRateBook, TaxRatesFailure>,
 ) {
   const source = yield* TaxRateSource;
-  const book = yield* source.read(scope);
-  const fetchedAtMillis = yield* Clock.currentTimeMillis;
+  const result = yield* Effect.result(source.read(scope));
+  const at = yield* DateTime.now;
+  const key = companyKey(scope);
   yield* Ref.update(
-    cachedBooks,
-    (books) => new Map([...books, [companyKey(scope), { book, fetchedAtMillis, source }]]),
+    companyAnswers,
+    (answers) => new Map([...answers, [key, answerAfter(entryOf(answers, key), result, at)]]),
   );
-  return book;
+  yield* Result.isSuccess(result) ? Deferred.succeed(done, result.success) : Deferred.fail(done, result.failure);
 });
 
-/** The company's rates, reused for at most {@link TAX_RATE_CACHE_MILLIS}. */
-export const cachedTaxRateBook = Effect.fn('Merchandise.cachedTaxRateBook')(function* cachedTaxRateBook(
+/**
+ * Joins the company's refresh in flight or starts one. The refresh runs on its own fiber, so it finishes (and is
+ * recorded) even when the caller stops waiting for it; the caller gets the pending answer.
+ */
+const refreshOf = Effect.fn('Merchandise.refreshTaxRates')(function* refreshOf(scope: OperationalScope) {
+  const key = companyKey(scope);
+  const created = yield* Deferred.make<TaxRateBook, TaxRatesFailure>();
+  const joined = yield* Ref.modify(companyAnswers, (answers) => {
+    const current = entryOf(answers, key);
+    return current.inflight === undefined
+      ? ([undefined, new Map([...answers, [key, { ...current, inflight: created }]])] as const)
+      : ([current.inflight, answers] as const);
+  });
+  if (joined !== undefined) {
+    return joined;
+  }
+  yield* Effect.forkDetach(runRefresh(scope, created).pipe(Effect.ensuring(releaseRefresh(key, created))));
+  return created;
+});
+
+/** What this process knows from Tax about the company. */
+export interface KnownTaxRates {
+  readonly book?: TaxRateBook;
+  /** Whether the answer is younger than {@link TAX_RATE_FRESHNESS}. */
+  readonly fresh: boolean;
+  readonly refused: boolean;
+}
+
+const known = Effect.fn('Merchandise.knownTaxRates')(function* known(scope: OperationalScope) {
+  const [answers, now] = yield* Effect.all([Ref.get(companyAnswers), DateTime.now], { concurrency: 1 });
+  const entry = entryOf(answers, companyKey(scope));
+  const fresh =
+    entry.fetchedAt !== undefined &&
+    !DateTime.isGreaterThan(entry.fetchedAt, now) &&
+    Duration.isLessThan(ageOf(entry.fetchedAt, now), TAX_RATE_FRESHNESS);
+  const answer: KnownTaxRates =
+    entry.book === undefined ? { fresh, refused: entry.refused } : { book: entry.book, fresh, refused: false };
+  return answer;
+});
+
+/**
+ * Tax's answer as far as this process knows it, never waiting for Tax (staff reads and writes that price nothing
+ * new): when the answer is missing or older than the freshness window a single refresh starts in the background, and
+ * the caller works with the company's materialised rates meanwhile.
+ */
+export const knownTaxRateBook = Effect.fn('Merchandise.knownTaxRateBook')(function* knownTaxRateBook(
   scope: OperationalScope,
 ) {
-  const [books, nowMillis, source] = yield* Effect.all([Ref.get(cachedBooks), Clock.currentTimeMillis, TaxRateSource], {
-    concurrency: 1,
-  });
-  const cached = books.get(companyKey(scope));
-  if (
-    cached !== undefined &&
-    cached.source === source &&
-    nowMillis >= cached.fetchedAtMillis &&
-    nowMillis - cached.fetchedAtMillis < TAX_RATE_CACHE_MILLIS
-  ) {
-    return cached.book;
+  const answer = yield* known(scope);
+  if (!answer.fresh) {
+    yield* refreshOf(scope);
   }
-  return yield* freshTaxRateBook(scope);
+  return answer;
+});
+
+const awaitRefresh = (scope: OperationalScope) =>
+  refreshOf(scope).pipe(
+    Effect.flatMap((pending) => Deferred.await(pending).pipe(Effect.timeoutOption(TAX_REFRESH_TIMEOUT))),
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.fail(new TaxRatesFailure({ kind: 'UNAVAILABLE' })),
+        onSome: (book) => Effect.succeed(book),
+      }),
+    ),
+  );
+
+/**
+ * Tax's answer for a write that prices something new (a new order line, a new product price): the known answer while
+ * fresh, else the company's single refresh, waited for at most {@link TAX_REFRESH_TIMEOUT}.
+ */
+export const currentTaxRateBook = Effect.fn('Merchandise.currentTaxRateBook')(function* currentTaxRateBook(
+  scope: OperationalScope,
+) {
+  const answer = yield* known(scope);
+  return answer.fresh && answer.book !== undefined ? answer.book : yield* awaitRefresh(scope);
+});
+
+/** Tax's answer now, for an explicit sync: always the single refresh, waited for at most the timeout. */
+export const refreshedTaxRateBook = Effect.fn('Merchandise.refreshedTaxRateBook')(function* refreshedTaxRateBook(
+  scope: OperationalScope,
+) {
+  return yield* awaitRefresh(scope);
 });

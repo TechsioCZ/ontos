@@ -340,6 +340,11 @@ export const RecordsResponseSchema = Schema.Struct({
    * company). A non-payer sells every classification without VAT; with no regime nothing can be sold.
    */
   sellerVatRegime: Schema.optionalKey(SellerVatRegimeSchema),
+  /**
+   * Staff reads: when Tax last confirmed the rates above; null while they are still the ones the classification
+   * migration took over from the stored prices (not yet confirmed by Tax).
+   */
+  taxRatesConfirmedAt: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtcFromString)),
 });
 export type RecordsResponse = typeof RecordsResponseSchema.Type;
 

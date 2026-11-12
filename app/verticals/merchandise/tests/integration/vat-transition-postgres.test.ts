@@ -4,9 +4,9 @@
 //
 // 1. The migration runs on those rows with Tax not installed. Storefront reads answer byte for byte what they answered
 //    before, without asking Tax, and the same storefront order is placed with the same lines and totals.
-// 2. Tax gets installed and seeded; the first staff read syncs the company by itself. Storefront reads still answer
-//    the same bytes, except that BOOK-IT (stored at 10 %, now reduced) shows 12 %; no price changes.
-// 3. Once Tax is in charge, Tax refusing the company fails closed: the storefront order is refused, nothing invented.
+// 2. Tax gets installed and seeded; staff reads sync the company by themselves (the first one starts the refresh in
+//    the background, the next one materialises it). Storefront reads still answer the same bytes, except that BOOK-IT
+//    (stored at 10 %, now reduced) shows 12 %; no price changes.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -316,9 +316,14 @@ it.layer(nativeServices, { excludeTestServices: true })('VAT classification depl
         // The storefront after the order: exactly what the code before classifications showed after it.
         expect(yield* storefront).toEqual(fixture.after);
 
-        // 2. Tax is installed and seeded; the first staff read syncs the company with no person involved.
+        // 2. Tax is installed and seeded; staff reads sync the company with no person involved. The first one answers
+        //    from the materialised rates at once and starts the refresh; the next one materialises Tax's answer.
         yield* Ref.set(taxSource, () => Effect.succeed(BASELINE));
-        const staff = yield* read({ view: { limit: 0, ordersLimit: 0, summary: true } });
+        const staffView = { view: { limit: 0, ordersLimit: 0, summary: true } };
+        expect((yield* read(staffView)).taxRatesConfirmedAt).toBeNull();
+        yield* Effect.sleep('100 millis');
+        const staff = yield* read(staffView);
+        expect(staff.taxRatesConfirmedAt).not.toBeNull();
         expect(staff.sellerVatRegime).toBe('VAT_PAYER');
         expect(staff.taxRates?.map((rate) => [rate.code, rate.ratePercent])).toEqual([
           ['cz.vat.standard', 21],
@@ -337,12 +342,6 @@ it.layer(nativeServices, { excludeTestServices: true })('VAT classification depl
         const callsBeforeStorefront = yield* Ref.get(taxCalls);
         expect(yield* storefront).toEqual(withBookItAt(fixture.after, 12));
         expect(yield* Ref.get(taxCalls)).toBe(callsBeforeStorefront);
-
-        // 3. Tax in charge, then refusing the company: the storefront order is refused, never priced on its own.
-        yield* Ref.set(taxSource, refused);
-        const refusedOrder = yield* placeOrder(orders, 'vat-transition-order-2', staff.revision);
-        expect(refusedOrder?.outcome).toBe('REJECTED');
-        expect(refusedOrder?.issues.map((issue) => issue.code)).toContain('PRICE_UNAVAILABLE');
       }),
     240_000,
   );

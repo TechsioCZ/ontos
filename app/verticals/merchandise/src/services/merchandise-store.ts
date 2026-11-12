@@ -810,9 +810,9 @@ export const advanceHeadRevision = Effect.fn('MerchandiseStore.advanceHeadRevisi
 });
 
 /**
- * A read's materialisation of Tax's answer: records the rates and advances the revision in one statement, only when the
- * head is still at `revision` and no writer holds it (a read never waits for a writer; the next read retries). Returns
- * the new revision, or undefined when it did not run.
+ * A read's materialisation of Tax's answer: records the rates (advancing the revision when they changed, not when Tax
+ * only confirmed them again) in one statement, only when the head is still at `revision` and no writer holds it (a
+ * read never waits for a writer; the next read retries). Returns the head's revision, or undefined when it did not run.
  */
 export const materialiseTaxRatesIfIdle = Effect.fn('MerchandiseStore.materialiseTaxRatesIfIdle')(
   function* materialiseTaxRatesIfIdle(
@@ -821,20 +821,22 @@ export const materialiseTaxRatesIfIdle = Effect.fn('MerchandiseStore.materialise
     revision: number,
     value: CompanyTaxRates,
     now: DateTime.Utc,
+    changed: boolean,
   ) {
     const encoded = yield* query(encodeTaxRates(value), 'Company tax rates do not encode');
+    const next = changed ? revision + 1 : revision;
     const idle = sql`exists (select 1 from ${catalogHeads} as idle
       where idle.tenant_id = ${scope.tenantId}::uuid and idle.legal_entity_id = ${scope.legalEntityId}::uuid
         and idle.revision = ${revision} for update skip locked)`;
     const heads = yield* query(
       db
         .update(catalogHeads)
-        .set({ revision: revision + 1, taxRates: encoded, updatedAt: date(now) })
+        .set(changed ? { revision: next, taxRates: encoded, updatedAt: date(now) } : { taxRates: encoded })
         .where(and(whereScope(catalogHeads, scope), eq(catalogHeads.revision, revision), idle))
         .returning({ revision: catalogHeads.revision }),
       'Company tax rates could not be written',
     );
-    return heads.length === 1 ? revision + 1 : undefined;
+    return heads.length === 1 ? next : undefined;
   },
 );
 
