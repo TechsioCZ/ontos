@@ -1,8 +1,7 @@
-import { createServer } from 'node:net';
-import type { Server, Socket } from 'node:net';
-import { NodeCrypto } from '@effect/platform-node';
-import { ConfigProvider, Context, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
-import { flow } from 'effect/Function';
+import { NodeCrypto, NodeSocketServer } from '@effect/platform-node';
+import { ConfigProvider, Context, Effect, Exit, Layer, Redacted, Result, Schema, Scope } from 'effect';
+import { NetAddress } from 'effect/net';
+import { Socket } from 'effect/socket';
 import { describe, expect, it } from 'effect-rstest';
 import { formatAddressHeader, SmtpEmailDeliveryLive, smtpConfigurationFromEnvironment } from '../../src/smtp.ts';
 import type { SmtpConfiguration } from '../../src/smtp.ts';
@@ -27,7 +26,7 @@ const smtpModes = [
 ] as const;
 type Mode = (typeof smtpModes)[number];
 interface FakeSmtp {
-  readonly close: Effect.Effect<void, Error>;
+  readonly close: Effect.Effect<void>;
   readonly messages: string[];
   readonly port: number;
 }
@@ -41,117 +40,86 @@ const recipientReply = (mode: Mode): string => {
   return '250 OK\r\n';
 };
 
-const handleSmtpConnection = (socket: Socket, mode: Mode, messages: string[]) => {
-  socket.setEncoding('utf-8');
-  let buffer = '';
-  let inData = false;
-  socket.on('error', () => {
-    // The disconnect cases deliberately close a socket before its peer finishes.
-  });
-  socket.write('220 fake.smtp ESMTP\r\n');
-  socket.on('data', (chunk: string) => {
-    buffer += chunk;
-    for (;;) {
-      if (inData) {
-        const end = buffer.indexOf('\r\n.\r\n');
-        if (end === -1) {
-          return;
-        }
-        messages.push(buffer.slice(0, end));
-        buffer = buffer.slice(end + 5);
-        inData = false;
-        if (mode === 'drop-after-data') {
-          socket.destroy();
-          return;
-        }
-        if (mode === 'stall-after-data') {
-          return;
-        }
-        if (mode === 'tempfail-data') {
-          socket.write('451 4.3.0 try later\r\n');
-        } else if (mode === 'reject-data') {
-          socket.write('550 5.7.1 rejected\r\n');
-        } else {
-          socket.write('250 2.0.0 queued\r\n');
-        }
-        continue;
-      }
-      const end = buffer.indexOf('\r\n');
-      if (end === -1) {
-        return;
-      }
-      const line = buffer.slice(0, end);
-      buffer = buffer.slice(end + 2);
-      if (line.startsWith('EHLO')) {
-        socket.write('250-fake.smtp\r\n250 8BITMIME\r\n');
-      } else if (line.startsWith('MAIL FROM')) {
-        socket.write('250 OK\r\n');
-      } else if (line.startsWith('RCPT TO')) {
-        if (mode === 'drop-before-data') {
-          socket.destroy();
-          return;
-        }
-        socket.write(recipientReply(mode));
-      } else if (line === 'DATA') {
-        inData = true;
-        socket.write('354 go ahead\r\n');
-      } else if (line === 'QUIT') {
-        if (mode === 'drop-quit') {
-          socket.destroy();
-          return;
-        }
-        socket.end('221 bye\r\n');
-        return;
-      } else {
-        socket.write('502 unsupported\r\n');
-      }
-    }
-  });
+const dataReply = (mode: Mode): string => {
+  if (mode === 'tempfail-data') {
+    return '451 4.3.0 try later\r\n';
+  }
+  if (mode === 'reject-data') {
+    return '550 5.7.1 rejected\r\n';
+  }
+  return '250 2.0.0 queued\r\n';
 };
 
-const closeSmtpServer = (server: Server, sockets: ReadonlySet<Socket>): FakeSmtp['close'] =>
-  Effect.callback((resume) => {
-    for (const socket of sockets) {
-      socket.destroy();
+/** A close code above 1000 destroys the connection without a reply, as a dropped peer would. */
+const dropConnection = new Socket.CloseEvent(1006);
+
+const serveSmtpConnection = (socket: Socket.Socket, mode: Mode, messages: string[]) =>
+  Effect.gen(function* smtpConversation() {
+    const pull = yield* Socket.readerString(socket, 'utf-8');
+    const { write } = yield* socket.writer;
+    yield* write('220 fake.smtp ESMTP\r\n');
+    const conversation = { buffer: '', inData: false };
+    while (true) {
+      conversation.buffer += (yield* pull).join('');
+      for (;;) {
+        const terminator = conversation.inData ? '\r\n.\r\n' : '\r\n';
+        const end = conversation.buffer.indexOf(terminator);
+        if (end === -1) {
+          break;
+        }
+        const unit = conversation.buffer.slice(0, end);
+        conversation.buffer = conversation.buffer.slice(end + terminator.length);
+        if (conversation.inData) {
+          messages.push(unit);
+          conversation.inData = false;
+          if (mode === 'drop-after-data') {
+            return yield* write(dropConnection);
+          }
+          if (mode === 'stall-after-data') {
+            return yield* Effect.never;
+          }
+          yield* write(dataReply(mode));
+        } else if (unit.startsWith('EHLO')) {
+          yield* write('250-fake.smtp\r\n250 8BITMIME\r\n');
+        } else if (unit.startsWith('MAIL FROM')) {
+          yield* write('250 OK\r\n');
+        } else if (unit.startsWith('RCPT TO')) {
+          if (mode === 'drop-before-data') {
+            return yield* write(dropConnection);
+          }
+          yield* write(recipientReply(mode));
+        } else if (unit === 'DATA') {
+          conversation.inData = true;
+          yield* write('354 go ahead\r\n');
+        } else if (unit === 'QUIT') {
+          return yield* write(mode === 'drop-quit' ? dropConnection : '221 bye\r\n');
+        } else {
+          yield* write('502 unsupported\r\n');
+        }
+      }
     }
-    server.close(flow((error?: Error) => (error === undefined ? Effect.void : Effect.fail(error)), resume));
-  });
+  }).pipe(
+    Effect.scoped,
+    // The disconnect cases deliberately close a socket before its peer finishes.
+    Effect.ignore,
+  );
 
 const startFakeSmtp = (mode: Mode = 'accept') =>
-  Effect.acquireRelease(
-    Effect.callback<FakeSmtp, Error>((resume, signal) => {
-      const messages: string[] = [];
-      const sockets = new Set<Socket>();
-      const server = createServer((socket) => {
-        sockets.add(socket);
-        socket.once('close', () => {
-          sockets.delete(socket);
-        });
-        handleSmtpConnection(socket, mode, messages);
-      });
-      let closed = false;
-      const close = Effect.suspend(() => {
-        if (closed) {
-          return Effect.void;
-        }
-        closed = true;
-        return closeSmtpServer(server, sockets);
-      });
-      server.once('error', (error) => {
-        resume(Effect.fail(error));
-      });
-      server.listen({ host: '127.0.0.1', port: 0, signal }, () => {
-        const address = Schema.decodeUnknownOption(Schema.Struct({ port: Schema.Int }))(server.address());
-        if (Option.isNone(address)) {
-          resume(Effect.die(new Error('The SMTP fixture must bind an IP socket')));
-          return;
-        }
-        resume(Effect.succeed({ close, messages, port: address.value.port }));
-      });
-      return close.pipe(Effect.orDie);
-    }),
-    (server) => server.close.pipe(Effect.orDie),
-  );
+  Effect.gen(function* fakeSmtpServer() {
+    const messages: string[] = [];
+    // The tests close the listener and its connections early to prove refused and dropped connections.
+    const serverScope = yield* Scope.make();
+    const close = Scope.close(serverScope, Exit.void);
+    yield* Effect.addFinalizer(() => close);
+    const server = yield* NodeSocketServer.make({ host: '127.0.0.1', port: 0 }).pipe(Scope.provide(serverScope));
+    const { address } = server;
+    if (!NetAddress.isInetAddress(address)) {
+      return yield* Effect.die('The SMTP fixture must bind an IP socket');
+    }
+    yield* server.run((socket) => serveSmtpConnection(socket, mode, messages)).pipe(Effect.forkIn(serverScope));
+    const fake: FakeSmtp = { close, messages, port: address.port };
+    return fake;
+  });
 
 class SmtpFixture extends Context.Service<SmtpFixture, FakeSmtp>()(
   '@app/email-delivery/tests/unit/smtp.test/SmtpFixture',
