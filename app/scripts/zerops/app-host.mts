@@ -7,8 +7,15 @@ import {
   TenantIntentLoaderLive,
 } from '../../packages/core-runtime/src/access/intent/tenant-intent-loader.ts';
 import { startProcessObservability } from './process-observability.mts';
-import { heapLimitArguments, heapLimitMiB, readContainerMemoryBytes } from './heap-limits.mts';
+import {
+  OWNERS_SEMI_SPACE_MIB,
+  OWNERS_YOUNG_GENERATION_ARGUMENTS,
+  heapLimitArguments,
+  heapLimitMiB,
+  readContainerMemoryBytes,
+} from './heap-limits.mts';
 import { withKeepAlive } from './http-keep-alive.mts';
+import { compositionSnapshotResponse } from './composition-source-response.mts';
 import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
 import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
 import {
@@ -400,7 +407,8 @@ const mebibytes = (bytes: number) => String(Math.floor(bytes / 1024 / 1024));
 
 /**
  * Only the single-unit Shell process can use the packaged Bun binary. Every other unit process uses Node. The Shell on
- * Node gets its heap share of the container (heap-limits.mts); Bun has no V8 heap flag, and the owners keep Node's own.
+ * Node gets its heap share of the container (heap-limits.mts); Bun has no V8 heap flag. The owners keep Node's own
+ * old-space limit and get a larger young generation, so request garbage dies young (heap-limits.mts).
  */
 export const startUnitProcess = (
   ids: readonly string[],
@@ -412,11 +420,12 @@ export const startUnitProcess = (
   const name = ids.length === 1 ? (ids[0] ?? 'owners') : 'owners';
   const shell = ids.length === 1 && ids[0] === SHELL_ID;
   const bun = runtime === 'bun' && shell;
-  const heap = shell && !bun ? heapLimitArguments('shell', memoryBytes) : [];
-  let limit = 'Node default';
+  let heap: readonly string[] = shell ? [] : OWNERS_YOUNG_GENERATION_ARGUMENTS;
+  let limit = `Node default, semi-space ${String(OWNERS_SEMI_SPACE_MIB)} MiB`;
   if (bun) {
     limit = 'Bun default';
-  } else if (heap.length > 0) {
+  } else if (shell) {
+    heap = heapLimitArguments('shell', memoryBytes);
     limit = `${String(heapLimitMiB('shell', memoryBytes))} MiB`;
   }
   return Console.log(`[app-host] ${name} heap limit: ${limit} (container ${mebibytes(memoryBytes)} MiB)`).pipe(
@@ -1044,10 +1053,7 @@ const compositionSourceResponse = <Failure, Requirements>(
     }
     const current = yield* load.pipe(Effect.option, Effect.map(Option.flatten));
     return Option.isSome(current)
-      ? HttpServerResponse.text(current.value, {
-          contentType: 'application/json',
-          headers: { 'cache-control': 'no-store' },
-        })
+      ? compositionSnapshotResponse(current.value, request.headers['if-none-match'])
       : HttpServerResponse.empty({ status: 503 });
   });
 

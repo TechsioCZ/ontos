@@ -11,6 +11,7 @@ import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
 import type { TenantId } from '../../src/access/ids.ts';
 import { AccessProjectionWriter } from '../../src/access/intent/projection-writer.ts';
 import { activateCatalogRelease, releaseActorId } from '../../src/access/release/activation.ts';
+import { PLATFORM_TENANT } from '../../src/auth/module-credentials.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
 import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
 import type { AccessCatalogModule, AccessDeclarationInput } from '../../src/authorization/access-declaration.ts';
@@ -375,6 +376,29 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
         }),
       );
     }),
+  );
+
+  suite.effect('never installs a module into the platform tenant, nor gives it a release actor', () =>
+    withProjectionTenant({ activeModules: [SELLING] }, (_tenantId, admin) =>
+      Effect.gen(function* platformTenant() {
+        const run = yield* install([{ moduleKey: TAX, sellingModuleKeys: [], tenantId: PLATFORM_TENANT.tenantId }]);
+        expect(run.modules).toEqual([
+          {
+            detail: 'the platform tenant serves no people; nothing is installed into it',
+            moduleKey: TAX,
+            outcome: 'tenant_absent',
+            tenantId: PLATFORM_TENANT.tenantId,
+          },
+        ]);
+        expect(run.reconciles).toEqual([]);
+        const actors = yield* admin
+          .unsafe(
+            `select count(*)::int as actors from core.principals where principal_id = '${releaseActorId(PLATFORM_TENANT.tenantId)}'`,
+          )
+          .pipe(Effect.orDie);
+        expect(actors).toEqual([{ actors: 0 }]);
+      }),
+    ),
   );
 
   suite.effect('never changes a state a person set, and installs nothing where the Tenant does not sell', () =>

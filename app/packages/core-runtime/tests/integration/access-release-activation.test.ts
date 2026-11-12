@@ -41,6 +41,7 @@ import { AccessWriteJournalStoreLive } from '../../src/access/lifecycle/persiste
 import { CellSchema } from '../../src/access/model.ts';
 import type { Cell } from '../../src/access/model.ts';
 import { activateCatalogRelease, planCatalogRelease, releaseActorId } from '../../src/access/release/activation.ts';
+import { ensurePlatformTenant, PLATFORM_TENANT } from '../../src/auth/module-credentials.ts';
 import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
 import type { AccessCatalogModule, AccessDeclarationInput } from '../../src/authorization/access-declaration.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
@@ -422,6 +423,47 @@ it.layer(NodeServices.layer)('access catalog release activation', (suite) => {
         expect(actorHoldings).toEqual([{ assignments: 0, memberships: 0 }]);
       }),
     ),
+  );
+
+  suite.effect(
+    'passes the platform tenant by with one plain line, and still fails a customer tenant without scope',
+    () =>
+      withTenant((tenantId, admin) =>
+        Effect.gen(function* platformTenant() {
+          yield* tenantOnOlderRelease(tenantId, admin);
+          // The platform tenant module credential provisioning creates: no person, scope, Role or relationship.
+          const { executor } = yield* CoreDatabase;
+          yield* executor.transaction((transaction) => ensurePlatformTenant(transaction)).pipe(Effect.orDie);
+          // A customer tenant that lost its tenant-context scope is damage, not the platform: it must still fail.
+          const damaged = uid(77);
+          yield* admin
+            .unsafe(
+              `insert into core.tenants (tenant_id, slug, name, status, default_locale) values ('${damaged}', 'damaged-${damaged.slice(0, 8)}', 'Damaged', 'active', 'cs')`,
+            )
+            .pipe(Effect.orDie);
+
+          const preview = yield* planCatalogRelease({ modules: newerDeployment }).pipe(Effect.orDie);
+          expect(preview.tenants.find((entry) => entry.tenantId === PLATFORM_TENANT.tenantId)).toMatchObject({
+            outcome: 'skipped',
+            reason: 'no access scope; nothing to follow',
+          });
+
+          const { report, tenant } = yield* activate(newerDeployment, tenantId);
+          expect(tenant).toMatchObject({ outcome: 'followed' });
+          expect(report.tenants.find((entry) => entry.tenantId === PLATFORM_TENANT.tenantId)).toMatchObject({
+            outcome: 'skipped',
+            reason: 'no access scope; nothing to follow',
+          });
+          expect(report.tenants.find((entry) => entry.tenantId === damaged)?.outcome).toBe('failed');
+          // The platform tenant is given no release actor: it has nothing to follow.
+          const actors = yield* admin
+            .unsafe(
+              `select count(*)::int as actors from core.principals where principal_id = '${releaseActorId(PLATFORM_TENANT.tenantId)}'`,
+            )
+            .pipe(Effect.orDie);
+          expect(actors).toEqual([{ actors: 0 }]);
+        }),
+      ),
   );
 
   suite.effect('writes nothing on a repeated activation, and an older deployment changes nothing', () =>

@@ -80,6 +80,7 @@ export const logSlowRequest = Effect.fn('AgentPlatform.logSlowRequest')(function
       callerGateCalls: caller.gateCalls,
       callerLists: caller.lists,
       callerListsMs: caller.durations.lists ?? null,
+      callerStatesAfterMs: caller.durations['states-after'] ?? null,
       callerStatesMs: caller.durations.states ?? null,
       outcome: Exit.isSuccess(exit) ? 'ok' : 'failed',
       totalMs,

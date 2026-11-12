@@ -4,6 +4,7 @@ import { Clock, Duration, Effect, Option, Ref, Result, Schema } from 'effect';
 import { AccessReleaseStore } from '../changes/persistence/release-store.ts';
 import { AccessProjectionWriter, isFenceBusy } from '../intent/projection-writer.ts';
 import { RELEASE_ACTOR_DISPLAY_NAME, releaseActorId } from '../release/activation.ts';
+import { tenantServesPeople } from '../../auth/module-credentials.ts';
 import { makeSystemPrincipalContextResolver, registerSystemWorkload } from '../../auth/system-principal-context.ts';
 import { preserveSystemPrincipalContextTrust } from '../../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../../db/client.ts';
@@ -217,7 +218,10 @@ export const sweepLapsedAccessFences = Effect.fn('AccessFenceSweeper.sweep')(fun
     }
     return NOTHING_LAPSED;
   }
-  const chosen = lapsed.slice(0, ACCESS_FENCE_SWEEP_TENANTS_PER_TICK).map(({ tenant_id: tenantId }) => tenantId);
+  // The platform's own tenant has no access scope, so it has no fence to lapse; were one ever listed, the sweep would
+  // leave it alone rather than create a release actor there (the one shared rule, `tenantServesPeople`).
+  const served = lapsed.flatMap(({ tenant_id: tenantId }) => (tenantServesPeople(tenantId) ? [tenantId] : []));
+  const chosen = served.slice(0, ACCESS_FENCE_SWEEP_TENANTS_PER_TICK);
   const outcomes = yield* Effect.forEach(chosen, (tenantId) => attemptTenant(backoffs, tenantId, runReference), {
     concurrency: 1,
   });
@@ -228,7 +232,7 @@ export const sweepLapsedAccessFences = Effect.fn('AccessFenceSweeper.sweep')(fun
       const outcome = outcomes[index];
       return outcome !== undefined && Result.isSuccess(outcome) && Option.isNone(outcome.success);
     }),
-    deferred: waiting.length + lapsed.length - chosen.length,
+    deferred: waiting.length + served.length - chosen.length,
     failed: outcomes.flatMap((outcome) => (Result.isFailure(outcome) ? [outcome.failure] : [])),
     healed,
   } satisfies AccessFenceSweepReport;

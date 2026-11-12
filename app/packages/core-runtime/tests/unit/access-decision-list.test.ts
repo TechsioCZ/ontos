@@ -3,7 +3,8 @@ import { expect, it } from 'effect-rstest';
 
 import type { ActorContextInput } from '../../src/access/decision/authority.ts';
 import type { AccessDecisionRequest, DecisionCapabilityPolicy } from '../../src/access/decision/contract.ts';
-import { decideAccess, resolveListAccess } from '../../src/access/decision/engine.ts';
+import { decideAccess, resolveListAccess, resolveListAccessMany } from '../../src/access/decision/engine.ts';
+import { accessDecisionUnavailable } from '../../src/access/decision/errors.ts';
 import { evaluateListAccessPredicate } from '../../src/access/decision/list-access.ts';
 import type {
   ListAccessCondition,
@@ -638,5 +639,111 @@ it.effect('returns UNAVAILABLE and no predicate when the engine is down', () =>
     });
     expect(resolution.decision.outcome).toBe('UNAVAILABLE');
     expect(resolution.predicate).toBeUndefined();
+  }),
+);
+
+/*
+ * A subject inspection asks many LISTs at once. Answered together they read every cell set once and ask the engine
+ * once, and each LIST's answer is exactly the one it gets alone: its decision, evidence and predicate.
+ */
+const READ_KEY = 'finance.invoice.read';
+const EXPORT_KEY = 'finance.invoice.export';
+const NOTHING_KEY = 'finance.invoice.archive';
+const bot: ActorContextInput = {
+  actor: { _tag: 'Agent', agentId: agent, connectionId, consentRevision: 1, principalId: person },
+  tenantId: tenant,
+};
+const manyAuthority: AuthoritySpec = {
+  cells: [
+    cell({ capability: capabilityKey, selector: { _tag: 'assigned' } }),
+    cell({ capability: READ_KEY, selector: { _tag: 'team' } }),
+    cell({ capability: READ_KEY, holder: agentHolder(), selector: { _tag: 'all' } }),
+    cell({ capability: EXPORT_KEY, selector: { _tag: 'targets', recordKeys: [record(1), record(2)] } }),
+    cell({ capability: capabilityKey, mode: 'propose', selector: { _tag: 'all' } }),
+  ],
+  connection: connect({
+    ceiling: { cells: [{ capabilityKey: capability(READ_KEY), mode: 'run', selector: { _tag: 'all' } }] },
+  }),
+  teamMembers: new Map([[holderId(principalHolder()), [teamOne]]]),
+};
+const manyInputs = [
+  { actor: human, capability: policy({ selectors: ['assigned'] }), mode: 'run' as const },
+  {
+    actor: human,
+    capability: policy({ capabilityKey: capability(READ_KEY), selectors: ['team'] }),
+    mode: 'run' as const,
+  },
+  {
+    actor: bot,
+    capability: policy({ capabilityKey: capability(READ_KEY), selectors: ['team'] }),
+    mode: 'run' as const,
+  },
+  { actor: human, capability: policy({ capabilityKey: capability(EXPORT_KEY), selectors: [] }), mode: 'run' as const },
+  { actor: human, capability: policy({ capabilityKey: capability(NOTHING_KEY), selectors: [] }), mode: 'run' as const },
+  { actor: human, capability: policy({ selectors: ['assigned'] }), mode: 'propose' as const },
+  { actor: human, capability: policy({ modes: ['run'], selectors: ['assigned'] }), mode: 'approve' as const },
+].map((input) => ({ ...input, now }));
+
+for (const variant of [
+  { batchReads: false, check: {} },
+  { batchReads: true, check: {} },
+  { batchReads: true, check: { failure: true } },
+  { batchReads: true, check: { indeterminate: true } },
+  { batchReads: true, check: { missingResults: 1 } },
+] as const) {
+  it.effect(
+    `answers many LISTs together exactly as each alone, from one read and one snapshot (${JSON.stringify(variant)})`,
+    () =>
+      Effect.gen(function* listMany() {
+        const spec = { ...manyAuthority, batchReads: variant.batchReads };
+        const alone = yield* Effect.forEach(
+          manyInputs,
+          (input) =>
+            resolveListAccess(makeAuthority(spec).port, makeCheck({ authority: spec, ...variant.check }).port, input),
+          { concurrency: 1 },
+        );
+        const authority = makeAuthority(spec);
+        const check = makeCheck({ authority: spec, ...variant.check });
+        const together = yield* resolveListAccessMany(authority.port, check.port, manyInputs);
+        expect(together).toEqual(alone);
+        // The plain variants mix allowed, approval and denied LISTs; the engine variants fail or narrow every one.
+        expect(new Set(alone.map(({ decision }) => decision.outcome)).size).toBeGreaterThan(
+          Object.keys(variant.check).length === 0 ? 1 : 0,
+        );
+        expect(check.calls.checkBulk).toBe(1);
+        expect(variant.batchReads ? authority.calls.readCellsMany : 0).toBe(variant.batchReads ? 1 : 0);
+      }),
+  );
+}
+
+/** The port, except that the export capability's cells cannot be read. */
+const failing = (port: ReturnType<typeof makeAuthority>['port']) => ({
+  ...port,
+  readCells: (query: Parameters<typeof port.readCells>[0]) =>
+    query.capabilityKey === capability(EXPORT_KEY)
+      ? Effect.fail(accessDecisionUnavailable('export cells unreadable'))
+      : port.readCells(query),
+});
+
+it.effect('leaves only the LIST whose cell set cannot be read UNAVAILABLE among many', () =>
+  Effect.gen(function* listManyUnreadable() {
+    const alone = yield* Effect.forEach(
+      manyInputs,
+      (input) =>
+        resolveListAccess(
+          failing(makeAuthority(manyAuthority).port),
+          makeCheck({ authority: manyAuthority }).port,
+          input,
+        ),
+      { concurrency: 1 },
+    );
+    const together = yield* resolveListAccessMany(
+      failing(makeAuthority(manyAuthority).port),
+      makeCheck({ authority: manyAuthority }).port,
+      manyInputs,
+    );
+    expect(together).toEqual(alone);
+    expect(together[3]?.decision.outcome).toBe('UNAVAILABLE');
+    expect(together[0]?.decision.outcome).not.toBe('UNAVAILABLE');
   }),
 );

@@ -6,6 +6,7 @@ import { makeSystemPrincipalContextResolver, registerSystemWorkload } from '../.
 import { preserveSystemPrincipalContextTrust } from '../../auth/system-principal-context-provenance.ts';
 import type { AccessCatalogModule } from '../../authorization/access-declaration.ts';
 import { CoreDatabase } from '../../db/client.ts';
+import { tenantServesPeople } from '../../auth/module-credentials.ts';
 import { tenants } from '../../db/schema.ts';
 import type { OperationalScope } from '../../operations/context.ts';
 import {
@@ -312,9 +313,10 @@ export interface TenantReleaseReport {
   readonly items: number;
   /**
    * `deferred`: another writer held the tenant's fence for the whole of this activation's waiting budget, so it was
-   * not followed this deploy (nothing was recorded) and the next activation follows it.
+   * not followed this deploy (nothing was recorded) and the next activation follows it. `skipped`: a tenant that
+   * serves no people (the platform's own) has no access to follow or reconcile.
    */
-  readonly outcome: 'deferred' | 'failed' | 'followed' | 'planned' | 'unchanged';
+  readonly outcome: 'deferred' | 'failed' | 'followed' | 'planned' | 'skipped' | 'unchanged';
   readonly presetCellsAdded: number;
   /** Whether the tenant had an untouched "Plný přístup" to follow; false for a tenant that failed. */
   readonly presetFound: boolean;
@@ -569,6 +571,20 @@ const followTenant = Effect.fn('AccessReleaseActivation.followTenant')(function*
   });
 });
 
+/** The platform tenant: no access scope, so nothing to follow; it gets no release actor either. */
+const skippedTenant = (tenantId: string): TenantReleaseReport => ({
+  elapsedMillis: 0,
+  inertKeys: [],
+  items: 0,
+  outcome: 'skipped',
+  presetCellsAdded: 0,
+  presetFound: false,
+  reason: 'no access scope; nothing to follow',
+  relationshipDeletions: 0,
+  relationshipTouches: 0,
+  tenantId,
+});
+
 const failedTenant = (tenantId: string, failure: AccessReleaseActivationError): TenantReleaseReport => ({
   elapsedMillis: 0,
   inertKeys: [],
@@ -636,9 +652,15 @@ export const activateCatalogRelease = Effect.fn('AccessReleaseActivation.activat
     (yield* Clock.currentTimeMillis) + Duration.toMillis(input.busyFenceBudget ?? ACTIVATION_BUSY_FENCE_BUDGET);
   const tenantReports = yield* Effect.all(
     ordered.tenantIds.map((tenantId) =>
-      followTenant(tenantId, ordered.release, waitUntil).pipe(
-        Effect.catchTag('AccessReleaseActivationError', (failure) => Effect.succeed(failedTenant(tenantId, failure))),
-      ),
+      // The platform's own tenant is skipped before any waiting, reconcile or release actor; every tenant that
+      // serves people goes through the budgeted follow.
+      tenantServesPeople(tenantId)
+        ? followTenant(tenantId, ordered.release, waitUntil).pipe(
+            Effect.catchTag('AccessReleaseActivationError', (failure) =>
+              Effect.succeed(failedTenant(tenantId, failure)),
+            ),
+          )
+        : Effect.succeed(skippedTenant(tenantId)),
     ),
     { concurrency: 1 },
   );
@@ -658,9 +680,13 @@ export const planCatalogRelease = Effect.fn('AccessReleaseActivation.plan')(func
   const ordered = yield* orderedRelease(input, false);
   const tenantReports = yield* Effect.all(
     ordered.tenantIds.map((tenantId) =>
-      planTenant(tenantId, ordered.release).pipe(
-        Effect.catchTag('AccessReleaseActivationError', (failure) => Effect.succeed(failedTenant(tenantId, failure))),
-      ),
+      tenantServesPeople(tenantId)
+        ? planTenant(tenantId, ordered.release).pipe(
+            Effect.catchTag('AccessReleaseActivationError', (failure) =>
+              Effect.succeed(failedTenant(tenantId, failure)),
+            ),
+          )
+        : Effect.succeed(skippedTenant(tenantId)),
     ),
     { concurrency: 1 },
   );

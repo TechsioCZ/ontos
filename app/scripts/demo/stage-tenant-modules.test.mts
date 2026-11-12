@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 
 import { expect, it } from 'effect-rstest';
 
+import { tenantServesPeople } from '../../packages/core-runtime/src/auth/module-credentials.ts';
 import { RELEASE_MODULES_SCRIPT, releaseModulesEnvironment } from '../zerops/app-host.mts';
 import { marketActivationScopeAllowed } from './activate-market-stage.mts';
 import { demoTenantId } from './fixture-ids.mts';
@@ -28,6 +29,8 @@ it('the release installs only its own reviewed pairs, each of them also a manual
   ]);
   for (const { moduleKey, tenantId } of stageReleaseTenantModules) {
     expect(marketActivationScopeAllowed(tenantId, moduleKey, 'session')).toBe(true);
+    // Never the platform's own tenant, which serves no people (the installer refuses it as well).
+    expect(tenantServesPeople(tenantId)).toBe(true);
   }
   const manual = stageActivationScopes.flatMap(({ moduleKeys, tenantId }) =>
     moduleKeys.map((key) => `${tenantId} ${key}`),

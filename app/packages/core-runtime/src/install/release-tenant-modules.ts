@@ -6,6 +6,7 @@ import { AccessProjectionWriter } from '../access/intent/projection-writer.ts';
 import type { TenantProjectionWrite } from '../access/intent/projection-writer.ts';
 import type { AccessProjectionWriteError } from '../access/intent/projection-write-error.ts';
 import { RELEASE_ACTOR_DISPLAY_NAME, releaseActorId } from '../access/release/activation.ts';
+import { tenantServesPeople } from '../auth/module-credentials.ts';
 import { makeSystemPrincipalContextResolver, registerSystemWorkload } from '../auth/system-principal-context.ts';
 import { preserveSystemPrincipalContextTrust } from '../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../db/client.ts';
@@ -251,6 +252,11 @@ const installOne = Effect.fn('ReleaseTenantModules.installOne')(
     entry: ReleaseTenantModule,
     runReference: string,
   ) {
+    // The one shared rule: the platform's own tenant serves no people and holds no access, so no module is ever
+    // installed into it and it never gets a release actor. The deployment's list never names it; this keeps it so.
+    if (!tenantServesPeople(entry.tenantId)) {
+      return report(entry, 'tenant_absent', 'the platform tenant serves no people; nothing is installed into it');
+    }
     const tenantRows = yield* executor
       .select({ status: tenants.status })
       .from(tenants)
