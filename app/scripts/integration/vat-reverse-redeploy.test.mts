@@ -2,8 +2,8 @@
 /*
  * Rollback, third part: the new release deploys again on the database the release before classifications rewrote
  * (`tests/vat-reverse.old-release.mts` wrote what it then charged and how the window trigger classified and held each
- * product). Every product is classified from the rate the old release wrote (21 standard, 10 or 12 reduced), held at
- * 10 % exactly when its company is still on the migrated rates and it was written at 10 %, and the new release sells
+ * product). Every product is classified from the rate the old release wrote (21 standard, 10 or 12 reduced), no hold is
+ * added by its rewrite, and the new release sells
  * every product and variant at exactly what the old release charged: no price changes on the way back. It runs only
  * inside the rehearsal (`ONTOS_VAT_REVERSE_REPORT`).
  */
@@ -48,12 +48,14 @@ it.live('the new release deployed again sells everything at what the old release
         row.rate === 21 ? 'cz.vat.standard' : 'cz.vat.reduced',
       ]);
     }
-    // Held at 10 % exactly when the company is still on the migrated rates and the product was written at 10 %.
-    const expectedHolds =
-      rollback.source === 'MIGRATION'
-        ? Object.fromEntries(rollback.classified.filter((row) => row.rate === 10).map((row) => [row.id, 10]))
-        : null;
-    expect(rollback.held).toEqual(expectedHolds);
+    // A rewrite never adds a hold: once Tax priced the company there are none; while migrated only products held since
+    // before the deploy and written at 10 % again keep theirs.
+    if (rollback.source === 'MIGRATION') {
+      const tenPercent = new Set(rollback.classified.filter((row) => row.rate === 10).map((row) => row.id));
+      expect(Object.keys(rollback.held ?? {}).filter((id) => !tenPercent.has(id))).toEqual([]);
+    } else {
+      expect(rollback.held).toBeNull();
+    }
 
     // The new release reads that state and sells at exactly what the old release charged.
     const connections = yield* loadDatabaseConnectionPair();

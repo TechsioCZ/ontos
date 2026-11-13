@@ -31,7 +31,7 @@ import { MerchandiseCommandPayloadSchema } from '../../shared/actions/apply-comm
 import { merchandiseRelations } from '../../src/database/schema.ts';
 import { currentPricingOf, loadProducts } from '../../src/services/merchandise-store.ts';
 import { persistenceService } from '../../src/services/persistence.service.ts';
-import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
+import { productRateOf, stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
 import type { PreparedTax } from '../../src/services/persistence.service.ts';
 import { CompanyTaxRatesSchema } from '../../src/services/tax-rates.ts';
 import type { FetchedTaxRates } from '../../src/services/tax-rates.ts';
@@ -301,12 +301,16 @@ const sellingOf = Effect.fn('TriggersNoOp.sellingOf')(function* sellingOf(adminD
   return Object.fromEntries(
     loaded.map(({ product }) => {
       const record = toProductRecord(product, stockLevelsOf([], product.id), rates, held);
+      // The rate its order lines split at, its label shows and a price entered now takes (all `productRateOf`).
       return [
         product.id,
-        [
-          record.grossPriceMinor ?? null,
-          ...(record.variantRecords ?? []).map((entry) => entry.grossPriceMinor ?? null),
-        ],
+        {
+          prices: [
+            record.grossPriceMinor ?? null,
+            ...(record.variantRecords ?? []).map((entry) => entry.grossPriceMinor ?? null),
+          ],
+          rate: productRateOf(product, rates, held) ?? null,
+        },
       ];
     }),
   );
@@ -423,6 +427,10 @@ it.layer(nativeServices, { excludeTestServices: true })('the window triggers and
           [taxed, 'Tax-priced'],
         ] as const) {
           const before = yield* sellingOf(adminDb, company);
+          const holdsBefore =
+            Schema.decodeUnknownSync(Schema.NullOr(Schema.Record(Schema.String, Schema.Number)))(
+              yield* heldOf(admin, company),
+            ) ?? {};
           yield* oldReleaseRewritesEveryProduct(admin, company);
           const rows = yield* admin.unsafe<{
             readonly classification: string;
@@ -441,12 +449,21 @@ it.layer(nativeServices, { excludeTestServices: true })('the window triggers and
               row.rate === 21 ? 'cz.vat.standard' : 'cz.vat.reduced',
             ]);
           }
+          // The rewrite never adds a hold: a held product written at 10 % keeps it, every other one loses it.
           const expectedHolds =
             regime === 'migrated'
-              ? Object.fromEntries(rows.filter((row) => row.rate === 10).map((row) => [row.id, 10]))
+              ? Object.fromEntries(
+                  rows
+                    .filter((row) => row.rate === 10 && Object.hasOwn(holdsBefore, row.id))
+                    .map((row) => [row.id, 10]),
+                )
               : null;
           expect([regime, yield* heldOf(admin, company)]).toEqual([regime, expectedHolds]);
-          expect([regime, yield* sellingOf(adminDb, company)]).toEqual([regime, before]);
+          // Prices and the VAT split are those of before the rollback, product by product: the imported coffee
+          // (written at 10 % for money, never held) stays at 12 %.
+          const after = yield* sellingOf(adminDb, company);
+          expect([regime, after]).toEqual([regime, before]);
+          expect([regime, before['p-imported']?.rate, after['p-imported']?.rate]).toEqual([regime, 12, 12]);
         }
       }),
     240_000,

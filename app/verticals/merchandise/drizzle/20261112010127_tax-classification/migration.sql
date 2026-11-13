@@ -157,9 +157,10 @@ ALTER TABLE "demo_merchandise"."products" ALTER COLUMN "tax_classification_code"
 CREATE INDEX "demo_merchandise_products_tax_classification" ON "demo_merchandise"."products" ("tenant_id","legal_entity_id","tax_classification_code");--> statement-breakpoint
 ALTER TABLE "demo_merchandise"."products" ADD CONSTRAINT "demo_merchandise_product_tax_classification" CHECK ("tax_classification_code" in ('cz.vat.standard', 'cz.vat.reduced'));--> statement-breakpoint
 -- A product the release before classifications writes gets its classification, in its column and in its document,
--- from the `vatRate` it wrote, and, while its company is still on the migrated rates (MIGRATION), its hold: a product
--- written at 10 % is held at 10 %, any other rate drops its hold; nothing about holds changes once Tax priced the
--- company. That release never writes `taxClassificationCode` (its decoders drop keys they do not know, so every
+-- from the `vatRate` it wrote; while its company is still on the migrated rates (MIGRATION) a held product written at
+-- any rate other than 10 % loses its hold. A hold is never added here: holds come only from the backfill above, from
+-- the data as it stood before the deploy. A product the old release writes at 10 % during the window is reduced, not
+-- held, and sells at its stored gross with the reduced rate's split (10 % is no rate any more). That release never writes `taxClassificationCode` (its decoders drop keys they do not know, so every
 -- document it rewrites lacks it), while this release always writes it: a document that carries it is this release's
 -- own and passes through untouched, column, document and holds alike. A rate nothing maps (0 %) is refused by name, as
 -- the preflight above refuses it for stored products.
@@ -183,15 +184,13 @@ CREATE FUNCTION "demo_merchandise"."classify_written_product"() RETURNS trigger
       NEW.tax_classification_code := code;
       NEW.document := NEW.document || jsonb_build_object('taxClassificationCode', code);
       held := "demo_merchandise"."held_product_rate"(NEW.document ->> 'vatRate');
-      UPDATE "demo_merchandise"."catalog_heads" AS h
-         SET tax_rates = CASE
-               WHEN held IS NOT NULL THEN h.tax_rates || jsonb_build_object(
-                 'heldProductRates', coalesce(h.tax_rates -> 'heldProductRates', '{}'::jsonb) || jsonb_build_object(NEW.id, held))
-               ELSE jsonb_set(h.tax_rates, '{heldProductRates}', (h.tax_rates -> 'heldProductRates') - NEW.id)
-             END
-       WHERE h.tenant_id = NEW.tenant_id AND h.legal_entity_id = NEW.legal_entity_id
-         AND h.tax_rates ->> 'source' = 'MIGRATION'
-         AND (held IS NOT NULL OR h.tax_rates -> 'heldProductRates' ? NEW.id);
+      IF held IS NULL THEN
+        UPDATE "demo_merchandise"."catalog_heads" AS h
+           SET tax_rates = jsonb_set(h.tax_rates, '{heldProductRates}', (h.tax_rates -> 'heldProductRates') - NEW.id)
+         WHERE h.tenant_id = NEW.tenant_id AND h.legal_entity_id = NEW.legal_entity_id
+           AND h.tax_rates ->> 'source' = 'MIGRATION'
+           AND h.tax_rates -> 'heldProductRates' ? NEW.id;
+      END IF;
       RETURN NEW;
     END
   $$;--> statement-breakpoint

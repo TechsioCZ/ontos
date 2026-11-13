@@ -272,7 +272,8 @@ it.layer(nativeServices, { excludeTestServices: true })('tax classification migr
               [tenantId, id],
             )
             .pipe(Effect.map(([row]) => row));
-        // A product it creates at 10 %: reduced in its column and document, and held at 10 % like BOOK-IT.
+        // A product it creates at 10 %: reduced in its column and document, and NOT held: holds come only from the data
+        // as it stood before the deploy, so it sells at its stored gross with the reduced rate's split.
         yield* insertProduct({ gross: 33_000, id: 'old-release-book', net: 30_000, vatRate: 10 });
         expect(yield* productRow('old-release-book')).toEqual({
           classification: 'cz.vat.reduced',
@@ -285,7 +286,13 @@ it.layer(nativeServices, { excludeTestServices: true })('tax classification migr
           gross: 33_000,
           net: 30_000,
         });
-        expect(yield* heldOf).toEqual({ 'book-it': 10, 'old-release-book': 10 });
+        expect(yield* heldOf).toEqual({ 'book-it': 10 });
+        // Rewriting BOOK-IT at its 10 % keeps its hold.
+        yield* client.unsafe(
+          `update demo_merchandise.products set document = $3::jsonb where tenant_id = $1 and id = $2`,
+          [tenantId, 'book-it', JSON.stringify({ currentPriceMinor: 49_000, name: 'book-it', vatRate: 10 })],
+        );
+        expect(yield* heldOf).toEqual({ 'book-it': 10 });
         // It rewrites BOOK-IT at 21 % with a document that names no classification: standard, and no longer held.
         yield* client.unsafe(
           `update demo_merchandise.products set document = $3::jsonb where tenant_id = $1 and id = $2`,
@@ -302,7 +309,13 @@ it.layer(nativeServices, { excludeTestServices: true })('tax classification migr
           gross: 53_900,
           net: 49_000,
         });
-        expect(yield* heldOf).toEqual({ 'old-release-book': 10 });
+        expect(yield* heldOf).toEqual({});
+        // Written at 10 % again: reduced, and its hold does not come back.
+        yield* client.unsafe(
+          `update demo_merchandise.products set document = $3::jsonb where tenant_id = $1 and id = $2`,
+          [tenantId, 'book-it', JSON.stringify({ currentPriceMinor: 49_000, name: 'book-it', vatRate: 10 })],
+        );
+        expect([(yield* productRow('book-it'))?.classification, yield* heldOf]).toEqual(['cz.vat.reduced', {}]);
         // A rate nothing maps is refused by name, never stored without a classification.
         const zero = yield* insertProduct({ gross: 500, id: 'old-release-zero', net: 500, vatRate: 0 }).pipe(
           Effect.flip,

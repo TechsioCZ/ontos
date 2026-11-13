@@ -140,7 +140,8 @@ const checkProducts = Effect.fn('VatWindow.products')(function* checkProducts(
   expect(columns.every((row) => row.classification === STANDARD || row.classification === REDUCED)).toBe(true);
   expect(products.length).toBe(columns.length);
 
-  // The 10 % product the old release created is held at 10 % with BOOK-IT: the storefront sells it unchanged. The old
+  // The 10 % product the old release created in the window is reduced and NOT held (holds come only from the data as
+  // it stood before the deploy): the storefront sells it at its stored gross with the reduced rate's split. The old
   // release wrote it as the deploy's runtime role (`ontos_runtime`, no superuser, row-level security on), so the hold
   // trigger's update of the company's head ran on that role's own rights. Every role that may write a product
   // document on the deployed database (the table's owner and each role granted INSERT or UPDATE on it) may update the
@@ -163,15 +164,11 @@ const checkProducts = Effect.fn('VatWindow.products')(function* checkProducts(
   expect(writers.filter((writer) => !writer.heads)).toEqual([]);
   const head = yield* loadHead(db, store);
   const held = heldRatesOf(head?.taxRates);
-  // Exactly the products selling at 10 %: BOOK-IT, the window's one, and every long-run product whose last rate is 10 %
-  // (a product moved from 10 % to 21 % lost its hold, one moved the other way gained it).
-  const heldLater = report.longRun.products.filter((product) => product.vatRate === 10);
-  expect(heldLater.length).toBeGreaterThan(0);
-  expect(held).toEqual({
-    'book-it': 10,
-    [report.heldProductId]: 10,
-    ...Object.fromEntries(heldLater.map((product) => [product.id, 10])),
-  });
+  // Only BOOK-IT, held since before the deploy, unless the old release rewrote it at another rate (which drops a hold);
+  // no product the old release wrote at 10 % in the window gained one, however many there were.
+  expect(report.longRun.products.filter((product) => product.vatRate === 10).length).toBeGreaterThan(0);
+  const bookItLast = report.longRun.products.find((product) => product.id === 'book-it');
+  expect(held).toEqual(bookItLast === undefined || bookItLast.vatRate === 10 ? { 'book-it': 10 } : {});
   const rates = sellableRatesOf(head?.taxRates, yield* DateTime.now);
   const heldProduct = products.find((entry) => entry.id === report.heldProductId);
   if (heldProduct === undefined) {
@@ -180,7 +177,7 @@ const checkProducts = Effect.fn('VatWindow.products')(function* checkProducts(
   const stock =
     hydrated.find(({ product }) => product.id === heldProduct.id)?.stock ?? stockLevelsOf([], heldProduct.id);
   const record = withStorefrontVat(toProductRecord(heldProduct, stock, rates, held), rates, held);
-  expect([record.vatRate, record.grossPriceMinor]).toEqual([10, 33_000]);
+  expect([record.vatRate, record.grossPriceMinor]).toEqual([12, 33_000]);
 
   // The first staff read or write backfills a price stored without any gross: the old era's variant without one gets
   // its gross at the rate its classification sells at (21 %); no stored gross moves, however unrelated to its net.
