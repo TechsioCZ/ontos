@@ -82,6 +82,29 @@ const subjectUserBanned = (auth: AuthExecutor, row: OriginatorEvidenceRow | unde
     );
 };
 
+/** Whether Core recorded a domain event of the invocation in the company, in the invocation's own tenant. */
+const selectMessageCompany = (
+  executor: CoreExecutor,
+  input: { readonly actionInvocationId: string; readonly legalEntityId: string; readonly tenantId: string },
+) =>
+  executor
+    .execute(
+      sql`
+        select 1 as "recorded"
+        from core.domain_events as e
+        where e.tenant_id = ${input.tenantId}
+          and e.action_invocation_id = ${input.actionInvocationId}
+          and e.legal_entity_id = ${input.legalEntityId}
+        limit 1
+      `,
+      'objects',
+    )
+    .pipe(
+      recoverSqlTransactionError,
+      Effect.mapError(delegationUnavailable),
+      Effect.map((rows) => rows.length > 0),
+    );
+
 const makeGatewayOriginatorEvidence = (core: CoreExecutor, auth: AuthExecutor): GatewayOriginatorEvidenceService => ({
   load: Effect.fn('GatewayOriginatorEvidence.load')(function* loadOriginatorEvidence(input: {
     readonly actionInvocationId: string;
@@ -98,6 +121,7 @@ const makeGatewayOriginatorEvidence = (core: CoreExecutor, auth: AuthExecutor): 
       tenantId: input.tenantId,
     });
   }),
+  messageCompanyRecorded: (input) => selectMessageCompany(core, input),
 });
 
 export const GatewayOriginatorEvidenceLive = Layer.effect(

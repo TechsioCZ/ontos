@@ -217,6 +217,11 @@ export const GatewayDelegatedSubjectSchema = Schema.Union([
   Schema.TaggedStruct('Originator', {
     actionInvocationId: ActionInvocationIdSchema,
     legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+    /**
+     * The company of the Outbox message the work handles, as Core recorded it on the invocation's domain event. The
+     * Shell checks it against that record and binds the context to exactly that company.
+     */
+    messageLegalEntityId: Schema.optionalKey(LegalEntityIdSchema),
     tenantId: TenantIdSchema,
   }),
 ]);
@@ -277,6 +282,8 @@ export const GatewayRefusalReasonSchema = Schema.Literals([
   'subject_authentication_ended',
   'originator_evidence_unavailable',
   'originator_not_admitted',
+  'originator_company_not_recorded',
+  'originator_company_mismatch',
   'subject_not_delegable',
   // The scope, the modules and the issuance.
   'scope_unavailable',

@@ -174,6 +174,8 @@ const admitAssertionSubject = Effect.fn('GatewayDelegation.admitAssertion')(func
 const admitOriginatorSubject = Effect.fn('GatewayDelegation.admitOriginator')(function* admitOriginatorSubject(input: {
   readonly actionInvocationId: string;
   readonly legalEntityId: string | undefined;
+  /** The company of the Outbox message the work handles, as its caller received it from the Outbox. */
+  readonly messageLegalEntityId: string | undefined;
   readonly now: number;
   readonly originatorActions: readonly string[];
   readonly tenantId: string;
@@ -185,6 +187,31 @@ const admitOriginatorSubject = Effect.fn('GatewayDelegation.admitOriginator')(fu
     tenantId: input.tenantId,
   });
   const recordedCompany = recorded.principal.legalEntityId;
+  if (input.messageLegalEntityId !== undefined) {
+    // The work belongs to the message's company: the context names exactly that company, once Core's own record shows
+    // the invocation published in it, and no other company may be named beside it.
+    if (
+      (recordedCompany !== undefined && recordedCompany !== input.messageLegalEntityId) ||
+      (input.legalEntityId !== undefined && input.legalEntityId !== input.messageLegalEntityId)
+    ) {
+      return yield* delegationForbidden('originator_company_mismatch')();
+    }
+    const published = yield* evidence.messageCompanyRecorded({
+      actionInvocationId: input.actionInvocationId,
+      legalEntityId: input.messageLegalEntityId,
+      tenantId: input.tenantId,
+    });
+    if (!published) {
+      return yield* delegationForbidden('originator_company_not_recorded')();
+    }
+    const bound: TrustedPrincipalContext = { ...recorded.principal, legalEntityId: input.messageLegalEntityId };
+    return {
+      expiresAtEpochSeconds: input.now + GATEWAY_ASSERTION_TTL_SECONDS,
+      principal: bound,
+      scopePrincipal: bound,
+      sourceKey: input.actionInvocationId,
+    };
+  }
   if (
     input.legalEntityId !== undefined &&
     (recordedCompany === undefined ? !recorded.workload : recordedCompany !== input.legalEntityId)
@@ -345,6 +372,7 @@ const issueForBinding = Effect.fn('GatewayDelegation.issueForBinding')(function*
         : admitOriginatorSubject({
             actionInvocationId: originator.actionInvocationId,
             legalEntityId: originator.legalEntityId,
+            messageLegalEntityId: originator.messageLegalEntityId,
             now,
             originatorActions: sourceContract?.manifest.originatorActions ?? [],
             tenantId: originator.tenantId,

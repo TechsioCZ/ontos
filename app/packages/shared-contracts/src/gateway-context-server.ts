@@ -1,5 +1,6 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { ownModuleCredential, ownWorkloadCredential } from '@app/core-runtime/auth/owner-module-credential';
+import { OutboxMessageCompany } from '@app/core-runtime/outbox/message-company';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import {
   readVerifiedGatewayCompositionRevision,
@@ -127,23 +128,33 @@ const assertionWire = ({
   });
 };
 
+/**
+ * The wire form of one subject. An `Originator` carries the company of the Outbox message being handled when the Outbox
+ * runtime provides one (`OutboxMessageCompany`); the caller never sets it.
+ */
 const subjectWireOf = (
   subject: GatewayDelegationSubject,
 ): Effect.Effect<WireSubjectRevision, GatewayDelegationSourceError> =>
   Match.value(subject).pipe(
     Match.tag('Originator', (originator) =>
-      Effect.succeed({
-        compositionRevision: originator.compositionRevision,
-        subject:
-          originator.legalEntityId === undefined
-            ? { _tag: 'Originator', actionInvocationId: originator.actionInvocationId, tenantId: originator.tenantId }
-            : {
-                _tag: 'Originator',
-                actionInvocationId: originator.actionInvocationId,
-                legalEntityId: originator.legalEntityId,
-                tenantId: originator.tenantId,
-              },
-      } satisfies WireSubjectRevision),
+      OutboxMessageCompany.pipe(
+        Effect.map((messageCompany): WireSubjectRevision => ({
+          compositionRevision: originator.compositionRevision,
+          subject: {
+            _tag: 'Originator',
+            actionInvocationId: originator.actionInvocationId,
+            tenantId: originator.tenantId,
+            ...Option.match(Option.fromUndefinedOr(originator.legalEntityId), {
+              onNone: () => ({}),
+              onSome: (legalEntityId) => ({ legalEntityId }),
+            }),
+            ...Option.match(messageCompany, {
+              onNone: () => ({}),
+              onSome: (messageLegalEntityId) => ({ messageLegalEntityId }),
+            }),
+          },
+        })),
+      ),
     ),
     Match.tag('Assertion', assertionWire),
     Match.exhaustive,

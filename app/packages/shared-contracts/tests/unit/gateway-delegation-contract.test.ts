@@ -1,8 +1,9 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
+import { OutboxMessageCompany } from '@app/core-runtime/outbox/message-company';
 import { readFileSync } from 'node:fs';
 
-import { ConfigProvider, Crypto, Effect, Match, Redacted, Schema } from 'effect';
+import { ConfigProvider, Crypto, Effect, Match, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
@@ -189,6 +190,48 @@ it.effect('authenticates with the module credential and sends the Originator sub
       actionInvocationId: originatorInvocationId,
       tenantId: principal.tenantId,
     });
+  }),
+);
+
+const messageCompany = '30000000-0000-4000-8000-00000000000a';
+
+/** Sends one Originator delegation with the Outbox message company the runtime provides; returns the wire's company. */
+const sendOriginatorWith = (company: Option.Option<string>) =>
+  Effect.gen(function* sendOriginator() {
+    const requests: Request[] = [];
+    yield* acquireDelegatedGatewayContext(
+      {
+        audience: 'party-registry',
+        callingAppId: 'catalog',
+        legalEntityScope: 'subject',
+        requestCorrelation: 'delegation-message-company',
+        subject: {
+          _tag: 'Originator',
+          actionInvocationId: originatorInvocationId,
+          compositionRevision,
+          tenantId: principal.tenantId,
+        },
+      },
+      crypto,
+    ).pipe(
+      Effect.provideService(OutboxMessageCompany, company),
+      Effect.provideService(ConfigProvider.ConfigProvider, configuration),
+      Effect.provideService(FetchHttpClient.Fetch, recordingFetch(compositionRevision, requests)),
+    );
+    const [request] = requests;
+    const wire = yield* requestBodyOf(request);
+    return Match.value(wire.subject).pipe(
+      Match.tag('Assertion', () => null),
+      Match.tag('Originator', ({ messageLegalEntityId }) => messageLegalEntityId ?? null),
+      Match.exhaustive,
+    );
+  });
+
+it.effect('carries the Outbox message company of Originator work only when the Outbox provides one', () =>
+  Effect.gen(function* delegatedOriginatorMessageCompany() {
+    yield* holdCallerKey;
+    expect(yield* sendOriginatorWith(Option.some(messageCompany))).toBe(messageCompany);
+    expect(yield* sendOriginatorWith(Option.none())).toBeNull();
   }),
 );
 
