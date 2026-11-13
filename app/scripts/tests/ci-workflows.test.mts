@@ -610,7 +610,7 @@ it('runs the root integration suite once and every package integration suite in 
   const { scripts } = readRootScripts();
   // The shards run exactly what the root script runs, split by package.
   expect(scripts['test:integration']).toBe(
-    'rstest --project integration --pool.maxWorkers 1 && pnpm -r --no-sort --workspace-concurrency 1 --if-present run test:integration --pool.maxWorkers 1',
+    'rstest --project integration --pool.maxWorkers 1 && pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present run test:integration --pool.maxWorkers 1',
   );
   const job = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
     SERVICE_INTEGRATION_JOB
@@ -620,9 +620,12 @@ it('runs the root integration suite once and every package integration suite in 
   expect(run?.env).toMatchObject({ APP_ENV_PATH: '/dev/null', SPICEDB_DATABASE_PASSWORD: 'spicedb' });
   expect(run?.run).toContain('mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1');
   expect(run?.run).toContain(
-    'mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1',
+    'mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1',
   );
   expect(run?.run).toContain('--shard "$RSTEST_SHARD"');
+  // One suite's failure never hides another's: the root suite's status is kept and the step fails only at the end.
+  expect(run?.run).toContain('mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 || status=$?');
+  expect(run?.run).toContain('exit "$status"');
   // Opted-in native proofs supplement (not replace or shard) the ordinary package suites.
   const nativeShards = job.strategy.matrix.include.filter((shard) => shard['native-preproposal'] === true);
   expect(nativeShards).toHaveLength(1);
