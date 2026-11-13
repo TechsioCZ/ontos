@@ -1,4 +1,3 @@
-import { v1 } from '@authzed/authzed-node';
 import { Context, Effect, Layer } from 'effect';
 
 import { AccessProjectionWriter } from '../access/intent/projection-writer.ts';
@@ -6,56 +5,6 @@ import type { TenantProjectionWrite } from '../access/intent/projection-writer.t
 import type { AgentOperatorCommand } from '../modules/actions/agent-operator-command.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import { ActionAuthorizationLifecycleError } from './action-authorization-lifecycle-error.ts';
-
-/**
- * The retired v1 credential edges of one principal, as a reviewed cutover artifact describes them. No
- * runtime path writes these: authorization v2 projects `principal`/`access_human` relations from
- * PostgreSQL intent, so only the one-time cutover tooling that reads a reviewed plan calls this.
- */
-export const buildPrincipalSelfCredentialUpdates = (input: {
-  readonly kind: string;
-  readonly principalId: string;
-  readonly status: string;
-  readonly tenantActive: boolean;
-  readonly tenantId: string;
-}): readonly v1.RelationshipUpdate[] => [
-  v1.RelationshipUpdate.create({
-    operation: v1.RelationshipUpdate_Operation.TOUCH,
-    relationship: {
-      relation: 'tenant',
-      resource: { objectId: input.principalId, objectType: 'principal' },
-      subject: { object: { objectId: input.tenantId, objectType: 'tenant' } },
-    },
-  }),
-  v1.RelationshipUpdate.create({
-    operation:
-      input.kind === 'human' && input.status === 'active' && input.tenantActive
-        ? v1.RelationshipUpdate_Operation.TOUCH
-        : v1.RelationshipUpdate_Operation.DELETE,
-    relationship: {
-      relation: 'self',
-      resource: { objectId: input.principalId, objectType: 'principal' },
-      subject: { object: { objectId: input.principalId, objectType: 'principal' } },
-    },
-  }),
-];
-
-/** Separate provenance prevents company departure from deleting independent tenant admission. */
-export const buildCompanyTenantAdmissionUpdate = (input: {
-  readonly membershipUpdates: readonly v1.RelationshipUpdate[];
-  readonly principalId: string;
-  readonly tenantId: string;
-}): v1.RelationshipUpdate =>
-  v1.RelationshipUpdate.create({
-    operation: input.membershipUpdates.some((update) => update.operation === v1.RelationshipUpdate_Operation.TOUCH)
-      ? v1.RelationshipUpdate_Operation.TOUCH
-      : v1.RelationshipUpdate_Operation.DELETE,
-    relationship: {
-      relation: 'company_member',
-      resource: { objectId: input.tenantId, objectType: 'tenant' },
-      subject: { object: { objectId: input.principalId, objectType: 'principal' } },
-    },
-  });
 
 interface CurrentAgentOperatorState {
   readonly activeHumanIds: readonly string[];
