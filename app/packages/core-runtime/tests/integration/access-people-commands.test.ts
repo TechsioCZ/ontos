@@ -873,7 +873,11 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('people commands on 
         expect(Option.getOrThrow(listed).status).toBe('active');
 
         const admitted = yield* admit(tenant, tenant.owner, newcomer).pipe(Effect.orDie);
-        expect(admitted.membership).toEqual({ principalId: newcomer, scopeId: companyScope, status: 'active' });
+        expect(admitted.membership).toEqual({
+          holder: { _tag: 'Principal', principalId: newcomer },
+          scopeId: companyScope,
+          status: 'active',
+        });
         const joined = yield* membershipsOf(tenant, newcomer);
         expect(joined).toHaveLength(2);
         for (const scopeId of [tenantScope, companyScope]) {

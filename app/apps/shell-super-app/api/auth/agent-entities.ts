@@ -62,6 +62,7 @@ import type { DemoAccountUnavailable } from './demo-account-unavailable.ts';
 
 const CHANGE_STATUS = 'change-status';
 const AGENT_NOT_FOUND = 'Agent v této firmě neexistuje.';
+const AGENT_CHANGES_NOT_AVAILABLE = 'Vytváření a úpravy agentů nejsou v této verzi k dispozici.';
 const ASSIGN_ROLE = 'assign-role';
 const unavailable = (cause: unknown) => new ConnectionsUnavailable({ cause });
 
@@ -557,5 +558,9 @@ export const manageAgentEntity = Effect.fn('AgentEntities.manageAgentEntity')(fu
         : Effect.void,
     ),
   );
+  // The configure-agent Action is not decidable on v2 yet (its gate question answers unavailable): refused cleanly.
+  if (request.operation === 'create' || request.operation === 'configure') {
+    return yield* new ConnectionsInvalid({ reason: AGENT_CHANGES_NOT_AVAILABLE });
+  }
   return yield* withCompanyAgentLock(tenantId, legalEntityId, changeAgent(caller, request, deps, headers));
 }, Effect.scoped);

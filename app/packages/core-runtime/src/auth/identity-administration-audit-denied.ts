@@ -27,6 +27,8 @@ export const IdentityAdministrationDeniedAttemptSchema = Schema.Struct({
     'configure-agent',
     'change-status-agent',
     'delete-agent',
+    'assign-role-agent',
+    'remove-role-agent',
   ]),
   principalKind: Schema.Union([Schema.Literal('agent'), Schema.Null]),
   targetPrincipalId: Schema.Union([PrincipalId, Schema.Null]),

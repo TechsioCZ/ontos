@@ -1,5 +1,5 @@
 import { AgentEntityOverviewSchema } from '@app/shared-contracts/agent-access';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -196,8 +196,69 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
                 .pipe(Effect.orDie);
               const companyRoleIds = new Set(roles.map(({ role_id }) => role_id));
               expect(overview.roles.every(({ roleId }) => companyRoleIds.has(roleId))).toBe(true);
-              // An agent holds no role yet, so it has no rights at all.
-              expect({ roles: agent?.roles, usable: agent?.usable }).toEqual({ roles: [], usable: [] });
+              // Every role the agent holds is named on the page; nothing technical is shown instead.
+              expect((agent?.roles ?? []).every(({ name }) => name !== '')).toBe(true);
+              // The owner gives the agent an assignable company role through the People Action family, and takes it away.
+              const heldRoleIds = new Set((agent?.roles ?? []).map(({ roleId }) => roleId));
+              const offeredRole = overview.roles.find(({ roleId }) => !heldRoleIds.has(roleId));
+              const offered = yield* Effect.fromOption(Option.fromUndefinedOr(offeredRole)).pipe(Effect.orDie);
+              const assigned = yield* shell.post({
+                idempotencyKey: 'agents-real-gate-assign-role',
+                legalEntityId: ours,
+                path: MANAGE_PATH,
+                payload: {
+                  expectedRevision: overview.rolesRevision,
+                  expectedRoleRevisionId: offered.roleRevisionId,
+                  operation: 'assign-role',
+                  principalId: agentId,
+                  roleId: offered.roleId,
+                },
+                persona: 'owner',
+                sameOrigin: true,
+              });
+              expect(assigned.status, assigned.text).toBe(200);
+              const after = yield* shell
+                .post({ legalEntityId: ours, path: LIST_PATH, payload: {}, persona: 'owner' })
+                .pipe(
+                  Effect.flatMap(({ text }) =>
+                    Schema.decodeUnknownEffect(Schema.fromJsonString(AgentEntityOverviewSchema))(text),
+                  ),
+                  Effect.orDie,
+                );
+              const holding = after.agents
+                .find(({ principalId }) => principalId === agentId)
+                ?.roles.find(({ roleId }) => roleId === offered.roleId);
+              expect(holding?.name).toBe(offered.name);
+              // A member may not assign roles: the People rule refuses them here too.
+              const memberAssign = yield* shell.post({
+                idempotencyKey: 'agents-real-gate-member-assign',
+                legalEntityId: ours,
+                path: MANAGE_PATH,
+                payload: {
+                  expectedRevision: after.rolesRevision,
+                  expectedRoleRevisionId: offered.roleRevisionId,
+                  operation: 'assign-role',
+                  principalId: agentId,
+                  roleId: offered.roleId,
+                },
+                persona: 'member',
+                sameOrigin: true,
+              });
+              expect(memberAssign.status).toBe(403);
+              const removed = yield* shell.post({
+                idempotencyKey: 'agents-real-gate-remove-role',
+                legalEntityId: ours,
+                path: MANAGE_PATH,
+                payload: {
+                  assignmentId: holding?.assignmentId ?? '',
+                  expectedRevision: after.rolesRevision,
+                  operation: 'remove-role',
+                  principalId: agentId,
+                },
+                persona: 'owner',
+                sameOrigin: true,
+              });
+              expect(removed.status, removed.text).toBe(200);
               const refused = yield* shell.post({
                 legalEntityId: ours,
                 path: LIST_PATH,
@@ -205,7 +266,7 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
                 persona: 'member',
               });
               expect(refused.status).toBe(403);
-              // Creating and configuring agents work again, with no module list: rights come only from roles.
+              // Creating and configuring agents is still not in this release: a clean refusal, never a 503.
               for (const request of [
                 { operation: 'create', operatorPrincipalIds: [memberId] },
                 { operation: 'configure', principalId: agentId },
@@ -224,15 +285,11 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
                   persona: 'owner',
                   sameOrigin: true,
                 });
-                expect({
+                expect({ operation: request.operation, status: change.status }).toEqual({
                   operation: request.operation,
-                  status: change.status,
-                  text: change.status === 200 ? '' : change.text,
-                }).toEqual({
-                  operation: request.operation,
-                  status: 200,
-                  text: '',
+                  status: 422,
                 });
+                expect(change.text).toContain('Vytváření a úpravy agentů nejsou v této verzi k dispozici.');
               }
             }),
           ),

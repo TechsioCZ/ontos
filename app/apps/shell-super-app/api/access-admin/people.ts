@@ -1303,8 +1303,10 @@ const companyScopeOf = (view: View, legalEntityId: string) =>
   Option.fromUndefinedOr(view.scopes.find((row) => row.legalEntityId === legalEntityId));
 
 /**
- * The agents' roles in one company, read with the People list's own reach: an administrator who cannot read the
- * company's people reads no agent roles either.
+ * The agents' roles in one company. The caller is an agent administrator of the company (the agents page decided that
+ * before this read): which roles its agents hold is agent administration and is answered for them. The roles OFFERED
+ * for assignment are the People page's: only a caller whose People reach covers the company is offered any, and the
+ * assignment itself still asks the People assign right.
  */
 const agentRoles = Effect.fn('AccessAdminPeople.agentRoles')(function* agentRolesOf(
   headers: Headers,
@@ -1313,18 +1315,21 @@ const agentRoles = Effect.fn('AccessAdminPeople.agentRoles')(function* agentRole
   const scope = yield* requireScope(headers);
   const view = yield* readView(scope);
   const now = yield* coreInstant;
-  const reach = yield* requireReach(scope, view, accessPeopleDeclarations.list, now);
+  const reach = yield* reachFor(scope, view, accessPeopleDeclarations.list, now);
   const company = companyScopeOf(view, input.legalEntityId);
-  if (Option.isNone(company) || !reach.scopeIds.has(company.value.scopeId)) {
+  if (Option.isNone(company)) {
     return yield* Effect.fail(forbidden(SCOPE_NOT_AVAILABLE));
   }
   const { scopeId } = company.value;
+  const offersRoles = reach.scopeIds.has(scopeId);
   const catalog = yield* (yield* AccessPeopleCommands)
     .readCatalog(scope)
     .pipe(Effect.mapError(accessPeopleFailureProblem));
   // Only roles an agent may hold are offered: one that runs a sensitive or administrative capability never is.
   const roles = view.roles.flatMap((entry) =>
-    entry.role.legalEntityId === input.legalEntityId && roleRevisionIsAgentAssignable(entry.revision, catalog)
+    offersRoles &&
+    entry.role.legalEntityId === input.legalEntityId &&
+    roleRevisionIsAgentAssignable(entry.revision, catalog)
       ? [{ name: entry.role.name, revisionId: entry.revision.id, roleId: entry.role.id }]
       : [],
   );
