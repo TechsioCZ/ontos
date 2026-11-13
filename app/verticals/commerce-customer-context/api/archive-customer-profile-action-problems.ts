@@ -127,7 +127,8 @@ const mapCoreProblem = (error: ActionCoreError): ArchiveCustomerProfileActionPro
       ActionInvocationStateError: (failure) => archiveCustomerProfileActionProblem.conflict(failure.code),
       ActionPayloadValidationError: archiveCustomerProfileActionProblem.invalid,
       ActionPermissionCheckError: (failure) => archiveCustomerProfileActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => archiveCustomerProfileActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        archiveCustomerProfileActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => archiveCustomerProfileActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => archiveCustomerProfileActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => archiveCustomerProfileActionProblem.conflict(failure.code),

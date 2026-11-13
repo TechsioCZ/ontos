@@ -17,6 +17,7 @@ export {
 } from './people-search-contract.ts';
 export { personResourceDescriptor } from '../resources/person.ts';
 export { personIdentity } from './person-identity.ts';
+export { mayFindPeople } from './people-search.ts';
 
 const corePeopleNavigationPath = '/sprava/lide-a-role' as const;
 

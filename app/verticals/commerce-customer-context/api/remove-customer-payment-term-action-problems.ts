@@ -139,7 +139,8 @@ const mapCoreProblem = (error: ActionCoreError): RemoveCustomerPaymentTermAction
       ActionInvocationStateError: (failure) => removeCustomerPaymentTermActionProblem.conflict(failure.code),
       ActionPayloadValidationError: removeCustomerPaymentTermActionProblem.invalid,
       ActionPermissionCheckError: (failure) => removeCustomerPaymentTermActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => removeCustomerPaymentTermActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        removeCustomerPaymentTermActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => removeCustomerPaymentTermActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => removeCustomerPaymentTermActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => removeCustomerPaymentTermActionProblem.conflict(failure.code),

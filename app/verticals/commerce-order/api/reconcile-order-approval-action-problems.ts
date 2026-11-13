@@ -78,10 +78,12 @@ export const reconcileOrderApprovalActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ReconcileOrderApprovalActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ReconcileOrderApprovalActionForbiddenProblem'> =>
     ReconcileOrderApprovalActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -196,7 +198,8 @@ const mapCoreProblem = (error: ActionCoreError): ReconcileOrderApprovalActionPro
       ActionInvocationStateError: (failure) => reconcileOrderApprovalActionProblem.conflict(failure.code),
       ActionPayloadValidationError: reconcileOrderApprovalActionProblem.invalid,
       ActionPermissionCheckError: (failure) => reconcileOrderApprovalActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => reconcileOrderApprovalActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        reconcileOrderApprovalActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => reconcileOrderApprovalActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => reconcileOrderApprovalActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => reconcileOrderApprovalActionProblem.conflict(failure.code),

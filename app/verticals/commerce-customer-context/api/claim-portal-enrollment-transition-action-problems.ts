@@ -92,10 +92,12 @@ export const claimPortalEnrollmentTransitionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ClaimPortalEnrollmentTransitionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ClaimPortalEnrollmentTransitionActionForbiddenProblem'> =>
     ClaimPortalEnrollmentTransitionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -221,7 +223,8 @@ const mapCoreProblem = (error: ActionCoreError): ClaimPortalEnrollmentTransition
       ActionInvocationStateError: (failure) => claimPortalEnrollmentTransitionActionProblem.conflict(failure.code),
       ActionPayloadValidationError: claimPortalEnrollmentTransitionActionProblem.invalid,
       ActionPermissionCheckError: (failure) => claimPortalEnrollmentTransitionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => claimPortalEnrollmentTransitionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        claimPortalEnrollmentTransitionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => claimPortalEnrollmentTransitionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => claimPortalEnrollmentTransitionActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => claimPortalEnrollmentTransitionActionProblem.conflict(failure.code),

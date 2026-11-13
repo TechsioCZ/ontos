@@ -12,6 +12,7 @@ import { companyAgentDirectoryRead } from '../auth/company-agent-directory-read.
 import { identityAdministrationAuditRead } from '../auth/identity-administration-audit-read.ts';
 import { staffRoleTemplateBindingsRead } from '../auth/staff-role-template-bindings-read.ts';
 import { oauthConnectionRevocationNotesRead } from '../auth/oauth-connection-revocation-notes-read.ts';
+import { oauthConnectionAdministrationRead } from '../auth/oauth-connection-administration-read.ts';
 import { peopleSearchRead } from '../people/people-search.ts';
 import {
   bindingSubjectRead,
@@ -247,6 +248,7 @@ const coreReads = Object.freeze([
   identityAdministrationAuditRead,
   staffRoleTemplateBindingsRead,
   oauthConnectionRevocationNotesRead,
+  oauthConnectionAdministrationRead,
   peopleSearchRead,
   legalEntityDetailRead,
   readPrincipalBinding,

@@ -31,6 +31,7 @@ export const MigrateCustomerPriceGroupActionForbiddenProblemSchema = makeProblem
       'operation_context_invalid',
       'customer_price_group_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const MigrateCustomerPriceGroupActionNotFoundProblemSchema = makeProblemDetailsSchema(

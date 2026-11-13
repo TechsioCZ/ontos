@@ -33,6 +33,7 @@ export const ManageQuantityTierActionForbiddenProblemSchema = makeProblemDetails
       'operation_context_invalid',
       'manage_quantity_tier_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ManageQuantityTierActionNotFoundProblemSchema = makeProblemDetailsSchema(

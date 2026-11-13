@@ -61,10 +61,12 @@ export const bootstrapPlaygroundCatalogActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'BootstrapPlaygroundCatalogActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'BootstrapPlaygroundCatalogActionForbiddenProblem'> =>
     BootstrapPlaygroundCatalogActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -166,7 +168,8 @@ const mapCoreProblem = (error: ActionCoreError): BootstrapPlaygroundCatalogActio
       ActionInvocationStateError: (failure) => bootstrapPlaygroundCatalogActionProblem.conflict(failure.code),
       ActionPayloadValidationError: bootstrapPlaygroundCatalogActionProblem.invalid,
       ActionPermissionCheckError: (failure) => bootstrapPlaygroundCatalogActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => bootstrapPlaygroundCatalogActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        bootstrapPlaygroundCatalogActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => bootstrapPlaygroundCatalogActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => bootstrapPlaygroundCatalogActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => bootstrapPlaygroundCatalogActionProblem.conflict(failure.code),

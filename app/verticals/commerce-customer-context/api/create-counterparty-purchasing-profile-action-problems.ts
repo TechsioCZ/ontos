@@ -91,10 +91,12 @@ export const createCounterpartyPurchasingProfileActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CreateCounterpartyPurchasingProfileActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CreateCounterpartyPurchasingProfileActionForbiddenProblem'> =>
     CreateCounterpartyPurchasingProfileActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -210,7 +212,8 @@ const mapCoreProblem = (error: ActionCoreError): CreateCounterpartyPurchasingPro
       ActionPayloadValidationError: createCounterpartyPurchasingProfileActionProblem.invalid,
       ActionPermissionCheckError: (failure) =>
         createCounterpartyPurchasingProfileActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => createCounterpartyPurchasingProfileActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        createCounterpartyPurchasingProfileActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => createCounterpartyPurchasingProfileActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         createCounterpartyPurchasingProfileActionProblem.unavailable(failure.code),

@@ -61,10 +61,12 @@ export const addSavedAddressActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'AddSavedAddressActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'AddSavedAddressActionForbiddenProblem'> =>
     AddSavedAddressActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -170,7 +172,7 @@ const mapCoreProblem = (error: ActionCoreError): AddSavedAddressActionProblem =>
       ActionInvocationStateError: (failure) => addSavedAddressActionProblem.conflict(failure.code),
       ActionPayloadValidationError: addSavedAddressActionProblem.invalid,
       ActionPermissionCheckError: (failure) => addSavedAddressActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => addSavedAddressActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => addSavedAddressActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => addSavedAddressActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => addSavedAddressActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => addSavedAddressActionProblem.conflict(failure.code),

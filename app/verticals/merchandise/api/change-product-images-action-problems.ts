@@ -63,10 +63,12 @@ export const changeProductImagesActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ChangeProductImagesActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ChangeProductImagesActionForbiddenProblem'> =>
     ChangeProductImagesActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -176,7 +178,8 @@ const mapCoreProblem = (error: ActionCoreError): ChangeProductImagesActionProble
       ActionInvocationStateError: (failure) => changeProductImagesActionProblem.conflict(failure.code),
       ActionPayloadValidationError: changeProductImagesActionProblem.invalid,
       ActionPermissionCheckError: (failure) => changeProductImagesActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => changeProductImagesActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        changeProductImagesActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => changeProductImagesActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => changeProductImagesActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => changeProductImagesActionProblem.conflict(failure.code),

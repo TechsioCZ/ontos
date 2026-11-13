@@ -49,7 +49,7 @@ rs.mock('../../../api/agent-platform/module-review.ts', () => ({
     ),
 }));
 rs.mock('../../../api/auth/demo-accounts.ts', () => ({
-  demoAccountCapability: () => Effect.succeed({ canManage: false }),
+  peopleAdministrationCapability: () => Effect.succeed({ canManage: false }),
 }));
 
 const principal: AgentPlatformCaller['principal'] = {

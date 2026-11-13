@@ -95,10 +95,12 @@ export const removeStorefrontAssociationActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RemoveStorefrontAssociationActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RemoveStorefrontAssociationActionForbiddenProblem'> =>
     RemoveStorefrontAssociationActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -213,7 +215,8 @@ const mapCoreProblem = (error: ActionCoreError): RemoveStorefrontAssociationActi
       ActionInvocationStateError: (failure) => removeStorefrontAssociationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: removeStorefrontAssociationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => removeStorefrontAssociationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => removeStorefrontAssociationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        removeStorefrontAssociationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => removeStorefrontAssociationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => removeStorefrontAssociationActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => removeStorefrontAssociationActionProblem.conflict(failure.code),

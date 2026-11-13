@@ -48,7 +48,12 @@ export const nativeDemoAccountTestServices = Effect.fn('NativeDemoAccountTestSer
     const access = Layer.succeed(ContextAccess, contextAccess);
     const resolver = administrationScopeLayer({ principal: caller.principal });
     const identities = makeDatabaseIdentityEnrollmentLive(FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
-    const gate = Layer.succeed(AccessDecisionGate, makeTestAccessDecision());
+    // The caller administers this company's agents: the right that decides agent status and, with it, the
+    // withdrawal of the agent's pending proposals (`core.identity.agent-status.manage`). Nothing else is granted.
+    const gate = Layer.succeed(
+      AccessDecisionGate,
+      makeTestAccessDecision({ answers: { 'core.identity.agent-status.manage': { outcome: 'ALLOWED' } } }),
+    );
     const deniedAudit = IdentityAdministrationDeniedAuditLive.pipe(
       Layer.provide(Layer.mergeAll(core, access, resolver, identities, gate)),
     );
@@ -67,7 +72,7 @@ export const nativeDemoAccountTestServices = Effect.fn('NativeDemoAccountTestSer
       checkActionProposalPermission: () => Effect.die('Unexpected business proposal authority check'),
     });
     const preparation = AgentProposalCommandPreparationLive.pipe(
-      Layer.provide(Layer.mergeAll(core, access, active, authority, identities)),
+      Layer.provide(Layer.mergeAll(core, access, active, authority, identities, gate)),
     );
     // Lifecycle administration must never use module-private visibility as a permission substitute.
     const review = Layer.succeed(AgentProposalQueueModuleReview, {

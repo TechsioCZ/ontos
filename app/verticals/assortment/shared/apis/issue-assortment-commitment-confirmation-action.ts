@@ -35,6 +35,7 @@ export const IssueAssortmentCommitmentConfirmationActionForbiddenProblemSchema =
       'operation_context_invalid',
       'assortment_confirmation_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const IssueAssortmentCommitmentConfirmationActionNotFoundProblemSchema = makeProblemDetailsSchema(

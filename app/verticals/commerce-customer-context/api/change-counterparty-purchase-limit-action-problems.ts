@@ -61,10 +61,12 @@ export const changeCounterpartyPurchaseLimitActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ChangeCounterpartyPurchaseLimitActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ChangeCounterpartyPurchaseLimitActionForbiddenProblem'> =>
     ChangeCounterpartyPurchaseLimitActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -169,7 +171,8 @@ const mapCoreProblem = (error: ActionCoreError): ChangeCounterpartyPurchaseLimit
       ActionInvocationStateError: (failure) => changeCounterpartyPurchaseLimitActionProblem.conflict(failure.code),
       ActionPayloadValidationError: changeCounterpartyPurchaseLimitActionProblem.invalid,
       ActionPermissionCheckError: (failure) => changeCounterpartyPurchaseLimitActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => changeCounterpartyPurchaseLimitActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        changeCounterpartyPurchaseLimitActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => changeCounterpartyPurchaseLimitActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => changeCounterpartyPurchaseLimitActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => changeCounterpartyPurchaseLimitActionProblem.conflict(failure.code),

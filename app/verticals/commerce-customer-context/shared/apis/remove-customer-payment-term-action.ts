@@ -31,6 +31,7 @@ export const RemoveCustomerPaymentTermActionForbiddenProblemSchema = makeProblem
       'operation_context_invalid',
       'SCOPE_MISMATCH',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const RemoveCustomerPaymentTermActionNotFoundProblemSchema = makeProblemDetailsSchema(

@@ -61,10 +61,12 @@ export const unassignTagActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'UnassignTagActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'UnassignTagActionForbiddenProblem'> =>
     UnassignTagActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -170,7 +172,7 @@ const mapCoreProblem = (error: ActionCoreError): UnassignTagActionProblem =>
       ActionInvocationStateError: (failure) => unassignTagActionProblem.conflict(failure.code),
       ActionPayloadValidationError: unassignTagActionProblem.invalid,
       ActionPermissionCheckError: (failure) => unassignTagActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => unassignTagActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => unassignTagActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => unassignTagActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => unassignTagActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => unassignTagActionProblem.conflict(failure.code),

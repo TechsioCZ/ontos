@@ -61,10 +61,12 @@ export const establishCommitmentProtectionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'EstablishCommitmentProtectionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'EstablishCommitmentProtectionActionForbiddenProblem'> =>
     EstablishCommitmentProtectionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -169,7 +171,8 @@ const mapCoreProblem = (error: ActionCoreError): EstablishCommitmentProtectionAc
       ActionInvocationStateError: (failure) => establishCommitmentProtectionActionProblem.conflict(failure.code),
       ActionPayloadValidationError: establishCommitmentProtectionActionProblem.invalid,
       ActionPermissionCheckError: (failure) => establishCommitmentProtectionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => establishCommitmentProtectionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        establishCommitmentProtectionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => establishCommitmentProtectionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => establishCommitmentProtectionActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => establishCommitmentProtectionActionProblem.conflict(failure.code),

@@ -74,10 +74,12 @@ export const setProductUnitTargetDivisibilityActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'SetProductUnitTargetDivisibilityActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'SetProductUnitTargetDivisibilityActionForbiddenProblem'> =>
     SetProductUnitTargetDivisibilityActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -191,7 +193,8 @@ const mapCoreProblem = (error: ActionCoreError): SetProductUnitTargetDivisibilit
       ActionInvocationStateError: (failure) => setProductUnitTargetDivisibilityActionProblem.conflict(failure.code),
       ActionPayloadValidationError: setProductUnitTargetDivisibilityActionProblem.invalid,
       ActionPermissionCheckError: (failure) => setProductUnitTargetDivisibilityActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => setProductUnitTargetDivisibilityActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        setProductUnitTargetDivisibilityActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => setProductUnitTargetDivisibilityActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => setProductUnitTargetDivisibilityActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => setProductUnitTargetDivisibilityActionProblem.conflict(failure.code),

@@ -80,10 +80,12 @@ export const retireProductCategoryActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RetireProductCategoryActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RetireProductCategoryActionForbiddenProblem'> =>
     RetireProductCategoryActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -199,7 +201,8 @@ const mapCoreProblem = (error: ActionCoreError): RetireProductCategoryActionProb
       ActionInvocationStateError: (failure) => retireProductCategoryActionProblem.conflict(failure.code),
       ActionPayloadValidationError: retireProductCategoryActionProblem.invalid,
       ActionPermissionCheckError: (failure) => retireProductCategoryActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => retireProductCategoryActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        retireProductCategoryActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => retireProductCategoryActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => retireProductCategoryActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => retireProductCategoryActionProblem.conflict(failure.code),
