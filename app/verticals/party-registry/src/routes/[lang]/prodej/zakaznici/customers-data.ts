@@ -34,6 +34,7 @@ import {
   useHeldSnapshot,
   useRecordDraft,
   useUnsavedChangesGuard,
+  whenBrowserIdle,
 } from '@app/admin-ui';
 import type { BlockedNavigation, DraftSaveResult, RowIntentProps, SavableDraft, SaveState } from '@app/admin-ui';
 
@@ -368,8 +369,11 @@ export const usePrefetchCustomerDetails = (
     if (scope === undefined || selection === '[]' || warmed.current === selection) {
       return;
     }
+    // The warm-up waits for an idle browser so it does not compete with the list's first paint and the next click.
+    // Row intent does not wait: it reads through `prefetchCustomerDetail`.
     const fiber = browserRuntime.runFork(
-      preload().pipe(
+      whenBrowserIdle.pipe(
+        Effect.andThen(preload()),
         Effect.tap(() =>
           Effect.sync(() => {
             warmed.current = selection;

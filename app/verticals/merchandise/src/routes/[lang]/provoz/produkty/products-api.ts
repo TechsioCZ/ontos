@@ -1,6 +1,13 @@
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { LIST_WARM_ROWS, makeIntentLimiter, makePointerDwell, rowIntentProps, useHeldSnapshot } from '@app/admin-ui';
+import {
+  LIST_WARM_ROWS,
+  makeIntentLimiter,
+  makePointerDwell,
+  rowIntentProps,
+  useHeldSnapshot,
+  whenBrowserIdle,
+} from '@app/admin-ui';
 import type { RowIntentProps } from '@app/admin-ui';
 import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
@@ -572,9 +579,12 @@ export const useProductDetailsPrefetch = (
   // revision and warms the rows again; opening a row always reads its detail fresh.
   const batch = cacheKey([request, selection]);
   const warmed = useRef<string>(undefined);
+  // The warm-up waits for an idle browser so it does not compete with the list's first paint and the next click.
+  // Row intent does not wait: it reads through `prefetchProductDetail`.
   const preload = useEffectEvent((key: string) =>
     key === request
-      ? preloadProductDetails(context, revision, rows).pipe(
+      ? whenBrowserIdle.pipe(
+          Effect.andThen(preloadProductDetails(context, revision, rows)),
           Effect.andThen(
             Effect.sync(() => {
               warmed.current = batch;
