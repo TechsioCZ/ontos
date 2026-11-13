@@ -26,10 +26,11 @@ export interface ScopedTransactionExecutor extends ScopedRoutineInvoker {
   readonly delete: CoreTransaction['delete'];
   readonly insert: CoreTransaction['insert'];
   /**
-   * Present only on an Action's own owner transaction: re-decides a gate question prepared before the transaction
-   * (by the bound Action gate) from this transaction's snapshot, under the authority fence the Action's carrier is
-   * re-checked under (O75, R5a-2). It can only re-decide a prepared question; it grants nothing and exposes no raw
-   * transaction. Absent anywhere else, so a re-check there fails closed.
+   * Present only on the owner transaction of a genuine Core Action (`isGenuineCoreAction`): re-decides a gate
+   * question prepared before the transaction (by the bound Action gate) from this transaction's snapshot, under the
+   * authority fence the Action's carrier is re-checked under (O75, R5a-2). It grants nothing, but it runs the prepared
+   * question's own re-check with this transaction, so only Core's own Actions get it. Absent on every other owner's
+   * executor, where a re-check fails closed.
    */
   readonly recheckPreparedAccess?: (
     prepared: PreparedAccessDecision,

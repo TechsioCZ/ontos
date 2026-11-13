@@ -1,4 +1,5 @@
 import {
+  isGenuineCoreAction,
   loadModuleOperationAdmission,
   operationCatalogLoader,
   prepareOperationIntrinsicState,
@@ -2895,11 +2896,13 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             ActionCoreError | DomainErrorSchema['Type'],
             HandlerRequirements
           > = Effect.fn('ActionRuntime.transaction')(function* executeTransaction(drizzleTransaction: CoreTransaction) {
-            // Core-owned handlers re-check questions they prepared before this transaction from its own snapshot.
-            const scopedTransaction = withPreparedAccessRecheck(
-              yield* installScope(drizzleTransaction, scope, options.databaseIdentities),
-              drizzleTransaction,
-            );
+            // A genuine Core Action re-checks questions it prepared before this transaction from its own snapshot.
+            // The re-check runs the prepared question's own code with this transaction, so no other owner's executor
+            // carries it: theirs fails a re-check closed.
+            const installed = yield* installScope(drizzleTransaction, scope, options.databaseIdentities);
+            const scopedTransaction = isGenuineCoreAction(input.registration)
+              ? withPreparedAccessRecheck(installed, drizzleTransaction)
+              : installed;
             notifyStage('database_scope_installed');
             yield* lockCompositionAuthority(drizzleTransaction, admittedCompositionRevision, 'write').pipe(
               Effect.mapError((cause) =>
