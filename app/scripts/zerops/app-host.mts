@@ -999,6 +999,13 @@ const waitForUnits = (units: readonly HostedUnit[]) =>
     ),
   );
 
+/**
+ * Request headers this host answers itself and never passes on: the drain marker, and `Expect`, whose 100-continue
+ * this host's server already answered to the client (undici rejects any `expect` header, so passing it on turned every
+ * such upload, curl's default above 1 MiB, into a 502, and into a 503 during a drain).
+ */
+const HOST_ANSWERED: ReadonlySet<string> = new Set([DRAIN_FORWARDED_HEADER, 'expect']);
+
 const HOP_BY_HOP: ReadonlySet<string> = new Set([
   'connection',
   'keep-alive',
@@ -1068,7 +1075,7 @@ const relay = Effect.fn('AppHost.relay')(function* relay(
 ) {
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(request.headers)) {
-    if (!HOP_BY_HOP.has(name) && name !== DRAIN_FORWARDED_HEADER) {
+    if (!HOP_BY_HOP.has(name) && !HOST_ANSWERED.has(name)) {
       headers[name] = value;
     }
   }

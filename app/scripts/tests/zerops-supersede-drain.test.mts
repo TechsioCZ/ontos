@@ -99,13 +99,13 @@ interface Answer {
 const send = (
   port: number,
   pathname: string,
-  options: { body?: Uint8Array; headers?: Record<string, string>; method?: string } = {},
+  options: { body?: Uint8Array; expectContinue?: boolean; headers?: Record<string, string>; method?: string } = {},
 ) =>
   Effect.callback<Answer>((resume) => {
     const request = httpRequest(
       {
         agent: false,
-        headers: options.headers,
+        headers: options.expectContinue === true ? { ...options.headers, expect: '100-continue' } : options.headers,
         host: '127.0.0.1',
         method: options.method ?? 'GET',
         path: pathname,
@@ -133,7 +133,14 @@ const send = (
     request.on('error', (error: NodeJS.ErrnoException) =>
       resume(Effect.succeed({ body: '', error: error.code ?? error.message, headers: {}, status: 0 })),
     );
-    request.end(options.body);
+    if (options.expectContinue === true) {
+      // As curl does above 1 MiB: the body follows only once the server said 100 Continue.
+      request.on('continue', () => {
+        request.end(options.body);
+      });
+    } else {
+      request.end(options.body);
+    }
   });
 
 const releaseOf = (answer: Answer) =>
@@ -557,4 +564,20 @@ it.live(
         ]),
       );
     }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live('an Expect: 100-continue upload of 2 MiB reaches its unit, directly and through a drain', () =>
+  Effect.gen(function* expectContinue() {
+    const [old, current] = yield* Effect.all([standingHost('old'), standingHost('new')]);
+    const body = new Uint8Array(2 * 1024 * 1024).fill(3);
+    const direct = yield* send(current.port, UPLOAD, { body, expectContinue: true, method: 'POST' });
+    expect(Option.map(decodeEcho(direct.body), ({ bytes, release }) => ({ bytes, release }))).toEqual(
+      Option.some({ bytes: body.byteLength, release: 'new' }),
+    );
+    yield* startDrain(old.supersede(Effect.succeed([peerAt(current.port)])), old.drain);
+    const relayed = yield* send(old.port, UPLOAD, { body, expectContinue: true, method: 'POST' });
+    expect(Option.map(decodeEcho(relayed.body), ({ bytes, release }) => ({ bytes, release }))).toEqual(
+      Option.some({ bytes: body.byteLength, release: 'new' }),
+    );
+  }),
 );
