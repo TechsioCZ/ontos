@@ -2016,14 +2016,18 @@ it.effect(
 );
 
 it.effect(
-  'keeps the retired company relation for a workload, an agent or an unreadable kind in its own company',
+  'keeps the retired company relation for a workload or an unreadable kind, and refuses an agent outright',
   Effect.fn(function* nonPersonInSelectedCompany() {
     // A workload behind a verified module call may select every company of its tenant, so its scope proves nothing.
-    for (const kind of ['service', 'agent', undefined] as const) {
+    for (const kind of ['service', undefined] as const) {
       const run = yield* runSelectedCompanyRead({ kind: 'legal_entity' }, kind);
       expect(deniedByLegacyRelation(run.outcome)).toBe(true);
       expect(run.asked).toEqual([selectedCompanyId]);
     }
+    // An agent holds nothing on the retired relation, and a v2 graph has no definition to ask: it is refused here.
+    const agent = yield* runSelectedCompanyRead({ kind: 'legal_entity' }, 'agent');
+    expect(deniedByLegacyRelation(agent.outcome)).toBe(true);
+    expect(agent.asked).toEqual([]);
   }),
 );
 
@@ -2076,14 +2080,17 @@ it.effect(
     const queue = yield* runAgentLegacyRead(agentProposalQueueReadKey, [selectedCompanyId]);
     expect(queue.outcome).toMatchObject({ _tag: 'Success' });
     expect(queue.asked).toEqual([]);
-    // The actors and profiles reads stay on the retired relation, which an agent on v2 never holds.
+    // The actors and profiles reads refuse the agent even in a company it may select, and never ask the retired
+    // relation: a v2-only graph (stage's) has no definition that could answer it.
     for (const readKey of ['core.identity.agent-activity-actors', 'core.identity.agent-profiles']) {
       const refused = yield* runAgentLegacyRead(readKey, [selectedCompanyId]);
       expect(deniedByLegacyRelation(refused.outcome)).toBe(true);
+      expect(refused.asked).toEqual([]);
     }
     // The gate re-reads the connection row: once it is revoked the agent selects nothing and reads nothing.
     const revoked = yield* runAgentLegacyRead(agentProposalQueueReadKey, []);
     expect(deniedByLegacyRelation(revoked.outcome)).toBe(true);
+    expect(revoked.asked).toEqual([]);
   }),
 );
 
