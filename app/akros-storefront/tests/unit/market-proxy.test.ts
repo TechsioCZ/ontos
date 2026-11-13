@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { storefrontMarketKind } from "@/ontos/market";
 import { proxy } from "@/proxy";
 
@@ -13,11 +13,15 @@ const forwarded = (response: Response, header: string) =>
   response.headers.get(`x-middleware-request-${header}`);
 
 beforeEach(() => {
+  // Mirrors next.config.ts skipProxyUrlNormalize for the actual receiving URL.
+  vi.stubEnv("__NEXT_NO_MIDDLEWARE_URL_NORMALIZE", "1");
   vi.mocked(storefrontMarketKind).mockReset();
   vi.mocked(storefrontMarketKind).mockImplementation(async (locale) =>
     locale === "pl" ? "not-active" : ["cs", "sk", "en"].includes(locale) ? "live" : "unknown",
   );
 });
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe("market routing proxy", () => {
   it.each([
@@ -68,6 +72,18 @@ describe("market routing proxy", () => {
     const response = await run("/sk/kosik", { "x-akros-market-locale": "cs" });
     expect(forwarded(response, "x-akros-market-locale")).toBe("sk");
   });
+
+  it.each(["localhost:3070", "127.0.0.1:3070"])(
+    "keeps internal rewrites on the receiving origin when the browser uses %s",
+    async (host) => {
+      const response = await proxy(
+        new NextRequest("http://127.0.0.1:3070/cs", { headers: { host } }),
+      );
+      expect(rewrite(response)).toBe("http://127.0.0.1:3070/");
+      expect(response.headers.get("location")).toBeNull();
+      expect(forwarded(response, "x-akros-market-locale")).toBe("cs");
+    },
+  );
 
   it("sends an unknown locale to the root 404 and an inactive market to its unavailable page", async () => {
     const unknown = await run("/de/kategorie/srouby");

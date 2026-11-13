@@ -47,7 +47,9 @@ export async function proxy(request: NextRequest) {
     );
   // An owner outage is reported by the render (catalog error page), never as an unknown market.
   const kind = await storefrontMarketKind(locale).catch(() => "live" as const);
-  const target = request.nextUrl.clone();
+  // NextURL normalizes loopback IPs to localhost. Rewrites must keep the receiving
+  // server origin, otherwise Next treats them as external and runs the proxy again.
+  const target = new URL(request.url);
   target.pathname =
     kind === "unknown"
       ? UNKNOWN_MARKET_PATH

@@ -81,6 +81,43 @@ afterEach(cleanup);
 
 describe("ProductPurchaseForm", () => {
   it.each([
+    { dimensions: [4, 4.5, 5, 6] },
+    { dimensions: [0.2, 0.4, 0.6] },
+    { dimensions: [0.2, 0.5, 1.2] },
+  ])(
+    "steps through existing dimensions $dimensions with either slider thumb",
+    async ({ dimensions }) => {
+      const user = userEvent.setup();
+      render(
+        <CartProvider storage={null}>
+          <ProductPurchaseForm
+            product={product}
+            variants={dimensions.map((diameter, index) => ({
+              ...variants[0],
+              id: `diameter-${index}`,
+              sku: `diameter-${index}`,
+              label: `M ${diameter} × 20`,
+            }))}
+          />
+        </CartProvider>,
+      );
+      const [minimum, maximum] = screen.getAllByRole("slider");
+      minimum.focus();
+      for (const expected of dimensions.slice(1)) {
+        await user.keyboard("{ArrowRight}");
+        expect(minimum.getAttribute("aria-valuenow")).toBe(String(expected));
+      }
+      await user.keyboard("{Home}");
+      maximum.focus();
+      for (const expected of dimensions.slice(0, -1).reverse()) {
+        await user.keyboard("{ArrowLeft}");
+        expect(maximum.getAttribute("aria-valuenow")).toBe(String(expected));
+      }
+      expect(screen.getAllByRole("row")).toHaveLength(2);
+    },
+  );
+
+  it.each([
     { minimumQuantity: 200, packageQuantity: 200, quantityStep: 200, unit: "ks" },
     { minimumQuantity: 100, packageQuantity: 100, quantityStep: 100, unit: "m" },
     { minimumQuantity: 400, packageQuantity: 200, quantityStep: 200, unit: "ks" },

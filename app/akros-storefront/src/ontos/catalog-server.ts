@@ -1,9 +1,11 @@
 import "server-only";
 import { cache } from "react";
+import { getBrandId } from "@/brand/config";
 import type { CatalogCategory, CatalogProduct } from "@/ontos/catalog-types";
 import { getActiveMarket } from "./active-market";
 import { catalogCache } from "./catalog-cache";
 import { createCatalog } from "./catalog-model";
+import { getConfig } from "./config";
 import { readRecords } from "./gateway";
 import {
   projectCategories,
@@ -87,6 +89,19 @@ const categoryPages = catalogCache<CategoryPage>({
   limit: 60,
 });
 
+/** Stable server deployment/profile identities; the same build also serves SroubShop. */
+const usesAkrosSourceListing = () =>
+  getBrandId() === "akros" && getConfig().appId === "akros-storefront";
+
+/** Other brands keep the owner's default visibility, including standalone source products. */
+const listingQuery = (query: Record<string, unknown>): Record<string, unknown> =>
+  usesAkrosSourceListing() &&
+  query.mode !== "categories" &&
+  query.slug === undefined &&
+  query.productIds === undefined
+    ? { ...query, mainSourceProductsOnly: true }
+    : query;
+
 /**
  * Every storefront catalog read is answered for one market: its offer and its currency. Without a market id
  * (no market exists yet, see market.ts) merchandise answers with the whole published CZK catalogue.
@@ -94,18 +109,20 @@ const categoryPages = catalogCache<CategoryPage>({
 const readCatalog = async (
   marketId: string | undefined,
   storefrontCatalog: Record<string, unknown>,
-) =>
-  (await readRecords("merchandise", "records", {
+) => {
+  const query = listingQuery(storefrontCatalog);
+  return (await readRecords("merchandise", "records", {
     view: {
       storefront: true,
-      storefrontCatalog:
-        marketId === undefined ? storefrontCatalog : { ...storefrontCatalog, marketId },
+      storefrontCatalog: marketId === undefined ? query : { ...query, marketId },
     },
   })) as Record<string, unknown>;
+};
 /** The request's market (resolved from the path locale; see active-market.ts). */
 const marketIdOf = async () => (await getActiveMarket()).marketId;
 /** Cache keys of market-dependent entries. */
-const marketKey = (marketId: string | undefined, key: string) => `${marketId ?? ""}\u0000${key}`;
+const marketKey = (marketId: string | undefined, key: string) =>
+  `${usesAkrosSourceListing()}\u0000${marketId ?? ""}\u0000${key}`;
 
 /** Drop unset keys (and the storefront-only `flag`, which OntOS rejects) so equal queries share a cache key. */
 const compact = (query: CatalogQuery): CatalogQuery =>
@@ -116,7 +133,7 @@ const compact = (query: CatalogQuery): CatalogQuery =>
   ) as CatalogQuery;
 
 const productKey = (marketId: string | undefined, query: CatalogQuery, fields: CatalogFields) =>
-  JSON.stringify({ ...compact(query), fields, includeCategories: false, marketId });
+  JSON.stringify(listingQuery({ ...compact(query), fields, includeCategories: false, marketId }));
 
 const loadProducts = (key: string) => async () => {
   const { marketId, ...query }: Record<string, unknown> = JSON.parse(key);

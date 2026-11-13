@@ -42,6 +42,7 @@ import {
   products,
 } from '../../src/database/schema.ts';
 import { resetToAkrosBaseline } from '../../src/services/akros-demo-reset.ts';
+import { buildAkrosEncoded } from '../../scripts/akros-catalog.mts';
 import { applyMarketCommand } from '../../src/services/market-commands.ts';
 import {
   catalogMarketScope,
@@ -94,6 +95,113 @@ const idsOf = (fixture: MerchandiseFixture, query: StorefrontCatalogQueryInput) 
 
 const onCatalog = <A, E>(run: (fixture: MerchandiseFixture) => Effect.Effect<A, E>) =>
   withMerchandise(catalogState, run);
+
+it.live(
+  'filters source variants only on explicit opt-in and keeps other storefronts and direct reads unchanged',
+  () => {
+    const [base] = catalogInput.products;
+    const state = decodeState({
+      ...catalogInput,
+      movements: [],
+      orders: [],
+      products: [
+        {
+          ...base,
+          id: 'orphan',
+          name: 'A orphan',
+          sku: 'ORPHAN',
+          slug: 'orphan',
+          sourceBaseProduct: false,
+          variants: [],
+        },
+        { ...base, id: 'main', name: 'B main', sku: 'MAIN', slug: 'main', sourceBaseProduct: true, variants: [] },
+        { ...base, id: 'legacy', name: 'C legacy', sku: 'LEGACY', slug: 'legacy', variants: [] },
+      ],
+    });
+    return withMerchandise(state, (fixture) =>
+      Effect.gen(function* listingSourceIdentity() {
+        const unchanged = yield* catalogPage(fixture, { fields: 'card', page: 1, pageSize: 1, sort: 'name' });
+        const disabled = yield* catalogPage(fixture, { fields: 'card', mainSourceProductsOnly: false });
+        expect([unchanged.total, staffProductIds(unchanged), disabled.total]).toEqual([3, ['orphan'], 3]);
+        const first = yield* catalogPage(fixture, {
+          fields: 'card',
+          mainSourceProductsOnly: true,
+          page: 1,
+          pageSize: 1,
+          sort: 'name',
+        });
+        const second = yield* catalogPage(fixture, {
+          fields: 'card',
+          mainSourceProductsOnly: true,
+          page: 2,
+          pageSize: 1,
+          sort: 'name',
+        });
+        expect([first.total, staffProductIds(first), second.total, staffProductIds(second)]).toEqual([
+          2,
+          ['main'],
+          2,
+          ['legacy'],
+        ]);
+        expect(yield* idsOf(fixture, { categorySlug: 'srouby', mainSourceProductsOnly: true })).toEqual([
+          'main',
+          'legacy',
+        ]);
+        expect(yield* idsOf(fixture, { mainSourceProductsOnly: true, slug: 'orphan' })).toEqual(['orphan']);
+        expect(yield* idsOf(fixture, { mainSourceProductsOnly: true, productIds: ['orphan'] })).toEqual(['orphan']);
+        const staff = yield* staffProducts(fixture.db, fixture.scope, Schema.decodeSync(RecordsViewSchema)({}), false);
+        expect(staff.total).toBe(3);
+      }),
+    );
+  },
+);
+
+it.live('filters the real Akros Matice import while retaining standalone main products and unfiltered reads', () =>
+  Effect.gen(function* importedAkrosListings() {
+    const state = decodeState(yield* buildAkrosEncoded());
+    expect(state.products).toHaveLength(1289);
+    expect(state.products.filter((product) => product.sourceBaseProduct === true)).toHaveLength(1057);
+    const visible = state.products.filter((product) => product.active && product.published !== false);
+    const main = visible.filter((product) => product.sourceBaseProduct !== false);
+    const matice = state.categories?.find((category) => category.slug === 'matice');
+    expect(matice).toBeDefined();
+    const mainNuts = main.filter((product) => product.categoryPathIds?.some((id) => id === matice?.id) === true);
+    const singles = main.filter((product) => (product.variants?.length ?? 0) === 0);
+    expect(singles).toHaveLength(7);
+    yield* withMerchandise(state, (fixture) =>
+      Effect.gen(function* realAkrosPostgresQueries() {
+        const unfiltered = yield* catalogPage(fixture, { fields: 'card', pageSize: 1 });
+        const filtered = yield* catalogPage(fixture, {
+          fields: 'card',
+          mainSourceProductsOnly: true,
+          pageSize: 1,
+        });
+        expect(unfiltered.total).toBe(visible.length);
+        expect(filtered.total).toBe(main.length);
+        const originalNuts = yield* idsOf(fixture, { categorySlug: 'matice', pageSize: 250 });
+        const listedNuts = yield* catalogPage(fixture, {
+          categorySlug: 'matice',
+          fields: 'card',
+          mainSourceProductsOnly: true,
+          pageSize: 250,
+        });
+        expect(originalNuts).toContain('product-31935');
+        expect(originalNuts).toHaveLength(101);
+        expect(staffProductIds(listedNuts)).not.toContain('product-31935');
+        expect(listedNuts.total).toBe(84);
+        expect(listedNuts.total).toBe(mainNuts.length);
+        expect(new Set(staffProductIds(listedNuts))).toEqual(new Set(mainNuts.map((product) => product.id)));
+        expect(yield* idsOf(fixture, { mainSourceProductsOnly: true, productIds: ['product-31935'] })).toEqual([
+          'product-31935',
+        ]);
+        for (const single of singles) {
+          expect(yield* idsOf(fixture, { mainSourceProductsOnly: true, q: single.sku })).toContain(single.id);
+        }
+        expect((yield* catalogPage(fixture, { fields: 'card', pageSize: 1 })).total).toBe(visible.length);
+      }),
+    );
+  }),
+);
 
 it.live('previews only the first three active sellable variant names without hydrating card variants', () => {
   const variants = [

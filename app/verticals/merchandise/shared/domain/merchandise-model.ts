@@ -197,6 +197,8 @@ export const ProductMetadataSchema = Schema.Struct({
   isSale: Schema.optionalKey(Schema.Boolean),
   lengthMm: Schema.optionalKey(MeasurementSchema),
   sourceGroupId: Schema.optionalKey(SourceGroupIdSchema),
+  /** Imported main catalog item. False keeps orphan source variants out of lists, but not direct reads. */
+  sourceBaseProduct: Schema.optionalKey(Schema.Boolean),
   sourceProductId: Schema.optionalKey(SourceProductIdSchema),
   /** Storefront visibility; absent means published when active. */
   published: Schema.optionalKey(Schema.Boolean),
