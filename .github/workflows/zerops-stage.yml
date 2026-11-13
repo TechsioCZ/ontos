@@ -395,8 +395,10 @@ jobs:
           ONTOS_STAGE_WARMUP_ENABLED: 'true'
         run: mise exec -- node scripts/ops/stage-warmup.mts
 
-      - name: Time /cs, OAuth metadata and the storefront home
+      - name: Time /cs and OAuth metadata; every storefront home must list products
         working-directory: app
+        env:
+          STAGE_STOREFRONT_URLS: https://ontos-stage-akros.web-revolution.cz,https://ontos-stage-shop.web-revolution.cz,https://ontos-stage-n1.web-revolution.cz
         run: mise exec -- node scripts/ops/stage-demo-verify.mjs
 
       # node24 configures these two PUBLIC resource UUIDs from actual Privacy publication results.

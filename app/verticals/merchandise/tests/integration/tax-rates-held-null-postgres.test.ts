@@ -77,6 +77,12 @@ it.layer(nativeServices, { excludeTestServices: true })(
         const held = { legalEntityId: yield* crypto.randomUUIDv4(), tenantId };
         const notHeld = { legalEntityId: yield* crypto.randomUUIDv4(), tenantId };
         const noCatalogue = { legalEntityId: yield* crypto.randomUUIDv4(), tenantId };
+        // The other stage shapes: a catalogue with 21 % products only, one with 12 % products and none held, and a
+        // company of another tenant (one that keeps no Finance ledger: Merchandise alone).
+        const standardOnly = { legalEntityId: yield* crypto.randomUUIDv4(), tenantId };
+        const reducedNotHeld = { legalEntityId: yield* crypto.randomUUIDv4(), tenantId };
+        const otherTenant = { legalEntityId: yield* crypto.randomUUIDv4(), tenantId: yield* crypto.randomUUIDv4() };
+        const catalogued = [notHeld, standardOnly, reducedNotHeld, otherTenant];
         const insertProduct = (company: typeof held, id: string, vatRate: number) =>
           client.unsafe(
             `insert into demo_merchandise.products (
@@ -95,7 +101,7 @@ it.layer(nativeServices, { excludeTestServices: true })(
               JSON.stringify({ currentPriceMinor: 1000, name: id, vatRate }),
             ],
           );
-        for (const company of [held, notHeld]) {
+        for (const company of [held, ...catalogued]) {
           yield* client.unsafe(
             'insert into demo_merchandise.catalog_heads (tenant_id, legal_entity_id) values ($1, $2)',
             [company.tenantId, company.legalEntityId],
@@ -103,6 +109,10 @@ it.layer(nativeServices, { excludeTestServices: true })(
         }
         yield* insertProduct(held, 'book-it', 10);
         yield* insertProduct(notHeld, 'screw', 21);
+        yield* insertProduct(standardOnly, 'laptop', 21);
+        yield* insertProduct(standardOnly, 'mouse', 21);
+        yield* insertProduct(reducedNotHeld, 'coffee', 12);
+        yield* insertProduct(otherTenant, 'jacket', 21);
 
         const headOf = (company: typeof held) =>
           client
@@ -126,11 +136,15 @@ it.layer(nativeServices, { excludeTestServices: true })(
         // The tax-classification migration as stage ran it: the company without a held product gets a JSON null.
         yield* migrate(db, migrationOptions(yield* folderUpTo(TAX_CLASSIFICATION, true)));
         expect(yield* headOf(held)).toEqual({ hasKey: true, held: { 'book-it': 10 }, revision: 0 });
-        expect(yield* headOf(notHeld)).toEqual({ hasKey: true, held: null, revision: 0 });
+        for (const company of catalogued) {
+          expect(yield* headOf(company)).toEqual({ hasKey: true, held: null, revision: 0 });
+        }
         expect(yield* headOf(noCatalogue)).toBeUndefined();
         // The reads below are about the company's stored VAT rates, not its product rows (the rows above carry only what the
         // migration reads): the products go, the heads stay as the migration wrote them.
-        yield* client.unsafe('delete from demo_merchandise.products where tenant_id = $1', [tenantId]);
+        yield* client.unsafe('delete from demo_merchandise.products where tenant_id = any($1::uuid[])', [
+          [tenantId, otherTenant.tenantId],
+        ]);
         const broken = yield* reads(notHeld).pipe(Effect.flip);
         expect(broken.reason).toContain('do not decode');
         const brokenStaff = yield* staffProducts(db, notHeld, view, false).pipe(Effect.flip);
@@ -146,6 +160,12 @@ it.layer(nativeServices, { excludeTestServices: true })(
         const [notHeldPricing, notHeldStaff, notHeldStorefront] = yield* reads(notHeld);
         expect(notHeldPricing.held).toEqual({});
         expect([notHeldStaff.products.length, notHeldStorefront.products.length]).toEqual([0, 0]);
+        // Every other shape reads too: pricing, the staff list and the storefront list, each without a hold.
+        for (const company of [standardOnly, reducedNotHeld, otherTenant]) {
+          expect(yield* headOf(company)).toEqual({ hasKey: false, held: null, revision: 1 });
+          const [pricing, staffList, storefrontList] = yield* reads(company);
+          expect([pricing.held, staffList.products.length, storefrontList.products.length]).toEqual([{}, 0, 0]);
+        }
         const [, noCatalogueStaff, noCatalogueStorefront] = yield* reads(noCatalogue);
         expect([noCatalogueStaff.products.length, noCatalogueStorefront.products.length]).toEqual([0, 0]);
 
@@ -155,6 +175,30 @@ it.layer(nativeServices, { excludeTestServices: true })(
         ]);
         yield* migrate(db, migrationOptions(yield* folderUpTo(HELD_NULL_REPAIR, true)));
         expect(yield* headOf(notHeld)).toEqual({ hasKey: false, held: null, revision: 1 });
+
+        // The functions the expand step leaves in place now write the key as Merchandise decodes it.
+        yield* migrate(db, migrationOptions(migrations));
+        yield* insertProduct(held, 'book-it', 10);
+        const migratedState = (company: typeof held) =>
+          client
+            .unsafe<{ readonly hasKey: boolean; readonly held: unknown }>(
+              `select s ? 'heldProductRates' as "hasKey", s -> 'heldProductRates' as held
+                 from demo_merchandise.migration_tax_rates($1, $2) as s`,
+              [company.tenantId, company.legalEntityId],
+            )
+            .pipe(Effect.map(([row]) => row));
+        // `migration_tax_rates`: the key only where a product is held, never `null` for a company holding nothing.
+        expect(yield* migratedState(held)).toEqual({ hasKey: true, held: { 'book-it': 10 } });
+        expect(yield* migratedState(notHeld)).toEqual({ hasKey: false, held: null });
+        // The window trigger: the release before classifications rewrites BOOK-IT at 21 %, its company's last hold;
+        // the key goes, never left as JSON null or an empty map.
+        yield* client.unsafe(
+          `update demo_merchandise.products set document = jsonb_build_object('currentPriceMinor', 1000, 'name', 'book-it',
+             'vatRate', 21) where tenant_id = $1 and legal_entity_id = $2 and id = 'book-it'`,
+          [held.tenantId, held.legalEntityId],
+        );
+        expect(yield* headOf(held)).toEqual({ hasKey: false, held: null, revision: 0 });
+        expect((yield* currentPricingOf(db, held)).held).toEqual({});
       }).pipe(Effect.scoped),
     );
   },

@@ -42,6 +42,7 @@ export {
   type PointerDwell,
   type RowIntentProps,
   rowIntentProps,
+  whenBrowserIdle,
 } from './row-intent.ts';
 export { SaveBar, type SaveBarProps } from './save-bar.tsx';
 export { type SaveLabels, saveLabels, saveLabelsFor } from './save-labels.ts';

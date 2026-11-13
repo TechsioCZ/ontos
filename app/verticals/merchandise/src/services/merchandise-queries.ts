@@ -52,11 +52,12 @@ import {
   hydrateProducts,
   loadHead,
   MerchandiseStoreFailure,
+  storedDocumentUndecodable,
   productSearchText,
   query,
   whereScope,
 } from './merchandise-store.ts';
-import type { MerchandiseDb, StoreScope } from './merchandise-store.ts';
+import type { MerchandiseDb, StoreScope, StoredDocument } from './merchandise-store.ts';
 import { CompanyTaxRatesSchema, heldRateOf, heldRatesOf, sellableRatesOf } from './tax-rates.ts';
 import type { SellableVariantRecord } from './market-pricing.ts';
 import type { CompanyTaxRates, HeldProductRates, SellableVatRates } from './tax-rates.ts';
@@ -76,6 +77,8 @@ const noCategoryTrails: readonly CategoryTrail[] = [];
 const noOrders: readonly Order[] = [];
 
 const STORED_ROWS_REASON = 'Stored rows do not decode';
+const SEARCH_ROWS: StoredDocument = 'products (search row)';
+const ORDER_DOCUMENTS: StoredDocument = 'orders.document';
 const storedRowsFailure = (cause: MerchandiseStoreFailure['cause']) =>
   new MerchandiseStoreFailure({ cause, reason: STORED_ROWS_REASON });
 
@@ -214,13 +217,25 @@ export const withStorefrontVat = (
 };
 
 /**
+ * A product as staff see it: its classification AND the rate that prices it today (`vatRate`), the same rate the
+ * storefront shows. A product held at its stored rate is priced at that rate while its classification names another.
+ */
+export const withStaffVat = (record: ProductRecord, rates: SellableVatRates, held: HeldProductRates): ProductRecord => {
+  const { vatRate } = withStorefrontVat(record, rates, held);
+  return vatRate === undefined ? record : { ...record, vatRate };
+};
+
+/**
  * One page of product records. `variants: false` (list rows) leaves variants out and takes the derived stock
  * fields from their stored columns; detail pages hydrate variants and derive records exactly like a write does.
  */
-const decodePageTaxRates = (stored: (typeof catalogHeads.$inferSelect)['taxRates']) =>
+const decodePageTaxRates = (scope: StoreScope, stored: (typeof catalogHeads.$inferSelect)['taxRates']) =>
   stored === null
     ? Effect.succeed(Option.getOrUndefined(Option.none<CompanyTaxRates>()))
-    : Schema.decodeUnknownEffect(CompanyTaxRatesSchema)(stored).pipe(Effect.mapError(storedRowsFailure));
+    : Schema.decodeUnknownEffect(CompanyTaxRatesSchema)(stored).pipe(
+        Effect.tapError(storedDocumentUndecodable(scope, 'catalog_heads.tax_rates')),
+        Effect.mapError(storedRowsFailure),
+      );
 
 const productPage = Effect.fn('MerchandiseQueries.productPage')(function* productPage(
   db: MerchandiseDb,
@@ -343,13 +358,16 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
     'Products could not be read',
   );
   const total = result[0]?.total ?? 0;
-  const taxRates = yield* decodePageTaxRates(result[0]?.taxRates ?? null);
+  const taxRates = yield* decodePageTaxRates(scope, result[0]?.taxRates ?? null);
   const pricedRates = sellableRatesOf(taxRates, yield* DateTime.now);
   const held = heldRatesOf(taxRates);
   const rows = result.flatMap(({ product }) => (product === null ? [] : [product]));
   const variantRows = rows.flatMap((row) => row.variantRows);
   const tierRows = rows.flatMap((row) => row.tierRows);
-  const hydrated = yield* hydrateProducts(rows, variantRows, tierRows).pipe(Effect.mapError(storedRowsFailure));
+  const hydrated = yield* hydrateProducts(rows, variantRows, tierRows).pipe(
+    Effect.tapError(storedDocumentUndecodable(scope, 'products.document')),
+    Effect.mapError(storedRowsFailure),
+  );
   const records = yield* Effect.forEach(
     hydrated,
     Effect.fn('MerchandiseQueries.productRecord')(function* productRecord(
@@ -366,7 +384,10 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
           input.variants ? Effect.void : Schema.decodeUnknownEffect(AvailabilitySchema)(row.availability),
         ],
         { concurrency: 1 },
-      ).pipe(Effect.mapError(storedRowsFailure));
+      ).pipe(
+        Effect.tapError(storedDocumentUndecodable(scope, 'products (list row)')),
+        Effect.mapError(storedRowsFailure),
+      );
       let record: ProductRecord;
       if (input.variants) {
         record = toProductRecord(product, stock, pricedRates, held);
@@ -392,7 +413,10 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
           const storefrontVariantPreview = yield* Schema.decodeEffect(StorefrontVariantPreviewSchema)({
             total: variantSummary.count,
             variants: row.variantPreview,
-          }).pipe(Effect.mapError(storedRowsFailure));
+          }).pipe(
+            Effect.tapError(storedDocumentUndecodable(scope, 'product_variants.document')),
+            Effect.mapError(storedRowsFailure),
+          );
           record = { ...record, storefrontVariantPreview };
         }
       }
@@ -407,7 +431,10 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
   const head =
     rawHead === undefined || rawHead === null
       ? null
-      : yield* Schema.decodeEffect(StorefrontHeadSchema)(rawHead).pipe(Effect.mapError(storedRowsFailure));
+      : yield* Schema.decodeEffect(StorefrontHeadSchema)(rawHead).pipe(
+          Effect.tapError(storedDocumentUndecodable(scope, 'catalog_heads (storefront head)')),
+          Effect.mapError(storedRowsFailure),
+        );
   return { head, held, products: records, rates: pricedRates, total } satisfies ProductPage;
 });
 
@@ -466,10 +493,10 @@ export const staffProducts = (
           const { contentHistory: _history, ...summary } = record;
           void _history;
           const row = { ...summary, priceHistory: [] };
-          return storefront ? withStorefrontVat(row, page.rates, page.held) : row;
+          return storefront ? withStorefrontVat(row, page.rates, page.held) : withStaffVat(row, page.rates, page.held);
         }
         if (!storefront) {
-          return record;
+          return withStaffVat(record, page.rates, page.held);
         }
         const { contentHistory: _content, variants: _raw, ...publicProduct } = record;
         void _raw;
@@ -702,6 +729,7 @@ const currentSearchBatch = Effect.fn('MerchandiseQueries.currentSearchBatch')(fu
       .limit(CURRENT_SEARCH_BATCH),
   );
   const candidates = yield* Schema.decodeUnknownEffect(Schema.Array(CurrentSearchProductSchema))(rows).pipe(
+    Effect.tapError(storedDocumentUndecodable(scope, SEARCH_ROWS)),
     Effect.mapError(storedRowsFailure),
   );
   if (candidates.length === 0) {
@@ -731,6 +759,7 @@ const currentSearchBatch = Effect.fn('MerchandiseQueries.currentSearchBatch')(fu
       .limit(candidates.length * MAX_PRODUCT_VARIANTS + 1),
   );
   const variants = yield* Schema.decodeUnknownEffect(Schema.Array(CurrentSearchVariantSchema))(variantRows).pipe(
+    Effect.tapError(storedDocumentUndecodable(scope, SEARCH_ROWS)),
     Effect.mapError(storedRowsFailure),
   );
   const grouped = new Map<string, (typeof variants)[number][]>();
@@ -843,6 +872,7 @@ const searchVariantRows = Effect.fn('MerchandiseQueries.searchVariantRows')(func
       .limit(page.length * MAX_PRODUCT_VARIANTS + 1),
   );
   const decoded = yield* Schema.decodeUnknownEffect(Schema.Array(SearchVariantRowSchema))(rows).pipe(
+    Effect.tapError(storedDocumentUndecodable(scope, SEARCH_ROWS)),
     Effect.mapError(storedRowsFailure),
   );
   const grouped = new Map<string, SearchVariantRow[]>();
@@ -894,7 +924,10 @@ const searchVariantRows = Effect.fn('MerchandiseQueries.searchVariantRows')(func
         variants: Schema.Array(SearchVariantRowSchema),
       }),
     ),
-  )(legacyRows).pipe(Effect.mapError(storedRowsFailure));
+  )(legacyRows).pipe(
+    Effect.tapError(storedDocumentUndecodable(scope, SEARCH_ROWS)),
+    Effect.mapError(storedRowsFailure),
+  );
   for (const candidate of legacy) {
     if (candidate.variants.length > MAX_PRODUCT_VARIANTS) {
       return yield* new MerchandiseStoreFailure({ reason: VARIANT_SET_OVERFLOW_REASON });
@@ -1039,6 +1072,7 @@ const sellableLeafOf = (record: ProductRecord, id: string): SellableVariantRecor
 };
 
 const searchMatchOf = Effect.fn('MerchandiseQueries.searchMatchOf')(function* searchMatchOf(
+  scope: StoreScope,
   plan: SearchPlan,
   selected: Effect.Success<ReturnType<typeof selectedSearchRows>>,
   pricing: Option.Option<StoredMarket>,
@@ -1062,6 +1096,7 @@ const searchMatchOf = Effect.fn('MerchandiseQueries.searchMatchOf')(function* se
     return yield* new MerchandiseStoreFailure({ reason: 'A selected search variant is missing' });
   }
   const decoded = yield* Schema.decodeUnknownEffect(ProductVariantSchema)(document).pipe(
+    Effect.tapError(storedDocumentUndecodable(scope, 'product_variants.document')),
     Effect.mapError(storedRowsFailure),
   );
   const tiers = plan.selected.inline
@@ -1122,7 +1157,7 @@ const currentSearchMatches = Effect.fn('MerchandiseQueries.currentSearchMatches'
   const matches = yield* Effect.forEach(
     plans,
     (plan) =>
-      searchMatchOf(plan, selected, pricing, rates, held).pipe(
+      searchMatchOf(scope, plan, selected, pricing, rates, held).pipe(
         Effect.map((match) => [plan.product.id, match] as const),
       ),
     { concurrency: 1 },
@@ -1510,6 +1545,7 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
         content.history = row.history;
       }
       return Schema.decodeUnknownEffect(CategoryNodeSchema)({ ...document, ...content }).pipe(
+        Effect.tapError(storedDocumentUndecodable(scope, 'categories.document')),
         Effect.mapError(storedRowsFailure),
       );
     },
@@ -1571,7 +1607,7 @@ export const orderPage = Effect.fn('MerchandiseQueries.orderPage')(function* ord
   );
   const decoded = yield* Effect.forEach(rows, (row) => decodeOrderDocument(row.document), {
     concurrency: 1,
-  }).pipe(Effect.mapError(storedRowsFailure));
+  }).pipe(Effect.tapError(storedDocumentUndecodable(scope, ORDER_DOCUMENTS)), Effect.mapError(storedRowsFailure));
   return { orders: decoded, total };
 });
 
@@ -1587,7 +1623,7 @@ export const ordersByClientRequest = Effect.fn('MerchandiseQueries.ordersByClien
     );
     return yield* Effect.forEach(rows, (row) => decodeOrderDocument(row.document), {
       concurrency: 1,
-    }).pipe(Effect.mapError(storedRowsFailure));
+    }).pipe(Effect.tapError(storedDocumentUndecodable(scope, ORDER_DOCUMENTS)), Effect.mapError(storedRowsFailure));
   },
 );
 
@@ -1617,7 +1653,10 @@ export const storefrontOrderStatus = Effect.fn('MerchandiseQueries.storefrontOrd
     if (row === undefined) {
       return null;
     }
-    const order = yield* decodeOrderDocument(row.document).pipe(Effect.mapError(storedRowsFailure));
+    const order = yield* decodeOrderDocument(row.document).pipe(
+      Effect.tapError(storedDocumentUndecodable(scope, ORDER_DOCUMENTS)),
+      Effect.mapError(storedRowsFailure),
+    );
     return storefrontStatusOf(order) satisfies StorefrontOrderStatus;
   },
 );
@@ -1658,7 +1697,7 @@ export const storefrontCustomerOrders = Effect.fn('MerchandiseQueries.storefront
     );
     const result = yield* Effect.forEach(rows, (row) => decodeOrderDocument(row.document), {
       concurrency: 1,
-    }).pipe(Effect.mapError(storedRowsFailure));
+    }).pipe(Effect.tapError(storedDocumentUndecodable(scope, ORDER_DOCUMENTS)), Effect.mapError(storedRowsFailure));
     return { orders: result, total: counts[0]?.total ?? 0 };
   },
 );
@@ -1678,6 +1717,7 @@ export const productMovements = Effect.fn('MerchandiseQueries.productMovements')
       .limit(MOVEMENT_LIMIT),
   );
   return yield* Effect.forEach(rows.toReversed(), decodeMovementRow, { concurrency: 1 }).pipe(
+    Effect.tapError(storedDocumentUndecodable(scope, 'stock_movements')),
     Effect.mapError(storedRowsFailure),
   );
 });
