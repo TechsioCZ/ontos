@@ -62,7 +62,6 @@ const ALLOWED: ReadonlyMap<string, AllowedSite> = new Map([
       ],
     },
   ],
-  ['packages/core-runtime/src/permissions/principal-operators.ts', { owner: AGENTS_ON_V2, types: ['principal'] }],
   [
     'packages/core-runtime/src/install/demo-account-administration.ts',
     { owner: AGENTS_ON_V2, types: ['legal_entity', 'principal'] },
