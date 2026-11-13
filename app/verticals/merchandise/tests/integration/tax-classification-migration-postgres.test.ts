@@ -22,7 +22,7 @@ import { merchandiseRelations } from '../../src/database/schema.ts';
 import { loadHead, loadWorkingSet, persistChange, replaceSnapshot } from '../../src/services/merchandise-store.ts';
 import { evolveMerchandiseState, workingSetRequestOf } from '../../src/services/persistence.service.ts';
 import { CompanyTaxRatesSchema } from '../../src/services/tax-rates.ts';
-import { TEST_RATES, TEST_TAX } from '../support/tax-fixtures.ts';
+import { TEST_PRICING, TEST_RATES, TEST_TAX } from '../support/tax-fixtures.ts';
 import { at, decodeState } from './support/merchandise-database.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
@@ -78,7 +78,7 @@ const changePriceOnce = Effect.fn('TaxClassificationMigration.changePriceOnce')(
   const working = yield* loadWorkingSet(tx, company, head, workingSetRequestOf(command, 'p1'));
   const now = DateTime.makeUnsafe('2026-11-13T10:00:00.000Z');
   const change = yield* evolveMerchandiseState(working.state, command, { actor, now, resourceId: 'p1', tax: TEST_TAX });
-  return yield* persistChange(tx, company, working, change.state, now, TEST_RATES, {});
+  return yield* persistChange(tx, company, working, change.state, now, TEST_RATES, {}, false);
 });
 
 it.layer(nativeServices, { excludeTestServices: true })('tax classification migration', (suite) => {
@@ -582,9 +582,7 @@ it.layer(nativeServices, { excludeTestServices: true })('tax classification migr
           updatedAt: at,
         };
         const state = decodeState({ categories: [], movements: [], orders: [], products: [product] });
-        const base = yield* db.transaction((tx) =>
-          replaceSnapshot(tx, company, state, { held: {}, rates: TEST_RATES }),
-        );
+        const base = yield* db.transaction((tx) => replaceSnapshot(tx, company, state, TEST_PRICING));
         const write = (priceMinor: number) => db.transaction((tx) => changePriceOnce(tx, company, actor, priceMinor));
         // This release's first write records it; later writes keep the one row.
         expect(yield* write(1100)).toBe(base + 1);

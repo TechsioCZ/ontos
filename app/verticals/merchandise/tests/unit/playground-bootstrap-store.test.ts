@@ -88,7 +88,7 @@ it.effect('projects simple and variant opening balances into native product and 
     ]);
     const rows = yield* Effect.all(
       state.products.map((product) =>
-        productRowsOf(scope, product, stockLevelsOf(state.movements, product.id), TEST_RATES, {}),
+        productRowsOf(scope, product, stockLevelsOf(state.movements, product.id), TEST_RATES, {}, false),
       ),
     );
     expect(rows).toMatchObject([
@@ -120,7 +120,7 @@ it.effect('keeps native identities scoped by tenant and company without rewritin
     for (const storeScope of scopes) {
       const rows = yield* Effect.all(
         state.products.map((product) =>
-          productRowsOf(storeScope, product, stockLevelsOf(state.movements, product.id), TEST_RATES, {}),
+          productRowsOf(storeScope, product, stockLevelsOf(state.movements, product.id), TEST_RATES, {}, false),
         ),
       );
       expect(rows.map(({ row }) => [row.tenantId, row.legalEntityId, row.id])).toEqual([
@@ -207,7 +207,7 @@ it.effect('adds only current opening movements, not source audit actors, history
     }
     const rows = yield* Effect.all(
       state.products.map((product) =>
-        productRowsOf(scope, product, stockLevelsOf(state.movements, product.id), TEST_RATES, {}),
+        productRowsOf(scope, product, stockLevelsOf(state.movements, product.id), TEST_RATES, {}, false),
       ),
     );
     for (const { row, variants } of rows) {

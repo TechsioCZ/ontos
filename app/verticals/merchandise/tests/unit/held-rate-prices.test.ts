@@ -24,7 +24,7 @@ const decodeCommand = Schema.decodeUnknownSync(MerchandiseCommandSchema);
 type CommandInput = typeof MerchandiseCommandSchema.Encoded;
 
 /** The migrated, unconfirmed state: BOOK-IT keeps selling at its stored 10 %; the reduced rate is 12 %. */
-const HELD_TAX: CommandTax = { ...TEST_TAX, held: { 'book-it': 10 } };
+const HELD_TAX: CommandTax = { ...TEST_TAX, held: { 'book-it': 10 }, migrated: true };
 
 const apply = (state: MerchandiseState, command: CommandInput, resourceId: string, tax: CommandTax = HELD_TAX) =>
   evolveMerchandiseState(state, decodeCommand(command), { actor, now: t0, resourceId, tax });

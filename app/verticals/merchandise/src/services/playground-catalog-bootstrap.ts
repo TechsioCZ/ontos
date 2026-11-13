@@ -215,7 +215,9 @@ export const playgroundBootstrapServices = Effect.fn('Merchandise.playgroundBoot
           ),
         ),
       );
-      yield* insertSnapshotPart(db, store, state, pricing.rates, pricing.held).pipe(Effect.mapError(unavailable));
+      yield* insertSnapshotPart(db, store, state, pricing.rates, pricing.held, pricing.migrated).pipe(
+        Effect.mapError(unavailable),
+      );
     },
   );
   const verify: BootstrapTransaction['verify'] = Effect.fn('Merchandise.verifyBootstrap')(function* verify(state) {

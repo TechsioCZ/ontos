@@ -239,6 +239,8 @@ export interface CommandTax {
   readonly book: TaxRateBook | undefined;
   /** Products that keep selling at their stored rate while the migrated state is unconfirmed (BOOK-IT, 10 %). */
   readonly held: HeldProductRates;
+  /** The company still sells at the migrated rates: product documents carry exactly the migration's rate. */
+  readonly migrated: boolean;
   readonly rates: SellableVatRates;
   /** Tax refused this company (not installed for it): nothing sells, and the storefront is told why. */
   readonly refused: boolean;
@@ -2575,7 +2577,14 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       const usable = pricing.usable ? pricing.book : undefined;
       const rates = usable === undefined ? NO_SELLABLE_RATES : sellableRatesAt(usable, now);
       const unreachable = usable === undefined && !refused && decision.book !== undefined;
-      const tax = { book: usable, held: pricing.held, rates, refused, unreachable } satisfies CommandTax;
+      const tax = {
+        book: usable,
+        held: pricing.held,
+        migrated: pricing.migrated,
+        rates,
+        refused,
+        unreachable,
+      } satisfies CommandTax;
       const taxRates = decision.materialise;
       if (taxRates !== undefined) {
         yield* writeTaxRates(transaction, store, taxRates).pipe(Effect.mapError(unavailable));
@@ -2609,9 +2618,16 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         );
         return advanced ?? (yield* revisionConflict());
       }
-      const revision = yield* persistChange(transaction, store, working, next, now, tax.rates, tax.held).pipe(
-        Effect.mapError(unavailable),
-      );
+      const revision = yield* persistChange(
+        transaction,
+        store,
+        working,
+        next,
+        now,
+        tax.rates,
+        tax.held,
+        tax.migrated,
+      ).pipe(Effect.mapError(unavailable));
       return revision ?? (yield* revisionConflict());
     });
     const applyOnce = Effect.fn('Merchandise.applyOnce')(function* applyOnce(

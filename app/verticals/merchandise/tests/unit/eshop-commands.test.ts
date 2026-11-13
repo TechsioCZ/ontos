@@ -33,6 +33,7 @@ const apply = (state: MerchandiseState, command: CommandInput, resourceId: strin
 const NON_PAYER_TAX = {
   book: testTaxBook({}, 'NON_PAYER'),
   held: {},
+  migrated: false,
   rates: { 'cz.vat.reduced': 0, 'cz.vat.standard': 0 },
   refused: false,
 };
