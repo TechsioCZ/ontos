@@ -14,6 +14,7 @@ import type { SwitchLegalEntityClientError, SwitchTenantClientError } from '../a
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { endBrowserSession } from './session-scope.ts';
 import { warmDocumentGatewayAssertions } from './document-gateway-assertions.ts';
+import { primeBrowserReads } from './[lang]/home-page-model.ts';
 import type { AuthenticatedHomePageModel } from './[lang]/home-page-model.ts';
 
 const authenticationRequired = 'authentication-required' as const;
@@ -64,6 +65,10 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
     if (compositionRevision !== undefined) {
       pinDocumentNavigationModules(model.navigation.moduleIds, browserDocument);
     }
+  }
+  // Before any browser loader runs: the server-rendered document's own Shell reads answer its first loaders.
+  if (browserDocument !== undefined && model?.browserReads !== undefined) {
+    browserRuntime.runSync(primeBrowserReads(model.browserReads).pipe(Effect.ignore));
   }
   // Started during render too: every audience of the document gets its assertion in one batch that module pages join
   // (a no-op while all are fresh), before they mount and ask.

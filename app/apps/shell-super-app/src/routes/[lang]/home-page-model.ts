@@ -1,8 +1,10 @@
 import { getDocumentCompositionRevision, pinDocumentCompositionRevision } from '@app/shared-contracts';
-import { Effect, Fiber, Match, Option } from 'effect';
+import { Effect, Fiber, Match, MutableRef, Option } from 'effect';
 
 import type {
+  AvailableLegalEntitiesResponse,
   AvailableTenant,
+  AvailableTenantsResponse,
   CurrentSession,
   LegalEntityChoice,
   SafeAuthenticatedIdentity,
@@ -57,7 +59,23 @@ export interface ReloadRequiredHomePageModel {
   readonly state: 'reload_required';
 }
 
+/**
+ * Server rendering only: the answers the browser's own Shell reads (session, composition, legal entities, tenants and
+ * the people-administration hint) would get right after hydration. The document context resolved them once for this
+ * person in this company, from the same handlers and checks as those endpoints; the browser keeps them in its read
+ * caches instead of asking again. Nothing else: no other person's or company's data, no token or assertion.
+ */
+export interface ServerBrowserReads {
+  readonly canManagePeople: boolean;
+  readonly composition: Extract<ShellComposition, { readonly state: 'available' }>;
+  readonly legalEntities: AvailableLegalEntitiesResponse;
+  readonly session: Extract<CurrentSession, { readonly state: 'authenticated' }>;
+  readonly tenants: AvailableTenantsResponse;
+}
+
 export interface AuthenticatedHomePageModel {
+  /** Server rendering only; see `ServerBrowserReads`. */
+  readonly browserReads?: ServerBrowserReads;
   /** The company's own Home text (Core tenant data); read only for the Shell's welcome page. */
   readonly companyWelcome?: string;
   readonly compositionRevision?: string;
@@ -254,6 +272,59 @@ const tenantsFor = (identity: SafeTenantIdentity, options: ShellAuthenticationCl
     : browserTenantsCache.get(browserReadKey(cacheBaseUrl, identity));
 };
 
+/** The reads this document primed: each server-rendered model is primed once, never again after a session boundary. */
+const primedReads = MutableRef.make(Option.none<ServerBrowserReads>());
+
+/**
+ * Keeps the server-rendered document's own Shell reads in the browser caches, under the keys the browser loaders ask
+ * with, so the first loader after hydration (a preload, a navigation) asks the Shell nothing again. Primed once per
+ * document model and never over an entry the cache already holds; a session boundary drops them like any read.
+ */
+export const primeBrowserReads = Effect.fn('HomePageModel.primeBrowserReads')(function* primeBrowserReadsEffect(
+  reads: ServerBrowserReads,
+  documentUrl: string = globalThis.location.href,
+) {
+  if (!('document' in globalThis) || Option.getOrUndefined(MutableRef.get(primedReads)) === reads) {
+    return;
+  }
+  MutableRef.set(primedReads, Option.some(reads));
+  // The loaders' requests carry the document's own URL, so this resolves the same cache keys they ask with.
+  const options = yield* shellAuthenticationClientOptionsFromRequest(new Request(documentUrl));
+  const cacheBaseUrl = browserBaseUrl(options);
+  if (cacheBaseUrl === undefined) {
+    return;
+  }
+  const { identity } = reads.session;
+  const key = browserReadKey(cacheBaseUrl, identity);
+  yield* browserSessionCache.prime(cacheBaseUrl, reads.session);
+  yield* browserCompositionCache.prime(
+    browserReadKey(cacheBaseUrl, identity, reads.composition.compositionRevision),
+    reads.composition,
+  );
+  yield* browserPeopleCapabilityCache.prime(key, reads.canManagePeople);
+  yield* browserLegalEntitiesCache.prime(key, reads.legalEntities);
+  yield* browserTenantsCache.prime(key, reads.tenants);
+});
+
+/**
+ * The document context's answers as the separate endpoints give them, when it answered every one of them; otherwise
+ * the browser reads them itself.
+ */
+const serverBrowserReads = (
+  context: ShellDocumentContext,
+  session: ServerBrowserReads['session'],
+  composition: ServerBrowserReads['composition'],
+): ServerBrowserReads | undefined =>
+  context.legalEntities === undefined || context.tenants?.state !== 'available'
+    ? undefined
+    : {
+        canManagePeople: context.canManagePeople ?? false,
+        composition,
+        legalEntities: context.legalEntities,
+        session,
+        tenants: { tenants: context.tenants.tenants },
+      };
+
 /** What the selected company says about itself on Home; nothing when it provides no text or the read fails. */
 interface HomeCompanyContext {
   readonly legalEntityId: SafeAuthenticatedIdentity['legalEntityId'];
@@ -440,8 +511,9 @@ const loadServerHomePageModel = Effect.fn('HomePageModel.loadServerHomePageModel
       state: 'authenticated',
       tenants,
     };
+    const browserReads = serverBrowserReads(context, session, composition);
     return {
-      ...model,
+      ...(browserReads === undefined ? model : { ...model, browserReads }),
       ...homeFields(Option.fromUndefinedOr(context.home)),
     };
   },

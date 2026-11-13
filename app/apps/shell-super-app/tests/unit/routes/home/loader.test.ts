@@ -1,10 +1,15 @@
+import { pinDocumentCompositionRevision } from '@app/shared-contracts';
 import { ConfigProvider, Effect } from 'effect';
 import { beforeEach, expect, rstest, it } from 'effect-rstest';
 
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
   rstest: 'importActual',
 };
-import { loadHomePageModel, resetBrowserSessionCache } from '../../../../src/routes/[lang]/home-page-model.ts';
+import {
+  loadHomePageModel,
+  primeBrowserReads,
+  resetBrowserSessionCache,
+} from '../../../../src/routes/[lang]/home-page-model.ts';
 import { endBrowserSession } from '../../../../src/routes/session-scope.ts';
 
 const {
@@ -622,6 +627,19 @@ it.effect('server rendering reads the whole document context in one request', ()
       selectedLegalEntityId: 'legal-1',
       state: 'authenticated',
       tenants: { items: [{ name: 'Alpha tenant', tenantId: 'tenant-1' }], state: 'available' },
+      // Exactly the separate endpoints' answers to this person here, and nothing else (no token, no assertion).
+      browserReads: {
+        canManagePeople: false,
+        composition: availableComposition({}),
+        legalEntities: {
+          legalEntities: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
+          selectedLegalEntityId: 'legal-1',
+          state: 'authenticated',
+          tenantContextAvailable: false,
+        },
+        session: { identity, state: 'authenticated' },
+        tenants: { tenants: [{ name: 'Alpha tenant', tenantId: 'tenant-1' }] },
+      },
     });
     expect(documentContextMock).toHaveBeenCalledTimes(1);
     expect(documentContextMock.mock.calls[0]?.[0]).toEqual({ home: true });
@@ -637,6 +655,65 @@ it.effect('server rendering reads the whole document context in one request', ()
       expect(separateRead).not.toHaveBeenCalled();
     }
   }),
+);
+
+/** The server-rendered model's own reads, primed in the browser as hydration does. */
+const hydrateServerModel = Effect.gen(function* hydrate() {
+  documentContextMock.mockReturnValue(Effect.succeed(documentContextOf({})));
+  const model = yield* serverModel();
+  if (model.state !== 'authenticated' || model.browserReads === undefined) {
+    throw new Error('Expected a server-rendered model with its browser reads');
+  }
+  yield* resetBrowserSessionCache;
+  yield* primeBrowserReads(model.browserReads, 'https://shell.example.test/en');
+  return model;
+});
+
+const separateShellReads = () => [
+  currentSessionMock,
+  shellCompositionMock,
+  availableTenantsMock,
+  availableLegalEntitiesMock,
+  canManageDemoAccountsMock,
+];
+
+it.effect('the first browser loader after hydration reuses the server-rendered Shell reads', () =>
+  inNewDocument(
+    Effect.gen(function* hydratedReads() {
+      const server = yield* hydrateServerModel;
+      if (server.state !== 'authenticated' || server.compositionRevision === undefined) {
+        throw new Error('Expected an authenticated server model');
+      }
+      yield* pinDocumentCompositionRevision(server.compositionRevision, globalThis.document);
+      const browser = yield* loadHomePageModel(new Request('https://shell.example.test/en/ukoly'));
+      expect(browser).toMatchObject({
+        compositionRevision,
+        legalEntities: server.legalEntities,
+        navigation: server.navigation,
+        tenants: server.tenants,
+      });
+      for (const separateRead of separateShellReads()) {
+        expect(separateRead).not.toHaveBeenCalled();
+      }
+    }),
+  ),
+);
+
+it.effect('a session boundary drops the primed reads, so the next loader asks the Shell again', () =>
+  inNewDocument(
+    Effect.gen(function* primedReadsEndWithSession() {
+      const server = yield* hydrateServerModel;
+      if (server.state !== 'authenticated' || server.compositionRevision === undefined) {
+        throw new Error('Expected an authenticated server model');
+      }
+      yield* pinDocumentCompositionRevision(server.compositionRevision, globalThis.document);
+      yield* endBrowserSession;
+      yield* loadHomePageModel(new Request('https://shell.example.test/en/ukoly'));
+      for (const separateRead of separateShellReads()) {
+        expect(separateRead).toHaveBeenCalled();
+      }
+    }),
+  ),
 );
 
 it.effect('server rendering maps each document-context part to the same models as the separate reads', () =>
