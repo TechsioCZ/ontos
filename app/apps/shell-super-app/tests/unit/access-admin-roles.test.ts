@@ -634,6 +634,26 @@ it.effect('creates an empty role and refuses any cells at creation, so cells onl
   }),
 );
 
+it.effect("shows the writer's own refusal as the sentence a person reads, with no technical code in it", () =>
+  Effect.sync(() => {
+    // The role an agent holds may not run a sensitive capability: the person reads what to do, never a code.
+    const refused = accessRolesFailureProblem({
+      code: 'access_changes_write_refused',
+      reason:
+        'Roli drží agent (Agent úkolů). Agent smí citlivé a správcovské akce jen navrhovat, ne provádět: roli mu nejdřív odeberte, nebo tuto změnu upravte.',
+    });
+    expect(refused.status).toBe(409);
+    expect(refused.detail).toBe(
+      'Roli drží agent (Agent úkolů). Agent smí citlivé a správcovské akce jen navrhovat, ne provádět: roli mu nejdřív odeberte, nebo tuto změnu upravte.',
+    );
+    expect(refused.detail).not.toContain('access_changes');
+    // A diagnostic code a client tells two refusals apart by keeps its prefix.
+    expect(accessRolesFailureProblem({ code: 'access_changes_revision_stale', reason: 'x' }).detail).toBe(
+      'access_changes_revision_stale: x',
+    );
+  }),
+);
+
 it.effect('maps every Core refusal onto the one status a client can act on', () =>
   Effect.sync(() => {
     expect(accessRolesFailureProblem({ code: 'access_changes_authority_missing', reason: 'x' }).status).toBe(403);

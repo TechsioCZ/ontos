@@ -1174,11 +1174,22 @@ export const makeAccessDecisionService = (
     },
   );
 
-  /** The connection row as it stands now: active, of this agent and operator, unexpired, at the carried consent. */
-  const agentConnectionIsLive = Effect.fn('AccessDecisionGate.agentConnectionIsLive')(
-    function* agentConnectionIsLiveEffect(input: SelectableLegalEntitiesInput, connection: GateAgentConnection) {
+  /**
+   * The companies this agent's connection may answer for: the row as it stands now (active, of this agent and this
+   * operator, unexpired, at the carried consent) AND the one company whose scope the consent was granted in, exactly
+   * as the decision path requires it (guarantee 3, O51(5)). A connection answers for at most that one company, so a
+   * consent granted in one company can never widen a company list.
+   */
+  const agentConnectionCompanies = Effect.fn('AccessDecisionGate.agentConnectionCompanies')(
+    function* agentConnectionCompaniesEffect(
+      input: SelectableLegalEntitiesInput,
+      actor: GateActor,
+      connection: GateAgentConnection,
+      candidates: readonly LegalEntityId[],
+    ) {
+      const authority = ports.authorityFor(input.scope);
       const read = yield* Effect.option(
-        ports.authorityFor(input.scope).readConnection({
+        authority.readConnection({
           connectionId: connection.connectionId,
           tenantId: TenantIdSchema.make(input.scope.tenantId),
         }),
@@ -1186,15 +1197,33 @@ export const makeAccessDecisionService = (
       if (Option.isNone(read)) {
         return yield* accessDecisionUnavailable('The agent connection could not be read');
       }
-      return Option.exists(
-        read.value,
-        (row) =>
-          row.status === 'active' &&
-          row.agentId === input.scope.principalId &&
-          row.principalId === connection.operatorPrincipalId &&
-          row.consentRevision === connection.consentRevision &&
-          row.deadline > input.now,
-      );
+      const row = Option.getOrUndefined(read.value);
+      if (
+        row === undefined ||
+        row.status !== 'active' ||
+        row.agentId !== input.scope.principalId ||
+        row.principalId !== connection.operatorPrincipalId ||
+        row.consentRevision !== connection.consentRevision ||
+        row.deadline <= input.now
+      ) {
+        return [];
+      }
+      const holders = memberHoldersOf(actor);
+      // The scope rows are read one company at a time and the search stops at the consent's own company: a connection
+      // belongs to exactly one scope, so there is nothing to find after it.
+      const isConsentedCompany = Effect.fn('AccessDecisionGate.isConsentedCompany')(function* isConsentedCompanyEffect(
+        legalEntityId: LegalEntityId,
+      ) {
+        const scopeRead = yield* Effect.option(
+          authority.readScope({ holders, legalEntityId, tenantId: TenantIdSchema.make(input.scope.tenantId) }),
+        );
+        if (Option.isNone(scopeRead)) {
+          return yield* accessDecisionUnavailable('A company scope of this tenant could not be read');
+        }
+        return Option.exists(scopeRead.value, (resolved) => resolved.scopeId === row.scopeId);
+      });
+      const consented = yield* Effect.findFirst(candidates, isConsentedCompany);
+      return Option.match(consented, { onNone: () => [], onSome: (legalEntityId) => [legalEntityId] });
     },
   );
 
@@ -1227,8 +1256,13 @@ export const makeAccessDecisionService = (
       if (candidates.value.length === 0 || actorResolution.workload === true) {
         return candidates.value;
       }
-      if (actor.agentConnection !== undefined && !(yield* agentConnectionIsLive(input, actor.agentConnection))) {
-        // An agent whose connection ended, lapsed or was consented again selects nothing on it.
+      // An agent whose connection ended, lapsed or was consented again selects nothing on it, and one that still
+      // holds answers only for the company its consent names.
+      const asked =
+        actor.agentConnection === undefined
+          ? candidates.value
+          : yield* agentConnectionCompanies(input, actor, actor.agentConnection, candidates.value);
+      if (asked.length === 0) {
         return [];
       }
       // A person selects a company they may act in. An agent selects one only where the agent itself AND the operator
@@ -1236,7 +1270,7 @@ export const makeAccessDecisionService = (
       const subjects = memberHoldersOf(actor).map(holderSubjectOf);
       const answers = yield* Effect.option(
         ports.check.checkBulk(
-          candidates.value.flatMap((legalEntityId) =>
+          asked.flatMap((legalEntityId) =>
             subjects.map((subject) => ({
               permission: SELECT_PERMISSION,
               resource: {
@@ -1248,11 +1282,11 @@ export const makeAccessDecisionService = (
           ),
         ),
       );
-      if (Option.isNone(answers) || answers.value.length !== candidates.value.length * subjects.length) {
+      if (Option.isNone(answers) || answers.value.length !== asked.length * subjects.length) {
         return yield* accessDecisionUnavailable('The authorization engine did not answer for every company');
       }
       const selectable: LegalEntityId[] = [];
-      for (const [index, candidate] of candidates.value.entries()) {
+      for (const [index, candidate] of asked.entries()) {
         const companyAnswers = answers.value.slice(index * subjects.length, (index + 1) * subjects.length);
         if (companyAnswers.some((answer) => answer.permissionship === 'error')) {
           return yield* accessDecisionUnavailable('The authorization engine could not answer for a company');

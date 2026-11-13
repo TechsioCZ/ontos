@@ -574,6 +574,43 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('an agent on authori
           expect(proposed.outcome).toBe('DENIED');
         }
         expect(yield* tenant.gate.selectableLegalEntities({ now: decisionAt, scope: apiKey })).toEqual([]);
+        // A consent granted in one company answers for that company only: with the agent admitted and connected in
+        // the other company, its company list never includes the company whose role it actually holds.
+        expect(yield* tenant.gate.selectableLegalEntities({ now: decisionAt, scope: connection.mcp })).toEqual([
+          company,
+        ]);
+        yield* tenant.admin
+          .unsafe(
+            `insert into core.principal_company_memberships (tenant_id, legal_entity_id, principal_id, affiliation, status)
+             values ('${tenant.tenantId}', '${otherCompany}', '${agent}', null, 'active')`,
+          )
+          .pipe(Effect.orDie);
+        const elsewhereGrant = yield* tenant.newId;
+        const openedElsewhere = yield* tenant.connections.open(
+          yield* sessionScope(tenant.tenantId, operator, otherCompany),
+          {
+            agentId: agent,
+            ceiling: consentCeilingOf({
+              catalog: tenant.release.entries,
+              cells: tenant.cellsOf([TASK_READ]),
+              modules: 'all',
+            }),
+            connectionId: agentConnectionIdOfGrant(elsewhereGrant),
+            legalEntityId: otherCompany,
+            validUntil: connectionEnd,
+          },
+        );
+        const elsewhereScope = yield* agentScope(
+          tenant.tenantId,
+          elsewhereGrant,
+          { connectionId: openedElsewhere.connectionId, revision: openedElsewhere.revision },
+          otherCompany,
+        );
+        const selectableElsewhere = yield* tenant.gate.selectableLegalEntities({
+          now: decisionAt,
+          scope: elsewhereScope,
+        });
+        expect(selectableElsewhere).not.toContain(company);
       }).pipe(Effect.provideService(AccessDecisionGate, tenant.gate)),
     ),
   );
@@ -752,7 +789,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('an agent on authori
           [TASK_READ, TASK_CREATE, TASK_DELETE],
           (cell) => cell.capabilityKey !== TASK_DELETE || cell.mode === 'propose',
         );
-        yield* assign(tenant, tenant.owner, reader, operator);
+        const operatorAssignment = yield* assign(tenant, tenant.owner, reader, operator);
         yield* admitAgent(tenant);
         yield* assign(tenant, tenant.owner, worker, 'agent');
         yield* seedOperators(tenant.admin, tenant.tenantId, [operator], 1);
@@ -782,6 +819,14 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('an agent on authori
         const lapsed = yield* tenant.gate.decide(ask(full.mcp, readCarrier, connectionEnd));
         expect(lapsed.outcome).toBe('DENIED');
         expect(codesOf(lapsed)).toEqual(['deny.connection_inactive']);
+        // Rights the operator loses AFTER the consent end the agent's authority on the next decision: the consent is
+        // a ceiling, never a right of its own.
+        const operatorIncarnation = yield* Effect.fromOption(
+          Option.fromUndefinedOr(operatorAssignment.assignment?.incarnationId),
+        ).pipe(Effect.orDie);
+        yield* tenant.people.unassignRole(tenant.owner, { incarnationId: operatorIncarnation });
+        const afterNarrowing = yield* tenant.gate.decide(ask(full.mcp, readCarrier));
+        expect(afterNarrowing.outcome).toBe('DENIED');
       }),
     ),
   );

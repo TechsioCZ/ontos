@@ -190,6 +190,31 @@ it('withholds an agent role that runs a sensitive capability, never the tenant, 
   expect(projected?.relationships.some((relationship) => relationship.relation === 'agent_member')).toBe(true);
 });
 
+it('withholds an agent role over any non-routine risk, and names that risk once', () => {
+  // 'critical' is not 'sensitive': the rule is "not routine", so a critical run cell is withheld the same way.
+  const critical = compile(
+    {
+      assignments: [assignment({ holder: agentHolder(AGENT) })],
+      roleRevisions: [revision({ cells: [cell({ capabilityKey: CAP_PAY, mode: 'run' })] })],
+    },
+    { catalogEntries: [{ ...partyEntry(CAP_PAY, 'critical'), amountInput: 'payload.amountMinor' }] },
+  );
+  expect(critical.withheldAgentAssignments).toEqual([
+    expect.objectContaining({ agentId: AGENT, reason: expect.stringContaining('critical'), roleId: ROLE }),
+  ]);
+  // A capability the release declares nothing for never reaches the withhold path: the cell itself is refused first,
+  // so no agent can hold it and the "undeclared" wording of the reason is unreachable by this route.
+  expect(
+    failureCodes(
+      {
+        assignments: [assignment({ holder: agentHolder(AGENT) })],
+        roleRevisions: [revision({ cells: [cell({ capabilityKey: CAP_PAY, mode: 'run' })] })],
+      },
+      { catalogEntries: [partyEntry(CAP_NOTE)] },
+    ),
+  ).toContain('access_projection_cell_outside_declaration');
+});
+
 it('shares one binding and one grant cell across every holder of a role (M1)', () => {
   const unit = scopeUnit();
   const binding = roleBindingObjectId(TENANT, SCOPE, ROLE);
