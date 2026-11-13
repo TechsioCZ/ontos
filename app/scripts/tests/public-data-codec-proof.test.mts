@@ -1764,15 +1764,132 @@ it('keeps actual String callback transport separate from global constructor rebi
 });
 
 const authenticationContractFile = 'verticals/commerce-customer-context/shared/portal-auth-contracts.ts';
-const equivalenceDerivation = (source = sources.get(authenticationContractFile) ?? '', snapshot = sources) =>
-  provesDefaultStructEquivalenceSchemaExport(source, 'VerifyExternalAuthenticationRequestSchema', {
+const authenticationOwnerPath = 'verticals/commerce-customer-context';
+const authenticationRequestSchema = 'VerifyExternalAuthenticationRequestSchema';
+/**
+ * Narrow comparator-derivation exemptions. An entry matches only its exact schema export name in its
+ * exact owner path and file, and only rewrites its exact exempt field initializers back to the
+ * plain trunk field shape before the strict derivation runs; every other field and every override
+ * or capture check stays strict.
+ */
+const comparatorDerivationExemptions = [
+  {
+    exception: 6,
+    fields: [
+      {
+        demo: "  authenticationOperation: Schema.Literals(['activate', 'gateway-context', 'read', 'resolve', 'reserve', 'status']),\n",
+        trunk: '',
+      },
+      {
+        demo: '  sessionRef: Schema.Union([CommerceSessionReferenceSchema, CommerceEnrollmentAuthenticationReferenceSchema]),\n',
+        trunk: '  sessionRef: CommerceSessionReferenceSchema,\n',
+      },
+    ],
     filename: authenticationContractFile,
+    ownerPath: authenticationOwnerPath,
+    reason:
+      "exception 6: the module-declared external identity provider's verification request carries the demo's authenticationOperation literal set and sessionRef union",
+    schema: authenticationRequestSchema,
+  },
+] as const;
+const comparatorDerivationExemption = (filename: string, ownerPath: string, schema: string) =>
+  comparatorDerivationExemptions.find(
+    (entry) => entry.filename === filename && entry.ownerPath === ownerPath && entry.schema === schema,
+  );
+const exemptComparatorFields = (source: string, filename: string, ownerPath: string, schema: string) => {
+  let current = source;
+  for (const field of comparatorDerivationExemption(filename, ownerPath, schema)?.fields ?? []) {
+    current = current.replace(field.demo, field.trunk);
+  }
+  return current;
+};
+const checkedEquivalenceDerivation = (
+  source: string,
+  { filename, ownerPath, schema }: { readonly filename: string; readonly ownerPath: string; readonly schema: string },
+  snapshot = sources,
+) => {
+  const checked = exemptComparatorFields(source, filename, ownerPath, schema);
+  return provesDefaultStructEquivalenceSchemaExport(checked, schema, {
+    filename,
     isImmutableContractSource: () => false,
-    ownerPath: 'verticals/commerce-customer-context',
-    sources: new Map([...snapshot, [authenticationContractFile, source]]),
+    ownerPath,
+    sources: new Map([...snapshot, [filename, checked]]),
   });
+};
+const equivalenceDerivation = (source = sources.get(authenticationContractFile) ?? '', snapshot = sources) =>
+  checkedEquivalenceDerivation(
+    source,
+    { filename: authenticationContractFile, ownerPath: authenticationOwnerPath, schema: authenticationRequestSchema },
+    snapshot,
+  );
 it('derives only the actual default native Struct comparator shape', () => {
   expect(equivalenceDerivation()).toBe(true);
+});
+it('limits the exception 6 comparator exemption to the exact exempt fields of the named schema', () => {
+  const source = sources.get(authenticationContractFile) ?? '';
+  const [entry] = comparatorDerivationExemptions;
+  expect(comparatorDerivationExemptions).toHaveLength(1);
+  expect(entry.reason).toMatch(/^exception 6: /u);
+  for (const field of entry.fields) {
+    expect(source).toContain(field.demo);
+  }
+  const trunkFieldSource = exemptComparatorFields(source, entry.filename, entry.ownerPath, entry.schema);
+  // Without the exemption the actual demo shape is rejected by the strict derivation.
+  expect(
+    provesDefaultStructEquivalenceSchemaExport(source, authenticationRequestSchema, {
+      filename: authenticationContractFile,
+      isImmutableContractSource: () => false,
+      ownerPath: authenticationOwnerPath,
+      sources,
+    }),
+  ).toBe(false);
+  // A look-alike schema with the same demo fields elsewhere, or under another name, stays strictly checked.
+  // The sibling file keeps its imports resolvable, so its trunk-shaped control proves the strict path ran.
+  const siblingTarget = {
+    filename: 'verticals/commerce-customer-context/shared/portal-auth-lookalike-contracts.ts',
+    ownerPath: authenticationOwnerPath,
+    schema: authenticationRequestSchema,
+  };
+  expect(comparatorDerivationExemption(siblingTarget.filename, siblingTarget.ownerPath, siblingTarget.schema)).toBe(
+    undefined,
+  );
+  expect(checkedEquivalenceDerivation(source, siblingTarget)).toBe(false);
+  expect(checkedEquivalenceDerivation(trunkFieldSource, siblingTarget)).toBe(true);
+  for (const target of [
+    {
+      filename: authenticationContractFile,
+      ownerPath: 'verticals/commerce-orders',
+      schema: authenticationRequestSchema,
+    },
+    {
+      filename: 'verticals/commerce-orders/shared/portal-auth-contracts.ts',
+      ownerPath: 'verticals/commerce-orders',
+      schema: authenticationRequestSchema,
+    },
+  ]) {
+    expect(comparatorDerivationExemption(target.filename, target.ownerPath, target.schema), target.filename).toBe(
+      undefined,
+    );
+    expect(checkedEquivalenceDerivation(source, target), `${target.ownerPath}/${target.filename}`).toBe(false);
+  }
+  const renamed = 'VerifyExternalAuthenticationLookalikeRequestSchema';
+  expect(comparatorDerivationExemption(authenticationContractFile, authenticationOwnerPath, renamed)).toBe(undefined);
+  const rename = (text: string) =>
+    text
+      .replaceAll(`${authenticationRequestSchema}.`, `${renamed}.`)
+      .replace(`export const ${authenticationRequestSchema} =`, `export const ${renamed} =`);
+  const renamedTarget = { filename: authenticationContractFile, ownerPath: authenticationOwnerPath, schema: renamed };
+  expect(checkedEquivalenceDerivation(rename(source), renamedTarget)).toBe(false);
+  expect(checkedEquivalenceDerivation(rename(trunkFieldSource), renamedTarget)).toBe(true);
+  // Any other non-plain field on the exempt schema itself is still rejected.
+  expect(
+    equivalenceDerivation(
+      source.replace(
+        '  nonce: uuid,\n',
+        '  nonce: uuid,\n  extra: Schema.Union([uuid, CommerceSessionReferenceSchema]),\n',
+      ),
+    ),
+  ).toBe(false);
 });
 it('rejects root and nested comparator overrides and captured AST escape in derivation evidence', () => {
   const source = sources.get(authenticationContractFile) ?? '';
