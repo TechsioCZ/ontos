@@ -13,7 +13,7 @@ import {
 } from '../../../shared/portal-auth/profile-api.ts';
 import type { CustomerOwnProfile, UpdateCustomerOwnProfile } from '../../../shared/portal-auth/profile-api.ts';
 import { updateOwnCustomerProfileAction } from '../../../src/actions/update-own-customer-profile.action.ts';
-import { customerOwnProfileRead } from '../../../src/api/customer-own-profile.read.ts';
+import { customerOwnProfileRead } from '../../../src/portal-auth/reads/customer-own-profile.read.ts';
 import { noStoreHeaders, requireTrustedOrigin } from '../http-transport.ts';
 import {
   OWN_PORTAL_AUDIENCE,

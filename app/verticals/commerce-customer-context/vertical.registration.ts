@@ -113,8 +113,8 @@ import { purchaseLimitEvaluationRead } from './src/api/purchase-limit-evaluation
 import { purchaseLimitPolicyReadRead } from './src/api/purchase-limit-policy-read.read.ts';
 import { repeatOrderPreparationRead } from './src/api/repeat-order-preparation.read.ts';
 import { retailAccessDecisionRead } from './src/api/retail-access-decision.read.ts';
-import { customerOwnConsentRead } from './src/api/customer-own-consent.read.ts';
-import { customerOwnProfileRead } from './src/api/customer-own-profile.read.ts';
+import { customerOwnConsentRead } from './src/portal-auth/reads/customer-own-consent.read.ts';
+import { customerOwnProfileRead } from './src/portal-auth/reads/customer-own-profile.read.ts';
 import { retailOrderHistoryDetailRead } from './src/api/retail-order-history-detail.read.ts';
 import { retailOrderHistoryRead } from './src/api/retail-order-history.read.ts';
 import { retailPortalProfileBindingReadRead } from './src/api/retail-portal-profile-binding-read.read.ts';

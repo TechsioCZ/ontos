@@ -2,21 +2,21 @@ import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ReadFinishContext } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
-import { ownPortalScope } from '../../api/portal-auth/own/own-portal-scope.ts';
-import { readCustomerPartyProfile } from '../../api/portal-auth/profile/party-profile.ts';
-import { profileUnavailable } from '../../api/portal-auth/profile/problems.ts';
+import { ownPortalScope } from '../../../api/portal-auth/own/own-portal-scope.ts';
+import { readCustomerPartyProfile } from '../../../api/portal-auth/profile/party-profile.ts';
+import { profileUnavailable } from '../../../api/portal-auth/profile/problems.ts';
 import {
   CustomerOwnProfileSchema,
   ProfileConflictProblemSchema,
   ProfileUnavailableProblemSchema,
-} from '../../shared/portal-auth/profile-api.ts';
+} from '../../../shared/portal-auth/profile-api.ts';
 import {
   CustomerOwnPortalReadInputSchema,
   PORTAL_OWN_OPERATION,
   STOREFRONT_CLIENT_WORKLOAD,
   portalSessionOwnerFacts,
-} from '../../shared/portal-auth/own-session.ts';
-import type { CustomerOwnPortalReadInput } from '../../shared/portal-auth/own-session.ts';
+} from '../../../shared/portal-auth/own-session.ts';
+import type { CustomerOwnPortalReadInput } from '../../../shared/portal-auth/own-session.ts';
 
 /** A governed read of the registered storefront client (O59, O73). */
 const customerProfileReadOwnEntrypoint = defineTenantModuleEntrypoint({

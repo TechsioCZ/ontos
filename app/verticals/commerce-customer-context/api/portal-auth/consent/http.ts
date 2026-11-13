@@ -14,7 +14,7 @@ import {
 import type { UpdateCustomerOwnConsent } from '../../../shared/portal-auth/consent-api.ts';
 import { UpdateOwnCustomerConsentPayloadSchema } from '../../../shared/portal-auth/own-session.ts';
 import { updateOwnCustomerConsentAction } from '../../../src/actions/update-own-customer-consent.action.ts';
-import { customerOwnConsentRead } from '../../../src/api/customer-own-consent.read.ts';
+import { customerOwnConsentRead } from '../../../src/portal-auth/reads/customer-own-consent.read.ts';
 import { noStoreHeaders, requireTrustedOrigin } from '../http-transport.ts';
 import {
   OWN_PORTAL_AUDIENCE,

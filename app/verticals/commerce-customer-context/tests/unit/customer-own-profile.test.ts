@@ -18,8 +18,8 @@ import {
 import { changeOwnCustomerPasswordAction } from '../../src/actions/change-own-customer-password.action.ts';
 import { updateOwnCustomerConsentAction } from '../../src/actions/update-own-customer-consent.action.ts';
 import { updateOwnCustomerProfileAction } from '../../src/actions/update-own-customer-profile.action.ts';
-import { customerOwnConsentRead } from '../../src/api/customer-own-consent.read.ts';
-import { customerOwnProfileRead } from '../../src/api/customer-own-profile.read.ts';
+import { customerOwnConsentRead } from '../../src/portal-auth/reads/customer-own-consent.read.ts';
+import { customerOwnProfileRead } from '../../src/portal-auth/reads/customer-own-profile.read.ts';
 import {
   makeCustomerOwnProfileClientLayer,
   readCustomerOwnProfileWithAuthorization,

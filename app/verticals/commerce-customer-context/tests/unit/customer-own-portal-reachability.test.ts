@@ -8,8 +8,8 @@ import { PORTAL_OWN_CARRIER } from '../../shared/portal-auth/own-session.ts';
 import { changeOwnCustomerPasswordAction } from '../../src/actions/change-own-customer-password.action.ts';
 import { updateOwnCustomerConsentAction } from '../../src/actions/update-own-customer-consent.action.ts';
 import { updateOwnCustomerProfileAction } from '../../src/actions/update-own-customer-profile.action.ts';
-import { customerOwnConsentRead } from '../../src/api/customer-own-consent.read.ts';
-import { customerOwnProfileRead } from '../../src/api/customer-own-profile.read.ts';
+import { customerOwnConsentRead } from '../../src/portal-auth/reads/customer-own-consent.read.ts';
+import { customerOwnProfileRead } from '../../src/portal-auth/reads/customer-own-profile.read.ts';
 
 /*
  * The five storefront self-service registrations are reachable only through their portal routes, which admit the
@@ -24,8 +24,8 @@ import { customerOwnProfileRead } from '../../src/api/customer-own-profile.read.
  */
 
 const REGISTRATIONS = [
-  ['src/api/customer-own-profile.read.ts', customerOwnProfileRead.descriptor, 'api/portal-auth/profile/http.ts'],
-  ['src/api/customer-own-consent.read.ts', customerOwnConsentRead.descriptor, 'api/portal-auth/consent/http.ts'],
+  ['src/portal-auth/reads/customer-own-profile.read.ts', customerOwnProfileRead.descriptor, 'api/portal-auth/profile/http.ts'],
+  ['src/portal-auth/reads/customer-own-consent.read.ts', customerOwnConsentRead.descriptor, 'api/portal-auth/consent/http.ts'],
   [
     'src/actions/update-own-customer-profile.action.ts',
     updateOwnCustomerProfileAction.descriptor,
