@@ -2,9 +2,11 @@ import { administrationProjectionLayer } from './oauth-connections-admin/adminis
 import { AgentModuleKeySchema, AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
 import { Effect, Layer, Schema } from 'effect' with { rstest: 'importActual' };
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
+import { makeTestAgentLifecycleAuthority } from '@app/core-runtime/testing/access-gate';
 import {
   ActionRuntime,
   ActionAuthorizationPreflight,
+  AgentLifecycleAuthority,
   ActiveApplicationCompositionService,
   ContextAccess,
   manageAgentStatusAction,
@@ -373,15 +375,19 @@ const fixture = (options: ReplayOptions = {}) =>
     const composition = yield* makeCompositionSnapshot([
       makeModuleContractFixture({ appId: 'notes', moduleId: AgentModuleKeySchema.make('fixture.notes') }),
     ]);
+    // The caller holds the agent-status right, which alone decides the agent's proposal withdrawal.
+    const agentStatusGate = makeTestAccessDecision({
+      answers: { 'core.identity.agent-status.manage': { outcome: 'ALLOWED' } },
+    });
     const preparation = yield* AgentProposalCommandPreparation.pipe(
       Effect.provide(AgentProposalCommandPreparationLive),
       Effect.provideService(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
       Effect.provideService(CoreDatabase, { executor: owner }),
       Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(composition) }),
-      // The caller holds the agent-status right, which alone decides the agent's proposal withdrawal.
+      Effect.provideService(AccessDecisionGate, agentStatusGate),
       Effect.provideService(
-        AccessDecisionGate,
-        makeTestAccessDecision({ answers: { 'core.identity.agent-status.manage': { outcome: 'ALLOWED' } } }),
+        AgentLifecycleAuthority,
+        makeTestAgentLifecycleAuthority({ prepare: () => 'allowed', recheck: () => 'allowed' }),
       ),
       Effect.provideService(ActionAuthority, {
         checkActionAuthorities: () => Effect.die('Lifecycle withdrawal does not confer business execution'),
@@ -401,7 +407,7 @@ const fixture = (options: ReplayOptions = {}) =>
         bindActionTestServices(manageAgentStatusAction, { transaction: scoped }),
         bindActionTestServices(mutateAgentProposalsAction, {
           ...proposalCommandsFromTransaction(scoped),
-          consumePreparation: preparation.consume,
+          consumePreparation: (input) => preparation.consume({ ...input, transaction: scoped }),
         }),
       ],
     }).pipe(Effect.provideService(ActionAuthorizationPreflight, preflight));

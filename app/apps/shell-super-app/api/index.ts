@@ -45,6 +45,7 @@ import type {
 
 import {
   makeActionRuntimeLive,
+  AgentLifecycleAuthorityLive,
   AgentProposalCommandPreparationLive,
   AgentProposalCommandAuthorizationPreflightLive,
   IdentityAdministrationDeniedAuditLive,
@@ -3744,6 +3745,8 @@ export const makeShellAuthenticationApiRuntime = (
   );
   // Agent-platform proposal preparation runs through the same canonical gate as every other protected surface.
   const proposalPreparationLayer = AgentProposalCommandPreparationLive.pipe(
+    // The lifecycle question of a withdrawal is prepared by the bound Action gate and re-checked in its transaction.
+    Layer.provide(AgentLifecycleAuthorityLive),
     Layer.provide(
       Layer.mergeAll(
         runtimeCorePersistenceLive,

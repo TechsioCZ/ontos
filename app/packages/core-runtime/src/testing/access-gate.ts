@@ -340,3 +340,6 @@ export const makeTestAccessGateLayers = (options: TestAccessGateScript = {}): Te
     Layer.succeed(LegalEntityCandidates, ports.candidates),
   );
 };
+
+/** The agent lifecycle question over a scripted gate, re-asked on re-check (see `AgentLifecycleAuthority`). */
+export { makeTestAgentLifecycleAuthority } from '../auth/agent-lifecycle-authority.ts';

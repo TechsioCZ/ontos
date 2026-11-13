@@ -92,6 +92,7 @@ import type { OperationalScope, OperationalScopeResolverService } from '../opera
 import { OperationalScopeResolver } from '../operations/context.ts';
 import { ContextAccess, isOwnerPermissionAccessTargetValid } from '../permissions/context-access.ts';
 import { ActionAuthorizationPreflight } from './owner-proof-preflight.ts';
+import { withPreparedAccessRecheck } from './owner-transaction-access.ts';
 import { ActionProposalAcceptedSchema } from './proposal-accepted.ts';
 import type { ActionProposalAccepted, ActionProposalSuccess, ActionSuccessContract } from './proposal-accepted.ts';
 import type { ActionAuthorizationPreflightService } from './owner-proof-preflight.ts';
@@ -2894,7 +2895,11 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             ActionCoreError | DomainErrorSchema['Type'],
             HandlerRequirements
           > = Effect.fn('ActionRuntime.transaction')(function* executeTransaction(drizzleTransaction: CoreTransaction) {
-            const scopedTransaction = yield* installScope(drizzleTransaction, scope, options.databaseIdentities);
+            // Core-owned handlers re-check questions they prepared before this transaction from its own snapshot.
+            const scopedTransaction = withPreparedAccessRecheck(
+              yield* installScope(drizzleTransaction, scope, options.databaseIdentities),
+              drizzleTransaction,
+            );
             notifyStage('database_scope_installed');
             yield* lockCompositionAuthority(drizzleTransaction, admittedCompositionRevision, 'write').pipe(
               Effect.mapError((cause) =>

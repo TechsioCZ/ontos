@@ -16,6 +16,9 @@ import type { OperationalScope } from '../operations/context.ts';
 // catalog (via `mutate-agent-proposals.action.ts`), so importing the implementation would cycle.
 import { ActionAuthority } from '../permissions/action-authority-contract.ts';
 import { AccessDecisionGate } from '../access/enforcement/contract.ts';
+import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
+import type { PreparedAccessDecision } from '../operations/access-gate.ts';
+import { AgentLifecycleAuthority } from './agent-lifecycle-authority.ts';
 import type { GateInput } from '../access/enforcement/contract.ts';
 import type { AccessDecision } from '../access/decision/contract.ts';
 import { manageAgentStatusAction } from '../modules/actions/manage-agent-status.action.ts';
@@ -38,6 +41,11 @@ import type { AgentProposalCommandSnapshot } from './agent-proposal-command-pers
 interface PreparedCommand {
   readonly compositionRevision: string;
   readonly expiresAt: number;
+  /**
+   * The lifecycle question of a withdrawal, prepared before the transaction; the execute step re-asks it from the
+   * Action transaction's own snapshot, so a right revoked after preparation withdraws nothing (F3).
+   */
+  readonly lifecycle?: PreparedAccessDecision;
   readonly payloadHash: string;
   readonly scopeHash: string;
   readonly snapshot: AgentProposalCommandSnapshot;
@@ -48,6 +56,8 @@ interface PreparationService {
     readonly compositionRevision: string;
     readonly payload: AgentProposalCommandPayload;
     readonly scope: OperationalScope;
+    /** The Action's own owner transaction: a prepared lifecycle question is re-asked inside it. */
+    readonly transaction: ScopedTransactionExecutor;
   }) => Effect.Effect<AgentProposalCommandSnapshot, AgentProposalCommandError>;
   readonly prepare: ActionAuthorizationPreflightService['prepare'];
 }
@@ -157,7 +167,8 @@ export const AgentProposalCommandPreparationLive = Layer.effect(
     const enrollment = yield* DatabaseIdentityEnrollmentContext;
     const composition = yield* ActiveApplicationCompositionService;
     const authority = yield* ActionAuthority;
-    const gate = yield* AccessDecisionGate;
+    // Prepares the lifecycle question outside SQL and re-checks it inside the Action transaction (F3).
+    const lifecycleAuthority = yield* AgentLifecycleAuthority;
     const prepared = yield* Ref.make<ReadonlyMap<string, PreparedCommand>>(new Map());
     const prepare = Effect.fn('AgentProposalCommand.prepare')(function* prepare(
       input: ActionAuthorizationPreflightInput,
@@ -193,9 +204,12 @@ export const AgentProposalCommandPreparationLive = Layer.effect(
         ],
         { concurrency: 2 },
       );
+      let lifecycle: PreparedAccessDecision | undefined;
       if (payload.operation === 'withdraw-pending-of-agent') {
-        const decision = yield* gate.decide(lifecycleQuestionOf(input.scope, DateTime.toDateUtc(yield* DateTime.now)));
-        if (input.scope.legalEntityId === undefined || !(yield* lifecycleAnswerOf(decision))) {
+        lifecycle = yield* lifecycleAuthority
+          .prepare(lifecycleQuestionOf(input.scope, DateTime.toDateUtc(yield* DateTime.now)))
+          .pipe(Effect.mapError(preflightUnavailable));
+        if (input.scope.legalEntityId === undefined || !(yield* lifecycleAnswerOf(lifecycle.decision))) {
           return { outcome: 'denied' as const };
         }
       } else {
@@ -238,13 +252,14 @@ export const AgentProposalCommandPreparationLive = Layer.effect(
         if (live.size >= 1024 && !live.has(input.actionInvocationId)) {
           return [false, live] as const;
         }
-        live.set(input.actionInvocationId, {
+        const entry: PreparedCommand = {
           compositionRevision: active.composition.revision,
           expiresAt: now + 120_000,
           payloadHash: computeCanonicalValueHash(payload),
           scopeHash: computeCanonicalValueHash(input.scope),
           snapshot,
-        });
+        };
+        live.set(input.actionInvocationId, lifecycle === undefined ? entry : { ...entry, lifecycle });
         return [true, live] as const;
       });
       if (!inserted) {
@@ -269,6 +284,15 @@ export const AgentProposalCommandPreparationLive = Layer.effect(
           proof.scopeHash !== computeCanonicalValueHash(input.scope)
         ) {
           return yield* proposalCommandUnavailable('An exact native invocation preparation is required');
+        }
+        if (proof.lifecycle !== undefined) {
+          // Re-asked from this transaction's snapshot under the authority fence: a revoked right is refused here.
+          const current = yield* lifecycleAuthority
+            .recheck(proof.lifecycle, DateTime.toDateUtc(yield* DateTime.now), input.transaction)
+            .pipe(Effect.mapError(proposalCommandUnavailable));
+          if (current.outcome !== 'ALLOWED') {
+            return yield* proposalCommandUnavailable('Agent administration authority is no longer current');
+          }
         }
         return proof.snapshot;
       }),

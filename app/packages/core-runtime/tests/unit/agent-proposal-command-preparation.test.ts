@@ -23,8 +23,10 @@ import { ActionAuthority } from '../../src/permissions/action-authority.ts';
 import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
 import type { AccessDecisionService, GateInput } from '../../src/access/enforcement/contract.ts';
 import { makeTestAccessDecision } from '../../src/access/enforcement/testing.ts';
-import { testAccessSpecOf } from '../../src/testing/access-gate.ts';
-import type { TestAccessOutcome } from '../../src/testing/access-gate.ts';
+import { makeTestAgentLifecycleAuthority } from '../../src/testing/access-gate.ts';
+import type { TestAgentLifecycleAnswers } from '../../src/auth/agent-lifecycle-authority.ts';
+import { AgentLifecycleAuthority } from '../../src/auth/agent-lifecycle-authority.ts';
+import type { ScopedTransactionExecutor } from '../../src/db/scoped-transaction.ts';
 import {
   agentId,
   batchId,
@@ -131,36 +133,31 @@ const preflightInput = (payload: Schema.Json = claimPayload) => ({
   principal: scope,
   scope,
 });
+/** A lifecycle authority no lifecycle-free command may ask: only a withdrawal asks the agent administration right. */
+const unaskedLifecycle: TestAgentLifecycleAnswers = {
+  prepare: () => {
+    throw new Error('Only an agent withdrawal asks the agent administration right');
+  },
+  recheck: () => {
+    throw new Error('Only an agent withdrawal re-checks the agent administration right');
+  },
+};
+
+/** The scripted lifecycle authority never reads the transaction it is handed. */
+const noTransaction: ScopedTransactionExecutor = Schema.decodeUnknownSync(Schema.Any)({});
 const forbiddenContext = () => Effect.die('No people, tenant or resource permissions authorize lifecycle commands');
 /** A gate no lifecycle-free command may ask: only withdrawal asks the agent administration right. */
 const unaskedGate: AccessDecisionService = {
   ...makeTestAccessDecision(),
   decide: () => Effect.die('Only an agent withdrawal asks the gate here'),
 };
-/** The gate answering `core.identity.agent-status.manage`, and recording what it was asked. */
-const agentStatusGate = (
-  outcome: TestAccessOutcome,
-  asked: GateInput[],
-  transactionOpen: () => boolean,
-): AccessDecisionService => {
-  const scripted = makeTestAccessDecision(testAccessSpecOf({ 'core.identity.agent-status.manage': outcome }));
-  return {
-    ...scripted,
-    decide: (input: GateInput) => {
-      // The authority is asked outside any SQL transaction, as every remote question is.
-      expect(transactionOpen()).toBe(false);
-      asked.push(input);
-      return scripted.decide(input);
-    },
-  };
-};
-
 // Capture one real preparation service in the native test scope so prepare/consume share its one-shot state.
 const makePreparation = Effect.fn('AgentProposalCommandPreparationTest.make')(function* makePreparation(
   database: (typeof CoreDatabase.Service)['executor'],
   gate: AccessDecisionService,
   authority: typeof ActionAuthority.Service,
   fixture: typeof composition = composition,
+  lifecycle: TestAgentLifecycleAnswers = unaskedLifecycle,
 ) {
   const services = yield* Layer.build(
     AgentProposalCommandPreparationLive.pipe(
@@ -170,6 +167,7 @@ const makePreparation = Effect.fn('AgentProposalCommandPreparationTest.make')(fu
           Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
           outboxWorkerCompositionLayer(fixture),
           Layer.succeed(AccessDecisionGate, gate),
+          Layer.succeed(AgentLifecycleAuthority, makeTestAgentLifecycleAuthority(lifecycle)),
           Layer.succeed(ActionAuthority, authority),
         ),
       ),
@@ -185,6 +183,7 @@ for (const [outcome, expected] of [
   it.effect(`withdrawal is decided by the agent administration right (${outcome}), never by business execute`, () =>
     Effect.gen(function* administration() {
       const asked: GateInput[] = [];
+      let rechecks = 0;
       let transactionOpen = false;
       const database = yield* makeTestDatabase((sql, params) => {
         if (sql === 'BEGIN') {
@@ -226,6 +225,7 @@ for (const [outcome, expected] of [
             compositionRevision: composition.revision,
             payload,
             scope,
+            transaction: noTransaction,
           });
           expect(snapshot.proposer.status).toBe('disabled');
         }
@@ -234,16 +234,31 @@ for (const [outcome, expected] of [
           AgentProposalCommandPreparation,
           yield* makePreparation(
             database,
-            agentStatusGate(outcome, asked, () => transactionOpen),
+            unaskedGate,
             {
               checkActionAuthorities: forbiddenContext,
               checkActionProposalPermission: forbiddenContext,
             },
+            composition,
+            {
+              prepare: (question) => {
+                // The authority is asked outside any SQL transaction, as every remote question is.
+                expect(transactionOpen).toBe(false);
+                asked.push(question);
+                return outcome;
+              },
+              recheck: () => {
+                rechecks += 1;
+                return outcome;
+              },
+            },
           ),
         ),
       );
-      // The one question is the agent-status right, in the request's own company.
+      // The one question is the agent-status right, in the request's own company: asked when the invocation is prepared
+      // and, for an allowed withdrawal, re-checked inside its transaction before anything is withdrawn.
       expect(asked).toHaveLength(1);
+      expect(rechecks).toBe(expected === 'not_applicable' ? 1 : 0);
       expect(asked[0]).toMatchObject({
         carrier: { accessDeclaration: { key: 'core.identity.agent-status.manage' } },
         legalEntityScope: 'required',
@@ -252,6 +267,59 @@ for (const [outcome, expected] of [
     }),
   );
 }
+
+it.effect('a withdrawal whose agent right is revoked between preparation and execution is refused there', () =>
+  Effect.gen(function* revokedBeforeExecution() {
+    let revoked = false;
+    let rechecks = 0;
+    const database = yield* makeTestDatabase((sql, params) => {
+      if (sql.includes('current_setting')) {
+        return Effect.succeed([{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
+      }
+      if (sql.includes('from "core"."principals"')) {
+        const isAgent = params.includes(agentId);
+        return Effect.succeed([
+          {
+            displayName: 'Actor',
+            kind: isAgent ? 'agent' : 'human',
+            principalId: isAgent ? agentId : humanId,
+            status: isAgent ? 'disabled' : 'active',
+          },
+        ]);
+      }
+      return Effect.succeed(sql.includes('from "core"."agent_proposals"') ? [proposalSqlRow(proposalRow())] : []);
+    });
+    // The right holds when the invocation is prepared and is revoked before its transaction runs.
+    const preparation = yield* makePreparation(
+      database,
+      unaskedGate,
+      { checkActionAuthorities: forbiddenContext, checkActionProposalPermission: forbiddenContext },
+      composition,
+      {
+        prepare: () => 'allowed',
+        recheck: () => {
+          rechecks += 1;
+          return revoked ? 'denied' : 'allowed';
+        },
+      },
+    );
+    const payload = { batchId, note: 'Agent disabled', operation: 'withdraw-pending-of-agent' as const };
+    expect((yield* preparation.prepare(preflightInput(payload))).outcome).toBe('not_applicable');
+    revoked = true;
+    const failure = yield* preparation
+      .consume({
+        actionInvocationId: nextInvocationId,
+        compositionRevision: composition.revision,
+        payload,
+        scope,
+        transaction: noTransaction,
+      })
+      .pipe(Effect.flip);
+    // Refused before the snapshot reaches the execute step: nothing is withdrawn.
+    expect(failure.code).toBe('agent_proposal_unavailable');
+    expect(rechecks).toBe(1);
+  }),
+);
 
 for (const propose of ['allowed', 'denied'] as const) {
   it.effect(`agent submission requires propose=${propose} independently of human execution`, () =>
@@ -565,6 +633,7 @@ for (const [name, execute, proposerPermission, expected] of [
             compositionRevision: composition.revision,
             payload: claimPayload,
             scope,
+            transaction: noTransaction,
           });
           expect(snapshot.rows.map((row) => row.proposalId)).toEqual([proposalId]);
           const reused = yield* preparation
@@ -573,6 +642,7 @@ for (const [name, execute, proposerPermission, expected] of [
               compositionRevision: composition.revision,
               payload: claimPayload,
               scope,
+              transaction: noTransaction,
             })
             .pipe(Effect.flip);
           expect(reused.code).toBe('agent_proposal_unavailable');
@@ -707,6 +777,7 @@ for (const mismatch of ['payload', 'scope', 'composition'] as const) {
             compositionRevision: mismatch === 'composition' ? 'a'.repeat(64) : composition.revision,
             payload,
             scope: mismatch === 'scope' ? { ...scope, authContextRef: 'a-different-admitted-request' } : scope,
+            transaction: noTransaction,
           })
           .pipe(Effect.flip);
         expect(failure.code).toBe('agent_proposal_unavailable');
@@ -716,6 +787,7 @@ for (const mismatch of ['payload', 'scope', 'composition'] as const) {
             compositionRevision: composition.revision,
             payload: claimPayload,
             scope,
+            transaction: noTransaction,
           })
           .pipe(Effect.flip);
         expect(consumed.code).toBe('agent_proposal_unavailable');
