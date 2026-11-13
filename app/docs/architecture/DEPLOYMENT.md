@@ -563,6 +563,23 @@ gates.
 
 Stage deploys from `demo/sales-crm` (`zerops-stage.yml`), never from `main`.
 
+## Demo branch divergence from main
+
+When `main` merges into `demo/sales-crm`, main's design wins except for these recorded exceptions:
+
+1. Owner-action approvals and agent proposals, including the AI staleness comparators.
+2. The optional `mcp` key in module manifests.
+3. Staged prepare/load/finish reads (helpers with the `Staged` suffix).
+4. Owner-declared Search presentation.
+5. Build-time public components.
+6. The module-declared external identity provider (Customer Context portal auth).
+7. Demo capability issuers.
+8. Manifest-declared registered-workload calls.
+
+Zerops-only deployment: the demo keeps main's GATES and none of main's deploy jobs or Cloudflare/edge workflows; it deploys through `zerops-stage.yml`. The deploy chain behind `MAIN_DEPLOY_ENABLED` in `ultramodern-workspace-gates.yml` and the workflows `active-application-composition-refresh.yml`, `initial-composition-cutover.yml` and `stage-edge-cost-guard.yml` are absent on purpose.
+
+Upstream risk when the demo merges back into `main`: Tax keeps the demo's migrations `20261023223119_gateway-assertion-redemptions` and `20261030121613_gateway-assertion-redemption-main-shape` instead of main's `20261109213238_tax_gateway_assertion_redemptions`. A database that already ran main's migration would replay the demo's two by name. Reconcile the Tax migration history before that merge lands.
+
 ## Pull-request and release hygiene
 
 Every deploy-affecting PR includes a deployment-impact section containing:
