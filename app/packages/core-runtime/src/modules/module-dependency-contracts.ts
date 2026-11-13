@@ -227,3 +227,30 @@ export const tenantModuleIntrinsicDependencyClosure = Effect.fn('TenantModuleSta
     return [...required].toSorted();
   },
 );
+
+/**
+ * The modules activating `moduleKey` installs with it: its manifest's `activation.installsWith`, and theirs in turn,
+ * never the module itself. Each must be published and able to be active; otherwise the activation is refused.
+ */
+export const tenantModuleInstallsWithClosure = Effect.fn('TenantModuleState.installsWithClosure')(
+  function* installsWithClosure(catalog: InstalledModuleCatalog, moduleKey: string) {
+    const found = new Set<string>();
+    const pending = [moduleKey];
+    for (let key = pending.shift(); key !== undefined; key = pending.shift()) {
+      const contract = catalog.getByModuleId(key);
+      if (contract === undefined) {
+        return yield* unsatisfiedDependency();
+      }
+      for (const companion of contract.manifest.activation.installsWith ?? []) {
+        if (companion !== moduleKey && !found.has(companion)) {
+          if (catalog.getByModuleId(companion)?.manifest.activation.supportedStates.includes('active') !== true) {
+            return yield* unsatisfiedDependency();
+          }
+          found.add(companion);
+          pending.push(companion);
+        }
+      }
+    }
+    return [...found].toSorted();
+  },
+);

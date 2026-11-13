@@ -53,7 +53,11 @@ import {
   accessRolesEntrypoints,
   accessRolesFailureProblem,
 } from '../../api/access-admin/roles.ts';
-import { AccessAdminSession, accessAdminAuthenticationRequiredProblem } from '../../api/access-admin/session.ts';
+import {
+  AccessAdminSession,
+  accessAdminAuthenticationRequiredProblem,
+  accessAdminSavedPendingProblem,
+} from '../../api/access-admin/session.ts';
 import type { OperationalScope } from '@app/core-runtime';
 
 /*
@@ -640,7 +644,10 @@ it.effect('maps every Core refusal onto the one status a client can act on', () 
     expect(accessRolesFailureProblem({ code: 'access_changes_revision_stale', reason: 'x' }).status).toBe(409);
     expect(accessRolesFailureProblem({ code: 'access_changes_record_conflict', reason: 'x' }).status).toBe(409);
     expect(accessRolesFailureProblem({ code: 'access_changes_store_unavailable', reason: 'x' }).status).toBe(503);
-    expect(accessRolesFailureProblem({ code: 'access_projection_write_unavailable', reason: 'x' }).status).toBe(503);
+    // The role revision is recorded before it is projected: a projection that did not complete is a saved change.
+    expect(accessRolesFailureProblem({ code: 'access_projection_write_unavailable', reason: 'x' })).toEqual(
+      accessAdminSavedPendingProblem(),
+    );
     expect(accessRolesFailureProblem({ code: 'access_changes_capability_not_configurable', reason: 'x' }).status).toBe(
       422,
     );

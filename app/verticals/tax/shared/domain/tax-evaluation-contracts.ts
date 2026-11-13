@@ -1,4 +1,4 @@
-import { OntosModuleIdSchema } from '@app/core-runtime';
+import { OntosModuleIdSchema } from '@app/core-runtime/modules/module-id';
 import { Schema } from 'effect';
 
 import {

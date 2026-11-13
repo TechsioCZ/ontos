@@ -174,6 +174,11 @@ export const administrationProjectionLayer = (
     loadProjection: (scope) =>
       Effect.gen(function* loadProjection() {
         assertScope(scope);
+        // The writer reads the intent twice per reconcile: before it takes the fence, and again under it to see any
+        // intent written in between. Only the first read starts a reconcile, so only it is observed and recorded.
+        if (fence.state === 'Changing') {
+          return intent;
+        }
         yield* observe(scope);
         reconciled.push(scope.tenantId);
         scopes.push(scope);

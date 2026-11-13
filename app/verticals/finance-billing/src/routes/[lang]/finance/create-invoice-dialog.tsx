@@ -15,13 +15,16 @@ import {
   lineValueIssue,
   newDraftLine,
   PAYMENT_TERM_DAYS,
-  toInvoiceLine,
+  storedLinesOf,
 } from '../../../../shared/domain/invoice-draft.ts';
 import type { DraftLine, DraftLineKind, PaymentTermDays } from '../../../../shared/domain/invoice-draft.ts';
 import { DOCUMENT_KINDS, DraftTotalsSummary, IssueDateField, issueDateProblem } from './create-invoice-fields.tsx';
 import { FinanceSaveActions, useFinanceFormSave } from './finance-form-save.tsx';
 import { useCreateInvoiceFeedback, zeroPriceChecked } from './create-invoice-toast.tsx';
 import { InvoiceLineEditor } from './invoice-line-editor.tsx';
+import { choicesOf, useVatChoices } from './use-vat-choices.ts';
+import { defaultLineVatChoice, forSellerRegime } from '../../../../shared/domain/line-vat.ts';
+import type { VatChoices } from '../../../../shared/apis/vat-choices.ts';
 import { formLabelProps } from './invoice-view.ts';
 import { emptyObjectSelection, objectAnchors, ObjectFields } from './object-fields.tsx';
 import type { ObjectSelection } from './object-fields.tsx';
@@ -45,11 +48,11 @@ interface Draft {
   readonly paymentDays: PaymentTermDays;
 }
 
-const emptyDraft = (lineKind: DraftLineKind): Draft => ({
+const emptyDraft = (lineKind: DraftLineKind, regime?: VatChoices['regime']): Draft => ({
   customerId: '',
   documentKind: 'STANDARD',
   issueDate: DateTime.formatIsoDateUtc(DateTime.nowUnsafe()),
-  lines: [newDraftLine('line-1', lineKind)],
+  lines: [newDraftLine('line-1', lineKind, defaultLineVatChoice('OUTGOING', regime))],
   object: emptyObjectSelection,
   paymentDays: 14,
 });
@@ -73,8 +76,13 @@ const CreateInvoiceForm = ({ onOpenChange, vm }: Omit<CreateInvoiceDialogProps, 
   /** Set by the first Uložit that finds a 0 Kč line; the next Uložit creates the draft anyway. */
   const [zeroPriceAcknowledged, setZeroPriceAcknowledged] = useState(false);
   const lineSequence = useRef(1);
-  const initial = emptyDraft(defaultLineKind);
-  const [draft, setDraft] = useState<Draft>(initial);
+  const [typed, setTyped] = useState<Draft>(() => emptyDraft(defaultLineKind));
+  const vat = useVatChoices(vm.scope, typed.issueDate);
+  const choices = choicesOf(vat);
+  const regime = choices?.regime;
+  // Once Tax says the company is not a VAT payer, every line on a classification reads as the non-payer treatment.
+  const draft: Draft = { ...typed, lines: typed.lines.map((line) => forSellerRegime(line, regime)) };
+  const initial = emptyDraft(defaultLineKind, regime);
   const [customerQuery, setCustomerQuery] = useState('');
   const customers = references.customers.filter((customer) => customer.status === 'ACTIVE');
   const customerOf = (value: Draft) => customers.find((item) => item.partyId === value.customerId);
@@ -85,16 +93,17 @@ const CreateInvoiceForm = ({ onOpenChange, vm }: Omit<CreateInvoiceDialogProps, 
       customer !== undefined &&
       dueDate !== undefined &&
       isPlausibleIssueDate(value.issueDate) &&
-      value.lines.every((line) => lineIssue(line) === undefined) &&
-      draftTotals(value.lines) !== undefined;
-    return valid
+      value.lines.every((line) => lineIssue(line, choices, 'OUTGOING') === undefined) &&
+      draftTotals(value.lines, choices, 'OUTGOING') !== undefined;
+    const lines = storedLinesOf(value.lines, choices);
+    return valid && lines !== undefined
       ? {
           anchors: objectAnchors(vm.objects, { ...value.object, contractId: '' }),
           customer,
           documentKind: value.documentKind,
           dueDate,
           issueDate: value.issueDate,
-          lines: value.lines.map(toInvoiceLine),
+          lines,
         }
       : undefined;
   };
@@ -108,7 +117,7 @@ const CreateInvoiceForm = ({ onOpenChange, vm }: Omit<CreateInvoiceDialogProps, 
         feedback.created(outcome.invoice);
       }
     },
-    reset: setDraft,
+    reset: setTyped,
     send: (value) => {
       const input = inputOf(value);
       return input === undefined ? undefined : createDraft(input);
@@ -119,7 +128,7 @@ const CreateInvoiceForm = ({ onOpenChange, vm }: Omit<CreateInvoiceDialogProps, 
   const showIssues = form.record.status === 'invalid';
   const { issueDate } = draft;
   const dueDate = issueDate === '' ? undefined : addCalendarDays(issueDate, draft.paymentDays);
-  const totals = draftTotals(draft.lines);
+  const totals = draftTotals(draft.lines, choices, 'OUTGOING');
   // A 0 Kč line can be a gift, so it is not an error, but it is never saved without a second, deliberate Uložit.
   const hasZeroPriceLine = inputOf(draft) !== undefined && draft.lines.some((line) => line.unitPriceMinor === 0);
   const { checked, zeroPriceWarning } = zeroPriceChecked(form, hasZeroPriceLine, [
@@ -138,16 +147,16 @@ const CreateInvoiceForm = ({ onOpenChange, vm }: Omit<CreateInvoiceDialogProps, 
     const label = item.companyId === null ? name : `${name} · ${companyIdLabel} ${item.companyId}`;
     return matchesSearch(label, customerQuery) ? [{ id: item.partyId, label, value: item.partyId }] : [];
   });
-  const update = (patch: Partial<Draft>) => setDraft((current) => ({ ...current, ...patch }));
+  const update = (patch: Partial<Draft>) => setTyped((current) => ({ ...current, ...patch }));
   // Any change to the lines asks again before a 0 Kč line is saved.
   const setLines = (next: (lines: readonly DraftLine[]) => readonly DraftLine[]) => {
     setZeroPriceAcknowledged(false);
-    setDraft((current) => ({ ...current, lines: next(current.lines) }));
+    setTyped((current) => ({ ...current, lines: next(current.lines) }));
   };
   const addLine = () => {
     lineSequence.current += 1;
     const key = `line-${lineSequence.current}`;
-    setLines((lines) => [...lines, newDraftLine(key, defaultLineKind)]);
+    setLines((lines) => [...lines, newDraftLine(key, defaultLineKind, defaultLineVatChoice('OUTGOING', regime))]);
   };
   const updateLine = (lineKey: string, next: DraftLine) =>
     setLines((lines) => lines.map((item) => (item.key === lineKey ? next : item)));
@@ -253,9 +262,10 @@ const CreateInvoiceForm = ({ onOpenChange, vm }: Omit<CreateInvoiceDialogProps, 
             {draft.lines.map((line, index) => (
               <InvoiceLineEditor
                 canRemove={draft.lines.length > 1}
+                direction="OUTGOING"
                 // A mistyped number is flagged as soon as it is typed; a missing product or description once the
                 // draft is held back.
-                issue={showIssues ? lineIssue(line) : lineValueIssue(line)}
+                issue={showIssues ? lineIssue(line, choices, 'OUTGOING') : lineValueIssue(line)}
                 key={line.key}
                 line={line}
                 onChange={(next) => updateLine(line.key, next)}
@@ -264,6 +274,7 @@ const CreateInvoiceForm = ({ onOpenChange, vm }: Omit<CreateInvoiceDialogProps, 
                 priceList={priceList}
                 products={references.products.filter((product) => product.active)}
                 productsReadable={references.productsReadable !== false}
+                vat={vat}
               />
             ))}
             <div>

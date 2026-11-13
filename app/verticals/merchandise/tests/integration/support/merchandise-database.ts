@@ -23,7 +23,10 @@ import {
   stockMovements,
 } from '../../../src/database/schema.ts';
 import { replaceSnapshot, whereScope } from '../../../src/services/merchandise-store.ts';
+import { grossPriceOf, realVariantsOf } from '../../../src/services/stock-levels.ts';
 import type { StoreScope } from '../../../src/services/merchandise-store.ts';
+import { CompanyTaxRatesSchema } from '../../../src/services/tax-rates.ts';
+import { TEST_COMPANY_TAX_RATES, TEST_PRICING, TEST_RATES } from '../../support/tax-fixtures.ts';
 
 export type MerchandiseTestDatabase = TestDatabaseFromClient<typeof merchandiseRelations>;
 const MerchandiseDatabase = Context.Service<MerchandiseTestDatabase>('MerchandiseTests.Database');
@@ -70,21 +73,25 @@ export const withMerchandise = <A, E>(
       const db = Context.get(services, MerchandiseDatabase);
       const scope: StoreScope = { legalEntityId: randomUUID(), tenantId: randomUUID() };
       yield* Effect.addFinalizer(() => deleteScope(db, scope).pipe(Effect.orDie));
-      const revision = yield* db.transaction((transaction) => replaceSnapshot(transaction, scope, state));
+      // The company synced with Tax's Czech baseline, as every selling company is before its catalog is read.
+      const revision = yield* db.transaction((transaction) => replaceSnapshot(transaction, scope, state, TEST_PRICING));
+      const taxRates = yield* Schema.encodeEffect(CompanyTaxRatesSchema)(TEST_COMPANY_TAX_RATES);
+      yield* db.update(catalogHeads).set({ taxRates }).where(whereScope(catalogHeads, scope));
       return yield* run({ db, revision, scope });
     }),
   );
 
 export const at = '2026-10-19T08:00:00.000Z';
 
+const STANDARD = 'cz.vat.standard';
 const base = {
   active: true,
   createdAt: at,
   lowStockThreshold: 0,
   priceHistory: [],
+  taxClassificationCode: STANDARD,
   unit: 'ks',
   updatedAt: at,
-  vatRate: 21,
 };
 
 /** Encoded catalog used by the storefront read tests (two categories, four products, two storefront orders). */
@@ -121,13 +128,25 @@ export const catalogInput = {
   ],
   homepageFeaturedProductIds: ['p3'],
   movements: [{ at, delta: 5, id: 'receipt', productId: 'p1', reason: 'RECEIPT', variantId: 'v1' }],
+  // Lines as this release writes them, with the classification of their rate. A rate-only line is the release
+  // before's shape: the expand step's trigger classifies it on write, so it would not read back as written.
   orders: [
     {
       channel: 'STOREFRONT',
       clientRequestId: 'secret-request-1',
       createdAt: at,
       id: 'o1',
-      lines: [{ productId: 'p1', productName: 'P1', quantity: 1, sku: 'P1', unitPriceMinor: 100, vatRate: 21 }],
+      lines: [
+        {
+          productId: 'p1',
+          productName: 'P1',
+          quantity: 1,
+          sku: 'P1',
+          taxClassificationCode: STANDARD,
+          unitPriceMinor: 100,
+          vatRate: 21,
+        },
+      ],
       number: 'OBJ-2026-0001',
       partyId: 'storefront-guest',
       status: 'NEW',
@@ -148,7 +167,17 @@ export const catalogInput = {
         reason: 'Ukázka skončila',
       },
       id: 'o2',
-      lines: [{ productId: 'p1', productName: 'P1', quantity: 1, sku: 'P1', unitPriceMinor: 100, vatRate: 21 }],
+      lines: [
+        {
+          productId: 'p1',
+          productName: 'P1',
+          quantity: 1,
+          sku: 'P1',
+          taxClassificationCode: STANDARD,
+          unitPriceMinor: 100,
+          vatRate: 21,
+        },
+      ],
       number: 'OBJ-2026-0002',
       partyId: 'storefront-guest',
       status: 'NEW',
@@ -210,3 +239,22 @@ export const catalogInput = {
 };
 
 export const catalogState = decodeState(catalogInput);
+
+/**
+ * The catalog as Merchandise stores it today: every priced product and variant carries the gross entered with its
+ * price (at the Czech baseline rates). Legacy rows without one are covered where that is the point of the test.
+ */
+export const withStoredGross = (state: MerchandiseState): MerchandiseState => ({
+  ...state,
+  products: state.products.map((product) => {
+    const rate = TEST_RATES[product.taxClassificationCode];
+    const variants = product.variants?.map((variant) => {
+      const gross = variant.priceMinor === undefined ? undefined : grossPriceOf(variant, variant.priceMinor, rate);
+      return gross === undefined ? variant : { ...variant, grossPriceMinor: gross };
+    });
+    const gross =
+      realVariantsOf(product).length > 0 ? undefined : grossPriceOf(product, product.currentPriceMinor, rate);
+    const priced = gross === undefined ? product : { ...product, grossPriceMinor: gross };
+    return variants === undefined ? priced : { ...priced, variants };
+  }),
+});

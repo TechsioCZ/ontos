@@ -40,6 +40,7 @@ export const AUTHORIZATION_CATALOG_ARTIFACT_PATH = 'topology/authorization-catal
 const ArtifactActorSchema = Schema.Struct({
   callers: AccessActorSchema.fields.callers,
   subject: AccessActorSchema.fields.subject,
+  subjectWorkloadCallers: AccessActorSchema.fields.subjectWorkloadCallers,
   subjectWorkloads: AccessActorSchema.fields.subjectWorkloads,
 });
 
@@ -95,12 +96,19 @@ type ArtifactActor = NonNullable<AccessCatalogArtifactDescriptor['actor']>;
 /** One module caller in canonical order: callers and workload subjects by key, absent when not declared. */
 const sortedActorOf = (actor: ArtifactActor): ArtifactActor => {
   const callers = EffectArray.sort(actor.callers, Order.make(compareText));
-  return actor.subjectWorkloads === undefined
-    ? { callers, subject: actor.subject }
+  if (actor.subjectWorkloads === undefined) {
+    return { callers, subject: actor.subject };
+  }
+  const withWorkloads = {
+    callers,
+    subject: actor.subject,
+    subjectWorkloads: EffectArray.sort(actor.subjectWorkloads, Order.make(compareText)),
+  };
+  return actor.subjectWorkloadCallers === undefined
+    ? withWorkloads
     : {
-        callers,
-        subject: actor.subject,
-        subjectWorkloads: EffectArray.sort(actor.subjectWorkloads, Order.make(compareText)),
+        ...withWorkloads,
+        subjectWorkloadCallers: EffectArray.sort(actor.subjectWorkloadCallers, Order.make(compareText)),
       };
 };
 

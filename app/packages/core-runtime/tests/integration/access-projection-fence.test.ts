@@ -1,417 +1,1004 @@
-import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Cause, Context, Crypto, Deferred, Effect, Exit, Fiber, Layer, Result, Schema } from 'effect';
+import { Clock, Deferred, Duration, Effect, Fiber, FileSystem, Layer, Option, Ref, Schema } from 'effect';
+import type { Context } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
-import { TenantAccessBootstrap, TenantAccessBootstrapLive } from '../../src/access/bootstrap/index.ts';
-import { tenantContextScopeId } from '../../src/access/bootstrap/persistence.ts';
-import { AccessChangesStoreLive } from '../../src/access/changes/persistence/drizzle-store.ts';
-import { tenantObjectId } from '../../src/access/compiler/object-id.ts';
-import type { AccessRelationship } from '../../src/access/compiler/relationship.ts';
-import {
-  makeAccessProjectionCompiler,
-  makeAccessProjectionTransport,
-} from '../../src/access/compiler/spice-db-compiler.ts';
-import { LegalEntityIdSchema, PrincipalIdSchema, TenantIdSchema } from '../../src/access/ids.ts';
-import type { LegalEntityId, PrincipalId, TenantId } from '../../src/access/ids.ts';
-import { AccessCatalogSnapshotWriterLive } from '../../src/access/intent/catalog-snapshot-writer.ts';
-import {
-  AccessMembershipIdSchema,
-  AccessMembershipStore,
-  AccessMembershipStoreLive,
-} from '../../src/access/intent/memberships.ts';
-import { AccessProjectionCompiler } from '../../src/access/intent/projection-compiler.ts';
-import { AccessProjectionWriter, AccessProjectionWriterLive } from '../../src/access/intent/projection-writer.ts';
-import { TenantIntentLoader, TenantIntentLoaderLive } from '../../src/access/intent/tenant-intent-loader.ts';
-import type { TenantIntentLoaderService } from '../../src/access/intent/tenant-intent-loader.ts';
-import { AccessWriteJournalStoreLive } from '../../src/access/lifecycle/persistence/journal-store.ts';
-import type { AccessDeclarationInput, AccessCatalogModule } from '../../src/authorization/access-declaration.ts';
-import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
+import { TenantAccessBootstrap } from '../../src/access/bootstrap/index.ts';
+import { AccessProjectionError } from '../../src/access/compiler/projection-error.ts';
+import type { AccessProjectionCompiler as AccessProjectionCompilerEngine } from '../../src/access/compiler/spice-db-compiler.ts';
+import type { TenantId } from '../../src/access/ids.ts';
+import { AccessProjectionWriter } from '../../src/access/intent/projection-writer.ts';
+import { activateCatalogRelease, releaseActorId } from '../../src/access/release/activation.ts';
+import { ensurePlatformTenant, PLATFORM_TENANT } from '../../src/auth/module-credentials.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
-import { DatabaseIdentityEnrollmentContext } from '../../src/db/database-identities.ts';
-import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
-import { coreRelations } from '../../src/db/schema.ts';
-import type { CoreDatabaseExecutor } from '../../src/db/types.ts';
+import { makeAccessFenceSweepBackoffs, sweepLapsedAccessFences } from '../../src/access/lifecycle/fence-sweeper.ts';
+import type { AccessFenceSweepBackoffs, AccessFenceSweepReport } from '../../src/access/lifecycle/fence-sweeper.ts';
+import type { TenantIntentLoaderService } from '../../src/access/intent/tenant-intent-loader.ts';
+import type { AccessCatalogModule } from '../../src/authorization/access-declaration.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
-import type { OperationalScope } from '../../src/operations/context.ts';
-import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
-import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
-import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
-import { createTemplateDatabase, replacedDatabase } from '../support/access-scenarios/database.ts';
-import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
-import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
+import {
+  ownerScope,
+  SCENARIO_COMPANY,
+  scenarioUid,
+  withProjectionTenant,
+} from '../support/projection-tenant-scenario.ts';
 
 /*
- * The tenant's fence covers the intent read, not only the graph write (R5a-1).
- *
- * The single projection writer used to load and plan a tenant *before* taking that tenant's fence, so a
- * reconciliation that read a tenant while a person was still a member could project that snapshot after
- * a revocation had replaced it — restoring a member tuple nobody holds, whose still-active role then
- * grants the revoked person access. The fence now comes first: nothing is read until this operation holds
- * it, and the fence's revision proves the snapshot was not overtaken when the graph is written.
- *
- * Each case is that interleaving, paused where the old order read intent: before the fence (case 1) and
- * after the read with the fence already held (case 2). Revoking a membership and reconciling in the
- * middle is what a second Core request does, and the assertions are what the old order got wrong.
- *
- * Each case gets its own database beside the integration environment's, and its own random tenant in the
- * environment's SpiceDB.
+ * The tenant scope fence under the real writer, journal store, PostgreSQL and SpiceDB: what happens to the fence when
+ * the process that holds it is interrupted or dies in the middle of the engine write.
  */
-
-const uid = (value: number) => `00000000-0000-4000-8000-${value.toString().padStart(12, '0')}`;
-
 const MODULE = 'billing.invoices';
-const CAPABILITY = 'billing.invoices.invoice.read';
-
-const entrypoint = defineTenantModuleEntrypoint({
-  access: 'read',
-  authorization: { kind: 'protected' },
-  entrypointKey: 'billing.invoices.api.list',
-  moduleKey: MODULE,
-  role: 'api',
-});
-const declaration: AccessDeclarationInput = {
-  key: CAPABILITY,
-  kind: 'read',
-  modes: ['run'],
-  placement: { group: 'invoices', level: 'basic' },
-  risk: 'routine',
-  selectors: [],
-};
-const modules: readonly AccessCatalogModule[] = [
-  { descriptors: [{ accessDeclaration: declaration, entrypoint }], moduleId: MODULE },
+const deployment: readonly AccessCatalogModule[] = [
+  {
+    descriptors: [
+      {
+        accessDeclaration: {
+          key: `${MODULE}.invoice.read`,
+          kind: 'read',
+          modes: ['run'],
+          placement: { group: 'invoices', level: 'basic' },
+          risk: 'routine',
+          selectors: [],
+        },
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'read',
+          authorization: { kind: 'protected' },
+          entrypointKey: `${MODULE}.api.list`,
+          moduleKey: MODULE,
+          role: 'api',
+        }),
+      },
+    ],
+    moduleId: MODULE,
+  },
 ];
 
-const owner = PrincipalIdSchema.make(uid(2));
-const member = PrincipalIdSchema.make(uid(3));
-const company = LegalEntityIdSchema.make(uid(4));
-const memberMembership = uid(20);
+const FenceRowSchema = Schema.Struct({ owning_operation_id: Schema.NullOr(Schema.String), state: Schema.String });
+const JournalRowSchema = Schema.Struct({ operation_id: Schema.String, phase: Schema.String });
 
-/** The tenant as the product creates it: identity rows and one installed module, never any access. */
-const seedTenant = (admin: PgClient.PgClient, tenantId: TenantId) =>
-  Effect.gen(function* seedTenantEffect() {
-    for (const statement of [
-      `insert into core.tenants (tenant_id, slug, name, status, default_locale)
-         values ('${tenantId}', 'c26-${tenantId}', 'C26 tenant', 'active', 'cs')`,
-      `insert into core.legal_entities
-         (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status)
-         values ('${company}', '${tenantId}', 'C26 s.r.o.', 'CZ', '12345678', 'active')`,
-      `insert into core.principals (principal_id, tenant_id, kind, display_name, status) values
-         ('${owner}', '${tenantId}', 'human', 'Vlastník', 'active'),
-         ('${member}', '${tenantId}', 'human', 'Člen', 'active')`,
-      `insert into core.tenant_module_states (tenant_module_state_id, tenant_id, module_key, state) values
-         ('${uid(5)}', '${tenantId}', '${MODULE}', 'active')`,
-    ]) {
-      yield* admin.unsafe(statement).pipe(Effect.orDie);
-    }
-  });
-
-/** One trusted request scope: the acting person, the tenant and the selected company when given (O66). */
-const scopeFor = (tenantId: TenantId, principalId: PrincipalId, legalEntityId?: LegalEntityId) => {
-  const session = {
-    authBindingId: uid(300),
-    authContextRef: 'session:access-projection-fence:1',
-    authMethod: 'session' as const,
-    principalId,
-    tenantId,
-  };
-  return Schema.decodeEffect(TrustedPrincipalContextSchema)(
-    legalEntityId === undefined ? session : { ...session, legalEntityId },
-  ).pipe(
-    Effect.map((context) => ({ ...context, correlationId: 'access-projection-fence' }) satisfies OperationalScope),
-    Effect.orDie,
-  );
-};
-
-/**
- * Where one reconciliation stops: before it pins the tenant fence (`fence_scope`), right after it read the
- * snapshot the pin covers (`projection`), or after it took the fence and is about to write the graph
- * (`fenced`).
- */
-const PAUSE_POINTS = ['fence_scope', 'projection', 'fenced'] as const;
-
-interface LoadPause {
-  readonly at: (typeof PAUSE_POINTS)[number];
-  readonly reached: Deferred.Deferred<null>;
-  readonly resume: Deferred.Deferred<null>;
-}
-
-const holdUntilResumed = <Value, Failure>(effect: Effect.Effect<Value, Failure>, pause: LoadPause) =>
-  effect.pipe(
-    Effect.tap(() =>
-      Deferred.succeed(pause.reached, null).pipe(Effect.andThen(Deferred.await(pause.resume)), Effect.asVoid),
-    ),
-  );
-
-/** Holds an effect before it runs, so a reconciliation can be stopped between its fence and its write. */
-const pauseBefore = <Value, Failure>(effect: Effect.Effect<Value, Failure>, pause: LoadPause) =>
-  Effect.gen(function* pauseBeforeEffect() {
-    yield* Deferred.succeed(pause.reached, null);
-    yield* Deferred.await(pause.resume);
-    return yield* effect;
-  });
-
-/** The loader one paused reconciliation reads through: it holds the call its pause point names. */
-const pausingLoader = (base: TenantIntentLoaderService, pause: LoadPause): TenantIntentLoaderService => ({
-  ...base,
-  loadProjection: (scope) =>
-    pause.at === 'projection' ? holdUntilResumed(base.loadProjection(scope), pause) : base.loadProjection(scope),
-  loadTenantContextScopeId: (scope) =>
-    pause.at === 'fence_scope'
-      ? holdUntilResumed(base.loadTenantContextScopeId(scope), pause)
-      : base.loadTenantContextScopeId(scope),
-});
-
-interface Tenant {
-  readonly admin: PgClient.PgClient;
-  readonly bootstrap: (typeof TenantAccessBootstrap)['Service'];
-  readonly compiler: ReturnType<typeof makeAccessProjectionCompiler>;
-  readonly memberships: (typeof AccessMembershipStore)['Service'];
-  readonly pause: LoadPause;
-  /** The writer of the paused reconciliation this case forks (A). */
-  readonly pausedWriter: (typeof AccessProjectionWriter)['Service'];
-  readonly tenantId: TenantId;
-  /** The writer of every reconciliation that is not paused (B, and the repair after A). */
-  readonly writer: (typeof AccessProjectionWriter)['Service'];
-}
-
-/**
- * One tenant of this suite's own. The writer is built twice: over the real intent loader, and over a
- * loader that holds one call, which is the only way to observe the order of "fence, then read".
- */
-const withTenant = <Value, Failure>(
-  pauseAt: (typeof PAUSE_POINTS)[number],
-  run: (tenant: Tenant) => Effect.Effect<Value, Failure>,
-) =>
-  Effect.gen(function* tenantScenario() {
-    const crypto = yield* Crypto.Crypto;
-    const [connections, configuration] = yield* Effect.all([loadDatabaseConnectionPair(), loadSpiceDbConfig()], {
-      concurrency: 2,
-    }).pipe(Effect.orDie);
-    const bootstrapConnection = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
-    const database = `access_projection_fence_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
-    yield* bootstrapConnection.unsafe(`create database "${database}"`).pipe(Effect.orDie);
-    yield* Effect.addFinalizer(() =>
-      bootstrapConnection.unsafe(`drop database if exists "${database}" with (force)`).pipe(Effect.orDie),
-    );
-    const admin = yield* makeTestPgClient(replacedDatabase(connections.admin.connectionString, database), {
-      maxConnections: 2,
-    });
-    // The whole committed migration set, its login roles and their grants: the same schema every suite uses.
-    yield* createTemplateDatabase(admin);
-    const tenantId = TenantIdSchema.make(yield* crypto.randomUUIDv4());
-    yield* seedTenant(admin, tenantId);
-    const runtime = yield* makeTestPgClient(replacedDatabase(connections.runtime.connectionString, database), {
-      maxConnections: 4,
-    });
-    const executor: CoreDatabaseExecutor = yield* makeTestDatabaseFromClient(runtime, coreRelations);
-    // The suite owns the engine's schema, so it starts from exactly the v2 definitions Core serves.
-    yield* Effect.acquireUseRelease(
-      Effect.sync(() => newSpiceDbGrpcClient(configuration)),
-      (client) =>
-        Effect.tryPromise(() =>
-          client.promises.writeSchema(v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA })),
-        ).pipe(Effect.orDie),
-      (client) => Effect.sync(() => client.close()),
-    );
-    const compiler = makeAccessProjectionCompiler(makeAccessProjectionTransport(configuration));
-    const core = Layer.mergeAll(
-      Layer.succeed(CoreDatabase, { executor }),
-      Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
-    );
-    const engine = Layer.succeed(AccessProjectionCompiler, compiler);
-    const pause: LoadPause = {
-      at: pauseAt,
-      reached: yield* Deferred.make<null>(),
-      resume: yield* Deferred.make<null>(),
-    };
-    // The paused writer's engine holds the write itself, which is the only way to stand between the fence
-    // a reconciliation took and the tuples it writes under it.
-    const pausedEngine = Layer.succeed(AccessProjectionCompiler, {
-      ...compiler,
-      reconcile: (intent, options) =>
-        pause.at === 'fenced'
-          ? pauseBefore(compiler.reconcile(intent, options), pause)
-          : compiler.reconcile(intent, options),
-    });
-    const platforms = Layer.mergeAll(core, engine, NodeServices.layer);
-    const intent = TenantIntentLoaderLive.pipe(Layer.provide(platforms));
-    const journal = AccessWriteJournalStoreLive.pipe(Layer.provide(platforms));
-    const changes = AccessChangesStoreLive.pipe(Layer.provide(platforms));
-    const stores = Layer.mergeAll(platforms, intent, journal, changes);
-    const base = Layer.mergeAll(
-      stores,
-      AccessMembershipStoreLive.pipe(Layer.provide(platforms)),
-      AccessCatalogSnapshotWriterLive.pipe(Layer.provide(stores)),
-      AccessProjectionWriterLive.pipe(Layer.provide(stores)),
-    );
-    const context = yield* Layer.build(Layer.mergeAll(base, TenantAccessBootstrapLive.pipe(Layer.provide(base))));
-    const pausedIntent = Layer.effect(
-      TenantIntentLoader,
-      Effect.gen(function* pausingLoaderLayerEffect() {
-        return pausingLoader(yield* TenantIntentLoader, pause);
-      }),
-    ).pipe(Layer.provide(intent));
-    const pausedPlatforms = Layer.mergeAll(core, pausedEngine, NodeServices.layer);
-    const pausedContext = yield* Layer.build(
-      AccessProjectionWriterLive.pipe(Layer.provide(Layer.mergeAll(pausedPlatforms, pausedIntent, journal, changes))),
-    );
-    return yield* run({
-      admin,
-      bootstrap: Context.get(context, TenantAccessBootstrap),
-      compiler,
-      memberships: Context.get(context, AccessMembershipStore),
-      pause,
-      pausedWriter: Context.get(pausedContext, AccessProjectionWriter),
-      tenantId,
-      writer: Context.get(context, AccessProjectionWriter),
-    });
-  }).pipe(Effect.scoped);
-
-/** The tenant's `member` tuples as the graph holds them: one subject object id per member. */
-const tenantMembers = (relationships: readonly AccessRelationship[], tenantId: TenantId): readonly string[] =>
-  relationships
-    .filter(
-      ({ relation, resourceId, resourceType }) =>
-        relation === 'member' && resourceType === 'access_tenant' && resourceId === tenantObjectId(tenantId),
+export const tenantFence = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  admin
+    .unsafe(
+      `select f.state, f.owning_operation_id from core.access_scope_fences f
+         join core.access_scopes s on s.scope_id = f.scope_id
+        where f.tenant_id = '${tenantId}' and s.legal_entity_id is null`,
     )
-    .map(({ subject }) => subject.objectId)
-    .toSorted();
+    .pipe(Effect.orDie, Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(FenceRowSchema))), Effect.orDie);
 
-const asFailure = (cause: { readonly code: string; readonly reason: string }) =>
-  new Error(`${cause.code}: ${cause.reason}`);
+export const journals = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  admin
+    .unsafe(
+      `select operation_id, phase from core.access_operation_journals where tenant_id = '${tenantId}' order by started_at`,
+    )
+    .pipe(Effect.orDie, Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(JournalRowSchema))), Effect.orDie);
 
-/** The tenant as a product creates it, with one member who is not the owner, projected into the graph. */
-const preparedTenant = (tenant: Tenant) =>
-  Effect.gen(function* preparedTenantEffect() {
-    const scope = yield* scopeFor(tenant.tenantId, owner);
-    yield* tenant.bootstrap
-      .bootstrapTenantAccess({ legalEntityIds: [company], modules, scope })
-      .pipe(Effect.mapError(asFailure), Effect.orDie);
-    yield* tenant.admin
-      .unsafe(`insert into core.access_memberships
-        (membership_id, tenant_id, scope_id, principal_id, kind, status, valid_from, recorded_by)
-        values ('${memberMembership}', '${tenant.tenantId}', '${tenantContextScopeId(tenant.tenantId)}', '${member}',
-                'member', 'active', '1970-01-01T00:00:00Z'::timestamptz, '${owner}')`)
+const journalPhases = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  journals(admin, tenantId).pipe(Effect.map((rows) => rows.map((journal) => journal.phase)));
+
+export const bootstrapTenant = (tenantId: TenantId) =>
+  Effect.gen(function* bootstrapScenarioTenant() {
+    const scope = yield* ownerScope(tenantId);
+    const bootstrap = yield* TenantAccessBootstrap;
+    yield* bootstrap
+      .bootstrapTenantAccess({ legalEntityIds: [SCENARIO_COMPANY], modules: deployment, scope })
       .pipe(Effect.orDie);
-    yield* tenant.writer.reconcileTenant({ scope }).pipe(Effect.mapError(asFailure), Effect.orDie);
-    expect(tenantMembers(yield* tenant.compiler.readProjection([tenant.tenantId]), tenant.tenantId)).toEqual(
-      [member, owner].toSorted(),
-    );
+    const writer = yield* AccessProjectionWriter;
+    yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
     return scope;
   });
 
-/** The revocation a second Core request commits while the first one is still reconciling. */
-const revokeMember = (tenant: Tenant, scope: OperationalScope) =>
-  tenant.memberships
-    .setMembershipStatus(scope, {
-      membershipId: AccessMembershipIdSchema.make(memberMembership),
-      status: 'revoked',
-    })
-    .pipe(Effect.mapError(asFailure), Effect.orDie);
+const DEAD_HOLDER = scenarioUid(900);
+const LeaseRowSchema = Schema.Struct({ lease_live: Schema.NullOr(Schema.Boolean) });
 
-/** One reconciliation that stops at this case's pause point, and the fiber it is running on. */
-const forkPausedReconciliation = (tenant: Tenant, scope: OperationalScope) =>
-  Effect.gen(function* forkPausedReconciliationEffect() {
-    const fiber = yield* Effect.forkChild(
-      tenant.pausedWriter.reconcileTenant({ scope }).pipe(Effect.mapError((cause) => asFailure(cause))),
-    );
-    yield* Deferred.await(tenant.pause.reached);
-    return fiber;
+/**
+ * What a holder that died in the middle of its engine write leaves behind (OOM kill, SIGKILL, host loss): its
+ * journal at `fenced` and the tenant fence `Changing` in its name, with the given lease (`null` = taken before leases
+ * existed) and a journal last touched `journalAge` ago. No finalizer ever ran.
+ */
+const plantDeadHolder = (
+  admin: PgClient.PgClient,
+  tenantId: TenantId,
+  hold: { readonly journalAge: string; readonly lease: string | null },
+) =>
+  Effect.gen(function* plantDeadHolderEffect() {
+    const scopes = yield* admin
+      .unsafe(
+        `select s.scope_id from core.access_scopes s where s.tenant_id = '${tenantId}' and s.legal_entity_id is null`,
+      )
+      .pipe(
+        Effect.orDie,
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ scope_id: Schema.String })))),
+        Effect.orDie,
+      );
+    const [scope] = scopes;
+    if (scope === undefined) {
+      return yield* Effect.die('the tenant has no tenant-context scope');
+    }
+    yield* admin
+      .unsafe(
+        `insert into core.access_operation_journals
+           (operation_id, tenant_id, scope_id, command_digest, phase, started_at, updated_at) values
+           ('${DEAD_HOLDER}', '${tenantId}', '${scope.scope_id}', '${'d'.repeat(64)}', 'fenced',
+            now() - interval '1 hour', now() - interval '${hold.journalAge}')`,
+      )
+      .pipe(Effect.orDie);
+    yield* admin
+      .unsafe(
+        `update core.access_scope_fences
+            set state = 'Changing', owning_operation_id = '${DEAD_HOLDER}', revision = revision + 1,
+                lease_expires_at = ${hold.lease === null ? 'null' : `now() + interval '${hold.lease}'`}
+          where tenant_id = '${tenantId}' and scope_id = '${scope.scope_id}'`,
+      )
+      .pipe(Effect.orDie);
+    return yield* Effect.void;
   });
 
-it.layer(NodeServices.layer)('access projection fence', (suite) => {
-  suite.effect('does not restore a revoked member when a reconcile was still waiting for the fence', () =>
-    withTenant('fence_scope', (tenant) =>
-      Effect.gen(function* revokedWhileWaitingForTheFence() {
-        const scope = yield* preparedTenant(tenant);
-        // A waits before its fence, so it has not read a single intent row yet.
-        const a = yield* forkPausedReconciliation(tenant, scope);
-        // The revocation commits and B projects it while A waits: the graph loses the member tuple.
-        yield* revokeMember(tenant, scope);
-        const b = yield* tenant.writer.reconcileTenant({ scope }).pipe(Effect.mapError(asFailure), Effect.orDie);
-        expect(b.deletions).toBeGreaterThan(0);
-        expect(b.verified).toBe(true);
-        expect(tenantMembers(yield* tenant.compiler.readProjection([tenant.tenantId]), tenant.tenantId)).toEqual([
-          owner,
-        ]);
+/** A sweep tick on the given test clock. */
+const sweepOnClock =
+  (backoffs: AccessFenceSweepBackoffs, clock: Context.Context<TestClock.TestClock>) => (tick: string) =>
+    sweepLapsedAccessFences(backoffs, tick).pipe(Effect.provide(clock));
 
-        // A resumes and takes the fence: it reads the intent as it is now, so its plan already lacks the
-        // member and there is nothing to write back — under the old order this is where a tuple returned.
-        yield* Deferred.succeed(tenant.pause.resume, null);
-        const resumed = yield* Fiber.join(a).pipe(Effect.orDie);
-        expect(resumed.verified).toBe(true);
-        expect(resumed.touches).toBe(0);
-        expect(resumed.deletions).toBe(0);
-        expect(tenantMembers(yield* tenant.compiler.readProjection([tenant.tenantId]), tenant.tenantId)).toEqual([
-          owner,
-        ]);
+/** Each failed tenant of a tick with the wait before its next try. */
+const retriesOf = (report: AccessFenceSweepReport) =>
+  report.failed.map(({ retryInMillis, tenantId }) => [tenantId, retryInMillis] as const);
+
+/** An Action in flight: a transaction holding the tenant fence's shared lock until `release` completes. */
+const actionHoldingFence = (
+  admin: PgClient.PgClient,
+  tenantId: TenantId,
+  lock: { readonly held: Deferred.Deferred<boolean>; readonly release: Deferred.Deferred<boolean> },
+) =>
+  admin
+    .withTransaction(
+      admin
+        .unsafe(`select 1 from core.access_scope_fences where tenant_id = '${tenantId}' for share`)
+        .pipe(Effect.andThen(Deferred.succeed(lock.held, true)), Effect.andThen(Deferred.await(lock.release))),
+    )
+    .pipe(Effect.orDie);
+
+const LeaseLeftSchema = Schema.Array(Schema.Struct({ seconds: Schema.Number }));
+
+/** How much of the held fence's lease is left now, on the database clock. */
+const leaseLeft = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  admin
+    .unsafe(
+      `select extract(epoch from lease_expires_at - clock_timestamp())::float8 as seconds
+         from core.access_scope_fences where tenant_id = '${tenantId}' and state = 'Changing'`,
+    )
+    .pipe(Effect.orDie, Effect.flatMap(Schema.decodeUnknownEffect(LeaseLeftSchema)), Effect.orDie);
+
+/** The runtime role can no longer write the fence: every lease renewal fails, and none is refused. */
+const renewalsFail = (admin: PgClient.PgClient, failing: boolean) =>
+  admin
+    .unsafe(
+      failing
+        ? 'revoke update on core.access_scope_fences from ontos_runtime'
+        : 'grant update on core.access_scope_fences to ontos_runtime',
+    )
+    .pipe(Effect.orDie, Effect.asVoid);
+
+const refusedJournals = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  admin
+    .unsafe(
+      `select count(*)::int as refused from core.access_operation_journals
+        where tenant_id = '${tenantId}' and phase = 'failed' and failure_code = 'fence_refused'`,
+    )
+    .pipe(Effect.orDie);
+
+/** The statements of one of this branch's Core migrations, as the migrator runs them. */
+const migrationStatements = (name: string) =>
+  FileSystem.FileSystem.pipe(
+    Effect.flatMap((files) =>
+      files.readFileString(new URL(`../../drizzle/${name}/migration.sql`, import.meta.url).pathname),
+    ),
+    Effect.orDie,
+    Effect.map((text) =>
+      text
+        .split('--> statement-breakpoint')
+        .map((statement) => statement.trim())
+        .filter((statement) => statement.length > 0),
+    ),
+  );
+
+/** Apply the lease migration in one transaction, as the deploy's migrator does. */
+const applyLeaseMigration = (admin: PgClient.PgClient, statements: readonly string[]) =>
+  admin.withTransaction(Effect.forEach(statements, (statement) => admin.unsafe(statement), { discard: true }));
+
+/** The database as it was before this branch's two fence migrations. */
+const beforeFenceMigrations = (admin: PgClient.PgClient) =>
+  Effect.forEach(
+    [
+      'drop function core.lapsed_access_fence_tenants(integer, interval, uuid[])',
+      'drop index core.access_scope_fences_held_ix',
+      'alter table core.access_scope_fences drop constraint access_scope_fences_lease_ck',
+      'alter table core.access_scope_fences drop column lease_expires_at',
+    ],
+    (statement) => admin.unsafe(statement).pipe(Effect.orDie),
+    { discard: true },
+  );
+
+/** The finalizer that gives the runtime role its fence writes back. */
+const renewalsRestored = (admin: PgClient.PgClient) => () => renewalsFail(admin, false);
+
+const OTHER_HEALER = scenarioUid(901);
+
+/** Another writer takes the tenant's fence under a fresh lease (another sweep, a deploy's activation). */
+const otherHealerTakes = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  Effect.forEach(
+    [
+      `insert into core.access_operation_journals
+         (operation_id, tenant_id, scope_id, command_digest, phase, started_at, updated_at)
+       select '${OTHER_HEALER}', f.tenant_id, f.scope_id, '${'e'.repeat(64)}', 'fenced', now(), now()
+         from core.access_scope_fences f where f.tenant_id = '${tenantId}' and f.state = 'Changing'`,
+      `update core.access_scope_fences
+          set owning_operation_id = '${OTHER_HEALER}', revision = revision + 1,
+              lease_expires_at = now() + interval '2 minutes'
+        where tenant_id = '${tenantId}' and state = 'Changing'`,
+    ],
+    (statement) => admin.unsafe(statement).pipe(Effect.orDie),
+    { discard: true },
+  );
+
+/** Whoever holds the tenant's fence gives it back, as a completed projection does. */
+const holderReleases = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  admin
+    .unsafe(
+      `update core.access_scope_fences
+          set state = 'Ready', owning_operation_id = null, lease_expires_at = null, revision = revision + 1
+        where tenant_id = '${tenantId}' and state = 'Changing'`,
+    )
+    .pipe(Effect.orDie);
+
+/** Whether the tenant has its platform release actor: 0 or 1. */
+const releaseActorsOf = (admin: PgClient.PgClient, tenantId: string) =>
+  admin
+    .unsafe(`select count(*)::int as actors from core.principals where principal_id = '${releaseActorId(tenantId)}'`)
+    .pipe(Effect.orDie);
+
+/** The dead holder's journal last moved `age` ago. */
+const idleJournal = (admin: PgClient.PgClient, age: string) =>
+  admin
+    .unsafe(
+      `update core.access_operation_journals set updated_at = now() - interval '${age}' where operation_id = '${DEAD_HOLDER}'`,
+    )
+    .pipe(Effect.orDie);
+
+/** The lapse of the hold, as time passing would bring it. */
+const lapseLease = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  admin
+    .unsafe(
+      `update core.access_scope_fences set lease_expires_at = now() - interval '1 second'
+        where tenant_id = '${tenantId}' and state = 'Changing'`,
+    )
+    .pipe(Effect.orDie);
+
+const journalOf = (admin: PgClient.PgClient, operationId: string) =>
+  admin
+    .unsafe(`select phase, failure_code from core.access_operation_journals where operation_id = '${operationId}'`)
+    .pipe(Effect.orDie);
+
+const leaseLive = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  admin
+    .unsafe(
+      `select f.lease_expires_at > now() as lease_live from core.access_scope_fences f
+         join core.access_scopes s on s.scope_id = f.scope_id
+        where f.tenant_id = '${tenantId}' and s.legal_entity_id is null`,
+    )
+    .pipe(Effect.orDie, Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(LeaseRowSchema))), Effect.orDie);
+
+const refusalOf = <A, E extends { readonly reason?: string }, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.flip,
+    Effect.map((failure) => failure.reason ?? ''),
+  );
+
+/** The finalizer that lets a held engine write go. */
+const letGoOf = (letGo: Deferred.Deferred<boolean>) => () => Deferred.succeed(letGo, true);
+
+/** The armed write, taken so it runs once; nothing when none is armed. */
+const runArmed = (afterRead: Ref.Ref<Option.Option<Effect.Effect<void>>>) =>
+  Ref.getAndSet(afterRead, Option.none()).pipe(Effect.flatMap(Option.getOrElse(() => Effect.void)));
+
+/** A loader that runs the armed write once, right after the writer's next read of the tenant's intent. */
+const interleavedLoader =
+  (afterRead: Ref.Ref<Option.Option<Effect.Effect<void>>>) =>
+  (loader: TenantIntentLoaderService): TenantIntentLoaderService => ({
+    ...loader,
+    loadProjection: (scope) => loader.loadProjection(scope).pipe(Effect.tap(runArmed(afterRead))),
+  });
+
+/** An engine that fails its write while `failing` is set, as an unreachable SpiceDB would. */
+const failingEngine =
+  (failing: Ref.Ref<boolean>) =>
+  (engine: AccessProjectionCompilerEngine): AccessProjectionCompilerEngine => ({
+    ...engine,
+    reconcile: (intent, options) =>
+      Ref.get(failing).pipe(
+        Effect.flatMap((fail) =>
+          fail
+            ? Effect.fail([new AccessProjectionError({ code: 'access_projection_unavailable', reason: 'engine down' })])
+            : engine.reconcile(intent, options),
+        ),
+      ),
+  });
+
+/** The connection lost in the middle of an engine write. */
+const midWriteLoss = [
+  new AccessProjectionError({ code: 'access_projection_unavailable', reason: 'SpiceDB client operation timed out' }),
+];
+
+/**
+ * An engine whose next `failures` reconciles send their first relationship write (the compiler's `beforeWrite` runs)
+ * and then lose the connection: from then on the graph may be half-written.
+ */
+const failingMidWrite =
+  (failures: Ref.Ref<number>) =>
+  (engine: AccessProjectionCompilerEngine): AccessProjectionCompilerEngine => ({
+    ...engine,
+    reconcile: (intent, options) =>
+      Ref.modify(failures, (left) => [left, Math.max(0, left - 1)] as const).pipe(
+        Effect.flatMap((left) =>
+          left > 0
+            ? (options.beforeWrite ?? Effect.void).pipe(Effect.andThen(Effect.fail(midWriteLoss)))
+            : engine.reconcile(intent, options),
+        ),
+      ),
+  });
+
+const lastJournal = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  journals(admin, tenantId).pipe(Effect.map((rows) => rows.at(-1)));
+
+/**
+ * An engine that, once armed, sends its first relationship write and waits inside it until the suite lets it go, then
+ * sends the next one: `wroteAfterLoss` records a write that went out after the hold was lost.
+ */
+const writingAcrossLoss =
+  (gate: {
+    readonly armed: Ref.Ref<boolean>;
+    readonly entered: Deferred.Deferred<boolean>;
+    readonly letGo: Deferred.Deferred<boolean>;
+    readonly wroteAfterLoss: Ref.Ref<boolean>;
+  }) =>
+  (engine: AccessProjectionCompilerEngine): AccessProjectionCompilerEngine => ({
+    ...engine,
+    reconcile: (intent, options) =>
+      Effect.gen(function* writeAcrossLoss() {
+        if (yield* Ref.get(gate.armed)) {
+          const beforeWrite = options.beforeWrite ?? Effect.void;
+          yield* beforeWrite;
+          yield* Deferred.succeed(gate.entered, true);
+          yield* Deferred.await(gate.letGo);
+          yield* beforeWrite;
+          yield* Ref.set(gate.wroteAfterLoss, true);
+        }
+        return yield* engine.reconcile(intent, options);
+      }),
+  });
+
+/** An engine whose write waits, once armed, until the suite lets it go: the holder is inside its engine write. */
+const holdingEngine =
+  (gate: {
+    readonly armed: Ref.Ref<boolean>;
+    readonly entered: Deferred.Deferred<boolean>;
+    readonly finished: Ref.Ref<boolean>;
+    readonly letGo: Deferred.Deferred<boolean>;
+  }) =>
+  (engine: AccessProjectionCompilerEngine): AccessProjectionCompilerEngine => ({
+    ...engine,
+    reconcile: (intent, options) =>
+      Effect.gen(function* heldEngineWrite() {
+        if (yield* Ref.get(gate.armed)) {
+          yield* Deferred.succeed(gate.entered, true);
+          yield* Deferred.await(gate.letGo);
+        }
+        const report = yield* engine.reconcile(intent, options);
+        yield* Ref.set(gate.finished, true);
+        return report;
+      }),
+  });
+
+it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fence', (suite) => {
+  suite.effect('a reconcile interrupted inside its engine write still finishes, commits and releases the fence', () =>
+    Effect.gen(function* interruptedReconcile() {
+      const gate = {
+        armed: yield* Ref.make(false),
+        entered: yield* Deferred.make<boolean>(),
+        finished: yield* Ref.make(false),
+        letGo: yield* Deferred.make<boolean>(),
+      };
+      yield* withProjectionTenant({ activeModules: [MODULE], wrapCompiler: holdingEngine(gate) }, (tenantId, admin) =>
+        Effect.gen(function* interruptMidWrite() {
+          const scope = yield* bootstrapTenant(tenantId);
+          yield* Ref.set(gate.armed, true);
+          // A failed expectation must never leave the held write waiting: it is uninterruptible by design.
+          yield* Effect.addFinalizer(letGoOf(gate.letGo));
+          const writer = yield* AccessProjectionWriter;
+          const fiber = yield* writer.reconcileTenant({ scope }).pipe(Effect.forkChild);
+          yield* Deferred.await(gate.entered);
+          // The holder is stopped (a SIGTERM to its process, a caller's budget) while its engine write is open.
+          const stopping = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild);
+          yield* Deferred.succeed(gate.letGo, true);
+          yield* Fiber.join(stopping);
+          expect(yield* Ref.get(gate.finished)).toBe(true);
+          expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+          expect((yield* journals(admin, tenantId)).at(-1)?.phase).toBe('committed');
+        }),
+      );
+    }),
+  );
+
+  suite.effect(
+    'a dead holder keeps the tenant closed while its lease is live; once it lapsed a reconcile takes over',
+    () =>
+      withProjectionTenant({ activeModules: [MODULE] }, (tenantId, admin) =>
+        Effect.gen(function* deadHolderRecovered() {
+          const scope = yield* bootstrapTenant(tenantId);
+          yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
+          const writer = yield* AccessProjectionWriter;
+          // A live lease is never preempted: the reconcile is refused and the tenant stays closed to every Action
+          // (`lockActionAccessFence` admits only a Ready fence).
+          expect(yield* refusalOf(writer.reconcileTenant({ scope }))).toContain('whose hold has not lapsed');
+          expect(yield* refusalOf(writer.reconcileTenant({ scope }))).toContain('whose hold has not lapsed');
+          expect(yield* tenantFence(admin, tenantId)).toEqual([
+            { owning_operation_id: DEAD_HOLDER, state: 'Changing' },
+          ]);
+          // Each refused attempt ended its own journal as `fence_refused`: none is left `validated` with nobody to
+          // finish it.
+          expect(yield* journalPhases(admin, tenantId)).not.toContain('validated');
+          expect(yield* refusedJournals(admin, tenantId)).toEqual([{ refused: 2 }]);
+
+          yield* lapseLease(admin, tenantId);
+          const recovered = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+          expect(recovered.verified).toBe(true);
+          // The fence opens only after the taker's whole reconcile committed, and the dead holder can never resume.
+          expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+          expect(yield* journalOf(admin, DEAD_HOLDER)).toEqual([{ failure_code: 'lease_expired', phase: 'failed' }]);
+          expect(yield* journalOf(admin, recovered.operationId)).toEqual([{ failure_code: null, phase: 'committed' }]);
+          // And the next reconcile is an ordinary one.
+          yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+          expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+        }),
+      ),
+  );
+
+  suite.effect(
+    'a hold taken before leases existed is recovered after 30 idle minutes and a skew margin, not before',
+    () =>
+      withProjectionTenant({ activeModules: [MODULE] }, (tenantId, admin) =>
+        Effect.gen(function* legacyHold() {
+          const scope = yield* bootstrapTenant(tenantId);
+          yield* plantDeadHolder(admin, tenantId, { journalAge: '10 seconds', lease: null });
+          const writer = yield* AccessProjectionWriter;
+          expect(yield* refusalOf(writer.reconcileTenant({ scope }))).toContain('whose hold has not lapsed');
+          // A writer of the previous release moves its journal only between phases: ten quiet minutes inside one long
+          // engine write is no lapse.
+          yield* idleJournal(admin, '10 minutes');
+          expect(yield* refusalOf(writer.reconcileTenant({ scope }))).toContain('whose hold has not lapsed');
+          // Thirty minutes plus the five-minute margin for the writer's clock against the database's is.
+          yield* idleJournal(admin, '34 minutes');
+          expect(yield* refusalOf(writer.reconcileTenant({ scope }))).toContain('whose hold has not lapsed');
+          yield* idleJournal(admin, '36 minutes');
+          yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+          expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+        }),
+      ),
+  );
+
+  suite.effect('a live holder in the middle of its write is never preempted, and holds a lease while it works', () =>
+    Effect.gen(function* liveHolder() {
+      const gate = {
+        armed: yield* Ref.make(false),
+        entered: yield* Deferred.make<boolean>(),
+        finished: yield* Ref.make(false),
+        letGo: yield* Deferred.make<boolean>(),
+      };
+      yield* withProjectionTenant({ activeModules: [MODULE], wrapCompiler: holdingEngine(gate) }, (tenantId, admin) =>
+        Effect.gen(function* concurrentReconciles() {
+          const scope = yield* bootstrapTenant(tenantId);
+          yield* Ref.set(gate.armed, true);
+          // A failed expectation must never leave the held write waiting: it is uninterruptible by design.
+          yield* Effect.addFinalizer(letGoOf(gate.letGo));
+          const writer = yield* AccessProjectionWriter;
+          const holder = yield* writer.reconcileTenant({ scope }).pipe(Effect.forkChild);
+          yield* Deferred.await(gate.entered);
+          expect(yield* leaseLive(admin, tenantId)).toEqual([{ lease_live: true }]);
+          const [held] = yield* tenantFence(admin, tenantId);
+          yield* Ref.set(gate.armed, false);
+          expect(yield* refusalOf(writer.reconcileTenant({ scope }))).toContain('whose hold has not lapsed');
+          expect(yield* tenantFence(admin, tenantId)).toEqual([held]);
+          yield* Deferred.succeed(gate.letGo, true);
+          yield* Fiber.join(holder).pipe(Effect.orDie);
+          expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+          expect(yield* leaseLive(admin, tenantId)).toEqual([{ lease_live: null }]);
+        }),
+      );
+    }),
+  );
+
+  suite.effect('a take-over whose reconcile fails keeps the tenant closed for the next taker', () =>
+    Effect.gen(function* failedTakeOver() {
+      const failing = yield* Ref.make(false);
+      yield* withProjectionTenant(
+        {
+          activeModules: [MODULE],
+          wrapCompiler: failingEngine(failing),
+        },
+        (tenantId, admin) =>
+          Effect.gen(function* takeOverThatFails() {
+            const scope = yield* bootstrapTenant(tenantId);
+            yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
+            yield* lapseLease(admin, tenantId);
+            yield* Ref.set(failing, true);
+            const writer = yield* AccessProjectionWriter;
+            yield* refusalOf(writer.reconcileTenant({ scope }));
+            const [held] = yield* tenantFence(admin, tenantId);
+            // The graph may be half-written by the dead holder: the fence does not open on a failed reconcile.
+            expect(held?.state).toBe('Changing');
+            expect(held?.owning_operation_id).not.toBe(DEAD_HOLDER);
+            yield* Ref.set(failing, false);
+            yield* lapseLease(admin, tenantId);
+            yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+            expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+          }),
+      );
+    }),
+  );
+
+  suite.effect('an intent that moved between the read and the fence is read again, never projected stale', () =>
+    Effect.gen(function* movedIntent() {
+      const afterRead = yield* Ref.make(Option.none<Effect.Effect<void>>());
+      yield* withProjectionTenant(
+        { activeModules: [MODULE], wrapIntentLoader: interleavedLoader(afterRead) },
+        (tenantId, admin) =>
+          Effect.gen(function* revocationInTheGap() {
+            const scope = yield* bootstrapTenant(tenantId);
+            // Right after the writer read the tenant, an intent write suspends the module. Like an Action, it commits
+            // while the fence is Ready and moves no revision, so the fence's compare-and-set cannot see it.
+            yield* Ref.set(
+              afterRead,
+              Option.some(
+                admin
+                  .unsafe(
+                    `update core.tenant_module_states set state = 'suspended'
+                      where tenant_id = '${tenantId}' and module_key = '${MODULE}'`,
+                  )
+                  .pipe(Effect.orDie, Effect.asVoid),
+              ),
+            );
+            const writer = yield* AccessProjectionWriter;
+            const written = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+            // The suspension was projected, not the plan read before it.
+            expect(written.deletions).toBeGreaterThan(0);
+            const again = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+            expect({ deletions: again.deletions, touches: again.touches }).toEqual({ deletions: 0, touches: 0 });
+            expect((yield* journalPhases(admin, tenantId)).slice(-3)).toEqual(['failed', 'committed', 'committed']);
+            expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+          }),
+      );
+    }),
+  );
+
+  suite.effect('a projection that failed after it wrote to the engine keeps the tenant closed for the next taker', () =>
+    Effect.gen(function* failedAfterEngineWrite() {
+      const failures = yield* Ref.make(0);
+      yield* withProjectionTenant(
+        { activeModules: [MODULE], wrapCompiler: failingMidWrite(failures) },
+        (tenantId, admin) =>
+          Effect.gen(function* keptClosed() {
+            const scope = yield* bootstrapTenant(tenantId);
+            yield* Ref.set(failures, 99);
+            const writer = yield* AccessProjectionWriter;
+            yield* refusalOf(writer.reconcileTenant({ scope }));
+            // Tried once and twice more under the same fence, then given up without opening the tenant.
+            expect(yield* Ref.get(failures)).toBe(96);
+            const [held] = yield* tenantFence(admin, tenantId);
+            const failed = yield* lastJournal(admin, tenantId);
+            expect(held).toEqual({ owning_operation_id: failed?.operation_id, state: 'Changing' });
+            expect(yield* journalOf(admin, failed?.operation_id ?? '')).toEqual([
+              { failure_code: 'projection_failed', phase: 'failed' },
+            ]);
+            // The write that failed (a client-side timeout, say) may still be under way in the engine until its
+            // deadline passes: neither a reconcile nor the sweep takes the hold over before its lease lapsed.
+            yield* Ref.set(failures, 0);
+            expect(yield* refusalOf(writer.reconcileTenant({ scope }))).toContain('whose hold has not lapsed');
+            const backoffs = yield* makeAccessFenceSweepBackoffs;
+            expect(yield* sweepLapsedAccessFences(backoffs, 'tick-1')).toEqual({
+              busy: [],
+              deferred: 0,
+              failed: [],
+              healed: [],
+            });
+            // Once the lease lapsed the next reconcile takes the fence over and opens it on a full projection.
+            yield* lapseLease(admin, tenantId);
+            yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+            expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+          }),
+      );
+    }),
+  );
+
+  suite.effect('a projection that failed before any engine write gives the fence back', () =>
+    Effect.gen(function* failedBeforeEngineWrite() {
+      const failing = yield* Ref.make(false);
+      yield* withProjectionTenant(
+        { activeModules: [MODULE], wrapCompiler: failingEngine(failing) },
+        (tenantId, admin) =>
+          Effect.gen(function* releasedUntouched() {
+            const scope = yield* bootstrapTenant(tenantId);
+            yield* Ref.set(failing, true);
+            const writer = yield* AccessProjectionWriter;
+            yield* refusalOf(writer.reconcileTenant({ scope }));
+            expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+            expect((yield* lastJournal(admin, tenantId))?.phase).toBe('failed');
+          }),
+      );
+    }),
+  );
+
+  suite.effect('a projection that lost the engine mid-write is tried again under the same fence and opens it', () =>
+    Effect.gen(function* retriedUnderFence() {
+      const failures = yield* Ref.make(0);
+      yield* withProjectionTenant(
+        { activeModules: [MODULE], wrapCompiler: failingMidWrite(failures) },
+        (tenantId, admin) =>
+          Effect.gen(function* recoveredInProcess() {
+            const scope = yield* bootstrapTenant(tenantId);
+            yield* Ref.set(failures, 1);
+            const writer = yield* AccessProjectionWriter;
+            const written = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+            expect(written.verified).toBe(true);
+            expect(yield* journalOf(admin, written.operationId)).toEqual([{ failure_code: null, phase: 'committed' }]);
+            expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+          }),
+      );
+    }),
+  );
+
+  suite.effect('a holder whose hold was lost stops before its next engine write and leaves the fence alone', () =>
+    Effect.gen(function* lostHold() {
+      const gate = {
+        armed: yield* Ref.make(false),
+        entered: yield* Deferred.make<boolean>(),
+        letGo: yield* Deferred.make<boolean>(),
+        wroteAfterLoss: yield* Ref.make(false),
+      };
+      yield* withProjectionTenant(
+        { activeModules: [MODULE], wrapCompiler: writingAcrossLoss(gate) },
+        (tenantId, admin) =>
+          Effect.gen(function* holdTakenMidWrite() {
+            const scope = yield* bootstrapTenant(tenantId);
+            yield* Ref.set(gate.armed, true);
+            yield* Effect.addFinalizer(letGoOf(gate.letGo));
+            // The holder runs on a test clock, so its renewals and its own sense of time move only when told.
+            const clock = yield* Layer.build(TestClock.layer());
+            yield* TestClock.setTime(yield* Clock.currentTimeMillis).pipe(Effect.provide(clock));
+            const writer = yield* AccessProjectionWriter;
+            const holder = yield* writer.reconcileTenant({ scope }).pipe(Effect.provide(clock), Effect.forkChild);
+            yield* Deferred.await(gate.entered);
+            // Another operation now holds the fence (a taker that judged this hold lapsed), and the holder's renewals
+            // fail to prove its hold for longer than it may go unproved.
+            yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
+            yield* TestClock.adjust('95 seconds').pipe(Effect.provide(clock));
+            yield* Deferred.succeed(gate.letGo, true);
+            expect(yield* refusalOf(Fiber.join(holder))).toContain('no longer holds');
+            expect(yield* Ref.get(gate.wroteAfterLoss)).toBe(false);
+            expect(yield* tenantFence(admin, tenantId)).toEqual([
+              { owning_operation_id: DEAD_HOLDER, state: 'Changing' },
+            ]);
+          }),
+      );
+    }),
+  );
+
+  suite.effect('the sweeper reopens a tenant whose hold lapsed, never a live hold, and does nothing when idle', () =>
+    withProjectionTenant({ activeModules: [MODULE] }, (tenantId, admin) =>
+      Effect.gen(function* sweptOpen() {
+        yield* bootstrapTenant(tenantId);
+        const backoffs = yield* makeAccessFenceSweepBackoffs;
+        const idle = { busy: [], deferred: 0, failed: [], healed: [] };
+        expect(yield* sweepLapsedAccessFences(backoffs, 'tick-1')).toEqual(idle);
+        const before = yield* journals(admin, tenantId);
+        yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
+        // A live lease is not the sweeper's: nothing is reconciled, no journal is opened.
+        expect(yield* sweepLapsedAccessFences(backoffs, 'tick-2')).toEqual(idle);
+        expect(yield* journals(admin, tenantId)).toHaveLength(before.length + 1);
+        yield* lapseLease(admin, tenantId);
+        expect(yield* sweepLapsedAccessFences(backoffs, 'tick-3')).toEqual({ ...idle, healed: [tenantId] });
+        expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+        expect(yield* journalOf(admin, DEAD_HOLDER)).toEqual([{ failure_code: 'lease_expired', phase: 'failed' }]);
+        expect(yield* sweepLapsedAccessFences(backoffs, 'tick-4')).toEqual(idle);
       }),
     ),
   );
 
-  suite.effect('refuses a snapshot the fence moved past instead of projecting a revoked member back', () =>
-    withTenant('projection', (tenant) =>
-      Effect.gen(function* snapshotOvertakenWhileReading() {
-        const scope = yield* preparedTenant(tenant);
-        // A pinned the tenant's fence revision and read a snapshot that still carries the member.
-        const a = yield* forkPausedReconciliation(tenant, scope);
-        // The revocation commits and B projects it: the fence moves two revisions while A holds its snapshot.
-        yield* revokeMember(tenant, scope);
-        const b = yield* tenant.writer.reconcileTenant({ scope }).pipe(Effect.mapError(asFailure), Effect.orDie);
-        expect(b.deletions).toBeGreaterThan(0);
-        expect(b.verified).toBe(true);
-        expect(tenantMembers(yield* tenant.compiler.readProjection([tenant.tenantId]), tenant.tenantId)).toEqual([
-          owner,
-        ]);
+  suite.effect('a tenant the sweeper cannot heal waits out a doubling backoff, then is healed', () =>
+    Effect.gen(function* sweptWithBackoff() {
+      const failing = yield* Ref.make(false);
+      yield* withProjectionTenant(
+        { activeModules: [MODULE], wrapCompiler: failingEngine(failing) },
+        (tenantId, admin) =>
+          Effect.gen(function* backedOff() {
+            yield* bootstrapTenant(tenantId);
+            const clock = yield* Layer.build(TestClock.layer());
+            yield* TestClock.setTime(yield* Clock.currentTimeMillis).pipe(Effect.provide(clock));
+            const backoffs = yield* makeAccessFenceSweepBackoffs;
+            const sweep = sweepOnClock(backoffs, clock);
+            yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
+            yield* lapseLease(admin, tenantId);
+            yield* Ref.set(failing, true);
+            const first = yield* sweep('tick-1');
+            expect(first.healed).toEqual([]);
+            expect(retriesOf(first)).toEqual([[tenantId, 60_000]]);
+            // The failed take-over keeps the tenant closed; once that lease lapses too the tenant is due again, but
+            // only after its backoff.
+            yield* lapseLease(admin, tenantId);
+            const journaled = (yield* journals(admin, tenantId)).length;
+            expect(yield* sweep('tick-2')).toEqual({ busy: [], deferred: 1, failed: [], healed: [] });
+            expect(yield* journals(admin, tenantId)).toHaveLength(journaled);
+            yield* TestClock.adjust('61 seconds').pipe(Effect.provide(clock));
+            const second = yield* sweep('tick-3');
+            expect(retriesOf(second)).toEqual([[tenantId, 120_000]]);
+            yield* lapseLease(admin, tenantId);
+            yield* Ref.set(failing, false);
+            yield* TestClock.adjust('121 seconds').pipe(Effect.provide(clock));
+            expect(yield* sweep('tick-4')).toEqual({ busy: [], deferred: 0, failed: [], healed: [tenantId] });
+            expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+          }),
+      );
+    }),
+  );
 
-        // A resumes: its compare-and-set finds the fence at another revision, so the snapshot it planned is
-        // refused instead of written — the stale projection never reaches the graph (R5a-1).
-        yield* Deferred.succeed(tenant.pause.resume, null);
-        const exit = yield* Effect.exit(Fiber.join(a));
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(Exit.isFailure(exit) ? Cause.pretty(exit.cause) : 'projected').toContain(
-          'access_projection_write_fence_refused',
+  suite.effect(
+    'the 90-second limit counts from before a take that waited behind an Action, and alone stops writes',
+    () =>
+      Effect.gen(function* unprovedHold() {
+        const gate = {
+          armed: yield* Ref.make(false),
+          entered: yield* Deferred.make<boolean>(),
+          letGo: yield* Deferred.make<boolean>(),
+          wroteAfterLoss: yield* Ref.make(false),
+        };
+        const lock = { held: yield* Deferred.make<boolean>(), release: yield* Deferred.make<boolean>() };
+        yield* withProjectionTenant(
+          { activeModules: [MODULE], wrapCompiler: writingAcrossLoss(gate) },
+          (tenantId, admin) =>
+            Effect.gen(function* takeBehindAction() {
+              const scope = yield* bootstrapTenant(tenantId);
+              yield* Ref.set(gate.armed, true);
+              yield* Effect.addFinalizer(letGoOf(gate.letGo));
+              yield* Effect.addFinalizer(letGoOf(lock.release));
+              yield* Effect.addFinalizer(renewalsRestored(admin));
+              const clock = yield* Layer.build(TestClock.layer());
+              yield* TestClock.setTime(yield* Clock.currentTimeMillis).pipe(Effect.provide(clock));
+              const action = yield* actionHoldingFence(admin, tenantId, lock).pipe(Effect.forkChild);
+              yield* Deferred.await(lock.held);
+              const writer = yield* AccessProjectionWriter;
+              const holder = yield* writer.reconcileTenant({ scope }).pipe(Effect.provide(clock), Effect.forkChild);
+              // The take waits behind the Action: two real seconds, and a minute on the holder's clock.
+              yield* Effect.sleep('2 seconds');
+              yield* TestClock.adjust('60 seconds').pipe(Effect.provide(clock));
+              yield* Deferred.succeed(lock.release, true);
+              yield* Fiber.join(action);
+              yield* Deferred.await(gate.entered);
+              // The lease is counted from when the take wrote it, not from its transaction's start two seconds before.
+              const [left] = yield* leaseLeft(admin, tenantId);
+              expect(left?.seconds).toBeGreaterThan(119);
+              // From now on no renewal succeeds, and none is refused: only the 90-second limit can stop the holder.
+              yield* renewalsFail(admin, true);
+              yield* TestClock.adjust('35 seconds').pipe(Effect.provide(clock));
+              yield* Deferred.succeed(gate.letGo, true);
+              expect(yield* refusalOf(Fiber.join(holder))).toContain('no lease renewal succeeded');
+              expect(yield* Ref.get(gate.wroteAfterLoss)).toBe(false);
+              yield* renewalsFail(admin, false);
+              const [held] = yield* tenantFence(admin, tenantId);
+              expect(held?.state).toBe('Changing');
+            }),
         );
-        expect(tenantMembers(yield* tenant.compiler.readProjection([tenant.tenantId]), tenant.tenantId)).toEqual([
-          owner,
-        ]);
+      }),
+  );
+
+  suite.effect(
+    'the lapsed-fence query skips the tenants the sweep waits out, and only the runtime role may run it',
+    () =>
+      withProjectionTenant({ activeModules: [MODULE] }, (tenantId, admin) =>
+        Effect.gen(function* lapsedQuery() {
+          yield* bootstrapTenant(tenantId);
+          yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
+          yield* lapseLease(admin, tenantId);
+          const lapsedWithout = (skip: string) =>
+            admin
+              .unsafe(
+                `select tenant_id::text as tenant_id
+                 from core.lapsed_access_fence_tenants(50, interval '35 minutes', ${skip})`,
+              )
+              .pipe(Effect.orDie);
+          expect(yield* lapsedWithout('null')).toEqual([{ tenant_id: tenantId }]);
+          expect(yield* lapsedWithout(`array['${tenantId}']::uuid[]`)).toEqual([]);
+          const grantees = yield* admin
+            .unsafe(
+              `select coalesce(nullif(a.grantee::regrole::text, '-'), 'PUBLIC') as grantee
+               from pg_proc p, aclexplode(p.proacl) a
+              where p.proname = 'lapsed_access_fence_tenants' and a.privilege_type = 'EXECUTE'`,
+            )
+            .pipe(Effect.orDie);
+          expect(grantees).toContainEqual({ grantee: 'ontos_runtime' });
+          expect(grantees).not.toContainEqual({ grantee: 'PUBLIC' });
+        }),
+      ),
+  );
+
+  suite.effect(
+    'a sweep that loses the take to another healer leaves the tenant to it, quietly and without backoff',
+    () =>
+      Effect.gen(function* lostToOtherHealer() {
+        const afterRead = yield* Ref.make(Option.none<Effect.Effect<void>>());
+        yield* withProjectionTenant(
+          { activeModules: [MODULE], wrapIntentLoader: interleavedLoader(afterRead) },
+          (tenantId, admin) =>
+            Effect.gen(function* otherHealerFirst() {
+              yield* bootstrapTenant(tenantId);
+              yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
+              yield* lapseLease(admin, tenantId);
+              // Right after this sweep read the tenant, another healer takes the lapsed fence.
+              yield* Ref.set(afterRead, Option.some(otherHealerTakes(admin, tenantId)));
+              const backoffs = yield* makeAccessFenceSweepBackoffs;
+              expect(yield* sweepLapsedAccessFences(backoffs, 'tick-1')).toEqual({
+                busy: [tenantId],
+                deferred: 0,
+                failed: [],
+                healed: [],
+              });
+              expect((yield* Ref.get(backoffs)).size).toBe(0);
+              expect(yield* tenantFence(admin, tenantId)).toEqual([
+                { owning_operation_id: OTHER_HEALER, state: 'Changing' },
+              ]);
+            }),
+        );
+      }),
+  );
+
+  suite.effect('two sweeps at once heal a lapsed tenant once, and neither reports a failure', () =>
+    withProjectionTenant({ activeModules: [MODULE] }, (tenantId, admin) =>
+      Effect.gen(function* twoSweeps() {
+        yield* bootstrapTenant(tenantId);
+        yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
+        yield* lapseLease(admin, tenantId);
+        const reports = yield* Effect.all(
+          [
+            makeAccessFenceSweepBackoffs.pipe(Effect.flatMap((backoffs) => sweepLapsedAccessFences(backoffs, 'a'))),
+            makeAccessFenceSweepBackoffs.pipe(Effect.flatMap((backoffs) => sweepLapsedAccessFences(backoffs, 'b'))),
+          ],
+          { concurrency: 2 },
+        );
+        expect(reports.flatMap(({ healed }) => healed)).toEqual([tenantId]);
+        expect(reports.flatMap(({ failed }) => failed)).toEqual([]);
+        expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
       }),
     ),
   );
 
-  suite.effect('keeps a revocation from being overwritten: a snapshot read under the fence cannot be pre-empted', () =>
-    withTenant('fenced', (tenant) =>
-      Effect.gen(function* noSnapshotOutsideTheFence() {
-        const scope = yield* preparedTenant(tenant);
-        // A holds the fence and has read the tenant's intent; it is paused before writing it.
-        const a = yield* forkPausedReconciliation(tenant, scope);
-        // The revocation commits, but B cannot project it: this tenant's fence belongs to A.
-        yield* revokeMember(tenant, scope);
-        const b = yield* Effect.result(tenant.writer.reconcileTenant({ scope }));
-        expect(Result.isFailure(b)).toBe(true);
-        expect(Result.isFailure(b) ? b.failure.code : 'allowed').toBe('access_projection_write_fence_refused');
-        expect(Result.isFailure(b) ? b.failure.reason : '').toContain('held by operation');
-
-        // A's snapshot still carries the member and nothing projected in between, so A writes nothing and
-        // releases the fence; the graph is exactly the snapshot A read under its own fence.
-        yield* Deferred.succeed(tenant.pause.resume, null);
-        const resumed = yield* Fiber.join(a).pipe(Effect.orDie);
-        expect(resumed.verified).toBe(true);
-        expect(resumed.touches).toBe(0);
-        expect(tenantMembers(yield* tenant.compiler.readProjection([tenant.tenantId]), tenant.tenantId)).toEqual(
-          [member, owner].toSorted(),
-        );
-
-        // The next reconciliation is the revocation's own and removes the tuple A could not overwrite.
-        const repair = yield* tenant.writer.reconcileTenant({ scope }).pipe(Effect.mapError(asFailure), Effect.orDie);
-        expect(repair.deletions).toBeGreaterThan(0);
-        expect(repair.verified).toBe(true);
-        expect(tenantMembers(yield* tenant.compiler.readProjection([tenant.tenantId]), tenant.tenantId)).toEqual([
-          owner,
-        ]);
+  suite.effect('a deploy activation that finds another writer holding the fence waits for it instead of failing', () =>
+    withProjectionTenant({ activeModules: [MODULE] }, (tenantId, admin) =>
+      Effect.gen(function* activationWaits() {
+        yield* bootstrapTenant(tenantId);
+        // A sweep is healing the tenant: its fence is held under a live lease while the deploy activates the catalog.
+        yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
+        const activation = yield* activateCatalogRelease({ modules: deployment }).pipe(Effect.orDie, Effect.forkChild);
+        yield* Effect.sleep('3 seconds');
+        yield* holderReleases(admin, tenantId);
+        const activated = yield* Fiber.join(activation);
+        expect(activated.tenants.find((entry) => entry.tenantId === tenantId)?.outcome).not.toBe('failed');
+        expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
       }),
     ),
+  );
+
+  suite.effect('a take-over that finds the intent moved projects the fresh intent before the fence opens', () =>
+    Effect.gen(function* movedUnderTakeOver() {
+      const afterRead = yield* Ref.make(Option.none<Effect.Effect<void>>());
+      yield* withProjectionTenant(
+        { activeModules: [MODULE], wrapIntentLoader: interleavedLoader(afterRead) },
+        (tenantId, admin) =>
+          Effect.gen(function* freshIntentUnderHeldFence() {
+            const scope = yield* bootstrapTenant(tenantId);
+            yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
+            yield* lapseLease(admin, tenantId);
+            yield* Ref.set(
+              afterRead,
+              Option.some(
+                admin
+                  .unsafe(
+                    `update core.tenant_module_states set state = 'suspended'
+                      where tenant_id = '${tenantId}' and module_key = '${MODULE}'`,
+                  )
+                  .pipe(Effect.orDie, Effect.asVoid),
+              ),
+            );
+            const writer = yield* AccessProjectionWriter;
+            const written = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+            expect(written.deletions).toBeGreaterThan(0);
+            expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+            // The first take-over ended its journal when the intent moved; the second took the fence from it at once.
+            expect((yield* journalPhases(admin, tenantId)).slice(-2)).toEqual(['failed', 'committed']);
+            const again = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+            expect({ deletions: again.deletions, touches: again.touches }).toEqual({ deletions: 0, touches: 0 });
+          }),
+      );
+    }),
+  );
+
+  suite.effect('the sweep finds a hold taken before leases only after 35 idle minutes', () =>
+    withProjectionTenant({ activeModules: [MODULE] }, (tenantId, admin) =>
+      Effect.gen(function* preLeaseSweep() {
+        yield* bootstrapTenant(tenantId);
+        yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: null });
+        const backoffs = yield* makeAccessFenceSweepBackoffs;
+        const idle = { busy: [], deferred: 0, failed: [], healed: [] };
+        yield* idleJournal(admin, '34 minutes');
+        expect(yield* sweepLapsedAccessFences(backoffs, 'tick-1')).toEqual(idle);
+        yield* idleJournal(admin, '36 minutes');
+        expect(yield* sweepLapsedAccessFences(backoffs, 'tick-2')).toEqual({ ...idle, healed: [tenantId] });
+        expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+      }),
+    ),
+  );
+
+  suite.effect('the lease migration fails within seconds instead of queueing Actions behind its lock', () =>
+    Effect.gen(function* migrationLockBudget() {
+      const lock = { held: yield* Deferred.make<boolean>(), release: yield* Deferred.make<boolean>() };
+      yield* withProjectionTenant({ activeModules: [MODULE] }, (tenantId, admin) =>
+        Effect.gen(function* migrateUnderLiveAction() {
+          yield* bootstrapTenant(tenantId);
+          yield* Effect.addFinalizer(letGoOf(lock.release));
+          const statements = yield* migrationStatements('20261112024527_scope-fence-lease');
+          yield* beforeFenceMigrations(admin);
+          // An Action of the release still serving holds the fence's shared lock.
+          const action = yield* actionHoldingFence(admin, tenantId, lock).pipe(Effect.forkChild);
+          yield* Deferred.await(lock.held);
+          const started = yield* Clock.currentTimeMillis;
+          const refused = yield* Effect.flip(applyLeaseMigration(admin, statements));
+          expect((yield* Clock.currentTimeMillis) - started).toBeLessThan(15_000);
+          expect(refused.cause._tag).toBe('LockTimeoutError');
+          yield* Deferred.succeed(lock.release, true);
+          yield* Fiber.join(action);
+          // Run again once the Action committed, the migration applies.
+          yield* applyLeaseMigration(admin, statements).pipe(Effect.orDie);
+        }),
+      );
+    }),
+  );
+
+  suite.effect(
+    'an activation whose waiting budget runs out leaves the tenant unfollowed and its projection exact',
+    () =>
+      withProjectionTenant({ activeModules: [MODULE] }, (tenantId, admin) =>
+        Effect.gen(function* budgetSpent() {
+          const scope = yield* bootstrapTenant(tenantId);
+          // The platform tenant lives in the same database, and another writer holds this tenant's fence for longer
+          // than the whole activation may wait.
+          const { executor } = yield* CoreDatabase;
+          yield* executor.transaction((transaction) => ensurePlatformTenant(transaction)).pipe(Effect.orDie);
+          yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
+          const activated = yield* activateCatalogRelease({
+            busyFenceBudget: Duration.seconds(3),
+            modules: deployment,
+          }).pipe(Effect.orDie);
+          const tenant = activated.tenants.find((entry) => entry.tenantId === tenantId);
+          expect(tenant?.outcome).toBe('deferred');
+          expect(tenant?.reason).toContain('not followed this deploy');
+          // The platform tenant is passed by before any waiting, and given no release actor.
+          expect(activated.tenants.find((entry) => entry.tenantId === PLATFORM_TENANT.tenantId)).toMatchObject({
+            outcome: 'skipped',
+          });
+          expect(yield* releaseActorsOf(admin, PLATFORM_TENANT.tenantId)).toEqual([{ actors: 0 }]);
+          // Nothing was recorded: once the other writer is done, the graph is still exactly the tenant's intent.
+          yield* holderReleases(admin, tenantId);
+          const writer = yield* AccessProjectionWriter;
+          const after = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+          expect({ deletions: after.deletions, touches: after.touches }).toEqual({ deletions: 0, touches: 0 });
+        }),
+      ),
   );
 });

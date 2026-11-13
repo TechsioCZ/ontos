@@ -10,14 +10,16 @@ import {
 import { Effect, Match } from 'effect';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import type { RecordsRequest } from '../../shared/apis/records.ts';
-import { merchandiseRecordsGrants, persistenceService } from '../services/persistence.service.ts';
+import { merchandiseRecordsPreparation, persistenceService } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { isAkrosCompany, storefrontReadRequest } from '../../shared/actions/command-guard.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
 const readFailure = (
-  failure: Effect.Error<ReturnType<Services['records']>> | Effect.Error<ReturnType<typeof merchandiseRecordsGrants>>,
+  failure:
+    | Effect.Error<ReturnType<Services['records']>>
+    | Effect.Error<ReturnType<typeof merchandiseRecordsPreparation>>,
 ) =>
   Match.value(failure).pipe(
     Match.tag(
@@ -96,7 +98,7 @@ export const recordsRead = defineRead(
     prepare: (input: RecordsRequest, context) =>
       akrosServiceKeyGuard(input, context.scope).pipe(
         Effect.andThen(
-          merchandiseRecordsGrants(
+          merchandiseRecordsPreparation(
             context.scope,
             storefrontReadRequest(context.scope.authMethod, context.scope.legalEntityId, input),
           ).pipe(Effect.mapError(readFailure)),

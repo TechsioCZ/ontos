@@ -1,7 +1,7 @@
 // Pure AKROS baseline builder: the seed CLI (akros-catalog.mts) and the in-app admin reset build the same state.
 import { Effect, Option, Schema } from 'effect';
 import type { MerchandiseStateSchema } from '../shared/apis/records.ts';
-import type { VatRate } from '../shared/domain/merchandise-model.ts';
+import { CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
 import {
   CatalogSourceIdSchema,
   CatalogCategoryIdSchema,
@@ -11,7 +11,7 @@ import {
 } from '../shared/domain/merchandise-model.ts';
 import { decodeCategoryText, orderCategoryPositions, stripUnbackedDiscount } from './akros-merge.ts';
 import { akrosSampleContacts } from './order-presentation.ts';
-import { applyDemoPriceTiers } from './akros-price-tiers.ts';
+import { AKROS_SEED_STANDARD_RATE, applyDemoPriceTiers } from './akros-price-tiers.ts';
 
 export type AkrosEncodedState = typeof MerchandiseStateSchema.Encoded;
 interface BaselineStockSource {
@@ -119,7 +119,8 @@ export type DemoId = (namespace: string, key: string) => string;
 const productUnitOf = (unit: string): AkrosEncodedState['products'][number]['unit'] =>
   unit === 'm' || unit === 'tab' || unit === 'set' ? unit : 'ks';
 const at = '2026-10-19T08:00:00.000Z';
-const vatRate: VatRate = 21;
+/** Seeded orders were placed at the standard rate the Tax baseline seeds (see AKROS_SEED_STANDARD_RATE). */
+const vatRate = AKROS_SEED_STANDARD_RATE;
 type SourceCatalogFields = {
   -readonly [
     Key in 'minimumQuantity' | 'packageQuantity' | 'parameters' | 'priceTiers' | 'sourceUnit'
@@ -200,6 +201,7 @@ export const buildAkrosEncodedFrom = Effect.fn('Akros.buildEncodedBaseline')(fun
     sourceGroupId: product.sourceGroupId,
     sourceProductId: product.id,
     stockTracked: true,
+    taxClassificationCode: CZ_VAT_STANDARD,
     unit: productUnitOf(product.unit),
     updatedAt: at,
     variants: product.detail.variants.map((variant) => {
@@ -228,7 +230,6 @@ export const buildAkrosEncodedFrom = Effect.fn('Akros.buildEncodedBaseline')(fun
         { isNew: variant.isNew },
       );
     }),
-    vatRate,
   }));
   const products = sourceProducts.map(applyDemoPriceTiers);
   const movements: AkrosEncodedState['movements'] = akrosSourceProducts.flatMap((product) => {
@@ -301,6 +302,7 @@ export const buildAkrosEncodedFrom = Effect.fn('Akros.buildEncodedBaseline')(fun
           {
             ...lineVariant,
             quantity,
+            taxClassificationCode: CZ_VAT_STANDARD,
             unitPriceMinor: tier.priceMinor,
             vatRate,
           },

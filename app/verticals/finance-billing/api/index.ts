@@ -42,6 +42,7 @@ import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
 // The redemption binding itself arrives through the generated support-import slot below; only the
 // finance-specific client comes from the owner service module, so this file imports that module once.
 import { FinanceRedemptionClientLive } from '../src/services/gateway-redemption.ts';
+import { FinanceTaxRatesLive } from '../src/integrations/tax-rates.ts';
 // <generated-governed-http-handler-support-imports>
 import {
   ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive,
@@ -57,6 +58,7 @@ import { invoicesReadApiLive } from './invoices-search-server.ts';
 import { leaseInvoicesReadApiLive } from './lease-invoices-read-server.ts';
 import { recordsReadApiLive } from './records-read-server.ts';
 import { requestSearchRebuildActionApiLive } from './request-search-rebuild-action-server.ts';
+import { vatChoicesReadApiLive } from './vat-choices-read-server.ts';
 // </generated-governed-http-handler-imports>
 
 const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
@@ -150,6 +152,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   leaseInvoicesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   recordsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   requestSearchRebuildActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  vatChoicesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(
   GovernedReadLayer.provide(CoreSearchQueryRuntimeLive.pipe(GovernedReadLayer.provide(CoreSearchProjectionStoreLive))),
@@ -162,6 +165,8 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   ),
   // </generated-governed-http-handler-support-layers>
   GovernedReadLayer.provide(FinanceRedemptionClientLive.pipe(GovernedReadLayer.provide(Reactivity.layer))),
+  // Invoice VAT choices and their command checks read Tax as Finance, for the admitted person.
+  GovernedReadLayer.provide(FinanceTaxRatesLive),
   // The apply command validates its references through the governed Read runtime.
   GovernedReadLayer.provide(GovernedReadLayer.mergeAll(ActionPermissionLive, governedReadRuntimeLive)),
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),

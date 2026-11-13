@@ -1,4 +1,6 @@
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+import { companyVatOf } from '../../provoz/produkty/product-tax-classification.ts';
+import type { CompanyVat } from '../../provoz/produkty/product-tax-classification.ts';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { LIST_WARM_ROWS, makeIntentLimiter, makePointerDwell, rowIntentProps, useHeldSnapshot } from '@app/admin-ui';
 import type { RowIntentProps } from '@app/admin-ui';
@@ -272,6 +274,8 @@ export interface OrderDetailRecords {
    */
   readonly products: readonly ProductRecord[];
   readonly revision: number;
+  /** The company's VAT rates (current and scheduled); the edit form takes a new line's rate from them. */
+  readonly vat: CompanyVat;
 }
 
 const OrderDetailIncomplete = Data.TaggedError('OrderDetailIncomplete');
@@ -338,6 +342,7 @@ const loadOrderDetail = Effect.fn('OrdersRecords.loadDetail')(function* loadOrde
       ...full.map((response) => response.revision),
       ...ledgers.map((ledger) => ledger.revision),
     ),
+    vat: companyVatOf(rows),
   } satisfies OrderDetailRecords;
 });
 
@@ -1027,7 +1032,8 @@ export const useOrderDetail = (
       left.order === right.order &&
       left.products === right.products &&
       left.revision === right.revision &&
-      left.movesStock === right.movesStock,
+      left.movesStock === right.movesStock &&
+      left.vat === right.vat,
   });
   if (kept === null) {
     return state;

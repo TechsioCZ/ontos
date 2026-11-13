@@ -23,6 +23,7 @@ import { applyCommandAction, CommandReferenceValidators } from '../../src/action
 import { transitionFinance } from '../../src/services/persistence.service.ts';
 import { financeBillingRegistration } from '../../vertical.registration.ts';
 import { financeStates } from '../../src/database/schema.ts';
+import { FinanceTaxRatesBaseline } from '../support/finance-tax-rates.ts';
 
 const principal = {
   authBindingId: '10000000-0000-4000-8000-000000000001',
@@ -91,7 +92,7 @@ const queryCompilationLayer = scriptedPgClientLayer(Effect.die('Query compilatio
   Layer.provide(Reactivity.layer),
 );
 
-it.layer(Layer.mergeAll(unusedProductionServices, NodeCrypto.layer, queryCompilationLayer))(
+it.layer(Layer.mergeAll(unusedProductionServices, NodeCrypto.layer, queryCompilationLayer, FinanceTaxRatesBaseline))(
   'Finance command authorization',
   (suite) => {
     suite.effect('executes an API-key principal through the real Action when native execute is allowed', () =>

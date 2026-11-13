@@ -21,6 +21,7 @@ import { Command, Flag } from 'effect/cli';
 import { FinanceStateSchema, InvoiceLinesSchema } from '../shared/apis/records.ts';
 import type { FinanceState } from '../shared/apis/records.ts';
 import { computeInvoiceTotals, INVOICE_NUMBER_PREFIX } from '../shared/domain/invoice-totals.ts';
+import { classificationOfStoredRate } from '../shared/domain/line-vat.ts';
 import { derivePaymentState } from '../src/services/persistence.service.ts';
 import { financeStates, financeRelations } from '../src/database/schema.ts';
 import { demoId, demoLegalEntityId, demoTenantId } from '../../../scripts/demo/fixture-ids.mts';
@@ -157,6 +158,10 @@ const salesDemoInvoice = Effect.fn('ResetDemo.salesDemoInvoice')(function* sales
             quantity: line.quantity,
             unitPriceMinor: snapshotPriceMinor(product, planned.issueDaysAgo),
             vatRate: product.vatRate,
+            ...Option.match(Option.fromUndefinedOr(classificationOfStoredRate(product.vatRate)), {
+              onNone: () => ({}),
+              onSome: (vatClassification) => ({ vatClassification }),
+            }),
           };
         }),
       ),

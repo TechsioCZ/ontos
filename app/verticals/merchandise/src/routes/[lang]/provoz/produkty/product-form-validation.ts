@@ -1,8 +1,7 @@
-import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
+import type { ProductUnit } from '../../../../../shared/domain/merchandise-model.ts';
 import type { ProductLabel } from './product-form-labels.ts';
 
 export const UNITS: readonly ProductUnit[] = ['ks', 'bal', 'hod', 'lic'];
-export const VAT_RATES: readonly VatRate[] = [0, 10, 12, 21];
 
 /**
  * Text limits of the apply-command schema. The forms check them before sending: an over-long value would

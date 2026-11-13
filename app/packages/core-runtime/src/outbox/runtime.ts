@@ -179,14 +179,20 @@ const handlerContext = (
     withOptionalProperty(
       withOptionalProperty(
         withOptionalProperty(
-          {
-            attemptNumber: claim.attemptNumber,
-            claimId: claim.claimId,
-            compositionRevision,
-          },
-          claim.originatorInvocationId !== undefined,
-          'originatorInvocationId',
-          claim.originatorInvocationId,
+          withOptionalProperty(
+            {
+              attemptNumber: claim.attemptNumber,
+              claimId: claim.claimId,
+              compositionRevision,
+            },
+            claim.originatorInvocationId !== undefined,
+            'originatorInvocationId',
+            claim.originatorInvocationId,
+            {},
+          ),
+          claim.originatorLegalEntityId !== undefined,
+          'originatorLegalEntityId',
+          claim.originatorLegalEntityId,
           {},
         ),
         claim.actorPrincipalId !== undefined,

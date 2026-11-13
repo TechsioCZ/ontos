@@ -1,3 +1,4 @@
+import { CZ_VAT_REDUCED } from '@app/shared-contracts/cz-vat-classifications';
 import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { ProductIdSchema, VariantIdSchema } from '../../shared/domain/merchandise-model.ts';
@@ -19,6 +20,7 @@ const coffeeLine: DraftLine = {
   productId: coffee,
   quantityText: '2',
   sku: 'ETI-250',
+  taxClassificationCode: CZ_VAT_REDUCED,
   vatRate: 12,
 };
 const draft: Draft = {
@@ -66,6 +68,7 @@ describe('order edit draft', () => {
             productId: tea,
             quantityText: '1',
             sku: 'SEN-100',
+            taxClassificationCode: CZ_VAT_REDUCED,
             variantId: large,
             vatRate: 12,
           },

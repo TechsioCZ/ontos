@@ -26,6 +26,7 @@ import {
   FinanceTextSchema,
   InvoiceDraftCommandFields,
   InvoiceLinesSchema,
+  LineVatFields,
   SourceOrderSchema,
   InvoiceSchema,
   MoneyMinorSchema,
@@ -231,7 +232,9 @@ export const FinanceCommandSchema = Schema.Union([
     name: FinanceTextSchema,
     unit: Schema.optionalKey(FinanceTextSchema),
     unitPriceMinor: MoneyMinorSchema,
+    vatClassification: LineVatFields.vatClassification,
     vatRate: VatRateSchema,
+    vatTreatment: LineVatFields.vatTreatment,
   }),
   Schema.TaggedStruct('SetOpeningBalance', {
     actorLabel,
