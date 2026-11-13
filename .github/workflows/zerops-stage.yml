@@ -24,11 +24,11 @@ on:
       - '**/CHANGELOG.md'
       - '**/LICENSE.md'
   workflow_dispatch:
-    # One deploy with the upload warm-up on decides whether the first transfer of a push step, rather than the first
+    # One deploy with the upload warm-up on decides whether the first transfer of a service, rather than the first
     # large transfer, is what stops every hostname of the project for 20-30 s. Off unless the input is ticked.
     inputs:
       upload_warmup:
-        description: Experiment — warm up the upload host before the first upload of each push step
+        description: Experiment — warm up the upload host before the first upload of each service
         type: boolean
         default: false
 
