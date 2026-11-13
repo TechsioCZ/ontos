@@ -879,7 +879,7 @@ const deniedRetailAccess = (
   requiredPermission: input.requiredPermission,
 });
 
-const profileKind = (ref: { readonly kind: 'COUNTERPARTY' | 'RETAIL' }) => ref.kind;
+const profileRefKind = (ref: { readonly kind: 'COUNTERPARTY' | 'RETAIL' }) => ref.kind;
 const targetState = (operation: ProfileLifecycleOperation): 'ACTIVE' | 'ARCHIVED' | 'SUSPENDED' => {
   if (operation === 'REACTIVATE') {
     return 'ACTIVE';
@@ -1713,7 +1713,7 @@ const lifecycleServices = (
         transaction
           .invoke(transitionProfileRoutine, [
             payload.profileRef.resourceId,
-            profileKind(payload.profileRef),
+            profileRefKind(payload.profileRef),
             payload.expectedState,
             payload.expectedRevision,
             targetState(operation),
@@ -2395,7 +2395,7 @@ const readServices = (
   const readProfile = (
     input: Parameters<CustomerProfileReadServices['readProfile']>[0],
   ): Effect.Effect<CustomerProfileReadResponse, ReadHandlerNotFound | ReadHandlerUnavailable> =>
-    transaction.invoke(readProfileRoutine, [input.profileRef.resourceId, profileKind(input.profileRef)]).pipe(
+    transaction.invoke(readProfileRoutine, [input.profileRef.resourceId, profileRefKind(input.profileRef)]).pipe(
       Effect.mapError(readUnavailableFromRoutineFailure),
       Effect.flatMap(
         ([row]): Effect.Effect<CustomerProfileReadResponse, ReadHandlerNotFound | ReadHandlerUnavailable> => {
@@ -2522,131 +2522,135 @@ const readServices = (
       evaluateGate: (
         input,
       ): Effect.Effect<CustomerProfileTradingGateResponse, ReadHandlerNotFound | ReadHandlerUnavailable> =>
-        transaction.invoke(readTradingGateRoutine, [input.profileRef.resourceId, profileKind(input.profileRef)]).pipe(
-          Effect.mapError(readUnavailableFromRoutineFailure),
-          Effect.flatMap(
-            ([row]): Effect.Effect<
-              CustomerProfileTradingGateResponse,
-              ReadHandlerNotFound | ReadHandlerUnavailable
-            > => {
-              if (row === undefined || row.outcome === 'PROFILE_NOT_FOUND') {
-                return Effect.fail(readNotFound('The Customer Profile does not exist in the verified scope'));
-              }
-              if (
-                row.payload === null ||
-                !Schema.is(ProfilePayloadSchema)(row.payload) ||
-                (row.payload.scopeLegalEntityId !== undefined && row.payload.scopeLegalEntityId !== scope.legalEntityId)
-              ) {
-                return Effect.fail(readUnavailable('The Customer Profile trading projection is invalid'));
-              }
-              const raw = row.payload;
-              const profile = profileFromPayload(raw, scope);
-              const profileReference = profileRef(scope.tenantId, raw.profileId, raw.profileKind);
-              if (row.outcome === 'PROFILE_RECONCILIATION_REQUIRED') {
-                return succeedCustomerProfileTradingGate({
-                  evaluatedAt: raw.updatedAt,
-                  gate: { canAcceptNewOrder: false, outcome: 'RECONCILIATION_REQUIRED' as const },
-                  profileRef: profileReference,
-                  provenance: profileProvenance(raw.updatedAt, raw.revision),
-                  revision: raw.revision,
-                  state: raw.state,
-                  subject: profile.subject,
-                });
-              }
+        transaction
+          .invoke(readTradingGateRoutine, [input.profileRef.resourceId, profileRefKind(input.profileRef)])
+          .pipe(
+            Effect.mapError(readUnavailableFromRoutineFailure),
+            Effect.flatMap(
+              ([row]): Effect.Effect<
+                CustomerProfileTradingGateResponse,
+                ReadHandlerNotFound | ReadHandlerUnavailable
+              > => {
+                if (row === undefined || row.outcome === 'PROFILE_NOT_FOUND') {
+                  return Effect.fail(readNotFound('The Customer Profile does not exist in the verified scope'));
+                }
+                if (
+                  row.payload === null ||
+                  !Schema.is(ProfilePayloadSchema)(row.payload) ||
+                  (row.payload.scopeLegalEntityId !== undefined &&
+                    row.payload.scopeLegalEntityId !== scope.legalEntityId)
+                ) {
+                  return Effect.fail(readUnavailable('The Customer Profile trading projection is invalid'));
+                }
+                const raw = row.payload;
+                const profile = profileFromPayload(raw, scope);
+                const profileReference = profileRef(scope.tenantId, raw.profileId, raw.profileKind);
+                if (row.outcome === 'PROFILE_RECONCILIATION_REQUIRED') {
+                  return succeedCustomerProfileTradingGate({
+                    evaluatedAt: raw.updatedAt,
+                    gate: { canAcceptNewOrder: false, outcome: 'RECONCILIATION_REQUIRED' as const },
+                    profileRef: profileReference,
+                    provenance: profileProvenance(raw.updatedAt, raw.revision),
+                    revision: raw.revision,
+                    state: raw.state,
+                    subject: profile.subject,
+                  });
+                }
 
-              if (profile.kind !== 'COUNTERPARTY') {
-                return succeedCustomerProfileTradingGate({
-                  evaluatedAt: raw.updatedAt,
-                  gate: { canAcceptNewOrder: profile.state === 'ACTIVE', outcome: profile.state },
-                  profileRef: profileReference,
-                  provenance: profileProvenance(raw.updatedAt, raw.revision),
-                  revision: raw.revision,
-                  state: raw.state,
-                  subject: profile.subject,
-                });
-              }
+                if (profile.kind !== 'COUNTERPARTY') {
+                  return succeedCustomerProfileTradingGate({
+                    evaluatedAt: raw.updatedAt,
+                    gate: { canAcceptNewOrder: profile.state === 'ACTIVE', outcome: profile.state },
+                    profileRef: profileReference,
+                    provenance: profileProvenance(raw.updatedAt, raw.revision),
+                    revision: raw.revision,
+                    state: raw.state,
+                    subject: profile.subject,
+                  });
+                }
 
-              const resolveRole = dependencies.resolveCounterpartyRole;
-              if (resolveRole === undefined) {
-                return Effect.fail(readUnavailable('Current Counterparty Role evidence is unavailable'));
-              }
-              return resolveRole({
-                counterpartyResourceId: profile.subject.counterpartyRef.resourceId,
-                tenantId: scope.tenantId,
-              }).pipe(
-                Effect.mapError((cause) =>
-                  readUnavailable(`Current Counterparty Role evidence is unavailable (${String(cause)})`),
-                ),
-                Effect.flatMap((eligibility) =>
-                  DateTime.now.pipe(
-                    // oxlint-disable-next-line sonarjs/no-nested-functions -- The timestamp mapper intentionally captures the resolved eligibility and scoped profile evidence inside this read transaction.
-                    Effect.map((now) => {
-                      const evaluatedAt = DateTime.formatIso(now);
-                      const eligibleForScope =
-                        eligibility.outcome === 'ELIGIBLE' && eligibility.managedLegalEntityId === scope.legalEntityId;
-                      const roleProvenance =
-                        eligibility.outcome === 'ELIGIBLE' && eligibility.roleResourceId !== undefined
-                          ? [
-                              {
-                                freshness: {
-                                  observedAt: evaluatedAt,
-                                  revision: eligibility.roleResourceRevision,
-                                  sourceModuleId: 'party.registry',
-                                  status: eligibleForScope ? ('CURRENT' as const) : ('INDETERMINATE' as const),
-                                },
-                                projection: 'PARTY_REGISTRY' as const,
-                                sourceResourceRef: eligibility.roleResourceId,
-                              },
-                            ]
-                          : [
-                              {
-                                freshness: {
-                                  observedAt: evaluatedAt,
-                                  sourceModuleId: 'party.registry',
-                                  status:
-                                    eligibility.outcome === 'INELIGIBLE'
-                                      ? ('CURRENT' as const)
-                                      : ('UNAVAILABLE' as const),
-                                },
-                                projection: 'PARTY_REGISTRY' as const,
-                              },
-                            ];
-                      let gate: CustomerProfileTradingGateResponse['gate'];
-                      if (eligibleForScope) {
-                        gate = {
-                          canAcceptNewOrder: profile.state === 'ACTIVE',
-                          outcome: profile.state,
-                        };
-                      } else if (
-                        eligibility.outcome === 'INELIGIBLE' ||
-                        (eligibility.outcome === 'ELIGIBLE' && !eligibleForScope)
-                      ) {
-                        gate = {
-                          canAcceptNewOrder: false,
-                          outcome: 'COUNTERPARTY_ROLE_NOT_ELIGIBLE',
-                        };
-                      } else {
-                        gate = {
-                          canAcceptNewOrder: false,
-                          outcome: 'DEPENDENCY_UNAVAILABLE',
-                        };
-                      }
-                      return {
-                        evaluatedAt,
-                        gate,
-                        profileRef: profileReference,
-                        provenance: [...profileProvenance(raw.updatedAt, raw.revision), ...roleProvenance],
-                        revision: raw.revision,
-                        state: raw.state,
-                        subject: profile.subject,
-                      };
-                    }),
+                const resolveRole = dependencies.resolveCounterpartyRole;
+                if (resolveRole === undefined) {
+                  return Effect.fail(readUnavailable('Current Counterparty Role evidence is unavailable'));
+                }
+                return resolveRole({
+                  counterpartyResourceId: profile.subject.counterpartyRef.resourceId,
+                  tenantId: scope.tenantId,
+                }).pipe(
+                  Effect.mapError((cause) =>
+                    readUnavailable(`Current Counterparty Role evidence is unavailable (${String(cause)})`),
                   ),
-                ),
-              );
-            },
+                  Effect.flatMap((eligibility) =>
+                    DateTime.now.pipe(
+                      // oxlint-disable-next-line sonarjs/no-nested-functions -- The timestamp mapper intentionally captures the resolved eligibility and scoped profile evidence inside this read transaction.
+                      Effect.map((now) => {
+                        const evaluatedAt = DateTime.formatIso(now);
+                        const eligibleForScope =
+                          eligibility.outcome === 'ELIGIBLE' &&
+                          eligibility.managedLegalEntityId === scope.legalEntityId;
+                        const roleProvenance =
+                          eligibility.outcome === 'ELIGIBLE' && eligibility.roleResourceId !== undefined
+                            ? [
+                                {
+                                  freshness: {
+                                    observedAt: evaluatedAt,
+                                    revision: eligibility.roleResourceRevision,
+                                    sourceModuleId: 'party.registry',
+                                    status: eligibleForScope ? ('CURRENT' as const) : ('INDETERMINATE' as const),
+                                  },
+                                  projection: 'PARTY_REGISTRY' as const,
+                                  sourceResourceRef: eligibility.roleResourceId,
+                                },
+                              ]
+                            : [
+                                {
+                                  freshness: {
+                                    observedAt: evaluatedAt,
+                                    sourceModuleId: 'party.registry',
+                                    status:
+                                      eligibility.outcome === 'INELIGIBLE'
+                                        ? ('CURRENT' as const)
+                                        : ('UNAVAILABLE' as const),
+                                  },
+                                  projection: 'PARTY_REGISTRY' as const,
+                                },
+                              ];
+                        let gate: CustomerProfileTradingGateResponse['gate'];
+                        if (eligibleForScope) {
+                          gate = {
+                            canAcceptNewOrder: profile.state === 'ACTIVE',
+                            outcome: profile.state,
+                          };
+                        } else if (
+                          eligibility.outcome === 'INELIGIBLE' ||
+                          (eligibility.outcome === 'ELIGIBLE' && !eligibleForScope)
+                        ) {
+                          gate = {
+                            canAcceptNewOrder: false,
+                            outcome: 'COUNTERPARTY_ROLE_NOT_ELIGIBLE',
+                          };
+                        } else {
+                          gate = {
+                            canAcceptNewOrder: false,
+                            outcome: 'DEPENDENCY_UNAVAILABLE',
+                          };
+                        }
+                        return {
+                          evaluatedAt,
+                          gate,
+                          profileRef: profileReference,
+                          provenance: [...profileProvenance(raw.updatedAt, raw.revision), ...roleProvenance],
+                          revision: raw.revision,
+                          state: raw.state,
+                          subject: profile.subject,
+                        };
+                      }),
+                    ),
+                  ),
+                );
+              },
+            ),
           ),
-        ),
     },
     guestAttributionStatus: {
       readStatus: (

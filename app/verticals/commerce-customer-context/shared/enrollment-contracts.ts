@@ -72,6 +72,9 @@ export const EnrollmentResourceIdSchema = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(300),
 ).pipe(Schema.brand('EnrollmentResourceId'));
+
+/** A Party resource identifier: an Enrollment resource identifier that is always a UUID. */
+export const EnrollmentPartyResourceIdSchema = EnrollmentResourceIdSchema.check(Schema.isUUID());
 export const EnrollmentEvidenceReferenceSchema = uuid.pipe(Schema.brand('EnrollmentEvidenceReference'));
 /**
  * Timestamps are UTC instants in the decoded contract and one canonical UTC ISO string encoded.

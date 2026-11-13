@@ -229,7 +229,15 @@ import { verifyEffectiveCustomerGroupMembershipSetV1Read } from './src/api/verif
 import { VerifyRetailPurchasingSubjectCurrentV1Api } from './shared/apis/verify-retail-purchasing-subject-current-v1.ts';
 // </generated-module-manifest-imports>
 import { commerceCustomerContextMcpContribution } from './shared/mcp/contribution.ts';
-import { commercePortalExternalIdentityProvider } from './shared/portal-auth-verification.ts';
+import type { OntosExternalIdentityProviderInput } from '@app/core-runtime/auth/external-identity-provider';
+import {
+  COMMERCE_ADMISSION_DEADLINE_MS,
+  COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+} from './shared/portal-auth-contracts.ts';
+import {
+  COMMERCE_PORTAL_AUTH_VERIFY_OPERATION,
+  COMMERCE_PORTAL_AUTH_VERIFY_PATH,
+} from './shared/portal-auth-verification.ts';
 import { commerceCustomerContextRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 
 const createCounterpartyProfileEntrypoint = 'commerce.customer-context.create-counterparty-purchasing-profile';
@@ -271,6 +279,15 @@ const priceGroupCompatibilityCurrentEvidence =
   'commerce.customer-context.evidence.price-group.compatibility-contract-current';
 const priceGroupCompatibilityEntrypoint = 'pricing.price-group-catalog.api.validate-price-group-compatibility';
 const priceGroupCatalogModuleId = 'pricing.price-group-catalog';
+
+/** The external identity provider this module declares in its contract; the Shell calls it generically.
+ * `provider` is the name the Shell records on the Auth Bindings it reserves for this namespace. */
+const commercePortalExternalIdentityProvider = {
+  admissionDeadlineMs: COMMERCE_ADMISSION_DEADLINE_MS,
+  authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+  provider: 'better-auth',
+  verification: { operation: COMMERCE_PORTAL_AUTH_VERIFY_OPERATION, path: COMMERCE_PORTAL_AUTH_VERIFY_PATH },
+} as const satisfies OntosExternalIdentityProviderInput;
 
 export const commerceCustomerContextManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
