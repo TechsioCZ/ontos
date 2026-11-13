@@ -1,4 +1,5 @@
 import { pendingProposalMessage } from '../../../../api/action-result.ts';
+import { companyVatOf } from './product-tax-classification.ts';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState, useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import type { RegisteredRouter } from '@tanstack/react-router';
@@ -550,6 +551,7 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
               onReload={reload}
               open={dialog === 'create'}
               revision={revision}
+              vat={companyVatOf(ready)}
             />
             <ReceiptDialog
               onCommitted={onCommitted}

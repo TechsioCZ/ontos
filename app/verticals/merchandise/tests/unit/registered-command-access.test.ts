@@ -25,8 +25,11 @@ import { placeStorefrontOrderAction } from '../../src/actions/place-storefront-o
 import { proposeOrderChangesAction } from '../../src/actions/propose-order-changes.action.ts';
 import { reviewOrderChangesAction } from '../../src/actions/review-order-changes.action.ts';
 import { merchandiseRegistration } from '../../vertical.registration.ts';
+import { TaxRateSource } from '../../src/services/tax-rates.ts';
+import { TEST_TAX_BOOK } from '../support/tax-fixtures.ts';
 
 const unusedRuntimeDependencies = Layer.mergeAll(
+  Layer.succeed(TaxRateSource, { read: () => Effect.succeed(TEST_TAX_BOOK) }),
   Layer.mock(ActiveApplicationCompositionService, {}),
   Layer.mock(GatewayPrincipalVerifierConfiguration, {}),
   Layer.succeed(
@@ -181,8 +184,8 @@ commandTests(applyCommandAction, {
   name: 'Bolt',
   priceMinor: 100,
   sku: 'BOLT',
+  taxClassificationCode: 'cz.vat.standard',
   unit: 'ks',
-  vatRate: 21,
 });
 commandTests(manageCatalogAction, { _tag: 'UpdateProduct', id: 'product-1', patch: { name: 'Bolt' } });
 commandTests(manageMarketsAction, { _tag: 'RemoveMarket', marketId: '50000000-0000-4000-8000-000000000001' });

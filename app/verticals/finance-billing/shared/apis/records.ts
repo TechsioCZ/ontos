@@ -6,6 +6,8 @@ import { PropertyRefSchema } from '@app/property-portfolio/resources/property';
 import { UnitRefSchema } from '@app/property-portfolio/resources/unit';
 import { TaskRefSchema } from '@app/work-tasks/resources/task';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { CzVatClassificationCodeSchema } from '@app/shared-contracts/cz-vat-classifications';
+import { TaxRuleRevisionRefSchema } from '@app/tax/resources/tax-rule-revision';
 import { Schema } from 'effect';
 import { CalendarDateWireSchema } from '@app/shared-contracts';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
@@ -41,9 +43,42 @@ export const InvoiceDirectionSchema = Schema.Literals(['OUTGOING', 'INCOMING']);
 export const InvoiceBusinessStateSchema = Schema.Literals(['DRAFT', 'CONFIRMED', 'VOIDED']);
 export const PaymentStateSchema = Schema.Literals(['UNPAID', 'PARTIALLY_PAID', 'PAID']);
 export const AccountingSyncStateSchema = Schema.Literals(['NOT_SYNCED', 'PENDING', 'SYNCED', 'FAILED']);
-/** Czech VAT rates in whole percent. */
-export const VatRateSchema = Schema.Literals([0, 10, 12, 21]);
+/**
+ * VAT rate of a stored line in whole percent. A classified line copies the rate Tax published for its classification
+ * at the issue date; older lines keep the rate they were issued with (for example 10 % or 15 %).
+ */
+export const VatRateSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(100));
 export type VatRate = typeof VatRateSchema.Type;
+/**
+ * A line outside the VAT rates: an exempt supply, a supply under the reverse charge, or a company that is not a VAT
+ * payer. Such a line always has 0 % and never a classification.
+ */
+export const LineVatTreatmentSchema = Schema.Literals(['EXEMPT', 'REVERSE_CHARGE', 'NON_PAYER']);
+export type LineVatTreatment = typeof LineVatTreatmentSchema.Type;
+/**
+ * How a line's VAT was chosen. `vatClassification` names the Tax classification whose rate `vatRate` copies, and
+ * `taxRuleRevisionRef` the exact Tax rule revision that published it. A line with neither a classification nor a
+ * treatment is an older line that keeps its stored rate.
+ */
+export const LineVatFields = {
+  taxRuleRevisionRef: Schema.optionalKey(TaxRuleRevisionRefSchema),
+  vatClassification: Schema.optionalKey(CzVatClassificationCodeSchema),
+  vatTreatment: Schema.optionalKey(LineVatTreatmentSchema),
+};
+interface StoredLineVat {
+  readonly taxRuleRevisionRef?: unknown;
+  readonly vatClassification?: unknown;
+  readonly vatRate: number;
+  readonly vatTreatment?: unknown;
+}
+/** A treatment line has 0 % and no classification; a revision reference always comes with its classification. */
+export const isLineVatConsistent = (line: StoredLineVat): boolean =>
+  (line.vatTreatment === undefined ||
+    (line.vatRate === 0 && line.vatClassification === undefined && line.taxRuleRevisionRef === undefined)) &&
+  (line.taxRuleRevisionRef === undefined || line.vatClassification !== undefined);
+const lineVatConsistent = Schema.makeFilter((line: StoredLineVat) =>
+  isLineVatConsistent(line) ? undefined : 'A VAT treatment line has 0 % and no classification',
+);
 /**
  * Approved line discount (S07.R4): a whole percentage of the line amount or a fixed amount in haléře, always with
  * its reason. The discount is shown separately on the line and in the totals; it is approved with the document.
@@ -65,7 +100,8 @@ export const InvoiceLineSchema = Schema.Struct({
   quantity: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(1_000_000)),
   unitPriceMinor: MoneyMinorSchema,
   vatRate: VatRateSchema,
-});
+  ...LineVatFields,
+}).check(lineVatConsistent);
 export type InvoiceLine = typeof InvoiceLineSchema.Type;
 export const InvoiceLinesSchema = Schema.Array(InvoiceLineSchema).check(Schema.isMinLength(1), Schema.isMaxLength(200));
 export const VatRecapEntrySchema = Schema.Struct({
@@ -178,7 +214,7 @@ export const InvoiceSchema = Schema.Struct({
   subtotalMinor: Schema.optionalKey(MoneyMinorSchema),
   updatedAt: Schema.DateTimeUtcFromString,
   vatMinor: Schema.optionalKey(MoneyMinorSchema),
-  vatRecap: Schema.optionalKey(Schema.Array(VatRecapEntrySchema).check(Schema.isMaxLength(4))),
+  vatRecap: Schema.optionalKey(Schema.Array(VatRecapEntrySchema).check(Schema.isMaxLength(8))),
 });
 export type Invoice = typeof InvoiceSchema.Type;
 export const BudgetKindSchema = Schema.Literals(['COST', 'REVENUE']);
@@ -372,8 +408,11 @@ export const PriceListItemSchema = Schema.Struct({
   unit: Schema.optionalKey(FinanceTextSchema),
   unitPriceMinor: MoneyMinorSchema,
   updatedAt: Schema.DateTimeUtcFromString,
+  vatClassification: LineVatFields.vatClassification,
+  /** Rate shown when the item was saved; an invoice line filled from the item takes Tax's rate at its issue date. */
   vatRate: VatRateSchema,
-});
+  vatTreatment: LineVatFields.vatTreatment,
+}).check(lineVatConsistent);
 export type PriceListItem = typeof PriceListItemSchema.Type;
 /** Manually confirmed opening balance for the cash-flow forecast; it is not a bank balance. */
 export const CashFlowOpeningSchema = Schema.Struct({
@@ -386,6 +425,26 @@ export const CashFlowOpeningSchema = Schema.Struct({
   openingDate: CalendarDateSchema,
 });
 export type CashFlowOpening = typeof CashFlowOpeningSchema.Type;
+/**
+ * A won opportunity that left WON (lost or reopened) before its invoice was drafted, at the Sales Pipeline revision
+ * of that change: a won message older than it no longer drafts an invoice.
+ */
+export const OpportunityLeftWonSchema = Schema.Struct({
+  leftAt: Schema.DateTimeUtcFromString,
+  opportunityId: FinanceOpportunityIdSchema,
+  revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type OpportunityLeftWon = typeof OpportunityLeftWonSchema.Type;
+/**
+ * A won opportunity whose invoice waits for its company's VAT: when Tax first answered that the company is not ready
+ * (no declared regime, no rate, Tax not installed). The wait is measured from then; the record goes when the invoice is
+ * drafted or the wait ends.
+ */
+export const OpportunityAwaitingVatSchema = Schema.Struct({
+  firstNotReadyAt: Schema.DateTimeUtcFromString,
+  opportunityId: FinanceOpportunityIdSchema,
+});
+export type OpportunityAwaitingVat = typeof OpportunityAwaitingVatSchema.Type;
 export const FinanceStateSchema = Schema.Struct({
   accountingExports: Schema.optionalKey(Schema.Array(AccountingExportSchema).check(Schema.isMaxLength(200))),
   accountingSetup: Schema.optionalKey(AccountingSetupSchema),
@@ -395,6 +454,10 @@ export const FinanceStateSchema = Schema.Struct({
   financialPlanEntries: Schema.Array(FinancialPlanEntrySchema).check(Schema.isMaxLength(1000)),
   invoices: Schema.Array(InvoiceSchema).check(Schema.isMaxLength(1000)),
   manualPayments: Schema.optionalKey(Schema.Array(ManualPaymentSchema).check(Schema.isMaxLength(5000))),
+  opportunitiesAwaitingVat: Schema.optionalKey(
+    Schema.Array(OpportunityAwaitingVatSchema).check(Schema.isMaxLength(1000)),
+  ),
+  opportunitiesLeftWon: Schema.optionalKey(Schema.Array(OpportunityLeftWonSchema).check(Schema.isMaxLength(1000))),
   planItems: Schema.optionalKey(Schema.Array(PlanItemSchema).check(Schema.isMaxLength(2000))),
   priceList: Schema.optionalKey(Schema.Array(PriceListItemSchema).check(Schema.isMaxLength(500))),
   recurringTemplates: Schema.optionalKey(Schema.Array(RecurringTemplateSchema).check(Schema.isMaxLength(500))),

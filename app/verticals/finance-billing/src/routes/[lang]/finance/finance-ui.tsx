@@ -3,6 +3,7 @@ import type { InvoiceLine } from '../../../../shared/apis/records.ts';
 import type { FinanceCommandSchema } from '../../../../shared/actions/apply-command.ts';
 import { Data, Effect, Result, Schema } from 'effect';
 import { financeBrowserRuntime } from '../../../runtime/browser.ts';
+import { LineVatIssueSchema } from '../../../../shared/domain/line-vat.ts';
 import type { useFinanceRecords } from './use-finance-records.ts';
 
 type FinanceCommandInput = typeof FinanceCommandSchema.Encoded;
@@ -184,6 +185,11 @@ export const outcomeMessage = (
   vm: FinanceViewModel,
   outcome: { readonly feedback: string; readonly reason?: string },
 ) => {
+  // A VAT refusal names what to change on the line, in the reader's language.
+  const vatIssue = LineVatIssueSchema.literals.find((code) => outcome.reason?.includes(code) === true);
+  if (vatIssue !== undefined) {
+    return vm.t(`finance-billing.vat.rejected.${vatIssue}`);
+  }
   const known = Object.entries(reasonText).find(([key]) => outcome.reason?.includes(key) === true);
   return known?.[1] ?? vm.t(`finance-billing.demo.feedback.${outcome.feedback}`);
 };

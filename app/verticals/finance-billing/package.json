@@ -46,6 +46,7 @@
     "@app/sales-pipeline": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
+    "@app/tax": "workspace:*",
     "@app/work-tasks": "workspace:*",
     "@effect/opentelemetry": "4.0.7",
     "@effect/platform-node": "4.0.7",

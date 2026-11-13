@@ -30,17 +30,19 @@ for service in $services; do
     n1) id="${ZEROPS_N1_STOREFRONT_SERVICE_ID:?n1 service id is required}"; setup=n1 ;;
     *) echo "unknown delivery service: $service" >&2; exit 1 ;;
   esac
+  # Each push's timestamped lines reach the job log as they happen (and its own log file, which gates the next upload).
   if [ "$service" = app ]; then
-    bash "$script_dir/push-service.sh" "$id" "$setup" "$GITHUB_SHA" >"$RUNNER_TEMP/push-$service.log" 2>&1 &
+    PUSH_SERVICE_NAME="$service" bash "$script_dir/push-service.sh" "$id" "$setup" "$GITHUB_SHA" > >(tee "$RUNNER_TEMP/push-$service.log") 2>&1 &
   else
-    PUSH_EXCLUDE=app/.zerops-prebuilt.tar.zst bash "$script_dir/push-service.sh" "$id" "$setup" "$GITHUB_SHA" >"$RUNNER_TEMP/push-$service.log" 2>&1 &
+    PUSH_SERVICE_NAME="$service" PUSH_EXCLUDE=app/.zerops-prebuilt.tar.zst bash "$script_dir/push-service.sh" "$id" "$setup" "$GITHUB_SHA" > >(tee "$RUNNER_TEMP/push-$service.log") 2>&1 &
   fi
   pid=$!
   pids+=("$pid")
-  until grep -q '^build and deploy process' "$RUNNER_TEMP/push-$service.log" || ! kill -0 "$pid" 2>/dev/null; do sleep 1; done
+  until grep -q 'build and deploy process' "$RUNNER_TEMP/push-$service.log" 2>/dev/null || ! kill -0 "$pid" 2>/dev/null; do sleep 1; done
 done
 status=0
 for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+# The same lines once more, one collapsed group per service, so each push reads whole after the parallel run.
 for service in $services; do
   echo "::group::push $service"
   cat "$RUNNER_TEMP/push-$service.log"

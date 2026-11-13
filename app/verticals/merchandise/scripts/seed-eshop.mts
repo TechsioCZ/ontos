@@ -20,6 +20,8 @@ import type { MerchandiseState } from '../shared/apis/records.ts';
 import { grossUnitPriceMinor, shippingMethods } from '../shared/domain/merchandise-model.ts';
 import type { OrderStatus, ShippingMethod } from '../shared/domain/merchandise-model.ts';
 import { fullOrderTotals, ORDER_NUMBER_PREFIX } from '../shared/domain/order-totals.ts';
+import { CZ_VAT_REDUCED, CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
+import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import { readCompanySnapshot, writeCompanySnapshot } from './company-snapshot.ts';
 
 export const eshopLegalEntityId = '71000000-0000-4000-8000-000000000023' as const;
@@ -47,6 +49,14 @@ const productIdOf = (slug: string) => demoId('eshop.product', slug);
 const variantIdOf = (slug: string, key: string) => `${slug}--${key}`;
 const eshopAdmin = { principalId: demoId('core.principal', 'kavarna-eshop'), tenantId: demoTenantId };
 const eshopDispatch = { principalId: demoId('core.principal', 'kavarna-expedice'), tenantId: demoTenantId };
+
+/**
+ * The rates the seeded gross prices include: the Tax baseline seeded for the company (standard 21 %, reduced 12 %).
+ * Merchandise reprices from net on its next sync if the company's rules in Tax say otherwise.
+ */
+const SEED_RATES = { [CZ_VAT_REDUCED]: 12, [CZ_VAT_STANDARD]: 21 } as const satisfies Readonly<
+  Record<CzVatClassificationCode, number>
+>;
 
 /** Net minor price whose server-computed gross equals `grossMinor` (closest one when not exactly reachable). */
 export const netForGross = (grossMinor: number, vatRate: number): number => {
@@ -85,8 +95,8 @@ interface SeedProduct {
   readonly slug: string;
   readonly stock?: number;
   readonly stockTracked?: boolean;
+  readonly taxClassificationCode: CzVatClassificationCode;
   readonly variants?: readonly SeedVariant[];
-  readonly vatRate: 12 | 21;
   readonly weightGrams?: number;
 }
 
@@ -141,8 +151,8 @@ export const eshopCatalog: readonly SeedProduct[] = [
     shortDescription: 'Květinová a citrusová, světlé pražení na filtr.',
     sku: 'KD-ETH-YIR',
     slug: 'etiopie-yirgacheffe',
+    taxClassificationCode: CZ_VAT_REDUCED,
     variants: beans([28_900, 98_900, 52_900], [42, 9, 18]),
-    vatRate: 12,
   },
   {
     category: ZRNKOVA,
@@ -153,8 +163,8 @@ export const eshopCatalog: readonly SeedProduct[] = [
     shortDescription: 'Čokoláda a karamel, univerzální pražení.',
     sku: 'KD-COL-HUI',
     slug: 'kolumbie-huila',
+    taxClassificationCode: CZ_VAT_REDUCED,
     variants: beans([25_900, 89_900], [55, 14]),
-    vatRate: 12,
   },
   {
     category: ZRNKOVA,
@@ -165,8 +175,8 @@ export const eshopCatalog: readonly SeedProduct[] = [
     shortDescription: 'Oříšková, nízká kyselost, do espressa s mlékem.',
     sku: 'KD-BRA-SAN',
     slug: 'brazilie-santos',
+    taxClassificationCode: CZ_VAT_REDUCED,
     variants: beans([21_900, 75_900], [60, 20]),
-    vatRate: 12,
   },
   {
     category: ZRNKOVA,
@@ -177,8 +187,8 @@ export const eshopCatalog: readonly SeedProduct[] = [
     shortDescription: 'Černý rybíz a grapefruit, limitovaná sklizeň.',
     sku: 'KD-KEN-NYE',
     slug: 'kena-aa-nyeri',
+    taxClassificationCode: CZ_VAT_REDUCED,
     variants: beans([33_900, 118_900], [12, 3]),
-    vatRate: 12,
   },
   {
     category: ZRNKOVA,
@@ -189,8 +199,8 @@ export const eshopCatalog: readonly SeedProduct[] = [
     shortDescription: 'Kakao a mandle — momentálně vyprodáno.',
     sku: 'KD-GUA-ANT',
     slug: 'guatemala-antigua',
+    taxClassificationCode: CZ_VAT_REDUCED,
     variants: beans([27_900, 95_900], [0, 0]),
-    vatRate: 12,
   },
   {
     category: ZRNKOVA,
@@ -201,8 +211,8 @@ export const eshopCatalog: readonly SeedProduct[] = [
     shortDescription: 'Nejprodávanější směs na espresso, hustá crema.',
     sku: 'KD-ESP-DOM',
     slug: 'espresso-domaci-smes',
+    taxClassificationCode: CZ_VAT_REDUCED,
     variants: beans([24_900, 84_900, 45_900], [80, 25, 30]),
-    vatRate: 12,
   },
   {
     category: ZRNKOVA,
@@ -215,7 +225,7 @@ export const eshopCatalog: readonly SeedProduct[] = [
     sku: 'KD-RWA-NYA',
     slug: 'rwanda-nyamasheke',
     stockTracked: false,
-    vatRate: 12,
+    taxClassificationCode: CZ_VAT_REDUCED,
     weightGrams: 250,
   },
   {
@@ -227,6 +237,7 @@ export const eshopCatalog: readonly SeedProduct[] = [
     shortDescription: 'Čerstvě namletá, vyberte hrubost mletí.',
     sku: 'KD-ESP-MLE',
     slug: 'espresso-mleta',
+    taxClassificationCode: CZ_VAT_REDUCED,
     variants: [
       {
         attributes: ESPRESSO_GRIND,
@@ -243,7 +254,6 @@ export const eshopCatalog: readonly SeedProduct[] = [
         stock: 21,
       },
     ],
-    vatRate: 12,
   },
   {
     category: MLETA,
@@ -254,6 +264,7 @@ export const eshopCatalog: readonly SeedProduct[] = [
     shortDescription: 'Bez kofeinu metodou Swiss Water.',
     sku: 'KD-DEC-MLE',
     slug: 'kolumbie-decaf-mleta',
+    taxClassificationCode: CZ_VAT_REDUCED,
     variants: [
       {
         attributes: FILTER_GRIND,
@@ -270,7 +281,6 @@ export const eshopCatalog: readonly SeedProduct[] = [
         stock: 4,
       },
     ],
-    vatRate: 12,
   },
   {
     category: MLETA,
@@ -283,7 +293,7 @@ export const eshopCatalog: readonly SeedProduct[] = [
     sku: 'KD-TUR-MLE',
     slug: 'brazilie-turecka',
     stock: 27,
-    vatRate: 12,
+    taxClassificationCode: CZ_VAT_REDUCED,
     weightGrams: 250,
   },
   {
@@ -295,6 +305,7 @@ export const eshopCatalog: readonly SeedProduct[] = [
     shortDescription: 'Jemná ranní káva na filtr.',
     sku: 'KD-SNI-MLE',
     slug: 'snidanova-smes',
+    taxClassificationCode: CZ_VAT_REDUCED,
     variants: [
       {
         attributes: FILTER_GRIND,
@@ -311,7 +322,6 @@ export const eshopCatalog: readonly SeedProduct[] = [
         stock: 0,
       },
     ],
-    vatRate: 12,
   },
   {
     category: CAJ,
@@ -322,11 +332,11 @@ export const eshopCatalog: readonly SeedProduct[] = [
     shortDescription: 'Svěží zelený čaj s umami.',
     sku: 'KD-TEA-SEN',
     slug: 'sencha-kagoshima',
+    taxClassificationCode: CZ_VAT_REDUCED,
     variants: [
       { attributes: FIFTY_GRAM_ATTRIBUTES, gross: 18_900, key: '50g', name: '50 g', stock: 30 },
       { attributes: HUNDRED_GRAM_ATTRIBUTES, gross: 34_900, key: '100g', name: '100 g', stock: 12 },
     ],
-    vatRate: 12,
   },
   {
     category: CAJ,
@@ -337,11 +347,11 @@ export const eshopCatalog: readonly SeedProduct[] = [
     shortDescription: 'Černý čaj s bergamotem a pomerančem.',
     sku: 'KD-TEA-EGR',
     slug: 'earl-grey',
+    taxClassificationCode: CZ_VAT_REDUCED,
     variants: [
       { attributes: FIFTY_GRAM_ATTRIBUTES, gross: 12_900, key: '50g', name: '50 g', stock: 45 },
       { attributes: HUNDRED_GRAM_ATTRIBUTES, gross: 22_900, key: '100g', name: '100 g', stock: 22 },
     ],
-    vatRate: 12,
   },
   {
     category: CAJ,
@@ -352,11 +362,11 @@ export const eshopCatalog: readonly SeedProduct[] = [
     shortDescription: 'Jarní sklizeň — vyprodáno do příští sezóny.',
     sku: 'KD-TEA-DAR',
     slug: 'darjeeling-first-flush',
+    taxClassificationCode: CZ_VAT_REDUCED,
     variants: [
       { attributes: FIFTY_GRAM_ATTRIBUTES, gross: 21_900, key: '50g', name: '50 g', stock: 0 },
       { attributes: HUNDRED_GRAM_ATTRIBUTES, gross: 39_900, key: '100g', name: '100 g', stock: 0 },
     ],
-    vatRate: 12,
   },
   {
     category: CAJ,
@@ -368,7 +378,7 @@ export const eshopCatalog: readonly SeedProduct[] = [
     sku: 'KD-TEA-ROO',
     slug: 'rooibos-vanilka',
     stock: 4,
-    vatRate: 12,
+    taxClassificationCode: CZ_VAT_REDUCED,
     weightGrams: 100,
   },
   {
@@ -382,7 +392,7 @@ export const eshopCatalog: readonly SeedProduct[] = [
     sku: 'KD-TEA-MAT',
     slug: 'matcha-uji',
     stock: 3,
-    vatRate: 12,
+    taxClassificationCode: CZ_VAT_REDUCED,
     weightGrams: 30,
   },
   {
@@ -394,6 +404,7 @@ export const eshopCatalog: readonly SeedProduct[] = [
     shortDescription: 'Ikonický dripper na překapávanou kávu.',
     sku: 'KD-HAR-V60',
     slug: 'hario-v60',
+    taxClassificationCode: CZ_VAT_STANDARD,
     variants: [
       { attributes: 'Velikost: 01; Barva: bílá', gross: 54_900, key: '01-bila', name: 'Velikost 01 / bílá', stock: 11 },
       { attributes: 'Velikost: 02; Barva: bílá', gross: 64_900, key: '02-bila', name: 'Velikost 02 / bílá', stock: 8 },
@@ -405,7 +416,6 @@ export const eshopCatalog: readonly SeedProduct[] = [
         stock: 2,
       },
     ],
-    vatRate: 21,
   },
   {
     category: PRIPRAVA,
@@ -418,7 +428,7 @@ export const eshopCatalog: readonly SeedProduct[] = [
     sku: 'KD-AERO',
     slug: 'aeropress',
     stock: 14,
-    vatRate: 21,
+    taxClassificationCode: CZ_VAT_STANDARD,
   },
   {
     category: PRIPRAVA,
@@ -429,11 +439,11 @@ export const eshopCatalog: readonly SeedProduct[] = [
     shortDescription: 'Italská moka konvička na sporák.',
     sku: 'KD-BIA-MOK',
     slug: 'bialetti-moka',
+    taxClassificationCode: CZ_VAT_STANDARD,
     variants: [
       { attributes: 'Objem: 3 šálky', gross: 87_900, key: '3', name: '3 šálky', stock: 9 },
       { attributes: 'Objem: 6 šálků', gross: 119_900, key: '6', name: '6 šálků', stock: 5 },
     ],
-    vatRate: 21,
   },
   {
     category: PRIPRAVA,
@@ -446,7 +456,7 @@ export const eshopCatalog: readonly SeedProduct[] = [
     sku: 'KD-TIM-C3',
     slug: 'timemore-c3',
     stock: 2,
-    vatRate: 21,
+    taxClassificationCode: CZ_VAT_STANDARD,
   },
   {
     category: PRIPRAVA,
@@ -459,7 +469,7 @@ export const eshopCatalog: readonly SeedProduct[] = [
     sku: 'KD-HAR-FIL',
     slug: 'filtry-v60',
     stock: 0,
-    vatRate: 21,
+    taxClassificationCode: CZ_VAT_STANDARD,
   },
   {
     category: PRIPRAVA,
@@ -472,7 +482,7 @@ export const eshopCatalog: readonly SeedProduct[] = [
     sku: 'KD-KON-GOO',
     slug: 'konvice-gooseneck',
     stock: 7,
-    vatRate: 21,
+    taxClassificationCode: CZ_VAT_STANDARD,
   },
   {
     category: DARKY,
@@ -485,7 +495,7 @@ export const eshopCatalog: readonly SeedProduct[] = [
     sku: 'KD-DAR-OBJ',
     slug: 'darkova-sada-objevitel',
     stock: 18,
-    vatRate: 12,
+    taxClassificationCode: CZ_VAT_REDUCED,
   },
   {
     category: DARKY,
@@ -498,7 +508,7 @@ export const eshopCatalog: readonly SeedProduct[] = [
     sku: 'KD-DAR-CAJ',
     slug: 'cajova-kazeta',
     stock: 9,
-    vatRate: 12,
+    taxClassificationCode: CZ_VAT_REDUCED,
   },
   {
     category: DARKY,
@@ -512,7 +522,7 @@ export const eshopCatalog: readonly SeedProduct[] = [
     sku: 'KD-DAR-BAR',
     slug: 'sada-domaci-barista',
     stock: 6,
-    vatRate: 21,
+    taxClassificationCode: CZ_VAT_STANDARD,
   },
 ];
 
@@ -520,7 +530,7 @@ const productState = (product: SeedProduct): EncodedProduct => {
   const createdAt = daysAgo(120);
   const productId = productIdOf(product.slug);
   const variants = (product.variants ?? []).map((variant) => {
-    const priceMinor = netForGross(variant.gross, product.vatRate);
+    const priceMinor = netForGross(variant.gross, SEED_RATES[product.taxClassificationCode]);
     return {
       active: true,
       attributes: variant.attributes,
@@ -532,7 +542,7 @@ const productState = (product: SeedProduct): EncodedProduct => {
     };
   });
   const firstGross = product.gross ?? product.variants?.[0]?.gross ?? 0;
-  const priceMinor = netForGross(firstGross, product.vatRate);
+  const priceMinor = netForGross(firstGross, SEED_RATES[product.taxClassificationCode]);
   const result: SeedProductState = {
     active: true,
     category: product.category,
@@ -549,9 +559,9 @@ const productState = (product: SeedProduct): EncodedProduct => {
     shortDescription: product.shortDescription,
     sku: product.sku,
     slug: product.slug,
+    taxClassificationCode: product.taxClassificationCode,
     unit: 'ks',
     updatedAt: createdAt,
-    vatRate: product.vatRate,
   };
   if (product.stockTracked === false) {
     result.stockTracked = false;
@@ -711,8 +721,9 @@ const buildOrder = Effect.fn('Merchandise.buildEshopOrder')(function* buildOrder
           productName: product.name,
           quantity: line.quantity,
           sku: variant?.sku ?? product.sku,
-          unitPriceMinor: grossUnitPriceMinor(net, product.vatRate),
-          vatRate: product.vatRate,
+          taxClassificationCode: product.taxClassificationCode,
+          unitPriceMinor: grossUnitPriceMinor(net, SEED_RATES[product.taxClassificationCode]),
+          vatRate: SEED_RATES[product.taxClassificationCode],
         };
         if (variant !== undefined) {
           snapshot.variantId = variant.id ?? '';
@@ -727,7 +738,7 @@ const buildOrder = Effect.fn('Merchandise.buildEshopOrder')(function* buildOrder
     label: method.label,
     method: order.shipping,
     priceMinor: method.grossPriceMinor,
-    vatRate: 21 as const,
+    vatRate: SEED_RATES[CZ_VAT_STANDARD],
   };
   const totals = fullOrderTotals({ lines, pricesIncludeVat: true, shipping });
   const createdAt = daysAgo(order.createdDaysAgo, 3);

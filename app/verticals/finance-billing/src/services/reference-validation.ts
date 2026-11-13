@@ -13,6 +13,7 @@ import { DateTime, Effect } from 'effect';
 import { FinanceReferenceUnavailable, FinanceRejected } from '../../shared/actions/apply-command.ts';
 import type { Invoice } from '../../shared/apis/records.ts';
 import { hasUsableRole } from '../../shared/domain/reference-audiences.ts';
+import { FinanceTaxRates } from '../integrations/tax-rates.ts';
 import { matchesFinanceRef } from './persistence.service.ts';
 import type { ExportPartnerReference, FinanceAnchors, FinanceValidators } from './persistence.service.ts';
 
@@ -48,6 +49,7 @@ export const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(fu
   const { legalEntityId } = scope;
   const source = yield* makeReferenceGatewayCredentialSource(scope).pipe(Effect.mapError(unavailable));
   const readRuntime = yield* ReadRuntime;
+  const taxRates = yield* FinanceTaxRates;
   /** S08: the issuer name comes from Core's legal entity of the trusted scope, partners from the party registry. */
   const exportReferences = Effect.gen(function* exportReferences() {
     const { issuer, target } = yield* readRuntime
@@ -307,6 +309,7 @@ export const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(fu
       yield* validateContract(invoice);
       return yield* validateTask(invoice);
     }),
+    vat: (on: string) => taxRates.choices(scope, on),
   } satisfies FinanceValidators;
 });
 

@@ -15,7 +15,7 @@ export interface OutboxWorkerRetryPolicy {
 }
 
 export interface OutboxWorkerHandlerContext extends Readonly<
-  Partial<Record<'actorPrincipalId' | 'correlationId' | 'originatorInvocationId', string>>
+  Partial<Record<'actorPrincipalId' | 'correlationId' | 'originatorInvocationId' | 'originatorLegalEntityId', string>>
 > {
   readonly attemptNumber: number;
   readonly claimId: string;

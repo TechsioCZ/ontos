@@ -1,6 +1,7 @@
 import { useLocalizedLocation, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Result, Schema } from 'effect';
 import { Helmet } from '@modern-js/runtime/head';
+import { siteOrigin } from '../site-url.ts';
 
 import type { RouteJsonLd } from './ultramodern-jsonld';
 import { ultramodernRouteMetadata } from './ultramodern-route-metadata';
@@ -83,10 +84,7 @@ const resolveRouteMetadata = (pathname: string) => {
   return routeMetadata[0];
 };
 
-const absoluteUrl = (pathname: string) => {
-  const origin = ULTRAMODERN_SITE_URL.replace(/\/+$/u, '');
-  return `${origin}${pathname}`;
-};
+const absoluteUrl = (pathname: string) => `${siteOrigin()}${pathname}`;
 
 const sanitiseJsonLd = (value: RouteJsonLd) =>
   Result.getOrThrow(Schema.encodeResult(Schema.fromJsonString(Schema.Json))(value)).replaceAll('<', String.raw`\u003c`);

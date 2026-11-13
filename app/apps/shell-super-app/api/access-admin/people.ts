@@ -69,6 +69,7 @@ import {
   accessAdminConflictProblem,
   accessAdminForbiddenProblem,
   accessAdminInternalProblem,
+  accessAdminSavedPendingProblem,
   accessAdminUnavailableProblem,
   accessAdminUnprocessableProblem,
 } from './session.ts';
@@ -214,15 +215,25 @@ export const accessPeopleFailureProblem = (failure: PeopleCommandFailure): Acces
   if (CONFLICT_CODES.has(failure.code)) {
     return conflict(text);
   }
+  // Every projection runs after the people change was recorded: the change is saved, its permissions are not yet.
+  if (failure.code.startsWith('access_projection_write_') && failure.code !== 'access_projection_write_plan_refused') {
+    return accessAdminSavedPendingProblem();
+  }
   if (
     failure.code === 'access_intent_unavailable' ||
     failure.code === 'people_tenant_scope_missing' ||
-    failure.code.startsWith('access_projection_write_')
+    failure.code === 'access_projection_write_plan_refused'
   ) {
     return accessAdminUnavailableProblem();
   }
   return unprocessable(text);
 };
+
+/** The repair a stale request runs before it refuses: it saved nothing, so a failed projection is only unavailable. */
+const staleRepairProblem = (failure: PeopleCommandFailure): AccessAdminProblem =>
+  failure.code.startsWith('access_projection_write_')
+    ? accessAdminUnavailableProblem()
+    : accessPeopleFailureProblem(failure);
 
 /** An unreadable directory is a retry that keeps Core's own code, never a smaller answer. */
 const directoryUnavailable = (failure: { readonly code: string }): AccessAdminProblem => ({
@@ -957,10 +968,11 @@ const admitWrite = Effect.fn('AccessAdminPeople.admitWrite')(function* admitPeop
   const reach = yield* requireReach(scope, view, declaration, now);
   if (revisionOf(view, shown) !== expectedRevision) {
     // A retry of a write that committed but failed to reconcile lands here, because its own commit
-    // moved the revision. Converging the projection first means that write still takes effect.
+    // moved the revision. Converging the projection first means that write still takes effect. This
+    // request saved nothing, so a projection that fails here is plainly unavailable, never "saved".
     yield* AccessPeopleCommands.pipe(
       Effect.flatMap((commands) => commands.reconcile(scope)),
-      Effect.mapError(accessPeopleFailureProblem),
+      Effect.mapError(staleRepairProblem),
     );
     return yield* Effect.fail(conflict('the people of this tenant changed since this screen was read; reload Lidé'));
   }

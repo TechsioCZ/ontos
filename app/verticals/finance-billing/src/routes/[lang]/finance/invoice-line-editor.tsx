@@ -10,21 +10,26 @@ import { useState } from 'react';
 import type { ComponentProps } from 'react';
 import {
   czkToMinor,
+  lineVatProblem,
   newDraftLine,
-  VAT_RATE_CHOICES,
   withProductSnapshot,
   draftLineDiscount,
-  toInvoiceLine,
 } from '../../../../shared/domain/invoice-draft.ts';
 import type { DraftDiscountKind, DraftLine, DraftLineIssue } from '../../../../shared/domain/invoice-draft.ts';
 import { lineDiscountMinor } from '../../../../shared/domain/invoice-totals.ts';
+import { lineVatChoice, lineVatOf } from '../../../../shared/domain/line-vat.ts';
+import type { InvoiceDirection } from '../../../../shared/domain/line-vat.ts';
 import type { PriceListItem } from '../../../../shared/apis/records.ts';
 import { formLabelProps } from './invoice-view.ts';
+import type { VatChoicesState } from './use-vat-choices.ts';
+import { VatChoiceSelect } from './vat-choice-select.tsx';
 
 const ns = 'finance-billing.faktury';
 
 interface InvoiceLineEditorProps {
   readonly canRemove: boolean;
+  /** Whose invoice it is: a supplier's own invoice may use every VAT treatment. */
+  readonly direction: InvoiceDirection;
   readonly issue: DraftLineIssue | undefined;
   readonly line: DraftLine;
   readonly onChange: (next: DraftLine) => void;
@@ -36,6 +41,8 @@ interface InvoiceLineEditorProps {
   /** Active products only; the caller filters them. */
   readonly products: readonly ProductRecord[];
   readonly productsReadable: boolean;
+  /** The company's VAT on the issue date, as Finance reads it from Tax. */
+  readonly vat: VatChoicesState;
 }
 
 const DISCOUNT_KINDS: readonly (readonly [DraftDiscountKind, string])[] = [
@@ -95,8 +102,88 @@ const InvoiceLineDiscount = ({ line, onChange }: Pick<InvoiceLineEditorProps, 'l
       </div>
       {draftLineDiscount(line) !== undefined && (
         <p className="text-fg-secondary text-xs">
-          Sleva {formatMoney(lineDiscountMinor(toInvoiceLine(line)))} se na dokladu zobrazí samostatně i s důvodem.
+          Sleva {formatMoney(lineDiscountMinor({ ...line, discount: draftLineDiscount(line) }))} se na dokladu zobrazí
+          samostatně i s důvodem.
         </p>
+      )}
+    </>
+  );
+};
+
+/** Fills a free line from a price-list item; the line takes Tax's rate for the item's classification. */
+const PriceListPick = ({
+  line,
+  onChange,
+  priceList,
+}: Pick<InvoiceLineEditorProps, 'line' | 'onChange'> & { readonly priceList: readonly PriceListItem[] }) => {
+  const { t } = useModernI18n();
+  return (
+    <div className="min-w-0">
+      <SelectTemplate
+        items={[
+          { displayValue: 'Ruční zadání', label: 'Ruční zadání', value: 'MANUAL' },
+          ...priceList.map((item) => {
+            const unit = item.unit === undefined ? '' : ` / ${item.unit}`;
+            const label = `${item.name} · ${formatMoney(item.unitPriceMinor)}${unit}`;
+            return { displayValue: label, label, value: item.id };
+          }),
+        ]}
+        label={t('finance-billing.financeUi.line.fromPriceList')}
+        labelProps={formLabelProps}
+        name={`invoice-line-price-list-${line.key}`}
+        onValueChange={({ value }) => {
+          const item = priceList.find((entry) => entry.id === value[0]);
+          onChange(
+            item === undefined
+              ? { ...line, priceListItemId: null }
+              : {
+                  ...line,
+                  description: item.name,
+                  priceListItemId: item.id,
+                  unitPriceMinor: item.unitPriceMinor,
+                  // The item names its classification; the line takes Tax's rate at the issue date.
+                  vat: lineVatChoice(item),
+                },
+          );
+        }}
+        value={[line.priceListItemId ?? 'MANUAL']}
+      />
+    </div>
+  );
+};
+
+/** What the line says under its fields: the picked product's snapshot, the line's problem, or a 0 Kč warning. */
+const LineNotes = ({
+  errorText,
+  line,
+  productPicked,
+  rate,
+  zeroPriceLine,
+}: {
+  readonly errorText: string | undefined;
+  readonly line: DraftLine;
+  readonly productPicked: boolean;
+  readonly rate: number | undefined;
+  readonly zeroPriceLine: boolean;
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <>
+      {line.kind === 'product' && productPicked && (
+        <p className="text-fg-secondary text-xs">
+          {t(`${ns}.form.productMeta`, { price: formatMoney(line.unitPriceMinor), vat: rate ?? '—' })}
+        </p>
+      )}
+      {errorText !== undefined && (
+        <StatusText showIcon size="sm" status="error">
+          {errorText}
+        </StatusText>
+      )}
+      {/* 0 Kč is a valid free line (e.g. a gift), so it warns instead of blocking the submit. */}
+      {errorText === undefined && zeroPriceLine && (
+        <StatusText showIcon size="sm" status="warning">
+          {t(`${ns}.form.zeroPriceWarning`)}
+        </StatusText>
       )}
     </>
   );
@@ -105,6 +192,7 @@ const InvoiceLineDiscount = ({ line, onChange }: Pick<InvoiceLineEditorProps, 'l
 /** One invoice line: a product (snapshot on pick) or free text, then quantity, and price and VAT for free text. */
 export const InvoiceLineEditor = ({
   canRemove,
+  direction,
   issue,
   line,
   onChange,
@@ -113,6 +201,7 @@ export const InvoiceLineEditor = ({
   priceList = noPriceList,
   products,
   productsReadable,
+  vat,
 }: InvoiceLineEditorProps) => {
   const { t } = useModernI18n();
   const [productQuery, setProductQuery] = useState('');
@@ -122,7 +211,10 @@ export const InvoiceLineEditor = ({
     return matchesSearch(label, productQuery) ? [{ id: item.id, label, value: item.id }] : [];
   });
   const product = products.find((item) => item.id === line.productId);
-  const errorText = issue === undefined ? undefined : t(`${ns}.form.error.${issue}`);
+  // A VAT problem is explained under the VAT select itself.
+  const errorText = issue === undefined || issue === 'vat' ? undefined : t(`${ns}.form.error.${issue}`);
+  const choices = vat.state === 'ready' ? vat.choices : undefined;
+  const lineRate = lineVatOf(line.vat, choices)?.vatRate;
   // Shown once the line is being filled in, so a freshly added line does not open with a warning.
   const filledIn = line.kind === 'product' ? line.productId !== null : line.description.trim() !== '';
   const zeroPriceLine = line.unitPriceMinor === 0 && filledIn;
@@ -133,11 +225,6 @@ export const InvoiceLineEditor = ({
       : []),
     { displayValue: t(`${ns}.form.kindFree`), label: t(`${ns}.form.kindFree`), value: 'free' },
   ];
-  const vatItems = VAT_RATE_CHOICES.map((rate) => ({
-    displayValue: `${rate} %`,
-    label: `${rate} %`,
-    value: String(rate),
-  }));
   let priceInputProps: Pick<ComponentProps<typeof FormNumericInput>, 'value'> = {};
   if (Number.isFinite(line.unitPriceMinor)) {
     priceInputProps = { value: line.unitPriceMinor / 100 };
@@ -160,7 +247,7 @@ export const InvoiceLineEditor = ({
             onValueChange={({ value }) => {
               const kind = value[0] === 'free' ? 'free' : 'product';
               if (kind !== line.kind) {
-                onChange(newDraftLine(line.key, kind));
+                onChange(newDraftLine(line.key, kind, line.vat));
               }
             }}
             placeholder={t('finance-billing.selectPlaceholder')}
@@ -231,102 +318,53 @@ export const InvoiceLineEditor = ({
           </FormNumericInput>
         </div>
         {line.kind === 'free' && (
-          <>
-            <div className="min-w-0">
-              <FormNumericInput
-                // Two decimals at most, so `1234,5` stays 1 234,50 Kč instead of being rounded to whole crowns.
-                // Blur must not clamp a typed -100 to 0; `lineIssue` rejects it with a message instead.
-                clampValueOnBlur={false}
-                formatOptions={priceFormatOptions}
-                id={`invoice-line-price-${line.key}`}
-                label={t(`${ns}.form.unitPrice`)}
-                locale="cs-CZ"
-                min={0}
-                name="unitPrice"
-                // Text that is not a price stores NaN, so `lineIssue` reports `price` instead of a silent 0.
-                onChange={(value) =>
-                  onChange({ ...line, unitPriceMinor: Number.isFinite(value) ? czkToMinor(value) : Number.NaN })
-                }
-                step={0.01}
-                // A NaN price leaves the field uncontrolled, so the typed text stays visible next to the error.
-                {...priceInputProps}
-              >
-                <NumericInput.Control>
-                  <NumericInput.Input />
-                </NumericInput.Control>
-              </FormNumericInput>
-            </div>
-            <div className="min-w-0">
-              <SelectTemplate
-                items={vatItems}
-                label={t(`${ns}.form.vat`)}
-                labelProps={formLabelProps}
-                name={`invoice-line-vat-${line.key}`}
-                onValueChange={({ value }) => {
-                  const rate = VAT_RATE_CHOICES.find((item) => String(item) === value[0]);
-                  if (rate !== undefined) {
-                    onChange({ ...line, vatRate: rate });
-                  }
-                }}
-                placeholder={t('finance-billing.selectPlaceholder')}
-                value={[String(line.vatRate)]}
-              />
-            </div>
-          </>
+          <div className="min-w-0">
+            <FormNumericInput
+              // Two decimals at most, so `1234,5` stays 1 234,50 Kč instead of being rounded to whole crowns.
+              // Blur must not clamp a typed -100 to 0; `lineIssue` rejects it with a message instead.
+              clampValueOnBlur={false}
+              formatOptions={priceFormatOptions}
+              id={`invoice-line-price-${line.key}`}
+              label={t(`${ns}.form.unitPrice`)}
+              locale="cs-CZ"
+              min={0}
+              name="unitPrice"
+              // Text that is not a price stores NaN, so `lineIssue` reports `price` instead of a silent 0.
+              onChange={(value) =>
+                onChange({ ...line, unitPriceMinor: Number.isFinite(value) ? czkToMinor(value) : Number.NaN })
+              }
+              step={0.01}
+              // A NaN price leaves the field uncontrolled, so the typed text stays visible next to the error.
+              {...priceInputProps}
+            >
+              <NumericInput.Control>
+                <NumericInput.Input />
+              </NumericInput.Control>
+            </FormNumericInput>
+          </div>
         )}
-      </div>
-      {line.kind === 'free' && priceList.length > 0 && (
         <div className="min-w-0">
-          <SelectTemplate
-            items={[
-              { displayValue: 'Ruční zadání', label: 'Ruční zadání', value: 'MANUAL' },
-              ...priceList.map((item) => {
-                const unit = item.unit === undefined ? '' : ` / ${item.unit}`;
-                const label = `${item.name} · ${formatMoney(item.unitPriceMinor)}${unit}`;
-                return { displayValue: label, label, value: item.id };
-              }),
-            ]}
-            label={t('finance-billing.financeUi.line.fromPriceList')}
-            labelProps={formLabelProps}
-            name={`invoice-line-price-list-${line.key}`}
-            onValueChange={({ value }) => {
-              const item = priceList.find((entry) => entry.id === value[0]);
-              onChange(
-                item === undefined
-                  ? { ...line, priceListItemId: null }
-                  : {
-                      ...line,
-                      description: item.name,
-                      priceListItemId: item.id,
-                      unitPriceMinor: item.unitPriceMinor,
-                      vatRate: item.vatRate,
-                    },
-              );
-            }}
-            value={[line.priceListItemId ?? 'MANUAL']}
+          <VatChoiceSelect
+            choice={line.vat}
+            direction={direction}
+            invalid={issue === 'vat' || (choices !== undefined && lineVatProblem(line, choices, direction))}
+            name={`invoice-line-vat-${line.key}`}
+            onChange={(next) => onChange({ ...line, vat: next })}
+            vat={vat}
           />
         </div>
+      </div>
+      {line.kind === 'free' && priceList.length > 0 && (
+        <PriceListPick line={line} onChange={onChange} priceList={priceList} />
       )}
       <InvoiceLineDiscount line={line} onChange={onChange} />
-      {line.kind === 'product' && product !== undefined && (
-        <p className="text-fg-secondary text-xs">
-          {t(`${ns}.form.productMeta`, {
-            price: formatMoney(line.unitPriceMinor),
-            vat: line.vatRate,
-          })}
-        </p>
-      )}
-      {errorText !== undefined && (
-        <StatusText showIcon size="sm" status="error">
-          {errorText}
-        </StatusText>
-      )}
-      {/* 0 Kč is a valid free line (e.g. a gift), so it warns instead of blocking the submit. */}
-      {errorText === undefined && zeroPriceLine && (
-        <StatusText showIcon size="sm" status="warning">
-          {t(`${ns}.form.zeroPriceWarning`)}
-        </StatusText>
-      )}
+      <LineNotes
+        errorText={errorText}
+        line={line}
+        productPicked={product !== undefined}
+        rate={lineRate}
+        zeroPriceLine={zeroPriceLine}
+      />
     </fieldset>
   );
 };

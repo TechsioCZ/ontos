@@ -77,6 +77,22 @@ export const accessAdminInternalProblem = (detail: string): AccessAdminProblem =
     type: 'https://ontos.dev/problems/access-admin-internal',
   });
 
+/**
+ * A change the store saved whose projection did not complete: the Action's write is committed, and the tenant's
+ * permissions are still being applied (a retry, the fence sweep or the next reconcile finishes them). A retry of the
+ * same request is safe: the saved change is found and only its projection runs again.
+ */
+export const accessAdminSavedPendingProblem = (): AccessAdminProblem =>
+  AccessAdminUnavailableProblemSchema.make({
+    _tag: 'AccessAdminUnavailable',
+    detail:
+      'The change is saved; its permissions are still being applied. Retry in a moment to finish them; nothing is saved twice.',
+    retryable: true,
+    status: ACCESS_ADMIN_HTTP_STATUS.unavailable,
+    title: 'Change saved, permissions still being applied',
+    type: 'https://ontos.dev/problems/access-admin-saved-permissions-pending',
+  });
+
 export const accessAdminUnavailableProblem = (): AccessAdminProblem =>
   AccessAdminUnavailableProblemSchema.make({
     _tag: 'AccessAdminUnavailable',

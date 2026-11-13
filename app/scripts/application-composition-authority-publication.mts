@@ -725,6 +725,47 @@ export const runApplicationCompositionMigration = Effect.fn('ApplicationComposit
  * owner work running during provider I/O and updates its lease only after success. A replacement
  * holds the authority lock through provider I/O; failure preserves the old admission phase.
  */
+/**
+ * Renews the authority this release holds, and nothing else: under the publication lock it re-reads the row and
+ * refuses unless the row still names this release's revision. A host superseded while its renewal waited for the lock
+ * therefore cannot replace the newer release (a full publication would treat its later validity as newer evidence).
+ */
+export const renewApplicationCompositionAuthoritySnapshot = Effect.fn('ApplicationCompositionAuthority.renewSnapshot')(
+  function* renewApplicationCompositionAuthoritySnapshot<Value, Failure, Requirements>(
+    snapshot: ActiveApplicationCompositionSnapshot,
+    publishProviderPointer: Effect.Effect<Value, Failure, Requirements>,
+  ) {
+    const approved = yield* validateActiveApplicationCompositionSnapshot(snapshot).pipe(
+      Effect.mapError(() => unavailable('The complete Application Composition snapshot is invalid or expired')),
+    );
+    const database = yield* CoreDatabase;
+    const renewal = Effect.gen(function* renewHeldAuthority() {
+      const [current] = yield* database.executor
+        .select({
+          revision: applicationCompositionAuthority.revision,
+          validUntil: applicationCompositionAuthority.validUntil,
+        })
+        .from(applicationCompositionAuthority)
+        .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+      if (current?.revision !== approved.composition.revision) {
+        return yield* unavailable(
+          'This release no longer holds the Application Composition authority; a renewal never replaces another release',
+        );
+      }
+      if (DateTime.toEpochMillis(approved.validUntil) < current.validUntil.getTime()) {
+        return yield* unavailable('Application Composition freshness cannot regress');
+      }
+      const value = yield* publishProviderPointer;
+      yield* withApplicationCompositionPublicationProgress(
+        'renew native authority',
+        database.executor.transaction((transaction) => publishApplicationCompositionAuthority(transaction, approved)),
+      );
+      return value;
+    });
+    return yield* withApplicationCompositionPublicationLock(renewal);
+  },
+);
+
 export const publishApplicationCompositionAuthoritySnapshot = Effect.fn(
   'ApplicationCompositionAuthority.publishSnapshot',
 )(function* publishApplicationCompositionAuthoritySnapshot<

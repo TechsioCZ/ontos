@@ -658,10 +658,26 @@ export const AccessActorSchema = Schema.Struct({
    * carrier.
    */
   subjectWorkloads: Schema.optionalKey(Schema.NonEmptyArray(WorkloadKeySchema).check(Schema.isUnique())),
+  /**
+   * The callers that may bring one of `subjectWorkloads` as the subject; absent, every caller may. A caller outside
+   * it is refused a workload subject exactly as a carrier that names no workload refuses one.
+   */
+  subjectWorkloadCallers: Schema.optionalKey(Schema.NonEmptyArray(TopologyAppIdSchema).check(Schema.isUnique())),
 }).check(
   Schema.makeFilter((actor) =>
     actor.subject === 'workload' && actor.subjectWorkloads === undefined
       ? 'a workload-only module actor requires subjectWorkloads'
+      : undefined,
+  ),
+  // A narrowing of the workload-subject callers needs workload keys and may name only callers.
+  Schema.makeFilter((actor) =>
+    actor.subjectWorkloadCallers !== undefined && actor.subjectWorkloads === undefined
+      ? 'subjectWorkloadCallers needs subjectWorkloads'
+      : undefined,
+  ),
+  Schema.makeFilter((actor) =>
+    actor.subjectWorkloadCallers?.some((caller) => !actor.callers.includes(caller)) === true
+      ? 'subjectWorkloadCallers must be callers'
       : undefined,
   ),
 );
@@ -692,9 +708,13 @@ export const decodeAccessActor = <Input>(
     Result.map((actor): AccessActor =>
       Object.freeze(
         withOptional(
-          { callers: Object.freeze(actor.callers), reason: actor.reason, subject: actor.subject },
-          'subjectWorkloads',
-          actor.subjectWorkloads === undefined ? undefined : Object.freeze(actor.subjectWorkloads),
+          withOptional(
+            { callers: Object.freeze(actor.callers), reason: actor.reason, subject: actor.subject },
+            'subjectWorkloads',
+            actor.subjectWorkloads === undefined ? undefined : Object.freeze(actor.subjectWorkloads),
+          ),
+          'subjectWorkloadCallers',
+          actor.subjectWorkloadCallers === undefined ? undefined : Object.freeze(actor.subjectWorkloadCallers),
         ),
       ),
     ),

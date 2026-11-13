@@ -90,7 +90,17 @@ interface DelegationCase {
   readonly legalEntityScope?: 'subject' | 'tenant';
   readonly malformed?: boolean;
   readonly missingDeployment?: 'catalog' | 'party-registry';
-  readonly moduleState?: 'suspended' | 'quarantined' | 'missing' | 'unavailable';
+  /** `destination-not-installed`: the calling module is active for the tenant, the module it calls is not. */
+  readonly moduleState?:
+    | 'suspended'
+    | 'quarantined'
+    | 'missing'
+    | 'unavailable'
+    | 'destination-not-installed'
+    | 'destination-suspended'
+    | 'destination-quarantined'
+    | 'destination-inactive'
+    | 'destination-archived';
   readonly originalBindingRevoked?: boolean;
   /**
    * `tenant` is a workload requester of work started in the tenant context — the Storefront client — and
@@ -174,6 +184,25 @@ const scopeResolverDouble = (failure: DelegationCase['contextFailure'], requests
   },
 });
 
+/** The state the module called (Party Registry) is in, per case; the calling module stays active. */
+const DESTINATION_STATES = [
+  ['destination-archived', 'archived'],
+  ['destination-inactive', 'inactive'],
+  ['destination-quarantined', 'quarantined'],
+  ['destination-suspended', 'suspended'],
+] as const;
+const destinationStateOf = (moduleState: DelegationCase['moduleState']) =>
+  DESTINATION_STATES.find(([kind]) => kind === moduleState)?.[1];
+
+/** One module's state in a case: every module suspended or quarantined, or only the destination in its own state. */
+const moduleStateOf = (moduleId: string, moduleState: DelegationCase['moduleState']) => {
+  if (moduleState === 'suspended' || moduleState === 'quarantined') {
+    return moduleState;
+  }
+  const destinationState = destinationStateOf(moduleState);
+  return destinationState !== undefined && moduleId === 'party.registry' ? destinationState : 'active';
+};
+
 /** The module states a case's tenant holds: active unless the case names a missing or unavailable state. */
 const moduleStatesFor = (
   modules: readonly { readonly moduleId: string }[],
@@ -182,9 +211,22 @@ const moduleStatesFor = (
   modules.map((module) =>
     Schema.decodeUnknownSync(TenantModuleStateRecordSchema)({
       moduleKey: module.moduleId,
-      state: moduleState === 'missing' || moduleState === 'unavailable' ? 'active' : (moduleState ?? 'active'),
+      state: moduleStateOf(module.moduleId, moduleState),
     }),
   );
+
+/** What the tenant holds: nothing when its states are missing; without the called module when that is not installed. */
+const statesHeld = (
+  moduleState: DelegationCase['moduleState'],
+  states: readonly (typeof TenantModuleStateRecordSchema.Type)[],
+) => {
+  if (moduleState === 'missing') {
+    return [];
+  }
+  return moduleState === 'destination-not-installed'
+    ? states.filter((state) => state.moduleKey !== 'party.registry')
+    : states;
+};
 
 /** The subject of a case: the requester's own live assertion, or the recorded requester of asynchronous work. */
 const subjectFor = (token: string, input: DelegationCase) => {
@@ -379,7 +421,7 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
                     reason: 'Controlled unavailable module state',
                   }),
                 )
-              : Effect.succeed(input.moduleState === 'missing' ? [] : moduleStates),
+              : Effect.succeed(statesHeld(input.moduleState, moduleStates)),
         }),
       ),
       Effect.provideService(GatewayDelegationExchangeLedger, {
@@ -760,6 +802,14 @@ const cryptoNegatives: readonly (readonly [string, DelegationCase, GatewayDelega
   ['suspended-module', { moduleState: 'suspended' }, 'forbidden'],
   ['quarantined-module', { moduleState: 'quarantined' }, 'forbidden'],
   ['missing-module-state', { moduleState: 'missing' }, 'forbidden'],
+  // The module called is absent, switched off or retired for the tenant: lasting states the caller reads as "not
+  // installed".
+  ['destination-not-installed', { moduleState: 'destination-not-installed' }, 'module_not_installed'],
+  ['destination-inactive', { moduleState: 'destination-inactive' }, 'module_not_installed'],
+  ['destination-archived', { moduleState: 'destination-archived' }, 'module_not_installed'],
+  // Suspended or quarantined is temporary: a plain refusal, an outage to the caller, never "not installed".
+  ['destination-suspended', { moduleState: 'destination-suspended' }, 'forbidden'],
+  ['destination-quarantined', { moduleState: 'destination-quarantined' }, 'forbidden'],
   ['originator-denied', { originator: 'denied' }, 'forbidden'],
   ['originator-unavailable', { originator: 'unavailable' }, 'unavailable'],
   ['originator-is-the-calling-module', { originator: 'caller' }, 'forbidden'],
@@ -788,6 +838,11 @@ const refusalReasons: readonly (readonly [string, DelegationCase, GatewayRefusal
   ['unavailable-current-context', { contextFailure: 'unavailable' }, 'scope_unavailable'],
   ['unavailable-module-state', { moduleState: 'unavailable' }, 'module_states_unavailable'],
   ['suspended-module', { moduleState: 'suspended' }, 'module_not_active'],
+  ['destination-not-installed', { moduleState: 'destination-not-installed' }, 'audience_module_not_installed'],
+  ['destination-inactive', { moduleState: 'destination-inactive' }, 'audience_module_not_installed'],
+  ['destination-archived', { moduleState: 'destination-archived' }, 'audience_module_not_installed'],
+  ['destination-suspended', { moduleState: 'destination-suspended' }, 'audience_module_not_active'],
+  ['destination-quarantined', { moduleState: 'destination-quarantined' }, 'audience_module_not_active'],
   ['originator-denied', { originator: 'denied' }, 'originator_not_admitted'],
   ['originator-unavailable', { originator: 'unavailable' }, 'originator_evidence_unavailable'],
   ['late-ledger-replay', { ledgerFailure: 'replay' }, 'exchange_replayed'],

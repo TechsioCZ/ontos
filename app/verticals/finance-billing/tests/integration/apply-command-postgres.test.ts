@@ -20,6 +20,7 @@ import { expect, it } from 'effect-rstest';
 import { ApplyCommandPayloadSchema, FinanceConflict } from '../../shared/actions/apply-command.ts';
 import { CommandReferenceValidators, prepareApplyCommandServices } from '../../src/actions/apply-command.action.ts';
 import { financeStates } from '../../src/database/schema.ts';
+import { FinanceTaxRatesBaseline } from '../support/finance-tax-rates.ts';
 
 const unused = () => Effect.die('Unexpected production reference transport');
 const nativeBoundary = Layer.mergeAll(
@@ -31,6 +32,7 @@ const nativeBoundary = Layer.mergeAll(
     HttpServerRequest.fromWeb(new Request('https://ontos.test/actions')),
   ),
   Layer.succeed(ReadRuntime, { runRead: unused }),
+  FinanceTaxRatesBaseline,
 );
 const nativePreparation = Effect.scoped(
   Effect.gen(function* nativePreparation() {

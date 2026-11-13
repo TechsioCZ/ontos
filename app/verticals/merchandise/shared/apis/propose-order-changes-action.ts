@@ -50,6 +50,7 @@ export const ProposeOrderChangesActionConflictProblemSchema = makeProblemDetails
       'action_request_hash_conflict',
       'action_invocation_state_invalid',
       'merchandise_lifecycle_conflict',
+      'merchandise_offered_price_changed',
       'merchandise_revision_conflict',
     ]),
   },

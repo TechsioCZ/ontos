@@ -15,6 +15,7 @@ import { InvoicesSearchApi } from './apis/invoices-search.ts';
 import { LeaseInvoicesApi } from './apis/lease-invoices.ts';
 import { RecordsApi } from './apis/records.ts';
 import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
+import { VatChoicesApi } from './apis/vat-choices.ts';
 // </generated-governed-http-api-imports>
 
 export type FinanceBillingMarker = MicroVerticalBuildMarker;
@@ -50,6 +51,7 @@ export const financeBillingApi = HttpApi.make('FinanceBillingApi')
   .addHttpApi(LeaseInvoicesApi)
   .addHttpApi(RecordsApi)
   .addHttpApi(RequestSearchRebuildActionApi)
+  .addHttpApi(VatChoicesApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);

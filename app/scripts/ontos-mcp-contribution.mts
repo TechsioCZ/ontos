@@ -408,9 +408,12 @@ const checkCoverage = (
 };
 
 const textFields = (entry: OntosMcpToolTextInput) => {
-  const fields: Mutable<Pick<OntosMcpTool, 'title' | 'description'>> = { title: entry.title };
+  const fields: Mutable<Pick<OntosMcpTool, 'title' | 'description' | 'genericOnly'>> = { title: entry.title };
   if (entry.description !== undefined) {
     fields.description = entry.description;
+  }
+  if (entry.genericOnly === true) {
+    fields.genericOnly = true;
   }
   return fields;
 };
@@ -419,7 +422,7 @@ const writeFields = (entry: OntosMcpWriteInput, verb: string) => {
   const fields: Mutable<
     Pick<
       OntosMcpTool,
-      'title' | 'description' | 'agentProposalOnly' | 'destructive' | 'referenceAudiences' | 'liveRight'
+      'title' | 'description' | 'genericOnly' | 'agentProposalOnly' | 'destructive' | 'referenceAudiences' | 'liveRight'
     >
   > = {
     ...textFields(entry),
