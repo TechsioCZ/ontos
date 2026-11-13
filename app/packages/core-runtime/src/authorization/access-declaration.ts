@@ -154,10 +154,10 @@ const accessDeclarationFields = Schema.Struct({
   /** One scalar money value of the Action payload, or a server-derived total for composites (O18). */
   amountInput: Schema.optionalKey(accessPathSchema),
   /**
-   * Part of what every Role of a tenant holds, so a signed-in member can load the product at all: the Shell's frame,
-   * never a business record. Every Role write includes it and the release step adds it to Roles that predate it. Only a
-   * routine, basic, unselected read of the Shell may be baseline, so it can grant no business data; exactly `true` or
-   * absent.
+   * The Shell's frame, so a signed-in member can load the product at all, never a business record. No Role cell holds
+   * it: when a person's Roles do not grant it, the engine admits them as a member of the scope they ask in, proven by
+   * one `access_scope#access` check (`structural.member_baseline`). Only a routine, basic, unselected read of the Shell
+   * may be baseline, and the engine checks that again at decision time; exactly `true` or absent.
    */
   baseline: Schema.optionalKey(Schema.Literal(true)),
   /** A short-lived proof that cannot wait for an approval (O22). */

@@ -146,7 +146,7 @@ const catalogEntryEphemeralIssue = (entry: {
 
 export const CatalogSnapshotEntrySchema = Schema.Struct({
   amountInput: Schema.optionalKey(LabelSchema),
-  /** Held by every Role of a tenant (the Shell's frame); see `AccessDeclaration.baseline`. */
+  /** The Shell's frame: no Role cell, admitted by scope membership; see `AccessDeclaration.baseline`. */
   baseline: Schema.optionalKey(Schema.Literal(true)),
   /** Present only for a short-lived proof that cannot wait for an approval (O22). */
   ephemeral: Schema.optionalKey(Schema.Literal(true)),
