@@ -29,7 +29,7 @@ import type { InternalWorkloadDeclaration } from '../../packages/core-runtime/sr
 import { registerReleaseInternalWorkloads } from '../../packages/core-runtime/src/install/release-internal-workloads.ts';
 import type { ReleaseInternalWorkloadTenantReport } from '../../packages/core-runtime/src/install/release-internal-workloads.ts';
 import { WorkloadKeySchema } from '../../packages/core-runtime/src/authorization/access-declaration.ts';
-import { MODULE_INTERNAL_WORKLOADS } from '../zerops/module-credentials.mts';
+import { INTERNAL_WORKLOAD_LABELS, MODULE_INTERNAL_WORKLOADS } from '../zerops/module-credentials.mts';
 
 const LOG_PREFIX = '[release-internal-workloads]';
 const CATALOG_ARTIFACT = new URL('../../topology/authorization-catalog.json', import.meta.url);
@@ -52,12 +52,22 @@ export const moduleKeyOfWorkload = (workloadKey: string): string => workloadKey.
 export const internalWorkloadDeclarations = (
   internal: ReadonlyMap<string, readonly string[]>,
   declared: ReadonlySet<string>,
+  labels: ReadonlyMap<string, string>,
 ): readonly InternalWorkloadDeclaration[] =>
   [...internal].flatMap(([appId, workloadKeys]) =>
-    workloadKeys.flatMap((workloadKey) =>
-      declared.has(workloadKey) ? [{ appId, moduleKey: moduleKeyOfWorkload(workloadKey), workloadKey }] : [],
-    ),
+    workloadKeys.flatMap((workloadKey) => {
+      const label = labels.get(workloadKey);
+      return declared.has(workloadKey) && label !== undefined
+        ? [{ appId, label, moduleKey: moduleKeyOfWorkload(workloadKey), workloadKey }]
+        : [];
+    }),
   );
+
+/** The internal workloads a person would see no readable name for; the release step does not run while any exists. */
+export const unlabelledInternalWorkloads = (
+  internal: ReadonlyMap<string, readonly string[]>,
+  labels: ReadonlyMap<string, string>,
+): readonly string[] => [...internal.values()].flat().filter((workloadKey) => !labels.has(workloadKey));
 
 /** One line per tenant: what it holds now, as counts; ids of tenants only, never a key. */
 export const reportLine = (report: ReleaseInternalWorkloadTenantReport): string => {
@@ -65,7 +75,8 @@ export const reportLine = (report: ReleaseInternalWorkloadTenantReport): string 
     return `${LOG_PREFIX} tenant ${report.tenantId}: FAILED (${report.failed}); what was done before the failure stays and the next run completes it`;
   }
   const held = report.held === 0 ? '' : `, ${String(report.held)} held as an administrator set them`;
-  return `${LOG_PREFIX} tenant ${report.tenantId}: ${String(report.registered)} registered, ${String(report.retired)} retired, ${String(report.unchanged)} unchanged${held}`;
+  const renamed = report.renamed === 0 ? '' : `, ${String(report.renamed)} renamed`;
+  return `${LOG_PREFIX} tenant ${report.tenantId}: ${String(report.registered)} registered, ${String(report.retired)} retired, ${String(report.unchanged)} unchanged${renamed}${held}`;
 };
 
 const ReleaseRuntimeLive = Layer.unwrap(
@@ -91,7 +102,15 @@ export const registerDeclaredInternalWorkloads = Effect.fn('ReleaseInternalWorkl
     Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(CatalogArtifactSchema))),
     Effect.mapError(() => failure('the reviewed authorization catalogue artefact could not be read')),
   );
-  const declarations = internalWorkloadDeclarations(MODULE_INTERNAL_WORKLOADS, new Set(catalog.declaredWorkloadKeys));
+  const unlabelled = unlabelledInternalWorkloads(MODULE_INTERNAL_WORKLOADS, INTERNAL_WORKLOAD_LABELS);
+  if (unlabelled.length > 0) {
+    return yield* failure(`internal workloads without a readable label: ${unlabelled.join(', ')}`);
+  }
+  const declarations = internalWorkloadDeclarations(
+    MODULE_INTERNAL_WORKLOADS,
+    new Set(catalog.declaredWorkloadKeys),
+    INTERNAL_WORKLOAD_LABELS,
+  );
   const { executor } = yield* CoreDatabase;
   const reports = yield* registerReleaseInternalWorkloads(
     { enrollment: APP_DATABASE_IDENTITY_ENROLLMENT, executor },

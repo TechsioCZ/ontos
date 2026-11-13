@@ -61,6 +61,7 @@ import {
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { liveModuleKeyIds } from '../../../../scripts/zerops/module-credential-liveness.mts';
 import {
+  INTERNAL_WORKLOAD_LABELS,
   MODULE_INTERNAL_WORKLOADS,
   ProvisioningOutputJsonSchema,
 } from '../../../../scripts/zerops/module-credentials.mts';
@@ -728,6 +729,14 @@ it.live(
         const [companyA, companyB, companyC] = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
         const owners = [crypto.randomUUID(), crypto.randomUUID()];
         const foreignPrincipal = crypto.randomUUID();
+        // A company that is not active, and a principal someone created with exactly the id the platform would derive for
+        // it (two Actions accept a caller-chosen principal id) but without the platform's marker: never the platform's.
+        const companyX = crypto.randomUUID();
+        const squatter = internalWorkloadPrincipalId({
+          legalEntityId: companyX,
+          tenantId: tenantOne,
+          workloadKey: INTAKE_WORKLOAD,
+        });
         const now = yield* DateTime.nowAsDate;
         // Product state the release step derives everything from: two tenants serving people, CRM installed in both,
         // two companies in the first and one in the second.
@@ -754,6 +763,14 @@ it.live(
             tenantId,
           })),
         );
+        yield* adminDatabase.insert(legalEntities).values({
+          legalEntityId: companyX,
+          legalName: 'Company X',
+          registrationCountry: 'CZ',
+          registrationNumber: '00000009',
+          status: 'suspended',
+          tenantId: tenantOne,
+        });
         yield* adminDatabase.insert(principals).values([
           ...[tenantOne, tenantTwo].map((tenantId, index) => ({
             displayName: 'Owner',
@@ -767,6 +784,13 @@ it.live(
             displayName: 'CRM Party intake (by hand)',
             kind: 'service' as const,
             principalId: foreignPrincipal,
+            status: 'active' as const,
+            tenantId: tenantOne,
+          },
+          {
+            displayName: 'CRM · zakládání klientů · Company X',
+            kind: 'service' as const,
+            principalId: squatter,
             status: 'active' as const,
             tenantId: tenantOne,
           },
@@ -801,11 +825,34 @@ it.live(
           tenantId: tenantOne,
           workloadBindingId: foreignBinding,
         });
+        const squatterBinding = crypto.randomUUID();
+        yield* adminDatabase.insert(accessWorkloadBindings).values({
+          bindingId: squatterBinding,
+          createdAt: now,
+          incarnation: crypto.randomUUID(),
+          principalId: squatter,
+          status: 'active',
+          tenantId: tenantOne,
+          workloadKey: INTAKE_WORKLOAD,
+        });
+        yield* adminDatabase.insert(accessWorkloadCompanyBindings).values({
+          companyBindingId: crypto.randomUUID(),
+          createdAt: now,
+          incarnation: crypto.randomUUID(),
+          legalEntityId: companyX,
+          status: 'active',
+          tenantId: tenantOne,
+          workloadBindingId: squatterBinding,
+        });
         const release: ModuleCredentialRelease = {
           ...moduleCredentialReleaseOf(catalog),
           buildMarkers: { ...moduleCredentialReleaseOf(catalog).buildMarkers, crm: 'crm-build' },
         };
-        const declarations = internalWorkloadDeclarations(MODULE_INTERNAL_WORKLOADS, new Set([INTAKE_WORKLOAD]));
+        const declarations = internalWorkloadDeclarations(
+          MODULE_INTERNAL_WORKLOADS,
+          new Set([INTAKE_WORKLOAD]),
+          INTERNAL_WORKLOAD_LABELS,
+        );
         const registrationRuntime = Layer.mergeAll(
           Layer.succeed(CoreDatabase, { executor: coreDatabase }),
           AccessReleaseStoreLive.pipe(
@@ -886,10 +933,56 @@ it.live(
         expect(yield* activeCompanyOf(principalOf(tenantTwo, companyC))).toEqual([{ legalEntityId: companyC }]);
         expect(yield* activeCompanyOf(foreignPrincipal)).toEqual([{ legalEntityId: companyA }]);
 
+        // A person reads what each registration is; the platform knows its own by marker and derived id, not by name.
+        const named = yield* adminDatabase
+          .select({
+            displayName: principals.displayName,
+            platformRole: principals.platformRole,
+            principalId: principals.principalId,
+          })
+          .from(principals)
+          .where(
+            inArray(principals.principalId, [
+              principalOf(tenantOne, companyA),
+              principalOf(tenantOne, companyB),
+              principalOf(tenantTwo, companyC),
+              squatter,
+            ]),
+          );
+        const nameOf = (principalId: string) => named.find((row) => row.principalId === principalId);
+        expect(nameOf(principalOf(tenantOne, companyA))).toMatchObject({
+          displayName: 'CRM · zakládání klientů · Company 0',
+          platformRole: 'internal_workload',
+        });
+        expect(nameOf(principalOf(tenantOne, companyB))?.displayName).toBe('CRM · zakládání klientů · Company 1');
+        expect(nameOf(principalOf(tenantTwo, companyC))?.displayName).toBe('CRM · zakládání klientů · Company 2');
+        // The squatter has the derived id but no marker: not adopted, not retired, not keyed (the keyed list above).
+        expect(nameOf(squatter)).toMatchObject({ platformRole: null });
+        expect(yield* activeCompanyOf(squatter)).toEqual([{ legalEntityId: companyX }]);
+
         // Re-running changes nothing.
         const again = yield* register('run-2');
         expect(counts(again, tenantOne)).toEqual({ failed: null, registered: 0, retired: 0, unchanged: 2 });
         expect(counts(again, tenantTwo)).toEqual({ failed: null, registered: 0, retired: 0, unchanged: 1 });
+
+        // A renamed company: its registration follows the new name, and nothing else changes.
+        yield* adminDatabase
+          .update(legalEntities)
+          .set({ legalName: 'Company A, s.r.o.' })
+          .where(eq(legalEntities.legalEntityId, companyA));
+        const renamed = yield* register('run-rename');
+        expect(renamed.find(({ tenantId }) => tenantId === tenantOne)).toMatchObject({
+          failed: null,
+          registered: 0,
+          renamed: 1,
+          retired: 0,
+          unchanged: 1,
+        });
+        const [afterRename] = yield* adminDatabase
+          .select({ displayName: principals.displayName })
+          .from(principals)
+          .where(eq(principals.principalId, principalOf(tenantOne, companyA)));
+        expect(afterRename?.displayName).toBe('CRM · zakládání klientů · Company A, s.r.o.');
 
         // Company B is suspended and CRM is uninstalled in the second tenant: those registrations are retired (never
         // deleted) and get no key; the hand-made registration stays exactly as it was.
@@ -936,7 +1029,8 @@ it.live(
           .select({ evidence: auditEvents.evidenceJson, tenantId: auditEvents.tenantId })
           .from(auditEvents)
           .where(eq(auditEvents.eventType, 'core.access.internal-workloads-registered-by-release'));
-        expect(audits.filter(({ tenantId }) => tenantId === tenantOne)).toHaveLength(3);
+        // The first tenant converged four times: registration, the company rename, retirement and the company's return.
+        expect(audits.filter(({ tenantId }) => tenantId === tenantOne)).toHaveLength(4);
         expect(audits.filter(({ tenantId }) => tenantId === tenantTwo)).toHaveLength(2);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer))),

@@ -166,6 +166,7 @@ const ambientPrincipalManagementRepository: PrincipalManagementRepositoryService
   changePrincipalStatus: unusedPrincipalManagementOperation,
   createNonHumanPrincipal: unusedPrincipalManagementOperation,
   createPlatformServicePrincipal: unusedPrincipalManagementOperation,
+  renamePlatformServicePrincipal: unusedPrincipalManagementOperation,
   setApiKeyBindingStatus: unusedPrincipalManagementOperation,
   validateSupportImpersonation: unusedPrincipalManagementOperation,
 };

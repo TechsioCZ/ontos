@@ -79,6 +79,7 @@ import {
 } from '../../../../scripts/active-application-composition.mts';
 import {
   encodeModuleCredentialHandover,
+  INTERNAL_WORKLOAD_LABELS,
   MODULE_INTERNAL_WORKLOADS,
 } from '../../../../scripts/zerops/module-credentials.mts';
 import { ApiKeyService, makeApiKeyService } from '../../api/auth/api-key-service.ts';
@@ -650,7 +651,11 @@ it.live(
               registerReleaseInternalWorkloads(
                 { enrollment: SHELL_DATABASE_IDENTITY_ENROLLMENT, executor: runtimeDatabase },
                 {
-                  declarations: internalWorkloadDeclarations(MODULE_INTERNAL_WORKLOADS, new Set([INTAKE_WORKLOAD])),
+                  declarations: internalWorkloadDeclarations(
+                    MODULE_INTERNAL_WORKLOADS,
+                    new Set([INTAKE_WORKLOAD]),
+                    INTERNAL_WORKLOAD_LABELS,
+                  ),
                   runReference,
                 },
               ).pipe(Effect.provide(registrationRuntime));

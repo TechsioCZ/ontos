@@ -25,6 +25,7 @@ const repositoryDefaults: PrincipalManagementPersistence = {
   loadApiKeyBinding: () => unconfigured('loadApiKeyBinding'),
   loadPrincipal: () => unconfigured('loadPrincipal'),
   loadSupportBindings: () => unconfigured('loadSupportBindings'),
+  renamePlatformPrincipal: () => unconfigured('renamePlatformPrincipal'),
   updateApiKeyBindingStatus: () => unconfigured('updateApiKeyBindingStatus'),
   updatePrincipalStatus: () => unconfigured('updatePrincipalStatus'),
 };

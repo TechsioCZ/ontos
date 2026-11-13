@@ -3,6 +3,7 @@ import { describe, expect, it } from 'effect-rstest';
 import { internalWorkloadPrincipalId } from '../../src/auth/module-credentials.ts';
 import {
   companyBindingIdsOf,
+  internalWorkloadDisplayName,
   planTenantInternalWorkloads,
   workloadBindingIdsOf,
 } from '../../src/install/internal-workload-plan.ts';
@@ -17,11 +18,22 @@ const OTHER_TENANT = '70000000-0000-4000-8000-000000000002';
 const COMPANY_A = '70000000-0000-4000-8000-0000000000a1';
 const COMPANY_B = '70000000-0000-4000-8000-0000000000b1';
 const WORKLOAD = 'demo.crm.party-intake';
-const INTAKE: InternalWorkloadDeclaration = { appId: 'crm', moduleKey: 'demo.crm', workloadKey: WORKLOAD };
+const LABEL = 'CRM · zakládání klientů';
+const INTAKE: InternalWorkloadDeclaration = {
+  appId: 'crm',
+  label: LABEL,
+  moduleKey: 'demo.crm',
+  workloadKey: WORKLOAD,
+};
+const COMPANY_NAMES = new Map([
+  [COMPANY_A, 'Obchodní firma'],
+  [COMPANY_B, 'Nájempark'],
+]);
 
 const stateOf = (overrides: Partial<TenantWorkloadState> = {}): TenantWorkloadState => ({
   activeCompanies: new Set([COMPANY_A, COMPANY_B]),
   activeModuleKeys: new Set(['demo.crm']),
+  companyNames: COMPANY_NAMES,
   registrations: [],
   tenantId: TENANT,
   ...overrides,
@@ -35,6 +47,7 @@ const whole = (legalEntityId: string, tenantId = TENANT): PlatformRegistration =
     activeCompanyBindingId: companyBindingIdsOf(binding.bindingId, legalEntityId, 0).companyBindingId,
     activeWorkloadBindingId: binding.bindingId,
     companyBindingCount: 1,
+    displayName: `${LABEL} · ${COMPANY_NAMES.get(legalEntityId) ?? ''}`,
     legalEntityId,
     principalId,
     principalStatus: 'active',
@@ -75,7 +88,7 @@ describe('planTenantInternalWorkloads', () => {
     const plan = planTenantInternalWorkloads(stateOf({ registrations: [whole(COMPANY_A), whole(COMPANY_B)] }), [
       INTAKE,
     ]);
-    expect(plan).toEqual({ held: [], registered: 0, retired: 0, steps: [], unchanged: 2 });
+    expect(plan).toEqual({ held: [], registered: 0, renamed: 0, retired: 0, steps: [], unchanged: 2 });
   });
 
   it('registers nothing where the module is not installed, and retires what it made when the module is uninstalled', () => {
@@ -146,5 +159,46 @@ describe('planTenantInternalWorkloads', () => {
     // Every id the plan writes is derived from its own tenant, so no step of one tenant names another's rows.
     const idsOf = (plan: typeof one) => plan.steps.map((step) => JSON.stringify(step));
     expect(idsOf(one).some((step) => idsOf(other).includes(step))).toBe(false);
+  });
+
+  it('names each registration for a person: the workload label and the company, never an identifier', () => {
+    const plan = planTenantInternalWorkloads(stateOf(), [INTAKE]);
+    const created = plan.steps.flatMap((step) => (step.kind === 'create-principal' ? [step.displayName] : []));
+    expect(created).toEqual(['CRM · zakládání klientů · Obchodní firma', 'CRM · zakládání klientů · Nájempark']);
+    expect(internalWorkloadDisplayName(LABEL, 'Obchodní firma')).toBe(created[0]);
+    for (const name of created) {
+      expect(name).not.toMatch(/[\da-f]{8}-[\da-f]{4}|demo\.crm/u);
+    }
+  });
+
+  it('follows a renamed company or label with a rename alone, and renames nothing it holds or retires', () => {
+    const renamedCompany = planTenantInternalWorkloads(
+      stateOf({
+        companyNames: new Map([...COMPANY_NAMES, [COMPANY_A, 'Obchodní firma, s.r.o.']]),
+        registrations: [whole(COMPANY_A), whole(COMPANY_B)],
+      }),
+      [INTAKE],
+    );
+    expect(renamedCompany).toMatchObject({ registered: 0, renamed: 1, retired: 0, unchanged: 1 });
+    expect(renamedCompany.steps).toEqual([
+      {
+        displayName: 'CRM · zakládání klientů · Obchodní firma, s.r.o.',
+        kind: 'rename-principal',
+        principalId: whole(COMPANY_A).principalId,
+      },
+    ]);
+    const held: PlatformRegistration = {
+      ...whole(COMPANY_A),
+      displayName: 'Renamed by an administrator',
+      principalStatus: 'archived',
+    };
+    expect(planTenantInternalWorkloads(stateOf({ registrations: [held, whole(COMPANY_B)] }), [INTAKE]).steps).toEqual(
+      [],
+    );
+    const retiring = planTenantInternalWorkloads(
+      stateOf({ activeModuleKeys: new Set(), registrations: [{ ...whole(COMPANY_A), displayName: 'old' }] }),
+      [INTAKE],
+    );
+    expect(retiring.steps.some(({ kind }) => kind === 'rename-principal')).toBe(false);
   });
 });

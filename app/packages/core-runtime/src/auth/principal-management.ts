@@ -46,9 +46,22 @@ type SupportBindingRecord = Readonly<{ readonly authBindingId: string }>;
 
 const isApiKeyBindingStatus = Schema.is(ApiKeyBindingStatusSchema);
 
+/**
+ * The marker of a principal the platform registered for a module's internal workload. Only Core's platform writer sets
+ * it, when it creates the principal; no Action or API payload has the field, and the database refuses any change to it
+ * afterwards (`core.keep_system_principals`). The release step recognises its own principals by this marker together
+ * with their derived id, never by their name.
+ */
+export const INTERNAL_WORKLOAD_PLATFORM_ROLE = 'internal_workload';
+export type InternalWorkloadPlatformRole = typeof INTERNAL_WORKLOAD_PLATFORM_ROLE;
+
 export interface PrincipalManagementPersistence {
   readonly createPrincipal: (
-    input: CreateNonHumanPrincipalInput & { readonly principalId?: string },
+    input: CreateNonHumanPrincipalInput & {
+      /** Set only by the platform's own writer; no Action or API carries it. */
+      readonly platformRole?: InternalWorkloadPlatformRole;
+      readonly principalId?: string;
+    },
   ) => Effect.Effect<Option.Option<{ readonly principalId: string }>, IdentityPersistenceUnavailableError>;
   readonly insertApiKeyBinding: (
     input: BindApiKeyInput,
@@ -66,6 +79,9 @@ export interface PrincipalManagementPersistence {
     readonly principalId: string;
     readonly tenantId: string;
   }) => Effect.Effect<readonly SupportBindingRecord[], IdentityPersistenceUnavailableError>;
+  readonly renamePlatformPrincipal: (
+    input: RenamePlatformServicePrincipalInput,
+  ) => Effect.Effect<Option.Option<{ readonly principalId: string }>, IdentityPersistenceUnavailableError>;
   readonly updateApiKeyBindingStatus: (
     input: SetApiKeyBindingStatusInput,
   ) => Effect.Effect<Option.Option<{ readonly status: BindingStatus }>, IdentityPersistenceUnavailableError>;
@@ -95,6 +111,10 @@ export interface PrincipalManagementRepositoryService {
   readonly createPlatformServicePrincipal: (
     input: CreatePlatformServicePrincipalInput,
   ) => Effect.Effect<{ readonly principalId: string; readonly status: 'active' }, PrincipalManagementError>;
+  /** Renames such a principal (a company or the workload's label was renamed); touches no principal without its marker. */
+  readonly renamePlatformServicePrincipal: (
+    input: RenamePlatformServicePrincipalInput,
+  ) => Effect.Effect<void, PrincipalManagementError>;
   readonly setApiKeyBindingStatus: (
     input: SetApiKeyBindingStatusInput,
   ) => Effect.Effect<
@@ -124,6 +144,7 @@ const principalManagementPersistenceFromTransaction = (
           : {
               displayName: input.displayName,
               kind: input.kind,
+              platformRole: input.platformRole ?? null,
               principalId: input.principalId,
               status: 'active',
               tenantId: input.tenantId,
@@ -248,6 +269,22 @@ const principalManagementPersistenceFromTransaction = (
           )
           .limit(2)
           .pipe(Effect.mapError(persistenceFailure)),
+  renamePlatformPrincipal: (input) =>
+    transaction
+      .update(principals)
+      .set({ displayName: input.displayName })
+      .where(
+        and(
+          eq(principals.tenantId, input.tenantId),
+          eq(principals.principalId, input.principalId),
+          eq(principals.platformRole, INTERNAL_WORKLOAD_PLATFORM_ROLE),
+        ),
+      )
+      .returning({ principalId: principals.principalId })
+      .pipe(
+        Effect.mapError(persistenceFailure),
+        Effect.map(([renamed]) => Option.fromNullishOr(renamed)),
+      ),
   updateApiKeyBindingStatus: (input) => {
     if (authenticationNamespaceId === undefined) {
       return Effect.fail(persistenceFailure());
@@ -314,15 +351,36 @@ export interface CreatePlatformServicePrincipalInput {
   readonly tenantId: string;
 }
 
+export interface RenamePlatformServicePrincipalInput {
+  readonly displayName: string;
+  readonly principalId: string;
+  readonly tenantId: string;
+}
+
 const createPlatformServicePrincipalFor = (persistence: PrincipalManagementPersistence) =>
   Effect.fn('PrincipalManagement.createPlatformServicePrincipal')(function* createPlatformPrincipal(
     input: CreatePlatformServicePrincipalInput,
   ) {
-    const created = yield* persistence.createPrincipal({ ...input, kind: 'service' });
+    const created = yield* persistence.createPrincipal({
+      ...input,
+      kind: 'service',
+      platformRole: INTERNAL_WORKLOAD_PLATFORM_ROLE,
+    });
     if (Option.isNone(created) || created.value.principalId !== input.principalId) {
       return yield* persistenceFailure();
     }
     return { principalId: created.value.principalId, status: 'active' as const };
+  });
+
+const renamePlatformServicePrincipalFor = (persistence: PrincipalManagementPersistence) =>
+  Effect.fn('PrincipalManagement.renamePlatformServicePrincipal')(function* renamePlatformPrincipal(
+    input: RenamePlatformServicePrincipalInput,
+  ) {
+    const renamed = yield* persistence.renamePlatformPrincipal(input);
+    if (Option.isNone(renamed)) {
+      return yield* persistenceFailure();
+    }
+    return yield* Effect.void;
   });
 
 const createNonHumanPrincipalFor = (persistence: PrincipalManagementPersistence) =>
@@ -510,6 +568,7 @@ export const principalManagementRepositoryFromPersistence = (
     changePrincipalStatus: changePrincipalStatusFor(persistence),
     createNonHumanPrincipal: createNonHumanPrincipalFor(persistence),
     createPlatformServicePrincipal: createPlatformServicePrincipalFor(persistence),
+    renamePlatformServicePrincipal: renamePlatformServicePrincipalFor(persistence),
     setApiKeyBindingStatus: setApiKeyBindingStatusFor(persistence),
     validateSupportImpersonation: validateSupportImpersonationFor(persistence),
   });

@@ -9,12 +9,17 @@ import {
   earliestExpiryOf,
   encodeModuleCredentialHandover,
   MODULE_CREDENTIAL_CALLERS,
+  INTERNAL_WORKLOAD_LABELS,
   MODULE_INTERNAL_WORKLOADS,
   noProvisionedCredentials,
   providerKeyIdsOf,
   ProvisioningOutputJsonSchema,
 } from '../zerops/module-credentials.mts';
-import { internalWorkloadDeclarations, moduleKeyOfWorkload } from '../demo/release-internal-workloads.mts';
+import {
+  internalWorkloadDeclarations,
+  moduleKeyOfWorkload,
+  unlabelledInternalWorkloads,
+} from '../demo/release-internal-workloads.mts';
 import {
   AccessCatalogArtifactDescriptorSchema,
   AccessCatalogArtifactSchema,
@@ -202,12 +207,27 @@ describe('module credential handover', () => {
 const INTAKE_WORKLOAD = 'demo.crm.party-intake';
 
 describe('internal workload declarations', () => {
+  const labels = new Map([[INTAKE_WORKLOAD, 'CRM · zakládání klientů']]);
+
   it('registers a module internal workload only while the reviewed catalogue declares it, under its own module', () => {
     const internal = new Map([['crm', [INTAKE_WORKLOAD, 'demo.crm.retired-sync']]]);
-    expect(internalWorkloadDeclarations(internal, new Set([INTAKE_WORKLOAD, 'commerce.storefront-client']))).toEqual([
-      { appId: 'crm', moduleKey: 'demo.crm', workloadKey: INTAKE_WORKLOAD },
+    expect(
+      internalWorkloadDeclarations(internal, new Set([INTAKE_WORKLOAD, 'commerce.storefront-client']), labels),
+    ).toEqual([
+      { appId: 'crm', label: 'CRM · zakládání klientů', moduleKey: 'demo.crm', workloadKey: INTAKE_WORKLOAD },
     ]);
-    expect(internalWorkloadDeclarations(internal, new Set())).toEqual([]);
+    expect(internalWorkloadDeclarations(internal, new Set(), labels)).toEqual([]);
     expect(moduleKeyOfWorkload(INTAKE_WORKLOAD)).toBe('demo.crm');
+  });
+
+  it('gives every internal workload a readable label, and names the ones that have none', () => {
+    expect(unlabelledInternalWorkloads(MODULE_INTERNAL_WORKLOADS, INTERNAL_WORKLOAD_LABELS)).toEqual([]);
+    for (const label of INTERNAL_WORKLOAD_LABELS.values()) {
+      // A label is words a person reads, never an identifier.
+      expect(label).not.toMatch(/[a-z]+\.[a-z]+|[\da-f]{8}-/u);
+    }
+    expect(unlabelledInternalWorkloads(new Map([['crm', [INTAKE_WORKLOAD, 'demo.crm.new-sync']]]), labels)).toEqual([
+      'demo.crm.new-sync',
+    ]);
   });
 });

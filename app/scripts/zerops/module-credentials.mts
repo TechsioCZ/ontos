@@ -54,6 +54,15 @@ export const MODULE_INTERNAL_WORKLOADS: ReadonlyMap<string, readonly string[]> =
 ]);
 
 /**
+ * What a person reads for each internal workload's registrations, before the company's name: the platform names its
+ * principal `<label> · <company>`, in Czech like its other own principals (the release actor is `OntOS · vydání
+ * oprávnění`). Every internal workload has one; the release step refuses to run otherwise.
+ */
+export const INTERNAL_WORKLOAD_LABELS: ReadonlyMap<string, string> = new Map([
+  ['demo.crm.party-intake', 'CRM · zakládání klientů'],
+]);
+
+/**
  * The modules that call other modules through the Shell's delegated issuance, and so get a module credential: every
  * module a carrier admits as its delegated caller. It is generated from those declarations with the catalog artifact
  * (`pnpm authorization:catalog:artifact`, checked by `--check`), so a module that starts calling another gets its key

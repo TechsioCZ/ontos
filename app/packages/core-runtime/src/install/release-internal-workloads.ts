@@ -1,4 +1,4 @@
-import { and, eq, inArray, like, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { DateTime, Effect, Match, Result, Schema } from 'effect';
 
 import { AccessReleaseStore } from '../access/changes/persistence/release-store.ts';
@@ -15,7 +15,10 @@ import { AccessWorkloadCompanyBindingIdSchema } from '../access/workloads/compan
 import { AccessWorkloadBindingIdSchema } from '../access/workloads/store.ts';
 import { WorkloadKeySchema } from '../authorization/access-declaration.ts';
 import { internalWorkloadPrincipalId, tenantServesPeople } from '../auth/module-credentials.ts';
-import { principalManagementRepositoryFromTransaction } from '../auth/principal-management.ts';
+import {
+  INTERNAL_WORKLOAD_PLATFORM_ROLE,
+  principalManagementRepositoryFromTransaction,
+} from '../auth/principal-management.ts';
 import { makeSystemPrincipalContextResolver, registerSystemWorkload } from '../auth/system-principal-context.ts';
 import { preserveSystemPrincipalContextTrust } from '../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../db/client.ts';
@@ -48,9 +51,12 @@ import type {
  * - Converges: a registration no longer wanted (module not active, workload no longer declared, company not active) is
  *   retired (company binding and workload binding revoked, principal disabled), never deleted; the platform's key
  *   provisioning then stops keying it and retires its key at its next pass.
- * - Recognises only what it made: the principal's id is derived from tenant, workload and company
- *   (`internalWorkloadPrincipalId`) and principal ids are never chosen by a tenant user. A registration someone made by
- *   hand is neither adopted nor touched, and key provisioning keys none.
+ * - Recognises only what it made: the principal carries the platform's `internal_workload` marker (set only by Core's
+ *   platform writer when it creates the principal; no Action or API sets it, and the database refuses any later change)
+ *   AND its id is the one derived from tenant, workload and company (`internalWorkloadPrincipalId`). Two Actions accept
+ *   a caller-chosen principal id (agent configuration, demo accounts), so the id alone is not proof. The name is never
+ *   read for this: it is what a person reads, e.g. `CRM · zakládání klientů · Obchodní firma`, and follows a renamed
+ *   company. A registration someone made by hand is neither adopted nor touched, and key provisioning keys none.
  * - Acts as the tenant's platform release actor (the system principal the access release activation uses), through
  *   Core's own writers, which take the tenant's workload fence; each tenant is read and written in its own scope.
  * - Each tenant is decided on its own; a failure is reported by name and the next run heals from what is true.
@@ -59,7 +65,6 @@ import type {
 export const RELEASE_INTERNAL_WORKLOAD_JOB = registerSystemWorkload({
   jobKey: 'release-internal-workload-registration',
 });
-const PRINCIPAL_PREFIX = 'internal-workload:';
 const NO_CONSTRAINTS: ReadonlySet<string> = new Set();
 const RETIREMENT_REASON = 'The internal workload is no longer wanted here (module, catalogue or company)';
 
@@ -74,35 +79,43 @@ export interface ReleaseInternalWorkloadTenantReport {
   readonly failed: string | null;
   readonly held: number;
   readonly registered: number;
+  readonly renamed: number;
   readonly retired: number;
   readonly tenantId: string;
   readonly unchanged: number;
 }
 
-/** The principal's display name: its workload and company, so a person reading a principal list sees what it is. */
-export const internalWorkloadPrincipalName = (workloadKey: string, legalEntityId: string): string =>
-  `${PRINCIPAL_PREFIX}${workloadKey}:${legalEntityId}`;
-
 const principalStatusOf = (status: string): PlatformRegistration['principalStatus'] =>
   status === 'active' || status === 'disabled' || status === 'archived' ? status : 'archived';
 
-/** Everything the plan needs of one tenant, read in that tenant's own scope. */
-const readTenant = Effect.fn('ReleaseInternalWorkloads.readTenant')(function* readTenant(tenantId: string) {
+/**
+ * Everything the plan needs of one tenant, read in that tenant's own scope. A principal is the platform's only when it
+ * carries the platform's internal workload marker AND its id is the one derived from a workload (declared now, or the
+ * one its bindings name) and a company of this tenant. Its name is never read for that: it is what a person reads.
+ */
+const readTenant = Effect.fn('ReleaseInternalWorkloads.readTenant')(function* readTenant(
+  tenantId: string,
+  declaredWorkloadKeys: readonly string[],
+) {
   const { executor } = yield* CoreDatabase;
   return yield* executor
     .transaction(
       Effect.fn('ReleaseInternalWorkloads.readTenantRows')(function* readRows(transaction) {
         yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantId}, true)`);
-        const [modules, activeCompanies, candidates] = yield* Effect.all(
+        const [modules, companies, candidates] = yield* Effect.all(
           [
             transaction
               .select({ moduleKey: tenantModuleStates.moduleKey })
               .from(tenantModuleStates)
               .where(and(eq(tenantModuleStates.tenantId, tenantId), eq(tenantModuleStates.state, 'active'))),
             transaction
-              .select({ legalEntityId: legalEntities.legalEntityId })
+              .select({
+                legalEntityId: legalEntities.legalEntityId,
+                legalName: legalEntities.legalName,
+                status: legalEntities.status,
+              })
               .from(legalEntities)
-              .where(and(eq(legalEntities.tenantId, tenantId), eq(legalEntities.status, 'active'))),
+              .where(eq(legalEntities.tenantId, tenantId)),
             transaction
               .select({
                 displayName: principals.displayName,
@@ -114,24 +127,15 @@ const readTenant = Effect.fn('ReleaseInternalWorkloads.readTenant')(function* re
                 and(
                   eq(principals.tenantId, tenantId),
                   eq(principals.kind, 'service'),
-                  like(principals.displayName, `${PRINCIPAL_PREFIX}%`),
+                  eq(principals.platformRole, INTERNAL_WORKLOAD_PLATFORM_ROLE),
                 ),
               ),
           ],
           { concurrency: 1 },
         );
-        // Only principals the platform made: the id is the one derived from the workload and company the name states.
-        const owned = candidates.flatMap((candidate) => {
-          const [workloadKey = '', legalEntityId = ''] = candidate.displayName
-            .slice(PRINCIPAL_PREFIX.length)
-            .split(':');
-          return candidate.principalId === internalWorkloadPrincipalId({ legalEntityId, tenantId, workloadKey })
-            ? [{ ...candidate, legalEntityId, workloadKey }]
-            : [];
-        });
-        const ownedIds = owned.map(({ principalId }) => principalId);
+        const candidateIds = candidates.map(({ principalId }) => principalId);
         const bindings =
-          ownedIds.length === 0
+          candidateIds.length === 0
             ? []
             : yield* transaction
                 .select({
@@ -144,9 +148,26 @@ const readTenant = Effect.fn('ReleaseInternalWorkloads.readTenant')(function* re
                 .where(
                   and(
                     eq(accessWorkloadBindings.tenantId, tenantId),
-                    inArray(accessWorkloadBindings.principalId, ownedIds),
+                    inArray(accessWorkloadBindings.principalId, candidateIds),
                   ),
                 );
+        // The (workload, company) each derived id stands for; a candidate whose id is none of them is not the platform's.
+        const workloadKeys = new Set([...declaredWorkloadKeys, ...bindings.map(({ workloadKey }) => workloadKey)]);
+        const derived = new Map(
+          [...workloadKeys].flatMap((workloadKey) =>
+            companies.map(
+              ({ legalEntityId }) =>
+                [
+                  internalWorkloadPrincipalId({ legalEntityId, tenantId, workloadKey }),
+                  { legalEntityId, workloadKey },
+                ] as const,
+            ),
+          ),
+        );
+        const owned = candidates.flatMap((candidate) => {
+          const registration = derived.get(candidate.principalId);
+          return registration === undefined ? [] : [{ ...candidate, ...registration }];
+        });
         const bindingIds = bindings.map(({ bindingId }) => bindingId);
         const companyBindings =
           bindingIds.length === 0
@@ -178,6 +199,7 @@ const readTenant = Effect.fn('ReleaseInternalWorkloads.readTenant')(function* re
               )?.companyBindingId ?? null,
             activeWorkloadBindingId: active?.bindingId ?? null,
             companyBindingCount: written.length,
+            displayName: principal.displayName,
             legalEntityId: principal.legalEntityId,
             principalId: principal.principalId,
             principalStatus: principalStatusOf(principal.status),
@@ -186,8 +208,11 @@ const readTenant = Effect.fn('ReleaseInternalWorkloads.readTenant')(function* re
           };
         });
         return {
-          activeCompanies: new Set(activeCompanies.map(({ legalEntityId }) => legalEntityId)),
+          activeCompanies: new Set(
+            companies.flatMap(({ legalEntityId, status }) => (status === 'active' ? [legalEntityId] : [])),
+          ),
           activeModuleKeys: new Set(modules.map(({ moduleKey }) => moduleKey)),
+          companyNames: new Map(companies.map(({ legalEntityId, legalName }) => [legalEntityId, legalName])),
           registrations,
           tenantId,
         } satisfies TenantWorkloadState;
@@ -278,7 +303,7 @@ const performStep = (
         runScoped(database, scope, NO_CONSTRAINTS, (transaction) =>
           principalManagementRepositoryFromTransaction(transaction)
             .createPlatformServicePrincipal({
-              displayName: internalWorkloadPrincipalName(principal.workloadKey, principal.legalEntityId),
+              displayName: principal.displayName,
               principalId: principal.principalId,
               tenantId,
             })
@@ -286,6 +311,16 @@ const performStep = (
         ).pipe(Effect.asVoid, Effect.mapError(stepFailed('the workload principal could not be created'))),
       'disable-principal': (principal) => principalStatus(principal.principalId, false),
       'reactivate-principal': (principal) => principalStatus(principal.principalId, true),
+      'rename-principal': (principal) =>
+        runScoped(database, scope, NO_CONSTRAINTS, (transaction) =>
+          principalManagementRepositoryFromTransaction(transaction)
+            .renamePlatformServicePrincipal({
+              displayName: principal.displayName,
+              principalId: principal.principalId,
+              tenantId,
+            })
+            .pipe(Effect.orDie),
+        ).pipe(Effect.asVoid, Effect.mapError(stepFailed('the workload principal could not be renamed'))),
       'revoke-company': (company) =>
         makeAccessWorkloadCompanyBindingDrizzleStore(database)
           .revokeCompanyBinding(scope, {
@@ -309,11 +344,18 @@ const registerTenant = Effect.fn('ReleaseInternalWorkloads.registerTenant')(func
   runReference: string,
 ) {
   const outcome = yield* Effect.gen(function* decideAndPerform() {
-    const plan = planTenantInternalWorkloads(yield* readTenant(tenantId), declarations);
+    const plan = planTenantInternalWorkloads(
+      yield* readTenant(
+        tenantId,
+        declarations.map(({ workloadKey }) => workloadKey),
+      ),
+      declarations,
+    );
     const report: ReleaseInternalWorkloadTenantReport = {
       failed: null,
       held: plan.held.length,
       registered: plan.registered,
+      renamed: plan.renamed,
       retired: plan.retired,
       tenantId,
       unchanged: plan.unchanged,
@@ -339,6 +381,7 @@ const registerTenant = Effect.fn('ReleaseInternalWorkloads.registerTenant')(func
           evidenceJson: {
             held: report.held,
             registered: report.registered,
+            renamed: report.renamed,
             retired: report.retired,
             runReference,
             unchanged: report.unchanged,
@@ -361,6 +404,7 @@ const registerTenant = Effect.fn('ReleaseInternalWorkloads.registerTenant')(func
         failed: outcome.failure.reason,
         held: 0,
         registered: 0,
+        renamed: 0,
         retired: 0,
         tenantId,
         unchanged: 0,
