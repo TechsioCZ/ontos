@@ -29,7 +29,7 @@ import type {
   Role,
   RoleRevision,
 } from '../model.ts';
-import { AssignmentSchema, DelegationSchema } from '../model.ts';
+import { AssignmentSchema, DelegationSchema, sameHolder } from '../model.ts';
 import type { AccessLifecycleError, AccessLifecycleFailureCode } from './errors.ts';
 import type { ManagerAuthority } from './delegation.ts';
 import {
@@ -94,7 +94,7 @@ export const PEOPLE_COMMAND_FAILURE_CODES = [
   'ownership_transfer_self',
   /** Only a person administers access; no agent appears on this surface (O46, O67-Q5). */
   'people_actor_not_a_person',
-  /** v2 assignments and memberships reach people only in this wave (O67-Q5). */
+  /** An agent holds a member row and role assignments only: never administration, a team place or a delegation. */
   'people_agent_holder_forbidden',
   'people_assignment_already_ended',
   'people_assignment_scope_mismatch',
@@ -175,13 +175,15 @@ export const PeopleIntentWriteSchema = Schema.Union([
     status: Schema.Literals(['revoked', 'suspended']),
   }),
   /**
-   * A precondition, not a row: the person is an active human with an 'active' company directory
-   * membership, checked and share-locked inside the change's own transaction, so a concurrent
-   * departure either waits for the admission or refuses it.
+   * A precondition, not a row: the holder is an active principal of exactly `principalKind` (a human
+   * for a person, an agent for an agent) with an 'active' company directory membership, checked and
+   * share-locked inside the change's own transaction, so a concurrent departure, disabling or archive
+   * either waits for the admission or refuses it.
    */
   Schema.TaggedStruct('RequireDirectoryMember', {
     legalEntityId: LegalEntityIdSchema,
     principalId: PrincipalIdSchema,
+    principalKind: Schema.Literals(['human', 'agent']),
   }),
   Schema.TaggedStruct('RecordAssignment', {
     assignment: AssignmentSchema,
@@ -240,6 +242,35 @@ const principalOf = (holder: Holder): Option.Option<PrincipalId> =>
 
 const personOf = (holder: Holder): PrincipalId | undefined => Option.getOrUndefined(principalOf(holder));
 
+/** The directory precondition of admitting this holder; an agent's principal id is its agent id (one id space). */
+const directoryPreconditionOf = (legalEntityId: LegalEntityId, holder: Holder): PeopleIntentWrite =>
+  Match.value(holder).pipe(
+    Match.tag('Agent', ({ agentId }): PeopleIntentWrite => ({
+      _tag: 'RequireDirectoryMember',
+      legalEntityId,
+      principalId: PrincipalIdSchema.make(agentId),
+      principalKind: 'agent',
+    })),
+    Match.tag('Principal', ({ principalId }): PeopleIntentWrite => ({
+      _tag: 'RequireDirectoryMember',
+      legalEntityId,
+      principalId,
+      principalKind: 'human',
+    })),
+    Match.exhaustive,
+  );
+
+/** The holder a person is: the membership, assignment and team rules below compare holders, never bare ids. */
+const personHolder = (principalId: PrincipalId): Holder => ({ _tag: 'Principal', principalId });
+
+/** How a refusal names a holder; an agent is named as one, never as the person it may act for. */
+const holderName = (holder: Holder): string =>
+  Match.value(holder).pipe(
+    Match.tag('Agent', ({ agentId }) => `Agent ${agentId}`),
+    Match.tag('Principal', ({ principalId }) => `Person ${principalId}`),
+    Match.exhaustive,
+  );
+
 /**
  * A live membership is the first half of every decision (guarantee 3). Suspension subtracts the
  * graph, so a suspended member is not live: assigning authority to them would write dead authority.
@@ -257,7 +288,7 @@ export const assignmentIsLive = (assignment: Assignment, at: Date): boolean =>
 
 const liveMembershipOf = (request: {
   readonly at: Date;
-  readonly holder: PrincipalId;
+  readonly holder: Holder;
   readonly kind: MembershipKind;
   readonly memberships: readonly AccessMembership[];
   readonly scopeId: AccessScopeId;
@@ -266,7 +297,7 @@ const liveMembershipOf = (request: {
     (membership) =>
       membership.scopeId === request.scopeId &&
       membership.kind === request.kind &&
-      personOf(membership.holder) === request.holder &&
+      sameHolder(membership.holder, request.holder) &&
       membershipIsLive(membership, request.at),
   );
 
@@ -302,18 +333,18 @@ export const hasLiveMembershipPath = (request: {
 const liveAssignmentsOf = (request: {
   readonly assignments: readonly Assignment[];
   readonly at: Date;
-  readonly holder: PrincipalId;
+  readonly holder: Holder;
   readonly scopeId: AccessScopeId;
 }): readonly Assignment[] =>
   request.assignments.filter(
     (assignment) =>
       assignment.scopeId === request.scopeId &&
-      personOf(assignment.holder) === request.holder &&
+      sameHolder(assignment.holder, request.holder) &&
       assignmentIsLive(assignment, request.at),
   );
 
 const teamPlacesOf = (request: {
-  readonly holder: PrincipalId;
+  readonly holder: Holder;
   readonly members: readonly AccessTeamMember[];
   readonly scopeId: AccessScopeId;
   readonly teams: readonly AccessTeam[];
@@ -324,7 +355,7 @@ const teamPlacesOf = (request: {
       teamIds.add(team.id);
     }
   }
-  return request.members.filter((member) => teamIds.has(member.teamId) && personOf(member.holder) === request.holder);
+  return request.members.filter((member) => teamIds.has(member.teamId) && sameHolder(member.holder, request.holder));
 };
 
 /**
@@ -334,7 +365,7 @@ const teamPlacesOf = (request: {
  */
 const requireLiveMember = (request: {
   readonly at: Date;
-  readonly holder: PrincipalId;
+  readonly holder: Holder;
   readonly memberships: readonly AccessMembership[];
   readonly scopeId: AccessScopeId;
 }): Effect.Effect<void, PeopleCommandError> =>
@@ -342,7 +373,7 @@ const requireLiveMember = (request: {
     ? Effect.fail(
         peopleRefusal(
           'people_holder_not_a_member',
-          `Person ${request.holder} has no live membership in scope ${request.scopeId}`,
+          `${holderName(request.holder)} has no live membership in scope ${request.scopeId}`,
         ),
       )
     : Effect.void;
@@ -402,7 +433,7 @@ export interface MembershipGrantRequest extends PeopleCommandFacts {
  */
 const membershipSlotOf = (request: {
   readonly at: Date;
-  readonly holder: PrincipalId;
+  readonly holder: Holder;
   readonly kind: MembershipKind;
   readonly memberships: readonly AccessMembership[];
   readonly scopeId: AccessScopeId;
@@ -412,7 +443,7 @@ const membershipSlotOf = (request: {
       row.scopeId === request.scopeId &&
       row.kind === request.kind &&
       row.status !== 'revoked' &&
-      personOf(row.holder) === request.holder,
+      sameHolder(row.holder, request.holder),
   );
   const expired = occupying.filter((row) => row.validUntil !== undefined && row.validUntil <= request.at);
   return {
@@ -428,13 +459,13 @@ const membershipSlotOf = (request: {
 export const planMembershipGrant = (
   request: MembershipGrantRequest,
 ): Effect.Effect<PeopleChangePlan, PeopleCommandError> => {
-  const principal = principalOf(request.holder);
-  if (Option.isNone(principal)) {
+  const { holder } = request;
+  // An agent is a participant only: owner and access_admin are administration, which no agent holds (O46, D2).
+  if (personOf(holder) === undefined && request.kind !== 'member') {
     return Effect.fail(
-      peopleRefusal('people_agent_holder_forbidden', 'An agent holds no membership in this wave (O67-Q5)'),
+      peopleRefusal('people_agent_holder_forbidden', 'An agent holds a member row only, never administration'),
     );
   }
-  const holder = Option.getOrThrow(principal);
   if (request.validUntil !== undefined && request.validUntil <= request.at) {
     return Effect.fail(
       peopleRefusal('people_membership_period_invalid', 'A membership ends after the instant it begins'),
@@ -451,7 +482,7 @@ export const planMembershipGrant = (
     return Effect.fail(
       peopleRefusal(
         'people_membership_already_active',
-        `Person ${holder} already holds a live ${request.kind} membership in scope ${request.scopeId}`,
+        `${holderName(holder)} already holds a live ${request.kind} membership in scope ${request.scopeId}`,
       ),
     );
   }
@@ -466,7 +497,7 @@ export const planMembershipGrant = (
     return Effect.fail(
       peopleRefusal(
         'people_membership_already_active',
-        `Person ${holder} holds a suspended or not yet started ${request.kind} membership in scope ${request.scopeId}`,
+        `${holderName(holder)} holds a suspended or not yet started ${request.kind} membership in scope ${request.scopeId}`,
       ),
     );
   }
@@ -529,11 +560,12 @@ const notEnded = (row: { readonly status: string; readonly validUntil?: Date | u
  */
 const leftoverAuthority = (
   request: MemberAdmissionRequest,
-  holder: PrincipalId,
+  holder: Holder,
   reached: (scopeId: AccessScopeId) => boolean,
 ) => {
+  const person = personOf(holder);
   const assignment = request.assignments.find(
-    (row) => reached(row.scopeId) && personOf(row.holder) === holder && notEnded(row, request.at),
+    (row) => reached(row.scopeId) && sameHolder(row.holder, holder) && notEnded(row, request.at),
   );
   if (assignment !== undefined) {
     return { kind: 'role assignment', scopeId: assignment.scopeId };
@@ -541,14 +573,14 @@ const leftoverAuthority = (
   const teamScopes = new Map(request.teams.map((entry) => [entry.id, entry.scopeId] as const));
   const place = request.teamMembers.find((member) => {
     const scopeId = teamScopes.get(member.teamId);
-    return scopeId !== undefined && reached(scopeId) && personOf(member.holder) === holder;
+    return scopeId !== undefined && reached(scopeId) && sameHolder(member.holder, holder);
   });
   const placeScope = place === undefined ? undefined : teamScopes.get(place.teamId);
   if (placeScope !== undefined) {
     return { kind: 'team place', scopeId: placeScope };
   }
   const delegation = request.delegations.find(
-    (row) => reached(row.scopeId) && row.managerId === holder && notEnded(row, request.at),
+    (row) => reached(row.scopeId) && row.managerId === person && notEnded(row, request.at),
   );
   if (delegation !== undefined) {
     return { kind: 'managed delegation', scopeId: delegation.scopeId };
@@ -559,7 +591,7 @@ const leftoverAuthority = (
     (row) =>
       row.kind !== 'member' &&
       reached(row.scopeId) &&
-      personOf(row.holder) === holder &&
+      sameHolder(row.holder, holder) &&
       row.status !== 'revoked' &&
       (row.validUntil === undefined || request.at < row.validUntil),
   );
@@ -587,14 +619,7 @@ const leftoverAuthority = (
 export const planMemberAdmission = (
   request: MemberAdmissionRequest,
 ): Effect.Effect<PeopleChangePlan, PeopleCommandError> => {
-  const principal = principalOf(request.holder);
-  if (Option.isNone(principal)) {
-    return Effect.fail(
-      peopleRefusal('people_agent_holder_forbidden', 'An agent holds no membership in this wave (O67-Q5)'),
-    );
-  }
-  const holder = Option.getOrThrow(principal);
-  const { at, companyScopeId } = request;
+  const { at, companyScopeId, holder } = request;
   const { tenantScopeId } = request.administration;
   if (companyScopeId === tenantScopeId) {
     return Effect.fail(
@@ -605,7 +630,7 @@ export const planMemberAdmission = (
     );
   }
   const memberRows = request.memberships.filter(
-    (row) => row.kind === 'member' && row.status !== 'revoked' && personOf(row.holder) === holder,
+    (row) => row.kind === 'member' && row.status !== 'revoked' && sameHolder(row.holder, holder),
   );
   const dormant = memberRows.find(
     (row) => (row.scopeId === tenantScopeId || row.scopeId === companyScopeId) && !membershipIsLive(row, at),
@@ -616,7 +641,7 @@ export const planMemberAdmission = (
     return Effect.fail(
       peopleRefusal(
         expired ? 'people_membership_ended' : 'people_membership_already_active',
-        `Person ${holder} holds ${state} member row ${dormant.id} in scope ${dormant.scopeId}; admission never replaces it`,
+        `${holderName(holder)} holds ${state} member row ${dormant.id} in scope ${dormant.scopeId}; admission never replaces it`,
       ),
     );
   }
@@ -642,7 +667,7 @@ export const planMemberAdmission = (
       if (elsewhere !== undefined) {
         return yield* peopleRefusal(
           'people_membership_ended',
-          `Person ${holder} still holds member row ${elsewhere.id} in scope ${elsewhere.scopeId}; a new tenant membership would bring it back`,
+          `${holderName(holder)} still holds member row ${elsewhere.id} in scope ${elsewhere.scopeId}; a new tenant membership would bring it back`,
         );
       }
     }
@@ -650,18 +675,14 @@ export const planMemberAdmission = (
     if (leftover !== undefined) {
       return yield* peopleRefusal(
         'people_membership_ended',
-        `Person ${holder} still holds a ${leftover.kind} in scope ${leftover.scopeId} from a membership that ended; end it before admitting them again`,
+        `${holderName(holder)} still holds a ${leftover.kind} in scope ${leftover.scopeId} from a membership that ended; end it before admitting them again`,
       );
     }
     const tenant = tenantLive ? [] : (yield* grant(tenantScopeId, request.tenantMembershipId)).writes;
     return planOf(
       { scopeId: companyScopeId, tenantId: request.tenantId },
       ['people_membership_admitted', 'people_directory_membership_required', 'people_admission_revives_nothing'],
-      [
-        { _tag: 'RequireDirectoryMember', legalEntityId: request.legalEntityId, principalId: holder },
-        ...tenant,
-        ...company.writes,
-      ],
+      [directoryPreconditionOf(request.legalEntityId, holder), ...tenant, ...company.writes],
     );
   });
 };
@@ -764,7 +785,7 @@ const endsOperationalPath = (ending: AccessMembership, memberships: readonly Acc
       other.id !== ending.id &&
       other.scopeId === ending.scopeId &&
       other.kind === 'member' &&
-      personOf(other.holder) === personOf(ending.holder) &&
+      sameHolder(other.holder, ending.holder) &&
       membershipIsLive(other, at),
   );
 
@@ -844,9 +865,18 @@ export const planMembershipEnd = (
       ),
     );
   }
-  const leaver = personOf(ending.holder);
-  if (leaver === undefined) {
-    return Effect.fail(peopleRefusal('people_holder_unknown', 'A membership row names no person'));
+  const leavingHolder = ending.holder;
+  // An agent holds a member row only (`planMembershipGrant`), so it administers nothing and manages no
+  // delegation: its leaver id never matches an administration row, and only its own authority closes.
+  const leaver = Match.value(leavingHolder).pipe(
+    Match.tag('Agent', ({ agentId }) => PrincipalIdSchema.make(agentId)),
+    Match.tag('Principal', ({ principalId }) => principalId),
+    Match.exhaustive,
+  );
+  if (personOf(leavingHolder) === undefined && (ending.kind !== 'member' || request.successor !== undefined)) {
+    return Effect.fail(
+      peopleRefusal('people_agent_holder_forbidden', 'An agent holds a member row only, never administration'),
+    );
   }
   // A suspended row is still within its window and may be revoked for good; only a revoked or
   // out-of-window row has ended. The transition table below decides which status it may take.
@@ -897,7 +927,7 @@ export const planMembershipEnd = (
       ? undefined
       : membershipSlotOf({
           at: request.at,
-          holder: request.successor.principalId,
+          holder: personHolder(request.successor.principalId),
           kind: ending.kind === 'owner' ? 'owner' : 'access_admin',
           memberships: request.memberships,
           scopeId: ending.scopeId,
@@ -935,10 +965,10 @@ export const planMembershipEnd = (
       const tenantPath = ending.scopeId === request.administration.tenantScopeId;
       const closedScopeIds = endsPath ? closedScopesOf(request, ending.scopeId, tenantPath) : [];
       const assignments = closedScopeIds.flatMap((scopeId) =>
-        liveAssignmentsOf({ assignments: request.assignments, at: request.at, holder: leaver, scopeId }),
+        liveAssignmentsOf({ assignments: request.assignments, at: request.at, holder: leavingHolder, scopeId }),
       );
       const places = closedScopeIds.flatMap((scopeId) =>
-        teamPlacesOf({ holder: leaver, members: request.teamMembers, scopeId, teams: request.teams }),
+        teamPlacesOf({ holder: leavingHolder, members: request.teamMembers, scopeId, teams: request.teams }),
       );
       // Revoking the path also revokes the rows that stood on it, so a later rejoin starts clean instead
       // of silently restoring an administration, or a company membership, nobody granted again. A
@@ -951,7 +981,7 @@ export const planMembershipEnd = (
                 (membership.kind === 'owner' ||
                   membership.kind === 'access_admin' ||
                   (tenantPath && membership.kind === 'member')) &&
-                personOf(membership.holder) === leaver &&
+                sameHolder(membership.holder, leavingHolder) &&
                 (tenantPath || membership.scopeId === ending.scopeId) &&
                 membership.status !== 'revoked' &&
                 membership.validFrom <= request.at &&
@@ -1086,7 +1116,7 @@ const delegatedAssignment = (
     assignedBy: request.actor,
     catalog: request.catalog,
     delegation: request.delegation.delegation,
-    holder: { _tag: 'Principal' as const, principalId: holder },
+    holder: personHolder(holder),
     incarnationId: request.incarnationId,
     managerIsMember: request.delegation.managerIsMember,
     roleId: request.role.id,
@@ -1097,11 +1127,11 @@ const delegatedAssignment = (
   return Effect.mapError(planDelegatedAssignment(delegated), toPeopleRefusal);
 };
 
-const directAssignment = (request: RoleAssignmentRequest, holder: PrincipalId): Assignment => {
+const directAssignment = (request: RoleAssignmentRequest): Assignment => {
   const assignment: Assignment = {
     assignedAt: request.at,
     assignedBy: request.actor,
-    holder: { _tag: 'Principal', principalId: holder },
+    holder: request.holder,
     incarnationId: request.incarnationId,
     roleId: request.role.id,
     roleRevisionId: request.roleRevision.id,
@@ -1114,22 +1144,24 @@ const directAssignment = (request: RoleAssignmentRequest, holder: PrincipalId): 
 };
 
 /**
- * Assigns one role revision to one person. The incarnation is minted by the caller and never
+ * Assigns one role revision to one person or agent. The incarnation is minted by the caller and never
  * reused; the deadline never outlives the membership the assignment stands on; and a delegated
  * assignment is built by the lifecycle's own `planDelegatedAssignment`, so the frozen envelope
  * (capability keys, amount ceiling, end date) is written by the one implementation of D10 and D10b
- * and never re-derived here.
+ * and never re-derived here. A delegation's envelope names people only, so a delegated manager never
+ * assigns to an agent. An agent's assignment is the same row on its agent side: the engine admits from
+ * it only what an agent may use at all (no administration, never approval), so the role is not narrowed here.
  */
 export const planRoleAssignment = (
   request: RoleAssignmentRequest,
 ): Effect.Effect<PeopleChangePlan, PeopleCommandError> => {
-  const principal = principalOf(request.holder);
-  if (Option.isNone(principal)) {
+  const { holder } = request;
+  const person = personOf(holder);
+  if (request.delegation !== undefined && person === undefined) {
     return Effect.fail(
-      peopleRefusal('people_agent_holder_forbidden', 'An agent holds no role assignment in this wave (O67-Q5)'),
+      peopleRefusal('delegation_holder_outside_envelope', 'A delegation envelope names people, never an agent'),
     );
   }
-  const holder = Option.getOrThrow(principal);
   if (request.roleRevision.roleId !== request.role.id) {
     return Effect.fail(
       peopleRefusal(
@@ -1168,9 +1200,9 @@ export const planRoleAssignment = (
     const deadline = request.validUntil ?? membershipEnd;
     const bounded = deadline === undefined ? request : { ...request, validUntil: deadline };
     const assignment =
-      request.delegation === undefined
-        ? directAssignment(bounded, holder)
-        : yield* delegatedAssignment({ ...bounded, delegation: request.delegation }, holder);
+      request.delegation === undefined || person === undefined
+        ? directAssignment(bounded)
+        : yield* delegatedAssignment({ ...bounded, delegation: request.delegation }, person);
     return planOf(
       { scopeId: request.scopeId, tenantId: request.tenantId },
       ['people_assignment_incarnation'],
@@ -1389,7 +1421,7 @@ export const planDelegationGrant = (
     yield* Effect.mapError(assertDelegationLive({ delegation, managerIsMember: true }), toPeopleRefusal);
     yield* requireLiveMember({
       at: request.at,
-      holder: delegation.managerId,
+      holder: personHolder(delegation.managerId),
       memberships: request.memberships,
       scopeId: request.scopeId,
     });
@@ -1398,7 +1430,7 @@ export const planDelegationGrant = (
       (person) =>
         requireLiveMember({
           at: request.at,
-          holder: person,
+          holder: personHolder(person),
           memberships: request.memberships,
           scopeId: request.scopeId,
         }),
@@ -1516,7 +1548,7 @@ export const planTeamMembership = (
   const holder = Option.getOrThrow(principal);
   return requireLiveMember({
     at: request.at,
-    holder,
+    holder: personHolder(holder),
     memberships: request.memberships,
     scopeId: request.scopeId,
   }).pipe(
@@ -1618,7 +1650,7 @@ export const ownershipTransferCandidates = (request: {
       (scopeId) =>
         liveMembershipOf({
           at: request.at,
-          holder: person,
+          holder: personHolder(person),
           kind: 'member',
           memberships: request.memberships,
           scopeId,
@@ -1717,7 +1749,7 @@ export const planOwnershipTransfer = (
   const slots = request.scopeIds.map((scopeId) =>
     membershipSlotOf({
       at: request.at,
-      holder: request.successor,
+      holder: personHolder(request.successor),
       kind: successorKind(scopeId),
       memberships: request.memberships,
       scopeId,

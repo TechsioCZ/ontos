@@ -281,6 +281,10 @@ const scopeIdOfTarget = (view: View, target: ScopeTarget): Option.Option<string>
 const principalOfHolder = (holder: ViewAssignment['holder']): string | undefined =>
   Predicate.isTagged(holder, 'Principal') ? String(holder.principalId) : undefined;
 
+/** The principal id a holder stands for: a person's own, an agent's agent id (agents are principals too). */
+const holderIdOf = (holder: ViewAssignment['holder']): string =>
+  Predicate.isTagged(holder, 'Principal') ? String(holder.principalId) : String(holder.agentId);
+
 /** A role is readable where it lives: a company's role in its company, a tenant role in the tenant context. */
 const roleIsReachable = (reach: PeopleReach, legalEntityId: string | undefined): boolean =>
   legalEntityId === undefined ? reach.readable.tenant : reach.readable.companies.has(legalEntityId);
@@ -1007,8 +1011,8 @@ const assign = Effect.fn('AccessAdminPeople.assign')(function* assignRole({
   }
   const commands = yield* AccessPeopleCommands;
   const command = {
+    holder: { _tag: 'Principal' as const, principalId: PrincipalIdSchema.make(payload.principalId) },
     incarnationId: AssignmentIncarnationIdSchema.make(mintedId(admitted.scope, 'assignment', idempotencyKey)),
-    principalId: PrincipalIdSchema.make(payload.principalId),
     roleId: RoleIdSchema.make(payload.roleId),
     roleRevisionId: RoleRevisionIdSchema.make(payload.expectedRoleRevisionId),
     scopeId,
@@ -1173,7 +1177,7 @@ const plainMembershipChange = (view: View, membership: PeopleCommandReceipt['mem
   membership === undefined
     ? undefined
     : {
-        principalId: String(membership.principalId),
+        principalId: holderIdOf(membership.holder),
         scope: scopeTargetOf(view, membership.scopeId),
         status: membership.status,
       };
@@ -1215,8 +1219,8 @@ const admitMember = Effect.fn('AccessAdminPeople.admitMember')(function* admitMe
       companyMembershipId: AccessMembershipIdSchema.make(
         mintedId(admitted.scope, 'membership', idempotencyKey, scopeId),
       ),
+      holder: { _tag: 'Principal', principalId: PrincipalIdSchema.make(payload.principalId) },
       legalEntityId,
-      principalId: PrincipalIdSchema.make(payload.principalId),
       tenantMembershipId: AccessMembershipIdSchema.make(
         mintedId(admitted.scope, 'membership', idempotencyKey, admitted.view.tenantScopeId),
       ),
@@ -1238,7 +1242,7 @@ const endMembership = Effect.fn('AccessAdminPeople.endMembership')(function* end
   const commands = yield* AccessPeopleCommands;
   const receipt = yield* commands
     .endMembership(admitted.scope, {
-      principalId: PrincipalIdSchema.make(payload.principalId),
+      holder: { _tag: 'Principal', principalId: PrincipalIdSchema.make(payload.principalId) },
       reason: payload.reason,
       scopeId,
     })

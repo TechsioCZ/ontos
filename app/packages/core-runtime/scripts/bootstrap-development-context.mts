@@ -636,10 +636,10 @@ const applyReviewedAccess = (
       }
       yield* people
         .assignRole(scope, {
+          holder: { _tag: 'Principal', principalId },
           incarnationId: AssignmentIncarnationIdSchema.make(
             fixtureAssignmentIncarnationId(tenantId, scopeId, role.roleId, principalId),
           ),
-          principalId,
           roleId: role.roleId,
           roleRevisionId: role.roleRevisionId,
           scopeId,

@@ -404,8 +404,8 @@ const assignInCompany = (
 ) =>
   Effect.gen(function* assignInCompanyEffect() {
     return yield* tenant.people.assignRole(actor, {
+      holder: { _tag: 'Principal', principalId },
       incarnationId: yield* tenant.newIncarnationId,
-      principalId,
       roleId: role.roleId,
       roleRevisionId: role.roleRevisionId,
       scopeId: legalEntityScopeId(tenant.tenantId, legalEntityId),
@@ -443,7 +443,9 @@ const admit = (
   legalEntityId: LegalEntityId = company,
 ) =>
   tenant.newMembershipIds.pipe(
-    Effect.flatMap((minted) => tenant.people.admitMember(actor, { ...minted, legalEntityId, principalId })),
+    Effect.flatMap((minted) =>
+      tenant.people.admitMember(actor, { ...minted, holder: { _tag: 'Principal', principalId }, legalEntityId }),
+    ),
   );
 
 /** The code an admission by the owner is refused with. */
@@ -504,8 +506,8 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('people commands on 
 
         yield* tenant.people
           .assignRole(tenant.owner, {
+            holder: { _tag: 'Principal', principalId: colleague },
             incarnationId: yield* tenant.newIncarnationId,
-            principalId: colleague,
             roleId: role.roleId,
             roleRevisionId: role.roleRevisionId,
             scopeId: companyScope,
@@ -523,8 +525,8 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('people commands on 
         // A second holder in the same scope reuses the live incarnations: the witness never moves.
         yield* tenant.people
           .assignRole(tenant.owner, {
+            holder: { _tag: 'Principal', principalId: teammate },
             incarnationId: yield* tenant.newIncarnationId,
-            principalId: teammate,
             roleId: role.roleId,
             roleRevisionId: role.roleRevisionId,
             scopeId: companyScope,
@@ -661,8 +663,8 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('people commands on 
         const role = yield* tenant.createRole(NOTE_READ);
         yield* tenant.people
           .assignRole(tenant.owner, {
+            holder: { _tag: 'Principal', principalId: colleague },
             incarnationId: yield* tenant.newIncarnationId,
-            principalId: colleague,
             roleId: role.roleId,
             roleRevisionId: role.roleRevisionId,
             scopeId: companyScope,
@@ -757,8 +759,8 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('people commands on 
         const held = yield* tenant.newIncarnationId;
         yield* tenant.people
           .assignRole(tenant.owner, {
+            holder: { _tag: 'Principal', principalId: colleague },
             incarnationId: held,
-            principalId: colleague,
             roleId: role.roleId,
             roleRevisionId: role.roleRevisionId,
             scopeId: companyScope,
@@ -809,8 +811,8 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('people commands on 
         const cover = yield* tenant.newIncarnationId;
         yield* tenant.people
           .assignRole(tenant.owner, {
+            holder: { _tag: 'Principal', principalId: colleague },
             incarnationId: cover,
-            principalId: colleague,
             roleId: role.roleId,
             roleRevisionId: role.roleRevisionId,
             scopeId: companyScope,
@@ -886,7 +888,11 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('people commands on 
         expect((yield* decide(tenant, noteReadCarrier, newcomer, otherCompany)).outcome).toBe('DENIED');
 
         yield* tenant.people
-          .endMembership(tenant.owner, { principalId: newcomer, reason: 'Odchod z firmy', scopeId: companyScope })
+          .endMembership(tenant.owner, {
+            holder: { _tag: 'Principal', principalId: newcomer },
+            reason: 'Odchod z firmy',
+            scopeId: companyScope,
+          })
           .pipe(Effect.orDie);
         expect((yield* decide(tenant, noteReadCarrier, newcomer)).outcome).toBe('DENIED');
         const ended = yield* membershipsOf(tenant, newcomer);
@@ -1052,10 +1058,18 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('people commands on 
         yield* Deferred.await(held);
         const reason = 'Souběžný odchod vlastníka';
         const endingColleague = yield* tenant.people
-          .endMembership(tenant.owner, { principalId: colleague, reason, scopeId: tenantScope })
+          .endMembership(tenant.owner, {
+            holder: { _tag: 'Principal', principalId: colleague },
+            reason,
+            scopeId: tenantScope,
+          })
           .pipe(Effect.exit, Effect.forkChild);
         const endingOwner = yield* tenant.people
-          .endMembership(secondOwner, { principalId: owner, reason, scopeId: tenantScope })
+          .endMembership(secondOwner, {
+            holder: { _tag: 'Principal', principalId: owner },
+            reason,
+            scopeId: tenantScope,
+          })
           .pipe(Effect.exit, Effect.forkChild);
         yield* eventually(Effect.map(blockedBackends(tenant), (blocked) => blocked === 2));
         yield* Deferred.succeed(released, null);
