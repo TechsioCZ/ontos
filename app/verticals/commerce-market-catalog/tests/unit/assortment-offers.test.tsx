@@ -2,9 +2,10 @@
 // The e-shop switches of the price list: a switch changes only the section's draft, the one Save sends each changed
 // offer once, and leaving with unsaved offers asks first. Only the merchandise and records clients, the i18n runtime
 // and the router blocker are replaced.
-import { executeManageMarkets } from '@app/merchandise/clients/manage-markets';
-import { executeRecords } from '@app/merchandise/clients/records';
-import { RecordsResponseSchema } from '@app/merchandise/contracts/records';
+import { executeManageMarkets } from '@app/merchandise/apis/manage-markets-action/client';
+import { executeRecords } from '@app/merchandise/apis/records/client';
+import { ManageMarketsPayloadSchema } from '@app/merchandise/apis/manage-markets-action';
+import { RecordsResponseSchema } from '@app/merchandise/apis/records';
 import { MarketSettingsSchema } from '@app/merchandise/domain/market-offers';
 import { saveLabelsFor } from '@app/admin-ui';
 import { Effect, Option, Predicate, Schema } from 'effect';
@@ -19,8 +20,8 @@ import { PriceListEditor } from '../../src/market-admin/assortment-section.tsx';
 import type { ExceptionsSpec } from '../../src/market-admin/assortment-section.tsx';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 
-rstest.mock('@app/merchandise/clients/manage-markets');
-rstest.mock('@app/merchandise/clients/records');
+rstest.mock('@app/merchandise/apis/manage-markets-action/client');
+rstest.mock('@app/merchandise/apis/records/client');
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
 }));
@@ -353,13 +354,15 @@ describe('e-shop offer switches of the price list', () => {
       yield* Effect.promise(() => clickSave());
       yield* Effect.sleep('100 millis');
       yield* Effect.promise(settle);
-      expect(sentCommands().at(-1)).toEqual({
-        _tag: 'SetProductMarketOffer',
-        expectedOffered: false,
-        marketId,
-        offered: true,
-        productId: 'p-1',
-      });
+      expect(sentCommands().at(-1)).toEqual(
+        Schema.decodeUnknownSync(ManageMarketsPayloadSchema.fields.command)({
+          _tag: 'SetProductMarketOffer',
+          expectedOffered: false,
+          marketId,
+          offered: true,
+          productId: 'p-1',
+        }),
+      );
       expect(server.get('p-1')).toBe(true);
       expect(document.body.textContent).not.toContain(labels.conflict);
     }),

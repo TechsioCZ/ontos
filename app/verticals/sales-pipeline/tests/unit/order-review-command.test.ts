@@ -1,13 +1,13 @@
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { ReviewOrderChangesPayloadSchema } from '@app/merchandise/contracts/review-order-changes';
+import { ReviewOrderChangesPayloadSchema } from '@app/merchandise/apis/review-order-changes-action';
 import { Effect, Predicate, Result, Schema } from 'effect';
 import { beforeEach, expect, it, rstest } from 'effect-rstest';
 
 import { sendOrderReview } from '../../src/routes/[lang]/prodej/schvalovani-ai/order-review-command.ts';
 
 const { records, review } = rstest.hoisted(() => ({ records: rstest.fn(), review: rstest.fn() }));
-rstest.mock('@app/merchandise/clients/records', () => ({ executeRecords: records }));
-rstest.mock('@app/merchandise/clients/review-order-changes', () => ({ executeReviewOrderChanges: review }));
+rstest.mock('@app/merchandise/apis/records/client', () => ({ executeRecords: records }));
+rstest.mock('@app/merchandise/apis/review-order-changes-action/client', () => ({ executeReviewOrderChanges: review }));
 
 const { command } = Schema.decodeUnknownSync(ReviewOrderChangesPayloadSchema)({
   command: { _tag: 'AiDecideChanges', changeIds: ['change-a'], decision: 'approve' },

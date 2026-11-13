@@ -4,7 +4,8 @@
 // (@app/shared-contracts/ai-approvals). Every decision is an audited Core Action of the approving person.
 import { EmptyState, PageHeader, SectionCard, formatDateTime } from '@app/admin-ui';
 import { sendOrderReview } from './order-review-command.ts';
-import { executeRecords as executeMerchandiseRecords } from '@app/merchandise/clients/records';
+import { RecordsRequestSchema as MerchandiseRecordsRequestSchema } from '@app/merchandise/apis/records';
+import { executeRecords as executeMerchandiseRecords } from '@app/merchandise/apis/records/client';
 import { aiLogActionLabel, aiRiskLabel, aiStatusLabel } from '@app/shared-contracts/ai-approvals';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
@@ -94,6 +95,12 @@ const opportunitySlice = (response: RecordsResponse): ModuleSlice => ({
   revision: response.revision,
 });
 
+/** One Merchandise records read; the request is decoded with the owner's schema before it is sent. */
+const readMerchandiseRecords = (payload: typeof MerchandiseRecordsRequestSchema.Encoded, requestCorrelation: string) =>
+  Schema.decodeEffect(MerchandiseRecordsRequestSchema)(payload).pipe(
+    Effect.flatMap((request) => executeMerchandiseRecords(request, requestCorrelation)),
+  );
+
 /** Merchandise reads at most 250 orders by id per call. */
 const ORDER_ID_BATCH = 250;
 
@@ -108,7 +115,7 @@ const orderPartiesOf = (changes: readonly AiChange<unknown>[]) => {
     (orderIds) =>
       correlation('order-parties').pipe(
         Effect.flatMap((key) =>
-          executeMerchandiseRecords({ view: { limit: 0, orderIds, ordersLimit: ORDER_ID_BATCH } }, key),
+          readMerchandiseRecords({ view: { limit: 0, orderIds, ordersLimit: ORDER_ID_BATCH } }, key),
         ),
       ),
     { concurrency: 2 },

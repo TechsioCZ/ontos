@@ -2,7 +2,7 @@ import { cleanupDemoAction } from '../../src/actions/cleanup-demo.action.ts';
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
-import { Effect, Layer, Schema } from 'effect';
+import { Effect, Layer, Predicate, Schema } from 'effect';
 import { HttpClient, HttpServerRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import { ManageCatalogPayloadSchema } from '../../shared/actions/apply-command.ts';
@@ -70,7 +70,7 @@ for (const access of ['denied', 'unavailable', 'allowed'] as const) {
             denied: 'ActionPermissionDenied',
             unavailable: 'ActionPermissionCheckError',
           } as const;
-          expect(failure._tag).toBe(expected[access]);
+          expect(Predicate.isTagged(failure, expected[access])).toBe(true);
           expect(harness.snapshot().transactionCount).toBe(0);
           expect(harness.snapshot().committed).toEqual([]);
         }),
@@ -93,7 +93,7 @@ it.effect('canonical cleanup authority never moves ResetDemoData outside its ori
           transport: { correlationId: 'reset-company', idempotencyKey: 'reset-company' },
         })
         .pipe(Effect.flip);
-      expect(failure._tag).toBe('MerchandisePermissionDenied');
+      expect(Predicate.isTagged(failure, 'MerchandisePermissionDenied')).toBe(true);
       expect(harness.snapshot().transactionCount).toBe(0);
       expect(harness.snapshot().committed).toEqual([]);
     }),

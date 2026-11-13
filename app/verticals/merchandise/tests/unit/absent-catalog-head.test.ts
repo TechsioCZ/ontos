@@ -12,7 +12,7 @@ import { MerchandiseCommandPayloadSchema } from '../../shared/actions/apply-comm
 import { MerchandiseRevisionConflict } from '../../shared/errors/merchandise-revision-conflict.ts';
 import { PLAYGROUND_COMPANY, PLAYGROUND_TENANT } from '../../shared/domain/playground-catalog-bootstrap.ts';
 import { merchandiseRelations } from '../../src/database/schema.ts';
-import { assertMerchandiseSearchPublished } from '../../src/search/catalog-publication.ts';
+import { assertMerchandiseSearchPublished } from '../../src/services/catalog-publication.ts';
 import { EMPTY_CATALOG_HEAD, lockHeadForWrite } from '../../src/services/merchandise-store.ts';
 import { persistenceService } from '../../src/services/persistence.service.ts';
 import { TEST_FETCHED_TAX } from '../support/tax-fixtures.ts';

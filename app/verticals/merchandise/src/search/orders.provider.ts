@@ -4,7 +4,7 @@ import { Effect } from 'effect';
 import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { OrderRefSchema } from '../../shared/resources/order.ts';
 import { loadCurrentMerchandiseSearch, loadMerchandiseSearch } from '../services/merchandise-search-projection.ts';
-import { assertMerchandiseSearchPublished } from './catalog-publication.ts';
+import { assertMerchandiseSearchPublished } from '../services/catalog-publication.ts';
 import { OrdersProviderRequestSchema, OrdersProviderResponseSchema } from '../../shared/apis/orders-search.ts';
 
 import type { ReadFinishContext, ReadPrepareContext } from '@app/core-runtime';

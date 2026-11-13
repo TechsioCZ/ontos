@@ -1,6 +1,7 @@
 // Records that hang off one business case (opportunity): its tasks, contracts and orders/offers in the owning modules.
 import { documentNavigationModules } from '@app/shared-contracts';
-import { listOrders } from '@app/merchandise/clients/records';
+import { RecordsRequestSchema as MerchandiseRecordsRequestSchema } from '@app/merchandise/apis/records';
+import { executeRecords as executeMerchandiseRecords } from '@app/merchandise/apis/records/client';
 import { executeRecords as executeAgreementsRecords } from '@app/legal-agreements/clients/records';
 import { executeRecords as executeTaskRecords } from '@app/work-tasks/clients/records';
 import { useHeldSnapshot } from '@app/admin-ui';
@@ -118,9 +119,11 @@ export const loadOpportunityRelated = (
             'demo.merchandise',
             correlation('orders').pipe(
               Effect.flatMap((id) =>
-                listOrders(id, { limit: 0, orderOpportunityId: opportunity.id, ordersLimit: 250 }),
+                Schema.decodeEffect(MerchandiseRecordsRequestSchema)({
+                  view: { limit: 0, orderOpportunityId: opportunity.id, ordersLimit: 250 },
+                }).pipe(Effect.flatMap((request) => executeMerchandiseRecords(request, id))),
               ),
-              Effect.map((orders) =>
+              Effect.map(({ orders }) =>
                 orders.map((order): RelatedOrder => ({
                   id: order.id,
                   number: order.number,

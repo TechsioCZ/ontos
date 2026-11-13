@@ -1,8 +1,8 @@
 import { OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { Effect } from 'effect';
-import { loadHead } from '../services/merchandise-store.ts';
-import type { MerchandiseDb } from '../services/merchandise-store.ts';
+import { loadHead } from './merchandise-store.ts';
+import type { MerchandiseDb } from './merchandise-store.ts';
 
 const unavailable = (cause?: unknown) =>
   Object.defineProperty(

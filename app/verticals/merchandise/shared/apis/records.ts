@@ -3,8 +3,7 @@ import { SellerVatRegimeSchema, TaxRateViewSchema } from '@app/shared-contracts/
 import { AgentHistoryRequestSchema } from '@app/shared-contracts/agent-proposals';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { makeAiApprovalSchemas } from '@app/shared-contracts/ai-approvals';
-import { MerchandiseAiOperationSchema } from '../actions/apply-command.ts';
+import { MerchandiseAiSliceSchema } from '../domain/merchandise-ai.ts';
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import {
   CatalogCategoryIdSchema,
@@ -232,13 +231,6 @@ export const RecordsViewSchema = Schema.Struct({
   ),
 });
 export type RecordsView = typeof RecordsViewSchema.Type;
-export type RecordsViewEncoded = typeof RecordsViewSchema.Encoded;
-
-/** AI level C proposals, decisions, reverts and their log (see `@app/shared-contracts/ai-approvals`). */
-export const MerchandiseAiSchemas = makeAiApprovalSchemas(MerchandiseAiOperationSchema);
-export const MerchandiseAiSliceSchema = MerchandiseAiSchemas.slice;
-export type MerchandiseAiSlice = typeof MerchandiseAiSliceSchema.Type;
-export type MerchandiseAiChange = typeof MerchandiseAiSchemas.change.Type;
 
 export const MerchandiseStateSchema = Schema.Struct({
   aiChanges: Schema.optionalKey(MerchandiseAiSliceSchema),
@@ -343,12 +335,12 @@ export const RecordsResponseSchema = Schema.Struct({
   /**
    * Staff reads: when Tax last confirmed the rates above; null unless they come from Tax (see `taxRatesSource`).
    */
-  taxRatesConfirmedAt: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  taxRatesConfirmedAt: Schema.optionalKey(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
   /**
    * Staff reads: where the rates above come from. `TAX`: Tax's answer. `MIGRATION`: the rates the classification
    * migration took over from the stored prices, not yet confirmed by Tax. null: the company has no rates at all.
    */
-  taxRatesSource: Schema.optionalKey(Schema.NullOr(Schema.Literals(['MIGRATION', 'TAX']))),
+  taxRatesSource: Schema.optionalKey(Schema.OptionFromNullOr(Schema.Literals(['MIGRATION', 'TAX']))),
 });
 export type RecordsResponse = typeof RecordsResponseSchema.Type;
 

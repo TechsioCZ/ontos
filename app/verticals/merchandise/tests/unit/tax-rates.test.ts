@@ -36,6 +36,7 @@ import {
   knownTaxRateBook,
   pricesCompany,
   refreshedTaxRateBook,
+  VatRateResolutionSchema,
   resolveVatRate,
   sellableRatesAt,
   shownTaxRates,
@@ -48,6 +49,7 @@ import { TEST_SINCE, TEST_TAX_BOOK, testTaxBook } from '../support/tax-fixtures.
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const NOW = at('2026-11-12T10:00:00.000Z');
 const revision = (id: string) => TaxRuleRevisionIdSchema.make(id);
+const [NotSellable, Rate] = VatRateResolutionSchema.members;
 
 /** The standard rate moving from 21 to 23 at UTC midnight of 2027-01-01, the reduced one unchanged. */
 const RATE_CHANGE = at('2027-01-01T00:00:00.000Z');
@@ -73,16 +75,12 @@ const changingBook: TaxRateBook = {
 };
 
 it('a VAT payer sells at the rate in force and names the rule revision it came from', () => {
-  expect(resolveVatRate(TEST_TAX_BOOK, 'cz.vat.standard', NOW)).toEqual({
-    _tag: 'Rate',
-    ratePercent: 21,
-    taxRuleRevisionId: revision('revision-standard'),
-  });
-  expect(resolveVatRate(TEST_TAX_BOOK, 'cz.vat.reduced', NOW)).toEqual({
-    _tag: 'Rate',
-    ratePercent: 12,
-    taxRuleRevisionId: revision('revision-reduced'),
-  });
+  expect(resolveVatRate(TEST_TAX_BOOK, 'cz.vat.standard', NOW)).toEqual(
+    Rate.make({ ratePercent: 21, taxRuleRevisionId: revision('revision-standard') }),
+  );
+  expect(resolveVatRate(TEST_TAX_BOOK, 'cz.vat.reduced', NOW)).toEqual(
+    Rate.make({ ratePercent: 12, taxRuleRevisionId: revision('revision-reduced') }),
+  );
 });
 
 it('periods are half-open and change at UTC midnight', () => {
@@ -101,25 +99,23 @@ it('periods are half-open and change at UTC midnight', () => {
 
 it('a non-payer sells every classification at 0 % without a rule revision', () => {
   const nonPayer = testTaxBook({}, 'NON_PAYER');
-  expect(resolveVatRate(nonPayer, 'cz.vat.standard', NOW)).toEqual({ _tag: 'Rate', ratePercent: 0 });
-  expect(resolveVatRate(nonPayer, 'cz.vat.reduced', NOW)).toEqual({ _tag: 'Rate', ratePercent: 0 });
+  expect(resolveVatRate(nonPayer, 'cz.vat.standard', NOW)).toEqual(Rate.make({ ratePercent: 0 }));
+  expect(resolveVatRate(nonPayer, 'cz.vat.reduced', NOW)).toEqual(Rate.make({ ratePercent: 0 }));
   expect(sellableRatesAt(nonPayer, NOW)).toEqual({ 'cz.vat.reduced': 0, 'cz.vat.standard': 0 });
   expect(taxRateViews(nonPayer, NOW)).toEqual([]);
 });
 
 it('fails closed: no regime, a missing rule, two rules at once or a fractional rate sell nothing', () => {
-  expect(resolveVatRate(testTaxBook(undefined, 'NOT_DECLARED'), 'cz.vat.standard', NOW)).toEqual({
-    _tag: 'NotSellable',
-    reason: 'REGIME_NOT_DECLARED',
-  });
+  expect(resolveVatRate(testTaxBook(undefined, 'NOT_DECLARED'), 'cz.vat.standard', NOW)).toEqual(
+    NotSellable.make({ reason: 'REGIME_NOT_DECLARED' }),
+  );
   const standardOnly = testTaxBook({ standard: '21' });
-  expect(resolveVatRate(standardOnly, 'cz.vat.reduced', NOW)).toEqual({ _tag: 'NotSellable', reason: 'NO_RULE' });
+  expect(resolveVatRate(standardOnly, 'cz.vat.reduced', NOW)).toEqual(NotSellable.make({ reason: 'NO_RULE' }));
   expect(sellableRatesAt(standardOnly, NOW)).toEqual({ 'cz.vat.standard': 21 });
   // Before the first rule took effect there is no rate either.
-  expect(resolveVatRate(TEST_TAX_BOOK, 'cz.vat.standard', at('1999-12-31T23:59:59.999Z'))).toEqual({
-    _tag: 'NotSellable',
-    reason: 'NO_RULE',
-  });
+  expect(resolveVatRate(TEST_TAX_BOOK, 'cz.vat.standard', at('1999-12-31T23:59:59.999Z'))).toEqual(
+    NotSellable.make({ reason: 'NO_RULE' }),
+  );
   const overlapping: TaxRatePeriod = {
     code: 'cz.vat.standard',
     effectiveFrom: at('2026-01-01T00:00:00.000Z'),
@@ -128,11 +124,10 @@ it('fails closed: no regime, a missing rule, two rules at once or a fractional r
   };
   expect(
     resolveVatRate({ ...TEST_TAX_BOOK, periods: [...TEST_TAX_BOOK.periods, overlapping] }, 'cz.vat.standard', NOW),
-  ).toEqual({ _tag: 'NotSellable', reason: 'RULE_CONFLICT' });
-  expect(resolveVatRate(testTaxBook({ standard: '21.5' }), 'cz.vat.standard', NOW)).toEqual({
-    _tag: 'NotSellable',
-    reason: 'NOT_INTEGER',
-  });
+  ).toEqual(NotSellable.make({ reason: 'RULE_CONFLICT' }));
+  expect(resolveVatRate(testTaxBook({ standard: '21.5' }), 'cz.vat.standard', NOW)).toEqual(
+    NotSellable.make({ reason: 'NOT_INTEGER' }),
+  );
 });
 
 it('staff see the current and scheduled rates of a payer, ended ones dropped, standard first', () => {
@@ -149,14 +144,16 @@ it('staff see the current and scheduled rates of a payer, ended ones dropped, st
 
 it('other modules apply the same rule to the staff response', () => {
   const views = taxRateViews(changingBook, NOW);
-  const payer = { sellerVatRegime: 'VAT_PAYER' as const, taxRates: views };
+  const payer = { sellerVatRegime: Option.some('VAT_PAYER' as const), taxRates: views };
   expect(vatRateAt(payer, 'cz.vat.standard', NOW)).toBe(21);
   expect(vatRateAt(payer, 'cz.vat.standard', RATE_CHANGE)).toBe(23);
   expect(vatRateAt(payer, 'cz.vat.reduced', NOW)).toBe(12);
   expect(vatRateAt(payer, undefined, NOW)).toBeUndefined();
-  expect(vatRateAt({ sellerVatRegime: 'VAT_PAYER', taxRates: [] }, 'cz.vat.standard', NOW)).toBeUndefined();
-  expect(vatRateAt({ sellerVatRegime: 'NON_PAYER', taxRates: [] }, 'cz.vat.reduced', NOW)).toBe(0);
-  expect(vatRateAt({ sellerVatRegime: null, taxRates: views }, 'cz.vat.standard', NOW)).toBeUndefined();
+  expect(
+    vatRateAt({ sellerVatRegime: Option.some('VAT_PAYER'), taxRates: [] }, 'cz.vat.standard', NOW),
+  ).toBeUndefined();
+  expect(vatRateAt({ sellerVatRegime: Option.some('NON_PAYER'), taxRates: [] }, 'cz.vat.reduced', NOW)).toBe(0);
+  expect(vatRateAt({ sellerVatRegime: Option.none(), taxRates: views }, 'cz.vat.standard', NOW)).toBeUndefined();
   expect(vatRateAt({}, 'cz.vat.standard', NOW)).toBeUndefined();
 });
 
@@ -409,7 +406,7 @@ it('the migrated state keeps selling until Tax prices the company, and holds BOO
     });
   }
   // The migrated periods name no Tax rule: lines sell at 21 / 12 % without a rule revision.
-  expect(resolveVatRate(MIGRATED.book, 'cz.vat.reduced', NOW)).toEqual({ _tag: 'Rate', ratePercent: 12 });
+  expect(resolveVatRate(MIGRATED.book, 'cz.vat.reduced', NOW)).toEqual(Rate.make({ ratePercent: 12 }));
   // Tax's first answer that prices the company replaces it, held rates included.
   expect(decideTaxRates(MIGRATED, answered(TEST_TAX_BOOK), NOW)).toEqual({
     book: TEST_TAX_BOOK,
@@ -433,7 +430,7 @@ it('once Tax is in charge its answer rules: a gap fails closed, an outage keeps 
   const standardOnly = testTaxBook({ standard: '21' });
   const gap = decideTaxRates(confirmedMinutesAgo(5), answered(standardOnly), NOW);
   expect([gap.book, gap.changed, gap.materialise?.source]).toEqual([standardOnly, true, 'TAX']);
-  expect(resolveVatRate(standardOnly, 'cz.vat.reduced', NOW)).toEqual({ _tag: 'NotSellable', reason: 'NO_RULE' });
+  expect(resolveVatRate(standardOnly, 'cz.vat.reduced', NOW)).toEqual(NotSellable.make({ reason: 'NO_RULE' }));
   // Tax unreachable: rates it confirmed within 24 hours still price new lines; older ones are shown, never used.
   const confirmedAt = (hoursAgo: number): CompanyTaxRates => ({
     ...CONFIRMED,

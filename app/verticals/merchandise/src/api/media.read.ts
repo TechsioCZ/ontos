@@ -88,7 +88,7 @@ export const mediaRead = defineRead(
       risk: 'sensitive',
       selectors: [],
     },
-    accessKind: 'download',
+    accessKind: 'detail',
     accessWorkload: {
       reason: 'The registered Storefront BFF reads published catalog data and places its own guest orders',
       workloads: ['demo.storefront-client'],

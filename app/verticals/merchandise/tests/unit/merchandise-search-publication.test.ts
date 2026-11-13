@@ -17,6 +17,7 @@ import {
   CoreSearchProjectionStore,
   CoreSearchQueryRuntime,
   CoreSearchWorkerSnapshot,
+  ReadPermissionDenied,
   TrustedPrincipalContextSchema,
   createCoreSearchQueryRuntime,
   makeCoreSearchIngestion,
@@ -1316,7 +1317,7 @@ it.effect('both real search providers preserve AND/OR target intersections and r
 );
 it.effect('missing or malformed canonical search predicates never become all-in-scope', () =>
   Effect.gen(function* missingPredicate() {
-    expect(yield* prepareSearchPredicate().pipe(Effect.flip)).toMatchObject({ _tag: 'ReadPermissionDenied' });
+    expect(yield* prepareSearchPredicate().pipe(Effect.flip)).toBeInstanceOf(ReadPermissionDenied);
     expect(validSearchPredicate({ groups: [{ clauses: [] }] })).toBe(false);
     expect(validSearchPredicate({ groups: [{ clauses: [{ conditions: [] }] }] })).toBe(false);
     expect(validSearchPredicate({ groups: [{ clauses: [{ conditions: [{ _tag: 'Unsupported' }] }] }] })).toBe(false);

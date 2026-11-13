@@ -165,7 +165,7 @@ it.effect('createCategoryCommand adds a child, publishes it, and marks the paren
       _tag: 'CreateCategory',
       id: categoryId('new'),
       name: 'Pánské',
-      parentId: categoryId('r'),
+      parentId: Option.some(categoryId('r')),
       slug: 'panske',
     });
     const category = created.state.categories?.find((entry) => entry.id === 'new');
@@ -185,7 +185,7 @@ it.effect('createCategoryCommand adds a root category that is not published when
       _tag: 'CreateCategory',
       id: categoryId('root2'),
       name: 'Ostatní',
-      parentId: null,
+      parentId: Option.none(),
       published: false,
       slug: 'ostatni',
     });
@@ -203,7 +203,7 @@ it.effect('createCategoryCommand refuses an existing identifier and an unknown p
         _tag: 'CreateCategory',
         id: categoryId('r'),
         name: 'X',
-        parentId: null,
+        parentId: Option.none(),
         slug: 'x',
       }),
     );
@@ -213,7 +213,7 @@ it.effect('createCategoryCommand refuses an existing identifier and an unknown p
         _tag: 'CreateCategory',
         id: categoryId('y'),
         name: 'Y',
-        parentId: categoryId('missing'),
+        parentId: Option.some(categoryId('missing')),
         slug: 'y',
       }),
     );

@@ -1,9 +1,7 @@
 import { documentNavigationModules } from '@app/shared-contracts';
 import { vatRateAt } from '@app/shared-contracts/cz-vat-classifications';
-import { executeRecords } from '@app/merchandise/clients/records';
-import type { ProductRecord } from '@app/merchandise/contracts/records';
-import { listCustomers } from '@app/party-registry/api/client';
-import type { CustomerListItem } from '@app/party-registry/api/client';
+import { executeRecords } from '@app/merchandise/apis/records/client';
+import { executeCustomerList } from '@app/party-registry/apis/customer-list/client';
 import { SubjectIdSchema } from '@app/tagging/contracts/records';
 import type { SubjectId, SubjectKind, TagId } from '@app/tagging/contracts/records';
 import { executeRecords as executeEmployeeRecords } from '@app/workforce/clients/records';
@@ -21,6 +19,20 @@ import {
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { subjectsWithTag } from './opportunity-tags.ts';
 import { loadPipeline } from './pipeline-api.ts';
+
+/** One Merchandise product as the records read returns it. */
+type ProductRecord = Effect.Success<ReturnType<typeof executeRecords>>['products'][number];
+/** One current CUSTOMER Counterparty as Party Registry's customer-list read returns it. */
+type CustomerListItem = Effect.Success<ReturnType<typeof executeCustomerList>>['items'][number];
+
+/** Current CUSTOMER Counterparties of the selected Legal Entity through Party Registry's customer-list read. */
+const listCustomers = (request: Parameters<typeof executeCustomerList>[0] = {}) =>
+  Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
+    Effect.flatMap(([first, second]) =>
+      executeCustomerList(request, `party-registry:customer-list:${first}:${second}`),
+    ),
+    Effect.map(({ items }) => items),
+  );
 
 /** Workforce employees for this view, read under its own correlation. */
 const listEmployees = () =>

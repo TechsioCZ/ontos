@@ -2,7 +2,7 @@
 // "Nastavit ceník" of a market without a price list: it puts the whole catalogue on the market's e-shops, so it asks
 // first, naming the market, and sends one ConfigureMarket only after the confirmation. Only the merchandise client,
 // the i18n runtime and the router blocker are replaced.
-import { executeManageMarkets } from '@app/merchandise/clients/manage-markets';
+import { executeManageMarkets } from '@app/merchandise/apis/manage-markets-action/client';
 import { Effect, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
@@ -14,7 +14,7 @@ import { MarketDefinitionSchema } from '../../shared/market-contracts.ts';
 import { PriceListSetup } from '../../src/market-admin/price-list-setup.tsx';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 
-rstest.mock('@app/merchandise/clients/manage-markets');
+rstest.mock('@app/merchandise/apis/manage-markets-action/client');
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({
     language: 'cs',

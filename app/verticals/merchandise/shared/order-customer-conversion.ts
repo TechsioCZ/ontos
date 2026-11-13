@@ -13,7 +13,7 @@ import type {
   ResolveDuplicateCandidateCreateResultSchema,
   ResolvePartyCommandCommitResultSchema,
 } from '@app/party-registry/api';
-import type { PartyCommandOptions, CustomerListItem } from '@app/party-registry/api/client';
+import type { executeCustomerList } from '@app/party-registry/apis/customer-list/client';
 import { DateTime, Effect, Schema } from 'effect';
 import type { Order } from './apis/records.ts';
 
@@ -22,7 +22,12 @@ export class OrderCustomerConversionError extends Schema.TaggedError<OrderCustom
   { reason: Schema.String, reviewCase: Schema.optionalKey(DuplicateCandidateDetailRequestSchema.fields.caseRef) },
 ) {}
 
-type WriteOptions = Pick<PartyCommandOptions, 'correlationId' | 'idempotencyKey'>;
+/** One customer row of Party Registry's customer-list read. */
+type CustomerListItem = Effect.Success<ReturnType<typeof executeCustomerList>>['items'][number];
+
+/** The correlation and idempotency keys of one step of a conversion: the steps share the conversion's root. */
+const writeOptionsOf = (root: string, step: string) => ({ correlationId: root, idempotencyKey: `${root}:${step}` });
+type WriteOptions = ReturnType<typeof writeOptionsOf>;
 const provenanceSource = 'demo.merchandise.order-customer';
 
 /**
@@ -68,7 +73,7 @@ export const convertOrderCustomer = Effect.fn('Merchandise.convertOrderCustomer'
     return yield* new OrderCustomerConversionError({ reason: 'Objednávka nemá kontakt zákazníka.' });
   }
   const root = `merchandise:order-customer:${order.id}`;
-  const options = (step: string): WriteOptions => ({ correlationId: root, idempotencyKey: `${root}:${step}` });
+  const options = (step: string): WriteOptions => writeOptionsOf(root, step);
   const evidenceReference = `merchandise:order:${order.id}`;
   // Immutable order time keeps the exact owner request stable across retries and interrupted runs.
   const validFrom = order.createdAt;

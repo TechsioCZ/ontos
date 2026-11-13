@@ -4,7 +4,7 @@
 // replaced.
 import { CZ_VAT_REDUCED, CZ_VAT_STANDARD, TaxRateViewSchema } from '@app/shared-contracts/cz-vat-classifications';
 import type { CompanyVat } from '../../src/routes/[lang]/provoz/produkty/product-tax-classification.ts';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -133,7 +133,9 @@ let shownOrder: Order = orderOf({ updatedAt: opened });
 const sentLines = () =>
   rstest
     .mocked(executeManageCatalog)
-    .mock.calls.flatMap(([payload]) => (payload.command._tag === 'EditOrder' ? (payload.command.lines ?? []) : []));
+    .mock.calls.flatMap(([payload]) =>
+      Predicate.isTagged(payload.command, 'EditOrder') ? (payload.command.lines ?? []) : [],
+    );
 
 const settle = async (): Promise<void> => {
   await browserRuntime.runPromise(Effect.yieldNow);

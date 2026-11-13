@@ -5,7 +5,7 @@
 // loading, as before.
 import { moduleWriteEvent } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -83,7 +83,7 @@ const ProductsList = () => {
       ? [
           ...state.response.products.map((row) => `${row.sku}:${row.taxClassificationCode ?? '-'}`),
           ...(state.response.taxRates ?? []).map((rate) => `${rate.code}=${rate.ratePercent}`),
-          state.response.sellerVatRegime ?? '-',
+          Option.getOrElse(state.response.sellerVatRegime ?? Option.none(), () => '-'),
         ].join(' ')
       : '';
   return createElement('output', null, state.status, createElement('span', null, vat));

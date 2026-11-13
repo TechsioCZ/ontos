@@ -167,3 +167,13 @@ export const makeServerCurrentStorefrontApplicationAuthority = ({
       ),
     ),
   );
+
+/**
+ * Reads the owner's Current evidence for one exact Storefront application under the trusted scope and its original
+ * correlation. Action preparation calls it before the owner transaction opens.
+ */
+export const readServerCurrentStorefrontApplicationEvidence = (
+  owner: Parameters<typeof makeServerCurrentStorefrontApplicationAuthority>[0],
+  request: CurrentStorefrontApplicationRequest,
+  requestCorrelation: string,
+) => makeServerCurrentStorefrontApplicationAuthority(owner).validateCurrent(request, requestCorrelation);

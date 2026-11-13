@@ -11,7 +11,7 @@ import {
 } from '@app/admin-ui';
 import type { DraftSaveResult, SaveOutcome } from '@app/admin-ui';
 import type { MarketSettings } from '@app/merchandise/domain/market-offers';
-import type { RecordsResponse } from '@app/merchandise/contracts/records';
+import type { executeRecords } from '@app/merchandise/apis/records/client';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Effect, Predicate, Schema } from 'effect';
@@ -37,7 +37,7 @@ interface AssortmentSectionProps {
   /** A change was parked for approval: nothing changed yet. */
   readonly onAwaitingApproval: () => void;
   readonly onDone: (message: string) => void;
-  readonly records: RecordsResponse | undefined;
+  readonly records: Effect.Success<ReturnType<typeof executeRecords>> | undefined;
   readonly recordsFailed: boolean;
   /** Re-reads the price lists (records `markets`). */
   readonly refreshSettings: Effect.Effect<void>;

@@ -14,7 +14,7 @@ rstest.mock('@app/shared-contracts', () => ({
   ...rstest.requireActual<object>('@app/shared-contracts'),
   documentNavigationModules: () => new Set(['work.tasks', 'demo.merchandise', 'legal.agreements']),
 }));
-rstest.mock('@app/merchandise/clients/records', () => ({ listOrders: mocks.orders }));
+rstest.mock('@app/merchandise/apis/records/client', () => ({ executeRecords: mocks.orders }));
 rstest.mock('@app/legal-agreements/clients/records', () => ({ executeRecords: mocks.contracts }));
 rstest.mock('@app/work-tasks/clients/records', () => ({ executeRecords: mocks.tasks }));
 
@@ -67,7 +67,7 @@ beforeEach(() => {
   rstest.resetAllMocks();
   opportunityRelatedData.invalidate();
   mocks.contracts.mockReturnValue(Effect.succeed({ contracts: [] }));
-  mocks.orders.mockReturnValue(Effect.succeed([]));
+  mocks.orders.mockReturnValue(Effect.succeed({ orders: [] }));
   mocks.tasks.mockReturnValue(Effect.succeed({ items: [] }));
 });
 

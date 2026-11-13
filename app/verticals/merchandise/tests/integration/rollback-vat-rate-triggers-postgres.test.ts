@@ -427,10 +427,12 @@ it.layer(nativeServices, { excludeTestServices: true })('the window triggers and
           [taxed, 'Tax-priced'],
         ] as const) {
           const before = yield* sellingOf(adminDb, company);
-          const holdsBefore =
-            Schema.decodeUnknownSync(Schema.NullOr(Schema.Record(Schema.String, Schema.Number)))(
+          const holdsBefore = Option.getOrElse(
+            Schema.decodeUnknownSync(Schema.OptionFromNullOr(Schema.Record(Schema.String, Schema.Number)))(
               yield* heldOf(admin, company),
-            ) ?? {};
+            ),
+            () => ({}),
+          );
           yield* oldReleaseRewritesEveryProduct(admin, company);
           const rows = yield* admin.unsafe<{
             readonly classification: string;

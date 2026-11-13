@@ -72,7 +72,7 @@ const changePriceOnce = Effect.fn('TaxClassificationMigration.changePriceOnce')(
 ) {
   const command = Schema.decodeUnknownSync(MerchandiseCommandSchema)({ _tag: 'ChangePrice', id: 'p1', priceMinor });
   const head = yield* loadHead(tx, company, { lock: true });
-  if (head === undefined || command._tag !== 'ChangePrice') {
+  if (head === undefined || !Predicate.isTagged(command, 'ChangePrice')) {
     return yield* Effect.die('missing head');
   }
   const working = yield* loadWorkingSet(tx, company, head, workingSetRequestOf(command, 'p1'));

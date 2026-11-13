@@ -1,7 +1,7 @@
 // @rstest-environment happy-dom
 // The market dialogs with a form: typing changes only the dialog's draft, the one Save sends once, and leaving with
 // unsaved input asks first. Only the Market Action clients, the i18n runtime and the router blocker are replaced.
-import { executeManageMarkets } from '@app/merchandise/clients/manage-markets';
+import { executeManageMarkets } from '@app/merchandise/apis/manage-markets-action/client';
 import { StorefrontApplicationSummarySchema } from '@app/storefront-registry/api/storefront-applications';
 import { Effect, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
@@ -26,7 +26,7 @@ import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 rstest.mock('../../src/api/associate-storefront-action-client.ts');
 rstest.mock('../../src/api/create-market-action-client.ts');
 rstest.mock('../../src/api/revise-market-definition-action-client.ts');
-rstest.mock('@app/merchandise/clients/manage-markets');
+rstest.mock('@app/merchandise/apis/manage-markets-action/client');
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
 }));
