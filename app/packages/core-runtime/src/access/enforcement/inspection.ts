@@ -22,6 +22,7 @@ import { AgentConnectionIdSchema, AgentIdSchema, PrincipalIdSchema, TenantIdSche
 import type { AccessMode, ActorContext } from '../model.ts';
 import type { AccessPrincipalKinds } from './actor.ts';
 import { capabilityPolicyOf, gateScopeKeyOf, gateScopeOf } from './capability.ts';
+import { checkedScopeAnswersUnchecked, scopeReadKey } from './checked-scope-reads.ts';
 import type { GateScope } from './capability.ts';
 import type { AccessDecisionPorts } from './contract.ts';
 import { shouldRecordDecision } from './decision-log.ts';
@@ -182,10 +183,7 @@ const sharedPerKey = <Query, Value, Failure>(
     );
 };
 
-const scopeQueryKey = (query: ScopeQuery): string =>
-  [query.tenantId, query.legalEntityId ?? '', query.checkedCompany ?? '', ...query.holders.map(holderIdOf)].join(
-    '\u0000',
-  );
+const scopeQueryKey = (query: ScopeQuery): string => scopeReadKey(query, query.checkedCompany ?? '');
 
 /**
  * The intent port of ONE batch: the same port, but a question its questions share — the scope, the cells of one
@@ -205,7 +203,9 @@ const batchAuthorityOf = (authority: DecisionAuthorityPort, scope: Scope.Scope):
           ),
           readCompanyOwnership: authority.readCompanyOwnership,
           readConnection: authority.readConnection,
-          readScope: sharedPerKey(scopeQueryKey, authority.readScope, scope),
+          // A checked read that resolved answers the same holders' unchecked read of a later stage (as the gate's own
+          // listMany does), so naming the company in the scope read costs no second read.
+          readScope: checkedScopeAnswersUnchecked(sharedPerKey(scopeQueryKey, authority.readScope, scope)),
           readTeamIds: authority.readTeamIds,
         },
         // The engine reads one batch's cell sets in one call; each set is still read once per batch.

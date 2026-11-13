@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, Result } from 'effect';
+import { Effect, Layer, Option } from 'effect';
 
 import type { AccessActor } from '../../authorization/access-declaration.ts';
 import { readVerifiedGatewayActor } from '../../auth/system-principal-context-provenance.ts';
@@ -19,7 +19,7 @@ import type { ListAccessResolution } from '../decision/engine.ts';
 import type { ListAccessPredicate } from '../decision/list-access.ts';
 import { accessDecisionUnavailable } from '../decision/errors.ts';
 import { withOptional } from '../decision/optional.ts';
-import { holderIdOf } from '../decision/selector.ts';
+import { checkedScopeAnswersUnchecked, scopeReadKey } from './checked-scope-reads.ts';
 import {
   AccessScopeIdSchema,
   CapabilityKeySchema,
@@ -715,41 +715,12 @@ const sharedPerKey = <Key, A, E>(keyOf: (key: Key) => string, read: (key: Key) =
 };
 
 type ScopeRead = DecisionAuthorityPort['readScope'];
-const scopeReadKey = (query: Parameters<ScopeRead>[0], checkedCompany: string) =>
-  [query.tenantId, query.legalEntityId ?? '', checkedCompany, ...query.holders.map(holderIdOf)].join('\u0000');
 
-/**
- * Scope reads answered once per distinct question. A tenant-context read that checked a company and resolved IS the
- * tenant's scope, so the same holders' read without a company (the engine's own) takes that answer instead of a read
- * of its own, as both did before the check existed. Never the reverse: an unchecked answer vouches for no company, and
- * a checked read that resolved nothing or failed leaves the unchecked read to its own answer.
- */
-const companyCheckedScopeReads = (read: ScopeRead): ScopeRead => {
-  const shared = sharedPerKey(
-    (query: Parameters<ScopeRead>[0]) => scopeReadKey(query, query.checkedCompany ?? ''),
-    read,
+/** Scope reads answered once per distinct question; a resolved checked read answers the unchecked one. */
+const companyCheckedScopeReads = (read: ScopeRead): ScopeRead =>
+  checkedScopeAnswersUnchecked(
+    sharedPerKey((query: Parameters<ScopeRead>[0]) => scopeReadKey(query, query.checkedCompany ?? ''), read),
   );
-  const checkedByScope = new Map<string, ReturnType<ScopeRead>>();
-  return (query) => {
-    const plain = scopeReadKey(query, '');
-    if (query.checkedCompany !== undefined) {
-      const answer = shared(query);
-      if (!checkedByScope.has(plain)) {
-        checkedByScope.set(plain, answer);
-      }
-      return answer;
-    }
-    const checked = checkedByScope.get(plain);
-    return checked === undefined
-      ? shared(query)
-      : checked.pipe(
-          Effect.result,
-          Effect.flatMap((answer) =>
-            Result.isSuccess(answer) && Option.isSome(answer.success) ? Effect.succeed(answer.success) : shared(query),
-          ),
-        );
-  };
-};
 
 /**
  * The same ports, reading each acting principal's kind and each gate scope once: what the LISTs of one `listMany` call
