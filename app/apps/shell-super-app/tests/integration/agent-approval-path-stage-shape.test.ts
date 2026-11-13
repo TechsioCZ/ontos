@@ -44,6 +44,8 @@ import { loadSpiceDbConfig } from '@app/core-runtime/access/spicedb-config';
 import type { PgClient } from '@effect/sql-pg';
 import {
   Config,
+  ConfigProvider,
+  Context,
   Crypto,
   Duration,
   Effect,
@@ -56,9 +58,24 @@ import {
   Schema,
   Tracer,
 } from 'effect';
+import { Reactivity } from 'effect/reactivity';
+import type { SqlConnection } from 'effect/sql';
 import { expect, it } from 'effect-rstest';
 
 import { DecisionCheck } from '../../../../packages/core-runtime/src/access/decision/engine.ts';
+import { DatabasePoolRegistryLive, DatabasePools } from '../../../../packages/core-runtime/src/db/database-client.ts';
+import { AccessDecisionGate } from '../../../../packages/core-runtime/src/access/enforcement/contract.ts';
+import { buildPeopleSearchDocuments } from '../../../../packages/core-runtime/src/people/people-search-projection.ts';
+import {
+  admitPeopleSystemSearch,
+  PeopleSearchReadLive,
+} from '../../../../packages/core-runtime/src/people/system-search-provider.ts';
+import { deriveCoreSearchRepresentation } from '../../../../packages/core-runtime/src/search/evidence-codec.ts';
+import {
+  coreSearchDocumentBodyText,
+  coreSearchDocumentPayload,
+  CoreSearchProjectionStoreLive,
+} from '../../../../packages/core-runtime/src/search/persistence.ts';
 import { enginePortOf } from '../../../../packages/core-runtime/src/access/enforcement/enforcement-live.ts';
 import { ActiveApplicationCompositionSource } from '../../../../packages/core-runtime/src/modules/active-application-composition-source-service.ts';
 import { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '../../../../packages/core-runtime/src/modules/module-dependency-contracts.ts';
@@ -93,6 +110,7 @@ import { AgentReadRequestIdentity } from '../../api/auth/agent-request-identity.
 import { StaffAuthenticationNamespaceRegistryLive } from '../../api/auth/authentication-namespace-registry.ts';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
 import { ShellInstalledModuleCatalogLive } from '../../api/modules/installed-module-catalog.ts';
+import { ShellPeopleSystemSearchLive, ShellSystemSearch } from '../../api/modules/shell-system-search.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import {
@@ -172,11 +190,36 @@ const publishedCatalog = Effect.gen(function* publishedCatalog() {
 // Recording: every finished span (name, ms, SQL text of statements), every Action-authority batch.
 // ---------------------------------------------------------------------------------------------------------------
 
+const SPICEDB_SPANS = new Set([
+  'AccessDecision.spicedbCheckBulk',
+  'SpiceDb.contextAccess.checkBulkPermissions',
+  'SpiceDb.contextAccess.checkPermission',
+  'SpiceDb.actionPermission.checkBulkPermissions',
+  'SpiceDb.actionPermission.checkPermission',
+]);
+const OWNER_REVIEW_SPAN = 'Stub.moduleVisibilityReview';
+/** Calls that leave the process: SpiceDB, a module owner, the composition source. */
+const REMOTE_SPANS = new Set([...SPICEDB_SPANS, OWNER_REVIEW_SPAN, 'Stub.compositionSourceLoad']);
+
+const LEASE_SPAN = 'test.pool.lease';
+const LEASE_STATEMENT_SPAN = 'test.pool.statement';
+const LEASE_ATTRIBUTE = 'test.lease';
+const ACQUIRED_BY_ATTRIBUTE = 'test.acquiredBy';
+const WAITED_ATTRIBUTE = 'test.waitedMs';
+
 interface SpanRecord {
+  /** The code that took a pool lease (lease spans only). */
+  readonly acquiredBy: string | undefined;
+  readonly endNs: bigint;
+  /** The pool lease a lease or lease statement span belongs to. */
+  readonly lease: string | undefined;
   readonly ms: number;
   readonly name: string;
   /** Statement text of a database span; parameters are placeholders and never recorded. */
   readonly sql: string | undefined;
+  readonly startNs: bigint;
+  /** How long a lease waited for the pool to hand out its connection (lease spans only). */
+  readonly waitedMs: number;
 }
 
 const recordingTracer = (records: SpanRecord[]) =>
@@ -187,10 +230,18 @@ const recordingTracer = (records: SpanRecord[]) =>
       span.end = (endTime, exit) => {
         end(endTime, exit);
         const text = span.attributes.get('db.query.text');
+        const lease = span.attributes.get(LEASE_ATTRIBUTE);
+        const acquiredBy = span.attributes.get(ACQUIRED_BY_ATTRIBUTE);
+        const waited = span.attributes.get(WAITED_ATTRIBUTE);
         records.push({
+          acquiredBy: Predicate.isString(acquiredBy) ? acquiredBy : undefined,
+          endNs: endTime,
+          lease: Predicate.isString(lease) ? lease : undefined,
           ms: Number(endTime - options.startTime) / 1e6,
           name: options.name,
           sql: Predicate.isString(text) ? text : undefined,
+          startNs: options.startTime,
+          waitedMs: Predicate.isNumber(waited) ? waited : 0,
         });
       };
       return span;
@@ -236,14 +287,238 @@ const spannedSpiceDb =
     };
   };
 
-const SPICEDB_SPANS = new Set([
-  'AccessDecision.spicedbCheckBulk',
-  'SpiceDb.contextAccess.checkBulkPermissions',
-  'SpiceDb.contextAccess.checkPermission',
-  'SpiceDb.actionPermission.checkBulkPermissions',
-  'SpiceDb.actionPermission.checkPermission',
-]);
-const OWNER_REVIEW_SPAN = 'Stub.moduleVisibilityReview';
+// ---------------------------------------------------------------------------------------------------------------
+// Pool leases: the Core database is opened over the process-shared pool exactly as stage opens it
+// (`ONTOS_DATABASE_POOL_SHARED=true`, `openDatabaseClient`), and every checkout of that pool is recorded: when it was
+// taken and given back, which code took it, and how long a statement was running on it. A lease's hold time minus its
+// statement time is the time it was held while the request waited on something else (remote calls, other fibers, CPU).
+// ---------------------------------------------------------------------------------------------------------------
+
+/** Span names that only describe the statement itself, never the code that asked for it. */
+const isStatementSpan = (name: string) =>
+  name.startsWith('sql.') ||
+  name.startsWith('test.pool.') ||
+  name === 'postgres' ||
+  name.startsWith('drizzle') ||
+  name.startsWith('db.');
+
+/** The nearest named spans above the code that took the connection. */
+const acquiringSpans = (span: Option.Option<Tracer.AnySpan>) => {
+  const names: string[] = [];
+  let current = Option.getOrUndefined(span);
+  while (current !== undefined && current._tag === 'Span' && names.length < 3) {
+    if (!isStatementSpan(current.name)) {
+      names.push(current.name);
+    }
+    current = Option.getOrUndefined(current.parent);
+  }
+  return names.join(' < ') || '-';
+};
+
+const leaseStatement = <A, E, R>(lease: string, statement: Effect.Effect<A, E, R>) =>
+  statement.pipe(Effect.withSpan(LEASE_STATEMENT_SPAN, { attributes: { [LEASE_ATTRIBUTE]: lease } }));
+
+/** A checked-out connection whose every statement is a span of its lease. */
+const timedConnection = (connection: SqlConnection.Connection, lease: string): SqlConnection.Connection => ({
+  execute: (text, params, transformRows) => leaseStatement(lease, connection.execute(text, params, transformRows)),
+  executeRaw: (text, params) => leaseStatement(lease, connection.executeRaw(text, params)),
+  executeStream: (text, params, transformRows) => connection.executeStream(text, params, transformRows),
+  executeUnprepared: (text, params, transformRows) =>
+    leaseStatement(lease, connection.executeUnprepared(text, params, transformRows)),
+  executeValues: (text, params) => leaseStatement(lease, connection.executeValues(text, params)),
+  executeValuesUnprepared: (text, params) => leaseStatement(lease, connection.executeValuesUnprepared(text, params)),
+});
+
+/** Each checkout is a span from checkout to return, named after the code that took it. */
+const recordedReserve = (pool: PgClient.PgClient, leases: { next: number }) =>
+  Effect.gen(function* reserveRecorded() {
+    const [waited, connection] = yield* Effect.timed(pool.reserve);
+    const acquiredBy = acquiringSpans(yield* Effect.option(Effect.currentSpan));
+    leases.next += 1;
+    const lease = `lease-${String(leases.next)}`;
+    yield* Effect.makeSpanScoped(LEASE_SPAN, {
+      attributes: {
+        [ACQUIRED_BY_ATTRIBUTE]: acquiredBy,
+        [LEASE_ATTRIBUTE]: lease,
+        [WAITED_ATTRIBUTE]: Duration.toMillis(waited),
+      },
+    });
+    return timedConnection(connection, lease);
+  });
+
+/** The host's pool registry, with every checkout of its pools recorded as a lease span. */
+const recordingPoolRegistry = (registry: (typeof DatabasePools)['Service']): (typeof DatabasePools)['Service'] => {
+  const leases = { next: 0 };
+  return {
+    acquire: (configuration) =>
+      registry.acquire(configuration).pipe(
+        Effect.map(
+          (pool): PgClient.PgClient =>
+            new Proxy(pool, {
+              get: (target, property, receiver) => {
+                const member: unknown =
+                  property === 'reserve' ? recordedReserve(target, leases) : Reflect.get(target, property, receiver);
+                return member;
+              },
+            }),
+        ),
+      ),
+  };
+};
+
+const nsToMs = (ns: bigint) => Math.round(Number(ns) / 1e5) / 10;
+
+interface Lease {
+  readonly acquiredBy: string;
+  readonly busyNs: bigint;
+  readonly endNs: bigint;
+  /** Periods the connection was held with no statement running on it. */
+  readonly gaps: readonly (readonly [bigint, bigint])[];
+  readonly startNs: bigint;
+  readonly statements: number;
+  readonly waitedMs: number;
+}
+
+const earlier = (left: bigint, right: bigint) => (left < right ? left : right);
+const later = (left: bigint, right: bigint) => (left > right ? left : right);
+
+/** The leases of one step, with the statements that ran on each. */
+const leasesOf = (records: readonly SpanRecord[]): readonly Lease[] => {
+  const statements = new Map<string, SpanRecord[]>();
+  for (const record of records) {
+    if (record.name === LEASE_STATEMENT_SPAN && record.lease !== undefined) {
+      statements.set(record.lease, [...(statements.get(record.lease) ?? []), record]);
+    }
+  }
+  return records.flatMap((record) => {
+    if (record.name !== LEASE_SPAN || record.lease === undefined) {
+      return [];
+    }
+    const ran = (statements.get(record.lease) ?? []).toSorted((left, right) => Number(left.startNs - right.startNs));
+    const gaps: (readonly [bigint, bigint])[] = [];
+    let idleFrom = record.startNs;
+    for (const statement of ran) {
+      if (statement.startNs > idleFrom) {
+        gaps.push([idleFrom, statement.startNs]);
+      }
+      idleFrom = later(idleFrom, statement.endNs);
+    }
+    if (record.endNs > idleFrom) {
+      gaps.push([idleFrom, record.endNs]);
+    }
+    return [
+      {
+        acquiredBy: record.acquiredBy ?? '-',
+        busyNs: ran.reduce((sum, statement) => sum + (statement.endNs - statement.startNs), 0n),
+        endNs: record.endNs,
+        gaps,
+        startNs: record.startNs,
+        statements: ran.length,
+        waitedMs: record.waitedMs,
+      },
+    ];
+  });
+};
+
+/** The most connections the leases held at one time. */
+const maxConcurrentLeases = (leases: readonly Lease[]) => {
+  const events = leases
+    .flatMap(({ endNs, startNs }) => [
+      { at: startNs, delta: 1 },
+      { at: endNs, delta: -1 },
+    ])
+    .toSorted((left, right) => (left.at === right.at ? left.delta - right.delta : Number(left.at - right.at)));
+  let current = 0;
+  let max = 0;
+  for (const { delta } of events) {
+    current += delta;
+    max = Math.max(max, current);
+  }
+  return max;
+};
+
+/** Which spans that are not statements started while a lease sat idle: the work it was held waiting on. */
+const idleCauses = (leases: readonly Lease[], records: readonly SpanRecord[]) => {
+  const causes = new Map<string, number>();
+  const work = records.filter(({ name }) => !isStatementSpan(name) && name !== 'measured.step');
+  for (const [gapStart, gapEnd] of leases.flatMap(({ gaps }) => gaps)) {
+    if (gapEnd - gapStart >= 1_000_000n) {
+      for (const record of work) {
+        const overlap = earlier(record.endNs, gapEnd) - later(record.startNs, gapStart);
+        if (overlap > 500_000n && record.startNs >= gapStart) {
+          causes.set(record.name, (causes.get(record.name) ?? 0) + Number(overlap) / 1e6);
+        }
+      }
+    }
+  }
+  return [...causes]
+    .toSorted(([, left], [, right]) => right - left)
+    .slice(0, 8)
+    .map(([name, ms]) => ({ ms: Math.round(ms * 10) / 10, name }));
+};
+
+interface AcquirerTotals {
+  readonly count: number;
+  readonly heldNs: bigint;
+  readonly idleNs: bigint;
+  readonly maxIdleNs: bigint;
+}
+
+const NO_TOTALS: AcquirerTotals = { count: 0, heldNs: 0n, idleNs: 0n, maxIdleNs: 0n };
+
+const leaseReport = (records: readonly SpanRecord[]) => {
+  const leases = leasesOf(records);
+  const byAcquirer = new Map<string, AcquirerTotals>();
+  for (const lease of leases) {
+    const held = lease.endNs - lease.startNs;
+    const idle = held - lease.busyNs;
+    const entry = byAcquirer.get(lease.acquiredBy) ?? NO_TOTALS;
+    byAcquirer.set(lease.acquiredBy, {
+      count: entry.count + 1,
+      heldNs: entry.heldNs + held,
+      idleNs: entry.idleNs + idle,
+      maxIdleNs: later(entry.maxIdleNs, idle),
+    });
+  }
+  const heldNs = leases.reduce((sum, lease) => sum + (lease.endNs - lease.startNs), 0n);
+  const busyNs = leases.reduce((sum, lease) => sum + lease.busyNs, 0n);
+  return {
+    byAcquirer: [...byAcquirer]
+      .toSorted(([, left], [, right]) => Number(right.idleNs - left.idleNs))
+      .slice(0, 10)
+      .map(([acquiredBy, entry]) => ({
+        acquiredBy,
+        count: entry.count,
+        heldMs: nsToMs(entry.heldNs),
+        idleMs: nsToMs(entry.idleNs),
+        maxIdleMs: nsToMs(entry.maxIdleNs),
+      })),
+    heldMs: nsToMs(heldNs),
+    /** Remote calls made while a connection of this step was checked out; a sequential request must make none. */
+    heldAcrossRemoteCalls: leases.flatMap(({ acquiredBy, endNs, startNs }) =>
+      records
+        .filter((record) => REMOTE_SPANS.has(record.name) && record.startNs >= startNs && record.endNs <= endNs)
+        .map(({ name }) => `${acquiredBy} held across ${name}`),
+    ),
+    idleCauses: idleCauses(leases, records),
+    idleMs: nsToMs(heldNs - busyNs),
+    leases: leases.length,
+    maxConcurrent: maxConcurrentLeases(leases),
+    maxWaitedMs: Math.round(Math.max(0, ...leases.map(({ waitedMs }) => waitedMs)) * 10) / 10,
+    /** Every message to PostgreSQL on a checked-out connection, BEGIN and COMMIT included. */
+    roundTrips: records.filter(({ name }) => name === LEASE_STATEMENT_SPAN).length,
+    /** Every checkout in the order it was taken: who took it, its statements, how long it was held and idle. */
+    sequence: leases
+      .toSorted((left, right) => Number(left.startNs - right.startNs))
+      .map((lease) => ({
+        acquiredBy: lease.acquiredBy.split(' < ').slice(0, 2).join(' < '),
+        heldMs: nsToMs(lease.endNs - lease.startNs),
+        idleMs: nsToMs(lease.endNs - lease.startNs - lease.busyNs),
+        statements: lease.statements,
+      })),
+    waitedMs: Math.round(leases.reduce((sum, { waitedMs }) => sum + waitedMs, 0) * 10) / 10,
+  };
+};
 
 // ---------------------------------------------------------------------------------------------------------------
 // The Shell's composition (api/index.ts makeShellAuthenticationApiRuntime) over this case's database and SpiceDB.
@@ -267,6 +542,26 @@ const hidingReview = (proposalId: string): (typeof AgentProposalQueueModuleRevie
     }),
 });
 
+/**
+ * Opens the case's runtime database as stage's Shell opens it: over the process-shared pool registry
+ * (`ONTOS_DATABASE_POOL_SHARED=true`), capped at stage's six connections, every checkout recorded as a lease span.
+ */
+const sharedPoolDatabase = Effect.fn('test.sharedPoolDatabase')(function* sharedPoolDatabase(
+  runtime: DatabaseConnectionPair['runtime'],
+) {
+  const registry = Context.get(
+    yield* Layer.build(DatabasePoolRegistryLive.pipe(Layer.provide(Reactivity.layer))),
+    DatabasePools,
+  );
+  return yield* makeCoreDatabase({ ...runtime, maxConnections: 10 }).pipe(
+    Effect.provideService(DatabasePools, recordingPoolRegistry(registry)),
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromUnknown({ ONTOS_DATABASE_POOL_MAX_CONNECTIONS: '6', ONTOS_DATABASE_POOL_SHARED: 'true' }),
+    ),
+  );
+});
+
 const shellLayer = (input: {
   readonly authorityCalls: Ref.Ref<readonly AuthorityCall[]>;
   readonly runtime: DatabaseConnectionPair['runtime'];
@@ -274,7 +569,7 @@ const shellLayer = (input: {
 }) =>
   Layer.unwrap(
     Effect.gen(function* buildShell() {
-      const database = yield* makeCoreDatabase({ ...input.runtime, maxConnections: 10 });
+      const database = yield* sharedPoolDatabase(input.runtime);
       const configuration = yield* loadSpiceDbConfig();
       const rpc = yield* Effect.acquireRelease(
         Effect.sync(() => spiceDbTransport.open(configuration, SPICEDB_CHECK_TIMEOUT_MS)),
@@ -334,10 +629,22 @@ const shellLayer = (input: {
           ).pipe(Layer.provideMerge(authority)),
         ),
       );
+      // The Shell's People branch of `/shell/search` (api/index.ts): the system search over the one Read runtime and
+      // the Core search index.
+      const peopleSearch = ShellPeopleSystemSearchLive.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            readRuntime,
+            PeopleSearchReadLive.pipe(Layer.provide(CoreSearchProjectionStoreLive.pipe(Layer.provide(base)))),
+          ),
+        ),
+        Layer.provide(authority),
+      );
       return Layer.mergeAll(
         readRuntime,
         actionRuntime,
         preparation,
+        peopleSearch,
         visibleEverywhere,
         ShellInstalledModuleCatalogLive.pipe(Layer.provide(composition)),
         shared,
@@ -665,6 +972,7 @@ const stepReport = (input: {
     label: input.label,
     ms: Math.round(records.find(({ name }) => name === 'measured.step')?.ms ?? -1),
     ownerReviewStubCalls: records.filter(({ name }) => name === OWNER_REVIEW_SPAN).length,
+    pool: leaseReport(records),
     // Identical statement fingerprints run more than once in this step, literals stripped.
     repeated: fingerprints
       .filter(({ count, key }) => count > 1 && key.startsWith('select'))
@@ -865,6 +1173,24 @@ const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* meas
       Effect.provideService(AgentReadRequestIdentity, readTransport('q3-proposal-page')),
     ),
   );
+  // The queue route's own shape (`loadAgentQueue`): the caller's authority, then names and the page side by side.
+  const queueCaller = yield* callerFor('q-route');
+  const queueRoute = yield* measure(
+    'Q loadAgentQueue reads',
+    'q-route',
+    callerModuleAccess(queueCaller).pipe(
+      Effect.andThen(
+        Effect.all(
+          [
+            principalNames(queueCaller.principal, readTransport('q-route')),
+            listCompanyProposalPage(queueCaller.principal, {}),
+          ],
+          { concurrency: 3 },
+        ),
+      ),
+      Effect.provideService(AgentReadRequestIdentity, readTransport('q-route')),
+    ),
+  );
   expect(q1.value.write.has(TASKS_MODULE)).toBe(true);
   expect(q2.value.get(agent)).toBe('N1 agent');
   expect(q3.value.proposals.some((row) => row.batchId === rejected.batchId)).toBe(true);
@@ -976,7 +1302,9 @@ const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* meas
           queue: acrossSteps(queue),
         },
         cold: [coldQueue.report, coldReject.report].map(({ fingerprints: _fingerprints, ...step }) => step),
-        steps: [...queue, ...decide, ...approve].map(({ fingerprints: _fingerprints, ...step }) => step),
+        steps: [...queue, queueRoute.report, ...decide, ...approve].map(
+          ({ fingerprints: _fingerprints, ...step }) => step,
+        ),
       }),
     );
   }
@@ -991,6 +1319,220 @@ const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* meas
   expect(totalOf(queue, 'statements')).toBeLessThanOrEqual(184);
   expect(totalOf(decide, 'statements')).toBeLessThanOrEqual(220);
   expect(totalOf(approve, 'statements')).toBeLessThanOrEqual(463);
+  // Every step checks a connection out only for its statements: none is held while the request waits on SpiceDB, a
+  // module owner or the composition source, and no request holds more than two at once (the gate reads two scopes of
+  // a batch side by side, never more), so six connections queue only behind other requests.
+  for (const step of [...queue, ...decide, ...approve]) {
+    expect({ held: step.pool.heldAcrossRemoteCalls, label: step.label }).toEqual({ held: [], label: step.label });
+    expect(step.pool.maxConcurrent).toBeLessThanOrEqual(2);
+  }
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// People search through the Shell (`/shell/search`, its People branch) for one surname, in a company of a few hundred.
+// ---------------------------------------------------------------------------------------------------------------
+
+const PEOPLE = 400;
+const SURNAME = 'Zelenka';
+const FIRST_NAMES = [
+  'Adam',
+  'Bára',
+  'Cyril',
+  'Dana',
+  'Emil',
+  'Fanda',
+  'Gita',
+  'Hana',
+  'Ivan',
+  'Jana',
+  'Karel',
+  'Lucie',
+];
+const SURNAMES = ['Novák', 'Svoboda', 'Dvořák', 'Černý', 'Procházka', 'Kučera', 'Veselý', 'Horák', 'Němec', 'Pokorný'];
+
+/** Person `index`'s name: every hundredth is a Zelenka, the rest carry surnames that never match it. */
+const personName = (index: number) =>
+  `${FIRST_NAMES[index % FIRST_NAMES.length] ?? 'Ema'} ${
+    index % 100 === 7 ? SURNAME : `${SURNAMES[index % SURNAMES.length] ?? 'Malý'} ${String(index)}`
+  }`;
+
+/**
+ * `PEOPLE` active people of the company and their People index rows, written as the people projection writes them
+ * (`buildPeopleSearchDocuments`, then the store's insert of each document).
+ */
+const seedPeople = Effect.fn('test.seedPeople')(function* seedPeople(stageCase: StageCase) {
+  const crypto = yield* Crypto.Crypto;
+  const { admin, companyId, tenantId } = stageCase;
+  const people = yield* Effect.forEach(
+    Array.from({ length: PEOPLE }, (_, index) => index),
+    (index) =>
+      crypto.randomUUIDv4().pipe(
+        Effect.map((principalId) => ({
+          displayName: personName(index),
+          legalEntityId: companyId,
+          principalId,
+          tenantId,
+        })),
+      ),
+  );
+  yield* admin.unsafe(
+    `insert into core.principals (principal_id, tenant_id, kind, display_name, status)
+     select (p->>'principalId')::uuid, '${tenantId}', 'human', p->>'displayName', 'active'
+       from jsonb_array_elements($1::jsonb) p`,
+    [jsonText(people)],
+  );
+  yield* admin.unsafe(
+    `insert into core.principal_company_memberships (tenant_id, legal_entity_id, principal_id, status)
+     select '${tenantId}', '${companyId}', (p->>'principalId')::uuid, 'active' from jsonb_array_elements($1::jsonb) p`,
+    [jsonText(people)],
+  );
+  const documents = yield* buildPeopleSearchDocuments({ people, projectionVersion: '1', tenantId });
+  const rows = yield* Effect.forEach(
+    documents,
+    (document) =>
+      Effect.fromResult(coreSearchDocumentBodyText(document)).pipe(
+        Effect.map((bodyText) => ({
+          bodyText,
+          facets: coreSearchDocumentPayload(document),
+          legalEntityId: document.selectedLegalEntityId ?? null,
+          resourceId: document.ref.resourceId,
+          searchFormatVersion: deriveCoreSearchRepresentation(document).searchFormatVersion,
+          searchTextV1: deriveCoreSearchRepresentation(document).searchTextV1,
+          title: document.title,
+        })),
+      ),
+    { concurrency: 1 },
+  );
+  yield* admin.unsafe(
+    `insert into core.search_index_entries
+       (tenant_id, legal_entity_id, source_module_key, source_resource_type, source_resource_id, title, body_text,
+        search_text_v1, search_format_version, search_source_version, deleted, facets_json, projection_version)
+     select '${tenantId}', (r->>'legalEntityId')::uuid, 'core.identity', 'core.identity.person', r->>'resourceId',
+            r->>'title', r->>'bodyText', r->>'searchTextV1', (r->>'searchFormatVersion')::int, 1, false, r->'facets', 1
+       from jsonb_array_elements($1::jsonb) r`,
+    [jsonText(rows)],
+  );
+  return people.filter(({ displayName }) => displayName.endsWith(SURNAME)).map(({ principalId }) => principalId);
+});
+
+const measurePeopleSearch = Effect.fn('test.measurePeopleSearch')(function* measurePeopleSearch(stageCase: StageCase) {
+  const snapshot = yield* installedComposition;
+  const authorityCalls = yield* Ref.make<readonly AuthorityCall[]>([]);
+  yield* stageCase.admin.unsafe(
+    `insert into core.application_composition_authority (authority_key, revision, phase, valid_until, subscriptions_json)
+     values ('active', '${snapshot.composition.revision}', 'active', now() + interval '1 day', '[]'::jsonb)
+     on conflict (authority_key) do update set revision = excluded.revision, phase = 'active',
+       valid_until = excluded.valid_until`,
+  );
+  const zelenkas = yield* seedPeople(stageCase);
+  const context = yield* Layer.build(shellLayer({ authorityCalls, runtime: stageCase.runtime, snapshot }));
+  const { admin, companyId, owner, ownerBinding, tenantId } = stageCase;
+  const ownerPrincipal = yield* sessionPrincipal({
+    bindingId: ownerBinding,
+    legalEntityId: companyId,
+    principalId: owner,
+    tenantId,
+  });
+  const inShell = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.provideContext(context));
+  /** The Shell's People branch for one query, as `/shell/search` runs it once its own read is admitted. */
+  const peopleBranch = (principal: typeof ownerPrincipal, correlationId: string, query: string) =>
+    Effect.gen(function* searchPeople() {
+      const scope = yield* (yield* OperationalScopeResolver).resolve({
+        correlationId,
+        legalEntityScope: 'required',
+        principal,
+      });
+      const admission = yield* admitPeopleSystemSearch(scope, yield* AccessDecisionGate);
+      return { admission, response: yield* (yield* ShellSystemSearch).search(scope, query) };
+    });
+  const measure = <A, E, R>(label: string, correlationId: string, step: Effect.Effect<A, E, R>) =>
+    measureStep({ admin, authorityCalls, correlationId, label, step: inShell(step) });
+
+  const cold = yield* measure(
+    'cold people search',
+    'people-cold',
+    peopleBranch(ownerPrincipal, 'people-cold', 'Novák'),
+  );
+  const warm = yield* measure('people search', 'people-search', peopleBranch(ownerPrincipal, 'people-search', SURNAME));
+  expect(cold.value.admission).toBe('allowed');
+  expect(warm.value.admission).toBe('allowed');
+  const found = warm.value.response.results.map(({ ref }) => ref.resourceId);
+  expect(found.toSorted()).toEqual(zelenkas.map((principalId) => `${companyId}.${principalId}`).toSorted());
+  expect(warm.value.response.results.every(({ title }) => title?.endsWith(SURNAME) === true)).toBe(true);
+  expect(warm.value.response.partial).toBe(false);
+
+  // A person of the company without the People list right finds nobody.
+  const bystander = yield* sessionPrincipal({
+    bindingId: stageCase.bystanderBinding,
+    legalEntityId: companyId,
+    principalId: stageCase.bystander,
+    tenantId,
+  });
+  const refused = yield* measure(
+    'people search without the right',
+    'people-bystander',
+    peopleBranch(bystander, 'people-bystander', SURNAME),
+  );
+  expect(refused.value.admission).toBe('denied');
+  expect(refused.value.response.results).toEqual([]);
+
+  // Many hits cost what few hits cost: no question is asked per person found.
+  const many = yield* measure(
+    'people search, 40 hits',
+    'people-many',
+    peopleBranch(ownerPrincipal, 'people-many', 'Novák'),
+  );
+  expect(many.value.response.results).toHaveLength(40);
+
+  // Typing a surname without waiting: every keystroke from the second letter is its own search, all in flight at once.
+  const burst = yield* measure(
+    'six keystrokes at once',
+    'people-burst',
+    Effect.all(
+      ['Ze', 'Zel', 'Zele', 'Zelen', 'Zelenk', SURNAME].map((query) =>
+        peopleBranch(ownerPrincipal, 'people-burst', query),
+      ),
+      { concurrency: 'unbounded' },
+    ),
+  );
+  expect(burst.value.map(({ response }) => response.results.length)).toEqual([4, 4, 4, 4, 4, 4]);
+
+  const path = yield* reportPath;
+  if (Option.isSome(path)) {
+    yield* (yield* FileSystem.FileSystem).writeFileString(
+      `${path.value}.people-search.json`,
+      yield* encodeReport({
+        steps: [cold.report, warm.report, many.report, refused.report, burst.report].map(
+          ({ fingerprints: _fingerprints, ...step }) => step,
+        ),
+      }),
+    );
+  }
+  // The counts are written first, so a run that breaks a bound still leaves its numbers. One People search for one
+  // surname: three gate decisions (the Shell's admission, the read's list right, the People list right), each with
+  // its own evidence row, two scope resolutions, the index query, the read and its evidence: 24 checkouts, 115
+  // messages to PostgreSQL, every connection back in the pool before each SpiceDB call.
+  expect(warm.report.pool.heldAcrossRemoteCalls).toEqual([]);
+  expect(warm.report.pool.maxConcurrent).toBe(1);
+  expect([warm.report.transactions, warm.report.spicedb.calls, warm.report.evidenceRows]).toEqual([22, 5, 3]);
+  expect(warm.report.statements).toBeLessThanOrEqual(71);
+  expect(warm.report.pool.leases).toBeLessThanOrEqual(24);
+  expect(warm.report.pool.roundTrips).toBeLessThanOrEqual(115);
+  // Ten times the hits, the same work: no question is asked, and no row read, per person found.
+  expect([
+    many.report.statements,
+    many.report.transactions,
+    many.report.spicedb.calls,
+    many.report.pool.leases,
+    many.report.evidenceRows,
+  ]).toEqual([
+    warm.report.statements,
+    warm.report.transactions,
+    warm.report.spicedb.calls,
+    warm.report.pool.leases,
+    warm.report.evidenceRows,
+  ]);
+  return warm.report;
 });
 
 it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '900 seconds' })(
@@ -1001,6 +1543,14 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '900 secon
       () =>
         withStageCase((stageCase) =>
           measureApprovalPath(stageCase).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+        ),
+      900_000,
+    );
+    suite.effect(
+      'measures the People branch of the Shell search for one surname in a company of a few hundred people',
+      () =>
+        withStageCase((stageCase) =>
+          measurePeopleSearch(stageCase).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
         ),
       900_000,
     );
