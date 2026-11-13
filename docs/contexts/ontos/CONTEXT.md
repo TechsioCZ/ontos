@@ -292,6 +292,17 @@ is a Resource.
 identity, Resource type, and Resource identity. It preserves addressability without transferring
 ownership to Core or the consumer.
 
+**Core Media** — Core-owned system capability for governed receipt, metadata, and authorized
+retrieval of files. It is not a separate Business Module or the owner of consumer-specific
+business assignments.
+
+**Media Asset** — Core-owned Resource representing one file intake with a durable Tenant-scoped
+identity, independent of its filename or similarity to another upload. Its existence does not
+by itself establish that its bytes are usable.
+
+**Media Link** — Core-recorded association between a Media Asset and another Resource. It does
+not transfer ownership of the target's business meaning or assignment, nor grant Permission.
+
 **Resource Alias** — Owner-maintained durable mapping from a superseded Resource identity to a
 surviving Resource identity after correction, merge, or reconciliation. It preserves lookup and
 historical explanation. It does not merge business facts, broaden Permission, or authorize a caller.
