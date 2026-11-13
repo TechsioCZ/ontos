@@ -49,12 +49,26 @@ export const CatalogPagination = ({
           linkAs={NextLink}
           page={page}
           pageSize={pageSize}
-          size="sm"
+          size="md"
           translations={translations}
           variant="filled"
         />
       </div>
-      <div className="hidden n1-compact:block">
+      <div className="hidden n1-compact:block md:hidden">
+        <Pagination
+          aria-label={d.page}
+          count={count}
+          getPageUrl={getPageUrl}
+          linkAs={NextLink}
+          page={page}
+          pageSize={pageSize}
+          siblingCount={0}
+          size="md"
+          translations={translations}
+          variant="filled"
+        />
+      </div>
+      <div className="hidden md:block">
         <Pagination
           aria-label={d.page}
           count={count}
