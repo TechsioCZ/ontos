@@ -45,13 +45,14 @@ it('keeps Shell runtime composition inside its declaration root and uses package
   }
 });
 
-it('pins least-privilege shared exceptions for Promotion and the Market retirement fence', () => {
+it('pins least-privilege shared exceptions for Promotion, the Market retirement fence and the serving VAT release', () => {
   const entry = manifestEntryForRole('ontos_runtime');
   expect(entry?.kind).toBe('legacy_shared');
   if (entry?.kind !== 'legacy_shared') {
     return;
   }
   expect(entry.tableGrantExceptions?.map(({ privileges, table }) => ({ privileges, table }))).toEqual([
+    { privileges: ['select'], table: 'demo_merchandise.tax_classification_live' },
     { privileges: ['select', 'insert'], table: 'promotion.policy_changes' },
     { privileges: ['select', 'insert', 'update'], table: 'promotion.tenant_generations' },
     { privileges: ['select', 'insert', 'update'], table: 'promotion.promotion_drafts' },

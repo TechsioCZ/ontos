@@ -12,6 +12,7 @@ import type { OrderStatus } from '../../shared/domain/merchandise-model.ts';
 import { orderTotals } from '../../shared/domain/order-totals.ts';
 import { evolveMerchandiseState, percentChangedPriceMinor } from '../../src/services/persistence.service.ts';
 import { computeProductRecords, stockOnHandOf } from '../../src/services/stock-levels.ts';
+import { TEST_RATES, TEST_TAX } from '../support/tax-fixtures.ts';
 
 const actor = {
   principalId: '20000000-0000-4000-8000-000000000002',
@@ -29,7 +30,7 @@ const isNotFound = Schema.is(MerchandiseNotFound);
 type CommandInput = typeof MerchandiseCommandSchema.Encoded;
 
 const apply = (state: MerchandiseState, command: CommandInput, resourceId: string, now = t0) =>
-  evolveMerchandiseState(state, decodeCommand(command), { actor, now, resourceId });
+  evolveMerchandiseState(state, decodeCommand(command), { actor, now, resourceId, tax: TEST_TAX });
 
 const addProduct = (state: MerchandiseState, resourceId: string, sku: string, priceMinor: number) =>
   apply(
@@ -42,8 +43,8 @@ const addProduct = (state: MerchandiseState, resourceId: string, sku: string, pr
       name: `Produkt ${sku}`,
       priceMinor,
       sku,
+      taxClassificationCode: 'cz.vat.standard',
       unit: 'ks',
-      vatRate: 21,
     },
     resourceId,
   );
@@ -83,24 +84,27 @@ it.effect('CreateProduct normalizes priced variants and preserves informational 
       name: 'Cable',
       priceMinor: 9900,
       sku: 'CABLE',
+      taxClassificationCode: 'cz.vat.standard',
       unit: 'ks',
       variants: [
         { attributes: 'Colour: black', name: 'Black', priceMinor: 1050, sku: 'CABLE-BLACK' },
         { attributes: 'Colour: white', id: 'white-variant', name: 'White', priceMinor: 0 },
         { attributes: 'Material: copper', name: 'Material' },
       ],
-      vatRate: 21,
     };
     const created = yield* apply(empty, command, 'variant-product');
     const variants = created.state.products[0]?.variants;
     expect(variants).toEqual([
+      // Each priced variant stores the gross entered with it at the standard rate then (1050 + 21 % = 1271).
       {
         ...command.variants?.[0],
+        grossPriceMinor: 1271,
         id: 'variant-product-v1',
         priceHistory: [{ changedBy: actor, effectiveFrom: t0, priceMinor: 1050 }],
       },
       {
         ...command.variants?.[1],
+        grossPriceMinor: 0,
         priceHistory: [{ changedBy: actor, effectiveFrom: t0, priceMinor: 0 }],
       },
       command.variants?.[2],
@@ -111,7 +115,7 @@ it.effect('CreateProduct normalizes priced variants and preserves informational 
     const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(created.state);
     const decoded = yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(encoded);
     expect(decoded).toEqual(created.state);
-    expect(computeProductRecords(decoded)[0]?.variantRecords?.map((variant) => variant.id)).toEqual([
+    expect(computeProductRecords(decoded, TEST_RATES, {})[0]?.variantRecords?.map((variant) => variant.id)).toEqual([
       'variant-product-v1',
       'white-variant',
     ]);
@@ -130,9 +134,9 @@ it.effect('new priced variants immediately accept stock and preserve their own o
         name: 'Cable',
         priceMinor: 9900,
         sku: 'CABLE',
+        taxClassificationCode: 'cz.vat.standard',
         unit: 'ks',
         variants: [{ attributes: 'Colour: black', name: 'Black', priceMinor: 1050 }],
-        vatRate: 21,
       },
       'variant-product',
     );
@@ -147,7 +151,7 @@ it.effect('new priced variants immediately accept stock and preserve their own o
       },
       'variant-receipt',
     );
-    expect(computeProductRecords(stocked.state)[0]?.variantRecords?.[0]).toMatchObject({
+    expect(computeProductRecords(stocked.state, TEST_RATES, {})[0]?.variantRecords?.[0]).toMatchObject({
       id: 'variant-product-v1',
       priceMinor: 1050,
       stockOnHand: 5,
@@ -169,7 +173,7 @@ it.effect('new priced variants immediately accept stock and preserve their own o
       variantId: 'variant-product-v1',
       variantName: 'Black',
     });
-    expect(computeProductRecords(ordered.state)[0]?.variantRecords?.[0]?.stockOnHand).toBe(3);
+    expect(computeProductRecords(ordered.state, TEST_RATES, {})[0]?.variantRecords?.[0]?.stockOnHand).toBe(3);
   }),
 );
 
@@ -190,9 +194,9 @@ it.effect('CreateProduct rejects duplicate variant identities including generate
           name: 'Cable',
           priceMinor: 9900,
           sku: 'CABLE',
+          taxClassificationCode: 'cz.vat.standard',
           unit: 'ks',
           variants: [firstVariant, { attributes: '', id, name: 'White', priceMinor: 1100 }],
-          vatRate: 21,
         },
         'variant-product',
       ).pipe(Effect.flip);
@@ -214,12 +218,12 @@ it.effect('CreateProduct rejects case-insensitive duplicate variant SKUs', () =>
         name: 'Cable',
         priceMinor: 9900,
         sku: 'CABLE',
+        taxClassificationCode: 'cz.vat.standard',
         unit: 'ks',
         variants: [
           { attributes: '', name: 'Black', priceMinor: 1050, sku: 'CABLE-ONE' },
           { attributes: '', name: 'White', priceMinor: 1100, sku: ' cable-one ' },
         ],
-        vatRate: 21,
       },
       'variant-product',
     ).pipe(Effect.flip);
@@ -310,6 +314,8 @@ it.effect('CreateOrder snapshots the line, totals it with VAT and numbers it in 
       productName: 'Produkt KAB-1',
       quantity: 2,
       sku: 'KAB-1',
+      taxClassificationCode: 'cz.vat.standard',
+      taxRuleRevisionId: 'revision-standard',
       unitPriceMinor: 19_900,
       vatRate: 21,
     });
@@ -566,9 +572,9 @@ it.effect('CreateProduct retains informational metadata and encodes optional mea
         name: 'Cable',
         priceMinor: 1050,
         sku: 'CABLE',
+        taxClassificationCode: 'cz.vat.standard',
         unit: 'ks',
         variants: [{ attributes: 'Colour: black', name: 'Black' }],
-        vatRate: 21,
         weightGrams: 100,
       },
       'metadata-product',
@@ -639,9 +645,9 @@ const bulkMembershipState = Schema.decodeUnknownSync(MerchandiseStateSchema)({
     name: id,
     priceHistory: [],
     sku: id,
+    taxClassificationCode: 'cz.vat.standard',
     unit: 'ks',
     updatedAt: '2026-10-05T10:00:00.000Z',
-    vatRate: 21,
   })),
 });
 

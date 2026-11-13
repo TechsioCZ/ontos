@@ -5,6 +5,7 @@ import { startEmailDispatchTrigger } from '../email-dispatch-trigger.mts';
 import { startProcessDatabasePools } from './process-database-pools.mts';
 import { startProcessCompositionSourceReads } from './process-composition-source-reads.mts';
 import { startSearchDerivedStampSweep } from './search-derived-stamp-sweep.mts';
+import { startAccessFenceSweep } from './access-fence-sweep.mts';
 
 export const startZeropsOutboxHost = () =>
   Effect.andThen(
@@ -18,7 +19,10 @@ export const startZeropsOutboxHost = () =>
     ),
     Effect.andThen(
       Effect.andThen(startProcessDatabasePools, startProcessCompositionSourceReads),
-      Effect.andThen(startEmailDispatchTrigger(), startSearchDerivedStampSweep()),
+      Effect.andThen(
+        startEmailDispatchTrigger(),
+        Effect.andThen(startSearchDerivedStampSweep(), startAccessFenceSweep()),
+      ),
     ),
   );
 

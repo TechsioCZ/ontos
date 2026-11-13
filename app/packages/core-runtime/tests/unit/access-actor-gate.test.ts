@@ -616,6 +616,35 @@ it.effect('refuses a workload subject whose carrier names no workload keys, and 
   }),
 );
 
+it.effect('admits a workload subject only from the callers its carrier lets bring one, single and batched', () =>
+  Effect.gen(function* workloadCallers() {
+    const { gate, state } = harness({
+      authority: { cells: [] },
+      kinds: kindSource('integration'),
+      workloads: workloadRegistry([storefront]),
+    });
+    const accessActor = workloadActorDeclaration({
+      callers: ['commerce-order', 'finance-billing'],
+      subjectWorkloadCallers: ['commerce-order'],
+    });
+    const allowed = yield* gate.decide(
+      gateOf({ accessActor }, delegatedScopeOf(callerOf('commerce-order'), workloadPrincipal)),
+    );
+    expect(allowed.outcome).toBe('ALLOWED');
+    // Finance is a caller of the carrier, but not one that may bring a workload subject.
+    const refused = yield* gate.decide(
+      gateOf({ accessActor }, delegatedScopeOf(callerOf('finance-billing'), workloadPrincipal)),
+    );
+    expect(refused.outcome).toBe('DENIED');
+    expect(codesOf(refused)).toEqual(['deny.actor_subject_invalid']);
+    const batch = yield* gate.decideMany([
+      gateOf({ accessActor }, delegatedScopeOf(callerOf('finance-billing'), workloadPrincipal)),
+    ]);
+    expect(batch.map(codesOf)).toEqual([['deny.actor_subject_invalid']]);
+    expect(state.entries.length).toBe(0);
+  }),
+);
+
 it.effect(
   'refuses a workload subject with no active binding for its named keys, or a binding of another principal',
   () =>

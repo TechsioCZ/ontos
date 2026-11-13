@@ -12,6 +12,7 @@ import { loadAkrosBaselineParts } from '../../src/services/akros-baseline.genera
 import { computeProductRecords } from '../../src/services/stock-levels.ts';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import { decodeAkrosBaselinePart, keepLinkedPhotos, linkedPhotosOf } from '../../src/services/akros-demo-reset.ts';
+import { TEST_RATES } from '../support/tax-fixtures.ts';
 
 // A case that rebuilds the whole AKROS catalogue takes seconds on a shared CI runner.
 const CATALOGUE_BUILD_TIMEOUT = 30_000;
@@ -127,7 +128,7 @@ it.effect(
   () =>
     Effect.gen(function* catalogueStockMinimums() {
       const built = yield* buildSroubshopEncoded();
-      const records = computeProductRecords(yield* Schema.decodeEffect(MerchandiseStateSchema)(built));
+      const records = computeProductRecords(yield* Schema.decodeEffect(MerchandiseStateSchema)(built), TEST_RATES, {});
       expect(records).toHaveLength(1289);
       expect(
         records

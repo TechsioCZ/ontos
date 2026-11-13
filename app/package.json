@@ -134,6 +134,7 @@
     "dev:crm-activities": "pnpm --filter @app/crm-activities dev",
     "demo:reset": "node scripts/siampark/reset-demo-entry.mts",
     "demo:reset:sales": "node scripts/demo/reset-demo.mts",
+    "demo:vat-preflight": "node scripts/demo/vat-classification-preflight.mts",
     "demo:seed:facility-operations": "node scripts/demo/seed-siampark-ops.mts",
     "demo:agent-api-keys": "node scripts/demo/agent-api-keys.mts",
     "demo:ai-profiles": "node scripts/demo/ai-profiles.mts",

@@ -719,6 +719,8 @@ export const useFinanceRecords = ({ scope }: { readonly scope: string | undefine
     relatedCustomer: partyId !== undefined || counterpartyId !== undefined,
     reload,
     requestVoid: (invoice: Invoice) => setVoidTarget(invoice),
+    /** The verified Shell scope this ledger belongs to; keys every other Finance read of the page. */
+    scope,
     selected,
     snapshot,
     t,

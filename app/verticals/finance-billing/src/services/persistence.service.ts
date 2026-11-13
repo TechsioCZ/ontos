@@ -19,15 +19,27 @@ import {
   FinancePriceListItemIdSchema,
   FinancePrincipalIdSchema,
   FinanceRecurringTemplateIdSchema,
+  InvoiceLineSchema,
 } from '../../shared/apis/records.ts';
 import type {
   FinanceDocument,
   FinanceState,
   Invoice,
   InvoiceLine,
+  PriceListItem,
   RecordsRequest,
   RecordsResponse,
 } from '../../shared/apis/records.ts';
+import type { VatChoices } from '../../shared/apis/vat-choices.ts';
+import {
+  lineVatChoice,
+  lineVatIssue,
+  lineVatOf,
+  rateOf,
+  sellerVatChoice,
+  withCurrentTaxRate,
+} from '../../shared/domain/line-vat.ts';
+import type { InvoiceDirection } from '../../shared/domain/line-vat.ts';
 import { computeInvoiceTotals, isLineDiscountValid, nextInvoiceNumber } from '../../shared/domain/invoice-totals.ts';
 import {
   addCalendarDaysTo,
@@ -65,6 +77,11 @@ export interface FinanceValidators {
   /** Absent in hosts that cannot reach Core and the party registry (outbox worker); exports then fail closed. */
   readonly exportReferences?: Effect.Effect<ExportReferences, FinanceError>;
   readonly invoice: (invoice: Invoice) => Effect.Effect<void, FinanceError>;
+  /**
+   * The VAT Tax publishes for the company on a date (YYYY-MM-DD). Absent only in seeds and tests, whose lines are stored
+   * exactly as given; every host that creates invoice lines (the app's Action, the Outbox worker) gives it.
+   */
+  readonly vat?: (on: string) => Effect.Effect<VatChoices, FinanceError>;
 }
 /** File content the action stores next to the state; the state itself only keeps document metadata. */
 export interface DocumentWrite {
@@ -84,6 +101,7 @@ const FINANCE_MODULE_ID = 'finance.billing';
 const INVOICE_RESOURCE_TYPE = 'finance.billing.invoice';
 const EXPORT_NOT_FOUND = 'Export not found';
 const rejected = (reason: string) => new FinanceRejected({ code: 'finance_rejected', reason });
+const sameInvoiceLine = Schema.toEquivalence(InvoiceLineSchema);
 const conflict = (reason: string) => new FinanceConflict({ code: 'finance_conflict', reason });
 const constructionUnavailable = (cause: Schema.SchemaError) =>
   Object.defineProperty(
@@ -182,6 +200,34 @@ const validate = Effect.fn('Finance.validate')(function* validate(
   }
   return yield* validators.invoice(invoice);
 });
+/**
+ * Checks the VAT of every new line against Tax on `on`. A line equal to one the record already stored (`kept`) may
+ * keep an older rate without a classification, so editing an old draft never rewrites its history.
+ */
+const validateLineVat = Effect.fn('Finance.validateLineVat')(function* validateLineVat(
+  lines: readonly InvoiceLine[] | undefined,
+  on: string,
+  direction: InvoiceDirection,
+  validators: FinanceValidators,
+  kept: readonly InvoiceLine[] = [],
+) {
+  if (lines === undefined || lines.length === 0 || validators.vat === undefined) {
+    return yield* Effect.void;
+  }
+  const choices = yield* validators.vat(on);
+  for (const line of lines) {
+    const issue = lineVatIssue(
+      line,
+      choices,
+      direction,
+      kept.some((stored) => sameInvoiceLine(stored, line)),
+    );
+    if (issue !== undefined) {
+      return yield* rejected(issue);
+    }
+  }
+  return yield* Effect.void;
+});
 interface FinanceTransitionContext {
   readonly input: {
     readonly attemptId: string;
@@ -255,6 +301,7 @@ const handleCreateInvoiceDraft = Effect.fn('Finance.handleCreateInvoiceDraft')(f
   }
   const { _tag: _commandTag, lines: _lines, totalMinor: _totalMinor, ...fields } = command;
   const totals = yield* draftTotals(command);
+  yield* validateLineVat(command.lines, command.issueDate, command.direction, validators);
   const invoice: Invoice = {
     ...fields,
     ...totals,
@@ -277,6 +324,41 @@ const handleCreateInvoiceDraft = Effect.fn('Finance.handleCreateInvoiceDraft')(f
   return { changed: true, invoice, state: { ...state, invoices: [...state.invoices, invoice] } };
 });
 
+/**
+ * A won opportunity's lines as a new invoice stores them, priced exactly as the invoice form prices a person's new line
+ * for this company on the issue date (`sellerVatChoice`, then `lineVatOf`): a VAT payer's line takes Tax's rate for
+ * its classification with the Tax rule revision that published it; a company that is not a VAT payer issues it with
+ * the non-payer treatment at 0 %. A line whose rate names no classification, or a company Tax gives no usable VAT,
+ * refuses the invoice; Finance never guesses a rate.
+ */
+const opportunityLines = Effect.fn('Finance.opportunityLines')(function* opportunityLines(
+  lines: readonly InvoiceLine[],
+  issueDate: string,
+  validators: FinanceValidators,
+) {
+  if (validators.vat === undefined) {
+    return lines;
+  }
+  const choices = yield* validators.vat(issueDate);
+  const priced: InvoiceLine[] = [];
+  for (const line of lines) {
+    const vat = lineVatOf(sellerVatChoice(lineVatChoice(line), choices.regime), choices);
+    const issue = vat === undefined ? 'vat_rate_changed' : lineVatIssue(vat, choices, 'OUTGOING');
+    if (vat === undefined || issue !== undefined) {
+      return yield* rejected(issue ?? 'vat_rate_changed');
+    }
+    const {
+      taxRuleRevisionRef: _snapshotRevision,
+      vatClassification: _snapshotClassification,
+      vatRate: _snapshotRate,
+      vatTreatment: _snapshotTreatment,
+      ...snapshot
+    } = line;
+    priced.push({ ...snapshot, ...vat });
+  }
+  return priced;
+});
+
 const handleCreateInvoiceFromOpportunity = Effect.fn('Finance.handleCreateInvoiceFromOpportunity')(
   function* handleCreateInvoiceFromOpportunity(
     command: Extract<FinanceCommand, { readonly _tag: 'CreateInvoiceFromOpportunity' }>,
@@ -294,8 +376,8 @@ const handleCreateInvoiceFromOpportunity = Effect.fn('Finance.handleCreateInvoic
     ) {
       return yield* conflict('invoice_already_exists');
     }
-    const totals = yield* draftTotals({ lines: command.lines });
     const issueDate = command.issueDate ?? calendarDateOf(input.now);
+    const totals = yield* draftTotals({ lines: yield* opportunityLines(command.lines, issueDate, validators) });
     const invoice: Invoice = {
       ...totals,
       accountingCorrelation: `demo-accounting:${input.resourceId}`,
@@ -350,6 +432,7 @@ const handleUpdateInvoiceDraft = Effect.fn('Finance.handleUpdateInvoiceDraft')(f
   }
   const { _tag: _commandTag, invoiceRef: _invoiceRef, lines: _lines, totalMinor: _total, ...fields } = command;
   const totals = yield* draftTotals(command);
+  yield* validateLineVat(command.lines, command.issueDate, command.direction, validators, previous.lines);
   // Replace all optional draft anchors and line snapshots; omitted ones are intentionally cleared.
   // The assigned number and the source opportunity are identity, so they are preserved.
   // Editing content sends a prepared draft back to a plain draft: it has to be prepared again.
@@ -664,6 +747,7 @@ const handleRecordIncomingInvoice = Effect.fn('Finance.handleRecordIncomingInvoi
   if (command.dueDate < command.issueDate) {
     return yield* rejected('invalid_invoice_anchors_or_dates');
   }
+  yield* validateLineVat(command.lines, command.issueDate, 'INCOMING', validators);
   const invoice = incomingInvoiceSnapshot(command, context, totals);
   yield* validate(invoice, scope, validators);
   const prepared =
@@ -828,6 +912,7 @@ const handleCreateRecurringTemplate = Effect.fn('Finance.handleCreateRecurringTe
   if (computeInvoiceTotals(command.lines)?.totalMinor === undefined) {
     return yield* rejected('invoice_amount_out_of_range');
   }
+  yield* validateLineVat(command.lines, calendarDateOf(context.input.now), 'OUTGOING', context.validators);
   return stateOnly({
     ...context.state,
     recurringTemplates: [
@@ -860,6 +945,34 @@ const handleSetRecurringTemplateActive = Effect.fn('Finance.handleSetRecurringTe
   });
 });
 
+/**
+ * A template's lines as the invoice of one period stores them: each classified line takes Tax's rate at that issue
+ * date, so a rate change reaches the next generated invoice. Treatments and older rate-only lines stay as they are.
+ */
+const recurringLines = Effect.fn('Finance.recurringLines')(function* recurringLines(
+  lines: readonly InvoiceLine[],
+  issueDate: string,
+  validators: FinanceValidators,
+) {
+  if (validators.vat === undefined || !lines.some((line) => line.vatClassification !== undefined)) {
+    return lines;
+  }
+  const choices = yield* validators.vat(issueDate);
+  const priced: InvoiceLine[] = [];
+  for (const line of lines) {
+    const current = withCurrentTaxRate(line, choices);
+    if (current === undefined) {
+      return yield* rejected('vat_rate_changed');
+    }
+    const issue = current.vatClassification === undefined ? undefined : lineVatIssue(current, choices, 'OUTGOING');
+    if (issue !== undefined) {
+      return yield* rejected(issue);
+    }
+    priced.push(current);
+  }
+  return priced;
+});
+
 const handleGenerateRecurringInvoice = Effect.fn('Finance.handleGenerateRecurringInvoice')(function* generate(
   command: CommandOf<'GenerateRecurringInvoice'>,
   context: FinanceTransitionContext,
@@ -881,8 +994,8 @@ const handleGenerateRecurringInvoice = Effect.fn('Finance.handleGenerateRecurrin
   if (duplicate && !command.confirmDuplicate) {
     return yield* conflict('recurring_period_already_generated');
   }
-  const totals = yield* draftTotals({ lines: template.lines });
   const issueDate = recurringIssueDate(command.period, template.issueDay);
+  const totals = yield* draftTotals({ lines: yield* recurringLines(template.lines, issueDate, validators) });
   const number = nextInvoiceNumber(state.invoices);
   let invoice: Invoice = {
     ...totals,
@@ -1411,6 +1524,38 @@ const handleDeletePlanItem = Effect.fn('Finance.handleDeletePlanItem')(function*
   return stateOnly({ ...context.state, planItems: items.filter((entry) => entry.id !== command.id) });
 });
 
+/**
+ * A price-list item names a classification (or a treatment); its stored rate must be the one Tax publishes today. An
+ * item whose VAT did not change may keep an older rate without a classification.
+ */
+const validatePriceItemVat = Effect.fn('Finance.validatePriceItemVat')(function* validatePriceItemVat(
+  item: Pick<PriceListItem, 'vatClassification' | 'vatRate' | 'vatTreatment'>,
+  kept: PriceListItem | undefined,
+  context: FinanceTransitionContext,
+) {
+  const { vat } = context.validators;
+  if (vat === undefined) {
+    return yield* Effect.void;
+  }
+  const vatUnchanged =
+    kept !== undefined &&
+    kept.vatRate === item.vatRate &&
+    kept.vatClassification === item.vatClassification &&
+    kept.vatTreatment === item.vatTreatment;
+  if (item.vatTreatment !== undefined || (item.vatClassification === undefined && vatUnchanged)) {
+    return yield* Effect.void;
+  }
+  if (item.vatClassification === undefined) {
+    return yield* rejected('vat_classification_required');
+  }
+  const choices = yield* vat(calendarDateOf(context.input.now));
+  const rate = rateOf(choices, item.vatClassification);
+  if (rate === undefined || rate.ratePercent !== item.vatRate) {
+    return yield* rejected('vat_rate_changed');
+  }
+  return yield* Effect.void;
+});
+
 const handleUpsertPriceListItem = Effect.fn('Finance.handleUpsertPriceListItem')(function* upsertPriceListItem(
   command: CommandOf<'UpsertPriceListItem'>,
   context: FinanceTransitionContext,
@@ -1433,6 +1578,8 @@ const handleUpsertPriceListItem = Effect.fn('Finance.handleUpsertPriceListItem')
   const itemId = yield* Schema.decodeEffect(FinancePriceListItemIdSchema)(id).pipe(
     Effect.mapError(constructionUnavailable),
   );
+  const kept = items.find((entry) => entry.id === id);
+  yield* validatePriceItemVat(fields, kept, context);
   const item = { ...(yield* actorOf(context, actorLabel)), ...fields, id: itemId, updatedAt: context.input.now };
   return stateOnly({
     ...context.state,

@@ -485,8 +485,8 @@ export const BootstrapCopyCatalogSchema = Schema.Struct({
   ),
 });
 const metadataSchema = Schema.toEncoded(ProductMetadataSchema);
-const productDocument = Schema.toEncoded(ProductSchema);
-export const productCopyFields = (product: typeof productDocument.Type) =>
+/** The copyable catalog content of a product document or a staff product record (both carry its metadata). */
+export const productCopyFields = (product: typeof metadataSchema.Type) =>
   Schema.decodeUnknownEffect(metadataSchema)(product);
 export const copyStock = (product: CopyProduct) =>
   (product.variantRecords ?? []).length === 0
@@ -514,10 +514,10 @@ export const bootstrapCopyCatalog = (snapshot: CopySnapshot) =>
           name: source.name,
           priceHistory: [{ effectiveFrom: snapshot.capturedAt, priceMinor: source.currentPriceMinor }],
           sku: source.sku,
+          taxClassificationCode: source.taxClassificationCode,
           unit: source.unit,
           updatedAt: snapshot.capturedAt,
           variants: source.variants?.map(({ priceHistory: _history, ...variant }) => variant),
-          vatRate: source.vatRate,
         };
         const product = yield* Schema.decodeUnknownEffect(Schema.toEncoded(ProductSchema))(
           Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)),

@@ -92,7 +92,11 @@ import {
   OperationalScopeResolverLive,
   TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
-import { API_KEY_GATEWAY_CONTEXT_HEADER, GatewayContextResponseSchema } from '@app/shared-contracts';
+import {
+  API_KEY_GATEWAY_CONTEXT_HEADER,
+  GATEWAY_MODULE_NOT_INSTALLED_TYPE,
+  GatewayContextResponseSchema,
+} from '@app/shared-contracts';
 import type { ApiKeyGatewayContextRequest, GatewayContextProblem, GatewayRefusalReason } from '@app/shared-contracts';
 import {
   AccessDecisionGate,
@@ -560,6 +564,15 @@ const gatewayForbiddenProblem = (): GatewayProblem<'GatewayForbiddenProblem'> =>
     403,
     'Gateway context forbidden',
     'https://ontos.dev/problems/gateway-forbidden',
+  );
+/** A refused module call whose module is not installed for the tenant: a 403 that says exactly that (`type`). */
+const gatewayModuleNotInstalledProblem = (): GatewayProblem<'GatewayForbiddenProblem'> =>
+  problemDetails(
+    'GatewayForbiddenProblem',
+    'The module the call is for is not installed for the tenant.',
+    403,
+    'Module not installed',
+    GATEWAY_MODULE_NOT_INSTALLED_TYPE,
   );
 const gatewayRateLimitedProblem = (retryAfterSeconds: number): GatewayProblem<'GatewayRateLimitedProblem'> =>
   extendedProblemDetails(
@@ -2782,6 +2795,7 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
                   Match.value(error.code).pipe(
                     Match.when('authentication_required', () => gatewayAuthenticationRequiredProblem()),
                     Match.when('forbidden', () => gatewayForbiddenProblem()),
+                    Match.when('module_not_installed', () => gatewayModuleNotInstalledProblem()),
                     Match.when('unavailable', () => gatewayAuthenticationUnavailableProblem()),
                     Match.when('reload_required', () =>
                       extendedProblemDetails(

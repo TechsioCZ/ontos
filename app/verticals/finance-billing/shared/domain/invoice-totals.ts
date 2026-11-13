@@ -3,7 +3,6 @@ import type { InvoiceLine, VatRecapEntry } from '../apis/records.ts';
 /** Fixed demo invoice series; numbers are `FV-2026-0001`, `FV-2026-0002`, … */
 export const INVOICE_NUMBER_PREFIX = 'FV-2026-';
 const MAX_MONEY_MINOR = 1_000_000_000_000;
-const VAT_RATE_ORDER = [21, 12, 10, 0] as const;
 
 export interface InvoiceTotals {
   readonly subtotalMinor: number;
@@ -80,10 +79,10 @@ export const computeInvoiceTotals = <Line extends InvoiceTotalsLine>(
       vatMinor: entry.vatMinor + lineVatMinor(line),
     });
   }
-  const vatRecap = VAT_RATE_ORDER.flatMap((rate) => {
-    const entry = byRate.get(rate);
-    return entry === undefined ? [] : [{ baseMinor: entry.baseMinor, rate, vatMinor: entry.vatMinor }];
-  });
+  // Highest rate first (21, 12, 10, 0 …), so a recap reads the same for every invoice whatever rates Tax publishes.
+  const vatRecap = [...byRate.entries()]
+    .toSorted(([left], [right]) => right - left)
+    .map(([rate, entry]) => ({ baseMinor: entry.baseMinor, rate, vatMinor: entry.vatMinor }));
   let subtotalMinor = 0;
   let vatMinor = 0;
   for (const entry of vatRecap) {

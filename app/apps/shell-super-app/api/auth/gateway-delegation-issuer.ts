@@ -6,6 +6,7 @@ import {
   trustVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { PrincipalResolver, TenantModuleStateService, tenantStatesAllowingAccess } from '@app/core-runtime';
+import type { TenantModuleState } from '@app/core-runtime';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import type { GatewayActorClaim, GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
 import {
@@ -68,6 +69,12 @@ interface AdmittedSubject {
  * A tenant-scoped copy of a principal: the same identity and trust, without its Legal Entity. A trusted Storefront
  * exists only inside a Legal Entity, so it is dropped with it.
  */
+/**
+ * Lasting, deliberate states of an installed module that its callers read as "not installed": switched off for the
+ * tenant (`inactive`) or retired with it (`archived`). `suspended` and `quarantined` are temporary: an outage.
+ */
+const NOT_INSTALLED_STATES: ReadonlySet<TenantModuleState> = new Set<TenantModuleState>(['archived', 'inactive']);
+
 const tenantScopedPrincipal = (principal: TrustedPrincipalContext): TrustedPrincipalContext => {
   const { legalEntityId: _legalEntityId, trustedStorefrontId: _trustedStorefrontId, ...tenantPrincipal } = principal;
   return preserveSystemPrincipalContextTrust(principal, tenantPrincipal);
@@ -259,8 +266,18 @@ const issueForSubject = Effect.fn('GatewayDelegation.issueForSubject')(function*
     .getTenantModuleStates(principal.tenantId, moduleKeys)
     .pipe(Effect.mapError(delegationUnavailable('module_states_unavailable')));
   const readableStates = new Set(tenantStatesAllowingAccess('read'));
-  if (moduleKeys.some((key) => !states.some((state) => state.moduleKey === key && readableStates.has(state.state)))) {
+  const readable = (key: string) => states.some((state) => state.moduleKey === key && readableStates.has(state.state));
+  if (!readable(sourceContract.manifest.module.id)) {
     return yield* delegationForbidden('module_not_active')();
+  }
+  // A calling module may read the refusal as "not installed" when the module it calls is absent for the tenant, or in a
+  // lasting, deliberate state: switched off (`inactive`) or retired with its tenant (`archived`). One that is only
+  // stopped for now (`suspended`, `quarantined`) is a plain refusal: an outage to the caller, never an answer.
+  if (!readable(destination.manifest.module.id)) {
+    const destinationState = states.find((state) => state.moduleKey === destination.manifest.module.id)?.state;
+    return yield* destinationState === undefined || NOT_INSTALLED_STATES.has(destinationState)
+      ? new GatewayDelegationError({ code: 'module_not_installed', reason: 'audience_module_not_installed' })
+      : delegationForbidden('audience_module_not_active')();
   }
 
   const ledger = yield* GatewayDelegationExchangeLedger;

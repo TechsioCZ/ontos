@@ -3,6 +3,7 @@ import { expect, it } from 'effect-rstest';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import { MerchandiseCommandSchema, MerchandiseLifecycleConflict } from '../../shared/actions/apply-command.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
+import { TEST_TAX } from '../support/tax-fixtures.ts';
 
 const actor = { principalId: '20000000-0000-4000-8000-000000000002', tenantId: '20000000-0000-4000-8000-000000000001' };
 const at = '2026-10-19T08:00:00.000Z';
@@ -51,15 +52,15 @@ const baseState = {
       name: 'Šroub',
       priceHistory: [],
       sku: 'S1',
+      taxClassificationCode: 'cz.vat.standard',
       unit: 'ks',
       updatedAt: at,
-      vatRate: 21,
     },
   ],
 };
 const state = Schema.decodeUnknownSync(MerchandiseStateSchema)(baseState);
 const command = Schema.decodeUnknownSync(MerchandiseCommandSchema);
-const input = { actor, now, resourceId: 'resource-1' };
+const input = { actor, now, resourceId: 'resource-1', tax: TEST_TAX };
 
 it.effect('moves a product to a subcategory and records the content change', () =>
   Effect.gen(function* merchandiseScenario1() {
@@ -194,8 +195,8 @@ it.effect('legacy CreateProduct retains its trusted category fields without addi
         name: 'Trusted',
         priceMinor: 100,
         sku: 'TRUSTED',
+        taxClassificationCode: 'cz.vat.standard',
         unit: 'ks',
-        vatRate: 21,
       }),
       input,
     );
@@ -219,8 +220,8 @@ it.effect('opt-in CreateProduct derives paths and rejects an unproved primary', 
       name: 'New',
       priceMinor: 100,
       sku: 'NEW',
+      taxClassificationCode: 'cz.vat.standard',
       unit: 'ks',
-      vatRate: 21,
     };
     const created = yield* evolveMerchandiseState(membershipState, command({ ...fields, categoryId: 'c' }), input);
     const product = created.state.products.at(-1);

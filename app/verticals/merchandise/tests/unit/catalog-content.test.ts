@@ -16,10 +16,11 @@ import {
   updateCategoryCommand,
   withContentHistory,
 } from '../../src/services/catalog-content.ts';
+import { TEST_TAX } from '../support/tax-fixtures.ts';
 
 const actor = { principalId: '20000000-0000-4000-8000-000000000002', tenantId: '20000000-0000-4000-8000-000000000001' };
 const now = DateTime.makeUnsafe('2026-10-20T10:00:00.000Z');
-const input = { actor, now, resourceId: 'resource-1' };
+const input = { actor, now, resourceId: 'resource-1', tax: TEST_TAX };
 const at = '2026-10-19T08:00:00.000Z';
 
 const rootCategory = Schema.decodeUnknownSync(CatalogCategorySchema)({
@@ -62,9 +63,9 @@ const rawP1 = {
   name: 'Šroub',
   priceHistory: [],
   sku: 'S1',
+  taxClassificationCode: 'cz.vat.standard',
   unit: 'ks',
   updatedAt: at,
-  vatRate: 21,
 };
 const p1 = Schema.decodeUnknownSync(ProductSchema)(rawP1);
 

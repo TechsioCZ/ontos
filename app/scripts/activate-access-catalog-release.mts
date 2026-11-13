@@ -19,7 +19,7 @@
  * the migrator reports it and keeps the release booting, because authorization then simply stays at the previous
  * release.
  */
-import { NodeServices } from '@effect/platform-node';
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import {
   Cause,
   Config,
@@ -246,6 +246,9 @@ export const command = Command.make(
 
 /** The one loud line for every failure: arguments, settings, the runtime it is composed with, or the run itself. */
 const failureReason = (cause: Cause.Cause<unknown>): string => {
+  if (Cause.hasInterruptsOnly(cause)) {
+    return 'stopped by a signal; a projection already under way was finished first';
+  }
   const problem = Cause.squash(cause);
   if (Schema.is(AccessCatalogReleaseActivationFailure)(problem)) {
     return problem.reason;
@@ -253,14 +256,21 @@ const failureReason = (cause: Cause.Cause<unknown>): string => {
   return Predicate.hasProperty(problem, '_tag') ? `unexpected failure (${String(problem._tag)})` : 'unexpected failure';
 };
 
+// The migrator stops this child with SIGTERM when its budget is spent, and a container shutdown does the same. `runMain`
+// turns the signal into an interrupt, so a tenant whose projection already took its access fence finishes that
+// projection and gives the fence back (the writer makes that stretch uninterruptible) before the process exits;
+// without it Node exits at once and the fence stays held.
 if (import.meta.main) {
-  const exit = await Effect.runPromiseExit(
+  NodeRuntime.runMain(
     Command.run(command, { version: '1.0.0' }).pipe(
-      Effect.tapCause((cause) =>
-        Console.error(`[access-release] ACCESS CATALOG RELEASE ACTIVATION FAILED: ${failureReason(cause)}`),
+      // `onExit`, not `tapCause`: it also runs when a signal interrupts the run, so a stop is never silent.
+      Effect.onExit((exit) =>
+        Exit.isFailure(exit)
+          ? Console.error(`[access-release] ACCESS CATALOG RELEASE ACTIVATION FAILED: ${failureReason(exit.cause)}`)
+          : Effect.void,
       ),
       Effect.provide(NodeServices.layer),
     ),
+    { disableErrorReporting: true },
   );
-  process.exitCode = Exit.isFailure(exit) ? 1 : 0;
 }

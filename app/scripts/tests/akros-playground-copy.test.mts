@@ -49,9 +49,9 @@ const product = (index = 0) => ({
   slug: `sroub-${index}`,
   stockOnHand: 0,
   stockValueMinor: 0,
+  taxClassificationCode: 'cz.vat.standard',
   unit: 'ks',
   updatedAt: at,
-  vatRate: 21,
 });
 
 it.effect('reuses durable source details after interruption and keeps checkpoint files owner-only', () =>
@@ -396,6 +396,7 @@ it.effect('prepares an actor-free bootstrap without carrying Core Media links ac
     const prepared = yield* bootstrapCopyCatalog(source);
     expect(Schema.is(BootstrapCopyCatalogSchema)(prepared)).toBe(true);
     expect(prepared.products[0]?.product.id).toBe('product-0');
+    expect(prepared.products[0]?.product.taxClassificationCode).toBe('cz.vat.standard');
     expect(prepared.categories[0]?.id).toBe('screws');
     expect(prepared.products[0]?.product.images).toEqual(['/akros/immutable.jpg']);
     expect(prepared.products[0]?.product.imageSrc).toBe('');

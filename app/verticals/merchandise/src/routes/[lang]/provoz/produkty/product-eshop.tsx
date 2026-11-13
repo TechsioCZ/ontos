@@ -25,6 +25,9 @@ import { useCommandFailure } from './product-form-labels.ts';
 import { useCommandInputGuard } from './command-input-guard.tsx';
 import { ProductTabSaveBar, useProductTabSave } from './product-tab-save.tsx';
 import type { ProductVariantDestination } from './product-variant-destination.ts';
+import { DEFAULT_TAX_CLASSIFICATION, classificationChoice, useTaxLabels } from './product-tax-classification.ts';
+import type { CompanyVat } from './product-tax-classification.ts';
+import { priceHistoryRows } from './product-price-history.ts';
 
 const availabilityPresentation = {
   IN_STOCK: { label: 'Skladem', variant: 'success' },
@@ -239,28 +242,7 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, p
 
 export const VariantPriceHistory = ({ product }: { readonly product: ProductRecord }) => {
   const { t } = useModernI18n();
-  const variantRows = (product.variantRecords ?? []).flatMap((variant) =>
-    variant.priceHistory.map((entry, index) => ({
-      at: entry.effectiveFrom,
-      gross: grossUnitPriceMinor(entry.priceMinor, product.vatRate),
-      key: `${variant.id}-${index}`,
-      name: `${variant.name} · ${variant.sku}`,
-      net: entry.priceMinor,
-      previous: entry.previousPriceMinor ?? (index === 0 ? undefined : variant.priceHistory[index - 1]?.priceMinor),
-    })),
-  );
-  const rows = [
-    ...variantRows,
-    ...product.priceHistory.map((entry, index) => ({
-      at: entry.effectiveFrom,
-      gross: grossUnitPriceMinor(entry.priceMinor, product.vatRate),
-      key: `product-${index}`,
-      name: `Základní cena produktu · ${product.sku}`,
-      net: entry.priceMinor,
-      previous: entry.previousPriceMinor ?? product.priceHistory[index - 1]?.priceMinor,
-    })),
-  ];
-  const sorted = rows.toSorted((left, right) => DateTime.toEpochMillis(right.at) - DateTime.toEpochMillis(left.at));
+  const sorted = priceHistoryRows(product);
   return (
     <SectionCard flush title={t('merchandise.ui.variantPriceHistory')}>
       <ScrollRegion label={t('merchandise.ui.variantPriceHistory')}>
@@ -286,7 +268,7 @@ export const VariantPriceHistory = ({ product }: { readonly product: ProductReco
                   {formatMoney(row.net)}
                 </Table.Cell>
                 <Table.Cell align="end" className="tabular-nums">
-                  {formatMoney(row.gross)}
+                  {row.gross === undefined ? '—' : formatMoney(row.gross)}
                 </Table.Cell>
               </Table.Row>
             ))}
@@ -422,15 +404,20 @@ const variantFieldError = (submitted: boolean, helpText: string, invalid = false
   return {};
 };
 
+/** The gross price a variant row shows: the server's for a saved price, else the preview at today's rate. */
 const variantGrossPrice = (
   price: number | null,
   record: VariantRecord | undefined,
-  vatRate: ProductRecord['vatRate'],
+  vatRate: number | undefined,
+  notSet: string,
 ) => {
   if (price === null) {
     return '—';
   }
-  return formatMoney(record?.priceMinor === price ? record.grossPriceMinor : grossUnitPriceMinor(price, vatRate));
+  if (record?.priceMinor === price) {
+    return record.grossPriceMinor === undefined ? notSet : formatMoney(record.grossPriceMinor);
+  }
+  return vatRate === undefined ? notSet : formatMoney(grossUnitPriceMinor(price, vatRate));
 };
 
 const variantPlaceholders = (product: ProductRecord) => {
@@ -467,7 +454,7 @@ const renderVariantPriceTiers = (record: VariantRecord | undefined, unit: Produc
   );
 };
 
-export const VariantsPanel = (props: PanelProps) => {
+export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) => {
   const { t } = useModernI18n();
   const {
     addDraft,
@@ -492,6 +479,14 @@ export const VariantsPanel = (props: PanelProps) => {
     visibleDrafts,
   } = useVariantsPanel(props);
   const placeholders = variantPlaceholders(product);
+  const taxLabels = useTaxLabels();
+  // The product's classification with the rate Tax gives it today; it names the gross preview of an edited price.
+  // Staff records always name the classification; only storefront records omit it.
+  const classification = classificationChoice(
+    props.vat,
+    product.taxClassificationCode ?? DEFAULT_TAX_CLASSIFICATION,
+    DateTime.nowUnsafe(),
+  );
   const variantDestination = props.variantDestination ?? { kind: 'none' };
   const selectedKey = variantDestination.kind === 'selected' ? variantDestination.draftKey : undefined;
   const [appliedTarget, setAppliedTarget] = useState<string | null>(null);
@@ -520,8 +515,7 @@ export const VariantsPanel = (props: PanelProps) => {
         </StatusText>
       ) : null}
       <p className="text-fg-secondary text-sm">
-        Varianta má vlastní SKU, cenu, sklad a stav. Cena se zadává bez DPH, zákazník v e-shopu vidí cenu s DPH (
-        {product.vatRate} %), kterou spočítá server.
+        {t('merchandise.ui.variantsIntro', { vat: taxLabels.choice(classification) })}
       </p>
       <div className="flex flex-wrap items-center gap-150">
         <FormInput
@@ -657,7 +651,7 @@ export const VariantsPanel = (props: PanelProps) => {
                         </div>
                       </Table.Cell>
                       <Table.Cell align="end" className="tabular-nums">
-                        {variantGrossPrice(price, record, product.vatRate)}
+                        {variantGrossPrice(price, record, classification.current?.ratePercent, taxLabels.notSet)}
                       </Table.Cell>
                       <Table.Cell align="end" className="tabular-nums">
                         {variantStockText(record, product.unit)}

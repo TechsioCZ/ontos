@@ -40,6 +40,8 @@ import type { StoreScope } from '../../src/services/merchandise-store.ts';
 import { persistenceService } from '../../src/services/persistence.service.ts';
 import { merchandiseRegistration } from '../../vertical.registration.ts';
 import { catalogState } from './support/merchandise-database.ts';
+import { TEST_COMPANY_TAX_RATES, TEST_FETCHED_TAX, TEST_PRICING, TEST_TAX_BOOK } from '../support/tax-fixtures.ts';
+import { CompanyTaxRatesSchema, TaxRateSource } from '../../src/services/tax-rates.ts';
 
 type Fixture = Effect.Success<ReturnType<typeof makeNativeReadTestContext>>;
 
@@ -66,7 +68,12 @@ const readRecords = (fixture: Fixture, input: RecordsRequestEncoded) =>
       registration: recordsRead,
       transport: { correlationId: 'merchandise-records-runtime' },
     })
-    .pipe(Effect.provide(fixture.layer), Effect.provideService(AccessDecisionGate, gate.accessDecision));
+    .pipe(
+      Effect.provide(fixture.layer),
+      Effect.provideService(AccessDecisionGate, gate.accessDecision),
+      // Staff reads show the company's rates from Tax; the fixture's Tax answers the Czech baseline.
+      Effect.provideService(TaxRateSource, { read: () => Effect.succeed(TEST_TAX_BOOK) }),
+    );
 
 const staffView: RecordsRequestEncoded = {};
 const storefrontView: RecordsRequestEncoded = { view: { storefront: true, storefrontCatalog: { fields: 'card' } } };
@@ -130,7 +137,14 @@ it.live(
             { discard: true },
           ).pipe(Effect.orDie),
         );
-        const stockedRevision = yield* admin.transaction((tx) => replaceSnapshot(tx, stockedCompany, catalogState));
+        const stockedRevision = yield* admin.transaction((tx) =>
+          replaceSnapshot(tx, stockedCompany, catalogState, TEST_PRICING),
+        );
+        // The stocked company synced with Tax; the empty one never did.
+        yield* admin
+          .update(catalogHeads)
+          .set({ taxRates: yield* Schema.encodeEffect(CompanyTaxRatesSchema)(TEST_COMPANY_TAX_RATES) })
+          .where(whereScope(catalogHeads, stockedCompany));
 
         // A company with a catalog: unchanged revision and its products.
         const stockedRead = yield* readRecords(stocked, staffView);
@@ -178,7 +192,11 @@ it.live(
           Effect.gen(function* firstWrite() {
             const scoped = yield* installOperationalScope(tx, scope, defineDatabaseIdentityEnrollment([]));
             const services = yield* persistenceService(scoped, {
-              prepared: { actionInvocationId: scope.correlationId, payload },
+              prepared: {
+                actionInvocationId: scope.correlationId,
+                payload,
+                tax: { fetched: TEST_FETCHED_TAX, refused: false },
+              },
               scope,
             });
             return yield* services.apply(payload.command, payload.expectedRevision, scope.correlationId);
