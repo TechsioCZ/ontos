@@ -136,9 +136,12 @@ describe('#1155 Gateway Enablement prerequisites', () => {
     ).toEqual(missing);
   });
 
-  it('#1155 Comgate enablement is rejected with gateway_payer_contact_source_missing', () => {
+  it('#1155 Comgate enablement is no longer refused: it needs the same source authorities as any family', () => {
     const comgate: PspEnablementBinding = { ...GOPAY_SANDBOX, providerFamily: 'COMGATE' };
-    expect(refusalCode(comgate, BOTH_AUTHORITIES)).toEqual(Option.some('gateway_payer_contact_source_missing'));
+    expect(refusalCode(comgate, BOTH_AUTHORITIES)).toEqual(Option.none());
+    expect(refusalCode(comgate, [authority('GATEWAY_OUTCOME')])).toEqual(
+      Option.some('gateway_source_authority_missing'),
+    );
   });
 
   it('#1155 A binding retired for new intents cannot be enabled', () => {

@@ -52,6 +52,8 @@ type DomainProblemIdentity =
         | 'payment_method_binding_mismatch'
         | 'payment_no_established_collection'
         | 'payment_outcome_transition_illegal'
+        | 'payment_payer_contact_not_applicable'
+        | 'payment_payer_contact_required'
         | 'payment_refund_amount_mismatch'
         | 'payment_refund_basis_invalid'
         | 'payment_refund_item_fractioned';
@@ -100,6 +102,14 @@ const paymentLifecycleConflictProblemByCode = {
   payment_superseded_conflict: { code: 'payment_superseded_conflict', kind: 'conflict' },
 } as const satisfies Record<
   Extract<DomainError, { readonly _tag: 'PaymentLifecycleConflict' }>['code'],
+  DomainProblemIdentity
+>;
+
+const paymentPayerContactRefusedProblemByCode = {
+  payment_payer_contact_not_applicable: { code: 'payment_payer_contact_not_applicable', kind: 'ineligible' },
+  payment_payer_contact_required: { code: 'payment_payer_contact_required', kind: 'ineligible' },
+} as const satisfies Record<
+  Extract<DomainError, { readonly _tag: 'PaymentPayerContactRefused' }>['code'],
   DomainProblemIdentity
 >;
 
@@ -219,6 +229,7 @@ const mapDomainProblem = (error: DomainError): StartPaymentCollectionActionProbl
       PaymentLifecycleConflict: (failure) => mapDomainIdentity(paymentLifecycleConflictProblemByCode[failure.code]),
       PaymentOwnerEvidenceUnavailable: () =>
         startPaymentCollectionActionProblem.unavailable('payment_owner_evidence_unavailable'),
+      PaymentPayerContactRefused: (failure) => mapDomainIdentity(paymentPayerContactRefusedProblemByCode[failure.code]),
       PaymentRejected: (failure) => mapDomainIdentity(paymentRejectedProblemByCode[failure.code]),
       PaymentUnavailable: () => startPaymentCollectionActionProblem.unavailable('payment_unavailable'),
     }),

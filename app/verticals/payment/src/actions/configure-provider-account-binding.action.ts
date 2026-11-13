@@ -8,6 +8,7 @@ import { Effect, Match, Option, Schema } from 'effect';
 import {
   ConfigureProviderAccountBindingPayloadSchema,
   ConfigureProviderAccountBindingResultSchema,
+  PaymentNotificationRouteUnavailable,
   ProviderAccountBindingConflict,
   ProviderAccountBindingNotFound,
 } from '../../shared/actions/configure-provider-account-binding.ts';
@@ -17,6 +18,7 @@ import type {
 } from '../../shared/actions/configure-provider-account-binding.ts';
 import type { PaymentExecutionProvenance } from '../../shared/domain/payment-provenance.ts';
 import { PaymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
+import { PaymentNotificationRoutes } from '../config/payment-notification-route-config.ts';
 import { pspBindingPersistenceForTransaction } from '../persistence/psp-binding-persistence.ts';
 import type { PspBindingPersistence } from '../persistence/psp-binding-persistence.ts';
 
@@ -48,12 +50,6 @@ const provenanceOf = (context: ConfigureContext): PaymentExecutionProvenance => 
   compositionRevision: context.compositionRevision,
 });
 
-/**
- * #1155: creates a Provider Account Binding of the trusted Selling Legal Entity (optionally replacing the
- * Current one of its family and environment for new Payment intents), or retires one for new intents. Each
- * change is decided against the binding's revision under its row lock. Retired bindings stay addressable for
- * their historical operations. The result never carries a secret or a secret reference.
- */
 type ProviderAccountBindingChangeOf<Tag extends ConfigureProviderAccountBindingPayload['change']['_tag']> = Extract<
   ConfigureProviderAccountBindingPayload['change'],
   { readonly _tag: Tag }
@@ -63,13 +59,18 @@ const createBinding = Effect.fn('ConfigureProviderAccountBinding.create')(functi
   change: ProviderAccountBindingChangeOf<'CREATE'>,
   context: ConfigureContext,
 ) {
+  // N11: Payment issues the route key and builds the notification URL; no caller supplies either.
+  const route = yield* (yield* PaymentNotificationRoutes).issue({
+    family: change.merchantIdentity._tag,
+    tenantId: context.scope.tenantId,
+  });
   const outcome = yield* context.services.createBinding({
     environment: change.environment,
     merchantIdentity: change.merchantIdentity,
-    notificationUrl: change.notificationUrl,
     provenance: provenanceOf(context),
     reason: change.reason,
     replaces: Option.fromUndefinedOr(change.replaces),
+    route,
     secretRef: change.secretRef,
   });
   // The Current binding of the family and environment was read under its lock, found or not.
@@ -114,6 +115,10 @@ const retireBinding = Effect.fn('ConfigureProviderAccountBinding.retire')(functi
  * Current one of its family and environment for new Payment intents), or retires one for new intents. Each
  * change is decided against the binding's revision under its row lock. Retired bindings stay addressable for
  * their historical operations. The result never carries a secret or a secret reference.
+ *
+ * #1157 (D-P4, N11): a created binding gets its Payment-issued notification route in the same transaction.
+ * Without a configured public notification origin creation is refused (`payment_notification_route_unavailable`)
+ * before anything is written.
  */
 export const handleConfigureProviderAccountBinding = (
   payload: ConfigureProviderAccountBindingPayload,
@@ -143,6 +148,7 @@ export const configureProviderAccountBindingAction = defineAction(
     domainErrorSchema: Schema.Union([
       ProviderAccountBindingConflict,
       ProviderAccountBindingNotFound,
+      PaymentNotificationRouteUnavailable,
       PaymentUnavailable,
     ]),
     domainEvents,

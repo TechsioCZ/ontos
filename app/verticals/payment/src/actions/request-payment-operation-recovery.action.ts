@@ -3,6 +3,9 @@
 // @ontos-action-slug request-payment-operation-recovery
 import type { ActionHandlerContext, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { OperationContextUnavailable, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement';
+import { readVerifiedGatewayRouteScope } from '@app/core-runtime/auth/system-principal-context-provenance';
+import type { RegisteredGatewayRouteScope } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { DateTime, Effect, Option, Schema } from 'effect';
 
 import {
@@ -22,7 +25,7 @@ import { PaymentGatewayAccountBindingSchema } from '../../shared/domain/payment-
 import { PaymentConflict } from '../../shared/domain/payment-conflict.ts';
 import type { PaymentExecutionProvenance } from '../../shared/domain/payment-provenance.ts';
 import { PaymentRejected, paymentRejected } from '../../shared/domain/payment-rejected.ts';
-import { PaymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
+import { PaymentUnavailable, paymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
 import { OutboxPayloadSchema as OperationRecoveryRequestedSchema } from '../../shared/outbox/payment-core-operation-recovery-requested-v1.ts';
 import { planPaymentRecovery, PaymentRecoveryPlan } from '../domain/evidence-recovery.ts';
 import type { PaymentRecoveryPlanCase } from '../domain/evidence-recovery.ts';
@@ -31,6 +34,11 @@ import { paymentAggregatePersistenceForTransaction } from '../persistence/paymen
 import { paymentEvidencePersistenceForTransaction } from '../persistence/payment-evidence-persistence.ts';
 import type { PaymentEvidenceActionServices } from '../persistence/payment-evidence-persistence.ts';
 import type { PaymentOperationRecord } from '../persistence/payment-aggregate-persistence.ts';
+import {
+  pspBindingRouteReaderForTransaction,
+  routeScopeNamesBindingRoute,
+} from '../persistence/psp-binding-route-persistence.ts';
+import type { PspBindingRouteReader } from '../persistence/psp-binding-route-persistence.ts';
 import type { PaymentOwnerScope } from '../ports/owner-evidence-unavailable.ts';
 import { PaymentProviderReplayEvidencePort } from '../ports/provider-replay-evidence-port.ts';
 import type { PaymentProviderReplayEvidenceReader } from '../ports/provider-replay-evidence-port.ts';
@@ -39,6 +47,20 @@ import { createRequestPaymentOperationRecoveryPaymentCoreOperationRecoveryReques
 
 const MODULE_KEY = 'payment.core' as const;
 const RECOVERY_REQUESTED = 'payment.core.operation-recovery-requested.v1' as const;
+const RECONCILIATION_WORKLOAD = 'payment.provider-reconciliation' as const;
+
+/**
+ * A route-scoped recovery request whose route does not authorize it (#1153, AUTHORIZATION.md:127): the caller
+ * is not the admitted reconciliation workload, or the operation was not dispatched through the signed route's
+ * binding. Nothing was written. A request without a route scope never meets this refusal.
+ */
+export class PaymentRouteScopeRefused extends Schema.TaggedError<PaymentRouteScopeRefused>()(
+  'PaymentRouteScopeRefused',
+  { code: Schema.Literal('payment_route_scope_refused'), reason: Schema.String },
+) {}
+
+const routeScopeRefused = (reason: string) =>
+  new PaymentRouteScopeRefused({ code: 'payment_route_scope_refused', reason });
 
 const domainEvents = { [RECOVERY_REQUESTED]: OperationRecoveryRequestedSchema } as const;
 
@@ -47,10 +69,14 @@ const RequestPaymentOperationRecoveryErrorSchema = Schema.Union([
   PaymentConflict,
   PaymentUnavailable,
   PaymentEvidenceRejected,
+  PaymentRouteScopeRefused,
 ]);
 
 interface RecoveryServices extends PaymentEvidenceActionServices {
+  /** Whether Core admitted this invocation through the reconciliation workload carrier (read only when routed). */
+  readonly readReconciliationAdmission: () => Effect.Effect<boolean, PaymentUnavailable>;
   readonly replayEvidence: PaymentProviderReplayEvidenceReader;
+  readonly routes: PspBindingRouteReader;
   readonly scope: PaymentOwnerScope;
 }
 
@@ -77,7 +103,14 @@ const paymentEvidenceServices = Effect.fn('RequestPaymentOperationRecoveryAction
   return {
     aggregate: paymentAggregatePersistenceForTransaction(transaction),
     evidence: paymentEvidencePersistenceForTransaction(transaction),
+    readReconciliationAdmission: () =>
+      readScopedAdmittedWorkload(transaction, scope, RECONCILIATION_WORKLOAD).pipe(
+        Effect.mapError((cause) =>
+          paymentUnavailable('The admitted workload of this invocation cannot be read', cause),
+        ),
+      ),
     replayEvidence: (yield* PaymentProviderReplayEvidencePort)(transaction, scope),
+    routes: pspBindingRouteReaderForTransaction(transaction),
     scope: { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId },
   } satisfies RecoveryServices;
 });
@@ -113,6 +146,49 @@ const readProviderGuarantee = (
     );
 };
 
+/** A route-scoped caller must be the admitted reconciliation workload; checked before the Payment is read. */
+const requireRoutedReconciliationWorkload = (services: RecoveryServices) =>
+  services
+    .readReconciliationAdmission()
+    .pipe(
+      Effect.flatMap((admitted) =>
+        admitted
+          ? Effect.void
+          : Effect.fail(routeScopeRefused('A routed recovery request must come from the reconciliation workload')),
+      ),
+    );
+
+/**
+ * The operation must have been dispatched through exactly the binding the signed route names, in this Tenant
+ * and Selling Legal Entity: a route of one binding never recovers another merchant's operation.
+ */
+const requireOperationOfRoute = (
+  proof: RegisteredGatewayRouteScope,
+  operation: PaymentOperationRecord,
+  services: RecoveryServices,
+) => {
+  const { binding } = operation;
+  if (!Schema.is(PaymentGatewayAccountBindingSchema)(binding)) {
+    return Effect.fail(routeScopeRefused('The operation was not dispatched through a gateway binding route'));
+  }
+  return services.routes
+    .readRouteOfBinding(proof.sourceRouteId)
+    .pipe(
+      Effect.flatMap((route) =>
+        Option.exists(
+          route,
+          (candidate) =>
+            routeScopeNamesBindingRoute(proof, candidate, services.scope) &&
+            candidate.providerFamily === binding.providerFamily &&
+            candidate.environment === binding.environment &&
+            candidate.providerAccountRef === binding.providerAccountRef,
+        )
+          ? Effect.void
+          : Effect.fail(routeScopeRefused('The operation was not dispatched through the binding of this route')),
+      ),
+    );
+};
+
 const requireOperation = (operations: readonly PaymentOperationRecord[], operationId: string) => {
   const operation = operations.find((candidate) => candidate.operationId === operationId);
   return operation === undefined
@@ -145,9 +221,18 @@ export const handleRequestPaymentOperationRecovery = Effect.fn('RequestPaymentOp
   ) {
     const { aggregate, evidence, scope } = context.services;
     const provenance = provenanceOf(context);
+    // #1153 / AUTHORIZATION.md:127: a route-scoped invocation is rechecked against its route; a person's
+    // request carries no route scope and is unchanged.
+    const proof = readVerifiedGatewayRouteScope(context.scope);
+    if (proof !== undefined) {
+      yield* requireRoutedReconciliationWorkload(context.services);
+    }
     const current = yield* aggregate.loadAggregate(payload.paymentId, { lock: true });
     yield* recordPaymentAggregateReads(context, [current.payment.paymentId]);
     const operation = yield* requireOperation(current.operations, payload.operationId);
+    if (proof !== undefined) {
+      yield* requireOperationOfRoute(proof, operation, context.services);
+    }
     const guarantee = Option.getOrUndefined(yield* readProviderGuarantee(operation, payload, context.services));
     const now = yield* DateTime.now;
     const plan = yield* requireExecutablePlan(

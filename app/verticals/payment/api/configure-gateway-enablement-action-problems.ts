@@ -29,13 +29,7 @@ type ProblemOf<Tag extends ConfigureGatewayEnablementActionProblem['_tag']> = Ex
 type DomainProblemIdentity =
   | { readonly code: 'gateway_enablement_revision_conflict'; readonly kind: 'conflict' }
   | { readonly code: 'gateway_binding_not_current'; readonly kind: 'ineligible' }
-  | {
-      readonly code:
-        | 'gateway_binding_not_found'
-        | 'gateway_payer_contact_source_missing'
-        | 'gateway_source_authority_missing';
-      readonly kind: 'notFound';
-    }
+  | { readonly code: 'gateway_binding_not_found' | 'gateway_source_authority_missing'; readonly kind: 'notFound' }
   | { readonly code: 'payment_unavailable'; readonly kind: 'unavailable' };
 
 const problemStatus = {
@@ -56,7 +50,6 @@ const gatewayEnablementRejectedProblemByCode = {
   gateway_binding_not_current: { code: 'gateway_binding_not_current', kind: 'ineligible' },
   gateway_binding_not_found: { code: 'gateway_binding_not_found', kind: 'notFound' },
   gateway_enablement_revision_conflict: { code: 'gateway_enablement_revision_conflict', kind: 'conflict' },
-  gateway_payer_contact_source_missing: { code: 'gateway_payer_contact_source_missing', kind: 'notFound' },
   gateway_source_authority_missing: { code: 'gateway_source_authority_missing', kind: 'notFound' },
 } as const satisfies Record<
   Extract<DomainError, { readonly _tag: 'GatewayEnablementRejected' }>['code'],

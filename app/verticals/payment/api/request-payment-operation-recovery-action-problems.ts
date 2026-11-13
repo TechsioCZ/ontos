@@ -239,6 +239,9 @@ const mapDomainProblem = (error: DomainError): RequestPaymentOperationRecoveryAc
       PaymentConflict: (failure) => mapDomainIdentity(paymentConflictProblemByCode[failure.code]),
       PaymentEvidenceRejected: (failure) => mapDomainIdentity(paymentEvidenceRejectedProblemByCode[failure.code]),
       PaymentRejected: (failure) => mapDomainIdentity(paymentRejectedProblemByCode[failure.code]),
+      // #1153: a route-scoped A10 that its route does not authorize is refused like any other denied context.
+      PaymentRouteScopeRefused: () =>
+        requestPaymentOperationRecoveryActionProblem.forbidden('operation_context_denied'),
       PaymentUnavailable: () => requestPaymentOperationRecoveryActionProblem.unavailable('payment_unavailable'),
     }),
     Match.exhaustive,

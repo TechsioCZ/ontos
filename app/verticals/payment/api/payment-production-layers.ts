@@ -1,5 +1,6 @@
 import { Layer } from 'effect';
 
+import { PaymentNotificationRoutesLive } from '../src/config/payment-notification-route-config.ts';
 import { governedPaymentTermEvidenceLive } from '../src/integrations/payment-term-evidence.ts';
 import { gatewayBindingServiceForTransaction } from '../src/integrations/psp/gateway-binding-live.ts';
 import { CommitmentOutcomePort, unavailableCommitmentOutcome } from '../src/ports/commitment-outcome-port.ts';
@@ -19,8 +20,14 @@ export const paymentDeferredOwnerPortsLive = Layer.mergeAll(
 /** Payment's own Current Gateway Enablement, read in the Core-scoped transaction of each Action or Read. */
 export const paymentGatewayBindingLive = Layer.succeed(GatewayBindingPort, gatewayBindingServiceForTransaction);
 
+/**
+ * Every owner port of the production composition. Payment-issued binding notification routes (#1157, N11) read
+ * the public origin when a binding is created, never while this layer builds, so a missing
+ * `ONTOS_PAYMENT_NOTIFICATION_BASE_URL` refuses only binding creation.
+ */
 export const paymentProductionOwnerPortsLive = Layer.mergeAll(
   paymentDeferredOwnerPortsLive,
   paymentGatewayBindingLive,
   governedPaymentTermEvidenceLive,
+  PaymentNotificationRoutesLive,
 );

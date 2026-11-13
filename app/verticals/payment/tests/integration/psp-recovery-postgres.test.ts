@@ -14,7 +14,6 @@ import type { PaymentGatewayAccountBinding } from '../../shared/domain/payment-e
 import type { PaymentGatewayProviderFamilySchema } from '../../shared/domain/payment-vocabulary.ts';
 import {
   GatewayCredentialSecretRefSchema,
-  GatewayHttpsUrlSchema,
   GatewayMerchantIdentitySchema,
   GatewayProviderAccountBindingIdSchema,
   GatewayProviderAccountRefSchema,
@@ -52,6 +51,7 @@ import {
 } from '../../src/integrations/psp/psp-result.ts';
 import type { ProviderFindingResult } from '../../src/integrations/psp/psp-result.ts';
 import { pspBindingPersistenceForTransaction } from '../../src/persistence/psp-binding-persistence.ts';
+import { testNotificationRouteOf } from '../support/route-scope.fixture.ts';
 import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import {
   COMPOSITION_REVISION,
@@ -725,10 +725,9 @@ it.live('#1156 Lookup through the original binding after a binding is retired fo
         [provenanceFor(fixture.scope), provenanceFor(fixture.scope)],
         { concurrency: 1 },
       );
-      const [merchantIdentity, notificationUrl, secretRef] = yield* Effect.all(
+      const [merchantIdentity, secretRef] = yield* Effect.all(
         [
           Schema.decodeUnknownEffect(GatewayMerchantIdentitySchema)(MERCHANT_IDENTITIES.GOPAY),
-          Schema.decodeUnknownEffect(GatewayHttpsUrlSchema)(NOTIFICATION_URL),
           Schema.decodeUnknownEffect(GatewayCredentialSecretRefSchema)('sandbox-credential-2'),
         ],
         { concurrency: 1 },
@@ -739,10 +738,10 @@ it.live('#1156 Lookup through the original binding after a binding is retired fo
             pspBindingPersistenceForTransaction(scoped).createBinding({
               environment: 'SANDBOX',
               merchantIdentity,
-              notificationUrl,
               provenance: replaceProvenance,
               reason: 'Replace the gateway account for new payments',
               replaces: Option.some({ expectedRevision: 1, providerAccountRef: fixture.accountRef }),
+              route: testNotificationRouteOf(fixture.scope.tenantId, 'GOPAY'),
               secretRef: Schema.decodeUnknownSync(GatewayCredentialSecretRefSchema)('sandbox-credential-new'),
             }),
           ),

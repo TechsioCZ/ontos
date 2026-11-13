@@ -161,6 +161,8 @@ const setup = Effect.fn('RecoveryOverdue.setup')(function* setup() {
           amount: { amountMinor, currency: 'CZK' as const },
           method: 'ONLINE_GATEWAY' as const,
           operationKey,
+          // The GoPay binding needs the payer's email (plan D-P3).
+          payerContact: { email: 'payer@example.test' },
           paymentId,
         },
         principal,

@@ -42,7 +42,6 @@ export const ConfigureGatewayEnablementActionNotFoundProblemSchema = makeProblem
     code: Schema.Literals([
       'action_invocation_not_found',
       'gateway_binding_not_found',
-      'gateway_payer_contact_source_missing',
       'gateway_source_authority_missing',
     ]),
   },

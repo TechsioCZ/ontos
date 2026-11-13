@@ -29,7 +29,9 @@ import type {
   GatewayProviderAccountRef,
 } from '../../shared/domain/psp-configuration.ts';
 import type { GatewayEnvironment } from '../../shared/domain/psp-vocabulary.ts';
+import type { PaymentNotificationRoute } from '../config/payment-notification-route-config.ts';
 import {
+  pspBindingRoutes,
   pspCredentialRevisions,
   pspProviderAccountBindingRevisions,
   pspProviderAccountBindings,
@@ -62,7 +64,6 @@ export interface ProviderAccountBindingTargetRecord {
 export interface CreateProviderAccountBindingInput {
   readonly environment: GatewayEnvironment;
   readonly merchantIdentity: GatewayMerchantIdentity;
-  readonly notificationUrl: GatewayHttpsUrl;
   readonly provenance: PaymentExecutionProvenance;
   readonly reason: string;
   /** The Current binding to retire for new intents; required exactly when one exists. */
@@ -70,6 +71,8 @@ export interface CreateProviderAccountBindingInput {
     readonly expectedRevision: number;
     readonly providerAccountRef: GatewayProviderAccountRef;
   }>;
+  /** The Payment-issued notification route of the new binding; stored with it in this transaction. */
+  readonly route: PaymentNotificationRoute;
   readonly secretRef: GatewayCredentialSecretRef;
 }
 
@@ -352,6 +355,29 @@ export const pspBindingPersistenceForTransaction = (transaction: ScopedTransacti
   });
 
   /**
+   * The binding's one notification route (#1157, D-P4), written once in the binding's own transaction. The
+   * database refuses a second route of the binding, a family or environment other than the binding's, and any
+   * later change.
+   */
+  const insertRoute = Effect.fn('PspBindingPersistence.insertRoute')(function* insertRoute(
+    binding: BindingRow,
+    route: PaymentNotificationRoute,
+  ) {
+    yield* transaction
+      .insert(pspBindingRoutes)
+      .values({
+        bindingId: binding.bindingId,
+        environment: binding.environment,
+        legalEntityId: binding.legalEntityId,
+        providerFamily: binding.providerFamily,
+        routeKey: route.routeKey,
+        routeRevision: 1,
+        tenantId: binding.tenantId,
+      })
+      .pipe(Effect.mapError(writeFailure));
+  });
+
+  /**
    * Inserts the new Current binding with a fresh `pab_` ref and its credential revision 1. A concurrent Current
    * binding of the same family and environment makes the insert a no-op (partial unique key), reported as a
    * conflict; nothing is written then.
@@ -378,7 +404,7 @@ export const pspBindingPersistenceForTransaction = (transaction: ScopedTransacti
         environment: input.environment,
         legalEntityId: scope.legalEntityId,
         merchantIdentity,
-        notificationUrl: input.notificationUrl,
+        notificationUrl: input.route.notificationUrl,
         providerAccountRef: sql`'pab_' || replace(gen_random_uuid()::text, '-', '')`,
         providerFamily: input.merchantIdentity._tag,
         reason: input.reason,
@@ -396,6 +422,7 @@ export const pspBindingPersistenceForTransaction = (transaction: ScopedTransacti
       );
     }
     yield* appendBindingRevision(row);
+    yield* insertRoute(row, input.route);
     const credential = yield* insertCredential(row, {
       provenance: input.provenance,
       recordedAt: configuredAt,
