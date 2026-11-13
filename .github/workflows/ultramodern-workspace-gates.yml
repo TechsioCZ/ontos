@@ -393,8 +393,9 @@ jobs:
             if: ${{ !cancelled() && steps.install.outcome == 'success' }}
             working-directory: app
             env:
-              # The whole-workspace prover peaks at about 5.3 GiB, above V8's ~4 GiB default heap.
-              NODE_OPTIONS: --max-old-space-size=8192
+              # The whole-workspace prover peaks at about 5.7 GiB footprint (5.2 GiB resident) and ran out of
+              # memory under an 8 GiB heap limit, so it gets 10 GiB.
+              NODE_OPTIONS: --max-old-space-size=10240
             run: mise exec -- pnpm database-access:check
 
           - name: Lean Core Dependencies

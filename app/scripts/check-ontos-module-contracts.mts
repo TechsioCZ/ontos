@@ -122,7 +122,9 @@ const walkSourceFiles = (directory: string): Effect.Effect<readonly string[], Pl
     const files = yield* Effect.all(
       entries.map((entry) =>
         Effect.gen(function* inspectSourceEntry() {
-          if (entry === 'node_modules' || entry.startsWith('dist')) {
+          // Build output is not authored source: `.output` holds each unit's bundled server build
+          // (~400 MiB of minified JS on a built tree), and parsing it exhausted an 8 GiB heap.
+          if (entry === 'node_modules' || entry === '.output' || entry.startsWith('dist')) {
             return [];
           }
           const target = path.join(directory, entry);
