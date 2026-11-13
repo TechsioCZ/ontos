@@ -165,7 +165,10 @@ const harness = (options: RunOptions = {}) => {
     ...authority.port,
     readScope: (query) => {
       scopes.push(query);
-      const foreign = query.legalEntityId !== undefined && options.foreignCompanies?.includes(query.legalEntityId);
+      // As the loader answers: a company the tenant does not own resolves no scope, whether the request selects it or
+      // names it in the tenant context.
+      const named = query.legalEntityId ?? query.checkedCompany;
+      const foreign = named !== undefined && options.foreignCompanies?.includes(named);
       return options.scopeMissing === true || foreign === true
         ? Effect.succeed(Option.none())
         : authority.port.readScope(query);
@@ -550,8 +553,9 @@ it.effect('decides an admin capability in its declared scope: tenant context whe
     );
     expect(decision.outcome).toBe('ALLOWED');
     // The named company is first checked to be the tenant's (no holder), then the decision reads the tenant context.
-    expect(scopes[0]).toMatchObject({ holders: [], legalEntityId });
-    expect(scopes.at(-1)?.legalEntityId).toBeUndefined();
+    // The named company is checked by the tenant scope read itself: no read of its own, no holder-less read.
+    expect(scopes.every((query) => query.legalEntityId === undefined && query.holders.length > 0)).toBe(true);
+    expect(scopes[0]).toMatchObject({ checkedCompany: legalEntityId });
   }),
 );
 

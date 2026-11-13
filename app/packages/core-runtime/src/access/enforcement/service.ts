@@ -223,13 +223,15 @@ const scopeQueryOf = (
   scope: OperationalScope,
   legalEntityId: LegalEntityId | undefined,
   holders: readonly Holder[],
+  checkedCompany?: LegalEntityId,
 ) => {
-  const base = { holders, tenantId: TenantIdSchema.make(scope.tenantId) };
+  const base = withOptional(
+    { holders, tenantId: TenantIdSchema.make(scope.tenantId) },
+    'checkedCompany',
+    checkedCompany,
+  );
   return legalEntityId === undefined ? base : { ...base, legalEntityId };
 };
-
-/** A company-ownership read proves no one's membership: it only asks whether the company is the tenant's. */
-const NO_HOLDERS: readonly Holder[] = Object.freeze([]);
 
 /** A person's scope read proves the person's own membership. */
 const memberHoldersOf = (actor: EvidenceSubject): readonly Holder[] => [holderOf(actor)];
@@ -726,7 +728,12 @@ const sharedPreambleReads = (ports: AccessDecisionPorts): AccessDecisionPorts =>
         ...port,
         readScope: sharedPerKey(
           (query: Parameters<typeof port.readScope>[0]) =>
-            [query.tenantId, query.legalEntityId ?? '', ...query.holders.map(holderIdOf)].join('\u0000'),
+            [
+              query.tenantId,
+              query.legalEntityId ?? '',
+              query.checkedCompany ?? '',
+              ...query.holders.map(holderIdOf),
+            ].join('\u0000'),
           (query) => port.readScope(query),
         ),
       };
@@ -753,20 +760,15 @@ export const makeAccessDecisionService = (
     holders: readonly Holder[],
     checkedCompany?: LegalEntityId,
   ) {
-    if (legalEntityId === undefined && checkedCompany !== undefined) {
-      // A tenant-context request that names a company: the company must be one of the asked tenant's, or the
-      // request pairs a tenant with a company it does not own and is refused, never decided (fail closed).
-      const company = yield* Effect.option(
-        ports.authorityFor(scope).readScope(scopeQueryOf(scope, checkedCompany, NO_HOLDERS)),
-      );
-      if (Option.isNone(company)) {
-        return { decision: seamUnavailable(IDENTITY_UNAVAILABLE) };
-      }
-      if (Option.isNone(company.value)) {
-        return { decision: seamRefusal('deny.scope_mismatch') };
-      }
-    }
-    const read = yield* Effect.option(ports.authorityFor(scope).readScope(scopeQueryOf(scope, legalEntityId, holders)));
+    // A tenant-context request that names a company resolves only when the company is the asked tenant's own: the same
+    // scope read answers it, so the check costs no statement and no transaction of its own (O66, O88).
+    const read = yield* Effect.option(
+      ports
+        .authorityFor(scope)
+        .readScope(
+          scopeQueryOf(scope, legalEntityId, holders, legalEntityId === undefined ? checkedCompany : undefined),
+        ),
+    );
     if (Option.isNone(read)) {
       return { decision: seamUnavailable(IDENTITY_UNAVAILABLE) };
     }
