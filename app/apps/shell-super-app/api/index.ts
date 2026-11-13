@@ -302,6 +302,7 @@ import { peopleAdministrationCapability } from './auth/demo-accounts.ts';
 import { rebrandRentalDemoAccounts } from './auth/rental-demo-brand-runtime-infrastructure.ts';
 import { listAgentEntities, manageAgentEntity } from './auth/agent-entities.ts';
 import { IdentityLifecycle, IdentityLifecycleLive } from './auth/identity-lifecycle.ts';
+import { ManagedApiKeyTargetEligibilityLive } from '@app/core-runtime/auth/managed-api-key-eligibility';
 import type { IdentityLifecycleError } from './auth/identity-lifecycle.ts';
 import {
   SupportImpersonationCorrelationId,
@@ -3829,7 +3830,14 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.provide(databaseIdentitiesLive),
   );
   const identityLifecycleLayer = IdentityLifecycleLive.pipe(
-    Layer.provide(Layer.mergeAll(actionRuntimeLayer, runtimeApiKeyServiceLive, runtimePrincipalResolverLive)),
+    Layer.provide(
+      Layer.mergeAll(
+        actionRuntimeLayer,
+        runtimeApiKeyServiceLive,
+        runtimePrincipalResolverLive,
+        ManagedApiKeyTargetEligibilityLive.pipe(Layer.provide(runtimeCorePersistenceLive)),
+      ),
+    ),
   );
   const shellGovernedReadsLayer = Layer.unwrap(
     GatewayIssuer.pipe(

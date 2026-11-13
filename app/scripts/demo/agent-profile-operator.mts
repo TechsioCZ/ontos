@@ -35,6 +35,7 @@ import {
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { AccessPeopleDirectoryLive } from '@app/core-runtime/access/intent/people-directory';
 import { CoreAdminDatabaseLive, CoreDatabase } from '@app/core-runtime/db/client';
+import { ManagedApiKeyTargetEligibilityLive } from '@app/core-runtime/auth/managed-api-key-eligibility';
 import { OAuthFlowLive } from '../../apps/shell-super-app/api/auth/db/oauth-flow-live.ts';
 import { OAuthCredentialsLive } from '../../apps/shell-super-app/api/auth/db/oauth-credentials-live.ts';
 import { OAuthEndpointGuardDataLive } from '../../apps/shell-super-app/api/oauth-connections/grant-store.ts';
@@ -176,7 +177,16 @@ const operatorIdentities = AccessPeopleDirectoryLive.pipe(
   Layer.provide(Layer.merge(persistence, databaseIdentitiesLive)),
 );
 const apiKeys = ApiKeyServiceLive.pipe(Layer.provide(authDatabase), Layer.provide(NodeCrypto.layer));
-const identityLifecycle = IdentityLifecycleLive.pipe(Layer.provide(Layer.mergeAll(actionRuntime, apiKeys, resolver)));
+const identityLifecycle = IdentityLifecycleLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      actionRuntime,
+      apiKeys,
+      resolver,
+      ManagedApiKeyTargetEligibilityLive.pipe(Layer.provide(persistence)),
+    ),
+  ),
+);
 export const AgentProfileOperatorLive = Layer.mergeAll(
   seedWriter,
   // Core revalidates the staff namespace when Actions run, not only while the authentication service is built.

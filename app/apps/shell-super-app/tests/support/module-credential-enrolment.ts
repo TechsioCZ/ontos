@@ -10,6 +10,7 @@ import {
   ModuleCredentialHostIdSchema,
 } from '../../api/auth/module-credential-attestation.ts';
 import { PlatformWorkloadKeyAdmission } from '../../api/auth/platform-workload-key-admission.ts';
+import { delegationForbidden } from '../../api/auth/gateway-delegation-errors.ts';
 
 /** What a test credential's issuing host attested: the module build and the release revision. */
 export interface TestModuleCredentialRelease {
@@ -71,3 +72,8 @@ export const unreadableModuleCredentialEnrolment: Layer.Layer<ModuleCredentialEn
 
 /** No principal these tests use is a module's internal workload: every key passes the platform workload check. */
 export const noInternalWorkloadPrincipals = Layer.succeed(PlatformWorkloadKeyAdmission, { admit: () => Effect.void });
+
+/** Every principal these tests use is a module's internal workload whose key the platform did not issue. */
+export const refusingInternalWorkloadKeys = Layer.succeed(PlatformWorkloadKeyAdmission, {
+  admit: () => Effect.fail(delegationForbidden('workload_key_not_platform_issued')()),
+});
