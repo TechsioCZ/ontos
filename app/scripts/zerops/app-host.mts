@@ -25,6 +25,17 @@ import {
   requestPathOnly,
 } from './host-refusal-log.mts';
 import type { HostRefusalLog } from './host-refusal-log.mts';
+import {
+  APP_SERVICE_HOSTNAME,
+  DRAIN_FORWARDED_HEADER,
+  DRAIN_FORWARD_CONNECT_TIMEOUT,
+  DRAIN_FORWARD_HEADERS_TIMEOUT,
+  SUPERSEDED_DRAIN,
+  drainSupersededHost,
+  makeSupersedeDrain,
+  platformDrainPeers,
+} from './supersede-drain.mts';
+import type { DrainPeer, SupersedeDrain } from './supersede-drain.mts';
 import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
 import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
 import {
@@ -69,7 +80,7 @@ import path from 'node:path';
 
 import { NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { fromReadable, toReadable } from '@effect/platform-node/NodeStream';
-import { request as requestLoopback } from '@effect/platform-node/Undici';
+import { Agent, request as requestLoopback } from '@effect/platform-node/Undici';
 import { sql } from 'drizzle-orm';
 import {
   Array as EffectArray,
@@ -79,6 +90,7 @@ import {
   Context,
   Console,
   DateTime,
+  Deferred,
   Duration,
   Effect,
   Exit,
@@ -89,6 +101,7 @@ import {
   Redacted,
   Queue,
   Ref,
+  Result,
   Schedule,
   Schema,
   Scope,
@@ -1014,21 +1027,48 @@ export const relayResponseHeaders = (
   return headers;
 };
 
-/** Relays one request byte-for-byte to a loopback owner; its compressed body and every header pass unchanged. */
+/** Where one relayed request goes: a loopback unit, or (while this host drains) a peer app container. */
+interface RelayTarget {
+  readonly dispatcher?: Agent;
+  /** Headers the target receives in addition to the request's own end-to-end headers. */
+  readonly extraHeaders?: Readonly<Record<string, string>>;
+  readonly headersTimeout: Duration.Duration;
+  readonly origin: string;
+  readonly path: string;
+}
+
+/**
+ * When a relayed response must stop before its unit ends it. `end` completes it cleanly (an event stream: its client
+ * reconnects); `cut` fails it, so the connection drops instead of a truncated body passing as complete.
+ */
+interface RelayCutoff {
+  readonly cut?: Effect.Effect<unknown>;
+  readonly end?: Effect.Effect<unknown>;
+}
+
+const isEventStream = (headers: Readonly<Record<string, string | readonly string[] | undefined>>) =>
+  String(headers['content-type'] ?? '').startsWith('text/event-stream');
+
+/**
+ * Relays one request byte-for-byte; its body streams (never buffered), its compressed response and every end-to-end
+ * header pass unchanged. Hop-by-hop headers and the drain marker never pass: a client cannot hand a unit or a peer
+ * the marker, and an upgrade request reaches the target as a plain request, which it answers.
+ */
 const relay = Effect.fn('AppHost.relay')(function* relay(
   request: HttpServerRequest.HttpServerRequest,
-  port: number,
-  pathname: string,
+  target: RelayTarget,
   reportCut: (problem: RelayFailure) => Effect.Effect<void>,
+  cutoffOf: (eventStream: boolean) => RelayCutoff,
 ) {
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(request.headers)) {
-    if (!HOP_BY_HOP.has(name)) {
+    if (!HOP_BY_HOP.has(name) && name !== DRAIN_FORWARDED_HEADER) {
       headers[name] = value;
     }
   }
   headers['x-forwarded-host'] ??= request.headers.host ?? '';
   headers['x-forwarded-proto'] ??= 'https';
+  Object.assign(headers, target.extraHeaders);
   const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
   const body = hasBody
     ? yield* toReadable(request.stream.pipe(Stream.mapError(() => failure('relay request body'))))
@@ -1036,11 +1076,12 @@ const relay = Effect.fn('AppHost.relay')(function* relay(
   const response = yield* Effect.tryPromise({
     catch: (cause) => new RelayFailure({ code: relayFailureCode(decodeRelayCause(cause)), stage: 'request' }),
     try: (signal): PromiseLike<Awaited<ReturnType<typeof requestLoopback>>> =>
-      requestLoopback(`${loopbackOrigin(port)}${pathname}`, {
+      requestLoopback(`${target.origin}${target.path}`, {
         body,
         bodyTimeout: 0,
+        dispatcher: target.dispatcher,
         headers,
-        headersTimeout: Duration.toMillis(RELAY_HEADERS_TIMEOUT),
+        headersTimeout: Duration.toMillis(target.headersTimeout),
         method: request.method,
         signal,
       }),
@@ -1051,14 +1092,23 @@ const relay = Effect.fn('AppHost.relay')(function* relay(
     response.body.resume();
     return HttpServerResponse.empty({ headers: responseHeaders, status: response.statusCode });
   }
+  const cutoff = cutoffOf(isEventStream(response.headers));
+  const cutProblem = new RelayFailure({ code: 'DRAIN_ENDED', stage: 'response body' });
   // The status and headers are sent by then: a unit that fails its body cuts the response, and that is logged.
-  return HttpServerResponse.stream(
-    fromReadable<Uint8Array, RelayFailure>({
-      evaluate: () => response.body,
-      onError: (cause) => new RelayFailure({ code: relayFailureCode(decodeRelayCause(cause)), stage: 'response body' }),
-    }).pipe(Stream.tapError(reportCut)),
-    { headers: responseHeaders, status: response.statusCode },
-  );
+  let body$ = fromReadable<Uint8Array, RelayFailure>({
+    evaluate: () => response.body,
+    onError: (cause) => new RelayFailure({ code: relayFailureCode(decodeRelayCause(cause)), stage: 'response body' }),
+  });
+  if (cutoff.end !== undefined) {
+    body$ = body$.pipe(Stream.interruptWhen(cutoff.end));
+  }
+  if (cutoff.cut !== undefined) {
+    body$ = body$.pipe(Stream.interruptWhen(cutoff.cut.pipe(Effect.andThen(Effect.fail(cutProblem)))));
+  }
+  return HttpServerResponse.stream(body$.pipe(Stream.tapError(reportCut)), {
+    headers: responseHeaders,
+    status: response.statusCode,
+  });
 });
 
 const isLoopbackPeer = (request: HttpServerRequest.HttpServerRequest) =>
@@ -1165,14 +1215,109 @@ const routedUnit = (url: string) => {
   return separator === -1 ? rest : rest.slice(0, separator);
 };
 
+/** The answer a caller already retries: 503 on a fresh connection (which can reach another container). */
+const retryableUnavailable = () =>
+  HttpServerResponse.text('Service temporarily unavailable\n', {
+    headers: { 'cache-control': 'no-store', connection: 'close', 'retry-after': '1' },
+    status: 503,
+  });
+
+/** A request's origin-form target: the path and query only; a host in an absolute-form URL never chooses anything. */
+const originForm = (url: string) => {
+  const parsed = new URL(url, 'https://drain.invalid');
+  return `${parsed.pathname}${parsed.search}`;
+};
+
+const hostLiteral = (address: string) => (address.includes(':') ? `[${address}]` : address);
+const peerOrigin = ({ address, port }: DrainPeer) => `http://${hostLiteral(address)}:${String(port)}`;
+
+/**
+ * While this host drains, it serves nothing itself: every public request goes to a peer app container of the same
+ * service, unchanged but for the drain marker, so every cookie, token and gateway check runs there exactly as for a
+ * direct request. A request that already carries the marker came from another draining host (two deploys in a row)
+ * and is not relayed again. A request without a body may try the next peer when one cannot be reached; a body
+ * streams to one peer only. Every failure answers the retryable 503 and is logged.
+ */
+const forwardDuringDrain = Effect.fn('AppHost.forwardDuringDrain')(function* forwardDuringDrain(
+  request: HttpServerRequest.HttpServerRequest,
+  peers: readonly DrainPeer[],
+  drain: SupersedeDrain,
+  refusals: HostRefusalLog,
+  dispatcher: Agent,
+) {
+  const started = yield* Clock.currentTimeMillis;
+  const refuse = (cause: string, peer: string) =>
+    Clock.currentTimeMillis.pipe(
+      Effect.flatMap((now) =>
+        refusals.record({
+          fields: {
+            cause,
+            elapsedMs: now - started,
+            method: request.method,
+            path: requestPathOnly(request.url),
+            peer,
+            status: 503,
+          },
+          key: 'drain-forward',
+          what: 'drain relay failed',
+        }),
+      ),
+      Effect.as(retryableUnavailable()),
+    );
+  if (request.headers[DRAIN_FORWARDED_HEADER] !== undefined) {
+    yield* drain.count('looped');
+    return yield* refuse('ALREADY_RELAYED', 'none');
+  }
+  const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
+  const candidates = hasBody ? peers.slice(0, 1) : peers;
+  let last = new RelayFailure({ code: 'NO_PEER', stage: 'request' });
+  let lastPeer = 'none';
+  for (const peer of candidates) {
+    const target = peerOrigin(peer);
+    const answer = yield* relay(
+      request,
+      {
+        dispatcher,
+        extraHeaders: { [DRAIN_FORWARDED_HEADER]: '1' },
+        headersTimeout: DRAIN_FORWARD_HEADERS_TIMEOUT,
+        origin: target,
+        path: originForm(request.url),
+      },
+      (problem) => refuse(problem.code, target).pipe(Effect.asVoid),
+      (eventStream) => {
+        const ended = Deferred.await(drain.ended);
+        return eventStream ? { end: ended } : { cut: ended };
+      },
+    ).pipe(Effect.result);
+    if (Result.isSuccess(answer)) {
+      yield* drain.count('forwarded');
+      return answer.success;
+    }
+    last = answer.failure;
+    lastPeer = target;
+  }
+  yield* drain.count('failed');
+  return yield* refuse(last.code, lastPeer);
+});
+
 export const hostApplication = <Failure, Requirements>(
   ports: ReadonlyMap<string, number>,
   published: Ref.Ref<boolean>,
   loadComposition: Effect.Effect<Option.Option<string>, Failure, Requirements>,
   refusals: HostRefusalLog = makeHostRefusalLog(),
-) =>
-  Effect.gen(function* routeHostRequest() {
+  drain: SupersedeDrain = makeSupersedeDrain(),
+) => {
+  const forwardDispatcher = new Agent({
+    bodyTimeout: 0,
+    connect: { timeout: Duration.toMillis(DRAIN_FORWARD_CONNECT_TIMEOUT) },
+    headersTimeout: Duration.toMillis(DRAIN_FORWARD_HEADERS_TIMEOUT),
+  });
+  return Effect.gen(function* routeHostRequest() {
     const request = yield* HttpServerRequest.HttpServerRequest;
+    const draining = yield* drain.peers;
+    if (Option.isSome(draining)) {
+      return yield* forwardDuringDrain(request, draining.value, drain, refusals, forwardDispatcher);
+    }
     const location = credentialSubmissionRedirect(new URL(request.url, 'https://host.invalid'), request.method);
     if (location !== undefined) {
       return HttpServerResponse.empty({
@@ -1227,12 +1372,19 @@ export const hostApplication = <Failure, Requirements>(
           }),
         ),
       );
-    return yield* relay(request, port, upstreamPath, (problem) => report(problem, 'cut')).pipe(
+    return yield* relay(
+      request,
+      { headersTimeout: RELAY_HEADERS_TIMEOUT, origin: loopbackOrigin(port), path: upstreamPath },
+      (problem) => report(problem, 'cut'),
+      // An event stream of this release ends once a newer one took over, so its browser reconnects to the new one.
+      (eventStream) => (eventStream ? { end: Deferred.await(drain.superseded) } : {}),
+    ).pipe(
       Effect.catchTag('RelayFailure', (problem) =>
         report(problem, 502).pipe(Effect.as(HttpServerResponse.text('Upstream unavailable\n', { status: 502 }))),
       ),
     );
   });
+};
 
 // ---------------------------------------------------------------------------------------------------------------
 // Composition
@@ -1404,25 +1556,35 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   // closes when a newer release takes the authority: from then on this host refuses every governed request.
   // One refusal log for the control and the public port; it writes the counts it held back every 10 seconds.
   const refusals = makeHostRefusalLog();
+  // Superseded, this host keeps its public port open as a relay to the new release (supersede-drain.mts).
+  const drain = makeSupersedeDrain();
   yield* refusals.flush.pipe(Effect.repeat(Schedule.spaced(HOST_REFUSAL_LOG_WINDOW)), Effect.forkScoped);
   yield* HttpServer.serveEffect(hostControlApplication(published, pointer.load, refusals));
   const publicScope = yield* Scope.make();
-  yield* Effect.addFinalizer(() => Scope.close(publicScope, Exit.void));
+  // Closing waits for in-flight requests (the server's graceful shutdown) and happens once, whoever asks first.
+  const closePublicPort = yield* Effect.cached(Scope.close(publicScope, Exit.void));
+  yield* Effect.addFinalizer(() => closePublicPort);
   const openPublicPort = NodeHttpServer.make(withKeepAlive(createServer), { host: '0.0.0.0', port: publicPort }).pipe(
     Effect.mapError(() => failure(`public port ${String(publicPort)} could not be opened`)),
-    Effect.flatMap((server) => server.serve(hostApplication(ports, published, pointer.load, refusals))),
+    Effect.flatMap((server) => server.serve(hostApplication(ports, published, pointer.load, refusals, drain))),
     Scope.provide(publicScope),
     Effect.andThen(Console.log(`[app-host] accepting application traffic on port ${String(publicPort)}`)),
   );
-  const closePublicPortWhenSuperseded = (ownRevision: string) =>
+  const drainWhenSuperseded = (ownRevision: string) =>
     awaitSupersedingRevision(
       ownRevision,
       readAuthority.pipe(Effect.map((rows) => Option.map(EffectArray.head(rows), ({ revision }) => revision))),
     ).pipe(
       Effect.flatMap((revision) =>
-        Console.log(`[app-host] superseded by composition ${revision}; closing public port ${String(publicPort)}`),
+        drainSupersededHost({
+          closePublicPort,
+          drain,
+          duration: SUPERSEDED_DRAIN,
+          peers: platformDrainPeers(APP_SERVICE_HOSTNAME, publicPort),
+          publicPort,
+          revision,
+        }),
       ),
-      Effect.andThen(Scope.close(publicScope, Exit.void)),
     );
 
   // Two processes serve every unit: the Shell alone (its SSR owns the Module Federation host runtime), and every
@@ -1451,6 +1613,18 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     startUnitProcess(ownerIds, runtime, ownersEnvironment.environment, memoryBytes, channel),
   );
   const exits = [yield* startUnitProcess([SHELL_ID], runtime, shellEnvironment.environment, memoryBytes), owners.exit];
+  // Registered after the units started, so it runs before they are stopped: on a stop signal (or any end) the
+  // public port first ends this release's event streams, lets in-flight requests finish and closes; then the
+  // units stop.
+  yield* Effect.addFinalizer(() =>
+    Console.log(
+      '[app-host] stopping: ending event streams, finishing in-flight requests, closing the public port',
+    ).pipe(
+      Effect.andThen(Deferred.succeed(drain.superseded, true)),
+      Effect.andThen(closePublicPort),
+      Effect.andThen(Console.log('[app-host] public port closed; stopping the units')),
+    ),
+  );
   const credentialHolders = yield* Ref.make<readonly Pick<CredentialHolder, 'handOver'>[]>([owners]);
   const replacedKeys = yield* makeReplacedKeyLedger;
   const heldCredentials = yield* Ref.make(noProvisionedCredentials(callers));
@@ -1600,11 +1774,11 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     yield* provisionForRelease(release);
     yield* verifyReleaseAccessIntent(releaseSnapshot);
     const revision = yield* publishSnapshot(releaseSnapshot);
-    // From this commit on the old release refuses every governed request and closes its public port, so this one
-    // serves internal callers and reports ready to the Zerops balancer at once.
+    // From this commit on Core refuses the old release's governed requests, and the old host relays its public
+    // traffic here until the balancer moved (supersede-drain.mts); this one serves at once and reports ready.
     yield* openPublicPort;
     yield* Ref.set(published, true);
-    yield* closePublicPortWhenSuperseded(revision).pipe(Effect.forkChild);
+    yield* drainWhenSuperseded(revision).pipe(Effect.forkChild);
     // Once in-flight delegated calls had time to finish, this host retires its own earlier boots' keys and, as it holds
     // the authority now, the credentials its release superseded. The provisioning program checks the authority row
     // itself: only while this release holds it, and only credentials bound before its revision took it.
@@ -1691,9 +1865,25 @@ export const ReleaseAccessIntentReaderLive = Layer.effect(
   ),
 );
 
+/**
+ * Ends when the platform stops this container (SIGTERM; SIGINT locally). Zerops stops the old container this way
+ * once traffic moved; racing it interrupts the host, so its finalizers run in order: the public port ends event
+ * streams, finishes in-flight requests and closes, then the units stop.
+ */
+const stopSignal = Effect.callback<string>((resume) => {
+  const stop = (signal: string) => resume(Effect.succeed(signal));
+  process.once('SIGTERM', stop);
+  process.once('SIGINT', stop);
+  return Effect.sync(() => {
+    process.off('SIGTERM', stop);
+    process.off('SIGINT', stop);
+  });
+}).pipe(Effect.flatMap((signal) => Console.log(`[app-host] ${signal} received; stopping gracefully`)));
+
 if (import.meta.main) {
   const program = runAppHost.pipe(
     Effect.scoped,
+    Effect.raceFirst(stopSignal),
     Effect.provide(NodeHttpServer.layer(withKeepAlive(createServer), { host: '127.0.0.1', port: CONTROL_PORT })),
     Effect.provide(ReleaseAccessIntentReaderLive),
     // Every authority transition re-observes legacy owner completion, as the operator publisher does.
