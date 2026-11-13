@@ -1,5 +1,6 @@
 import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
-import { Deferred, Effect, Fiber, Schema } from 'effect';
+import { Clock, Deferred, Effect, Fiber, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
@@ -11,6 +12,7 @@ import {
 import { AcceptPaymentObservationPayloadSchema } from '../../shared/actions/accept-payment-observation.ts';
 import { ConfigurePaymentSourceAuthorityPayloadSchema } from '../../shared/actions/configure-payment-source-authority.ts';
 import { RecordPaymentLocalEvidencePayloadSchema } from '../../shared/actions/record-payment-local-evidence.ts';
+import { isBankAccountingReceiptBinding } from '../../shared/domain/payment-execution-binding.ts';
 import type { PaymentExecutionBinding } from '../../shared/domain/payment-execution-binding.ts';
 import { PaymentRefundBasisSchema } from '../../shared/domain/payment-refund-basis.ts';
 import type { PaymentMethod } from '../../shared/domain/payment-vocabulary.ts';
@@ -26,9 +28,14 @@ import {
   handleRecordPaymentLocalEvidence,
   recordPaymentLocalEvidenceAction,
 } from '../../src/actions/record-payment-local-evidence.action.ts';
+import { paymentAggregatePersistenceForTransaction } from '../../src/persistence/payment-aggregate-persistence.ts';
 import type { PaymentRecord } from '../../src/persistence/payment-aggregate-persistence.ts';
-import { paymentSourceServicesForTransaction } from '../../src/persistence/payment-source-persistence.ts';
+import {
+  paymentSourceServicesForTransaction,
+  selectBankReceiptAuthorities,
+} from '../../src/persistence/payment-source-persistence.ts';
 import type { PaymentSourceServices } from '../../src/persistence/payment-source-persistence.ts';
+import { seedSourceAuthority } from '../support/refund-native-runtime.ts';
 import { refundExecutionRouteOf } from '../support/refund-execution-route.fixture.ts';
 import type { ConfiguredRefundAuthority } from '../support/refund-execution-route.fixture.ts';
 import type { PaymentTestDatabase, PaymentTestScope } from './database-fixture.ts';
@@ -206,8 +213,25 @@ const startCollect = Effect.fn('SourceTest.startCollect')(function* startCollect
   payment: PaymentRecord,
 ) {
   const input = yield* collectInput(scope, { amountMinor: 100_000, paymentId: payment.paymentId }, 'collect-1');
-  const created = yield* withPersistence(database, scope, (persistence) =>
-    persistence.insertOperation({ ...input, binding: payment.executionBinding }),
+  const created = yield* database.transaction((transaction) =>
+    Effect.gen(function* seedCollection() {
+      const scoped = yield* installOperationalScope(
+        transaction,
+        operationalScopeOf(scope),
+        defineDatabaseIdentityEnrollment([]),
+      );
+      const { executionBinding, method } = payment;
+      const candidates =
+        method === 'BANK_TRANSFER_ADVANCE' || method === 'DEFERRED_INVOICE'
+          ? yield* selectBankReceiptAuthorities(scoped, method)
+          : [];
+      const [only] = candidates;
+      const binding =
+        isBankAccountingReceiptBinding(executionBinding) && only !== undefined && candidates.length === 1
+          ? { ...executionBinding, receiptAuthority: only }
+          : executionBinding;
+      return yield* paymentAggregatePersistenceForTransaction(scoped).insertOperation({ ...input, binding });
+    }),
   );
   return created.record;
 });
@@ -376,7 +400,10 @@ describe('#1152 external/offline source boundary on native PostgreSQL', () => {
           'payment_source_authority_forbidden',
         );
         // Operator evidence cannot be smuggled through the integration Action even once configured.
-        yield* configure(database, scope, authorityFor(storePos, 'LOCAL_POS_COLLECTION', 'PAY_ON_PICKUP_OR_ON_SITE'));
+        yield* configure(database, scope, {
+          ...authorityFor(storePos, 'LOCAL_POS_COLLECTION', 'PAY_ON_PICKUP_OR_ON_SITE'),
+          pickupCapabilityRef: pickupBinding.pickupCapabilityRef,
+        });
         const { evidenceRef: _evidenceRef, reason: _reason, ...asIngress } = posEvidence;
         expect(yield* failureCodeOf(accept(database, scope, asIngress))).toBe('payment_source_authority_forbidden');
         const before = yield* aggregateOf(database, scope, payment.paymentId);
@@ -496,7 +523,10 @@ describe('#1152 external/offline source boundary on native PostgreSQL', () => {
         Effect.gen(function* collectionWithoutAmount() {
           const { countRows, database, scope } = yield* nativeDatabase;
           yield* configure(database, scope, authorityFor(erpBank, 'BANK_ACCOUNTING_RECEIPT', 'BANK_TRANSFER_ADVANCE'));
-          yield* configure(database, scope, authorityFor(storePos, 'LOCAL_POS_COLLECTION', 'PAY_ON_PICKUP_OR_ON_SITE'));
+          yield* configure(database, scope, {
+            ...authorityFor(storePos, 'LOCAL_POS_COLLECTION', 'PAY_ON_PICKUP_OR_ON_SITE'),
+            pickupCapabilityRef: pickupBinding.pickupCapabilityRef,
+          });
           const bankPayment = yield* createPayment(database, scope, 'BANK_TRANSFER_ADVANCE', bankBinding);
           const bankCollect = yield* startCollect(database, scope, bankPayment);
           const { amount: _bankAmount, ...bankWithoutAmount } = bankReceipt(bankPayment.paymentId);
@@ -782,15 +812,30 @@ describe('#1152 external/offline source boundary on native PostgreSQL', () => {
     Effect.scoped(
       Effect.gen(function* manualRefundRoute() {
         const { database, scope } = yield* nativeDatabase;
-        yield* configure(database, scope, authorityFor(erpBank, 'BANK_ACCOUNTING_RECEIPT', 'BANK_TRANSFER_ADVANCE'));
+        yield* configure(database, scope, {
+          ...authorityFor(storePos, 'LOCAL_POS_COLLECTION', 'PAY_ON_PICKUP_OR_ON_SITE'),
+          pickupCapabilityRef: pickupBinding.pickupCapabilityRef,
+        });
         const refundRoute = yield* configure(
           database,
           scope,
-          authorityFor(treasuryDesk, 'REFUND_EXECUTION', 'BANK_TRANSFER_ADVANCE', true),
+          authorityFor(treasuryDesk, 'REFUND_EXECUTION', 'PAY_ON_PICKUP_OR_ON_SITE', true),
         );
-        const payment = yield* createPayment(database, scope, 'BANK_TRANSFER_ADVANCE', bankBinding);
+        const payment = yield* createPayment(database, scope, 'PAY_ON_PICKUP_OR_ON_SITE', pickupBinding);
         const collect = yield* startCollect(database, scope, payment);
-        yield* accept(database, scope, bankReceipt(payment.paymentId));
+        yield* recordLocal(database, scope, {
+          amount: { amountMinor: 100_000, currency: 'CZK' },
+          evidenceRef: 'pos-receipt-111',
+          factFamily: 'LOCAL_POS_COLLECTION',
+          factKind: 'COLLECTION_CONFIRMED',
+          operationId: collect.operationId,
+          paymentId: payment.paymentId,
+          pickupCapabilityRef: pickupBinding.pickupCapabilityRef,
+          reason: 'The customer paid the collection at the POS',
+          source: storePos,
+          sourceOccurrenceId: 'pos-receipt-111',
+          sourceRevision: 1,
+        });
         const refund = yield* startRefund(database, scope, payment, collect.operationId, refundRoute);
         const manual = {
           amount: { amountMinor: 100_000, currency: 'CZK' },
@@ -813,10 +858,64 @@ describe('#1152 external/offline source boundary on native PostgreSQL', () => {
             sourceOccurrenceId: 'treasury-12-done',
           }),
         );
-        expect(asserted).toBe('payment_source_fact_unsupported');
+        expect(asserted).toBe('payment_unavailable');
         expect(yield* outcomeOf(database, scope, payment.paymentId, refund.operationId)).toBe('PENDING');
       }),
     ),
+  );
+
+  it.live(
+    '#1152 Legacy POS and manual authorities can be revoked, while their unsupported configuration cannot be created or reactivated',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* revokeLegacyAuthorities() {
+          const { database, scope } = yield* nativeDatabase;
+          const legacyPos = authorityFor(storePos, 'LOCAL_POS_COLLECTION', 'PAY_ON_PICKUP_OR_ON_SITE');
+          const manualBase = authorityFor(treasuryDesk, 'REFUND_EXECUTION', 'PAY_ON_PICKUP_OR_ON_SITE', true);
+          for (const method of ['BANK_TRANSFER_ADVANCE', 'DEFERRED_INVOICE', 'CASH_ON_DELIVERY'] as const) {
+            expect(yield* failureCodeOf(configure(database, scope, { ...manualBase, method }))).toBe(
+              'payment_source_configuration_invalid',
+            );
+          }
+          const { method: _method, ...manualNeutral } = manualBase;
+          expect(yield* failureCodeOf(configure(database, scope, manualNeutral))).toBe(
+            'payment_source_configuration_invalid',
+          );
+          const legacyAuthorities: readonly ConfigureWithoutSubmitters[] = [
+            legacyPos,
+            manualNeutral,
+            { ...manualBase, method: 'CASH_ON_DELIVERY' },
+          ];
+          for (const legacy of legacyAuthorities) {
+            expect(yield* failureCodeOf(configure(database, scope, { ...legacy, status: 'REVOKED' }))).toBe(
+              'payment_source_configuration_invalid',
+            );
+            const originalId = yield* seedSourceAuthority(database, scope, {
+              ...legacy.source,
+              factFamily: legacy.factFamily,
+              method: legacy.method,
+              refundRoute: legacy.refundRoute,
+            });
+            expect(yield* failureCodeOf(configure(database, scope, legacy))).toBe(
+              'payment_source_configuration_invalid',
+            );
+            const revoked = yield* configure(database, scope, { ...legacy, expectedRevision: 1, status: 'REVOKED' });
+            expect(revoked).toMatchObject({
+              changed: true,
+              revision: 2,
+              sourceAuthorityId: originalId,
+              status: 'REVOKED',
+            });
+            const replay = yield* configure(database, scope, { ...legacy, status: 'REVOKED' });
+            expect(replay).toMatchObject({
+              changed: false,
+              revision: 2,
+              sourceAuthorityId: originalId,
+              status: 'REVOKED',
+            });
+          }
+        }),
+      ),
   );
 
   it.live('#1152 Late bank evidence under a compatible runtime: R2 provenance recorded, R1 lineage untouched', () =>
@@ -863,15 +962,16 @@ describe('#1152 external/offline source boundary on native PostgreSQL', () => {
         yield* configure(database, scope, authorityFor(erpBank, 'BANK_ACCOUNTING_RECEIPT', 'BANK_TRANSFER_ADVANCE'));
         const payment = yield* createPayment(database, scope, 'BANK_TRANSFER_ADVANCE', bankBinding);
         yield* startCollect(database, scope, payment);
-        const first = yield* accept(database, scope, bankReceipt(payment.paymentId));
-        const again = yield* accept(database, scope, bankReceipt(payment.paymentId));
+        const receipt = { ...bankReceipt(payment.paymentId), economicEffectKey: 'bank-transfer-duplicate-revision' };
+        const first = yield* accept(database, scope, receipt);
+        const again = yield* accept(database, scope, receipt);
         expect(again.result.acceptanceOutcome).toBe('DUPLICATE');
         expect(again.result.observationId).toBe(first.result.observationId);
         const changed = yield* failureCodeOf(
-          accept(database, scope, bankReceipt(payment.paymentId, { amount: { amountMinor: 99_000, currency: 'CZK' } })),
+          accept(database, scope, { ...receipt, amount: { amountMinor: 99_000, currency: 'CZK' } }),
         );
         expect(changed).toBe('payment_source_occurrence_conflict');
-        const revised = yield* accept(database, scope, bankReceipt(payment.paymentId, { sourceRevision: 2 }));
+        const revised = yield* accept(database, scope, { ...receipt, sourceRevision: 2 });
         expect(revised.result.acceptanceOutcome).toBe('ACCEPTED_OBSERVATION');
         expect(revised.result.interpretation).toBe('NO_CHANGE');
         expect(yield* countRows('observations')).toBe(2);
@@ -1027,12 +1127,23 @@ describe('#1151 source ingress concurrency on native PostgreSQL', () => {
           bankReceipt(payment.paymentId),
         );
 
-        // Delivery A takes the source authority lock (as the Action does first) and holds it.
+        const receivedAtMs = yield* Clock.currentTimeMillis;
+        const verifiedAtMs = receivedAtMs + 1000;
+        const pauseQualification = Effect.gen(function* pauseQualification() {
+          yield* Deferred.succeed(locked, true);
+          yield* Deferred.await(release);
+          yield* TestClock.setTime(verifiedAtMs);
+        });
+
+        // Pause A's real qualification after it takes the source authority lock.
         const first = yield* inActionTransaction(database, scope, COMPOSITION_REVISION, (services, base) =>
           Effect.gen(function* acceptWhileHolding() {
-            yield* services.source.lockAuthorities({ factFamily: 'BANK_ACCOUNTING_RECEIPT', source: erpBank });
-            yield* Deferred.succeed(locked, true);
-            yield* Deferred.await(release);
+            yield* TestClock.setTime(receivedAtMs);
+            const source = {
+              ...services.source,
+              lockAuthorities: (...args: Parameters<typeof services.source.lockAuthorities>) =>
+                services.source.lockAuthorities(...args).pipe(Effect.tap(pauseQualification)),
+            };
             const { descriptor } = acceptPaymentObservationAction;
             const collector = createActionCollector(
               descriptor.domainEvents,
@@ -1040,8 +1151,12 @@ describe('#1151 source ingress concurrency on native PostgreSQL', () => {
               descriptor.accessEvidencePolicy,
               descriptor.auditEvidenceSchema,
             );
-            return yield* handleAcceptPaymentObservation(payload, { ...base, ...collector, services });
-          }),
+            return yield* handleAcceptPaymentObservation(payload, {
+              ...base,
+              ...collector,
+              services: { ...services, source },
+            });
+          }).pipe(Effect.provide(TestClock.layer())),
         ).pipe(Effect.forkChild);
         yield* Deferred.await(locked);
 
@@ -1073,6 +1188,12 @@ describe('#1151 source ingress concurrency on native PostgreSQL', () => {
         expect(loser.result.acceptanceOutcome).toBe('DUPLICATE');
         expect(loser.result.observationId).toBe(winner.observationId);
         expect(loser.evidence.outboxMessages).toEqual([]);
+        const [observation] = yield* admin.unsafe<{ received_at: Date; verified_at: Date }>(
+          'select received_at, verified_at from payment.observations where observation_id = $1',
+          [winner.observationId],
+        );
+        expect(observation?.received_at.getTime()).toBe(receivedAtMs);
+        expect(observation?.verified_at.getTime()).toBe(verifiedAtMs);
         expect(yield* outcomeOf(database, scope, payment.paymentId, collect.operationId)).toBe('EFFECT_CONFIRMED');
         expect(yield* countRows('observations')).toBe(1);
         expect(yield* countRows('operation_outcome_transitions')).toBe(2);

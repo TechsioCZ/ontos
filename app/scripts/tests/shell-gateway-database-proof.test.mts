@@ -8,6 +8,7 @@ import { provedShellGatewayDatabaseSources } from '../shell-gateway-database-pro
 
 const nativeRuntimeEntry = 'apps/shell-super-app/api/index.ts';
 const nativeTransportEntry = 'apps/shell-super-app/api/symmy/transport.ts';
+const paymentTransportEntry = 'apps/shell-super-app/api/payment-gateway/transport.ts';
 const fixtureRoot = '/issuer-proof';
 const rootFile = `${fixtureRoot}/apps/shell-super-app/api/index.ts`;
 const helperFile = `${fixtureRoot}/apps/shell-super-app/api/auth/evidence.ts`;
@@ -148,7 +149,7 @@ it.effect.each([
   return proveFixture(sources).pipe(Effect.map((result) => expect(result).toEqual([])));
 });
 
-it.live('proves exactly the six current Shell issuer bootstrap sources', () =>
+it.live('proves exactly the seven current Shell issuer bootstrap sources', () =>
   Effect.gen(function* actualShellIssuerProof() {
     const purePath = yield* Path.Path;
     const root = nodePath.resolve(import.meta.dirname, '../..');
@@ -183,6 +184,7 @@ it.live('proves exactly the six current Shell issuer bootstrap sources', () =>
     ).toEqual(
       new Set([
         'gateway-organization-governance-evidence.ts',
+        'gateway-payment-route-scope.ts',
         'gateway-privacy-dispatch-evidence.ts',
         'gateway-recovery-evidence.ts',
         'gateway-registered-assertion.ts',
@@ -232,8 +234,53 @@ it.live('proves exactly the six current Shell issuer bootstrap sources', () =>
       expect(original).toContain(mutation.from);
       const mutated = new Map([...sources, [mutation.file, original.replace(mutation.from, mutation.to)]]);
       const proved = provedShellGatewayDatabaseSources(mutated, root, purePath, exports);
-      expect(proved.size).toBe(5);
+      expect(proved.size).toBe(6);
       expect(proved.has(nodePath.join(root, 'apps/shell-super-app/api/auth/gateway-symmy-route-scope.ts'))).toBe(false);
+    }
+    const paymentRouteScope = nodePath.join(root, 'apps/shell-super-app/api/auth/gateway-payment-route-scope.ts');
+    const paymentMutations = [
+      {
+        file: nodePath.join(root, nativeRuntimeEntry),
+        from: '      return {\n        authorize:',
+        to: '      if (false) return {\n        authorize:',
+      },
+      {
+        file: nodePath.join(root, nativeRuntimeEntry),
+        from: '    paymentGatewayHandlersLive.pipe(',
+        to: '    unregisteredHandlers.pipe(',
+      },
+      {
+        file: nodePath.join(root, paymentTransportEntry),
+        from: 'Context.Service<',
+        to: 'forgedContext.Service<',
+      },
+      {
+        all: true,
+        file: nodePath.join(root, paymentTransportEntry),
+        from: '.authorize({',
+        to: '.foreignAuthorize({',
+      },
+      {
+        file: nodePath.join(root, nativeRuntimeEntry),
+        from: 'const paymentGatewayRelayLive = Layer.effect(\n    PaymentGatewayRelay,',
+        to: 'const paymentGatewayRelayLive = Layer.effect(\n    foreignService,',
+      },
+    ];
+    for (const mutation of paymentMutations) {
+      const original = sources.get(mutation.file) ?? '';
+      expect(original).toContain(mutation.from);
+      const replaced =
+        mutation.all === true
+          ? original.replaceAll(mutation.from, mutation.to)
+          : original.replace(mutation.from, mutation.to);
+      const proved = provedShellGatewayDatabaseSources(
+        new Map([...sources, [mutation.file, replaced]]),
+        root,
+        purePath,
+        exports,
+      );
+      expect(proved.size).toBe(6);
+      expect(proved.has(paymentRouteScope)).toBe(false);
     }
   }).pipe(Effect.provide(Path.layer)),
 );

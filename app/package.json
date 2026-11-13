@@ -167,6 +167,7 @@
     "@app/legal-agreements": "workspace:*",
     "@app/merchandise": "workspace:*",
     "@app/party-registry": "workspace:*",
+    "@app/payment": "workspace:*",
     "@app/price-group-catalog": "workspace:*",
     "@app/privacy": "workspace:*",
     "@app/projects": "workspace:*",

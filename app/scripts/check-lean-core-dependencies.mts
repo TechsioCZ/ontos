@@ -894,8 +894,8 @@ const ViolationOrder = Order.combine(
 // contracts, so a vertical's app id (quoted, or as an `@app/<id>` / `verticals/<id>` path segment) or module id must
 // not appear in Core or Shell platform source. Demo guide content, demo seed data and Core's test fixtures name demo
 // tenants' modules on purpose. Main's governed integration layer is deliberately vertical-aware (Shell owns the
-// Symmy ingress and the gateway evidence that issues Symmy, Privacy-dispatch and organization-governance
-// assertions), so those files, or only the audiences they name, are exempt.
+// Symmy ingress, the Payment gateway relay and the gateway evidence that issues Symmy, Payment route-scope,
+// Privacy-dispatch and organization-governance assertions), so those files, or only the audiences they name, are exempt.
 // ---------------------------------------------------------------------------------------------------------------
 export interface PlatformVertical {
   readonly appId: string;
@@ -915,6 +915,8 @@ const PLATFORM_EXEMPT = [
   'apps/shell-super-app/src/demo-guide/guides/',
   'packages/core-runtime/src/testing/',
   'apps/shell-super-app/api/symmy/',
+  'apps/shell-super-app/api/payment-gateway/',
+  'apps/shell-super-app/api/auth/gateway-payment-route-scope.ts',
   'apps/shell-super-app/api/auth/gateway-organization-governance-evidence.ts',
   'apps/shell-super-app/api/auth/gateway-privacy-dispatch-evidence.ts',
   'apps/shell-super-app/api/auth/gateway-recovery-evidence.ts',
@@ -929,6 +931,8 @@ const PLATFORM_EXEMPT_IDS = new Map<string, readonly string[]>([
   ['apps/shell-super-app/api/auth/gateway-issuer.ts', ['privacy', 'symmy-integration']],
   ['apps/shell-super-app/api/auth/gateway-originator-evidence.ts', ['privacy.core']],
   ['apps/shell-super-app/api/index.ts', ['symmy-integration']],
+  ['apps/shell-super-app/server/modern.server.ts', ['payment']],
+  ['apps/shell-super-app/shared/api.ts', ['payment']],
 ]);
 
 const isPlatformGuarded = (relative: string): boolean =>

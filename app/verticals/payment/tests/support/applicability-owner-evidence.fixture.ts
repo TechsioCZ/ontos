@@ -12,7 +12,7 @@ import type {
   PaymentDeliveryCapabilityService,
 } from '../../src/ports/delivery-capability-port.ts';
 import { GatewayBindingPort } from '../../src/ports/gateway-binding-port.ts';
-import type { PaymentGatewayBindingService } from '../../src/ports/gateway-binding-port.ts';
+import type { PaymentGatewayBindingEvidence } from '../../src/ports/gateway-binding-port.ts';
 import { ownerEvidenceUnavailable } from '../../src/ports/owner-evidence-unavailable.ts';
 import { PaymentTermEvidencePort } from '../../src/ports/payment-term-evidence-port.ts';
 import type {
@@ -177,7 +177,7 @@ export const applicabilityOwnerEvidenceFixture = (script: ApplicabilityOwnerEvid
         : Effect.succeed(answer);
     },
   };
-  const gateway: PaymentGatewayBindingService = {
+  const gateway: PaymentGatewayBindingEvidence = {
     listEnabledBindings: () => {
       calls.gatewayListings.push(1);
       const enabled = script.enabledGatewayBindings;
@@ -185,6 +185,9 @@ export const applicabilityOwnerEvidenceFixture = (script: ApplicabilityOwnerEvid
         ? Effect.fail(ownerEvidenceUnavailable('GATEWAY_BINDING', 'Fixture: C17 unavailable'))
         : Effect.succeed(enabled);
     },
+    // Applicability decides new Payment intents only; it never asks for an existing Payment's binding.
+    resolveOriginalBinding: () =>
+      Effect.fail(ownerEvidenceUnavailable('GATEWAY_BINDING', 'Fixture: not a new-intent question')),
     verifySelectedBinding: ({ binding }) => {
       calls.gatewayBindings.push(binding);
       const enabled = script.enabledGatewayBindings;
@@ -218,11 +221,11 @@ export const applicabilityOwnerEvidenceFixture = (script: ApplicabilityOwnerEvid
   };
   const layer = Layer.mergeAll(
     Layer.succeed(PaymentTermEvidencePort, termEvidence),
-    Layer.succeed(GatewayBindingPort, gateway),
+    Layer.succeed(GatewayBindingPort, () => gateway),
     Layer.succeed(DeliveryCapabilityPort, delivery),
     Layer.succeed(PickupCapabilityPort, pickup),
   );
-  return { calls, layer };
+  return { calls, gateway, layer };
 };
 
 export const GOPAY_PRODUCTION: PaymentGatewayAccountBinding = {

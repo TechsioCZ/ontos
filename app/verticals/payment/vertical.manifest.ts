@@ -2,15 +2,30 @@
 // @ontos-deployment-app-id payment
 // @ontos-module-id payment.core
 import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
-import { defineOntosModuleManifest } from '@app/core-runtime';
+import { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY, defineOntosModuleManifest } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
+import { paymentTermRequirements } from './src/integrations/payment-term-evidence.ts';
+import { processProviderNotificationWorker } from './src/workers/process-provider-notification.worker.ts';
+import { recoverGatewayOperationWorker } from './src/workers/recover-gateway-operation.worker.ts';
 // <generated-module-manifest-imports>
 import { acceptPaymentObservationAction } from './src/actions/accept-payment-observation.action.ts';
+import { AcceptPaymentObservationActionApi } from './shared/apis/accept-payment-observation-action.ts';
+import { captureProviderNotificationAction } from './src/actions/capture-provider-notification.action.ts';
+import { configureGatewayEnablementAction } from './src/actions/configure-gateway-enablement.action.ts';
 import { configurePaymentMethodEnablementAction } from './src/actions/configure-payment-method-enablement.action.ts';
 import { configurePaymentSourceAuthorityAction } from './src/actions/configure-payment-source-authority.action.ts';
+import { configureProviderAccountBindingAction } from './src/actions/configure-provider-account-binding.action.ts';
 import { createPaymentAction } from './src/actions/create-payment.action.ts';
 import { CurrentPaymentApi } from './shared/apis/current-payment.ts';
 import { currentPaymentRead } from './src/api/current-payment.read.ts';
+import { GatewayConfigurationApi } from './shared/apis/gateway-configuration.ts';
+import { gatewayConfigurationRead } from './src/api/gateway-configuration.read.ts';
+import { GatewayCustomerActionApi } from './shared/apis/gateway-customer-action.ts';
+import { gatewayCustomerActionRead } from './src/api/gateway-customer-action.read.ts';
+import { GatewayReconciliationDebtApi } from './shared/apis/gateway-reconciliation-debt.ts';
+import { gatewayReconciliationDebtRead } from './src/api/gateway-reconciliation-debt.read.ts';
+import { GatewayReturnStatusApi } from './shared/apis/gateway-return-status.ts';
+import { gatewayReturnStatusRead } from './src/api/gateway-return-status.read.ts';
 import { issuePaymentAuthorizationAction } from './src/actions/issue-payment-authorization.action.ts';
 import { PaymentAuthorizationValidationApi } from './shared/apis/payment-authorization-validation.ts';
 import { paymentAuthorizationValidationRead } from './src/api/payment-authorization-validation.read.ts';
@@ -22,13 +37,38 @@ import { PaymentReconciliationDebtApi } from './shared/apis/payment-reconciliati
 import { paymentReconciliationDebtRead } from './src/api/payment-reconciliation-debt.read.ts';
 import { paymentResourceDescriptor } from './shared/resources/payment.ts';
 import { paymentRootResourceDescriptor } from './shared/resources/payment-root.ts';
+import { ProviderBindingRouteApi } from './shared/apis/provider-binding-route.ts';
+import { providerBindingRouteRead } from './src/api/provider-binding-route.read.ts';
 import { recordPaymentLocalEvidenceAction } from './src/actions/record-payment-local-evidence.action.ts';
 import { recordPaymentReconciliationDecisionAction } from './src/actions/record-payment-reconciliation-decision.action.ts';
 import { requestPaymentCancellationAction } from './src/actions/request-payment-cancellation.action.ts';
 import { requestPaymentOperationRecoveryAction } from './src/actions/request-payment-operation-recovery.action.ts';
 import { requestPaymentRefundAction } from './src/actions/request-payment-refund.action.ts';
+import { rotateProviderCredentialAction } from './src/actions/rotate-provider-credential.action.ts';
 import { startPaymentCollectionAction } from './src/actions/start-payment-collection.action.ts';
+import { paymentRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 // </generated-module-manifest-imports>
+
+const profilePaymentTermEvidence = ['payment.core.evidence.payment-term.current-profile-purchase'] as const;
+const guestPaymentTermEvidence = ['payment.core.evidence.payment-term.current-guest-purchase'] as const;
+const profilePaymentTermProvider = {
+  entrypointKey: 'commerce.customer-context.api.payment-terms-resolution',
+  moduleId: 'commerce.customer-context',
+  schemaVersion: '1',
+} as const;
+const guestPaymentTermProvider = {
+  ...profilePaymentTermProvider,
+  entrypointKey: 'commerce.customer-context.api.guest-payment-terms-resolution',
+} as const;
+/**
+ * C17 workers submit provider evidence through the public A8 Action of this same module, only for
+ * deliveries whose original admission is a workload-admitted originator Action (#1157, #1158).
+ */
+const gatewayEvidenceProvider = {
+  entrypointKey: acceptPaymentObservationAction.descriptor.entrypoint.entrypointKey,
+  moduleId: 'payment.core',
+  schemaVersion: '1',
+} as const;
 
 export const paymentManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
@@ -44,12 +84,19 @@ export const paymentManifest: OntosModuleManifestInput = defineOntosModuleManife
     implementedAs: 'ultramodern_microvertical',
     kind: 'business_module',
   },
+  originatorActions: [
+    captureProviderNotificationAction.descriptor.actionKey,
+    requestPaymentOperationRecoveryAction.descriptor.actionKey,
+  ],
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
       acceptPaymentObservationAction,
+      captureProviderNotificationAction,
+      configureGatewayEnablementAction,
       configurePaymentMethodEnablementAction,
       configurePaymentSourceAuthorityAction,
+      configureProviderAccountBindingAction,
       createPaymentAction,
       issuePaymentAuthorizationAction,
       recordPaymentLocalEvidenceAction,
@@ -57,17 +104,24 @@ export const paymentManifest: OntosModuleManifestInput = defineOntosModuleManife
       requestPaymentCancellationAction,
       requestPaymentOperationRecoveryAction,
       requestPaymentRefundAction,
+      rotateProviderCredentialAction,
       startPaymentCollectionAction,
       // </generated-module-manifest-actions>
     ],
     api: {
       // <generated-module-manifest-apis>
+      'accept-payment-observation-action': AcceptPaymentObservationActionApi,
       'current-payment': CurrentPaymentApi,
+      'gateway-configuration': GatewayConfigurationApi,
+      'gateway-customer-action': GatewayCustomerActionApi,
+      'gateway-reconciliation-debt': GatewayReconciliationDebtApi,
+      'gateway-return-status': GatewayReturnStatusApi,
       'owner-action-approvals': OwnerActionApprovalApi,
       'payment-authorization-validation': PaymentAuthorizationValidationApi,
       'payment-history': PaymentHistoryApi,
       'payment-method-applicability': PaymentMethodApplicabilityApi,
       'payment-reconciliation-debt': PaymentReconciliationDebtApi,
+      'provider-binding-route': ProviderBindingRouteApi,
       // </generated-module-manifest-apis>
     },
     components: {
@@ -77,7 +131,32 @@ export const paymentManifest: OntosModuleManifestInput = defineOntosModuleManife
     events: [],
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
+      {
+        apiKey: 'accept-payment-observation-action',
+        operationKey: 'acceptPaymentObservationAction.execute',
+        registration: acceptPaymentObservationAction,
+      },
       { apiKey: 'current-payment', operationKey: 'currentPayment.execute', registration: currentPaymentRead },
+      {
+        apiKey: 'gateway-configuration',
+        operationKey: 'gatewayConfiguration.execute',
+        registration: gatewayConfigurationRead,
+      },
+      {
+        apiKey: 'gateway-customer-action',
+        operationKey: 'gatewayCustomerAction.execute',
+        registration: gatewayCustomerActionRead,
+      },
+      {
+        apiKey: 'gateway-reconciliation-debt',
+        operationKey: 'gatewayReconciliationDebt.execute',
+        registration: gatewayReconciliationDebtRead,
+      },
+      {
+        apiKey: 'gateway-return-status',
+        operationKey: 'gatewayReturnStatus.execute',
+        registration: gatewayReturnStatusRead,
+      },
       {
         apiKey: 'payment-authorization-validation',
         operationKey: 'paymentAuthorizationValidation.execute',
@@ -93,6 +172,11 @@ export const paymentManifest: OntosModuleManifestInput = defineOntosModuleManife
         apiKey: 'payment-reconciliation-debt',
         operationKey: 'paymentReconciliationDebt.execute',
         registration: paymentReconciliationDebtRead,
+      },
+      {
+        apiKey: 'provider-binding-route',
+        operationKey: 'providerBindingRoute.execute',
+        registration: providerBindingRouteRead,
       },
       // </generated-module-manifest-operation-contracts>
     ],
@@ -136,10 +220,69 @@ export const paymentManifest: OntosModuleManifestInput = defineOntosModuleManife
       timelines: [],
     },
   },
+  // Demo divergence exception 8: the Payment workers' A8 calls, declared by the caller (see the module).
+  registeredWorkloadCalls: paymentRegisteredWorkloadCalls,
   requirements: {
-    coreCapabilities: [],
+    coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
     intrinsic: [],
-    operations: [],
+    operations: [
+      {
+        condition: 'payment.core.condition.applicability-profile-payment-term',
+        entrypointKey: paymentMethodApplicabilityRead.descriptor.entrypoint.entrypointKey,
+        evidence: profilePaymentTermEvidence,
+        key: paymentTermRequirements.APPLICABILITY.PROFILE,
+        provider: profilePaymentTermProvider,
+      },
+      {
+        condition: 'payment.core.condition.applicability-guest-payment-term',
+        entrypointKey: paymentMethodApplicabilityRead.descriptor.entrypoint.entrypointKey,
+        evidence: guestPaymentTermEvidence,
+        key: paymentTermRequirements.APPLICABILITY.GUEST,
+        provider: guestPaymentTermProvider,
+      },
+      {
+        condition: 'payment.core.condition.create-profile-payment-term',
+        entrypointKey: createPaymentAction.descriptor.entrypoint.entrypointKey,
+        evidence: profilePaymentTermEvidence,
+        key: paymentTermRequirements.CREATE.PROFILE,
+        provider: profilePaymentTermProvider,
+      },
+      {
+        condition: 'payment.core.condition.create-guest-payment-term',
+        entrypointKey: createPaymentAction.descriptor.entrypoint.entrypointKey,
+        evidence: guestPaymentTermEvidence,
+        key: paymentTermRequirements.CREATE.GUEST,
+        provider: guestPaymentTermProvider,
+      },
+      {
+        condition: 'payment.core.condition.issue-deferred-invoice-proof',
+        entrypointKey: issuePaymentAuthorizationAction.descriptor.entrypoint.entrypointKey,
+        evidence: profilePaymentTermEvidence,
+        key: paymentTermRequirements.ISSUE.PROFILE,
+        provider: profilePaymentTermProvider,
+      },
+      {
+        condition: 'payment.core.condition.validate-deferred-invoice-proof',
+        entrypointKey: paymentAuthorizationValidationRead.descriptor.entrypoint.entrypointKey,
+        evidence: profilePaymentTermEvidence,
+        key: paymentTermRequirements.VALIDATE.PROFILE,
+        provider: profilePaymentTermProvider,
+      },
+      {
+        condition: 'payment.core.condition.gateway-evidence-notification',
+        entrypointKey: processProviderNotificationWorker.descriptor.entrypoint.entrypointKey,
+        evidence: ['payment.core.evidence.gateway-provider-notification'],
+        key: 'payment.core.requirement.gateway-evidence-notification',
+        provider: gatewayEvidenceProvider,
+      },
+      {
+        condition: 'payment.core.condition.gateway-evidence-recovery',
+        entrypointKey: recoverGatewayOperationWorker.descriptor.entrypoint.entrypointKey,
+        evidence: ['payment.core.evidence.gateway-provider-recovery'],
+        key: 'payment.core.requirement.gateway-evidence-recovery',
+        provider: gatewayEvidenceProvider,
+      },
+    ],
     schemaVersion: '1',
   },
 });

@@ -42,6 +42,7 @@ const ASSORTMENT_UNIT = 'assortment';
 const CART_UNIT = 'commerce-cart';
 const CUSTOMER_CONTEXT_UNIT = 'commerce-customer-context';
 const ORDER_UNIT = 'commerce-order';
+const PAYMENT_UNIT = 'payment';
 const PRIVACY_UNIT = 'privacy';
 const SYMMY_INTEGRATION_UNIT = 'symmy-integration';
 
@@ -97,6 +98,16 @@ export const OWNER_RUNTIME_CONFIGURATIONS: readonly OwnerRuntimeConfiguration[] 
     credentialVariables: [],
     operatorValues: [],
     unitId: ORDER_UNIT,
+  },
+  {
+    apiDependencies: [shellGateway],
+    // ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS is the reconciliation driver's `[{ tenantId, apiKey }]` JSON
+    // array, read lazily per entry by the Payment Outbox Worker only.
+    credentialVariables: ['ONTOS_PAYMENT_PROVIDER_CREDENTIALS', 'ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS'],
+    // ONTOS_PAYMENT_NOTIFICATION_BASE_URL, the public Shell origin Payment composes provider notification URLs
+    // from, is derived by the app host from the public origin (scripts/zerops/app-host.mts), not recorded.
+    operatorValues: [],
+    unitId: PAYMENT_UNIT,
   },
   {
     apiDependencies: [shellGateway],

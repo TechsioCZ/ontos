@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 
 import { NodeCrypto } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, Effect } from 'effect';
+import { Crypto, Effect, Result } from 'effect';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -347,19 +347,28 @@ it.live('#1151 one return restated from the collection to its REFUND is counted 
       const evidence = yield* scenario();
       const { collect, first, payment } = yield* confirmedCollect(evidence);
       const returnKey = `gopay:refund:restated:${randomUUID()}`;
-      const returnStatement = (operationId: string) =>
-        evidence.accept(
-          gopayStatement({
+      const returnStatement = (operationId: string, factFamily: 'GATEWAY_OUTCOME' | 'REFUND_EXECUTION') =>
+        evidence.accept({
+          ...gopayStatement({
             amount: czk(60_000),
             economicEffectKey: returnKey,
             factKind: 'REFUND_CONFIRMED',
             operationId,
             paymentId: payment.paymentId,
           }),
-        );
+          factFamily,
+        });
       // The gateway first states the 600 CZK return against the collection...
-      const againstCollect = yield* returnStatement(collect.operationId);
-      const routeSource = yield* evidence.configureRefundRoute('erp-primary', 'refund-account-a');
+      const againstCollect = yield* returnStatement(collect.operationId, 'GATEWAY_OUTCOME');
+      const route = yield* evidence.configureSource({
+        factFamily: 'REFUND_EXECUTION',
+        method: 'ONLINE_GATEWAY',
+        reason: 'GoPay executes refunds for its own account',
+        refundRoute: true,
+        source: GOPAY_SOURCE,
+        status: 'ACTIVE',
+        submitterPrincipalIds: [evidence.scope.principalId],
+      });
       const refund = yield* evidence.startOperation({
         amountMinor: 60_000,
         kind: 'REFUND',
@@ -369,12 +378,12 @@ it.live('#1151 one return restated from the collection to its REFUND is counted 
           _tag: 'REFUNDABLE_ITEMS',
           items: [{ amountMinor: 60_000, currency: 'CZK', itemRef: 'line-restated', sourceEvidenceRef: 'order-line' }],
         },
-        refundExecutionRoute: yield* evidence.refundRouteOf(routeSource),
+        refundExecutionRoute: yield* evidence.refundRouteOf(route.sourceAuthorityId),
         targetOperationId: collect.operationId,
       });
       yield* evidence.settle(payment.paymentId, refund.operationId, 1, 'EFFECT_CONFIRMED');
       // ...and later the same economic effect against the Payment REFUND that executed it.
-      const againstRefund = yield* returnStatement(refund.operationId);
+      const againstRefund = yield* returnStatement(refund.operationId, 'REFUND_EXECUTION');
       // The first statement stays held debt of its own case; the second corroborates the confirmed REFUND.
       expect(againstCollect).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED', interpretation: 'HOLD' });
       expect(againstRefund).toMatchObject({ acceptanceOutcome: 'ACCEPTED_OBSERVATION', interpretation: 'NO_CHANGE' });
@@ -390,6 +399,62 @@ it.live('#1151 one return restated from the collection to its REFUND is counted 
         }),
       );
       expect(reduction).toMatchObject({ acceptanceOutcome: 'ACCEPTED_OBSERVATION', interpretation: 'CORRECTION' });
+    }),
+  ),
+);
+
+it.live('#1151 a disputed reused correction cannot release a second recorded return through case closure', () =>
+  native(
+    Effect.gen(function* reusedReturnCorrection() {
+      const evidence = yield* scenario();
+      const { collect, payment } = yield* confirmedCollect(evidence);
+      const correlation = { operationId: collect.operationId, paymentId: payment.paymentId };
+      const recordReturn = (effect: string, amountMinor: number) =>
+        evidence.accept(
+          gopayStatement({
+            ...correlation,
+            amount: czk(amountMinor),
+            economicEffectKey: effect,
+            factKind: 'REFUND_CONFIRMED',
+          }),
+        );
+      const first = yield* recordReturn('gopay:return:first', 10_000);
+      const second = yield* recordReturn('gopay:return:second', 20_000);
+      for (const entry of [first, second]) {
+        expect(entry.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+        yield* evidence.decide({
+          caseId: entry.reconciliationCaseId ?? '',
+          decision: { _tag: 'CLOSE_CASE', evidenceRef: entry.observationId },
+          reason: 'The established collection accounts for this prior return',
+        });
+      }
+      const correct = (correctsObservationId: string) =>
+        evidence.accept(
+          gopayStatement({
+            ...correlation,
+            correctsObservationId,
+            economicEffectKey: 'gopay:correction:one',
+            factKind: 'SOURCE_CORRECTION',
+          }),
+        );
+      const accepted = yield* correct(first.observationId);
+      expect(accepted.acceptanceOutcome).toBe('ACCEPTED_OBSERVATION');
+      expect(yield* evidence.coverage(payment.paymentId)).toBe(
+        'Established collected=100000 returned=20000 remaining=80000',
+      );
+      const disputed = yield* correct(second.observationId);
+      expect(disputed.interpretation).toBe('HOLD');
+      const close = yield* Effect.result(
+        evidence.decide({
+          caseId: disputed.reconciliationCaseId ?? '',
+          decision: { _tag: 'CLOSE_CASE', evidenceRef: disputed.observationId },
+          reason: 'Close the disputed correction',
+        }),
+      );
+      expect([
+        Result.isFailure(close) ? close.failure.code : close.success.caseStatus,
+        yield* evidence.coverage(payment.paymentId),
+      ]).toEqual(['payment_reconciliation_obligation_unresolved', 'Held UNRESOLVED_EVIDENCE']);
     }),
   ),
 );

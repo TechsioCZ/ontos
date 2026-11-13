@@ -76,7 +76,11 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
   'effect-native/no-driver-failure-inspection': [
     'error',
     {
-      decoderPaths: ['packages/core-runtime/src/database/postgres-failure.ts'],
+      decoderPaths: [
+        'packages/core-runtime/src/database/postgres-failure.ts',
+        // The single PSP outbound HTTP seam classifies pre-write socket failures (#1158).
+        'verticals/payment/src/integrations/psp/provider-http-live.ts',
+      ],
     },
   ],
   'effect-native/no-duplicate-literal-vocabulary': 'error',

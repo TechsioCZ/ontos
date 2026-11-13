@@ -227,6 +227,26 @@ import {
 import { symmyUnavailableProblem } from './symmy/contract.ts';
 import { SymmyDefectBoundary, symmyInternalProblem, symmyRouteNotFoundProblem } from './symmy/defect-boundary.ts';
 import {
+  PaymentGatewayHostMountLive,
+  PaymentGatewayRelay,
+  PaymentGatewayRelayTransportLive,
+  PaymentNotificationHandlersLive,
+  PaymentReconciliationHandlersLive,
+} from './payment-gateway/transport.ts';
+import { paymentRouteRefused } from './payment-gateway/contract.ts';
+import type { PaymentRouteAuthorizationInput, PaymentRouteRefused } from './payment-gateway/contract.ts';
+import {
+  describePaymentGatewayDefect,
+  PaymentGatewayDefectSeam,
+  PaymentNotificationBoundaryLive,
+  PaymentReconciliationBoundaryLive,
+} from './payment-gateway/defect-boundary.ts';
+import {
+  forwardPaymentOwnerRelease,
+  resolvePaymentOwnerReleaseBase,
+} from './payment-gateway/owner-release-transport.ts';
+import { acquirePaymentRouteScopeProof, issuePaymentRouteScopeAssertion } from './auth/gateway-payment-route-scope.ts';
+import {
   SymmyGovernedDispatch,
   SymmyGovernedDispatchLive,
   forwardSymmyOwnerRelease,
@@ -2498,7 +2518,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
 });
 
 const requireGatewayRelease = Effect.fn('ShellGateway.requireRelease')(function* requireGatewayReleaseEffect(
-  compositionRevision: string | undefined,
+  compositionRevision?: string,
   /** For a browser-session endpoint: what to log when its document's release is refused. */
   caller?: { readonly endpoint: string; readonly headers: GatewayReleaseRefusalHeaders },
 ) {
@@ -2851,6 +2871,64 @@ const apiKeyProviderRefusalReason = (error: ApiKeyProviderError): GatewayRefusal
     }),
     Match.exhaustive,
   );
+/** API key resolution answers 401, 403, 429 or 503; only the first two are a decision about the key. */
+const paymentRouteRefusalOfGatewayProblem = (gatewayProblem: {
+  readonly status: number;
+}): PaymentRouteRefused['reason'] => {
+  if (gatewayProblem.status === 401) {
+    return 'unauthenticated';
+  }
+  return gatewayProblem.status === 403 ? 'forbidden' : 'unavailable';
+};
+
+/**
+ * Payment gateway relay authority (#1157): the API key is verified fresh, the integration principal and its
+ * workloads are re-read natively, the binding route comes from Payment's protected Read, and the issued
+ * assertion is scoped to the one route operation of the requested workload. A fresh assertion (and JTI) is
+ * issued for every HTTP attempt.
+ */
+const authorizePaymentRoute = Effect.fn('ShellGateway.authorizePaymentRoute')(function* authorizePaymentRoute(
+  input: PaymentRouteAuthorizationInput,
+  request: HttpServerRequest.HttpServerRequest,
+) {
+  const { principal, principalKind } = yield* resolveApiKeyGatewayPrincipal(Redacted.value(input.apiKey)).pipe(
+    Effect.catch((error) => paymentRouteRefused(paymentRouteRefusalOfGatewayProblem(error))),
+  );
+  if (principalKind !== 'integration') {
+    return yield* paymentRouteRefused('forbidden');
+  }
+  const compositionRevision = yield* requireGatewayRelease().pipe(
+    Effect.catchTags({
+      GatewayReloadRequiredProblem: () => paymentRouteRefused('unavailable'),
+      GatewayUnavailableProblem: () => paymentRouteRefused('unavailable'),
+    }),
+  );
+  const scoped = yield* Effect.gen(function* routeScopedAssertion() {
+    const proof = yield* acquirePaymentRouteScopeProof({
+      compositionRevision,
+      notificationPath: input.notificationPath,
+      principal,
+      requestCorrelation: correlationFromRequest(request),
+      routeKey: input.routeKey,
+      workload: input.workload,
+    });
+    return yield* issuePaymentRouteScopeAssertion(proof, { principal });
+  }).pipe(Effect.catchTag('PaymentRouteScopeError', (error) => paymentRouteRefused(error.code)));
+  const baseUrl = yield* resolvePaymentOwnerReleaseBase(scoped.assertion.apiBaseUrl).pipe(
+    Effect.catchTag('PaymentOwnerReleaseRefused', () => paymentRouteRefused('unavailable')),
+  );
+  return {
+    assertion: Redacted.make(scoped.assertion.token),
+    baseUrl,
+    compositionRevision: scoped.assertion.compositionRevision,
+    route: scoped.route,
+  };
+});
+
+/** Shell's defect seam for the relay groups: only reason classes are logged, never values or annotations. */
+export const PaymentGatewayDefectSeamLive = Layer.succeed(PaymentGatewayDefectSeam, {
+  recover: (message, fail) => recoverUnexpectedDefect({ headers: {} }, message, fail, describePaymentGatewayDefect),
+});
 
 const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) =>
   handlers
@@ -3811,6 +3889,14 @@ const symmyOwnerReleaseFetchLive = Layer.effect(
     return flow(forwardSymmyOwnerRelease, Effect.runPromiseWith(services));
   }),
 );
+/** The scoped Fetch edge for the generated Payment route Read, capture and recovery clients. */
+const paymentOwnerReleaseFetchLive = Layer.effect(
+  FetchHttpClient.Fetch,
+  Effect.gen(function* paymentOwnerReleaseFetchLayer() {
+    const services = yield* Effect.context<ActiveApplicationCompositionService>();
+    return flow(forwardPaymentOwnerRelease, Effect.runPromiseWith(services));
+  }),
+);
 
 type ShellAuthenticationLayer = Layer.Layer<AuthenticationService, Layer.Error<typeof authenticationServiceLive>>;
 type ShellModuleStateLayer = Layer.Layer<TenantModuleStateService, Layer.Error<typeof tenantModuleStateServiceLive>>;
@@ -4443,6 +4529,27 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.provide(SymmyGovernedDispatchLive),
     Layer.provide(symmyOwnerReleaseFetchLive.pipe(Layer.provide(shellReadAuthorityLayer))),
   );
+  const paymentGatewayRelayLive = Layer.effect(
+    PaymentGatewayRelay,
+    Effect.gen(function* configurePaymentGatewayRelay() {
+      const context =
+        yield* Effect.context<
+          Exclude<Effect.Services<ReturnType<typeof authorizePaymentRoute>>, HttpServerRequest.HttpServerRequest>
+        >();
+      return {
+        authorize: (input) =>
+          HttpServerRequest.HttpServerRequest.pipe(
+            Effect.flatMap((request) => authorizePaymentRoute(input, request)),
+            Effect.provide(context),
+          ),
+      };
+    }),
+  ).pipe(Layer.provide(paymentOwnerReleaseFetchLive.pipe(Layer.provide(shellReadAuthorityLayer))));
+  const paymentGatewayBoundariesLive = Layer.mergeAll(
+    PaymentNotificationBoundaryLive,
+    PaymentReconciliationBoundaryLive,
+  );
+  const paymentGatewayHandlersLive = Layer.mergeAll(PaymentNotificationHandlersLive, PaymentReconciliationHandlersLive);
   const apiHandlersLive = Layer.mergeAll(
     ShellEmailReceiptHandlersLive,
     authenticationGroupLive,
@@ -4476,6 +4583,15 @@ export const makeShellAuthenticationApiRuntime = (
         ),
       ),
     ),
+    paymentGatewayHandlersLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          paymentGatewayRelayLive,
+          paymentGatewayBoundariesLive.pipe(Layer.provide(PaymentGatewayDefectSeamLive)),
+          paymentOwnerReleaseFetchLive.pipe(Layer.provide(shellReadAuthorityLayer)),
+        ),
+      ),
+    ),
   ).pipe(Layer.provide(apiServicesLive), Layer.provide(shellSearchNoStoreLayer));
 
   return assembleEffectBffRuntime({
@@ -4485,6 +4601,7 @@ export const makeShellAuthenticationApiRuntime = (
       ShellTransportLive,
       LiveChangesRouteLive,
       SymmyIngressTransportLive.pipe(Layer.provide(SymmyHostMountLive)),
+      PaymentGatewayRelayTransportLive.pipe(Layer.provide(PaymentGatewayHostMountLive)),
     ).pipe(
       // Building the MCP endpoint's route Layer registers it beside the other Shell routes.
       Layer.provide(mcpEndpointRoutesLive),

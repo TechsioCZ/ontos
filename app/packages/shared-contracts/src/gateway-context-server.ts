@@ -513,9 +513,18 @@ const subjectWireOf = (
     Match.tag(
       'RegisteredWorkload',
       ({ context, declarationKey, expectedPrincipalId, legalEntityId, operationRequirementKey }) => {
-        if (!isVerifiedOutboxWorkerHandlerContext(context) || context.legalEntityScope !== 'forbidden') {
+        // A company-scoped worker always names its company. Shell admits it only when it equals the company of the
+        // delivery's original workload admission, so the worker cannot choose another one.
+        if (
+          !isVerifiedOutboxWorkerHandlerContext(context) ||
+          (context.legalEntityScope === 'required'
+            ? legalEntityId === undefined
+            : context.legalEntityScope !== 'forbidden')
+        ) {
           return Effect.fail(
-            new GatewayDelegationSourceError({ reason: 'A current verified tenant-only worker delivery is required' }),
+            new GatewayDelegationSourceError({
+              reason: 'A current verified worker delivery in its declared company scope is required',
+            }),
           );
         }
         const base = {

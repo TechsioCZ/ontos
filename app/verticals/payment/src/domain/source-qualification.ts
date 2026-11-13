@@ -1,6 +1,14 @@
 import { Data, DateTime, Match, Option } from 'effect';
 
-import type { PaymentExecutionBinding } from '../../shared/domain/payment-execution-binding.ts';
+import {
+  isBankAccountingReceiptBinding,
+  isPickupCapabilityBinding,
+  sameBankReceiptAuthority,
+} from '../../shared/domain/payment-execution-binding.ts';
+import type {
+  PaymentBankReceiptAuthority,
+  PaymentExecutionBinding,
+} from '../../shared/domain/payment-execution-binding.ts';
 import { PAYMENT_LAUNCH_CURRENCY } from '../../shared/domain/payment-money.ts';
 import type { PaymentMonetaryAmount } from '../../shared/domain/payment-money.ts';
 import type {
@@ -13,6 +21,7 @@ import type {
   PaymentSourceFactFamily,
   PaymentSourceKind,
 } from '../../shared/domain/payment-vocabulary.ts';
+import type { PaymentRefundExecutionRoute } from '../../shared/domain/refund-contract.ts';
 import type {
   PaymentSourceBinding,
   PaymentSourceClaimedAmount,
@@ -39,7 +48,8 @@ import { paymentFactMeaning } from './evidence-interpretation.ts';
  * - A generic carrier DELIVERED signal is not customer-funds collection: only a carrier authority
  *   configured for COD_CUSTOMER_COLLECTION stating COLLECTION_CONFIRMED for the exact Delivery Offer is.
  * - Operator/POS and manual refund statements enter only through the separately permitted local
- *   evidence Action; a manual refund route can report a request, never confirm returned money.
+ *   evidence Action. Manual refund outcomes and corrections also require governed executor evidence
+ *   before recording or interpretation.
  */
 
 const ENTRY_SOURCE_KINDS: Readonly<Record<PaymentSourceEntry, readonly PaymentSourceKind[]>> = Object.freeze({
@@ -73,6 +83,7 @@ const REMITTANCE_FACTS = [
 ] as const satisfies readonly PaymentObservationFactKind[];
 const REFUND_EFFECT_FACTS = [
   'REFUND_PENDING',
+  'REFUND_INDETERMINATE',
   'REFUND_CONFIRMED',
   'REFUND_NOT_EFFECTED',
   'SOURCE_CORRECTION',
@@ -115,8 +126,8 @@ export const PAYMENT_SOURCE_FACT_AUTHORITY: Readonly<
     BANK_ACCOUNTING: { facts: REFUND_EFFECT_FACTS, methods: NON_GATEWAY_METHODS },
     // A governed POS/local refund function exists only for pickup/on-site collection.
     LOCAL_POS_OPERATOR: { facts: REFUND_EFFECT_FACTS, methods: ['PAY_ON_PICKUP_OR_ON_SITE'] },
-    // A manual external route is an executor, not effect evidence: it reports a request only.
-    MANUAL_EXTERNAL_REFUND: { facts: ['REFUND_PENDING'], methods: NON_GATEWAY_METHODS },
+    // The source authority identifies the executor. Acceptance separately verifies its outcome evidence.
+    MANUAL_EXTERNAL_REFUND: { facts: REFUND_EFFECT_FACTS, methods: ['PAY_ON_PICKUP_OR_ON_SITE'] },
     // Gateway refunds execute only through the original provider family/account/environment
     // (#1150, C17 #1155/#1158); the route itself is matched against that binding by #1150.
     PAYMENT_GATEWAY: { facts: REFUND_EFFECT_FACTS, methods: ['ONLINE_GATEWAY'] },
@@ -133,10 +144,14 @@ export const PAYMENT_SOURCE_FACT_AUTHORITY: Readonly<
 const authorityRule = (family: PaymentSourceFactFamily, kind: PaymentSourceKind): SourceFactAuthority | undefined =>
   PAYMENT_SOURCE_FACT_AUTHORITY[family][kind];
 
+export const isBankReceiptFactFamily = (family: PaymentSourceFactFamily): boolean =>
+  family === 'BANK_ACCOUNTING_RECEIPT' || family === 'DEFERRED_INVOICE_RECEIPT';
+
 /** Why a requested authority configuration is invalid; `undefined` when it is a valid combination. */
 export const sourceAuthorityConfigurationProblem = (configuration: {
   readonly factFamily: PaymentSourceFactFamily;
   readonly method: PaymentMethod | undefined;
+  readonly pickupCapabilityRef?: string | undefined;
   readonly refundRoute: boolean;
   readonly sourceKind: PaymentSourceKind;
 }): string | undefined => {
@@ -146,6 +161,12 @@ export const sourceAuthorityConfigurationProblem = (configuration: {
   }
   if (configuration.method !== undefined && !rule.methods.includes(configuration.method)) {
     return `${configuration.factFamily} from ${configuration.sourceKind} does not apply to ${configuration.method}`;
+  }
+  if (configuration.sourceKind === 'MANUAL_EXTERNAL_REFUND' && configuration.method !== 'PAY_ON_PICKUP_OR_ON_SITE') {
+    return 'A manual external refund route must explicitly cover pickup or on-site collection';
+  }
+  if ((configuration.sourceKind === 'LOCAL_POS_OPERATOR') !== (configuration.pickupCapabilityRef !== undefined)) {
+    return 'An exact pickup capability is required only for a POS/operator authority';
   }
   if (configuration.refundRoute !== (configuration.factFamily === 'REFUND_EXECUTION')) {
     return 'A refund route is configured exactly for the REFUND_EXECUTION fact family';
@@ -164,6 +185,7 @@ export interface PaymentSourceAuthorityView {
   readonly environment: string;
   readonly factFamily: PaymentSourceFactFamily;
   readonly method: PaymentMethod | undefined;
+  readonly pickupCapabilityRef?: string | undefined;
   readonly refundRoute: boolean;
   readonly revision: number;
   readonly sourceAuthorityId: string;
@@ -178,6 +200,8 @@ export interface PaymentSourceAuthorityView {
 export interface PaymentRecordedObservationView {
   readonly acceptanceOutcome: PaymentObservationAcceptanceOutcome;
   readonly amount: PaymentMonetaryAmount | undefined;
+  /** A governed attachment established an operation without rewriting the original occurrence. */
+  readonly attachedOperationId?: string | undefined;
   readonly correctsObservationId: string | undefined;
   readonly economicEffectKey: string | undefined;
   readonly evidenceRef: string | undefined;
@@ -201,7 +225,10 @@ export interface PaymentSourceTargetView {
     readonly outcome: PaymentOperationOutcome;
     /** The configured executor a REFUND was requested through (#1150); absent for other kinds. */
     readonly refundExecutionRoute?:
-      | { readonly sourceAuthorityId: string; readonly sourceKind: PaymentSourceKind }
+      | Pick<
+          PaymentRefundExecutionRoute,
+          'accountRef' | 'environment' | 'sourceAuthorityId' | 'sourceKind' | 'sourceSystem'
+        >
       | undefined;
   }[];
   readonly payment: {
@@ -413,10 +440,12 @@ const bindingProblem = (statement: PaymentSourceStatement, binding: PaymentExecu
 const correlatedOperationKind = (factKind: PaymentObservationFactKind): PaymentOperationKind | undefined =>
   factKind === 'SETTLEMENT_OBSERVED' ? 'COLLECT' : paymentFactMeaning(factKind)?.kind;
 
+const collectionLineage = (target: PaymentSourceTargetView) =>
+  target.operations.filter((operation) => operation.kind === 'COLLECT');
+
 /**
- * Exact operation correlation. An explicit identity is passed on (interpretation holds a foreign or
- * mismatching one). Without it, only the single live-or-proven COLLECT lineage (#1148 invariant) is
- * exact; refunds and cancellations must name their operation.
+ * Without an explicit operation identity, a statement can correlate only when there has been one
+ * collection attempt. An earlier not-effected attempt may still receive late contradictory evidence.
  */
 const correlateOperation = (statement: PaymentSourceStatement, target: PaymentSourceTargetView): string | undefined => {
   if (statement.operationId !== undefined) {
@@ -425,9 +454,7 @@ const correlateOperation = (statement: PaymentSourceStatement, target: PaymentSo
   if (correlatedOperationKind(statement.factKind) !== 'COLLECT') {
     return undefined;
   }
-  const lineage = target.operations.filter(
-    (operation) => operation.kind === 'COLLECT' && operation.outcome !== 'NOT_EFFECTED_CONFIRMED',
-  );
+  const lineage = collectionLineage(target);
   return lineage.length === 1 ? lineage[0]?.operationId : undefined;
 };
 
@@ -444,18 +471,38 @@ const claimsMonetaryEffect = (factKind: PaymentObservationFactKind): boolean => 
 const exactAmount = (claimed: PaymentSourceClaimedAmount | undefined): PaymentMonetaryAmount | undefined =>
   claimed === undefined ? undefined : { amountMinor: claimed.amountMinor, currency: PAYMENT_LAUNCH_CURRENCY };
 
-/**
- * A REFUND keeps the executor it was requested through: no other executor evidences it, whatever its kind,
- * account or system, and a revoked original route is explicit, never replaced (#1150/#1152). `active` is
- * already narrowed to the statement's own source binding, so an executor of another kind is never in it.
- */
-const bypassesOriginalRefundRoute = (
-  statement: PaymentSourceStatement,
-  active: readonly PaymentSourceAuthorityView[],
-  operation: PaymentSourceTargetView['operations'][number] | undefined,
+type SourceTargetOperation = PaymentSourceTargetView['operations'][number];
+
+/** A canonical REFUND can only be evidenced by the recorded executor of that operation. */
+const matchesOriginalRefundAuthority = (
+  operation: SourceTargetOperation,
+  authority: PaymentSourceAuthorityView,
+  method: PaymentMethod,
 ): boolean => {
-  const route = statement.factFamily === 'REFUND_EXECUTION' ? operation?.refundExecutionRoute : undefined;
-  return route !== undefined && !active.some((candidate) => candidate.sourceAuthorityId === route.sourceAuthorityId);
+  const route = operation.refundExecutionRoute;
+  return (
+    route !== undefined &&
+    authority.factFamily === 'REFUND_EXECUTION' &&
+    authority.refundRoute &&
+    (authority.method === undefined || authority.method === method) &&
+    authority.sourceAuthorityId === route.sourceAuthorityId &&
+    authority.sourceKind === route.sourceKind &&
+    authority.sourceSystem === route.sourceSystem &&
+    authority.accountRef === route.accountRef &&
+    authority.environment === route.environment
+  );
+};
+
+const correctionOperationOf = (
+  input: PaymentSourceQualificationInput,
+  target: PaymentSourceTargetView,
+): SourceTargetOperation | undefined => {
+  const corrected = input.correctedObservation;
+  if (input.statement.factKind !== 'SOURCE_CORRECTION' || corrected?.paymentId !== target.payment.paymentId) {
+    return undefined;
+  }
+  const operationId = corrected.operationId ?? corrected.attachedOperationId;
+  return target.operations.find((operation) => operation.operationId === operationId);
 };
 
 /** The bound ACTIVE authority that issued the observation a correction names on this Payment, if still configured. */
@@ -472,23 +519,138 @@ const issuingAuthorityOf = (
   return active.find((candidate) => candidate.sourceAuthorityId === issuerId);
 };
 
-const qualifyAgainstPayment = (
+const matchingMethodAuthority = (active: readonly PaymentSourceAuthorityView[], method: PaymentMethod) =>
+  active.find((candidate) => candidate.method === method) ?? active.find((candidate) => candidate.method === undefined);
+
+const bankReceiptAuthorityOf = (
+  operation: PaymentSourceTargetView['operations'][number] | undefined,
+): PaymentBankReceiptAuthority | undefined => {
+  const binding = operation?.kind === 'COLLECT' ? operation.binding : undefined;
+  return isBankAccountingReceiptBinding(binding) ? binding.receiptAuthority : undefined;
+};
+
+/** The original source can be proved even when the statement cannot identify which attempt it concerns. */
+const sharedBankReceiptAuthority = (target: PaymentSourceTargetView): PaymentBankReceiptAuthority | undefined => {
+  const [first, ...others] = collectionLineage(target);
+  const original = bankReceiptAuthorityOf(first);
+  if (original === undefined) {
+    return undefined;
+  }
+  const sameOriginal = others.every((operation) => {
+    const candidate = bankReceiptAuthorityOf(operation);
+    return candidate !== undefined && sameBankReceiptAuthority(original, candidate);
+  });
+  return sameOriginal ? original : undefined;
+};
+
+const matchingBankReceiptAuthority = (
   input: PaymentSourceQualificationInput,
   active: readonly PaymentSourceAuthorityView[],
+  target: PaymentSourceTargetView,
+  operation: PaymentSourceTargetView['operations'][number] | undefined,
+  issuer: PaymentSourceAuthorityView | undefined,
+): PaymentSourceAuthorityView | undefined => {
+  const { method, paymentId } = target.payment;
+  const corrected = input.correctedObservation;
+  if (
+    input.statement.factKind === 'SOURCE_CORRECTION' &&
+    (corrected === undefined || corrected.paymentId !== paymentId)
+  ) {
+    // The existing correction path holds an unresolved target without applying any effect.
+    return matchingMethodAuthority(active, method);
+  }
+  const receiptOperation =
+    operation ??
+    (issuer === undefined
+      ? undefined
+      : target.operations.find((candidate) => candidate.operationId === corrected?.operationId));
+  const original =
+    receiptOperation === undefined && input.statement.factKind === 'COLLECTION_CONFIRMED'
+      ? sharedBankReceiptAuthority(target)
+      : bankReceiptAuthorityOf(receiptOperation);
+  if (original === undefined) {
+    // A recorded issuer can correct an accepted historical receipt, but cannot add a new one.
+    return corrected?.acceptanceOutcome === 'ACCEPTED_OBSERVATION' ? issuer : undefined;
+  }
+  return active.find(
+    (candidate) =>
+      (candidate.method === undefined || candidate.method === method) && sameBankReceiptAuthority(original, candidate),
+  );
+};
+
+const correctionQualificationProblem = (
+  corrected: PaymentRecordedObservationView | undefined,
+  authority: PaymentSourceAuthorityView,
+  paymentId: string,
+  operationId: string | undefined,
+): PaymentSourceQualificationCase | undefined => {
+  if (corrected === undefined || corrected.paymentId !== paymentId) {
+    return PaymentSourceQualification.Held({
+      authority,
+      operationId: Option.fromNullishOr(operationId),
+      paymentId,
+      reason: 'CORRECTION_TARGET_UNKNOWN',
+    });
+  }
+  if (corrected.sourceAuthorityId !== authority.sourceAuthorityId) {
+    return unauthorized('Only the authority that issued a statement can correct it');
+  }
+  return undefined;
+};
+
+const authorityCoversPickupCapability = (
+  authority: PaymentSourceAuthorityView,
+  pickupCapabilityRef: string | undefined,
+): boolean => {
+  if (authority.sourceKind === 'MANUAL_EXTERNAL_REFUND') {
+    return authority.method === 'PAY_ON_PICKUP_OR_ON_SITE';
+  }
+  return (
+    authority.sourceKind !== 'LOCAL_POS_OPERATOR' ||
+    (pickupCapabilityRef !== undefined && authority.pickupCapabilityRef === pickupCapabilityRef)
+  );
+};
+
+const matchingOperationAuthority = (
+  input: PaymentSourceQualificationInput,
+  active: readonly PaymentSourceAuthorityView[],
+  target: PaymentSourceTargetView,
+  operation: SourceTargetOperation | undefined,
+): PaymentSourceAuthorityView | undefined => {
+  const original = correctionOperationOf(input, target) ?? operation;
+  if (original?.kind === 'REFUND') {
+    return active.find((candidate) => matchesOriginalRefundAuthority(original, candidate, target.payment.method));
+  }
+  // Corrections stay with the original issuer, even when a more specific authority was added later.
+  const issuer =
+    input.statement.factKind === 'SOURCE_CORRECTION'
+      ? issuingAuthorityOf(input, target.payment.paymentId, active)
+      : undefined;
+  return isBankReceiptFactFamily(input.statement.factFamily)
+    ? matchingBankReceiptAuthority(input, active, target, operation, issuer)
+    : (issuer ?? matchingMethodAuthority(active, target.payment.method));
+};
+
+const qualifyAgainstPayment = (
+  input: PaymentSourceQualificationInput,
+  bound: readonly PaymentSourceAuthorityView[],
   target: PaymentSourceTargetView,
 ): PaymentSourceQualificationCase => {
   const { statement } = input;
   const { payment } = target;
-  // A correction is decided by the authority that issued the statement it corrects, while that authority
-  // is still bound and ACTIVE: a more specific row added for the same binding must not block it.
-  const issuer =
-    statement.factKind === 'SOURCE_CORRECTION' ? issuingAuthorityOf(input, payment.paymentId, active) : undefined;
-  const authority =
-    issuer ??
-    active.find((candidate) => candidate.method === payment.method) ??
-    active.find((candidate) => candidate.method === undefined);
+  const bindingRef = isPickupCapabilityBinding(payment.executionBinding)
+    ? payment.executionBinding.pickupCapabilityRef
+    : undefined;
+  const active = bound.filter((authority) => authorityCoversPickupCapability(authority, bindingRef));
+  const operationId = correlateOperation(statement, target);
+  const operation = target.operations.find((candidate) => candidate.operationId === operationId);
+  const authority = matchingOperationAuthority(input, active, target, operation);
   if (authority === undefined) {
-    return unauthorized(`The source is not a configured ${statement.factFamily} authority for ${payment.method}`);
+    return unauthorized(
+      isBankReceiptFactFamily(statement.factFamily)
+        ? 'The statement does not prove the original bank receipt authority of the collection'
+        : `The source is not a configured ${statement.factFamily} authority for ${payment.method}`,
+    );
   }
   const rule = authorityRule(statement.factFamily, statement.source.sourceKind);
   if (rule === undefined || !rule.methods.includes(payment.method)) {
@@ -501,13 +663,8 @@ const qualifyAgainstPayment = (
   if (Option.contains(binding, 'MISMATCH')) {
     return unauthorized('The statement does not match the original execution binding or selected capability');
   }
-  const operationId = correlateOperation(statement, target);
-  const operation = target.operations.find((candidate) => candidate.operationId === operationId);
   if (operation !== undefined && Option.contains(bindingProblem(statement, operation.binding), 'MISMATCH')) {
     return unauthorized('The statement does not match the original binding of the correlated operation');
-  }
-  if (bypassesOriginalRefundRoute(statement, active, operation)) {
-    return unauthorized('The statement does not come from the refund execution route the REFUND was requested through');
   }
   if (Option.contains(binding, 'MISSING')) {
     return PaymentSourceQualification.Held({
@@ -518,17 +675,14 @@ const qualifyAgainstPayment = (
     });
   }
   if (statement.factKind === 'SOURCE_CORRECTION') {
-    const corrected = input.correctedObservation;
-    if (corrected === undefined || corrected.paymentId !== payment.paymentId) {
-      return PaymentSourceQualification.Held({
-        authority,
-        operationId: Option.fromNullishOr(operation?.operationId),
-        paymentId: payment.paymentId,
-        reason: 'CORRECTION_TARGET_UNKNOWN',
-      });
-    }
-    if (corrected.sourceAuthorityId !== authority.sourceAuthorityId) {
-      return unauthorized('Only the authority that issued a statement can correct it');
+    const problem = correctionQualificationProblem(
+      input.correctedObservation,
+      authority,
+      payment.paymentId,
+      operation?.operationId,
+    );
+    if (problem !== undefined) {
+      return problem;
     }
   }
   return PaymentSourceQualification.Qualified({
@@ -544,6 +698,42 @@ const qualifyAgainstPayment = (
     },
     paymentId: payment.paymentId,
   });
+};
+
+const canReplayOccurrence = (
+  original: PaymentRecordedObservationView,
+  bound: readonly PaymentSourceAuthorityView[],
+  target: PaymentSourceTargetView | undefined,
+): boolean => {
+  const issuer = bound.find(
+    (authority) =>
+      authority.factFamily === original.factFamily && authority.sourceAuthorityId === original.sourceAuthorityId,
+  );
+  if (issuer === undefined) {
+    return false;
+  }
+  const operationId = original.operationId ?? original.attachedOperationId;
+  if (operationId === undefined) {
+    return true;
+  }
+  if (target === undefined) {
+    return false;
+  }
+  const operation = target.operations.find((candidate) => candidate.operationId === operationId);
+  return (
+    operation !== undefined &&
+    (operation.kind !== 'REFUND' || matchesOriginalRefundAuthority(operation, issuer, target.payment.method))
+  );
+};
+
+const exactPaymentTarget = (
+  target: PaymentSourceTargetView | undefined,
+  operationId: string | undefined,
+): PaymentSourceTargetView | undefined => {
+  if (target === undefined || operationId === undefined) {
+    return target;
+  }
+  return target.operations.some((operation) => operation.operationId === operationId) ? target : undefined;
 };
 
 /** Qualifies one source statement. Only `Held` and `Qualified` may record evidence. */
@@ -571,10 +761,20 @@ export const qualifyPaymentSourceStatement = (
   if (bound.length === 0) {
     return NOT_A_BOUND_AUTHORITY;
   }
+  const { existingOccurrence } = input;
+  // The occurrence belongs to its recorded authority, even if another method shares the same source tuple.
+  if (existingOccurrence !== undefined && !canReplayOccurrence(existingOccurrence, bound, input.target)) {
+    return NOT_A_BOUND_AUTHORITY;
+  }
   const rule = authorityRule(statement.factFamily, statement.source.sourceKind);
   if (rule === undefined || !rule.facts.includes(statement.factKind)) {
     return PaymentSourceQualification.Unsupported({
       reason: `${statement.factKind} is not a fact ${statement.factFamily} from ${statement.source.sourceKind} establishes`,
+    });
+  }
+  if (statement.factKind === 'REFUND_INDETERMINATE' && statement.amount === undefined) {
+    return PaymentSourceQualification.Unsupported({
+      reason: 'An unknown refund outcome must identify the exact refund amount and currency',
     });
   }
   if (statement.amount === undefined && claimsMonetaryEffect(statement.factKind)) {
@@ -589,16 +789,19 @@ export const qualifyPaymentSourceStatement = (
       required: requiredCurrency,
     });
   }
-  const { existingOccurrence } = input;
   if (existingOccurrence !== undefined) {
     // An exact redelivery claims the same content; anything else is a changed statement (#1151).
     return existingOccurrence.statementHash === input.statementHash
       ? PaymentSourceQualification.Duplicate({ original: existingOccurrence })
       : PaymentSourceQualification.OccurrenceConflict({ original: existingOccurrence });
   }
-  if (input.target === undefined) {
-    const authority = unassignedAuthority(bound);
+  const target = exactPaymentTarget(input.target, statement.operationId);
+  if (target === undefined) {
+    // An explicit operation absent from the named Payment cannot attach debt to either Payment.
+    const authority = unassignedAuthority(
+      bound.filter((candidate) => authorityCoversPickupCapability(candidate, statement.pickupCapabilityRef)),
+    );
     return authority === undefined ? NOT_A_BOUND_AUTHORITY : PaymentSourceQualification.HeldUnassigned({ authority });
   }
-  return qualifyAgainstPayment(input, bound, input.target);
+  return qualifyAgainstPayment(input, bound, target);
 };

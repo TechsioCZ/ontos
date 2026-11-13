@@ -30,6 +30,8 @@
     "./api/change-customer-profile-ico-action/client": "./src/api/change-customer-profile-ico-action-client.ts",
     "./api/customer-group-detail": "./shared/apis/customer-group-detail.ts",
     "./api/client": "./src/api/commerce-customer-context-client.ts",
+    "./api/guest-payment-terms-resolution": "./shared/apis/guest-payment-terms-resolution.ts",
+    "./api/payment-terms-resolution": "./shared/apis/payment-terms-resolution.ts",
     "./api/consume-order-purchase-approval-action": "./shared/apis/consume-order-purchase-approval-action.ts",
     "./api/consume-order-purchase-approval-action/client": "./src/api/consume-order-purchase-approval-action-client.ts",
     "./api/consume-purchase-approval-action": "./shared/apis/consume-purchase-approval-action.ts",

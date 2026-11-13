@@ -309,6 +309,9 @@ importers:
       '@app/party-registry':
         specifier: workspace:*
         version: link:verticals/party-registry
+      '@app/payment':
+        specifier: workspace:*
+        version: link:verticals/payment
       '@app/price-group-catalog':
         specifier: workspace:*
         version: link:verticals/price-group-catalog
@@ -605,6 +608,9 @@ importers:
       '@app/party-registry-identity-contracts':
         specifier: workspace:*
         version: link:../../packages/party-registry-identity-contracts
+      '@app/payment':
+        specifier: workspace:*
+        version: link:../../verticals/payment
       '@app/price-group-catalog':
         specifier: workspace:*
         version: link:../../verticals/price-group-catalog
@@ -3388,6 +3394,9 @@ importers:
 
   verticals/payment:
     dependencies:
+      '@app/commerce-customer-context':
+        specifier: workspace:*
+        version: link:../commerce-customer-context
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime

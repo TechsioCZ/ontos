@@ -298,6 +298,9 @@ export const derivedEnvironment = (
     ONTOS_EMAIL_FROM: `noreply@${new URL(origin).hostname}`,
     ONTOS_GATEWAY_ISSUER: origin,
     ONTOS_OAUTH_ISSUER: `${origin}/shell-super-app-api/oauth`,
+    // Payment composes each provider binding's notification URL from the public Shell origin (an https origin only;
+    // anything else refuses binding creation and leaves the rest of Payment running).
+    ONTOS_PAYMENT_NOTIFICATION_BASE_URL: origin,
     ONTOS_PUBLIC_URL: origin,
     ONTOS_SHELL_GATEWAY_BASE_URL: shellGateway,
   };

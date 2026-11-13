@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import type { PAYMENT_GATEWAY_RELAY_PATH_PREFIX } from '@app/payment/payment-gateway-relay';
 import { SYMMY_REST_PREFIX } from '@app/shared-contracts/symmy/route-catalog';
 import { defineConfig, presetUltramodernWorkspace } from '@modern-js/ultramodern-app-tools';
 import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
@@ -24,6 +25,9 @@ import { createWorkspaceModernConfig } from '../../packages/shared-contracts/too
 
 const appId = 'shell-super-app';
 const shellBffPrefix = '/shell-super-app-api';
+// PSP notifications and the Payment reconciliation driver reach Shell at the relay's own path on every deployment.
+// The relay contract module loads Effect, which the config loader must not evaluate, so only its type is imported.
+const paymentGatewayRelayPrefix = '/api/payment/v1' satisfies typeof PAYMENT_GATEWAY_RELAY_PATH_PREFIX;
 const internalSymmyIngress =
   is(Literal('1'))(getBuildConfigEnvironment('ONTOS_INTERNAL_SYMMY_INGRESS')) &&
   resolveDeployTarget().target === 'node';
@@ -63,7 +67,7 @@ export default defineConfig(
           openapi: { path: '/openapi.json' },
           strictEffectApproach: true,
         },
-        prefix: internalSymmyIngress ? [shellBffPrefix, SYMMY_REST_PREFIX] : shellBffPrefix,
+        prefix: [shellBffPrefix, paymentGatewayRelayPrefix, ...(internalSymmyIngress ? [SYMMY_REST_PREFIX] : [])],
         runtimeFramework: 'effect',
       },
       builderPlugins: [pluginTailwindcss()],
@@ -87,6 +91,7 @@ export default defineConfig(
               '/bundles',
               '/favicon.ico',
               shellBffPrefix,
+              paymentGatewayRelayPrefix,
               ...(internalSymmyIngress ? [SYMMY_REST_PREFIX] : []),
               '/locales',
               '/mf-manifest.json',

@@ -24,6 +24,8 @@
     "integration.symmy.source-organization-facts.read",
     "party.registry.source-read",
     "party.registry.source-write",
+    "payment.provider-notification-ingress",
+    "payment.provider-reconciliation",
     "payment.source-ingress",
     "pricing.price-group-catalog.source-read",
     "pricing.price-group-catalog.source-write",
@@ -21679,6 +21681,138 @@
         },
         {
           "accessDeclaration": {
+            "key": "payment.core.gateway-configuration.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.api.gateway-configuration",
+            "moduleKey": "payment.core",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "payment.core.gateway-customer-action.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.api.gateway-customer-action",
+            "moduleKey": "payment.core",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "payment.core.gateway-enablement.configure",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.configure-gateway-enablement",
+            "moduleKey": "payment.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "payment.core.gateway-reconciliation-debt.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.api.gateway-reconciliation-debt",
+            "moduleKey": "payment.core",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "payment.core.gateway-return-status.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.api.gateway-return-status",
+            "moduleKey": "payment.core",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "payment.core.history.read",
             "kind": "read",
             "modes": [
@@ -21871,6 +22005,62 @@
         },
         {
           "accessDeclaration": {
+            "key": "payment.core.provider-account-binding.configure",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.configure-provider-account-binding",
+            "moduleKey": "payment.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "payment.core.provider-credential.rotate",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.rotate-provider-credential",
+            "moduleKey": "payment.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "payment.core.reconciliation.decide",
             "kind": "action",
             "modes": [
@@ -21937,7 +22127,9 @@
               "level": "manage"
             },
             "risk": "critical",
-            "selectors": []
+            "selectors": [
+              "all"
+            ]
           },
           "accessFieldGroups": [],
           "entrypoint": {

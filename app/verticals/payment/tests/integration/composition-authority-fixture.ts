@@ -2,7 +2,9 @@ import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { PgClient } from '@effect/sql-pg';
 import { Context, Effect, Layer, Redacted, Ref, Schema } from 'effect';
 
+import { extractVerticalRuntimeSafeDescriptors } from '../../../../packages/core-runtime/src/modules/runtime-registration.ts';
 import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { paymentRegistration } from '../../vertical.registration.ts';
 
 /**
  * Core's single Application Composition authority for Payment tests that make an operation's effect
@@ -11,7 +13,16 @@ import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests
  * work only while exactly that revision is the active, unexpired authority. The fixture holds the
  * publication lock Core's native suites share for the whole test, publishes the requested revision,
  * and on release removes the Payment work it admitted and restores the exact prior authority row.
+ *
+ * Each published revision carries Payment's real registered Outbox subscriptions, exactly as Core
+ * publishes them for an approved release, so completion-bound executor work (#1158: gateway dispatch
+ * and lookup/replay recovery) is enrolled as durable work without weakening Core's enrollment trigger.
+ * Never install twice in one test: the session lock makes a second install wait forever; switch the
+ * revision with `activate` instead.
  */
+
+/** Payment's real registered Outbox subscriptions. */
+const paymentOutboxSubscriptions = extractVerticalRuntimeSafeDescriptors(paymentRegistration).outboxSubscriptions;
 
 /** The session lock Core's native suites share for their exclusive use of the authority row. */
 const FIXTURE_LOCK = "hashtextextended('ontos.search-test-authority', 0)";
@@ -26,6 +37,26 @@ const PreviousAuthoritySchema = Schema.Struct({
   updated_at: Schema.String,
   valid_until: Schema.String,
 });
+
+/**
+ * Publishes `revision` as the active, open, unexpired release with Payment's registered subscriptions on
+ * `client`'s database under Core's publication lock. Suites on a disposable database call it directly; the
+ * shared database goes through `installPaymentTestCompositionAuthority`, which restores the prior row.
+ */
+export const publishPaymentTestCompositionAuthority = Effect.fn('PaymentTests.publishCompositionAuthority')(
+  function* publishPaymentTestCompositionAuthority(client: PgClient.PgClient, revision: string) {
+    const subscriptions = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(paymentOutboxSubscriptions);
+    yield* client.withTransaction(
+      Effect.gen(function* publishPaymentTestRelease() {
+        yield* client.unsafe(`select pg_advisory_xact_lock(${PUBLICATION_LOCK})`);
+        yield* client.unsafe(
+          "insert into core.application_composition_authority (authority_key, revision, phase, durable_work_admission, valid_until, subscriptions_json) values ('active', $1, 'active', 'open', clock_timestamp() + interval '1 hour', $2::jsonb) on conflict (authority_key) do update set revision = excluded.revision, phase = excluded.phase, durable_work_admission = excluded.durable_work_admission, valid_until = excluded.valid_until, subscriptions_json = excluded.subscriptions_json",
+          [revision, subscriptions],
+        );
+      }),
+    );
+  },
+);
 
 export const installPaymentTestCompositionAuthority = Effect.fn('PaymentTests.installCompositionAuthority')(
   function* installPaymentTestCompositionAuthority(revision: string) {
@@ -54,7 +85,7 @@ export const installPaymentTestCompositionAuthority = Effect.fn('PaymentTests.in
                 "delete from core.application_composition_authority where authority_key = 'active'",
               );
             } else {
-              const subscriptions = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
+              const previousSubscriptions = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
                 previous.subscriptions_json,
               );
               yield* session.unsafe(
@@ -64,7 +95,7 @@ export const installPaymentTestCompositionAuthority = Effect.fn('PaymentTests.in
                   previous.phase,
                   previous.durable_work_admission,
                   previous.valid_until,
-                  subscriptions,
+                  previousSubscriptions,
                   previous.updated_at,
                 ],
               );
@@ -73,19 +104,11 @@ export const installPaymentTestCompositionAuthority = Effect.fn('PaymentTests.in
         )
         .pipe(Effect.andThen(session.unsafe(`select pg_advisory_unlock(${FIXTURE_LOCK})`)), Effect.orDie),
     );
-    /** Publishes `selected` as the active, open, unexpired release (the next compatible runtime, R2). */
+    /** Publishes `selected` (the next compatible runtime, R2) with Payment's registered subscriptions. */
     const activate = (selected: string) =>
-      session
-        .withTransaction(
-          Effect.gen(function* publishPaymentTestRelease() {
-            yield* session.unsafe(`select pg_advisory_xact_lock(${PUBLICATION_LOCK})`);
-            yield* session.unsafe(
-              "insert into core.application_composition_authority (authority_key, revision, phase, durable_work_admission, valid_until, subscriptions_json) values ('active', $1, 'active', 'open', clock_timestamp() + interval '1 hour', '[]'::jsonb) on conflict (authority_key) do update set revision = excluded.revision, phase = excluded.phase, durable_work_admission = excluded.durable_work_admission, valid_until = excluded.valid_until, subscriptions_json = excluded.subscriptions_json",
-              [selected],
-            );
-          }),
-        )
-        .pipe(Effect.andThen(Ref.update(activated, (revisions) => new Set([...revisions, selected]))));
+      publishPaymentTestCompositionAuthority(session, selected).pipe(
+        Effect.andThen(Ref.update(activated, (revisions) => new Set([...revisions, selected]))),
+      );
     yield* activate(revision);
     return { activate };
   },

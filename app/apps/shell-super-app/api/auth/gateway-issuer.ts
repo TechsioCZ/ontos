@@ -832,7 +832,10 @@ export const issueSymmyGatewayContextAssertion = Effect.fn('GatewayIssuer.issueS
   },
 );
 
-/** Shell-private route scope issuance: the proof owner supplies only its actual protected Read result. */
+/**
+ * Shell-private route scope issuance: the proof owner supplies only its actual protected Read result.
+ * The Symmy ingress marker is attached only for the Symmy audience; a Payment route scope never carries it.
+ */
 export const issueRouteScopedGatewayContextAssertion = Effect.fn('GatewayIssuer.issueRouteScoped')(
   function* issueRouteScoped(input: {
     readonly audience: string;
@@ -841,6 +844,10 @@ export const issueRouteScopedGatewayContextAssertion = Effect.fn('GatewayIssuer.
     readonly routeScope: RegisteredGatewayRouteScope;
   }) {
     const gatewayIssuer = yield* GatewayIssuer;
-    return yield* gatewayIssuer.issue({ ...input, [routeScopedIssuance]: true, [symmyIngressIssuance]: true });
+    return yield* gatewayIssuer.issue(
+      input.audience === SYMMY_INGRESS_AUDIENCE
+        ? { ...input, [routeScopedIssuance]: true, [symmyIngressIssuance]: true }
+        : { ...input, [routeScopedIssuance]: true },
+    );
   },
 );

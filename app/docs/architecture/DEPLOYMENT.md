@@ -245,6 +245,31 @@ Commerce Order, Customer Context, Commerce Cart and Pricing call each other thro
 
 Add these to the owner's entry, keyed by its `appId`, in the GitHub secret `DEMO_IMMUTABLE_RELEASE_SECRETS` of the `stage-edge` environment. Each deploy writes that JSON to the `app` service as `ONTOS_OWNER_SECRETS_JSON` (see [Secrets](#secrets)), and the app host hands each process only the entries of the owners it serves; the Outbox Worker host receives every owner's entries, because it runs their workers. Every owner base is the owner's loopback API origin `<origin>/<unit>-api`, derived, never stored. At runtime each owner reads its values lazily, so an unusable one fails only the work that needs it, never the other owners in the shared process.
 
+### Payment gateway relay
+
+Providers deliver notifications to the Shell's typed relay at `/api/payment/v1/notifications/{gopay,stripe,comgate}/<tenantId>/<routeKey>`, and the Payment reconciliation driver requests recoveries at `/api/payment/v1/reconciliation/<routeKey>/recoveries`. The Shell mounts `/api/payment/v1` as its own always-on prefix beside `/shell-super-app-api`, and the app host routes every path outside `/_m/<appId>/` to the Shell, so the relay is served at the public origin.
+
+| Owner             | Credentials (sensitive, in `DEMO_IMMUTABLE_RELEASE_SECRETS`)                     |
+| ----------------- | -------------------------------------------------------------------------------- |
+| `payment`         | `ONTOS_PAYMENT_PROVIDER_CREDENTIALS`, `ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS` |
+| `shell-super-app` | `ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS`                                   |
+
+- `ONTOS_PAYMENT_NOTIFICATION_BASE_URL` is derived by the app host from the public origin (`scripts/zerops/app-host.mts`), never stored. Payment composes each binding's notification URL from it, the provider family, the tenant and the binding's generated route key. Outside an `https` origin (the local demo), configuring a provider binding fails with 503 `payment_notification_route_unavailable` and the rest of Payment keeps working.
+- `ONTOS_PAYMENT_PROVIDER_CREDENTIALS` is a JSON object keyed by the credential secret ref of a provider account binding. Each entry is `{ "family": "GOPAY", "clientId", "clientSecret" }`, `{ "family": "STRIPE", "secretKey", "webhookSigningSecret" }` or `{ "family": "COMGATE", "secret" }`; an entry with any other field is refused. While it is absent every payment gateway operation is unavailable and the other Payment features keep working. Payment reads it on each cache miss, so a rotation is picked up within 60 seconds.
+- `ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS` (Shell) and `ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS` (Payment; read by the Payment Outbox Worker in the Outbox Worker host) are each a JSON array `[{ "tenantId": "<tenant uuid>", "apiKey": "<managed API key>" }]`, one entry per tenant. Each entry is decoded on its own and only when its tenant is needed, so a malformed entry fails only that tenant and an absent value makes the relay or the driver unavailable while the rest keeps working. Two entries for one tenant mean no key. A provider notification for a tenant with no relay entry gets the same 404 as an unknown route.
+- The driver calls the Shell at the origin of `ONTOS_SHELL_GATEWAY_BASE_URL` (the host-derived loopback Shell base) and drops the `/shell-super-app-api` path. Without a valid tenant entry, that tenant is skipped and logged at most once per hour.
+
+Before a tenant uses a payment gateway, a human operator, never an agent, provisions two integration principals in that tenant and records their keys:
+
+1. Run `core.identity.create-non-human-principal` with `kind: integration` and the display name `Payment notification relay`. Register its workloads `payment.provider-notification-ingress` and `payment.source-ingress` (on stage through the accounts file `workloads`).
+2. Run `core.identity.create-non-human-principal` with `kind: integration` and the display name `Payment reconciliation driver`. Register its workloads `payment.provider-reconciliation` and `payment.source-ingress`.
+3. For each principal, issue a managed API key through Shell's API key service and run `core.identity.bind-managed-api-key` with the principal ID and provider key ID.
+4. Add the relay key to the Shell's `ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS` and the driver key to Payment's `ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS`, each under the tenant's ID.
+
+Rotating a relay or driver key changes only that secret; notification URLs stay the same. Revoking a key or a workload registration makes that tenant's relay or driver fail closed, and the providers retry within their own limits.
+
+Payment's notification and recovery Outbox Workers submit provider evidence through Payment's own `accept-payment-observation` Action with a registered-workload assertion. Payment calls through the Shell's delegated issuance with its own module credential (`MODULE_CREDENTIAL_CALLERS`), and the Shell derives the registered-workload rules of the Payment binding from the installed contracts; nobody records them. Each tenant needs exactly one active system principal registered for `payment.source-ingress`; it is the executor.
+
 ### Module credentials and bindings
 
 The platform provisions module credentials itself, on every environment and with no human step. Nobody issues, copies or rotates a module key by hand, and no module key or binding is stored in GitHub, Zerops or an env file. Every module key ends 24 hours after it was issued (`MODULE_CREDENTIAL_LIFETIME`), so a key nobody retired still dies on its own.
