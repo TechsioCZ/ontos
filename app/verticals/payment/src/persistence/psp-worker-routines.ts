@@ -293,6 +293,8 @@ const PspPrepareDispatchResultSchema = Schema.Union([
   Schema.TaggedStruct('WITHHELD', { record: PspDispatchRecordSchema }),
   /** A GoPay/Comgate REFUND while another refund of the same provider payment is unresolved; nothing written. */
   Schema.TaggedStruct('DEFERRED', { unresolvedRefundOperationIds: Schema.Array(PaymentOperationIdSchema) }),
+  /** A GoPay REFUND whose baseline was read before another refund of the payment was prepared; nothing written. */
+  Schema.TaggedStruct('REFUND_BASELINE_STALE', {}),
   conflict(PspDispatchRecordSchema),
 ]);
 
@@ -313,6 +315,8 @@ const PspCorrelateResultSchema = Schema.Union([
 
 const PspUnresolvedRefundsSchema = Schema.Struct({
   operationIds: Schema.Array(PaymentOperationIdSchema),
+  /** Refund dispatches of the provider payment in any state, read in the same snapshot as `operationIds`. */
+  refundDispatchCount: nonNegativeIntSchema,
   unresolved: Schema.Boolean,
 });
 
@@ -436,6 +440,7 @@ const prepareDispatchRoutine = defineScopedRoutine({
     { nullable: true, source: 'input', type: 'integer' },
     { nullable: true, source: 'input', type: 'text' },
     { nullable: true, source: 'input', type: 'jsonb' },
+    { nullable: true, source: 'input', type: 'integer' },
     ...origin,
   ] as const,
   resultSchema: resultRow(PspPrepareDispatchResultSchema),
@@ -772,6 +777,11 @@ export interface PspPrepareDispatchInput extends PspDispatchIdentity {
   readonly providerPaymentRef: Option.Option<string>;
   /** GoPay REFUND only: refund-history row ids read before the send (`provider_refund_baseline`). */
   readonly refundBaseline: Option.Option<readonly string[]>;
+  /**
+   * With `refundBaseline` only: the `refundDispatchCount` of the unresolved-refund check the baseline was read
+   * after. The routine answers REFUND_BASELINE_STALE when another refund dispatch of the payment exists by now.
+   */
+  readonly refundDispatchCount: Option.Option<number>;
   /** Exact request bytes and non-secret headers, persisted only when a replay window exists. */
   readonly replayRequest: Option.Option<{
     readonly body: Uint8Array;
@@ -800,6 +810,7 @@ export const pspPrepareDispatch = (invoker: ScopedRoutineInvoker, input: PspPrep
         Option.getOrNull(input.replayRequest.pipe(Option.map(({ windowMs }) => windowMs))),
         Option.getOrNull(input.providerPaymentRef),
         Option.getOrNull(input.refundBaseline),
+        Option.getOrNull(input.refundDispatchCount),
         ...originValues(input.origin),
       ]),
     ),

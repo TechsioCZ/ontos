@@ -298,6 +298,7 @@ const prepareThroughLedger = (runtime: PaymentTestDatabase, fixture: DebtFixture
       ledger.prepare({
         identity: fixture.collect,
         prepared,
+        refundDispatchCount: Option.none(),
         returnToken: Option.none(),
         scope,
         workerContext,

@@ -303,7 +303,14 @@ const prepareCollect = (runtime: PaymentTestDatabase, fixture: GatewayFixture) =
     const result = yield* inWorker(runtime, fixture.scope, ({ scope, workerContext }) =>
       ProviderDispatchLedger.pipe(
         Effect.flatMap((ledger) =>
-          ledger.prepare({ identity: fixture.collect, prepared, returnToken: Option.none(), scope, workerContext }),
+          ledger.prepare({
+            identity: fixture.collect,
+            prepared,
+            refundDispatchCount: Option.none(),
+            returnToken: Option.none(),
+            scope,
+            workerContext,
+          }),
         ),
       ),
     ).pipe(Effect.provide(storesLayer));

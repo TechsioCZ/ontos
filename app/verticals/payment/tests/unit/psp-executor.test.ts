@@ -532,11 +532,14 @@ const unresolvedRefundOf = (paymentRef: ProviderObjectRef) => (row: ProviderDisp
   Option.exists(row.providerPaymentRef, (ref) => sameRef(ref, paymentRef)) &&
   (row.state === 'PREPARED' || row.state === 'OUTCOME_UNKNOWN' || row.state === 'ACKNOWLEDGED');
 
+const refundDispatchesOf = (world: World, paymentRef: ProviderObjectRef) =>
+  [...world.dispatches.values()].filter(
+    (row) => row.operationKind === 'REFUND' && Option.exists(row.providerPaymentRef, (ref) => sameRef(ref, paymentRef)),
+  ).length;
+
 const ledgerOf = (world: World): ProviderDispatchLedgerContract => ({
   correlateUnknown: () => Effect.die('unused'),
-  hasUnresolvedRefund: ({ providerPaymentRef }) =>
-    Effect.sync(() => [...world.dispatches.values()].some(unresolvedRefundOf(providerPaymentRef))),
-  prepare: ({ identity, prepared, returnToken }) =>
+  prepare: ({ identity, prepared, refundDispatchCount, returnToken }) =>
     Effect.gen(function* prepareFake() {
       const now = yield* DateTime.now;
       const existing = world.dispatches.get(identity.operationId);
@@ -546,6 +549,18 @@ const ledgerOf = (world: World): ProviderDispatchLedgerContract => ({
           : { _tag: 'CONFLICT' as const, existing };
       }
       const targetRef = identity.targetOperationId.pipe(Option.flatMap((target) => paymentRefOf(world, target)));
+      // As psp_prepare_dispatch: a GoPay baseline goes with the count it was read under; a changed count is stale.
+      if (Option.isSome(prepared.refundBaseline) !== Option.isSome(refundDispatchCount)) {
+        return yield* Effect.die('a GoPay refund baseline travels with its refund dispatch count, nothing else does');
+      }
+      if (
+        Option.exists(
+          Option.all([refundDispatchCount, targetRef]),
+          ([count, ref]) => count !== refundDispatchesOf(world, ref),
+        )
+      ) {
+        return { _tag: 'REFUND_BASELINE_STALE' as const };
+      }
       const replay = Option.isSome(prepared.replayWindowMs);
       const record = recordOf(identity, 'PREPARED', {
         endpointRef: Option.some(prepared.endpointRef),
@@ -584,6 +599,11 @@ const ledgerOf = (world: World): ProviderDispatchLedgerContract => ({
   recordRejected: ({ operationId }) => update(world, operationId, { state: 'REJECTED_BEFORE_EFFECT' }),
   recordTargetUnresolved: ({ operationId }) => update(world, operationId, { state: 'TARGET_UNRESOLVED' }),
   recordUnsupported: ({ identity }) => recordUnsent(world, identity, 'UNSUPPORTED', Option.none()),
+  refundSerialization: ({ providerPaymentRef }) =>
+    Effect.sync(() => ({
+      refundDispatchCount: refundDispatchesOf(world, providerPaymentRef),
+      unresolved: [...world.dispatches.values()].some(unresolvedRefundOf(providerPaymentRef)),
+    })),
   registerCancel: ({ cancel }) =>
     Effect.sync(() => {
       const existing = world.dispatches.get(cancel.operationId);

@@ -306,19 +306,30 @@ const preparedFor = (identity: ProviderDispatchIdentity, family: Family) => {
 const returnTokenFor = (seed: string) =>
   Schema.decodeEffect(GatewayReturnTokenSchema)(seed.replaceAll('-', '').slice(0, 22));
 
-/** Prepares one operation through the live ledger in its own worker delivery and transaction. */
+/**
+ * Prepares one operation through the live ledger in its own worker delivery and transaction. A GoPay refund's
+ * baseline goes with `refundDispatchCount`, the count of the serialization check it was read after.
+ */
 const prepareThroughLedger = (
   runtime: PaymentTestDatabase,
   fixture: GatewayFixture,
   identity: ProviderDispatchIdentity,
   returnTokenSeed?: string,
+  refundDispatchCount = 0,
 ) =>
   Effect.gen(function* prepareDispatch() {
     const prepared = yield* preparedFor(identity, fixture.family);
     const returnToken =
       returnTokenSeed === undefined ? Option.none() : Option.some(yield* returnTokenFor(returnTokenSeed));
     return yield* inWorker(runtime, fixture.scope, ({ ledger, scope, workerContext }) =>
-      ledger.prepare({ identity, prepared, returnToken, scope, workerContext }),
+      ledger.prepare({
+        identity,
+        prepared,
+        refundDispatchCount: prepared.refundBaseline.pipe(Option.map(() => refundDispatchCount)),
+        returnToken,
+        scope,
+        workerContext,
+      }),
     );
   });
 
@@ -481,6 +492,7 @@ it.live('#1158 Duplicate execution delivery reuses the existing dispatch', () =>
             ledger.prepare({
               identity: fixture.collect,
               prepared,
+              refundDispatchCount: Option.none(),
               returnToken: Option.none(),
               scope: worker,
               workerContext,
@@ -566,9 +578,10 @@ it.live('#1158 Refunds are serialized per provider payment', () =>
       expect(deferred.unresolvedRefundOperationIds).toEqual([winner.operationId]);
       expect(yield* dispatchCount(runtimeClient, fixture.scope, loser.operationId)).toBe(0);
 
-      const unresolved = inWorker(runtime, fixture.scope, ({ ledger, scope }) =>
-        ledger.hasUnresolvedRefund({ bindingId: fixture.bindingId, providerPaymentRef: paymentRef, scope }),
+      const serialization = inWorker(runtime, fixture.scope, ({ ledger, scope }) =>
+        ledger.refundSerialization({ bindingId: fixture.bindingId, providerPaymentRef: paymentRef, scope }),
       );
+      const unresolved = serialization.pipe(Effect.map((read) => read.unresolved));
       expect(yield* unresolved).toBe(true);
 
       // Acknowledged is not resolved yet: refund completion needs definitive refund evidence.
@@ -601,8 +614,15 @@ it.live('#1158 Refunds are serialized per provider payment', () =>
           workerContext,
         }),
       );
-      expect(yield* unresolved).toBe(false);
-      yield* expectTag(yield* prepareThroughLedger(runtime, fixture, loser), 'PREPARED');
+      // #1158: a baseline read under the old count (no refund dispatch yet) is refused; under the current one it is not.
+      const { refundDispatchCount } = yield* serialization;
+      expect([yield* unresolved, refundDispatchCount]).toEqual([false, 1]);
+      yield* expectTag(yield* prepareThroughLedger(runtime, fixture, loser), 'REFUND_BASELINE_STALE');
+      expect(yield* dispatchCount(runtimeClient, fixture.scope, loser.operationId)).toBe(0);
+      yield* expectTag(
+        yield* prepareThroughLedger(runtime, fixture, loser, undefined, refundDispatchCount),
+        'PREPARED',
+      );
     }),
   ),
 );

@@ -244,7 +244,14 @@ const preparedCollect = Effect.fn('PspNotificationFixture.collect')(function* pr
   yield* inWorker(runtime, scope, ({ scope: worker, workerContext }) =>
     Effect.service(ProviderDispatchLedger).pipe(
       Effect.flatMap((ledger) =>
-        ledger.prepare({ identity, prepared, returnToken: Option.none(), scope: worker, workerContext }),
+        ledger.prepare({
+          identity,
+          prepared,
+          refundDispatchCount: Option.none(),
+          returnToken: Option.none(),
+          scope: worker,
+          workerContext,
+        }),
       ),
     ),
   ).pipe(Effect.provide(storesLayer));
