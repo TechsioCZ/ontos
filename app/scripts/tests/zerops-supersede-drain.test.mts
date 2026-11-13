@@ -33,6 +33,7 @@ import { makeHostRefusalLog } from '../zerops/host-refusal-log.mts';
 import {
   APP_SERVICE_HOSTNAME,
   DRAIN_FORWARDED_HEADER,
+  DRAIN_REFUSED_HEADER,
   drainSupersededHost,
   makeSupersedeDrain,
   platformDrainPeers,
@@ -71,6 +72,13 @@ const unitApplication = (release: string, seen: Ref.Ref<number>) =>
       return HttpServerResponse.stream(
         Stream.tick('50 millis').pipe(Stream.map((): Uint8Array => new TextEncoder().encode(`data: ${release}\n\n`))),
         { contentType: 'text/event-stream' },
+      );
+    }
+    if (pathname === '/signals') {
+      // A unit that sets the host's own drain headers, by mistake or on purpose.
+      return HttpServerResponse.text(release).pipe(
+        HttpServerResponse.setHeader(DRAIN_REFUSED_HEADER, 'draining'),
+        HttpServerResponse.setHeader(DRAIN_FORWARDED_HEADER, '1'),
       );
     }
     const body = request.method === 'POST' ? yield* request.arrayBuffer.pipe(Effect.orDie) : new ArrayBuffer(0);
@@ -283,6 +291,24 @@ it.live('the drain marker: refused when a draining host receives it, stripped an
     expect(Option.map(decodeEcho(relayed.body), ({ marker, release }) => ({ marker, release }))).toEqual(
       Option.some({ marker: false, release: 'new' }),
     );
+  }),
+);
+
+it.live('a unit cannot speak for its host: its drain headers never leave the host, and a drain keeps its peer', () =>
+  Effect.gen(function* unitSignals() {
+    const hosts = yield* twoHosts();
+    const direct = yield* send(hosts.newPort, '/_m/crm/signals');
+    expect(direct.status).toBe(200);
+    expect(direct.headers[DRAIN_REFUSED_HEADER]).toBeUndefined();
+    expect(direct.headers[DRAIN_FORWARDED_HEADER]).toBeUndefined();
+    yield* startDrain(hosts.supersede(), hosts.drain);
+    // Through the drain the serving peer answers as itself, and stays a peer for the next request.
+    for (const _ of [1, 2]) {
+      const relayed = yield* send(hosts.oldPort, '/_m/crm/signals');
+      expect({ body: relayed.body, status: relayed.status }).toEqual({ body: 'new', status: 200 });
+      expect(relayed.headers[DRAIN_REFUSED_HEADER]).toBeUndefined();
+    }
+    expect(yield* hosts.drain.livePeers).toHaveLength(1);
   }),
 );
 

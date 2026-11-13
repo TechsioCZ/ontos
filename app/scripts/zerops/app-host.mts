@@ -1023,6 +1023,12 @@ const HOP_BY_HOP: ReadonlySet<string> = new Set([
   'upgrade',
 ]);
 
+/**
+ * Response headers only a host sets: a unit's answer never carries them on, or a draining host relaying through this
+ * one would read a unit's `x-ontos-drain-refused` as this host refusing, and drop a serving peer.
+ */
+const HOST_SIGNALS: ReadonlySet<string> = new Set([DRAIN_FORWARDED_HEADER, DRAIN_REFUSED_HEADER]);
+
 /** The headers a `Connection` header names are hop-by-hop too (RFC 9110, 7.6.1). */
 type HeaderValue = string | readonly string[] | undefined;
 const connectionNamed = (connection: HeaderValue): ReadonlySet<string> =>
@@ -1046,7 +1052,7 @@ export const relayResponseHeaders = (
   const headers: Record<string, string | readonly string[]> = {};
   const named = connectionNamed(upstream.connection);
   for (const [name, value] of Object.entries(upstream)) {
-    if (value !== undefined && !HOP_BY_HOP.has(name) && !named.has(name)) {
+    if (value !== undefined && !HOP_BY_HOP.has(name) && !named.has(name) && !HOST_SIGNALS.has(name)) {
       headers[name] = value;
     }
   }
