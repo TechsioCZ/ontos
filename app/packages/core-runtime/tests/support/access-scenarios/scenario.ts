@@ -8,7 +8,7 @@ import { grantIncarnationId } from '../../../src/access/intent/grant-incarnation
 import type { AccessChangesStoreService } from '../../../src/access/changes/persistence/store.ts';
 import { capabilitySlot } from '../../../src/access/compiler/object-id.ts';
 import type { AccessDecision } from '../../../src/access/decision/contract.ts';
-import type { GateInput } from '../../../src/access/enforcement/contract.ts';
+import type { AccessDecisionService, GateInput } from '../../../src/access/enforcement/contract.ts';
 import type { OwnerAccessFacts } from '../../../src/access/enforcement/owner-overlay.ts';
 import { AccessScopeIdSchema, CapabilityKeySchema, CurrencyCodeSchema, RoleIdSchema } from '../../../src/access/ids.ts';
 import type { TenantId } from '../../../src/access/ids.ts';
@@ -72,6 +72,8 @@ export interface ScenarioServices {
     readonly principalId: string;
   }) => Effect.Effect<BootstrapTenantAccessResult>;
   readonly changes: AccessChangesStoreService;
+  /** The whole live gate, for a scenario that asks a batch or the company list as well as one decision. */
+  readonly decisionGate: AccessDecisionService;
   readonly gate: (input: GateInput) => Effect.Effect<AccessDecision>;
   readonly ownerOverlayFacts: Ref.Ref<readonly (OwnerAccessFacts | undefined)[]>;
   readonly runAction: ActionRuntimeService['runAction'];
@@ -94,7 +96,17 @@ export interface AccessScenario extends Omit<ScenarioServices, 'gate'> {
     readonly principalId: string;
   }) => Effect.Effect<AccessDecision>;
   /** Ends one registered workload binding; a revoked binding is never reopened (O73). */
+  /** Registers one company for the active binding of one workload key (D6), or ends that registration. */
+  readonly registerWorkloadCompany: (input: {
+    readonly legalEntityId: string;
+    readonly principalId: string;
+    readonly workloadKey: string;
+  }) => Effect.Effect<void>;
   readonly revokeWorkload: (input: {
+    readonly principalId: string;
+    readonly workloadKey: string;
+  }) => Effect.Effect<void>;
+  readonly revokeWorkloadCompany: (input: {
     readonly principalId: string;
     readonly workloadKey: string;
   }) => Effect.Effect<void>;
@@ -333,6 +345,39 @@ export const revokeWorkloadBinding = (
     )
     .pipe(Effect.orDie);
 
+/** One company registration for the active binding of a workload key, exactly the row Core writes (D6). */
+export const insertWorkloadCompanyBinding = (
+  admin: PgClient.PgClient,
+  tenantId: TenantId,
+  input: { readonly legalEntityId: string; readonly principalId: string; readonly workloadKey: string },
+) =>
+  admin
+    .unsafe(
+      `insert into core.access_workload_company_bindings
+         (company_binding_id, tenant_id, workload_binding_id, legal_entity_id, status, incarnation, created_at)
+       select gen_random_uuid(), tenant_id, binding_id, '${input.legalEntityId}', 'active', gen_random_uuid(), now()
+         from core.access_workload_bindings
+        where tenant_id = '${tenantId}' and principal_id = '${input.principalId}'
+          and workload_key = '${input.workloadKey}' and status = 'active'`,
+    )
+    .pipe(Effect.orDie);
+
+/** Ends the company registration of one workload key's active binding, exactly as Core revokes it (D6). */
+export const revokeWorkloadCompanyBinding = (
+  admin: PgClient.PgClient,
+  tenantId: TenantId,
+  input: { readonly principalId: string; readonly workloadKey: string },
+) =>
+  admin
+    .unsafe(
+      `update core.access_workload_company_bindings as c set status = 'revoked', revoked_at = now()
+         from core.access_workload_bindings as b
+        where c.tenant_id = '${tenantId}' and b.tenant_id = c.tenant_id and b.binding_id = c.workload_binding_id
+          and b.principal_id = '${input.principalId}' and b.workload_key = '${input.workloadKey}'
+          and c.status = 'active'`,
+    )
+    .pipe(Effect.orDie);
+
 /** One composed scenario: the services the suite resolved, plus the questions a scenario asks. */
 export const scenarioOf = (services: ScenarioServices): AccessScenario => {
   const { gate, tenantId, ...rest } = services;
@@ -350,7 +395,9 @@ export const scenarioOf = (services: ScenarioServices): AccessScenario => {
           }),
         ),
       ),
+    registerWorkloadCompany: (input) => insertWorkloadCompanyBinding(services.admin, tenantId, input),
     revokeWorkload: (input) => revokeWorkloadBinding(services.admin, tenantId, input),
+    revokeWorkloadCompany: (input) => revokeWorkloadCompanyBinding(services.admin, tenantId, input),
     scopeFor: (principalId, legalEntityId) => scopeOf({ legalEntityId, principalId, tenantId }),
     seedTenant: (input) => seedTenantRows(services.admin, { ...input, tenantId }),
     tenantId,

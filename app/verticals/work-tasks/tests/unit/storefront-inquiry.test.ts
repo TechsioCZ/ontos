@@ -50,11 +50,10 @@ const gateOf = (registry: Registry) =>
     legalEntities: { listCandidateIds: () => Effect.succeed([LegalEntityIdSchema.make(company)]) },
     principalKinds: { readKind: () => Effect.succeed(Option.some(registry.kind ?? 'service')) },
     workloadBindings: {
-      readActiveWorkloadKeys: () => Effect.succeed(new Set(registry.keys ?? ['work.storefront-client'])),
-      readCompanyDeclaration: () =>
+      readWorkloadAuthority: () =>
         Effect.succeed({
           activeCompanyIds: new Set((registry.companies ?? [company]).map((id) => LegalEntityIdSchema.make(id))),
-          pinned: true,
+          workloadKeys: new Set(registry.keys ?? ['work.storefront-client']),
         }),
     },
   });

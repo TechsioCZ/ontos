@@ -883,8 +883,10 @@ export const reviewedWorkloadBindings = (): readonly ReviewedWorkloadBinding[] =
   storefrontBinding(akrosStorefrontPrincipal, STOREFRONT_CLIENT_WORKLOAD),
   storefrontBinding(akrosStorefrontPrincipal, STOREFRONT_MERCHANDISE_WORKLOAD),
   storefrontBinding(akrosStorefrontPrincipal, STOREFRONT_INQUIRY_WORKLOAD),
-  { principalId: commercePortalPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
-  { principalId: commercePortalPrincipal.principalId, workloadKey: IDENTITY_PROVIDER_WORKLOAD },
+  // The Commerce portal serves the one e-shop company it belongs to, so its keys are registered there: a module call
+  // can never carry it into another company of the tenant (D6). No workload is tenant-wide by omission.
+  storefrontBinding(commercePortalPrincipal, STOREFRONT_CLIENT_WORKLOAD),
+  storefrontBinding(commercePortalPrincipal, IDENTITY_PROVIDER_WORKLOAD),
   // CRM's own internal workload `demo.crm.party-intake` is not listed: the platform registers it per company at release
   // (`release-internal-workloads.mts`) and keys it; nobody registers or keys it by hand.
 ];

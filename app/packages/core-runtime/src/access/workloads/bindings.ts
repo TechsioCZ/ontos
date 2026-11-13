@@ -26,8 +26,8 @@ import type { AccessIntentDatabase } from '../intent/persistence.ts';
  * rows through row-level security (O66); the write side is `binding-store.ts`, and Core is its only
  * writer.
  *
- * The same reader answers the companies a binding is explicitly registered for (D6): a standalone
- * workload that holds no verified module actor selects exactly these, and the write side of that
+ * The same read answers the companies a binding is explicitly registered for (D6): a workload acts and
+ * selects only in these, directly and as the subject of a module call, and the write side of that
  * owner-declared fact is `company-bindings.ts`.
  */
 
@@ -42,34 +42,11 @@ const readUnavailable = (cause?: unknown): AccessDecisionUnavailable =>
   accessDecisionUnavailable('The registered workloads of this actor could not be read', cause);
 
 export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindingDatabase): AccessWorkloadBindings => ({
-  readActiveWorkloadKeys: Effect.fn('AccessWorkloadBindings.readActiveWorkloadKeys')(
-    function* readActiveWorkloadKeysEffect(query: WorkloadBindingQuery, transaction?: CoreTransaction) {
+  readWorkloadAuthority: Effect.fn('AccessWorkloadBindings.readWorkloadAuthority')(
+    function* readWorkloadAuthorityEffect(query: WorkloadBindingQuery, transaction?: CoreTransaction) {
       const read = (opened: CoreTransaction) =>
         // The registry forces tenant row security on `ontos_runtime`, so the request's own scope is
         // installed before the read: a principal id from another tenant answers nothing (O66).
-        installOperationalScope(opened, query.scope, database.enrollment).pipe(
-          Effect.andThen(() =>
-            opened
-              .select({ workloadKey: accessWorkloadBindings.workloadKey })
-              .from(accessWorkloadBindings)
-              .where(
-                and(
-                  eq(accessWorkloadBindings.tenantId, query.tenantId),
-                  eq(accessWorkloadBindings.principalId, query.principalId),
-                  eq(accessWorkloadBindings.status, 'active'),
-                ),
-              ),
-          ),
-        );
-      const keys = yield* (transaction === undefined ? database.executor.transaction(read) : read(transaction)).pipe(
-        Effect.mapError(readUnavailable),
-      );
-      return new Set(keys.map(({ workloadKey }) => workloadKey));
-    },
-  ),
-  readCompanyDeclaration: Effect.fn('AccessWorkloadBindings.readCompanyDeclaration')(
-    function* readCompanyDeclarationEffect(query: WorkloadBindingQuery, transaction?: CoreTransaction) {
-      const read = (opened: CoreTransaction) =>
         installOperationalScope(opened, query.scope, database.enrollment).pipe(
           Effect.andThen(() =>
             opened
@@ -77,20 +54,21 @@ export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindin
                 companyStatus: legalEntities.status,
                 legalEntityId: accessWorkloadCompanyBindings.legalEntityId,
                 registrationStatus: accessWorkloadCompanyBindings.status,
+                workloadKey: accessWorkloadBindings.workloadKey,
               })
-              .from(accessWorkloadCompanyBindings)
-              // A registration counts only while the binding it was written for is still active and
-              // still belongs to this principal: a revoked binding takes its company with it (D6).
-              .innerJoin(
-                accessWorkloadBindings,
+              .from(accessWorkloadBindings)
+              // A registration counts only while the binding it was written for is still active: the keys and the
+              // companies come from the same active bindings in the same read, so a revoked binding takes its key
+              // and its company together (D6).
+              .leftJoin(
+                accessWorkloadCompanyBindings,
                 and(
-                  eq(accessWorkloadBindings.tenantId, accessWorkloadCompanyBindings.tenantId),
-                  eq(accessWorkloadBindings.bindingId, accessWorkloadCompanyBindings.workloadBindingId),
+                  eq(accessWorkloadCompanyBindings.tenantId, accessWorkloadBindings.tenantId),
+                  eq(accessWorkloadCompanyBindings.workloadBindingId, accessWorkloadBindings.bindingId),
                 ),
               )
-              // The registered company is a company of this tenant, so a suspended or archived one is
-              // never selectable even though its registration is untouched. The join is outer because a
-              // revoked or suspended company still proves that the owner declared a company at all.
+              // The registered company is a company of this tenant, so a suspended or archived one is never
+              // selectable even though its registration is untouched.
               .leftJoin(
                 legalEntities,
                 and(
@@ -100,7 +78,7 @@ export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindin
               )
               .where(
                 and(
-                  eq(accessWorkloadCompanyBindings.tenantId, query.tenantId),
+                  eq(accessWorkloadBindings.tenantId, query.tenantId),
                   eq(accessWorkloadBindings.principalId, query.principalId),
                   eq(accessWorkloadBindings.status, 'active'),
                 ),
@@ -110,13 +88,15 @@ export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindin
       const rows = yield* (transaction === undefined ? database.executor.transaction(read) : read(transaction)).pipe(
         Effect.mapError(readUnavailable),
       );
+      const workloadKeys = new Set<string>();
       const activeCompanyIds = new Set<LegalEntityId>();
       for (const row of rows) {
-        if (row.registrationStatus === 'active' && row.companyStatus === 'active') {
+        workloadKeys.add(row.workloadKey);
+        if (row.legalEntityId !== null && row.registrationStatus === 'active' && row.companyStatus === 'active') {
           activeCompanyIds.add(LegalEntityIdSchema.make(row.legalEntityId));
         }
       }
-      return { activeCompanyIds, pinned: rows.length > 0 };
+      return { activeCompanyIds, workloadKeys };
     },
   ),
 });

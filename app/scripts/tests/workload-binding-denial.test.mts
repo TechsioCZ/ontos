@@ -146,14 +146,15 @@ const ports: AccessDecisionPorts = {
   legalEntities: { listCandidateIds: () => Effect.succeed([]) },
   principalKinds: { readKind: (query) => Effect.succeed(kindOf(query.principalId)) },
   workloadBindings: {
-    readActiveWorkloadKeys: (query) => Effect.succeed(boundKeysOf(query.tenantId, query.principalId)),
-    readCompanyDeclaration: (query) => {
-      const companies = registeredCompaniesOf(query.tenantId, query.principalId);
-      return Effect.succeed({
-        activeCompanyIds: new Set([...companies].map((company) => LegalEntityIdSchema.make(company))),
-        pinned: companies.size > 0,
-      });
-    },
+    readWorkloadAuthority: (query) =>
+      Effect.succeed({
+        activeCompanyIds: new Set(
+          [...registeredCompaniesOf(query.tenantId, query.principalId)].map((company) =>
+            LegalEntityIdSchema.make(company),
+          ),
+        ),
+        workloadKeys: boundKeysOf(query.tenantId, query.principalId),
+      }),
   },
 };
 

@@ -133,14 +133,13 @@ it('binds each storefront to what its BFF calls, registered for its own company 
   expect(new Set(of(storefrontPrincipal.principalId).map(({ workloadKey }) => workloadKey))).toEqual(
     new Set([STOREFRONT_CLIENT_WORKLOAD, STOREFRONT_MERCHANDISE_WORKLOAD]),
   );
-  for (const principal of [storefrontPrincipal, akrosStorefrontPrincipal]) {
+  // No workload is tenant-wide by omission (D6): the storefronts and the Commerce portal each act for the one
+  // company they serve. The portal's identity-provider Actions run in the tenant context, so its registration only
+  // fences its company-scoped storefront-client calls.
+  for (const principal of [storefrontPrincipal, akrosStorefrontPrincipal, commercePortalPrincipal]) {
     for (const { legalEntityId } of of(principal.principalId)) {
       expect(legalEntityId).toBe(principal.legalEntityId);
     }
-  }
-  // Non-storefront workloads keep acting across the tenant: no company is registered for them.
-  for (const principal of [commercePortalPrincipal]) {
-    expect(of(principal.principalId).every(({ legalEntityId }) => legalEntityId === undefined)).toBe(true);
   }
 });
 

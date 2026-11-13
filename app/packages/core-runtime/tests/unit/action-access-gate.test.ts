@@ -125,8 +125,8 @@ const boundGate = (options: SeamOptions = {}): BoundAccessGate => {
       ? makeCheck({ authority: authoritySpec, failure: true })
       : makeCheck({ authority: authoritySpec });
   const workloadBindings: AccessWorkloadBindings = {
-    readActiveWorkloadKeys: () => Effect.succeed(new Set(options.workloadKeys)),
-    readCompanyDeclaration: () => Effect.succeed({ activeCompanyIds: new Set(), pinned: false }),
+    readWorkloadAuthority: () =>
+      Effect.succeed({ activeCompanyIds: new Set(), workloadKeys: new Set(options.workloadKeys) }),
   };
   const ports = {
     candidates: { listCandidateIds: () => Effect.succeed([legalEntityId]) },
