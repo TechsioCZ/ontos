@@ -22,6 +22,7 @@ import type { ActionAuthorizationPreflightInput, ActionAuthorizationPreflightSer
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
 import { SupportedGatewayContextClaimsSchema } from '@app/shared-contracts';
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
+import { shellGatewayBaseUrlConfig } from '@app/shared-contracts/shell-gateway-url';
 import type { Scope } from 'effect';
 import { Config, Context, DateTime, Effect, Redacted, Schema } from 'effect';
 import {
@@ -81,20 +82,7 @@ export class CommerceConsentAuthorityLookup extends Context.Service<
 const configuration = Config.all({
   actorPrincipalId: Config.schema(Schema.String.check(Schema.isUUID()), 'COMMERCE_MARKETING_ACTOR_PRINCIPAL_ID'),
   apiKey: Config.Redacted('ONTOS_PRIVACY_GATEWAY_API_KEY'),
-  baseUrl: Config.schema(
-    Schema.URLFromString.check(
-      Schema.makeFilter((url) =>
-        (url.protocol === 'http:' || url.protocol === 'https:') &&
-        url.username.length === 0 &&
-        url.password.length === 0 &&
-        url.search.length === 0 &&
-        url.hash.length === 0
-          ? undefined
-          : 'Shell URL must be HTTP(S) without credentials, query, or fragment',
-      ),
-    ),
-    'ONTOS_SHELL_GATEWAY_BASE_URL',
-  ),
+  baseUrl: shellGatewayBaseUrlConfig,
 });
 
 /** Owner I/O is only invoked by the Core preflight, before the Action transaction opens. */

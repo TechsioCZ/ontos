@@ -53,6 +53,16 @@ const specifiersOf = (file: string) => {
 const importersOf = (pattern: RegExp) =>
   production.filter((file) => specifiersOf(file).some((specifier) => pattern.test(specifier)));
 
+it('keeps the operator programs and their privileged seed writer out of every unit and the Shell', () => {
+  // The agent-profile operator holds the privileged connection, and its seed writer writes with it: operator-only,
+  // run from scripts, never bundled into a unit, a vertical, a package or the Shell.
+  for (const pattern of [/agent-profile-operator(?:\.mts)?$/u, /agent-seed-identity(?:\.mts)?$/u]) {
+    const importers = importersOf(pattern);
+    expect(importers.length).toBeGreaterThan(0);
+    expect(importers.filter((file) => !file.startsWith('scripts/'))).toEqual([]);
+  }
+});
+
 it('lets only the delegated gateway client read an owner slot, and only the host fill one', () => {
   // The reader: a module's own credential, read by the delegated client with the calling module's app id.
   expect(importersOf(/owner-module-credential(?:\.ts)?$/u)).toEqual([
@@ -100,6 +110,14 @@ it('lets only the host programs reach a built bundle claim, and no host load an 
         file !== 'scripts/zerops/hosted-credential-claim.mts',
     ),
   ).toEqual([]);
+});
+
+it('reads the Shell gateway address under one rule, in every client that presents a key there', () => {
+  // `ONTOS_SHELL_GATEWAY_BASE_URL` is read only through `shellGatewayBaseUrlConfig`: HTTPS, or plain HTTP to loopback.
+  const ownRule = /Config\.[A-Za-z]+\([^;]*?'ONTOS_SHELL_GATEWAY_BASE_URL'/su;
+  expect(production.filter((file) => ownRule.test(read(file))).toSorted()).toEqual([
+    'packages/shared-contracts/src/shell-gateway-url.ts',
+  ]);
 });
 
 /** A string constant: a literal, or one cast `as const`. */

@@ -1,6 +1,7 @@
 import type { Effect, Option, Redacted } from 'effect';
 
 import { hostedSlot, hostedWorkloadSlot } from './hosted-module-credential-store.ts';
+import { internalWorkloadEntryId } from './hosted-module-credentials.ts';
 
 /*
  * The one reader of a module's own credentials in a process. Only the delegated gateway client imports it
@@ -17,13 +18,14 @@ export const ownModuleCredential = (appId: string): Effect.Effect<Option.Option<
   hostedSlot(appId);
 
 /**
- * An owner's internal workload credential for one tenant (O73): the key of the principal the operator registered for
- * the owner's own workload there, handed over by the host and rotated like the module key. None where the host
- * handed none over, and none for a tenant where the workload is not registered: the caller then fails closed.
+ * An owner's internal workload credential for one company of one tenant (O73): the key of the principal the platform
+ * registered for the owner's own workload there, handed over by the host and rotated like the module key. Exactly
+ * that entry, never another company's: none where the host handed none over, and none for a company where the
+ * workload is not registered, so the caller fails closed.
  */
 export const ownWorkloadCredential = (input: {
   readonly appId: string;
+  readonly legalEntityId: string;
   readonly tenantId: string;
   readonly workloadKey: string;
-}): Effect.Effect<Option.Option<Redacted.Redacted>> =>
-  hostedWorkloadSlot(`${input.appId}/${input.workloadKey}/${input.tenantId}`);
+}): Effect.Effect<Option.Option<Redacted.Redacted>> => hostedWorkloadSlot(internalWorkloadEntryId(input));

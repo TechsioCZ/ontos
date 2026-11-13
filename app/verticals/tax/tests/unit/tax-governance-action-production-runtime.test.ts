@@ -38,6 +38,8 @@ import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-
 const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 const principalId = '20000000-0000-4000-8000-000000000001';
 const authBindingId = '40000000-0000-4000-8000-000000000001';
 const sellerA = '30000000-0000-4000-8000-000000000001';
@@ -130,21 +132,19 @@ const makeProductionComposition = Effect.fn('TaxProductionRuntimeTest.make')(fun
       ownerStatements.push(text);
       return yield* sqlFailure(new Error('TAX owner persistence is outside this authorization test'));
     }
-    if (text.includes('set_config')) {
+    // A session-setting role installs its scope and reads back the connected role in one statement.
+    if (text === installAndReadScopeSql) {
       const [scopedTenantId, scopedLegalEntityId] = values;
       if (Predicate.isString(scopedTenantId) && Predicate.isString(scopedLegalEntityId)) {
         installed = { legalEntityId: scopedLegalEntityId, tenantId: scopedTenantId };
       }
-      return [];
+      return [{ legal_entity_id: installed.legalEntityId, role: 'ontos_runtime', tenant_id: installed.tenantId }];
     }
     if (text.includes('application_composition_authority')) {
       return [{ phase: 'active', revision: snapshot.composition.revision, subscriptionsJson: [], unexpired: true }];
     }
     if (text.includes("current_setting('transaction_isolation')")) {
       return [{ isolation }];
-    }
-    if (text.includes('current_setting')) {
-      return [{ legal_entity_id: installed.legalEntityId, role: 'ontos_runtime', tenant_id: installed.tenantId }];
     }
     if (text.includes('transaction_timestamp')) {
       return [{ operation_at: DateTime.toDateUtc(DateTime.makeUnsafe(Date.parse('2027-01-02T00:00:00.000Z'))) }];

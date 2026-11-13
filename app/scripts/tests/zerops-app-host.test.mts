@@ -100,10 +100,60 @@ describe('relayResponseHeaders', () => {
     ).toStrictEqual({ etag: '"a"' });
   });
 
+  it('never relays server-timing to a public caller, from a module owner or from the Shell', () => {
+    expect(
+      relayResponseHeaders(200, {
+        'content-type': 'application/json',
+        'server-timing': 'owner-total;dur=40, owner-gate;dur=12, owner-sql-count;dur=7',
+      }),
+    ).toStrictEqual({ 'content-type': 'application/json' });
+    expect(relayResponseHeaders(503, { 'server-timing': 'key-verify;dur=3' })).toStrictEqual({ connection: 'close' });
+  });
+
   it('keeps the caller connection reusable for every other answer and drops hop-by-hop headers', () => {
     expect(relayResponseHeaders(200, { connection: 'keep-alive', etag: '"a"' })).toStrictEqual({
       etag: '"a"',
     });
+  });
+
+  const hashedShellFile = '/static/js/async/gn.5d3189321f.js';
+  const script = { 'content-type': 'text/javascript' };
+
+  it('lets a browser keep build output named by its content hash, of the Shell and of a module', () => {
+    const kept = { 'cache-control': 'public, max-age=31536000, immutable', ...script };
+    expect(relayResponseHeaders(200, script, hashedShellFile)).toStrictEqual(kept);
+    expect(
+      relayResponseHeaders(200, script, '/_m/merchandise/static/js/async/(lang)/prodej/page.c887205b16.js?v=1'),
+    ).toStrictEqual(kept);
+  });
+
+  it('adds no caching to anything whose name does not change with its bytes, or that did not answer 200', () => {
+    for (const url of [
+      '/_m/merchandise/remoteEntry.js',
+      '/_m/merchandise/mf-manifest.json',
+      '/static/js/index.js',
+      '/cs/prodej/objednavky',
+      '/shell-super-app-api/static/report.5d3189321f.js',
+      '/static/report.5d3189321f.js',
+    ]) {
+      expect(relayResponseHeaders(200, script, url)).toStrictEqual(script);
+    }
+    expect(relayResponseHeaders(404, script, hashedShellFile)).toStrictEqual(script);
+    expect(relayResponseHeaders(200, script)).toStrictEqual(script);
+  });
+
+  it('never lets a browser keep a page, even at an address that looks like a build file', () => {
+    // The Shell does not redirect `/static/…`, so this address reaches a signed-in page route with `static` as language.
+    const page = { 'content-type': 'text/html; charset=UTF-8' };
+    expect(relayResponseHeaders(200, page, '/static/resources/a/b/c.abcdef1234.js')).toStrictEqual(page);
+    expect(relayResponseHeaders(200, script, '/static/resources/a/b/c.abcdef1234.js')).toStrictEqual(script);
+    expect(relayResponseHeaders(200, page, hashedShellFile)).toStrictEqual(page);
+    expect(relayResponseHeaders(200, {}, hashedShellFile)).toStrictEqual({});
+  });
+
+  it('keeps the caching a unit chose itself', () => {
+    const upstream = { 'cache-control': 'no-store' };
+    expect(relayResponseHeaders(200, upstream, hashedShellFile)).toStrictEqual(upstream);
   });
 });
 

@@ -51,6 +51,8 @@ import { commerceCustomerContextRegistration } from '../../vertical.registration
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 const principalId = '30000000-0000-4000-8000-000000000001';
 const purchaseCurrencyRevisionId = '50000000-0000-4000-8000-000000000001';
 const stalePurchaseCurrencyRevisionId = '50000000-0000-4000-8000-000000000002';
@@ -92,14 +94,16 @@ const makePolicyReadAuthorizationHarness = Effect.fn(function* makePolicyReadAut
   let handlerQueries = 0;
   const routineCalls: string[] = [];
   const database = {
-    executor: yield* makeTestDatabase((text) => {
+    executor: yield* makeTestDatabase((text, params) => {
       if (text.includes('transaction_timestamp')) {
         return Effect.succeed([{ operation_at: new Date(at) }]);
       }
       if (text.includes('data_access_events')) {
         return Effect.succeed([]);
       }
-      if (text.includes('current_setting')) {
+      // A session-setting role installs its scope and reads back the connected role in one statement.
+      if (text === installAndReadScopeSql) {
+        expect(params).toEqual([tenantId, legalEntityId]);
         return Effect.succeed([{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
       }
       for (const [routineName, result] of options.routineResults ?? []) {

@@ -1192,6 +1192,45 @@ export const makeAccessDecisionService = (
    * tenant its binding is registered in. A storefront API key therefore reaches exactly the one company the
    * operator declared, never the tenant's whole company list and never a company through a bare principal kind.
    */
+  /**
+   * The companies a workload may select, or none to keep the tenant's own. A workload holds no v2 tuple, and none
+   * while it holds no active binding (O73). A standalone workload holds no company by kind: only the companies its
+   * owner registered for one of its active bindings, intersected with the tenant's companies. The same holds for the
+   * subject of a module call whose workload declares companies (D6: a platform registration acts for exactly one), as
+   * the decision gate already pins it; only a module subject with no declaration keeps the tenant's companies.
+   */
+  const selectableWorkloadCompanies = Effect.fn('AccessDecisionGate.selectableWorkloadCompanies')(
+    function* selectableWorkloadCompaniesEffect(
+      scope: SelectableLegalEntitiesInput['scope'],
+      actor: Parameters<typeof workloadQueryOf>[1],
+      moduleCall: boolean,
+    ) {
+      const registry = ports.workloadBindings ?? FAIL_CLOSED_WORKLOADS;
+      const query = workloadQueryOf(scope, actor);
+      const bound = yield* Effect.option(registry.readActiveWorkloadKeys(query));
+      if (Option.isNone(bound)) {
+        return yield* accessDecisionUnavailable('The workload registry could not be read');
+      }
+      if (bound.value.size === 0) {
+        return Option.some<readonly LegalEntityId[]>([]);
+      }
+      const declared = yield* Effect.option(registry.readCompanyDeclaration(query));
+      if (Option.isNone(declared)) {
+        return yield* accessDecisionUnavailable('The registered companies of this workload could not be read');
+      }
+      if (moduleCall && !declared.value.pinned) {
+        return Option.none<readonly LegalEntityId[]>();
+      }
+      const companies = yield* Effect.option(ports.legalEntities.listCandidateIds(scope));
+      if (Option.isNone(companies)) {
+        return yield* accessDecisionUnavailable('The companies of this tenant could not be read');
+      }
+      return Option.some<readonly LegalEntityId[]>(
+        companies.value.filter((legalEntityId) => declared.value.activeCompanyIds.has(legalEntityId)),
+      );
+    },
+  );
+
   const selectableLegalEntities = Effect.fn('AccessDecisionGate.selectableLegalEntities')(
     function* selectableLegalEntitiesGate(input: SelectableLegalEntitiesInput) {
       const calledBy = readVerifiedGatewayActor(input.scope);

@@ -85,6 +85,14 @@ const unitApplication = (release: string, seen: Ref.Ref<number>) =>
         HttpServerResponse.setHeader(DRAIN_FORWARDED_HEADER, '1'),
       );
     }
+    if (pathname.startsWith('/static/js/')) {
+      // A content-hashed build file, sent without caching and with the unit's own timings; or, at a lookalike
+      // address, a page.
+      const page = pathname.includes('/page.');
+      return HttpServerResponse.text(page ? '<!doctype html>' : 'export {};', {
+        contentType: page ? 'text/html' : 'text/javascript',
+      }).pipe(HttpServerResponse.setHeader('server-timing', 'owner-total;dur=1'));
+    }
     const body = request.method === 'POST' ? yield* request.arrayBuffer.pipe(Effect.orDie) : new ArrayBuffer(0);
     return HttpServerResponse.text(
       JSON.stringify({
@@ -730,6 +738,29 @@ it.live(
       const relayed = yield* rawExchange(old.port, 'GET /_m/crm/echo HTTP/1.1', headers);
       expect(relayed.status).toBe(200);
       expect(relayed.hop).toEqual(Option.some(false));
+    }),
+);
+
+/** A content-hashed build file the browser may keep for good, without the unit's own timings. */
+const expectKept = (answer: Answer) => {
+  expect(answer.status).toBe(200);
+  expect(answer.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+  expect(answer.headers['server-timing']).toBeUndefined();
+};
+
+it.live(
+  'relays a module build file with browser caching, directly and through a drain, judged by its original target',
+  () =>
+    Effect.gen(function* buildFilesKept() {
+      const [old, current] = yield* Effect.all([standingHost('old'), standingHost('new')]);
+      // The original target carries the module prefix; the unit is asked for `/static/js/…` only.
+      const asset = '/_m/crm/static/js/s.a5d64c6353.js';
+      const page = '/_m/crm/static/js/page.a5d64c6353.js';
+      expectKept(yield* send(current.port, asset));
+      expect((yield* send(current.port, page)).headers['cache-control']).toBeUndefined();
+      yield* startDrain(old.supersede(Effect.succeed([peerAt(current.port)])), old.drain);
+      expectKept(yield* send(old.port, asset));
+      expect((yield* send(old.port, page)).headers['cache-control']).toBeUndefined();
     }),
 );
 

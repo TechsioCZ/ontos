@@ -6,6 +6,8 @@ import {
 } from '../modules/active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
 import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
+import { INSTALLED_TENANT_MODULE_STATES } from '../modules/module-state-gate.ts';
+import { TenantModuleStateService } from '../modules/tenant-module-state-service.ts';
 import { ActionAuthority } from '../permissions/action-authority-contract.ts';
 import type { ReadPrepareContext, ReadLoadContext, ReadFinishContext } from '../reads/context.ts';
 import type { ReadHandlerUnavailable } from '../reads/errors.ts';
@@ -121,6 +123,24 @@ const holdsAnyExecutableAction = (actions: readonly AgentProposalQueueAction[], 
     Effect.withSpan('AgentProposalQueueRead.holdsAnyExecutableAction'),
   );
 
+/** No Actions: what every read but the queue carries as the Actions of modules the tenant has not installed. */
+const NO_ACTIONS: readonly AgentProposalQueueAction[] = [];
+
+/**
+ * The modules the tenant has installed now, by the access gate's own rule (`INSTALLED_TENANT_MODULE_STATES`: active,
+ * read-only and deprecated still offer their data); a state that cannot be read makes the read unavailable.
+ */
+const installedModuleKeys = Effect.fn('AgentProposalQueueRead.installedModuleKeys')(function* installedModuleKeys(
+  tenantId: string,
+) {
+  const states = yield* (yield* TenantModuleStateService)
+    .listTenantModuleStates(tenantId)
+    .pipe(Effect.mapError(unavailable));
+  return new Set(
+    states.flatMap(({ moduleKey, state }) => (INSTALLED_TENANT_MODULE_STATES.includes(state) ? [moduleKey] : [])),
+  );
+});
+
 /** No Action answered yet: what every read but an exact batch carries from `prepare`. */
 const NOTHING_ANSWERED: ReadonlyMap<string, boolean> = new Map();
 
@@ -143,12 +163,12 @@ const prepare = Effect.fn('AgentProposalQueueRead.prepare')(function* prepare(
       return yield* agentProposalQueueDenied();
     }
     const actions: readonly AgentProposalQueueAction[] = [];
-    return { actions, answered: NOTHING_ANSWERED, revision: '' };
+    return { actions, answered: NOTHING_ANSWERED, revision: '', uninstalled: actions };
   }
   if (isOwnProposalRead(input)) {
     // Kind is checked against the current principal row in the owner transaction, not client input.
     const actions: readonly AgentProposalQueueAction[] = [];
-    return { actions, answered: NOTHING_ANSWERED, revision: '' };
+    return { actions, answered: NOTHING_ANSWERED, revision: '', uninstalled: actions };
   }
   const snapshot = yield* (yield* ActiveApplicationCompositionService).load.pipe(
     Effect.flatMap(validateActiveApplicationCompositionSnapshot),
@@ -190,13 +210,26 @@ const prepare = Effect.fn('AgentProposalQueueRead.prepare')(function* prepare(
     if (!any.found) {
       return yield* agentProposalQueueDenied();
     }
-    return { actions: unique, answered: any.answered, revision };
+    return { actions: unique, answered: any.answered, revision, uninstalled: NO_ACTIONS };
   }
-  const actions = yield* executableActions(unique, context.scope);
+  // The queue asks only the Actions of modules the tenant has installed, as the gate counts installed: an Action of
+  // a module it has not installed is never allowed, so asking it in advance only records a denial nobody acted on. A
+  // proposal that exists for such a module still has its Action asked in `finish`, so that refusal is decided and
+  // recorded. Unknown module state refuses nothing and allows nothing: the read is unavailable.
+  const installed = yield* installedModuleKeys(context.scope.tenantId);
+  const actions = yield* executableActions(
+    unique.filter(({ moduleKey }) => installed.has(moduleKey)),
+    context.scope,
+  );
   if (actions.length === 0) {
     return yield* agentProposalQueueDenied();
   }
-  return { actions, answered: NOTHING_ANSWERED, revision };
+  return {
+    actions,
+    answered: NOTHING_ANSWERED,
+    revision,
+    uninstalled: unique.filter(({ moduleKey }) => !installed.has(moduleKey)),
+  };
 });
 
 type Prepared = Effect.Success<ReturnType<typeof prepare>>;
@@ -205,7 +238,8 @@ const load = Effect.fn('AgentProposalQueueRead.load')(function* load(
   input: AgentProposalQueueInput,
   context: ReadLoadContext<Services, Prepared>,
 ) {
-  return yield* context.services.load(input, context.prepared.actions);
+  const queue = yield* context.services.load(input, context.prepared.actions);
+  return { queue, uninstalledNamed: yield* context.services.namedActions(context.prepared.uninstalled) };
 });
 type Loaded = Effect.Success<ReturnType<typeof load>>;
 
@@ -271,7 +305,11 @@ const finish = Effect.fn('AgentProposalQueueRead.finish')(function* finish(
   input: AgentProposalQueueInput,
   context: ReadFinishContext<Prepared, Loaded>,
 ) {
-  const { loaded, prepared } = context;
+  const { prepared } = context;
+  const { queue: loaded, uninstalledNamed } = context.loaded;
+  // Proposals of modules the tenant has not installed are never shown; their Actions are asked so each refusal is
+  // decided and recorded, and a failure to decide makes the read unavailable.
+  yield* executableActions(uninstalledNamed, context.scope);
   if (input.mode === 'withdrawal-batches') {
     return { evidence: { resultCount: loaded.withdrawalBatches?.batchIds.length ?? 0 }, result: loaded };
   }

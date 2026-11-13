@@ -48,6 +48,12 @@ const observedHealth = Effect.gen(function* observedHealthEffect() {
   };
 });
 
+const offMachinePlainHttp = (() => {
+  const url = new URL('https://shell.internal.example/shell-super-app-api');
+  url.protocol = 'http:';
+  return url.toString();
+})();
+
 const tenantCredentials = JSON.stringify({
   '70000000-0000-4000-8000-000000000001': {
     coreIdentityApiKey: 'synthetic-core-identity-credential',
@@ -64,6 +70,8 @@ for (const [index, environment] of [
     COMMERCE_TENANT_CREDENTIALS: tenantCredentials,
     ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.invalid?untrusted=true',
   },
+  // Plain HTTP off the machine: the Tenant keys would travel in clear text.
+  { COMMERCE_TENANT_CREDENTIALS: tenantCredentials, ONTOS_SHELL_GATEWAY_BASE_URL: offMachinePlainHttp },
 ].entries()) {
   it.effect(`fails recovery preflight for incomplete or invalid gateway configuration ${index}`, () =>
     Effect.gen(function* missingGatewayConfiguration() {
