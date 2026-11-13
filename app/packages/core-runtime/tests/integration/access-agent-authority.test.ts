@@ -1,0 +1,626 @@
+import { v1 } from '@authzed/authzed-node';
+import { NodeServices } from '@effect/platform-node';
+import type { PgClient } from '@effect/sql-pg';
+import { Context, Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
+import { AccessEnforcementPortsLive } from '../../src/actions/runtime-wiring.ts';
+import { TenantAccessBootstrap, TenantAccessBootstrapLive } from '../../src/access/bootstrap/index.ts';
+import { compileFullAccessRole } from '../../src/access/bootstrap/full-access-role.ts';
+import { legalEntityScopeId, tenantContextScopeId } from '../../src/access/bootstrap/persistence.ts';
+import { AccessChangesStoreLive } from '../../src/access/changes/persistence/drizzle-store.ts';
+import { writeRoleCreation } from '../../src/access/changes/role-revision.ts';
+import {
+  makeAccessProjectionCompiler,
+  makeAccessProjectionTransport,
+} from '../../src/access/compiler/spice-db-compiler.ts';
+import type { AccessDecision } from '../../src/access/decision/contract.ts';
+import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
+import { AccessDecisionLive } from '../../src/access/enforcement/service.ts';
+import {
+  AgentIdSchema,
+  AssignmentIncarnationIdSchema,
+  LegalEntityIdSchema,
+  PrincipalIdSchema,
+  RoleIdSchema,
+  RoleRevisionIdSchema,
+  TenantIdSchema,
+} from '../../src/access/ids.ts';
+import type { LegalEntityId, PrincipalId, RoleId, RoleRevisionId, TenantId } from '../../src/access/ids.ts';
+import type { CatalogSnapshot, Cell } from '../../src/access/model.ts';
+import {
+  agentConnectionIdOfGrant,
+  AgentConnectionStore,
+  AgentConnectionStoreLive,
+} from '../../src/access/intent/agent-connections.ts';
+import { AccessCatalogSnapshotWriterLive } from '../../src/access/intent/catalog-snapshot-writer.ts';
+import { AccessMembershipIdSchema, AccessMembershipStoreLive } from '../../src/access/intent/memberships.ts';
+import { AccessPeopleDirectoryLive } from '../../src/access/intent/people-directory.ts';
+import { AccessPeopleStore, AccessPeopleStoreLive } from '../../src/access/intent/people-store.ts';
+import { AccessProjectionCompiler } from '../../src/access/intent/projection-compiler.ts';
+import { AccessProjectionWriterLive } from '../../src/access/intent/projection-writer.ts';
+import { AccessTeamStore, makeAccessTeamDrizzleStore } from '../../src/access/intent/teams.ts';
+import { TenantIntentLoaderLive } from '../../src/access/intent/tenant-intent-loader.ts';
+import { consentCeilingOf } from '../../src/access/lifecycle/agent-authority.ts';
+import { AccessWriteJournalStoreLive } from '../../src/access/lifecycle/persistence/journal-store.ts';
+import { AccessPeopleCommands, AccessPeopleCommandsLive } from '../../src/access/lifecycle/people-service.ts';
+import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
+import type { AccessCatalogModule, AccessDeclarationInput } from '../../src/authorization/access-declaration.ts';
+import { CoreDatabase } from '../../src/db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../src/db/database-identities.ts';
+import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
+import { coreRelations } from '../../src/db/schema.ts';
+import { replaceAgentOperatorsActionKey } from '../../src/modules/actions/agent-operator-command.ts';
+import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import type { OperationalScope } from '../../src/operations/context.ts';
+import { outboxProducerModuleKey, outboxTopic } from '../../src/outbox/core-identity-principal-lifecycle-changed-v1.ts';
+import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
+import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
+import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
+import {
+  createTemplateDatabase,
+  insertTenantStatement,
+  replacedDatabase,
+} from '../support/access-scenarios/database.ts';
+import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
+
+/*
+ * An agent on authorization v2, end to end on the real stores, the real projection and the real gate over a
+ * SpiceDB that carries exactly the schema a v2 stage runs (`ONTOS_SPICEDB_SCHEMA`, no legacy definition of its own):
+ * the owner admits the agent to the company and assigns it a role through the People commands, the operator opens
+ * the agent's credential-bound connection, and the gate decides each request AS the agent on that connection. Every
+ * revocation path that Core owns is asked again on the next decision.
+ */
+const uid = (value: number) => `00000000-0000-4000-8000-${value.toString().padStart(12, '0')}`;
+
+const MODULE = 'desk.tasks';
+const TASK_READ = 'desk.tasks.task.read';
+const TASK_CREATE = 'desk.tasks.task.create';
+const TASK_DELETE = 'desk.tasks.task.delete';
+
+const entrypoint = (key: string, access: 'read' | 'write') =>
+  defineTenantModuleEntrypoint({
+    access,
+    authorization: { kind: 'protected' },
+    entrypointKey: key,
+    moduleKey: MODULE,
+    role: access === 'read' ? 'api' : 'action',
+  });
+const taskRead: AccessDeclarationInput = {
+  key: TASK_READ,
+  kind: 'read',
+  modes: ['run'],
+  placement: { group: 'desk', level: 'basic' },
+  risk: 'routine',
+  selectors: [],
+};
+const taskCreate: AccessDeclarationInput = {
+  key: TASK_CREATE,
+  kind: 'action',
+  modes: ['run', 'propose', 'approve'],
+  placement: { group: 'desk', level: 'basic' },
+  risk: 'routine',
+  selectors: [],
+};
+const taskDelete: AccessDeclarationInput = {
+  key: TASK_DELETE,
+  kind: 'action',
+  modes: ['run', 'propose', 'approve'],
+  placement: { group: 'desk', level: 'extended' },
+  risk: 'sensitive',
+  selectors: [],
+};
+const readEntrypoint = entrypoint('desk.tasks.api.task-read', 'read');
+const createEntrypoint = entrypoint('desk.tasks.task-create', 'write');
+const deleteEntrypoint = entrypoint('desk.tasks.task-delete', 'write');
+const modules: readonly AccessCatalogModule[] = [
+  {
+    descriptors: [
+      { accessDeclaration: taskRead, entrypoint: readEntrypoint },
+      { accessDeclaration: taskCreate, entrypoint: createEntrypoint },
+      { accessDeclaration: taskDelete, entrypoint: deleteEntrypoint },
+    ],
+    moduleId: MODULE,
+  },
+];
+const readCarrier = { accessDeclaration: decodeAccessDeclarationOrThrow(taskRead, readEntrypoint) };
+const createCarrier = { accessDeclaration: decodeAccessDeclarationOrThrow(taskCreate, createEntrypoint) };
+const deleteCarrier = { accessDeclaration: decodeAccessDeclarationOrThrow(taskDelete, deleteEntrypoint) };
+
+const owner = PrincipalIdSchema.make(uid(2));
+const operator = PrincipalIdSchema.make(uid(3));
+const bystander = PrincipalIdSchema.make(uid(4));
+const agent = AgentIdSchema.make(uid(5));
+const company = LegalEntityIdSchema.make(uid(6));
+const otherCompany = LegalEntityIdSchema.make(uid(7));
+
+const seedTenant = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  Effect.forEach(
+    [
+      insertTenantStatement(tenantId),
+      `insert into core.legal_entities
+         (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values
+         ('${company}', '${tenantId}', 'Kancelář s.r.o.', 'CZ', '12345678', 'active'),
+         ('${otherCompany}', '${tenantId}', 'Sklad s.r.o.', 'CZ', '87654321', 'active')`,
+      `insert into core.principals (tenant_id, principal_id, kind, display_name, status) values
+         ('${tenantId}', '${owner}', 'human', 'Vlastník', 'active'),
+         ('${tenantId}', '${operator}', 'human', 'Operátorka', 'active'),
+         ('${tenantId}', '${bystander}', 'human', 'Kolega', 'active'),
+         ('${tenantId}', '${agent}', 'agent', 'Agent úkolů', 'active')`,
+      `insert into core.principal_company_memberships (tenant_id, legal_entity_id, principal_id, affiliation, status)
+         values ('${tenantId}', '${company}', '${agent}', 'employee', 'active'),
+                ('${tenantId}', '${company}', '${operator}', 'employee', 'active')`,
+      `insert into core.tenant_module_states (tenant_module_state_id, tenant_id, module_key, state) values
+         ('${uid(8)}', '${tenantId}', '${MODULE}', 'active')`,
+    ],
+    (statement) => admin.unsafe(statement).pipe(Effect.orDie),
+    { concurrency: 1, discard: true },
+  );
+
+/** The operator and the bystander are members of the tenant and the company, as the People page admits them. */
+const seedMembers = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  admin
+    .unsafe(
+      `insert into core.access_memberships
+         (membership_id, tenant_id, scope_id, principal_id, kind, status, valid_from, recorded_by) values
+         ('${uid(20)}', '${tenantId}', '${tenantContextScopeId(tenantId)}', '${operator}', 'member', 'active',
+          now() - interval '1 day', '${owner}'),
+         ('${uid(21)}', '${tenantId}', '${legalEntityScopeId(tenantId, company)}', '${operator}', 'member', 'active',
+          now() - interval '1 day', '${owner}'),
+         ('${uid(22)}', '${tenantId}', '${tenantContextScopeId(tenantId)}', '${bystander}', 'member', 'active',
+          now() - interval '1 day', '${owner}'),
+         ('${uid(23)}', '${tenantId}', '${legalEntityScopeId(tenantId, company)}', '${bystander}', 'member', 'active',
+          now() - interval '1 day', '${owner}')`,
+    )
+    .pipe(Effect.orDie);
+
+/**
+ * The agent's operators exactly as the committed `core.identity.replace-agent-operators` Action leaves them: its
+ * invocation, its lifecycle event and its sensitive audit evidence at the next revision.
+ */
+const seedOperators = (admin: PgClient.PgClient, tenantId: TenantId, operators: readonly string[], revision: number) =>
+  Effect.gen(function* seedOperatorCommand() {
+    const invocation = uid(400 + revision);
+    const operatorList = [...operators]
+      .toSorted()
+      .map((id) => `'${id}'`)
+      .join(', ');
+    // The committed evidence, built by PostgreSQL itself.
+    const evidence = `jsonb_build_object(
+      'actionKey', '${replaceAgentOperatorsActionKey}', 'agentPrincipalId', '${agent}', 'context', 'operators-edited',
+      'desiredOperatorPrincipalIds', jsonb_build_array(${operatorList}), 'legalEntityId', '${company}',
+      'previousRevision', ${revision - 1}, 'revision', ${revision}, 'revokedConnections', 0)`;
+    for (const statement of [
+      `insert into core.action_invocations (action_invocation_id, tenant_id, legal_entity_id, action_key, status, request_hash)
+         values ('${invocation}', '${tenantId}', '${company}', '${replaceAgentOperatorsActionKey}', 'succeeded', 'h${revision}')`,
+      `insert into core.domain_events (tenant_id, legal_entity_id, action_invocation_id, producer_module_key, event_type,
+         subject_module_key, subject_resource_type, subject_resource_id, payload_json) values
+         ('${tenantId}', '${company}', '${invocation}', '${outboxProducerModuleKey}', '${outboxTopic}',
+          '${outboxProducerModuleKey}', 'principal', '${agent}',
+          jsonb_build_object('data', jsonb_build_object('principalId', '${agent}')))`,
+      `insert into core.audit_events (tenant_id, legal_entity_id, action_invocation_id, auth_method, event_type, outcome,
+         outcome_stage, outcome_code, audit_profile, evidence_json) values
+         ('${tenantId}', '${company}', '${invocation}', 'session', 'action.executed', 'succeeded', 'execution',
+          'succeeded', 'sensitive', ${evidence})`,
+    ]) {
+      yield* admin.unsafe(statement).pipe(Effect.orDie);
+    }
+  });
+
+const sessionScope = (tenantId: TenantId, principalId: PrincipalId, legalEntityId?: LegalEntityId) => {
+  const session = {
+    authBindingId: uid(300),
+    authContextRef: 'session:access-agent-authority:1',
+    authMethod: 'session',
+    principalId,
+    tenantId,
+  };
+  return Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(
+    legalEntityId === undefined ? session : { ...session, legalEntityId },
+  ).pipe(
+    Effect.map((context) => ({ ...context, correlationId: 'access-agent-authority' }) satisfies OperationalScope),
+    Effect.orDie,
+  );
+};
+
+/** The trusted scope of an MCP request of the agent's OAuth connection, as the MCP transport builds it. */
+const agentScope = (
+  tenantId: TenantId,
+  grantId: string,
+  connection: { readonly connectionId: string; readonly revision: number },
+  legalEntityId: LegalEntityId = company,
+) =>
+  Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+    authBindingId: uid(301),
+    authContextRef: `oauth-grant:${grantId}`,
+    authMethod: 'oauth_connection',
+    connection: {
+      agentConnection: connection,
+      clientId: 'https://client.example/oauth/metadata.json',
+      clientName: 'Client',
+      grantId,
+      modules: 'all',
+      writePolicy: 'direct',
+    },
+    delegatedByPrincipalId: operator,
+    legalEntityId,
+    principalId: agent,
+    tenantId,
+  }).pipe(
+    Effect.map((context) => ({ ...context, correlationId: 'access-agent-authority:mcp' }) satisfies OperationalScope),
+    Effect.orDie,
+  );
+
+interface Tenant {
+  readonly admin: PgClient.PgClient;
+  readonly cellsOf: (capabilityKeys: readonly string[]) => readonly Cell[];
+  readonly connections: (typeof AgentConnectionStore)['Service'];
+  readonly createRole: (
+    capabilityKeys: readonly string[],
+    keep?: (cell: Cell) => boolean,
+  ) => Effect.Effect<{
+    readonly roleId: RoleId;
+    readonly roleRevisionId: RoleRevisionId;
+  }>;
+  readonly gate: (typeof AccessDecisionGate)['Service'];
+  readonly newId: Effect.Effect<string>;
+  readonly owner: OperationalScope;
+  readonly people: (typeof AccessPeopleCommands)['Service'];
+  readonly release: CatalogSnapshot;
+  readonly tenantId: TenantId;
+}
+
+const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value, Failure>) =>
+  Effect.gen(function* tenantScenario() {
+    const pair = yield* loadDatabaseConnectionPair();
+    const crypto = yield* Crypto.Crypto;
+    const configuration = yield* loadSpiceDbConfig();
+    const bootstrapConnection = yield* makeTestPgClient(pair.admin.connectionString, { maxConnections: 1 });
+    const database = `access_agents_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+    yield* bootstrapConnection.unsafe(`create database "${database}"`).pipe(Effect.orDie);
+    yield* Effect.addFinalizer(() =>
+      bootstrapConnection.unsafe(`drop database if exists "${database}" with (force)`).pipe(Effect.orDie),
+    );
+    const admin = yield* makeTestPgClient(replacedDatabase(pair.admin.connectionString, database), {
+      maxConnections: 2,
+    });
+    yield* createTemplateDatabase(admin);
+    const tenantId = TenantIdSchema.make(yield* crypto.randomUUIDv4());
+    yield* seedTenant(admin, tenantId);
+    const runtime = yield* makeTestPgClient(replacedDatabase(pair.runtime.connectionString, database), {
+      maxConnections: 3,
+    });
+    const executor = yield* makeTestDatabaseFromClient(runtime, coreRelations);
+    // Exactly the schema a v2 stage runs: the cutover writes ONTOS_SPICEDB_SCHEMA and nothing else.
+    yield* Effect.acquireUseRelease(
+      Effect.sync(() => newSpiceDbGrpcClient(configuration)),
+      (client) =>
+        Effect.tryPromise(() =>
+          client.promises.writeSchema(v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA })),
+        ).pipe(Effect.orDie),
+      (client) => Effect.sync(() => client.close()),
+    );
+    const compiler = makeAccessProjectionCompiler(makeAccessProjectionTransport(configuration));
+    const platforms = Layer.mergeAll(
+      Layer.succeed(CoreDatabase, { executor }),
+      Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+      Layer.succeed(AccessProjectionCompiler, compiler),
+      NodeServices.layer,
+    );
+    const stores = Layer.mergeAll(
+      platforms,
+      TenantIntentLoaderLive.pipe(Layer.provide(platforms)),
+      AccessWriteJournalStoreLive.pipe(Layer.provide(platforms)),
+      AccessChangesStoreLive.pipe(Layer.provide(platforms)),
+      AccessMembershipStoreLive.pipe(Layer.provide(platforms)),
+      AccessPeopleStoreLive.pipe(Layer.provide(platforms)),
+      AccessPeopleDirectoryLive.pipe(Layer.provide(platforms)),
+      AgentConnectionStoreLive.pipe(Layer.provide(platforms)),
+      Layer.succeed(
+        AccessTeamStore,
+        makeAccessTeamDrizzleStore({ enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT, executor }),
+      ),
+    );
+    const base = Layer.mergeAll(
+      stores,
+      AccessCatalogSnapshotWriterLive.pipe(Layer.provide(stores)),
+      AccessProjectionWriterLive.pipe(Layer.provide(stores)),
+    );
+    const context = yield* Layer.build(
+      Layer.mergeAll(
+        base,
+        TenantAccessBootstrapLive.pipe(Layer.provide(base)),
+        AccessDecisionLive.pipe(Layer.provide(AccessEnforcementPortsLive), Layer.provide(base)),
+        AccessPeopleCommandsLive.pipe(Layer.provide(base)),
+      ),
+    );
+    const ownerScope = yield* sessionScope(tenantId, owner);
+    yield* Context.get(context, TenantAccessBootstrap)
+      .bootstrapTenantAccess({ legalEntityIds: [company, otherCompany], modules, scope: ownerScope })
+      .pipe(
+        Effect.mapError((cause) => new Error(`${cause.code}: ${cause.reason}`)),
+        Effect.orDie,
+      );
+    yield* seedMembers(admin, tenantId);
+    const release = Option.getOrThrow(
+      yield* Context.get(context, AccessPeopleStore).loadCatalogSnapshot(ownerScope).pipe(Effect.orDie),
+    );
+    const { cells } = yield* Effect.fromResult(compileFullAccessRole(release)).pipe(Effect.orDie);
+    const cellsOf = (capabilityKeys: readonly string[]) =>
+      cells.filter((cell) => capabilityKeys.includes(cell.capabilityKey));
+    const createRole = (capabilityKeys: readonly string[], keep: (cell: Cell) => boolean = () => true) =>
+      Effect.gen(function* createRoleEffect() {
+        const kept = cellsOf(capabilityKeys).filter(keep);
+        const [roleUuid, revisionUuid] = yield* Effect.all([crypto.randomUUIDv4(), crypto.randomUUIDv4()]);
+        const created = yield* writeRoleCreation({
+          catalogSnapshotId: release.id,
+          cells: kept,
+          decidedAt: yield* DateTime.nowAsDate,
+          legalEntityId: company,
+          name: `Role ${capabilityKeys.join('+')}`,
+          scope: ownerScope,
+          targetRevisionId: RoleRevisionIdSchema.make(revisionUuid),
+          targetRoleId: RoleIdSchema.make(roleUuid),
+        });
+        return { roleId: created.roleId, roleRevisionId: created.roleRevisionId };
+      }).pipe(Effect.provideContext(context), Effect.orDie);
+    return yield* run({
+      admin,
+      cellsOf,
+      connections: Context.get(context, AgentConnectionStore),
+      createRole,
+      gate: Context.get(context, AccessDecisionGate),
+      newId: crypto.randomUUIDv4().pipe(Effect.orDie),
+      owner: ownerScope,
+      people: Context.get(context, AccessPeopleCommands),
+      release,
+      tenantId,
+    });
+  }).pipe(Effect.scoped);
+
+const decisionAt = DateTime.toDateUtc(DateTime.makeUnsafe('2030-01-01T00:00:00Z'));
+const connectionEnd = DateTime.toDateUtc(DateTime.makeUnsafe('2031-01-01T00:00:00Z'));
+const companyScopeId = (tenant: Tenant) => legalEntityScopeId(tenant.tenantId, company);
+
+const codesOf = (decision: AccessDecision) => decision.reasons.map(({ code }) => code);
+
+const decideAs = (scope: OperationalScope, carrier: typeof readCarrier) =>
+  AccessDecisionGate.pipe(
+    Effect.flatMap((gate) => gate.decide({ carrier, legalEntityScope: 'required', now: decisionAt, scope })),
+  );
+
+const assign = (
+  tenant: Tenant,
+  actor: OperationalScope,
+  holder: { readonly roleId: RoleId; readonly roleRevisionId: RoleRevisionId },
+  who: 'agent' | PrincipalId,
+) =>
+  Effect.gen(function* assignEffect() {
+    return yield* tenant.people.assignRole(actor, {
+      holder: who === 'agent' ? { _tag: 'Agent', agentId: agent } : { _tag: 'Principal', principalId: who },
+      incarnationId: AssignmentIncarnationIdSchema.make(yield* tenant.newId),
+      roleId: holder.roleId,
+      roleRevisionId: holder.roleRevisionId,
+      scopeId: companyScopeId(tenant),
+    });
+  });
+
+const admitAgent = (tenant: Tenant) =>
+  Effect.gen(function* admitAgentEffect() {
+    return yield* tenant.people.admitMember(tenant.owner, {
+      companyMembershipId: AccessMembershipIdSchema.make(yield* tenant.newId),
+      holder: { _tag: 'Agent', agentId: agent },
+      legalEntityId: company,
+      tenantMembershipId: AccessMembershipIdSchema.make(yield* tenant.newId),
+    });
+  });
+
+/** The operator consents for the agent on one OAuth grant: the connection with the ceiling of the agent's cells. */
+const connect = (tenant: Tenant, consenter: PrincipalId, capabilityKeys: readonly string[]) =>
+  Effect.gen(function* connectEffect() {
+    const grantId = yield* tenant.newId;
+    const scope = yield* sessionScope(tenant.tenantId, consenter, company);
+    const opened = yield* tenant.connections.open(scope, {
+      agentId: agent,
+      ceiling: consentCeilingOf({
+        catalog: tenant.release.entries,
+        cells: tenant.cellsOf(capabilityKeys),
+        modules: 'all',
+      }),
+      connectionId: agentConnectionIdOfGrant(grantId),
+      legalEntityId: company,
+      validUntil: connectionEnd,
+    });
+    const mcp = yield* agentScope(tenant.tenantId, grantId, {
+      connectionId: opened.connectionId,
+      revision: opened.revision,
+    });
+    return { grantId, mcp, opened };
+  });
+
+/** The agent holding the read-only role, connected by its operator who holds everything. */
+const connectedReader = (tenant: Tenant) =>
+  Effect.gen(function* connectedReaderEffect() {
+    const everything = yield* tenant.createRole([TASK_READ, TASK_CREATE, TASK_DELETE]);
+    const reader = yield* tenant.createRole([TASK_READ]);
+    yield* assign(tenant, tenant.owner, everything, operator);
+    yield* admitAgent(tenant);
+    const readerAssignment = yield* assign(tenant, tenant.owner, reader, 'agent');
+    yield* seedOperators(tenant.admin, tenant.tenantId, [operator], 1);
+    const connection = yield* connect(tenant, operator, [TASK_READ]);
+    return { connection, everything, reader, readerAssignment };
+  });
+
+it.layer(NodeServices.layer, { excludeTestServices: true })('an agent on authorization v2', (suite) => {
+  suite.effect('reads within its role as the agent, and nothing beyond the role or the consent', () =>
+    withTenant((tenant) =>
+      Effect.gen(function* withinTheRole() {
+        const { connection, everything } = yield* connectedReader(tenant);
+        // A role that runs a sensitive capability is never an agent's: the People rule refuses it before any write.
+        const refused = yield* Effect.flip(assign(tenant, tenant.owner, everything, 'agent'));
+        expect(refused.code).toBe('people_agent_holder_forbidden');
+        // The agent's working role: routine reads and changes, and the sensitive change only as a proposal.
+        const worker = yield* tenant.createRole(
+          [TASK_READ, TASK_CREATE, TASK_DELETE],
+          (cell) => cell.capabilityKey !== TASK_DELETE || cell.mode === 'propose',
+        );
+        const read = yield* decideAs(connection.mcp, readCarrier);
+        expect(read.outcome).toBe('ALLOWED');
+        // The role grants no change, so the agent changes nothing although its operator could.
+        const create = yield* decideAs(connection.mcp, createCarrier);
+        expect(create.outcome).toBe('DENIED');
+        // A role given after the consent is not in the consent's ceiling: the connection stays as consented.
+        yield* assign(tenant, tenant.owner, worker, 'agent');
+        const afterRole = yield* decideAs(connection.mcp, createCarrier);
+        expect(afterRole.outcome).toBe('DENIED');
+        expect(codesOf(afterRole)).toContain('deny.connection_ceiling');
+        // A new consent covers it: a routine change runs, a sensitive one is only a proposal a person decides.
+        const reconnected = yield* connect(tenant, operator, [TASK_READ, TASK_CREATE, TASK_DELETE]);
+        expect((yield* decideAs(reconnected.mcp, createCarrier)).outcome).toBe('ALLOWED');
+        const sensitive = yield* decideAs(reconnected.mcp, deleteCarrier);
+        expect(sensitive.outcome).toBe('NEEDS_APPROVAL');
+        expect(codesOf(sensitive)).toContain('approval.required');
+        // The agent never approves.
+        const approve = yield* AccessDecisionGate.pipe(
+          Effect.flatMap((gate) =>
+            gate.decide({
+              carrier: deleteCarrier,
+              legalEntityScope: 'required',
+              mode: 'approve',
+              now: decisionAt,
+              scope: reconnected.mcp,
+            }),
+          ),
+        );
+        expect(approve.outcome).toBe('DENIED');
+      }).pipe(Effect.provideService(AccessDecisionGate, tenant.gate)),
+    ),
+  );
+
+  suite.effect('is refused in another company and in another tenant', () =>
+    withTenant((tenant) =>
+      Effect.gen(function* otherScopes() {
+        const { connection } = yield* connectedReader(tenant);
+        const elsewhere = yield* agentScope(
+          tenant.tenantId,
+          connection.grantId,
+          { connectionId: connection.opened.connectionId, revision: 1 },
+          otherCompany,
+        );
+        expect((yield* decideAs(elsewhere, readCarrier)).outcome).toBe('DENIED');
+        const foreignTenant = { ...connection.mcp, tenantId: TenantIdSchema.make(yield* tenant.newId) };
+        expect((yield* decideAs(foreignTenant, readCarrier)).outcome).not.toBe('ALLOWED');
+      }).pipe(Effect.provideService(AccessDecisionGate, tenant.gate)),
+    ),
+  );
+
+  suite.effect('is connected only by a current operator, and only while it is an active agent of the company', () =>
+    withTenant((tenant) =>
+      Effect.gen(function* onlyOperators() {
+        yield* connectedReader(tenant);
+        const bystanderScope = yield* sessionScope(tenant.tenantId, bystander, company);
+        const notOperator = yield* Effect.flip(
+          tenant.connections.open(bystanderScope, {
+            agentId: agent,
+            ceiling: { cells: [] },
+            connectionId: agentConnectionIdOfGrant(yield* tenant.newId),
+            legalEntityId: company,
+            validUntil: connectionEnd,
+          }),
+        );
+        expect(notOperator).toMatchObject({ _tag: 'AgentConnectionRefused', code: 'agent_connection_not_operator' });
+        // The operator is removed: they can no longer connect, and the live facts say so on the next request.
+        yield* seedOperators(tenant.admin, tenant.tenantId, [bystander], 2);
+        const removed = yield* Effect.flip(connect(tenant, operator, [TASK_READ]));
+        expect(removed).toMatchObject({ code: 'agent_connection_not_operator' });
+        const operatorScope = yield* sessionScope(tenant.tenantId, operator, company);
+        const facts = yield* tenant.connections.liveFacts(operatorScope, {
+          agentId: agent,
+          connectionId: agentConnectionIdOfGrant(yield* tenant.newId),
+          legalEntityId: company,
+          operatorPrincipalId: operator,
+        });
+        expect(facts.operatorHolds).toBe(false);
+        // A disabled agent is not an active agent of the company: nothing connects it and the live check fails.
+        yield* tenant.admin
+          .unsafe(`update core.principals set status = 'disabled' where principal_id = '${agent}'`)
+          .pipe(Effect.orDie);
+        const disabled = yield* tenant.connections.liveFacts(operatorScope, {
+          agentId: agent,
+          connectionId: agentConnectionIdOfGrant(yield* tenant.newId),
+          legalEntityId: company,
+          operatorPrincipalId: bystander,
+        });
+        expect(disabled.agentInCompany).toBe(false);
+        const bystanderAgain = yield* sessionScope(tenant.tenantId, bystander, company);
+        const inactive = yield* Effect.flip(
+          tenant.connections.open(bystanderAgain, {
+            agentId: agent,
+            ceiling: { cells: [] },
+            connectionId: agentConnectionIdOfGrant(yield* tenant.newId),
+            legalEntityId: company,
+            validUntil: connectionEnd,
+          }),
+        );
+        expect(inactive).toMatchObject({ code: 'agent_connection_agent_inactive' });
+      }),
+    ),
+  );
+
+  suite.effect('loses its authority on the next decision when its connection, role or membership ends', () =>
+    withTenant((tenant) =>
+      Effect.gen(function* revocations() {
+        const { connection, readerAssignment } = yield* connectedReader(tenant);
+        expect((yield* decideAs(connection.mcp, readCarrier)).outcome).toBe('ALLOWED');
+        // The grant is revoked: its connection ends with it.
+        const operatorScope = yield* sessionScope(tenant.tenantId, operator, company);
+        yield* tenant.connections.revoke(operatorScope, connection.opened.connectionId);
+        const revoked = yield* decideAs(connection.mcp, readCarrier);
+        expect(revoked.outcome).toBe('DENIED');
+        expect(codesOf(revoked)).toEqual(['deny.connection_inactive']);
+        // A new connection works again; then the role is removed through the People commands.
+        const second = yield* connect(tenant, operator, [TASK_READ]);
+        expect((yield* decideAs(second.mcp, readCarrier)).outcome).toBe('ALLOWED');
+        const incarnation = yield* Effect.fromOption(
+          Option.fromUndefinedOr(readerAssignment.assignment?.incarnationId),
+        ).pipe(Effect.orDie);
+        yield* tenant.people.unassignRole(tenant.owner, { incarnationId: incarnation });
+        expect((yield* decideAs(second.mcp, readCarrier)).outcome).toBe('DENIED');
+        // The role is back, then the agent leaves the company: its membership path ends and so does everything.
+        const reader = yield* tenant.createRole([TASK_READ]);
+        yield* assign(tenant, tenant.owner, reader, 'agent');
+        expect((yield* decideAs(second.mcp, readCarrier)).outcome).toBe('ALLOWED');
+        yield* tenant.people.endMembership(tenant.owner, {
+          holder: { _tag: 'Agent', agentId: agent },
+          reason: 'Agent ukončen',
+          scopeId: companyScopeId(tenant),
+        });
+        expect((yield* decideAs(second.mcp, readCarrier)).outcome).toBe('DENIED');
+      }).pipe(Effect.provideService(AccessDecisionGate, tenant.gate)),
+    ),
+  );
+
+  suite.effect('gets roles only from someone who may assign them under the People rule', () =>
+    withTenant((tenant) =>
+      Effect.gen(function* peopleRule() {
+        const reader = yield* tenant.createRole([TASK_READ]);
+        yield* admitAgent(tenant);
+        // A plain member administers nothing here, so they neither assign a role to the agent nor admit it.
+        const bystanderScope = yield* sessionScope(tenant.tenantId, bystander);
+        const refused = yield* Effect.flip(assign(tenant, bystanderScope, reader, 'agent'));
+        expect(refused.code).toBe('people_authority_missing');
+        // An agent never holds administration.
+        const admin = yield* Effect.flip(
+          tenant.people.endMembership(bystanderScope, {
+            holder: { _tag: 'Agent', agentId: agent },
+            reason: 'x',
+            scopeId: companyScopeId(tenant),
+          }),
+        );
+        expect(admin.code).toBe('people_authority_missing');
+      }),
+    ),
+  );
+});

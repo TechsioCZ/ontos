@@ -1080,6 +1080,20 @@ const catalogIssue = (request: {
       );
 };
 
+/**
+ * Whether an agent may hold this role revision: every run cell is of a routine capability the release declares. A
+ * non-routine change an agent only proposes, so the projection never writes an agent into a sensitive or critical run
+ * cell (O48a); administration is critical, so a role that administers is never an agent's. Refusing here keeps a
+ * committed assignment from failing the tenant's reconcile.
+ */
+export const roleRevisionIsAgentAssignable = (
+  roleRevision: Pick<RoleRevision, 'cells'>,
+  catalog: readonly CatalogSnapshotEntry[],
+): boolean => {
+  const risks = new Map(catalog.map((entry) => [entry.key, entry.risk] as const));
+  return roleRevision.cells.every((cell) => cell.mode !== 'run' || risks.get(cell.capabilityKey) === 'routine');
+};
+
 const roleLivesInScope = (scope: AccessScope, role: Role): boolean =>
   Match.value(scope).pipe(
     Match.tag('LegalEntity', ({ legalEntityId }) => role.legalEntityId === legalEntityId),
@@ -1160,6 +1174,14 @@ export const planRoleAssignment = (
   if (request.delegation !== undefined && person === undefined) {
     return Effect.fail(
       peopleRefusal('delegation_holder_outside_envelope', 'A delegation envelope names people, never an agent'),
+    );
+  }
+  if (person === undefined && !roleRevisionIsAgentAssignable(request.roleRevision, request.catalog)) {
+    return Effect.fail(
+      peopleRefusal(
+        'people_agent_holder_forbidden',
+        `Role ${request.role.name} runs a sensitive or administrative capability; an agent may only propose those`,
+      ),
     );
   }
   if (request.roleRevision.roleId !== request.role.id) {

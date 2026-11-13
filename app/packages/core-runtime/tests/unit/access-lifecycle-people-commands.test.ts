@@ -1605,20 +1605,35 @@ const agentMembership = (fixture: { readonly id: number; readonly status?: Membe
 it.effect('assigns a role to an agent on its own agent side, only while the agent is a live member', () =>
   Effect.gen(function* agentAssignmentNeedsLiveMembership() {
     yield* TestClock.setTime(AT.getTime());
+    const routine = [makeEntry({ risk: 'routine' })];
     const assigned = yield* planRoleAssignment({
-      ...assignmentRequest({ memberships: [agentMembership({ id: 31 }), membership({ holder: MANAGER, id: 2 })] }),
+      ...assignmentRequest({
+        catalog: routine,
+        memberships: [agentMembership({ id: 31 }), membership({ holder: MANAGER, id: 2 })],
+      }),
       holder: agentHolder,
     });
     expect(writeTags(assigned)).toEqual(['RecordAssignment']);
     expect(Option.getOrThrow(assignmentIn(assigned.writes[0])).holder).toEqual(agentHolder);
 
+    // A role that runs a critical capability is never an agent's: it may only propose it (O48a).
+    const critical = yield* Effect.flip(
+      planRoleAssignment({
+        ...assignmentRequest({ memberships: [agentMembership({ id: 31 }), membership({ holder: MANAGER, id: 2 })] }),
+        holder: agentHolder,
+      }),
+    );
+    expect(critical.code).toBe('people_agent_holder_forbidden');
+
     // A person's membership never stands in for the agent's own (guarantee 4).
-    const notMember = yield* Effect.flip(planRoleAssignment({ ...assignmentRequest(), holder: agentHolder }));
+    const notMember = yield* Effect.flip(
+      planRoleAssignment({ ...assignmentRequest({ catalog: routine }), holder: agentHolder }),
+    );
     expect(notMember.code).toBe('people_holder_not_a_member');
 
     const suspended = yield* Effect.flip(
       planRoleAssignment({
-        ...assignmentRequest({ memberships: [agentMembership({ id: 31, status: 'suspended' })] }),
+        ...assignmentRequest({ catalog: routine, memberships: [agentMembership({ id: 31, status: 'suspended' })] }),
         holder: agentHolder,
       }),
     );

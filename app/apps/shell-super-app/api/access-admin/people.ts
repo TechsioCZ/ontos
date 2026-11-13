@@ -24,6 +24,7 @@ import { AccessTeamMemberIdSchema } from '@app/core-runtime/access/intent/teams'
 import {
   assignmentIsLive,
   membershipIsLive,
+  roleRevisionIsAgentAssignable,
   soleAdministrationScopeIds,
 } from '@app/core-runtime/access/lifecycle/people-commands';
 import { AccessPeopleCommands } from '@app/core-runtime/access/lifecycle/people-service';
@@ -1318,8 +1319,12 @@ const agentRoles = Effect.fn('AccessAdminPeople.agentRoles')(function* agentRole
     return yield* Effect.fail(forbidden(SCOPE_NOT_AVAILABLE));
   }
   const { scopeId } = company.value;
+  const catalog = yield* (yield* AccessPeopleCommands)
+    .readCatalog(scope)
+    .pipe(Effect.mapError(accessPeopleFailureProblem));
+  // Only roles an agent may hold are offered: one that runs a sensitive or administrative capability never is.
   const roles = view.roles.flatMap((entry) =>
-    entry.role.legalEntityId === input.legalEntityId
+    entry.role.legalEntityId === input.legalEntityId && roleRevisionIsAgentAssignable(entry.revision, catalog)
       ? [{ name: entry.role.name, revisionId: entry.revision.id, roleId: entry.role.id }]
       : [],
   );
@@ -1349,9 +1354,6 @@ const agentRoles = Effect.fn('AccessAdminPeople.agentRoles')(function* agentRole
       ] as const;
     }),
   );
-  const catalog = yield* (yield* AccessPeopleCommands)
-    .readCatalog(scope)
-    .pipe(Effect.mapError(accessPeopleFailureProblem));
   return { agents, catalog, revision: revisionOf(view, reach), roles } satisfies AgentRolesView;
 });
 
