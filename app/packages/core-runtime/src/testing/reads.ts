@@ -381,7 +381,11 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
     layer: Layer.mergeAll(
       Layer.succeed(ReadRuntime, runtime),
       Layer.succeed(ContextAccess, contextAccess),
-      Layer.succeed(AccessDecisionGate, scriptedGate.accessDecision),
+      // A default only: a gate the test supplies around this layer wins, so a test's own gate is never shadowed.
+      Layer.effect(
+        AccessDecisionGate,
+        Effect.serviceOption(AccessDecisionGate).pipe(Effect.map(Option.getOrElse(() => scriptedGate.accessDecision))),
+      ),
     ),
     ownerServices: Layer.mergeAll(
       Layer.succeed(CoreDatabase, database),

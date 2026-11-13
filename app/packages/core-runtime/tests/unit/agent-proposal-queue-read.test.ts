@@ -1461,8 +1461,14 @@ it.layer(
         permissionDecision: 'allowed',
         scope,
       });
-      // The harness gate grants the agent administration right (permissionDecision: 'allowed').
-      const services = yield* Layer.build(harness.layer);
+      // This caller holds the agent administration right; the suite's default gate refuses every question, and a
+      // gate the test supplies always wins over the harness's own.
+      const services = yield* Layer.build(harness.layer).pipe(
+        Effect.provideService(
+          AccessDecisionGate,
+          makeTestAccessDecision({ answers: { 'core.identity.agent-status.manage': { outcome: 'ALLOWED' } } }),
+        ),
+      );
       const pages = yield* Effect.gen(function* pages() {
         const first = yield* harness.runtime.runRead({
           input: { agentPrincipalId: targetAgentId, mode: 'withdrawal-batches' },
