@@ -64,6 +64,9 @@ const unitApplication = (release: string, seen: Ref.Ref<number>) =>
     const request = yield* HttpServerRequest.HttpServerRequest;
     yield* Ref.update(seen, (count) => count + 1);
     const pathname = request.url.split('?')[0] ?? '';
+    if (pathname === '/slow') {
+      yield* Effect.sleep('1500 millis');
+    }
     if (pathname === '/events') {
       return HttpServerResponse.stream(
         Stream.tick('50 millis').pipe(Stream.map((): Uint8Array => new TextEncoder().encode(`data: ${release}\n\n`))),
@@ -177,12 +180,12 @@ const twoHosts = (console?: TestConsole.TestConsole) =>
       duration = Duration.millis(800),
     ) =>
       drainSupersededHost({
-        closePublicPort: Scope.close(oldPublic, Exit.void),
         drain,
         duration,
         peers: Effect.succeed(peers),
         publicPort: oldPort,
         revision: 'new-revision',
+        stopAccepting: Scope.close(oldPublic, Exit.void),
       });
     return { drain, newPort, newUnitSeen, oldPort, oldUnitSeen, supersede };
   });
@@ -206,12 +209,12 @@ const standingHost = (release: string) =>
     const port = yield* serveOn(app, publicScope);
     const supersede = (peers: Effect.Effect<readonly DrainPeer[]>, duration = Duration.seconds(10)) =>
       drainSupersededHost({
-        closePublicPort: Scope.close(publicScope, Exit.void),
         drain,
         duration,
         peers,
         publicPort: port,
         revision: 'newer',
+        stopAccepting: Scope.close(publicScope, Exit.void),
       });
     return { drain, port, seen, supersede };
   });
@@ -570,7 +573,10 @@ it.live(
       expect(stream.status).toBe(200);
       expect(stream.error).toBeUndefined();
       expect(stream.body).toContain('data: tick');
-      expect(yield* Fiber.join(upload)).toMatch(/^HTTP\/1\.1 503 /u);
+      // The upload may already have reached its unit: a plain 502, never an invitation to retry it.
+      const cut = yield* Fiber.join(upload);
+      expect(cut).toMatch(/^HTTP\/1\.1 502 /u);
+      expect(cut.toLowerCase()).not.toContain('retry-after');
       expect(yield* Ref.get(lines)).toEqual(
         expect.arrayContaining([
           '[app-host] SIGTERM received; stopping gracefully',
@@ -655,4 +661,22 @@ it.effect('a host publishes first freely, then only while the authority still na
     expect(yield* allowed(Option.some('own'), Effect.succeed(Option.some('own')))).toBe(false);
     expect(yield* allowed(Option.none(), Effect.succeed(Option.none()))).toBe(false);
   }),
+);
+
+it.live(
+  "the drain deadline is not a stop: a slow POST in flight gets the peer's real answer, sent to the peer once",
+  () =>
+    Effect.gen(function* deadlineWithRequestInFlight() {
+      const [old, current] = yield* Effect.all([standingHost('old'), standingHost('new')]);
+      yield* startDrain(old.supersede(Effect.succeed([peerAt(current.port)]), Duration.millis(500)), old.drain);
+      const before = yield* Ref.get(current.seen);
+      const answer = yield* send(old.port, '/_m/crm/slow', { body: new Uint8Array(1024).fill(5), method: 'POST' });
+      expect(answer.status).toBe(200);
+      expect(Option.map(decodeEcho(answer.body), ({ bytes, release }) => ({ bytes, release }))).toEqual(
+        Option.some({ bytes: 1024, release: 'new' }),
+      );
+      expect((yield* Ref.get(current.seen)) - before).toBe(1);
+      // After the deadline the listener no longer accepts.
+      expect((yield* send(old.port, ECHO)).error).toBe('ECONNREFUSED');
+    }),
 );

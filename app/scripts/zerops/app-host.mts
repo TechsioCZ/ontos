@@ -79,6 +79,7 @@ import { authenticationQueryRedactions, credentialSubmissionRedirect } from '@ap
  */
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
+import type { Server } from 'node:http';
 import { hostname } from 'node:os';
 import path from 'node:path';
 
@@ -1262,8 +1263,38 @@ const routedUnit = (url: string) => {
  * event streams end, other relayed responses are cut and relays awaiting an answer answer 503, then the server's
  * graceful close, which then has nothing left to wait for. Runs once, whoever asks first.
  */
+/**
+ * Stops accepting connections on the public port, nothing more: Node closes the idle kept-alive ones, and every
+ * request already on its way finishes (the drain's end; its relays keep their answers).
+ */
+export const stopAccepting = (server: Server) =>
+  Effect.sync(() => {
+    if (server.listening) {
+      server.close();
+    }
+  });
+
 export const publicPortClosing = (publicScope: Scope.Closeable, drain: SupersedeDrain) =>
   Effect.cached(Deferred.succeed(drain.stopping, true).pipe(Effect.andThen(Scope.close(publicScope, Exit.void))));
+
+/**
+ * The answer when a request may already have reached its target (its peer or unit could have acted on it): 502, or
+ * 504 when no answer came in time, and never `Retry-After`, so a caller without an idempotency key does not write
+ * twice.
+ */
+const mayHaveReachedTarget = (code: string) =>
+  HttpServerResponse.text(code === 'UND_ERR_HEADERS_TIMEOUT' ? 'Gateway timeout\n' : 'Upstream unavailable\n', {
+    headers: { 'cache-control': 'no-store', connection: 'close' },
+    status: code === 'UND_ERR_HEADERS_TIMEOUT' ? 504 : 502,
+  });
+
+/** 503 when nothing reached the target; 504 when it may have but did not answer in time; 502 otherwise. */
+const failureStatus = (code: string, reached: boolean) => {
+  if (!reached) {
+    return 503;
+  }
+  return code === 'UND_ERR_HEADERS_TIMEOUT' ? 504 : 502;
+};
 
 /** The answer a caller already retries: 503 on a fresh connection (which can reach another container). */
 const retryableUnavailable = () =>
@@ -1324,7 +1355,8 @@ const forwardDuringDrain = Effect.fn('AppHost.forwardDuringDrain')(function* for
   dispatcher: Agent,
 ) {
   const started = yield* Clock.currentTimeMillis;
-  const refuse = (cause: string, peer: string) =>
+  /** Nothing reached a peer (refused connections, a draining peer's refusal): the caller may retry elsewhere. */
+  const refuse = (cause: string, peer: string, reached = false) =>
     Clock.currentTimeMillis.pipe(
       Effect.flatMap((now) =>
         refusals.record({
@@ -1334,13 +1366,13 @@ const forwardDuringDrain = Effect.fn('AppHost.forwardDuringDrain')(function* for
             method: request.method,
             peer,
             route: loggableRoute(request.url),
-            status: 503,
+            status: failureStatus(cause, reached),
           },
           key: 'drain-forward',
           what: 'drain relay failed',
         }),
       ),
-      Effect.as(retryableUnavailable()),
+      Effect.as(reached ? mayHaveReachedTarget(cause) : retryableUnavailable()),
     );
   if (request.headers[DRAIN_FORWARDED_HEADER] !== undefined) {
     yield* drain.count('looped');
@@ -1365,11 +1397,13 @@ const forwardDuringDrain = Effect.fn('AppHost.forwardDuringDrain')(function* for
           origin: target,
           path: relayed,
         },
-        (problem) => refuse(problem.code, target).pipe(Effect.asVoid),
-        (eventStream) => {
-          const over = Effect.raceFirst(Deferred.await(drain.ended), Deferred.await(drain.stopping));
-          return eventStream ? { end: over } : { cut: over };
-        },
+        (problem) => refuse(problem.code, target, true).pipe(Effect.asVoid),
+        // At the drain's end event streams end (their clients reconnect elsewhere); any other relayed answer finishes,
+        // and only the host's stop cuts it.
+        (eventStream) =>
+          eventStream
+            ? { end: Effect.raceFirst(Deferred.await(drain.ended), Deferred.await(drain.stopping)) }
+            : { cut: Deferred.await(drain.stopping) },
         Deferred.await(drain.stopping),
       ).pipe(Effect.result);
       if (Result.isSuccess(answer)) {
@@ -1381,6 +1415,11 @@ const forwardDuringDrain = Effect.fn('AppHost.forwardDuringDrain')(function* for
       const refusedConnection = CONNECT_FAILURES.has(last.code);
       if (refusedConnection || last.code === 'PEER_DRAINING') {
         yield* drain.drop(peer);
+      }
+      if (!refusedConnection && last.code !== 'PEER_DRAINING') {
+        // The request may have reached this peer: it is never sent to another one, and the caller is not told to retry.
+        yield* drain.count('failed');
+        return yield* refuse(last.code, lastPeer, true);
       }
       if (hasBody && !refusedConnection) {
         yield* drain.count('failed');
@@ -1475,12 +1514,22 @@ export const hostApplication = <Failure, Requirements>(
       Deferred.await(drain.stopping),
     ).pipe(
       Effect.catchTag('RelayFailure', (problem) =>
-        problem.code === 'HOST_STOPPING'
-          ? Effect.succeed(retryableUnavailable())
+        problem.code === 'HOST_STOPPING' || !CONNECT_FAILURES.has(problem.code)
+          ? report(problem, problem.code === 'UND_ERR_HEADERS_TIMEOUT' ? 504 : 502).pipe(
+              Effect.as(mayHaveReachedTarget(problem.code)),
+            )
           : report(problem, 502).pipe(Effect.as(HttpServerResponse.text('Upstream unavailable\n', { status: 502 }))),
       ),
     );
-  });
+  }).pipe(
+    // Once the listener stopped (the drain's end) or the host stops, every answer closes its connection, so the client's
+    // next request opens a new one, on a container that still serves.
+    Effect.map((response) =>
+      Deferred.isDoneUnsafe(drain.ended) || Deferred.isDoneUnsafe(drain.stopping)
+        ? HttpServerResponse.setHeader(response, 'connection', 'close')
+        : response,
+    ),
+  );
 };
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1659,9 +1708,11 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   yield* HttpServer.serveEffect(hostControlApplication(published, pointer.load, refusals));
   const publicScope = yield* Scope.make();
   // Closing waits for in-flight requests (the server's graceful shutdown) and happens once, whoever asks first.
+  // The public server is made here so the host can stop its listener alone (the drain's end) or close it whole (stop).
+  const publicServer = withKeepAlive(createServer)();
   const closePublicPort = yield* publicPortClosing(publicScope, drain);
   yield* Effect.addFinalizer(() => closePublicPort);
-  const openPublicPort = NodeHttpServer.make(withKeepAlive(createServer), { host: '0.0.0.0', port: publicPort }).pipe(
+  const openPublicPort = NodeHttpServer.make(() => publicServer, { host: '0.0.0.0', port: publicPort }).pipe(
     Effect.mapError(() => failure(`public port ${String(publicPort)} could not be opened`)),
     Effect.flatMap((server) => server.serve(hostApplication(ports, published, pointer.load, refusals, drain))),
     Scope.provide(publicScope),
@@ -1674,12 +1725,12 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     ).pipe(
       Effect.flatMap((revision) =>
         drainSupersededHost({
-          closePublicPort,
           drain,
           duration: SUPERSEDED_DRAIN,
           peers: platformDrainPeers(APP_SERVICE_HOSTNAME, publicPort),
           publicPort,
           revision,
+          stopAccepting: stopAccepting(publicServer),
         }),
       ),
     );

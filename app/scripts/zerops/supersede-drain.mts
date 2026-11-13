@@ -44,7 +44,8 @@ export const DRAIN_PEER_RESOLVE_INTERVAL = Duration.seconds(1);
 export const APP_SERVICE_HOSTNAME = 'app';
 
 export const DRAIN_FORWARD_CONNECT_TIMEOUT = Duration.seconds(2);
-export const DRAIN_FORWARD_HEADERS_TIMEOUT = Duration.seconds(30);
+/** The direct relay's own bound: a relayed request waits for its answer as long as a direct one would. */
+export const DRAIN_FORWARD_HEADERS_TIMEOUT = Duration.seconds(60);
 
 /** A peer container the drain relays to: an address from the internal DNS and the fixed public port. */
 export interface DrainPeer {
@@ -126,10 +127,9 @@ export const makeSupersedeDrain = (): SupersedeDrain => {
           : [true, { ...current, dropped: new Set([...current.dropped, peerKey(peer)]) }],
       ).pipe(Effect.flatMap((added) => (added ? count('dropped') : Effect.void))),
     ended,
-    finish: Deferred.succeed(ended, true).pipe(
-      Effect.andThen(Ref.update(state, (current) => ({ ...current, active: false }))),
-      Effect.andThen(Ref.get(counts)),
-    ),
+    // The drain stays active after its end: a request still arriving on a connection that was open when the listener
+    // closed is relayed too, never served by this superseded release.
+    finish: Deferred.succeed(ended, true).pipe(Effect.andThen(Ref.get(counts))),
     livePeers: Ref.get(state).pipe(Effect.map(live)),
     refresh: Effect.gen(function* refreshPeers() {
       const now = yield* Clock.currentTimeMillis;
@@ -191,12 +191,13 @@ const describePeers = (peers: readonly DrainPeer[]) =>
  * (interruption) ends the drain early; either way the end is logged with its counts and the port closes.
  */
 export const drainSupersededHost = (input: {
-  readonly closePublicPort: Effect.Effect<void>;
   readonly drain: SupersedeDrain;
   readonly duration: Duration.Duration;
   readonly peers: Effect.Effect<readonly DrainPeer[]>;
   readonly publicPort: number;
   readonly revision: string;
+  /** Stops accepting connections; requests already relayed finish (only the stop signal cuts them). */
+  readonly stopAccepting: Effect.Effect<void>;
 }) =>
   Effect.gen(function* drainSuperseded() {
     const peers = yield* input.peers;
@@ -207,7 +208,7 @@ export const drainSupersededHost = (input: {
         `[app-host] superseded by composition ${input.revision}; no other app container resolves; closing public port ${port} now`,
       );
       yield* input.drain.finish;
-      return yield* input.closePublicPort;
+      return yield* input.stopAccepting;
     }
     const seconds = String(Duration.toSeconds(input.duration));
     yield* input.drain.begin(peers, input.peers);
@@ -221,10 +222,12 @@ export const drainSupersededHost = (input: {
             `[app-host] drain ended (${reason}): forwarded=${String(forwarded)} failed=${String(failed)} looped=${String(looped)} dropped=${String(dropped)}; closing public port ${port}`,
           ),
         ),
-        Effect.andThen(input.closePublicPort),
       );
+    // On a stop signal the host's own stop closes the port (and cuts what is still relayed); here only the end is told.
     yield* Effect.sleep(input.duration).pipe(Effect.onInterrupt(() => end('stop signal')));
-    return yield* end('deadline');
+    yield* end('deadline');
+    // The deadline is not a stop: event streams end (`finish`), the listener closes, relays in flight finish.
+    return yield* input.stopAccepting;
   });
 
 /**
