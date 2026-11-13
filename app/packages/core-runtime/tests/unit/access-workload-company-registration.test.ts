@@ -19,7 +19,7 @@ import { AccessWorkloadCompanyBindingIdSchema } from '../../src/access/workloads
 import type { RegisterWorkloadCompanyBindingInput } from '../../src/access/workloads/company-store.ts';
 import { AccessWorkloadBindingIdSchema } from '../../src/access/workloads/store.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
-import { WorkloadKeySchema } from '../../src/authorization/access-declaration.ts';
+import { AccessActorSchema, WorkloadKeySchema } from '../../src/authorization/access-declaration.ts';
 import {
   preserveSystemPrincipalContextTrust,
   trustVerifiedGatewayPrincipalContext,
@@ -158,6 +158,21 @@ const gateInput = (scope: OperationalScope): GateInput => ({
   scope,
 });
 
+/** A carrier a calling module reaches with the storefront client as the subject of its call (D6). */
+const moduleCallInput = (scope: OperationalScope): GateInput => ({
+  carrier: {
+    accessActor: Schema.decodeUnknownSync(AccessActorSchema)({
+      callers: ['commerce'],
+      reason: 'The calling module acts for the storefront client that started the work.',
+      subject: 'workload',
+      subjectWorkloads: [workloadKey],
+    }),
+  },
+  legalEntityScope: 'required',
+  now,
+  scope,
+});
+
 const reasonCodesOf = (decision: AccessDecision): readonly string[] => decision.reasons.map(({ code }) => code);
 
 it.effect('answers exactly the one company a standalone workload is registered for', () =>
@@ -243,15 +258,22 @@ it.effect('fails the company list when the registration cannot be read, never as
   }),
 );
 
-it.effect('keeps the tenant-wide company list for the subject of a verified module call (D6)', () =>
+it.effect('pins the subject of a verified module call to its declared companies, as the decision gate does (D6)', () =>
   Effect.gen(function* verifiedModuleSubject() {
-    const { gate, scope } = harness({
+    const pinned = harness({
       candidates: [companyA, companyB],
       company: companyA,
       declaredCompanies: [companyA],
       delegated: true,
     });
-    expect(yield* gate.selectableLegalEntities({ now, scope })).toEqual([companyA, companyB]);
+    // A platform registration acts for exactly one company: the issuer may select no other for it.
+    expect(yield* pinned.gate.selectableLegalEntities({ now, scope: pinned.scope })).toEqual([companyA]);
+    // A module subject whose workload declares no company keeps the tenant's companies.
+    const undeclared = harness({ candidates: [companyA, companyB], company: companyA, delegated: true });
+    expect(yield* undeclared.gate.selectableLegalEntities({ now, scope: undeclared.scope })).toEqual([
+      companyA,
+      companyB,
+    ]);
   }),
 );
 
@@ -348,6 +370,62 @@ it.effect('applies the same company rule to a batched workload entry', () =>
     const [denied] = yield* refused.gate.decideMany([gateInput(refused.scope)]);
     expect(denied?.outcome).toBe('DENIED');
     expect(denied === undefined ? [] : reasonCodesOf(denied)).toEqual(['deny.workload_unbound']);
+  }),
+);
+
+it.effect('pins the workload subject of a module call to its declared company, single and batched (D6)', () =>
+  Effect.gen(function* moduleCallSubjectPinned() {
+    const admitted = harness({ company: companyA, declaredCompanies: [companyA], delegated: true });
+    expect(reasonCodesOf(yield* admitted.gate.decide(moduleCallInput(admitted.scope)))).toEqual(['allow.workload']);
+    const [batchAllowed] = yield* admitted.gate.decideMany([moduleCallInput(admitted.scope)]);
+    expect(batchAllowed?.outcome).toBe('ALLOWED');
+
+    // The calling module names another company of the same tenant: refused as an unbound workload is.
+    const moved = harness({ company: companyB, declaredCompanies: [companyA], delegated: true });
+    const single = yield* moved.gate.decide(moduleCallInput(moved.scope));
+    expect(single.outcome).toBe('DENIED');
+    expect(reasonCodesOf(single)).toEqual(['deny.workload_unbound']);
+    const [batched] = yield* moved.gate.decideMany([moduleCallInput(moved.scope)]);
+    expect(batched === undefined ? [] : reasonCodesOf(batched)).toEqual(['deny.workload_unbound']);
+
+    // A revoked registration keeps the workload pinned to no company on the module-call path too.
+    const revoked = harness({ company: companyA, declaredCompaniesRevoked: true, delegated: true });
+    expect(reasonCodesOf(yield* revoked.gate.decide(moduleCallInput(revoked.scope)))).toEqual([
+      'deny.workload_unbound',
+    ]);
+    const [revokedBatch] = yield* revoked.gate.decideMany([moduleCallInput(revoked.scope)]);
+    expect(revokedBatch === undefined ? [] : reasonCodesOf(revokedBatch)).toEqual(['deny.workload_unbound']);
+  }),
+);
+
+it.effect('keeps a module-call workload subject that declares no company tenant-wide (O73)', () =>
+  Effect.gen(function* moduleCallSubjectUndeclared() {
+    const { gate, scope } = harness({ company: companyB, delegated: true });
+    expect((yield* gate.decide(moduleCallInput(scope))).outcome).toBe('ALLOWED');
+    const [batched] = yield* gate.decideMany([moduleCallInput(scope)]);
+    expect(batched?.outcome).toBe('ALLOWED');
+  }),
+);
+
+it.effect('answers UNAVAILABLE, never "not pinned", when a module-call subject declaration is unreadable (O48)', () =>
+  Effect.gen(function* moduleCallSubjectUnreadable() {
+    const { gate, scope } = harness({ company: companyA, declarationFails: true, delegated: true });
+    const single = yield* gate.decide(moduleCallInput(scope));
+    expect(single.outcome).toBe('UNAVAILABLE');
+    expect(reasonCodesOf(single)).toEqual(['unavailable.intent']);
+    const [batched] = yield* gate.decideMany([moduleCallInput(scope)]);
+    expect(batched?.outcome).toBe('UNAVAILABLE');
+  }),
+);
+
+it.effect('reads no declaration for a module-call workload subject its keys refuse', () =>
+  Effect.gen(function* moduleCallSubjectUnboundKey() {
+    const { asked, gate, scope } = harness({ company: companyA, declarationFails: true, delegated: true, keys: [] });
+    expect(reasonCodesOf(yield* gate.decide(moduleCallInput(scope)))).toEqual(['deny.actor_subject_invalid']);
+    const [batched] = yield* gate.decideMany([moduleCallInput(scope)]);
+    expect(batched === undefined ? [] : reasonCodesOf(batched)).toEqual(['deny.actor_subject_invalid']);
+    // Only the key reads were asked: an unreadable declaration never turns a refusal into UNAVAILABLE.
+    expect(asked).toHaveLength(2);
   }),
 );
 

@@ -4,7 +4,13 @@ import { Cause, Context, Crypto, DateTime, Effect, Exit, Layer, Option, Ref, Res
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { AccessActorSchema } from '../../src/authorization/access-declaration.ts';
 import type { AccessCatalogModule } from '../../src/authorization/access-declaration.ts';
+import {
+  preserveSystemPrincipalContextTrust,
+  trustVerifiedGatewayPrincipalContext,
+} from '../../src/auth/system-principal-context-provenance.ts';
+import type { OperationalScope } from '../../src/operations/context.ts';
 import { AccessDecisionLive } from '../../src/access/enforcement/service.ts';
 import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
 import type { GateInput } from '../../src/access/enforcement/contract.ts';
@@ -90,6 +96,7 @@ import {
   replacedDatabase,
 } from '../support/access-scenarios/database.ts';
 import {
+  DECISION_AT,
   insertAssignment,
   insertMembership,
   insertRoleWithCells,
@@ -161,6 +168,41 @@ const agentPrincipal = uid(8);
 const approver = uid(9);
 
 const ownerFactsActionKey = OWNER_FACTS_ACTION;
+
+/** The storefront-shaped workload key a calling module may bring as the subject of its module call (D6). */
+const SUBJECT_WORKLOAD = 'test.storefront-client';
+const callingModule = { appId: 'customer-context', buildMarker: 'customer-context-build', principalId: uid(11) };
+
+/** A carrier that admits only a registered workload as the subject of the calling module's call (D6). */
+const workloadSubjectCarrier: GateInput['carrier'] = {
+  accessActor: Schema.decodeUnknownSync(AccessActorSchema)({
+    callers: [callingModule.appId],
+    reason: 'The calling module acts for the storefront client that started the work.',
+    subject: 'workload',
+    subjectWorkloads: [SUBJECT_WORKLOAD],
+  }),
+};
+
+/** The scope a receiving owner sees for a module call: the workload subject, its calling module sealed beside it. */
+const moduleCallScopeOf = (scope: OperationalScope): OperationalScope => {
+  const trusted = trustVerifiedGatewayPrincipalContext(scope, 'a'.repeat(64), undefined, callingModule);
+  return preserveSystemPrincipalContextTrust(
+    trusted,
+    Object.freeze({ ...trusted, correlationId: scope.correlationId }),
+  );
+};
+
+/** One workload-subject question in the module call's scope; the company is the one that scope names. */
+const workloadSubjectInputOf = (scope: OperationalScope): GateInput => ({
+  carrier: workloadSubjectCarrier,
+  legalEntityScope: 'required',
+  now: DECISION_AT,
+  scope,
+});
+
+/** The refusal codes of one decision, empty when it was not refused. */
+const refusalCodesOf = (decision: AccessDecision): readonly string[] =>
+  decision.outcome === 'DENIED' ? decision.reasons.map(({ code }) => code) : [];
 
 const transport = (key: string) => ({
   correlationId: `c20-${key}`,
@@ -446,6 +488,7 @@ const withAccessScenario = <Value, Failure>(run: (scenario: AccessScenario) => E
           admin,
           bootstrap: (input) => bootstrapScenarioTenant(live, tenantId, input),
           changes: live.changes,
+          decisionGate: live.gate,
           gate: (input: GateInput): Effect.Effect<AccessDecision> => live.gate.decide(input),
           ownerOverlayFacts,
           runAction: live.runAction,
@@ -762,6 +805,91 @@ it.layer(scenarioSuiteLayer, { excludeTestServices: true })('access cutover scen
             registration: dualReadRegistration,
             transport: transport('dual-read-human'),
           });
+        }),
+      ),
+  );
+
+  suite.effect(
+    'a module call acts for a registered workload only in the company it is registered for (D6), single and batched',
+    () =>
+      withAccessScenario((scenario) =>
+        Effect.gen(function* workloadSubjectCompany() {
+          const tenantWide = uid(12);
+          yield* scenario.seedTenant({
+            legalEntityIds: [companyA, companyB],
+            moduleKeys: [SCENARIO_MODULE],
+            principals: [
+              { kind: 'human', principalId: owner },
+              { kind: 'service', principalId: workloadPrincipal },
+              { kind: 'service', principalId: tenantWide },
+            ],
+          });
+          yield* scenario.bootstrap({
+            legalEntityIds: [companyA, companyB],
+            modules: scenarioModules(),
+            principalId: owner,
+          });
+          // The storefront client is bound and registered for company A only; the second workload declares no company.
+          yield* scenario.bindWorkload({ principalId: workloadPrincipal, workloadKey: SUBJECT_WORKLOAD });
+          yield* scenario.registerWorkloadCompany({
+            legalEntityId: companyA,
+            principalId: workloadPrincipal,
+            workloadKey: SUBJECT_WORKLOAD,
+          });
+          yield* scenario.bindWorkload({ principalId: tenantWide, workloadKey: SUBJECT_WORKLOAD });
+
+          // The registered company admits it, on the single and the batched entry.
+          const inA = yield* scenario.scopeFor(workloadPrincipal, companyA).pipe(Effect.map(moduleCallScopeOf));
+          expect((yield* scenario.decisionGate.decide(workloadSubjectInputOf(inA))).outcome).toBe('ALLOWED');
+          expect(
+            (yield* scenario.decisionGate.decideMany([workloadSubjectInputOf(inA)])).map(({ outcome }) => outcome),
+          ).toEqual(['ALLOWED']);
+
+          // Another company of the same tenant is refused exactly as an unbound workload is, single and batched.
+          const inB = yield* scenario.scopeFor(workloadPrincipal, companyB).pipe(Effect.map(moduleCallScopeOf));
+          const single = yield* scenario.decisionGate.decide(workloadSubjectInputOf(inB));
+          expect(single.outcome).toBe('DENIED');
+          expect(refusalCodesOf(single)).toEqual(['deny.workload_unbound']);
+          const batched = yield* scenario.decisionGate.decideMany([
+            workloadSubjectInputOf(inA),
+            workloadSubjectInputOf(inB),
+          ]);
+          expect(batched.map(({ outcome }) => outcome)).toEqual(['ALLOWED', 'DENIED']);
+          expect(batched.flatMap((one) => refusalCodesOf(one))).toEqual(['deny.workload_unbound']);
+          const batchedAlone = yield* scenario.decisionGate.decideMany([workloadSubjectInputOf(inB)]);
+          expect(batchedAlone.flatMap((one) => refusalCodesOf(one))).toEqual(['deny.workload_unbound']);
+
+          // The company list the Shell asks while issuing that module call offers only the registered company.
+          expect(yield* scenario.decisionGate.selectableLegalEntities({ now: DECISION_AT, scope: inB })).toEqual([
+            companyA,
+          ]);
+
+          // A workload that declares no company keeps the tenant-wide module-call authority it is bound for (O73).
+          const undeclaredInB = yield* scenario.scopeFor(tenantWide, companyB).pipe(Effect.map(moduleCallScopeOf));
+          expect((yield* scenario.decisionGate.decide(workloadSubjectInputOf(undeclaredInB))).outcome).toBe('ALLOWED');
+          expect(
+            (yield* scenario.decisionGate.decideMany([workloadSubjectInputOf(undeclaredInB)])).map(
+              ({ outcome }) => outcome,
+            ),
+          ).toEqual(['ALLOWED']);
+          expect(
+            (yield* scenario.decisionGate.selectableLegalEntities({
+              now: DECISION_AT,
+              scope: undeclaredInB,
+            })).toSorted(),
+          ).toEqual([companyA, companyB].toSorted());
+
+          // Revoking the registration leaves the workload pinned to no company: A is refused too.
+          yield* scenario.revokeWorkloadCompany({ principalId: workloadPrincipal, workloadKey: SUBJECT_WORKLOAD });
+          expect(refusalCodesOf(yield* scenario.decisionGate.decide(workloadSubjectInputOf(inA)))).toEqual([
+            'deny.workload_unbound',
+          ]);
+          expect(
+            (yield* scenario.decisionGate.decideMany([workloadSubjectInputOf(inA)])).flatMap((one) =>
+              refusalCodesOf(one),
+            ),
+          ).toEqual(['deny.workload_unbound']);
+          expect(yield* scenario.decisionGate.selectableLegalEntities({ now: DECISION_AT, scope: inA })).toEqual([]);
         }),
       ),
   );

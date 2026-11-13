@@ -603,12 +603,23 @@ it.effect('names the company of work a workload started in the tenant context, r
 
 it.effect('refuses a named company the subject may not act in, before any ledger claim or signing', () =>
   Effect.gen(function* refusesUnselectableCompany() {
+    // The scope resolver asks the gate's company selection for this module call: a workload registered for another
+    // company selects only that one (D6), so the calling module cannot move it here.
     const result = yield* delegationCase({
       contextFailure: 'denied',
       originator: 'tenant',
       originatorLegalEntityId: namedCompany,
     });
     assertDenied(result, 'forbidden');
+    expect(Exit.isFailure(result.result) ? Cause.squash(result.result.cause) : undefined).toMatchObject({
+      reason: 'scope_refused',
+    });
+    expect(result.resolvedScopes).toEqual([
+      expect.objectContaining({
+        actorAppId: 'catalog',
+        principal: expect.objectContaining({ legalEntityId: namedCompany }),
+      }),
+    ]);
   }),
 );
 

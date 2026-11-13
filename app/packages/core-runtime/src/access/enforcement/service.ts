@@ -182,9 +182,11 @@ const denialOf = (reasons: readonly DecisionReason[]): AccessDecision => {
 /**
  * The company refusal of one admitted workload (D6): a workload whose owner declared a company acts
  * only in the companies that declaration names, so a request that names another company is refused
- * exactly as a workload whose binding names no key is (O73). A standalone workload always needs an
- * active company registration; losing its last registration must never unpin another active binding.
- * A verified module subject with no declaration keeps its carrier's tenant-wide authority.
+ * exactly as a workload whose binding names no key is (O73). The rule holds on both paths: a direct
+ * call, and a module call made for the workload as its subject — a calling module never moves a pinned
+ * workload into another company of the tenant. A standalone workload always needs an active company
+ * registration; losing its last registration must never unpin another active binding. A verified module
+ * subject with no declaration keeps its carrier's tenant-wide authority.
  */
 const workloadCompanyRefusalOf = (
   scope: OperationalScope,
@@ -374,6 +376,10 @@ interface GatePrepared {
 interface DelegatedGroup {
   readonly actor?: GateActor | undefined;
   readonly calledBy: VerifiedGatewayActor;
+  /** The company declaration of a workload subject, read once for the group beside its keys (D6). */
+  readonly companyDeclaration?: WorkloadCompanyDeclaration | undefined;
+  /** The declaration could not be read: an entry the keys admit is then UNAVAILABLE, never unpinned (O48, D6). */
+  readonly companyDeclarationUnavailable?: boolean | undefined;
   /** The subject's tenant scope, read once for the group when one of its refusals is evidenced there. */
   readonly refusalScopeId?: AccessScopeId | undefined;
   readonly subjectDecision?: AccessDecision | undefined;
@@ -386,10 +392,10 @@ interface DelegatedGroup {
 
 /**
  * The same workload subject rule as the single call: never an `admin` declaration (O81), then its carrier's
- * callers and named keys, a readable registry and one active binding, with no membership read and no v2
- * evidence row (O29, O73).
+ * callers and named keys, a readable registry and one active binding, then the company its owner declared
+ * (D6), with no membership read and no v2 evidence row (O29, O73).
  */
-const delegatedWorkloadDecision = (gate: GateInput, group: DelegatedGroup): AccessDecision => {
+const delegatedWorkloadDecision = (gate: GateInput, group: DelegatedGroup, scope: OperationalScope): AccessDecision => {
   const workloadCarrier = delegatedWorkloadCarrierOf(gate, group.calledBy);
   if ('refusal' in workloadCarrier) {
     return workloadCarrier.refusal;
@@ -397,9 +403,16 @@ const delegatedWorkloadDecision = (gate: GateInput, group: DelegatedGroup): Acce
   if (group.workloadRegistryUnavailable === true) {
     return seamUnavailable(IDENTITY_UNAVAILABLE);
   }
-  return admitsSubjectWorkload(workloadCarrier.declared, group.workloadKeys ?? NO_WORKLOADS)
-    ? seamAdmission(workloadCarrier.declared.subject === 'workload' ? ALLOW_WORKLOAD : ALLOW_ACTOR_IDENTITY)
-    : seamRefusal(ACTOR_SUBJECT_INVALID);
+  if (!admitsSubjectWorkload(workloadCarrier.declared, group.workloadKeys ?? NO_WORKLOADS)) {
+    return seamRefusal(ACTOR_SUBJECT_INVALID);
+  }
+  if (group.companyDeclarationUnavailable === true || group.companyDeclaration === undefined) {
+    return seamUnavailable(IDENTITY_UNAVAILABLE);
+  }
+  return (
+    workloadCompanyRefusalOf(scope, group.companyDeclaration) ??
+    seamAdmission(workloadCarrier.declared.subject === 'workload' ? ALLOW_WORKLOAD : ALLOW_ACTOR_IDENTITY)
+  );
 };
 
 /** One delegated entry of a batch, decided exactly as `preambleOf` decides a single delegated request. */
@@ -441,7 +454,7 @@ const prepareDelegatedEntry = (params: {
     return isWorkloadPrincipalKind(actor.kind) ? { decision } : refusedInTenant(decision, actor);
   }
   if (isWorkloadPrincipalKind(actor.kind)) {
-    return { decision: delegatedWorkloadDecision(params.gate, params.group) };
+    return { decision: delegatedWorkloadDecision(params.gate, params.group, params.scope) };
   }
   const preamble = params.preambles.get(gateScopeKeyOf(gateScope));
   if (preamble?.decision !== undefined) {
@@ -793,6 +806,52 @@ export const makeAccessDecisionService = (
     resolveGateScope(scope, undefined, holders).pipe(Effect.map((read) => read.scopeId));
 
   /**
+   * A workload subject of a module call is decided exactly as a direct workload call is: by its registered binding,
+   * never by a membership or a v2 grant, and it leaves no v2 evidence row, because a workload is never a v2 subject
+   * (O29, O73). The company checks still hold — a company carrier never runs without one, and a workload whose owner
+   * declared a company acts only there, whichever company the calling module names (D6) — and an `admin` declaration
+   * refuses a machine here exactly as the direct path does (O81).
+   */
+  const delegatedWorkloadSubjectOf = Effect.fn('AccessDecisionGate.delegatedWorkloadSubject')(
+    function* delegatedWorkloadSubjectEffect(
+      input: Pick<GateInput, 'carrier' | 'mode' | 'scope'>,
+      calledBy: VerifiedGatewayActor,
+      actor: GateActor,
+      gateScope: GateScope,
+    ) {
+      if (gateScope.refusal !== undefined) {
+        return { decision: denialOf([gateScope.refusal]) };
+      }
+      const carrier = delegatedWorkloadCarrierOf(input, calledBy);
+      if ('refusal' in carrier) {
+        return { decision: carrier.refusal };
+      }
+      const registry = ports.workloadBindings ?? FAIL_CLOSED_WORKLOADS;
+      const query = workloadQueryOf(input.scope, actor);
+      const bound = yield* Effect.option(registry.readActiveWorkloadKeys(query));
+      if (Option.isNone(bound)) {
+        return { decision: seamUnavailable(IDENTITY_UNAVAILABLE) };
+      }
+      if (!admitsSubjectWorkload(carrier.declared, bound.value)) {
+        return { decision: seamRefusal(ACTOR_SUBJECT_INVALID) };
+      }
+      // The calling module chose the company, so the workload's own declaration decides whether it may act there.
+      // It is read on every decision, never cached, so a revoked registration ends the company at once (D6).
+      const declared = yield* Effect.option(registry.readCompanyDeclaration(query));
+      if (Option.isNone(declared)) {
+        return { decision: seamUnavailable(IDENTITY_UNAVAILABLE) };
+      }
+      const companyRefusal = workloadCompanyRefusalOf(input.scope, declared.value);
+      return companyRefusal === undefined
+        ? {
+            decision: seamAdmission(carrier.declared.subject === 'workload' ? ALLOW_WORKLOAD : ALLOW_ACTOR_IDENTITY),
+            workloadAdmitted: true as const,
+          }
+        : { decision: companyRefusal };
+    },
+  );
+
+  /**
    * A call made by a verified calling module (D6). The subject and its scope are resolved first, so the
    * carrier's refusals are decided for a known subject and leave an evidence row (D6 step 5). Then the
    * carrier's `subject` says whether the subject's rights are decided (`rights`) or the subject is
@@ -825,29 +884,7 @@ export const makeAccessDecisionService = (
     }
     const gateScope = gateScopeOf(input.legalEntityScope, input.scope);
     if (isWorkloadPrincipalKind(actor.kind)) {
-      // A workload subject is decided exactly as a direct workload call is: by its registered binding, never by a
-      // membership or a v2 grant, and it leaves no v2 evidence row, because a workload is never a v2 subject (O29,
-      // O73). The company check still holds, so a company carrier never runs without one, and an `admin`
-      // declaration refuses a machine here exactly as the direct path does (O81).
-      if (gateScope.refusal !== undefined) {
-        return { decision: denialOf([gateScope.refusal]) };
-      }
-      const carrier = delegatedWorkloadCarrierOf(input, calledBy);
-      if ('refusal' in carrier) {
-        return { decision: carrier.refusal };
-      }
-      const bound = yield* Effect.option(
-        (ports.workloadBindings ?? FAIL_CLOSED_WORKLOADS).readActiveWorkloadKeys(workloadQueryOf(input.scope, actor)),
-      );
-      if (Option.isNone(bound)) {
-        return { decision: seamUnavailable(IDENTITY_UNAVAILABLE) };
-      }
-      return admitsSubjectWorkload(carrier.declared, bound.value)
-        ? {
-            decision: seamAdmission(carrier.declared.subject === 'workload' ? ALLOW_WORKLOAD : ALLOW_ACTOR_IDENTITY),
-            workloadAdmitted: true as const,
-          }
-        : { decision: seamRefusal(ACTOR_SUBJECT_INVALID) };
+      return yield* delegatedWorkloadSubjectOf(input, calledBy, actor, gateScope);
     }
     if (gateScope.refusal !== undefined) {
       // A refused company is evidenced in the tenant scope, the one scope a company-less request is decided in.
@@ -1108,13 +1145,52 @@ export const makeAccessDecisionService = (
   });
 
   /**
+   * The companies a workload may select, or none to keep the tenant's own. A workload holds no v2 tuple, and none
+   * while it holds no active binding (O73). A standalone workload holds no company by kind: only the companies its
+   * owner registered for one of its active bindings, intersected with the tenant's companies. The same holds for the
+   * subject of a module call whose workload declares companies (D6: a platform registration acts for exactly one), as
+   * the decision gate already pins it; only a module subject with no declaration keeps the tenant's companies.
+   */
+  const selectableWorkloadCompanies = Effect.fn('AccessDecisionGate.selectableWorkloadCompanies')(
+    function* selectableWorkloadCompaniesEffect(
+      scope: SelectableLegalEntitiesInput['scope'],
+      actor: Parameters<typeof workloadQueryOf>[1],
+      moduleCall: boolean,
+    ) {
+      const registry = ports.workloadBindings ?? FAIL_CLOSED_WORKLOADS;
+      const query = workloadQueryOf(scope, actor);
+      const bound = yield* Effect.option(registry.readActiveWorkloadKeys(query));
+      if (Option.isNone(bound)) {
+        return yield* accessDecisionUnavailable('The workload registry could not be read');
+      }
+      if (bound.value.size === 0) {
+        return Option.some<readonly LegalEntityId[]>([]);
+      }
+      const declared = yield* Effect.option(registry.readCompanyDeclaration(query));
+      if (Option.isNone(declared)) {
+        return yield* accessDecisionUnavailable('The registered companies of this workload could not be read');
+      }
+      if (moduleCall && !declared.value.pinned) {
+        return Option.none<readonly LegalEntityId[]>();
+      }
+      const companies = yield* Effect.option(ports.legalEntities.listCandidateIds(scope));
+      if (Option.isNone(companies)) {
+        return yield* accessDecisionUnavailable('The companies of this tenant could not be read');
+      }
+      return Option.some<readonly LegalEntityId[]>(
+        companies.value.filter((legalEntityId) => declared.value.activeCompanyIds.has(legalEntityId)),
+      );
+    },
+  );
+
+  /**
    * The companies whose context this actor may select, proved in one engine snapshot (O28).
    *
-   * A workload is classified on both of its paths (D6, O73): as the subject of a verified module call it may
-   * act in every company of the tenant its binding is registered in, and standalone — with no verified
-   * calling module — it may select only the companies its owner explicitly registered for an active binding
-   * of this principal. A standalone storefront API key therefore reaches exactly the one company the operator
-   * declared, never the tenant's whole company list and never a company through a bare principal kind.
+   * A workload selects by its company declaration on both of its paths (D6, O73): standalone, and as the subject
+   * of a verified module call, it selects only the companies its owner registered for an active binding of this
+   * principal. Only the subject of a module call whose workload declares no company selects every company of the
+   * tenant its binding is registered in. A storefront API key therefore reaches exactly the one company the
+   * operator declared, never the tenant's whole company list and never a company through a bare principal kind.
    */
   const selectableLegalEntities = Effect.fn('AccessDecisionGate.selectableLegalEntities')(
     function* selectableLegalEntitiesGate(input: SelectableLegalEntitiesInput) {
@@ -1133,30 +1209,9 @@ export const makeAccessDecisionService = (
         return [];
       }
       if (actorResolution.workload === true) {
-        // A workload holds no v2 tuple. Its registered binding is tenant-wide, so the subject of a module call may
-        // act in every company of the tenant it is bound in, and in none while it holds no active binding (O73).
-        const registry = ports.workloadBindings ?? FAIL_CLOSED_WORKLOADS;
-        const query = workloadQueryOf(input.scope, actor);
-        const bound = yield* Effect.option(registry.readActiveWorkloadKeys(query));
-        if (Option.isNone(bound)) {
-          return yield* accessDecisionUnavailable('The workload registry could not be read');
-        }
-        if (bound.value.size === 0) {
-          return [];
-        }
-        if (calledBy === undefined) {
-          // A standalone workload holds no company by kind: only the companies its owner registered for one of
-          // its active bindings, intersected with the tenant's own companies, are selectable. The tenant-wide
-          // list is never authority for a machine that no verified module call stands behind.
-          const declared = yield* Effect.option(registry.readCompanyDeclaration(query));
-          if (Option.isNone(declared)) {
-            return yield* accessDecisionUnavailable('The registered companies of this workload could not be read');
-          }
-          const companies = yield* Effect.option(ports.legalEntities.listCandidateIds(input.scope));
-          if (Option.isNone(companies)) {
-            return yield* accessDecisionUnavailable('The companies of this tenant could not be read');
-          }
-          return companies.value.filter((legalEntityId) => declared.value.activeCompanyIds.has(legalEntityId));
+        const narrowed = yield* selectableWorkloadCompanies(input.scope, actor, calledBy !== undefined);
+        if (Option.isSome(narrowed)) {
+          return narrowed.value;
         }
       }
       const candidates = yield* Effect.option(ports.legalEntities.listCandidateIds(input.scope));
@@ -1192,6 +1247,42 @@ export const makeAccessDecisionService = (
         }
       }
       return selectable;
+    },
+  );
+
+  /**
+   * The registry reads of a batch whose subject is a workload, made once for the group: its active keys and, when it
+   * holds any, its company declaration, which each entry the keys admit then answers exactly as a single call does
+   * (D6, O73). An unreadable read is carried as unavailable, never as "no keys" or "not pinned" (O48).
+   */
+  const delegatedWorkloadGroupOf = Effect.fn('AccessDecisionGate.delegatedWorkloadGroup')(
+    function* delegatedWorkloadGroupEffect(
+      scope: OperationalScope,
+      actor: GateActor,
+    ): Effect.fn.Return<
+      Pick<
+        DelegatedGroup,
+        'companyDeclaration' | 'companyDeclarationUnavailable' | 'workloadKeys' | 'workloadRegistryUnavailable'
+      >
+    > {
+      const registry = ports.workloadBindings ?? FAIL_CLOSED_WORKLOADS;
+      const query = workloadQueryOf(scope, actor);
+      const bound = yield* Effect.option(registry.readActiveWorkloadKeys(query));
+      if (Option.isNone(bound)) {
+        return { workloadKeys: NO_WORKLOADS, workloadRegistryUnavailable: true };
+      }
+      if (bound.value.size === 0) {
+        // No key admits any entry, so no entry reaches the company declaration (D6).
+        return { workloadKeys: NO_WORKLOADS, workloadRegistryUnavailable: false };
+      }
+      const companyDeclaration = yield* Effect.option(registry.readCompanyDeclaration(query));
+      return Option.isNone(companyDeclaration)
+        ? { companyDeclarationUnavailable: true, workloadKeys: bound.value, workloadRegistryUnavailable: false }
+        : {
+            companyDeclaration: companyDeclaration.value,
+            workloadKeys: bound.value,
+            workloadRegistryUnavailable: false,
+          };
     },
   );
 
@@ -1242,12 +1333,7 @@ export const makeAccessDecisionService = (
       if (!namesWorkloads) {
         return { actor, calledBy, workloadKeys: NO_WORKLOADS, workloadRegistryUnavailable: false };
       }
-      const bound = yield* Effect.option(
-        (ports.workloadBindings ?? FAIL_CLOSED_WORKLOADS).readActiveWorkloadKeys(workloadQueryOf(params.scope, actor)),
-      );
-      return Option.isNone(bound)
-        ? { actor, calledBy, workloadKeys: NO_WORKLOADS, workloadRegistryUnavailable: true }
-        : { actor, calledBy, workloadKeys: bound.value, workloadRegistryUnavailable: false };
+      return { actor, calledBy, ...(yield* delegatedWorkloadGroupOf(params.scope, actor)) };
     }
     // A carrier that declares only `accessActor` never admits a module-less call, so it reads no identity (D6).
     const declared = params.group.indexes.some((index) => {
@@ -1368,6 +1454,8 @@ export const makeAccessDecisionService = (
           group: {
             actor: gate.actor,
             calledBy: gate.calledBy,
+            companyDeclaration: gate.companyDeclaration,
+            companyDeclarationUnavailable: gate.companyDeclarationUnavailable,
             refusalScopeId: gate.refusalScopeId,
             subjectDecision: gate.subjectDecision,
             subjectEvidence: gate.subjectEvidence,

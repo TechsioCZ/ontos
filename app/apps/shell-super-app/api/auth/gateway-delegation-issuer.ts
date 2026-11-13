@@ -167,9 +167,10 @@ const admitAssertionSubject = Effect.fn('GatewayDelegation.admitAssertion')(func
  * ran in, and nothing else for a person: a human or agent requester is never moved into another company, because a
  * calling module could then act for that person anywhere the person could select, identity carriers included.
  * Only a workload requester whose invocation ran in the tenant context — the Storefront client that started an
- * enrollment — may name the one company the work belongs to. A workload's registered binding is tenant-wide, so the
- * scope resolver below admits that company only while the workload holds an active binding in the tenant and the
- * company is an active company of it (O73).
+ * enrollment — may name the one company the work belongs to. The scope resolver below admits that company through
+ * the gate's company selection for this module call: only while the workload holds an active binding in the tenant,
+ * the company is an active company of it (O73), and — when the workload's owner registered it for a company — it is
+ * that registered company (D6). A calling module therefore never moves a registered workload into another company.
  */
 const admitOriginatorSubject = Effect.fn('GatewayDelegation.admitOriginator')(function* admitOriginatorSubject(input: {
   readonly actionInvocationId: string;
