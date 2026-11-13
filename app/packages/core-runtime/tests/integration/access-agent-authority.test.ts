@@ -150,7 +150,7 @@ const seedTenant = (admin: PgClient.PgClient, tenantId: TenantId) =>
          ('${tenantId}', '${bystander}', 'human', 'Kolega', 'active'),
          ('${tenantId}', '${agent}', 'agent', 'Agent úkolů', 'active')`,
       `insert into core.principal_company_memberships (tenant_id, legal_entity_id, principal_id, affiliation, status)
-         values ('${tenantId}', '${company}', '${agent}', 'employee', 'active'),
+         values ('${tenantId}', '${company}', '${agent}', null, 'active'),
                 ('${tenantId}', '${company}', '${operator}', 'employee', 'active')`,
       `insert into core.tenant_module_states (tenant_module_state_id, tenant_id, module_key, state) values
          ('${uid(8)}', '${tenantId}', '${MODULE}', 'active')`,

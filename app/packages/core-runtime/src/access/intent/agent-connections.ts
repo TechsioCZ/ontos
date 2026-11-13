@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
 import { CoreDatabase } from '../../db/client.ts';
@@ -205,6 +205,7 @@ const agentIsActiveInCompany = Effect.fn('AgentConnectionStore.agentIsActiveInCo
         eq(principalCompanyMemberships.legalEntityId, legalEntityId),
         eq(principalCompanyMemberships.principalId, agentId),
         eq(principalCompanyMemberships.status, 'active'),
+        isNull(principalCompanyMemberships.affiliation),
         eq(principals.kind, 'agent'),
         eq(principals.status, 'active'),
       ),
@@ -335,6 +336,7 @@ const activeAgentsOfCompany = (transaction: CoreTransaction, scope: OperationalS
         eq(principalCompanyMemberships.tenantId, scope.tenantId),
         eq(principalCompanyMemberships.legalEntityId, legalEntityId),
         eq(principalCompanyMemberships.status, 'active'),
+        isNull(principalCompanyMemberships.affiliation),
         eq(principals.kind, 'agent'),
         eq(principals.status, 'active'),
       ),

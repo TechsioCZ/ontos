@@ -1,4 +1,4 @@
-import { and, eq, or } from 'drizzle-orm';
+import { and, eq, isNull, or } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
 
 import { principalCompanyMemberships, principals } from '../db/schema.ts';
@@ -56,9 +56,11 @@ const prepare = Effect.fn('CompanyAgentDirectory.prepare')(function* prepare(
 ) {
   // The directory behind the Agents administration page: only the company's agent administrators read it.
   yield* requireAgentAdministration(context.scope);
-  return context.scope.legalEntityId === undefined
-    ? yield* unavailable('An exact company context is required')
-    : undefined;
+  const { legalEntityId } = context.scope;
+  if (legalEntityId === undefined) {
+    return yield* unavailable('An exact company context is required');
+  }
+  return legalEntityId;
 });
 
 const agentStatus = (status: string): 'active' | 'archived' | 'disabled' => {
@@ -68,17 +70,11 @@ const agentStatus = (status: string): 'active' | 'archived' | 'disabled' => {
   return 'disabled';
 };
 
-/**
- * The company's directory is PostgreSQL's own: the principals with an active directory membership of the company
- * (people active, agents in any status). Operators are each agent's latest committed operator command. Neither is
- * read from the graph: the authorization graph holds access intent, not the directory or an agent's operators.
- */
 const directoryFromTransaction = (transaction: ScopedTransactionExecutor) => ({
-  load: Effect.fn('CompanyAgentDirectory.load')(function* load() {
-    const { legalEntityId, tenantId } = transaction.scope;
-    if (legalEntityId === undefined) {
-      return yield* unavailable('An exact company context is required');
-    }
+  load: Effect.fn('CompanyAgentDirectory.load')(function* load(legalEntityId: string) {
+    const { tenantId } = transaction.scope;
+    // The company's members are its active Core company memberships, the rows the People directory reads; never a
+    // SpiceDB relation (a v2 tenant has no legacy `legal_entity#member` tuples, so they would read as nobody).
     const rows = yield* transaction
       .select({
         displayName: principals.displayName,
@@ -99,7 +95,11 @@ const directoryFromTransaction = (transaction: ScopedTransactionExecutor) => ({
           eq(principalCompanyMemberships.tenantId, tenantId),
           eq(principalCompanyMemberships.legalEntityId, legalEntityId),
           eq(principalCompanyMemberships.status, 'active'),
-          or(eq(principals.kind, 'agent'), and(eq(principals.kind, 'human'), eq(principals.status, 'active'))),
+          // An agent's directory row carries no affiliation (the agent status Action requires that); a person's is active.
+          or(
+            and(eq(principals.kind, 'agent'), isNull(principalCompanyMemberships.affiliation)),
+            and(eq(principals.kind, 'human'), eq(principals.status, 'active')),
+          ),
         ),
       )
       .pipe(Effect.mapError(unavailable));
@@ -128,6 +128,10 @@ const directoryFromTransaction = (transaction: ScopedTransactionExecutor) => ({
       { concurrency: 1 },
     );
     const commands = new Map(commandEntries);
+    const people = rows
+      .flatMap((row) => (row.kind === 'human' ? [{ displayName: row.displayName, principalId: row.principalId }] : []))
+      .toSorted((left, right) => left.displayName.localeCompare(right.displayName, 'cs'));
+    const activePeople = new Set(people.map((person) => person.principalId));
     const agents = agentRows
       .map((row) => {
         const operatorCommand = commands.get(row.principalId) ?? null;
@@ -135,25 +139,26 @@ const directoryFromTransaction = (transaction: ScopedTransactionExecutor) => ({
           ...(profiles.get(row.principalId) ?? DEFAULT_AGENT_PROFILE),
           displayName: row.displayName,
           operatorCommand,
-          operatorPrincipalIds: operatorCommand?.desiredOperatorPrincipalIds ?? [],
+          // The operators are the latest committed operator command's people who are still active in the company: the
+          // v2 schema projects no operator relation, so the committed command is the only record of them.
+          operatorPrincipalIds: (operatorCommand?.desiredOperatorPrincipalIds ?? []).filter((id) =>
+            activePeople.has(id),
+          ),
           principalId: row.principalId,
           status: agentStatus(row.status),
         };
       })
-      .toSorted((left, right) => left.displayName.localeCompare(right.displayName, 'cs'));
-    const people = rows
-      .flatMap((row) => (row.kind === 'human' ? [{ displayName: row.displayName, principalId: row.principalId }] : []))
       .toSorted((left, right) => left.displayName.localeCompare(right.displayName, 'cs'));
     return { agents, members: rows.map((row) => row.principalId), people };
   }),
 });
 type Services = ReturnType<typeof directoryFromTransaction>;
 type Loaded = Effect.Success<ReturnType<Services['load']>>;
-const load = (_input: typeof CompanyAgentDirectoryInputSchema.Type, context: ReadLoadContext<Services, void>) =>
-  context.services.load();
+const load = (_input: typeof CompanyAgentDirectoryInputSchema.Type, context: ReadLoadContext<Services, string>) =>
+  context.services.load(context.prepared);
 const finish = Effect.fn('CompanyAgentDirectory.finish')(function* finish(
   _input: typeof CompanyAgentDirectoryInputSchema.Type,
-  context: ReadFinishContext<void, Loaded>,
+  context: ReadFinishContext<string, Loaded>,
 ) {
   const result = yield* Schema.decodeEffect(CompanyAgentDirectoryResultSchema)(context.loaded).pipe(
     Effect.mapError(unavailable),

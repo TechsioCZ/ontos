@@ -178,9 +178,9 @@ export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
         agentPrincipalId: string,
       ) {
         yield* reconcile();
-        // Archive ends the agent's company directory membership: the committed directory no longer lists it as active.
-        const confirmed = (yield* loadSnapshot).agents.find((candidate) => candidate.principalId === agentPrincipalId);
-        if (confirmed !== undefined && confirmed.status !== 'archived') {
+        // Archive takes the agent out of the company's directory. Confirm it there without emitting a second command.
+        const remaining = (yield* loadSnapshot).agents.find((agent) => agent.principalId === agentPrincipalId);
+        if (remaining !== undefined && remaining.status !== 'archived') {
           return yield* unavailable('Archived agent cleanup has not converged; reload and retry');
         }
         return yield* Effect.void;

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { Context, Effect, Layer, Match, Option, Ref, Schema } from 'effect';
 
 import { CoreDatabase } from '../../db/client.ts';
@@ -706,6 +706,8 @@ const requireDirectoryMember = Effect.fn('AccessPeopleStore.requireDirectoryMemb
           eq(principalCompanyMemberships.principalId, write.principalId),
           eq(principalCompanyMemberships.status, 'active'),
           eq(principals.kind, write.principalKind),
+          // An agent's directory row carries no affiliation, exactly as the agent status Action requires.
+          write.principalKind === 'agent' ? isNull(principalCompanyMemberships.affiliation) : undefined,
           eq(principals.status, 'active'),
         ),
       )

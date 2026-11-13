@@ -1,4 +1,5 @@
-import { Effect } from 'effect';
+import { AgentEntityOverviewSchema } from '@app/shared-contracts/agent-access';
+import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -20,6 +21,7 @@ import { installedReleaseComposition } from '../support/installed-release-compos
 
 const AGENTS_DECLARATION = 'shell-super-app.access-admin.agents';
 const LIST_PATH = '/auth/identity/agent-entities/list';
+const MANAGE_PATH = '/auth/identity/agent-entities';
 const CASE_TIMEOUT = 300_000;
 
 interface Ask {
@@ -124,6 +126,114 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
               expect(
                 answers.find(({ company, persona }) => persona === 'companyAdmin' && company === 'other')?.status,
               ).not.toBe(200);
+            }),
+          ),
+        ),
+      CASE_TIMEOUT,
+    );
+
+    suite.effect(
+      "the owner reads the company's agent, its operators, its audit and the tenant's v2 roles; a member is refused",
+      () =>
+        withAccessAdminCase((accessCase) =>
+          Effect.scoped(
+            Effect.gen(function* ownerReadsCompanyAgents() {
+              // Stage-shaped: an agent of the company (its Core company membership, as `configure-agent` writes it),
+              // the tenant's v2 roles, and no legacy SpiceDB tuple anywhere (the fixture's SpiceDB carries exactly the
+              // schema stage serves). Trunk read the company's members and each agent's operators from legacy
+              // `legal_entity#member` / `principal#operator` relations: empty on a v2 tenant, unknown to its schema.
+              const [ours = ''] = accessCase.companies;
+              const agentId = accessCase.ids.get('agent')?.principalId ?? '';
+              const memberId = accessCase.ids.get('member')?.principalId ?? '';
+              yield* accessCase.admin
+                .unsafe(
+                  `insert into core.principal_company_memberships (tenant_id, legal_entity_id, principal_id, affiliation, status)
+                   values ($1, $2, $3, null, 'active')`,
+                  [accessCase.tenantId, ours, agentId],
+                )
+                .pipe(Effect.orDie);
+              const shell = yield* shellHttpFor(accessCase, yield* installedReleaseComposition);
+              // A member's attempt to disable the agent is refused, and the refusal is written to the agent audit.
+              const attempt = yield* shell.post({
+                idempotencyKey: 'agents-real-gate-member-disable',
+                legalEntityId: ours,
+                path: MANAGE_PATH,
+                payload: {
+                  expectedStatus: 'active',
+                  newStatus: 'disabled',
+                  operation: 'change-status',
+                  principalId: agentId,
+                  reason: 'Zkouška',
+                },
+                persona: 'member',
+                sameOrigin: true,
+              });
+              expect(attempt.status).toBe(403);
+              const list = yield* shell.post({ legalEntityId: ours, path: LIST_PATH, payload: {}, persona: 'owner' });
+              expect({ status: list.status, text: list.status === 200 ? '' : list.text }).toEqual({
+                status: 200,
+                text: '',
+              });
+              const overview = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(AgentEntityOverviewSchema))(
+                list.text,
+              ).pipe(Effect.orDie);
+              const agent = overview.agents.find(({ principalId }) => principalId === agentId);
+              // The company's agent, with the operators its committed operator command names (none yet).
+              expect({ operators: agent?.operators, status: agent?.status }).toEqual({
+                operators: [],
+                status: 'active',
+              });
+              expect(overview.members.map(({ principalId }) => principalId)).toContain(memberId);
+              // The member's refused attempt is in the agent administration audit.
+              expect(overview.audit.length).toBeGreaterThan(0);
+              // The roles offered are the company's own v2 roles (a tenant-wide role lives in the tenant context, never
+              // in a company assignment), and only those an agent may hold.
+              const roles = yield* accessCase.admin
+                .unsafe<{ readonly role_id: string }>(
+                  `select role_id from core.access_roles where tenant_id = $1 and legal_entity_id = $2`,
+                  [accessCase.tenantId, ours],
+                )
+                .pipe(Effect.orDie);
+              const companyRoleIds = new Set(roles.map(({ role_id }) => role_id));
+              expect(overview.roles.every(({ roleId }) => companyRoleIds.has(roleId))).toBe(true);
+              // An agent holds no role yet, so it has no rights at all.
+              expect({ roles: agent?.roles, usable: agent?.usable }).toEqual({ roles: [], usable: [] });
+              const refused = yield* shell.post({
+                legalEntityId: ours,
+                path: LIST_PATH,
+                payload: {},
+                persona: 'member',
+              });
+              expect(refused.status).toBe(403);
+              // Creating and configuring agents work again, with no module list: rights come only from roles.
+              for (const request of [
+                { operation: 'create', operatorPrincipalIds: [memberId] },
+                { operation: 'configure', principalId: agentId },
+              ]) {
+                const change = yield* shell.post({
+                  idempotencyKey: `agents-real-gate-${request.operation}`,
+                  legalEntityId: ours,
+                  path: MANAGE_PATH,
+                  payload: {
+                    ...request,
+                    description: null,
+                    displayName: `Agent ${request.operation}`,
+                    ownerPrincipalId: memberId,
+                    writePolicy: 'approval',
+                  },
+                  persona: 'owner',
+                  sameOrigin: true,
+                });
+                expect({
+                  operation: request.operation,
+                  status: change.status,
+                  text: change.status === 200 ? '' : change.text,
+                }).toEqual({
+                  operation: request.operation,
+                  status: 200,
+                  text: '',
+                });
+              }
             }),
           ),
         ),
