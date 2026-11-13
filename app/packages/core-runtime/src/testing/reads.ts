@@ -72,6 +72,37 @@ export interface ReadTestHarnessOptions extends Pick<
 }
 
 const scopeValuesSchema = Schema.Tuple([Schema.String, Schema.String]);
+
+const SESSION_INSTALL_AND_READ_SCOPE_SQL =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
+const SESSION_INSTALL_SCOPE_SQL =
+  "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)";
+const SESSION_READ_SCOPE_SQL =
+  "select current_user::text as role, current_setting('ontos.tenant_id', true) as tenant_id, current_setting('ontos.legal_entity_id', true) as legal_entity_id";
+
+/**
+ * A session-setting role's scope statements, each matched by its exact text: installing records the scope from its
+ * parameters, and the one-statement install and the read-back answer the connected role with it. None for any other
+ * statement.
+ */
+const sessionScopeRows = Effect.fn('ReadTestHarness.sessionScopeRows')(function* sessionScopeRows(
+  text: string,
+  params: readonly unknown[],
+  scope: { legalEntityId: string; tenantId: string },
+  role: string,
+) {
+  if (text === SESSION_INSTALL_AND_READ_SCOPE_SQL || text === SESSION_INSTALL_SCOPE_SQL) {
+    [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(params).pipe(
+      Effect.orDie,
+    );
+  }
+  if (text === SESSION_INSTALL_SCOPE_SQL) {
+    return Option.some<readonly object[]>([]);
+  }
+  return text === SESSION_INSTALL_AND_READ_SCOPE_SQL || text === SESSION_READ_SCOPE_SQL
+    ? Option.some<readonly object[]>([{ legal_entity_id: scope.legalEntityId, role, tenant_id: scope.tenantId }])
+    : Option.none<readonly object[]>();
+});
 const readCommittedIsolation = 'read committed';
 const fencedScopeValuesSchema = Schema.Tuple([Schema.String, Schema.String, Schema.Literal(readCommittedIsolation)]);
 const installReadScopeSql =
@@ -178,17 +209,9 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
           },
         ];
       }
-      if (text === "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)") {
-        [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(params).pipe(
-          Effect.orDie,
-        );
-        return [];
-      }
-      if (
-        text ===
-        "select current_user::text as role, current_setting('ontos.tenant_id', true) as tenant_id, current_setting('ontos.legal_entity_id', true) as legal_entity_id"
-      ) {
-        return [{ legal_entity_id: scope.legalEntityId, role: connection.role, tenant_id: scope.tenantId }];
+      const sessionScope = yield* sessionScopeRows(text, params, scope, connection.role);
+      if (Option.isSome(sessionScope)) {
+        return sessionScope.value;
       }
       if (
         text ===

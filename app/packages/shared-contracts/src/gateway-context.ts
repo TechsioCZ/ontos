@@ -60,7 +60,11 @@ const GatewayClaimIdSchema = nonEmptyString.pipe(Schema.brand('GatewayClaimId'),
 const GatewayDeliveryIdSchema = uuid.pipe(Schema.brand('GatewayDeliveryId'), Schema.decodeTo(Schema.String));
 const GatewayWorkerKeySchema = nonEmptyString.pipe(Schema.brand('GatewayWorkerKey'), Schema.decodeTo(Schema.String));
 const SUBJECT_IS_PRINCIPAL_ISSUE = 'sub must equal principal.principalId';
+/** The longest audience a request may name; the longest topology app id today has 25 characters. */
+export const GATEWAY_AUDIENCE_MAX_LENGTH = 200;
+
 export const GatewayAudienceSchema = nonEmptyString.check(
+  Schema.isMaxLength(GATEWAY_AUDIENCE_MAX_LENGTH),
   Schema.makeFilter((value) =>
     /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u.test(value) ? undefined : 'audience must be a stable topology app ID',
   ),
@@ -535,6 +539,11 @@ export const GatewayAssertionSubjectSchema = Schema.TaggedStruct('Assertion', {
 export const GatewayOriginatorSubjectSchema = Schema.TaggedStruct('Originator', {
   actionInvocationId: ActionInvocationIdSchema,
   legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+  /**
+   * The company of the Outbox message the work handles, as Core recorded it on the invocation's domain event. The
+   * Shell checks it against that record and binds the context to exactly that company.
+   */
+  messageLegalEntityId: Schema.optionalKey(LegalEntityIdSchema),
   tenantId: TenantIdSchema,
 });
 const privacyDispatchAttempt = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1));
@@ -663,6 +672,8 @@ export const GatewayRefusalReasonSchema = Schema.Literals([
   'caller_principal_unresolved',
   'caller_not_service',
   'caller_build_not_installed',
+  'workload_key_not_platform_issued',
+  'workload_admission_unavailable',
   // The release.
   'installed_release_unavailable',
   'release_changed',
@@ -677,6 +688,8 @@ export const GatewayRefusalReasonSchema = Schema.Literals([
   'subject_authentication_ended',
   'originator_evidence_unavailable',
   'originator_not_admitted',
+  'originator_company_not_recorded',
+  'originator_company_mismatch',
   'subject_not_delegable',
   // A verified source assertion of another kind than its subject names: a workload's or a person's in the wrong
   // subject, or a finite Privacy dispatch or governance Read, which never delegates onward.

@@ -876,18 +876,6 @@ export interface CommercePortalWorkload {
   readonly tenantId: string;
 }
 
-const intakeName = 'crm-party-intake';
-
-/**
- * The principal registered for CRM's internal workload `demo.crm.party-intake`. Its key is the platform's: module
- * credential provisioning issues, hands over, rotates and retires it beside CRM's module key; nobody issues it by hand.
- */
-export const crmPartyIntakePrincipal = {
-  displayName: 'CRM · zakládání klientů v Party Registry',
-  kind: 'service',
-  principalId: demoId(principalResource, intakeName),
-} as const;
-
 /** Exact reviewed bindings. Topology caller `crm` does not rename producer workload `demo.crm.party-intake`. */
 export const reviewedWorkloadBindings = (): readonly ReviewedWorkloadBinding[] => [
   storefrontBinding(storefrontPrincipal, STOREFRONT_CLIENT_WORKLOAD),
@@ -897,7 +885,8 @@ export const reviewedWorkloadBindings = (): readonly ReviewedWorkloadBinding[] =
   storefrontBinding(akrosStorefrontPrincipal, STOREFRONT_INQUIRY_WORKLOAD),
   { principalId: commercePortalPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
   { principalId: commercePortalPrincipal.principalId, workloadKey: IDENTITY_PROVIDER_WORKLOAD },
-  { principalId: crmPartyIntakePrincipal.principalId, workloadKey: CRM_PARTY_INTAKE_WORKLOAD },
+  // CRM's own internal workload `demo.crm.party-intake` is not listed: the platform registers it per company at release
+  // (`release-internal-workloads.mts`) and keys it; nobody registers or keys it by hand.
 ];
 
 /**
@@ -1100,7 +1089,6 @@ export const reviewedMachinePrincipals = [
   akrosStorefrontPrincipal,
   commercePortalPrincipal,
   privacyConsentPrincipal,
-  crmPartyIntakePrincipal,
 ] as const satisfies readonly {
   readonly displayName: string;
   readonly kind: string;

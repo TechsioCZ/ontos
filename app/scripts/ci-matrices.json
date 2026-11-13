@@ -40,7 +40,30 @@
       "suite": "integration",
       "name": "Database, Migration, RLS, Authorization, and Outbox Integration",
       "native-composition": true,
-      "package-filters": "--filter !. --filter !./verticals/catalog --filter !./verticals/pricing --filter !./verticals/inventory --filter !./verticals/commerce-customer-context --filter !./verticals/commerce-market-catalog --filter !./verticals/commerce-order --filter !./verticals/payment --filter !./verticals/payment-term-catalog --filter !./verticals/price-group-catalog --filter !./verticals/storefront-registry --filter !./verticals/privacy --filter !./verticals/party-registry --filter !./verticals/tax --filter !./verticals/projects"
+      "package-filters": "--filter !. --filter !./verticals/catalog --filter !./verticals/pricing --filter !./verticals/inventory --filter !./verticals/commerce-customer-context --filter !./verticals/commerce-market-catalog --filter !./verticals/commerce-order --filter !./verticals/payment --filter !./verticals/payment-term-catalog --filter !./verticals/price-group-catalog --filter !./verticals/storefront-registry --filter !./verticals/privacy --filter !./verticals/party-registry --filter !./verticals/tax --filter !./verticals/projects --filter !./packages/core-runtime --filter !./apps/shell-super-app"
+    },
+    {
+      "suite": "integration",
+      "name": "Core Runtime Integration",
+      "package-filters": "--filter ./packages/core-runtime"
+    },
+    {
+      "suite": "integration",
+      "name": "Shell Integration (1/3)",
+      "package-filters": "--filter ./apps/shell-super-app",
+      "rstest-shard": "1/3"
+    },
+    {
+      "suite": "integration",
+      "name": "Shell Integration (2/3)",
+      "package-filters": "--filter ./apps/shell-super-app",
+      "rstest-shard": "2/3"
+    },
+    {
+      "suite": "integration",
+      "name": "Shell Integration (3/3)",
+      "package-filters": "--filter ./apps/shell-super-app",
+      "rstest-shard": "3/3"
     },
     {
       "suite": "integration",

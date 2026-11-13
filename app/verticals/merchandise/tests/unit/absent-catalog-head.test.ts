@@ -22,6 +22,8 @@ import { TEST_FETCHED_TAX } from '../support/tax-fixtures.ts';
  * the company's head in memory, so each case shows exactly which head statements a read and a first write issue.
  */
 
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 const headTable = '"demo_merchandise"."catalog_heads"';
 
 interface StoredHead {
@@ -43,11 +45,9 @@ const harness = (options: { readonly concurrentWinner?: boolean; readonly initia
             if (/^(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE SAVEPOINT|ROLLBACK TO SAVEPOINT)\b/u.test(sql)) {
               return Effect.succeed([]);
             }
-            if (sql.includes('set_config(')) {
+            // A session-setting role installs its scope and reads back the connected role in one statement.
+            if (sql === installAndReadScopeSql) {
               scope = { legalEntityId: String(params[1]), tenantId: String(params[0]) };
-              return Effect.succeed([{}]);
-            }
-            if (sql.includes('current_user::text as role')) {
               return Effect.succeed([
                 { legal_entity_id: scope.legalEntityId, role: 'ontos_runtime', tenant_id: scope.tenantId },
               ]);

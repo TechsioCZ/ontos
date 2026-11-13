@@ -74,6 +74,8 @@ const engineAnswer = (item: Parameters<CanonicalPorts['check']['checkBulk']>[0][
     : ('none' as const),
 });
 const normalizeSql = (sql: string) => sql.trim().replaceAll(/\s+/gu, ' ').toLowerCase();
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 
 /** The public production currentness reader and the Action writer share these exact database rows. */
 const fenceDatabase = (fences: AccessFences) =>
@@ -90,18 +92,11 @@ const fenceDatabase = (fences: AccessFences) =>
         if (statement === 'select current_user::text as role') {
           return [{ role: SHARED_RUNTIME_IDENTITY.role }];
         }
-        if (
-          statement === "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)"
-        ) {
+        // A session-setting role installs its scope and reads back the connected role in one statement.
+        if (statement === installAndReadScopeSql) {
           [installedTenant, installedCompany] = yield* Schema.decodeUnknownEffect(scopeValues)(params).pipe(
             Effect.orDie,
           );
-          return [];
-        }
-        if (
-          statement ===
-          "select current_user::text as role, current_setting('ontos.tenant_id', true) as tenant_id, current_setting('ontos.legal_entity_id', true) as legal_entity_id"
-        ) {
           return [
             {
               legal_entity_id: installedCompany,

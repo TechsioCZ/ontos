@@ -1,13 +1,20 @@
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { ConfigProvider, Crypto, Effect, Match, Redacted, Schema } from 'effect';
+import { OutboxMessageCompany } from '@app/core-runtime/outbox/message-company';
+import { readFileSync } from 'node:fs';
+
+import { ConfigProvider, Crypto, Effect, Match, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { holdTestModuleCredentials } from '../../../core-runtime/tests/support/module-credentials.ts';
 import { GatewayDelegationSourceError, acquireDelegatedGatewayContext } from '../../src/gateway-context-server.ts';
-import { GatewayDelegatedContextRequestSchema } from '../../src/gateway-context.ts';
+import {
+  GATEWAY_AUDIENCE_MAX_LENGTH,
+  GatewayAudienceSchema,
+  GatewayDelegatedContextRequestSchema,
+} from '../../src/gateway-context.ts';
 
 type DecodedSubject = Schema.Schema.Type<typeof GatewayDelegatedContextRequestSchema>['subject'];
 
@@ -201,6 +208,47 @@ it.effect('authenticates with the module credential and sends the Originator sub
       actionInvocationId: originatorInvocationId,
       tenantId: principal.tenantId,
     });
+  }),
+);
+
+const messageCompany = '30000000-0000-4000-8000-00000000000a';
+
+/** Sends one Originator delegation with the Outbox message company the runtime provides; returns the wire's company. */
+const sendOriginatorWith = (company: Option.Option<string>) =>
+  Effect.gen(function* sendOriginator() {
+    const requests: Request[] = [];
+    yield* acquireDelegatedGatewayContext(
+      {
+        audience: 'party-registry',
+        callingAppId: 'catalog',
+        legalEntityScope: 'subject',
+        requestCorrelation: 'delegation-message-company',
+        subject: {
+          _tag: 'Originator',
+          actionInvocationId: originatorInvocationId,
+          compositionRevision,
+          tenantId: principal.tenantId,
+        },
+      },
+      crypto,
+    ).pipe(
+      Effect.provideService(OutboxMessageCompany, company),
+      Effect.provideService(ConfigProvider.ConfigProvider, configuration),
+      Effect.provideService(FetchHttpClient.Fetch, recordingFetch(compositionRevision, requests)),
+    );
+    const [request] = requests;
+    const wire = yield* requestBodyOf(request);
+    return Match.value(wire.subject).pipe(
+      Match.tag('Originator', ({ messageLegalEntityId }) => messageLegalEntityId ?? null),
+      Match.orElse(() => null),
+    );
+  });
+
+it.effect('carries the Outbox message company of Originator work only when the Outbox provides one', () =>
+  Effect.gen(function* delegatedOriginatorMessageCompany() {
+    yield* holdCallerKey;
+    expect(yield* sendOriginatorWith(Option.some(messageCompany))).toBe(messageCompany);
+    expect(yield* sendOriginatorWith(Option.none())).toBeNull();
   }),
 );
 
@@ -626,3 +674,16 @@ it.effect('preserves post-commit admission recovery conditional keys for indepen
     ).toBe('integration.source.requirement.admission-party-recovery');
   }),
 );
+it('bounds an audience: every topology app id fits, and an oversized one is refused before anything reads it', () => {
+  const TopologySchema = Schema.Struct({ verticals: Schema.Array(Schema.Struct({ id: Schema.String })) });
+  const topology = Schema.decodeUnknownSync(Schema.fromJsonString(TopologySchema))(
+    readFileSync(new URL('../../../../topology/reference-topology.json', import.meta.url), 'utf-8'),
+  );
+  const appIds = [...topology.verticals.map(({ id }) => id), 'shell-super-app'];
+  for (const appId of appIds) {
+    expect(appId.length).toBeLessThanOrEqual(GATEWAY_AUDIENCE_MAX_LENGTH);
+    expect(Schema.is(GatewayAudienceSchema)(appId)).toBe(true);
+  }
+  expect(Schema.is(GatewayAudienceSchema)('a'.repeat(GATEWAY_AUDIENCE_MAX_LENGTH))).toBe(true);
+  expect(Schema.is(GatewayAudienceSchema)('a'.repeat(GATEWAY_AUDIENCE_MAX_LENGTH + 1))).toBe(false);
+});

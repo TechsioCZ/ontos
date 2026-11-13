@@ -12,6 +12,10 @@
  * companies of that Tenant are accepted. Identifiers are derived exactly as the stage bootstrap derives them, so a
  * re-run is a no-op and an already active binding is reused instead of duplicated. Nothing else is written: no
  * Role, grant, membership or key. The run connects with the runtime identity (`DATABASE_URL`) only.
+ *
+ * It is for storefront and other external workloads. A module's own internal workload (`MODULE_INTERNAL_WORKLOADS`) is
+ * the platform's: `release-internal-workloads.mts` registers it per company at release, and a registration made here
+ * for one is never keyed.
  */
 import { createHash } from 'node:crypto';
 

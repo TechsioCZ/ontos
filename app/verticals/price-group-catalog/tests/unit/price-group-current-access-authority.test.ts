@@ -35,9 +35,8 @@ const principalId = PrincipalIdSchema.make('00000000-0000-4000-8000-0000000a0002
 const companyId = LegalEntityIdSchema.make('00000000-0000-4000-8000-0000000a0003');
 const scopeValues = Schema.Tuple([Schema.String, Schema.String]);
 const normalize = (sql: string) => sql.trim().replaceAll(/\s+/gu, ' ').toLowerCase();
-const setupScope = "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)";
-const readInstalledScope =
-  "select current_user::text as role, current_setting('ontos.tenant_id', true) as tenant_id, current_setting('ontos.legal_entity_id', true) as legal_entity_id";
+const installAndReadScope =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 
 type Fences = Effect.Success<ReturnType<typeof makeActionTestAccessFences>>;
 
@@ -52,16 +51,15 @@ const fenceDatabase = (fences: Fences) =>
         if (['begin', 'commit', 'rollback'].includes(statement)) {
           return [];
         }
-        if (statement === setupScope) {
-          [installedTenant, installedCompany] = yield* Schema.decodeUnknownEffect(scopeValues)(params).pipe(
-            Effect.orDie,
-          );
-          return [];
-        }
+        // Main's scope authority probes the connected role before it installs a scope.
         if (statement === 'select current_user::text as role') {
           return [{ role: SHARED_RUNTIME_IDENTITY.role }];
         }
-        if (statement === readInstalledScope) {
+        // A session-setting role installs its scope and reads back the connected role in one statement.
+        if (statement === installAndReadScope) {
+          [installedTenant, installedCompany] = yield* Schema.decodeUnknownEffect(scopeValues)(params).pipe(
+            Effect.orDie,
+          );
           return [
             {
               legal_entity_id: installedCompany,

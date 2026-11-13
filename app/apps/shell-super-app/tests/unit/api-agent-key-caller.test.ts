@@ -16,6 +16,8 @@ import { ApiKeyService } from '../../api/auth/api-key-service.ts';
 import { agentPlatformKeyCaller } from '../../api/index.ts';
 import {
   enrolledModuleCredentials,
+  noInternalWorkloadPrincipals,
+  refusingInternalWorkloadKeys,
   unreadableModuleCredentialEnrolment,
 } from '../support/module-credential-enrolment.ts';
 import { makeShellTestAccessGate } from '../support/access-decision-double.ts';
@@ -45,6 +47,8 @@ const run = Effect.fn('test.agentKeyCaller')(function* run(
     readonly resolutionUnavailable?: boolean;
     readonly selectable?: boolean;
     readonly selectionUnavailable?: boolean;
+    /** The key's principal is a module's internal workload and the key is not the one the platform issued it. */
+    readonly workloadKeyRefused?: boolean;
   } = {},
 ) {
   const events: string[] = [];
@@ -75,6 +79,7 @@ const run = Effect.fn('test.agentKeyCaller')(function* run(
     Effect.provide(
       Layer.mergeAll(
         NodeCrypto.layer,
+        options.workloadKeyRefused === true ? refusingInternalWorkloadKeys : noInternalWorkloadPrincipals,
         Layer.succeed(
           ApiKeyService,
           makeApiKeyServiceDouble({
@@ -140,6 +145,18 @@ it.effect('asks company selection in the original revalidated API-key scope and 
     }
     expect(gate.selectableAsks).toHaveLength(1);
     expect(gate.selectableAsks[0]?.scope).toBe(scopes[0]);
+  }),
+);
+
+it.effect('refuses a key of an internal workload principal the platform did not issue, before any scope is asked', () =>
+  Effect.gen(function* refusesUnattestedWorkloadKey() {
+    const { events, result } = yield* run({ workloadKeyRefused: true });
+    expect(Result.isFailure(result)).toBe(true);
+    if (Result.isFailure(result)) {
+      expect(Predicate.isTagged(result.failure, 'ShellTargetForbiddenProblem')).toBe(true);
+      expect(result.failure.status).toBe(403);
+    }
+    expect(events).not.toContain('resolve-scope');
   }),
 );
 

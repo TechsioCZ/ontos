@@ -43,6 +43,8 @@ const configurationId = '44444444-4444-4444-8444-444444444444';
 const relationId = '55555555-5555-4555-8555-555555555555';
 const observedAt = '2026-09-25T10:00:00.000Z';
 const commerceContextEvidenceRef = 'commerce-owner:context:current:1';
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 const scope = {
   authBindingId: '66666666-6666-4666-8666-666666666666',
   authContextRef: 'better-auth-session:stock-sharing-resolution-test',
@@ -236,13 +238,14 @@ it.effect('denies the exact Stock Position before owner services are resolved', 
     const stages: string[] = [];
     const gate = makeTestBoundAccessGate();
     const database = {
-      executor: yield* makeTestDatabase((text) =>
-        Effect.succeed(
-          text.includes('current_setting')
-            ? [{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]
-            : [],
-        ),
-      ),
+      executor: yield* makeTestDatabase((text, params) => {
+        // A session-setting role installs its scope and reads back the connected role in one statement.
+        if (text === installAndReadScopeSql) {
+          expect(params).toEqual([tenantId, legalEntityId]);
+          return Effect.succeed([{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
+        }
+        return Effect.succeed([]);
+      }),
     };
     const runtime = makeReadRuntime(
       database,

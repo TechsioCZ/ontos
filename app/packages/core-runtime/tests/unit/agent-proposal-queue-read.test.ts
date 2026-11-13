@@ -26,6 +26,15 @@ import { agentProposalQueueUnavailable } from '../../src/auth/agent-proposal-que
 import { agentProposals } from '../../src/db/schema.ts';
 import { canonicalizeApplicationComposition } from '../../src/modules/application-composition.ts';
 import { OntosModuleDeploymentContractSchema } from '../../src/modules/manifest.ts';
+import {
+  TenantModuleStateRecordSchema,
+  TenantModuleStateService,
+} from '../../src/modules/tenant-module-state-service.ts';
+import type {
+  TenantModuleState,
+  TenantModuleStateServiceContract,
+} from '../../src/modules/tenant-module-state-service.ts';
+import { TenantModuleStateReadUnavailableError } from '../../src/modules/tenant-module-state-read-unavailable-error.ts';
 import { ActionAuthority } from '../../src/permissions/action-authority.ts';
 import type { ActionAuthorityService } from '../../src/permissions/action-authority.ts';
 import { ContextAccess } from '../../src/permissions/context-access.ts';
@@ -382,6 +391,94 @@ const manyActionReads = Effect.fn('AgentProposalQueueReadTest.manyActionReads')(
   return reads;
 });
 
+/** How the one grouped statement groups: by the proposal columns, unlike the queue page's `group by p.batch_id`. */
+const NAMED_ACTIONS_GROUPING =
+  'group by "core"."agent_proposals"."app_id", "core"."agent_proposals"."module_key", "core"."agent_proposals"."action_slug"';
+
+/** Second tenant: one that runs the party registry the first tenant does not. */
+const otherTenantId = '10000000-0000-4000-8000-000000000002';
+
+/** Each tenant's module states, by module; or a module state nobody can read. */
+const moduleStates = (
+  byTenant: Readonly<Record<string, Readonly<Record<string, TenantModuleState>>>> | 'unavailable',
+): TenantModuleStateServiceContract => ({
+  getTenantModuleStates: () => Effect.die('Unexpected module state lookup'),
+  // The queue counts installed exactly as the gate does, over every state, never by `active` alone.
+  listActiveTenantModules: () => Effect.die('Unexpected active-only module listing'),
+  listTenantModuleStates: (tenant) =>
+    byTenant === 'unavailable'
+      ? Effect.fail(
+          new TenantModuleStateReadUnavailableError({
+            code: 'tenant_module_state_read_unavailable',
+            reason: 'Tenant module state is temporarily unavailable',
+          }),
+        )
+      : Effect.succeed(
+          Object.entries(byTenant[tenant] ?? {}).map(([moduleKey, state]) =>
+            Schema.decodeSync(TenantModuleStateRecordSchema)({ moduleKey, state }),
+          ),
+        ),
+});
+
+/**
+ * Owner SQL of a queue read: the admitted person, the queue page's `rows`, and `named` as the uninstalled modules'
+ * Actions that existing proposals name (the one grouped statement).
+ */
+const queueQueries =
+  (rows: readonly ReturnType<typeof driverRow>[], named: readonly object[]) => (query: { readonly sql: string }) => {
+    if (query.sql.includes('from "core"."principals"')) {
+      return Effect.succeed([{ principalId }]);
+    }
+    return Effect.succeed(query.sql.includes(NAMED_ACTIONS_GROUPING) ? named : rows);
+  };
+
+/** A queue read over work tasks and the party registry, with `running` module state, asked by `actionAuthority`. */
+const partyQueueRead = Effect.fn('AgentProposalQueueReadTest.partyQueueRead')(function* partyQueueRead(
+  running: TenantModuleStateServiceContract,
+  actionAuthority: ActionAuthorityService,
+  named: readonly object[],
+  rows: readonly ReturnType<typeof driverRow>[] = [tableRow('update', 0)],
+) {
+  const harness = yield* makeReadTestHarness({
+    executeOwnerQuery: queueQueries(rows, named),
+    operationTime,
+    ownerAuthorizationDecision: 'allowed',
+    permissionDecision: 'allowed',
+    scope,
+  });
+  const composition = yield* executableComposition('no-review', [], {
+    appId: 'party-service',
+    moduleId: 'party.registry',
+  });
+  const services = yield* Layer.build(Layer.mergeAll(harness.layer, outboxWorkerCompositionLayer(composition)));
+  const outcome = yield* harness.runtime
+    .runRead({
+      input: { mode: 'queue', request: {} },
+      principal: scope,
+      registration: agentProposalQueueRead,
+      transport,
+    })
+    .pipe(
+      Effect.provideService(ActionAuthority, actionAuthority),
+      Effect.provideService(TenantModuleStateService, running),
+      Effect.provide(services),
+      Effect.match({ onFailure: outcomeOfFailure, onSuccess: (read) => `rows ${read.proposals.length}` }),
+    );
+  const groupedQueries = harness
+    .snapshot()
+    .ownerQueries.filter(({ sql }) => sql.includes(NAMED_ACTIONS_GROUPING)).length;
+  return { groupedQueries, outcome };
+});
+
+/** A pending party registry proposal beside the work task one, in the same batch page. */
+const PARTY_PAGE = [
+  tableRow('update', 0),
+  { ...tableRow('update', 1), appId: 'party-service', moduleKey: 'party.registry' },
+];
+
+/** The party registry Action an existing proposal names, as the grouped statement answers it. */
+const PARTY_ROW_ACTION = { actionSlug: 'update', appId: 'party-service', moduleKey: 'party.registry' };
+
 /** A person who exists only in the v2 model holds no `module_access` tuple: that retired relation denies. */
 const retiredModuleRelation = (asked: string[]) => (target: { readonly moduleIds: readonly string[] }) =>
   Effect.sync(() => {
@@ -394,6 +491,11 @@ it.layer(
     NodeCrypto.layer,
     outboxWorkerCompositionLayer(),
     Layer.succeed(ActionAuthority, authority()),
+    // Every fixture module runs for the tenant unless a test says otherwise.
+    Layer.succeed(
+      TenantModuleStateService,
+      moduleStates({ [tenantId]: { 'party.registry': 'active', 'work.tasks': 'active' } }),
+    ),
     Layer.succeed(AgentProposalQueueModuleReview, { review: () => Effect.die('Unexpected module review') }),
     Layer.succeed(ContextAccess, {
       legalEntities: () => Effect.die('Unexpected context access'),
@@ -1051,6 +1153,120 @@ it.layer(
         expect(read).toEqual({ loaded: true, outcome: 'rows 0' });
         expect(calls.map((call) => call.length)).toEqual([8]);
       }),
+  );
+
+  /*
+   * The queue asks only the Actions of modules the tenant runs. A proposal that exists for a module it no longer runs
+   * is never shown, and its Action is still asked, so that refusal is decided and recorded as before.
+   */
+  suite.effect(
+    "asks only running modules' Actions up front, and still the Action of an existing proposal of an uninstalled module",
+    () =>
+      Effect.gen(function* uninstalledWithProposal() {
+        const calls: string[][] = [];
+        const read = yield* partyQueueRead(
+          moduleStates({ [tenantId]: { 'work.tasks': 'active' } }),
+          recordingAuthority(new Set(['work.tasks.update']), calls),
+          [PARTY_ROW_ACTION],
+        );
+        expect(read.outcome).toBe('rows 1');
+        expect(calls).toEqual([['work.tasks.update'], ['party.registry.update']]);
+      }),
+  );
+
+  for (const state of ['read_only', 'deprecated'] as const) {
+    suite.effect(
+      `shows a ${state} module's proposal to a person who may run its Action, as the gate counts it installed`,
+      () =>
+        Effect.gen(function* stillInstalledModule() {
+          const calls: string[][] = [];
+          const read = yield* partyQueueRead(
+            moduleStates({ [tenantId]: { 'party.registry': state, 'work.tasks': 'active' } }),
+            recordingAuthority(new Set(['work.tasks.update', 'party.registry.update']), calls),
+            [],
+            PARTY_PAGE,
+          );
+          expect(read.outcome).toBe('rows 2');
+          // One question, both Actions: the module counts as installed, so its Action is asked up front.
+          expect(calls).toHaveLength(1);
+          expect(new Set(calls[0])).toEqual(new Set(['work.tasks.update', 'party.registry.update']));
+        }),
+    );
+  }
+
+  suite.effect("never shows a suspended module's proposal, and still decides and records its refusal", () =>
+    Effect.gen(function* suspendedModule() {
+      const calls: string[][] = [];
+      const read = yield* partyQueueRead(
+        moduleStates({ [tenantId]: { 'party.registry': 'suspended', 'work.tasks': 'active' } }),
+        recordingAuthority(new Set(['work.tasks.update', 'party.registry.update']), calls),
+        [PARTY_ROW_ACTION],
+        PARTY_PAGE,
+      );
+      expect(read.outcome).toBe('rows 1');
+      expect(calls).toEqual([['work.tasks.update'], ['party.registry.update']]);
+    }),
+  );
+
+  suite.effect(
+    'never asks the Action of an uninstalled module nobody proposed, at the cost of one grouped statement',
+    () =>
+      Effect.gen(function* uninstalledWithoutProposal() {
+        const calls: string[][] = [];
+        const read = yield* partyQueueRead(
+          moduleStates({ [tenantId]: { 'work.tasks': 'active' } }),
+          recordingAuthority(new Set(['work.tasks.update']), calls),
+          [],
+        );
+        expect(read.outcome).toBe('rows 1');
+        expect(calls).toEqual([['work.tasks.update']]);
+        expect(read.groupedQueries).toBe(1);
+      }),
+  );
+
+  suite.effect(
+    "treats a module another tenant runs as not running here, and still decides this tenant's proposal of it",
+    () =>
+      Effect.gen(function* otherTenantModule() {
+        const calls: string[][] = [];
+        const read = yield* partyQueueRead(
+          moduleStates({
+            [otherTenantId]: { 'party.registry': 'active', 'work.tasks': 'active' },
+            [tenantId]: { 'work.tasks': 'active' },
+          }),
+          recordingAuthority(new Set(['work.tasks.update', 'party.registry.update']), calls),
+          [PARTY_ROW_ACTION],
+        );
+        // Even an answer that would allow it shows nothing of a module this tenant does not run.
+        expect(read.outcome).toBe('rows 1');
+        expect(calls).toEqual([['work.tasks.update'], ['party.registry.update']]);
+      }),
+  );
+
+  suite.effect('answers unavailable, never allowed, when the module state cannot be read, asking nothing', () =>
+    Effect.gen(function* moduleStateUnavailable() {
+      const calls: string[][] = [];
+      const read = yield* partyQueueRead(
+        moduleStates('unavailable'),
+        recordingAuthority(new Set(['work.tasks.update']), calls),
+        [PARTY_ROW_ACTION],
+      );
+      expect(read.outcome).toBe('unavailable');
+      expect(calls).toEqual([]);
+    }),
+  );
+
+  suite.effect("answers unavailable when an uninstalled module's proposal cannot be decided", () =>
+    Effect.gen(function* uninstalledUndecided() {
+      const calls: string[][] = [];
+      const read = yield* partyQueueRead(
+        moduleStates({ [tenantId]: { 'work.tasks': 'active' } }),
+        failingAuthority(new Set(['work.tasks.update']), calls, 2),
+        [PARTY_ROW_ACTION],
+      );
+      expect(read.outcome).toBe('unavailable');
+      expect(calls).toEqual([['work.tasks.update'], ['party.registry.update']]);
+    }),
   );
 
   suite.effect('batch access refuses a partial owning-Action view instead of weakening revert-all', () =>

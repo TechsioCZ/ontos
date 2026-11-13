@@ -217,31 +217,85 @@ export const firstOrdersPage = (limit: number): OrdersQuery => ({
 export const recordsCanEditOrders = (records: RecordsResponse): boolean => records.canEditOrders ?? records.canWrite;
 
 /**
+ * Scopes whose last first read said the person may edit orders. Only the yes is kept, and a no removes it; with it,
+ * the next document of that scope asks for the customer names together with its first page. The tab's sessionStorage
+ * carries the yes to the next document; memory alone serves when storage is blocked.
+ */
+const mayEditOrdersMemory = MutableRef.make(new Set<string>());
+const mayEditOrdersStorageKey = (scope: string): string => `merchandise.orders.may-edit:${scope}`;
+
+const sessionStorageOrUndefined = (): Storage | undefined =>
+  'sessionStorage' in globalThis ? globalThis.sessionStorage : undefined;
+
+const rememberedMayEditOrders = (scope: string | undefined): boolean => {
+  if (scope === undefined) {
+    return false;
+  }
+  if (MutableRef.get(mayEditOrdersMemory).has(scope)) {
+    return true;
+  }
+  try {
+    return sessionStorageOrUndefined()?.getItem(mayEditOrdersStorageKey(scope)) === 'yes';
+  } catch {
+    return false;
+  }
+};
+
+const rememberMayEditOrders = (scope: string | undefined, mayEdit: boolean): void => {
+  if (scope === undefined) {
+    return;
+  }
+  if (mayEdit) {
+    MutableRef.get(mayEditOrdersMemory).add(scope);
+  } else {
+    MutableRef.get(mayEditOrdersMemory).delete(scope);
+  }
+  try {
+    if (mayEdit) {
+      sessionStorageOrUndefined()?.setItem(mayEditOrdersStorageKey(scope), 'yes');
+    } else {
+      sessionStorageOrUndefined()?.removeItem(mayEditOrdersStorageKey(scope));
+    }
+  } catch {
+    // Storage is full or blocked: the next document starts as the first one does.
+  }
+};
+
+/**
  * Prepares the first page, the header counts and, for staff who edit orders, the customer directory the names come
- * from, so the page opens with all of them in place.
+ * from, so the page opens with all of them in place. The directory starts with the first page when the last answer
+ * for this scope was yes; otherwise it starts once the first read says so.
  */
 export const preloadOrdersPage = (
   legalEntityId: string,
   limit: number,
   context?: ModulePageContext,
 ): Effect.Effect<void> => {
+  const scope = pageDataScopeKey(context, ORDERS_MODULE);
   const input: OrdersPageInput = {
     legalEntityId,
     query: firstOrdersPage(limit),
-    scope: pageDataScopeKey(context, ORDERS_MODULE),
+    scope,
   };
-  const firstPageWithNames = ordersPageData.preload(input).pipe(
+  const remembered = rememberedMayEditOrders(scope);
+  const firstPage = ordersPageData.preload(input).pipe(
     Effect.andThen(
       Effect.suspend(() => {
         const page = ordersPageData.snapshot(input);
-        return page.state === 'ready' && recordsCanEditOrders(page.value)
-          ? customerDirectoryData.preload(legalEntityId)
-          : Effect.void;
+        if (page.state !== 'ready') {
+          return Effect.void;
+        }
+        const mayEdit = recordsCanEditOrders(page.value);
+        rememberMayEditOrders(scope, mayEdit);
+        // Already asked for with the page: asking again here would repeat a request that failed at once.
+        return mayEdit && !remembered ? customerDirectoryData.preload(legalEntityId) : Effect.void;
       }),
     ),
   );
-  return Effect.all([firstPageWithNames, orderCountsData.preload(input.scope ?? legalEntityId)], {
-    concurrency: 2,
+  // A remembered yes starts the directory now. Its request runs next to the first read, not after it.
+  const names = remembered ? customerDirectoryData.preload(legalEntityId) : Effect.void;
+  return Effect.all([firstPage, names, orderCountsData.preload(input.scope ?? legalEntityId)], {
+    concurrency: 3,
     discard: true,
   });
 };

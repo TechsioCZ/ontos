@@ -49,6 +49,8 @@ const scope = {
   principalId: '33333333-3333-4333-8333-333333333333',
   tenantId,
 };
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 const requestScope = { requestId: scope.correlationId, tenantId };
 
 describe('Manufacturer target preflight evidence', () => {
@@ -142,11 +144,10 @@ it.effect(
             Effect.andThen(runtime.runtime.runRead(input)),
           ),
       };
-      const connection = testSqlConnection((sql) => {
-        if (sql.includes('set_config')) {
-          return Effect.succeed([]);
-        }
-        if (sql.includes('current_user')) {
+      const connection = testSqlConnection((sql, params) => {
+        // A session-setting role installs its scope and reads back the connected role in one statement.
+        if (sql === installAndReadScopeSql) {
+          expect(params).toEqual([tenantId, '']);
           return Effect.succeed([{ legal_entity_id: '', role: 'ontos_runtime', tenant_id: tenantId }]);
         }
         if (/^(?:begin|commit|rollback|savepoint|release)/iu.test(sql.trim())) {

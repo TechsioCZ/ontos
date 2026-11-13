@@ -38,7 +38,7 @@ import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/ef
 import { Clock, Context, Crypto, DateTime, Effect, Layer, Predicate, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { enrolledModuleCredentials } from '../support/module-credential-enrolment.ts';
+import { enrolledModuleCredentials, noInternalWorkloadPrincipals } from '../support/module-credential-enrolment.ts';
 
 import { GatewayIssuer } from '../../api/auth/gateway-issuer.ts';
 import { makeInstalledModuleCatalogLayer } from '../../api/modules/installed-module-catalog.ts';
@@ -411,6 +411,7 @@ const makeServer = (
         HttpApiBuilder.layer(ExternalIdentityApi).pipe(
           Layer.provide(externalIdentityStandaloneGroupLive),
           Layer.provide(externalIdentityWorkloadAuthorizationLive.pipe(Layer.provide(enrolledModuleCredentials([])))),
+          Layer.provide(noInternalWorkloadPrincipals),
           Layer.provide(dependencies),
           Layer.provide(HttpServer.layerServices),
         ),

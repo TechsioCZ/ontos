@@ -1,7 +1,4 @@
-import { HttpEffect, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
-import { Clock, Context, Effect, Exit, Option, Ref, Schema } from 'effect';
-
-import { ownerServerTimings } from '../../src/module-api/response-relay.ts';
+import { Clock, Context, Effect, Exit, Schema } from 'effect';
 
 /** Fixed names only: timing diagnostics must never contain credentials, identities or request data. */
 const GatewayPhaseSchema = Schema.Literals([
@@ -22,38 +19,27 @@ const GatewayPhaseSchema = Schema.Literals([
   'assertion-issue',
   'owner-dispatch',
 ]);
-export type GatewayPhase = typeof GatewayPhaseSchema.Type;
+type GatewayPhase = typeof GatewayPhaseSchema.Type;
 
-interface GatewayTiming {
-  readonly durationMs: number;
-  readonly phase: GatewayPhase;
-}
-
-export class GatewayTimings extends Context.Reference<Option.Option<Ref.Ref<readonly GatewayTiming[]>>>(
+/**
+ * Whether this request's gateway phases are measured. The Shell API root turns it on for each gateway request; each
+ * phase is logged when it ends, fixed names and milliseconds only. No client ever receives them: no Shell response
+ * carries `server-timing` (`../no-server-timing.ts`).
+ */
+export class GatewayTimings extends Context.Reference<boolean>(
   '@app/shell-super-app/api/auth/gateway-timing/GatewayTimings',
-  { defaultValue: Option.none },
+  {
+    defaultValue: () => false,
+  },
 ) {}
 
-const MAX_PHASES = 64;
-export const gatewayServerTiming = (timings: readonly GatewayTiming[]): string => {
-  const metrics: string[] = [];
-  for (const { durationMs, phase } of timings.slice(0, MAX_PHASES)) {
-    if (Number.isFinite(durationMs) && durationMs >= 0) {
-      metrics.push(`${phase};dur=${durationMs}`);
-    }
-  }
-  return metrics.join(', ');
-};
-
-const recordGatewayTiming = Effect.fn('GatewayTiming.record')(function* recordGatewayTimingEffect<Value, Failure>(
-  timings: Ref.Ref<readonly GatewayTiming[]>,
+const logGatewayPhase = Effect.fn('GatewayTiming.record')(function* logGatewayPhaseEffect<Value, Failure>(
   phase: GatewayPhase,
   startedAt: number,
   exit: Exit.Exit<Value, Failure>,
 ) {
   const finishedAt = yield* Clock.currentTimeMillis;
   const durationMs = Math.max(0, finishedAt - startedAt);
-  yield* Ref.update(timings, (entries) => [...entries, { durationMs, phase }]);
   yield* (
     Exit.isFailure(exit)
       ? Effect.logWarning('Shell gateway phase failed')
@@ -66,28 +52,9 @@ export const observeGatewayPhase = (phase: GatewayPhase) =>
   Effect.fn('GatewayTiming.observePhase')(function* observeGatewayPhaseEffect<Value, Failure, Requirements>(
     effect: Effect.Effect<Value, Failure, Requirements>,
   ) {
-    const timings = yield* GatewayTimings;
-    if (Option.isNone(timings)) {
+    if (!(yield* GatewayTimings)) {
       return yield* effect;
     }
     const startedAt = yield* Clock.currentTimeMillis;
-    return yield* effect.pipe(Effect.onExit((exit) => recordGatewayTiming(timings.value, phase, startedAt, exit)));
+    return yield* effect.pipe(Effect.onExit((exit) => logGatewayPhase(phase, startedAt, exit)));
   });
-
-/** The HTTP boundary installs this fresh collector and hook for each request, including error responses. */
-export const gatewayTimingCollector = Effect.gen(function* gatewayTimingCollectorEffect() {
-  const timings = yield* Ref.make<readonly GatewayTiming[]>([]);
-  const appendResponseHeader = HttpEffect.appendPreResponseHandler((_request, response) =>
-    Ref.get(timings).pipe(
-      Effect.map((entries) => {
-        const gateway = gatewayServerTiming(entries).split(', ').filter(Boolean);
-        const owner = ownerServerTimings(response.headers['server-timing'] ?? '').slice(0, MAX_PHASES - gateway.length);
-        const header = [...owner, ...gateway].join(', ');
-        return header.length === 0
-          ? HttpServerResponse.removeHeader(response, 'server-timing')
-          : HttpServerResponse.setHeader(response, 'server-timing', header);
-      }),
-    ),
-  );
-  return { appendResponseHeader, timings };
-});

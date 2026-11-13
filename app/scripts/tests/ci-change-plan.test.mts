@@ -169,7 +169,7 @@ it('rejects incomplete full matrices and widens unsupported package-selector syn
   ).toBe('full');
 });
 
-it('selects browser checks and all root integration shards when they consume a changed package', () => {
+it('selects browser checks, all root integration shards and every Shell shard when they consume a changed package', () => {
   const plan = planCiChecks({
     applyAffected: true,
     changedPaths: [CATALOG_SOURCE],
@@ -183,11 +183,23 @@ it('selects browser checks and all root integration shards when they consume a c
   const roots = plan.integration.filter((entry) => entry['root-suite'] === true);
   expect(roots.map((entry) => entry['root-rstest-shard'])).toEqual(['1/3', '2/3', '3/3']);
   expect(roots.every((entry) => entry['package-filters'] === '')).toBe(true);
-  const shellPackage = plan.integration.filter(
-    (entry) => entry['package-filters'] === '--filter ./apps/shell-super-app',
-  );
-  expect(shellPackage).toHaveLength(1);
-  expect(shellPackage[0]?.['root-suite']).toBe(false);
+  // The Shell suite runs in its own shards, so the root-suite shard names no package here.
+  expect(plan.integration.find((entry) => entry['root-suite'] === true)?.['package-filters']).toBe('');
+  expect(
+    plan.integration
+      .filter((entry) => entry['package-filters'] === '--filter ./apps/shell-super-app')
+      .map((entry) => entry['rstest-shard']),
+  ).toEqual(['1/3', '2/3', '3/3']);
+});
+
+it('keeps a root-only integration shard empty of package filters rather than selecting every package', () => {
+  const plan = planCiChecks({
+    applyAffected: true,
+    changedPaths: [CATALOG_SOURCE],
+    packages: [...packages, { dependencies: [CATALOG], directory: '.', name: 'app' }],
+    templates,
+  });
+  expect(plan.integration.find((entry) => entry['root-suite'] === true)?.['package-filters']).toBe('');
 });
 
 it('follows topology-only Shell and vertical remote references to browser tests', () => {

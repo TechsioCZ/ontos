@@ -64,7 +64,7 @@
     "db:verify": "node ./scripts/verify-application-db-schema.mts",
     "local:initialize": "node ./scripts/initialize-local-development.mts",
     "test:unit": "pnpm -r --no-sort --if-present run test:unit && pnpm -r --no-sort --if-present run test:component",
-    "test:integration": "rstest --project integration --pool.maxWorkers 1 && pnpm -r --no-sort --workspace-concurrency 1 --if-present run test:integration --pool.maxWorkers 1",
+    "test:integration": "rstest --project integration --pool.maxWorkers 1 && pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present run test:integration --pool.maxWorkers 1",
     "test:scripts": "rstest --project scripts --pool.maxWorkers 1",
     "test:operator": "rstest --project operator --pool.maxWorkers 1",
     "test:lint-rules": "rstest --project lint-rules",

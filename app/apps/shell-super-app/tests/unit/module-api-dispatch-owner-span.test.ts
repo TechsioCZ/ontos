@@ -23,7 +23,9 @@ rs.mock('@app/core-runtime/unit-service-fetch', () => ({
   moduleReleaseFetch: () =>
     Effect.succeed(
       new Response('{}', {
-        headers: { 'server-timing': 'read-owner;dur=12, private;desc="secret", read-audit;dur=3' },
+        headers: {
+          'server-timing': 'owner-total;dur=40, private;desc="secret", owner-gate;dur=12, owner-sql-count;dur=7',
+        },
         status: 200,
       }),
     ),
@@ -55,6 +57,6 @@ it.effect('names the owner and the phases it reported on the dispatch span, neve
     );
     expect(response.status).toBe(200);
     expect(attributes.get('ontos.owner_app')).toBe('work-tasks');
-    expect(attributes.get('ontos.owner_timing')).toBe('read-owner;dur=12, read-audit;dur=3');
+    expect(attributes.get('ontos.owner_timing')).toBe('owner-total;dur=40, owner-gate;dur=12, owner-sql-count;dur=7');
   }),
 );

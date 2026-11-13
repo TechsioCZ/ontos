@@ -209,7 +209,7 @@ it.effect('a gateway grant whose derived scope differs from the request fails cl
   }),
 );
 
-it.effect('non-enrolled audiences and contexts without an assertion keep the session settings', () =>
+it.effect('non-enrolled audiences and contexts without an assertion keep the session settings, in one statement', () =>
   Effect.gen(function* sessionSettingInstallation() {
     for (const scope of [gatewayScope('catalog'), transactionScope(false)]) {
       const { result, statements } = yield* recordScopeInstallation(scope, {
@@ -218,11 +218,13 @@ it.effect('non-enrolled audiences and contexts without an assertion keep the ses
         tenant_id: tenantId,
       });
       expect(Exit.isSuccess(result)).toBe(true);
-      expect(statements.length).toBe(3);
+      // The connected role is probed first; then one round trip installs the settings and reads back the connected
+      // role with what was set.
+      expect(statements.length).toBe(2);
       expect(statements[0]?.sql).toBe('select current_user::text as role');
+      expect(statements[1]?.sql).toContain('current_user::text as role');
       expect(statements[1]?.sql).toContain("set_config('ontos.tenant_id'");
       expect(statements[1]?.params).toEqual([tenantId, '']);
-      expect(statements[2]?.sql).toContain("current_setting('ontos.tenant_id', true)");
       expect(statements.some(({ sql: statementSql }) => statementSql.includes('trust.'))).toBe(false);
       expect(statements.some(({ params }) => params.includes(assertionValue))).toBe(false);
     }
@@ -385,7 +387,8 @@ it.effect('a login outside the enrolled identities cannot authorize domain SQL e
         true,
       );
       expect(statements.some(({ sql: statementSql }) => statementSql.includes('private_owner_data'))).toBe(false);
-      expect(statements).toHaveLength(installer === 'scope' ? 4 : 3);
+      // Both installers set and read back the scope in one statement: BEGIN, that statement, ROLLBACK.
+      expect(statements).toHaveLength(3);
       expect(statements.at(-1)?.sql).toBe('ROLLBACK');
     }
   }),

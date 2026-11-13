@@ -340,4 +340,32 @@ export const proposalQueueFromTransaction = (transaction: ScopedTransactionExecu
     );
     return { ...recovered, reservations };
   }),
+  /**
+   * The Actions of `uninstalled` that this company's proposals name, whatever their status: one statement. A proposal
+   * of a module the tenant no longer runs is never shown, but its Action is still asked, so the refusal is decided and
+   * recorded for the rows that exist.
+   */
+  namedActions: Effect.fn('AgentProposalQueue.namedActions')(function* namedActions(
+    uninstalled: readonly AgentProposalQueueAction[],
+  ): Effect.fn.Return<readonly AgentProposalQueueAction[], ReadHandlerUnavailable> {
+    if (uninstalled.length === 0) {
+      return [];
+    }
+    const named = yield* transaction
+      .select({
+        actionSlug: agentProposals.actionSlug,
+        appId: agentProposals.appId,
+        moduleKey: agentProposals.moduleKey,
+      })
+      .from(agentProposals)
+      .where(and(companyPredicate(scope), allowedActions(uninstalled)))
+      .groupBy(agentProposals.appId, agentProposals.moduleKey, agentProposals.actionSlug)
+      .pipe(Effect.mapError(unavailable));
+    return uninstalled.filter((action) =>
+      named.some(
+        (row) =>
+          row.appId === action.appId && row.moduleKey === action.moduleKey && row.actionSlug === action.actionSlug,
+      ),
+    );
+  }),
 });

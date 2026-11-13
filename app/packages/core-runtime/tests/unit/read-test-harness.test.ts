@@ -368,9 +368,11 @@ it.layer(NodeCrypto.layer)('read test harness', (suite) => {
       const scopeIndex = statements.findIndex((statement) => statement.includes('set_config'));
       expect(scopeIndex).toBeGreaterThan(fenceIndex + 1);
       expect(ownerIndex).toBeGreaterThan(scopeIndex);
-      expect(statements.slice(scopeIndex, ownerIndex).some((statement) => statement.includes('current_setting'))).toBe(
-        true,
+      // The scope install reads back the connected role in the same statement; no separate verification read.
+      expect(statements[scopeIndex]).toBe(
+        "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id",
       );
+      expect(statements.slice(scopeIndex + 1, ownerIndex)).toEqual(['select transaction_timestamp() as operation_at']);
       expect(statements[ownerIndex + 1]).toBe('COMMIT');
       expect(statements.some((statement) => statement.includes('SAVEPOINT'))).toBe(false);
       expect(evidenceWrites).toBe(1);

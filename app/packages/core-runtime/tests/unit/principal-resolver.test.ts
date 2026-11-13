@@ -183,6 +183,15 @@ it.effect('resolves exactly one API-key subject for human, service, integration 
     ).toBe(true);
   }),
 );
+it.effect('never resolves an API key of a system principal, whatever binding it holds', () =>
+  // Every Shell API-key path (agent key caller, MCP, external-identity workloads, gateway delegation and its issuer,
+  // identity lifecycle) resolves a verified key through `resolveBetterAuthApiKey`, which classifies it here: the
+  // platform's own system principals (the release actor) act through Core's writers, never with a key.
+  Effect.gen(function* refusesSystemPrincipalKey() {
+    const refused = yield* Effect.flip(classifyApiKeyPrincipal([{ ...activeRecord, principalKind: 'system' }]));
+    expect(Predicate.isTagged(refused, 'PrincipalInactiveError')).toBe(true);
+  }),
+);
 it.effect('fails closed for empty, inactive, and duplicate eligible resolver states', () =>
   Effect.gen(function* rejectsInvalidResolverStates() {
     expect(Predicate.isTagged(yield* Effect.flip(classifyAvailableTenants([])), 'PrincipalBindingMissingError')).toBe(

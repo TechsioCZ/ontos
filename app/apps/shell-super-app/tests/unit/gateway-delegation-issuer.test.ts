@@ -92,6 +92,10 @@ interface DelegationCase {
   readonly ledgerFailure?: 'replay' | 'unavailable';
   readonly legalEntityScope?: 'subject' | 'tenant';
   readonly malformed?: boolean;
+  /** Whether Core recorded a domain event of the invocation in the message company (default: it did). */
+  readonly messageCompanyRecorded?: boolean;
+  /** The company of the Outbox message the work handles, as the Outbox gave it to the caller. */
+  readonly messageLegalEntityId?: string;
   readonly missingDeployment?: 'catalog' | 'party-registry';
   /** `destination-not-installed`: the calling module is active for the tenant, the module it calls is not. */
   readonly moduleState?:
@@ -131,7 +135,7 @@ interface DelegationCase {
 }
 
 /** The recorded requester of asynchronous work, or the refusal the invocation's evidence would give. */
-const originatorEvidenceDouble = (decision: NonNullable<DelegationCase['originator']>) => ({
+const originatorEvidenceDouble = (decision: NonNullable<DelegationCase['originator']>, messageRecorded = true) => ({
   load: () => {
     if (decision === 'denied') {
       return Effect.fail(delegationForbidden('originator_not_admitted')());
@@ -152,6 +156,7 @@ const originatorEvidenceDouble = (decision: NonNullable<DelegationCase['originat
     return Effect.succeed({ principal: delegationUnitPrincipal, workload: false });
   },
   loadPrivacyDispatchHuman: () => Effect.fail(delegationForbidden('originator_not_admitted')()),
+  messageCompanyRecorded: () => Effect.succeed(messageRecorded),
 });
 
 /** What the scope resolver was asked: the principal it resolved, its company rule and its calling module. */
@@ -282,9 +287,13 @@ const subjectFor = (token: string, input: DelegationCase) => {
     actionInvocationId: subjectInvocationId,
     tenantId: delegationUnitPrincipal.tenantId,
   };
+  const withMessage =
+    input.messageLegalEntityId === undefined
+      ? originator
+      : { ...originator, messageLegalEntityId: input.messageLegalEntityId };
   return input.originatorLegalEntityId === undefined
-    ? originator
-    : { ...originator, legalEntityId: input.originatorLegalEntityId };
+    ? withMessage
+    : { ...withMessage, legalEntityId: input.originatorLegalEntityId };
 };
 
 /** The catalog module's key as the platform attests it: for the release under test and that release's catalog build. */
@@ -477,7 +486,10 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
           },
         }),
       ),
-      Effect.provideService(GatewayOriginatorEvidence, originatorEvidenceDouble(input.originator ?? 'ok')),
+      Effect.provideService(
+        GatewayOriginatorEvidence,
+        originatorEvidenceDouble(input.originator ?? 'ok', input.messageCompanyRecorded),
+      ),
       Effect.provideService(OperationalScopeResolver, scopeResolverDouble(input.contextFailure, resolvedScopes)),
       Effect.provide(
         Layer.mock(TenantModuleStateService, {
@@ -701,6 +713,88 @@ it.effect('refuses a named company that is not the one the originating invocatio
     const result = yield* delegationCase({ originator: 'ok', originatorLegalEntityId: namedCompany });
     assertDenied(result, 'forbidden');
     expect(result.resolvedScopes).toEqual([]);
+  }),
+);
+
+const messageCompany = '30000000-0000-4000-8000-00000000000a';
+
+/** The company the issued context names, or null when it was not issued. */
+const issuedCompanyOf = (result: Effect.Success<ReturnType<typeof delegationCase>>) =>
+  Effect.gen(function* issuedCompany() {
+    if (!Exit.isSuccess(result.result)) {
+      return null;
+    }
+    const { token } = result.result.value;
+    const verified = yield* Effect.promise(() =>
+      jwtVerify(token, result.publicKey, {
+        audience: 'party-registry',
+        currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(delegationUnitNow * 1000)),
+        issuer,
+      }),
+    );
+    const principal: unknown = verified.payload['principal'];
+    return Predicate.hasProperty(principal, 'legalEntityId') && Predicate.isString(principal.legalEntityId)
+      ? principal.legalEntityId
+      : null;
+  });
+
+it.effect('binds tenant-context work to the company of its Outbox message, as Core recorded it', () =>
+  Effect.gen(function* bindsMessageCompany() {
+    // A workload's tenant-context invocation: without the message's company any company could have been named.
+    const bound = yield* delegationCase({ messageLegalEntityId: messageCompany, originator: 'tenant' });
+    expect(yield* issuedCompanyOf(bound)).toBe(messageCompany);
+    // A person's tenant-context invocation is bound the same way; it no longer stays tenant-wide.
+    const person = yield* delegationCase({ messageLegalEntityId: messageCompany, originator: 'person-tenant' });
+    expect(yield* issuedCompanyOf(person)).toBe(messageCompany);
+    // The caller may restate that same company.
+    const restated = yield* delegationCase({
+      messageLegalEntityId: messageCompany,
+      originator: 'tenant',
+      originatorLegalEntityId: messageCompany,
+    });
+    expect(yield* issuedCompanyOf(restated)).toBe(messageCompany);
+  }),
+);
+
+it.effect('refuses any other company beside the message company, and a company Core never recorded', () =>
+  Effect.gen(function* refusesOtherThanMessageCompany() {
+    const reasonOf = (result: Effect.Success<ReturnType<typeof delegationCase>>) => {
+      const failure = Exit.isFailure(result.result) ? Cause.squash(result.result.cause) : null;
+      return Schema.is(GatewayDelegationError)(failure) ? failure.reason : null;
+    };
+    const named = yield* delegationCase({
+      messageLegalEntityId: messageCompany,
+      originator: 'tenant',
+      originatorLegalEntityId: namedCompany,
+    });
+    assertDenied(named, 'forbidden');
+    expect(reasonOf(named)).toBe('originator_company_mismatch');
+    // The invocation ran in another company than the message claims.
+    const recordedElsewhere = yield* delegationCase({ messageLegalEntityId: messageCompany, originator: 'ok' });
+    expect(reasonOf(recordedElsewhere)).toBe('originator_company_mismatch');
+    // Core has no domain event of the invocation in that company.
+    const unrecorded = yield* delegationCase({
+      messageCompanyRecorded: false,
+      messageLegalEntityId: messageCompany,
+      originator: 'tenant',
+    });
+    assertDenied(unrecorded, 'forbidden');
+    expect(reasonOf(unrecorded)).toBe('originator_company_not_recorded');
+    expect(unrecorded.resolvedScopes).toEqual([]);
+  }),
+);
+
+it.effect('changes nothing while the Outbox supplies no message company', () =>
+  Effect.gen(function* unchangedWithoutMessageCompany() {
+    expect(yield* issuedCompanyOf(yield* delegationCase({ originator: 'ok' }))).toBe(
+      delegationUnitPrincipal.legalEntityId,
+    );
+    expect(
+      yield* issuedCompanyOf(yield* delegationCase({ originator: 'tenant', originatorLegalEntityId: namedCompany })),
+    ).toBe(namedCompany);
+    expect(
+      yield* issuedCompanyOf(yield* delegationCase({ legalEntityScope: 'tenant', originator: 'person-tenant' })),
+    ).toBeNull();
   }),
 );
 

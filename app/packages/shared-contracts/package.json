@@ -30,7 +30,8 @@
     "./symmy": "./src/symmy/index.ts",
     "./symmy/organization-source-witness": "./src/symmy/organization-source-witness.ts",
     "./symmy/route-catalog": "./src/symmy/routes.ts",
-    "./cz-vat-classifications": "./src/cz-vat-classifications.ts"
+    "./cz-vat-classifications": "./src/cz-vat-classifications.ts",
+    "./shell-gateway-url": "./src/shell-gateway-url.ts"
   },
   "scripts": {
     "test:types": "ultramodern-create ultramodern typecheck --project tests/tsconfig.json && ultramodern-create ultramodern typecheck --project tests/client-runtime-types.tsconfig.json",

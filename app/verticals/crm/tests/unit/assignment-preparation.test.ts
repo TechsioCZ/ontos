@@ -69,6 +69,9 @@ const scenarios = [
 ] as const;
 type Scenario = (typeof scenarios)[number];
 
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
+
 const registeredAssignment = (scenario: Scenario) =>
   Effect.scoped(
     Effect.gen(function* registeredPreparation() {
@@ -93,11 +96,9 @@ const registeredAssignment = (scenario: Scenario) =>
           sqlDepth -= 1;
           return Effect.succeed([]);
         }
-        if (sql.includes("set_config('ontos.tenant_id'")) {
+        // A session-setting role installs its scope and reads back the connected role in one statement.
+        if (sql === installAndReadScopeSql) {
           expect(params).toEqual([scope.tenantId, scope.legalEntityId]);
-          return Effect.succeed([]);
-        }
-        if (sql.includes('current_user::text as role')) {
           return Effect.succeed([
             { legal_entity_id: scope.legalEntityId, role: SHARED_RUNTIME_IDENTITY.role, tenant_id: scope.tenantId },
           ]);

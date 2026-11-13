@@ -1,4 +1,4 @@
-import { and, asc, eq, or, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, or, sql } from 'drizzle-orm';
 import { Cause, DateTime, Effect, Schema } from 'effect';
 
 import { auditEvents, principalAuthBindings, principals } from '../db/schema.ts';
@@ -137,6 +137,8 @@ const services = (
           input.scope === 'company-agent'
             ? and(eq(principals.kind, 'agent'), eq(principals.principalId, input.principalId))
             : or(eq(principals.kind, 'service'), eq(principals.kind, 'integration')),
+          // The platform's own principals and their keys are the platform's to manage, not a tenant administrator's.
+          isNull(principals.platformRole),
         ),
       )
       .orderBy(asc(principals.displayName), asc(principals.principalId), asc(principalAuthBindings.createdAt))

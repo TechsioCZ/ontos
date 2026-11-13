@@ -5,7 +5,8 @@ import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runne
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { HttpServerRequest } from 'effect/http';
-import { Match, Option, Redacted, Schema } from 'effect';
+import { Match, Option, Redacted, Ref, Schema } from 'effect';
+import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import { crmApi } from '../shared/api.ts';
 import { applyCommandAction } from '../src/actions/apply-command.action.ts';
 import { observeClientPartySync, PartyIntake } from '../src/services/party-intake.ts';
@@ -16,36 +17,13 @@ import {
   mapApplyCommandActionProblem,
 } from './apply-command-action-problems.ts';
 
-const runActionHttp = bindActionHttpRunner({
-  authentication: applyCommandActionProblem.authentication,
-  unavailable: () => applyCommandActionProblem.unavailable('operation_context_unavailable'),
-});
-
-const AssertionClaimsSchema = Schema.fromJsonString(
-  Schema.Struct({
-    principal: Schema.Struct({
-      legalEntityId: Schema.optionalKey(Schema.String.pipe(Schema.brand('LegalEntityId'))),
-      tenantId: Schema.String.pipe(Schema.brand('TenantId')),
-    }),
-  }),
-);
-/** Tenant and company of the (already verified and redeemed) gateway assertion of this request. */
-const scopeOfAssertion = (authorization: Redacted.Redacted<string | undefined>) => {
-  const payload = Redacted.value(authorization)?.split('.')[1];
-  const decoded = Option.fromUndefinedOr(payload).pipe(
-    Option.flatMap((value) =>
-      Schema.decodeOption(AssertionClaimsSchema)(Buffer.from(value, 'base64url').toString('utf-8')),
-    ),
-  );
-  return Option.isSome(decoded) ? decoded.value.principal : undefined;
-};
-
 const reconcileClients = Effect.fn('ApplyCommandActionServer.reconcileClients')(function* reconcileClients(
   request: HttpServerRequest.HttpServerRequest,
+  verified: Option.Option<TrustedPrincipalContext>,
   revision: number,
   clientIds?: readonly string[],
 ) {
-  const scope = scopeOfAssertion(Redacted.make(request.headers['authorization']));
+  const scope = Option.getOrUndefined(verified);
   const compositionRevision = request.headers['x-ontos-composition-revision'];
   if (scope?.legalEntityId === undefined || compositionRevision === undefined) {
     return yield* Effect.fail(applyCommandActionProblem.unavailable('operation_context_unavailable'));
@@ -74,6 +52,15 @@ const execute = Effect.fn('ApplyCommandActionServer.execute')(function* executeA
   );
   const decoded = yield* Schema.decodeEffect(applyCommandAction.descriptor.payloadSchema)(payload).pipe(
     Effect.mapError(applyCommandActionProblem.invalid),
+  );
+  // The post-commit intake acts in exactly the scope this request's authentication verified (and redeemed).
+  const verified = yield* Ref.make(Option.none<TrustedPrincipalContext>());
+  const runActionHttp = bindActionHttpRunner(
+    {
+      authentication: applyCommandActionProblem.authentication,
+      unavailable: () => applyCommandActionProblem.unavailable('operation_context_unavailable'),
+    },
+    (principal) => Ref.set(verified, Option.some(principal)),
   );
   const result = yield* runActionHttp({
     endpointHeaders,
@@ -106,7 +93,9 @@ const execute = Effect.fn('ApplyCommandActionServer.execute')(function* executeA
     return result;
   }
   const clientPartySync = yield* observeClientPartySync(
-    reconcileClients(request, result.revision, intakeEntityIds.value).pipe(Effect.uninterruptible),
+    reconcileClients(request, yield* Ref.get(verified), result.revision, intakeEntityIds.value).pipe(
+      Effect.uninterruptible,
+    ),
   );
   return { ...result, clientPartySync };
 });

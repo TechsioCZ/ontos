@@ -23,12 +23,12 @@ import {
   agentBotPrincipal,
   akrosStorefrontPrincipal,
   commercePortalPrincipal,
-  crmPartyIntakePrincipal,
   demoHumanAccounts,
   reviewedWorkloadBindings,
   storefrontPrincipal,
 } from '../demo/permissions.mts';
 import { demoLegalEntityId, demoTenantId } from '../demo/fixture-ids.mts';
+import { internalWorkloadPrincipalId } from '../../packages/core-runtime/src/auth/module-credentials.ts';
 
 /*
  * The registered workload rule, proved against the real enforcement seam (O73). The reviewed demo bindings
@@ -66,11 +66,23 @@ const unrelatedCarrier: AccessWorkload = {
   workloads: [OTHER_WORKLOAD],
 };
 
+/** CRM's intake principal in the demo company, as the platform's release step registers it (never by hand). */
+const platformIntakePrincipal = internalWorkloadPrincipalId({
+  legalEntityId: demoLegalEntityId,
+  tenantId: demoTenantId,
+  workloadKey: CRM_PARTY_INTAKE_WORKLOAD,
+});
+/** The demo's bindings: the reviewed hand-made ones and the platform's intake registration for the demo company. */
+const registrations = () => [
+  ...reviewedWorkloadBindings(),
+  { legalEntityId: demoLegalEntityId, principalId: platformIntakePrincipal, workloadKey: CRM_PARTY_INTAKE_WORKLOAD },
+];
+
 const machineKinds = new Map<string, AccessPrincipalKind>([
   [storefrontPrincipal.principalId, 'service'],
   [akrosStorefrontPrincipal.principalId, 'service'],
   [commercePortalPrincipal.principalId, 'service'],
-  [crmPartyIntakePrincipal.principalId, 'service'],
+  [platformIntakePrincipal, 'service'],
   [agentBotPrincipal.principalId, 'service'],
 ]);
 const kindOf = (principalId: string): Option.Option<AccessPrincipalKind> =>
@@ -82,7 +94,7 @@ const kindOf = (principalId: string): Option.Option<AccessPrincipalKind> =>
 const boundKeysOf = (tenantId: string, principalId: string): ReadonlySet<string> =>
   new Set(
     tenantId === demoTenantId
-      ? reviewedWorkloadBindings()
+      ? registrations()
           .filter((binding) => binding.principalId === principalId)
           .map((binding) => binding.workloadKey)
       : [],
@@ -92,7 +104,7 @@ const boundKeysOf = (tenantId: string, principalId: string): ReadonlySet<string>
 const registeredCompaniesOf = (tenantId: string, principalId: string): ReadonlySet<string> =>
   new Set(
     tenantId === demoTenantId
-      ? reviewedWorkloadBindings().flatMap((binding) =>
+      ? registrations().flatMap((binding) =>
           binding.principalId === principalId && binding.legalEntityId !== undefined ? [binding.legalEntityId] : [],
         )
       : [],
@@ -264,7 +276,7 @@ it.effect('refuses the agent-bot API key on owner carriers, so the sales proof e
 
 it.effect('refuses other machine identities on the storefront key they do not hold', () =>
   Effect.gen(function* refusesUnboundMachines() {
-    for (const principalId of [crmPartyIntakePrincipal.principalId, agentBotPrincipal.principalId]) {
+    for (const principalId of [platformIntakePrincipal, agentBotPrincipal.principalId]) {
       const decision = yield* decideOn(principalId, storefrontCarrier);
       expect({ outcome: decision.outcome, principalId }).toEqual({ outcome: 'DENIED', principalId });
       expect(codesOf(decision)).toEqual([workloadUnbound]);
@@ -287,24 +299,26 @@ it.effect("keeps a binding inside its own tenant: another tenant holds none of t
   }),
 );
 
-it.effect('admits the reviewed CRM intake only on its purpose workload, not broad declaration carriers', () =>
-  Effect.gen(function* exactCrmIntakeWorkload() {
-    const carrier: AccessWorkload = {
-      reason: 'Reviewed CRM intake purpose',
-      workloads: [WorkloadKeySchema.make(CRM_PARTY_INTAKE_WORKLOAD)],
-    };
-    expect((yield* decideOn(crmPartyIntakePrincipal.principalId, carrier)).outcome).toBe('ALLOWED');
-    expect((yield* decideOn(storefrontPrincipal.principalId, carrier)).outcome).toBe('DENIED');
-    expect((yield* decideOn(demoHumanAccounts[0].principalId, carrier)).outcome).toBe('DENIED');
-    expect(
-      (yield* decideOn(crmPartyIntakePrincipal.principalId, carrier, {
-        tenantId: foreignTenantId,
-      })).outcome,
-    ).toBe('DENIED');
-    for (const key of ['demo.crm.api-records.read', 'demo.crm.apply-command.write', 'party.registry.party.create']) {
-      const denied = yield* decideOn(crmPartyIntakePrincipal.principalId, undefined, { accessDeclaration: { key } });
-      expect(denied.outcome).toBe('DENIED');
-      expect(codesOf(denied)).toEqual([workloadForbidden]);
-    }
-  }),
+it.effect(
+  'admits the platform-registered CRM intake only on its purpose workload, not broad declaration carriers',
+  () =>
+    Effect.gen(function* exactCrmIntakeWorkload() {
+      const carrier: AccessWorkload = {
+        reason: 'Reviewed CRM intake purpose',
+        workloads: [WorkloadKeySchema.make(CRM_PARTY_INTAKE_WORKLOAD)],
+      };
+      expect((yield* decideOn(platformIntakePrincipal, carrier)).outcome).toBe('ALLOWED');
+      expect((yield* decideOn(storefrontPrincipal.principalId, carrier)).outcome).toBe('DENIED');
+      expect((yield* decideOn(demoHumanAccounts[0].principalId, carrier)).outcome).toBe('DENIED');
+      expect(
+        (yield* decideOn(platformIntakePrincipal, carrier, {
+          tenantId: foreignTenantId,
+        })).outcome,
+      ).toBe('DENIED');
+      for (const key of ['demo.crm.api-records.read', 'demo.crm.apply-command.write', 'party.registry.party.create']) {
+        const denied = yield* decideOn(platformIntakePrincipal, undefined, { accessDeclaration: { key } });
+        expect(denied.outcome).toBe('DENIED');
+        expect(codesOf(denied)).toEqual([workloadForbidden]);
+      }
+    }),
 );

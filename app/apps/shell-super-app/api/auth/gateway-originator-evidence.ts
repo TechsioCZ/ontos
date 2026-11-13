@@ -182,6 +182,15 @@ export interface GatewayOriginatorEvidenceService {
     readonly actionInvocationId: string;
     readonly tenantId: string;
   }) => Effect.Effect<AdmittedOriginator, GatewayDelegationError>;
+  /**
+   * Whether Core recorded a domain event of that invocation in that company: the only proof the Shell accepts that an
+   * Outbox message of the work belongs to the company its caller states.
+   */
+  readonly messageCompanyRecorded: (input: {
+    readonly actionInvocationId: string;
+    readonly legalEntityId: string;
+    readonly tenantId: string;
+  }) => Effect.Effect<boolean, GatewayDelegationError>;
 }
 
 export class GatewayOriginatorEvidence extends Context.Service<

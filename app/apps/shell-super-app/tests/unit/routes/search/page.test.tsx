@@ -1179,3 +1179,48 @@ test('full results show the approved generic subtitle and archive badge once wit
   const plainLink = screen.getByRole('link', { name: /Bez archivu/u });
   expect(plainLink.getAttribute('aria-label')).not.toContain('Archived');
 });
+
+const serverRenderedPending = (): SearchPageModel => ({
+  query: 'unit',
+  shell: authenticatedShell(),
+  state: 'pending',
+});
+
+test('a server-rendered pending search shows the loading placeholder, never the empty state', () => {
+  useLoaderDataMock.mockReturnValue(serverRenderedPending());
+  render(<SearchPage />);
+
+  expect(screen.getByText('Searching…')).toBeTruthy();
+  expect(screen.queryByText('Nothing found for “unit”.')).toBeNull();
+  expect(document.querySelector('[aria-busy="true"]')).not.toBeNull();
+  expect(renderedRows()).toHaveLength(0);
+});
+
+effectTest.effect('a server-rendered pending search runs once in the browser after hydration', () =>
+  Effect.gen(function* hydratedPendingSearch() {
+    searchResourcesMock.mockReturnValue(
+      Effect.succeed({
+        partial: false,
+        presentation: presentationInventory,
+        results: [resourceHit('inventory.stock', 'stock-item', plainResourceId, 'Unit 1')],
+      }),
+    );
+    useLoaderDataMock.mockReturnValue(serverRenderedPending());
+    const { rerender } = render(<SearchPage />);
+    yield* Effect.promise(() =>
+      act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      }),
+    );
+
+    expect(searchResourcesMock).toHaveBeenCalledTimes(1);
+    expect(searchResourcesMock).toHaveBeenCalledWith(
+      { compositionRevision: '1'.repeat(64), query: 'unit' },
+      { locale: 'en' },
+    );
+    expect(screen.getByRole('link', { name: /Unit 1/u })).toBeTruthy();
+    rerender(<SearchPage />);
+    expect(searchResourcesMock).toHaveBeenCalledTimes(1);
+  }),
+);

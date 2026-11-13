@@ -433,6 +433,13 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=6144
         run: mise exec -- pnpm api:check
 
+      # The reviewed authorization catalogue and what is generated from it (which modules get a module credential)
+      # must match the declarations in source; a stale artefact would key the wrong modules.
+      - name: Authorization catalogue artefact
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: app
+        run: mise exec -- pnpm authorization:catalog:artifact:check
+
   # The pre-commit hook is the format and lint gate, run from the git root exactly as a commit runs it,
   # over every tracked file. Type-aware lint of the whole tree took over four minutes on one runner, so
   # each shard runs the hook over every other tracked file (`--all-files` is `git ls-files`): together
@@ -710,14 +717,18 @@ jobs:
           ROOT_SUITE: ${{ matrix.root-suite }}
           RSTEST_SHARD: ${{ matrix.rstest-shard }}
         # Same commands as `pnpm test:integration`, with separate Rstest shards for the root and large packages.
+        # Every suite runs even when an earlier one fails (--no-bail; the root suite's failure is kept, not fatal), so
+        # one package's failure never hides another's; the step fails at the end if any of them failed.
         run: |
+          status=0
           if [[ "$ROOT_SUITE" == true ]]; then
-            mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 ${ROOT_RSTEST_SHARD:+--shard "$ROOT_RSTEST_SHARD"}
+            mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 ${ROOT_RSTEST_SHARD:+--shard "$ROOT_RSTEST_SHARD"} || status=$?
           fi
           if [[ -n "$PACKAGE_FILTERS" ]]; then
             # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
-            mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 ${RSTEST_SHARD:+--shard "$RSTEST_SHARD"}
+            mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 ${RSTEST_SHARD:+--shard "$RSTEST_SHARD"} || status=$?
           fi
+          exit "$status"
 
       - name: Prove native preproposal basis and genuine approval through registered owners
         if: matrix.native-preproposal == true
@@ -867,6 +878,22 @@ jobs:
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
           mise exec -- pnpm -r --no-sort --workspace-concurrency=1 "${filters[@]}" run build
+          # The app host serves the Shell and every released module from the unit's dist/zerops-entry.mjs, which
+          # scripts/zerops/build-app.sh writes after the build; the native hosted-owner fixtures start them so too.
+          served="$(mise exec -- node -e '
+            const intent = require("./topology/application-release-intent.json");
+            for (const { appId } of intent.modules) console.log(`verticals/${appId}`);
+            console.log("apps/shell-super-app");
+          ')"
+          entries=()
+          for unit in "${units[@]}"; do
+            if grep -qxF "$unit" <<<"$served"; then
+              entries+=("$unit")
+            fi
+          done
+          if [ "${#entries[@]}" -gt 0 ]; then
+            mise exec -- node scripts/zerops/owner-entry.mts "${entries[@]}"
+          fi
 
       # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
       - name: Pack the shard's build outputs

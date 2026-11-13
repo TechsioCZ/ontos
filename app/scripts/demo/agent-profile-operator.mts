@@ -35,6 +35,7 @@ import {
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { AccessPeopleDirectoryLive } from '@app/core-runtime/access/intent/people-directory';
 import { CoreAdminDatabaseLive, CoreDatabase } from '@app/core-runtime/db/client';
+import { ManagedApiKeyTargetEligibilityLive } from '@app/core-runtime/auth/managed-api-key-eligibility';
 import { OAuthFlowLive } from '../../apps/shell-super-app/api/auth/db/oauth-flow-live.ts';
 import { OAuthCredentialsLive } from '../../apps/shell-super-app/api/auth/db/oauth-credentials-live.ts';
 import { OAuthEndpointGuardDataLive } from '../../apps/shell-super-app/api/oauth-connections/grant-store.ts';
@@ -51,6 +52,9 @@ import { AuthenticationService, AuthenticationServiceLive } from '../../apps/she
 import { StaffAuthenticationNamespaceRegistryLive } from '../../apps/shell-super-app/api/auth/authentication-namespace-registry.ts';
 import { ShellInstalledModuleCatalogLive } from '../../apps/shell-super-app/api/modules/installed-module-catalog.ts';
 import { AgentProfileReadDatabase } from './agent-profile-setup.mts';
+import { AgentSeedIdentityWriter } from './agent-seed-identity.mts';
+import type { SeededAgentIdentity } from './agent-seed-identity.mts';
+import { principalCompanyMemberships, principals } from '../../packages/core-runtime/src/db/schema.ts';
 import { AgentProfileSetupError, retainAgentOperatorSessionCookies } from './agent-operator-session.mts';
 
 const persistence = CorePersistenceLive.pipe(Layer.provide(DatabaseConfigLive));
@@ -120,9 +124,54 @@ const actionRuntime = Layer.unwrap(
 const reads = Layer.effect(
   AgentProfileReadDatabase,
   Effect.gen(function* readOnlyOperatorDatabase() {
-    // Privileged connection is deliberately exposed as SELECT-only. All identity writes use runtime scoped transactions.
+    // Reads only. The privileged connection writes in exactly one place, the seed writer below; every other identity
+    // write runs through runtime-scoped Action transactions. This module is operator-only: it runs from scripts and is
+    // never bundled into a unit, a vertical, a package or the Shell (scripts/tests/module-credential-reader-boundary).
     const database = yield* CoreDatabase;
     return { executor: database.executor };
+  }),
+).pipe(Layer.provide(CoreAdminDatabaseLive));
+// The operator's privileged connection seeds a reviewed agent's fixed id: its only write; nothing a tenant user calls
+// reaches it.
+const seedWriter = Layer.effect(
+  AgentSeedIdentityWriter,
+  Effect.gen(function* operatorSeedWriter() {
+    const database = yield* CoreDatabase;
+    return {
+      seed: (identity: SeededAgentIdentity) =>
+        database.executor
+          .transaction((transaction) =>
+            transaction
+              .insert(principals)
+              .values({
+                displayName: identity.displayName,
+                kind: 'agent',
+                principalId: identity.principalId,
+                status: 'active',
+                tenantId: identity.tenantId,
+              })
+              .pipe(
+                Effect.andThen(
+                  transaction.insert(principalCompanyMemberships).values({
+                    affiliation: null,
+                    legalEntityId: identity.legalEntityId,
+                    principalId: identity.principalId,
+                    status: 'active',
+                    tenantId: identity.tenantId,
+                  }),
+                ),
+              ),
+          )
+          .pipe(
+            Effect.asVoid,
+            Effect.mapError(
+              () =>
+                new AgentProfileSetupError({
+                  reason: `The reviewed agent ${identity.principalId} could not be seeded`,
+                }),
+            ),
+          ),
+    };
   }),
 ).pipe(Layer.provide(CoreAdminDatabaseLive));
 const readRuntime = ReadRuntimeLive.pipe(Layer.provide(operations));
@@ -131,8 +180,18 @@ const operatorIdentities = AccessPeopleDirectoryLive.pipe(
   Layer.provide(Layer.merge(persistence, databaseIdentitiesLive)),
 );
 const apiKeys = ApiKeyServiceLive.pipe(Layer.provide(authDatabase), Layer.provide(NodeCrypto.layer));
-const identityLifecycle = IdentityLifecycleLive.pipe(Layer.provide(Layer.mergeAll(actionRuntime, apiKeys, resolver)));
+const identityLifecycle = IdentityLifecycleLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      actionRuntime,
+      apiKeys,
+      resolver,
+      ManagedApiKeyTargetEligibilityLive.pipe(Layer.provide(persistence)),
+    ),
+  ),
+);
 export const AgentProfileOperatorLive = Layer.mergeAll(
+  seedWriter,
   // Core revalidates the staff namespace when Actions run, not only while the authentication service is built.
   StaffAuthenticationNamespaceRegistryLive,
   identityLifecycle,

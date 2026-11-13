@@ -4,7 +4,6 @@ import { WorkloadKeySchema } from '../../packages/core-runtime/src/authorization
 
 import {
   IDENTITY_PROVIDER_WORKLOAD,
-  CRM_PARTY_INTAKE_WORKLOAD,
   STOREFRONT_CLIENT_WORKLOAD,
   STOREFRONT_INQUIRY_WORKLOAD,
   STOREFRONT_MERCHANDISE_WORKLOAD,
@@ -20,7 +19,6 @@ import {
   crmNavigationKeys,
   tenantAdministratorCrmRole,
   companyAgentKeyAdministratorRole,
-  crmPartyIntakePrincipal,
   demoHumanAccounts,
   demoLegalEntityIds,
   demoModuleIds,
@@ -124,7 +122,6 @@ it('maps every reviewed machine identity to exactly the workload keys a carrier 
     { ...sroubshop, workloadKey: STOREFRONT_INQUIRY_WORKLOAD },
     { principalId: commercePortalPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
     { principalId: commercePortalPrincipal.principalId, workloadKey: IDENTITY_PROVIDER_WORKLOAD },
-    { principalId: crmPartyIntakePrincipal.principalId, workloadKey: CRM_PARTY_INTAKE_WORKLOAD },
   ]);
   // Every bound principal has a principal row, and every row is a machine identity, never a person.
   const machineIds = new Set(reviewedMachinePrincipals.map((machine) => machine.principalId));
@@ -144,8 +141,6 @@ it('keeps every machine identity out of the reviewed person assignments', () => 
   for (const machine of reviewedMachinePrincipals) {
     expect(assigned.has(machine.principalId)).toBe(false);
   }
-  // The MCP bot and the CRM intake keep their identity but reach nothing through a Role.
-  expect(assigned.has(crmPartyIntakePrincipal.principalId)).toBe(false);
 });
 
 it('keeps the reviewed assignment set free of legacy tuple vocabulary', () => {

@@ -4,6 +4,7 @@ import { Clock, Config, Effect, Option, Ref, Schema, Semaphore } from 'effect';
 import { commerceTenantWorkloadCredentials } from '../../api/tenant-workload-credentials.ts';
 import { CommerceEnrollmentContinuation } from '../enrollment/continuation/enrollment-continuation.ts';
 import { commerceEnrollmentContinuationSweeperFor } from '../workers/enrollment-continuation-sweeper.ts';
+import { shellGatewayBaseUrlConfig } from '@app/shared-contracts/shell-gateway-url';
 
 const RECOVERY_INTERVAL_MS = 30_000;
 const RECOVERY_CYCLE_TIMEOUT_MS = 60_000;
@@ -27,24 +28,12 @@ const recoveryConfigurationFailure = (cause: unknown): CommerceEnrollmentRecover
     { enumerable: false, value: cause },
   );
 
-const gatewayUrl = Schema.URLFromString.check(
-  Schema.makeFilter((url) =>
-    (url.protocol === 'http:' || url.protocol === 'https:') &&
-    url.username === '' &&
-    url.password === '' &&
-    url.search === '' &&
-    url.hash === ''
-      ? undefined
-      : 'The owner gateway URL must be HTTP(S) without credentials, query or fragment',
-  ),
-);
-
 /**
  * The owner adapters read these lazily. An empty journal must not conceal missing credentials: the Tenant credential
  * map must parse to at least one Tenant, and each Attempt still selects its own Tenant's key when it runs.
  */
 export const validateCommerceEnrollmentRecoveryConfiguration = Config.all({
-  baseUrl: Config.schema(gatewayUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
+  baseUrl: shellGatewayBaseUrlConfig,
   credentials: commerceTenantWorkloadCredentials,
 }).pipe(Effect.mapError(recoveryConfigurationFailure), Effect.asVoid);
 
