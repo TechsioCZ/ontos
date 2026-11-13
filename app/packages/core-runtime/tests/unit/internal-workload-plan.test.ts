@@ -92,6 +92,7 @@ describe('planTenantInternalWorkloads', () => {
     expect(plan).toEqual({
       corrected: 0,
       healed: 0,
+      healedPrincipalIds: [],
       registered: 0,
       renamed: 0,
       retired: 0,
@@ -154,6 +155,7 @@ describe('planTenantInternalWorkloads', () => {
     const archived: PlatformRegistration = { ...whole(COMPANY_B), principalStatus: 'archived' };
     const plan = planTenantInternalWorkloads(stateOf({ registrations: [disabled, archived] }), [INTAKE]);
     expect(plan.healed).toBe(2);
+    expect(plan.healedPrincipalIds).toEqual([disabled.principalId, archived.principalId]);
     expect(plan.steps).toEqual([
       { kind: 'reactivate-principal', principalId: disabled.principalId },
       { kind: 'reactivate-principal', principalId: archived.principalId },

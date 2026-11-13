@@ -1183,6 +1183,19 @@ it.live(
           .where(eq(principals.principalId, principalOf(tenantOne, companyA)));
         const afterArchive = yield* register('heal-archived');
         expect(afterArchive.find(({ tenantId }) => tenantId === tenantOne)).toMatchObject({ failed: null, healed: 1 });
+        // The release's audit row names the principal it made active again.
+        const healAudits = yield* adminDatabase
+          .select({ evidence: auditEvents.evidenceJson })
+          .from(auditEvents)
+          .where(
+            and(
+              eq(auditEvents.tenantId, tenantOne),
+              eq(auditEvents.eventType, 'core.access.internal-workloads-registered-by-release'),
+            ),
+          );
+        expect(healAudits.map(({ evidence }) => evidence)).toContainEqual(
+          expect.objectContaining({ healed: 1, healedPrincipalIds: [principalOf(tenantOne, companyA)] }),
+        );
         const [restoredRow] = yield* adminDatabase
           .select({ status: principals.status })
           .from(principals)

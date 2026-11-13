@@ -97,6 +97,8 @@ export interface TenantWorkloadPlan {
    * platform owns them, so they are made active again.
    */
   readonly healed: number;
+  /** The principals of those healed registrations, as the release's audit row names them. */
+  readonly healedPrincipalIds: readonly string[];
   readonly registered: number;
   /** Registrations that were whole but carried another name (a company or the workload's label was renamed). */
   readonly renamed: number;
@@ -235,7 +237,7 @@ export const planTenantInternalWorkloads = (
   const wantedIds = new Set(wanted.map(({ principalId }) => principalId));
   const units: RegistrationUnit[] = [];
   let corrected = 0;
-  let healed = 0;
+  const healedPrincipalIds: string[] = [];
   let registered = 0;
   let renamed = 0;
   let unchanged = 0;
@@ -257,7 +259,7 @@ export const planTenantInternalWorkloads = (
       registration.principalStatus === 'archived' ||
       (registration.principalStatus === 'disabled' && registration.activeWorkloadBindingId !== null)
     ) {
-      healed += 1;
+      healedPrincipalIds.push(registration.principalId);
     }
     const ensure = ensureSteps(registration, wish.displayName);
     const rename =
@@ -287,7 +289,8 @@ export const planTenantInternalWorkloads = (
   }
   return {
     corrected,
-    healed,
+    healed: healedPrincipalIds.length,
+    healedPrincipalIds,
     registered,
     renamed,
     retired,

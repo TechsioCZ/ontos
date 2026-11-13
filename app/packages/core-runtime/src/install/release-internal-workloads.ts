@@ -449,6 +449,7 @@ const registerTenant = Effect.fn('ReleaseInternalWorkloads.registerTenant')(func
           corrected: report.corrected,
           failedRegistrations: failures.length,
           healed: report.healed,
+          healedPrincipalIds: plan.healedPrincipalIds,
           registered: report.registered,
           renamed: report.renamed,
           retired: report.retired,
