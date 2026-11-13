@@ -3,6 +3,7 @@ import type { OwnerAuthorizationInput, ScopedRoutineDefinition, ScopedTransactio
 import { DateTime, Deferred, Effect, Fiber, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { ownerAuthorizationFromExit } from '@app/core-runtime';
 import { makeCommerceCustomerContextOwnerAuthorizationOverlay } from '../../src/persistence/owner-authorization-overlay.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
@@ -324,5 +325,114 @@ it.effect('denies a Retail capability whose profile fact or retail permission is
     // The owner profile has no binding for this principal: the durable owner state is unavailable,
     // which is a 503 and never an allow (fail closed, O48).
     expect(unboundProfile).toBe('unavailable');
+  }),
+);
+
+/** One portal session's facts: its binding, its customer principal, its provider subject and the Party it names. */
+const portalSession = {
+  portalAuthBindingId: '60000000-0000-4000-8000-000000000001',
+  portalCustomerPrincipalId: '60000000-0000-4000-8000-000000000002',
+  portalPartyId: '60000000-0000-4000-8000-000000000003',
+  portalProviderSubjectId: 'customer-subject-one',
+};
+const boundProfileId = '60000000-0000-4000-8000-000000000004';
+/** The owner's own account mapping: which Party (and profile) this session's account is bound to here. */
+const accountBoundTo = (partyId: string) => (routineKey: string) =>
+  routineKey === 'portal-enrollment.account-party.read' ? [{ party_id: partyId, profile_id: boundProfileId }] : [];
+/** Each portal operation and the retail right its session's account must hold (the operation chooses it). */
+const PORTAL_OPERATIONS = [
+  ['commerce.customer-context.api.customer-profile-read-own', 'retail.profile.read'],
+  ['commerce.customer-context.update-own-customer-profile', 'retail.profile.read'],
+  ['commerce.customer-context.api.customer-consent-read-own', 'retail.consent.manage'],
+  ['commerce.customer-context.update-own-customer-consent', 'retail.consent.manage'],
+  ['commerce.customer-context.change-own-customer-password', 'retail.profile.read'],
+] as const;
+
+it.effect('a portal operation is refused without its full session facts, whatever else it carries', () =>
+  Effect.gen(function* portalFactsRequired() {
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    for (const [operation, right] of PORTAL_OPERATIONS) {
+      const { portalPartyId: _party, ...withoutParty } = portalSession;
+      const factBags: readonly (Readonly<Record<string, string>> | undefined)[] = [
+        undefined,
+        {},
+        withoutParty,
+        { counterpartyId },
+      ];
+      for (const facts of factBags) {
+        const answer = yield* overlay.authorize(
+          transactionWith(accountBoundTo(portalSession.portalPartyId)),
+          factInput(operation, facts),
+        );
+        expect(answer).toEqual(refused('deny.owner.portal_session_fact_missing', `requires.${right}`));
+      }
+    }
+  }),
+);
+
+it.effect("a portal session reaches only the Party its own account is bound to: never another customer's", () =>
+  Effect.gen(function* portalPartyIsTheSession() {
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    const otherCustomersParty = '60000000-0000-4000-8000-0000000000ff';
+    for (const [operation, right] of PORTAL_OPERATIONS) {
+      // The session's account is bound to another Party than the request names: refused before any retail check.
+      const mismatch = yield* overlay.authorize(
+        transactionWith(accountBoundTo(otherCustomersParty)),
+        factInput(operation, portalSession),
+      );
+      expect(mismatch).toEqual(refused('deny.owner.portal_party_mismatch'));
+      // The session's account is bound nowhere in this company: refused, naming the right it would need.
+      const unbound = yield* overlay.authorize(
+        transactionWith(() => []),
+        factInput(operation, portalSession),
+      );
+      expect(unbound).toEqual(refused('deny.owner.portal_session_unbound', `requires.${right}`));
+    }
+  }),
+);
+
+it.effect("a bound portal session still needs its account's own retail right for the operation", () =>
+  Effect.gen(function* portalRetailRight() {
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    const notBound = (routineKey: string) => {
+      if (routineKey === 'portal-enrollment.account-party.read') {
+        return [{ party_id: portalSession.portalPartyId, profile_id: boundProfileId }];
+      }
+      return routineKey === 'profile.resolve-principal'
+        ? [
+            {
+              outcome: 'RETAIL_PRINCIPAL_NOT_BOUND',
+              payload: { observedAt: '2026-09-09T09:00:00.000Z', profileId: boundProfileId, revision: 1 },
+            },
+          ]
+        : [];
+    };
+    expect(
+      yield* overlay.authorize(
+        transactionWith(notBound),
+        factInput('commerce.customer-context.update-own-customer-consent', portalSession),
+      ),
+    ).toEqual(refused('deny.owner.retail_binding_not_found', 'requires.retail.consent.manage'));
+    expect(
+      yield* overlay.authorize(
+        transactionWith(notBound),
+        factInput('commerce.customer-context.change-own-customer-password', portalSession),
+      ),
+    ).toEqual(refused('deny.owner.retail_binding_not_found', 'requires.retail.profile.read'));
+  }),
+);
+
+it.effect('an unreadable account mapping is unavailable, never an allow', () =>
+  Effect.gen(function* portalUnavailable() {
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    const input = factInput('commerce.customer-context.api.customer-profile-read-own', portalSession);
+    // As Core decodes the overlay's answer: a crash of the owner state read is unavailable.
+    const exit = yield* Effect.exit(
+      overlay.authorize(
+        transactionWithEffect(() => Effect.die(new Error('owner state unreadable'))),
+        input,
+      ),
+    );
+    expect(yield* ownerAuthorizationFromExit(input)(exit)).toEqual({ decision: 'unavailable' });
   }),
 );

@@ -3,20 +3,11 @@
 // @ontos-module-id commerce.customer-context
 import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { CustomerOwnConsentReadApi, CustomerOwnConsentUpdateApi } from './shared/portal-auth/consent-api.ts';
-import {
-  customerConsentReadOwnPermission,
-  customerConsentUpdateOwnPermission,
-} from './shared/permissions/customer-consent-self-service.ts';
-import { customerPasswordChangeOwnPermission } from './shared/permissions/customer-password-self-service.ts';
 import { defineOntosModuleManifest, ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '@app/core-runtime';
 import { getCookies } from 'better-auth/cookies';
 import { COMMERCE_PORTAL_AUTH_POLICY } from './api/portal-auth/provider/config.ts';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 import { CustomerOwnProfileReadApi, CustomerOwnProfileUpdateApi } from './shared/portal-auth/profile-api.ts';
-import {
-  customerProfileReadOwnPermission,
-  customerProfileUpdateOwnPermission,
-} from './shared/permissions/customer-profile-self-service.ts';
 // <generated-module-manifest-imports>
 import { addSavedAddressAction } from './src/actions/add-saved-address.action.ts';
 import { administerCommerceQuantityRuleAction } from './src/actions/administer-commerce-quantity-rule.action.ts';
@@ -160,6 +151,9 @@ import { savedAddressResourceDescriptor } from './shared/resources/saved-address
 import { setDefaultBillingAddressAction } from './src/actions/set-default-billing-address.action.ts';
 import { setDefaultDeliveryDestinationAction } from './src/actions/set-default-delivery-destination.action.ts';
 import { startPortalEnrollmentAction } from './src/actions/start-portal-enrollment.action.ts';
+import { changeOwnCustomerPasswordAction } from './src/actions/change-own-customer-password.action.ts';
+import { updateOwnCustomerConsentAction } from './src/actions/update-own-customer-consent.action.ts';
+import { updateOwnCustomerProfileAction } from './src/actions/update-own-customer-profile.action.ts';
 import { submitPurchaseApprovalRequestAction } from './src/actions/submit-purchase-approval-request.action.ts';
 import { suspendCustomerProfileAction } from './src/actions/suspend-customer-profile.action.ts';
 import { terminatePortalEnrollmentAction } from './src/actions/terminate-portal-enrollment.action.ts';
@@ -225,6 +219,10 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
   ],
   publicSurface: {
     actions: [
+      // The storefront customer's own portal writes (workload-only carriers; served by the portal routes).
+      changeOwnCustomerPasswordAction,
+      updateOwnCustomerConsentAction,
+      updateOwnCustomerProfileAction,
       // <generated-module-manifest-actions>
       addSavedAddressAction,
       administerCommerceQuantityRuleAction,
@@ -390,13 +388,6 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
           { method: 'POST', path: '/api/portal-auth/refresh' },
         ],
       },
-    ],
-    businessPermissions: [
-      customerConsentReadOwnPermission,
-      customerConsentUpdateOwnPermission,
-      customerPasswordChangeOwnPermission,
-      customerProfileReadOwnPermission,
-      customerProfileUpdateOwnPermission,
     ],
     components: {
       // <generated-module-manifest-components>
