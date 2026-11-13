@@ -94,10 +94,7 @@ const OntosModuleFederationBoundaryIdSchema = Schema.String.check(
 export const OntosModuleIdentitySchema = Schema.Struct({
   description: nonEmptyString,
   displayName: nonEmptyString,
-  /** `core.*` names the platform itself (the Shell frame among it, `core.shell`); no module may claim it. */
-  id: OntosModuleIdSchema.check(
-    Schema.makeFilter((id) => (id.startsWith('core.') ? 'core.* module ids are reserved for the platform' : undefined)),
-  ),
+  id: OntosModuleIdSchema,
   implementedAs: Schema.Literal('ultramodern_microvertical'),
   kind: OntosModuleKindSchema,
 });

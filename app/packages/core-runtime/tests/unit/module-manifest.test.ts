@@ -337,12 +337,6 @@ it.effect('preserves business refs and grant targets across two validated deploy
   }),
 );
 
-it('refuses a module that claims a core.* id, which names the platform (the Shell frame is core.shell)', () => {
-  const claiming = { ...emptyManifestInput(), module: { ...emptyManifestInput().module, id: 'core.shell' } };
-  expect(() => defineOntosModuleManifest(claiming)).toThrow(/reserved for the platform/u);
-  expect(defineOntosModuleManifest(emptyManifestInput()).module.id).toBe('property.registry');
-});
-
 it('requires real private Read storage rather than copied markers, prototypes or descriptors', () => {
   const read = createRead();
   const target = { descriptor: read.descriptor };
