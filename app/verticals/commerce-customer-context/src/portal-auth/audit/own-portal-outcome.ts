@@ -27,8 +27,14 @@ export const recordOwnPortalRow = (
 ) => DateTime.nowAsDate.pipe(Effect.flatMap((occurredAt) => recorder.record({ ...subject, ...row, occurredAt })));
 
 /**
- * The final row of a change that was applied. Its write failing must not turn the applied change into a refusal: the
- * row then says `outcome_unknown` (written if it can be) and the change is still delivered to the buyer.
+ * The final row of a change that was applied, written as well as the audit store allows. What is guaranteed is the
+ * `requested` row, not this one: the caller records that row before the first native command and refuses the change
+ * if it cannot be written, so no change is ever applied without a row saying it was asked for.
+ *
+ * This row is best effort, because the change has already happened and must not become a refusal. Three outcomes:
+ * the success row is written; or that write fails and an `outcome_unknown` row is written in its place, after one
+ * logged warning; or the store is unavailable for both, and then the applied change keeps only its `requested` row
+ * and that one warning. In every case the buyer gets the change, never a 503 for a change that was applied.
  */
 export const recordAppliedOutcome = (
   recorder: CommercePortalAuthAuditRecorder,
