@@ -6,7 +6,7 @@
 import type { OutboxWorkerHandlerContext, OutboxWorkerLegalEntityScope } from '@app/core-runtime';
 import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { OutboxWorkerLegalEntityScopeError } from '@app/core-runtime/outbox/worker';
-import { OutboxWorkerLegalEntityScopeFanout, outboxTerminalFailureFields } from '@app/core-runtime/outbox/worker';
+import { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
 import type { OutboxPayload } from '@app/sales-pipeline/outbox/opportunity-stage-changed';
 import {
   OutboxPayloadSchema,
@@ -39,6 +39,7 @@ export class DraftInvoiceFromWonOpportunityRejected extends Schema.TaggedError<D
       'FINANCE_REJECTED',
       'OPPORTUNITY_COMPANY_WITHOUT_LEDGER',
       'OPPORTUNITY_NO_LONGER_WON',
+      'OPPORTUNITY_WITHOUT_COMPANY',
       'PERSISTENCE_UNAVAILABLE',
       'TAX_STILL_UNAVAILABLE',
       'TAX_UNAVAILABLE',
@@ -47,18 +48,43 @@ export class DraftInvoiceFromWonOpportunityRejected extends Schema.TaggedError<D
     ]),
     reason: Schema.String,
     retryable: Schema.Boolean,
-    ...outboxTerminalFailureFields,
   },
 ) {}
 
-/**
- * A refusal no retry can fix (a genuinely invalid line, a delivery that is not this worker's) is terminal: Core ends
- * the delivery as dead at once, where operators see it. Only a retryable failure waits on the long retry policy.
- */
 const rejected = (code: DraftInvoiceFromWonOpportunityRejected['code'], reason: string, retryable: boolean) =>
-  new DraftInvoiceFromWonOpportunityRejected(
-    retryable ? { code, reason, retryable } : { code, outboxTerminal: true, reason, retryable },
-  );
+  new DraftInvoiceFromWonOpportunityRejected({ code, reason, retryable });
+
+/**
+ * Business outcomes, not system failures: there is nothing to draft, so the delivery completes (settled without
+ * effect) with one log line and is neither retried nor left dead. A dead delivery would stop every app host boot
+ * (`outbox-dead-startup-gate.mts`) until an operator cleared it, for an ordinary outcome of selling.
+ */
+const SETTLED_WITHOUT_DRAFT: ReadonlyMap<DraftInvoiceFromWonOpportunityRejected['code'], 'Info' | 'Warning'> = new Map([
+  ['OPPORTUNITY_NO_LONGER_WON', 'Info'],
+  ['OPPORTUNITY_COMPANY_WITHOUT_LEDGER', 'Warning'],
+  ['OPPORTUNITY_WITHOUT_COMPANY', 'Warning'],
+  ['FINANCE_REJECTED', 'Warning'],
+  ['VAT_NOT_SET_UP', 'Warning'],
+  ['TAX_STILL_UNAVAILABLE', 'Warning'],
+]);
+
+/** Completes a delivery that ended in a business outcome; every other refusal stays a failure on the retry policy. */
+const settleBusinessOutcome =
+  (payload: OutboxPayload, context: OutboxWorkerHandlerContext) =>
+  (refusal: DraftInvoiceFromWonOpportunityRejected) => {
+    const level = SETTLED_WITHOUT_DRAFT.get(refusal.code);
+    if (level === undefined) {
+      return Effect.fail(refusal);
+    }
+    const fields = {
+      code: refusal.code,
+      company: context.originatorLegalEntityId ?? null,
+      opportunityId: payload.opportunityId,
+      tenantId: context.tenantId,
+    };
+    const message = "Won opportunity's invoice not drafted";
+    return level === 'Info' ? Effect.logInfo(message, fields) : Effect.logWarning(message, fields);
+  };
 
 const deliveryMatchesWorker = (context: OutboxWorkerHandlerContext): boolean =>
   context.workerKey === workerKey &&
@@ -76,7 +102,7 @@ const vatNotReadyIssues: ReadonlySet<string> = new Set<LineVatIssue>(['vat_regim
 /**
  * How long a won opportunity waits for its company's VAT: from the moment it was won (`changedAt`, stamped by Sales
  * Pipeline's clock in the transaction that wrote this Outbox message) to this attempt. 72 hours spans a release's
- * deploy-to-seed gap and a weekend; after that the delivery ends terminal, naming the company, where operators see it.
+ * deploy-to-seed gap and a weekend; after that the delivery completes without a draft, logging the company.
  */
 const NOT_READY_WINDOW_HOURS = 72;
 const NOT_READY_WINDOW = Duration.hours(NOT_READY_WINDOW_HOURS);
@@ -88,10 +114,7 @@ interface FailureContext {
   readonly wonRevision: number;
 }
 
-/**
- * A not-ready refusal: retried within the window; after it terminal, under its own code (Core logs the code of a
- * dead delivery) and with a reason naming the company.
- */
+/** A not-ready refusal: retried within the window; after it a business outcome under its own code, naming the company. */
 const notReady = (
   code: 'TAX_UNAVAILABLE' | 'VAT_NOT_READY',
   reason: string,
@@ -205,7 +228,11 @@ export const handleDraftInvoiceFromWonOpportunity = Effect.fn('DraftInvoiceFromW
     // Sales Pipeline keeps each company's opportunities apart; Core records the company its invocation acted in.
     const company = context.originatorLegalEntityId;
     if (company === undefined) {
-      return yield* rejected('WORKER_CONTEXT_INVALID', 'The stage change names no company of the opportunity', false);
+      return yield* rejected(
+        'OPPORTUNITY_WITHOUT_COMPANY',
+        'The stage change names no company of the opportunity',
+        false,
+      );
     }
     const wonAt = DateTime.toEpochMillis(DateTime.makeUnsafe(payload.changedAt));
     const failureContext: FailureContext = {
@@ -272,10 +299,11 @@ export const draftInvoiceFromWonOpportunityWorker = defineOutboxWorker(
     legalEntityScope: 'required',
     payloadSchema: OutboxPayloadSchema,
     producerModuleKey: outboxProducerModuleKey,
-    // Core retries every retryable failure on this one schedule and gives up (dead) at maxAttempts; a terminal refusal
-    // is dead at once. A not-ready delivery (VAT not set up, Tax unavailable) retries for 72 hours from the win, then
-    // the worker ends it terminal (NOT_READY_WINDOW_HOURS); other retryable failures keep the Outbox's longest back-off
-    // (Core's limits: 100 attempts, one day apart).
+    // Core retries every failure on this one schedule and gives up (dead) at maxAttempts. A not-ready delivery (VAT
+    // not set up, Tax unavailable) retries for 72 hours from the win, then completes without a draft
+    // (NOT_READY_WINDOW_HOURS): the back-off doubles from one second, so those 72 hours take about 18 attempts of the
+    // 100. Business outcomes complete at once (SETTLED_WITHOUT_DRAFT); only system failures keep the Outbox's longest
+    // back-off (Core's limits: 100 attempts, one day apart).
     retryPolicy: {
       initialBackoffMs: 1000,
       maxAttempts: 100,
@@ -285,5 +313,8 @@ export const draftInvoiceFromWonOpportunityWorker = defineOutboxWorker(
     topic: outboxTopic,
     workerKey,
   },
-  handleDraftInvoiceFromWonOpportunity,
+  (payload, context) =>
+    handleDraftInvoiceFromWonOpportunity(payload, context).pipe(
+      Effect.catchTag('DraftInvoiceFromWonOpportunityRejected', settleBusinessOutcome(payload, context)),
+    ),
 );

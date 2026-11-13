@@ -3,16 +3,10 @@ import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
-import { defineOutboxWorker, outboxTerminalFailureFields } from '../../src/outbox/definition.ts';
+import { defineOutboxWorker } from '../../src/outbox/definition.ts';
 import type { OutboxWorkerHandler, OutboxWorkerRegistration } from '../../src/outbox/definition.ts';
 import { OutboxClaimLostError, OutboxWorkerDescriptorError } from '../../src/outbox/errors.ts';
-import { outboxFailureStatus } from '../../src/outbox/repository.ts';
-import type {
-  OutboxClaim,
-  OutboxFailureDisposition,
-  OutboxFailureStatus,
-  OutboxRepositoryService,
-} from '../../src/outbox/repository.ts';
+import type { OutboxClaim, OutboxFailureStatus, OutboxRepositoryService } from '../../src/outbox/repository.ts';
 import { makeOutboxRuntime } from '../../src/outbox/runtime.ts';
 
 const TestHandlerFailureContract = Schema.TaggedStruct('TestHandlerFailure', {
@@ -21,16 +15,6 @@ const TestHandlerFailureContract = Schema.TaggedStruct('TestHandlerFailure', {
 type TestHandlerFailureSelf = typeof TestHandlerFailureContract.Type;
 const TestHandlerFailure = Schema.TaggedError<TestHandlerFailureSelf>()('TestHandlerFailure', {
   reason: Schema.String,
-});
-const TestRefusalContract = Schema.TaggedStruct('TestRefusal', {
-  reason: Schema.String,
-  ...outboxTerminalFailureFields,
-});
-type TestRefusalSelf = typeof TestRefusalContract.Type;
-/** A worker's own failure that may mark itself terminal. */
-const TestRefusal = Schema.TaggedError<TestRefusalSelf>()('TestRefusal', {
-  reason: Schema.String,
-  ...outboxTerminalFailureFields,
 });
 
 class TestWorkerDependency extends Context.Service<
@@ -96,11 +80,7 @@ interface RepositoryProbe {
   readonly claimedAt: Date[];
   readonly completed: OutboxClaim[];
   readonly completedAt: Date[];
-  readonly failed: {
-    readonly claim: OutboxClaim;
-    readonly disposition: OutboxFailureDisposition | undefined;
-    readonly message: string;
-  }[];
+  readonly failed: { readonly claim: OutboxClaim; readonly message: string }[];
   readonly failedAt: Date[];
   readonly matchedRevisions: string[];
 }
@@ -148,10 +128,10 @@ const repository = (
           probe.completed.push(claimed);
         });
       },
-      fail: (claimed, message, now, disposition) =>
+      fail: (claimed, message, now) =>
         Effect.sync(() => {
           probe.failedAt.push(now);
-          probe.failed.push({ claim: claimed, disposition, message });
+          probe.failed.push({ claim: claimed, message });
           return failureStatuses.shift() ?? 'pending';
         }),
       matchUnmatched: (revision) =>
@@ -457,30 +437,6 @@ it.effect('classifies declared failures, defects, retry exhaustion, and never co
     expect(defect.probe.failed[0]?.message ?? '').not.toMatch(/password/u);
     expect(declared.probe.completed).toEqual([]);
     expect(defect.probe.completed).toEqual([]);
-  }),
-);
-
-it.effect('ends a delivery at once only when the worker marks its declared failure terminal', () =>
-  Effect.gen(function* terminalFailure() {
-    const dispositionOf = function* dispositionOf(registration: NoRequirementsWorker) {
-      const controlled = repository({ claims: [claim()] });
-      yield* run(controlled.service, registration);
-      expect(controlled.probe.completed).toEqual([]);
-      return controlled.probe.failed.map((failure) => failure.disposition);
-    };
-    expect(
-      yield* dispositionOf(worker(() => Effect.fail(new TestRefusal({ outboxTerminal: true, reason: 'never valid' })))),
-    ).toEqual(['terminal']);
-    // The same failure without the mark, any other declared failure, and a defect keep the worker's retry policy.
-    expect(yield* dispositionOf(worker(() => Effect.fail(new TestRefusal({ reason: 'not yet' }))))).toEqual(['retry']);
-    expect(yield* dispositionOf(worker(() => Effect.fail(new TestHandlerFailure({ reason: 'not yet' }))))).toEqual([
-      'retry',
-    ]);
-    expect(yield* dispositionOf(worker(() => Effect.die({ outboxTerminal: true })))).toEqual(['retry']);
-    // The repository settles a terminal failure as dead on its first attempt, a retried one only once attempts run out.
-    expect(outboxFailureStatus(claim(1), 'terminal')).toBe('dead');
-    expect(outboxFailureStatus(claim(1), 'retry')).toBe('pending');
-    expect(outboxFailureStatus(claim(2), 'retry')).toBe('dead');
   }),
 );
 

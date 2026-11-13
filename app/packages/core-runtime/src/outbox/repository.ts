@@ -62,18 +62,6 @@ export interface OutboxClaim {
 }
 const OutboxFailureStatusSchema = Schema.Literals(['dead', 'pending']);
 export type OutboxFailureStatus = typeof OutboxFailureStatusSchema.Type;
-/** How a failed attempt settles: on the worker's retry policy, or terminal (dead at once). */
-const OutboxFailureDispositionSchema = Schema.Literals(['retry', 'terminal']);
-export type OutboxFailureDisposition = typeof OutboxFailureDispositionSchema.Type;
-/**
- * Where a failed attempt leaves its delivery: dead once the retry policy has no attempt left, or at once when the
- * failure is terminal; otherwise pending for the next retry.
- */
-export const outboxFailureStatus = (
-  claim: Pick<OutboxClaim, 'attemptNumber' | 'retryPolicy'>,
-  disposition: OutboxFailureDisposition,
-): OutboxFailureStatus =>
-  disposition === 'terminal' || claim.attemptNumber >= claim.retryPolicy.maxAttempts ? 'dead' : 'pending';
 export interface OutboxRepositoryService {
   readonly claimNext: (
     registrations: readonly AnyOutboxWorkerRegistration[],
@@ -86,8 +74,6 @@ export interface OutboxRepositoryService {
     claim: OutboxClaim,
     safeErrorMessage: string,
     now: Date,
-    /** Defaults to `retry`: the worker's retry policy decides. */
-    disposition?: OutboxFailureDisposition,
   ) => Effect.Effect<OutboxFailureStatus, OutboxClaimLostError | PersistenceFailure>;
   readonly matchUnmatched: (
     compositionRevision: string,
@@ -583,7 +569,7 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
           Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
           Effect.mapError(claimLostOrPersistenceError),
         ),
-    fail: (claim, safeErrorMessage, now, disposition = 'retry') =>
+    fail: (claim, safeErrorMessage, now) =>
       executor
         .transaction(
           Effect.fn('failEffect')(function* failEffect(transaction: CoreTransaction) {
@@ -612,7 +598,8 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
             if (finishedAttempts.length !== 1) {
               return yield* claimLost();
             }
-            const status = outboxFailureStatus(claim, disposition);
+            const status: OutboxFailureStatus =
+              claim.attemptNumber >= claim.retryPolicy.maxAttempts ? 'dead' : 'pending';
             const availableAt =
               status === 'dead' ? now : addMilliseconds(now, retryBackoffMs(claim.retryPolicy, claim.attemptNumber));
             const updated = yield* transaction
