@@ -212,7 +212,7 @@ it('withholds an agent role over any non-routine risk, and names that risk once'
       },
       { catalogEntries: [partyEntry(CAP_NOTE)] },
     ),
-  ).toContain('access_projection_cell_outside_declaration');
+  ).toEqual(['access_projection_unknown_capability']);
 });
 
 it('shares one binding and one grant cell across every holder of a role (M1)', () => {
