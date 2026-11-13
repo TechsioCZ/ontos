@@ -1,3 +1,4 @@
+import type { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Hex } from 'effect/encoding';
@@ -68,6 +69,8 @@ export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
     CompanyDirectory,
     Effect.gen(function* companyDirectoryService() {
       const reads = yield* ReadRuntime;
+      // The directory read asks the agent administration right in its `prepare`, through this composition's gate.
+      const gateContext = yield* Effect.context<AccessDecisionGate>();
       const actions = yield* ActionRuntime;
       const projectionWriter = yield* AccessProjectionWriter;
       const scopeResolver = yield* OperationalScopeResolver;
@@ -80,6 +83,7 @@ export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
           transport: { correlationId: request.transport.correlationId },
         }),
       ).pipe(
+        Effect.provideContext(gateContext),
         Effect.map(directorySnapshot),
         Effect.mapError(fromRuntimeError),
         Effect.withSpan('CompanyDirectory.snapshot'),

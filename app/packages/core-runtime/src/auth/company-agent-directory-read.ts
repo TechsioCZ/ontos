@@ -3,6 +3,7 @@ import { and, eq, inArray, or } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
 
 import { principals } from '../db/schema.ts';
+import { requireAgentAdministration } from './agent-administration.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import { ConfigureAgentAuditEvidenceSchema } from '../modules/actions/configure-agent.action.ts';
 import {
@@ -107,6 +108,8 @@ const prepare = Effect.fn('CompanyAgentDirectory.prepare')(function* prepare(
   _input: typeof CompanyAgentDirectoryInputSchema.Type,
   context: ReadPrepareContext,
 ) {
+  // The directory behind the Agents administration page: only the company's agent administrators read it.
+  yield* requireAgentAdministration(context.scope);
   const { legalEntityId, tenantId } = context.scope;
   const companyObjectId =
     legalEntityId === undefined ? undefined : toLegalEntityAccessObjectId(tenantId, legalEntityId);
@@ -235,7 +238,7 @@ export const companyAgentDirectoryRead = defineRead(
     inputSchema: CompanyAgentDirectoryInputSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'core.identity',
-    permissionTarget: 'tenant',
+    permissionTarget: 'legal_entity',
     policies: [],
     readKey: 'core.identity.company-agent-directory',
     resultSchema: CompanyAgentDirectoryResultSchema,
@@ -243,11 +246,7 @@ export const companyAgentDirectoryRead = defineRead(
   },
   { finish, load, prepare },
   (transaction) => Effect.succeed(directoryFromTransaction(transaction)),
-  () => ({
-    kind: 'any_of',
-    targets: [
-      { kind: 'tenant', permission: 'read_people' },
-      { kind: 'legal_entity', permission: 'read_people' },
-    ],
-  }),
+  // Admitted by authentication in the gate-decided company scope; `prepare` asks the read's own v2 question. No legacy
+  // relation is asked: `read_people` is not v2 intent and the v2 schema defines none, so asking it was unavailable.
+  () => ({ kind: 'legal_entity' }),
 );
