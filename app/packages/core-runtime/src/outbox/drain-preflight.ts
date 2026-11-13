@@ -11,6 +11,7 @@ import { Duration, Effect, Schema } from 'effect';
 import { outboxDeliveries, outboxMessages } from '../db/schema.ts';
 import type { CoreDbExecutor } from '../db/types.ts';
 import { carriesOverToNextRelease } from './carry-over.ts';
+import { stalledLongerThanBudget } from './undrainable-work.ts';
 import { activeMessageTenant, backgroundEligibleConsumer } from './repository.ts';
 import type { OutboxConsumerKey } from './repository.ts';
 
@@ -76,9 +77,7 @@ export const listDrainWork = Effect.fn('Outbox.listDrainWork')(function* listDra
       status: outboxDeliveries.status,
       tenantId: outboxMessages.tenantId,
       trackedRevision: outboxMessages.completionOriginalRevision,
-      unclaimedTooLong: sql<boolean>`${outboxDeliveries.status} = 'pending' and ${outboxDeliveries.attemptsCount} = 0
-        and ${outboxDeliveries.claimedBy} is null and ${outboxDeliveries.createdAt} < ${budgetAgo}
-        and ${outboxDeliveries.availableAt} < clock_timestamp()`,
+      unclaimedTooLong: sql<boolean>`coalesce(${stalledLongerThanBudget(budgetAgo)}, false)`,
       workerKey: outboxDeliveries.workerKey,
     })
     .from(outboxDeliveries)

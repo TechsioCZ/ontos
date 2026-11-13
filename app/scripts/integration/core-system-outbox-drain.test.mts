@@ -441,10 +441,15 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
     Effect.gen(function* promotesThroughInterleavedClaim() {
       const f = yield* fixture();
       const next = yield* snapshotFor(`${FIXTURE_NAME}-new`, 7200);
-      // The interleaving the drain poll cannot see: a host of the retiring release, with the claim fix, takes a
-      // carried-over row after the poll said "drained" and finishes it while the promote runs.
-      const interleaved = yield* Effect.gen(function* claimThenFinish() {
-        yield* Effect.sleep('300 millis');
+      const claims = yield* Ref.make(0);
+      const claimedWorkerKey = yield* Ref.make('');
+      // `verifyInitialCutover` is called once inside the drain (entering `draining`) and again immediately before
+      // the promote. Claiming on that second call puts the claim deterministically between the drain poll and the
+      // promote's own check — the interleaving a live host of the retiring release can really cause.
+      const claimBeforePromote = Effect.gen(function* claimOnSecondCall() {
+        if ((yield* Ref.updateAndGet(claims, (seen) => seen + 1)) !== 2) {
+          return;
+        }
         const claim = yield* withWorkerRuntimeBinding(
           {
             authority: { load: Effect.succeed(f.old) },
@@ -452,27 +457,32 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
             registrations: ALL_CORE_WORKERS,
           },
           f.repository.claimNext(ALL_CORE_WORKERS, CLAIM_OWNER, yield* DateTime.nowAsDate, f.old.composition.revision),
-        ).pipe(
-          Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(f.old) }),
-          Effect.orElseSucceed(() => Option.none()),
-        );
-        if (Option.isNone(claim)) {
-          return;
-        }
-        yield* Effect.sleep('300 millis');
-        yield* f.repository.complete(claim.value, yield* DateTime.nowAsDate).pipe(Effect.ignore);
-      }).pipe(Effect.forkChild);
+        ).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(f.old) }));
+        // It must really be claimed, or this test would silently stop proving the retry.
+        expect(Option.isSome(claim)).toBe(true);
+        yield* Ref.set(claimedWorkerKey, Option.getOrThrow(claim).workerKey);
+        // The retiring host finishes it while the publisher re-drains, so the retry can succeed.
+        yield* f.repository
+          .complete(Option.getOrThrow(claim), yield* DateTime.nowAsDate)
+          .pipe(Effect.delay('500 millis'), Effect.forkChild);
+      });
 
-      yield* publishApplicationCompositionAuthoritySnapshot(next, Effect.void, Effect.void).pipe(
+      yield* publishApplicationCompositionAuthoritySnapshot(next, Effect.void, claimBeforePromote).pipe(
         Effect.provide(f.layer),
       );
-      yield* Fiber.join(interleaved);
-      // The promotion went through and the authority is the new release's, admitting reads again.
+      // The claim happened where it was aimed, and the promotion still landed on the new revision.
+      expect(yield* Ref.get(claims)).toBeGreaterThanOrEqual(2);
       expect(yield* authorityRow(f.runtime)).toMatchObject({
         durableWorkAdmission: 'open',
         phase: 'active',
         revision: next.composition.revision,
       });
+      // The very row the retiring host claimed mid-promotion finished, which is what let the retry through.
+      const [claimed] = yield* f.runtime
+        .select({ status: outboxDeliveries.status })
+        .from(outboxDeliveries)
+        .where(eq(outboxDeliveries.workerKey, yield* Ref.get(claimedWorkerKey)));
+      expect(claimed).toMatchObject({ status: 'done' });
     }),
   );
 
@@ -520,7 +530,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       // Because it does not carry over, the pre-flight can see it: exempting by worker key alone would hide a row
       // the drain still blocks on. Aged past a whole budget, nothing has picked it up, so it is refused.
       yield* f.admin.executor.execute(
-        sql`update ${outboxDeliveries} set created_at = clock_timestamp() - interval '2 hours'
+        sql`update ${outboxDeliveries} set available_at = clock_timestamp() - interval '2 hours'
             where ${outboxDeliveries.workerKey} = ${corePrincipalLifecycleSubscription.workerKey}`,
         'objects',
       );

@@ -111,10 +111,29 @@ const preflight = (budgetMs: number, limit: number) =>
       coreSystemConsumers: sets.coreSystemConsumers,
     });
     const described = describeUndrainableOutboxWork(undrainable.filter((delivery) => delivery.reason !== 'dead'));
-    const starts = undrainable.length === 0;
+    // The pre-flight only ever runs for an `active` authority. Say what the publisher would really do otherwise,
+    // and count unmatched messages, which the drain and every seal block on just as hard.
+    const blockers = [
+      ...(undrainable.length === 0 ? [] : [`${String(undrainable.length)} delivery(ies) would be refused`]),
+      ...(unmatched === 0 ? [] : [`${String(unmatched)} unmatched message(s) would block the drain`]),
+    ];
+    if (authority.phase === 'draining') {
+      yield* Console.log(
+        'this authority is draining: the running release already refuses reads, and a publication would resume its Outbox drain rather than run this pre-flight. Follow "Returning a stuck authority to active" in docs/architecture/DEPLOYMENT.md.',
+      );
+      return false;
+    }
+    if (authority.phase === 'sealed') {
+      yield* Console.log(
+        'this authority is sealed: a replacement publication is refused outright until a migration completes.',
+      );
+      return false;
+    }
+    const starts = blockers.length === 0;
+    const skipsDrain = authority.phase === 'migrated';
     yield* Console.log(
-      `a publication of this release would start its drain: ${starts ? 'yes' : 'no'}${
-        starts ? '' : ` (${String(undrainable.length)} row(s) would be refused)`
+      `a publication of this release would ${skipsDrain ? 'promote without a drain (the authority is migrated), and its promotion check' : 'start its drain'}: ${
+        starts ? 'yes' : `no (${blockers.join('; ')})`
       }`,
     );
     if (described !== '') {

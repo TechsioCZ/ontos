@@ -22,6 +22,7 @@
  *   been picked up by anything, whatever the reason, so it is reported.
  */
 import { and, asc, eq, gt, lt, notInArray, or, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import { DateTime, Duration, Effect, Schema } from 'effect';
 
 import { outboxDeliveries, outboxMessages } from '../db/schema.ts';
@@ -60,6 +61,27 @@ export interface UndrainableOutboxDelivery {
 /** Enough rows to act on; the message says when there are more. */
 export const UNDRAINABLE_REPORT_LIMIT = 20;
 
+/**
+ * Work nothing has picked up for longer than a whole drain budget, in the one place both the pre-flight and the
+ * operator command ask it. It covers the claim terms that cannot be asked from the database alone — an inactive
+ * intrinsic provider, and a worker key no live host registers.
+ *
+ * Age is measured by `available_at`, never `created_at`: a redrive resets a row to pending and due now while
+ * keeping its original `created_at`, and a deploy straight after a documented redrive must not be refused for a
+ * row that has been claimable for seconds. A `processing` row counts once its claim lease has been expired for a
+ * whole budget — the claim path would hand it to a live host at once, so only a row no host takes stays stuck.
+ */
+export const stalledLongerThanBudget = (budgetAgo: SQL) =>
+  or(
+    and(
+      eq(outboxDeliveries.status, 'pending'),
+      eq(outboxDeliveries.attemptsCount, 0),
+      sql`${outboxDeliveries.claimedBy} is null`,
+      lt(outboxDeliveries.availableAt, budgetAgo),
+    ),
+    and(eq(outboxDeliveries.status, 'processing'), lt(outboxDeliveries.claimExpiresAt, budgetAgo)),
+  );
+
 export interface UndrainableOutboxWorkInput {
   readonly budgetMs: number;
   /** Proven-identical core-system keys: the rows these carry over are exempt, by the shared predicate. */
@@ -89,15 +111,7 @@ export const listUndrainableOutboxWork = Effect.fn('Outbox.listUndrainableWork')
     sql`not (${activeMessageTenant})`,
   );
   const ineligible = and(eq(outboxDeliveries.status, 'pending'), noLiveConsumer);
-  // Nothing picked it up for a whole budget: covers an inactive intrinsic provider and a worker key no live host
-  // registers, neither of which can be asked from the database alone.
-  const unclaimedTooLong = and(
-    eq(outboxDeliveries.status, 'pending'),
-    eq(outboxDeliveries.attemptsCount, 0),
-    sql`${outboxDeliveries.claimedBy} is null`,
-    lt(outboxDeliveries.createdAt, budgetAgo),
-    lt(outboxDeliveries.availableAt, sql`clock_timestamp()`),
-  );
+  const stalled = stalledLongerThanBudget(budgetAgo);
   return yield* executor
     .select({
       attemptsCount: outboxDeliveries.attemptsCount,
@@ -107,6 +121,7 @@ export const listUndrainableOutboxWork = Effect.fn('Outbox.listUndrainableWork')
       reason: sql<UndrainableOutboxReason>`case
           when ${outboxDeliveries.status} = 'dead' then 'dead'
           when ${outboxDeliveries.availableAt} > ${deadline} then 'scheduled-beyond-budget'
+          when ${stalled} then 'unclaimed-longer-than-budget'
           when ${noLiveConsumer} then 'no-eligible-consumer'
           else 'unclaimed-longer-than-budget' end`,
       status: outboxDeliveries.status,
@@ -120,12 +135,7 @@ export const listUndrainableOutboxWork = Effect.fn('Outbox.listUndrainableWork')
         notInArray(outboxDeliveries.status, ['done', 'released']),
         // Exactly the rows the drain carries over are exempt, and only those.
         carriesOver === undefined ? undefined : sql`not ${carriesOver}`,
-        or(
-          eq(outboxDeliveries.status, 'dead'),
-          gt(outboxDeliveries.availableAt, deadline),
-          ineligible,
-          unclaimedTooLong,
-        ),
+        or(eq(outboxDeliveries.status, 'dead'), gt(outboxDeliveries.availableAt, deadline), ineligible, stalled),
       ),
     )
     .orderBy(asc(outboxDeliveries.createdAt), asc(outboxDeliveries.outboxDeliveryId))
