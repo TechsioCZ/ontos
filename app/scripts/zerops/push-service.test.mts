@@ -11,6 +11,9 @@ import { collectToolingProcess } from '../tests/tooling-process-fixture.mts';
 
 const ZEROPS_API_ORIGIN = 'https://api.app-prg1.zerops.io';
 const SERVICE_ID = 'service-under-test';
+const TOKEN = 'test-token';
+const UPLOAD_ROUTE = 'PUT /upload';
+const DEPLOYED = 'app deployed in';
 
 /**
  * The real `curl` against a local stand-in for the Zerops API: the shim only points the script's fixed API origin at
@@ -20,9 +23,15 @@ const SERVICE_ID = 'service-under-test';
 const shims = {
   curl: `#!/usr/bin/env bash
 zerops="${ZEROPS_API_ORIGIN}"
+printf '%s\\n' "$*" >>"$RUNNER_TEMP/curl-calls"
+# FAKE_CURL_HEAD_FAIL makes the warm-up HEAD fail the way curl does: 7 cannot connect, 28 timed out.
+if [ -n "\${FAKE_CURL_HEAD_FAIL:-}" ]; then
+  for arg in "$@"; do
+    if [ "$arg" = -I ]; then exit "$FAKE_CURL_HEAD_FAIL"; fi
+  done
+fi
 args=()
 for arg in "$@"; do args+=("\${arg/#"$zerops"/$FAKE_ZEROPS_ORIGIN}"); done
-printf '%s\\n' "$*" >>"$RUNNER_TEMP/curl-calls"
 exec "$REAL_CURL" "\${args[@]}"
 `,
   find: `#!/usr/bin/env bash
@@ -64,12 +73,17 @@ const PLAIN_UPLOAD = '/upload';
 const runPush = (
   answer: ProcessAnswer,
   environment: Readonly<Record<string, string>> = {},
-  upload: { readonly origin?: (origin: string) => string; readonly target?: string } = {},
+  upload: {
+    readonly delayFirstUploadMs?: number;
+    readonly origin?: (origin: string) => string;
+    readonly target?: string;
+  } = {},
 ) =>
   Effect.gen(function* pushAgainstFakeApi() {
     const fs = yield* FileSystem.FileSystem;
     const calls: string[] = [];
     let polls = 0;
+    let uploadCount = 0;
     const api = HttpServer.serve(
       Effect.gen(function* fakeZeropsApi() {
         const request = yield* HttpServerRequest.HttpServerRequest;
@@ -83,7 +97,11 @@ const runPush = (
             uploadUrl: `${upload.origin?.(origin) ?? origin}${upload.target ?? PLAIN_UPLOAD}`,
           });
         }
-        if (route.startsWith('PUT /upload')) {
+        if (route.startsWith(UPLOAD_ROUTE)) {
+          uploadCount += 1;
+          if (uploadCount === 1 && upload.delayFirstUploadMs !== undefined) {
+            yield* Effect.sleep(upload.delayFirstUploadMs);
+          }
           return HttpServerResponse.empty({ status: 200 });
         }
         if (route === 'PUT /api/rest/public/app-version/version-1/build-and-deploy') {
@@ -122,7 +140,7 @@ const runPush = (
             PATH: `${bin}:${searchPath}`,
             REAL_CURL: realCurl,
             RUNNER_TEMP: directory,
-            ZEROPS_TOKEN: 'test-token',
+            ZEROPS_TOKEN: TOKEN,
           },
           extendEnv: true,
         }),
@@ -136,7 +154,7 @@ const runPush = (
 const writes = (calls: readonly string[]) => calls.filter((call) => !call.startsWith('GET '));
 const ONE_EACH = [
   `POST /api/rest/public/service-stack/${SERVICE_ID}/app-version`,
-  'PUT /upload',
+  UPLOAD_ROUTE,
   'PUT /api/rest/public/app-version/version-1/build-and-deploy',
 ];
 
@@ -144,7 +162,7 @@ it.live('a deploy poll that meets two 502s asks again and reports the deploy', (
   Effect.gen(function* transientGateway() {
     const result = yield* runPush((call) => (call <= 2 ? badGateway : processState('FINISHED')));
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('app deployed in');
+    expect(result.stdout).toContain(DEPLOYED);
     expect(result.polls).toBe(3);
     // The app version and the build-and-deploy request are never repeated.
     expect(writes(result.calls)).toEqual(ONE_EACH);
@@ -174,7 +192,7 @@ it.live(
         'process state: FINISHED',
         'app deployed in Ns',
       ]);
-      expect(result.stdout).not.toContain('test-token');
+      expect(result.stdout).not.toContain(TOKEN);
       expect(result.stdout).not.toContain('/upload');
     }),
 );
@@ -222,6 +240,110 @@ it.live('the upload rate limit is an experiment: off by default, passed to curl 
     expect(malformed.status).toBe(1);
     expect(malformed.stderr).toContain('ONTOS_PUSH_UPLOAD_LIMIT_RATE must be a curl rate such as 8M');
     expect(malformed.calls).toEqual([]);
+  }),
+);
+
+/** The curl calls that warmed the upload host up: a HEAD, so the only ones with -I. */
+const warmups = (curlArguments: string) => curlArguments.split('\n').filter((call) => call.includes(' -I '));
+
+it.live('the upload warm-up is an experiment: off by default, exactly one before the first upload when on', () =>
+  Effect.gen(function* uploadWarmup() {
+    const plain = yield* runPush(() => processState('FINISHED'));
+    expect(plain.stdout).not.toContain('warm-up');
+    expect(warmups(plain.curlArguments)).toHaveLength(0);
+    expect(writes(plain.calls)).toEqual(ONE_EACH);
+    // Spelling the switch out as false changes nothing either.
+    const explicit = yield* runPush(() => processState('FINISHED'), { ONTOS_PUSH_UPLOAD_WARMUP: 'false' });
+    expect(explicit.stdout).not.toContain('warm-up');
+    expect(explicit.calls).toEqual(plain.calls);
+
+    const warm = yield* runPush(() => processState('FINISHED'), { ONTOS_PUSH_UPLOAD_WARMUP: 'true' });
+    expect(warm.status).toBe(0);
+    // One warm-up, once, before the first upload, and the deploy's command sequence is otherwise unchanged.
+    expect(warm.calls.filter((call) => call === 'HEAD /')).toHaveLength(1);
+    expect(warm.calls.indexOf('HEAD /')).toBeLessThan(warm.calls.indexOf(UPLOAD_ROUTE));
+    expect(writes(warm.calls).filter((call) => call !== 'HEAD /')).toEqual(ONE_EACH);
+    expect(warmups(warm.curlArguments)).toHaveLength(1);
+    expect(uploads(warm.curlArguments)).toHaveLength(1);
+    expect(warm.curlArguments.split('\n')[1]).toContain(' -I ');
+    // One fact line with the same fields as the upload facts: start time, duration, status and bytes.
+    expect(warm.stdout).toMatch(
+      /upload warm-up \(attempt 1, 0 bytes\): host 127\.0\.0\.1, started \d{4}-\d{2}-\d{2}T[\d:.]+Z, namelookup=[\d.]+ connect=[\d.]+ appconnect=[\d.]+ pretransfer=[\d.]+ starttransfer=[\d.]+ total=[\d.]+ speed_upload=[\d.]+ size_upload=0 http_code=\d+ curl_exit=0/u,
+    );
+  }),
+);
+
+it.live('the warm-up runs only before the first upload: a retried upload is not warmed again', () =>
+  Effect.gen(function* uploadWarmupRetry() {
+    const result = yield* runPush(
+      () => processState('FINISHED'),
+      { ONTOS_PUSH_UPLOAD_WARMUP: 'true', UPLOAD_LIMIT_SECONDS: '1' },
+      { delayFirstUploadMs: 3000 },
+    );
+    expect(result.status).toBe(0);
+    expect(uploads(result.curlArguments)).toHaveLength(2);
+    expect(warmups(result.curlArguments)).toHaveLength(1);
+    expect(result.calls.filter((call) => call === 'HEAD /')).toHaveLength(1);
+    expect(result.stdout).toContain('upload warm-up (attempt 1, 0 bytes)');
+    expect(result.stdout).toContain('upload started (attempt 2');
+    expect(result.stdout).not.toContain('upload warm-up (attempt 2');
+  }),
+);
+
+it.live('a warm-up that cannot connect is logged and the deploy carries on unchanged', () =>
+  Effect.gen(function* uploadWarmupError() {
+    const result = yield* runPush(() => processState('FINISHED'), {
+      FAKE_CURL_HEAD_FAIL: '7',
+      ONTOS_PUSH_UPLOAD_WARMUP: 'true',
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(DEPLOYED);
+    expect(result.stdout).toContain('curl_exit=7 (the warm-up failed; the push continues)');
+    expect(warmups(result.curlArguments)).toHaveLength(1);
+    expect(uploads(result.curlArguments)).toHaveLength(1);
+  }),
+);
+
+it.live('a warm-up that times out inside its 40 s cap is logged and the deploy carries on unchanged', () =>
+  Effect.gen(function* uploadWarmupTimeout() {
+    const result = yield* runPush(() => processState('FINISHED'), {
+      FAKE_CURL_HEAD_FAIL: '28',
+      ONTOS_PUSH_UPLOAD_WARMUP: 'true',
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(DEPLOYED);
+    expect(result.stdout).toContain('curl_exit=28 (the warm-up failed; the push continues)');
+    expect(warmups(result.curlArguments)[0]).toContain('--max-time 40');
+    expect(uploads(result.curlArguments)).toHaveLength(1);
+  }),
+);
+
+it.live('the warm-up carries no credential: no token, no user info, no signed path or query', () =>
+  Effect.gen(function* uploadWarmupSecrets() {
+    const result = yield* runPush(
+      () => processState('FINISHED'),
+      { ONTOS_PUSH_UPLOAD_WARMUP: 'true' },
+      {
+        origin: (origin) => origin.replace('//', '//uploader:SECRET-PASSWORD@'),
+        target: '/upload/SECRET-PATH?X-Amz-Signature=SECRET-SIGNATURE&token=SECRET-TOKEN',
+      },
+    );
+    expect(result.status).toBe(0);
+    const head = warmups(result.curlArguments)[0] ?? '';
+    expect(head).toContain(' -I ');
+    expect(head).toContain('http://127.0.0.1:');
+    expect(head).not.toContain('SECRET');
+    expect(`${result.stdout}${result.stderr}`).not.toContain('SECRET');
+    expect(result.stdout).not.toContain(TOKEN);
+  }),
+);
+
+it.live('the warm-up switch refuses a value that is neither true nor false, before any remote mutation', () =>
+  Effect.gen(function* uploadWarmupSwitch() {
+    const result = yield* runPush(() => processState('FINISHED'), { ONTOS_PUSH_UPLOAD_WARMUP: 'maybe' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('ONTOS_PUSH_UPLOAD_WARMUP must be true or false');
+    expect(result.calls).toEqual([]);
   }),
 );
 
