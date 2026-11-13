@@ -1442,7 +1442,7 @@ const forwardDuringDrain = Effect.fn('AppHost.forwardDuringDrain')(function* for
       lastPeer = target;
       const refusedConnection = CONNECT_FAILURES.has(last.code);
       if (refusedConnection || last.code === 'PEER_DRAINING') {
-        yield* drain.drop(peer);
+        yield* drain.drop(peer, refusedConnection ? 'refused' : 'draining');
       }
       if (!refusedConnection && last.code !== 'PEER_DRAINING') {
         // The request may have reached this peer: it is never sent to another one, and the caller is not told to retry.

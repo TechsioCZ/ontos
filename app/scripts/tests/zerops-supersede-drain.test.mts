@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import type { IncomingHttpHeaders } from 'node:http';
-import { connect } from 'node:net';
+import { connect, createServer as createTcpServer } from 'node:net';
 import path from 'node:path';
 
 import { NodeHttpServer, NodeServices } from '@effect/platform-node';
@@ -286,7 +286,7 @@ it.live('the drain marker: refused when a draining host receives it, stripped an
   }),
 );
 
-it.live('with no other app container the old host closes its public port at once', () =>
+it.live('with no other app container, after 5 s of asking the DNS again, the old host closes its public port', () =>
   Effect.gen(function* noPeer() {
     const console = yield* TestConsole.make;
     const hosts = yield* twoHosts();
@@ -705,4 +705,60 @@ it.live(
       // After the deadline the listener no longer accepts.
       expect((yield* send(old.port, ECHO)).error).toBe('ECONNREFUSED');
     }),
+);
+
+const decodeBoundPort = Schema.decodeUnknownOption(Schema.Struct({ port: Schema.Number }));
+
+/** A loopback port nothing listens on yet: bound once by the OS, then released. */
+const freePort = Effect.callback<number>((resume) => {
+  const probe = createTcpServer();
+  probe.listen(0, '127.0.0.1', () => {
+    const port = Option.match(decodeBoundPort(probe.address()), { onNone: () => 0, onSome: (bound) => bound.port });
+    probe.close(() => resume(Effect.succeed(port)));
+  });
+});
+
+/** From now on, `port` accepts connections and pipes their bytes to `target`: a listener that came up late. */
+const lateListener = (port: number, target: number) =>
+  Effect.acquireRelease(
+    Effect.callback<ReturnType<typeof createTcpServer>>((resume) => {
+      const server = createTcpServer((client) => {
+        const upstream = connect(target, '127.0.0.1');
+        client.pipe(upstream).pipe(client);
+      });
+      server.listen(port, '127.0.0.1', () => resume(Effect.succeed(server)));
+    }),
+    (server) =>
+      Effect.callback<true>((resume) => {
+        server.close(() => resume(Effect.succeed(true)));
+      }),
+  );
+
+it.live('a peer that refused the connection once is tried again after the next resolution', () =>
+  Effect.gen(function* lateNewHost() {
+    const [a, c] = yield* Effect.all([standingHost('a'), standingHost('c')]);
+    const port = yield* freePort;
+    yield* startDrain(a.supersede(Effect.succeed([peerAt(port)])), a.drain);
+    // The new host's listener is not up yet: nothing reached it, so the caller may retry.
+    expect((yield* send(a.port, ECHO)).status).toBe(503);
+    yield* lateListener(port, c.port);
+    yield* Effect.sleep('1100 millis');
+    expect(releaseOf(yield* send(a.port, ECHO))).toBe('c');
+  }),
+);
+
+it.live('an empty DNS answer at supersede is asked again, and the drain proceeds once the new host resolves', () =>
+  Effect.gen(function* dnsLag() {
+    const [a, c] = yield* Effect.all([standingHost('a'), standingHost('c')]);
+    const answers = yield* Ref.make<readonly (readonly DrainPeer[])[]>([[], [], [peerAt(c.port)]]);
+    const resolver = Ref.modify(
+      answers,
+      (remaining): readonly [readonly DrainPeer[], readonly (readonly DrainPeer[])[]] => [
+        remaining[0] ?? [],
+        remaining.length > 1 ? remaining.slice(1) : remaining,
+      ],
+    );
+    yield* startDrain(a.supersede(resolver), a.drain);
+    expect(releaseOf(yield* send(a.port, ECHO))).toBe('c');
+  }),
 );

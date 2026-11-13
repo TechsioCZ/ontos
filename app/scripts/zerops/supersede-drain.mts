@@ -19,7 +19,7 @@
 import { promises as dns } from 'node:dns';
 import { networkInterfaces } from 'node:os';
 
-import { Clock, Console, Deferred, Duration, Effect, Option, Ref } from 'effect';
+import { Clock, Console, Deferred, Duration, Effect, Option, Ref, Schedule } from 'effect';
 
 /**
  * How long a superseded host relays: the readiness probe period (`zerops.yaml` app `retryPeriod: 10s`) plus the
@@ -39,6 +39,10 @@ export const DRAIN_REFUSED_HEADER = 'x-ontos-drain-refused';
 
 /** Peers are resolved again only when every known one failed, and then at most once per second. */
 export const DRAIN_PEER_RESOLVE_INTERVAL = Duration.seconds(1);
+
+/** At supersede, an empty DNS answer is asked again every 500 ms for 5 s before the port closes. */
+export const DRAIN_PEER_FIRST_RESOLVE_RETRY = Duration.millis(500);
+export const DRAIN_PEER_FIRST_RESOLVE_ATTEMPTS = 10;
 
 /** The app service's hostname on the project's internal network (`zerops-import.yaml`). */
 export const APP_SERVICE_HOSTNAME = 'app';
@@ -72,7 +76,12 @@ export interface SupersedeDrain {
   readonly active: Effect.Effect<boolean>;
   readonly begin: (peers: readonly DrainPeer[], resolve: Effect.Effect<readonly DrainPeer[]>) => Effect.Effect<void>;
   readonly count: (outcome: keyof DrainCounts) => Effect.Effect<void>;
-  readonly drop: (peer: DrainPeer) => Effect.Effect<void>;
+  /**
+   * `draining`: the peer refused as a draining host itself, and stays dropped for the rest of the drain. `refused`: it
+   * refused the connection (a new host's listener a few milliseconds late), and is tried again after the next
+   * resolution.
+   */
+  readonly drop: (peer: DrainPeer, reason: 'draining' | 'refused') => Effect.Effect<void>;
   readonly ended: Deferred.Deferred<true>;
   readonly finish: Effect.Effect<DrainCounts>;
   readonly livePeers: Effect.Effect<readonly DrainPeer[]>;
@@ -90,6 +99,7 @@ interface DrainState {
   readonly active: boolean;
   readonly dropped: ReadonlySet<string>;
   readonly peers: readonly DrainPeer[];
+  readonly refused: ReadonlySet<string>;
   readonly resolve: Effect.Effect<readonly DrainPeer[]>;
   readonly resolvedAt: number;
 }
@@ -99,6 +109,7 @@ export const makeSupersedeDrain = (): SupersedeDrain => {
     active: false,
     dropped: new Set(),
     peers: [],
+    refused: new Set(),
     resolve: Effect.succeed([]),
     resolvedAt: 0,
   });
@@ -106,7 +117,8 @@ export const makeSupersedeDrain = (): SupersedeDrain => {
   const superseded = Deferred.makeUnsafe<true>();
   const ended = Deferred.makeUnsafe<true>();
   const stopping = Deferred.makeUnsafe<true>();
-  const live = ({ dropped, peers }: DrainState) => peers.filter((peer) => !dropped.has(peerKey(peer)));
+  const live = ({ dropped, peers, refused }: DrainState) =>
+    peers.filter((peer) => !dropped.has(peerKey(peer)) && !refused.has(peerKey(peer)));
   const count = (outcome: keyof DrainCounts) =>
     Ref.update(counts, (current) => ({ ...current, [outcome]: current[outcome] + 1 }));
   return {
@@ -120,12 +132,16 @@ export const makeSupersedeDrain = (): SupersedeDrain => {
         Effect.asVoid,
       ),
     count,
-    drop: (peer) =>
-      Ref.modify(state, (current) =>
-        current.dropped.has(peerKey(peer))
-          ? [false, current]
-          : [true, { ...current, dropped: new Set([...current.dropped, peerKey(peer)]) }],
-      ).pipe(Effect.flatMap((added) => (added ? count('dropped') : Effect.void))),
+    drop: (peer, reason) =>
+      Ref.modify(state, (current) => {
+        const key = peerKey(peer);
+        if (current.dropped.has(key) || (reason === 'refused' && current.refused.has(key))) {
+          return [false, current];
+        }
+        return reason === 'draining'
+          ? [true, { ...current, dropped: new Set([...current.dropped, key]) }]
+          : [true, { ...current, refused: new Set([...current.refused, key]) }];
+      }).pipe(Effect.flatMap((added) => (added ? count('dropped') : Effect.void))),
     ended,
     // The drain stays active after its end: a request still arriving on a connection that was open when the listener
     // closed is relayed too, never served by this superseded release.
@@ -138,7 +154,13 @@ export const makeSupersedeDrain = (): SupersedeDrain => {
         return live(current);
       }
       const peers = yield* current.resolve;
-      const next = yield* Ref.updateAndGet(state, (latest) => ({ ...latest, peers, resolvedAt: now }));
+      // A peer that only refused a connection gets another chance; a draining one does not.
+      const next = yield* Ref.updateAndGet(state, (latest) => ({
+        ...latest,
+        peers,
+        refused: new Set<string>(),
+        resolvedAt: now,
+      }));
       return live(next);
     }),
     stopping,
@@ -200,7 +222,15 @@ export const drainSupersededHost = (input: {
   readonly stopAccepting: Effect.Effect<void>;
 }) =>
   Effect.gen(function* drainSuperseded() {
-    const peers = yield* input.peers;
+    // The new container's address may reach the internal DNS a moment after its publication: ask again for a while
+    // before concluding that there is no other container.
+    const peers = yield* input.peers.pipe(
+      Effect.repeat({
+        schedule: Schedule.spaced(DRAIN_PEER_FIRST_RESOLVE_RETRY),
+        times: DRAIN_PEER_FIRST_RESOLVE_ATTEMPTS - 1,
+        until: (resolved) => resolved.length > 0,
+      }),
+    );
     const port = String(input.publicPort);
     if (peers.length === 0) {
       yield* input.drain.begin([], input.peers);
