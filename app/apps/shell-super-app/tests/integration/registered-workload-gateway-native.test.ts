@@ -41,12 +41,18 @@ import {
 } from '@app/core-runtime';
 import {
   AccessDecisionGate,
+  AccessWorkloadBindingIdSchema,
+  AccessWorkloadCompanyBindingIdSchema,
   computeActionRequestHash,
   computeCanonicalValueHash,
   makeAccessDecisionService,
+  makeAccessWorkloadCompanyBindingDrizzleStore,
   makeDrizzleAccessPrincipalKinds,
   makeDrizzleAccessWorkloadBindings,
 } from '@app/core-runtime/access/enforcement';
+import { bootstrapScopesOf, writeBootstrapScopes } from '@app/core-runtime/access/bootstrap';
+import { LegalEntityIdSchema, TenantIdSchema } from '@app/core-runtime/access/ids';
+import { stageScopeOf } from '@app/core-runtime/install/stage-context-bootstrap';
 import type { GatewayAssertionRedemptionInput } from '@app/core-runtime';
 import { CoreDatabase, makeCoreDatabase } from '@app/core-runtime/db/client';
 import {
@@ -960,6 +966,8 @@ it.live(
         const privacyMachine = yield* crypto.randomUUIDv4();
         const partyModulePrincipal = yield* crypto.randomUUIDv4();
         const privacyOriginalBinding = yield* crypto.randomUUIDv4();
+        const privacyMachineBinding = yield* crypto.randomUUIDv4();
+        const tenantOperator = yield* crypto.randomUUIDv4();
         const insert = (statement: Parameters<typeof admin.executor.execute>[0]) =>
           admin.executor.execute(statement, 'objects');
         yield* insert(
@@ -969,7 +977,7 @@ it.live(
           sql`insert into core.legal_entities(legal_entity_id,tenant_id,legal_name,registration_country,registration_number,status) values(${legalEntityId}::uuid,${tenantId}::uuid,'Native company','CZ','1','active'),(${foreignLegalEntityId}::uuid,${otherTenantId}::uuid,'Foreign company','CZ','2','active')`,
         );
         yield* insert(
-          sql`insert into core.principals(principal_id,tenant_id,kind,display_name,status) values(${originalPrincipal}::uuid,${tenantId}::uuid,'integration','Original integration','active'),(${machinePrincipal}::uuid,${tenantId}::uuid,'system','Receiver system','active'),(${modulePrincipal}::uuid,${tenantId}::uuid,'service','Source deployment','active')`,
+          sql`insert into core.principals(principal_id,tenant_id,kind,display_name,status) values(${originalPrincipal}::uuid,${tenantId}::uuid,'integration','Original integration','active'),(${machinePrincipal}::uuid,${tenantId}::uuid,'system','Receiver system','active'),(${modulePrincipal}::uuid,${tenantId}::uuid,'service','Source deployment','active'),(${tenantOperator}::uuid,${tenantId}::uuid,'human','Tenant operator','active')`,
         );
         yield* insert(
           sql`insert into core.principal_auth_bindings(principal_auth_binding_id,tenant_id,principal_id,authentication_namespace_id,provider,subject_type,provider_subject_id,status) values(${originalAuthBinding}::uuid,${tenantId}::uuid,${originalPrincipal}::uuid,${authenticationNamespaceId},'better_auth','api_key','retired-ingress-key','active'),(${moduleAuthBinding}::uuid,${tenantId}::uuid,${modulePrincipal}::uuid,${authenticationNamespaceId},'better_auth','api_key',${providerKey},'active')`,
@@ -999,7 +1007,7 @@ it.live(
           sql`insert into core.principal_auth_bindings(principal_auth_binding_id,tenant_id,principal_id,authentication_namespace_id,provider,subject_type,provider_subject_id,status) values(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${partyModulePrincipal}::uuid,${authenticationNamespaceId},'better_auth','api_key',${partyProviderKey},'active')`,
         );
         yield* insert(
-          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${privacyOriginalBinding}::uuid,${tenantId}::uuid,${originalPrincipal}::uuid,${privacyWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active'),(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${privacyMachine}::uuid,${privacyWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
+          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${privacyOriginalBinding}::uuid,${tenantId}::uuid,${originalPrincipal}::uuid,${privacyWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active'),(${privacyMachineBinding}::uuid,${tenantId}::uuid,${privacyMachine}::uuid,${privacyWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
         );
         yield* insert(
           sql`insert into core.tenant_module_states(tenant_id,module_key,state) values(${tenantId}::uuid,'privacy.core','active')`,
@@ -1012,21 +1020,59 @@ it.live(
         yield* insert(
           sql`insert into core.principal_auth_bindings(tenant_id,principal_id,authentication_namespace_id,provider,subject_type,provider_subject_id,status) values(${tenantId}::uuid,${privacyModulePrincipal}::uuid,${authenticationNamespaceId},'better_auth','api_key',${privacyProviderKey},'active')`,
         );
+        const sourceFactsMachineBinding = yield* crypto.randomUUIDv4();
         yield* Effect.forEach(
           [
-            [originalPrincipal, organizationBusinessWorkload],
-            [privacyMachine, organizationBusinessWorkload],
-            [originalPrincipal, sourceFactsWorkload],
-            [sourceFactsMachine, sourceFactsWorkload],
+            [originalPrincipal, organizationBusinessWorkload, yield* crypto.randomUUIDv4()],
+            [privacyMachine, organizationBusinessWorkload, yield* crypto.randomUUIDv4()],
+            [originalPrincipal, sourceFactsWorkload, yield* crypto.randomUUIDv4()],
+            [sourceFactsMachine, sourceFactsWorkload, sourceFactsMachineBinding],
           ],
-          ([principalId, workload]) =>
+          ([principalId, workload, bindingId]) =>
             Effect.gen(function* enrollProcessingBinding() {
               yield* insert(
-                sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${principalId}::uuid,${workload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
+                sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${bindingId}::uuid,${tenantId}::uuid,${principalId}::uuid,${workload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
               );
             }),
           { concurrency: 1, discard: true },
         );
+        // One active workload binding acts for one company (D6), so the tenant registers each standalone workload's
+        // company through Core's own writers, as the stage and local installers do: the tenant bootstrap creates the
+        // tenant's access scopes with their ready fence, and the company registration store ties a workload binding
+        // to the company under that fence. The Privacy machine's company is registered where its refusal is proven.
+        const workloadAuthority = { enrollment: SHELL_DATABASE_IDENTITY_ENROLLMENT, executor: runtime.executor };
+        const operatorScope = yield* stageScopeOf({ principalId: tenantOperator, tenantId });
+        yield* writeBootstrapScopes(workloadAuthority, operatorScope, {
+          scopes: bootstrapScopesOf(TenantIdSchema.make(tenantId), [LegalEntityIdSchema.make(legalEntityId)]),
+          tenantId: TenantIdSchema.make(tenantId),
+        });
+        const companyRegistrations = makeAccessWorkloadCompanyBindingDrizzleStore(workloadAuthority);
+        const registerCompany = (workloadBindingId: string) =>
+          Effect.gen(function* registerWorkloadCompany() {
+            const companyBindingId = AccessWorkloadCompanyBindingIdSchema.make(yield* crypto.randomUUIDv4());
+            yield* companyRegistrations.registerCompanyBindings(operatorScope, {
+              bindings: [
+                {
+                  companyBindingId,
+                  createdAt: DateTime.toDateUtc(yield* DateTime.now),
+                  incarnation: AccessWorkloadCompanyBindingIdSchema.make(yield* crypto.randomUUIDv4()),
+                  legalEntityId: LegalEntityIdSchema.make(legalEntityId),
+                  tenantId: TenantIdSchema.make(tenantId),
+                  workloadBindingId: AccessWorkloadBindingIdSchema.make(workloadBindingId),
+                },
+              ],
+            });
+            return companyBindingId;
+          });
+        yield* registerCompany(machineBinding);
+        yield* registerCompany(originalOwnerBinding);
+        yield* registerCompany(sourceFactsMachineBinding);
+        // A system principal is the platform's own identity: Core refuses to disable it while its tenant is active, so a
+        // machine stops acting only when its workload binding ends (the cases below revoke bindings instead).
+        const systemPrincipalDisableRefused = (principalId: string) =>
+          Effect.exit(
+            insert(sql`update core.principals set status='disabled' where principal_id=${principalId}::uuid`),
+          ).pipe(Effect.map(Exit.isFailure));
         const installed = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
         const auth = yield* makeAuthDatabase({
           connectionString: fixture.connections.runtime.connectionString,
@@ -1345,8 +1391,8 @@ it.live(
         expect(nestedScope.legalEntityId).toBe(legalEntityId);
         expect(readVerifiedGatewayWorkload(nestedScope)?.originalPrincipalId).toBe(originalPrincipal);
         expect(readVerifiedGatewayWorkload(nestedScope)?.workloadKey).toBe(privacyWorkload);
-        expect(
-          (yield* nativeMachineGate(runtime).decide({
+        const decideNested = () =>
+          nativeMachineGate(runtime).decide({
             carrier: {
               accessDeclaration: privacyDeclaration,
               accessWorkload: privacyAccessWorkload,
@@ -1356,8 +1402,25 @@ it.live(
             legalEntityScope: 'required',
             now: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
             scope: nestedScope,
-          })).outcome,
-        ).toBe('ALLOWED');
+          });
+        // A verified registered-workload claim is no exemption from the company fence (D6): one active workload
+        // binding acts for one company, so until the tenant registers the Privacy machine's company it is refused.
+        const unregistered = yield* decideNested();
+        expect(unregistered.outcome).toBe('DENIED');
+        expect(unregistered.reasons.map((reason) => reason.code)).toEqual(['deny.workload_unbound']);
+        const privacyCompany = yield* registerCompany(privacyMachineBinding);
+        const registered = yield* decideNested();
+        expect(registered.outcome, JSON.stringify(registered.reasons)).toBe('ALLOWED');
+        // Ending the registration ends the company of the same verified claim; a re-registration is a fresh row.
+        yield* companyRegistrations.revokeCompanyBinding(operatorScope, {
+          companyBindingId: privacyCompany,
+          revokedAt: DateTime.toDateUtc(yield* DateTime.now),
+        });
+        const revoked = yield* decideNested();
+        expect(revoked.outcome).toBe('DENIED');
+        expect(revoked.reasons.map((reason) => reason.code)).toEqual(['deny.workload_unbound']);
+        yield* registerCompany(privacyMachineBinding);
+        expect((yield* decideNested()).outcome).toBe('ALLOWED');
         const projectedTenant = yield* issue(
           {
             _tag: 'RegisteredAssertion',
@@ -1566,18 +1629,18 @@ it.live(
         expect(Exit.isFailure(yield* Effect.exit(issue({ ...admission, legalEntityId: foreignLegalEntityId })))).toBe(
           true,
         );
-        yield* insert(sql`update core.principals set status='disabled' where principal_id=${machinePrincipal}::uuid`);
-        expect(Exit.isFailure(yield* Effect.exit(issue(nestedSubject, 'privacy', partyProviderKey)))).toBe(true);
-        yield* insert(sql`update core.principals set status='active' where principal_id=${machinePrincipal}::uuid`);
+        expect(yield* systemPrincipalDisableRefused(machinePrincipal)).toBe(true);
         yield* insert(
           sql`update core.access_workload_bindings set status='revoked',revoked_at=now() where binding_id=${originalOwnerBinding}::uuid`,
         );
         expect((yield* decide(scope)).outcome).toBe('DENIED');
         expect(Exit.isFailure(yield* Effect.exit(issue(nestedSubject, 'privacy', partyProviderKey)))).toBe(true);
         expect(Exit.isFailure(yield* Effect.exit(issue(admission)))).toBe(true);
+        const renewedOwnerBinding = yield* crypto.randomUUIDv4();
         yield* insert(
-          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${originalPrincipal}::uuid,${targetWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
+          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${renewedOwnerBinding}::uuid,${tenantId}::uuid,${originalPrincipal}::uuid,${targetWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
         );
+        yield* registerCompany(renewedOwnerBinding);
         const renewedSource = yield* issue(admission);
         const renewedNestedSubject = { ...nestedSubject, sourceAssertion: renewedSource.token };
         yield* issue(renewedNestedSubject, 'privacy', partyProviderKey);
@@ -2048,11 +2111,12 @@ it.live(
           })).principalId,
         ).toBe(otherMachine);
         const ambiguousMachine = yield* crypto.randomUUIDv4();
+        const ambiguousBinding = yield* crypto.randomUUIDv4();
         yield* insert(
           sql`insert into core.principals(principal_id,tenant_id,kind,display_name,status) values(${ambiguousMachine}::uuid,${tenantId}::uuid,'system','Ambiguous machine','active')`,
         );
         yield* insert(
-          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${ambiguousMachine}::uuid,${targetWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
+          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${ambiguousBinding}::uuid,${tenantId}::uuid,${ambiguousMachine}::uuid,${targetWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
         );
         expect(
           Exit.isFailure(
@@ -2066,7 +2130,10 @@ it.live(
           ),
         ).toBe(true);
         expect(Exit.isFailure(yield* Effect.exit(issue(admission)))).toBe(true);
-        yield* insert(sql`update core.principals set status='disabled' where principal_id=${ambiguousMachine}::uuid`);
+        expect(yield* systemPrincipalDisableRefused(ambiguousMachine)).toBe(true);
+        yield* insert(
+          sql`update core.access_workload_bindings set status='revoked',revoked_at=now() where binding_id=${ambiguousBinding}::uuid`,
+        );
         const beforeRevoke = yield* issue(admission);
         const beforePrincipal = yield* receive(beforeRevoke.token);
         const beforeScope = yield* receiverScopes.resolve({
@@ -2081,7 +2148,12 @@ it.live(
         expect((yield* decide(beforeScope)).outcome).toBe('DENIED');
         // The tenant now holds no active registration of the receiving workload: the declared call admits nothing.
         expect(yield* refusalOf(issue(admission))).toBe('workload_binding_not_active');
-        yield* insert(sql`update core.principals set status='active' where principal_id=${ambiguousMachine}::uuid`);
+        // The ambiguous machine is registered again: a fresh binding, with its company.
+        const renewedAmbiguousBinding = yield* crypto.randomUUIDv4();
+        yield* insert(
+          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${renewedAmbiguousBinding}::uuid,${tenantId}::uuid,${ambiguousMachine}::uuid,${targetWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
+        );
+        yield* registerCompany(renewedAmbiguousBinding);
         expect(Exit.isFailure(yield* Effect.exit(issue(admission)))).toBe(true);
 
         const currentWriteAdmission = {
@@ -2120,6 +2192,7 @@ it.live(
         yield* insert(
           sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${recoveryBindingId}::uuid,${tenantId}::uuid,${recoveryPrincipalId}::uuid,${recoveryWorkload},${recoveryIncarnation}::uuid,'active')`,
         );
+        yield* registerCompany(recoveryBindingId);
         const originalOwnerInvocation = yield* crypto.randomUUIDv4();
         const originalWorkerInvocation = yield* crypto.randomUUIDv4();
         const originalTenantInvocation = yield* crypto.randomUUIDv4();
@@ -2543,18 +2616,14 @@ it.live(
           sql`update core.action_invocations set action_key=${sourceAction} where action_invocation_id=${admissionId}::uuid`,
         );
         yield* issue(historicalRecovery);
-        yield* insert(
-          sql`update core.principals set status='disabled' where principal_id=${recoveryPrincipalId}::uuid`,
-        );
-        expect(Exit.isFailure(yield* Effect.exit(issue(admissionRecovery)))).toBe(true);
-        expect((yield* decideRecovery(historicalScope)).outcome).toBe('DENIED');
-        expect(Exit.isFailure(yield* Effect.exit(issue(historicalRecovery)))).toBe(true);
-        yield* insert(sql`update core.principals set status='active' where principal_id=${recoveryPrincipalId}::uuid`);
+        expect(yield* systemPrincipalDisableRefused(recoveryPrincipalId)).toBe(true);
         yield* insert(
           sql`update core.access_workload_bindings set status='revoked',revoked_at=now() where binding_id=${recoveryBindingId}::uuid`,
         );
         expect((yield* decideRecovery(recoveredScope)).outcome).toBe('DENIED');
+        expect((yield* decideRecovery(historicalScope)).outcome).toBe('DENIED');
         expect(Exit.isFailure(yield* Effect.exit(issue(admissionRecovery)))).toBe(true);
+        expect(Exit.isFailure(yield* Effect.exit(issue(historicalRecovery)))).toBe(true);
         yield* insert(
           sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${recoveryPrincipalId}::uuid,${recoveryWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
         );
