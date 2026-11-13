@@ -110,6 +110,29 @@ describe('declared delegated callers', () => {
   });
 });
 
+/**
+ * The callers the last hand-kept `MODULE_CREDENTIAL_CALLERS` named at the commit this branch derives from. The derived
+ * list must never drop one: a module that held a key keeps it while a carrier admits it. When this branch is rebased
+ * onto a commit that still kept the list by hand (the VAT branch named `finance-billing` and `merchandise` there), the
+ * conflict resolves to the derived list and this pin takes that commit's hand list.
+ */
+const LAST_HAND_KEPT_CALLERS = [
+  'catalog',
+  'commerce-cart',
+  'commerce-customer-context',
+  'commerce-market-catalog',
+  'commerce-order',
+  'crm',
+  'party-registry',
+  'pricing',
+] as const;
+
+describe('the derived callers keep every caller the hand-kept list had', () => {
+  it('generates a superset of the last hand-kept list', () => {
+    expect(MODULE_CREDENTIAL_CALLERS).toEqual(expect.arrayContaining([...LAST_HAND_KEPT_CALLERS]));
+  });
+});
+
 describe('MODULE_INTERNAL_WORKLOADS', () => {
   it('names exactly the modules whose own server acts as a workload, each only with workloads its own Actions declare', () => {
     const topology = Schema.decodeUnknownSync(Schema.fromJsonString(TopologySchema))(
