@@ -67,7 +67,7 @@ import type { CommercePortalAuthEnrollmentTransitionClaim } from '../../api/port
 import { commercePortalAuthEnrollmentSessionSubject } from '../../api/portal-auth/enrollment/session-subject.ts';
 import { CommercePortalAuthAccountLookupService } from '../../api/portal-auth/provider/account-lookup-service.ts';
 import { CommercePortalAuthInstance, makeCommercePortalAuth } from '../../api/portal-auth/provider/auth.ts';
-import { CommercePortalAuthService } from '../../api/portal-auth/session/http.ts';
+import { CommercePortalAuthService } from '../../api/portal-auth/session/auth-service.ts';
 import { CommercePortalAuthSessionLifecycle } from '../../api/portal-auth/session/lifecycle-service.ts';
 import { PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY } from '../../src/enrollment/journeys/existing-account.ts';
 import { CommercePortalAuthAccountCreationRejected } from '../../api/portal-auth/provider/account-creation-rejected.ts';

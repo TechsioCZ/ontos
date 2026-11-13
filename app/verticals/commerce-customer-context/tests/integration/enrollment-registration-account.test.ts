@@ -36,7 +36,8 @@ import {
 import { CommercePortalAuthAccountLookupService } from '../../api/portal-auth/provider/account-lookup-service.ts';
 import { CommercePortalAuthRecoveryRateLimitService } from '../../api/portal-auth/rate-limit-service.ts';
 import { commerceCustomerAuthorityLive } from '../../api/portal-auth/session/customer-authority.ts';
-import { CommercePortalAuthService, portalAuthSessionApiLive } from '../../api/portal-auth/session/http.ts';
+import { portalAuthSessionApiLive } from '../../api/portal-auth/session/http.ts';
+import { CommercePortalAuthService } from '../../api/portal-auth/session/auth-service.ts';
 import {
   CommercePortalAuthSessionLifecycle,
   makeCommercePortalAuthSessionLifecycle,

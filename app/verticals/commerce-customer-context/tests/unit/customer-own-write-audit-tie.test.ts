@@ -1,19 +1,21 @@
 import { once } from 'node:events';
 
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
 import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Exit, Fiber, Redacted, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { CustomerOwnConsentUpdateExchange } from '../../api/portal-auth/consent/update-exchange.ts';
 import { CustomerOwnPasswordChangeExchange } from '../../api/portal-auth/password-change/change-exchange.ts';
 import { outcomeUnknownLanguageOf } from '../../api/portal-auth/password-change/outcome-unknown-texts.ts';
 import { passwordChangeOutcomeUnknown } from '../../api/portal-auth/password-change/problems.ts';
 import { CustomerOwnProfileUpdateExchange } from '../../api/portal-auth/profile/update-exchange.ts';
 import { CommercePortalAuthRecoveryRateLimitService } from '../../api/portal-auth/rate-limit-service.ts';
-import { CommercePortalAuthService } from '../../api/portal-auth/session/http.ts';
+import { CommercePortalAuthService } from '../../api/portal-auth/session/auth-service.ts';
 import {
   ChangeOwnCustomerPasswordPayloadSchema,
   UpdateOwnCustomerConsentPayloadSchema,
@@ -95,8 +97,11 @@ const portal =
       }),
       Effect.provideService(CustomerOwnProfileUpdateExchange, { deliver: () => Effect.void, sessionRef: SESSION_REF }),
       Effect.provideService(CustomerOwnConsentUpdateExchange, { deliver: () => Effect.void, sessionRef: SESSION_REF }),
-      // Never reached here: the owner routines are refused before their composition or transaction runner is used.
-      Effect.provideService(ActiveApplicationCompositionService, Schema.decodeUnknownSync(Schema.Any)({})),
+      // The late verdict of a change that completes past the call budget does reach a composition read, so this
+      // service answers with a real snapshot and the test needs no composition snapshot in the environment.
+      Effect.provideService(ActiveApplicationCompositionService, {
+        load: makeApplicationCompositionSnapshotFixture(['commerce-customer-context'], ultramodernApiMarker.buildMarker),
+      }),
       Effect.provideService(CommerceEnrollmentOwnerTransactionRunner, Schema.decodeUnknownSync(Schema.Any)({})),
       Effect.provide(NodeCrypto.layer),
     );

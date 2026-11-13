@@ -7,7 +7,7 @@ import { expect, it } from 'effect-rstest';
 
 import { CustomerOwnPasswordChangeExchange } from '../../api/portal-auth/password-change/change-exchange.ts';
 import { CommercePortalAuthRecoveryRateLimitService } from '../../api/portal-auth/rate-limit-service.ts';
-import { CommercePortalAuthService } from '../../api/portal-auth/session/http.ts';
+import { CommercePortalAuthService } from '../../api/portal-auth/session/auth-service.ts';
 import {
   ChangeOwnCustomerPasswordPayloadSchema,
   CustomerOwnWriteAuthorizedSchema,

@@ -43,6 +43,7 @@ import { consumeRateLimitBudget } from '../rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../rate-limit-service.ts';
 import { CommercePortalAuthInstance } from '../provider/auth.ts';
 import type { CommercePortalAuth } from '../provider/auth.ts';
+import { CommercePortalAuthService } from './auth-service.ts';
 import { CommercePortalAuthConfig } from '../provider/config-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../provider/config.ts';
 import type { CommercePortalAuthConfigValue } from '../provider/config.ts';
@@ -83,8 +84,6 @@ const httpBridgeTimeoutPolicy = Effect.timeoutOrElse({
     ),
 });
 
-// The tag lives in `auth-service.ts` so a caller that only asks for the capability does not pull this transport in.
-export { CommercePortalAuthService } from './auth-service.ts';
 
 const PROBLEM_TYPE_PREFIX = 'https://ontos.dev/problems/commerce-portal-auth-session-';
 const problemStatus = {

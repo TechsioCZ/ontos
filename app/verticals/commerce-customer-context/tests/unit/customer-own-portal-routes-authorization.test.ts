@@ -11,7 +11,7 @@ import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-
 import type { CommercePortalAuthConfigValue } from '../../api/portal-auth/provider/config.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../../api/portal-auth/provider/config.ts';
 import { CommerceCustomerAuthority } from '../../api/portal-auth/session/customer-authority.ts';
-import { CommercePortalAuthService } from '../../api/portal-auth/session/http.ts';
+import { CommercePortalAuthService } from '../../api/portal-auth/session/auth-service.ts';
 import { CommercePortalAuthSessionLifecycle } from '../../api/portal-auth/session/lifecycle-service.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { CustomerOwnConsentReadApi, CustomerOwnConsentUpdateApi } from '../../shared/portal-auth/consent-api.ts';

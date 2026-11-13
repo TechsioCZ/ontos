@@ -26,7 +26,7 @@ import { CommercePortalAuthStepUpUnavailable } from './provider/step-up/unavaila
 import { CommercePortalAuthStepUpHttpProviderUnavailableLive } from './provider/step-up/http-provider-unavailable.ts';
 import { CommercePortalAuthSessionLifecycle } from './session/lifecycle-service.ts';
 import { CommercePortalAuthProviderUnavailable, CommercePortalAuthSessionUnavailable } from './session/errors.ts';
-import { CommercePortalAuthService } from './session/http.ts';
+import { CommercePortalAuthService } from './session/auth-service.ts';
 
 /**
  * The Commerce portal realm is optional, and `assembleEffectBffRuntime` requires a handler Layer
