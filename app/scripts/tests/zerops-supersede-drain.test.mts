@@ -46,6 +46,7 @@ import type { DrainPeer, SupersedeDrain } from '../zerops/supersede-drain.mts';
 
 const EchoSchema = Schema.Struct({
   bytes: Schema.Number,
+  hop: Schema.Boolean,
   host: Schema.String,
   marker: Schema.Boolean,
   path: Schema.String,
@@ -71,6 +72,7 @@ const unitApplication = (release: string, seen: Ref.Ref<number>) =>
     return HttpServerResponse.text(
       JSON.stringify({
         bytes: body.byteLength,
+        hop: request.headers['x-hop-secret'] !== undefined || request.headers['proxy-authorization'] !== undefined,
         host: request.headers.host ?? '',
         marker: request.headers[DRAIN_FORWARDED_HEADER] !== undefined,
         path: request.url,
@@ -450,10 +452,14 @@ it.live('when every known peer failed the peers are resolved again, at most once
 );
 
 /** One raw HTTP/1.1 exchange, so the request line reaches the host exactly as written. */
-const rawExchange = (port: number, requestLine: string) =>
-  Effect.callback<{ readonly path: Option.Option<string>; readonly status: number }>((resume) => {
+const rawExchange = (port: number, requestLine: string, headerLines: readonly string[] = []) =>
+  Effect.callback<{
+    readonly hop: Option.Option<boolean>;
+    readonly path: Option.Option<string>;
+    readonly status: number;
+  }>((resume) => {
     const socket = connect(port, '127.0.0.1', () => {
-      socket.write(`${requestLine}\r\nHost: stage.test\r\nConnection: close\r\n\r\n`);
+      socket.write(`${[requestLine, 'Host: stage.test', ...headerLines, 'Connection: close'].join('\r\n')}\r\n\r\n`);
     });
     const chunks: Buffer[] = [];
     socket.on('data', (chunk: Buffer) => {
@@ -463,7 +469,14 @@ const rawExchange = (port: number, requestLine: string) =>
       const text = Buffer.concat(chunks).toString('utf-8');
       const status = Number(/^HTTP\/1\.1 (?<status>\d{3})/u.exec(text)?.groups?.status ?? 0);
       const body = text.slice(text.indexOf('\r\n\r\n') + 4);
-      resume(Effect.succeed({ path: Option.map(decodeEcho(body), (echo) => echo.path), status }));
+      const echo = decodeEcho(body);
+      resume(
+        Effect.succeed({
+          hop: echo.pipe(Option.map(({ hop }) => hop)),
+          path: echo.pipe(Option.map((found) => found.path)),
+          status,
+        }),
+      );
     });
   });
 
@@ -580,4 +593,20 @@ it.live('an Expect: 100-continue upload of 2 MiB reaches its unit, directly and 
       Option.some({ bytes: body.byteLength, release: 'new' }),
     );
   }),
+);
+
+it.live(
+  'headers a Connection header names, and proxy credentials, never pass a relay, directly or through a drain',
+  () =>
+    Effect.gen(function* hopByHop() {
+      const [old, current] = yield* Effect.all([standingHost('old'), standingHost('new')]);
+      const headers = ['Connection: x-hop-secret', 'X-Hop-Secret: 1', 'Proxy-Authorization: Basic dXNlcjpwYXNz'];
+      const direct = yield* rawExchange(current.port, 'GET /_m/crm/echo HTTP/1.1', headers);
+      expect(direct.status).toBe(200);
+      expect(direct.hop).toEqual(Option.some(false));
+      yield* startDrain(old.supersede(Effect.succeed([peerAt(current.port)])), old.drain);
+      const relayed = yield* rawExchange(old.port, 'GET /_m/crm/echo HTTP/1.1', headers);
+      expect(relayed.status).toBe(200);
+      expect(relayed.hop).toEqual(Option.some(false));
+    }),
 );

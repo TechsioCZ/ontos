@@ -1009,12 +1009,25 @@ const HOST_ANSWERED: ReadonlySet<string> = new Set([DRAIN_FORWARDED_HEADER, 'exp
 const HOP_BY_HOP: ReadonlySet<string> = new Set([
   'connection',
   'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
   'proxy-connection',
   'te',
   'trailer',
   'transfer-encoding',
   'upgrade',
 ]);
+
+/** The headers a `Connection` header names are hop-by-hop too (RFC 9110, 7.6.1). */
+type HeaderValue = string | readonly string[] | undefined;
+const connectionNamed = (connection: HeaderValue): ReadonlySet<string> =>
+  new Set(
+    [connection ?? []]
+      .flat()
+      .flatMap((value) => value.split(','))
+      .map((name) => name.trim().toLowerCase())
+      .filter((name) => name !== ''),
+  );
 
 /**
  * The owner's end-to-end headers. A caller retries an unavailable (503) answer: make it reconnect, so the retry
@@ -1026,8 +1039,9 @@ export const relayResponseHeaders = (
   upstream: Readonly<Record<string, string | readonly string[] | undefined>>,
 ) => {
   const headers: Record<string, string | readonly string[]> = {};
+  const named = connectionNamed(upstream.connection);
   for (const [name, value] of Object.entries(upstream)) {
-    if (value !== undefined && !HOP_BY_HOP.has(name)) {
+    if (value !== undefined && !HOP_BY_HOP.has(name) && !named.has(name)) {
       headers[name] = value;
     }
   }
@@ -1074,8 +1088,9 @@ const relay = Effect.fn('AppHost.relay')(function* relay(
   stopping: Effect.Effect<unknown>,
 ) {
   const headers: Record<string, string> = {};
+  const named = connectionNamed(request.headers.connection);
   for (const [name, value] of Object.entries(request.headers)) {
-    if (!HOP_BY_HOP.has(name) && !HOST_ANSWERED.has(name)) {
+    if (!HOP_BY_HOP.has(name) && !named.has(name) && !HOST_ANSWERED.has(name)) {
       headers[name] = value;
     }
   }
@@ -1391,6 +1406,7 @@ export const hostApplication = <Failure, Requirements>(
     const request = yield* HttpServerRequest.HttpServerRequest;
     const relayed = relayedTarget(request.url);
     if (Option.isNone(relayed)) {
+      yield* refusals.tally('invalidTarget');
       return HttpServerResponse.empty({ status: 400 });
     }
     if (yield* drain.active) {
@@ -1405,13 +1421,9 @@ export const hostApplication = <Failure, Requirements>(
     }
     if (new URL(request.url, 'https://host.invalid').pathname === STAGE_CIMD_FIXTURE_PATH) {
       const fixture = yield* stageCimdFixtureResponse;
-      // It exists only on stage under the stage origin; a refusal there breaks MCP client sign-in, so it is logged.
+      // It exists only on stage under the stage origin; any client can ask it wrongly, so refusals are counted.
       if (fixture.status >= 400) {
-        yield* refusals.record({
-          fields: refusedRequest(request, fixture.status),
-          key: 'cimd-fixture',
-          what: 'stage client metadata refused',
-        });
+        yield* refusals.tally('stageClientMetadata');
       }
       return fixture;
     }
@@ -1422,11 +1434,8 @@ export const hostApplication = <Failure, Requirements>(
     const route = routeRequest(relayed.value, ports);
     const unit = routedUnit(relayed.value);
     if (Option.isNone(route)) {
-      yield* refusals.record({
-        fields: { ...refusedRequest(request, 404), unit },
-        key: 'unrouted',
-        what: 'no unit serves this path',
-      });
+      // Any client can ask for a module path no unit serves: counted, never a line of its own.
+      yield* refusals.tally('unroutedModulePath');
       return HttpServerResponse.empty({ status: 404 });
     }
     const { path: upstreamPath, port } = route.value;

@@ -30,7 +30,17 @@ export interface HostRefusal {
 export interface HostRefusalLog {
   readonly flush: Effect.Effect<void>;
   readonly record: (refusal: HostRefusal) => Effect.Effect<void>;
+  /**
+   * Counts a refusal any public client can cause at will (a module path no unit serves, a malformed request target,
+   * the stage client metadata asked wrongly). Such refusals never write a line of their own, or an unauthenticated
+   * client could push the log service's ~1,000 lines out; `flush` writes their counts as one line at most every 10
+   * minutes, and only when one is above zero.
+   */
+  readonly tally: (counter: string) => Effect.Effect<void>;
 }
+
+/** How often the counts of client-caused refusals are written, at most. */
+export const CLIENT_REFUSAL_SUMMARY_WINDOW = Duration.minutes(10);
 
 interface RefusalWindow {
   last: HostRefusal;
@@ -98,6 +108,8 @@ export const loggableRoute = (target: string) => {
 
 export const makeHostRefusalLog = (): HostRefusalLog => {
   const windows = new Map<string, RefusalWindow>();
+  const tallies = new Map<string, number>();
+  let talliedSince: number | null = null;
   const record = (refusal: HostRefusal) =>
     Effect.gen(function* recordRefusal() {
       const now = yield* Clock.currentTimeMillis;
@@ -112,8 +124,25 @@ export const makeHostRefusalLog = (): HostRefusalLog => {
         line(refusal, open === undefined || open.suppressed === 0 ? {} : { earlierRepeats: open.suppressed }),
       );
     });
+  const tally = (counter: string) =>
+    Clock.currentTimeMillis.pipe(
+      Effect.flatMap((now) =>
+        Effect.sync(() => {
+          talliedSince ??= now;
+          tallies.set(counter, (tallies.get(counter) ?? 0) + 1);
+        }),
+      ),
+    );
   const flush = Effect.gen(function* flushRefusals() {
     const now = yield* Clock.currentTimeMillis;
+    if (talliedSince !== null && now - talliedSince >= Duration.toMillis(CLIENT_REFUSAL_SUMMARY_WINDOW)) {
+      const counts = Object.fromEntries([...tallies].toSorted(([left], [right]) => left.localeCompare(right)));
+      yield* Console.error(
+        `[app-host] WARN client-caused refusals in the last ${String(Math.round((now - talliedSince) / 1000))}s: ${formatFields(counts)}`,
+      );
+      tallies.clear();
+      talliedSince = null;
+    }
     for (const [key, open] of windows) {
       if (open.suppressed > 0 && now - open.opened >= WINDOW_MILLIS) {
         yield* Console.error(
@@ -123,7 +152,7 @@ export const makeHostRefusalLog = (): HostRefusalLog => {
       }
     }
   });
-  return { flush, record };
+  return { flush, record, tally };
 };
 
 /**

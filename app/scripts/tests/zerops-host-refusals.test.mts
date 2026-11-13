@@ -94,7 +94,7 @@ it.effect('a burst of 50 refusals writes one line at once and one summary after 
   }),
 );
 
-it.effect('the host logs its own refusals: an unknown control path, a published host without a snapshot, no unit', () =>
+it.effect('the host logs its own refusals: an unknown control path and a published host without a snapshot', () =>
   Effect.gen(function* hostRefusals() {
     const console = yield* TestConsole.make;
     const published = yield* Ref.make(false);
@@ -108,19 +108,39 @@ it.effect('the host logs its own refusals: an unknown control path, a published 
     expect((yield* run(control.pipe(fromLoopback('http://127.0.0.1/_host/composition')))).status).toBe(503);
     yield* Ref.set(published, true);
     expect((yield* run(control.pipe(fromLoopback('http://127.0.0.1/_host/composition')))).status).toBe(503);
-    const host = hostApplication(new Map(), published, none);
-    expect((yield* run(host.pipe(at('https://stage.test/_m/uninstalled/remoteEntry.js')))).status).toBe(404);
 
     const lines = (yield* console.errorLines).map(String);
-    expect(lines).toHaveLength(3);
+    expect(lines).toHaveLength(2);
     expect(lines[0]).toBe('[app-host] WARN control port refused: method=GET route=/_host/other status=404');
     expect(lines[1]).toBe(
       '[app-host] WARN composition source unavailable: method=GET route=/_host/composition status=503 reason=no snapshot the authority admits',
     );
-    expect(lines[2]).toBe(
-      '[app-host] WARN no unit serves this path: method=GET route=/_m/uninstalled/remoteEntry.js status=404 unit=uninstalled',
-    );
   }),
+);
+
+it.effect(
+  'refusals any client can cause write no line of their own: 1,000 of them become one count line in 10 minutes',
+  () =>
+    Effect.gen(function* clientCaused() {
+      const console = yield* TestConsole.make;
+      const published = yield* Ref.make(true);
+      const refusals = makeHostRefusalLog();
+      const host = hostApplication(new Map(), published, Effect.succeed(Option.none<string>()), refusals);
+      for (let request = 0; request < 1000; request += 1) {
+        const response = yield* host.pipe(at(`https://stage.test/_m/probe-${String(request)}/remoteEntry.js`));
+        expect(response.status).toBe(404);
+      }
+      yield* refusals.flush.pipe(Effect.provideService(Console.Console, console));
+      expect(yield* console.errorLines).toEqual([]);
+      yield* TestClock.adjust('10 minutes');
+      yield* refusals.flush.pipe(Effect.provideService(Console.Console, console));
+      expect((yield* console.errorLines).map(String)).toEqual([
+        '[app-host] WARN client-caused refusals in the last 600s: unroutedModulePath=1000',
+      ]);
+      yield* TestClock.adjust('10 minutes');
+      yield* refusals.flush.pipe(Effect.provideService(Console.Console, console));
+      expect((yield* console.errorLines).length).toBe(1);
+    }),
 );
 
 describe('loggableRoute', () => {
