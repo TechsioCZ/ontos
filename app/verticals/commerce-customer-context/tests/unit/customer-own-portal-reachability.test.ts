@@ -1,8 +1,10 @@
+import { decodeAccessWorkload } from '@app/core-runtime';
 import { NodeServices } from '@effect/platform-node';
-import { Effect, FileSystem, Path } from 'effect';
+import { Effect, FileSystem, Path, Result } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { commerceCustomerContextMcpContribution } from '../../shared/mcp/contribution.ts';
+import { PORTAL_OWN_CARRIER } from '../../shared/portal-auth/own-session.ts';
 import { changeOwnCustomerPasswordAction } from '../../src/actions/change-own-customer-password.action.ts';
 import { updateOwnCustomerConsentAction } from '../../src/actions/update-own-customer-consent.action.ts';
 import { updateOwnCustomerProfileAction } from '../../src/actions/update-own-customer-profile.action.ts';
@@ -51,6 +53,35 @@ const sourcesOf = Effect.fn('PortalReachability.sources')(function* sourcesOf(ro
   return files.filter((file) => file.endsWith('.ts')).map((file) => path.join(directory, file));
 });
 const MODULE_FILES = ['vertical.registration.ts', 'vertical.manifest.ts'] as const;
+
+it('each registered carrier is the public carrier table entry the Shell real-gate test decides', () => {
+  const byKey = {
+    changePassword: changeOwnCustomerPasswordAction.descriptor,
+    readConsent: customerOwnConsentRead.descriptor,
+    readProfile: customerOwnProfileRead.descriptor,
+    updateConsent: updateOwnCustomerConsentAction.descriptor,
+    updateProfile: updateOwnCustomerProfileAction.descriptor,
+  } as const;
+  for (const [key, carrier] of Object.entries(PORTAL_OWN_CARRIER)) {
+    const descriptor = new Map<string, (typeof byKey)[keyof typeof byKey]>(Object.entries(byKey)).get(key);
+    expect({ key, workload: descriptor?.accessWorkload }).toEqual({
+      key,
+      workload: Result.getOrThrow(
+        decodeAccessWorkload(carrier.workload, {
+          access: carrier.access,
+          authorization: { kind: 'protected' },
+          moduleKey: 'commerce.customer-context',
+          role: carrier.role,
+        }),
+      ),
+    });
+    expect({ access: descriptor?.entrypoint.access, key, role: descriptor?.entrypoint.role }).toEqual({
+      access: carrier.access,
+      key,
+      role: carrier.role,
+    });
+  }
+});
 
 it('no carrier of the five admits a delegated module call, a person, an agent, an API key or OAuth', () => {
   for (const [, descriptor] of REGISTRATIONS) {

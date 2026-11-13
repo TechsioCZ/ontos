@@ -115,6 +115,7 @@ export const changeOwnCustomerPasswordAction = defineAction(
       policyKey: 'commerce.customer-context.change-own-customer-password.access.v1',
     },
     accessOwnerFacts: (payload: ChangeOwnCustomerPasswordPayload) => portalSessionOwnerFacts(payload.session),
+    // Pinned to the public carrier table `PORTAL_OWN_CARRIER.changePassword` by the reachability suite.
     accessWorkload: {
       reason: 'The registered storefront client changes the signed-in customer’s own password for its own portal',
       workloads: [STOREFRONT_CLIENT_WORKLOAD],

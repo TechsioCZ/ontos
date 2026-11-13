@@ -15,6 +15,55 @@ import { UpdateCustomerOwnProfileSchema } from './profile-api.ts';
 /** The storefront workload key every portal self-service carrier admits (O73). */
 export const STOREFRONT_CLIENT_WORKLOAD = 'commerce.storefront-client';
 
+/**
+ * The carrier of each portal self-service registration, exactly as its descriptor declares it (a descriptor's carrier
+ * must be a static literal for the catalog, so the reachability suite pins each registered descriptor to this table).
+ * The Shell's real-gate test decides these, since it may not import this module's private source. Workload-only: no
+ * capability anyone's role could hold, and no `accessActor`, so no delegated module call.
+ */
+export const PORTAL_OWN_CARRIER = {
+  changePassword: {
+    access: 'write',
+    role: 'action',
+    workload: {
+      reason: 'The registered storefront client changes the signed-in customer’s own password for its own portal',
+      workloads: [STOREFRONT_CLIENT_WORKLOAD],
+    },
+  },
+  readConsent: {
+    access: 'read',
+    role: 'api',
+    workload: {
+      reason: 'The registered storefront client reads the signed-in customer’s own consent for its own portal',
+      workloads: [STOREFRONT_CLIENT_WORKLOAD],
+    },
+  },
+  readProfile: {
+    access: 'read',
+    role: 'api',
+    workload: {
+      reason: 'The registered storefront client reads the signed-in customer’s own profile for its own portal',
+      workloads: [STOREFRONT_CLIENT_WORKLOAD],
+    },
+  },
+  updateConsent: {
+    access: 'write',
+    role: 'action',
+    workload: {
+      reason: 'The registered storefront client records the signed-in customer’s own consent for its own portal',
+      workloads: [STOREFRONT_CLIENT_WORKLOAD],
+    },
+  },
+  updateProfile: {
+    access: 'write',
+    role: 'action',
+    workload: {
+      reason: 'The registered storefront client changes the signed-in customer’s own profile for its own portal',
+      workloads: [STOREFRONT_CLIENT_WORKLOAD],
+    },
+  },
+} as const;
+
 const Uuid = Schema.String.check(Schema.isUUID());
 export const PortalAuthBindingIdSchema = Uuid.pipe(Schema.brand('PortalAuthBindingId'));
 export const PortalCustomerPrincipalIdSchema = Uuid.pipe(Schema.brand('PortalCustomerPrincipalId'));

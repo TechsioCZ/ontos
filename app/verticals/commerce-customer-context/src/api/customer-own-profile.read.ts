@@ -36,6 +36,7 @@ export const customerOwnProfileRead = defineRead(
   {
     accessKind: 'detail',
     accessOwnerFacts: (input: CustomerOwnPortalReadInput) => portalSessionOwnerFacts(input.session),
+    // Pinned to the public carrier table `PORTAL_OWN_CARRIER.readProfile` by the reachability suite.
     accessWorkload: {
       reason: 'The registered storefront client reads the signed-in customer’s own profile for its own portal',
       workloads: [STOREFRONT_CLIENT_WORKLOAD],

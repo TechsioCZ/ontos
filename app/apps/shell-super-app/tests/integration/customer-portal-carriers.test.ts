@@ -1,4 +1,5 @@
 import { decodeAccessWorkload } from '@app/core-runtime';
+import { PORTAL_OWN_CARRIER } from '@app/commerce-customer-context/portal-auth/own-session';
 import type { GateInput } from '@app/core-runtime/access/enforcement';
 import { Effect, Result } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -17,26 +18,27 @@ import type { AccessAdminCase, Persona } from '../support/access-admin-real-gate
  * unregistered workload and no other tenant's workload or company. Which Party a request reaches is then the owner
  * overlay's session rule (Customer Context's own unit suite).
  *
- * The five carriers are workload-only and company-required; Customer Context's unit suite pins every one of them to
- * exactly the two shapes decided here (its private source is not importable from the Shell).
+ * The five carriers are workload-only and company-required. They are read from Customer Context's public carrier table,
+ * which its registered descriptors use and its unit suite pins them to (its private source is not importable here).
  */
 
-const storefrontCarrier = (role: 'action' | 'api', access: 'read' | 'write') => ({
-  accessWorkload: Result.getOrThrow(
-    decodeAccessWorkload(
+/** The five carriers exactly as Customer Context registers them (its unit suite pins every descriptor to this table). */
+const CARRIERS = Object.entries(PORTAL_OWN_CARRIER).map(
+  ([label, carrier]) =>
+    [
+      label,
       {
-        reason: 'The registered storefront client serves its signed-in customer',
-        workloads: ['commerce.storefront-client'],
+        accessWorkload: Result.getOrThrow(
+          decodeAccessWorkload(carrier.workload, {
+            access: carrier.access,
+            authorization: { kind: 'protected' },
+            moduleKey: 'commerce.customer-context',
+            role: carrier.role,
+          }),
+        ),
       },
-      { access, authorization: { kind: 'protected' }, moduleKey: 'commerce.customer-context', role },
-    ),
-  ),
-});
-
-const CARRIERS = [
-  ['own profile and consent reads', storefrontCarrier('api', 'read')],
-  ['own profile, consent and password changes', storefrontCarrier('action', 'write')],
-] as const;
+    ] as const,
+);
 
 const answersFor = Effect.fn('PortalCarriers.answers')(function* answersFor(
   accessCase: AccessAdminCase,

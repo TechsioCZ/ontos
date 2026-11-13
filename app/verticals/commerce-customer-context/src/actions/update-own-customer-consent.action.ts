@@ -153,6 +153,7 @@ export const updateOwnCustomerConsentAction = defineAction(
       policyKey: 'commerce.customer-context.update-own-customer-consent.access.v1',
     },
     accessOwnerFacts: (payload: UpdateOwnCustomerConsentPayload) => portalSessionOwnerFacts(payload.session),
+    // Pinned to the public carrier table `PORTAL_OWN_CARRIER.updateConsent` by the reachability suite.
     accessWorkload: {
       reason: 'The registered storefront client records the signed-in customer’s own consent for its own portal',
       workloads: [STOREFRONT_CLIENT_WORKLOAD],

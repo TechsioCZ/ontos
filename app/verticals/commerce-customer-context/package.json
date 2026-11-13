@@ -86,6 +86,7 @@
     "./outbox/commerce-customer-context-saved-address-removed-v1": "./shared/outbox/commerce-customer-context-saved-address-removed-v1.ts",
     "./outbox/commerce-customer-context-saved-address-updated-v1": "./shared/outbox/commerce-customer-context-saved-address-updated-v1.ts",
     "./portal-auth/contracts": "./shared/portal-auth-contracts.ts",
+    "./portal-auth/own-session": "./shared/portal-auth/own-session.ts",
     "./portal-auth/verification": "./shared/portal-auth-verification.ts",
     "./portal-auth/verification/client": "./src/api/portal-auth-verification/client.ts",
     "./ports/counterparty-canonicalization-observation": "./shared/domain/profile-counterparty-canonicalization-port.ts",

@@ -155,6 +155,7 @@ export const updateOwnCustomerProfileAction = defineAction(
       policyKey: 'commerce.customer-context.update-own-customer-profile.access.v1',
     },
     accessOwnerFacts: (payload: UpdateOwnCustomerProfilePayload) => portalSessionOwnerFacts(payload.session),
+    // Pinned to the public carrier table `PORTAL_OWN_CARRIER.updateProfile` by the reachability suite.
     accessWorkload: {
       reason: 'The registered storefront client changes the signed-in customer’s own profile for its own portal',
       workloads: [STOREFRONT_CLIENT_WORKLOAD],
