@@ -100,6 +100,72 @@ beforeEach(() => {
   issueDocumentGatewayContextsMock.mockReset();
 });
 
+/** Answers every batch with one freshly tokened assertion per entry it asks for, and records what it was asked. */
+const answeringBatches = () => {
+  const asked: (readonly string[])[] = [];
+  let issued = 0;
+  issueDocumentGatewayContextsMock.mockImplementation((request: { readonly audiences: readonly string[] }) => {
+    asked.push(request.audiences);
+    return Effect.succeed({
+      assertions: request.audiences.map((audience) => {
+        issued += 1;
+        return { ...assertion(audience), token: `token-${audience}-issued-${String(issued)}` };
+      }),
+    });
+  });
+  return { asked };
+};
+
+it.live('hands each read of one module its own pooled assertion, and asks a dry pool several in one batch', () =>
+  Effect.gen(function* poolPerModule() {
+    yield* resetDocumentGatewayAssertions;
+    const audience = 'orders';
+    const batches = answeringBatches();
+    yield* warmDocumentGatewayAssertions(revision, [audience]);
+    yield* Effect.sleep('20 millis');
+    // The document holds one assertion of the module; five reads of it follow, as a list warming its rows does.
+    const claimed = yield* Effect.forEach(
+      [1, 2, 3, 4, 5],
+      () => askAssertion({ audience, compositionRevision: revision }),
+      { concurrency: 'unbounded' },
+    );
+    expect(claimed.every(({ status }) => status === 200)).toBe(true);
+    // Every read got its own assertion, and none asked the single issuer.
+    expect(new Set(claimed.map(({ body }) => body.token)).size).toBe(5);
+    expect(gatewayRequests()).toHaveLength(0);
+    // The waiting reads were answered by batches that asked for several assertions of this one module.
+    // Five reads of one module cost at most two batches, each asking several assertions of it, never one call a read.
+    expect(batches.asked.length).toBeLessThanOrEqual(2);
+    expect(
+      Math.max(...batches.asked.map((entries) => entries.filter((named) => named === audience).length)),
+    ).toBeGreaterThan(1);
+    expect(batches.asked.every((entries) => entries.every((named) => named === audience))).toBe(true);
+  }),
+);
+
+it.live('never hands out a pooled assertion of a context that ended', () =>
+  Effect.gen(function* poolEndsWithContext() {
+    yield* resetDocumentGatewayAssertions;
+    const audience = 'orders';
+    const held = [
+      { ...assertion(audience), token: `token-${audience}-held-1` },
+      { ...assertion(audience), token: `token-${audience}-held-2` },
+    ];
+    issueDocumentGatewayContextsMock.mockReturnValueOnce(Effect.succeed({ assertions: held }));
+    yield* warmDocumentGatewayAssertions(revision, [audience]);
+    yield* Effect.sleep('20 millis');
+    const first = yield* askAssertion({ audience, compositionRevision: revision });
+    expect(held.map(({ token }) => token)).toContain(first.body.token);
+    // A company or tenant switch (or a sign-out) drops every pool; an unclaimed token is never handed out.
+    yield* clearBrowserRequestCache;
+    issueDocumentGatewayContextsMock.mockReturnValue(Effect.succeed({ assertions: [] }));
+    const afterBoundary = yield* askAssertion({ audience, compositionRevision: revision });
+    expect(held.map(({ token }) => token)).not.toContain(afterBoundary.body.token);
+    // It came from the single issuer, which decides for the person signed in now.
+    expect(gatewayRequests()).toHaveLength(1);
+  }),
+);
+
 it.live('obtains every audience of a client-side navigation in one batch that concurrent remotes join', () =>
   Effect.gen(function* batched() {
     yield* resetDocumentGatewayAssertions;
