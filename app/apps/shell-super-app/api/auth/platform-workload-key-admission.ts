@@ -8,7 +8,9 @@ import { AuthDatabase } from './db/client.ts';
 import { apikey } from './db/schema.ts';
 import { delegationForbidden, delegationUnavailable } from './gateway-delegation-errors.ts';
 import type { GatewayDelegationError } from './gateway-delegation-errors.ts';
-import { WorkloadCredentialAttestationJson } from './module-credential-attestation.ts';
+import { moduleCredentialReleaseOf, WorkloadCredentialAttestationJson } from './module-credential-attestation.ts';
+import type { ModuleCredentialRelease } from './module-credential-attestation.ts';
+import { isPlatformKeyOwner } from './platform-key-owner.ts';
 
 /** One verified API key and the principal it resolved to, about to act. */
 export interface PlatformWorkloadKeyInput {
@@ -84,20 +86,46 @@ const readWorkloadPrincipal = (core: CoreExecutor, input: PlatformWorkloadKeyInp
       Effect.map(([row]) => row !== undefined && (row.platformRole === 'internal_workload' || row.internalBound)),
     );
 
-const readAttestation = (auth: AuthExecutor, providerKeyId: string) =>
+/** The provider record of one key: what its metadata says and which provider user owns it. */
+export interface WorkloadKeyRecord {
+  readonly metadata: null | string;
+  readonly referenceId: string;
+}
+
+/**
+ * Whether a key is the one the platform issued this workload principal for the release served now. The attestation
+ * counts only on a key the platform key owner holds: metadata copied onto a key someone else owns attests nothing.
+ */
+export const admitsWorkloadKey = (
+  record: WorkloadKeyRecord | undefined,
+  input: PlatformWorkloadKeyInput,
+  release: ModuleCredentialRelease,
+): boolean =>
+  record !== undefined &&
+  isPlatformKeyOwner(record.referenceId) &&
+  Option.exists(
+    Option.flatMap(Option.fromNullishOr(record.metadata), (metadata) =>
+      Schema.decodeOption(WorkloadCredentialAttestationJson)(metadata),
+    ),
+    (attestation) =>
+      attestation.principalId === input.principalId &&
+      attestation.tenantId === input.tenantId &&
+      (input.legalEntityId === null || attestation.legalEntityId === input.legalEntityId) &&
+      attestation.compositionRevision === release.compositionRevision &&
+      release.buildMarkers[attestation.appId] !== undefined &&
+      attestation.buildMarker === release.buildMarkers[attestation.appId],
+  );
+
+const readKeyRecord = (auth: AuthExecutor, providerKeyId: string) =>
   auth
-    .select({ metadata: apikey.metadata })
+    .select({ metadata: apikey.metadata, referenceId: apikey.referenceId })
     .from(apikey)
     .where(eq(apikey.id, providerKeyId))
     .limit(1)
     .pipe(
       recoverSqlTransactionError,
       Effect.mapError(unavailable),
-      Effect.map(([record]) =>
-        Option.flatMap(Option.fromNullishOr(record?.metadata), (metadata) =>
-          Schema.decodeOption(WorkloadCredentialAttestationJson)(metadata),
-        ),
-      ),
+      Effect.map(([record]): WorkloadKeyRecord | undefined => record),
     );
 
 export const PlatformWorkloadKeyAdmissionLive = Layer.effect(
@@ -111,20 +139,11 @@ export const PlatformWorkloadKeyAdmissionLive = Layer.effect(
         if (!(yield* readWorkloadPrincipal(core.executor, input))) {
           return yield* Effect.void;
         }
-        const attested = yield* readAttestation(auth.executor, input.providerKeyId);
+        const record = yield* readKeyRecord(auth.executor, input.providerKeyId);
         const installed = yield* catalog.load.pipe(Effect.mapError(unavailable));
-        const admitted = Option.exists(attested, (attestation) => {
-          const contract = installed.contracts.find(({ deployment }) => deployment.appId === attestation.appId);
-          return (
-            attestation.principalId === input.principalId &&
-            attestation.tenantId === input.tenantId &&
-            (input.legalEntityId === null || attestation.legalEntityId === input.legalEntityId) &&
-            attestation.compositionRevision === installed.composition.revision &&
-            contract !== undefined &&
-            attestation.buildMarker === contract.deployment.buildMarker
-          );
-        });
-        return admitted ? yield* Effect.void : yield* refused();
+        return admitsWorkloadKey(record, input, moduleCredentialReleaseOf(installed))
+          ? yield* Effect.void
+          : yield* refused();
       }),
     };
   }),
