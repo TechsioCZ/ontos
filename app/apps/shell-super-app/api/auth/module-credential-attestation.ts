@@ -41,7 +41,8 @@ export const WorkloadCredentialAttestationSchema = Schema.Struct({
   buildMarker: Schema.String.check(Schema.isMinLength(1)),
   compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
   hostId: ModuleCredentialHostIdSchema,
-  ontosModuleCredential: Schema.Literal('workload_attested_v1'),
+  legalEntityId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('WorkloadLegalEntityId')),
+  ontosModuleCredential: Schema.Literal('workload_attested_v2'),
   principalId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('WorkloadPrincipalId')),
   tenantId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('WorkloadTenantId')),
   workloadKey: Schema.String.check(Schema.isMinLength(1)).pipe(Schema.brand('InternalWorkloadKey')),
@@ -59,12 +60,8 @@ export type PlatformCredentialAttestation = ModuleCredentialAttestation | Worklo
 export const platformAttestationOf = (metadata: null | string): Option.Option<PlatformCredentialAttestation> =>
   metadata === null ? Option.none() : Schema.decodeOption(PlatformCredentialAttestationJson)(metadata);
 
-/** The handover entry of a workload credential: the module, the workload and the tenant it acts in. */
-export const workloadCredentialEntryId = (entry: {
-  readonly appId: string;
-  readonly tenantId: string;
-  readonly workloadKey: string;
-}): string => `${entry.appId}/${entry.workloadKey}/${entry.tenantId}`;
+/** The handover entry of a workload credential: the module, the workload, and the tenant and company it acts for. */
+export { internalWorkloadEntryId as workloadCredentialEntryId } from '@app/core-runtime/auth/hosted-module-credentials';
 
 /** The attestation stored with a key, if its metadata holds one; anything else attests nothing. */
 export const attestationOf = (metadata: null | string): Option.Option<ModuleCredentialAttestation> =>

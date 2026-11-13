@@ -429,6 +429,13 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=6144
         run: mise exec -- pnpm api:check
 
+      # The reviewed authorization catalogue and what is generated from it (which modules get a module credential)
+      # must match the declarations in source; a stale artefact would key the wrong modules.
+      - name: Authorization catalogue artefact
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: app
+        run: mise exec -- pnpm authorization:catalog:artifact:check
+
   # The pre-commit hook is the format and lint gate, run from the git root exactly as a commit runs it,
   # over every tracked file. Type-aware lint of the whole tree took over four minutes on one runner, so
   # each shard runs the hook over every other tracked file (`--all-files` is `git ls-files`): together

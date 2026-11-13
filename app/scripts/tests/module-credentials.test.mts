@@ -9,16 +9,32 @@ import {
   earliestExpiryOf,
   encodeModuleCredentialHandover,
   MODULE_CREDENTIAL_CALLERS,
+  INTERNAL_WORKLOAD_LABELS,
   MODULE_INTERNAL_WORKLOADS,
   noProvisionedCredentials,
   providerKeyIdsOf,
   ProvisioningOutputJsonSchema,
 } from '../zerops/module-credentials.mts';
+import {
+  internalWorkloadDeclarations,
+  moduleKeyOfWorkload,
+  unlabelledInternalWorkloads,
+} from '../demo/release-internal-workloads.mts';
+import {
+  AccessCatalogArtifactDescriptorSchema,
+  AccessCatalogArtifactSchema,
+  declaredDelegatedCallers,
+  renderModuleCredentialCallers,
+} from '../authorization-catalog-artifact.mts';
+import { installedCallersOf } from '../zerops/provision-module-credentials.mts';
 
 const workspace = path.resolve(import.meta.dirname, '../..');
 const DELEGATED_CLIENT = /\bacquireDelegatedGatewayContext\b/u;
 const WORKLOAD_CLIENT = /\bacquireWorkloadGatewayContext\b/u;
 const ORDER = 'commerce-order';
+const MERCHANDISE = 'merchandise';
+const TOPOLOGY_FILE = 'topology/reference-topology.json';
+const FINANCE = 'finance-billing';
 
 /** Production source of one vertical: no tests, fixtures or generated build output. */
 const productionSources = (directory: string): string[] =>
@@ -37,7 +53,7 @@ const TopologySchema = Schema.Struct({
 describe('MODULE_CREDENTIAL_CALLERS', () => {
   it('names exactly the modules whose production code calls another module through delegated issuance', () => {
     const topology = Schema.decodeUnknownSync(Schema.fromJsonString(TopologySchema))(
-      readFileSync(path.join(workspace, 'topology/reference-topology.json'), 'utf-8'),
+      readFileSync(path.join(workspace, TOPOLOGY_FILE), 'utf-8'),
     );
     const callers = topology.verticals
       .filter((vertical) =>
@@ -51,10 +67,76 @@ describe('MODULE_CREDENTIAL_CALLERS', () => {
   });
 });
 
+describe('declared delegated callers', () => {
+  const committed = Schema.decodeUnknownSync(Schema.fromJsonString(AccessCatalogArtifactSchema))(
+    readFileSync(path.join(workspace, 'topology/authorization-catalog.json'), 'utf-8'),
+  );
+
+  it('keys every module a carrier admits as its caller: provisioning of a release that installs it issues its key', () => {
+    const declared = declaredDelegatedCallers(committed.modules);
+    expect(declared.length).toBeGreaterThan(0);
+    // A release that installs every topology module: each declared caller must be among the modules that get a key.
+    const topology = Schema.decodeUnknownSync(Schema.fromJsonString(TopologySchema))(
+      readFileSync(path.join(workspace, TOPOLOGY_FILE), 'utf-8'),
+    );
+    const keyed = installedCallersOf(topology.verticals.map(({ id }) => ({ deployment: { appId: id } })));
+    for (const caller of declared) {
+      expect(keyed).toContain(caller);
+    }
+    expect([...MODULE_CREDENTIAL_CALLERS]).toEqual([...declared]);
+  });
+
+  it('a new carrier that admits a new caller adds that caller, with nobody editing a list', () => {
+    const [first] = committed.modules;
+    const [descriptor] = first?.descriptors ?? [];
+    expect(descriptor).toBeDefined();
+    if (first === undefined || descriptor === undefined) {
+      return;
+    }
+    // The VAT push: a Tax carrier that admits Merchandise and Finance as its callers.
+    const vatCarrier = Schema.decodeUnknownSync(AccessCatalogArtifactDescriptorSchema)({
+      ...descriptor,
+      actor: { callers: [FINANCE, MERCHANDISE], subject: 'identity' },
+    });
+    const withVat = [...committed.modules, { ...first, descriptors: [vatCarrier] }];
+    expect(declaredDelegatedCallers(withVat)).toEqual(expect.arrayContaining([FINANCE, MERCHANDISE]));
+    expect(renderModuleCredentialCallers(withVat)).toContain(`'${MERCHANDISE}',`);
+    // Today's release keys neither: no carrier admits them yet.
+    expect(MODULE_CREDENTIAL_CALLERS).not.toContain(MERCHANDISE);
+  });
+
+  it('keys no module that only receives calls', () => {
+    expect(installedCallersOf([{ deployment: { appId: 'tax' } }, { deployment: { appId: 'crm' } }])).toEqual(['crm']);
+  });
+});
+
+/**
+ * The callers the last hand-kept `MODULE_CREDENTIAL_CALLERS` named at the commit this branch derives from. The derived
+ * list must never drop one: a module that held a key keeps it while a carrier admits it. When this branch is rebased
+ * onto a commit that still kept the list by hand (the VAT branch named `finance-billing` and `merchandise` there), the
+ * conflict resolves to the derived list and this pin takes that commit's hand list.
+ */
+const LAST_HAND_KEPT_CALLERS = [
+  'catalog',
+  'commerce-cart',
+  'commerce-customer-context',
+  'commerce-market-catalog',
+  'commerce-order',
+  'crm',
+  'party-registry',
+  'pricing',
+] as const;
+
+describe('the derived callers keep every caller the hand-kept list had', () => {
+  it('generates a superset of the last hand-kept list', () => {
+    expect(MODULE_CREDENTIAL_CALLERS).toEqual(expect.arrayContaining([...LAST_HAND_KEPT_CALLERS]));
+  });
+});
+
 describe('MODULE_INTERNAL_WORKLOADS', () => {
   it('names exactly the modules whose own server acts as a workload, each only with workloads its own Actions declare', () => {
     const topology = Schema.decodeUnknownSync(Schema.fromJsonString(TopologySchema))(
-      readFileSync(path.join(workspace, 'topology/reference-topology.json'), 'utf-8'),
+      readFileSync(path.join(workspace, TOPOLOGY_FILE), 'utf-8'),
     );
     const sourcesOf = (appId: string) => {
       const vertical = topology.verticals.find(({ id }) => id === appId);
@@ -112,7 +194,8 @@ describe('module credential handover', () => {
           },
           schemaVersion: 1,
           workloadCredentials: {
-            'crm/demo.crm.party-intake/70000000-0000-4000-8000-000000000001': 'crm-intake-workload-key',
+            'crm/demo.crm.party-intake/70000000-0000-4000-8000-000000000001/70000000-0000-4000-8000-000000000021':
+              'crm-intake-workload-key',
           },
         });
         const decoded = yield* Schema.decodeEffect(ProvisioningOutputJsonSchema)(encoded);
@@ -141,5 +224,33 @@ describe('module credential handover', () => {
     expect(none.failedAppIds).toEqual([ORDER, 'pricing']);
     expect(providerKeyIdsOf(none)).toEqual([]);
     expect(earliestExpiryOf(none)).toBeUndefined();
+  });
+});
+
+const INTAKE_WORKLOAD = 'demo.crm.party-intake';
+
+describe('internal workload declarations', () => {
+  const labels = new Map([[INTAKE_WORKLOAD, 'CRM · zakládání klientů']]);
+
+  it('registers a module internal workload only while the reviewed catalogue declares it, under its own module', () => {
+    const internal = new Map([['crm', [INTAKE_WORKLOAD, 'demo.crm.retired-sync']]]);
+    expect(
+      internalWorkloadDeclarations(internal, new Set([INTAKE_WORKLOAD, 'commerce.storefront-client']), labels),
+    ).toEqual([
+      { appId: 'crm', label: 'CRM · zakládání klientů', moduleKey: 'demo.crm', workloadKey: INTAKE_WORKLOAD },
+    ]);
+    expect(internalWorkloadDeclarations(internal, new Set(), labels)).toEqual([]);
+    expect(moduleKeyOfWorkload(INTAKE_WORKLOAD)).toBe('demo.crm');
+  });
+
+  it('gives every internal workload a readable label, and names the ones that have none', () => {
+    expect(unlabelledInternalWorkloads(MODULE_INTERNAL_WORKLOADS, INTERNAL_WORKLOAD_LABELS)).toEqual([]);
+    for (const label of INTERNAL_WORKLOAD_LABELS.values()) {
+      // A label is words a person reads, never an identifier.
+      expect(label).not.toMatch(/[a-z]+\.[a-z]+|[\da-f]{8}-/u);
+    }
+    expect(unlabelledInternalWorkloads(new Map([['crm', [INTAKE_WORKLOAD, 'demo.crm.new-sync']]]), labels)).toEqual([
+      'demo.crm.new-sync',
+    ]);
   });
 });

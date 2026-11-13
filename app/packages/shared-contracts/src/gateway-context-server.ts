@@ -1,14 +1,16 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { ownModuleCredential, ownWorkloadCredential } from '@app/core-runtime/auth/owner-module-credential';
+import { OutboxMessageCompany } from '@app/core-runtime/outbox/message-company';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import {
   readVerifiedGatewayCompositionRevision,
   readVerifiedGatewayScopeAssertion,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { Crypto } from 'effect';
-import { Config, ConfigProvider, Effect, Match, Option, Redacted, Schema } from 'effect';
+import { ConfigProvider, Effect, Match, Option, Redacted, Schema } from 'effect';
 
 import { issueApiKeyGatewayContext, issueDelegatedGatewayContext } from './gateway-context-api-key.ts';
+import { shellGatewayBaseUrlConfig } from './shell-gateway-url.ts';
 import type {
   GatewayContextClientError,
   GatewayContextProblem,
@@ -126,45 +128,39 @@ const assertionWire = ({
   });
 };
 
+/**
+ * The wire form of one subject. An `Originator` carries the company of the Outbox message being handled when the Outbox
+ * runtime provides one (`OutboxMessageCompany`); the caller never sets it.
+ */
 const subjectWireOf = (
   subject: GatewayDelegationSubject,
 ): Effect.Effect<WireSubjectRevision, GatewayDelegationSourceError> =>
   Match.value(subject).pipe(
     Match.tag('Originator', (originator) =>
-      Effect.succeed({
-        compositionRevision: originator.compositionRevision,
-        subject:
-          originator.legalEntityId === undefined
-            ? { _tag: 'Originator', actionInvocationId: originator.actionInvocationId, tenantId: originator.tenantId }
-            : {
-                _tag: 'Originator',
-                actionInvocationId: originator.actionInvocationId,
-                legalEntityId: originator.legalEntityId,
-                tenantId: originator.tenantId,
-              },
-      } satisfies WireSubjectRevision),
+      OutboxMessageCompany.pipe(
+        Effect.map((messageCompany): WireSubjectRevision => ({
+          compositionRevision: originator.compositionRevision,
+          subject: {
+            _tag: 'Originator',
+            actionInvocationId: originator.actionInvocationId,
+            tenantId: originator.tenantId,
+            ...Option.match(Option.fromUndefinedOr(originator.legalEntityId), {
+              onNone: () => ({}),
+              onSome: (legalEntityId) => ({ legalEntityId }),
+            }),
+            ...Option.match(messageCompany, {
+              onNone: () => ({}),
+              onSome: (messageLegalEntityId) => ({ messageLegalEntityId }),
+            }),
+          },
+        })),
+      ),
     ),
     Match.tag('Assertion', assertionWire),
     Match.exhaustive,
   );
 
-/** Hosts a module may reach the Shell on over plain HTTP: the same machine (the app host's loopback relay, a dev box). */
-const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
-
-/** Where a module's keys are presented: HTTPS, or plain HTTP to the same machine only. */
-const ShellGatewayBaseUrl = Config.schema(
-  Schema.URLFromString.check(
-    Schema.makeFilter((url) =>
-      (url.protocol === 'https:' || (url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname))) &&
-      url.username === '' &&
-      url.password === '' &&
-      url.hash === ''
-        ? undefined
-        : 'Gateway transport requires HTTPS (plain HTTP only to a loopback host) without credentials or fragment',
-    ),
-  ),
-  'ONTOS_SHELL_GATEWAY_BASE_URL',
-);
+const ShellGatewayBaseUrl = shellGatewayBaseUrlConfig;
 
 /** Requests a fresh module-to-module context authenticated by this deployment's own module credential. */
 export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acquire')(
@@ -259,12 +255,14 @@ export const acquireWorkloadGatewayContext = Effect.fn('GatewayWorkload.acquire'
   function* acquireWorkload(request: WorkloadGatewayRequest) {
     const key = yield* ownWorkloadCredential({
       appId: request.callingAppId,
+      legalEntityId: request.legalEntityId,
       tenantId: request.tenantId,
       workloadKey: request.workloadKey,
     });
     if (Option.isNone(key)) {
+      // The caller shows its own unavailable answer; the warning below keeps which tenant and company had no key.
       return yield* new GatewayDelegationSourceError({
-        reason: `No credential of ${request.workloadKey} for this tenant: the workload is not registered, or not provisioned yet`,
+        reason: `No credential of ${request.workloadKey} for tenant ${request.tenantId} company ${request.legalEntityId}: the workload is not registered there, or not provisioned yet`,
       });
     }
     const baseUrl = yield* ShellGatewayBaseUrl.parse(yield* ConfigProvider.ConfigProvider).pipe(

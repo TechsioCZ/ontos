@@ -23,6 +23,7 @@ import {
   provisionModuleCredentialsForReleaseWith,
   recordHostBoot,
   retireAfterHandoverWith,
+  workloadKeysDiffer,
 } from '../zerops/app-host.mts';
 import type { HandoverChannel, ModuleCredentialHealingStreaks } from '../zerops/app-host.mts';
 import {
@@ -47,20 +48,21 @@ const PARTY_KEY_TWO = 'party-registry-module-key-2';
 const GENERATION_TWO = '-2';
 const HANDOVER_LOOKALIKE = '{"schemaVersion":1,"credentials":{}}';
 const TENANT = '70000000-0000-4000-8000-000000000001';
-const OTHER_TENANT = '70000000-0000-4000-8000-000000000002';
-/** An internal workload of the order module, registered in two tenants. */
+const COMPANY = '70000000-0000-4000-8000-000000000021';
+const OTHER_COMPANY = '70000000-0000-4000-8000-000000000022';
+/** An internal workload of the order module, registered in two companies of one tenant: one key each. */
 const ORDER_WORKLOAD = { appId: ORDER, tenantId: TENANT, workloadKey: 'demo.order.intake' };
-const ORDER_WORKLOAD_ENTRY = `${ORDER}/demo.order.intake/${TENANT}`;
-const ORDER_WORKLOAD_ELSEWHERE = `${ORDER}/demo.order.intake/${OTHER_TENANT}`;
+const ORDER_WORKLOAD_ENTRY = `${ORDER}/demo.order.intake/${TENANT}/${COMPANY}`;
+const ORDER_WORKLOAD_ELSEWHERE = `${ORDER}/demo.order.intake/${TENANT}/${OTHER_COMPANY}`;
 const WORKLOAD_KEY_ONE = 'order-intake-workload-key-1';
 const WORKLOAD_KEY_TWO = 'order-intake-workload-key-2';
 const WORKLOAD_KEY_ELSEWHERE = 'order-intake-workload-key-x';
-const PRICING_WORKLOAD_ENTRY = `pricing/demo.pricing.sync/${TENANT}`;
+const PRICING_WORKLOAD_ENTRY = `pricing/demo.pricing.sync/${TENANT}/${COMPANY}`;
 const PRICING_WORKLOAD_KEY = 'pricing-sync-workload-key';
 
-/** What the order module reads as its intake workload key in one tenant. */
-const readWorkload = (tenantId: string) =>
-  ownWorkloadCredential({ ...ORDER_WORKLOAD, tenantId }).pipe(
+/** What the order module reads as its intake workload key in one company of the tenant: exactly that entry. */
+const readWorkload = (legalEntityId: string) =>
+  ownWorkloadCredential({ ...ORDER_WORKLOAD, legalEntityId }).pipe(
     Effect.map((key) => (Option.isSome(key) ? Redacted.value(key.value) : undefined)),
   );
 const decoder = new TextDecoder();
@@ -161,8 +163,8 @@ describe('a process receiving handovers on its channel', () => {
         expect(yield* readOwnerCredential(PARTY)).toBe('party-registry-module-key');
         expect(yield* readOwnerCredential('pricing')).toBeUndefined();
 
-        // An owner's internal workload key, per tenant: read from its slot, never from the environment.
-        expect(yield* readWorkload(TENANT)).toBeUndefined();
+        // An owner's internal workload key, per tenant and company: read from its slot, never from the environment.
+        expect(yield* readWorkload(COMPANY)).toBeUndefined();
         const withWorkloads = yield* encodeModuleCredentialHandover({ [ORDER]: Redacted.make(ORDER_KEY) }, [ORDER], {
           [ORDER_WORKLOAD_ELSEWHERE]: Redacted.make(WORKLOAD_KEY_ELSEWHERE),
           [ORDER_WORKLOAD_ENTRY]: Redacted.make(WORKLOAD_KEY_ONE),
@@ -171,24 +173,24 @@ describe('a process receiving handovers on its channel', () => {
         });
         expect(decoder.decode(withWorkloads)).not.toContain(PRICING_WORKLOAD_KEY);
         yield* applyModuleCredentialHandovers(receiver, Stream.make(withWorkloads));
-        expect(yield* readWorkload(TENANT)).toBe(WORKLOAD_KEY_ONE);
-        expect(yield* readWorkload(OTHER_TENANT)).toBe(WORKLOAD_KEY_ELSEWHERE);
-        expect(yield* readWorkload('70000000-0000-4000-8000-000000000003')).toBeUndefined();
-        // A rotation hands the workload a new key in the running process; a tenant whose registration ended is dropped.
+        expect(yield* readWorkload(COMPANY)).toBe(WORKLOAD_KEY_ONE);
+        expect(yield* readWorkload(OTHER_COMPANY)).toBe(WORKLOAD_KEY_ELSEWHERE);
+        expect(yield* readWorkload('70000000-0000-4000-8000-000000000023')).toBeUndefined();
+        // A rotation hands the workload a new key in the running process; a company whose registration ended is dropped.
         const rotatedWorkload = yield* encodeModuleCredentialHandover(
           { [ORDER]: Redacted.make(ORDER_KEY_TWO) },
           [ORDER],
           { [ORDER_WORKLOAD_ENTRY]: Redacted.make(WORKLOAD_KEY_TWO) },
         );
         yield* applyModuleCredentialHandovers(receiver, Stream.make(rotatedWorkload));
-        expect(yield* readWorkload(TENANT)).toBe(WORKLOAD_KEY_TWO);
-        expect(yield* readWorkload(OTHER_TENANT)).toBeUndefined();
+        expect(yield* readWorkload(COMPANY)).toBe(WORKLOAD_KEY_TWO);
+        expect(yield* readWorkload(OTHER_COMPANY)).toBeUndefined();
         // A handover that names only another owner leaves this owner's workload keys as they are.
         yield* applyModuleCredentialHandovers(
           receiver,
           Stream.make(yield* encodeModuleCredentialHandover({ [PARTY]: Redacted.make(PARTY_KEY_TWO) }, [PARTY])),
         );
-        expect(yield* readWorkload(TENANT)).toBe(WORKLOAD_KEY_TWO);
+        expect(yield* readWorkload(COMPANY)).toBe(WORKLOAD_KEY_TWO);
         const stranger = yield* receiver.accept(
           Schema.decodeUnknownSync(HostedModuleCredentialsSchema)({
             credentials: {},
@@ -401,6 +403,7 @@ describe('module credential healing', () => {
     start: ProvisioningOutput = held,
     nowMillis = 0,
     streaks: Ref.Ref<ModuleCredentialHealingStreaks> = Ref.makeUnsafe({ revocations: 0, unreadable: 0 }),
+    renewal: Ref.Ref<boolean> = Ref.makeUnsafe(false),
   ) =>
     Effect.gen(function* healOnce() {
       yield* TestClock.setTime(nowMillis);
@@ -418,6 +421,7 @@ describe('module credential healing', () => {
           held: state,
           holders: Effect.succeed([holder, holder]),
           issue: (appIds) => Effect.sync(() => issues.push(appIds)).pipe(Effect.as(issued)),
+          renewal,
           retireOwn: (keep) => Effect.sync(() => retirements.push(keep)),
           serving: Effect.succeed(true),
         },
@@ -425,6 +429,40 @@ describe('module credential healing', () => {
       );
       return { healthy, held: yield* Ref.get(state), issues, messages, retirements, streaks: yield* Ref.get(streaks) };
     });
+
+  it.effect('renews every caller once when the internal workload registrations changed, keys live or not', () =>
+    Effect.gen(function* registrationsChanged() {
+      const current = output({ [ORDER]: ORDER_KEY_ONE, [PARTY]: PARTY_KEY_ONE });
+      const live = new Set(providerKeyIdsOf(current));
+      const fresh = output({ [ORDER]: ORDER_KEY_TWO, [PARTY]: PARTY_KEY_TWO }, [], GENERATION_TWO, 40 * HOUR, {
+        [ORDER_WORKLOAD_ENTRY]: WORKLOAD_KEY_ONE,
+      });
+      const renewal = Ref.makeUnsafe(true);
+      const result = yield* healing(Effect.succeed(live), fresh, current, HOUR, undefined, renewal);
+      expect(result.issues).toEqual([[ORDER, PARTY]]);
+      expect(result.messages.every((message) => message.includes(WORKLOAD_KEY_ONE))).toBe(true);
+      expect(result.retirements).toEqual([providerKeyIdsOf(current)]);
+      expect(yield* Ref.get(renewal)).toBe(false);
+      // Asked once: the next step, with nothing new, renews nothing.
+      const quiet = yield* healing(
+        Effect.succeed(new Set(providerKeyIdsOf(fresh))),
+        fresh,
+        fresh,
+        HOUR,
+        undefined,
+        renewal,
+      );
+      expect(quiet.issues).toEqual([]);
+    }),
+  );
+
+  it('compares the registrations with the workload keys held, company by company', () => {
+    const holding = output({ [ORDER]: ORDER_KEY_ONE }, [], '', DAY, { [ORDER_WORKLOAD_ENTRY]: WORKLOAD_KEY_ONE });
+    const registration = { appId: ORDER, legalEntityId: COMPANY, tenantId: TENANT, workloadKey: 'demo.order.intake' };
+    expect(workloadKeysDiffer(holding, [registration])).toBe(false);
+    expect(workloadKeysDiffer(holding, [registration, { ...registration, legalEntityId: OTHER_COMPANY }])).toBe(true);
+    expect(workloadKeysDiffer(holding, [])).toBe(true);
+  });
 
   it.effect('hands fresh keys to every holder when its own keys were revoked, then retires what they replaced', () =>
     Effect.gen(function* revoked() {

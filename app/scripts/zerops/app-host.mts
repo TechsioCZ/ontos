@@ -54,10 +54,15 @@ import {
   noProvisionedCredentials,
   providerKeyIdsOf,
   ProvisioningOutputJsonSchema,
+  MODULE_INTERNAL_WORKLOADS,
 } from './module-credentials.mts';
 import type { ProvisioningOutput } from './module-credentials.mts';
 import { liveModuleKeyIds } from './module-credential-liveness.mts';
-import { workloadEntryAppId } from '../../packages/core-runtime/src/auth/hosted-module-credentials.ts';
+import {
+  internalWorkloadEntryId,
+  workloadEntryAppId,
+} from '../../packages/core-runtime/src/auth/hosted-module-credentials.ts';
+import { loadInternalWorkloadBindings } from '../../packages/core-runtime/src/auth/module-credentials.ts';
 import { authenticationQueryRedactions, credentialSubmissionRedirect } from '@app/shared-contracts/credential-url';
 /**
  * One stateless Zerops container that serves the whole OntOS application: the Shell, every MicroVertical owner
@@ -489,6 +494,33 @@ export const startUnitProcess = (
   );
 };
 
+/** The release step that registers every module's own declared internal workload, per tenant and company. */
+export const RELEASE_INTERNAL_WORKLOADS_SCRIPT = 'scripts/demo/release-internal-workloads.mts';
+/** The only settings that step reads; it is started with these alone, never the host's other secrets. */
+export const RELEASE_INTERNAL_WORKLOADS_SETTINGS = [
+  'DATABASE_URL',
+  'PATH',
+  'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
+] as const;
+
+/**
+ * Whether the platform's internal workload registrations differ from the workload keys the host holds: a registration
+ * without a held key, or a held key whose registration ended.
+ */
+export const workloadKeysDiffer = (
+  held: ProvisioningOutput,
+  registered: readonly {
+    readonly appId: string;
+    readonly legalEntityId: string;
+    readonly tenantId: string;
+    readonly workloadKey: string;
+  }[],
+): boolean => {
+  const wanted = new Set(registered.map((entry) => internalWorkloadEntryId(entry)));
+  const holding = new Set(Object.keys(held.workloadCredentials));
+  return wanted.size !== holding.size || [...wanted].some((entry) => !holding.has(entry));
+};
+
 /** Finite operator commands own private pools; only long-running hosts install a shared-pool registry. */
 export const finiteProcessEnvironment = (environment: ChildEnvironment): ChildEnvironment => ({
   ...environment,
@@ -531,6 +563,35 @@ const runChild = (
     observeRuntimeJob('supervisor-child', name),
     Effect.catchTag('PlatformError', () => Effect.fail(failure(`${name} could not run`))),
   );
+
+/**
+ * The platform's internal workload registration (`release-internal-workloads.mts`), started with its own settings
+ * only. It never holds or fails the boot: a failure is one loud line, and the registrations stay as they were until
+ * the next run.
+ */
+export const registerInternalWorkloads = (release: { readonly compositionRevision: string }) =>
+  Effect.gen(function* registerWorkloads() {
+    const settings: Record<string, string> = {};
+    for (const key of RELEASE_INTERNAL_WORKLOADS_SETTINGS) {
+      const value = yield* Config.option(Config.String(key));
+      if (Option.isSome(value)) {
+        settings[key] = value.value;
+      }
+    }
+    yield* runChild(
+      'release-internal-workloads',
+      process.execPath,
+      [RELEASE_INTERNAL_WORKLOADS_SCRIPT, '--run', release.compositionRevision],
+      workspaceRoot,
+      settings,
+    ).pipe(
+      Effect.catchTag('AppHostError', ({ reason }) =>
+        Console.error(
+          `[app-host] INTERNAL WORKLOAD REGISTRATION FAILED (${reason}); the registrations stay as they were until the next run`,
+        ),
+      ),
+    );
+  });
 
 const PROVISIONING_SCRIPT = path.join(workspaceRoot, 'scripts/zerops/provision-module-credentials.mts');
 /**
@@ -850,7 +911,7 @@ export const mergeProvisioning = (held: ProvisioningOutput, fresh: ProvisioningO
 export type ModuleCredentialHealing =
   | { readonly appIds: readonly string[]; readonly kind: 'fill' }
   | { readonly kind: 'none' }
-  | { readonly kind: 'renew'; readonly reason: 'expiring' | 'revoked' };
+  | { readonly kind: 'renew'; readonly reason: 'expiring' | 'registrations' | 'revoked' };
 
 /** Whether the keys the host holds end within `MODULE_CREDENTIAL_ROTATION_LEAD`: known locally, no read needed. */
 const nearTheirEnd = (held: ProvisioningOutput, nowMillis: number) => {
@@ -899,6 +960,11 @@ export interface ModuleCredentialHealingInput<Requirements> {
   readonly holders: Effect.Effect<readonly Pick<CredentialHolder, 'handOver'>[]>;
   readonly issue: (appIds: readonly string[]) => Effect.Effect<ProvisioningOutput, never, Requirements>;
   /** Retires exactly the given keys this boot replaced (and its container's ended boots' keys), after the grace. */
+  /**
+   * Set when the internal workload registrations changed after this boot's keys were issued (the release step after
+   * publish): the next step renews every caller, so new registrations get keys and retired ones lose them.
+   */
+  readonly renewal: Ref.Ref<boolean>;
   readonly retireOwn: (replaced: readonly string[]) => Effect.Effect<void, never, Requirements>;
   readonly serving: Effect.Effect<boolean>;
 }
@@ -930,7 +996,9 @@ export const healModuleCredentialsOnce = Effect.fn('AppHost.healModuleCredential
     );
   }
   const held = yield* Ref.get(input.held);
-  const plan = planModuleCredentialHealing(held, active, yield* Clock.currentTimeMillis);
+  const plan: ModuleCredentialHealing = (yield* Ref.getAndSet(input.renewal, false))
+    ? { kind: 'renew', reason: 'registrations' }
+    : planModuleCredentialHealing(held, active, yield* Clock.currentTimeMillis);
   const revoked = plan.kind === 'renew' && plan.reason === 'revoked';
   const { revocations } = yield* Ref.updateAndGet(streaks, (counted) => ({
     ...counted,
@@ -944,7 +1012,11 @@ export const healModuleCredentialsOnce = Effect.fn('AppHost.healModuleCredential
       ? Console.error(
           `[app-host] MODULE CREDENTIALS OF THIS HOST WERE REVOKED (${String(revocations)} renewal(s) in a row); issuing and handing over fresh ones`,
         )
-      : Console.log('[app-host] module credentials near their end; rotating them');
+      : Console.log(
+          plan.reason === 'registrations'
+            ? '[app-host] internal workload registrations changed; issuing and handing over keys for them'
+            : '[app-host] module credentials near their end; rotating them',
+        );
   }
   const appIds = plan.kind === 'fill' ? plan.appIds : input.callers;
   const fresh = yield* input.issue(appIds);
@@ -1868,6 +1940,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   const credentialHolders = yield* Ref.make<readonly Pick<CredentialHolder, 'handOver'>[]>([owners]);
   const replacedKeys = yield* makeReplacedKeyLedger;
   const heldCredentials = yield* Ref.make(noProvisionedCredentials(callers));
+  const renewal = yield* Ref.make(false);
   const issueFor = (release: HostRelease) => (appIds: readonly string[]) =>
     provisionModuleCredentialsForRelease({
       appIds,
@@ -1902,8 +1975,29 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       earlierBoots,
       shellEnvironment: shellEnvironment.environment,
     });
+  /** After a run that may have changed registrations: renew the callers' keys when they no longer match. */
+  const renewWhenRegistrationsChanged = Effect.gen(function* compareRegistrations() {
+    const workloads = [...new Set([...MODULE_INTERNAL_WORKLOADS.values()].flat())];
+    const registered = yield* loadInternalWorkloadBindings(database.executor, workloads).pipe(Effect.option);
+    if (Option.isNone(registered)) {
+      return yield* Console.error(
+        '[app-host] internal workload registrations could not be read; keys renew on schedule',
+      );
+    }
+    const appOf = new Map(
+      [...MODULE_INTERNAL_WORKLOADS].flatMap(([appId, keys]) => keys.map((key) => [key, appId] as const)),
+    );
+    const entries = registered.value.flatMap((binding) => {
+      const appId = appOf.get(binding.workloadKey);
+      return appId === undefined || !callers.includes(appId) ? [] : [{ ...binding, appId }];
+    });
+    return workloadKeysDiffer(yield* Ref.get(heldCredentials), entries)
+      ? yield* Ref.set(renewal, true)
+      : yield* Effect.void;
+  });
   const healCredentials = (release: HostRelease, serving: Effect.Effect<boolean>) =>
     healModuleCredentials({
+      renewal,
       // Bound and, for the keys this host holds, still verifying (enabled, not ended) in the key store.
       activeProviderKeyIds: Ref.get(heldCredentials).pipe(
         Effect.flatMap((held) => liveModuleKeyIds(database.executor, providerKeyIdsOf(held))),
@@ -2055,6 +2149,9 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     // After migrations, the role bootstrap and schema verification (all inside the migrator) and before this host
     // serves anything: the observed release's keys are issued and handed to the owners.
     const release = hostReleaseOf(releaseSnapshot);
+    // Keys can only be issued for registrations that exist: the platform registers every module's declared internal
+    // workloads first (per tenant and company), so the boot's provisioning keys them in the same pass.
+    yield* registerInternalWorkloads(release);
     yield* provisionForRelease(release);
     yield* verifyReleaseAccessIntent(releaseSnapshot);
     const revision = yield* publishSnapshot(releaseSnapshot);
@@ -2079,7 +2176,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
         releaseSettings.set(key, value.value);
       }
     }
-    yield* runChild(
+    const installReleaseModules = runChild(
       'release-modules',
       node,
       [RELEASE_MODULES_SCRIPT],
@@ -2092,13 +2189,22 @@ export const runAppHost = Effect.gen(function* runAppHost() {
           `[app-host] RELEASE MODULE INSTALLATION FAILED (${reason}); the modules stay as they were until the next release`,
         ),
       ),
+    );
+    // One fiber, in this order: module installation, then internal workload registration (which follows the release
+    // just published and the modules it installed), then key renewal when the registrations now differ from the keys
+    // held. A module this release installed has its workloads registered and keyed in the same boot; a module
+    // installed later at runtime gets its registrations at the next deploy (ADR-0028). Neither step holds the boot.
+    yield* installReleaseModules.pipe(
+      Effect.andThen(registerInternalWorkloads(release)),
+      Effect.andThen(renewWhenRegistrationsChanged),
       Effect.forkChild,
     );
     // No relationship is written by hand here. Authorization v2 (ADR-0030) projects every tuple from PostgreSQL
     // intent through the one Core writer, so the retired `scoped_role`/`action`/`context_permission` reconciliation
     // would only fail here. Two release steps change intent and then project it through that writer: the migrator's
     // access catalog activation, and the release module step above, which reconciles each Tenant it installed a module
-    // in. Everything else in a live Tenant is seeded by the operator-gated stage bootstrap
+    // in; the internal workload registration writes Core intent only (no relationship). Everything else in a live
+    // Tenant is seeded by the operator-gated stage bootstrap
     // (`apps/shell-super-app/scripts/bootstrap-stage-accounts.mts`). The engine's canonical schema arrives with the
     // deployment's SpiceDB bootstrap file, and a live schema or tuple retirement is its own approved operation. The
     // release proves the projected access before it publishes (`verifyReleaseAccessIntent` above).
