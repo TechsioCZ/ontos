@@ -8446,7 +8446,10 @@ const hasOriginalPhaseCalls = (
       hasPublicCoreReadCallable(owner, source, token.value) ||
       hasOriginalResourceRefCallable(owner, source, token.value) ||
       (original !== undefined &&
+        // Main's `isExecutableCallback` does not read a generic arrow (`<T>(value: T) => ...`); the trunk's own
+        // staged arrow reader does, so an owner-local generic helper is recognised the same way as a plain one.
         (isExecutableCallback(original.initializer) ||
+          hasBalancedArrowCallbackStaged(original.initializer) ||
           /^Schema\.(?:encodeEffect|decodeEffect|decodeUnknownEffect)\(/u.test(original.initializer)))
     );
   });
@@ -16426,6 +16429,36 @@ const nativeSnapshotTransactionTemplates = (): readonly string[] => {
   ];
 };
 
+/**
+ * The executor parameter of a callback passed inline to `context.transaction(...)`. Core's `transaction` method
+ * types the executor, so main's database-access checker forbids re-annotating it on a nested function; the
+ * parameter is therefore the bare name `transaction` (or the explicit original Core annotation). Callers only hand
+ * in callbacks taken from the `context.transaction` call itself, and the body is matched token for token, so the
+ * executor cannot come from an outer scope or escape the callback.
+ */
+const hasContextTransactionCallbackParameter = (source: string, parameter: string | undefined): boolean =>
+  parameter === 'transaction' ||
+  (parameter === SCOPED_TRANSACTION_PARAMETER && hasOriginalScopedFactoryType(source, 'ScopedTransactionExecutor'));
+
+/** The bare executor name may only occur inside the `context.transaction` callbacks, never in the phase around them. */
+const hasExecutorOutsideTransactionCallbacks = (body: string, callbacks: readonly string[]): boolean => {
+  let rest = maskComments(body);
+  for (const callback of callbacks) {
+    const at = rest.indexOf(callback);
+    if (at === -1) {
+      return true;
+    }
+    rest = `${rest.slice(0, at)}${rest.slice(at + callback.length)}`;
+  }
+  const tokens = tokenizeGovernedClient(rest);
+  return tokens.some(
+    (token, index) =>
+      token.kind === SyntaxKind.Identifier &&
+      token.value === 'transaction' &&
+      !READ_FACTORY_MEMBER_SELECTORS.has(tokens[index - 1]?.kind ?? SyntaxKind.Unknown),
+  );
+};
+
 const hasOriginalNativeSnapshotReadCallback = (
   owner: ReadPhaseOwner,
   source: string,
@@ -16441,8 +16474,7 @@ const hasOriginalNativeSnapshotReadCallback = (
   ];
   return (
     parameters?.length === 1 &&
-    parameters[0] === SCOPED_TRANSACTION_PARAMETER &&
-    hasOriginalScopedFactoryType(source, 'ScopedTransactionExecutor') &&
+    hasContextTransactionCallbackParameter(source, parameters[0]) &&
     body !== undefined &&
     hasExactSourceTokens(tokenizeGovernedClient(body), expected) &&
     targets.every((binding) => {
@@ -16473,6 +16505,7 @@ const hasOriginalNativeSnapshotReadFinish = (owner: ReadPhaseOwner, source: stri
   return (
     body !== undefined &&
     callbacks?.length === templates.length &&
+    !hasExecutorOutsideTransactionCallbacks(body, callbacks) &&
     body.trimStart().startsWith('const { loaded, prepared, scope } = context;') &&
     /\bconst \{ request \} = loaded\.snapshot;/u.test(body) &&
     /\bconst deadline = DateTime\.toEpochMillis\(prepared\.observedAt\) \+ MAX_EVIDENCE_WINDOW_MS;/u.test(body) &&
