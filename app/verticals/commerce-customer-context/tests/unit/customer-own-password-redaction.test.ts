@@ -144,3 +144,97 @@ it.effect('a same-key retry of a committed change changes no password and replay
     expect(providerBodies).toHaveLength(1);
   }),
 );
+
+/** How one failing attempt ends: refused by the gate or the owner rule, or failing at or after the provider. */
+const FAILURES = [
+  ['the gate refuses the caller', { access: 'denied' }],
+  ['the owner rule refuses the session', { owner: 'denied' }],
+  ['the provider says the current password is wrong', { provider: 'wrong-current' }],
+  ['the provider fails', { provider: 'error' }],
+  ['the provider defects', { provider: 'defect' }],
+] as const;
+
+const failingScenario = Effect.fn('PasswordRedaction.failing')(function* failingScenario(
+  failure: (typeof FAILURES)[number][1],
+) {
+  const logs: string[] = [];
+  const auditEvents: CommercePortalAuthAuditEvent[] = [];
+  const harness = yield* makeActionTestHarness({
+    access: 'access' in failure ? failure.access : 'allowed',
+    onOwnerAuthorization: () => ('owner' in failure ? failure.owner : 'allowed'),
+    ownerRegistration: commerceCustomerContextRegistration,
+    services: [bindActionTestServices(changeOwnCustomerPasswordAction, {})],
+  });
+  const payload = yield* Schema.decodeUnknownEffect(ChangeOwnCustomerPasswordPayloadSchema)({ session });
+  const provider = 'provider' in failure ? failure.provider : 'never';
+  const exit = yield* harness.runtime
+    .runAction({
+      payload,
+      principal: workloadPrincipal,
+      registration: changeOwnCustomerPasswordAction,
+      transport: { correlationId: 'password-redaction-failing', idempotencyKey: 'password-redaction-failing' },
+    })
+    .pipe(
+      Effect.provideService(CustomerOwnPasswordChangeExchange, {
+        currentPassword: Redacted.make(CURRENT),
+        newPassword: Redacted.make(NEXT),
+        requestHeaders: new Headers({ cookie: 'commerce-portal.session_token=opaque' }),
+        sessionRef: 'session-reference',
+      }),
+      Effect.provideService(CommercePortalAuthAudit, {
+        record: (event) => Effect.sync(() => auditEvents.push(event)),
+      }),
+      Effect.provideService(CommercePortalAuthRecoveryRateLimitService, { consume: () => Effect.succeed(true) }),
+      Effect.provideService(CommercePortalAuthService, {
+        api: Schema.decodeUnknownSync(Schema.Any)({
+          changePassword: (request: { readonly body: { readonly currentPassword: string } }) => {
+            // Every failure the provider could carry the passwords in: its message, its body and its cause.
+            const echo = `${request.body.currentPassword} ${NEXT}`;
+            if (provider === 'defect') {
+              throw new Error(`provider crashed with ${echo}`);
+            }
+            return Promise.reject(
+              Object.assign(new Error(`provider refused ${echo}`), {
+                body: { code: provider === 'wrong-current' ? 'INVALID_PASSWORD' : 'INTERNAL', message: echo },
+              }),
+            );
+          },
+        }),
+      }),
+      Effect.provide(
+        Logger.layer([
+          Logger.make((options) => {
+            logs.push(JSON.stringify(Logger.formatStructured.log(options)));
+          }),
+        ]),
+      ),
+      Effect.exit,
+    );
+  return { auditEvents, exit, harness, logs };
+});
+
+for (const [label, failure] of FAILURES) {
+  it.effect(`no password reaches evidence, logs, the audit or the answer when ${label}`, () =>
+    Effect.gen(function* failingRedaction() {
+      const { auditEvents, exit, harness, logs } = yield* failingScenario(failure);
+      expect(Exit.isFailure(exit)).toBe(true);
+      // A provider case really reached the provider: its intent and its outcome row are there.
+      expect(auditEvents.map(({ eventType }) => eventType)).toEqual(
+        'provider' in failure
+          ? ['commerce.portal-auth.password-change-requested.v1', 'commerce.portal-auth.password-change-failed.v1']
+          : [],
+      );
+      const snapshot = harness.snapshot();
+      for (const [where, text] of [
+        ['invocations and idempotency record', encodeJson(snapshot.invocations)],
+        ['committed Core evidence', encodeJson(snapshot.committed)],
+        ['refusal evidence', encodeJson([snapshot.permissionDenials, snapshot.policyDenials])],
+        ['portal audit', encodeJson(auditEvents)],
+        ['logs', logs.join('\n')],
+        ['the answer', encodeJson(Exit.isFailure(exit) ? String(exit.cause) : '')],
+      ] as const) {
+        expect({ leaks: leaksIn(text), where }).toEqual({ leaks: [], where });
+      }
+    }),
+  );
+}
