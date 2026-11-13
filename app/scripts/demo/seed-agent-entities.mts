@@ -9,7 +9,10 @@
  *
  *   node scripts/demo/seed-agent-entities.mts
  *   node scripts/demo/seed-agent-entities.mts --roles-admin obchod@demo.ontos \
- *     --roles-company 71000000-0000-4000-8000-000000000020 --role 'AI agent B · čtení + úkoly (Obchodní firma)=<role>'
+ *     --roles-company 71000000-0000-4000-8000-000000000020 \
+ *     --operator 'AI agent B · čtení + úkoly (Obchodní firma)=<person>' \
+ *     --role 'AI agent B · čtení + úkoly (Obchodní firma)=<role>'
+ * Operators are set explicitly through the operators Action, never read from the old SpiceDB relation.
  *
  * Environment: ONTOS_DEMO_SEED_URL (default http://localhost:3020), ONTOS_DEMO_PASSWORD (password1234).
  */
@@ -152,16 +155,61 @@ const adminSession = (origin: string, password: Redacted.Redacted, email: string
   });
 
 /**
+ * Makes each named person an operator of the named agent, through the operators Action (audited, revisioned), keeping
+ * the operators the agent already has. Operators are never read from the old SpiceDB relation: an existing agent gets
+ * them only from this explicit setting. An unknown agent or person fails and lists who exists.
+ */
+const assignOperators = (session: Effect.Success<ReturnType<typeof makeSession>>, pairs: readonly string[]) =>
+  Effect.gen(function* assignSeedOperators() {
+    for (const pair of pairs) {
+      const [agentName = '', personName = ''] = pair.split('=', 2).map((part) => part.trim());
+      const overview = yield* session
+        .post(LIST, EmptySchema, {}, `${pair} overview`)
+        .pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(AgentEntityOverviewSchema)));
+      const agent = overview.agents.find((candidate) => candidate.displayName === agentName);
+      const person = overview.members.find((candidate) => candidate.displayName === personName);
+      if (agent === undefined || person === undefined) {
+        const known = overview.members.map((candidate) => candidate.displayName).join(', ');
+        return yield* new AgentSeedFailure({
+          message: `${pair}: ${agent === undefined ? 'no such agent' : 'no such person'}; people: ${known}`,
+        });
+      }
+      const current = agent.operators.map((operator) => operator.principalId);
+      if (current.includes(person.principalId)) {
+        yield* Console.log(`[seed-agent-entities] ${personName} already operates ${agentName}`);
+        continue;
+      }
+      const request = yield* Schema.decodeUnknownEffect(AgentOperatorsRequestSchema)({
+        agentPrincipalId: agent.principalId,
+        expectedRevision: agent.operatorsRevision,
+        operatorPrincipalIds: [...current, person.principalId],
+      });
+      yield* session.post(OPERATORS, AgentOperatorsRequestSchema, request, `${pair} operators`).pipe(
+        Effect.flatMap((response) => response.text),
+        Effect.asVoid,
+      );
+      yield* Console.log(`[seed-agent-entities] ${personName} now operates ${agentName}`);
+    }
+    return yield* Effect.void;
+  });
+
+/**
  * Gives each named agent the named EXISTING role of the company, idempotently (a held role is kept). A role or agent
  * that does not exist fails and lists what does: the seed never invents a role or an agent.
  */
 const assignRoles = (
   origin: string,
   password: Redacted.Redacted,
-  input: { readonly adminEmail: string; readonly legalEntityId: string; readonly pairs: readonly string[] },
+  input: {
+    readonly adminEmail: string;
+    readonly legalEntityId: string;
+    readonly operators: readonly string[];
+    readonly pairs: readonly string[];
+  },
 ) =>
   Effect.gen(function* assignSeedRoles() {
     const session = yield* adminSession(origin, password, input.adminEmail, input.legalEntityId);
+    yield* assignOperators(session, input.operators);
     for (const pair of input.pairs) {
       const [agentName = '', roleName = ''] = pair.split('=', 2).map((part) => part.trim());
       const overview = yield* session
@@ -280,11 +328,12 @@ const command = Command.make(
   'seed-agent-entities',
   {
     help: Flag.Boolean('help').pipe(Flag.withAlias('h')),
+    operator: Flag.String('operator').pipe(Flag.atLeast(0)),
     role: Flag.String('role').pipe(Flag.atLeast(0)),
     rolesAdmin: Flag.String('roles-admin').pipe(Flag.optional),
     rolesCompany: Flag.String('roles-company').pipe(Flag.optional),
   },
-  ({ help, role, rolesAdmin, rolesCompany }) =>
+  ({ help, operator, role, rolesAdmin, rolesCompany }) =>
     Effect.gen(function* seedDemoAgents() {
       if (help) {
         yield* Console.log(USAGE);
@@ -295,15 +344,16 @@ const command = Command.make(
       const password = yield* Config.Redacted('ONTOS_DEMO_PASSWORD').pipe(
         Config.withDefault(Redacted.make('password1234')),
       );
-      // With --role the seed only gives existing agents existing roles; it creates nothing.
-      if (role.length > 0) {
+      // With --operator / --role the seed only gives existing agents operators and existing roles; it creates nothing.
+      if (role.length > 0 || operator.length > 0) {
         if (Option.isNone(rolesAdmin) || Option.isNone(rolesCompany)) {
-          yield* new AgentSeedFailure({ message: '--role needs --roles-admin and --roles-company' });
+          yield* new AgentSeedFailure({ message: '--operator/--role need --roles-admin and --roles-company' });
           return;
         }
         yield* assignRoles(origin, password, {
           adminEmail: rolesAdmin.value,
           legalEntityId: rolesCompany.value,
+          operators: operator,
           pairs: role,
         });
         return;
