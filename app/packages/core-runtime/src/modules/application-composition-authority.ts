@@ -209,6 +209,8 @@ export const carriedOverCoreSystemWorkerKeys = Effect.fn('ApplicationComposition
         carriedOverWorkerKeys: none,
         // SAFETY: an empty literal has no element to widen; the annotation only names the element contract.
         coreSystemConsumers: [] as readonly OutboxConsumerKey[],
+        // SAFETY: as above, an empty literal.
+        liveCoreSystemConsumers: [] as readonly OutboxConsumerKey[],
       };
     }
     const [approved, shipped] = yield* Effect.all(
@@ -224,8 +226,7 @@ export const carriedOverCoreSystemWorkerKeys = Effect.fn('ApplicationComposition
       const own = shipped.get(subscription.workerKey);
       return own !== undefined && subscriptionAuthorityEquivalence(subscription, own) ? [subscription.workerKey] : [];
     });
-    // Every core-system key the retiring authority approved, identical or not: these are the keys a live host of
-    // that release claims as Core's own work, which is what decides whether its outstanding work can drain at all.
+    // Every core-system key the retiring authority approved, identical or not.
     const coreSystemConsumers: readonly OutboxConsumerKey[] = approved.flatMap((subscription) =>
       isCoreSystemOutboxSubscription(subscription)
         ? [{ consumerModuleKey: subscription.consumerModuleKey, workerKey: subscription.workerKey }]
@@ -238,19 +239,60 @@ export const carriedOverCoreSystemWorkerKeys = Effect.fn('ApplicationComposition
       approvedWorkerKeys: approved.map(({ workerKey }) => workerKey),
       carriedOverWorkerKeys,
       coreSystemConsumers,
+      /**
+       * The core-system subscriptions this release may count on a live consumer for, in the retiring release or
+       * the next. Only the carried-over keys qualify. An approved core key is not evidence that the retiring
+       * release can claim its work: a release without the claim-eligibility fix (any release before
+       * `3327256a0`) never claims core-system work at all, and nothing in the authority row says which release
+       * carries the fix. So a pending core-system row that does not carry over is treated as having no live
+       * consumer and refuses the drain instead of stalling it. On a retiring release that does carry the fix this
+       * is a transient false refusal — its host finishes the row and the next attempt proceeds — which is the
+       * price of never waiting on a consumer that may not exist.
+       */
+      liveCoreSystemConsumers: coreSystemConsumers.filter(({ workerKey }) => carriedOverWorkerKeys.includes(workerKey)),
     };
   },
 );
 
 /**
- * The Outbox work that blocks a drain, with the proven carry-over keys excluded. A carried-over delivery must be
- * untouched work whose message is matched and carries no completion debt of the retiring revision.
+ * The deliveries that block a drain, as a row condition: every unfinished delivery except those that carry over
+ * to the next release ({@link carriesOverToNextRelease}). The drain poll, every promote and seal, and the operator
+ * command's verdict for a migrated authority all ask exactly this.
  */
-const blockingOutboxWork = (carriedOverWorkerKeys: readonly string[]) => {
-  const unfinished = sql`exists (select 1 from ${outboxDeliveries} where ${outboxDeliveries.status} not in ('done', 'released')`;
+const blockingDelivery = (carriedOverWorkerKeys: readonly string[]) => {
+  const unfinished = sql`${outboxDeliveries.status} not in ('done', 'released')`;
   const carriesOver = carriesOverToNextRelease(carriedOverWorkerKeys);
-  return carriesOver === undefined ? sql`${unfinished})` : sql`${unfinished} and not ${carriesOver})`;
+  return carriesOver === undefined ? unfinished : sql`${unfinished} and not ${carriesOver}`;
 };
+
+const blockingOutboxWork = (carriedOverWorkerKeys: readonly string[]) =>
+  sql`exists (select 1 from ${outboxDeliveries} where ${blockingDelivery(carriedOverWorkerKeys)})`;
+
+/**
+ * What a promote or seal of the retiring revision would block on right now, counted with the very predicates
+ * `requireDrainedWork` asks: durable owner workflows, unmatched messages, and deliveries that do not carry over.
+ * Read-only and lock-free, for the operator command's verdict; the transitions themselves re-ask under the lock.
+ */
+export const countDrainBlockers = Effect.fn('ApplicationCompositionAuthority.countDrainBlockers')(
+  function* countDrainBlockersEffect(transaction: CoreTransaction) {
+    const { carriedOverWorkerKeys } = yield* carriedOverCoreSystemWorkerKeys(transaction);
+    const [counts] = yield* transaction.execute<{
+      readonly deliveries: number;
+      readonly durable: number;
+      readonly unmatched: number;
+    }>(
+      sql`select
+        (select count(*)::int from ${applicationCompositionDurableWork}) as durable,
+        (select count(*)::int from ${outboxMessages} where ${outboxMessages.matchedAt} is null) as unmatched,
+        (select count(*)::int from ${outboxDeliveries} where ${blockingDelivery(carriedOverWorkerKeys)}) as deliveries`,
+      'objects',
+    );
+    if (counts === undefined) {
+      return yield* unavailable('Application Composition drain blockers are unavailable');
+    }
+    return counts;
+  },
+);
 
 const requireNoPendingDurableWork = Effect.fn('ApplicationCompositionAuthority.requireNoPendingDurableWork')(
   function* requireNoPendingDurableWorkEffect(transaction: CoreTransaction) {

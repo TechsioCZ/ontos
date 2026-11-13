@@ -7,6 +7,7 @@ import {
   Deferred,
   Duration,
   Effect,
+  Exit,
   Fiber,
   Layer,
   Option,
@@ -40,6 +41,7 @@ import {
 import { installApplicationCompositionCompletionSchema } from './application-composition-schema-expansion.mts';
 import type { ActiveApplicationCompositionSnapshot } from '../packages/core-runtime/src/modules/active-application-composition.ts';
 import {
+  countStalledUnmatchedMessages,
   describeUndrainableOutboxWork,
   listUndrainableOutboxWork,
 } from '../packages/core-runtime/src/outbox/undrainable-work.ts';
@@ -423,38 +425,143 @@ const reportDeadDrainDeliveries = Effect.fn('ApplicationCompositionAuthority.rep
   },
 );
 
+/** How every refusal to start a drain begins, so an operator and a test can tell it from a drain that ran. */
+const DRAIN_NOT_STARTED = 'The Application Composition drain was not started';
+
 /**
- * The pre-flight of a drain: it names every delivery the drain would wait for and never get, and fails the
- * publication before durable admission closes. Nothing is written, the authority stays `active`, and the running
- * release keeps serving reads and writes. Work that is merely in flight is not reported and still drains.
+ * Everything that decides whether a drain may start, read in one transaction with the drain's own predicates:
+ * the deliveries the drain would wait for in vain, the messages no matcher has taken for a whole budget, and the
+ * messages not matched yet. Core-system work counts as having a live consumer only where it carries over
+ * (`liveCoreSystemConsumers`), because nothing in the authority row says whether the retiring release can claim it.
+ */
+const assessDrainStart = Effect.fn('ApplicationCompositionAuthority.assessDrainStart')(function* assessDrainStart(
+  transaction: CoreTransaction,
+  budgetMs: number,
+) {
+  const { carriedOverWorkerKeys, liveCoreSystemConsumers } = yield* carriedOverCoreSystemWorkerKeys(transaction);
+  const undrainable = yield* listUndrainableOutboxWork(transaction, {
+    budgetMs,
+    carriedOverWorkerKeys,
+    coreSystemConsumers: liveCoreSystemConsumers,
+  });
+  const stalledMessages = yield* countStalledUnmatchedMessages(transaction, budgetMs);
+  const [unmatched] = yield* transaction.execute<{ readonly count: number }>(
+    sql`select count(*)::int as count from ${outboxMessages} where ${outboxMessages.matchedAt} is null`,
+    'objects',
+  );
+  return { stalledMessages, undrainable, unmatched: unmatched?.count ?? 0 };
+});
+
+type DrainStartAssessment = Effect.Success<ReturnType<typeof assessDrainStart>>;
+
+/**
+ * The reasons a drain must not start, or `[]` when it may. Before admission closes, a freshly written unmatched
+ * message is in-flight work the running matcher takes. Under the enter-draining fence it is not: the matcher is
+ * blocked by the exclusive authority lock, so an unmatched message there is work whose deliveries nobody has been
+ * able to classify, and it blocks too (`unmatchedBlocks`).
+ */
+const drainStartRefusals = Effect.fn('ApplicationCompositionAuthority.drainStartRefusals')(function* drainStartRefusals(
+  assessment: DrainStartAssessment,
+  unmatchedBlocks: boolean,
+) {
+  // A dead delivery keeps the description the operator commands already use; the other reasons have no command.
+  // If that description cannot be read, the dead rows are still named from the assessment itself: a refusal must
+  // never vanish because its wording was unavailable.
+  const deadRows = assessment.undrainable.filter((delivery) => delivery.reason === 'dead');
+  const dead =
+    deadRows.length === 0
+      ? ''
+      : yield* describeDeadDrainDeliveries(null).pipe(
+          Effect.orElseSucceed(() => ''),
+          Effect.map((described) => (described === '' ? describeUndrainableOutboxWork(deadRows) : described)),
+        );
+  const others = describeUndrainableOutboxWork(assessment.undrainable.filter((delivery) => delivery.reason !== 'dead'));
+  return [
+    ...(dead === '' ? [] : [dead]),
+    ...(others === '' ? [] : [others]),
+    ...(assessment.stalledMessages === 0
+      ? []
+      : [
+          `${String(assessment.stalledMessages)} Outbox message(s) have waited longer than the whole drain budget without being matched: no matcher is running, so the drain could never finish.`,
+        ]),
+    ...(unmatchedBlocks && assessment.stalledMessages === 0 && assessment.unmatched > 0
+      ? [
+          `${String(assessment.unmatched)} Outbox message(s) were still unmatched when the drain was about to start, so their deliveries could not be checked.`,
+        ]
+      : []),
+  ];
+});
+
+/**
+ * The pre-flight of a drain, before durable admission closes. It fails CLOSED: a pre-flight that cannot be read is
+ * not evidence that the drain is safe, and a drain that starts on unread work may stall with the running release
+ * refusing reads. On any refusal durable admission is unchanged and the authority stays `active`, so the running
+ * release keeps serving reads and writes. Work that is merely in flight still drains.
  */
 const refuseUndrainableWork = Effect.fn('ApplicationCompositionAuthority.refuseUndrainableWork')(
   function* refuseUndrainableWorkEffect(budgetMs: number) {
     const database = yield* CoreDatabase;
-    const undrainable = yield* database.executor
-      .transaction((transaction) =>
-        carriedOverCoreSystemWorkerKeys(transaction).pipe(
-          Effect.flatMap(({ carriedOverWorkerKeys, coreSystemConsumers }) =>
-            listUndrainableOutboxWork(transaction, { budgetMs, carriedOverWorkerKeys, coreSystemConsumers }),
-          ),
-        ),
-      )
+    const unreadable = unavailable(
+      `${DRAIN_NOT_STARTED}: its pre-flight could not read the outstanding Outbox work. Durable admission is unchanged and the authority stays active, so the running release keeps serving.`,
+    );
+    const assessment = yield* database.executor
+      .transaction((transaction) => assessDrainStart(transaction, budgetMs))
       .pipe(
-        // An unreadable pre-flight is not evidence that the drain is safe, but it is not evidence of debt either:
-        // the drain's own bounded wait and its blocker diagnostics remain.
-        Effect.orElseSucceed(() => []),
+        Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(unreadable) : Effect.die(defect))),
+        Effect.mapError(() => unreadable),
       );
-    if (undrainable.length === 0) {
+    const refusals = yield* drainStartRefusals(assessment, false);
+    if (refusals.length === 0) {
       return yield* Effect.void;
     }
-    // A dead delivery keeps the description the operator commands already use; the other reasons have no command.
-    const dead = yield* describeDeadDrainDeliveries(null).pipe(Effect.orElseSucceed(() => ''));
-    const others = describeUndrainableOutboxWork(undrainable.filter((delivery) => delivery.reason !== 'dead'));
     return yield* unavailable(
       [
-        'The Application Composition drain was not started: durable admission is unchanged and the authority stays active, so the running release keeps serving.',
-        ...(dead === '' ? [] : [dead]),
-        ...(others === '' ? [] : [others]),
+        `${DRAIN_NOT_STARTED}: durable admission is unchanged and the authority stays active, so the running release keeps serving.`,
+        ...refusals,
+      ].join(' '),
+    );
+  },
+);
+
+/** How long the publisher lets the running matcher take freshly written messages before it enters `draining`. */
+const MATCHED_BEFORE_DRAINING = Duration.seconds(30);
+
+/**
+ * Waits, bounded, until no message is unmatched. The pre-flight is a point in time; the enter-draining fence
+ * re-checks under the exclusive lock, and this wait keeps that re-check from refusing for ordinary traffic the
+ * running matcher would have taken a poll later.
+ */
+const waitForMatchedMessages = Effect.gen(function* waitForMatchedMessagesEffect() {
+  const database = yield* CoreDatabase;
+  const unmatched = database.executor
+    .select({ count: sql<number>`count(*)::int` })
+    .from(outboxMessages)
+    .where(sql`${outboxMessages.matchedAt} is null`)
+    .pipe(Effect.map((rows) => rows[0]?.count ?? 0));
+  while ((yield* unmatched) > 0) {
+    yield* Effect.sleep(Duration.seconds(1));
+  }
+}).pipe(Effect.timeout(MATCHED_BEFORE_DRAINING), Effect.ignore);
+
+/**
+ * A drain refused at the enter-draining fence finds durable admission already closed and the authority still
+ * `active` (the fence's transaction rolled back, so the phase never moved). Reads and writes still work, but new
+ * durable workflows would stay refused for good, so admission is reopened for the same revision: the authority is
+ * then exactly as it was before the publication began. If reopening fails, the refusal says so; that state is
+ * degraded — new durable workflows refused — but never an outage.
+ */
+const reopenAfterRefusedDrain = Effect.fn('ApplicationCompositionAuthority.reopenAfterRefusedDrain')(
+  function* reopenAfterRefusedDrain(revision: string, refusalReason: string) {
+    const database = yield* CoreDatabase;
+    const reopened = yield* database.executor
+      .transaction((transaction) => resumeApplicationCompositionDurableAdmission(transaction, revision))
+      .pipe(Effect.exit);
+    return yield* unavailable(
+      [
+        refusalReason,
+        Exit.isSuccess(reopened)
+          ? 'Durable admission was reopened and the authority stays active, so the running release keeps serving.'
+          : 'The authority stays active, so the running release keeps serving reads and writes, but durable admission could not be reopened: run `resumeApplicationCompositionDurableWork` for this revision.',
       ].join(' '),
     );
   },
@@ -564,6 +671,11 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
             logApplicationCompositionDrainBlockers,
           );
           progressState.phase = 'enter-draining';
+          // The pre-flight was a point in time: work matched since then has never been checked. Let the running
+          // matcher take what is in flight first; the fence below re-checks under the exclusive authority lock,
+          // where the matcher is blocked and the answer cannot move before the phase does. This wait comes before
+          // the legacy observation, which must stay immediately before the fence it justifies.
+          yield* waitForMatchedMessages;
           // A provider receipt alone is insufficient: re-observe the actual retired executables.
           yield* verifyLegacyQuiescence;
           yield* requireNoLegacyRuntimeTransactions();
@@ -571,7 +683,23 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
           yield* withApplicationCompositionPublicationProgress(
             'enter draining (authority fence)',
             withVerifiedLegacyTransition(current.revision, (transaction) =>
-              drainApplicationCompositionAuthority(transaction, current.revision),
+              Effect.gen(function* enterDrainingIfDrainable() {
+                const refusals = yield* drainStartRefusals(yield* assessDrainStart(transaction, budgetMs), true);
+                if (refusals.length > 0) {
+                  return yield* unavailable([`${DRAIN_NOT_STARTED}:`, ...refusals].join(' '));
+                }
+                return yield* drainApplicationCompositionAuthority(transaction, current.revision);
+              }),
+            ).pipe(
+              Effect.catchIf(
+                (error) =>
+                  Schema.is(ApplicationCompositionAuthorityError)(error) && error.reason.startsWith(DRAIN_NOT_STARTED),
+                (error) =>
+                  reopenAfterRefusedDrain(
+                    current.revision,
+                    Schema.is(ApplicationCompositionAuthorityError)(error) ? error.reason : DRAIN_NOT_STARTED,
+                  ),
+              ),
             ),
           );
         }
@@ -615,6 +743,18 @@ const FRESH_OUTBOX_WORK = 'Outstanding Outbox work';
 const isFreshOutboxWork = (reason: string) => reason.includes(FRESH_OUTBOX_WORK);
 
 /**
+ * Why a drained transition gave up, naming the phase the authority is really left in. A promote or seal that
+ * began on an `active` or `draining` authority leaves it `draining`; a promote from a `migrated` authority leaves
+ * it `migrated`, which the draining recovery does not apply to.
+ */
+export const abandonedTransitionMessage = (startedFrom: CurrentApplicationCompositionAuthority['phase']) => {
+  const giveUp = `Outbox work kept arriving after ${String(DRAINED_TRANSITION_RETRIES)} re-drains, so the Application Composition transition was abandoned.`;
+  return startedFrom === 'migrated'
+    ? `${giveUp} The authority stays migrated, which admits no work of the retired release; deploy again once the work finished.`
+    : `${giveUp} The authority is left in draining and the running release refuses reads: follow "Returning a stuck authority to active" in docs/architecture/DEPLOYMENT.md, or deploy again once the work finished.`;
+};
+
+/**
  * Commits one authority transition on a drained composition — the promote, or the seal before a migration —
  * tolerating work that arrives between the drain poll and the transition.
  *
@@ -622,8 +762,9 @@ const isFreshOutboxWork = (reason: string) => reason.includes(FRESH_OUTBOX_WORK)
  * live host of the retiring release claimed it in between: a real interleaving now that a host with the claim fix
  * takes exactly those rows. Failing there would leave the authority in `draining`, so the publisher waits for the
  * Outbox again and retries. Only the re-drain wait is bounded — the transition itself contains provider I/O and
- * keeps the caller's own budget — and that wait can never outlive the retiring release's freshness lease, exactly
- * as the first drain cannot.
+ * keeps the caller's own budget. All re-drains together end at one deadline: never past the retiring release's
+ * freshness lease (less its margin), exactly as the first drain cannot, and never longer than one drain budget.
+ * The final failure is followed by no retry, so no re-drain runs after it.
  */
 const withDrainedCompositionTransition = Effect.fn('ApplicationCompositionAuthority.drainedTransition')(
   function* withDrainedCompositionTransition<Value, Failure, Requirements>(
@@ -631,10 +772,16 @@ const withDrainedCompositionTransition = Effect.fn('ApplicationCompositionAuthor
     transition: (transaction: CoreTransaction) => Effect.Effect<Value, Failure, Requirements>,
   ) {
     const reported = yield* Ref.make('');
+    const failures = yield* Ref.make(0);
+    // One deadline for every re-drain together: never past the retiring lease (less its margin), and never longer
+    // than one drain budget in total, however many retries there are.
     const leaseMillis = DateTime.toEpochMillis(DateTime.makeUnsafe(current.validUntil));
+    const redrainDeadline = Math.min(
+      leaseMillis - Duration.toMillis(DRAINED_TRANSITION_LEASE_MARGIN),
+      (yield* Clock.currentTimeMillis) + APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.drainMs,
+    );
     const redrain = Effect.gen(function* waitForFreshWork() {
-      const remaining =
-        leaseMillis - (yield* Clock.currentTimeMillis) - Duration.toMillis(DRAINED_TRANSITION_LEASE_MARGIN);
+      const remaining = redrainDeadline - (yield* Clock.currentTimeMillis);
       yield* waitForOutboxPublicationWork(current.revision, reported).pipe(
         Effect.timeout(Duration.millis(Math.max(1, remaining))),
         // The original refusal is the operator's evidence: a wait that cannot finish must never replace it.
@@ -643,11 +790,18 @@ const withDrainedCompositionTransition = Effect.fn('ApplicationCompositionAuthor
     });
     return yield* withVerifiedLegacyTransition(current.revision, transition).pipe(
       Effect.tapError((error) =>
-        Schema.is(ApplicationCompositionAuthorityError)(error) && isFreshOutboxWork(error.reason)
-          ? Effect.logInfo('Application Composition transition found fresh Outbox work; draining again').pipe(
-              Effect.andThen(redrain),
-            )
-          : Effect.void,
+        Effect.gen(function* drainAgainBeforeRetry() {
+          if (!(Schema.is(ApplicationCompositionAuthorityError)(error) && isFreshOutboxWork(error.reason))) {
+            return;
+          }
+          // The final failure is followed by no retry, so waiting for the Outbox after it would only delay the
+          // refusal.
+          if ((yield* Ref.updateAndGet(failures, (seen) => seen + 1)) > DRAINED_TRANSITION_RETRIES) {
+            return;
+          }
+          yield* Effect.logInfo('Application Composition transition found fresh Outbox work; draining again');
+          yield* redrain;
+        }),
       ),
       Effect.retry({
         schedule: Schedule.recurs(DRAINED_TRANSITION_RETRIES),
@@ -655,12 +809,7 @@ const withDrainedCompositionTransition = Effect.fn('ApplicationCompositionAuthor
       }),
       Effect.catchIf(
         (error) => Schema.is(ApplicationCompositionAuthorityError)(error) && isFreshOutboxWork(error.reason),
-        () =>
-          Effect.fail(
-            unavailable(
-              `Outbox work kept arriving after ${String(DRAINED_TRANSITION_RETRIES)} re-drains, so the Application Composition transition was abandoned. The authority is left in draining and the running release refuses reads: follow "Returning a stuck authority to active" in docs/architecture/DEPLOYMENT.md, or deploy again once the work finished.`,
-            ),
-          ),
+        () => Effect.fail(unavailable(abandonedTransitionMessage(current.phase))),
       ),
     );
   },

@@ -36,7 +36,10 @@ import {
   describeWorkerKeyIdentity,
   listDrainWork,
 } from '../../packages/core-runtime/src/outbox/drain-preflight.ts';
-import { listUndrainableOutboxWork } from '../../packages/core-runtime/src/outbox/undrainable-work.ts';
+import {
+  countStalledUnmatchedMessages,
+  listUndrainableOutboxWork,
+} from '../../packages/core-runtime/src/outbox/undrainable-work.ts';
 import {
   ActiveApplicationCompositionService,
   validateActiveApplicationCompositionSnapshot,
@@ -83,9 +86,7 @@ const snapshotFor = (buildMarker: string, validitySeconds: number) =>
   });
 
 /** An isolated database carrying stage's shape: an old active revision and one unclaimed core-system delivery. */
-const fixture = Effect.fn('coreSystemDrainFixture')(function* coreSystemDrainFixture(
-  options: { readonly moduleStateFor?: string } = {},
-) {
+const fixture = Effect.fn('coreSystemDrainFixture')(function* coreSystemDrainFixture() {
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     mode: 'empty',
     purpose: 'publication-drain-core-system',
@@ -154,9 +155,6 @@ const fixture = Effect.fn('coreSystemDrainFixture')(function* coreSystemDrainFix
     tenantId,
   });
   // Deliberately no `core.authorization` module state: no product code ever writes one, exactly as on stage.
-  if (options.moduleStateFor !== undefined) {
-    yield* runtime.insert(tenantModuleStates).values({ moduleKey: options.moduleStateFor, state: 'active', tenantId });
-  }
   const messageId = yield* runtime.transaction(
     Effect.fn(function* acceptPrincipalLifecycleWork(transaction) {
       const [event] = yield* transaction
@@ -217,6 +215,41 @@ const deliveryRow = (runtime: CoreDbExecutor) =>
     .from(outboxDeliveries)
     .where(eq(outboxDeliveries.workerKey, corePrincipalLifecycleSubscription.workerKey))
     .pipe(Effect.map((rows) => rows[0]));
+
+type DrainFixture = Effect.Success<ReturnType<typeof fixture>>;
+
+/** One claim exactly as a live Outbox host of the retiring release makes it: its binding, its five registrations. */
+const claimAsRetiringHost = (f: DrainFixture) =>
+  Effect.gen(function* claimAsRetiringHostEffect() {
+    return yield* withWorkerRuntimeBinding(
+      {
+        authority: { load: Effect.succeed(f.old) },
+        expectedDeployment: f.old.composition.shell.deployment,
+        registrations: ALL_CORE_WORKERS,
+      },
+      f.repository.claimNext(ALL_CORE_WORKERS, CLAIM_OWNER, yield* DateTime.nowAsDate, f.old.composition.revision),
+    ).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(f.old) }));
+  });
+
+/** A second, matched delivery for a tenant module that is installed nowhere: work no host can ever claim. */
+const writeUnclaimableDelivery = (f: DrainFixture) =>
+  Effect.gen(function* writeUnclaimableDeliveryEffect() {
+    const [message] = yield* f.admin.executor
+      .select({ id: outboxMessages.outboxMessageId })
+      .from(outboxMessages)
+      .limit(1);
+    if (message === undefined) {
+      return yield* Effect.die('the fixture message is missing');
+    }
+    yield* f.admin.executor.insert(outboxDeliveries).values({
+      consumerModuleKey: 'commerce.merchandise',
+      outboxMessageId: message.id,
+      workerKey: ABSENT_WORKER_KEY,
+    });
+  });
+
+const reasonOf = (failure: unknown) =>
+  Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '';
 
 it.layer(services, { excludeTestServices: true })('core-system Outbox claim, carry-over and drain', (suite) => {
   suite.effect('claims core lifecycle work in a tenant that has no core module state', () =>
@@ -346,7 +379,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
   suite.effect('does not carry over a core-system subscription whose descriptor changed', () =>
     Effect.gen(function* refusesChangedDescriptor() {
       const f = yield* fixture();
-      // A short freshness lease bounds the drain wait at about ten seconds.
+      // A short freshness lease bounds the wait, so without the refusal this test fails fast instead of hanging.
       yield* f.admin.executor
         .update(applicationCompositionAuthority)
         .set({ validUntil: sql`clock_timestamp() + interval '40 seconds'` });
@@ -370,11 +403,19 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       );
       expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
       const reason = Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '';
-      // The retiring release approved that descriptor and its own host claims it, so the work has a consumer and
-      // the pre-flight admits the drain. It is simply not this release's to finish: the drain waits for it.
-      expect(reason).not.toContain('drain was not started');
-      expect(reason).toContain('did not finish within its freshness lease');
+      // The descriptor differs, so this release cannot carry the row over, and nothing in the authority row says
+      // whether the retiring release can claim it. The pre-flight therefore assumes no live consumer and refuses
+      // before admission closes, instead of starting a drain that might stall with reads refused.
+      expect(reason).toContain('drain was not started: durable admission is unchanged');
+      expect(reason).toContain(`no-eligible-consumer: --tenant-id ${f.tenantId}`);
+      expect(reason).toContain(corePrincipalLifecycleSubscription.workerKey);
+      expect(yield* authorityRow(f.runtime)).toMatchObject({
+        durableWorkAdmission: 'open',
+        phase: 'active',
+        revision: f.old.composition.revision,
+      });
       expect(yield* deliveryRow(f.runtime)).toMatchObject({ attempts: 0, status: 'pending' });
+      return yield* Effect.void;
     }),
   );
 
@@ -388,7 +429,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       const rows = yield* listDrainWork(f.runtime, {
         budgetMs,
         carriedOverWorkerKeys: sets.carriedOverWorkerKeys,
-        coreSystemConsumers: sets.coreSystemConsumers,
+        coreSystemConsumers: sets.liveCoreSystemConsumers,
       });
       // Two core-system subscriptions consume `principal-lifecycle-changed.v1`: the authorization reconcile and
       // the People search projection. Both are Core's own untouched work, so both carry over.
@@ -406,7 +447,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
         yield* listUndrainableOutboxWork(f.runtime, {
           budgetMs,
           carriedOverWorkerKeys: sets.carriedOverWorkerKeys,
-          coreSystemConsumers: sets.coreSystemConsumers,
+          coreSystemConsumers: sets.liveCoreSystemConsumers,
         }),
       ).toHaveLength(0);
 
@@ -418,7 +459,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       const blocked = yield* listDrainWork(f.runtime, {
         budgetMs,
         carriedOverWorkerKeys: sets.carriedOverWorkerKeys,
-        coreSystemConsumers: sets.coreSystemConsumers,
+        coreSystemConsumers: sets.liveCoreSystemConsumers,
       });
       const blockedRow = blocked.find(({ workerKey }) => workerKey === ABSENT_WORKER_KEY);
       if (blockedRow === undefined) {
@@ -430,9 +471,85 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
         yield* listUndrainableOutboxWork(f.runtime, {
           budgetMs,
           carriedOverWorkerKeys: sets.carriedOverWorkerKeys,
-          coreSystemConsumers: sets.coreSystemConsumers,
+          coreSystemConsumers: sets.liveCoreSystemConsumers,
         }),
       ).toHaveLength(1);
+
+      // Aged past a whole budget, the same row is also caught by the generic catch-all. The specific reason must
+      // still win, because only `no-eligible-consumer` names a remedy an operator can act on.
+      yield* f.admin.executor.execute(
+        sql`update ${outboxDeliveries} set available_at = clock_timestamp() - interval '2 hours'
+            where ${outboxDeliveries.workerKey} = ${ABSENT_WORKER_KEY}`,
+        'objects',
+      );
+      const aged = yield* listUndrainableOutboxWork(f.runtime, {
+        budgetMs,
+        carriedOverWorkerKeys: sets.carriedOverWorkerKeys,
+        coreSystemConsumers: sets.liveCoreSystemConsumers,
+      });
+      expect(aged.find(({ workerKey }) => workerKey === ABSENT_WORKER_KEY)?.reason).toBe('no-eligible-consumer');
+      return yield* Effect.void;
+    }),
+  );
+
+  suite.effect('refuses a drain while a message waited a whole budget unmatched, not while one is fresh', () =>
+    Effect.gen(function* refusesStalledUnmatchedMessage() {
+      const f = yield* fixture();
+      const budgetMs = APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.drainMs;
+      const messageId = yield* f.runtime.transaction(
+        Effect.fn(function* writeUnmatchedMessage(transaction) {
+          const [event] = yield* transaction
+            .insert(domainEvents)
+            .values({
+              eventType: corePrincipalLifecycleSubscription.topic,
+              payloadJson: {},
+              producerModuleKey: corePrincipalLifecycleSubscription.producerModuleKey,
+              subjectModuleKey: corePrincipalLifecycleSubscription.producerModuleKey,
+              subjectResourceId: f.tenantId,
+              subjectResourceType: 'principal',
+              tenantId: f.tenantId,
+            })
+            .returning({ id: domainEvents.domainEventId });
+          const [message] = yield* transaction
+            .insert(outboxMessages)
+            .values({
+              domainEventId: Option.getOrThrow(Option.fromNullishOr(event)).id,
+              payloadJson: { data: { principalId: f.tenantId, state: 'disabled', tenantId: f.tenantId }, schemaVersion: 1 },
+              producerModuleKey: corePrincipalLifecycleSubscription.producerModuleKey,
+              tenantId: f.tenantId,
+              topic: corePrincipalLifecycleSubscription.topic,
+            })
+            .returning({ id: outboxMessages.outboxMessageId });
+          return Option.getOrThrow(Option.fromNullishOr(message)).id;
+        }),
+      );
+      // Freshly written, the running matcher would take it: in-flight work, not a reason to refuse.
+      expect(yield* countStalledUnmatchedMessages(f.runtime, budgetMs)).toBe(0);
+
+      // Waiting a whole budget unmatched means no matcher runs: the drain would wait for it in vain.
+      yield* f.admin.executor.execute(
+        sql`update ${outboxMessages} set created_at = clock_timestamp() - interval '2 hours'
+            where ${outboxMessages.outboxMessageId} = ${messageId}`,
+        'objects',
+      );
+      expect(yield* countStalledUnmatchedMessages(f.runtime, budgetMs)).toBe(1);
+      // A short freshness lease bounds the wait, so without the refusal this test fails fast rather than hanging.
+      yield* f.admin.executor
+        .update(applicationCompositionAuthority)
+        .set({ validUntil: sql`clock_timestamp() + interval '40 seconds'` });
+      const next = yield* snapshotFor(`${FIXTURE_NAME}-new`, 7200);
+      const failure = yield* publishApplicationCompositionAuthoritySnapshot(next, Effect.void, Effect.void).pipe(
+        Effect.provide(f.layer),
+        Effect.flip,
+      );
+      const reason = Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '';
+      expect(reason).toContain('drain was not started: durable admission is unchanged');
+      expect(reason).toContain('without being matched');
+      expect(yield* authorityRow(f.runtime)).toMatchObject({
+        durableWorkAdmission: 'open',
+        phase: 'active',
+        revision: f.old.composition.revision,
+      });
       return yield* Effect.void;
     }),
   );
@@ -518,7 +635,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       const rows = yield* listDrainWork(f.runtime, {
         budgetMs: APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.drainMs,
         carriedOverWorkerKeys: sets.carriedOverWorkerKeys,
-        coreSystemConsumers: sets.coreSystemConsumers,
+        coreSystemConsumers: sets.liveCoreSystemConsumers,
       });
       const redriven = rows.find(({ workerKey }) => workerKey === corePrincipalLifecycleSubscription.workerKey);
       if (redriven === undefined) {
@@ -537,7 +654,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       const undrainable = yield* listUndrainableOutboxWork(f.runtime, {
         budgetMs: APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.drainMs,
         carriedOverWorkerKeys: sets.carriedOverWorkerKeys,
-        coreSystemConsumers: sets.coreSystemConsumers,
+        coreSystemConsumers: sets.liveCoreSystemConsumers,
       });
       expect(undrainable.map(({ workerKey }) => workerKey)).toContain(corePrincipalLifecycleSubscription.workerKey);
       expect(undrainable.map(({ reason }) => reason)).toContain('unclaimed-longer-than-budget');
@@ -574,6 +691,161 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       expect(reason).not.toContain('drain was not started');
       expect(reason).toContain('did not finish within its freshness lease');
       expect(yield* deliveryRow(f.runtime)).toMatchObject({ status: 'processing' });
+    }),
+  );
+
+  suite.effect('never claims core work under the wrong consumer module, nor a tenant consumer without its module', () =>
+    Effect.gen(function* refusesMispairedClaims() {
+      const f = yield* fixture();
+      // A core worker key paired with the wrong consumer module is not Core's own work, so the core-system
+      // exemption does not apply to it.
+      yield* f.admin.executor
+        .update(outboxDeliveries)
+        .set({ consumerModuleKey: 'core.identity' })
+        .where(eq(outboxDeliveries.workerKey, corePrincipalLifecycleSubscription.workerKey));
+      // The correctly paired People-search row is claimed and finished; after it nothing is claimable.
+      const first = yield* claimAsRetiringHost(f);
+      expect(Option.getOrThrow(first).workerKey).not.toBe(corePrincipalLifecycleSubscription.workerKey);
+      yield* f.repository.complete(Option.getOrThrow(first), yield* DateTime.nowAsDate);
+      expect(Option.isNone(yield* claimAsRetiringHost(f))).toBe(true);
+      expect(yield* deliveryRow(f.runtime)).toMatchObject({ attempts: 0, claimedBy: null, status: 'pending' });
+
+      // A tenant module's consumer without a module state in its tenant stays unclaimed as well. (The module-state
+      // branch admitting a genuine tenant worker whose module is installed is proven in
+      // `outbox-dead-delivery-drain.test.mts`, which claims and settles exactly such deliveries.)
+      yield* f.admin.executor
+        .update(outboxDeliveries)
+        .set({ consumerModuleKey: 'commerce.merchandise' })
+        .where(eq(outboxDeliveries.workerKey, corePrincipalLifecycleSubscription.workerKey));
+      expect(Option.isNone(yield* claimAsRetiringHost(f))).toBe(true);
+
+      // Control: with its own consumer module restored, the very same row is claimed, so the pairing — nothing
+      // else about the row — is what kept it unclaimed.
+      yield* f.admin.executor
+        .update(outboxDeliveries)
+        .set({ consumerModuleKey: corePrincipalLifecycleSubscription.consumerModuleKey })
+        .where(eq(outboxDeliveries.workerKey, corePrincipalLifecycleSubscription.workerKey));
+      expect(Option.getOrThrow(yield* claimAsRetiringHost(f)).workerKey).toBe(
+        corePrincipalLifecycleSubscription.workerKey,
+      );
+      return yield* Effect.void;
+    }),
+  );
+
+  suite.effect('names a row scheduled past the budget and a claim that expired a whole budget ago', () =>
+    Effect.gen(function* reportsScheduledAndExpiredClaims() {
+      const f = yield* fixture();
+      const budgetMs = APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.drainMs;
+      const reasonFor = Effect.gen(function* reasonForLifecycleRow() {
+        const sets = yield* f.runtime.transaction((transaction) => carriedOverCoreSystemWorkerKeys(transaction));
+        const undrainable = yield* listUndrainableOutboxWork(f.runtime, {
+          budgetMs,
+          carriedOverWorkerKeys: sets.carriedOverWorkerKeys,
+          coreSystemConsumers: sets.liveCoreSystemConsumers,
+        });
+        return undrainable.find(({ workerKey }) => workerKey === corePrincipalLifecycleSubscription.workerKey)?.reason;
+      });
+      // Attempted once, so it no longer carries over, and its next attempt is a day away.
+      yield* f.admin.executor.execute(
+        sql`update ${outboxDeliveries} set attempts_count = 1, available_at = clock_timestamp() + interval '1 day'
+            where ${outboxDeliveries.workerKey} = ${corePrincipalLifecycleSubscription.workerKey}`,
+        'objects',
+      );
+      expect(yield* reasonFor).toBe('scheduled-beyond-budget');
+      // Claimed by a host that vanished: its lease expired two hours ago and no live host has taken it back.
+      yield* f.admin.executor.execute(
+        sql`update ${outboxDeliveries}
+            set status = 'processing', claimed_by = 'vanished-host', claimed_at = clock_timestamp() - interval '3 hours',
+                claim_expires_at = clock_timestamp() - interval '2 hours', available_at = clock_timestamp() - interval '3 hours'
+            where ${outboxDeliveries.workerKey} = ${corePrincipalLifecycleSubscription.workerKey}`,
+        'objects',
+      );
+      expect(yield* reasonFor).toBe('unclaimed-longer-than-budget');
+      return yield* Effect.void;
+    }),
+  );
+
+  suite.effect('fails closed when the pre-flight cannot read the Outbox', () =>
+    Effect.gen(function* failsClosedOnUnreadablePreflight() {
+      const f = yield* fixture();
+      // The carry-over predicate reads the resolution table; without it the pre-flight query itself fails.
+      yield* f.admin.executor.execute(sql`drop table core.outbox_delivery_resolutions cascade`, 'objects');
+      const next = yield* snapshotFor(`${FIXTURE_NAME}-new`, 7200);
+      const failure = yield* publishApplicationCompositionAuthoritySnapshot(next, Effect.void, Effect.void).pipe(
+        Effect.provide(f.layer),
+        Effect.flip,
+      );
+      // An unreadable pre-flight is no evidence the drain is safe: nothing moved, and the old release serves.
+      expect(reasonOf(failure)).toContain('pre-flight could not read the outstanding Outbox work');
+      expect(yield* authorityRow(f.runtime)).toMatchObject({
+        durableWorkAdmission: 'open',
+        phase: 'active',
+        revision: f.old.composition.revision,
+      });
+      return yield* Effect.void;
+    }),
+  );
+
+  suite.effect('re-checks at the enter-draining fence and reopens admission when work arrived after the pre-flight', () =>
+    Effect.gen(function* rechecksAtTheFence() {
+      const f = yield* fixture();
+      // A short freshness lease bounds the wait, so without the re-check this test fails fast instead of hanging.
+      yield* f.admin.executor
+        .update(applicationCompositionAuthority)
+        .set({ validUntil: sql`clock_timestamp() + interval '40 seconds'` });
+      const calls = yield* Ref.make(0);
+      // `verifyInitialCutover` runs first right before the enter-draining fence, after the pre-flight passed and
+      // durable admission closed: exactly the window in which new work escapes a point-in-time check.
+      const arriveAfterPreflight = Effect.gen(function* arriveOnFirstCall() {
+        if ((yield* Ref.updateAndGet(calls, (seen) => seen + 1)) === 1) {
+          yield* writeUnclaimableDelivery(f);
+        }
+      });
+      const next = yield* snapshotFor(`${FIXTURE_NAME}-new`, 7200);
+      const failure = yield* publishApplicationCompositionAuthoritySnapshot(next, Effect.void, arriveAfterPreflight).pipe(
+        Effect.provide(f.layer),
+        Effect.flip,
+      );
+      const reason = reasonOf(failure);
+      expect(reason).toContain('drain was not started');
+      expect(reason).toContain(`--worker-key ${ABSENT_WORKER_KEY}`);
+      expect(reason).toContain('Durable admission was reopened');
+      // The authority is exactly as it was before the publication began: active, admission open, same revision.
+      expect(yield* authorityRow(f.runtime)).toMatchObject({
+        durableWorkAdmission: 'open',
+        phase: 'active',
+        revision: f.old.composition.revision,
+      });
+      return yield* Effect.void;
+    }),
+  );
+
+  suite.effect('gives up after the last re-drain and says which phase the authority is left in', () =>
+    Effect.gen(function* exhaustsRetries() {
+      const f = yield* fixture();
+      // A short lease makes every re-drain deadline pass at once, so all retries run within seconds.
+      yield* f.admin.executor
+        .update(applicationCompositionAuthority)
+        .set({ validUntil: sql`clock_timestamp() + interval '40 seconds'` });
+      const calls = yield* Ref.make(0);
+      // On the call right before the promote, a retiring host claims a carried-over row and never finishes it.
+      const claimAndHold = Effect.gen(function* claimOnSecondCall() {
+        if ((yield* Ref.updateAndGet(calls, (seen) => seen + 1)) === 2) {
+          expect(Option.isSome(yield* claimAsRetiringHost(f))).toBe(true);
+        }
+      });
+      const next = yield* snapshotFor(`${FIXTURE_NAME}-new`, 7200);
+      const failure = yield* publishApplicationCompositionAuthoritySnapshot(next, Effect.void, claimAndHold).pipe(
+        Effect.provide(f.layer),
+        Effect.flip,
+      );
+      const reason = reasonOf(failure);
+      expect(reason).toContain('re-drains, so the Application Composition transition was abandoned');
+      expect(reason).toContain('left in draining');
+      // Until the automatic return to `active` (G3) exists, an exhausted promotion leaves the authority draining;
+      // that change must turn this expectation into "active, admission open".
+      expect(yield* authorityRow(f.runtime)).toMatchObject({ phase: 'draining', revision: f.old.composition.revision });
+      return yield* Effect.void;
     }),
   );
 });

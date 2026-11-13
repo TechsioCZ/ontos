@@ -82,6 +82,28 @@ export const stalledLongerThanBudget = (budgetAgo: SQL) =>
     and(eq(outboxDeliveries.status, 'processing'), lt(outboxDeliveries.claimExpiresAt, budgetAgo)),
   );
 
+/**
+ * Messages nothing has matched for longer than a whole drain budget. The matcher keeps running while a release
+ * drains, so a freshly written unmatched message is in-flight work and drains; one that has waited a whole budget
+ * means no matcher is running, and the drain would wait for it in vain. Asked by the publisher's pre-flight and by
+ * the operator command alike.
+ */
+export const countStalledUnmatchedMessages = Effect.fn('Outbox.countStalledUnmatchedMessages')(
+  function* countStalledUnmatchedMessages(executor: CoreDbExecutor | CoreTransaction, budgetMs: number) {
+    const budgetSeconds = Duration.toSeconds(Duration.millis(budgetMs));
+    const [row] = yield* executor
+      .select({ count: sql<number>`count(*)::int` })
+      .from(outboxMessages)
+      .where(
+        and(
+          sql`${outboxMessages.matchedAt} is null`,
+          lt(outboxMessages.createdAt, sql`clock_timestamp() - make_interval(secs => ${budgetSeconds})`),
+        ),
+      );
+    return row?.count ?? 0;
+  },
+);
+
 export interface UndrainableOutboxWorkInput {
   readonly budgetMs: number;
   /** Proven-identical core-system keys: the rows these carry over are exempt, by the shared predicate. */
@@ -121,8 +143,7 @@ export const listUndrainableOutboxWork = Effect.fn('Outbox.listUndrainableWork')
       reason: sql<UndrainableOutboxReason>`case
           when ${outboxDeliveries.status} = 'dead' then 'dead'
           when ${outboxDeliveries.availableAt} > ${deadline} then 'scheduled-beyond-budget'
-          when ${stalled} then 'unclaimed-longer-than-budget'
-          when ${noLiveConsumer} then 'no-eligible-consumer'
+          when ${ineligible} then 'no-eligible-consumer'
           else 'unclaimed-longer-than-budget' end`,
       status: outboxDeliveries.status,
       tenantId: outboxMessages.tenantId,
