@@ -9,6 +9,7 @@ const GatewayPhaseSchema = Schema.Literals([
   'document-admission',
   'document-composition',
   'document-home',
+  'document-target',
   'session-read',
   'session-principal',
   'session-legal-entities',

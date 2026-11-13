@@ -1,4 +1,4 @@
-import { Effect, Fiber, Match, Schema } from 'effect';
+import { Effect, Fiber, Match, Option, Schema } from 'effect';
 import type { Cause, Config } from 'effect';
 
 import { MODULE_TARGET_BATCH_LIMIT, ResolveModuleTargetPayloadSchema } from '../../../../../shared/api.ts';
@@ -22,9 +22,9 @@ import {
   isServerRender,
   shellAuthenticationClientOptionsFromRequest,
 } from '../../../shell-authentication-client-options.ts';
-import { loadHomePageModel, sessionEndedModel } from '../../home-page-model.ts';
+import { loadHomePageModel, loadServerModuleDocument, sessionEndedModel } from '../../home-page-model.ts';
 import { requireSignedIn } from '../../../sign-in-return.ts';
-import type { HomePageModel } from '../../home-page-model.ts';
+import type { HomePageModel, ServerModuleDocument } from '../../home-page-model.ts';
 
 interface ModuleTargetLoaderArguments {
   readonly canonicalPath?: string;
@@ -205,26 +205,63 @@ export const prepareCanonicalTargets = Effect.fn('ModulePageModel.prepareCanonic
   },
 );
 
-/**
- * Server rendering resolves the page's target beside the Shell's own reads instead of after the composition: it asks
- * for the current release, and the answer counts only when it names the revision the composition read returned.
- */
-const startServerTarget = (selector: Pick<ModuleTargetLoaderArguments, 'canonicalPath' | 'params'>, request: Request) =>
-  Effect.forkChild(
-    shellAuthenticationClientOptionsFromRequest(request).pipe(
-      Effect.flatMap((options) =>
-        targetPayload(selector).pipe(Effect.flatMap((payload) => resolveModuleTarget(payload, options))),
-      ),
-    ),
-    { startImmediately: true },
-  );
+/** How long a page loader waits for the Shell's own reads of its document. */
+const SHELL_DOCUMENT_BUDGET = '30 seconds';
 
-export const loadModulePageModel: (
-  selector: ModuleTargetLoaderArguments,
-) => Effect.Effect<ModuleTargetPageModel, Cause.TimeoutError> = Effect.fn('ModulePageModel.loadModulePageModel')(
-  function* loadModulePageModelEffect(selector: ModuleTargetLoaderArguments) {
+/** The page state of a Shell model that admits no target: signed out, no company, or no captured release. */
+const shellPageState = (shell: HomePageModel): ModuleTargetPageModel =>
+  shell.state === 'authenticated' || shell.state === 'anonymous'
+    ? { shell, state: 'selection_required' }
+    : { shell, state: shell.state };
+
+/** A resolved target counts only for the revision the document's Shell model captured. */
+const resolvedPageModel = (
+  resolved: ResolvedModuleTarget,
+  shell: HomePageModel,
+  compositionRevision: string,
+  request: Request,
+): ModuleTargetPageModel =>
+  resolved.compositionRevision === compositionRevision
+    ? {
+        routeParams: resolved.routeParameters,
+        search: new URL(request.url).search,
+        shell,
+        state: 'resolved',
+        target: resolved,
+      }
+    : { shell, state: 'reload_required' };
+
+/**
+ * Server rendering asks the document context for the page's target in the same request: one session resolution and
+ * one captured release for the Shell model and the target. A document that answered no target shows "unavailable".
+ */
+const loadServerModulePageModel = Effect.fn('ModulePageModel.loadServerModulePageModel')(
+  function* loadServerModulePageModelEffect(selector: ModuleTargetLoaderArguments) {
     const { request } = selector;
-    const serverTarget = isServerRender() ? yield* startServerTarget(selector, request) : undefined;
+    const payload = yield* targetPayload(selector).pipe(Effect.option);
+    const { shell, target }: ServerModuleDocument = Option.isSome(payload)
+      ? yield* loadServerModuleDocument(request, payload.value).pipe(Effect.timeout(SHELL_DOCUMENT_BUDGET))
+      : { shell: yield* loadHomePageModel(request).pipe(Effect.timeout(SHELL_DOCUMENT_BUDGET)) };
+    if (shell.state !== 'authenticated' || shell.compositionRevision === undefined) {
+      return shellPageState(shell);
+    }
+    if (target === undefined) {
+      return { shell, state: 'unavailable' } satisfies ModuleTargetPageModel;
+    }
+    const { compositionRevision } = shell;
+    return Match.value(target).pipe(
+      Match.discriminatorsExhaustive('state')({
+        failed: ({ problem }) => safeState(problem, shell),
+        resolved: ({ target: resolved }) => resolvedPageModel(resolved, shell, compositionRevision, request),
+        selection_required: () => ({ shell, state: 'selection_required' }) satisfies ModuleTargetPageModel,
+      }),
+    );
+  },
+);
+
+const loadBrowserModulePageModel = Effect.fn('ModulePageModel.loadBrowserModulePageModel')(
+  function* loadBrowserModulePageModelEffect(selector: ModuleTargetLoaderArguments) {
+    const { request } = selector;
     const targetScope = yield* Effect.scope;
     let browserTarget: Fiber.Fiber<ResolvedModuleTarget, ShellTargetClientError> | undefined;
     const shell = yield* loadHomePageModel(request, (identity, revision, options) =>
@@ -238,20 +275,13 @@ export const loadModulePageModel: (
         ),
         Effect.asVoid,
       ),
-    ).pipe(Effect.timeout('30 seconds'));
-    if (shell.state !== 'authenticated') {
-      return {
-        shell,
-        state: shell.state === 'anonymous' ? 'selection_required' : shell.state,
-      } satisfies ModuleTargetPageModel;
-    }
-    if (shell.compositionRevision === undefined) {
-      return { shell, state: 'selection_required' } satisfies ModuleTargetPageModel;
+    ).pipe(Effect.timeout(SHELL_DOCUMENT_BUDGET));
+    if (shell.state !== 'authenticated' || shell.compositionRevision === undefined) {
+      return shellPageState(shell);
     }
     const { compositionRevision } = shell;
-    const pendingTarget = serverTarget ?? browserTarget;
     const target =
-      pendingTarget === undefined
+      browserTarget === undefined
         ? shellAuthenticationClientOptionsFromRequest(request).pipe(
             Effect.flatMap((options) =>
               targetPayload(selector, compositionRevision).pipe(
@@ -259,19 +289,9 @@ export const loadModulePageModel: (
               ),
             ),
           )
-        : Fiber.join(pendingTarget);
+        : Fiber.join(browserTarget);
     return yield* target.pipe(
-      Effect.map((resolved): ModuleTargetPageModel =>
-        resolved.compositionRevision === compositionRevision
-          ? {
-              routeParams: resolved.routeParameters,
-              search: new URL(request.url).search,
-              shell,
-              state: 'resolved',
-              target: resolved,
-            }
-          : { shell, state: 'reload_required' },
-      ),
+      Effect.map((resolved) => resolvedPageModel(resolved, shell, compositionRevision, request)),
       Effect.matchEffect({
         onFailure: (error) => Effect.succeed(safeState(error, shell)),
         onSuccess: Effect.succeed,
@@ -280,6 +300,11 @@ export const loadModulePageModel: (
   },
   Effect.scoped,
 );
+
+export const loadModulePageModel = (
+  selector: ModuleTargetLoaderArguments,
+): Effect.Effect<ModuleTargetPageModel, Cause.TimeoutError> =>
+  Effect.suspend(() => (isServerRender() ? loadServerModulePageModel(selector) : loadBrowserModulePageModel(selector)));
 
 export const loader = (input: ModuleTargetLoaderArguments): Promise<ModuleTargetPageModel> =>
   browserRuntime.runPromise(

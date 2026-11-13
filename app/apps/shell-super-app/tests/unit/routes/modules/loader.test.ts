@@ -6,14 +6,16 @@ import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
   rstest: 'importActual',
 };
 import { ResolvedModuleTargetSchema } from '../../../../shared/api.ts';
+import type { ShellDocumentTarget } from '../../../../shared/api.ts';
 import {
   BrowserModuleRevisionConflict,
   pinBrowserModuleTarget,
 } from '../../../../src/routes/module-entrypoint-loader.ts';
 import { loadModulePageModel } from '../../../../src/routes/[lang]/modules/[moduleId]/module-page-model.ts';
 
-const { loadHomePageModelMock, resolveModuleTargetMock } = rstest.hoisted(() => ({
+const { loadHomePageModelMock, loadServerModuleDocumentMock, resolveModuleTargetMock } = rstest.hoisted(() => ({
   loadHomePageModelMock: rstest.fn(),
+  loadServerModuleDocumentMock: rstest.fn(),
   resolveModuleTargetMock: rstest.fn(),
 }));
 
@@ -24,6 +26,8 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
 
 rstest.mock('../../../../src/routes/[lang]/home-page-model.ts', () => ({
   loadHomePageModel: loadHomePageModelMock,
+  loadServerModuleDocument: loadServerModuleDocumentMock,
+  sessionEndedModel: { reason: 'session_ended', state: 'anonymous' },
 }));
 
 const authenticatedShell = {
@@ -275,27 +279,41 @@ const asServerRender = <Value, Failure>(operation: Effect.Effect<Value, Failure>
       }),
   );
 
-it.effect('server rendering resolves the target beside the Shell reads and keeps it only for that revision', () =>
-  Effect.gen(function* serverTargetBesideShell() {
-    const startedBeforeShell: boolean[] = [];
-    loadHomePageModelMock.mockImplementation(() =>
-      Effect.sync(() => {
-        startedBeforeShell.push(resolveModuleTargetMock.mock.calls.length > 0);
-        return authenticatedShell;
-      }),
-    );
-    expect(yield* asServerRender(moduleModel({ canonicalPath: '/contacts', request: request() }))).toMatchObject({
-      state: 'resolved',
-      target: { moduleId: 'party.registry' },
-    });
-    expect(startedBeforeShell).toEqual([true]);
-    expect(resolveModuleTargetMock).toHaveBeenCalledWith({ canonicalPath: '/contacts' }, expect.any(Object));
+/** The server document of the next case: its Shell model and, when it read one, the page target. */
+const serverDocument = (target?: ShellDocumentTarget) =>
+  loadServerModuleDocumentMock.mockReturnValueOnce(
+    Effect.succeed(target === undefined ? { shell: authenticatedShell } : { shell: authenticatedShell, target }),
+  );
+const serverModel = () => asServerRender(moduleModel({ canonicalPath: '/contacts', request: request() }));
 
-    resolveModuleTargetMock.mockReturnValueOnce(
-      Effect.succeed({ ...approvedTarget, compositionRevision: 'd'.repeat(64) }),
-    );
-    expect(yield* asServerRender(moduleModel({ canonicalPath: '/contacts', request: request() }))).toMatchObject({
-      state: 'reload_required',
+it.effect('server rendering reads the page target in the one document read and keeps it only for that revision', () =>
+  Effect.gen(function* serverTargetInDocument() {
+    serverDocument({ state: 'resolved', target: approvedTarget });
+    expect(yield* serverModel()).toMatchObject({ state: 'resolved', target: { moduleId: 'party.registry' } });
+    expect(loadServerModuleDocumentMock).toHaveBeenCalledWith(expect.any(Request), { canonicalPath: '/contacts' });
+    // One request per document: no separate target read, no separate Shell read.
+    expect(resolveModuleTargetMock).not.toHaveBeenCalled();
+    expect(loadHomePageModelMock).not.toHaveBeenCalled();
+
+    serverDocument({ state: 'resolved', target: { ...approvedTarget, compositionRevision: 'd'.repeat(64) } });
+    expect(yield* serverModel()).toMatchObject({ state: 'reload_required' });
+    serverDocument({
+      problem: { _tag: 'ShellTargetForbiddenProblem', detail: 'd', status: 403, title: 't', type: 'x' },
+      state: 'failed',
     });
+    expect(yield* serverModel()).toMatchObject({ state: 'forbidden' });
+    serverDocument({
+      problem: { _tag: 'ShellAuthenticationRequiredProblem', detail: 'd', status: 401, title: 't', type: 'x' },
+      state: 'failed',
+    });
+    expect(yield* serverModel()).toMatchObject({ shell: { reason: 'session_ended' }, state: 'selection_required' });
+    serverDocument({ state: 'selection_required' });
+    expect(yield* serverModel()).toMatchObject({ state: 'selection_required' });
+    // An authenticated document that answered no target never shows a page.
+    serverDocument();
+    expect(yield* serverModel()).toMatchObject({ state: 'unavailable' });
+    loadServerModuleDocumentMock.mockReturnValueOnce(Effect.succeed({ shell: { state: 'anonymous' } }));
+    expect(yield* serverModel()).toMatchObject({ state: 'selection_required' });
+    expect(resolveModuleTargetMock).not.toHaveBeenCalled();
   }),
 );

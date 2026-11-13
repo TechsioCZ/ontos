@@ -244,6 +244,8 @@ import type {
   ShellCapabilityUnavailableProblem,
   ShellInternalProblem,
   ShellDocumentContextRequest,
+  ShellDocumentTarget,
+  ModuleTargetSelector,
   ResolveModuleTargetPayload,
   ResolveModuleTargetsPayload,
   ShellInvalidRequestProblem,
@@ -1641,6 +1643,48 @@ const liveScopeOrRefusal = Option.match({
 });
 
 /**
+ * A module page document's target: the same governed read `resolveModuleTargetHandler` runs for the same principal
+ * (`tenantModuleTarget` for a tenant session), against the document's captured release. Its problem is its own
+ * outcome, never the document's, exactly as the separate request answered it.
+ */
+const documentTarget = Effect.fn('shell.composition.documentTarget')(function* documentTargetEffect(
+  request: RequestWithHeaders,
+  selector: ModuleTargetSelector,
+  principal: TrustedPrincipalContext,
+  catalog: ShellInstalledCatalog,
+  context: 'company' | 'tenant',
+) {
+  const governedReads = yield* ShellGovernedReads;
+  const input = {
+    ...selector,
+    compositionRevision: catalog.composition.revision,
+    correlationId: correlationFromRequest(request),
+    principal,
+  };
+  const read: Effect.Effect<ShellDocumentTarget, ReadCoreError> =
+    context === 'tenant'
+      ? governedReads.tenantModuleTarget(input)
+      : governedReads.moduleTarget(input).pipe(Effect.map((target) => ({ state: 'resolved' as const, target })));
+  return yield* read.pipe(
+    Effect.provideService(CapturedShellCompositionCatalog, catalog),
+    Effect.tapError((error) =>
+      logShellReadFailure(
+        'module_target',
+        request,
+        error,
+        moduleTargetLogAnnotations(catalog, {
+          reportedSource: request.headers[moduleTargetSourceHeader],
+          selector,
+          sourcePath: request.headers[moduleTargetSourcePathHeader],
+        }),
+      ),
+    ),
+    Effect.catch((error) => Effect.succeed({ problem: shellReadProblem(error), state: 'failed' as const })),
+    observeGatewayPhase('document-target'),
+  );
+});
+
+/**
  * Server rendering of a Shell document reads everything it needs here, from one resolution of the session's context:
  * reading session, legal entities, tenants, composition and the people capability as separate requests resolved the
  * same context (Better Auth session plus legal-entity checks) five times per document, each in its own invocation on
@@ -1713,6 +1757,15 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
             const catalog = yield* captureShellRelease(payload.compositionRevision).pipe(
               observeGatewayPhase('document-admission'),
             );
+            // The page target reads beside the composition, against the same captured release.
+            const target =
+              payload.target === undefined
+                ? Option.none<Fiber.Fiber<ShellDocumentTarget>>()
+                : Option.some(
+                    yield* Effect.forkChild(documentTarget(request, payload.target, principal, catalog, 'company'), {
+                      startImmediately: true,
+                    }),
+                  );
             const governedReads = yield* ShellGovernedReads;
             const response = yield* governedReads
               .composition({
@@ -1724,7 +1777,7 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
                 Effect.tapError((error) => logShellReadFailure('composition', request, error)),
               );
             const documentComposition = yield* decodeResponse(ShellCompositionSchema, response, shellInternalProblem);
-            return { catalog, composition: documentComposition };
+            return { catalog, composition: documentComposition, target };
           }).pipe(
             observeGatewayPhase('document-composition'),
             Effect.catch((error) =>
@@ -1735,6 +1788,7 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
                     ? ('reload_required' as const)
                     : ('unavailable' as const),
                 },
+                target: Option.none<Fiber.Fiber<ShellDocumentTarget>>(),
               }),
             ),
           );
@@ -1762,13 +1816,17 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
                   Effect.provideService(DocumentHomeCorrelationId, correlationFromRequest(request)),
                 )
               : undefined;
-          return home === undefined ? { ...base, canManagePeople } : { ...base, canManagePeople, home };
+          const withHome = home === undefined ? { ...base, canManagePeople } : { ...base, canManagePeople, home };
+          return Option.isNone(captured.target)
+            ? withHome
+            : { ...withHome, target: yield* Fiber.join(captured.target.value) };
         }),
         tenantContextAvailable: canSelectTenantContext(context.principal).pipe(Effect.orElseSucceed(() => false)),
       },
       { concurrency: 2 },
     );
     let tenantRelease = Option.none<string>();
+    let tenantTarget = Option.none<ShellDocumentTarget>();
     if (context.state === 'tenant_authenticated') {
       // The release hint serves only tenant-context page dispatch, so it goes to exactly the people that
       // dispatch admits: `core.shell.tenant-module-target.resolve`, asked in the tenant context (O28).
@@ -1783,10 +1841,14 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
         }),
       });
       if (decision.outcome === 'ALLOWED') {
-        tenantRelease = yield* captureShellRelease(payload.compositionRevision).pipe(
-          Effect.map((catalog) => catalog.composition.revision),
-          Effect.option,
-        );
+        const tenantCatalog = yield* captureShellRelease(payload.compositionRevision).pipe(Effect.option);
+        tenantRelease = tenantCatalog.pipe(Option.map((catalog) => catalog.composition.revision));
+        // A page target counts only beside the release hint; without it the page shows "select a company".
+        if (Option.isSome(tenantCatalog) && payload.target !== undefined) {
+          tenantTarget = Option.some(
+            yield* documentTarget(request, payload.target, context.principal, tenantCatalog.value, 'tenant'),
+          );
+        }
       }
     }
     const result = {
@@ -1799,7 +1861,11 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
         { state: context.state },
       ),
     };
-    return Option.isSome(tenantRelease) ? { ...result, compositionRevision: tenantRelease.value } : result;
+    if (Option.isNone(tenantRelease)) {
+      return result;
+    }
+    const withRelease = { ...result, compositionRevision: tenantRelease.value };
+    return Option.isSome(tenantTarget) ? { ...withRelease, target: tenantTarget.value } : withRelease;
   },
 );
 

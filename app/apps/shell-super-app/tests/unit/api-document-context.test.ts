@@ -20,7 +20,8 @@ import {
 } from '../../api/modules/installed-module-catalog.ts';
 import { ShellGovernedReads } from '../../api/modules/shell-governed-reads.ts';
 import type { ShellGovernedReadsService } from '../../api/modules/shell-governed-reads.ts';
-import { ShellCompositionSchema, ShellDocumentContextSchema } from '../../shared/api.ts';
+import { ResolvedModuleTargetSchema, ShellCompositionSchema, ShellDocumentContextSchema } from '../../shared/api.ts';
+import type { ShellDocumentContextRequest } from '../../shared/api.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import { makeShellTestAccessGate } from '../support/access-decision-double.ts';
 import { makeAuthenticationServiceDouble } from '../support/impersonation-service-doubles.ts';
@@ -81,6 +82,11 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
   composition: ShellGovernedReadsService['composition'],
   peopleStarted: Effect.Effect<unknown> = Effect.void,
   tenantAccess: TenantDecisions = Effect.succeed(denied),
+  page: {
+    readonly moduleTarget?: ShellGovernedReadsService['moduleTarget'];
+    readonly payload?: ShellDocumentContextRequest;
+    readonly tenantModuleTarget?: ShellGovernedReadsService['tenantModuleTarget'];
+  } = {},
 ) {
   const { catalog } = yield* fixture;
   const readComposition = rs.fn(composition);
@@ -109,16 +115,19 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
     }
     return tenantSelection(input);
   };
-  const response = yield* documentContextHandler(request, {}).pipe(
+  const readModuleTarget = rs.fn(page.moduleTarget ?? (() => Effect.die('No page target was asked for')));
+  const readTenantTarget = rs.fn(page.tenantModuleTarget ?? (() => Effect.die('No tenant page target was asked for')));
+  const resolveDocumentContext = rs.fn((headers: Headers) => {
+    expect(headers.get('cookie')).toBe('session=document-context');
+    return Effect.succeed({ context, tenants: Result.succeed({ setCookieHeaders: [], tenants: [] }) });
+  });
+  const response = yield* documentContextHandler(request, page.payload ?? {}).pipe(
     Effect.provide(
       Layer.mergeAll(
         Layer.succeed(
           AuthenticationService,
           makeAuthenticationServiceDouble({
-            resolveDocumentContext: (headers) => {
-              expect(headers.get('cookie')).toBe('session=document-context');
-              return Effect.succeed({ context, tenants: Result.succeed({ setCookieHeaders: [], tenants: [] }) });
-            },
+            resolveDocumentContext,
           }),
         ),
         Layer.succeed(AccessDecisionGate, { ...makeTestAccessDecision(), decide }),
@@ -129,13 +138,27 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
         Layer.mock(LegalEntityContext, {}),
         Layer.mock(ReadRuntime, {}),
         Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
-        Layer.mock(ShellGovernedReads, { composition: readComposition }),
+        Layer.mock(ShellGovernedReads, {
+          composition: readComposition,
+          moduleTarget: readModuleTarget,
+          tenantModuleTarget: readTenantTarget,
+        }),
         Layer.mock(GatewayIssuer, { issueDocument: issue }),
       ),
     ),
     Effect.flatMap(Schema.decodeUnknownEffect(ShellDocumentContextSchema)),
   );
-  return { issue, peopleCheck, readComposition, releaseHint, response, tenantSelection };
+  return {
+    issue,
+    peopleCheck,
+    readComposition,
+    readModuleTarget,
+    readTenantTarget,
+    releaseHint,
+    resolveDocumentContext,
+    response,
+    tenantSelection,
+  };
 });
 
 it.live('overlaps the switcher hint with composition and people reads, and issues no gateway assertions', () =>
@@ -400,3 +423,126 @@ it.effect('rereads switcher permission on the next document instead of retaining
     }
   }),
 );
+
+const pageTarget = (compositionRevision: string) =>
+  Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
+    appId: 'party-registry',
+    componentKey: 'party.registry.page-contacts',
+    compositionRevision,
+    entrypointKey: 'party.registry.page.contacts',
+    federation: {
+      expose: './PageContacts',
+      manifest: { sha256: 'a'.repeat(64), url: 'https://assets.example.test/party/release-a/mf-manifest.json' },
+      remoteName: 'partyRegistryReleaseA',
+    },
+    moduleId: 'party.registry',
+    routeParameters: {},
+    writable: false,
+  });
+
+it.effect('resolves a module page target in the same document read, for the same principal and release', () =>
+  Effect.gen(function* foldedTarget() {
+    const { catalog, composition } = yield* fixture;
+    const { readComposition, readModuleTarget, resolveDocumentContext, response } = yield* documentTest(
+      authenticated,
+      Effect.succeed(denied),
+      () => Effect.succeed(composition),
+      Effect.void,
+      Effect.succeed(denied),
+      {
+        moduleTarget: (input) => Effect.succeed(pageTarget(input.compositionRevision ?? '')),
+        payload: { target: { canonicalPath: '/contacts' } },
+      },
+    );
+    // One session resolution answers the Shell context and the page target together.
+    expect(resolveDocumentContext).toHaveBeenCalledTimes(1);
+    expect(readModuleTarget).toHaveBeenCalledTimes(1);
+    expect(readModuleTarget.mock.calls[0]?.[0]).toEqual({
+      canonicalPath: '/contacts',
+      compositionRevision: catalog.composition.revision,
+      correlationId: 'document-correlation',
+      principal,
+    });
+    expect(readComposition.mock.calls[0]?.[0]).toEqual({ correlationId: 'document-correlation', principal });
+    expect(response.target).toEqual({ state: 'resolved', target: pageTarget(catalog.composition.revision) });
+    expect(response.composition).toMatchObject({ state: 'available' });
+  }),
+);
+
+it.effect('answers a refused page target as its own outcome, never as the document failing', () =>
+  Effect.gen(function* refusedTarget() {
+    const { composition } = yield* fixture;
+    const { response } = yield* documentTest(
+      authenticated,
+      Effect.succeed(denied),
+      () => Effect.succeed(composition),
+      Effect.void,
+      Effect.succeed(denied),
+      {
+        moduleTarget: () => Effect.fail(new ReadPermissionDenied({ code: 'read_permission_denied', reason: 'denied' })),
+        payload: { target: { canonicalPath: '/contacts' } },
+      },
+    );
+    expect(response.composition).toMatchObject({ state: 'available' });
+    expect(response.target).toMatchObject({ problem: { _tag: 'ShellTargetForbiddenProblem' }, state: 'failed' });
+  }),
+);
+
+it.effect('answers no page target when the document has no composition to admit it', () =>
+  Effect.gen(function* noCompositionNoTarget() {
+    const { response } = yield* documentTest(
+      authenticated,
+      Effect.succeed(denied),
+      () => Effect.fail(new ReadPermissionDenied({ code: 'read_permission_denied', reason: 'denied' })),
+      Effect.void,
+      Effect.succeed(denied),
+      {
+        moduleTarget: (input) => Effect.succeed(pageTarget(input.compositionRevision ?? '')),
+        payload: { target: { canonicalPath: '/contacts' } },
+      },
+    );
+    expect(response.composition).toEqual({ state: 'unavailable' });
+    expect(response).not.toHaveProperty('target');
+  }),
+);
+
+for (const decision of ['allowed', 'denied'] as const) {
+  it.effect(`reads a tenant session's page target only beside an admitted release hint: ${decision}`, () =>
+    Effect.gen(function* tenantTarget() {
+      const { legalEntityId, ...tenantPrincipal } = principal;
+      void legalEntityId;
+      const { catalog } = yield* fixture;
+      const { readModuleTarget, readTenantTarget, response } = yield* documentTest(
+        {
+          availableLegalEntities: [legalEntity],
+          identity,
+          principal: tenantPrincipal,
+          setCookieHeaders: [],
+          state: 'tenant_authenticated',
+        },
+        Effect.succeed(denied),
+        () => Effect.die('Tenant documents read no company composition'),
+        Effect.void,
+        Effect.succeed([{ decision, key: principal.tenantId }]),
+        {
+          payload: { target: { canonicalPath: '/contacts' } },
+          tenantModuleTarget: (input) =>
+            Effect.succeed({ state: 'resolved' as const, target: pageTarget(input.compositionRevision ?? '') }),
+        },
+      );
+      expect(readModuleTarget).not.toHaveBeenCalled();
+      if (decision === 'allowed') {
+        expect(readTenantTarget.mock.calls[0]?.[0]).toMatchObject({
+          canonicalPath: '/contacts',
+          compositionRevision: catalog.composition.revision,
+          principal: tenantPrincipal,
+        });
+        expect(response.target).toEqual({ state: 'resolved', target: pageTarget(catalog.composition.revision) });
+      } else {
+        expect(readTenantTarget).not.toHaveBeenCalled();
+        expect(response).not.toHaveProperty('target');
+        expect(response).not.toHaveProperty('compositionRevision');
+      }
+    }),
+  );
+}

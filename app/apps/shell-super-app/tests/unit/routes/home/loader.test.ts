@@ -7,6 +7,7 @@ import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
 };
 import {
   loadHomePageModel,
+  loadServerModuleDocument,
   primeBrowserReads,
   resetBrowserSessionCache,
 } from '../../../../src/routes/[lang]/home-page-model.ts';
@@ -714,6 +715,24 @@ it.effect('a session boundary drops the primed reads, so the next loader asks th
       }
     }),
   ),
+);
+
+it.effect('a module page document reads its target in the same document-context request', () =>
+  Effect.gen(function* moduleDocument() {
+    const target = { state: 'selection_required' as const };
+    documentContextMock.mockReturnValue(Effect.succeed(documentContextOf({ target })));
+    const document = yield* asServerRender(
+      loadServerModuleDocument(serverRequest('https://shell.example.test/en/contacts'), {
+        canonicalPath: '/contacts',
+      }).pipe(Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({}))),
+    );
+    expect(document.target).toEqual(target);
+    expect(document.shell).toMatchObject({ compositionRevision, state: 'authenticated' });
+    expect(documentContextMock).toHaveBeenCalledTimes(1);
+    expect(documentContextMock.mock.calls[0]?.[0]).toEqual({ target: { canonicalPath: '/contacts' } });
+    expect(documentContextMock.mock.calls[0]?.[1]).toMatchObject({ targetSource: 'server_render' });
+    expect(resolveModuleTargetMock).not.toHaveBeenCalled();
+  }),
 );
 
 it.effect('server rendering maps each document-context part to the same models as the separate reads', () =>
