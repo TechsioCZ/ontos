@@ -227,12 +227,44 @@ CREATE FUNCTION "demo_merchandise"."classify_written_order"() RETURNS trigger
 CREATE TRIGGER "orders_tax_classification"
   BEFORE INSERT OR UPDATE OF "document" ON "demo_merchandise"."orders"
   FOR EACH ROW EXECUTE FUNCTION "demo_merchandise"."classify_written_order"();--> statement-breakpoint
--- Empty until this release, serving the composition it published, writes the catalogue for the first time. The
--- contract step refuses to drop the rollback `vatRate` before then.
+-- Which release with the classification serves now: empty after the deploy, then the composition revision of the
+-- release whose catalogue write came last (each release records itself on its first write, and only a different
+-- revision updates the row). The contract step refuses unless that revision is the one serving when it runs.
 CREATE TABLE "demo_merchandise"."tax_classification_live" (
+	"composition_revision" text NOT NULL,
 	"first_served_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"singleton" boolean PRIMARY KEY DEFAULT true,
 	CONSTRAINT "demo_merchandise_tax_classification_live_singleton" CHECK ("singleton")
 );--> statement-breakpoint
-GRANT SELECT, INSERT ON "demo_merchandise"."tax_classification_live" TO ontos_runtime;--> statement-breakpoint
+-- Called by this release's catalogue writes, always inside a transaction the composition fence admitted, where the
+-- active composition is this release's own. Returns whether the row already named it (nothing to record).
+CREATE FUNCTION "demo_merchandise"."record_tax_classification_live"() RETURNS boolean
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = pg_catalog, pg_temp
+  AS $$
+    DECLARE
+      serving text;
+      recorded text;
+    BEGIN
+      SELECT authority.revision INTO serving
+        FROM core.application_composition_authority AS authority
+       WHERE authority.authority_key = 'active';
+      IF serving IS NULL THEN
+        RETURN false;
+      END IF;
+      SELECT live.composition_revision INTO recorded FROM "demo_merchandise"."tax_classification_live" AS live;
+      IF recorded IS NOT DISTINCT FROM serving THEN
+        RETURN true;
+      END IF;
+      INSERT INTO "demo_merchandise"."tax_classification_live" (composition_revision, first_served_at)
+        VALUES (serving, clock_timestamp())
+        ON CONFLICT (singleton) DO UPDATE
+          SET composition_revision = EXCLUDED.composition_revision, first_served_at = EXCLUDED.first_served_at;
+      RETURN false;
+    END
+  $$;--> statement-breakpoint
+REVOKE ALL ON FUNCTION "demo_merchandise"."record_tax_classification_live"() FROM PUBLIC;--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION "demo_merchandise"."record_tax_classification_live"() TO ontos_runtime;--> statement-breakpoint
+GRANT SELECT ON "demo_merchandise"."tax_classification_live" TO ontos_runtime;--> statement-breakpoint
 SET LOCAL lock_timeout TO DEFAULT;

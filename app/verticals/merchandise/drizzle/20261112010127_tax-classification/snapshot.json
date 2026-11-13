@@ -1738,6 +1738,19 @@
       "table": "stock_movements"
     },
     {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "composition_revision",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "tax_classification_live"
+    },
+    {
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,

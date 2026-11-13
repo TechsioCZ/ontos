@@ -545,7 +545,7 @@ it.layer(nativeServices, { excludeTestServices: true })('tax classification migr
   );
 
   suite.effect(
-    'records once, on the first catalogue write of this release, that it served; the contract step waits for it',
+    'records which release serves: its composition revision, on its first catalogue write; a later release replaces it',
     () =>
       Effect.gen(function* servedMarker() {
         const isolated = yield* makeIsolatedNativeDatabaseFixture({
@@ -556,11 +556,20 @@ it.layer(nativeServices, { excludeTestServices: true })('tax classification migr
         const client = yield* makeTestPgClient(isolated.connections.admin.connectionString, { maxConnections: 1 });
         const db = yield* makeTestDatabaseFromClient(client, merchandiseRelations);
         yield* migrate(db, migrationOptions(migrations));
-        const marker = client.unsafe<{ readonly count: number }>(
-          'select count(*)::integer as count from demo_merchandise.tax_classification_live',
+        const marker = client.unsafe<{ readonly revision: string }>(
+          'select composition_revision as revision from demo_merchandise.tax_classification_live',
         );
         // The deploy itself (migration, backfill) and the release still serving record nothing.
-        expect(yield* marker).toEqual([{ count: 0 }]);
+        expect(yield* marker).toEqual([]);
+        /** The composition the app host published: the one its fence admits this release's writes under. */
+        const serving = (revision: string) =>
+          client.unsafe(
+            `insert into core.application_composition_authority
+               (authority_key, revision, phase, valid_until, subscriptions_json)
+             values ('active', $1, 'active', now() + interval '1 hour', '[]'::jsonb)
+             on conflict (authority_key) do update set revision = excluded.revision`,
+            [revision],
+          );
         const crypto = yield* Crypto.Crypto;
         const company = { legalEntityId: yield* crypto.randomUUIDv4(), tenantId: yield* crypto.randomUUIDv4() };
         const actor = Schema.decodeUnknownSync(PrincipalRefSchema)({
@@ -584,17 +593,20 @@ it.layer(nativeServices, { excludeTestServices: true })('tax classification migr
         const state = decodeState({ categories: [], movements: [], orders: [], products: [product] });
         const base = yield* db.transaction((tx) => replaceSnapshot(tx, company, state, TEST_PRICING));
         const write = (priceMinor: number) => db.transaction((tx) => changePriceOnce(tx, company, actor, priceMinor));
-        // This release's first write records it; later writes keep the one row.
+        // The first write of the release serving composition `a…` records it.
+        const releaseA = 'a'.repeat(64);
+        yield* serving(releaseA);
         expect(yield* write(1100)).toBe(base + 1);
-        const [first] = yield* client.unsafe<{ readonly at: Date }>(
-          'select first_served_at as at from demo_merchandise.tax_classification_live',
-        );
-        expect(yield* marker).toEqual([{ count: 1 }]);
+        expect(yield* marker).toEqual([{ revision: releaseA }]);
+        // A later release with the classification (composition `b…`) replaces it on its own first write.
+        const releaseB = 'b'.repeat(64);
+        yield* serving(releaseB);
         expect(yield* write(1200)).toBe(base + 2);
-        expect(yield* marker).toEqual([{ count: 1 }]);
-        expect(
-          yield* client.unsafe('select first_served_at as at from demo_merchandise.tax_classification_live'),
-        ).toEqual([first]);
+        expect(yield* marker).toEqual([{ revision: releaseB }]);
+        // Once the row names this release, its process stops offering it: the row stays as it is.
+        expect(yield* write(1300)).toBe(base + 3);
+        expect(yield* write(1400)).toBe(base + 4);
+        expect(yield* marker).toEqual([{ revision: releaseB }]);
       }),
     180_000,
   );

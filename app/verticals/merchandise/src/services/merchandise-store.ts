@@ -30,7 +30,6 @@ import {
   productVariants,
   products,
   stockMovements,
-  taxClassificationLive,
 } from '../database/schema.ts';
 import { grossPriceOf, productRateOf, realVariantsOf, stockLevelsOf, toProductRecord } from './stock-levels.ts';
 import type { StockLevels } from './stock-levels.ts';
@@ -1558,28 +1557,30 @@ const persistCategories = Effect.fn('MerchandiseStore.persistCategories')(functi
   );
 });
 
-// True once this process saw the marker committed (its insert met the row); until then each catalogue write offers it.
+// True once this process saw the marker name its own release (a process serves one release).
 const taxClassificationLiveSeen = Ref.makeUnsafe(false);
 
 /**
- * Records, once, that this release served a catalogue write (`tax_classification_live`): every write reaches here only
- * inside a transaction the composition fence admitted, so only while the composition this release published serves.
- * The contract step of the VAT classification refuses to run until the row exists.
+ * Records that this release serves (`tax_classification_live`): its composition revision, on its first catalogue write.
+ * Every write reaches here only inside a transaction the composition fence admitted, so the active composition the
+ * database function reads is this release's own. The contract step of the VAT classification refuses to run unless the
+ * recorded revision is the one serving then: the release being replaced must be one that no longer reads `vatRate`.
  */
 const recordTaxClassificationLive = Effect.fn('MerchandiseStore.recordTaxClassificationLive')(
-  function* recordTaxClassificationLive(db: MerchandiseDb) {
+  function* recordTaxClassificationLive(db: MerchandiseDb, scope: StoreScope) {
     if (yield* Ref.get(taxClassificationLiveSeen)) {
       return;
     }
-    const written = yield* query(
+    // Once, on the company's head the write holds locked (the scoped executor runs no free-standing statement).
+    const [recorded] = yield* query(
       db
-        .insert(taxClassificationLive)
-        .values({})
-        .onConflictDoNothing()
-        .returning({ singleton: taxClassificationLive.singleton }),
-      'The VAT classification marker could not be written',
+        .select({ current: sql<boolean>`demo_merchandise.record_tax_classification_live()` })
+        .from(catalogHeads)
+        .where(whereScope(catalogHeads, scope))
+        .limit(1),
+      'The serving release could not be recorded',
     );
-    if (written.length === 0) {
+    if (recorded?.current === true) {
       yield* Ref.set(taxClassificationLiveSeen, true);
     }
   },
@@ -1647,7 +1648,7 @@ export const persistChange = Effect.fn('MerchandiseStore.persistChange')(functio
     sliceChanged && after.aiChanges !== undefined
       ? yield* query(encodeSlice(after.aiChanges), 'AI changes do not encode')
       : undefined;
-  yield* recordTaxClassificationLive(db);
+  yield* recordTaxClassificationLive(db, scope);
   const update = { revision: working.revision + 1, updatedAt: date(now) };
   const heads = yield* query(
     db
