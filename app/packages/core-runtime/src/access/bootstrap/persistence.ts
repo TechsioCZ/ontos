@@ -96,6 +96,32 @@ const requireTenant = (scope: OperationalScope, tenantId: TenantId): Effect.Effe
   return issue === null ? Effect.void : Effect.fail(intentConflict('access_intent_scope_mismatch', issue));
 };
 
+/**
+ * The rows of `scopes` and the one fence of each: written together, since a scope without a fence can never be
+ * projected (D15). Every writer of a scope (tenant setup, a company created later) builds them here.
+ */
+export const scopeRowsOf = (tenantId: TenantId, scopes: readonly BootstrapScope[]) => ({
+  fences: scopes.map((entry) => ({
+    owningOperationId: null,
+    revision: 1,
+    scopeId: entry.scopeId,
+    state: 'Ready' as const,
+    tenantId,
+  })),
+  scopes: scopes.map((entry) => ({ ...scopeIdentityOf(tenantId, entry), scopeId: entry.scopeId, tenantId })),
+});
+
+/** The scope of each company in `legalEntityIds`, under the identifiers tenant setup derives for them. */
+export const legalEntityScopesOf = (
+  tenantId: TenantId,
+  legalEntityIds: readonly LegalEntityId[],
+): readonly BootstrapScope[] =>
+  legalEntityIds.map((legalEntityId) => ({
+    _tag: 'LegalEntity',
+    legalEntityId,
+    scopeId: legalEntityScopeId(tenantId, legalEntityId),
+  }));
+
 export interface WriteBootstrapScopesInput {
   readonly scopes: readonly BootstrapScope[];
   readonly tenantId: TenantId;
@@ -112,37 +138,24 @@ export const writeBootstrapScopes = (
 ): Effect.Effect<void, AccessIntentError> =>
   requireTenant(scope, input.tenantId).pipe(
     Effect.andThen(
-      runScoped(database, scope, SCOPE_UNIQUE_CONSTRAINTS, (transaction) =>
-        Effect.all(
+      runScoped(database, scope, SCOPE_UNIQUE_CONSTRAINTS, (transaction) => {
+        const rows = scopeRowsOf(input.tenantId, input.scopes);
+        return Effect.all(
           [
             transaction
               .insert(accessScopes)
-              .values(
-                input.scopes.map((entry) => ({
-                  ...scopeIdentityOf(input.tenantId, entry),
-                  scopeId: entry.scopeId,
-                  tenantId: input.tenantId,
-                })),
-              )
+              .values(rows.scopes)
               .onConflictDoNothing()
               .pipe(durable(SCOPE_UNIQUE_CONSTRAINTS), Effect.asVoid),
             transaction
               .insert(accessScopeFences)
-              .values(
-                input.scopes.map((entry) => ({
-                  owningOperationId: null,
-                  revision: 1,
-                  scopeId: entry.scopeId,
-                  state: 'Ready' as const,
-                  tenantId: input.tenantId,
-                })),
-              )
+              .values(rows.fences)
               .onConflictDoNothing()
               .pipe(durable(SCOPE_UNIQUE_CONSTRAINTS), Effect.asVoid),
           ],
           { concurrency: 1, discard: true },
-        ),
-      ),
+        );
+      }),
     ),
   );
 
