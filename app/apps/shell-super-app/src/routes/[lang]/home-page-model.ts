@@ -310,16 +310,20 @@ export const primeBrowserReads = Effect.fn('HomePageModel.primeBrowserReads')(fu
 
 /**
  * The document context's answers as the separate endpoints give them, when it answered every one of them; otherwise
- * the browser reads them itself.
+ * the browser reads them itself. A hint whose check could not answer (shown as "no") is never kept as an answer: the
+ * document then primes nothing, so the browser asks again.
  */
 const serverBrowserReads = (
   context: ShellDocumentContext,
   composition: ServerBrowserReads['composition'],
 ): ServerBrowserReads | undefined =>
-  context.legalEntities === undefined || context.tenants?.state !== 'available'
+  context.legalEntities === undefined ||
+  context.tenants?.state !== 'available' ||
+  context.canManagePeople === undefined ||
+  context.tenantContextUnavailable === true
     ? undefined
     : {
-        canManagePeople: context.canManagePeople ?? false,
+        canManagePeople: context.canManagePeople,
         composition,
         legalEntities: context.legalEntities,
         tenants: { tenants: context.tenants.tenants },

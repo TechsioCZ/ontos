@@ -304,6 +304,7 @@ import { GatewayTimings, observeGatewayPhase } from './auth/gateway-timing.ts';
 import { NoServerTimingLive } from './no-server-timing.ts';
 import { preserveSystemPrincipalContextTrust } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { peopleAdministrationCapability } from './auth/demo-accounts.ts';
+import { peopleAdministrationDecision } from './auth/administration-access.ts';
 import { rebrandRentalDemoAccounts } from './auth/rental-demo-brand-runtime-infrastructure.ts';
 import { listAgentEntities, manageAgentEntity } from './auth/agent-entities.ts';
 import { IdentityLifecycle, IdentityLifecycleLive } from './auth/identity-lifecycle.ts';
@@ -1744,9 +1745,13 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
             return yield* Effect.fail(authenticationInternalProblem());
           }
           const capability = yield* Effect.forkChild(
-            peopleAdministrationCapability({ principal }).pipe(
-              Effect.map(({ canManage }) => canManage),
-              Effect.orElseSucceed(() => false),
+            // A check that could not answer is told apart from a refusal: the document shows no people
+            // administration either way, but says nothing the browser could keep as an answer.
+            peopleAdministrationDecision(principal).pipe(
+              Effect.map(({ outcome }) =>
+                outcome === 'UNAVAILABLE' ? Option.none<boolean>() : Option.some(outcome === 'ALLOWED'),
+              ),
+              Effect.orElseSucceed(() => Option.none<boolean>()),
             ),
             { startImmediately: true },
           );
@@ -1800,7 +1805,8 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
             return base;
           }
           // Shell-owned people navigation does not depend on a workforce module contributing a legacy capability item.
-          const canManagePeople = yield* Fiber.join(capability);
+          const capabilityAnswer = yield* Fiber.join(capability);
+          const canManagePeople = Option.getOrElse(capabilityAnswer, () => false);
           const home =
             payload.home === true
               ? yield* resolveDocumentHome({
@@ -1813,12 +1819,13 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
                   Effect.provideService(DocumentHomeCorrelationId, correlationFromRequest(request)),
                 )
               : undefined;
-          const withHome = home === undefined ? { ...base, canManagePeople } : { ...base, canManagePeople, home };
+          const answered = Option.isSome(capabilityAnswer) ? { ...base, canManagePeople } : base;
+          const withHome = home === undefined ? answered : { ...answered, home };
           return Option.isNone(captured.target)
             ? withHome
             : { ...withHome, target: yield* Fiber.join(captured.target.value) };
         }),
-        tenantContextAvailable: canSelectTenantContext(context.principal).pipe(Effect.orElseSucceed(() => false)),
+        tenantContextAvailable: canSelectTenantContext(context.principal).pipe(Effect.option),
       },
       { concurrency: 2 },
     );
@@ -1848,16 +1855,23 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
         }
       }
     }
-    const result = {
+    const assembled = {
       ...document,
       legalEntities: withOptionalProperty(
-        { legalEntities: context.availableLegalEntities, tenantContextAvailable },
+        {
+          legalEntities: context.availableLegalEntities,
+          tenantContextAvailable: Option.getOrElse(tenantContextAvailable, () => false),
+        },
         context.state === 'authenticated',
         'selectedLegalEntityId',
         context.state === 'authenticated' ? context.identity.legalEntityId : undefined,
         { state: context.state },
       ),
     };
+    // The switcher hint shows "no tenant context" when its check could not answer, and says so.
+    const result = Option.isNone(tenantContextAvailable)
+      ? { ...assembled, tenantContextUnavailable: true as const }
+      : assembled;
     if (Option.isNone(tenantRelease)) {
       return result;
     }

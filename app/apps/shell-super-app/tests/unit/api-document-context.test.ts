@@ -85,6 +85,8 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
   page: {
     readonly moduleTarget?: ShellGovernedReadsService['moduleTarget'];
     readonly payload?: ShellDocumentContextRequest;
+    /** The people-administration check's answer; denied unless a case says otherwise. */
+    readonly people?: TenantDecisions;
     readonly tenantModuleTarget?: ShellGovernedReadsService['tenantModuleTarget'];
   } = {},
 ) {
@@ -103,7 +105,7 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
   const tenantSelection = rs.fn((input: GateInput) => answer(hint, input));
   const releaseHint = rs.fn((input: GateInput) => answer(tenantAccess, input));
   const peopleCheck = rs.fn((input: GateInput) =>
-    peopleStarted.pipe(Effect.andThen(answer(Effect.succeed(denied), input))),
+    peopleStarted.pipe(Effect.andThen(answer(page.people ?? Effect.succeed(denied), input))),
   );
   const decide = (input: GateInput) => {
     const key = input.carrier.accessDeclaration?.key;
@@ -223,9 +225,30 @@ it.effect(
         Effect.succeed(composition),
       );
       expect(response.legalEntities?.tenantContextAvailable).toBe(false);
+      // An unanswered check is told apart from a refusal, so nothing downstream keeps it as an answer.
+      expect(response.tenantContextUnavailable).toBe(true);
       expect(response.canManagePeople).toBe(false);
       expect(response.composition).toEqual(composition);
     }),
+);
+
+it.effect('omits the people hint when its check could not answer, and shows a refusal as false', () =>
+  Effect.gen(function* unansweredPeopleHint() {
+    const { composition } = yield* fixture;
+    const unanswered = yield* documentTest(
+      authenticated,
+      Effect.succeed(denied),
+      () => Effect.succeed(composition),
+      Effect.void,
+      Effect.succeed(denied),
+      { people: Effect.succeed(unavailable) },
+    );
+    expect(unanswered.response).not.toHaveProperty('canManagePeople');
+    expect(unanswered.response.composition).toEqual(composition);
+    expect(unanswered.response).not.toHaveProperty('tenantContextUnavailable');
+    const refused = yield* documentTest(authenticated, Effect.succeed(denied), () => Effect.succeed(composition));
+    expect(refused.response.canManagePeople).toBe(false);
+  }),
 );
 
 it.effect('does not start permission, composition or assertion reads for an anonymous document', () =>

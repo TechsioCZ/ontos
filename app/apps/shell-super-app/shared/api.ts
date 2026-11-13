@@ -1039,6 +1039,7 @@ export type ShellDocumentTarget = typeof ShellDocumentTargetSchema.Type;
  * page target. Each part keeps its own outcome. Signed-out or unselected sessions get no Home or page target.
  */
 export const ShellDocumentContextSchema = Schema.Struct({
+  /** The people-administration hint; absent when its check could not answer (or for a document without company). */
   canManagePeople: Schema.optionalKey(Schema.Boolean),
   composition: Schema.optionalKey(ShellDocumentCompositionSchema),
   /** Captured release identity only; tenant authentication gains no company or navigation capability. */
@@ -1047,6 +1048,8 @@ export const ShellDocumentContextSchema = Schema.Struct({
   legalEntities: Schema.optionalKey(AvailableLegalEntitiesResponseSchema),
   session: CurrentSessionSchema,
   target: Schema.optionalKey(ShellDocumentTargetSchema),
+  /** Present when the tenant-context switcher check could not answer; `legalEntities` then says "not available". */
+  tenantContextUnavailable: Schema.optionalKey(Schema.Literal(true)),
   tenants: Schema.optionalKey(ShellDocumentTenantsSchema),
 });
 export type ShellDocumentContext = typeof ShellDocumentContextSchema.Type;

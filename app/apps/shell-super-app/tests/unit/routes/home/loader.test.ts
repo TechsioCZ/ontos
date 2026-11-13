@@ -705,6 +705,19 @@ it.effect('server rendering reads the whole document context in one request', ()
   }),
 );
 
+it.effect('a document whose hint checks could not answer primes nothing, so the browser asks again', () =>
+  Effect.gen(function* unansweredHints() {
+    const { canManagePeople: _unanswered, ...withoutPeopleHint } = documentContextOf({});
+    for (const context of [withoutPeopleHint, documentContextOf({ tenantContextUnavailable: true })]) {
+      documentContextMock.mockReturnValueOnce(Effect.succeed(context));
+      const model = yield* serverModel();
+      // The page still shows the hint as "no"; only nothing is kept as an answer.
+      expect(model).toMatchObject({ state: 'authenticated' });
+      expect(model).not.toHaveProperty('browserReads');
+    }
+  }),
+);
+
 /** The server-rendered model's own reads, primed in the browser as hydration does. */
 const hydrateServerModel = Effect.gen(function* hydrate() {
   documentContextMock.mockReturnValue(Effect.succeed(documentContextOf({})));
