@@ -30,6 +30,7 @@ import {
   makeGatewayIssuerLayer,
 } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
+import { DocumentGatewayContextsRequestSchema } from '../../shared/document-gateway-api.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -283,6 +284,102 @@ it.effect('admits a document once and signs each available audience independentl
     }
   }),
 );
+
+it.effect(
+  'issues several assertions of one audience as separate single-use assertions, each checked and registered',
+  () =>
+    Effect.gen(function* repeatedAudiences() {
+      const { configuration, publicKey } = yield* makeConfiguration();
+      const { inputs, registrar } = capturingScopeGrantRegistrar();
+      let admissionLoads = 0;
+      let jtis = 0;
+      const layer = makeGatewayIssuerLayer(
+        dependencies(configuration, {
+          generateJti: Effect.sync(() => {
+            jtis += 1;
+            return `6${String(jtis).padStart(7, '0')}-0000-4000-8000-000000000001`;
+          }),
+          loadAdmission: Effect.sync(() => {
+            admissionLoads += 1;
+            return {
+              audiences: new Map([
+                ['property-registry', 'property-registry-build'],
+                ['tagging', 'tagging-build'],
+              ]),
+              revision: compositionRevision,
+            };
+          }),
+        }),
+      ).pipe(Layer.provide(scopeGrantRegistrarLayer(registrar)));
+      const assertions = yield* GatewayIssuer.pipe(
+        Effect.flatMap((gateway) =>
+          gateway.issueDocument({
+            audiences: [
+              'property-registry',
+              'property-registry',
+              'unavailable-owner',
+              'property-registry',
+              'unavailable-owner',
+              'tagging',
+            ],
+            compositionRevision,
+            principal,
+          }),
+        ),
+        Effect.provide(layer),
+      );
+      // One admission for the whole batch; the refused audience is left out each time it is named and fails no other.
+      expect(admissionLoads).toBe(1);
+      expect(assertions.map(({ audience }) => audience)).toEqual([
+        'property-registry',
+        'property-registry',
+        'property-registry',
+        'tagging',
+      ]);
+      // Each one is its own assertion: its own id and token, its own scope grant for this person, tenant and company.
+      const ids = new Set<string>();
+      for (const assertion of assertions) {
+        const verified = yield* Effect.promise(() =>
+          jwtVerify(assertion.token, publicKey, {
+            algorithms: ['EdDSA'],
+            audience: assertion.audience,
+            currentDate: new Date(1_700_000_001_000),
+            issuer,
+          }),
+        );
+        expect(verified.payload['principal']).toEqual(principal);
+        expect(verified.payload.exp).toBe((verified.payload.iat ?? 0) + 300);
+        ids.add(verified.payload.jti ?? '');
+      }
+      expect(ids.size).toBe(4);
+      expect(new Set(assertions.map(({ token }) => token)).size).toBe(4);
+      expect(inputs.map(({ jti }) => jti).toSorted()).toEqual([...ids].toSorted());
+      expect(inputs.map((input) => Redacted.value(input.assertion)).toSorted()).toEqual(
+        assertions.map(({ token }) => token).toSorted(),
+      );
+      for (const input of inputs) {
+        expect(input).toMatchObject({
+          legalEntityId: principal.legalEntityId,
+          principalId: principal.principalId,
+          tenantId: principal.tenantId,
+        });
+      }
+    }),
+);
+
+const documentRequest = (audiences: readonly string[]) => ({ audiences, compositionRevision });
+const namedTimes = (audience: string, times: number) => Array.from({ length: times }, () => audience);
+
+it('bounds a document batch at eight assertions of one audience and 64 in all', () => {
+  const decode = Schema.decodeUnknownExit(DocumentGatewayContextsRequestSchema);
+  const request = documentRequest;
+  const named = namedTimes;
+  expect(Exit.isSuccess(decode(request(named('property-registry', 8))))).toBe(true);
+  expect(Exit.isFailure(decode(request(named('property-registry', 9))))).toBe(true);
+  const sixtyFour = Array.from({ length: 8 }, (_, index) => named(`owner-${index}`, 8)).flat();
+  expect(Exit.isSuccess(decode(request(sixtyFour)))).toBe(true);
+  expect(Exit.isFailure(decode(request([...sixtyFour, 'owner-8'])))).toBe(true);
+});
 
 it.effect('rereads document admission after revocation and revision changes before issuing assertions', () =>
   Effect.gen(function* documentAdmissionChanges() {

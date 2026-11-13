@@ -369,8 +369,9 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
     const principal = yield* decodePrincipal(input.principal).pipe(
       Effect.mapError((failureCause) => unavailable('principal', failureCause)),
     );
-    // One document is one issuance operation. Its audiences share this fresh admission; a later
-    // document or individual issuance always reads authority again, with fresh tokens.
+    // One document is one issuance operation. Its entries share this fresh admission; a later
+    // document or individual issuance always reads authority again, with fresh tokens. An audience named
+    // several times gets several assertions, each checked, signed and registered on its own.
     const approved = yield* admission;
     const issued = yield* Effect.forEach(
       input.audiences,

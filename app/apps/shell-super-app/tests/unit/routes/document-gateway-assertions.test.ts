@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rste
 
 import * as actualAuthClient from '../../../src/api/auth-client.ts' with { rstest: 'importActual' };
 import { clearBrowserRequestCache, installBrowserRequestCache } from '../../../src/routes/browser-request-cache.ts';
+import type { DocumentGatewayContextsRequest } from '../../../shared/document-gateway-api.ts';
 import {
   documentGatewayAssertion,
   resetDocumentGatewayAssertions,
@@ -285,5 +286,89 @@ it.live('announces every settled module write to page-data stores, but not a rej
     yield* write(500);
     expect(announced).toBe(2);
     globalThis.removeEventListener(moduleWriteEvent, onWrite);
+  }),
+);
+
+/** Every entry a batch asks for is answered with its own token, as the Shell issues them. */
+const answerEveryEntry = () => {
+  let minted = 0;
+  issueDocumentGatewayContextsMock.mockImplementation(({ audiences }: DocumentGatewayContextsRequest) =>
+    Effect.succeed({
+      assertions: audiences.map((audience) => {
+        minted += 1;
+        return { ...assertion(audience), token: `batch-${audience}-${minted}` };
+      }),
+    }),
+  );
+};
+
+const readAudience = (audience: string) => askAssertion({ audience, compositionRevision: revision });
+
+it.live('serves the orders list and the warm-up of five order details in four batches, one token per read', () =>
+  Effect.gen(function* ordersList() {
+    yield* resetDocumentGatewayAssertions;
+    answerEveryEntry();
+    // The document asks one assertion per audience as it renders.
+    yield* holdAssertions([assertion('merchandise'), assertion('party-registry')]);
+    issueDocumentGatewayContextsMock.mockClear();
+    answerEveryEntry();
+    let single = 0;
+    platformFetch.mockImplementation(async (_input, init) => {
+      const { audience } = Schema.decodeUnknownSync(GatewayRequestBodySchema)(init?.body);
+      single += 1;
+      return Response.json({ ...withoutAudience(assertion(audience)), token: `single-${audience}-${single}` });
+    });
+    // The page: three Merchandise reads and the customer names, together.
+    const page = yield* Effect.forEach(['merchandise', 'merchandise', 'merchandise', 'party-registry'], readAudience, {
+      concurrency: 'unbounded',
+    });
+    // Then the warm-up of the first five orders' details, one order after another (11 reads).
+    const warm = yield* Effect.forEach(
+      [2, 2, 2, 2, 3],
+      (reads) =>
+        Effect.forEach(
+          Array.from({ length: reads }, () => 'merchandise'),
+          readAudience,
+          { concurrency: 'unbounded' },
+        ),
+      { concurrency: 1 },
+    );
+    const tokens = [...page, ...warm.flat()].map(({ body }) => body.token);
+    expect(tokens).toHaveLength(15);
+    expect(new Set(tokens).size).toBe(15);
+    // With one assertion per audience and batch this load took 6 batches and 7 single requests after the document's
+    // own batch (stage measured 13 gateway calls). Now each dry pool asks for the reads waiting or as many as were
+    // used, at most 8: 4 batches, no single request, 7 assertions left unused to expire.
+    const m = 'merchandise';
+    expect(issueDocumentGatewayContextsMock.mock.calls.map(([request]) => request.audiences)).toEqual([
+      [m, m],
+      [m, m, m, 'party-registry'],
+      [m, m, m, m, m, m],
+      [m, m, m, m, m, m, m, m],
+    ]);
+    expect(gatewayRequests()).toHaveLength(0);
+  }),
+);
+
+const readLeftOver = askAssertion({ audience: 'left-over', compositionRevision: revision });
+
+it.live('hands no assertion left over from a refill to a read after a context boundary', () =>
+  Effect.gen(function* leftoverAtBoundary() {
+    yield* resetDocumentGatewayAssertions;
+    answerEveryEntry();
+    yield* holdAssertions([assertion('left-over')]);
+    // The third read's refill asks two (as many as were used), so one is left in the pool.
+    const before = yield* Effect.forEach([1, 2, 3], () => readLeftOver, { concurrency: 1 });
+    expect(issueDocumentGatewayContextsMock.mock.calls.at(-1)?.[0]).toEqual({
+      audiences: ['left-over', 'left-over'],
+      compositionRevision: revision,
+    });
+    // A company or tenant switch, or a sign-out, clears the cache: the next document starts with an empty pool.
+    yield* clearBrowserRequestCache;
+    yield* holdAssertions([assertion('left-over')]);
+    const after = yield* readLeftOver;
+    expect(new Set(before.map(({ body }) => body.token)).size).toBe(3);
+    // The new document's own assertion, not the one the earlier refill left over.
+    expect(after.body.token).toBe(assertion('left-over').token);
   }),
 );

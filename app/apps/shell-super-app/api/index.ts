@@ -1481,9 +1481,10 @@ const withGatewayTimings = <Value, Failure, Requirements>(effect: Effect.Effect<
   effect.pipe(Effect.provideService(GatewayTimings, true));
 
 /**
- * One assertion per audience for an authenticated session principal, from the same issuer as `issueGatewayContext`
- * (same audience binding and lifetime). An audience the release does not admit is left out instead of failing the
- * others; the browser asks for it alone and gets the single 400.
+ * One assertion per requested entry (an audience may be named up to eight times) for an authenticated session
+ * principal, from the same issuer as `issueGatewayContext`: each with its own id, audience binding, lifetime and scope
+ * grant. An audience the release does not admit is left out instead of failing the others; the browser asks for it
+ * alone and gets the single 400.
  */
 const issueDocumentGatewayAssertions = Effect.fn('ShellGateway.issueDocumentAssertions')(
   function* issueDocumentGatewayAssertionsEffect(
