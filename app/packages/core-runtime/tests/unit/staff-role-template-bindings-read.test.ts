@@ -21,18 +21,12 @@ const scope = {
   correlationId: 'staff-role-template-test',
 };
 
-it('requires the exact company and existing manage_identity OR manage_people, not invented role rights', () => {
+it('requires the exact company and asks no legacy relation (its own question is in prepare)', () => {
   const resolve = getReadPermissionTargetResolver(staffRoleTemplateBindingsRead);
   if (!Predicate.isFunction(resolve)) {
     throw new TypeError('Expected an exact role-template permission resolver');
   }
-  expect(resolve({ emails: ['person@example.invalid'] }, scope)).toEqual({
-    kind: 'any_of',
-    targets: [
-      { kind: 'tenant', permission: 'manage_identity' },
-      { kind: 'legal_entity', permission: 'manage_people' },
-    ],
-  });
+  expect(resolve({ emails: ['person@example.invalid'] }, scope)).toEqual({ kind: 'legal_entity' });
   expect(staffRoleTemplateBindingsRead.descriptor.legalEntityScope).toBe('required');
   expect(staffRoleTemplateBindingsRead.descriptor.entrypoint.authorization).toEqual({
     kind: 'authenticated_principal',
