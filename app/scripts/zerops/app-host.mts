@@ -1043,13 +1043,37 @@ const connectionNamed = (connection: HeaderValue): ReadonlySet<string> =>
   );
 
 /**
+ * Build output whose file name carries its content hash (`s.a5d64c6353.js`): a new build names a new file, so the
+ * bytes behind one name never change. The units send these with no caching header at all, and a browser then fetched
+ * every one of them again on each page (2026-11-13 on stage: about 100 files, 2.5 MB, none from cache).
+ * Only the bundler's own folders count. `/static/` alone is not enough: the Shell does not redirect that prefix, so
+ * `/static/resources/a/b/c.abcdef1234.js` reaches a signed-in page route with `static` as its language, and a
+ * person's page must never be kept. Files named the same in every build (`remoteEntry.js`, `mf-manifest.json`) do
+ * not match either.
+ */
+const BUILD_OUTPUT = /^(?:\/_m\/[^/]+)?\/static\/(?:assets|css|font|image|js|media|svg|wasm)\//u;
+const CONTENT_HASH_IN_NAME = /\.[0-9a-f]{8,}\.[a-z0-9]+$/u;
+const isContentHashedAsset = (url: string): boolean => {
+  const pathname = url.split('?', 1)[0] ?? '';
+  return BUILD_OUTPUT.test(pathname) && CONTENT_HASH_IN_NAME.test(pathname.slice(pathname.lastIndexOf('/') + 1));
+};
+/** A page is never a build file, whatever its address: an answer without a type, or typed as HTML, is not kept. */
+const isPage = (contentType: HeaderValue): boolean => {
+  const types = [contentType ?? []].flat();
+  return types.length === 0 || types.some((type) => type.trim().toLowerCase().startsWith('text/html'));
+};
+const KEEP_FOR_GOOD = 'public, max-age=31536000, immutable';
+
+/**
  * The owner's end-to-end headers. A caller retries an unavailable (503) answer: make it reconnect, so the retry
  * can reach another container instead of reusing a kept-alive socket to this one. A superseded release keeps
- * refusing governed requests until Zerops stops it.
+ * refusing governed requests until Zerops stops it. A found (200) content-hashed build file the unit sent without
+ * caching may be kept by the browser; a missing one answers 404 and is never kept, and neither is any page.
  */
 export const relayResponseHeaders = (
   statusCode: number,
   upstream: Readonly<Record<string, string | readonly string[] | undefined>>,
+  url?: string,
 ) => {
   const headers: Record<string, string | readonly string[]> = {};
   const named = connectionNamed(upstream.connection);
@@ -1060,6 +1084,15 @@ export const relayResponseHeaders = (
   }
   if (statusCode === 503) {
     headers.connection = 'close';
+  }
+  if (
+    statusCode === 200 &&
+    url !== undefined &&
+    headers['cache-control'] === undefined &&
+    !isPage(headers['content-type']) &&
+    isContentHashedAsset(url)
+  ) {
+    headers['cache-control'] = KEEP_FOR_GOOD;
   }
   return headers;
 };
@@ -1139,7 +1172,7 @@ const relay = Effect.fn('AppHost.relay')(function* relay(
     response.body.resume();
     return yield* new RelayFailure({ code: 'PEER_DRAINING', stage: 'request' });
   }
-  const responseHeaders = relayResponseHeaders(response.statusCode, response.headers);
+  const responseHeaders = relayResponseHeaders(response.statusCode, response.headers, request.url);
   const noBody = request.method === 'HEAD' || [204, 205, 304].includes(response.statusCode);
   if (noBody) {
     response.body.resume();
