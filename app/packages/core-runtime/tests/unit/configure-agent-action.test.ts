@@ -63,10 +63,15 @@ it('retains the sensitive audit, lifecycle events and domain contracts', () => {
 
 it('accepts both native operations and explicit profile clearing without supplying defaults', () => {
   const decode = Schema.decodeUnknownSync(ConfigureAgentPayloadSchema);
-  for (const operation of ['create-agent', 'configure-agent']) {
-    const payload = { ...profile, operation, principalId };
-    expect(decode(payload)).toEqual(payload);
-  }
+  const configure = { ...profile, operation: 'configure-agent', principalId };
+  expect(decode(configure)).toEqual(configure);
+  // Creating names a creation reference, never a principal: Core gives the new principal its id.
+  const create = { ...profile, creationReference: 'request-1', operation: 'create-agent' };
+  expect(decode(create)).toEqual(create);
+  expect(
+    Schema.decodeUnknownResult(ConfigureAgentPayloadSchema)({ ...profile, operation: 'create-agent', principalId })
+      ._tag,
+  ).toBe('Failure');
   const isProfile = Schema.is(AgentProfileSchema);
   expect(isProfile(profile)).toBe(true);
   for (const requiredField of ['description', 'ownerPrincipalId', 'writePolicy']) {

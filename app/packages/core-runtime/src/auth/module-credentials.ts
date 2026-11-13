@@ -4,6 +4,7 @@ import { DateTime, Duration, Effect, Option, Schema } from 'effect';
 import { stableUuid } from '../access/catalog/stable-id.ts';
 import {
   accessWorkloadBindings,
+  accessWorkloadCompanyBindings,
   applicationCompositionAuthority,
   auditEvents,
   principalAuthBindings,
@@ -13,22 +14,16 @@ import {
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import { ModuleAppIdSchema } from './hosted-module-credentials.ts';
 import { ModuleCredentialUnavailableError } from './module-credential-unavailable-error.ts';
-import { principalManagementRepositoryFromTransaction } from './principal-management.ts';
+import {
+  INTERNAL_WORKLOAD_PLATFORM_ROLE,
+  principalManagementRepositoryFromTransaction,
+} from './principal-management.ts';
+import { PLATFORM_TENANT } from './platform-tenant.ts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from './staff-authentication-namespace.ts';
 
 export { ModuleCredentialUnavailableError } from './module-credential-unavailable-error.ts';
 
-/**
- * The platform tenant. The platform creates it and nobody administers it: it has no person, membership, Role or
- * company, so no Action, grant or tenant-managed key can reach what it holds. It holds exactly one service
- * principal per calling module, and the module credentials the platform issues to those principals.
- */
-export const PLATFORM_TENANT = Object.freeze({
-  defaultLocale: 'cs',
-  name: 'OntOS platform',
-  slug: 'ontos-platform',
-  tenantId: stableUuid('ontos.platform/tenant'),
-});
+export { PLATFORM_TENANT } from './platform-tenant.ts';
 
 /**
  * Whether a tenant serves people and so holds access: every tenant but the platform's own. The platform tenant holds
@@ -282,14 +277,32 @@ export const loadPlatformCredentialBindings = Effect.fn('ModuleCredentials.loadB
 
 /** One registered internal workload of a module in a tenant (O73): the principal the operator bound to it. */
 export interface InternalWorkloadBinding {
+  /** The one company the binding acts for (one active workload binding acts for one company). */
+  readonly legalEntityId: string;
   readonly principalId: string;
   readonly tenantId: string;
   readonly workloadKey: string;
 }
 
 /**
- * Every active binding of the given internal workload keys, in every tenant that serves people: the principals the
- * operator registered for a module's own workloads. Each tenant is read in its own scope (row level security).
+ * The principal the platform registers for a module's own internal workload in one company of one tenant. Its id is
+ * derived from those three and is computable by anyone, so it is not proof on its own: the platform's mark is the
+ * `internal_workload` marker only Core's platform writer sets. No product Action takes a principal id (Core gives every
+ * principal an Action creates its id in its own namespace), so no tenant can place a principal at this id; a principal
+ * created here before that rule holds no marker and is never keyed. Key provisioning keys a binding only when its
+ * principal carries the marker and exactly the id derived from that binding's tenant, workload and company.
+ */
+export const internalWorkloadPrincipalId = (input: {
+  readonly legalEntityId: string;
+  readonly tenantId: string;
+  readonly workloadKey: string;
+}): string =>
+  stableUuid(`ontos.internal-workload/principal:${input.tenantId}:${input.workloadKey}:${input.legalEntityId}`);
+
+/**
+ * Every active platform registration of the given internal workload keys, in every tenant that serves people: one per
+ * company, each with its principal, workload binding and company binding active. Registrations the platform did not
+ * make are left out, so they get no key. Each tenant is read in its own scope (row level security).
  */
 export const loadInternalWorkloadBindings = Effect.fn('ModuleCredentials.loadWorkloadBindings')(
   function* loadWorkloadBindings(
@@ -311,8 +324,9 @@ export const loadInternalWorkloadBindings = Effect.fn('ModuleCredentials.loadWor
           .transaction(
             Effect.fn('ModuleCredentials.loadTenantWorkloadBindings')(function* loadTenant(transaction) {
               yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantId}, true)`);
-              return yield* transaction
+              const rows = yield* transaction
                 .select({
+                  legalEntityId: accessWorkloadCompanyBindings.legalEntityId,
                   principalId: accessWorkloadBindings.principalId,
                   tenantId: accessWorkloadBindings.tenantId,
                   workloadKey: accessWorkloadBindings.workloadKey,
@@ -325,15 +339,27 @@ export const loadInternalWorkloadBindings = Effect.fn('ModuleCredentials.loadWor
                     eq(principals.principalId, accessWorkloadBindings.principalId),
                   ),
                 )
+                .innerJoin(
+                  accessWorkloadCompanyBindings,
+                  and(
+                    eq(accessWorkloadCompanyBindings.tenantId, accessWorkloadBindings.tenantId),
+                    eq(accessWorkloadCompanyBindings.workloadBindingId, accessWorkloadBindings.bindingId),
+                  ),
+                )
                 .where(
                   and(
                     eq(accessWorkloadBindings.tenantId, tenantId),
                     eq(accessWorkloadBindings.status, 'active'),
+                    eq(accessWorkloadCompanyBindings.status, 'active'),
                     inArray(accessWorkloadBindings.workloadKey, [...workloadKeys]),
                     eq(principals.kind, 'service'),
                     eq(principals.status, 'active'),
+                    eq(principals.platformRole, INTERNAL_WORKLOAD_PLATFORM_ROLE),
                   ),
                 );
+              // Only the registrations the platform made: its marker and the id derived from tenant, workload and company.
+              // A hand-made one (no marker, or another id, even one chosen to match) gets no key.
+              return rows.filter((row) => row.principalId === internalWorkloadPrincipalId(row));
             }),
           )
           .pipe(Effect.mapError(unavailable('The internal workload bindings could not be read'))),

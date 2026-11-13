@@ -335,6 +335,16 @@ it('builds every delivery unit of the topology in exactly one build shard of eac
 
 const readArtifactBuildJobs = () => Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(readGateWorkflow()).jobs;
 
+it('writes the app host entry of every served unit it builds, after its build, as the app host build does', () => {
+  const { steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
+  const build = steps.find(({ run }) => run?.includes(`"\${filters[@]}" run build\n`) === true)?.run ?? '';
+  // The native hosted-owner fixtures start an owner only from its dist/zerops-entry.mjs, from these same artifacts.
+  const entry = build.indexOf(`mise exec -- node scripts/zerops/owner-entry.mts "\${entries[@]}"`);
+  expect(entry).toBeGreaterThan(build.indexOf('run build\n'));
+  expect(build).toContain('require("./topology/application-release-intent.json")');
+  expect(build).toContain('console.log("apps/shell-super-app")');
+});
+
 it('proves each target on its own shards only after every other shard of the target uploaded its outputs', () => {
   const jobs = readArtifactBuildJobs();
   for (const [job, proofs, artifacts] of [[NODE_ARTIFACT_BUILD_JOB, ['node'], NODE_BUILD_ARTIFACT_PATTERN]] as const) {
@@ -610,7 +620,7 @@ it('runs the root integration suite once and every package integration suite in 
   const { scripts } = readRootScripts();
   // The shards run exactly what the root script runs, split by package.
   expect(scripts['test:integration']).toBe(
-    'rstest --project integration --pool.maxWorkers 1 && pnpm -r --no-sort --workspace-concurrency 1 --if-present run test:integration --pool.maxWorkers 1',
+    'rstest --project integration --pool.maxWorkers 1 && pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present run test:integration --pool.maxWorkers 1',
   );
   const job = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
     SERVICE_INTEGRATION_JOB
@@ -620,9 +630,12 @@ it('runs the root integration suite once and every package integration suite in 
   expect(run?.env).toMatchObject({ APP_ENV_PATH: '/dev/null', SPICEDB_DATABASE_PASSWORD: 'spicedb' });
   expect(run?.run).toContain('mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1');
   expect(run?.run).toContain(
-    'mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1',
+    'mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1',
   );
   expect(run?.run).toContain('--shard "$RSTEST_SHARD"');
+  // One suite's failure never hides another's: the root suite's status is kept and the step fails only at the end.
+  expect(run?.run).toContain('mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 || status=$?');
+  expect(run?.run).toContain('exit "$status"');
   // Opted-in native proofs supplement (not replace or shard) the ordinary package suites.
   const nativeShards = job.strategy.matrix.include.filter((shard) => shard['native-preproposal'] === true);
   expect(nativeShards).toHaveLength(1);

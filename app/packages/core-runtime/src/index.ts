@@ -1323,6 +1323,7 @@ export type {
 
 export {
   configureAgentAction,
+  ConfigureAgentOperationSchema,
   ConfigureAgentPayloadSchema,
   ConfigureAgentResultSchema,
   ConfigureAgentAuditEvidenceSchema,

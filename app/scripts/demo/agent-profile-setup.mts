@@ -5,12 +5,15 @@ import { Context, Effect, FileSystem, Option, Schema } from 'effect';
 
 import {
   ActionRuntime,
+  AgentProfileSchema,
   configureAgentAction,
   ConfigureAgentAuditEvidenceSchema,
+  ConfigureAgentOperationSchema,
   ConfigureAgentPayloadSchema,
 } from '@app/core-runtime';
 import type { CoreDatabase } from '@app/core-runtime/db/client';
 import { auditEvents, principalCompanyMemberships, principals } from '../../packages/core-runtime/src/db/schema.ts';
+import { AgentSeedIdentityWriter } from './agent-seed-identity.mts';
 import {
   AgentProfileSetupError,
   requireAgentSetupAuthority,
@@ -37,21 +40,23 @@ const IdentifierSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.decodeTo(Schema.String),
 );
 export const AgentProfileSetupInputSchema = Schema.Struct({
-  ...ConfigureAgentPayloadSchema.fields,
+  ...AgentProfileSchema.fields,
   legalEntityId: IdentifierSchema,
+  operation: ConfigureAgentOperationSchema,
+  principalId: IdentifierSchema,
   tenantId: IdentifierSchema,
 });
 export type AgentProfileSetupInput = typeof AgentProfileSetupInputSchema.Type;
 export const ReviewedAgentProfilesSchema = Schema.Struct({
   profiles: Schema.Array(
     Schema.Struct({
-      description: ConfigureAgentPayloadSchema.fields.description,
+      description: AgentProfileSchema.fields.description,
       legalEntityId: IdentifierSchema,
-      modules: ConfigureAgentPayloadSchema.fields.modules,
-      ownerPrincipalId: ConfigureAgentPayloadSchema.fields.ownerPrincipalId,
+      modules: AgentProfileSchema.fields.modules,
+      ownerPrincipalId: AgentProfileSchema.fields.ownerPrincipalId,
       principalId: IdentifierSchema,
       tenantId: IdentifierSchema,
-      writePolicy: ConfigureAgentPayloadSchema.fields.writePolicy,
+      writePolicy: AgentProfileSchema.fields.writePolicy,
     }),
   ).check(Schema.isMinLength(1)),
   schemaVersion: Schema.Literal(2),
@@ -263,11 +268,12 @@ export const runAgentProfileSetup = Effect.fn('AgentProfileSetup.run')(function*
       if (current !== undefined && !profileMatches(current, input)) {
         return yield* fail('The current native profile differs; do not overwrite newer administrator evidence');
       }
+      // A reviewed agent keeps its fixed id: the operator seeds the principal, and the Action writes its profile.
       const payload = {
         description: input.description,
         displayName: input.displayName,
         modules: input.modules,
-        operation: input.operation,
+        operation: configureOperation,
         ownerPrincipalId: input.ownerPrincipalId,
         principalId: input.principalId,
         writePolicy: input.writePolicy,
@@ -299,6 +305,14 @@ export const runAgentProfileSetup = Effect.fn('AgentProfileSetup.run')(function*
         }
         // Another exact invocation may have committed while this batch was being prepared.
         continue;
+      }
+      if (row.input.operation === createOperation) {
+        yield* (yield* AgentSeedIdentityWriter).seed({
+          displayName: row.input.displayName,
+          legalEntityId: row.input.legalEntityId,
+          principalId: row.input.principalId,
+          tenantId: row.input.tenantId,
+        });
       }
       yield* runtime
         .runAction({

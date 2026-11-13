@@ -3,6 +3,7 @@ import { startProcessObservability } from './process-observability.mts';
 import { startProcessDatabasePools } from './process-database-pools.mts';
 import { startProcessCompositionValidation } from './process-composition-validation.mts';
 import { startProcessCompositionSourceReads } from './process-composition-source-reads.mts';
+import { startProcessBootWarmUpImports } from './process-boot-warm-up-imports.mts';
 /**
  * Serves the named units in this one Node process, each unit's own Modern.js production server on its loopback
  * port. Every unit resolves its packages through the installed workspace, so their shared dependencies load once.
@@ -20,6 +21,11 @@ import { pathToFileURL } from 'node:url';
 import { NodeRuntime } from '@effect/platform-node';
 import { Console, Effect, FileSystem, Layer, Predicate, Schema } from 'effect';
 import { Argument, Command } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
+
+import { ActiveApplicationCompositionConfigLive } from '../../packages/core-runtime/src/modules/active-application-composition.ts';
+import { ActiveApplicationCompositionSourceLive } from '../../packages/core-runtime/src/modules/active-application-composition-source.node.ts';
+import { nodeHostBootWarmUp } from '../../packages/core-runtime/src/runtime/node-host-boot-warm-up.ts';
 
 import { UNIT_ENTRY, readHostedUnits, workspaceRoot } from './hosted-units.mts';
 import type { HostedUnit } from './hosted-units.mts';
@@ -113,9 +119,35 @@ const serveUnit = (holders: HostedCredentialHolders) => (unit: HostedUnit) =>
     return yield* Console.log(`[serve-units] ${unit.id} on 127.0.0.1:${String(unit.port)}`);
   });
 
+export const ServedProcessSchema = Schema.Literals(['owners', 'shell']);
+export type ServedProcess = typeof ServedProcessSchema.Type;
+
+export const servedProcessOf = (ids: readonly string[]): ServedProcess =>
+  ids.length === 1 && ids[0] === 'shell-super-app' ? 'shell' : 'owners';
+
+/** The warm-up reads the composition as the units do: the loopback source, through the process-shared reads. */
+const HostBootWarmUpLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(ActiveApplicationCompositionSourceLive),
+  Layer.provide(FetchHttpClient.layer),
+);
+
+/**
+ * Forks the process's boot warm-up into the host scope and returns at once: the units load and serve without waiting
+ * for it, and a failed warm-up only logs (`packages/core-runtime/src/runtime/boot-warm-up.ts`).
+ */
+export const startBootWarmUp = Effect.fn('ServeUnits.startBootWarmUp')(function* forkBootWarmUp<Requirements>(
+  served: ServedProcess,
+  warmUp: Effect.Effect<void, never, Requirements>,
+) {
+  yield* Effect.forkScoped(warmUp.pipe(Effect.annotateLogs({ process: served })));
+});
+
 const command = Command.make('serve-units', { ids: Argument.String('app-id').pipe(Argument.atLeast(1)) }, ({ ids }) =>
   Effect.gen(function* serveUnits() {
-    yield* startProcessObservability(ids.length === 1 && ids[0] === 'shell-super-app' ? 'shell' : 'owners');
+    const served = servedProcessOf(ids);
+    yield* startProcessObservability(served);
+    // Background only: it waits for the published composition, then opens what the first requests would.
+    yield* startBootWarmUp(served, nodeHostBootWarmUp());
     // Before any owner loads: the host hands keys over on the private channel now and replaces them later (late,
     // renewed, rotated); each unit's own store copy is claimed as it loads and gets them from then on.
     const holders = yield* receiveModuleCredentialHandover(ids);
@@ -136,12 +168,18 @@ if (import.meta.main) {
   NodeRuntime.runMain(
     Effect.andThen(
       Effect.andThen(
-        Effect.andThen(startProcessDatabasePools, startProcessCompositionValidation),
-        startProcessCompositionSourceReads,
+        Effect.andThen(
+          Effect.andThen(startProcessDatabasePools, startProcessCompositionValidation),
+          startProcessCompositionSourceReads,
+        ),
+        startProcessBootWarmUpImports,
       ),
       Layer.build(
         // This process keeps its credential channel open on file descriptor 3, which a subprocess would inherit.
-        Layer.effectDiscard(Command.run({ version: '1.0.0' })(command)).pipe(Layer.provide(NoSubprocessServicesLive)),
+        Layer.effectDiscard(Command.run({ version: '1.0.0' })(command)).pipe(
+          Layer.provide(NoSubprocessServicesLive),
+          Layer.provide(HostBootWarmUpLive),
+        ),
       ),
     ).pipe(Effect.scoped),
   );

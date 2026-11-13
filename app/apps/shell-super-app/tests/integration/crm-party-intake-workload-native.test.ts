@@ -44,7 +44,7 @@ import {
 import { v1 } from '@authzed/authzed-node';
 import { NodeHttpClient, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import {
   Brand,
   Config,
@@ -66,11 +66,16 @@ import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 
+import { legalEntities, tenantModuleStates } from '../../../../packages/core-runtime/src/db/schema.ts';
+import { AccessReleaseStoreLive } from '../../../../packages/core-runtime/src/access/changes/persistence/drizzle-store.ts';
 import {
-  accessWorkloadBindings,
-  accessWorkloadCompanyBindings,
-  principals,
-} from '../../../../packages/core-runtime/src/db/schema.ts';
+  bindPlatformCredential,
+  internalWorkloadPrincipalId,
+} from '../../../../packages/core-runtime/src/auth/module-credentials.ts';
+import { PLATFORM_KEY_OWNER } from '../../api/auth/platform-key-owner.ts';
+import { registerReleaseInternalWorkloads } from '../../../../packages/core-runtime/src/install/release-internal-workloads.ts';
+import { writeTestTenantScopes } from '../../../../packages/core-runtime/src/testing/tenant-access.ts';
+import { internalWorkloadDeclarations } from '../../../../scripts/demo/release-internal-workloads.mts';
 import { makeTestTenantRoleAccess } from '../../../../packages/core-runtime/src/testing/tenant-access-roles.ts';
 import {
   deriveActiveApplicationCompositionSnapshot,
@@ -78,6 +83,7 @@ import {
 } from '../../../../scripts/active-application-composition.mts';
 import {
   encodeModuleCredentialHandover,
+  INTERNAL_WORKLOAD_LABELS,
   MODULE_INTERNAL_WORKLOADS,
 } from '../../../../scripts/zerops/module-credentials.mts';
 import { ApiKeyService, makeApiKeyService } from '../../api/auth/api-key-service.ts';
@@ -86,6 +92,7 @@ import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { account, user } from '../../api/auth/db/schema.ts';
 import { moduleCredentialReleaseOf } from '../../api/auth/module-credential-attestation.ts';
 import {
+  MODULE_CREDENTIAL_LIFETIME,
   provisionModuleCredentials,
   retireOwnModuleCredentials,
 } from '../../api/auth/module-credential-provisioning.service.ts';
@@ -238,8 +245,28 @@ const makeCrmShellFixture = Effect.fn('CrmIntakeWorkloadNative.makeShellFixture'
     }),
     (fixture) => fixture.close().pipe(Effect.orDie),
   );
+  // A second company of the same Tenant: the intake workload is registered, and keyed, once per company.
+  const secondLegalEntityId = yield* Crypto.Crypto.pipe(Effect.flatMap((random) => random.randomUUIDv4()));
+  yield* database.insert(legalEntities).values({
+    legalEntityId: secondLegalEntityId,
+    legalName: 'CRM intake second company',
+    registrationCountry: 'CZ',
+    registrationNumber: '27082440',
+    status: 'active',
+    tenantId: core.tenantId,
+  });
+  // Scopes are written as the runtime role, the only role a tenant scope is installed for.
+  const scopeWriter = yield* PgClient.make({ url: Redacted.make(connections.runtime.connectionString) }).pipe(
+    Effect.flatMap((runtime) => testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, runtime))),
+  );
+  yield* writeTestTenantScopes(scopeWriter, {
+    databaseIdentities: SHELL_DATABASE_IDENTITY_ENROLLMENT,
+    legalEntityIds: [core.legalEntityId, secondLegalEntityId],
+    principalId: core.manager.principalId,
+    tenantId: core.tenantId,
+  });
   const accessTarget = {
-    legalEntityIds: [core.legalEntityId] as const,
+    legalEntityIds: [core.legalEntityId, secondLegalEntityId] as const,
     spiceDb: yield* liveFixtureSpiceDb(core.permissionEnvironment),
     writerConnectionString: Redacted.make(connections.runtime.connectionString),
   };
@@ -326,6 +353,7 @@ const makeCrmShellFixture = Effect.fn('CrmIntakeWorkloadNative.makeShellFixture'
     origin,
     password,
     persistence,
+    secondLegalEntityId,
   };
 });
 
@@ -383,7 +411,16 @@ const issuePersonalKey = Effect.fn('CrmIntakeWorkloadNative.issuePersonalKey')(f
     headers: { cookie: Redacted.value(cookie), origin: fixture.origin },
   });
   expect(session.status).toBe(200);
-  const view = yield* session.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(AuthenticatedSessionSchema)));
+  // The person works in two companies, so its session has selected none yet; only its principal matters here.
+  const view = yield* session.json.pipe(
+    Effect.flatMap(
+      Schema.decodeUnknownEffect(
+        Schema.Struct({
+          identity: Schema.Struct({ principalId: AuthenticatedSessionSchema.fields.identity.fields.principalId }),
+        }),
+      ),
+    ),
+  );
   expect(view.identity.principalId).toBe(fixture.core.manager.principalId);
   const issued = yield* client.post(`${fixture.origin}${prefix}/auth/identity/api-keys/self`, {
     body: yield* HttpBody.json({ name: 'CRM client writer' }),
@@ -411,6 +448,8 @@ const issueKeyContext = Effect.fn('CrmIntakeWorkloadNative.issueKeyContext')(fun
     readonly apiKey: Redacted.Redacted;
     readonly audience: 'crm' | 'party-registry';
     readonly compositionRevision: string;
+    /** The company the context is asked for; the fixture's first company when not named. */
+    readonly legalEntityId?: string;
   },
 ) {
   const crypto = yield* Crypto.Crypto;
@@ -418,7 +457,7 @@ const issueKeyContext = Effect.fn('CrmIntakeWorkloadNative.issueKeyContext')(fun
     {
       audience: input.audience,
       compositionRevision: input.compositionRevision,
-      legalEntityId: fixture.core.legalEntityId,
+      legalEntityId: input.legalEntityId ?? fixture.core.legalEntityId,
     },
     {
       apiKey: input.apiKey,
@@ -594,52 +633,58 @@ it.live(
               ]),
             );
 
-            // The operator's data (ADR-0028): the principal registered for CRM's intake workload in this Tenant, its
-            // binding and the one company it acts for. The platform never writes these; nobody issues it a key.
-            const intakePrincipal = yield* crypto.randomUUIDv4();
-            const intakeBinding = yield* crypto.randomUUIDv4();
-            yield* database.insert(principals).values({
-              displayName: 'CRM Party intake',
-              kind: 'service',
-              principalId: intakePrincipal,
-              status: 'active',
-              tenantId: core.tenantId,
-            });
-            yield* database.insert(accessWorkloadBindings).values({
-              bindingId: intakeBinding,
-              incarnation: yield* crypto.randomUUIDv4(),
-              principalId: intakePrincipal,
-              status: 'active',
-              tenantId: core.tenantId,
-              workloadKey: INTAKE_WORKLOAD,
-            });
-            yield* database.insert(accessWorkloadCompanyBindings).values({
-              companyBindingId: yield* crypto.randomUUIDv4(),
-              incarnation: yield* crypto.randomUUIDv4(),
-              legalEntityId: core.legalEntityId,
-              status: 'active',
-              tenantId: core.tenantId,
-              workloadBindingId: intakeBinding,
-            });
-            // The operator ends the registration when the suite ends, so later provisioning passes on this database
-            // issue no key for this Tenant; the rows themselves stay, as Core retains access intent (D27).
-            yield* Effect.addFinalizer(() =>
-              DateTime.nowAsDate.pipe(
-                Effect.flatMap((revokedAt) =>
-                  database
-                    .update(accessWorkloadBindings)
-                    .set({ revokedAt, status: 'revoked' })
-                    .where(eq(accessWorkloadBindings.bindingId, intakeBinding)),
-                ),
-                Effect.orDie,
-              ),
-            );
-
-            // The platform's provisioning pass, exactly as a host boot runs it: CRM's and Party Registry's module
-            // keys and the intake workload's key, for this Tenant only, attested for this release.
+            // No manual registration: the platform's release step registers CRM's intake workload in this Tenant,
+            // where CRM is installed, once per company, as the app host runs it before its boot's key provisioning.
+            // The release step and the provisioning pass run as the shared runtime role, as on the app host.
             const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
             const runtime = yield* PgClient.make({ url: Redacted.make(connections.runtime.connectionString) });
             const runtimeDatabase = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, runtime));
+            const companyA = core.legalEntityId;
+            const companyB = fixture.secondLegalEntityId;
+            const registrationRuntime = Layer.mergeAll(
+              Layer.succeed(CoreDatabase, { executor: runtimeDatabase }),
+              AccessReleaseStoreLive.pipe(
+                Layer.provide(
+                  Layer.mergeAll(
+                    Layer.succeed(CoreDatabase, { executor: runtimeDatabase }),
+                    makeDatabaseIdentityEnrollmentLive(SHELL_DATABASE_IDENTITY_ENROLLMENT),
+                  ),
+                ),
+              ),
+            );
+            const registerRelease = (runReference: string) =>
+              registerReleaseInternalWorkloads(
+                { enrollment: SHELL_DATABASE_IDENTITY_ENROLLMENT, executor: runtimeDatabase },
+                {
+                  declarations: internalWorkloadDeclarations(
+                    MODULE_INTERNAL_WORKLOADS,
+                    new Set([INTAKE_WORKLOAD]),
+                    INTERNAL_WORKLOAD_LABELS,
+                  ),
+                  runReference,
+                },
+              ).pipe(Effect.provide(registrationRuntime));
+            const registered = yield* registerRelease(revision);
+            expect(registered.find(({ tenantId }) => tenantId === core.tenantId)).toMatchObject({
+              failed: null,
+              registered: 2,
+            });
+            // When the suite ends CRM is uninstalled here and the release step runs again: it retires both
+            // registrations (nothing is deleted), so later provisioning passes on this database key nothing here.
+            yield* Effect.addFinalizer(() =>
+              database
+                .update(tenantModuleStates)
+                .set({ state: 'inactive' })
+                .where(
+                  and(eq(tenantModuleStates.tenantId, core.tenantId), eq(tenantModuleStates.moduleKey, 'demo.crm')),
+                )
+                .pipe(Effect.andThen(registerRelease(`${revision}:end`)), Effect.orDie, Effect.asVoid),
+            );
+            const principalOf = (legalEntityId: string) =>
+              internalWorkloadPrincipalId({ legalEntityId, tenantId: core.tenantId, workloadKey: INTAKE_WORKLOAD });
+
+            // The platform's provisioning pass, exactly as a host boot runs it: CRM's and Party Registry's module
+            // keys and the intake workload's key, for this Tenant only, attested for this release.
             const keys = yield* makeApiKeyService().pipe(
               Effect.provideService(AuthConfig, fixture.configuration),
               Effect.provideService(AuthDatabase, fixture.persistence),
@@ -668,7 +713,7 @@ it.live(
                 ),
                 Effect.provide(platform),
               );
-            const entry = `crm/${INTAKE_WORKLOAD}/${core.tenantId}`;
+            const entryOf = (legalEntityId: string) => `crm/${INTAKE_WORKLOAD}/${core.tenantId}/${legalEntityId}`;
             const handOver = Effect.fn('CrmIntakeWorkloadNative.handOver')(function* handOver(
               pass: Effect.Success<ReturnType<typeof provision>>,
             ) {
@@ -683,14 +728,16 @@ it.live(
               // (one per Tenant that registered the workload; this database may hold other suites' Tenants).
               const taken = (yield* crm.received).split(', ');
               expect(taken[0]).toBe('crm');
-              expect(taken).toContain(entry);
+              expect(taken).toContain(entryOf(companyA));
+              expect(taken).toContain(entryOf(companyB));
               expect(taken.every((name) => name === 'crm' || name.startsWith(`crm/${INTAKE_WORKLOAD}/`))).toBe(true);
             });
             const bootOne = yield* crypto.randomUUIDv4();
             const first = yield* provision(bootOne);
             expect(first.failedAppIds).toEqual([]);
-            expect([...first.workloadCredentials.keys()]).toContain(entry);
-            const workloadKey = yield* present(first.workloadCredentials.get(entry), 'intake workload key');
+            // First deploy ordering: registered before this pass, so both companies are keyed in it.
+            const workloadKey = yield* present(first.workloadCredentials.get(entryOf(companyA)), 'company A key');
+            const workloadKeyB = yield* present(first.workloadCredentials.get(entryOf(companyB)), 'company B key');
             const crmModuleKey = yield* present(first.credentials.get('crm'), 'CRM module key');
             const partyModuleKey = yield* present(first.credentials.get('party-registry'), 'Party module key');
             const resolver = makePrincipalResolver(
@@ -700,8 +747,12 @@ it.live(
             const resolved = yield* resolver.resolveBetterAuthApiKey(
               (yield* keys.verify(Redacted.value(workloadKey))).providerKeyId,
             );
-            expect(resolved.principalId).toBe(intakePrincipal);
+            expect(resolved.principalId).toBe(principalOf(companyA));
             expect(resolved.tenantId).toBe(core.tenantId);
+            const resolvedB = yield* resolver.resolveBetterAuthApiKey(
+              (yield* keys.verify(Redacted.value(workloadKeyB))).providerKeyId,
+            );
+            expect(resolvedB.principalId).toBe(principalOf(companyB));
             yield* handOver(first);
 
             // The person: signed in, holding its own personal key, then left with CRM client writes only.
@@ -733,14 +784,19 @@ it.live(
                   : headers,
               });
             });
-            const personContext = (audience: 'crm' | 'party-registry') =>
-              issueKeyContext(fixture, { apiKey: personalKey, audience, compositionRevision: revision });
-            const workloadContext = (audience: 'crm' | 'party-registry', apiKey = workloadKey) =>
-              issueKeyContext(fixture, { apiKey, audience, compositionRevision: revision });
-            const readRecords = Effect.fn('CrmIntakeWorkloadNative.readRecords')(function* readRecords() {
+            const personContext = (audience: 'crm' | 'party-registry', legalEntityId = companyA) =>
+              issueKeyContext(fixture, { apiKey: personalKey, audience, compositionRevision: revision, legalEntityId });
+            const workloadContext = (
+              audience: 'crm' | 'party-registry',
+              apiKey = workloadKey,
+              legalEntityId = companyA,
+            ) => issueKeyContext(fixture, { apiKey, audience, compositionRevision: revision, legalEntityId });
+            const readRecords = Effect.fn('CrmIntakeWorkloadNative.readRecords')(function* readRecords(
+              legalEntityId: string = companyA,
+            ) {
               const response = yield* crmRequest(
                 '/reads/records',
-                yield* requireIssued(yield* personContext('crm')),
+                yield* requireIssued(yield* personContext('crm', legalEntityId)),
                 yield* HttpBody.json({}),
               );
               expect(response.status).toBe(200);
@@ -784,12 +840,12 @@ it.live(
 
             /** One CRM client created by the person, linked by CRM's intake to the Party it created as the workload. */
             const createLinkedClient = Effect.fn('CrmIntakeWorkloadNative.createLinkedClient')(
-              function* createLinkedClient(name: string) {
-                const before = yield* readRecords();
+              function* createLinkedClient(name: string, legalEntityId: string = companyA) {
+                const before = yield* readRecords(legalEntityId);
                 expect(before.viewer.writeAll).toBe(true);
                 const response = yield* crmRequest(
                   '/crm/actions/apply-command',
-                  yield* requireIssued(yield* personContext('crm')),
+                  yield* requireIssued(yield* personContext('crm', legalEntityId)),
                   yield* HttpBody.json({
                     command: { _tag: 'CreateClient', kind: 'organization', name },
                     expectedRevision: before.revision,
@@ -816,7 +872,7 @@ it.live(
                   status: 'complete',
                 });
                 const clientId = yield* present(created.entityIds[0], 'created CRM client');
-                const after = yield* readRecords();
+                const after = yield* readRecords(legalEntityId);
                 const linked = after.state.clients.items.find(({ id }) => id === clientId);
                 expect(linked?.name).toBe(name);
                 const partyId = yield* present(linked?.partyRef?.partyId, 'Party link on the CRM client');
@@ -828,9 +884,10 @@ it.live(
                 );
                 expect(parties).toEqual([{ displayName: name }]);
                 const counterparties = yield* Schema.decodeUnknownEffect(CounterpartyRowSchema)(
-                  yield* fixture.admin`select party_id::text as "partyId", accepted_by_principal_id::text as "acceptedBy" from party.counterparties where tenant_id = ${core.tenantId}::uuid and counterparty_id = ${counterpartyId}::uuid and legal_entity_id = ${core.legalEntityId}::uuid`,
+                  yield* fixture.admin`select party_id::text as "partyId", accepted_by_principal_id::text as "acceptedBy" from party.counterparties where tenant_id = ${core.tenantId}::uuid and counterparty_id = ${counterpartyId}::uuid and legal_entity_id = ${legalEntityId}::uuid`,
                 );
-                expect(counterparties).toEqual([{ acceptedBy: intakePrincipal, partyId }]);
+                // Accepted from that company's own workload principal: its key, never another company's.
+                expect(counterparties).toEqual([{ acceptedBy: principalOf(legalEntityId), partyId }]);
                 return { clientId, counterpartyId, partyId };
               },
             );
@@ -843,8 +900,9 @@ it.live(
               expect(personParty.refused).toBe(403);
             }
 
-            // 2. Where the workload key is accepted, another module's key is refused: the Shell admits it at the API-key
-            // gateway context as an ordinary key of the registered principal, never a module credential.
+            // 2. Where the workload key is accepted, another module's key is refused. The Shell admits it at the API-key
+            // gateway context only as the key the platform issued that principal: its metadata attests exactly this
+            // principal, tenant and company at the release the Shell serves. Any other key of the principal is refused.
             const accepted = yield* requireIssued(yield* workloadContext('crm'));
             const verified = yield* Effect.tryPromise(() =>
               jwtVerify(Redacted.value(accepted), signingKeyPair.publicKey, {
@@ -853,12 +911,35 @@ it.live(
               }),
             );
             const claims = yield* Schema.decodeUnknownEffect(GatewayContextV2ClaimsSchema)(verified.payload);
-            expect(claims.sub).toBe(intakePrincipal);
+            expect(claims.sub).toBe(principalOf(companyA));
             expect(claims.principal.tenantId).toBe(core.tenantId);
             expect(claims.principal.legalEntityId).toBe(core.legalEntityId);
             expect(claims.principal.authMethod).toBe('api_key');
+            // Company A's key is refused for company B, at the Shell: each registration acts for its one company.
+            expect(yield* workloadContext('crm', workloadKey, companyB)).toEqual({ refused: 403 });
+            expect(yield* workloadContext('party-registry', workloadKey, companyB)).toEqual({ refused: 403 });
+            expect('token' in (yield* workloadContext('crm', workloadKeyB, companyB))).toBe(true);
+            expect(yield* workloadContext('crm', workloadKeyB, companyA)).toEqual({ refused: 403 });
             expect(yield* workloadContext('crm', partyModuleKey)).toEqual({ refused: 403 });
             expect(yield* workloadContext('crm', crmModuleKey)).toEqual({ refused: 403 });
+            // A key of the workload principal the platform did not attest (a tenant-managed one, or one left from
+            // before): bound to the very principal, yet refused at the Shell.
+            const unattested = yield* keys.issueServerOwned({
+              expiresInSeconds: Duration.toSeconds(MODULE_CREDENTIAL_LIFETIME),
+              issuerPrincipalId: principalOf(companyA),
+              lifecycleOperationId: yield* crypto.randomUUIDv4(),
+              name: 'tenant-managed workload key',
+              ownerUserId: PLATFORM_KEY_OWNER.id,
+              tenantId: core.tenantId,
+            });
+            yield* runtimeDatabase.transaction((transaction) =>
+              bindPlatformCredential(transaction, {
+                principalId: principalOf(companyA),
+                providerKeyId: unattested.providerKeyId,
+                tenantId: core.tenantId,
+              }),
+            );
+            expect(yield* workloadContext('crm', unattested.secret)).toEqual({ refused: 403 });
 
             // 3. The workload key is refused on every endpoint other than the one it is for.
             // The delegated endpoint takes module credentials only: the workload key binds nothing there, while CRM's
@@ -919,6 +1000,12 @@ it.live(
             // 1 (continued). The person creates a CRM client; CRM's intake, acting as the workload with the key the
             // platform handed it, creates the client's Party and Counterparty and links them.
             const firstClient = yield* createLinkedClient(`Workload intake client ${yield* crypto.randomUUIDv4()}`);
+            // And in company B, with company B's key: its own Party record and Counterparty, accepted by B's principal.
+            const companyBClient = yield* createLinkedClient(
+              `Company B intake client ${yield* crypto.randomUUIDv4()}`,
+              companyB,
+            );
+            expect(companyBClient.partyId).not.toBe(firstClient.partyId);
             yield* Effect.logInfo('CRM client created by the person and linked by the intake workload', {
               linked: true,
             });
@@ -936,7 +1023,10 @@ it.live(
             const bootTwo = yield* crypto.randomUUIDv4();
             const second = yield* provision(bootTwo);
             expect(second.failedAppIds).toEqual([]);
-            const rotatedWorkloadKey = yield* present(second.workloadCredentials.get(entry), 'rotated workload key');
+            const rotatedWorkloadKey = yield* present(
+              second.workloadCredentials.get(entryOf(companyA)),
+              'rotated workload key',
+            );
             expect(Redacted.value(rotatedWorkloadKey) === Redacted.value(workloadKey)).toBe(false);
             yield* handOver(second);
             const retired = yield* retireOwnModuleCredentials({
