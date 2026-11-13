@@ -159,8 +159,8 @@ const mapFailure =
           )
         : rejected('VAT_NOT_READY', failure.reason, true);
     }
-    // Anything else that kept a reference from answering (Tax unreachable, a missing gateway credential, Tax installed
-    // but not readable now, another reference read's outage) is a system failure: the retry policy.
+    // Anything else that kept a reference from answering (Tax unreachable, a missing gateway credential, Tax suspended
+    // or quarantined for now, another reference read's outage) is a system failure: the retry policy.
     if (Predicate.isTagged(failure, 'FinanceReferenceUnavailable')) {
       return rejected('TAX_UNAVAILABLE', failure.reason, true);
     }

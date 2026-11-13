@@ -583,7 +583,7 @@ it.layer(NodeCrypto.layer)(
       }),
     );
 
-    suite.effect('Tax unreachable, or installed but not readable, is never ended by the wait: it keeps retrying', () =>
+    suite.effect('Tax unreachable, suspended or quarantined is never ended by the wait: it keeps retrying', () =>
       Effect.gen(function* taxDown() {
         const { awaiting, scope } = makeLedger();
         const tax = FinanceTaxRates.of({ choices: down, choicesFor: down });
@@ -909,7 +909,7 @@ const forbiddenProblem = (type: string, reason: string) => ({
   type,
 });
 
-it('only Tax absent for the tenant reads as not installed; Tax installed but not readable now is an outage', () => {
+it("only the Shell's not-installed answer reads as not installed; Tax suspended or quarantined is an outage", () => {
   expect(
     taxUnavailableReasonOf(forbiddenProblem(GATEWAY_MODULE_NOT_INSTALLED_TYPE, 'audience_module_not_installed')),
   ).toBe(TAX_NOT_INSTALLED_REASON);
@@ -918,4 +918,55 @@ it('only Tax absent for the tenant reads as not installed; Tax installed but not
       forbiddenProblem('https://ontos.dev/problems/gateway-forbidden', 'audience_module_not_active'),
     ),
   ).not.toBe(TAX_NOT_INSTALLED_REASON);
+});
+
+/** The Shell's refusal for each state Tax can be in for the tenant, as the issuer answers it. */
+const shellRefusalFor = (state: 'absent' | 'archived' | 'inactive' | 'quarantined' | 'suspended') =>
+  state === 'suspended' || state === 'quarantined'
+    ? forbiddenProblem('https://ontos.dev/problems/gateway-forbidden', 'audience_module_not_active')
+    : forbiddenProblem(GATEWAY_MODULE_NOT_INSTALLED_TYPE, 'audience_module_not_installed');
+/** Tax refused by the Shell in that state, as Finance's Tax client reports it. */
+const taxIn = (state: Parameters<typeof shellRefusalFor>[0]) => {
+  const refused = () =>
+    Effect.fail(
+      new FinanceReferenceUnavailable({
+        code: 'finance_reference_unavailable',
+        reason: taxUnavailableReasonOf(shellRefusalFor(state)),
+      }),
+    );
+  return FinanceTaxRates.of({ choices: refused, choicesFor: refused });
+};
+
+it.layer(NodeCrypto.layer)('Tax in each state the tenant can hold it in', (suite) => {
+  for (const state of ['absent', 'inactive', 'archived'] as const) {
+    suite.effect(`${state}: lasting, so not ready; the delivery completes 72 hours after the first answer`, () =>
+      Effect.gen(function* lastingState() {
+        const { awaiting, scope } = makeLedger();
+        yield* TestClock.setTime(firstNotReadyMs);
+        expect((yield* failureOf(deliver(scope, taxIn(state), yield* wonPayload(21)))).code).toBe('VAT_NOT_READY');
+        yield* TestClock.setTime(firstNotReadyMs + 72 * HOUR_MS);
+        expect(yield* settleFirstAttempt(scope, taxIn(state), wonMessage(21), 2)).toEqual({
+          dead: 0,
+          retried: 0,
+          succeeded: 1,
+        });
+        expect(awaiting()).toEqual([]);
+      }),
+    );
+  }
+  for (const state of ['suspended', 'quarantined'] as const) {
+    suite.effect(`${state}: temporary, so an outage; retried however long it lasts, never completed`, () =>
+      Effect.gen(function* temporaryState() {
+        const { awaiting, scope } = makeLedger();
+        yield* TestClock.setTime(firstNotReadyMs + 100 * HOUR_MS);
+        expect((yield* failureOf(deliver(scope, taxIn(state), yield* wonPayload(21)))).code).toBe('TAX_UNAVAILABLE');
+        expect(yield* settleFirstAttempt(scope, taxIn(state), wonMessage(21), 60)).toEqual({
+          dead: 0,
+          retried: 1,
+          succeeded: 0,
+        });
+        expect(awaiting()).toEqual([]);
+      }),
+    );
+  }
 });

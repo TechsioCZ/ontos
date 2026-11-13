@@ -22,9 +22,9 @@ const NotInstalledSchema = Schema.TaggedStruct('GatewayForbiddenProblem', {
 export const TAX_NOT_INSTALLED_REASON = 'Tax is not installed for the Tenant, so the company has no VAT rates yet';
 
 /**
- * Why Tax gave no answer, from the call's own failure: "not installed" only for the Shell's 403 that says so (Tax has
- * no state for the tenant); a Tax installed but not readable now (suspended, quarantined, inactive, archived) is a plain
- * refusal, an outage like any other.
+ * Why Tax gave no answer, from the call's own failure: "not installed" only for the Shell's 403 that says so (Tax is
+ * absent for the tenant, switched off or retired with it); a Tax suspended or quarantined for now is a plain refusal,
+ * an outage like any other.
  */
 export const taxUnavailableReasonOf = (cause: unknown): string =>
   Schema.is(NotInstalledSchema)(cause) ? TAX_NOT_INSTALLED_REASON : 'The VAT rates of the company are unavailable';

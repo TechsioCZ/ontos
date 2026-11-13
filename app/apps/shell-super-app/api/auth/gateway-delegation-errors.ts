@@ -7,7 +7,8 @@ import { Effect, Option, Predicate, Schema } from 'effect';
 export class GatewayDelegationError extends Schema.TaggedError<GatewayDelegationError>()('GatewayDelegationError', {
   cause: Schema.optionalKey(Schema.Defect()),
   /**
-   * `module_not_installed`: the module the call is for is not installed for the subject's tenant (no state there).
+   * `module_not_installed`: the module the call is for is not installed for the subject's tenant (absent there,
+   * switched off or retired with the tenant).
    * Every other refusal (an unknown or retired module credential, another release, a subject not admitted) is
    * `forbidden`.
    */

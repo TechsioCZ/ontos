@@ -359,10 +359,11 @@ export const taxRateViews = (book: TaxRateBook, at: DateTime.Utc): TaxRateView[]
     : [];
 
 /**
- * Tax could not answer the company's rates. `REFUSED`: Tax is not installed (or not active) for the tenant, exactly as
- * the Shell says when it refuses the module call for that reason. `UNAVAILABLE`: everything else, an outage: Tax or the
- * Shell did not answer, or refused the call for another reason (a missing or retired module credential, another
- * release, a requester not admitted), named in `refusal`; the stored rates keep serving under the outage rule.
+ * Tax could not answer the company's rates. `REFUSED`: Tax is not installed for the tenant (absent, switched off or
+ * retired with the tenant), exactly as the Shell says when it refuses the module call for that reason. `UNAVAILABLE`:
+ * everything else, an outage: Tax or the Shell did not answer, or refused the call for another reason (Tax suspended
+ * or quarantined for now, a missing or retired module credential, another release, a requester not admitted), named
+ * in `refusal`; the stored rates keep serving under the outage rule.
  */
 export class TaxRatesFailure extends Schema.TaggedError<TaxRatesFailure>()('TaxRatesFailure', {
   cause: Schema.optionalKey(Schema.Defect()),
