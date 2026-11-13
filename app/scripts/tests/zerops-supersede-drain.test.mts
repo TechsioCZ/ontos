@@ -9,6 +9,7 @@ import {
   Clock,
   Console,
   Context,
+  Deferred,
   Duration,
   Effect,
   Exit,
@@ -198,7 +199,9 @@ const twoHosts = (console?: TestConsole.TestConsole) =>
         revision: 'new-revision',
         stopAccepting: Scope.close(oldPublic, Exit.void),
       });
-    return { drain, newPort, newUnitSeen, oldPort, oldUnitSeen, supersede };
+    /** What the host's stop does after a stop signal ended the drain: it closes the public port. */
+    const stopOld = Scope.close(oldPublic, Exit.void);
+    return { drain, newPort, newUnitSeen, oldPort, oldUnitSeen, stopOld, supersede };
   });
 
 /** One host with its own `crm` unit (answering `release`), serving until it is superseded. */
@@ -240,38 +243,55 @@ const startDrain = <A, E, R>(drain: Effect.Effect<A, E, R>, until: SupersedeDrai
   });
 
 it.live(
-  'across a hand-over the old port answers every 100 ms sample, first itself, then by the new host; it closes after the drain',
+  'across a hand-over the old port answers every 100 ms sample, first itself, then by the new host; it closes at the stop',
   () =>
     Effect.gen(function* handOver() {
       const console = yield* TestConsole.make;
       const hosts = yield* twoHosts();
       const samples = yield* Ref.make<readonly Answer[]>([]);
+      const sampledFrom = yield* Clock.currentTimeMillis;
+      // Each sample notes when it started and whether the drain had ended by then, for the failure message.
+      const sampled = yield* Ref.make<readonly string[]>([]);
       const sampler = yield* Effect.forkChild(
-        send(hosts.oldPort, ECHO).pipe(
-          Effect.tap((answer) => Ref.update(samples, (all) => [...all, answer])),
-          Effect.repeat({ schedule: Schedule.spaced('100 millis'), times: 11 }),
-        ),
+        Effect.gen(function* sample() {
+          const startedAt = (yield* Clock.currentTimeMillis) - sampledFrom;
+          const ended = yield* Deferred.isDone(hosts.drain.ended);
+          const answer = yield* send(hosts.oldPort, ECHO);
+          const tookMillis = (yield* Clock.currentTimeMillis) - sampledFrom - startedAt;
+          yield* Ref.update(samples, (all) => [...all, answer]);
+          yield* Ref.update(sampled, (all) => [
+            ...all,
+            `#${String(all.length)} at=${String(startedAt)}ms took=${String(tookMillis)}ms drainEnded=${String(ended)} status=${String(answer.status)} error=${answer.error ?? '-'} release=${releaseOf(answer)}`,
+          ]);
+        }).pipe(Effect.repeat({ schedule: Schedule.spaced('100 millis'), times: 11 })),
       );
       yield* Effect.sleep('400 millis');
-      // The drain outlasts the sampler by about a second: no sample starts after the listener closed, whatever the load.
+      // The drain's deadline is out of reach, and only the stop signal after the last sample ends it: no sample can meet
+      // a closed listener, however long the machine stalls (a 2 s deadline was met by a sampler stalled for a second).
+      // The deadline's own close is the slow-POST test's subject.
       const drain = yield* Effect.forkChild(
-        hosts.supersede(undefined, Duration.seconds(2)).pipe(Effect.provideService(Console.Console, console)),
+        hosts.supersede(undefined, Duration.minutes(10)).pipe(Effect.provideService(Console.Console, console)),
       );
       yield* Fiber.join(sampler);
       const answers = yield* Ref.get(samples);
-      expect(answers.length).toBe(12);
-      expect(answers.every((answer) => answer.status === 200 && answer.error === undefined)).toBe(true);
+      const report = (yield* Ref.get(sampled)).join('\n');
+      expect(answers.length, report).toBe(12);
+      expect(
+        answers.every((answer) => answer.status === 200 && answer.error === undefined),
+        report,
+      ).toBe(true);
       const releases = answers.map(releaseOf);
       expect(releases[0]).toBe('old');
       expect(releases.at(-1)).toBe('new');
       // Once relayed, always relayed: no answer of the old release after the first of the new one.
       expect(releases.slice(releases.indexOf('new')).every((release) => release === 'new')).toBe(true);
-      yield* Fiber.join(drain);
+      yield* Fiber.interrupt(drain);
+      yield* hosts.stopOld;
       expect((yield* send(hosts.oldPort, ECHO)).error).toBe('ECONNREFUSED');
       const lines = (yield* console.logLines).map(String);
-      expect(lines[0]).toMatch(/drain started: public port \d+ relays to 1 peer\(s\) 127\.0\.0\.1:\d+ for up to 2s/u);
+      expect(lines[0]).toMatch(/drain started: public port \d+ relays to 1 peer\(s\) 127\.0\.0\.1:\d+ for up to 600s/u);
       expect(lines[1]).toMatch(
-        /^\[app-host\] drain ended \(deadline\): forwarded=\d+ failed=0 looped=0 dropped=0; closing public port/u,
+        /^\[app-host\] drain ended \(stop signal\): forwarded=\d+ failed=0 looped=0 dropped=0; closing public port/u,
       );
     }),
 );
