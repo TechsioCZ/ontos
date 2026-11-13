@@ -313,6 +313,7 @@ const changeAgentRole = Effect.fn('AgentEntities.changeAgentRole')(function* cha
             agentPrincipalId,
             expectedRevision: request.expectedRevision,
             incarnationId: request.assignmentId,
+            legalEntityId,
           },
         });
   yield* write.pipe(Effect.mapError(fromPeopleProblem));

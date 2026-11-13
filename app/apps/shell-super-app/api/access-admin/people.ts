@@ -1448,11 +1448,18 @@ const revokeAgentAssignment = Effect.fn('AccessAdminPeople.revokeAgentAssignment
   function* revokeAgentAssignmentWrite({
     headers,
     payload,
-  }: AgentRoleWrite<{ readonly agentPrincipalId: string; readonly incarnationId: string }>) {
+  }: AgentRoleWrite<{
+    readonly agentPrincipalId: string;
+    readonly incarnationId: string;
+    readonly legalEntityId: string;
+  }>) {
     const admitted = yield* admitWrite(headers, accessPeopleDeclarations.revokeAssignment, payload.expectedRevision);
+    // Only an assignment in the agent administrator's own company: the agents page never reaches another company's.
+    const scopeId = yield* requireScopeTarget(admitted, { kind: 'company', legalEntityId: payload.legalEntityId });
     const assignment = admitted.view.assignments.find((candidate) => candidate.incarnationId === payload.incarnationId);
     if (
       assignment === undefined ||
+      assignment.scopeId !== scopeId ||
       !Predicate.isTagged(assignment.holder, 'Agent') ||
       assignment.holder.agentId !== payload.agentPrincipalId ||
       !admitted.reach.scopeIds.has(assignment.scopeId)
@@ -1532,7 +1539,11 @@ export interface AccessPeopleBffService {
     payload: ListAccessPeoplePayload,
   ) => Effect.Effect<ListAccessPeopleOptionsResponse, AccessAdminProblem>;
   readonly revokeAgentAssignment: (
-    input: AgentRoleWrite<{ readonly agentPrincipalId: string; readonly incarnationId: string }>,
+    input: AgentRoleWrite<{
+      readonly agentPrincipalId: string;
+      readonly incarnationId: string;
+      readonly legalEntityId: string;
+    }>,
   ) => Effect.Effect<void, AccessAdminProblem>;
   readonly revokeAssignment: (
     input: AccessPeopleWrite<RevokeAccessAssignmentPayload>,

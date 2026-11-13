@@ -550,7 +550,17 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('an agent on authori
   suite.effect('is connected only by a current operator, and only while it is an active agent of the company', () =>
     withTenant((tenant) =>
       Effect.gen(function* onlyOperators() {
-        yield* connectedReader(tenant);
+        const { connection } = yield* connectedReader(tenant);
+        const operatorScope = yield* sessionScope(tenant.tenantId, operator, company);
+        const retry = tenant.connections.open(operatorScope, {
+          agentId: agent,
+          ceiling: { cells: [] },
+          connectionId: connection.opened.connectionId,
+          legalEntityId: company,
+          validUntil: connectionEnd,
+        });
+        // A retried consent of the operator's own active connection is confirmed while everything still holds.
+        expect((yield* retry).connectionId).toBe(connection.opened.connectionId);
         const bystanderScope = yield* sessionScope(tenant.tenantId, bystander, company);
         const notOperator = yield* Effect.flip(
           tenant.connections.open(bystanderScope, {
@@ -566,7 +576,8 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('an agent on authori
         yield* seedOperators(tenant.admin, tenant.tenantId, [bystander], 2);
         const removed = yield* Effect.flip(connect(tenant, operator, [TASK_READ]));
         expect(removed).toMatchObject({ code: 'agent_connection_not_operator' });
-        const operatorScope = yield* sessionScope(tenant.tenantId, operator, company);
+        // A retry of the consent is re-checked too: the removed operator's retry is refused, not confirmed.
+        expect(yield* Effect.flip(retry)).toMatchObject({ code: 'agent_connection_not_operator' });
         const facts = yield* tenant.connections.liveFacts(operatorScope, {
           agentId: agent,
           connectionId: agentConnectionIdOfGrant(yield* tenant.newId),

@@ -283,8 +283,9 @@ export const finishRevocation = Effect.fn('OAuthConnectionService.finishRevocati
   readonly note: string | null;
   readonly reason: ConnectionRevokeReason;
 }) {
+  // The connection ends first: a revocation already ended it, a supersede ends it here, retried before anything else.
+  yield* endAgentConnectionOf(input.grant).pipe(Effect.retry({ times: 2 }));
   yield* (yield* OAuthFlow).deleteGrantTokens(input.grant.grantId);
-  yield* endAgentConnectionOf(input.grant);
   yield* (yield* OAuthAuthenticationAudit)
     .record({
       authBindingId: null,
@@ -325,6 +326,9 @@ export const revokeConnection = Effect.fn('OAuthConnectionService.revokeConnecti
     });
     return denied ?? grant;
   }
+  // An agent's connection ends before the grant changes status: should the status change fail, the agent is
+  // already refused, never left acting on a grant someone revoked.
+  yield* endAgentConnectionOf(grant);
   const updated = yield* setGrantStatus({
     grantId: input.grantId,
     revokedByPrincipalId: input.actorPrincipalId,

@@ -142,7 +142,7 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
               // the tenant's v2 roles, and no legacy SpiceDB tuple anywhere (the fixture's SpiceDB carries exactly the
               // schema stage serves). Trunk read the company's members and each agent's operators from legacy
               // `legal_entity#member` / `principal#operator` relations: empty on a v2 tenant, unknown to its schema.
-              const [ours = ''] = accessCase.companies;
+              const [ours = '', other = ''] = accessCase.companies;
               const agentId = accessCase.ids.get('agent')?.principalId ?? '';
               const memberId = accessCase.ids.get('member')?.principalId ?? '';
               yield* accessCase.admin
@@ -229,6 +229,7 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
                 .find(({ principalId }) => principalId === agentId)
                 ?.roles.find(({ roleId }) => roleId === offered.roleId);
               expect(holding?.name).toBe(offered.name);
+              const heldAssignmentId = holding?.assignmentId ?? '';
               // A member may not assign roles: the People rule refuses them here too.
               const memberAssign = yield* shell.post({
                 idempotencyKey: 'agents-real-gate-member-assign',
@@ -245,12 +246,35 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
                 sameOrigin: true,
               });
               expect(memberAssign.status).toBe(403);
+              // The agent is also an agent of the other company: removing its role held here from the other company's
+              // agents page is refused, as the page only ends assignments in its own company.
+              yield* accessCase.admin
+                .unsafe(
+                  `insert into core.principal_company_memberships (tenant_id, legal_entity_id, principal_id, affiliation, status)
+                   values ($1, $2, $3, null, 'active')`,
+                  [accessCase.tenantId, other, agentId],
+                )
+                .pipe(Effect.orDie);
+              const elsewhere = yield* shell.post({
+                idempotencyKey: 'agents-real-gate-remove-role-elsewhere',
+                legalEntityId: other,
+                path: MANAGE_PATH,
+                payload: {
+                  assignmentId: heldAssignmentId,
+                  expectedRevision: after.rolesRevision,
+                  operation: 'remove-role',
+                  principalId: agentId,
+                },
+                persona: 'owner',
+                sameOrigin: true,
+              });
+              expect(elsewhere.status, elsewhere.text).toBe(403);
               const removed = yield* shell.post({
                 idempotencyKey: 'agents-real-gate-remove-role',
                 legalEntityId: ours,
                 path: MANAGE_PATH,
                 payload: {
-                  assignmentId: holding?.assignmentId ?? '',
+                  assignmentId: heldAssignmentId,
                   expectedRevision: after.rolesRevision,
                   operation: 'remove-role',
                   principalId: agentId,

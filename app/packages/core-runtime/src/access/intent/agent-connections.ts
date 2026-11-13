@@ -239,17 +239,21 @@ const openInTransaction = Effect.fn('AgentConnectionStore.openInTransaction')(fu
   if (companyScope === undefined) {
     return Option.some(refused('agent_connection_scope_missing', 'The company has no access scope'));
   }
+  // A retry finds its own active row; any other existing row never reopens. A retry is re-checked like a first
+  // consent below, so it never confirms a connection whose agent was disabled or whose operator was removed meanwhile.
   const existing = yield* readRow(transaction, scope, input.connectionId);
-  if (Option.isSome(existing)) {
-    const row = existing.value;
-    const same =
-      row.status === 'active' &&
-      row.agentId === input.agentId &&
-      row.principalId === operator &&
-      row.scopeId === companyScope.scopeId;
-    return same
-      ? Option.none()
-      : Option.some(refused('agent_connection_ended', 'This connection already exists and never reopens'));
+  const retry = Option.isSome(existing);
+  if (
+    Option.exists(
+      existing,
+      (row) =>
+        row.status !== 'active' ||
+        row.agentId !== input.agentId ||
+        row.principalId !== operator ||
+        row.scopeId !== companyScope.scopeId,
+    )
+  ) {
+    return Option.some(refused('agent_connection_ended', 'This connection already exists and never reopens'));
   }
   if (!(yield* agentIsActiveInCompany(transaction, scope, input.agentId, input.legalEntityId))) {
     return Option.some(refused('agent_connection_agent_inactive', 'The agent is not an active agent of this company'));
@@ -266,6 +270,9 @@ const openInTransaction = Effect.fn('AgentConnectionStore.openInTransaction')(fu
   );
   if (operators === null || !operators.desiredOperatorPrincipalIds.includes(operator)) {
     return Option.some(refused('agent_connection_not_operator', 'Only an operator of the agent connects it'));
+  }
+  if (retry) {
+    return Option.none();
   }
   const now = yield* DateTime.nowAsDate;
   yield* transaction.insert(accessAgentConnections).values({
