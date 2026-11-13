@@ -98,7 +98,7 @@ it.layer(nativeServices, { excludeTestServices: true })('tax classification migr
         const fs = yield* FileSystem.FileSystem;
         const before = yield* fs.makeTempDirectoryScoped({ prefix: 'ontos-merchandise-before-tax-' });
         for (const name of yield* fs.readDirectory(migrations)) {
-          if (name === TAX_CLASSIFICATION || !(yield* fs.exists(`${migrations}/${name}/migration.sql`))) {
+          if (name >= TAX_CLASSIFICATION || !(yield* fs.exists(`${migrations}/${name}/migration.sql`))) {
             continue;
           }
           yield* fs.makeDirectory(`${before}/${name}`);
@@ -309,13 +309,14 @@ it.layer(nativeServices, { excludeTestServices: true })('tax classification migr
           gross: 53_900,
           net: 49_000,
         });
-        expect(yield* heldOf).toEqual({});
+        // Its company's last hold: the key goes (absent, never null and never an empty map).
+        expect(yield* heldOf).toBeNull();
         // Written at 10 % again: reduced, and its hold does not come back.
         yield* client.unsafe(
           `update demo_merchandise.products set document = $3::jsonb where tenant_id = $1 and id = $2`,
           [tenantId, 'book-it', JSON.stringify({ currentPriceMinor: 49_000, name: 'book-it', vatRate: 10 })],
         );
-        expect([(yield* productRow('book-it'))?.classification, yield* heldOf]).toEqual(['cz.vat.reduced', {}]);
+        expect([(yield* productRow('book-it'))?.classification, yield* heldOf]).toEqual(['cz.vat.reduced', null]);
         // A rate nothing maps is refused by name, never stored without a classification.
         const zero = yield* insertProduct({ gross: 500, id: 'old-release-zero', net: 500, vatRate: 0 }).pipe(
           Effect.flip,
@@ -387,7 +388,7 @@ it.layer(nativeServices, { excludeTestServices: true })('tax classification migr
         const fs = yield* FileSystem.FileSystem;
         const before = yield* fs.makeTempDirectoryScoped({ prefix: 'ontos-merchandise-before-tax-' });
         for (const name of yield* fs.readDirectory(migrations)) {
-          if (name === TAX_CLASSIFICATION || !(yield* fs.exists(`${migrations}/${name}/migration.sql`))) {
+          if (name >= TAX_CLASSIFICATION || !(yield* fs.exists(`${migrations}/${name}/migration.sql`))) {
             continue;
           }
           yield* fs.makeDirectory(`${before}/${name}`);
@@ -517,7 +518,7 @@ it.layer(nativeServices, { excludeTestServices: true })('tax classification migr
         const fs = yield* FileSystem.FileSystem;
         const before = yield* fs.makeTempDirectoryScoped({ prefix: 'ontos-merchandise-before-tax-' });
         for (const name of yield* fs.readDirectory(migrations)) {
-          if (name === TAX_CLASSIFICATION || !(yield* fs.exists(`${migrations}/${name}/migration.sql`))) {
+          if (name >= TAX_CLASSIFICATION || !(yield* fs.exists(`${migrations}/${name}/migration.sql`))) {
             continue;
           }
           yield* fs.makeDirectory(`${before}/${name}`);

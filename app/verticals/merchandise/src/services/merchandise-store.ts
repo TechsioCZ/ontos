@@ -613,17 +613,28 @@ const dropReclassifiedHolds = Effect.fn('MerchandiseStore.dropReclassifiedHolds'
   if (dropped.length === 0) {
     return;
   }
+  const droppedIds = sql`array[${sql.join(
+    dropped.map((id) => sql`${id}`),
+    sql`, `,
+  )}]::text[]`;
   yield* query(
     db
       .update(catalogHeads)
       .set({
-        taxRates: sql`jsonb_set(${catalogHeads.taxRates}, '{heldProductRates}',
-          (${catalogHeads.taxRates} -> 'heldProductRates') - array[${sql.join(
-            dropped.map((id) => sql`${id}`),
-            sql`, `,
-          )}]::text[])`,
+        // The last hold dropped leaves the key absent, as Merchandise decodes it: never an empty map, never null.
+        taxRates: sql`case
+          when (${catalogHeads.taxRates} -> 'heldProductRates') - ${droppedIds} = '{}'::jsonb
+            then ${catalogHeads.taxRates} - 'heldProductRates'
+          else jsonb_set(${catalogHeads.taxRates}, '{heldProductRates}',
+            (${catalogHeads.taxRates} -> 'heldProductRates') - ${droppedIds})
+        end`,
       })
-      .where(and(whereScope(catalogHeads, scope), sql`${catalogHeads.taxRates} ? 'heldProductRates'`)),
+      .where(
+        and(
+          whereScope(catalogHeads, scope),
+          sql`jsonb_typeof(${catalogHeads.taxRates} -> 'heldProductRates') = 'object'`,
+        ),
+      ),
     'The dropped holds could not be written',
   );
 });

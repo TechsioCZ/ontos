@@ -155,6 +155,30 @@ it.layer(nativeServices, { excludeTestServices: true })(
         ]);
         yield* migrate(db, migrationOptions(yield* folderUpTo(HELD_NULL_REPAIR, true)));
         expect(yield* headOf(notHeld)).toEqual({ hasKey: false, held: null, revision: 1 });
+
+        // The functions the expand step leaves in place now write the key as Merchandise decodes it.
+        yield* migrate(db, migrationOptions(migrations));
+        yield* insertProduct(held, 'book-it', 10);
+        const migratedState = (company: typeof held) =>
+          client
+            .unsafe<{ readonly hasKey: boolean; readonly held: unknown }>(
+              `select s ? 'heldProductRates' as "hasKey", s -> 'heldProductRates' as held
+                 from demo_merchandise.migration_tax_rates($1, $2) as s`,
+              [company.tenantId, company.legalEntityId],
+            )
+            .pipe(Effect.map(([row]) => row));
+        // `migration_tax_rates`: the key only where a product is held, never `null` for a company holding nothing.
+        expect(yield* migratedState(held)).toEqual({ hasKey: true, held: { 'book-it': 10 } });
+        expect(yield* migratedState(notHeld)).toEqual({ hasKey: false, held: null });
+        // The window trigger: the release before classifications rewrites BOOK-IT at 21 %, its company's last hold;
+        // the key goes, never left as JSON null or an empty map.
+        yield* client.unsafe(
+          `update demo_merchandise.products set document = jsonb_build_object('currentPriceMinor', 1000, 'name', 'book-it',
+             'vatRate', 21) where tenant_id = $1 and legal_entity_id = $2 and id = 'book-it'`,
+          [held.tenantId, held.legalEntityId],
+        );
+        expect(yield* headOf(held)).toEqual({ hasKey: false, held: null, revision: 0 });
+        expect((yield* currentPricingOf(db, held)).held).toEqual({});
       }).pipe(Effect.scoped),
     );
   },

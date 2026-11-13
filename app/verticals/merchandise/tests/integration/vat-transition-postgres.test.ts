@@ -212,7 +212,7 @@ it.layer(nativeServices, { excludeTestServices: true })('VAT classification depl
         const fs = yield* FileSystem.FileSystem;
         const before = yield* fs.makeTempDirectoryScoped({ prefix: 'ontos-merchandise-vat-transition-' });
         for (const name of yield* fs.readDirectory(migrations)) {
-          if (name === TAX_CLASSIFICATION || !(yield* fs.exists(`${migrations}/${name}/migration.sql`))) {
+          if (name >= TAX_CLASSIFICATION || !(yield* fs.exists(`${migrations}/${name}/migration.sql`))) {
             continue;
           }
           yield* fs.makeDirectory(`${before}/${name}`);
