@@ -41,6 +41,7 @@ import type {
   describeLines,
   describeShipping,
   evolveMerchandiseState,
+  MerchandiseCommandInput,
   orderStatusLabels,
 } from './persistence.service.ts';
 import { stockOnHandOf, variantStockOf } from './stock-levels.ts';
@@ -53,6 +54,8 @@ interface AiCommandContext {
   readonly actor: PrincipalRef;
   readonly invocationId: string;
   readonly now: DateTime.Utc;
+  /** The company's VAT rates for this command, as persistence synced them. */
+  readonly tax: MerchandiseCommandInput['tax'];
 }
 
 interface AiOrderHelpers {
@@ -146,6 +149,7 @@ const previewOrders = Effect.fn('MerchandiseAi.previewOrders')(function* preview
           actor: context.actor,
           now: context.now,
           resourceId: 'ai-describe',
+          tax: context.tax,
         })
         .pipe(
           Effect.exit,
@@ -165,11 +169,12 @@ const previewOrders = Effect.fn('MerchandiseAi.previewOrders')(function* preview
 const adapterFor = (
   actor: PrincipalRef,
   now: DateTime.Utc,
+  tax: MerchandiseCommandInput['tax'],
   helpers: AiOrderHelpers,
   previewedOrders: ReadonlyMap<MerchandiseAiOperation, Order | undefined> = new Map(),
 ): AiApprovalAdapter<MerchandiseState, MerchandiseAiOperation> => {
   const run = (state: MerchandiseState, operation: MerchandiseAiOperation, invocationId: string) =>
-    helpers.evolveMerchandiseState(state, operation, { actor, now, resourceId: invocationId }).pipe(
+    helpers.evolveMerchandiseState(state, operation, { actor, now, resourceId: invocationId, tax }).pipe(
       Effect.map((change) => ({ entityIds: change.entityIds, state: change.state })),
       Effect.mapError((cause) => new AiAdapterFailure({ cause, message: czechReason(cause.reason) })),
     );
@@ -311,7 +316,7 @@ export const applyMerchandiseAiCommand = Effect.fn('Merchandise.applyAiCommand')
   context: AiCommandContext,
   helpers: AiOrderHelpers,
 ): Effect.fn.Return<{ readonly entityIds: readonly string[]; readonly state: MerchandiseState }, AiFailure> {
-  const adapter = adapterFor(context.actor, context.now, helpers);
+  const adapter = adapterFor(context.actor, context.now, context.tax, helpers);
   const aiContext: AiContext = yield* Schema.decodeEffect(AiContextSchema)({
     invocationId: context.invocationId,
     now: context.now,
@@ -334,7 +339,7 @@ export const applyMerchandiseAiCommand = Effect.fn('Merchandise.applyAiCommand')
       AiProposeChanges: Effect.fn('MerchandiseAi.propose')(function* propose(value: AiProposal) {
         const previews = yield* previewOrders(state, value.changes, context, helpers);
         return yield* proposeAiChanges(
-          adapterFor(context.actor, context.now, helpers, previews),
+          adapterFor(context.actor, context.now, context.tax, helpers, previews),
           state,
           {
             agentLabel: value.agentLabel ?? 'AI agent',

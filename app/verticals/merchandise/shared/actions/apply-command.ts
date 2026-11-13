@@ -1,3 +1,4 @@
+import { CzVatClassificationCodeSchema } from '@app/shared-contracts/cz-vat-classifications';
 import { MediaImageUploadSchema } from '@app/core-runtime/media/image-contract';
 import { Schema } from 'effect';
 import {
@@ -39,7 +40,6 @@ import {
   ProductUnitSchema,
   ShippingMethodSchema,
   VariantIdSchema,
-  VatRateSchema,
 } from '../domain/merchandise-model.ts';
 import {
   ExchangeRateSchema,
@@ -57,8 +57,8 @@ export const ProductPatchSchema = Schema.Struct({
   category: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120))),
   lowStockThreshold: Schema.optionalKey(MinorAmountSchema),
   name: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+  taxClassificationCode: Schema.optionalKey(CzVatClassificationCodeSchema),
   unit: Schema.optionalKey(ProductUnitSchema),
-  vatRate: Schema.optionalKey(VatRateSchema),
 });
 export type ProductPatch = typeof ProductPatchSchema.Type;
 
@@ -129,6 +129,12 @@ export const StorefrontOrderLineRequestSchema = Schema.Struct({
  * order's price mode (gross for storefront orders, net for staff orders).
  */
 export const EditOrderLineSchema = Schema.Struct({
+  /**
+   * Marks a line this edit adds (also one removed and added again in the same edit): the unit price the editor offered
+   * it at. The server prices the line as a new one and refuses the edit when that price is no longer the offered one;
+   * `unitPriceMinor`, when sent, is the price staff typed instead.
+   */
+  offeredUnitPriceMinor: Schema.optionalKey(MinorAmountSchema),
   productId: ProductIdSchema,
   quantity: QuantitySchema,
   unitPriceMinor: Schema.optionalKey(MinorAmountSchema),
@@ -258,8 +264,8 @@ const ApplyCreateProductCommandSchema = Schema.TaggedStruct('CreateProduct', {
   name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
   priceMinor: MinorAmountSchema,
   sku: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+  taxClassificationCode: CzVatClassificationCodeSchema,
   unit: ProductUnitSchema,
-  vatRate: VatRateSchema,
 });
 
 const ApplyUpdateCategoryCommandSchema = Schema.TaggedStruct('UpdateCategory', {
@@ -322,6 +328,9 @@ const ApplyArchiveDemoProductCommandSchema = Schema.TaggedStruct('ArchiveDemoPro
   id: ProductIdSchema,
   reason: Schema.Trim.check(Schema.isMinLength(5), Schema.isMaxLength(500)),
 });
+
+/** Reads the company's VAT rates from Tax now and reprices stored gross prices when they changed. */
+const ApplySyncTaxRatesCommandSchema = Schema.TaggedStruct('SyncTaxRates', {});
 
 const ApplyResetDemoDataCommandSchema = Schema.TaggedStruct('ResetDemoData', {
   confirmation: Schema.Literal('OBNOVIT'),
@@ -406,6 +415,11 @@ export const MerchandiseCommandSchema = Schema.Union([
    * (the same state `demo:seed:akros --reset` writes). Scoped to the caller's tenant and legal entity.
    */
   ApplyResetDemoDataCommandSchema,
+  /**
+   * Re-reads the company's VAT rates and VAT regime from Tax and reprices the stored gross prices of every
+   * classification whose rate changed. Every other write does the same on its way; this one does only that.
+   */
+  ApplySyncTaxRatesCommandSchema,
   ApplyRemoveDemoOrderCommandSchema,
   ApplyChangeOrderStatusCommandSchema,
   /**
@@ -534,6 +548,7 @@ export const ManageCatalogPayloadSchema = Schema.Struct({
     ApplyCreateOrderCommandSchema,
     ApplyEditOrderCommandSchema,
     ApplyLinkOrderCustomerCommandSchema,
+    ApplySyncTaxRatesCommandSchema,
   ]),
   expectedRevision: MerchandiseCommandPayloadSchema.fields.expectedRevision,
 });

@@ -209,6 +209,9 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   ),
   // </generated-governed-http-handler-support-layers>
   Layer.provide(compositionSourceLive),
+  // ReadRuntime keeps its admission gate private: the regime history read decides the reader's VAT change rights on
+  // Tax's own Actions with the owner's gate (as Finance's records read decides its write right).
+  Layer.provide(accessEnforcementLive),
   Layer.provide(
     Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, nodeCryptoLayer, databaseIdentitiesLive),
   ),

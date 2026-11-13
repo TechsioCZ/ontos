@@ -27,6 +27,7 @@ const storefrontRegistryModule = 'commerce.storefront-registry';
 const crmModule = 'demo.crm';
 const pipelineModule = 'demo.sales-pipeline';
 const principalResource = 'core.principal';
+const taxModule = 'commerce.tax';
 
 /**
  * Module IDs as declared in each `vertical.manifest.ts`. Vertical directories: party-registry, work-tasks,
@@ -51,6 +52,7 @@ export const demoModuleIds = [
   operationsModule,
   marketModule,
   storefrontRegistryModule,
+  taxModule,
 ] as const;
 export type DemoModuleId = (typeof demoModuleIds)[number];
 
@@ -76,6 +78,7 @@ export interface DemoRole {
   readonly restrictedModules?: readonly string[];
   /** Tenant ownership: the `owner` membership in the tenant-context scope. */
   readonly tenantOwner?: true;
+  readonly withoutKeys?: PolicyRole['withoutKeys'];
 }
 
 export const pipelineReadCapability = 'demo.sales-pipeline.api-records.read';
@@ -219,6 +222,33 @@ export const partyHumanWriterKeys = [
   'party.registry.search-label.read',
 ] as const;
 
+/**
+ * The Tax reads the accountant's DPH page makes as the signed-in person: which rates apply and whether the company is
+ * a VAT payer, each with its history. No preset role but full access gets a Tax write: a rate or a regime declaration
+ * changes what every sale costs, so people with full access (which follows the catalogue) or a role an owner edits
+ * manage them. Merchandise and Finance read rates through their own module calls, which need no Tax right of the
+ * person they act for, so nobody else needs these.
+ */
+export const taxAccountantKeys = [
+  'commerce.tax.seller-vat-regime-declaration.read-history',
+  'commerce.tax.seller-vat-regime.read-at-instant',
+  'commerce.tax.tax-rule-set.read',
+  'commerce.tax.tax-rule.read-history',
+] as const;
+/** The Finance reads of the DPH page and of the VAT a line may carry, new with the VAT rollout. */
+export const financeVatReadKeys = [
+  'finance.billing.navigation-vat.read',
+  'finance.billing.page-vat.read',
+  'finance.billing.vat-choices.read',
+] as const;
+/**
+ * The DPH page's navigation and page reads. The page reads the company's VAT regime and rates from Tax as the person
+ * (`taxAccountantKeys`), so a role without those reads would see the item and get "forbidden": it does not hold
+ * these two. The VAT choices an invoice or price form offers come through Finance's own Tax read
+ * (`finance.billing.vat-choices.read`), so every role reading Finance keeps that one.
+ */
+export const dphPageKeys = ['finance.billing.navigation-vat.read', 'finance.billing.page-vat.read'] as const;
+
 const everything = {
   [commerceModule]: 'write',
   'demo.merchandise': 'write',
@@ -234,10 +264,12 @@ const everything = {
 
 export const demoRoles = {
   accountant: {
-    capabilityKeys: { [partyModule]: partyHumanReaderKeys },
+    capabilityKeys: { [partyModule]: partyHumanReaderKeys, [taxModule]: taxAccountantKeys },
     label: 'Účetní',
     modules: {
       [commerceModule]: 'read',
+      // Rates and the seller's VAT regime with their histories, through the explicit tax keys only: read, never change.
+      [taxModule]: 'read',
       // Invoice lines pick products; without this read the create form's product list fails to load.
       'demo.merchandise': 'read',
       'demo.sales-insights': 'read',
@@ -250,7 +282,7 @@ export const demoRoles = {
       'work.tasks': 'write',
     },
     proposalReview: true,
-    restrictedModules: [partyModule],
+    restrictedModules: [partyModule, taxModule],
   },
   headOfSales: {
     capabilityKeys: { [partyModule]: partyHumanWriterKeys },
@@ -262,10 +294,15 @@ export const demoRoles = {
     tenantOwner: true,
   },
   salesRep: {
-    capabilityKeys: { [partyModule]: partyHumanWriterKeys, [pipelineModule]: pipelineWriterKeys },
+    capabilityKeys: {
+      [partyModule]: partyHumanWriterKeys,
+      [pipelineModule]: pipelineWriterKeys,
+    },
     label: 'Obchodník',
     proposalReview: true,
     restrictedModules: [pipelineModule, partyModule],
+    // No Tax read of its own: the DPH page is not for this role (the invoice form's VAT choices stay).
+    withoutKeys: dphPageKeys,
     // Billing is visible but not writable: the rep cannot confirm or void invoices.
     modules: {
       [commerceModule]: 'write',
@@ -397,6 +434,8 @@ export const rentalDemoRoles = {
     },
     proposalReview: true,
     restrictedModules: [partyModule],
+    // No Tax read of its own: the DPH page is not for this role (the invoice form's VAT choices stay).
+    withoutKeys: dphPageKeys,
   },
   headOfSales: {
     capabilityKeys: { [partyModule]: partyHumanWriterKeys },
@@ -417,6 +456,8 @@ export const rentalDemoRoles = {
     },
     proposalReview: true,
     restrictedModules: [partyModule],
+    // No Tax read of its own: the DPH page is not for this role (the invoice form's VAT choices stay).
+    withoutKeys: dphPageKeys,
   },
   salesRep: {
     capabilityKeys: { [partyModule]: partyHumanWriterKeys, [pipelineModule]: pipelineWriterKeys },
@@ -437,6 +478,8 @@ export const rentalDemoRoles = {
     },
     proposalReview: true,
     restrictedModules: [pipelineModule, partyModule],
+    // No Tax read of its own: the DPH page is not for this role (the invoice form's VAT choices stay).
+    withoutKeys: dphPageKeys,
   },
 } as const satisfies Readonly<Partial<Record<DemoRoleKey, DemoRole>>>;
 
@@ -833,18 +876,6 @@ export interface CommercePortalWorkload {
   readonly tenantId: string;
 }
 
-const intakeName = 'crm-party-intake';
-
-/**
- * The principal registered for CRM's internal workload `demo.crm.party-intake`. Its key is the platform's: module
- * credential provisioning issues, hands over, rotates and retires it beside CRM's module key; nobody issues it by hand.
- */
-export const crmPartyIntakePrincipal = {
-  displayName: 'CRM · zakládání klientů v Party Registry',
-  kind: 'service',
-  principalId: demoId(principalResource, intakeName),
-} as const;
-
 /** Exact reviewed bindings. Topology caller `crm` does not rename producer workload `demo.crm.party-intake`. */
 export const reviewedWorkloadBindings = (): readonly ReviewedWorkloadBinding[] => [
   storefrontBinding(storefrontPrincipal, STOREFRONT_CLIENT_WORKLOAD),
@@ -854,7 +885,8 @@ export const reviewedWorkloadBindings = (): readonly ReviewedWorkloadBinding[] =
   storefrontBinding(akrosStorefrontPrincipal, STOREFRONT_INQUIRY_WORKLOAD),
   { principalId: commercePortalPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
   { principalId: commercePortalPrincipal.principalId, workloadKey: IDENTITY_PROVIDER_WORKLOAD },
-  { principalId: crmPartyIntakePrincipal.principalId, workloadKey: CRM_PARTY_INTAKE_WORKLOAD },
+  // CRM's own internal workload `demo.crm.party-intake` is not listed: the platform registers it per company at release
+  // (`release-internal-workloads.mts`) and keys it; nobody registers or keys it by hand.
 ];
 
 /**
@@ -1057,7 +1089,6 @@ export const reviewedMachinePrincipals = [
   akrosStorefrontPrincipal,
   commercePortalPrincipal,
   privacyConsentPrincipal,
-  crmPartyIntakePrincipal,
 ] as const satisfies readonly {
   readonly displayName: string;
   readonly kind: string;

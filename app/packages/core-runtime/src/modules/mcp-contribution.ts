@@ -41,6 +41,11 @@ export const OntosMcpToolSchema = Schema.Struct({
   description: Schema.optionalKey(OntosMcpTextSchema),
   /** Removes, cancels or voids data or access; clients ask before calling. */
   destructive: Schema.Boolean,
+  /**
+   * Never listed as its own typed MCP tool; agents reach it only through the generic tools (`ontos_capabilities`,
+   * `ontos_read`, `ontos_execute`, `ontos_propose`) under the same rights. Absent: listed when the budget allows.
+   */
+  genericOnly: Schema.optionalKey(Schema.Literal(true)),
   /** Stable id: `<moduleId>/read/<slug>`, `<moduleId>/command/<Tag>` or `<moduleId>/action/<slug>`. */
   id: nonEmpty,
   /** JSON Schema of the tool arguments; `$ref`s point into the contribution's `definitions`. */
@@ -254,6 +259,11 @@ export type OntosMcpContribution = typeof OntosMcpContributionSchema.Type;
 /** Title and optional description of one tool, authored by the vertical. */
 export interface OntosMcpToolTextInput {
   readonly description?: OntosMcpText;
+  /**
+   * Offered to agents only through the generic tools, never as its own typed tool: system, import and recovery steps
+   * that would only crowd the connection's typed-tool budget. Rights are unchanged.
+   */
+  readonly genericOnly?: boolean;
   readonly title: OntosMcpText;
 }
 

@@ -37,13 +37,16 @@ const product = Schema.encodeSync(ProductRecordSchema)(
     sku: 'CABLE',
     stockOnHand: 10,
     stockValueMinor: 1000,
+    taxClassificationCode: 'cz.vat.standard',
     unit: 'ks',
     updatedAt: instant,
-    vatRate: 21,
   }),
 );
 
-const responseOf = (products: readonly (typeof product)[]) =>
+const responseOf = (
+  products: readonly (typeof product)[],
+  tax: Pick<typeof RecordsResponseSchema.Encoded, 'sellerVatRegime' | 'taxRates'>,
+) =>
   Schema.decodeSync(RecordsResponseSchema)({
     actorPrincipalRef: {
       principalId: '20000000-0000-4000-8000-000000000002',
@@ -56,6 +59,7 @@ const responseOf = (products: readonly (typeof product)[]) =>
     orders: [],
     products,
     revision: 7,
+    ...tax,
   });
 
 /** Every list read the page sent. */
@@ -63,7 +67,7 @@ const reads: string[] = [];
 const serve = () => {
   rstest.mocked(executeRecords).mockImplementation(() => {
     reads.push('list');
-    return Effect.succeed(responseOf([product]));
+    return Effect.succeed(responseOf([product], { taxRates: [] }));
   });
 };
 const count = (kind: string) => reads.filter((read) => read === kind).length;
@@ -73,7 +77,16 @@ const renders: string[] = [];
 const ProductsList = () => {
   const { state } = useProductPage(company.legalEntityId, firstProductPage(PAGE_SIZE), company);
   renders.push(state.status);
-  return createElement('output', null, state.status);
+  // A ready list shows each product's classification and the company's VAT regime and rates from Tax.
+  const vat =
+    state.status === 'ready'
+      ? [
+          ...state.response.products.map((row) => `${row.sku}:${row.taxClassificationCode ?? '-'}`),
+          ...(state.response.taxRates ?? []).map((rate) => `${rate.code}=${rate.ratePercent}`),
+          state.response.sellerVatRegime ?? '-',
+        ].join(' ')
+      : '';
+  return createElement('output', null, state.status, createElement('span', null, vat));
 };
 
 let unmount: (() => void) | null = null;
@@ -164,5 +177,40 @@ it.effect('a write in between makes the reopened list load, not show the rows of
 
     yield* idle(5);
     expect(count('list')).toBe(1);
+  }),
+);
+
+it.effect('a reopened list keeps each product classification and the company VAT rates and regime from Tax', () =>
+  Effect.gen(function* classified() {
+    const reduced: typeof product = {
+      ...product,
+      id: 'product-coffee',
+      name: 'Coffee',
+      sku: 'COFFEE',
+      taxClassificationCode: 'cz.vat.reduced',
+    };
+    rstest.mocked(executeRecords).mockImplementation(() => {
+      reads.push('list');
+      return Effect.succeed(
+        responseOf([product, reduced], {
+          sellerVatRegime: 'VAT_PAYER',
+          taxRates: [
+            { code: 'cz.vat.standard', effectiveFrom: '2020-01-01T00:00:00.000Z', ratePercent: 21 },
+            { code: 'cz.vat.reduced', effectiveFrom: '2020-01-01T00:00:00.000Z', ratePercent: 12 },
+          ],
+        }),
+      );
+    });
+    yield* mount();
+    yield* idle(5);
+    unmountList();
+    renders.length = 0;
+
+    yield* idle(30);
+    yield* mount();
+    expect(renders[0]).toBe('ready');
+    expect(document.querySelector('output span')?.textContent).toBe(
+      'CABLE:cz.vat.standard COFFEE:cz.vat.reduced cz.vat.standard=21 cz.vat.reduced=12 VAT_PAYER',
+    );
   }),
 );

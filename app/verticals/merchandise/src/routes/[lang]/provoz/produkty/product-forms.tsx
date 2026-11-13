@@ -1,6 +1,6 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { Effect } from 'effect';
+import { DateTime, Effect } from 'effect';
 import { constVoid } from 'effect/Function';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
@@ -18,7 +18,8 @@ import {
 import type { SaveLabels, SaveOutcome, SaveState, UnsavedChangesGuard } from '@app/admin-ui';
 import { useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
-import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
+import type { ProductUnit } from '../../../../../shared/domain/merchandise-model.ts';
+import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import { sameSku } from '../../../../../shared/domain/merchandise-model.ts';
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { productCommandOutcome, runCommand } from './products-api.ts';
@@ -31,13 +32,15 @@ import { useCommandFailure, useProductLabel } from './product-form-labels.ts';
 import {
   PRODUCT_LIMITS,
   UNITS,
-  VAT_RATES,
   fieldError,
   focusFirstInvalid,
   lowStockErrorKey,
   priceErrorKey,
   tooLongMessage,
 } from './product-form-validation.ts';
+import { DEFAULT_TAX_CLASSIFICATION, classificationChoices, useTaxLabels } from './product-tax-classification.ts';
+import type { CompanyVat } from './product-tax-classification.ts';
+import { TaxClassificationSelect } from './product-tax-classification-select.tsx';
 
 export interface FormDialogProps {
   /** Called after a successful command. The page shows the toast and reloads. */
@@ -96,8 +99,9 @@ interface ProductDraft {
   readonly priceCzk: number;
   readonly priceText: string;
   readonly sku: string;
+  /** Picked by staff; until then the form uses the first classification with a rate in force. */
+  readonly taxClassificationCode?: CzVatClassificationCode;
   readonly unit: ProductUnit;
-  readonly vatRate: VatRate;
 }
 
 const blankProduct: ProductDraft = {
@@ -109,7 +113,6 @@ const blankProduct: ProductDraft = {
   priceText: '',
   sku: '',
   unit: 'ks',
-  vatRate: 21,
 };
 
 /** The texts carry the numbers, so two drafts with the same texts are the same draft. */
@@ -119,8 +122,8 @@ const sameProduct = (left: ProductDraft, right: ProductDraft): boolean =>
   left.name === right.name &&
   left.priceText === right.priceText &&
   left.sku === right.sku &&
-  left.unit === right.unit &&
-  left.vatRate === right.vatRate;
+  left.taxClassificationCode === right.taxClassificationCode &&
+  left.unit === right.unit;
 
 interface FormSaveOptions<V> {
   /** The product command that sends the draft. */
@@ -232,10 +235,20 @@ const FormSaveActions = ({ form }: { readonly form: FormSave }) => {
 };
 
 /**
- * Create product: SKU, name, unit, category, VAT, price, minimum stock. Sends CreateProduct. The server refuses a
+ * Create product: SKU, name, unit, category, VAT classification, price, minimum stock. Sends CreateProduct. The server refuses a
  * SKU the catalog already has; the field then shows that message until the SKU changes.
  */
-export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open, revision }: FormDialogProps) => {
+export const CreateProductDialog = ({
+  onCommitted,
+  onOpenChange,
+  onReload,
+  open,
+  revision,
+  vat,
+}: FormDialogProps & {
+  /** The company's VAT rates from the staff records read; they name the classifications the select offers. */
+  readonly vat: CompanyVat;
+}) => {
   const k = useProductLabel();
   const { t } = useModernI18n();
   const [draft, setDraft] = useState<ProductDraft>(blankProduct);
@@ -243,6 +256,21 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
   // The SKU the server refused as a duplicate. Only that exact value shows the message, so editing it clears it.
   const [takenSku, setTakenSku] = useState<string | null>(null);
 
+  const taxLabels = useTaxLabels();
+  const choices = classificationChoices(vat, DateTime.nowUnsafe());
+  // A new product starts on the first classification the company has a rate for (standard first).
+  const firstPriced = choices.find((choice) => choice.current !== undefined)?.code;
+  const classificationOf = (value: ProductDraft) =>
+    value.taxClassificationCode ?? firstPriced ?? DEFAULT_TAX_CLASSIFICATION;
+  const classificationError = (value: ProductDraft) => {
+    if (firstPriced === undefined) {
+      return taxLabels.noRateToCreate;
+    }
+    const code = classificationOf(value);
+    return choices.find((choice) => choice.code === code)?.current === undefined
+      ? taxLabels.rateNotInForce(code)
+      : undefined;
+  };
   const errorsOf = (value: ProductDraft) => {
     const skuTakenError = takenSku !== null && sameSku(takenSku, value.sku) ? k('validation.skuTaken') : undefined;
     const priceKey = priceErrorKey(value.priceCzk);
@@ -255,6 +283,7 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
       price: priceKey === undefined ? undefined : k(priceKey),
       sku:
         value.sku.trim() === '' ? k(REQUIRED_KEY) : (skuTakenError ?? tooLongMessage(k, value.sku, PRODUCT_LIMITS.sku)),
+      taxClassification: classificationError(value),
     };
   };
   const form = useFormSave<ProductDraft>({
@@ -266,8 +295,8 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
       name: value.name.trim(),
       priceMinor: Math.round(value.priceCzk * 100),
       sku: value.sku.trim(),
+      taxClassificationCode: classificationOf(value),
       unit: value.unit,
-      vatRate: value.vatRate,
     }),
     equals: sameProduct,
     initial: blankProduct,
@@ -356,19 +385,11 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
               placeholder={k('selectPlaceholder')}
               value={[draft.unit]}
             />
-            <SelectTemplate
-              items={VAT_RATES.map((rate) => selectItem(String(rate), `${rate} %`))}
-              label={k('fields.vat')}
-              name="vat"
-              onValueChange={(details) => {
-                const [next] = details.value;
-                const picked = VAT_RATES.find((rate) => String(rate) === next);
-                if (picked !== undefined) {
-                  update({ vatRate: picked });
-                }
-              }}
-              placeholder={k('selectPlaceholder')}
-              value={[String(draft.vatRate)]}
+            <TaxClassificationSelect
+              error={errors.taxClassification}
+              onChange={(taxClassificationCode) => update({ taxClassificationCode })}
+              value={classificationOf(draft)}
+              vat={vat}
             />
           </div>
           <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">

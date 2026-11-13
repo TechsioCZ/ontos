@@ -45,24 +45,33 @@ export const readOrderVersion = (orderId: Order['id']): Effect.Effect<OrderVersi
   );
 
 /**
+ * The edit added a line at a price the product no longer has (its price changed after it was picked): nothing was
+ * saved, and the form takes the current price before staff save again.
+ */
+export const OFFERED_PRICE_CHANGED = 'offeredPriceChanged';
+
+/**
  * Why an edit wrote nothing. A conflict means someone else edited the order, so the form offers their version
  * instead of sending the same edit again; an edit parked for approval is held and never sent again.
  */
-const outcomeOf = (error: EditFailure): SaveOutcome => {
+const outcomeOf = (error: EditFailure): SaveOutcome | typeof OFFERED_PRICE_CHANGED => {
   if (pendingProposalMessage(error) !== undefined) {
     return 'proposed';
   }
-  return Predicate.isTagged(error, 'ManageCatalogActionConflictProblem') &&
-    error.code === 'merchandise_revision_conflict'
-    ? 'conflict'
-    : 'failed';
+  if (!Predicate.isTagged(error, 'ManageCatalogActionConflictProblem')) {
+    return 'failed';
+  }
+  if (error.code === 'merchandise_offered_price_changed') {
+    return OFFERED_PRICE_CHANGED;
+  }
+  return error.code === 'merchandise_revision_conflict' ? 'conflict' : 'failed';
 };
 
 /**
  * The order version a saved edit left behind, or `saved` when that version is not known; otherwise why nothing was
  * saved.
  */
-export type OrderEditSaveResult = OrderVersion | SaveOutcome;
+export type OrderEditSaveResult = OrderVersion | SaveOutcome | typeof OFFERED_PRICE_CHANGED;
 
 /**
  * Sends one order edit against `revision` and reads the version the server has afterwards, which the next change of
@@ -96,6 +105,15 @@ interface OrderEditDraftOptions {
    * (`editCommandOf`), so the rule for an edited address or contact uses the base the sent command uses.
    */
   readonly isValid: (value: Draft, confirmed: Draft) => boolean;
+  /**
+   * After a save refused because an added line's price changed meanwhile: takes the current prices into the draft and
+   * says so. The save then counts as failed; the next Uložit sends the new prices.
+   */
+  readonly onOfferedPriceChanged: (draft: Draft) => Effect.Effect<void>;
+  /** Each save the server stored. */
+  readonly onSaveSucceeded: () => void;
+  /** Each save, as it sends the edit. */
+  readonly onSend: () => void;
   readonly order: Order;
   /** The catalog revision `order` was read at. */
   readonly revision: number;
@@ -114,7 +132,14 @@ interface OrderEditDraftOptions {
  * the catalog revision moves with every other order and product too. Each save sends the pair read together. After a
  * save the base moves to the version read back only when that order is what the save wrote (`saveOrderEdit`).
  */
-export const useOrderEditDraft = ({ isValid, order, revision }: OrderEditDraftOptions) => {
+export const useOrderEditDraft = ({
+  isValid,
+  onOfferedPriceChanged,
+  onSaveSucceeded,
+  onSend,
+  order,
+  revision,
+}: OrderEditDraftOptions) => {
   // The change reason that went into the history with the last saved edit: the reload after that save clears it
   // from the field, while a reason still waiting for its edit stays.
   const [sentReason, setSentReason] = useState<string | null>(null);
@@ -141,12 +166,19 @@ export const useOrderEditDraft = ({ isValid, order, revision }: OrderEditDraftOp
       const isWritten = (read: Order) => sameOrderDraft(draftOf(read), written);
       return command === null
         ? Effect.succeed('saved')
-        : saveOrderEdit(command, base.revision, isWritten).pipe(
+        : Effect.sync(onSend).pipe(
+            Effect.andThen(saveOrderEdit(command, base.revision, isWritten)),
+            Effect.flatMap((result) =>
+              result === OFFERED_PRICE_CHANGED
+                ? onOfferedPriceChanged(value).pipe(Effect.as<SaveOutcome>('failed'))
+                : Effect.succeed(result),
+            ),
             Effect.map((result): RevisionedSaveResult => {
               if (result === 'conflict' || result === 'failed' || result === 'proposed') {
                 return result;
               }
               savedOnce.current = true;
+              onSaveSucceeded();
               setSentReason(command.reason ?? null);
               if (result === 'saved') {
                 return result;

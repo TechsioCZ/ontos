@@ -28,6 +28,21 @@ type ProblemOf<Tag extends ProposeOrderChangesActionProblem['_tag']> = Extract<
   ProposeOrderChangesActionProblem,
   { readonly _tag: Tag }
 >;
+type DomainProblemIdentity =
+  | {
+      readonly code:
+        | 'merchandise_lifecycle_conflict'
+        | 'merchandise_offered_price_changed'
+        | 'merchandise_revision_conflict';
+      readonly kind: 'conflict';
+    }
+  | { readonly code: 'merchandise_permission_denied' | 'merchandise_scope_mismatch'; readonly kind: 'forbidden' }
+  | { readonly code: 'merchandise_reference_ineligible'; readonly kind: 'ineligible' }
+  | { readonly code: 'merchandise_not_found'; readonly kind: 'notFound' }
+  | {
+      readonly code: 'merchandise_persistence_unavailable' | 'merchandise_reference_unavailable';
+      readonly kind: 'unavailable';
+    };
 
 const problemStatus = {
   authentication: 401,
@@ -42,6 +57,14 @@ const problemStatus = {
   timeout: 504,
   unavailable: 503,
 } as const;
+
+const merchandiseLifecycleConflictProblemByCode = {
+  merchandise_lifecycle_conflict: { code: 'merchandise_lifecycle_conflict', kind: 'conflict' },
+  merchandise_offered_price_changed: { code: 'merchandise_offered_price_changed', kind: 'conflict' },
+} as const satisfies Record<
+  Extract<DomainError, { readonly _tag: 'MerchandiseLifecycleConflict' }>['code'],
+  DomainProblemIdentity
+>;
 
 export const proposeOrderChangesActionProblem = {
   authentication: (): ProblemOf<'ProposeOrderChangesActionAuthenticationProblem'> =>
@@ -127,10 +150,23 @@ export const proposeOrderChangesActionProblem = {
     }),
 } as const;
 
+const mapDomainIdentity = (identity: DomainProblemIdentity): ProposeOrderChangesActionProblem =>
+  Match.value(identity).pipe(
+    Match.when({ kind: 'conflict' as const }, (matched) => proposeOrderChangesActionProblem.conflict(matched.code)),
+    Match.when({ kind: 'forbidden' as const }, (matched) => proposeOrderChangesActionProblem.forbidden(matched.code)),
+    Match.when({ kind: 'ineligible' as const }, (matched) => proposeOrderChangesActionProblem.ineligible(matched.code)),
+    Match.when({ kind: 'notFound' as const }, (matched) => proposeOrderChangesActionProblem.notFound(matched.code)),
+    Match.when({ kind: 'unavailable' as const }, (matched) =>
+      proposeOrderChangesActionProblem.unavailable(matched.code),
+    ),
+    Match.exhaustive,
+  );
+
 const mapDomainProblem = (error: DomainError): ProposeOrderChangesActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      MerchandiseLifecycleConflict: () => proposeOrderChangesActionProblem.conflict('merchandise_lifecycle_conflict'),
+      MerchandiseLifecycleConflict: (failure) =>
+        mapDomainIdentity(merchandiseLifecycleConflictProblemByCode[failure.code]),
       MerchandiseNotFound: () => proposeOrderChangesActionProblem.notFound('merchandise_not_found'),
       MerchandiseNotImplemented: (failure) => mapMerchandiseNotImplementedProblem(failure),
       MerchandisePermissionDenied: () => proposeOrderChangesActionProblem.forbidden('merchandise_permission_denied'),

@@ -2,23 +2,54 @@
 // The order edit form as the user sees it: one Save button in the form's footer, the draft's status next to it, and
 // a question before unsaved changes are left. Only the generated clients, the i18n runtime and the router blocker are
 // replaced.
+import { CZ_VAT_REDUCED, CZ_VAT_STANDARD, TaxRateViewSchema } from '@app/shared-contracts/cz-vat-classifications';
+import type { CompanyVat } from '../../src/routes/[lang]/provoz/produkty/product-tax-classification.ts';
 import { Effect, Option, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
-import { act } from 'react';
+import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import { OrderSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
-import type { Order } from '../../shared/apis/records.ts';
+import { OrderSchema, ProductRecordSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import type { Order, ProductRecord } from '../../shared/apis/records.ts';
 import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
 import { executeRecords } from '../../src/api/records-consumer.ts';
 import { OrderEditForm } from '../../src/routes/[lang]/prodej/objednavky/order-edit-form.tsx';
+import type { ProductRecordState } from '../../src/routes/[lang]/provoz/produkty/product-reads.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
+import { translateTaxCs } from './merchandise-translate.ts';
+
+/** The product the mocked picker picks. */
+interface OfferedProduct {
+  current: ProductRecord | null;
+}
+
+const { offered } = rstest.hoisted(() => {
+  // Set before each test, since the mocks exist before this module's constants.
+  const pick: OfferedProduct = { current: null };
+  return { offered: pick };
+});
 
 rstest.mock('../../src/api/records-consumer.ts');
 rstest.mock('../../src/api/manage-catalog-action-client.ts');
 rstest.mock('../../src/api/cleanup-demo-action-client.ts');
 rstest.mock('../../src/api/change-order-status-action-client.ts');
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
+  useModernI18n: () => ({
+    language: 'cs',
+    t: (key: string, values?: Record<string, number | string>) => translateTaxCs(key, values),
+  }),
+}));
+// The product picker: one button that picks the product the test offers.
+rstest.mock('../../src/routes/[lang]/provoz/produkty/product-search.tsx', () => ({
+  ProductSearchCombobox: (props: { readonly onSelect: (product: ProductRecord | null) => void }) =>
+    createElement('button', { onClick: () => props.onSelect(offered.current), type: 'button' }, 'pick product'),
+}));
+// The picked product's full record arrives at once.
+rstest.mock('../../src/routes/[lang]/provoz/produkty/product-reads.ts', () => ({
+  loadProductRecord: (_productId: string, answer: (state: ProductRecordState) => void) => {
+    if (offered.current !== null) {
+      answer({ product: offered.current, status: 'ready' });
+    }
+  },
 }));
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   useBlocker: () => ({ status: 'idle' }),
@@ -35,7 +66,16 @@ const orderOf = (fields: { readonly note?: string; readonly updatedAt: string })
     demo: true,
     id: 'order-1',
     lines: [
-      { productId: 'product-1', productName: 'Cable', quantity: 2, sku: 'CABLE', unitPriceMinor: 100, vatRate: 21 },
+      {
+        productId: 'product-1',
+        productName: 'Cable',
+        quantity: 2,
+        sku: 'CABLE',
+        taxClassificationCode: CZ_VAT_STANDARD,
+        taxRuleRevisionId: 'tax-rule-revision-standard-21',
+        unitPriceMinor: 100,
+        vatRate: 21,
+      },
     ],
     note: fields.note ?? '',
     number: 'ORD-1',
@@ -45,6 +85,32 @@ const orderOf = (fields: { readonly note?: string; readonly updatedAt: string })
     totalVatMinor: 42,
     updatedAt: fields.updatedAt,
   });
+
+const rate = Schema.decodeSync(TaxRateViewSchema);
+/** Today Tax gives the standard classification 23 %: the order's own line keeps the 21 % it was snapshotted with. */
+const standardRate = rate({ code: CZ_VAT_STANDARD, effectiveFrom: '2020-01-01T00:00:00Z', ratePercent: 23 });
+const reducedRate = rate({ code: CZ_VAT_REDUCED, effectiveFrom: '2020-01-01T00:00:00Z', ratePercent: 12 });
+/** The company's rates the page passes in; a test replaces them. */
+const payer: CompanyVat = { rates: [standardRate, reducedRate], regime: 'VAT_PAYER' };
+let vat: CompanyVat = payer;
+
+const beans: ProductRecord = Schema.decodeSync(ProductRecordSchema)({
+  active: true,
+  category: 'Káva',
+  createdAt: opened,
+  currentPriceMinor: 800,
+  id: 'product-2',
+  lowStock: false,
+  lowStockThreshold: 0,
+  name: 'Zrnková káva',
+  priceHistory: [],
+  sku: 'BEANS',
+  stockOnHand: 50,
+  stockValueMinor: 40_000,
+  taxClassificationCode: CZ_VAT_REDUCED,
+  unit: 'ks',
+  updatedAt: opened,
+});
 
 const recordsWith = (order: Order, revision: number) =>
   Schema.decodeSync(RecordsResponseSchema)({
@@ -61,6 +127,13 @@ const recordsWith = (order: Order, revision: number) =>
   });
 
 const edits = () => rstest.mocked(executeManageCatalog).mock.calls.length;
+/** The order the form edits; a test replaces it. */
+let shownOrder: Order = orderOf({ updatedAt: opened });
+/** The lines of the edits the form sent. */
+const sentLines = () =>
+  rstest
+    .mocked(executeManageCatalog)
+    .mock.calls.flatMap(([payload]) => (payload.command._tag === 'EditOrder' ? (payload.command.lines ?? []) : []));
 
 const settle = async (): Promise<void> => {
   await browserRuntime.runPromise(Effect.yieldNow);
@@ -90,9 +163,10 @@ const mount = async (): Promise<View> => {
         onSaved={(message) => {
           saved.push(message);
         }}
-        order={orderOf({ updatedAt: opened })}
+        order={shownOrder}
         products={[]}
         revision={7}
+        vat={vat}
       />,
     );
     await settle();
@@ -160,11 +234,15 @@ const waitUntil = async (condition: () => boolean, attempt = 0): Promise<void> =
   await waitUntil(condition, attempt + 1);
 };
 
-const text = () => document.body.textContent ?? '';
+/** What the form shows, with non-breaking spaces (money, percent) read as plain spaces. */
+const text = () => (document.body.textContent ?? '').replaceAll('\u00A0', ' ');
 
 beforeEach(() => {
   rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   rstest.resetAllMocks();
+  offered.current = beans;
+  shownOrder = orderOf({ updatedAt: opened });
+  vat = payer;
   rstest.mocked(executeManageCatalog).mockReturnValue(Effect.succeed({ entityIds: [], revision: 8 }));
   rstest
     .mocked(executeRecords)
@@ -248,6 +326,89 @@ describe('order edit form with one Save button', () => {
       yield* Effect.promise(() => click(button('merchandise.pages.orders.detail.backToDetail')));
       expect(buttons('Zůstat')).toHaveLength(0);
       expect(view.cancelled).toEqual(['cancel']);
+    }),
+  );
+});
+
+describe('VAT of the order lines', () => {
+  it.effect("an order's own line shows the VAT it was snapshotted with, named by its classification", () =>
+    Effect.gen(function* snapshot() {
+      yield* Effect.promise(mount);
+      expect(text()).toContain('merchandise.pages.orders.detail.lineVat Základní (21 %)');
+      expect(text()).not.toContain('23 %');
+      // 2 × 1 Kč net + 21 % VAT, as the order already counted it.
+      expect(text()).toContain('2,42 Kč');
+    }),
+  );
+
+  it.effect("an added product takes its classification from the product and today's rate from Tax", () =>
+    Effect.gen(function* added() {
+      yield* Effect.promise(mount);
+      yield* Effect.promise(() => click(button('pick product')));
+      yield* Effect.promise(() => click(button('Přidat')));
+      expect(text()).toContain('merchandise.pages.orders.detail.lineVat Snížená (12 %)');
+      // 2,42 Kč for the order's line, plus 8 Kč net and 0,96 Kč VAT for the new one.
+      expect(text()).toContain('11,38 Kč');
+      expect(edits()).toBe(0);
+    }),
+  );
+
+  it.effect('a product whose classification has no rate in force cannot be added, and the form says why', () =>
+    Effect.gen(function* missing() {
+      vat = { ...payer, rates: [standardRate] };
+      yield* Effect.promise(mount);
+      yield* Effect.promise(() => click(button('pick product')));
+      expect(text()).toContain('Sazba DPH „Snížená“ není pro tuto firmu nastavená, produkt nelze přidat.');
+      expect(button('Přidat').disabled).toBe(true);
+    }),
+  );
+
+  it.effect('a product without a VAT classification cannot be added, and the form says why', () =>
+    Effect.gen(function* unclassified() {
+      const { taxClassificationCode: _code, ...withoutClassification } = beans;
+      void _code;
+      offered.current = withoutClassification;
+      yield* Effect.promise(mount);
+      yield* Effect.promise(() => click(button('pick product')));
+      expect(text()).toContain('Produkt nemá zařazení do sazby DPH, proto ho nelze přidat.');
+      expect(text()).not.toContain('„není nastaveno“');
+      expect(button('Přidat').disabled).toBe(true);
+    }),
+  );
+
+  it.effect('a company that is not a VAT payer adds a product at 0 % and the line says so', () =>
+    Effect.gen(function* nonPayer() {
+      vat = { rates: [], regime: 'NON_PAYER' };
+      yield* Effect.promise(mount);
+      yield* Effect.promise(() => click(button('pick product')));
+      expect(button('Přidat').disabled).toBe(false);
+      yield* Effect.promise(() => click(button('Přidat')));
+      expect(text()).toContain('merchandise.pages.orders.detail.lineVat Snížená (0 %)');
+      // 2,42 Kč for the order's line, plus 8 Kč net and no VAT for the new one.
+      expect(text()).toContain('10,42 Kč');
+      expect(text()).not.toContain('není nastaveno');
+    }),
+  );
+});
+
+describe('a line added to a storefront order (prices include VAT)', () => {
+  it.effect('takes the stored price including VAT and sends it as the offered price unless staff change it', () =>
+    Effect.gen(function* storedGross() {
+      shownOrder = { ...orderOf({ updatedAt: opened }), pricesIncludeVat: true };
+      // Stored gross 10 Kč, not 8 Kč net plus 12 % (8,96 Kč).
+      offered.current = { ...beans, grossPriceMinor: 1000 };
+      yield* Effect.promise(mount);
+      yield* Effect.promise(() => click(button('pick product')));
+      yield* Effect.promise(() => click(button('Přidat')));
+      expect(text()).not.toContain('8,96 Kč');
+      expect(text()).toContain('10 Kč');
+      yield* Effect.promise(() => click(button('Uložit')));
+      // The offered price travels with the line: the server stores that price or refuses when it changed meanwhile.
+      expect(sentLines().find((line) => line.productId === beans.id)).toEqual({
+        offeredUnitPriceMinor: 1000,
+        productId: beans.id,
+        quantity: 1,
+      });
     }),
   );
 });

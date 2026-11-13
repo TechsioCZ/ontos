@@ -13,12 +13,14 @@ import { SearchLabelsApi } from '../../verticals/party-registry/shared/apis/sear
 import { partyRegistryMcpContribution } from '../../verticals/party-registry/shared/mcp/contribution.ts';
 import { LeaseInvoicesApi } from '../../verticals/finance-billing/shared/apis/lease-invoices.ts';
 import { RecordsApi as FinanceRecordsApi } from '../../verticals/finance-billing/shared/apis/records.ts';
+import { VatChoicesApi } from '../../verticals/finance-billing/shared/apis/vat-choices.ts';
 import { financeBillingMcpContribution } from '../../verticals/finance-billing/shared/mcp/contribution.ts';
 import { CounterpartyRefSchema } from '../../verticals/party-registry/shared/resources/counterparty.ts';
 import { crmRuntimeManifest } from '../../verticals/crm/vertical.runtime-declaration.ts';
 import { crmMcpContribution } from '../../verticals/crm/shared/mcp/contribution.ts';
 import { facilityOperationsRuntimeManifest } from '../../verticals/facility-operations/vertical.runtime-declaration.ts';
 import { facilityOperationsMcpContribution } from '../../verticals/facility-operations/shared/mcp/contribution.ts';
+import { taxManifest } from '../../verticals/tax/vertical.manifest.ts';
 import { deriveOntosMcpContribution, OntosMcpContributionDerivationError } from '../ontos-mcp-contribution.mts';
 
 const APP_ID = 'party-registry';
@@ -76,11 +78,11 @@ it.effect('routes the three personal Facility commands to their distinct Action 
   }),
 );
 
-it.effect('keeps the lease detail preload read governed without adding an MCP tool', () =>
+it.effect('keeps the lease detail preload and VAT choices reads governed without adding an MCP tool', () =>
   Effect.gen(function* financePreloadContribution() {
     const derived = deriveOntosMcpContribution({
       actions: [],
-      api: { 'lease-invoices': LeaseInvoicesApi, records: FinanceRecordsApi },
+      api: { 'lease-invoices': LeaseInvoicesApi, records: FinanceRecordsApi, 'vat-choices': VatChoicesApi },
       appId: 'finance-billing',
       authored: { ...financeBillingMcpContribution, actions: {}, commands: {} },
       moduleId: 'finance.billing',
@@ -98,7 +100,7 @@ it('rejects an undeclared lease preload read instead of silently excluding it', 
   expect(() =>
     deriveOntosMcpContribution({
       actions: [],
-      api: { 'lease-invoices': LeaseInvoicesApi, records: FinanceRecordsApi },
+      api: { 'lease-invoices': LeaseInvoicesApi, records: FinanceRecordsApi, 'vat-choices': VatChoicesApi },
       appId: 'finance-billing',
       authored: {
         ...financeBillingMcpContribution,
@@ -335,4 +337,46 @@ it.effect(
         isJsonObject(properties) && isJsonObject(properties.counterpartyRef) && properties.counterpartyRef.$ref,
       ).toEqual(expect.stringMatching(/^#\/\$defs\/S[0-9a-f]{12}$/u));
     }),
+);
+
+it.effect('tax lists only VAT management as typed tools; system steps stay generic-only', () =>
+  Effect.gen(function* taxGenericOnlyContribution() {
+    const derived = deriveOntosMcpContribution({
+      actions: taxManifest.publicSurface.actions,
+      api: taxManifest.publicSurface.api,
+      appId: 'tax',
+      authored: taxManifest.publicSurface.mcp,
+      moduleId: 'commerce.tax',
+    });
+    if (derived === undefined) {
+      expect.unreachable('Expected the tax MCP contribution');
+    }
+    const catalog = yield* Schema.decodeEffect(OntosMcpToolCatalogJsonSchema)(derived.toolCatalog);
+    const ids = (genericOnly: boolean) =>
+      catalog.tools
+        .filter((tool) => (tool.genericOnly === true) === genericOnly)
+        .map((tool) => tool.id)
+        .toSorted();
+    expect(ids(false)).toEqual([
+      'commerce.tax/action/create-tax-rule',
+      'commerce.tax/action/create-tax-rule-revision',
+      'commerce.tax/action/declare-seller-vat-regime',
+      'commerce.tax/action/end-tax-rule-revision',
+      'commerce.tax/read/applicable-tax-rule-set',
+      'commerce.tax/read/seller-vat-regime-at-instant',
+      'commerce.tax/read/tax-rule-history',
+    ]);
+    expect(ids(true)).toEqual([
+      'commerce.tax/action/correct-tax-rule-revision',
+      'commerce.tax/action/finalize-order-tax',
+      'commerce.tax/action/import-seller-vat-regime-declarations',
+      'commerce.tax/read/final-order-tax',
+      'commerce.tax/read/seller-vat-regime-history',
+      'commerce.tax/read/tax-correction-preview',
+      'commerce.tax/read/tax-evaluation',
+      'commerce.tax/read/tax-materiality-comparison',
+    ]);
+    expect(catalog.tools.some((tool) => tool.id.endsWith('/tax-privacy-owner-coverage'))).toBe(false);
+    expect(Object.hasOwn(catalog.tools.find((tool) => tool.genericOnly !== true) ?? {}, 'genericOnly')).toBe(false);
+  }),
 );

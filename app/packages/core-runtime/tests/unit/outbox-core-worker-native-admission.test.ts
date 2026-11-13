@@ -43,6 +43,7 @@ const composition = makeOutboxWorkerComposition();
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const actorPrincipalId = '10000000-0000-4000-8000-000000000002';
 const invocationId = '10000000-0000-4000-8000-000000000003';
+const companyId = '10000000-0000-4000-8000-000000000006';
 
 const payloadFor = (registration: CoreWorker) =>
   Match.value(registration.descriptor.workerKey).pipe(
@@ -66,6 +67,8 @@ const payloadFor = (registration: CoreWorker) =>
 interface FixtureOptions {
   readonly authority?: 'expired' | 'revision-changed' | 'unavailable';
   readonly deployment?: typeof OntosDeploymentIdentitySchema.Type;
+  /** The company the claimed event's invocation acted in (`core.domain_events.legal_entity_id`); null when none. */
+  readonly legalEntityId?: string;
   readonly registrations?: readonly CoreWorker[];
   readonly selected?: CoreWorker;
   readonly sqlAuthority?: 'expired' | 'sealed' | 'stale';
@@ -79,6 +82,7 @@ const runEntry = Effect.fn('TestCoreOutbox.runEntry')(function* runEntry(options
   const claims: OutboxClaim[] = [];
   const results: OutboxCycleResult[] = [];
   const { selected } = options;
+  const eventCompany = options.legalEntityId ?? null;
   let openTransactions = 0;
   let claimed = false;
   let completed = false;
@@ -118,6 +122,7 @@ const runEntry = Effect.fn('TestCoreOutbox.runEntry')(function* runEntry(options
             consumerModuleKey: selected.descriptor.consumerModuleKey,
             deliveryId: 'delivery-1',
             domainEventId: 'event-1',
+            legalEntityId: eventCompany,
             messageId: 'message-1',
             payloadJson: payloadFor(selected),
             producerModuleKey: selected.descriptor.producerModuleKey,
@@ -464,6 +469,32 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
       }),
     );
   }
+
+  suite.effect(
+    'hands a worker the company its event acted in only when the event names one; other workers settle as before',
+    () =>
+      Effect.gen(function* originatorCompany() {
+        const [peopleWorker] = corePeopleSearchOutboxWorkers;
+        // The claim reads the company from the domain event itself.
+        const withCompany = yield* runEntry({ legalEntityId: companyId, selected: peopleWorker });
+        const claimSql = withCompany.statements.find(({ sql }) => sql.includes('skip locked'))?.sql ?? '';
+        expect(claimSql).toMatch(/"domain_events"\."legal_entity_id"/u);
+        expect(withCompany.claims.map((claim) => claim.originatorLegalEntityId)).toEqual([companyId]);
+        expect(withCompany.observed.map((context) => context.originatorLegalEntityId)).toEqual([companyId]);
+        expect([withCompany.completed, withCompany.failures]).toEqual([true, []]);
+        // A tenant-level event (no company): the claim and the handler context carry no company at all.
+        const tenantLevel = yield* runEntry({ selected: peopleWorker });
+        expect(tenantLevel.claims.map((claim) => Object.hasOwn(claim, 'originatorLegalEntityId'))).toEqual([false]);
+        expect(tenantLevel.observed.map((context) => Object.hasOwn(context, 'originatorLegalEntityId'))).toEqual([
+          false,
+        ]);
+        expect([tenantLevel.completed, tenantLevel.failures]).toEqual([true, []]);
+        // A worker that knows nothing of companies decodes and settles a message whose event names one, as before.
+        const system = yield* runEntry({ legalEntityId: companyId, selected: coreSystemOutboxWorkers[0] });
+        expect(system.claims.map((claim) => claim.originatorLegalEntityId)).toEqual([companyId]);
+        expect([system.completed, system.failures, system.reconciled.length]).toEqual([true, [], 1]);
+      }),
+  );
 
   for (const authority of ['expired', 'revision-changed', 'unavailable'] as const) {
     suite.effect(`rejects ${authority} composition observed between process admission and native claiming`, () =>

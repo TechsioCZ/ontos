@@ -89,8 +89,22 @@ interface DelegationCase {
   readonly ledgerFailure?: 'replay' | 'unavailable';
   readonly legalEntityScope?: 'subject' | 'tenant';
   readonly malformed?: boolean;
+  /** Whether Core recorded a domain event of the invocation in the message company (default: it did). */
+  readonly messageCompanyRecorded?: boolean;
+  /** The company of the Outbox message the work handles, as the Outbox gave it to the caller. */
+  readonly messageLegalEntityId?: string;
   readonly missingDeployment?: 'catalog' | 'party-registry';
-  readonly moduleState?: 'suspended' | 'quarantined' | 'missing' | 'unavailable';
+  /** `destination-not-installed`: the calling module is active for the tenant, the module it calls is not. */
+  readonly moduleState?:
+    | 'suspended'
+    | 'quarantined'
+    | 'missing'
+    | 'unavailable'
+    | 'destination-not-installed'
+    | 'destination-suspended'
+    | 'destination-quarantined'
+    | 'destination-inactive'
+    | 'destination-archived';
   readonly originalBindingRevoked?: boolean;
   /**
    * `tenant` is a workload requester of work started in the tenant context — the Storefront client — and
@@ -113,7 +127,7 @@ interface DelegationCase {
 }
 
 /** The recorded requester of asynchronous work, or the refusal the invocation's evidence would give. */
-const originatorEvidenceDouble = (decision: NonNullable<DelegationCase['originator']>) => ({
+const originatorEvidenceDouble = (decision: NonNullable<DelegationCase['originator']>, messageRecorded = true) => ({
   load: () => {
     if (decision === 'denied') {
       return Effect.fail(delegationForbidden('originator_not_admitted')());
@@ -133,6 +147,7 @@ const originatorEvidenceDouble = (decision: NonNullable<DelegationCase['originat
     }
     return Effect.succeed({ principal: delegationUnitPrincipal, workload: false });
   },
+  messageCompanyRecorded: () => Effect.succeed(messageRecorded),
 });
 
 /** What the scope resolver was asked: the principal it resolved, its company rule and its calling module. */
@@ -174,6 +189,25 @@ const scopeResolverDouble = (failure: DelegationCase['contextFailure'], requests
   },
 });
 
+/** The state the module called (Party Registry) is in, per case; the calling module stays active. */
+const DESTINATION_STATES = [
+  ['destination-archived', 'archived'],
+  ['destination-inactive', 'inactive'],
+  ['destination-quarantined', 'quarantined'],
+  ['destination-suspended', 'suspended'],
+] as const;
+const destinationStateOf = (moduleState: DelegationCase['moduleState']) =>
+  DESTINATION_STATES.find(([kind]) => kind === moduleState)?.[1];
+
+/** One module's state in a case: every module suspended or quarantined, or only the destination in its own state. */
+const moduleStateOf = (moduleId: string, moduleState: DelegationCase['moduleState']) => {
+  if (moduleState === 'suspended' || moduleState === 'quarantined') {
+    return moduleState;
+  }
+  const destinationState = destinationStateOf(moduleState);
+  return destinationState !== undefined && moduleId === 'party.registry' ? destinationState : 'active';
+};
+
 /** The module states a case's tenant holds: active unless the case names a missing or unavailable state. */
 const moduleStatesFor = (
   modules: readonly { readonly moduleId: string }[],
@@ -182,9 +216,22 @@ const moduleStatesFor = (
   modules.map((module) =>
     Schema.decodeUnknownSync(TenantModuleStateRecordSchema)({
       moduleKey: module.moduleId,
-      state: moduleState === 'missing' || moduleState === 'unavailable' ? 'active' : (moduleState ?? 'active'),
+      state: moduleStateOf(module.moduleId, moduleState),
     }),
   );
+
+/** What the tenant holds: nothing when its states are missing; without the called module when that is not installed. */
+const statesHeld = (
+  moduleState: DelegationCase['moduleState'],
+  states: readonly (typeof TenantModuleStateRecordSchema.Type)[],
+) => {
+  if (moduleState === 'missing') {
+    return [];
+  }
+  return moduleState === 'destination-not-installed'
+    ? states.filter((state) => state.moduleKey !== 'party.registry')
+    : states;
+};
 
 /** The subject of a case: the requester's own live assertion, or the recorded requester of asynchronous work. */
 const subjectFor = (token: string, input: DelegationCase) => {
@@ -196,9 +243,13 @@ const subjectFor = (token: string, input: DelegationCase) => {
     actionInvocationId: subjectInvocationId,
     tenantId: delegationUnitPrincipal.tenantId,
   };
+  const withMessage =
+    input.messageLegalEntityId === undefined
+      ? originator
+      : { ...originator, messageLegalEntityId: input.messageLegalEntityId };
   return input.originatorLegalEntityId === undefined
-    ? originator
-    : { ...originator, legalEntityId: input.originatorLegalEntityId };
+    ? withMessage
+    : { ...withMessage, legalEntityId: input.originatorLegalEntityId };
 };
 
 /** The catalog module's key as the platform attests it: for the release under test and that release's catalog build. */
@@ -367,7 +418,10 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
           },
         }),
       ),
-      Effect.provideService(GatewayOriginatorEvidence, originatorEvidenceDouble(input.originator ?? 'ok')),
+      Effect.provideService(
+        GatewayOriginatorEvidence,
+        originatorEvidenceDouble(input.originator ?? 'ok', input.messageCompanyRecorded),
+      ),
       Effect.provideService(OperationalScopeResolver, scopeResolverDouble(input.contextFailure, resolvedScopes)),
       Effect.provide(
         Layer.mock(TenantModuleStateService, {
@@ -379,7 +433,7 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
                     reason: 'Controlled unavailable module state',
                   }),
                 )
-              : Effect.succeed(input.moduleState === 'missing' ? [] : moduleStates),
+              : Effect.succeed(statesHeld(input.moduleState, moduleStates)),
         }),
       ),
       Effect.provideService(GatewayDelegationExchangeLedger, {
@@ -591,6 +645,88 @@ it.effect('refuses a named company that is not the one the originating invocatio
   }),
 );
 
+const messageCompany = '30000000-0000-4000-8000-00000000000a';
+
+/** The company the issued context names, or null when it was not issued. */
+const issuedCompanyOf = (result: Effect.Success<ReturnType<typeof delegationCase>>) =>
+  Effect.gen(function* issuedCompany() {
+    if (!Exit.isSuccess(result.result)) {
+      return null;
+    }
+    const { token } = result.result.value;
+    const verified = yield* Effect.promise(() =>
+      jwtVerify(token, result.publicKey, {
+        audience: 'party-registry',
+        currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(delegationUnitNow * 1000)),
+        issuer,
+      }),
+    );
+    const principal: unknown = verified.payload['principal'];
+    return Predicate.hasProperty(principal, 'legalEntityId') && Predicate.isString(principal.legalEntityId)
+      ? principal.legalEntityId
+      : null;
+  });
+
+it.effect('binds tenant-context work to the company of its Outbox message, as Core recorded it', () =>
+  Effect.gen(function* bindsMessageCompany() {
+    // A workload's tenant-context invocation: without the message's company any company could have been named.
+    const bound = yield* delegationCase({ messageLegalEntityId: messageCompany, originator: 'tenant' });
+    expect(yield* issuedCompanyOf(bound)).toBe(messageCompany);
+    // A person's tenant-context invocation is bound the same way; it no longer stays tenant-wide.
+    const person = yield* delegationCase({ messageLegalEntityId: messageCompany, originator: 'person-tenant' });
+    expect(yield* issuedCompanyOf(person)).toBe(messageCompany);
+    // The caller may restate that same company.
+    const restated = yield* delegationCase({
+      messageLegalEntityId: messageCompany,
+      originator: 'tenant',
+      originatorLegalEntityId: messageCompany,
+    });
+    expect(yield* issuedCompanyOf(restated)).toBe(messageCompany);
+  }),
+);
+
+it.effect('refuses any other company beside the message company, and a company Core never recorded', () =>
+  Effect.gen(function* refusesOtherThanMessageCompany() {
+    const reasonOf = (result: Effect.Success<ReturnType<typeof delegationCase>>) => {
+      const failure = Exit.isFailure(result.result) ? Cause.squash(result.result.cause) : null;
+      return Schema.is(GatewayDelegationError)(failure) ? failure.reason : null;
+    };
+    const named = yield* delegationCase({
+      messageLegalEntityId: messageCompany,
+      originator: 'tenant',
+      originatorLegalEntityId: namedCompany,
+    });
+    assertDenied(named, 'forbidden');
+    expect(reasonOf(named)).toBe('originator_company_mismatch');
+    // The invocation ran in another company than the message claims.
+    const recordedElsewhere = yield* delegationCase({ messageLegalEntityId: messageCompany, originator: 'ok' });
+    expect(reasonOf(recordedElsewhere)).toBe('originator_company_mismatch');
+    // Core has no domain event of the invocation in that company.
+    const unrecorded = yield* delegationCase({
+      messageCompanyRecorded: false,
+      messageLegalEntityId: messageCompany,
+      originator: 'tenant',
+    });
+    assertDenied(unrecorded, 'forbidden');
+    expect(reasonOf(unrecorded)).toBe('originator_company_not_recorded');
+    expect(unrecorded.resolvedScopes).toEqual([]);
+  }),
+);
+
+it.effect('changes nothing while the Outbox supplies no message company', () =>
+  Effect.gen(function* unchangedWithoutMessageCompany() {
+    expect(yield* issuedCompanyOf(yield* delegationCase({ originator: 'ok' }))).toBe(
+      delegationUnitPrincipal.legalEntityId,
+    );
+    expect(
+      yield* issuedCompanyOf(yield* delegationCase({ originator: 'tenant', originatorLegalEntityId: namedCompany })),
+    ).toBe(namedCompany);
+    expect(
+      yield* issuedCompanyOf(yield* delegationCase({ legalEntityScope: 'tenant', originator: 'person-tenant' })),
+    ).toBeNull();
+  }),
+);
+
 it.effect('refuses a named company on a tenant-only delegation', () =>
   Effect.gen(function* refusesCompanyOnTenantScope() {
     const result = yield* delegationCase({
@@ -760,6 +896,14 @@ const cryptoNegatives: readonly (readonly [string, DelegationCase, GatewayDelega
   ['suspended-module', { moduleState: 'suspended' }, 'forbidden'],
   ['quarantined-module', { moduleState: 'quarantined' }, 'forbidden'],
   ['missing-module-state', { moduleState: 'missing' }, 'forbidden'],
+  // The module called is absent, switched off or retired for the tenant: lasting states the caller reads as "not
+  // installed".
+  ['destination-not-installed', { moduleState: 'destination-not-installed' }, 'module_not_installed'],
+  ['destination-inactive', { moduleState: 'destination-inactive' }, 'module_not_installed'],
+  ['destination-archived', { moduleState: 'destination-archived' }, 'module_not_installed'],
+  // Suspended or quarantined is temporary: a plain refusal, an outage to the caller, never "not installed".
+  ['destination-suspended', { moduleState: 'destination-suspended' }, 'forbidden'],
+  ['destination-quarantined', { moduleState: 'destination-quarantined' }, 'forbidden'],
   ['originator-denied', { originator: 'denied' }, 'forbidden'],
   ['originator-unavailable', { originator: 'unavailable' }, 'unavailable'],
   ['originator-is-the-calling-module', { originator: 'caller' }, 'forbidden'],
@@ -788,6 +932,11 @@ const refusalReasons: readonly (readonly [string, DelegationCase, GatewayRefusal
   ['unavailable-current-context', { contextFailure: 'unavailable' }, 'scope_unavailable'],
   ['unavailable-module-state', { moduleState: 'unavailable' }, 'module_states_unavailable'],
   ['suspended-module', { moduleState: 'suspended' }, 'module_not_active'],
+  ['destination-not-installed', { moduleState: 'destination-not-installed' }, 'audience_module_not_installed'],
+  ['destination-inactive', { moduleState: 'destination-inactive' }, 'audience_module_not_installed'],
+  ['destination-archived', { moduleState: 'destination-archived' }, 'audience_module_not_installed'],
+  ['destination-suspended', { moduleState: 'destination-suspended' }, 'audience_module_not_active'],
+  ['destination-quarantined', { moduleState: 'destination-quarantined' }, 'audience_module_not_active'],
   ['originator-denied', { originator: 'denied' }, 'originator_not_admitted'],
   ['originator-unavailable', { originator: 'unavailable' }, 'originator_evidence_unavailable'],
   ['late-ledger-replay', { ledgerFailure: 'replay' }, 'exchange_replayed'],

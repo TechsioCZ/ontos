@@ -5,6 +5,11 @@ const promotionImmutableEvidenceReason = 'Promotion immutable publication, attri
 
 export const SHARED_RUNTIME_TABLE_GRANT_EXCEPTIONS = [
   {
+    privileges: ['select'],
+    reason: 'The serving VAT classification release; only demo_merchandise.record_tax_classification_live() writes it',
+    table: 'demo_merchandise.tax_classification_live',
+  },
+  {
     privileges: ['select', 'insert'],
     reason: 'Immutable before/after Promotion selection and basis policy evidence',
     table: 'promotion.policy_changes',

@@ -14,6 +14,8 @@ import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { Context, Effect, Option, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
 
+import { refuseRedirects, withoutFollowingRedirects } from './key-transport.ts';
+
 export interface ApiKeyGatewayContextClientOptions {
   readonly apiKey: Redacted.Redacted;
   readonly baseUrl: string | URL;
@@ -32,29 +34,34 @@ const ApiKeyGatewayContextTransport = Context.Reference<Option.Option<ApiKeyGate
   },
 );
 
-const apiKeyGatewayContextClient = makeEffectHttpApiClient(GatewayContextApi, {
-  transformClient: HttpClient.mapRequestEffect((request) =>
-    ApiKeyGatewayContextTransport.pipe(
-      Effect.map(
-        Option.match({
-          onNone: () => request,
-          onSome: (options) =>
-            HttpClientRequest.setHeader(
-              HttpClientRequest.prependUrl(request, options.baseUrl.toString()),
-              'x-correlation-id',
-              options.requestCorrelation,
-            ),
-        }),
-      ),
+const attachTransport = HttpClient.mapRequestEffect((request) =>
+  ApiKeyGatewayContextTransport.pipe(
+    Effect.map(
+      Option.match({
+        onNone: () => request,
+        onSome: (options) =>
+          HttpClientRequest.setHeader(
+            HttpClientRequest.prependUrl(request, options.baseUrl.toString()),
+            'x-correlation-id',
+            options.requestCorrelation,
+          ),
+      }),
     ),
   ),
+);
+
+const apiKeyGatewayContextClient = makeEffectHttpApiClient(GatewayContextApi, {
+  transformClient: (client) => client.pipe(attachTransport, refuseRedirects),
 });
 
 /** One request-scoped transport seam shared by the two API-key-authenticated issuer operations. */
 const withApiKeyGatewayContextTransport =
   (options: ApiKeyGatewayContextTransportOptions) =>
   <Success, Failure, Requirements>(effect: Effect.Effect<Success, Failure, Requirements>) =>
-    effect.pipe(Effect.updateService(ApiKeyGatewayContextTransport, () => Option.some(options)));
+    effect.pipe(
+      withoutFollowingRedirects,
+      Effect.updateService(ApiKeyGatewayContextTransport, () => Option.some(options)),
+    );
 
 /**
  * Server-only client for Shell-owned API-key capability issuance.

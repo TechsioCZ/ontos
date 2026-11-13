@@ -72,8 +72,11 @@ const unconfiguredPrincipalManagement = (operation: string) =>
   Effect.die(`${operation} is not configured in this test`);
 const principalManagementRepository: PrincipalManagementRepositoryService = {
   bindApiKey: () => unconfiguredPrincipalManagement('bindApiKey'),
+  changePlatformPrincipalStatus: () => unconfiguredPrincipalManagement('changePlatformPrincipalStatus'),
   changePrincipalStatus: () => unconfiguredPrincipalManagement('changePrincipalStatus'),
   createNonHumanPrincipal: () => unconfiguredPrincipalManagement('createNonHumanPrincipal'),
+  createPlatformServicePrincipal: () => unconfiguredPrincipalManagement('createPlatformServicePrincipal'),
+  renamePlatformServicePrincipal: () => unconfiguredPrincipalManagement('renamePlatformServicePrincipal'),
   setApiKeyBindingStatus: () => unconfiguredPrincipalManagement('setApiKeyBindingStatus'),
   validateSupportImpersonation: () => unconfiguredPrincipalManagement('validateSupportImpersonation'),
 };

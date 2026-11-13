@@ -44,6 +44,11 @@ export const catalogHeads = merchandiseSchema.table.withRLS(
       .default(sql`'{}'::text[]`)
       .notNull(),
     revision: integer('revision').default(0).notNull(),
+    /**
+     * The company's VAT rates as last read from Tax (`CompanyTaxRates`): the book with its effective periods and the
+     * rates the stored gross prices were computed with. Null until the first sync; then nothing is sellable.
+     */
+    taxRates: jsonb('tax_rates'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
@@ -91,10 +96,21 @@ export const products = merchandiseSchema.table.withRLS(
     sourceGroupId: text('source_group_id'),
     stockOnHand: doublePrecision('stock_on_hand').notNull(),
     stockValueMinor: minor('stock_value_minor').notNull(),
+    /** The product's VAT classification (`document.taxClassificationCode`); Tax holds its rate. */
+    taxClassificationCode: text('tax_classification_code').notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.tenantId, table.legalEntityId, table.id] }),
+    check(
+      'demo_merchandise_product_tax_classification',
+      sql`${table.taxClassificationCode} in ('cz.vat.standard', 'cz.vat.reduced')`,
+    ),
+    index('demo_merchandise_products_tax_classification').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.taxClassificationCode,
+    ),
     uniqueIndex('demo_merchandise_products_sku').on(table.tenantId, table.legalEntityId, table.skuKey),
     index('demo_merchandise_products_ordinal').on(table.tenantId, table.legalEntityId, table.ordinal),
     index('demo_merchandise_products_slug').on(table.tenantId, table.legalEntityId, table.slug),
@@ -291,6 +307,21 @@ export const gatewayAssertionRedemptions = merchandiseSchema.table(
     primaryKey({ columns: [table.issuer, table.audience, table.jti] }),
     index('demo_merchandise_redemption_expiry').on(table.expiresAt),
   ],
+);
+
+/**
+ * Which release with the VAT classification serves now: the composition revision of the release whose catalogue write
+ * came last (written by `demo_merchandise.record_tax_classification_live()` on each release's first write). The
+ * contract step refuses unless it is the revision serving when it runs, then drops the table.
+ */
+export const taxClassificationLive = merchandiseSchema.table(
+  'tax_classification_live',
+  {
+    compositionRevision: text('composition_revision').notNull(),
+    firstServedAt: timestamp('first_served_at', { withTimezone: true }).defaultNow().notNull(),
+    singleton: boolean('singleton').default(true).primaryKey(),
+  },
+  (table) => [check('demo_merchandise_tax_classification_live_singleton', sql`${table.singleton}`)],
 );
 
 export const merchandiseRelations = defineRelations({

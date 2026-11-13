@@ -51,7 +51,7 @@ import {
 import { AccessAdminClock } from '../../api/access-admin/clock.ts';
 import type { AccessPeopleBffService } from '../../api/access-admin/people.ts';
 import { AccessPeopleBff, AccessPeopleBffLive, accessPeopleDeclarations } from '../../api/access-admin/people.ts';
-import { AccessAdminSession } from '../../api/access-admin/session.ts';
+import { AccessAdminSession, accessAdminUnavailableProblem } from '../../api/access-admin/session.ts';
 import { AccessPeopleWriteAvailability } from '../../api/access-admin/people-write-gate.ts';
 
 /*
@@ -336,7 +336,11 @@ interface Recorded {
   reconciles: number;
 }
 
-const commandsFor = (recorded: Recorded, failure?: PeopleCommandFailure): AccessPeopleCommandsService => {
+const commandsFor = (
+  recorded: Recorded,
+  failure?: PeopleCommandFailure,
+  reconcileFailure?: PeopleCommandFailure,
+): AccessPeopleCommandsService => {
   const answer = (operation: string, command: PeopleCommand) =>
     Effect.suspend(() => {
       recorded.calls.push({ command, operation });
@@ -361,8 +365,9 @@ const commandsFor = (recorded: Recorded, failure?: PeopleCommandFailure): Access
         }),
       ]),
     reconcile: () =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         recorded.reconciles += 1;
+        return reconcileFailure === undefined ? Effect.void : Effect.fail(reconcileFailure);
       }),
     revokeDelegation: (_scope, command) => answer('revokeDelegation', command),
     setTeamMembership: (_scope, command) => answer('setTeamMembership', command),
@@ -374,6 +379,7 @@ const commandsFor = (recorded: Recorded, failure?: PeopleCommandFailure): Access
 const harness = (input: {
   readonly failure?: PeopleCommandFailure;
   readonly persona: Persona;
+  readonly reconcileFailure?: PeopleCommandFailure;
   readonly writes?: boolean;
 }) => {
   const recorded: Recorded = { calls: [], directoryReads: 0, reconciles: 0 };
@@ -390,7 +396,7 @@ const harness = (input: {
           reason: 'pending real-gate verification',
         }),
         Layer.succeed(AccessDecisionGate, gate),
-        Layer.succeed(AccessPeopleCommands, commandsFor(recorded, input.failure)),
+        Layer.succeed(AccessPeopleCommands, commandsFor(recorded, input.failure, input.reconcileFailure)),
         Layer.succeed(AccessPeopleDirectory, directoryFor(recorded)),
       ),
     ),
@@ -545,6 +551,32 @@ it.effect('refuses a stale screen with 409 before Core writes, converging the pr
     expect(recorded.calls).toEqual([]);
     // A retry of a write that committed before its reconcile failed lands here; it reconciles once.
     expect(recorded.reconciles).toBe(1);
+  }),
+);
+
+it.effect('answers a stale screen whose repair fails as unavailable, never as a change this request saved', () =>
+  Effect.gen(function* staleRepairFails() {
+    const { recorded, run } = harness({
+      persona: 'owner',
+      reconcileFailure: { code: 'access_projection_write_unavailable', reason: 'engine down' },
+    });
+    const problem = yield* failureOf(
+      run((bff) =>
+        bff.assign({
+          headers,
+          idempotencyKey: 'assign-3',
+          payload: decode(AssignAccessRolePayloadSchema, {
+            expectedRevision: 'an-old-revision',
+            expectedRoleRevisionId: ROLE_A_REVISION,
+            principalId: ALICE,
+            roleId: ROLE_A,
+            scope: { kind: 'company', legalEntityId: COMPANY_A },
+          }),
+        }),
+      ),
+    );
+    expect(recorded.calls).toEqual([]);
+    expect(problem).toEqual(accessAdminUnavailableProblem());
   }),
 );
 

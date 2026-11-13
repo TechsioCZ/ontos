@@ -20,6 +20,15 @@ for service in $services; do
     n1) : "${ZEROPS_N1_STOREFRONT_SERVICE_ID:?n1 service id is required}" ;;
   esac
 done
+# The project's public hostnames (the workflow's STAGE_*_URL), so each upload says whether it enters through them.
+if [ -z "${PUSH_PROJECT_HOSTS:-}" ]; then
+  PUSH_PROJECT_HOSTS=''
+  for url in "${STAGE_SHELL_URL:-}" "${STAGE_STOREFRONT_URL:-}" "${STAGE_SHOP_URL:-}" "${STAGE_N1_URL:-}"; do
+    host="${url#*://}"
+    if [ -n "$url" ]; then PUSH_PROJECT_HOSTS+="${host%%[/:?#]*} "; fi
+  done
+fi
+export PUSH_PROJECT_HOSTS
 pids=()
 started="$(date +%s)"
 for service in $services; do

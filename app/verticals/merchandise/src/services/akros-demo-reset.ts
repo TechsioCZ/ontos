@@ -16,6 +16,7 @@ import {
   decodeCategoryRow,
   deleteScope,
   insertSnapshotPart,
+  currentPricingOf,
   loadProducts,
   query,
   whereScope,
@@ -139,13 +140,15 @@ export const resetToAkrosBaseline = Effect.fn('Merchandise.resetToAkrosBaseline'
     yield* Effect.forEach(categoryRows, decodeCategoryRow, { concurrency: 1 }),
   );
   const head = keepLinkedPhotos(yield* decodeAkrosBaselinePart(first), linked);
+  // Baseline prices without a stored gross are entered at the company's current rates.
+  const { held, rates } = yield* currentPricingOf(db, scope);
   yield* deleteScope(db, scope);
-  yield* insertSnapshotPart(db, scope, head);
+  yield* insertSnapshotPart(db, scope, head, rates, held);
   yield* Effect.forEach(
     rest,
     (part) =>
       decodeAkrosBaselinePart(part).pipe(
-        Effect.flatMap((state) => insertSnapshotPart(db, scope, keepLinkedPhotos(state, linked))),
+        Effect.flatMap((state) => insertSnapshotPart(db, scope, keepLinkedPhotos(state, linked), rates, held)),
       ),
     { concurrency: 1, discard: true },
   );

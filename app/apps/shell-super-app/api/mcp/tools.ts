@@ -12,6 +12,7 @@ import {
   agentCommandOf,
 } from '@app/shared-contracts/agent-proposals';
 import type { AgentProposalInput } from '@app/shared-contracts/agent-proposals';
+import type { ConnectionModule } from '@app/shared-contracts/oauth-connections';
 import { Duration, Effect, Option, Predicate, Result, Schema } from 'effect';
 
 import type { JsonObject, McpCatalogModule, McpCatalogTool } from './catalog.ts';
@@ -30,7 +31,16 @@ import type { DirectReplayResult } from './replay.ts';
 import { matchesTokens, queryTokens } from './search.ts';
 import { RecordSearchInput } from './record-search.ts';
 import type { RecordSearchRefused } from './record-search.ts';
-import { annotationsFor, canPropose, canRead, canWrite, grantAllowsWrite, isOffered, planTools } from './tool-plan.ts';
+import {
+  annotationsFor,
+  canPropose,
+  canRead,
+  canWrite,
+  grantAllowsWrite,
+  isOffered,
+  planTools,
+  TYPED_TOOL_CAP,
+} from './tool-plan.ts';
 import type { GenericToolName } from './tool-plan.ts';
 import {
   CapabilitiesInput,
@@ -74,6 +84,10 @@ const MSG_NO_REVISION = (label: string): string =>
 const READ_NOTE_CS =
   'Výsledek je zkrácený. Další položky seznamu: stejné volání s offset. Vynechané části (omitted) načtěte přes ontos_read {id, path}.';
 const NOT_PROPOSABLE_NOTE = 'Návrhy ke schválení tento modul nepřijímá; změny jen přímo v OntOS.';
+const genericOnlyNote = (moduleId: string): string =>
+  `Modul nemá vlastní nástroje v seznamu (připojení má nejvýš ${TYPED_TOOL_CAP} typovaných nástrojů). Jeho čtení a akce najdeš přes ontos_capabilities {moduleId: "${moduleId}"} a spustíš přes ontos_read nebo ontos_execute; oprávnění jsou stejná. / No listed tools for this module (typed-tool limit); use ontos_capabilities, ontos_read and ontos_execute with the same rights.`;
+const overCapNote = (typed: readonly string[], genericOnly: readonly string[]): string =>
+  `Vlastní nástroje v seznamu mají moduly: ${typed.length === 0 ? 'žádný' : typed.join(', ')}. Jen přes obecné nástroje (ontos_capabilities, ontos_read, ontos_execute) fungují: ${genericOnly.join(', ')}. Oprávnění jsou v obou případech stejná.`;
 
 const isJsonObject = Schema.is(Schema.JsonObject);
 const encodeToolResult = Schema.encodeEffect(Schema.fromJsonString(Schema.Json));
@@ -253,6 +267,16 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
     },
     d,
   );
+  const listedNames = new Set(plan.typed.map((tool) => tool.id));
+  const genericOnlyModules = plan.modules.filter((module) => module.mode === 'generic_only');
+  const genericOnlyIds = new Set(genericOnlyModules.map((module) => module.moduleId));
+  /** The tool that runs `tool`: its own typed tool when listed, otherwise the generic read or execute tool. */
+  const listedToolName = (tool: McpCatalogTool, requiresGenericWrapper: boolean): string => {
+    if (!requiresGenericWrapper && listedNames.has(tool.id)) {
+      return tool.name;
+    }
+    return tool.access === 'read' ? 'ontos_read' : 'ontos_execute';
+  };
   const moduleOf = (moduleId: string): McpCatalogModule | undefined => findModule(catalog, moduleId);
   const labelOf = (moduleId: string): string =>
     moduleOf(moduleId)?.label.cs ?? d.modules.find((module) => module.moduleId === moduleId)?.label ?? moduleId;
@@ -618,7 +642,7 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
       moduleId: tool.moduleId,
       titleCs: tool.title.cs,
       titleEn: tool.title.en,
-      toolName: requiresGenericWrapper ? 'ontos_execute' : tool.name,
+      toolName: listedToolName(tool, requiresGenericWrapper),
     };
     if (tool.access === 'read') {
       return yield* okResult(detail);
@@ -757,6 +781,49 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
     ),
   );
 
+  const whoamiModule = (granted: ConnectionModule) => {
+    const module = moduleOf(granted.moduleId);
+    const write = canWrite(d, module);
+    const entry = {
+      label: labelOf(granted.moduleId),
+      moduleId: granted.moduleId,
+      read: granted.read,
+      tools: module?.tools.length ?? 0,
+      typedTools: plan.typed.filter((tool) => tool.moduleId === granted.moduleId).length,
+      write,
+    };
+    const listed = genericOnlyIds.has(granted.moduleId)
+      ? { ...entry, toolsNoteCs: genericOnlyNote(granted.moduleId) }
+      : entry;
+    return !write && grantAllowsWrite(d, granted.moduleId) ? { ...listed, writeNoteCs: NOT_PROPOSABLE_NOTE } : listed;
+  };
+
+  /** How many typed tools are listed and, when some module did not fit, which modules work only generically. */
+  const typedToolsSummary = () => {
+    const summary = {
+      cap: TYPED_TOOL_CAP,
+      count: plan.typed.length,
+      genericOnlyModules: genericOnlyModules.map((module) => module.moduleId),
+      overCap: plan.typedOverCap,
+    };
+    if (!plan.typedOverCap) {
+      return summary;
+    }
+    const typedLabels: string[] = [];
+    for (const module of plan.modules) {
+      if (module.mode === 'typed') {
+        typedLabels.push(labelOf(module.moduleId));
+      }
+    }
+    return {
+      ...summary,
+      noteCs: overCapNote(
+        typedLabels,
+        genericOnlyModules.map((module) => labelOf(module.moduleId)),
+      ),
+    };
+  };
+
   const whoami = () =>
     Effect.suspend(() =>
       okResult({
@@ -764,23 +831,10 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
         client: { host: d.client.host, kind: d.client.kind, name: d.client.name },
         company: { legalEntityId: d.legalEntityId, legalName: d.legalName },
         delegatedBy: Option.getOrNull(d.delegatedBy),
-        modules: d.modules.map((granted) => {
-          const module = moduleOf(granted.moduleId);
-          const write = canWrite(d, module);
-          const entry = {
-            label: labelOf(granted.moduleId),
-            moduleId: granted.moduleId,
-            read: granted.read,
-            tools: module?.tools.length ?? 0,
-            write,
-          };
-          return !write && grantAllowsWrite(d, granted.moduleId)
-            ? { ...entry, writeNoteCs: NOT_PROPOSABLE_NOTE }
-            : entry;
-        }),
+        modules: d.modules.map(whoamiModule),
         profile_id: d.profileId,
         reviewUrl,
-        typedTools: { count: plan.typed.length, overCap: plan.typedOverCap },
+        typedTools: typedToolsSummary(),
         writePolicy: d.writePolicy,
         writePolicyCs: WRITE_POLICY_CS[d.writePolicy],
       }),
@@ -867,7 +921,7 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
     ontos_whoami: instrument(
       'ontos_whoami',
       'Kdo jsem (profil připojení)',
-      'Profil tohoto připojení: firma, za koho aplikace jedná, moduly a režim zápisu. Vrací profile_id. Zavolej jako první. / Connection profile (profile_id, company, acting identity, modules, write mode); call it first.',
+      'Profil tohoto připojení: firma, za koho aplikace jedná, moduly (a které mají vlastní nástroje, které jen obecné) a režim zápisu. Vrací profile_id. Zavolej jako první. / Connection profile (profile_id, company, acting identity, modules and which have typed tools, write mode); call it first.',
       toolInputSchema(EmptyInput),
       { openWorldHint: false, readOnlyHint: true },
       whoami,

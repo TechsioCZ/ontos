@@ -4,19 +4,29 @@ import type { MerchandiseCommand } from '../../../../../shared/actions/apply-com
 import type { Order } from '../../../../../shared/apis/records.ts';
 import type { ProductId, ShippingMethod, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
 import { moneyInputText } from '../../../../form-number.ts';
+import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 
 type Mutable<Value> = { -readonly [Key in keyof Value]: Value[Key] };
 
 export interface DraftLine {
   readonly key: string;
   readonly name: string;
+  /**
+   * A new line's price as the catalog offers it; the edit sends a price for the line only when staff changed it, so the
+   * server prices the line itself (the stored gross of a storefront order, never one recomputed from net).
+   */
+  readonly offeredPriceText?: string;
   readonly priceText: string;
   readonly productId: ProductId;
   readonly quantityText: string;
   readonly sku: string;
+  /** The line's VAT classification: the order's snapshot, or the picked product's for a new line. */
+  /** Absent on lines from before classifications (10 % and 0 % history keep their rate only). */
+  readonly taxClassificationCode?: CzVatClassificationCode | undefined;
   readonly variantId?: VariantId;
   readonly variantName?: string;
-  readonly vatRate: Order['lines'][number]['vatRate'];
+  /** The line's VAT percentage: the order's snapshot, or the rate Tax gives a new line's classification today. */
+  readonly vatRate: number;
 }
 
 export interface Draft {
@@ -57,6 +67,7 @@ const draftLineOf = (line: Order['lines'][number], index: number): DraftLine => 
     productId: line.productId,
     quantityText: String(line.quantity),
     sku: line.sku,
+    taxClassificationCode: line.taxClassificationCode,
     vatRate: line.vatRate,
   };
   if (line.variantId !== undefined) {
@@ -122,8 +133,16 @@ const editLineOf = (line: DraftLine): EditLine => {
   const edit: Mutable<EditLine> = {
     productId: line.productId,
     quantity: parseQuantity(line.quantityText) ?? 1,
-    unitPriceMinor: parseAmount(line.priceText) ?? 0,
   };
+  const offered = line.offeredPriceText === undefined ? null : parseAmount(line.offeredPriceText);
+  const price = parseAmount(line.priceText) ?? 0;
+  if (offered !== null) {
+    // An added line: the server prices it as new and refuses when the offered price is no longer the price.
+    edit.offeredUnitPriceMinor = offered;
+  }
+  if (offered === null || offered !== price) {
+    edit.unitPriceMinor = price;
+  }
   if (line.variantId !== undefined) {
     edit.variantId = line.variantId;
   }

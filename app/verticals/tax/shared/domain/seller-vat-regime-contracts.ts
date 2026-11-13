@@ -36,8 +36,20 @@ const DeclarationOriginFields = {
 /** The seller comes from the trusted Operational Scope, never the payload (#950 F24). */
 export const SellerVatRegimeHistoryRequestContractSchema = Schema.Struct({});
 
+/**
+ * Which VAT changes the reading person may run in this company now, decided by Tax's gate on the very Actions: a
+ * screen offers only those. Advisory: each Action decides again when it runs, and a proposal is no permission.
+ */
+export const VatChangeRightsSchema = Schema.Struct({
+  createRevision: Schema.Boolean,
+  createRule: Schema.Boolean,
+  declareRegime: Schema.Boolean,
+  endRevision: Schema.Boolean,
+});
+export type VatChangeRights = typeof VatChangeRightsSchema.Type;
+
 /** Every declaration revision for the seller, in revision order, with its full attribution (tax.evidence.read). */
-export const SellerVatRegimeHistoryResponseContractSchema = Schema.Struct({
+export const SellerVatRegimeTimelineContractSchema = Schema.Struct({
   completeness: CompletenessSchema,
   revisions: Schema.Array(
     Schema.Struct({
@@ -52,6 +64,13 @@ export const SellerVatRegimeHistoryResponseContractSchema = Schema.Struct({
       revision: RevisionSchema,
     }),
   ),
+});
+export type SellerVatRegimeTimelineContract = typeof SellerVatRegimeTimelineContractSchema.Type;
+
+/** The timeline, and which VAT changes the reading person may make (the DPH page reads it as that person). */
+export const SellerVatRegimeHistoryResponseContractSchema = Schema.Struct({
+  ...SellerVatRegimeTimelineContractSchema.fields,
+  changeRights: VatChangeRightsSchema,
 });
 export type SellerVatRegimeHistoryResponseContract = typeof SellerVatRegimeHistoryResponseContractSchema.Type;
 

@@ -31,10 +31,11 @@ import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identi
  * intent written into a shared test database could never be cleaned up afterwards.
  */
 const databasePrefix = 'ontos_test_access_workload_bindings_';
-const migrationPath = new URL(
+/** The access migration, then the access fence's lease (the column Core's fence writers set). */
+const migrationPaths = [
   '../../drizzle/20261103093547_authorization-v2-access-intent/migration.sql',
-  import.meta.url,
-).pathname;
+  '../../drizzle/20261112024527_scope-fence-lease/migration.sql',
+].map((path) => new URL(path, import.meta.url).pathname);
 
 const uid = (value: number) => `00000000-0000-4000-8000-${value.toString().padStart(12, '0')}`;
 const tenantA = uid(1);
@@ -129,10 +130,12 @@ const makeAccessWorkloadSchema = Effect.gen(function* accessWorkloadSchema() {
   for (const statement of REQUIRED_IDENTITY_TABLES) {
     yield* admin.unsafe(statement);
   }
-  const migration = yield* fileSystem.readFileString(migrationPath);
-  for (const statement of migration.split('--> statement-breakpoint')) {
-    if (statement.trim().length > 0) {
-      yield* admin.unsafe(statement);
+  for (const migrationPath of migrationPaths) {
+    const migration = yield* fileSystem.readFileString(migrationPath);
+    for (const statement of migration.split('--> statement-breakpoint')) {
+      if (statement.trim().length > 0) {
+        yield* admin.unsafe(statement);
+      }
     }
   }
   // The runtime role's Core privileges, exactly what `db:bootstrap-runtime-role` grants after a migrate.
