@@ -78,10 +78,12 @@ export const manageProductPricesBulkActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ManageProductPricesBulkActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ManageProductPricesBulkActionForbiddenProblem'> =>
     ManageProductPricesBulkActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -191,7 +193,8 @@ const mapCoreProblem = (error: ActionCoreError): ManageProductPricesBulkActionPr
       ActionInvocationStateError: (failure) => manageProductPricesBulkActionProblem.conflict(failure.code),
       ActionPayloadValidationError: manageProductPricesBulkActionProblem.invalid,
       ActionPermissionCheckError: (failure) => manageProductPricesBulkActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => manageProductPricesBulkActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        manageProductPricesBulkActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => manageProductPricesBulkActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => manageProductPricesBulkActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => manageProductPricesBulkActionProblem.conflict(failure.code),

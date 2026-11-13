@@ -1,6 +1,5 @@
 /** Joins retained grants, live connection authority and Core-owned revocation notes for management. */
 import {
-  ContextAccess,
   OAuthAuthenticationAudit,
   OAuthConnectionCompanies,
   OAuthGrantOwners,
@@ -11,7 +10,7 @@ import {
   TenantModuleStateService,
 } from '@app/core-runtime';
 import type { OperationalScope, OperationalScopeRequest } from '@app/core-runtime';
-import { SubjectAccessInspection } from '@app/core-runtime/access/enforcement';
+import { AccessDecisionGate, SubjectAccessInspection } from '@app/core-runtime/access/enforcement';
 import {
   ConnectionStatusSchema,
   ConnectionSummarySchema as AdminConnectionSummarySchema,
@@ -146,7 +145,7 @@ export const GrantAdminLive = (request: GrantAdminRequest) =>
         principal: request.principal,
       });
       const services = Context.make(OAuthGrantRegistry, registry).pipe(
-        Context.add(ContextAccess, yield* ContextAccess),
+        Context.add(AccessDecisionGate, yield* AccessDecisionGate),
         Context.add(SubjectAccessInspection, yield* SubjectAccessInspection),
         Context.add(OAuthAuthenticationAudit, yield* OAuthAuthenticationAudit),
         Context.add(OAuthConnectionCompanies, yield* OAuthConnectionCompanies),

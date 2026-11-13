@@ -78,10 +78,12 @@ export const recordPrecommitFailureActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RecordPrecommitFailureActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RecordPrecommitFailureActionForbiddenProblem'> =>
     RecordPrecommitFailureActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -196,7 +198,8 @@ const mapCoreProblem = (error: ActionCoreError): RecordPrecommitFailureActionPro
       ActionInvocationStateError: (failure) => recordPrecommitFailureActionProblem.conflict(failure.code),
       ActionPayloadValidationError: recordPrecommitFailureActionProblem.invalid,
       ActionPermissionCheckError: (failure) => recordPrecommitFailureActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => recordPrecommitFailureActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        recordPrecommitFailureActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => recordPrecommitFailureActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => recordPrecommitFailureActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => recordPrecommitFailureActionProblem.conflict(failure.code),

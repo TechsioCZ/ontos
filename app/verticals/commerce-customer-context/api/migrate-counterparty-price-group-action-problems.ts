@@ -163,7 +163,8 @@ const mapCoreProblem = (error: ActionCoreError): MigrateCounterpartyPriceGroupAc
       ActionInvocationStateError: (failure) => migrateCounterpartyPriceGroupActionProblem.conflict(failure.code),
       ActionPayloadValidationError: migrateCounterpartyPriceGroupActionProblem.invalid,
       ActionPermissionCheckError: (failure) => migrateCounterpartyPriceGroupActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => migrateCounterpartyPriceGroupActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        migrateCounterpartyPriceGroupActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => migrateCounterpartyPriceGroupActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => migrateCounterpartyPriceGroupActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => migrateCounterpartyPriceGroupActionProblem.conflict(failure.code),

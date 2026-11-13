@@ -31,6 +31,7 @@ export const CompleteOrderPreparationActionForbiddenProblemSchema = makeProblemD
       'operation_context_invalid',
       'order_commitment_permission_denied',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const CompleteOrderPreparationActionNotFoundProblemSchema = makeProblemDetailsSchema(

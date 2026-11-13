@@ -73,10 +73,12 @@ export const reactivateBrandActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ReactivateBrandActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ReactivateBrandActionForbiddenProblem'> =>
     ReactivateBrandActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -184,7 +186,7 @@ const mapCoreProblem = (error: ActionCoreError): ReactivateBrandActionProblem =>
       ActionInvocationStateError: (failure) => reactivateBrandActionProblem.conflict(failure.code),
       ActionPayloadValidationError: reactivateBrandActionProblem.invalid,
       ActionPermissionCheckError: (failure) => reactivateBrandActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => reactivateBrandActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => reactivateBrandActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => reactivateBrandActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => reactivateBrandActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => reactivateBrandActionProblem.conflict(failure.code),

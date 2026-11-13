@@ -61,10 +61,12 @@ export const endStockSharingEligibilityActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'EndStockSharingEligibilityActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'EndStockSharingEligibilityActionForbiddenProblem'> =>
     EndStockSharingEligibilityActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -168,7 +170,8 @@ const mapCoreProblem = (error: ActionCoreError): EndStockSharingEligibilityActio
       ActionInvocationStateError: (failure) => endStockSharingEligibilityActionProblem.conflict(failure.code),
       ActionPayloadValidationError: endStockSharingEligibilityActionProblem.invalid,
       ActionPermissionCheckError: (failure) => endStockSharingEligibilityActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => endStockSharingEligibilityActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        endStockSharingEligibilityActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => endStockSharingEligibilityActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => endStockSharingEligibilityActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => endStockSharingEligibilityActionProblem.conflict(failure.code),

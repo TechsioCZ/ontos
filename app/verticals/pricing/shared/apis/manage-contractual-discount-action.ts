@@ -36,6 +36,7 @@ export const ManageContractualDiscountActionForbiddenProblemSchema = makeProblem
       'operation_context_invalid',
       'manage_contractual_discount_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ManageContractualDiscountActionNotFoundProblemSchema = makeProblemDetailsSchema(

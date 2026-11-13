@@ -30,6 +30,7 @@ export const CreateCounterpartyPurchasingProfileActionForbiddenProblemSchema = m
       'operation_context_denied',
       'operation_context_invalid',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const CreateCounterpartyPurchasingProfileActionNotFoundProblemSchema = makeProblemDetailsSchema(

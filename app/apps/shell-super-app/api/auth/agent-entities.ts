@@ -294,8 +294,18 @@ const changeAgent = Effect.fn('AgentEntities.changeAgent')(function* applyAgentC
   });
   const revokeActive = (agentPrincipalId: string, reasonText: string) =>
     revokeAgentConnections(caller, deps, agentPrincipalId, reasonText);
+  // Status first, then cleanup (O43): the status change commits on its own, and a failed withdrawal answers a
+  // retryable 503. The client retries the exact command with its original key; the native same-key run confirms
+  // the committed status (ActionAlreadyCommitted) and resumes this cleanup, so nothing is left half done for good.
   const withdrawProposals = (agentPrincipalId: string, note: string) =>
-    withdrawAllPendingOfAgent(caller.principal, { agentPrincipalId, note }).pipe(Effect.mapError(unavailable));
+    withdrawAllPendingOfAgent(caller.principal, { agentPrincipalId, note }).pipe(
+      Effect.tapError(() =>
+        Effect.logWarning('Agent status committed; proposal withdrawal pending a same-key retry').pipe(
+          Effect.annotateLogs({ agentPrincipal: agentPrincipalId, operation: request.operation }),
+        ),
+      ),
+      Effect.mapError(unavailable),
+    );
 
   if (request.operation === 'create') {
     const snapshot = yield* deps.directory.snapshot;

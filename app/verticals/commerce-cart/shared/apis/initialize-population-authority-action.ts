@@ -31,6 +31,7 @@ export const InitializePopulationAuthorityActionForbiddenProblemSchema = makePro
       'operation_context_invalid',
       'cart_permission_denied',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const InitializePopulationAuthorityActionNotFoundProblemSchema = makeProblemDetailsSchema(

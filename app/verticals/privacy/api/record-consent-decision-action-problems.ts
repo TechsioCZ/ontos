@@ -81,10 +81,12 @@ export const recordConsentDecisionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RecordConsentDecisionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RecordConsentDecisionActionForbiddenProblem'> =>
     RecordConsentDecisionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -197,7 +199,8 @@ const mapCoreProblem = (error: ActionCoreError): RecordConsentDecisionActionProb
       ActionInvocationStateError: (failure) => recordConsentDecisionActionProblem.conflict(failure.code),
       ActionPayloadValidationError: recordConsentDecisionActionProblem.invalid,
       ActionPermissionCheckError: (failure) => recordConsentDecisionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => recordConsentDecisionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        recordConsentDecisionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => recordConsentDecisionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => recordConsentDecisionActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => recordConsentDecisionActionProblem.conflict(failure.code),

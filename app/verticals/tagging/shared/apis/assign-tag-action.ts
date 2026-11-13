@@ -26,6 +26,7 @@ export const AssignTagActionForbiddenProblemSchema = makeProblemDetailsSchema('A
     'tagging_permission_denied',
     'tagging_scope_mismatch',
   ]),
+  reasons: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export const AssignTagActionNotFoundProblemSchema = makeProblemDetailsSchema('AssignTagActionNotFoundProblem', 404, {
   code: Schema.Literals(['action_invocation_not_found', 'tagging_not_found']),

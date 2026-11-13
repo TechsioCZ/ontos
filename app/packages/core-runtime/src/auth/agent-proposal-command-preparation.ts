@@ -1,4 +1,4 @@
-import { Clock, Context, Effect, Layer, Option, Ref, Schema } from 'effect';
+import { Clock, Context, DateTime, Effect, Layer, Option, Ref, Schema } from 'effect';
 
 import { ActionPermissionCheckError } from '../actions/errors.ts';
 import { computeCanonicalValueHash, recoverSqlTransactionError } from '../actions/repository.ts';
@@ -15,7 +15,10 @@ import type { OperationalScope } from '../operations/context.ts';
 // The pure tag, not the catalog-backed implementation: this module is reached from the Core Action
 // catalog (via `mutate-agent-proposals.action.ts`), so importing the implementation would cycle.
 import { ActionAuthority } from '../permissions/action-authority-contract.ts';
-import { ContextAccess } from '../permissions/context-access.ts';
+import { AccessDecisionGate } from '../access/enforcement/contract.ts';
+import type { GateInput } from '../access/enforcement/contract.ts';
+import type { AccessDecision } from '../access/decision/contract.ts';
+import { manageAgentStatusAction } from '../modules/actions/manage-agent-status.action.ts';
 import { ActionAuthorizationPreflight } from '../actions/owner-proof-preflight.ts';
 import type {
   ActionAuthorizationPreflightInput,
@@ -64,34 +67,33 @@ const preflightUnavailable = (cause: unknown) =>
     'cause',
     { value: cause },
   );
-/** Live native administration authority, not module execution or a caller-supplied capability. */
+/**
+ * Withdrawing every pending proposal of an agent is agent lifecycle administration: it is decided by the
+ * very right the same person uses to disable or archive that agent, `core.identity.agent-status.manage`,
+ * asked by the one gate in the request's own company (O81). It is not a new right, never a module's
+ * execution right and never a caller-supplied capability.
+ */
+const lifecycleQuestionOf = (scope: OperationalScope, now: Date): GateInput => ({
+  carrier: { accessDeclaration: manageAgentStatusAction.descriptor.accessDeclaration },
+  legalEntityScope: 'required',
+  now,
+  scope,
+});
+
+/** The gate's answer as the lifecycle check acts on it: allowed, refused, or an unreadable authority. */
+const lifecycleAnswerOf = (decision: AccessDecision) =>
+  decision.outcome === 'UNAVAILABLE'
+    ? Effect.fail(preflightUnavailable('Agent administration authority is unavailable'))
+    : Effect.succeed(decision.outcome === 'ALLOWED');
+
 export const proposalLifecycleAdministrator = Effect.fn('AgentProposalCommand.lifecycleAdministrator')(
-  function* administrator(
-    scope: Pick<OperationalScope, 'tenantId' | 'legalEntityId' | 'principalId'>,
-    access: typeof ContextAccess.Service,
-  ) {
-    const { legalEntityId, principalId, tenantId } = scope;
-    if (legalEntityId === undefined) {
+  function* administrator(scope: OperationalScope) {
+    if (scope.legalEntityId === undefined) {
       return false;
     }
-    const [tenant, company] = yield* Effect.all(
-      [
-        access.tenants({ permission: 'manage_identity', principalId, tenantIds: [tenantId] }),
-        access.legalEntities({ legalEntityIds: [legalEntityId], permission: 'manage_people', principalId, tenantId }),
-      ],
-      { concurrency: 2 },
-    );
-    const decisions = [
-      ...tenant.filter(({ key }) => key === tenantId),
-      ...company.filter(({ key }) => key === legalEntityId),
-    ];
-    if (decisions.some(({ decision }) => decision === 'allowed')) {
-      return true;
-    }
-    if (decisions.some(({ decision }) => decision === 'unavailable')) {
-      return yield* preflightUnavailable('Administrator authorization is unavailable');
-    }
-    return false;
+    const gate = yield* AccessDecisionGate;
+    const decision = yield* gate.decide(lifecycleQuestionOf(scope, DateTime.toDateUtc(yield* DateTime.now)));
+    return yield* lifecycleAnswerOf(decision);
   },
 );
 
@@ -155,7 +157,7 @@ export const AgentProposalCommandPreparationLive = Layer.effect(
     const enrollment = yield* DatabaseIdentityEnrollmentContext;
     const composition = yield* ActiveApplicationCompositionService;
     const authority = yield* ActionAuthority;
-    const contextAccess = yield* ContextAccess;
+    const gate = yield* AccessDecisionGate;
     const prepared = yield* Ref.make<ReadonlyMap<string, PreparedCommand>>(new Map());
     const prepare = Effect.fn('AgentProposalCommand.prepare')(function* prepare(
       input: ActionAuthorizationPreflightInput,
@@ -192,7 +194,8 @@ export const AgentProposalCommandPreparationLive = Layer.effect(
         { concurrency: 2 },
       );
       if (payload.operation === 'withdraw-pending-of-agent') {
-        if (!(yield* proposalLifecycleAdministrator(input.scope, contextAccess))) {
+        const decision = yield* gate.decide(lifecycleQuestionOf(input.scope, DateTime.toDateUtc(yield* DateTime.now)));
+        if (input.scope.legalEntityId === undefined || !(yield* lifecycleAnswerOf(decision))) {
           return { outcome: 'denied' as const };
         }
       } else {

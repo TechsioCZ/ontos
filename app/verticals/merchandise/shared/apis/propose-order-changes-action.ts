@@ -34,6 +34,7 @@ export const ProposeOrderChangesActionForbiddenProblemSchema = makeProblemDetail
       'merchandise_permission_denied',
       'merchandise_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ProposeOrderChangesActionNotFoundProblemSchema = makeProblemDetailsSchema(

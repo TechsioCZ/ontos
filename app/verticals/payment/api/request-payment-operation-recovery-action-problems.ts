@@ -154,10 +154,12 @@ export const requestPaymentOperationRecoveryActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RequestPaymentOperationRecoveryActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RequestPaymentOperationRecoveryActionForbiddenProblem'> =>
     RequestPaymentOperationRecoveryActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -277,7 +279,8 @@ const mapCoreProblem = (error: ActionCoreError): RequestPaymentOperationRecovery
       ActionInvocationStateError: (failure) => requestPaymentOperationRecoveryActionProblem.conflict(failure.code),
       ActionPayloadValidationError: requestPaymentOperationRecoveryActionProblem.invalid,
       ActionPermissionCheckError: (failure) => requestPaymentOperationRecoveryActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => requestPaymentOperationRecoveryActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        requestPaymentOperationRecoveryActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => requestPaymentOperationRecoveryActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => requestPaymentOperationRecoveryActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => requestPaymentOperationRecoveryActionProblem.conflict(failure.code),

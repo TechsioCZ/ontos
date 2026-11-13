@@ -32,6 +32,7 @@ export const ClaimCounterpartyAccessInvitationActionForbiddenProblemSchema = mak
       'counterparty_scope_mismatch',
       'principal_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ClaimCounterpartyAccessInvitationActionNotFoundProblemSchema = makeProblemDetailsSchema(

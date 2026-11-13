@@ -61,10 +61,12 @@ export const selectInventoryBackendActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'SelectInventoryBackendActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'SelectInventoryBackendActionForbiddenProblem'> =>
     SelectInventoryBackendActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -166,7 +168,8 @@ const mapCoreProblem = (error: ActionCoreError): SelectInventoryBackendActionPro
       ActionInvocationStateError: (failure) => selectInventoryBackendActionProblem.conflict(failure.code),
       ActionPayloadValidationError: selectInventoryBackendActionProblem.invalid,
       ActionPermissionCheckError: (failure) => selectInventoryBackendActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => selectInventoryBackendActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        selectInventoryBackendActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => selectInventoryBackendActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => selectInventoryBackendActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => selectInventoryBackendActionProblem.conflict(failure.code),

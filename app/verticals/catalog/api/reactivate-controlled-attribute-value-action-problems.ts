@@ -61,10 +61,12 @@ export const reactivateControlledAttributeValueActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ReactivateControlledAttributeValueActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ReactivateControlledAttributeValueActionForbiddenProblem'> =>
     ReactivateControlledAttributeValueActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -172,7 +174,8 @@ const mapCoreProblem = (error: ActionCoreError): ReactivateControlledAttributeVa
       ActionPayloadValidationError: reactivateControlledAttributeValueActionProblem.invalid,
       ActionPermissionCheckError: (failure) =>
         reactivateControlledAttributeValueActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => reactivateControlledAttributeValueActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        reactivateControlledAttributeValueActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => reactivateControlledAttributeValueActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         reactivateControlledAttributeValueActionProblem.unavailable(failure.code),

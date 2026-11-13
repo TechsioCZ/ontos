@@ -61,10 +61,12 @@ export const compensateInventoryPreCommitActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CompensateInventoryPreCommitActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CompensateInventoryPreCommitActionForbiddenProblem'> =>
     CompensateInventoryPreCommitActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -167,7 +169,8 @@ const mapCoreProblem = (error: ActionCoreError): CompensateInventoryPreCommitAct
       ActionInvocationStateError: (failure) => compensateInventoryPreCommitActionProblem.conflict(failure.code),
       ActionPayloadValidationError: compensateInventoryPreCommitActionProblem.invalid,
       ActionPermissionCheckError: (failure) => compensateInventoryPreCommitActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => compensateInventoryPreCommitActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        compensateInventoryPreCommitActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => compensateInventoryPreCommitActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => compensateInventoryPreCommitActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => compensateInventoryPreCommitActionProblem.conflict(failure.code),

@@ -7,7 +7,6 @@ import {
 import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
 import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
 import { ActionAuthority } from '../permissions/action-authority-contract.ts';
-import { ContextAccess } from '../permissions/context-access.ts';
 import type { ReadPrepareContext, ReadLoadContext, ReadFinishContext } from '../reads/context.ts';
 import type { ReadHandlerUnavailable } from '../reads/errors.ts';
 import { defineRead } from '../reads/definition.ts';
@@ -140,9 +139,7 @@ const prepare = Effect.fn('AgentProposalQueueRead.prepare')(function* prepare(
     input.mode === 'withdrawal-batches' ||
     (input.mode === AGENT_PROPOSAL_COMMAND_RECOVERY_MODE && input.payload.operation === 'withdraw-pending-of-agent')
   ) {
-    if (
-      !(yield* proposalLifecycleAdministrator(context.scope, yield* ContextAccess).pipe(Effect.mapError(unavailable)))
-    ) {
+    if (!(yield* proposalLifecycleAdministrator(context.scope).pipe(Effect.mapError(unavailable)))) {
       return yield* agentProposalQueueDenied();
     }
     const actions: readonly AgentProposalQueueAction[] = [];

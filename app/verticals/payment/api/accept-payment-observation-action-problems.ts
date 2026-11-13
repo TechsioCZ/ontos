@@ -132,10 +132,12 @@ export const acceptPaymentObservationActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'AcceptPaymentObservationActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'AcceptPaymentObservationActionForbiddenProblem'> =>
     AcceptPaymentObservationActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -257,7 +259,8 @@ const mapCoreProblem = (error: ActionCoreError): AcceptPaymentObservationActionP
       ActionInvocationStateError: (failure) => acceptPaymentObservationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: acceptPaymentObservationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => acceptPaymentObservationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => acceptPaymentObservationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        acceptPaymentObservationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => acceptPaymentObservationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => acceptPaymentObservationActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => acceptPaymentObservationActionProblem.conflict(failure.code),

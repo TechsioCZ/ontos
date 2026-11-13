@@ -29,6 +29,7 @@ export const UpdateCustomerGroupActionForbiddenProblemSchema = makeProblemDetail
       'customer_group_archived_correction_forbidden',
       'customer_group_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const UpdateCustomerGroupActionNotFoundProblemSchema = makeProblemDetailsSchema(

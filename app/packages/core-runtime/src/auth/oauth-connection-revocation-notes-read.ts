@@ -4,10 +4,10 @@ import { Effect, Option, Schema } from 'effect';
 import { auditEvents } from '../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
-import { ContextAccess } from '../permissions/context-access.ts';
 import type { ReadLoadContext, ReadPrepareContext } from '../reads/context.ts';
 import { defineRead } from '../reads/definition.ts';
 import { ReadHandlerUnavailable } from '../reads/errors.ts';
+import { administersOAuthConnections } from './oauth-connection-administration-read.ts';
 import {
   OAuthGrantOwners,
   OAuthGrantOwnerSchema,
@@ -67,23 +67,9 @@ const prepare = Effect.fn('OAuthConnectionRevocationNotes.prepare')(function* pr
   if (ownIds.length === candidateIds.length) {
     return ownIds;
   }
-  // Same live administrator semantics as connection management; membership alone is insufficient.
-  const access = yield* ContextAccess;
-  const [tenant, company] = yield* Effect.all(
-    [
-      access.tenants({ permission: 'manage_identity', principalId, tenantIds: [tenantId] }),
-      access.legalEntities({ legalEntityIds: [legalEntityId], permission: 'manage_people', principalId, tenantId }),
-    ],
-    { concurrency: 2 },
-  );
-  const decisions = [...tenant, ...company];
-  if (decisions.some((decision) => decision.decision === 'allowed')) {
-    return candidateIds;
-  }
-  if (decisions.some((decision) => decision.decision === 'unavailable')) {
-    return yield* unavailable('Administrator authorization is unavailable');
-  }
-  return ownIds;
+  // Others' notes go to exactly the people who administer the company's connected applications
+  // (`core.identity.oauth-connection.administer`); everyone else reads their own, as before.
+  return (yield* administersOAuthConnections(context.scope)) ? candidateIds : ownIds;
 });
 
 const notesFromTransaction = (transaction: ScopedTransactionExecutor) => ({

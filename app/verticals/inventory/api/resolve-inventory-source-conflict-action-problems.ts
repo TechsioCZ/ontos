@@ -61,10 +61,12 @@ export const resolveInventorySourceConflictActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ResolveInventorySourceConflictActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ResolveInventorySourceConflictActionForbiddenProblem'> =>
     ResolveInventorySourceConflictActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -169,7 +171,8 @@ const mapCoreProblem = (error: ActionCoreError): ResolveInventorySourceConflictA
       ActionInvocationStateError: (failure) => resolveInventorySourceConflictActionProblem.conflict(failure.code),
       ActionPayloadValidationError: resolveInventorySourceConflictActionProblem.invalid,
       ActionPermissionCheckError: (failure) => resolveInventorySourceConflictActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => resolveInventorySourceConflictActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        resolveInventorySourceConflictActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => resolveInventorySourceConflictActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => resolveInventorySourceConflictActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => resolveInventorySourceConflictActionProblem.conflict(failure.code),

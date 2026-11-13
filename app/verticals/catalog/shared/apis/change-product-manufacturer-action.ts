@@ -33,6 +33,7 @@ export const ChangeProductManufacturerActionForbiddenProblemSchema = makeProblem
       'operation_context_invalid',
       'manufacturer_target_forbidden',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ChangeProductManufacturerActionNotFoundProblemSchema = makeProblemDetailsSchema(

@@ -31,6 +31,7 @@ export const OpenProfileReconciliationActionForbiddenProblemSchema = makeProblem
       'operation_context_invalid',
       'CROSS_LEGAL_ENTITY_RECONCILIATION_FORBIDDEN',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const OpenProfileReconciliationActionNotFoundProblemSchema = makeProblemDetailsSchema(

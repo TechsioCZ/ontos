@@ -61,10 +61,12 @@ export const confirmVariantCombinationActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ConfirmVariantCombinationActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ConfirmVariantCombinationActionForbiddenProblem'> =>
     ConfirmVariantCombinationActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -168,7 +170,8 @@ const mapCoreProblem = (error: ActionCoreError): ConfirmVariantCombinationAction
       ActionInvocationStateError: (failure) => confirmVariantCombinationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: confirmVariantCombinationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => confirmVariantCombinationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => confirmVariantCombinationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        confirmVariantCombinationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => confirmVariantCombinationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => confirmVariantCombinationActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => confirmVariantCombinationActionProblem.conflict(failure.code),

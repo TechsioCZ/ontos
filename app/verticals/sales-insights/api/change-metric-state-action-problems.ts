@@ -61,10 +61,12 @@ export const changeMetricStateActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ChangeMetricStateActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ChangeMetricStateActionForbiddenProblem'> =>
     ChangeMetricStateActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -174,7 +176,8 @@ const mapCoreProblem = (error: ActionCoreError): ChangeMetricStateActionProblem 
       ActionInvocationStateError: (failure) => changeMetricStateActionProblem.conflict(failure.code),
       ActionPayloadValidationError: changeMetricStateActionProblem.invalid,
       ActionPermissionCheckError: (failure) => changeMetricStateActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => changeMetricStateActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        changeMetricStateActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => changeMetricStateActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => changeMetricStateActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => changeMetricStateActionProblem.conflict(failure.code),

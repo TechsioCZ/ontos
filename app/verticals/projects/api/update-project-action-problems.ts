@@ -61,10 +61,12 @@ export const updateProjectActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'UpdateProjectActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'UpdateProjectActionForbiddenProblem'> =>
     UpdateProjectActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -167,7 +169,7 @@ const mapCoreProblem = (error: ActionCoreError): UpdateProjectActionProblem =>
       ActionInvocationStateError: (failure) => updateProjectActionProblem.conflict(failure.code),
       ActionPayloadValidationError: updateProjectActionProblem.invalid,
       ActionPermissionCheckError: (failure) => updateProjectActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => updateProjectActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => updateProjectActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => updateProjectActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => updateProjectActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => updateProjectActionProblem.conflict(failure.code),

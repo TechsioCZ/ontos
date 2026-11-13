@@ -63,10 +63,12 @@ export const cleanupDemoActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CleanupDemoActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CleanupDemoActionForbiddenProblem'> =>
     CleanupDemoActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -174,7 +176,7 @@ const mapCoreProblem = (error: ActionCoreError): CleanupDemoActionProblem =>
       ActionInvocationStateError: (failure) => cleanupDemoActionProblem.conflict(failure.code),
       ActionPayloadValidationError: cleanupDemoActionProblem.invalid,
       ActionPermissionCheckError: (failure) => cleanupDemoActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => cleanupDemoActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => cleanupDemoActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => cleanupDemoActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => cleanupDemoActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => cleanupDemoActionProblem.conflict(failure.code),
