@@ -1,10 +1,12 @@
 /* eslint-disable anti-slop/no-chained-type-assertions, typescript/no-unsafe-type-assertion -- The test harness decodes fixture rows through each owner routine schema before exposing Core's private branded transaction capability; expires: 2027-03-31. */
 import type { OwnerAuthorizationInput, ScopedRoutineDefinition, ScopedTransactionExecutor } from '@app/core-runtime';
-import { DateTime, Deferred, Effect, Fiber, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Fiber, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ownerAuthorizationFromExit } from '@app/core-runtime';
+import { CommercePortalAuthSessionReadUnavailable } from '../../api/portal-auth/provider/session-read-unavailable.ts';
 import { makeCommerceCustomerContextOwnerAuthorizationOverlay } from '../../src/persistence/owner-authorization-overlay.ts';
+import type { CommercePortalSessionLivenessService } from '../../src/portal-auth/persistence/portal-auth-session-liveness.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const legalEntityId = '30000000-0000-4000-8000-000000000001';
@@ -334,7 +336,21 @@ const portalSession = {
   portalCustomerPrincipalId: '60000000-0000-4000-8000-000000000002',
   portalPartyId: '60000000-0000-4000-8000-000000000003',
   portalProviderSubjectId: 'customer-subject-one',
+  portalSessionRefDigest: 'a'.repeat(64),
 };
+/** The portal realm's sessions: the one this test's session names is live, unless a test says otherwise. */
+const sessionsWhere = (live: boolean | 'unreadable') =>
+  Option.some<CommercePortalSessionLivenessService>({
+    isLive: ({ providerSubjectId, sessionRefDigest }) =>
+      live === 'unreadable'
+        ? Effect.fail(new CommercePortalAuthSessionReadUnavailable({ reason: 'sessions unreadable' }))
+        : Effect.succeed(
+            live &&
+              providerSubjectId === portalSession.portalProviderSubjectId &&
+              sessionRefDigest === portalSession.portalSessionRefDigest,
+          ),
+  });
+const liveSessions = sessionsWhere(true);
 const boundProfileId = '60000000-0000-4000-8000-000000000004';
 /** The owner's own account mapping: which Party (and profile) this session's account is bound to here. */
 const accountBoundTo = (partyId: string) => (routineKey: string) =>
@@ -350,7 +366,7 @@ const PORTAL_OPERATIONS = [
 
 it.effect('a portal operation is refused without its full session facts, whatever else it carries', () =>
   Effect.gen(function* portalFactsRequired() {
-    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(liveSessions);
     for (const [operation, right] of PORTAL_OPERATIONS) {
       const { portalPartyId: _party, ...withoutParty } = portalSession;
       const factBags: readonly (Readonly<Record<string, string>> | undefined)[] = [
@@ -372,7 +388,7 @@ it.effect('a portal operation is refused without its full session facts, whateve
 
 it.effect("a portal session reaches only the Party its own account is bound to: never another customer's", () =>
   Effect.gen(function* portalPartyIsTheSession() {
-    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(liveSessions);
     const otherCustomersParty = '60000000-0000-4000-8000-0000000000ff';
     for (const [operation, right] of PORTAL_OPERATIONS) {
       // The session's account is bound to another Party than the request names: refused before any retail check.
@@ -393,7 +409,7 @@ it.effect("a portal session reaches only the Party its own account is bound to: 
 
 it.effect("a bound portal session still needs its account's own retail right for the operation", () =>
   Effect.gen(function* portalRetailRight() {
-    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(liveSessions);
     const notBound = (routineKey: string) => {
       if (routineKey === 'portal-enrollment.account-party.read') {
         return [{ party_id: portalSession.portalPartyId, profile_id: boundProfileId }];
@@ -424,7 +440,7 @@ it.effect("a bound portal session still needs its account's own retail right for
 
 it.effect('an unreadable account mapping is unavailable, never an allow', () =>
   Effect.gen(function* portalUnavailable() {
-    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(liveSessions);
     const input = factInput('commerce.customer-context.api.customer-profile-read-own', portalSession);
     // As Core decodes the overlay's answer: a crash of the owner state read is unavailable.
     const exit = yield* Effect.exit(
@@ -434,5 +450,33 @@ it.effect('an unreadable account mapping is unavailable, never an allow', () =>
       ),
     );
     expect(yield* ownerAuthorizationFromExit(input)(exit)).toEqual({ decision: 'unavailable' });
+  }),
+);
+
+it.effect('a portal session that is no longer live is refused; unknown liveness is unavailable, never an allow', () =>
+  Effect.gen(function* portalSessionLive() {
+    for (const [operation, right] of PORTAL_OPERATIONS) {
+      const input = factInput(operation, portalSession);
+      const bound = transactionWith(accountBoundTo(portalSession.portalPartyId));
+      // Signed out, expired or revoked: the realm has no live session with this reference for this subject.
+      expect(
+        yield* makeCommerceCustomerContextOwnerAuthorizationOverlay(sessionsWhere(false)).authorize(bound, input),
+      ).toEqual(refused('deny.owner.portal_session_not_live', `requires.${right}`));
+      // Another subject's session reference proves nothing for this one.
+      expect(
+        yield* makeCommerceCustomerContextOwnerAuthorizationOverlay(liveSessions).authorize(
+          bound,
+          factInput(operation, { ...portalSession, portalProviderSubjectId: 'customer-subject-two' }),
+        ),
+      ).toEqual(refused('deny.owner.portal_session_not_live', `requires.${right}`));
+      // The realm cannot be read, or this runtime has no reader at all: unavailable.
+      expect(
+        yield* makeCommerceCustomerContextOwnerAuthorizationOverlay(sessionsWhere('unreadable')).authorize(
+          bound,
+          input,
+        ),
+      ).toBe('unavailable');
+      expect(yield* makeCommerceCustomerContextOwnerAuthorizationOverlay().authorize(bound, input)).toBe('unavailable');
+    }
   }),
 );

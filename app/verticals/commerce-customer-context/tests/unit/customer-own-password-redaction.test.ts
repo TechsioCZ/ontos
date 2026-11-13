@@ -41,6 +41,7 @@ const session = {
   customerPrincipalId: '40000000-0000-4000-8000-000000000002',
   partyId: '40000000-0000-4000-8000-000000000003',
   providerSubjectId: 'customer-subject',
+  sessionRefDigest: 'a'.repeat(64),
 };
 
 /** Every encoding of a secret a careless writer could leave behind: itself, its digests, its base64. */

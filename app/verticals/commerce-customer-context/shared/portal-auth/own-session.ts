@@ -19,6 +19,10 @@ const Uuid = Schema.String.check(Schema.isUUID());
 export const PortalAuthBindingIdSchema = Uuid.pipe(Schema.brand('PortalAuthBindingId'));
 export const PortalCustomerPrincipalIdSchema = Uuid.pipe(Schema.brand('PortalCustomerPrincipalId'));
 export const PortalPartyIdSchema = Uuid.pipe(Schema.brand('PortalPartyId'));
+/** SHA-256 (hex) of the admitted session's published reference: it names the session, never its token. */
+export const PortalSessionRefDigestSchema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)).pipe(
+  Schema.brand('PortalSessionRefDigest'),
+);
 export const PortalProviderSubjectIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)).pipe(
   Schema.brand('PortalProviderSubjectId'),
 );
@@ -33,6 +37,7 @@ export const CustomerPortalOwnSessionSchema = Schema.Struct({
   customerPrincipalId: PortalCustomerPrincipalIdSchema,
   partyId: PortalPartyIdSchema,
   providerSubjectId: PortalProviderSubjectIdSchema,
+  sessionRefDigest: PortalSessionRefDigestSchema,
 });
 export type CustomerPortalOwnSession = typeof CustomerPortalOwnSessionSchema.Type;
 
@@ -73,6 +78,7 @@ export const PORTAL_SESSION_FACT = {
   customerPrincipalId: 'portalCustomerPrincipalId',
   partyId: 'portalPartyId',
   providerSubjectId: 'portalProviderSubjectId',
+  sessionRefDigest: 'portalSessionRefDigest',
 } as const;
 
 export const portalSessionOwnerFacts = (session: CustomerPortalOwnSession) =>
@@ -81,6 +87,7 @@ export const portalSessionOwnerFacts = (session: CustomerPortalOwnSession) =>
     [PORTAL_SESSION_FACT.customerPrincipalId]: session.customerPrincipalId,
     [PORTAL_SESSION_FACT.partyId]: session.partyId,
     [PORTAL_SESSION_FACT.providerSubjectId]: session.providerSubjectId,
+    [PORTAL_SESSION_FACT.sessionRefDigest]: session.sessionRefDigest,
   }) satisfies Readonly<Record<string, string>>;
 
 /** The operation keys of the five portal self-service carriers, and the retail right each needs of the session. */

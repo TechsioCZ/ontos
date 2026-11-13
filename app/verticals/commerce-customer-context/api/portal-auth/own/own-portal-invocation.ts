@@ -9,6 +9,7 @@ import { Crypto, Effect, Schema } from 'effect';
 
 import { CustomerPortalOwnSessionSchema } from '../../../shared/portal-auth/own-session.ts';
 import type { CustomerPortalOwnSession } from '../../../shared/portal-auth/own-session.ts';
+import { portalSessionRefDigestOf } from '../../../src/portal-auth/persistence/portal-auth-session-liveness.ts';
 import type { admitCustomerAccount } from '../session/http.ts';
 
 /** The receiving deployment of every portal self-service read and Action: this Customer Context unit. */
@@ -20,18 +21,23 @@ export type AdmittedPortalCustomer = Extract<Admission, { readonly state: 'authe
 
 /**
  * The admitted session's own account, exactly as the route admitted it: the binding, the customer principal and the
- * Party its customer authority resolved, and the provider subject of the live session. This is the only source of the
- * Party a portal read or Action addresses.
+ * Party its customer authority resolved, the provider subject of the live session and the digest of that session's
+ * reference (the overlay re-proves the session is still live). This is the only source of the Party a portal read or
+ * Action addresses.
  */
 export const ownSessionOf = Effect.fn('CustomerOwnPortal.session')(function* ownSessionOf<Failure>(
   current: AdmittedPortalCustomer,
   unavailable: () => Failure,
 ) {
+  const sessionRefDigest = yield* portalSessionRefDigestOf(current.session.sessionRef).pipe(
+    Effect.mapError(unavailable),
+  );
   const session: CustomerPortalOwnSession = yield* Schema.decodeEffect(CustomerPortalOwnSessionSchema)({
     authBindingId: current.customerAuthority.authBindingId,
     customerPrincipalId: current.customerAuthority.principalId,
     partyId: current.customerAuthority.partyId,
     providerSubjectId: current.session.providerSubjectId,
+    sessionRefDigest,
   }).pipe(Effect.mapError(unavailable));
   return session;
 });

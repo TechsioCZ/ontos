@@ -155,6 +155,7 @@ import {
 import { CommercePortalAuthRecoveryServiceLive } from './portal-auth/provider/recovery/service.ts';
 import { CommercePortalAuthVerificationWorkloadGrantConfigurationLive } from './portal-auth/verification-http/workload-grants.ts';
 import { CommercePortalAuthSessionReaderLive } from '../src/portal-auth/persistence/portal-auth-session-reader.ts';
+import { CommercePortalSessionLivenessLive } from '../src/portal-auth/persistence/portal-auth-session-liveness.ts';
 import { portalAuthStepUpApiLive } from './portal-auth/provider/step-up/http.ts';
 import { CommercePortalAuthStepUpHttpProviderUnavailableLive } from './portal-auth/provider/step-up/http-provider-unavailable.ts';
 import { CommercePortalAuthStepUpLive } from './portal-auth/provider/step-up/step-up.ts';
@@ -642,6 +643,26 @@ const productionOwnerRuntimeServicesLive = commerceCustomerContextOwnerRuntimeSe
 );
 const productionOwnerAuthorizationOverlayLive = commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(
   Layer.provide(productionOwnerRuntimeServicesLive),
+  // The portal session rule re-proves the admitted session is live through the portal realm's own sessions; a
+  // deployment without the realm has none, and its portal operations are then unavailable, never allowed.
+  Layer.provide(
+    Layer.unwrap(
+      portalAuthRealmConfigured.pipe(
+        Effect.map((configured) =>
+          configured
+            ? CommercePortalSessionLivenessLive.pipe(
+                Layer.provide(
+                  Layer.mergeAll(
+                    CommercePortalAuthDatabaseLive.pipe(Layer.provide(CommercePortalAuthConfigLive)),
+                    commercePortalAuthPlatformCryptoLive,
+                  ),
+                ),
+              )
+            : Layer.empty,
+        ),
+      ),
+    ),
+  ),
 );
 const productionPurchaseLimitPersistenceLive = purchaseLimitPersistenceLayer.pipe(
   Layer.provide(
