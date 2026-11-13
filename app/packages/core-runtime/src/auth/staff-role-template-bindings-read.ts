@@ -5,7 +5,7 @@ import { principalAuthBindings, principalCompanyMemberships, principals } from '
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
 import { PrincipalRefSchema } from '../permissions/principal-ref.ts';
-import type { ReadLoadContext } from '../reads/context.ts';
+import type { ReadLoadContext, ReadPrepareContext } from '../reads/context.ts';
 import { defineRead } from '../reads/definition.ts';
 import {
   StaffRoleTemplateAccountProvider,
@@ -13,6 +13,7 @@ import {
   StaffRoleTemplateEmailSchema,
   StaffRoleTemplateEmailsSchema,
 } from './staff-role-template-account-provider.ts';
+import { requireAgentAdministration } from './agent-administration.ts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from './staff-authentication-namespace.ts';
 import { staffRoleTemplateUnavailable } from './staff-role-template-unavailable.ts';
 
@@ -26,7 +27,10 @@ export const StaffRoleTemplateBindingsResultSchema = Schema.Struct({
 /** Runs only after native admission/authorization, before Core opens its scoped transaction. */
 const prepare = Effect.fn('StaffRoleTemplateBindings.prepare')(function* prepare(
   input: typeof StaffRoleTemplateBindingsInputSchema.Type,
+  context: ReadPrepareContext,
 ) {
+  // The role templates the Agents administration page offers: only the company's agent administrators read them.
+  yield* requireAgentAdministration(context.scope);
   const requestedEmails = new Set(input.emails);
   const emails = [...requestedEmails];
   const accounts = yield* (yield* StaffRoleTemplateAccountProvider)
@@ -124,7 +128,7 @@ export const staffRoleTemplateBindingsRead = defineRead(
     inputSchema: StaffRoleTemplateBindingsInputSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'core.identity',
-    permissionTarget: 'tenant',
+    permissionTarget: 'legal_entity',
     policies: [],
     readKey: 'core.identity.staff-role-template-bindings',
     resultSchema: StaffRoleTemplateBindingsResultSchema,
@@ -132,11 +136,8 @@ export const staffRoleTemplateBindingsRead = defineRead(
   },
   { load, prepare },
   (transaction) => Effect.succeed(bindingsFromTransaction(transaction)),
-  () => ({
-    kind: 'any_of',
-    targets: [
-      { kind: 'tenant', permission: 'manage_identity' },
-      { kind: 'legal_entity', permission: 'manage_people' },
-    ],
-  }),
+  // Admitted by authentication in the gate-decided company scope; `prepare` asks the read's own v2 question. No legacy
+  // relation is asked: `manage_identity` / `manage_people` are not v2 intent, and the v2 schema defines no
+  // `legal_entity#manage_people`, so asking it was unavailable (503) on every v2 tenant.
+  () => ({ kind: 'legal_entity' }),
 );
