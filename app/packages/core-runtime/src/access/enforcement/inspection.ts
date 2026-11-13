@@ -438,6 +438,16 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
     const { checkedCompany, legalEntityId } = context;
     const selected = yield* actorFor(input, legalEntityId);
     if (selected.actor === undefined) {
+      // A subject unseen in its named company is refused either way; when that company is not the tenant's own, the
+      // refusal is the gate's own company-of-tenant answer. Read only on this refusal path, never on an admitted one.
+      if (legalEntityId !== undefined && selected.decision?.reasons[0]?.code === PRINCIPAL_FORBIDDEN) {
+        const owned = yield* authority
+          .readCompanyOwnership({ legalEntityId, tenantId: TenantIdSchema.make(input.requesterScope.tenantId) })
+          .pipe(Effect.mapError(unavailable));
+        if (!owned) {
+          return { authority, decision: seamRefusal(SCOPE_MISMATCH) };
+        }
+      }
       return { authority, decision: selected.decision ?? seamRefusal(PRINCIPAL_FORBIDDEN) };
     }
     const now = yield* instant;
