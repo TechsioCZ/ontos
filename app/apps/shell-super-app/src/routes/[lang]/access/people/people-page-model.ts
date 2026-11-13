@@ -11,6 +11,7 @@ import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../../../shell-authentication-client-options.ts';
 import { loadHomePageModel } from '../../home-page-model.ts';
 import type { HomePageModel } from '../../home-page-model.ts';
+import { warmAgentEntities } from '../../../people/agent-data.ts';
 
 export interface PeopleReadPort {
   readonly list: typeof listAccessPeople;
@@ -96,6 +97,10 @@ export const loader = ({ request }: { readonly request: Request }): Promise<Peop
   );
   return browserRuntime.runPromise(
     loadHomePageModel(request).pipe(
+      // The Agents tab's list starts with the page, beside the People reads, not when the tab is clicked.
+      Effect.tap((shell) =>
+        warmAgentEntities(shell.state === 'authenticated' ? shell.selectedLegalEntityId : undefined),
+      ),
       Effect.flatMap((shell) =>
         shellAuthenticationClientOptionsFromRequest(request).pipe(
           Effect.flatMap((options) =>
