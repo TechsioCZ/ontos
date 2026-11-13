@@ -229,7 +229,17 @@ const refusalCodesOf = (decision: AccessDecision): readonly string[] =>
  */
 const pathsAgree = (
   scenario: AccessScenario,
-  input: { readonly company: string; readonly expected: 'ALLOWED' | 'DENIED'; readonly principal: string },
+  input: {
+    readonly company: string;
+    readonly expected: 'ALLOWED' | 'DENIED';
+    readonly principal: string;
+    /**
+     * Which fence refuses this leg. D6 (the registration) answers `deny.workload_unbound` and is the default, because
+     * every company below is one the tenant owns. A company the tenant does not own is refused earlier, by O88's
+     * ownership fence, which answers `deny.scope_mismatch` on every path.
+     */
+    readonly refusal?: 'deny.scope_mismatch' | 'deny.workload_unbound';
+  },
 ) =>
   Effect.gen(function* bothPaths() {
     const direct = yield* scenario.scopeFor(input.principal, input.company);
@@ -242,7 +252,9 @@ const pathsAgree = (
     ];
     expect(answers.map(({ outcome }) => outcome)).toEqual(Array.from({ length: 4 }, () => input.expected));
     expect(answers.flatMap(refusalCodesOf)).toEqual(
-      input.expected === 'DENIED' ? Array.from({ length: 4 }, () => 'deny.workload_unbound') : [],
+      input.expected === 'DENIED'
+        ? Array.from({ length: 4 }, () => input.refusal ?? 'deny.workload_unbound')
+        : [],
     );
     // The company list the Shell asks while issuing the module call, and the one the workload selects alone.
     const listed = [
@@ -870,6 +882,8 @@ it.layer(scenarioSuiteLayer, { excludeTestServices: true })('access cutover scen
           const sibling = uid(13);
           const twice = uid(14);
           const companyC = uid(15);
+          /** A company of another tenant: it has no scope row here, so O88 refuses it before any binding is read. */
+          const foreignCompany = uid(16);
           yield* scenario.seedTenant({
             legalEntityIds: [companyA, companyB, companyC],
             moduleKeys: [SCENARIO_MODULE],
@@ -882,7 +896,9 @@ it.layer(scenarioSuiteLayer, { excludeTestServices: true })('access cutover scen
             ],
           });
           yield* scenario.bootstrap({
-            legalEntityIds: [companyA, companyB],
+            // All three are the tenant's own, so every refusal below is the registration fence's (D6) and not
+            // ownership's: a company with no scope row would be refused earlier, by O88.
+            legalEntityIds: [companyA, companyB, companyC],
             modules: scenarioModules(),
             principalId: owner,
           });
@@ -960,6 +976,16 @@ it.layer(scenarioSuiteLayer, { excludeTestServices: true })('access cutover scen
           yield* scenario.revokeWorkloadCompany({ principalId: twice, workloadKey: SIBLING_WORKLOAD });
           yield* agree(twice, companyA, 'ALLOWED');
           yield* agree(twice, companyB, 'DENIED');
+
+          // A company this tenant does not own is refused by the ownership fence (O88) before any binding is read,
+          // so it names `deny.scope_mismatch` and not the registration fence's code — even for a workload that is
+          // registered somewhere and would otherwise be admitted.
+          yield* pathsAgree(scenario, {
+            company: foreignCompany,
+            expected: 'DENIED',
+            principal: twice,
+            refusal: 'deny.scope_mismatch',
+          });
         }),
       ),
   );
