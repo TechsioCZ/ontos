@@ -13,8 +13,8 @@ import type { LegalEntityId, PrincipalId, TenantId } from '../ids.ts';
  */
 
 /**
- * The one question the gate asks the workload registry: which workload keys this actor may run right
- * now (O73). The scope is the trusted request scope, so the reader answers only this tenant's rows.
+ * The one question the gate asks the workload registry: what this actor may run right now and in which
+ * companies (O73, D6). The scope is the trusted request scope, so the reader answers only this tenant's rows.
  */
 export interface WorkloadBindingQuery {
   readonly principalId: PrincipalId;
@@ -23,20 +23,16 @@ export interface WorkloadBindingQuery {
 }
 
 /**
- * What the owner declared for the bindings of one workload (D6). A standalone workload selects and
- * acts only in `activeCompanyIds`; no declaration means no company authority. A verified module
- * subject with no declaration retains the tenant-wide authority established by its calling module.
+ * The registered authority of one workload, read in one consistent read (O73, D6). A workload runs the carriers
+ * that declare one of `workloadKeys` and acts only in `activeCompanyIds`, on its direct calls and as the subject of
+ * a module call alike. Company authority is always a registration, never its absence: a workload with no active
+ * registration acts in no company, and revoking a registration or the binding that carries it only removes one.
  */
-export interface WorkloadCompanyDeclaration {
-  /** Every company an active registration names right now, each an active company of this tenant. */
+export interface WorkloadAuthority {
+  /** Every company an active registration of an active binding names right now, each an active company of this tenant. */
   readonly activeCompanyIds: ReadonlySet<LegalEntityId>;
-  /**
-   * The owner declared a company for an active binding of this workload, so the workload is pinned to
-   * `activeCompanyIds`. The pin outlives the registration: revoking the last one leaves it pinned to no
-   * company, which is why a revoked registration ends the prepared Action's company exactly as a
-   * revoked binding ends its key.
-   */
-  readonly pinned: boolean;
+  /** The workload keys of this actor's active bindings. */
+  readonly workloadKeys: ReadonlySet<string>;
 }
 
 /**
@@ -46,28 +42,15 @@ export interface WorkloadCompanyDeclaration {
  */
 export interface AccessWorkloadBindings {
   /**
-   * `transaction` is a transaction the caller already owns (O75): a workload decided inside an owner
-   * Action's transaction must read its registry bindings from that transaction. A caller with no
-   * transaction leaves it out and the read opens one of its own in the request's scope.
+   * The keys and registered companies of this actor, read together in one transaction so a binding revoked
+   * between two reads can never pair a stale key with a current company. `transaction` is a transaction the caller
+   * already owns (O75): a workload decided inside an owner Action's transaction reads from that transaction. A
+   * caller with no transaction leaves it out and the read opens one of its own in the request's scope.
    */
-  readonly readActiveWorkloadKeys: (
+  readonly readWorkloadAuthority: (
     query: WorkloadBindingQuery,
     transaction?: CoreTransaction,
-  ) => Effect.Effect<ReadonlySet<string>, AccessDecisionUnavailable>;
-  /**
-   * The company declaration of this workload's active bindings (D6). A standalone workload that holds
-   * no verified module actor selects only `activeCompanyIds`, never the tenant's whole company list,
-   * and acts only in them even after its last declared binding is revoked. Only a verified module
-   * subject may retain the tenant-wide rule of O73. An unreadable registry is `UNAVAILABLE` (O48), never "no declaration",
-   * because an empty answer would unpin a workload whose owner really declared one.
-   *
-   * `transaction` carries the same meaning as on `readActiveWorkloadKeys` (O75), so a decision taken
-   * inside an owner Action's transaction reads the declaration from that transaction.
-   */
-  readonly readCompanyDeclaration: (
-    query: WorkloadBindingQuery,
-    transaction?: CoreTransaction,
-  ) => Effect.Effect<WorkloadCompanyDeclaration, AccessDecisionUnavailable>;
+  ) => Effect.Effect<WorkloadAuthority, AccessDecisionUnavailable>;
 }
 
 /** The runtime binds the workload registry through this service tag. */

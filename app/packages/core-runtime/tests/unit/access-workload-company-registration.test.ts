@@ -32,10 +32,9 @@ import { at, person, tenant } from './access-decision-support.ts';
 
 /*
  * The explicit company registrations (D6), proved against the real seam without a database. A workload
- * binding is tenant-wide, so a standalone workload that holds no verified module actor selects and
- * acts in a company only when its owner declared one for that binding: the declaration pins it to the
- * companies it names, and no active registration means no company authority. The verified-module
- * subject keeps O73's tenant-wide path. Every case below is answered by `makeAccessDecisionService`
+ * selects and acts in a company only when its owner registered that company for one of its active
+ * bindings, directly and as the subject of a verified module call alike: no active registration means no
+ * company authority, never a tenant-wide one. Every case below is answered by `makeAccessDecisionService`
  * itself, so the suite proves the shipped rule rather than a scripted double.
  */
 
@@ -94,11 +93,10 @@ interface RunOptions {
   readonly candidates?: readonly LegalEntityId[];
   /** The company the trusted scope names; absent means the request selects none. */
   readonly company?: LegalEntityId;
+  /** The registry cannot be read at all: keys and companies are one read, so both are unavailable (O48). */
   readonly declarationFails?: boolean;
-  /** The companies the owner declared; absent means no declaration at all. */
+  /** The companies the owner registered; absent means no registration at all. */
   readonly declaredCompanies?: readonly LegalEntityId[] | undefined;
-  /** The owner declared a company and then revoked it: the workload stays pinned to none (D6). */
-  readonly declaredCompaniesRevoked?: boolean;
   readonly delegated?: boolean;
   readonly keys?: readonly string[];
   readonly kind?: AccessPrincipalKind;
@@ -108,17 +106,13 @@ interface RunOptions {
 const harness = (options: RunOptions = {}) => {
   const asked: { readonly principalId: string; readonly tenantId: string }[] = [];
   const workloadBindings: AccessWorkloadBindings = {
-    readActiveWorkloadKeys: (query) => {
-      asked.push({ principalId: query.principalId, tenantId: query.tenantId });
-      return Effect.succeed(new Set(options.keys ?? [workloadKey]));
-    },
-    readCompanyDeclaration: (query) => {
+    readWorkloadAuthority: (query) => {
       asked.push({ principalId: query.principalId, tenantId: query.tenantId });
       return options.declarationFails === true
         ? Effect.fail(accessDecisionUnavailable('the workload registry is unavailable'))
         : Effect.succeed({
             activeCompanyIds: new Set(options.declaredCompanies),
-            pinned: options.declaredCompaniesRevoked === true || options.declaredCompanies !== undefined,
+            workloadKeys: new Set(options.keys ?? [workloadKey]),
           });
     },
   };
@@ -193,23 +187,17 @@ it.effect('answers no company for a standalone workload whose owner declared non
   }),
 );
 
-it.effect('answers no company while the workload holds no active binding, and reads no declaration', () =>
+it.effect('answers no company while the workload holds no active binding, in one registry read', () =>
   Effect.gen(function* unboundWorkload() {
-    const { asked, gate, scope } = harness({ candidates: [companyA], company: companyA, keys: [] });
-    expect(yield* gate.selectableLegalEntities({ now, scope })).toEqual([]);
-    // The binding is read once and the declaration never: no binding, no company question at all (O73).
-    expect(asked).toHaveLength(1);
-  }),
-);
-
-it.effect('answers no company after the owner revoked the registration, never a stale one', () =>
-  Effect.gen(function* revokedRegistration() {
-    const { gate, scope } = harness({
-      candidates: [companyA, companyB],
+    const { asked, gate, scope } = harness({
+      candidates: [companyA],
       company: companyA,
-      declaredCompaniesRevoked: true,
+      declaredCompanies: [companyA],
+      keys: [],
     });
     expect(yield* gate.selectableLegalEntities({ now, scope })).toEqual([]);
+    // Keys and companies are one consistent read: a registration never outlives its binding (O73).
+    expect(asked).toHaveLength(1);
   }),
 );
 
@@ -235,10 +223,7 @@ it.effect('asks the registry only for the trusted scope principal and tenant (O6
       declaredCompanies: [companyA],
     });
     yield* gate.selectableLegalEntities({ now, scope });
-    expect(asked).toEqual([
-      { principalId: storefront, tenantId: tenant },
-      { principalId: storefront, tenantId: tenant },
-    ]);
+    expect(asked).toEqual([{ principalId: storefront, tenantId: tenant }]);
   }),
 );
 
@@ -268,12 +253,9 @@ it.effect('pins the subject of a verified module call to its declared companies,
     });
     // A platform registration acts for exactly one company: the issuer may select no other for it.
     expect(yield* pinned.gate.selectableLegalEntities({ now, scope: pinned.scope })).toEqual([companyA]);
-    // A module subject whose workload declares no company keeps the tenant's companies.
+    // A module subject whose workload has no registration selects no company: company authority is never an absence.
     const undeclared = harness({ candidates: [companyA, companyB], company: companyA, delegated: true });
-    expect(yield* undeclared.gate.selectableLegalEntities({ now, scope: undeclared.scope })).toEqual([
-      companyA,
-      companyB,
-    ]);
+    expect(yield* undeclared.gate.selectableLegalEntities({ now, scope: undeclared.scope })).toEqual([]);
   }),
 );
 
@@ -309,7 +291,7 @@ it.effect('refuses a pinned workload in any other company, exactly as an unbound
 
 it.effect('refuses a revoked registration in its former company, so a prepared Action cannot keep it', () =>
   Effect.gen(function* revokedRegistrationRefused() {
-    const revoked = harness({ company: companyA, declaredCompaniesRevoked: true });
+    const revoked = harness({ company: companyA });
     const decision = yield* revoked.gate.decide(gateInput(revoked.scope));
     expect(decision.outcome).toBe('DENIED');
     expect(reasonCodesOf(decision)).toEqual(['deny.workload_unbound']);
@@ -389,7 +371,7 @@ it.effect('pins the workload subject of a module call to its declared company, s
     expect(batched === undefined ? [] : reasonCodesOf(batched)).toEqual(['deny.workload_unbound']);
 
     // A revoked registration keeps the workload pinned to no company on the module-call path too.
-    const revoked = harness({ company: companyA, declaredCompaniesRevoked: true, delegated: true });
+    const revoked = harness({ company: companyA, delegated: true });
     expect(reasonCodesOf(yield* revoked.gate.decide(moduleCallInput(revoked.scope)))).toEqual([
       'deny.workload_unbound',
     ]);
@@ -398,12 +380,23 @@ it.effect('pins the workload subject of a module call to its declared company, s
   }),
 );
 
-it.effect('keeps a module-call workload subject that declares no company tenant-wide (O73)', () =>
-  Effect.gen(function* moduleCallSubjectUndeclared() {
-    const { gate, scope } = harness({ company: companyB, delegated: true });
-    expect((yield* gate.decide(moduleCallInput(scope))).outcome).toBe('ALLOWED');
-    const [batched] = yield* gate.decideMany([moduleCallInput(scope)]);
-    expect(batched?.outcome).toBe('ALLOWED');
+it.effect('refuses a module-call workload subject with no registration in every company, as the direct path does', () =>
+  Effect.gen(function* moduleCallSubjectUnregistered() {
+    // A storefront key nobody registered: a calling module cannot carry it into any company (D6).
+    const delegated = harness({ company: companyB, delegated: true });
+    expect(reasonCodesOf(yield* delegated.gate.decide(moduleCallInput(delegated.scope)))).toEqual([
+      'deny.workload_unbound',
+    ]);
+    const [batched] = yield* delegated.gate.decideMany([moduleCallInput(delegated.scope)]);
+    expect(batched === undefined ? [] : reasonCodesOf(batched)).toEqual(['deny.workload_unbound']);
+    // The direct path answers the same workload the same way.
+    const direct = harness({ company: companyB });
+    expect(reasonCodesOf(yield* direct.gate.decide(gateInput(direct.scope)))).toEqual(['deny.workload_unbound']);
+    // In the tenant context no company is named, so both paths still admit it there.
+    const tenantOnly = harness({ delegated: true });
+    expect(
+      (yield* tenantOnly.gate.decide({ ...moduleCallInput(tenantOnly.scope), legalEntityScope: 'forbidden' })).outcome,
+    ).toBe('ALLOWED');
   }),
 );
 
@@ -418,13 +411,13 @@ it.effect('answers UNAVAILABLE, never "not pinned", when a module-call subject d
   }),
 );
 
-it.effect('reads no declaration for a module-call workload subject its keys refuse', () =>
-  Effect.gen(function* moduleCallSubjectUnboundKey() {
-    const { asked, gate, scope } = harness({ company: companyA, declarationFails: true, delegated: true, keys: [] });
-    expect(reasonCodesOf(yield* gate.decide(moduleCallInput(scope)))).toEqual(['deny.actor_subject_invalid']);
-    const [batched] = yield* gate.decideMany([moduleCallInput(scope)]);
-    expect(batched === undefined ? [] : reasonCodesOf(batched)).toEqual(['deny.actor_subject_invalid']);
-    // Only the key reads were asked: an unreadable declaration never turns a refusal into UNAVAILABLE.
+it.effect('reads the keys and companies of a module-call workload subject in one registry read', () =>
+  Effect.gen(function* moduleCallSubjectOneRead() {
+    const { asked, gate, scope } = harness({ company: companyA, declaredCompanies: [companyA], delegated: true });
+    expect((yield* gate.decide(moduleCallInput(scope))).outcome).toBe('ALLOWED');
+    expect(asked).toHaveLength(1);
+    yield* gate.decideMany([moduleCallInput(scope), moduleCallInput(scope)]);
+    // One read for the whole batch: a binding revoked between two reads can never pair a stale key with a company.
     expect(asked).toHaveLength(2);
   }),
 );

@@ -47,9 +47,11 @@ const question = (scope: typeof storefrontScope) => ({
  */
 const gateFor = (options: { readonly boundWorkloadKeys?: readonly string[]; readonly kind: AccessPrincipalKind }) => {
   const workloadBindings: AccessWorkloadBindings = {
-    readActiveWorkloadKeys: () => Effect.succeed(new Set(options.boundWorkloadKeys)),
-    readCompanyDeclaration: () =>
-      Effect.succeed({ activeCompanyIds: new Set([LegalEntityIdSchema.make(legalEntityId)]), pinned: true }),
+    readWorkloadAuthority: () =>
+      Effect.succeed({
+        activeCompanyIds: new Set([LegalEntityIdSchema.make(legalEntityId)]),
+        workloadKeys: new Set(options.boundWorkloadKeys),
+      }),
   };
   return makeAccessDecisionService({
     authorityFor: () => ({

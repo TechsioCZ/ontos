@@ -176,16 +176,12 @@ const harness = (options: RunOptions = {}) => {
   };
   const { log, state } = logWriter(options.logFails === true);
   const workloadBindings: AccessWorkloadBindings = {
-    readActiveWorkloadKeys: () =>
+    readWorkloadAuthority: () =>
       options.workloadReadFails === true
-        ? Effect.fail(accessDecisionUnavailable('the workload registry is unavailable'))
-        : Effect.succeed(new Set(options.workloadKeys)),
-    readCompanyDeclaration: () =>
-      options.companyDeclarationReadFails === true
         ? Effect.fail(accessDecisionUnavailable('the workload registry is unavailable'))
         : Effect.succeed({
             activeCompanyIds: new Set(options.declaredCompanies),
-            pinned: options.declaredCompaniesRevoked === true || options.declaredCompanies !== undefined,
+            workloadKeys: new Set(options.workloadKeys),
           }),
   };
   const batches: (readonly AccessDecisionLogEntry[])[] = [];
@@ -669,8 +665,7 @@ it.effect('answers a 20-entry navigation from one engine snapshot, identically t
       legalEntities: legalEntityCandidates([]),
       principalKinds: countingKinds,
       workloadBindings: {
-        readActiveWorkloadKeys: () => Effect.succeed(new Set()),
-        readCompanyDeclaration: () => Effect.succeed({ activeCompanyIds: new Set(), pinned: false }),
+        readWorkloadAuthority: () => Effect.succeed({ activeCompanyIds: new Set(), workloadKeys: new Set() }),
       },
     });
     const inputs = navigationKeys.map((key) => gateOf({ carrier: { accessDeclaration: navigationDeclaration(key) } }));

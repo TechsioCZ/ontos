@@ -4,7 +4,7 @@ import { Cause, Context, Crypto, DateTime, Effect, Exit, Layer, Option, Ref, Res
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { AccessActorSchema } from '../../src/authorization/access-declaration.ts';
+import { AccessActorSchema, AccessWorkloadSchema } from '../../src/authorization/access-declaration.ts';
 import type { AccessCatalogModule } from '../../src/authorization/access-declaration.ts';
 import {
   preserveSystemPrincipalContextTrust,
@@ -173,6 +173,17 @@ const ownerFactsActionKey = OWNER_FACTS_ACTION;
 const SUBJECT_WORKLOAD = 'test.storefront-client';
 const callingModule = { appId: 'customer-context', buildMarker: 'customer-context-build', principalId: uid(11) };
 
+/** A second key of the same storefront principal, which carries no company registration of its own. */
+const SIBLING_WORKLOAD = 'test.storefront-sibling';
+
+/** The same storefront-shaped workload calling an owner directly, on a carrier that names its key (O73). */
+const directWorkloadCarrier: GateInput['carrier'] = {
+  accessWorkload: Schema.decodeUnknownSync(AccessWorkloadSchema)({
+    reason: 'The registered storefront client calls this owner directly.',
+    workloads: [SUBJECT_WORKLOAD],
+  }),
+};
+
 /** A carrier that admits only a registered workload as the subject of the calling module's call (D6). */
 const workloadSubjectCarrier: GateInput['carrier'] = {
   accessActor: Schema.decodeUnknownSync(AccessActorSchema)({
@@ -200,9 +211,50 @@ const workloadSubjectInputOf = (scope: OperationalScope): GateInput => ({
   scope,
 });
 
+/** The same question on the workload's own direct call. */
+const directWorkloadInputOf = (scope: OperationalScope): GateInput => ({
+  carrier: directWorkloadCarrier,
+  legalEntityScope: 'required',
+  now: DECISION_AT,
+  scope,
+});
+
 /** The refusal codes of one decision, empty when it was not refused. */
 const refusalCodesOf = (decision: AccessDecision): readonly string[] =>
   decision.outcome === 'DENIED' ? decision.reasons.map(({ code }) => code) : [];
+
+/**
+ * Direct and delegated paths answer one workload in one company alike (D6): the single and batched decision on the
+ * workload's own call and as a module call's subject, and the company list each path selects.
+ */
+const pathsAgree = (
+  scenario: AccessScenario,
+  input: { readonly company: string; readonly expected: 'ALLOWED' | 'DENIED'; readonly principal: string },
+) =>
+  Effect.gen(function* bothPaths() {
+    const direct = yield* scenario.scopeFor(input.principal, input.company);
+    const delegated = moduleCallScopeOf(direct);
+    const answers = [
+      yield* scenario.decisionGate.decide(directWorkloadInputOf(direct)),
+      yield* scenario.decisionGate.decide(workloadSubjectInputOf(delegated)),
+      ...(yield* scenario.decisionGate.decideMany([directWorkloadInputOf(direct)])),
+      ...(yield* scenario.decisionGate.decideMany([workloadSubjectInputOf(delegated)])),
+    ];
+    expect(answers.map(({ outcome }) => outcome)).toEqual(Array.from({ length: 4 }, () => input.expected));
+    expect(answers.flatMap(refusalCodesOf)).toEqual(
+      input.expected === 'DENIED' ? Array.from({ length: 4 }, () => 'deny.workload_unbound') : [],
+    );
+    // The company list the Shell asks while issuing the module call, and the one the workload selects alone.
+    const listed = [
+      yield* scenario.decisionGate.selectableLegalEntities({ now: DECISION_AT, scope: direct }),
+      yield* scenario.decisionGate.selectableLegalEntities({ now: DECISION_AT, scope: delegated }),
+    ];
+    const company = LegalEntityIdSchema.make(input.company);
+    expect(listed.map((companies) => companies.includes(company))).toEqual([
+      input.expected === 'ALLOWED',
+      input.expected === 'ALLOWED',
+    ]);
+  });
 
 const transport = (key: string) => ({
   correlationId: `c20-${key}`,
@@ -814,14 +866,19 @@ it.layer(scenarioSuiteLayer, { excludeTestServices: true })('access cutover scen
     () =>
       withAccessScenario((scenario) =>
         Effect.gen(function* workloadSubjectCompany() {
-          const tenantWide = uid(12);
+          const unregistered = uid(12);
+          const sibling = uid(13);
+          const twice = uid(14);
+          const companyC = uid(15);
           yield* scenario.seedTenant({
-            legalEntityIds: [companyA, companyB],
+            legalEntityIds: [companyA, companyB, companyC],
             moduleKeys: [SCENARIO_MODULE],
             principals: [
               { kind: 'human', principalId: owner },
               { kind: 'service', principalId: workloadPrincipal },
-              { kind: 'service', principalId: tenantWide },
+              { kind: 'service', principalId: unregistered },
+              { kind: 'service', principalId: sibling },
+              { kind: 'service', principalId: twice },
             ],
           });
           yield* scenario.bootstrap({
@@ -829,67 +886,80 @@ it.layer(scenarioSuiteLayer, { excludeTestServices: true })('access cutover scen
             modules: scenarioModules(),
             principalId: owner,
           });
-          // The storefront client is bound and registered for company A only; the second workload declares no company.
+          // The storefront client is bound and registered for company A only; the second storefront-kind key is bound
+          // and registered for no company at all — no workload is tenant-wide by omission.
           yield* scenario.bindWorkload({ principalId: workloadPrincipal, workloadKey: SUBJECT_WORKLOAD });
           yield* scenario.registerWorkloadCompany({
             legalEntityId: companyA,
             principalId: workloadPrincipal,
             workloadKey: SUBJECT_WORKLOAD,
           });
-          yield* scenario.bindWorkload({ principalId: tenantWide, workloadKey: SUBJECT_WORKLOAD });
+          yield* scenario.bindWorkload({ principalId: unregistered, workloadKey: SUBJECT_WORKLOAD });
 
-          // The registered company admits it, on the single and the batched entry.
+          // Direct and delegated paths must answer every registration state alike.
+          const agree = (principal: string, company: string, expected: 'ALLOWED' | 'DENIED') =>
+            pathsAgree(scenario, { company, expected, principal });
+
+          // Registered: A is admitted, B of the same tenant refused, alone and inside a mixed batch.
+          yield* agree(workloadPrincipal, companyA, 'ALLOWED');
+          yield* agree(workloadPrincipal, companyB, 'DENIED');
           const inA = yield* scenario.scopeFor(workloadPrincipal, companyA).pipe(Effect.map(moduleCallScopeOf));
-          expect((yield* scenario.decisionGate.decide(workloadSubjectInputOf(inA))).outcome).toBe('ALLOWED');
-          expect(
-            (yield* scenario.decisionGate.decideMany([workloadSubjectInputOf(inA)])).map(({ outcome }) => outcome),
-          ).toEqual(['ALLOWED']);
-
-          // Another company of the same tenant is refused exactly as an unbound workload is, single and batched.
           const inB = yield* scenario.scopeFor(workloadPrincipal, companyB).pipe(Effect.map(moduleCallScopeOf));
-          const single = yield* scenario.decisionGate.decide(workloadSubjectInputOf(inB));
-          expect(single.outcome).toBe('DENIED');
-          expect(refusalCodesOf(single)).toEqual(['deny.workload_unbound']);
-          const batched = yield* scenario.decisionGate.decideMany([
+          const mixed = yield* scenario.decisionGate.decideMany([
             workloadSubjectInputOf(inA),
             workloadSubjectInputOf(inB),
           ]);
-          expect(batched.map(({ outcome }) => outcome)).toEqual(['ALLOWED', 'DENIED']);
-          expect(batched.flatMap((one) => refusalCodesOf(one))).toEqual(['deny.workload_unbound']);
-          const batchedAlone = yield* scenario.decisionGate.decideMany([workloadSubjectInputOf(inB)]);
-          expect(batchedAlone.flatMap((one) => refusalCodesOf(one))).toEqual(['deny.workload_unbound']);
+          expect(mixed.map(({ outcome }) => outcome)).toEqual(['ALLOWED', 'DENIED']);
 
-          // The company list the Shell asks while issuing that module call offers only the registered company.
-          expect(yield* scenario.decisionGate.selectableLegalEntities({ now: DECISION_AT, scope: inB })).toEqual([
-            companyA,
-          ]);
+          // Unregistered storefront-kind key: refused in every company on both paths, never tenant-wide.
+          yield* agree(unregistered, companyA, 'DENIED');
+          yield* agree(unregistered, companyB, 'DENIED');
 
-          // A workload that declares no company keeps the tenant-wide module-call authority it is bound for (O73).
-          const undeclaredInB = yield* scenario.scopeFor(tenantWide, companyB).pipe(Effect.map(moduleCallScopeOf));
-          expect((yield* scenario.decisionGate.decide(workloadSubjectInputOf(undeclaredInB))).outcome).toBe('ALLOWED');
-          expect(
-            (yield* scenario.decisionGate.decideMany([workloadSubjectInputOf(undeclaredInB)])).map(
-              ({ outcome }) => outcome,
-            ),
-          ).toEqual(['ALLOWED']);
-          expect(
-            (yield* scenario.decisionGate.selectableLegalEntities({
-              now: DECISION_AT,
-              scope: undeclaredInB,
-            })).toSorted(),
-          ).toEqual([companyA, companyB].toSorted());
-
-          // Revoking the registration leaves the workload pinned to no company: A is refused too.
+          // Revoked registration: the workload is left with no company.
           yield* scenario.revokeWorkloadCompany({ principalId: workloadPrincipal, workloadKey: SUBJECT_WORKLOAD });
-          expect(refusalCodesOf(yield* scenario.decisionGate.decide(workloadSubjectInputOf(inA)))).toEqual([
-            'deny.workload_unbound',
-          ]);
+          yield* agree(workloadPrincipal, companyA, 'DENIED');
+
+          // Revoked binding beside an unregistered sibling binding of the same principal: removing the binding that
+          // carried the registration never widens the sibling to the tenant's companies.
+          yield* scenario.bindWorkload({ principalId: sibling, workloadKey: SUBJECT_WORKLOAD });
+          yield* scenario.registerWorkloadCompany({
+            legalEntityId: companyA,
+            principalId: sibling,
+            workloadKey: SUBJECT_WORKLOAD,
+          });
+          yield* scenario.bindWorkload({ principalId: sibling, workloadKey: SIBLING_WORKLOAD });
+          yield* agree(sibling, companyA, 'ALLOWED');
+          yield* scenario.revokeWorkload({ principalId: sibling, workloadKey: SUBJECT_WORKLOAD });
+          yield* scenario.bindWorkload({ principalId: sibling, workloadKey: SUBJECT_WORKLOAD });
+          // The key is bound again (a fresh binding with no registration yet): no company until it is registered.
+          yield* agree(sibling, companyA, 'DENIED');
+          yield* agree(sibling, companyB, 'DENIED');
+
+          // Two registrations of one principal (two bindings, one company each): its companies are every company its
+          // registrations name, never only the first row the registry returns, and never a third company.
+          yield* scenario.bindWorkload({ principalId: twice, workloadKey: SUBJECT_WORKLOAD });
+          yield* scenario.registerWorkloadCompany({
+            legalEntityId: companyA,
+            principalId: twice,
+            workloadKey: SUBJECT_WORKLOAD,
+          });
+          yield* scenario.bindWorkload({ principalId: twice, workloadKey: SIBLING_WORKLOAD });
+          yield* scenario.registerWorkloadCompany({
+            legalEntityId: companyB,
+            principalId: twice,
+            workloadKey: SIBLING_WORKLOAD,
+          });
+          yield* agree(twice, companyA, 'ALLOWED');
+          yield* agree(twice, companyB, 'ALLOWED');
+          yield* agree(twice, companyC, 'DENIED');
+          const twiceInC = yield* scenario.scopeFor(twice, companyC);
           expect(
-            (yield* scenario.decisionGate.decideMany([workloadSubjectInputOf(inA)])).flatMap((one) =>
-              refusalCodesOf(one),
-            ),
-          ).toEqual(['deny.workload_unbound']);
-          expect(yield* scenario.decisionGate.selectableLegalEntities({ now: DECISION_AT, scope: inA })).toEqual([]);
+            (yield* scenario.decisionGate.selectableLegalEntities({ now: DECISION_AT, scope: twiceInC })).toSorted(),
+          ).toEqual([companyA, companyB].toSorted());
+          // Revoking one registration removes exactly its company and keeps the other.
+          yield* scenario.revokeWorkloadCompany({ principalId: twice, workloadKey: SIBLING_WORKLOAD });
+          yield* agree(twice, companyA, 'ALLOWED');
+          yield* agree(twice, companyB, 'DENIED');
         }),
       ),
   );

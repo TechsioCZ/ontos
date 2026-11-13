@@ -14,7 +14,15 @@ import {
   TenantModuleStateRecordSchema,
 } from '@app/core-runtime';
 import type { ResolvedPrincipalIdentity } from '@app/core-runtime';
-import { OperationalScopeResolver } from '@app/core-runtime/operations/context';
+import { OperationalScopeResolver, makeOperationalScopeResolver } from '@app/core-runtime/operations/context';
+import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
+import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
+import {
+  AuthenticationNamespaceRegistry,
+  makeAuthenticationNamespaceRegistry,
+} from '@app/core-runtime/auth/external-identity-admission';
+import { AuthenticationNamespaceRegistrationSchema } from '@app/core-runtime/auth/external-identity-contracts';
+import { NodeCrypto } from '@effect/platform-node';
 import { readVerifiedGatewayActor } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
@@ -68,6 +76,7 @@ import type { DelegationUnitRows } from '../support/gateway-delegation-test.ts';
 const issuer = 'https://delegation-unit.example.test';
 const subjectInvocationId = '70000000-0000-4000-8000-000000000001';
 const sourceKeyId = 'source-workload-key';
+const namedCompany = '30000000-0000-4000-8000-000000000009';
 const callerIdentity: ResolvedPrincipalIdentity = {
   authBindingId: '10000000-0000-4000-8000-000000000003',
   displayName: 'Catalog module credential',
@@ -115,6 +124,11 @@ interface DelegationCase {
   readonly originatorLegalEntityId?: string;
   readonly principal?: Partial<typeof GatewayTrustedPrincipalContextSchema.Type>;
   readonly providerKeyId?: string;
+  /**
+   * Resolve the scope with Core's own resolver over the real decision gate, for a Storefront client registered for
+   * exactly these companies (D6), instead of the scripted resolver.
+   */
+  readonly registeredCompanies?: readonly string[];
   readonly signerUnavailable?: boolean;
   readonly source?: Omit<Partial<typeof GatewayContextV2ClaimsSchema.Encoded>, 'ver'> & {
     readonly act?: unknown;
@@ -188,6 +202,76 @@ const scopeResolverDouble = (failure: DelegationCase['contextFailure'], requests
     return Effect.succeed({ ...request.principal, correlationId: request.correlationId });
   },
 });
+
+/** The staff namespace the unit principal authenticates in; its API-key subjects need no external admission. */
+const staffNamespace = makeAuthenticationNamespaceRegistry([
+  Schema.decodeSync(AuthenticationNamespaceRegistrationSchema)({
+    allowedAudiences: ['catalog'],
+    authenticationNamespaceId: 'ontos.staff.better-auth.v1',
+    provider: 'better-auth',
+    requiresOperationAdmission: false,
+    reservationPrincipalKind: 'service',
+    subjectTypes: ['api_key'],
+    trustedAttesterPrincipalIds: [],
+  }),
+]);
+
+/**
+ * Core's own scope resolver over the real decision gate. Only the database rows are fixed: the subject is an active
+ * Storefront-client service principal with an active API-key binding, bound to `commerce.storefront-client` and
+ * registered for `registeredCompanies`; the tenant has those companies and the named one.
+ */
+const realScopeResolver = (registeredCompanies: readonly string[], companies: readonly string[]) =>
+  makeOperationalScopeResolver(
+    {
+      load: (principal) =>
+        Effect.succeed({
+          bindingAuthenticationNamespaceId: principal.authenticationNamespaceId ?? null,
+          bindingIssuingLegalEntityId: null,
+          bindingPrincipalId: principal.principalId,
+          bindingRevision: 1,
+          bindingRevokedAt: null,
+          bindingStatus: 'active',
+          bindingSubjectType: 'api_key',
+          bindingTenantId: principal.tenantId,
+          impersonatorStatus: null,
+          impersonatorTenantId: null,
+          legalEntityStatus: 'active',
+          legalEntityTenantId: principal.tenantId,
+          principalKind: 'service',
+          principalStatus: 'active',
+          principalTenantId: principal.tenantId,
+          tenantStatus: 'active',
+        }),
+    },
+    makeAccessDecisionService({
+      authorityFor: () => ({
+        readCells: () => Effect.die('A workload subject reads no authority cells'),
+        readConnection: () => Effect.die('A workload subject reads no connection'),
+        readScope: () => Effect.die('A workload subject reads no membership scope'),
+        readTeamIds: () => Effect.die('A workload subject reads no teams'),
+      }),
+      check: { checkBulk: () => Effect.die('A workload subject never asks the engine') },
+      decisionLog: { record: () => Effect.void },
+      legalEntities: {
+        listCandidateIds: () => Effect.succeed(companies.map((company) => LegalEntityIdSchema.make(company))),
+      },
+      principalKinds: { readKind: () => Effect.succeed(Option.some('service' as const)) },
+      workloadBindings: {
+        readWorkloadAuthority: () =>
+          Effect.succeed({
+            activeCompanyIds: new Set(registeredCompanies.map((company) => LegalEntityIdSchema.make(company))),
+            workloadKeys: new Set(['commerce.storefront-client']),
+          }),
+      },
+    }),
+  ).pipe(Effect.provide(NodeCrypto.layer));
+
+/** The scripted resolver, or Core's own one when the case registers the Storefront client for companies. */
+const scopeResolverFor = (input: DelegationCase, resolvedScopes: ResolvedScopeRequest[]) =>
+  input.registeredCompanies === undefined
+    ? Effect.succeed(scopeResolverDouble(input.contextFailure, resolvedScopes))
+    : realScopeResolver(input.registeredCompanies, [delegationUnitPrincipal.legalEntityId ?? '', namedCompany]);
 
 /** The state the module called (Party Registry) is in, per case; the calling module stays active. */
 const DESTINATION_STATES = [
@@ -370,6 +454,7 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
     loadConfig: input.signerUnavailable === true ? parseGatewayIssuerConfig({}) : Effect.succeed(configuration),
   }).pipe(Layer.provide(scopeGrantRegistrarLayer(registrar.registrar)));
   const moduleStates = moduleStatesFor(snapshot.composition.modules, input.moduleState);
+  const scopeResolver = yield* scopeResolverFor(input, resolvedScopes);
   const callerKeyId = input.providerKeyId ?? sourceKeyId;
   const callerKind = input.callerKind ?? 'service';
   const result = yield* Effect.exit(
@@ -422,7 +507,8 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
         GatewayOriginatorEvidence,
         originatorEvidenceDouble(input.originator ?? 'ok', input.messageCompanyRecorded),
       ),
-      Effect.provideService(OperationalScopeResolver, scopeResolverDouble(input.contextFailure, resolvedScopes)),
+      Effect.provideService(OperationalScopeResolver, scopeResolver),
+      Effect.provideService(AuthenticationNamespaceRegistry, staffNamespace),
       Effect.provide(
         Layer.mock(TenantModuleStateService, {
           getTenantModuleStates: () =>
@@ -584,8 +670,6 @@ it.effect('acts for asynchronous work: issues a fresh window for the recorded re
   }),
 );
 
-const namedCompany = '30000000-0000-4000-8000-000000000009';
-
 it.effect('names the company of work a workload started in the tenant context, resolved for the calling module', () =>
   Effect.gen(function* originatorNamesCompany() {
     const result = yield* delegationCase({ originator: 'tenant', originatorLegalEntityId: namedCompany });
@@ -632,6 +716,35 @@ it.effect('refuses a named company the subject may not act in, before any ledger
         principal: expect.objectContaining({ legalEntityId: namedCompany }),
       }),
     ]);
+  }),
+);
+
+it.effect('refuses, through Core’s own scope resolver, a company the Storefront client is not registered for', () =>
+  Effect.gen(function* refusesUnregisteredCompanyThroughRealResolver() {
+    // The calling module names company B for a Storefront client registered only for company A (D6).
+    const moved = yield* delegationCase({
+      originator: 'tenant',
+      originatorLegalEntityId: namedCompany,
+      registeredCompanies: [delegationUnitPrincipal.legalEntityId ?? ''],
+    });
+    assertDenied(moved, 'forbidden');
+    expect(Exit.isFailure(moved.result) ? Cause.squash(moved.result.cause) : undefined).toMatchObject({
+      reason: 'scope_refused',
+    });
+    // The same request naming the registered company is issued.
+    const registered = yield* delegationCase({
+      originator: 'tenant',
+      originatorLegalEntityId: namedCompany,
+      registeredCompanies: [namedCompany],
+    });
+    expect(Exit.isSuccess(registered.result)).toBe(true);
+    // A Storefront client with no registration at all is refused in every company, never tenant-wide.
+    const unregistered = yield* delegationCase({
+      originator: 'tenant',
+      originatorLegalEntityId: namedCompany,
+      registeredCompanies: [],
+    });
+    assertDenied(unregistered, 'forbidden');
   }),
 );
 

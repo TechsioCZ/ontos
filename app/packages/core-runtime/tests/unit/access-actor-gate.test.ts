@@ -28,6 +28,7 @@ import type { AccessLegalEntityCandidates } from '../../src/access/enforcement/l
 import type { AccessWorkloadBindings } from '../../src/access/enforcement/workload-port.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { LegalEntityIdSchema } from '../../src/access/ids.ts';
+import type { LegalEntityId } from '../../src/access/ids.ts';
 import { at, cell, makeAuthority, makeCheck, person, tenant } from './access-decision-support.ts';
 import type { AuthoritySpec } from './access-decision-support.ts';
 
@@ -84,16 +85,22 @@ const workloadActorDeclaration = (overrides: Partial<AccessActorInput> = {}) =>
   actorDeclaration({ subjectWorkloads: [storefront], ...overrides });
 
 /** A registry that binds `keys` to one principal; any other principal holds no binding. */
-const workloadRegistry = (keys: readonly string[], principal: string = workloadPrincipal): AccessWorkloadBindings => ({
-  readActiveWorkloadKeys: (query) =>
-    Effect.succeed(new Set(query.principalId === principal && query.tenantId === tenant ? keys : [])),
-  // This registry declares no company, so a standalone workload keeps the tenant-wide rule (D6).
-  readCompanyDeclaration: () => Effect.succeed({ activeCompanyIds: new Set(), pinned: false }),
+const workloadRegistry = (
+  keys: readonly string[],
+  principal: string = workloadPrincipal,
+  companies: readonly LegalEntityId[] = [],
+): AccessWorkloadBindings => ({
+  readWorkloadAuthority: (query) => {
+    const bound = query.principalId === principal && query.tenantId === tenant;
+    return Effect.succeed({
+      activeCompanyIds: new Set(bound ? companies : []),
+      workloadKeys: new Set(bound ? keys : []),
+    });
+  },
 });
 
 const unreadableRegistry: AccessWorkloadBindings = {
-  readActiveWorkloadKeys: () => Effect.fail(accessDecisionUnavailable('the workload registry is unreadable')),
-  readCompanyDeclaration: () => Effect.fail(accessDecisionUnavailable('the workload registry is unreadable')),
+  readWorkloadAuthority: () => Effect.fail(accessDecisionUnavailable('the workload registry is unreadable')),
 };
 
 /**
@@ -531,7 +538,8 @@ it.effect('admits a bound workload subject on a company carrier although it hold
       authority: { cells: [] },
       kinds: kindSource('service'),
       members: [person],
-      workloads: workloadRegistry([storefront]),
+      // The storefront client is registered for the company the module names (D6).
+      workloads: workloadRegistry([storefront], workloadPrincipal, [LegalEntityIdSchema.make(uid(60))]),
     });
     const carrier: GateCarrier = {
       accessActor: workloadActorDeclaration({ callers: ['commerce-customer-context'] }),
@@ -975,20 +983,24 @@ const twoCompanies: AccessLegalEntityCandidates = {
   listCandidateIds: () => Effect.succeed([uid(60), uid(61)].map((id) => LegalEntityIdSchema.make(id))),
 };
 
-it.effect('lets a bound workload subject of a module call select every company of its tenant', () =>
+it.effect('lets a bound workload subject of a module call select only the companies it is registered for', () =>
   Effect.gen(function* selectsCompaniesForWorkloadSubject() {
-    const { check, gate } = harness({
+    const scope = delegatedScopeOf(callerOf('commerce-customer-context'), workloadPrincipal);
+    const registered = harness({
+      kinds: kindSource('service'),
+      legalEntities: twoCompanies,
+      workloads: workloadRegistry([storefront], workloadPrincipal, [LegalEntityIdSchema.make(uid(60))]),
+    });
+    expect(yield* registered.gate.selectableLegalEntities({ now, scope })).toEqual([uid(60)]);
+    // The registration is the workload's company authority: the engine holds no tuple for it.
+    expect(registered.check.calls.checkBulk).toBe(0);
+    // A bound workload with no registration selects no company, never the tenant's whole list (D6).
+    const unregistered = harness({
       kinds: kindSource('service'),
       legalEntities: twoCompanies,
       workloads: workloadRegistry([storefront]),
     });
-    const selectable = yield* gate.selectableLegalEntities({
-      now,
-      scope: delegatedScopeOf(callerOf('commerce-customer-context'), workloadPrincipal),
-    });
-    expect(selectable).toEqual([uid(60), uid(61)]);
-    // The tenant-wide binding is the workload's company authority: the engine holds no tuple for it.
-    expect(check.calls.checkBulk).toBe(0);
+    expect(yield* unregistered.gate.selectableLegalEntities({ now, scope })).toEqual([]);
   }),
 );
 

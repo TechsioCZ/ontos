@@ -88,8 +88,7 @@ export const inertAccessEnforcementPorts = (): AccessEnforcementPorts =>
     }),
     principalKinds: Object.freeze({ readKind: inertPortAnswer }),
     workloadBindings: Object.freeze({
-      readActiveWorkloadKeys: inertPortAnswer,
-      readCompanyDeclaration: inertPortAnswer,
+      readWorkloadAuthority: inertPortAnswer,
     }),
   });
 
