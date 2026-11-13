@@ -52,7 +52,7 @@ import {
   ManageAgentEntityRequestSchema,
   ManageAgentEntityResponseSchema,
 } from '@app/shared-contracts/agent-access';
-import { DocumentGatewayApiGroup, DocumentGatewayAssertionSchema } from './document-gateway-api.ts';
+import { DocumentGatewayApiGroup } from './document-gateway-api.ts';
 import { OAuthConnectApiGroup } from './oauth-connect-api.ts';
 import {
   PEOPLE_PATHS,
@@ -661,16 +661,15 @@ export const ShellDocumentHomeSchema = Schema.Struct({
 export type ShellDocumentHome = typeof ShellDocumentHomeSchema.Type;
 
 /**
- * One session resolution supplies a document's context and assertions. Home additionally receives its governed
- * component target (or welcome), so hydration can load the remote without another authenticated BFF request.
- * Each part keeps its own outcome. Signed-out or unselected sessions get no Home target or assertions.
+ * One session resolution supplies a document's context. Home additionally receives its governed component target (or
+ * welcome), so hydration can load the remote without another authenticated BFF request. Each part keeps its own
+ * outcome. Signed-out or unselected sessions get no Home target.
  */
 export const ShellDocumentContextSchema = Schema.Struct({
   canManagePeople: Schema.optionalKey(Schema.Boolean),
   composition: Schema.optionalKey(ShellDocumentCompositionSchema),
   /** Captured release identity only; tenant authentication gains no company or navigation capability. */
   compositionRevision: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u))),
-  gatewayAssertions: Schema.optionalKey(Schema.Array(DocumentGatewayAssertionSchema)),
   home: Schema.optionalKey(ShellDocumentHomeSchema),
   legalEntities: Schema.optionalKey(AvailableLegalEntitiesResponseSchema),
   session: CurrentSessionSchema,
@@ -1054,9 +1053,8 @@ export const AgentProposalRequestHeadersSchema = Schema.Struct({
 export const AgentOwnProposalsRequestSchema = Schema.Struct({ legalEntityId: LegalEntityIdSchema });
 
 /**
- * Server rendering's one read per Shell document. It signs the document's gateway assertions too, so it is a classified
- * session capability issuer (`shell.document-context.issue.session` in `gatewayContextAuthorizationEntrypoints`) and,
- * like every issuer, a no-store POST.
+ * Server rendering's one read per Shell document, a no-store POST. It issues no gateway assertions: the browser obtains
+ * them in one batch from `auth/gateway-contexts`.
  */
 export const ShellDocumentContextApiGroup = HttpApiGroup.make('documentContext').add(
   HttpApiEndpoint.post('documentContext', '/shell/document-context', {

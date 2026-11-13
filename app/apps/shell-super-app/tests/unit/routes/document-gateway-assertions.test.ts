@@ -8,7 +8,6 @@ import { clearBrowserRequestCache, installBrowserRequestCache } from '../../../s
 import {
   documentGatewayAssertion,
   resetDocumentGatewayAssertions,
-  seedDocumentGatewayAssertions,
   warmDocumentGatewayAssertions,
 } from '../../../src/routes/document-gateway-assertions.ts';
 
@@ -66,6 +65,21 @@ const write = (status: number) =>
 const isGatewayUrl = Schema.is(Schema.String.check(Schema.isEndingWith('/auth/gateway-context')));
 const gatewayRequests = () => platformFetch.mock.calls.filter(([input]) => isGatewayUrl(input));
 
+/** The document holds these assertions: its one batch answered them (the next batch answers what the test mocks). */
+const holdAssertions = (assertions: readonly ReturnType<typeof assertion>[]) =>
+  Effect.gen(function* hold() {
+    const answered = yield* Deferred.make<boolean>();
+    issueDocumentGatewayContextsMock.mockReturnValueOnce(
+      Effect.succeed({ assertions }).pipe(Effect.tap(() => Deferred.succeed(answered, true))),
+    );
+    yield* warmDocumentGatewayAssertions(
+      revision,
+      assertions.map(({ audience }) => audience),
+    );
+    yield* Deferred.await(answered);
+    yield* Effect.yieldNow;
+  });
+
 beforeAll(() => {
   globalThis.fetch = platformFetch;
   installBrowserRequestCache();
@@ -84,18 +98,6 @@ beforeEach(() => {
   });
   issueDocumentGatewayContextsMock.mockReset();
 });
-
-it.live('answers remotes from the assertions server rendering embedded, without a round trip', () =>
-  Effect.gen(function* seeded() {
-    yield* resetDocumentGatewayAssertions;
-    const seededFinance = assertion('seeded-finance');
-    yield* seedDocumentGatewayAssertions(revision, [seededFinance, assertion('seeded-pipeline')]);
-    const answer = yield* askAssertion({ audience: 'seeded-finance', compositionRevision: revision });
-    expect(answer).toEqual({ body: withoutAudience(seededFinance), status: 200 });
-    expect(gatewayRequests()).toHaveLength(0);
-    expect(issueDocumentGatewayContextsMock).not.toHaveBeenCalled();
-  }),
-);
 
 it.live('obtains every audience of a client-side navigation in one batch that concurrent remotes join', () =>
   Effect.gen(function* batched() {
@@ -121,31 +123,6 @@ it.live('obtains every audience of a client-side navigation in one batch that co
     yield* warmDocumentGatewayAssertions(revision, audiences);
     yield* askAssertion({ audience: 'warm-a', compositionRevision: revision });
     expect(issueDocumentGatewayContextsMock).toHaveBeenCalledTimes(2);
-  }),
-);
-
-it.live('claims a seeded token once under concurrency and cannot resurrect it by seeding again', () =>
-  Effect.gen(function* claimOnce() {
-    yield* resetDocumentGatewayAssertions;
-    const seeded = assertion('single-use');
-    issueDocumentGatewayContextsMock.mockReturnValue(Effect.succeed({ assertions: [] }));
-    let issued = 0;
-    platformFetch.mockImplementation(async () => {
-      issued += 1;
-      return Response.json({ ...withoutAudience(seeded), token: `fresh-single-${issued}` });
-    });
-    yield* seedDocumentGatewayAssertions(revision, [seeded]);
-    const answers = yield* Effect.forEach(
-      [1, 2, 3],
-      () => askAssertion({ audience: 'single-use', compositionRevision: revision }),
-      { concurrency: 'unbounded' },
-    );
-    expect(new Set(answers.map(({ body }) => body.token)).size).toBe(3);
-    expect(answers.filter(({ body }) => body.token === seeded.token)).toHaveLength(1);
-    yield* seedDocumentGatewayAssertions(revision, [seeded]);
-    const later = yield* askAssertion({ audience: 'single-use', compositionRevision: revision });
-    expect(later.body.token).not.toBe(seeded.token);
-    expect(gatewayRequests()).toHaveLength(3);
   }),
 );
 
@@ -182,10 +159,7 @@ it.live('renews the document assertions in one batch once they near expiry, neve
   Effect.gen(function* renewed() {
     yield* resetDocumentGatewayAssertions;
     const audiences = ['renew-a', 'renew-b'];
-    yield* seedDocumentGatewayAssertions(
-      revision,
-      audiences.map((audience) => assertion(audience, EXPIRED)),
-    );
+    yield* holdAssertions(audiences.map((audience) => assertion(audience, EXPIRED)));
     issueDocumentGatewayContextsMock.mockReturnValue(
       Effect.succeed({ assertions: audiences.map((audience) => assertion(audience)) }),
     );
@@ -195,8 +169,8 @@ it.live('renews the document assertions in one batch once they near expiry, neve
       { concurrency: 'unbounded' },
     );
     expect(answers.map(({ body }) => body.expiresAt)).toEqual([FAR_EXPIRY, FAR_EXPIRY]);
-    expect(issueDocumentGatewayContextsMock).toHaveBeenCalledTimes(1);
-    expect(issueDocumentGatewayContextsMock.mock.calls[0]?.[0]).toEqual({ audiences, compositionRevision: revision });
+    expect(issueDocumentGatewayContextsMock).toHaveBeenCalledTimes(2);
+    expect(issueDocumentGatewayContextsMock.mock.calls[1]?.[0]).toEqual({ audiences, compositionRevision: revision });
     expect(gatewayRequests()).toHaveLength(0);
   }),
 );
@@ -204,7 +178,7 @@ it.live('renews the document assertions in one batch once they near expiry, neve
 it.live('leaves other companies, other releases and unknown audiences to the single issuer', () =>
   Effect.gen(function* fallsBack() {
     yield* resetDocumentGatewayAssertions;
-    yield* seedDocumentGatewayAssertions(revision, [assertion('known')]);
+    yield* holdAssertions([assertion('known')]);
     yield* askAssertion({ audience: 'known', compositionRevision: revision, legalEntityId: 'other-company' });
     yield* askAssertion({ audience: 'known', compositionRevision: otherRevision });
     yield* askAssertion({ audience: 'unknown', compositionRevision: revision });
@@ -212,7 +186,7 @@ it.live('leaves other companies, other releases and unknown audiences to the sin
 
     // An audience a remote asked for alone joins the document, so the next renewal covers it with the others.
     yield* resetDocumentGatewayAssertions;
-    yield* seedDocumentGatewayAssertions(revision, [assertion('expiring', EXPIRED)]);
+    yield* holdAssertions([assertion('expiring', EXPIRED)]);
     yield* askAssertion({ audience: 'noted', compositionRevision: revision });
     issueDocumentGatewayContextsMock.mockReturnValue(Effect.succeed({ assertions: [] }));
     yield* askAssertion({ audience: 'expiring', compositionRevision: revision });
@@ -234,33 +208,6 @@ it.live('lets each remote ask alone when the batch fails', () =>
   }),
 );
 
-it.live('never holds an embedded token again once a context boundary or another revision dropped the held set', () =>
-  Effect.gen(function* embeddedOnce() {
-    yield* resetDocumentGatewayAssertions;
-    const embedded = assertion('embedded-once');
-    issueDocumentGatewayContextsMock.mockReturnValue(Effect.succeed({ assertions: [] }));
-    let issued = 0;
-    platformFetch.mockImplementation(async () => {
-      issued += 1;
-      return Response.json({ ...withoutAudience(embedded), token: `embedded-fresh-${issued}` });
-    });
-    yield* seedDocumentGatewayAssertions(revision, [embedded]);
-    const first = yield* askAssertion({ audience: embedded.audience, compositionRevision: revision });
-    expect(first.body.token).toBe(embedded.token);
-    // A boundary that does not reload the document (a company switch that failed) drops the held set, and the Shell
-    // renders again from the same server-rendered model. Its owner has already redeemed this token: a 401.
-    yield* clearBrowserRequestCache;
-    yield* seedDocumentGatewayAssertions(revision, [embedded]);
-    const afterBoundary = yield* askAssertion({ audience: embedded.audience, compositionRevision: revision });
-    expect(afterBoundary.body.token).not.toBe(embedded.token);
-    // A loader that saw another revision replaces the held set; the document's own revision renders again.
-    yield* warmDocumentGatewayAssertions(otherRevision, []);
-    yield* seedDocumentGatewayAssertions(revision, [embedded]);
-    const afterRevision = yield* askAssertion({ audience: embedded.audience, compositionRevision: revision });
-    expect(afterRevision.body.token).not.toBe(embedded.token);
-  }),
-);
-
 it.effect('hands out an assertion only while more than the margin of its lifetime is left', () =>
   Effect.gen(function* margin() {
     yield* resetDocumentGatewayAssertions;
@@ -268,7 +215,7 @@ it.effect('hands out an assertion only while more than the margin of its lifetim
     // The test clock starts at 0: 16 s of lifetime, the margin is 15 s.
     const justUsable = assertion('margin-usable', 16);
     const atMargin = assertion('margin-reached', 16);
-    yield* seedDocumentGatewayAssertions(revision, [justUsable, atMargin]);
+    yield* holdAssertions([justUsable, atMargin]);
     yield* TestClock.adjust('999 millis');
     expect(yield* documentGatewayAssertion(justUsable.audience, revision)).toEqual(
       Option.some(withoutAudience(justUsable)),
@@ -276,8 +223,8 @@ it.effect('hands out an assertion only while more than the margin of its lifetim
     yield* TestClock.adjust('1 millis');
     expect(yield* documentGatewayAssertion(atMargin.audience, revision)).toEqual(Option.none());
     // The expiring one was renewed with the others in one batch, not handed out.
-    expect(issueDocumentGatewayContextsMock).toHaveBeenCalledTimes(1);
-    expect(issueDocumentGatewayContextsMock.mock.calls[0]?.[0]).toEqual({
+    expect(issueDocumentGatewayContextsMock).toHaveBeenCalledTimes(2);
+    expect(issueDocumentGatewayContextsMock.mock.calls[1]?.[0]).toEqual({
       audiences: [justUsable.audience, atMargin.audience],
       compositionRevision: revision,
     });

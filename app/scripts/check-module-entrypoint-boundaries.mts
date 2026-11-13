@@ -5372,16 +5372,6 @@ const gatewayIssuerBindings: readonly GatewayIssuerBinding[] = [
     path: shellGatewayContextContract.issueDocumentGatewayContextsPath,
     runtimeLayer: 'documentGatewayGroupLive',
   },
-  {
-    contractFile: SHELL_API_CONTRACT_FILE,
-    credential: 'session',
-    entrypointKey: 'shell.document-context.issue.session',
-    group: 'ShellDocumentContextApiGroup',
-    groupId: 'documentContext',
-    handler: 'documentContext',
-    path: shellGatewayContextContract.documentContextPath,
-    runtimeLayer: 'documentContextGroupLive',
-  },
 ];
 
 const gatewayIssuerBinding = (entrypointKey: string): GatewayIssuerBinding | undefined =>
@@ -5413,7 +5403,7 @@ export const validateGatewayIssuerEntrypoints = (issuers: readonly GatewayIssuer
     if (issuers.length !== gatewayIssuerBindings.length || !exactIssuers) {
       yield* fail(
         GATEWAY_CONTRACT_FILE,
-        'gateway authorization contract must classify exactly the six session, API-key, delegated, gateway-read, document gateway, and document-context issuers',
+        'gateway authorization contract must classify exactly the five session, API-key, delegated, gateway-read and document gateway issuers',
       );
     }
   });
@@ -5503,7 +5493,7 @@ const hasMountedIssuerPath = (
     gatewayImport(shellApi, 'HttpApi', EFFECT_CLIENT_PROVIDER) &&
     gatewayImport(contract, 'HttpApiGroup', EFFECT_CLIENT_PROVIDER) &&
     gatewayImport(contract, 'HttpApiEndpoint', EFFECT_CLIENT_PROVIDER) &&
-    (binding.contractFile === SHELL_API_CONTRACT_FILE || gatewayImport(shellApi, binding.group, expectedImport)) &&
+    gatewayImport(shellApi, binding.group, expectedImport) &&
     api.root?.type === 'CallExpression' &&
     gatewayMember(api.root.callee, 'HttpApi', 'make') &&
     api.calls.filter((call) => call.arguments.length === 1 && gatewayIdentifier(call.arguments[0], binding.group))
@@ -5664,7 +5654,7 @@ const validateGatewayRuntime = (runtime: GatewayProgram | undefined) =>
     ) {
       yield* fail(
         SHELL_API_RUNTIME_FILE,
-        'all six classified capability issuers must be mounted by the Shell API runtime',
+        'all five classified capability issuers must be mounted by the Shell API runtime',
       );
     }
   });

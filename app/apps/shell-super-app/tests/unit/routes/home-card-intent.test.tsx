@@ -13,9 +13,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { Deferred, Effect } from 'effect';
 import { afterAll, afterEach, beforeAll, expect, it, rstest } from 'effect-rstest';
 
+import type { issueDocumentGatewayContexts as IssueDocumentGatewayContexts } from '../../../src/api/auth-client.ts';
 import { browserRuntime } from '../../../src/runtime/browser-effect-runtime.ts';
 import { clearBrowserRequestCache, installBrowserRequestCache } from '../../../src/routes/browser-request-cache.ts';
-import { seedDocumentGatewayAssertions } from '../../../src/routes/document-gateway-assertions.ts';
+import { warmDocumentGatewayAssertions } from '../../../src/routes/document-gateway-assertions.ts';
 import { ShellRouteLink } from '../../../src/routes/shell-frame.tsx';
 import { StaffRoutePreloadContext } from '../../../src/routes/use-idle-route-preload.ts';
 import { staffRoutePreloads } from '../../../src/routes/route-preload-scheduler.ts';
@@ -31,6 +32,14 @@ rstest.mock('../../../src/routes/route-preload-scheduler.ts', () => {
     staffRoutePreloads: actual.makeRoutePreloadScheduler(3),
   };
 });
+
+const { issueDocumentGatewayContexts } = rstest.hoisted(() => ({
+  issueDocumentGatewayContexts: rstest.fn<typeof IssueDocumentGatewayContexts>(),
+}));
+rstest.mock('../../../src/api/auth-client.ts', () => ({
+  ...rstest.requireActual<object>('../../../src/api/auth-client.ts'),
+  issueDocumentGatewayContexts,
+}));
 
 const destinations = ['/finance', '/ukoly', '/prodej/prilezitosti'];
 const revision = 'a'.repeat(64);
@@ -69,9 +78,12 @@ it.live(
         browserRuntime.runPromise(Deferred.await(release).pipe(Effect.as(Response.json({ value: 'fresh' })))),
       );
       yield* clearBrowserRequestCache;
-      yield* seedDocumentGatewayAssertions(revision, [
-        { apiBaseUrl: base, audience, compositionRevision: revision, expiresAt: 4_102_444_800, token },
-      ]);
+      issueDocumentGatewayContexts.mockReturnValue(
+        Effect.succeed({
+          assertions: [{ apiBaseUrl: base, audience, compositionRevision: revision, expiresAt: 4_102_444_800, token }],
+        }),
+      );
+      yield* warmDocumentGatewayAssertions(revision, [audience]);
       yield* Effect.promise(() =>
         globalThis.fetch('/shell-super-app-api/auth/gateway-context', {
           body: JSON.stringify({ audience, compositionRevision: revision }),

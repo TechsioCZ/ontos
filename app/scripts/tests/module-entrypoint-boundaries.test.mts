@@ -675,12 +675,9 @@ import { routeMeta as route1 } from './[lang]/$/route.meta';`,
     `import { GatewayContextApiGroup } from '@app/shared-contracts';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
 import { DocumentGatewayApiGroup } from './document-gateway-api.ts';
-export const ShellDocumentContextApiGroup = HttpApiGroup.make('documentContext')
-  .add(HttpApiEndpoint.post('documentContext', '/shell/document-context', {}));
 export const ShellAuthenticationApi = HttpApi.make('shell')
   .add(GatewayContextApiGroup)
-  .add(DocumentGatewayApiGroup)
-  .add(ShellDocumentContextApiGroup);`,
+  .add(DocumentGatewayApiGroup);`,
   );
   yield* write(
     root,
@@ -703,10 +700,8 @@ export const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationA
   .handle('issueDelegatedGatewayContext', () => Effect.void));
 export const documentGatewayGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'documentGateway', (handlers) => handlers
   .handle('issueDocumentGatewayContexts', () => Effect.void));
-export const documentContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'documentContext', (handlers) => handlers
-  .handle('documentContext', () => Effect.void));
 export const makeShellAuthenticationApiRuntime = () => {
-  const apiHandlersLive = Layer.mergeAll(gatewayContextGroupLive, documentGatewayGroupLive, documentContextGroupLive);
+  const apiHandlersLive = Layer.mergeAll(gatewayContextGroupLive, documentGatewayGroupLive);
   return assembleEffectBffRuntime({ api: ShellAuthenticationApi, handlers: apiHandlersLive });
 };
 const apiRuntime = makeShellAuthenticationApiRuntime();
@@ -736,7 +731,7 @@ export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
   .add(HttpApiEndpoint.post('issueApiKeyGatewayContext', '/auth/api-key/gateway-context', {}))
   .add(HttpApiEndpoint.post('readWithApiKeyGatewayContext', '/auth/api-key/gateway-read', {}))
   .add(HttpApiEndpoint.post('issueDelegatedGatewayContext', '/auth/delegated/gateway-context', {}));
-export const shellGatewayContextContract = { issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context', issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context', issueDelegatedGatewayContextPath: '/shell-super-app-api/auth/delegated/gateway-context', readWithApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-read', issueDocumentGatewayContextsPath: '/shell-super-app-api/auth/gateway-contexts', documentContextPath: '/shell-super-app-api/shell/document-context' };`,
+export const shellGatewayContextContract = { issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context', issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context', issueDelegatedGatewayContextPath: '/shell-super-app-api/auth/delegated/gateway-context', readWithApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-read', issueDocumentGatewayContextsPath: '/shell-super-app-api/auth/gateway-contexts' };`,
   );
   yield* write(root, 'packages/core-runtime/src/index.ts', `export const core = true;`);
   return root;
@@ -3274,7 +3269,6 @@ for (const [before, after] of [
 }
 
 for (const [file, group, handler, endpointPath] of [
-  [SHELL_SHARED_API_PATH, 'ShellDocumentContextApiGroup', 'documentContext', '/shell/document-context'],
   [
     'apps/shell-super-app/shared/document-gateway-api.ts',
     'DocumentGatewayApiGroup',
@@ -3308,7 +3302,7 @@ for (const [file, group, handler, endpointPath] of [
   );
 }
 
-it.effect('accepts exactly the six issuer classifications regardless of declaration order', () =>
+it.effect('accepts exactly the five issuer classifications regardless of declaration order', () =>
   validateGatewayIssuerEntrypoints(EffectArray.reverse(gatewayContextAuthorizationEntrypoints)),
 );
 
@@ -3318,7 +3312,6 @@ for (const entrypointKey of [
   'shell.gateway-context.issue.delegated',
   'shell.gateway-read.issue.api-key',
   'shell.gateway-contexts.issue.session',
-  'shell.document-context.issue.session',
 ] as const) {
   for (const mutation of ['duplicate', 'unknown', 'credential', 'path', 'kind', 'missing'] as const) {
     it.effect(`rejects an invalid issuer classification: ${entrypointKey} ${mutation}`, () =>
@@ -3369,7 +3362,6 @@ for (const handler of [
   'issueDelegatedGatewayContext',
   'readWithApiKeyGatewayContext',
   'issueDocumentGatewayContexts',
-  'documentContext',
 ] as const) {
   it.live(`requires the mounted issuer handler rather than an identifier: ${handler}`, () =>
     Effect.gen(function* missingIssuerHandler() {
@@ -3384,7 +3376,7 @@ for (const handler of [
         `${modifiedRuntime}\nexport const ${handler} = true;\nexport const unusedText = ".handle('${handler}', unused)";\n// .handle('${handler}', unused)`,
       );
       yield* Effect.matchCause(checkModuleEntrypointBoundaries(root), {
-        onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/all six classified capability issuers/u),
+        onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/all five classified capability issuers/u),
         onSuccess: () => {
           throw new Error(EXPECTED_EFFECT_FAILURE);
         },

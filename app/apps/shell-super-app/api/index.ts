@@ -1645,9 +1645,8 @@ const liveScopeOrRefusal = Option.match({
  * reading session, legal entities, tenants, composition and the people capability as separate requests resolved the
  * same context (Better Auth session plus legal-entity checks) five times per document, each in its own invocation on
  * the document's isolate. Each part keeps its own outcome; the browser keeps the separate, cached endpoints.
- * It also signs the gateway assertions of the composition's audiences for the session principal (it is classified as
- * `shell.document-context.issue.session`): a separate batch call had to wait for this answer and then resolved the
- * session a second time. When signing fails the document goes without them and the browser asks the batch issuer.
+ * It issues no gateway assertions: the HTML waited for one signature and one scope-grant registration per audience
+ * here, while the browser obtains them in one batch (`auth/gateway-contexts`) as soon as the document renders.
  */
 export const documentContextHandler = Effect.fn('shell.composition.documentContext')(
   function* documentContextHandlerEffect(request: RequestWithHeaders, payload: ShellDocumentContextRequest) {
@@ -1749,19 +1748,6 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
           if (documentComposition.state !== 'available' || captured.catalog === null) {
             return base;
           }
-          const assertions = yield* Effect.forkChild(
-            Effect.option(
-              issueDocumentGatewayAssertions(
-                context.principal,
-                documentComposition.compositionRevision,
-                documentComposition.gatewayAudiences,
-              ).pipe(
-                observeGatewayPhase('document-assertions'),
-                Effect.tapError((error) => logGatewayIssuerFailure('session', request, error)),
-              ),
-            ),
-            { startImmediately: true },
-          );
           // Shell-owned people navigation does not depend on a workforce module contributing a legacy capability item.
           const canManagePeople = yield* Fiber.join(capability);
           const home =
@@ -1776,11 +1762,7 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
                   Effect.provideService(DocumentHomeCorrelationId, correlationFromRequest(request)),
                 )
               : undefined;
-          const result = home === undefined ? { ...base, canManagePeople } : { ...base, canManagePeople, home };
-          return Option.match(yield* Fiber.join(assertions), {
-            onNone: () => result,
-            onSome: (gatewayAssertions) => ({ ...result, gatewayAssertions }),
-          });
+          return home === undefined ? { ...base, canManagePeople } : { ...base, canManagePeople, home };
         }),
         tenantContextAvailable: canSelectTenantContext(context.principal).pipe(Effect.orElseSucceed(() => false)),
       },

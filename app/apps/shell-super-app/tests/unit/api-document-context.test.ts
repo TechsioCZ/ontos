@@ -79,13 +79,13 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
   context: ShellContextResult,
   hint: TenantDecisions,
   composition: ShellGovernedReadsService['composition'],
-  issueDocument: Effect.Effect<readonly []> = Effect.succeed([] as const),
   peopleStarted: Effect.Effect<unknown> = Effect.void,
   tenantAccess: TenantDecisions = Effect.succeed(denied),
 ) {
   const { catalog } = yield* fixture;
   const readComposition = rs.fn(composition);
-  const issue = rs.fn(() => issueDocument);
+  // The document context never signs gateway assertions: the browser asks the batch issuer for them.
+  const issue = rs.fn(() => Effect.die('The document context must not issue gateway assertions'));
   /** One scripted v2 answer for a question, from the first of the given decisions. */
   const answer = (decisions: TenantDecisions, input: GateInput) =>
     decisions.pipe(
@@ -138,20 +138,18 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
   return { issue, peopleCheck, readComposition, releaseHint, response, tenantSelection };
 });
 
-it.live('overlaps the switcher hint with composition and people reads, joining only after document assertions', () =>
+it.live('overlaps the switcher hint with composition and people reads, and issues no gateway assertions', () =>
   Effect.gen(function* overlappingDocumentReads() {
     const { composition } = yield* fixture;
     const hintStarted = yield* Deferred.make<boolean>();
     const compositionStarted = yield* Deferred.make<boolean>();
     const peopleStarted = yield* Deferred.make<boolean>();
-    const assertionsFinished = yield* Deferred.make<boolean>();
     const hint = Deferred.succeed(hintStarted, true).pipe(
       Effect.andThen(Deferred.await(compositionStarted)),
       Effect.andThen(Deferred.await(peopleStarted)),
-      Effect.andThen(Deferred.await(assertionsFinished)),
       Effect.as(denied),
     );
-    const { readComposition, response } = yield* documentTest(
+    const { issue, readComposition, response } = yield* documentTest(
       authenticated,
       hint,
       (input) => {
@@ -161,17 +159,17 @@ it.live('overlaps the switcher hint with composition and people reads, joining o
           Effect.as(composition),
         );
       },
-      Deferred.succeed(assertionsFinished, true).pipe(Effect.as([] as const)),
       Deferred.await(hintStarted).pipe(Effect.andThen(Deferred.succeed(peopleStarted, true))),
     );
     expect(readComposition).toHaveBeenCalledTimes(1);
     expect(response).toMatchObject({
       canManagePeople: false,
       composition: { state: 'available' },
-      gatewayAssertions: [],
       legalEntities: { selectedLegalEntityId: legalEntity.legalEntityId, tenantContextAvailable: false },
       session: { state: 'authenticated' },
     });
+    expect(response).not.toHaveProperty('gatewayAssertions');
+    expect(issue).not.toHaveBeenCalled();
   }).pipe(Effect.timeout('2 seconds')),
 );
 
@@ -244,7 +242,6 @@ it.live('interrupts pending composition and people reads when the parallel hint 
             }),
           ),
         ),
-      Effect.succeed([] as const),
       Deferred.succeed(peopleStarted, true).pipe(
         Effect.andThen(Effect.never),
         Effect.onInterrupt(() =>
@@ -331,7 +328,6 @@ it.effect(
         context,
         Effect.succeed(denied),
         () => Effect.die('Tenant search must not request a company composition'),
-        Effect.die('Tenant search must not issue gateway assertions'),
         Effect.void,
         Effect.succeed([{ decision: 'allowed', key: principal.tenantId }]),
       );
@@ -370,7 +366,6 @@ for (const decisions of [denied, unavailable]) {
         context,
         Effect.succeed([{ decision: 'allowed', key: principal.tenantId }]),
         () => Effect.die('No company composition'),
-        Effect.succeed([] as const),
         Effect.void,
         Effect.succeed(decisions),
       );

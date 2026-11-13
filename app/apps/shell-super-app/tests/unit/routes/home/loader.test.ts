@@ -770,46 +770,18 @@ it.effect('server rendering preserves the company welcome and unavailable Home o
   }),
 );
 
-const gatewayAssertion = {
-  apiBaseUrl: '/shell-super-app-api/module-api/future-generated/build/future-generated-api',
-  audience: 'future-generated',
-  compositionRevision,
-  expiresAt: 1_700_000_300,
-  token: 'assertion-token',
-};
-
 const audienceComposition = () => availableComposition({ gatewayAudiences: ['future-generated'] });
 
-const withGatewayAudiences = () =>
-  documentContextMock.mockReturnValue(Effect.succeed(documentContextOf({ composition: audienceComposition() })));
-
-const withSignedGatewayAssertions = () =>
-  documentContextMock.mockReturnValue(
-    Effect.succeed(documentContextOf({ composition: audienceComposition(), gatewayAssertions: [gatewayAssertion] })),
-  );
-
-it.effect('server rendering embeds the gateway assertions the document context signed, with no second call', () =>
-  Effect.gen(function* serverEmbedsAssertions() {
-    withSignedGatewayAssertions();
-    expect(yield* serverModel('https://shell.example.test/en/ukoly')).toMatchObject({
-      gatewayAssertions: [gatewayAssertion],
-      gatewayAudiences: ['future-generated'],
-    });
+it.effect('server rendering embeds no gateway assertions and leaves them to the browser batch', () =>
+  Effect.gen(function* serverWithoutAssertions() {
+    documentContextMock.mockReturnValue(Effect.succeed(documentContextOf({ composition: audienceComposition() })));
+    const model = yield* serverModel('https://shell.example.test/en/ukoly');
+    expect(model).toMatchObject({ gatewayAudiences: ['future-generated'], state: 'authenticated' });
+    expect(model).not.toHaveProperty('gatewayAssertions');
     expect(documentContextMock).toHaveBeenCalledTimes(1);
     expect(issueDocumentGatewayContextsMock).not.toHaveBeenCalled();
   }),
 );
-
-it.effect('server rendering without signed assertions leaves them to the browser batch', () =>
-  Effect.gen(function* serverWithoutAssertions() {
-    withGatewayAudiences();
-    const model = yield* serverModel('https://shell.example.test/en/ukoly');
-    expect(model).toMatchObject({ gatewayAudiences: ['future-generated'], state: 'authenticated' });
-    expect(model).not.toHaveProperty('gatewayAssertions');
-    expect(issueDocumentGatewayContextsMock).not.toHaveBeenCalled();
-  }),
-);
-
 it.effect('reconstructs explicit tenant scope on browser reload without company navigation', () =>
   Effect.gen(function* browserTenantScope() {
     const { legalEntityId, legalName, ...tenantIdentity } = identity;

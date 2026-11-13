@@ -11,16 +11,16 @@ import { issueDocumentGatewayContexts } from '../api/auth-client.ts';
  *
  * Every remote asks the Shell for an assertion before its first read of a module. Asked one by one, a page that reads
  * five modules waited for five `/auth/gateway-context` round trips (1-3 s each on a loaded stage) before any read
- * could start. Server rendering embeds the document's assertions (see home-page-model.ts), a client-side navigation
- * obtains them in one batch while the page's target and remote load, and the browser request cache answers each
- * remote's request from here. Each slot is claimed once. Missing or expiring slots are replenished in a batch, and
+ * could start. The Shell obtains a document's assertions in one batch as soon as it renders (and a client-side
+ * navigation while the page's target and remote load), and the browser request cache answers each remote's request
+ * from here. Each slot is claimed once. Missing or expiring slots are replenished in a batch, and
  * concurrent consumers never share a token.
  *
  * Nothing is persisted: sign-out and tenant or legal-entity switches reload the document, which drops them, and a new
  * composition revision replaces them. Each assertion keeps its own audience and lifetime; modules authorize every call.
  *
  * Owners redeem each assertion exactly once: a second presentation is refused with 401. So a token leaves this module
- * at most once for the whole document, including tokens server rendering embedded, which every render offers again.
+ * at most once.
  */
 
 /** Leave enough lifetime for a claimed assertion to reach its owner. */
@@ -45,13 +45,6 @@ interface DocumentAssertions {
 
 /** One document admits one release; a new revision starts an empty set. */
 const documentAssertions = MutableRef.make(Option.none<DocumentAssertions>());
-
-/**
- * Every embedded token ever offered, for the document's lifetime. The Shell offers the same embedded set on every
- * render, also after a context boundary or another revision dropped the held set; a token offered before is never
- * held again, whether a remote already redeemed it or it belongs to the context that just ended.
- */
-const offeredTokens = MutableRef.make(new Set<string>());
 
 /** Revisions the Shell no longer issues for (a release switch); their documents must reload, so no batch is asked. */
 const retiredRevisions = MutableRef.make(new Set<string>());
@@ -240,40 +233,5 @@ export const noteDocumentGatewayAudience = (audience: string, revision: string) 
     Option.map(currentFor(revision), ({ audiences }) => audiences.add(audience));
   });
 
-/**
- * Keeps the assertions server rendering embedded in the document. Called while the Shell renders, before routed module
- * pages mount and ask for them; an audience that already holds a usable assertion keeps it.
- */
-export const seedDocumentGatewayAssertions = Effect.fn('DocumentGatewayAssertions.seed')(function* seedEffect(
-  revision: string,
-  assertions: readonly DocumentGatewayAssertion[],
-) {
-  if (!inBrowser()) {
-    return;
-  }
-  const now = yield* Clock.currentTimeMillis;
-  const owned = ownedFor(revision);
-  const offered = MutableRef.get(offeredTokens);
-  for (const assertion of assertions) {
-    owned.audiences.add(assertion.audience);
-    const slot = owned.slots.get(assertion.audience);
-    const response = assertionOf(assertion);
-    if (offered.has(response.token)) {
-      continue;
-    }
-    offered.add(response.token);
-    if (
-      assertion.compositionRevision === revision &&
-      usable(response, now) &&
-      (slot === undefined || (slot.kind === 'ready' && !usable(slot.response, now)))
-    ) {
-      owned.slots.set(assertion.audience, { kind: 'ready', response });
-    }
-  }
-});
-
-/**
- * Drops every held assertion at a context boundary (and between test cases). Embedded tokens offered before stay
- * refused: they belong to the context that ended or were already redeemed.
- */
+/** Drops every held assertion at a context boundary (and between test cases). */
 export const resetDocumentGatewayAssertions = Effect.sync(() => MutableRef.set(documentAssertions, Option.none()));

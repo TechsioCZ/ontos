@@ -22,7 +22,6 @@ import {
   executeLegalEntityDetail,
   shellComposition,
 } from '../../api/auth-client.ts';
-import type { DocumentGatewayAssertion } from '../../../shared/document-gateway-api.ts';
 import { warmDocumentGatewayAssertions } from '../document-gateway-assertions.ts';
 import { presentedShellNavigationItems } from '../../../shared/shell-platform-navigation.ts';
 import { homeContributionCandidates, isHomeRequest, resolveHomeContribution } from './home-contribution-model.ts';
@@ -63,11 +62,6 @@ export interface AuthenticatedHomePageModel {
   readonly companyWelcome?: string;
   readonly compositionRevision?: string;
   readonly contextState: 'access_blocked' | 'authenticated' | 'selection_required' | 'tenant_authenticated';
-  /**
-   * Server rendering only, when the batch answered in time: the document's gateway assertions, one per module audience,
-   * so the browser's first module reads need no assertion round trip. Kept in memory (document-gateway-assertions.ts).
-   */
-  readonly gatewayAssertions?: readonly DocumentGatewayAssertion[];
   /** Module deployments this document may call; the browser obtains their assertions in one batch. */
   readonly gatewayAudiences?: readonly string[];
   readonly homeContribution?: HomeContribution;
@@ -371,11 +365,10 @@ const unavailableLegalEntities = { items: [] as const, state: 'unavailable' as c
 
 /**
  * Server rendering reads the whole document context in ONE request: the BFF resolves the session's context once and
- * answers session, legal entities, tenants, composition, the people-administration hint and the gateway assertions of
- * the composition's audiences together. Separate reads resolved that context five times, each in its own invocation
- * on the document's isolate (stage: 4-5 s sequential, then 2.6 s concurrent with ~1 s of their CPU queued on the
- * document's thread), and a separate assertion batch waited for the composition before resolving the session again.
- * Home target admission shares this invocation; remote code and primary data still load only in the browser.
+ * answers session, legal entities, tenants, composition and the people-administration hint together. Separate reads
+ * resolved that context five times, each in its own invocation on the document's isolate (stage: 4-5 s sequential,
+ * then 2.6 s concurrent with ~1 s of their CPU queued on the document's thread). Home target admission shares this
+ * invocation; gateway assertions, remote code and primary data load only in the browser.
  */
 const loadServerHomePageModel = Effect.fn('HomePageModel.loadServerHomePageModel')(
   function* loadServerHomePageModelEffect(request: Request, options: ShellAuthenticationClientOptions) {
@@ -447,10 +440,8 @@ const loadServerHomePageModel = Effect.fn('HomePageModel.loadServerHomePageModel
       state: 'authenticated',
       tenants,
     };
-    const withAssertions =
-      context.gatewayAssertions === undefined ? model : { ...model, gatewayAssertions: context.gatewayAssertions };
     return {
-      ...withAssertions,
+      ...model,
       ...homeFields(Option.fromUndefinedOr(context.home)),
     };
   },

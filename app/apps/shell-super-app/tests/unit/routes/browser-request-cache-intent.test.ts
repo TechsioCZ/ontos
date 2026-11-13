@@ -16,7 +16,7 @@ import {
 } from '../../../src/routes/browser-request-cache.ts';
 import { staffRoutePreloads } from '../../../src/routes/route-preload-scheduler.ts';
 import type { makeRoutePreloadScheduler } from '../../../src/routes/route-preload-scheduler.ts';
-import { seedDocumentGatewayAssertions } from '../../../src/routes/document-gateway-assertions.ts';
+import { warmDocumentGatewayAssertions } from '../../../src/routes/document-gateway-assertions.ts';
 import { prepareModulePage, RemotePagePreparation } from '../../../src/routes/remote-page-loader.ts';
 
 rstest.mock('../../../src/routes/route-preload-scheduler.ts', () => {
@@ -37,9 +37,9 @@ rstest.mock('../../../src/api/auth-client.ts', () => ({ issueDocumentGatewayCont
 
 const revision = 'a'.repeat(64);
 const audience = 'intent-fixture';
-/** The document never holds an embedded token twice, so each case embeds its own. */
+/** Each case's document batch issues its own token. */
 let token = 'intent-fixture-token';
-let embedded = 0;
+let issuedBatches = 0;
 const base = `/shell-super-app-api/module-api/${audience}/build/fixture`;
 const manifestKey = 'ontos.page-reads.v1:/en/home';
 const platformFetch = rstest.fn<typeof globalThis.fetch>();
@@ -80,18 +80,17 @@ beforeEach(async () => {
   globalThis.history.replaceState(null, '', '/en/home');
   globalThis.localStorage.clear();
   platformFetch.mockReset();
-  embedded += 1;
-  token = `intent-fixture-token-${embedded}`;
+  issuedBatches += 1;
+  token = `intent-fixture-token-${issuedBatches}`;
   issueDocumentGatewayContexts.mockReturnValue(Effect.succeed({ assertions: [] }));
+  issueDocumentGatewayContexts.mockReturnValueOnce(
+    Effect.succeed({
+      assertions: [{ apiBaseUrl: base, audience, compositionRevision: revision, expiresAt: 4_102_444_800, token }],
+    }),
+  );
   platformFetch.mockImplementation(async () => Response.json({ value: 'fresh' }));
   await browserRuntime.runPromise(
-    clearBrowserRequestCache.pipe(
-      Effect.andThen(
-        seedDocumentGatewayAssertions(revision, [
-          { apiBaseUrl: base, audience, compositionRevision: revision, expiresAt: 4_102_444_800, token },
-        ]),
-      ),
-    ),
+    clearBrowserRequestCache.pipe(Effect.andThen(warmDocumentGatewayAssertions(revision, [audience]))),
   );
   await gatewayRequest();
 });

@@ -13,7 +13,7 @@ import { signOut, switchLegalEntity, switchTenant, switchToTenantContext } from 
 import type { SwitchLegalEntityClientError, SwitchTenantClientError } from '../api/auth-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { endBrowserSession } from './session-scope.ts';
-import { seedDocumentGatewayAssertions, warmDocumentGatewayAssertions } from './document-gateway-assertions.ts';
+import { warmDocumentGatewayAssertions } from './document-gateway-assertions.ts';
 import type { AuthenticatedHomePageModel } from './[lang]/home-page-model.ts';
 
 const authenticationRequired = 'authentication-required' as const;
@@ -65,15 +65,10 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
       pinDocumentNavigationModules(model.navigation.moduleIds, browserDocument);
     }
   }
-  // Kept during render too: the assertions server rendering embedded must be in place before module pages ask, and
-  // any audience still without one gets it in one batch the module pages join (a no-op while all are fresh).
-  if (browserDocument !== undefined && compositionRevision !== undefined) {
-    if (model?.gatewayAssertions !== undefined) {
-      browserRuntime.runSync(seedDocumentGatewayAssertions(compositionRevision, model.gatewayAssertions));
-    }
-    if (model?.gatewayAudiences !== undefined) {
-      browserRuntime.runSync(warmDocumentGatewayAssertions(compositionRevision, model.gatewayAudiences));
-    }
+  // Started during render too: every audience of the document gets its assertion in one batch that module pages join
+  // (a no-op while all are fresh), before they mount and ask.
+  if (browserDocument !== undefined && compositionRevision !== undefined && model?.gatewayAudiences !== undefined) {
+    browserRuntime.runSync(warmDocumentGatewayAssertions(compositionRevision, model.gatewayAudiences));
   }
   const [logoutPending, setLogoutPending] = useState(false);
   const [logoutFailed, setLogoutFailed] = useState(false);

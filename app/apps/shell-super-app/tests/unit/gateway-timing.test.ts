@@ -205,7 +205,7 @@ describe('Shell gateway phase timing', () => {
     }),
   );
 
-  it.effect('reports document session, composition, admission and signing phases', () =>
+  it.effect('reports document session, composition, admission and home phases', () =>
     Effect.gen(function* documentPhases() {
       const response = yield* handle(
         Effect.gen(function* prepareDocument() {
@@ -213,12 +213,12 @@ describe('Shell gateway phase timing', () => {
           yield* TestClock.adjust(30).pipe(observeGatewayPhase('session-principal'));
           yield* TestClock.adjust(40).pipe(observeGatewayPhase('document-admission'));
           yield* TestClock.adjust(50).pipe(observeGatewayPhase('document-composition'));
-          yield* TestClock.adjust(10).pipe(observeGatewayPhase('document-assertions'));
+          yield* TestClock.adjust(10).pipe(observeGatewayPhase('document-home'));
           return HttpServerResponse.empty();
         }).pipe(withGatewayTimings),
       );
       expect(response.headers['server-timing']).toBe(
-        'session-read;dur=20, session-principal;dur=30, document-admission;dur=40, document-composition;dur=50, document-assertions;dur=10',
+        'session-read;dur=20, session-principal;dur=30, document-admission;dur=40, document-composition;dur=50, document-home;dur=10',
       );
     }),
   );
