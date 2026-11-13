@@ -627,44 +627,33 @@ const OPTION_WRITES = [
 type OptionWrite = (typeof OPTION_WRITES)[number];
 
 /**
- * The options read's admission and what each write's own declaration reaches right now, asked in ONE gate
- * batch: the read's own declaration and, while the Lidé gate is open, every write's, each in the tenant
- * context and in every company's own scope, exactly as `reachFor` asks one of them. Asked one decision at a
- * time, a tenant owner's options were 8 writes x every scope single decisions, each its own run of pooled
- * transactions, which held the request for tens of seconds; asked as two batches, every scope was prepared
- * twice. A closed gate asks the read's own declaration only, and offers no write. A read that covers no scope
- * is refused like every Lidé read; one unreadable answer refuses the whole request (503).
+ * The options read's admission, then what each write's own declaration reaches right now. The read's own
+ * declaration is asked first, in the tenant context and every company's own scope like every Lidé read, and a
+ * read that covers no scope is refused before any write is asked: a refused reader leaves only the read's own
+ * evidence. Then, while the Lidé gate is open, all eight writes travel in ONE gate batch, each asked exactly as
+ * `reachFor` asks it (asked one decision at a time, a tenant owner's options were 8 writes x every scope single
+ * decisions, each its own run of pooled transactions, which held the request for tens of seconds). A closed gate
+ * asks no write and offers none; one unreadable answer refuses the whole request (503).
  */
 const admitOptions = Effect.fn('AccessAdminPeople.admitOptions')(function* admitOptionsRead(headers: Headers) {
-  const scope = yield* requireScope(headers);
-  const view = yield* readView(scope);
-  const now = yield* coreInstant;
+  const { now, reach, scope, view } = yield* admitRead(headers, accessPeopleDeclarations.options);
   const gate = yield* AccessPeopleWriteAvailability;
-  const writes = gate.available ? OPTION_WRITES : [];
-  const [readable, ...writeReadable] = yield* roleReadScopes({
+  if (!gate.available) {
+    return { reach, reaches: Option.none<ReadonlyMap<OptionWrite, PeopleReach>>(), scope, view };
+  }
+  const readable = yield* roleReadScopes({
     companies: companiesOf(view),
-    declarations: [accessPeopleDeclarations.options, ...writes.map((write) => accessPeopleDeclarations[write])],
+    declarations: OPTION_WRITES.map((write) => accessPeopleDeclarations[write]),
     now,
     scope,
   });
-  if (readable === undefined) {
-    return yield* Effect.fail(accessAdminUnavailableProblem());
-  }
-  const reach = reachOf(view, readable);
-  if (coversNoRole(reach.readable)) {
-    return yield* Effect.fail(forbidden(PEOPLE_NOT_AVAILABLE));
-  }
-  const reaches: Option.Option<ReadonlyMap<OptionWrite, PeopleReach>> = gate.available
-    ? Option.some(
-        new Map(
-          writes.flatMap((write, index) => {
-            const one = writeReadable[index];
-            return one === undefined ? [] : [[write, reachOf(view, one)] as const];
-          }),
-        ),
-      )
-    : Option.none();
-  return { reach, reaches, scope, view };
+  const reaches: ReadonlyMap<OptionWrite, PeopleReach> = new Map(
+    OPTION_WRITES.flatMap((write, index) => {
+      const one = readable[index];
+      return one === undefined ? [] : [[write, reachOf(view, one)] as const];
+    }),
+  );
+  return { reach, reaches: Option.some(reaches), scope, view };
 });
 
 /** Whether this person may run one write anywhere its reach shows; a closed gate offers none. */
