@@ -473,8 +473,7 @@ const readOperation = (scope: OutboxWorkerLegalEntityScope, operationId: string)
 const acknowledgedTargetRef = (record: ProviderDispatchRecord): Option.Option<ProviderObjectRef> =>
   record.state === 'ACKNOWLEDGED' ? record.providerPaymentRef : Option.none();
 
-const isRefundRef = (ref: ProviderObjectRef) =>
-  Predicate.isTagged(ref, 'STRIPE_REFUND') || Predicate.isTagged(ref, 'GOPAY_REFUND');
+const isRefundRef = (ref: ProviderObjectRef) => Predicate.isTagged(ref, 'STRIPE_REFUND');
 const isPaymentIntentRef = (ref: ProviderObjectRef) => Predicate.isTagged(ref, 'STRIPE_PAYMENT_INTENT');
 
 const REFUND_SERIALIZED_FAMILIES: ReadonlySet<Family> = new Set(['COMGATE', 'GOPAY']);

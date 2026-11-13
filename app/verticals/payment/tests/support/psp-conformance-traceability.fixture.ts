@@ -113,7 +113,7 @@ const T = {
   ),
   anAcceptedGopayRefundIs: u(
     GOPAY_ADAPTER,
-    '#1156 GoPay refund response without completion evidence stays pending; SUCCESS confirms',
+    '#1156 An accepted GoPay refund is confirmed only by one matching refund-history entry',
   ),
   aNotificationAddressedToAnother: u(
     GOPAY_NOTIFICATION,
@@ -181,7 +181,7 @@ const T = {
   chainGopayCancel: {
     file: CHAIN,
     title:
-      '#1156 #1159 L3-14 boundary executor+ledger routines+production GoPay adapter: a GoPay v4 cancel is sent once and decided by the lookup (204 CANCELED confirmed; 409 PAYMENT_METHOD_CHOSEN or PAID not effected)',
+      '#1156 #1159 L3-14 boundary executor+ledger routines+production GoPay adapter: a GoPay cancel ends UNSUPPORTED with CANCEL_NOT_EFFECTED and reaches no provider',
   },
   chainGopayComgateRefund: {
     file: CHAIN,
@@ -306,7 +306,7 @@ const T = {
   gopayNotificationTriggersLookupOnly: u(GOPAY_NOTIFICATION, '#1157 GoPay notification triggers lookup only'),
   gopayRefundRecoveryNative: i(
     PSP_RECOVERY_POSTGRES,
-    '#1156 #1158 GoPay v4 refund recovery reads the refund by the id GoPay returned and confirms it',
+    '#1156 #1158 GoPay refund recovery confirms the one refund-history entry requested after the dispatch',
   ),
   gopayReplayAndOrderReference: u(GOPAY_ADAPTER, '#1158 GoPay replay and order-reference lookup are UNSUPPORTED'),
   historicalInformationDoesNotAuthorize: i(
@@ -382,7 +382,7 @@ const T = {
   oneProviderOutageDoesNot: i(PSP_ENABLEMENT_POSTGRES, '#1155 One provider outage does not gate unrelated providers'),
   payerContactRules: i(
     START_PAYMENT_COLLECTION_PAYER_CONTACT_POSTGRES,
-    '#1153 H1094-01=A A Stripe collection needs no contact, GoPay only an email, Comgate a full name and an email or phone',
+    '#1153 H1094-01=A Stripe and GoPay collections need no contact, Comgate a full name and an email or phone',
   ),
   providerIdempotencyWindowHasExpired: i(
     EVIDENCE_RECOVERY_POSTGRES,
@@ -517,7 +517,7 @@ const rows: readonly RowInput[] = [
     expected: 'CUSTOMER_ACTION_REQUIRED with redirect; COLLECTION_PENDING at most, never EFFECT_CONFIRMED',
     id: 'MIN-1',
     limits:
-      'Provider acceptance of the request body is not proven without a sandbox; GoPay and Comgate creates carry the payer contact the collection caller supplies (D-P3)',
+      'Provider acceptance of the request body is not proven without a sandbox; Comgate creates carry the payer contact the collection caller supplies (D-P3)',
     mapping: '{gopay,stripe,comgate}-payment.service.ts prepareCollect/send',
     requirement: 'one-shot create / direct collection',
     rule: 'Payment authorizes one COLLECT on its exact binding; ACK or browser return never proves collection',
@@ -542,14 +542,12 @@ const rows: readonly RowInput[] = [
     tests: [T.l2Retrieve, T.l2Miss],
   },
   {
-    capability:
-      'Stripe Checkout Session expire; Comgate DELETE transId; GoPay v4 DELETE /payments/{id} (CREATED only: 204, else 409)',
+    capability: 'Stripe Checkout Session expire; Comgate DELETE transId; GoPay has no cancel API (N8)',
     expected:
-      'CANCEL_CONFIRMED only from a provider lookup; a refused GoPay cancel of a paid payment keeps COLLECTION_CONFIRMED',
+      'CANCEL_CONFIRMED only from the provider; GoPay typed UNSUPPORTED -> CANCEL_NOT_EFFECTED pending evidence',
     id: 'MIN-3',
-    limits:
-      'GoPay v4 cancel not sandbox-verified and v4 for the merchant unconfirmed (N8 merge gate); Comgate DELETE path not sandbox-verified (ORIGIN C-11)',
-    mapping: '{stripe,comgate,gopay} prepareCancel/send; gopay DELETE then GET /payments/{id} (mapGopayCancelAnswer)',
+    limits: 'GoPay cancel returned to PO (N8); Comgate DELETE path not sandbox-verified (ORIGIN C-11)',
+    mapping: 'stripe/comgate prepareCancel/send; gopay prepareCancel -> GatewayProviderUnsupported',
     requirement: 'pending cancellation / void path as supported',
     rule: 'CANCEL_OR_VOID is distinct from refund; unsupported is explicit, never a fallback',
     sandbox: SANDBOX_NOT_RUN,
@@ -563,11 +561,11 @@ const rows: readonly RowInput[] = [
   },
   {
     capability:
-      'GoPay v4 refund resource (REQUESTED/SUCCESS/FAILED); Stripe Refunds API; Comgate refund (no status API; completion only in the production settlement statement, D-P2)',
+      'GoPay refund + refund history; Stripe Refunds API; Comgate refund (no status API; completion only in the production settlement statement, D-P2)',
     expected: 'ACCEPTED_PENDING + REFUND_PENDING on acceptance; REFUND_CONFIRMED only from provider proof',
     id: 'MIN-4',
     limits:
-      'Comgate refund completion is read only from a LIVE statement: sandbox has none, so it needs one small real production refund (N10); statement row shape unverified live; GoPay refuses an early partial card refund with 409 (L4)',
+      'Comgate refund completion is read only from a LIVE statement: sandbox has none, so it needs one small real production refund (N10); statement row shape unverified live; GoPay partial card refunds need a bank transfer (L4)',
     mapping:
       '{gopay,stripe,comgate}-payment.service.ts prepareRefund/send; comgate statement lookup (transferList + singleTransfer)',
     requirement: 'amount-based refund',
@@ -642,7 +640,7 @@ const rows: readonly RowInput[] = [
     tests: [T.l2Amount, T.observedAmountMismatchIsA],
   },
   {
-    capability: 'GoPay GoID path + own order_number; Stripe livemode + key prefix; Comgate merchant + test flag',
+    capability: 'GoPay goid; Stripe livemode + key prefix; Comgate merchant + test flag',
     expected: 'Foreign merchant/environment answers never confirm; environments are not interchangeable',
     id: 'MIN-8',
     limits: NO_LIMIT_BEYOND_NATIVE,
@@ -1557,16 +1555,15 @@ const rows: readonly RowInput[] = [
     tests: [T.sameLogicalRefundButChanged],
   },
   {
-    capability: 'GoPay v4 DELETE /payments/{id} then GET /payments/{id}',
-    expected:
-      '204+CANCELED: CANCEL_CONFIRMED + COLLECTION_NOT_EFFECTED; 409+PAYMENT_METHOD_CHOSEN: CANCEL_NOT_EFFECTED; 409+PAID: CANCEL_NOT_EFFECTED + COLLECTION_CONFIRMED; never resent',
+    capability: 'GoPay has no cancel API (N8)',
+    expected: 'CANCEL_NOT_EFFECTED pending evidence; no fallback',
     id: 'L3-14',
-    limits: 'GoPay v4 cancel not sandbox-verified (N8 merge gate)',
-    mapping: 'gopay prepareCancel/send, mapGopayCancelAnswer',
-    requirement: 'GoPay cancel is sent once through the original binding and decided by the lookup',
-    rule: 'A cancel answer alone never proves its effect',
+    limits: 'N8 returned to PO',
+    mapping: 'gopay prepareCancel UNSUPPORTED',
+    requirement: 'GoPay cancel UNSUPPORTED reaches Payment as CANCEL_NOT_EFFECTED pending evidence',
+    rule: 'Unsupported is explicit',
     sandbox: SANDBOX_NOT_RUN,
-    tests: [T.l2Cancel, T.chainGopayCancel],
+    tests: [T.unsupportedProviderOperationYieldsTyped, T.l2Cancel, T.chainGopayCancel],
   },
 ];
 

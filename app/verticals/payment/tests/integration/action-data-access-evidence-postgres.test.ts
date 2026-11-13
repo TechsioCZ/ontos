@@ -131,8 +131,6 @@ const collect = Effect.fn('PaymentDataAccess.collect')(function* collect(
         amount: { amountMinor: payload.amountMinor, currency: 'CZK' },
         method: 'ONLINE_GATEWAY',
         operationKey: payload.operationKey,
-        // The GoPay binding needs the payer's email (plan D-P3).
-        payerContact: { email: 'payer@example.test' },
         paymentId: payload.paymentId,
       },
       principal: principalOf(evidence.scope),

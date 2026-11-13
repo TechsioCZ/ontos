@@ -63,9 +63,10 @@ const COLLECT_OPERATION_ID = '3f1c2b7e-8a9d-4e6f-9b1a-2c3d4e5f6a7b';
 const REFUND_OPERATION_ID = '6a0b1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d';
 const CANCEL_OPERATION_ID = '9c8b7a6d-5e4f-4321-8abc-def012345678';
 /** Fixture keys with Stripe's environment prefixes; joined at runtime so no key-shaped literal is committed. */
-const fixtureKeyOf = (mode: 'live' | 'test') => ['sk', mode, 'c17', 'fixture', 'not', 'a', 'real', 'key'].join('_');
-const SANDBOX_KEY = fixtureKeyOf('test');
-const LIVE_KEY = fixtureKeyOf('live');
+const fixtureKeyOf = (kind: 'rk' | 'rkcs' | 'sk', mode: 'live' | 'test') =>
+  [kind, mode, 'c17', 'fixture', 'not', 'a', 'real', 'key'].join('_');
+const SANDBOX_KEY = fixtureKeyOf('sk', 'test');
+const LIVE_KEY = fixtureKeyOf('sk', 'live');
 const WEBHOOK_SECRET = 'whsec_c17_fixture_not_a_real_secret';
 const PROVIDER_ACCOUNT_REF = 'pab_0123456789abcdef0123456789abcdef';
 const RETURN_TOKEN = 'AAAAAAAAAAAAAAAAAAAAAA';
@@ -380,6 +381,64 @@ describe('#1154 Stripe Checkout Session collection', () => {
         expect(JSON.stringify(error)).not.toContain(LIVE_KEY);
       }
       expect(sent).toHaveLength(0);
+    }),
+  );
+
+  it.effect('#1155 A SANDBOX binding admits secret, restricted and claimable-sandbox test keys', () =>
+    Effect.gen(function* sandboxKeysAdmitted() {
+      for (const kind of ['sk', 'rk', 'rkcs'] as const) {
+        const { adapter, sent } = yield* harness(
+          [respond(200, JSON.stringify(openSession))],
+          fixtureKeyOf(kind, 'test'),
+        );
+        const prepared = yield* adapter.prepareCollect(SANDBOX_TARGET, collectRequest);
+        const response = yield* adapter.send(SANDBOX_TARGET, prepared, collectExpected);
+
+        expect(dispatchOutcomeOf(response)).toBe('ACKNOWLEDGED');
+        expect(sent).toHaveLength(1);
+      }
+    }),
+  );
+
+  it.effect('#1155 A SANDBOX binding refuses every live key and unknown prefixes before any send', () =>
+    Effect.gen(function* sandboxRefusesLiveKeys() {
+      for (const secretKey of [
+        fixtureKeyOf('sk', 'live'),
+        fixtureKeyOf('rk', 'live'),
+        fixtureKeyOf('rkcs', 'live'),
+        ['pk', 'test', 'c17', 'fixture'].join('_'),
+      ]) {
+        const { adapter, sent } = yield* harness([respond(200, JSON.stringify(openSession))], secretKey);
+        const prepared = yield* adapter.prepareCollect(SANDBOX_TARGET, collectRequest);
+        const error = yield* failureOf(adapter.send(SANDBOX_TARGET, prepared, collectExpected));
+
+        expect(error).toMatchObject({
+          code: 'gateway_provider_unavailable',
+          reason: 'credential_environment_mismatch',
+        });
+        expect(JSON.stringify(error)).not.toContain(secretKey);
+        expect(sent).toHaveLength(0);
+      }
+    }),
+  );
+
+  it.effect('#1155 A LIVE binding refuses every test key, including the claimable-sandbox key', () =>
+    Effect.gen(function* liveRefusesTestKeys() {
+      const liveTarget = targetOf('LIVE');
+      for (const kind of ['sk', 'rk', 'rkcs'] as const) {
+        const { adapter, sent } = yield* harness(
+          [respond(200, JSON.stringify(openSession))],
+          fixtureKeyOf(kind, 'test'),
+        );
+        const prepared = yield* adapter.prepareCollect(liveTarget, collectRequest);
+        const error = yield* failureOf(adapter.send(liveTarget, prepared, collectExpected));
+
+        expect(error).toMatchObject({
+          code: 'gateway_provider_unavailable',
+          reason: 'credential_environment_mismatch',
+        });
+        expect(sent).toHaveLength(0);
+      }
     }),
   );
 

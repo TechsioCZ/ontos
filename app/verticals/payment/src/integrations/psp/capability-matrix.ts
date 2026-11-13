@@ -24,7 +24,7 @@ export const GatewayCapabilityMatrixSchema = Schema.Struct({
 });
 export type GatewayCapabilityMatrix = typeof GatewayCapabilityMatrixSchema.Type;
 
-/** Every Launch family supports every capability; GoPay cancels through Payments API v4 `DELETE /payments/{id}` (plan D-P1). */
+/** GoPay has no cancel API for a standard payment (plan N8). */
 export const GATEWAY_LAUNCH_CAPABILITIES: GatewayCapabilityMatrix = {
   COMGATE: {
     CANCEL_OR_VOID: 'SUPPORTED',
@@ -34,7 +34,7 @@ export const GATEWAY_LAUNCH_CAPABILITIES: GatewayCapabilityMatrix = {
     RETRIEVE: 'SUPPORTED',
   },
   GOPAY: {
-    CANCEL_OR_VOID: 'SUPPORTED',
+    CANCEL_OR_VOID: 'UNSUPPORTED',
     COLLECT: 'SUPPORTED',
     NOTIFICATION: 'SUPPORTED',
     REFUND: 'SUPPORTED',

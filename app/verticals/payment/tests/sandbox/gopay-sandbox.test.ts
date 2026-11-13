@@ -1,9 +1,9 @@
-import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import type { Scope } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import type { TestContext } from 'effect-rstest';
 
-import { GopayPaymentFromJsonSchema } from '../../src/integrations/gopay/gopay-wire.ts';
+import { GopayPaymentFromJsonSchema, gopayProviderObjectId } from '../../src/integrations/gopay/gopay-wire.ts';
 import { GopayClientIdSchema } from '../../src/integrations/psp/credentials.ts';
 import type { ProviderObjectRef } from '../../src/integrations/psp/psp-request.ts';
 import type { ProviderFindingResult } from '../../src/integrations/psp/psp-result.ts';
@@ -17,7 +17,6 @@ import {
   SETTLE_POLL,
   announce,
   announceHostedPage,
-  cancelExpected,
   cancelRequestOf,
   collectExpected,
   collectRequestOf,
@@ -41,19 +40,19 @@ import {
 import type { GopaySandboxCredentials, SandboxOperation, SandboxScenarioInput } from './sandbox-harness.ts';
 
 /**
- * #1159 level 4: the GoPay Payments API v4 sandbox (`https://gw.sandbox.gopay.com/gp-gw/api/4.0`, plan D-P1)
- * through the production `GopayPaymentService` and `GopayOAuthToken`. Needs `ONTOS_C17_SANDBOX_GOPAY_CLIENT_ID`,
- * `ONTOS_C17_SANDBOX_GOPAY_CLIENT_SECRET` and `ONTOS_C17_SANDBOX_GOPAY_GOID` of a v4 sandbox eshop; when the
- * optional public `ONTOS_C17_SANDBOX_GOPAY_NOTIFICATION_URL` is set, created payments name it as `notification_url`
- * so GoPay calls it on every state change.
+ * #1159 level 4: the GoPay sandbox (`https://gw.sandbox.gopay.com/api`) through the production
+ * `GopayPaymentService` and `GopayOAuthToken` (plan §6 GoPay). Needs `ONTOS_C17_SANDBOX_GOPAY_CLIENT_ID`,
+ * `ONTOS_C17_SANDBOX_GOPAY_CLIENT_SECRET` and `ONTOS_C17_SANDBOX_GOPAY_GOID`; when the optional public
+ * `ONTOS_C17_SANDBOX_GOPAY_NOTIFICATION_URL` is set, created payments name it as `notification_url` so GoPay
+ * calls it on every state change.
  *
- * This run is the D-P1 merge gate: it proves v4 create, lookup, cancel (`DELETE` 204 then lookup CANCELED) and
- * refund with the merchant's own sandbox credentials, the token scopes `payment:read payment:write`, and the
- * `created_at` format the refund list matching relies on.
+ * Also settles the GOPAY-CLIENT open points: the token path below the API root, the inquiry accepting the
+ * form content type, and the refund-history `date_requested` format (a date-only value would leave every
+ * GoPay refund unconfirmed; the refund scenario then fails after its lookup poll).
  *
- * GoPay has no order-reference lookup and no replay: those scenarios assert the typed Unsupported answers. An early
- * partial refund of a card payment is refused with 409, so the hosted payment must be paid by bank transfer for the
- * refund scenario to pass.
+ * GoPay has no cancel/void API (N8), no order-reference lookup and no replay: those scenarios assert the
+ * typed Unsupported answers. Partial refunds cannot be tested on card payments, so the hosted payment must
+ * be paid by bank transfer for the refund scenario to pass.
  */
 
 /** Ends in 00, so the sandbox test card 5447 3800 0000 0006 pays it. */
@@ -61,14 +60,6 @@ const COLLECT_AMOUNT = { amountMinor: 10_000, currency: 'CZK' } as const;
 const REFUND_AMOUNT = { amountMinor: 4000, currency: 'CZK' } as const;
 /** `gopay:<id>:` plus 200 characters exceeds the 200-character stored delivery identity (plan §13.2). */
 const OVERLONG_DELIVERY_REF = 'r'.repeat(200);
-/** v4 create requires `customer.email`; a reserved example domain, never a real payer. */
-const SANDBOX_PAYER = Option.some({
-  email: Option.some('c17-sandbox-payer@example.test'),
-  fullName: Option.none(),
-  phone: Option.none(),
-});
-/** A GoPay v4 refund's own reference (it names its payment, which `Refund-Details` does not). */
-const isGopayRefundRef = (ref: ProviderObjectRef): boolean => Predicate.isTagged(ref, 'GOPAY_REFUND');
 
 const setup = {
   credentials: gopaySandboxCredentials,
@@ -98,7 +89,7 @@ const createPayment = ({ provider, target }: GopayScenario) =>
     });
     const prepared = yield* provider.adapter.prepareCollect(
       target,
-      collectRequestOf({ amount: COLLECT_AMOUNT, issuedAt, operation, payerContact: SANDBOX_PAYER, returnToken }),
+      collectRequestOf({ amount: COLLECT_AMOUNT, issuedAt, operation, payerContact: Option.none(), returnToken }),
     );
     const response = yield* provider.adapter.send(target, prepared, collectExpected(operation, COLLECT_AMOUNT));
     expect(dispatchOutcomeOf(response)).toBe('ACKNOWLEDGED');
@@ -123,7 +114,7 @@ const orderReferenceOf = (findings: readonly ProviderFindingResult[], operation:
 const decodeCreatedPayment = (bodyText: string): Option.Option<ProviderObjectRef> =>
   Option.map(Schema.decodeUnknownOption(GopayPaymentFromJsonSchema)(bodyText), (payment) => ({
     _tag: 'GOPAY_PAYMENT',
-    id: payment.id,
+    id: gopayProviderObjectId(payment.id),
   }));
 
 describe('#1159 GoPay sandbox conformance', () => {
@@ -185,59 +176,40 @@ describe('#1159 GoPay sandbox conformance', () => {
           );
           expect(dispatchOutcomeOf(response)).toBe('ACKNOWLEDGED');
           expect(['EFFECT_CONFIRMED', 'ACCEPTED_PENDING']).toContain(response.finding.finding);
-          // The 201 refund resource names the refund by its own GoPay id; completion is read from that refund.
-          const refundRef = Option.getOrThrow(
-            Option.fromUndefinedOr(response.finding.providerRefs.find(isGopayRefundRef)),
-          );
 
           const settled = yield* pollUntil(
             input.provider.adapter.lookup(
               input.target,
-              objectLookup(refundRef, refundExpected(refund, REFUND_AMOUNT), refundedAt),
+              objectLookup(created.payment, refundExpected(refund, REFUND_AMOUNT), refundedAt),
             ),
             (current) => findingKindFor(current, refund.operationId) === 'EFFECT_CONFIRMED',
             SETTLE_POLL,
           );
           expect(findingKindFor(settled, refund.operationId)).toBe('EFFECT_CONFIRMED');
-          // Without the refund id (a lost response), the payment's refund list finds the same single refund.
-          const byList = yield* input.provider.adapter.lookup(
-            input.target,
-            objectLookup(created.payment, refundExpected(refund, REFUND_AMOUNT), refundedAt),
-          );
-          expect(findingKindFor(byList, refund.operationId)).toBe('EFFECT_CONFIRMED');
         }),
       ),
     HOSTED_SCENARIO_TIMEOUT_MS,
   );
 
-  it.live('#1159 GoPay sandbox: a created payment is canceled by DELETE and the lookup shows CANCELED', (ctx) =>
+  it.live('#1159 GoPay sandbox: cancel is UNSUPPORTED and leaves the payment open', (ctx) =>
     gopay(ctx, (input) =>
-      Effect.gen(function* cancelPending() {
+      Effect.gen(function* cancelUnsupported() {
         const created = yield* createPayment(input);
         const cancel = yield* newOperation;
-        const expected = cancelExpected(cancel, created.operation, COLLECT_AMOUNT);
-        const prepared = yield* input.provider.adapter.prepareCancel(
-          input.target,
-          cancelRequestOf({ cancel, collection: created.operation, providerTarget: created.payment }),
-        );
-        const response = yield* input.provider.adapter.send(input.target, prepared, expected);
-
-        expect(dispatchOutcomeOf(response)).toBe('ACKNOWLEDGED');
-        expect(response.finding.finding).toBe('EFFECT_CONFIRMED');
-        expect(response.finding.evidence.pipe(Option.map(({ factKind }) => factKind))).toEqual(
-          Option.some('CANCEL_CONFIRMED'),
-        );
-        expect(
-          response.targetFinding.pipe(
-            Option.flatMap(({ evidence }) => evidence),
-            Option.map(({ factKind }) => factKind),
+        const refused = yield* Effect.flip(
+          input.provider.adapter.prepareCancel(
+            input.target,
+            cancelRequestOf({ cancel, collection: created.operation, providerTarget: created.payment }),
           ),
-        ).toEqual(Option.some('COLLECTION_NOT_EFFECTED'));
-        // An independent lookup through the same binding agrees, and a second cancel is refused (409) by state.
+        );
         const findings = yield* lookupCollection(input, created.operation, created.payment, created.issuedAt);
-        expect(findingKindFor(findings, created.operation.operationId)).toBe('NOT_EFFECTED');
-        const again = yield* input.provider.adapter.send(input.target, prepared, expected);
-        expect([dispatchOutcomeOf(again), again.finding.finding]).toEqual(['ACKNOWLEDGED', 'EFFECT_CONFIRMED']);
+
+        expect(refused).toMatchObject({
+          capability: 'CANCEL_OR_VOID',
+          code: 'gateway_provider_unsupported',
+          reason: 'provider_cancel_unsupported',
+        });
+        expect(findingKindFor(findings, created.operation.operationId)).not.toBe('NOT_EFFECTED');
       }),
     ),
   );
@@ -302,7 +274,7 @@ describe('#1159 GoPay sandbox conformance', () => {
             amount: COLLECT_AMOUNT,
             issuedAt: preparedAt,
             operation,
-            payerContact: SANDBOX_PAYER,
+            payerContact: Option.none(),
             returnToken,
           }),
         );

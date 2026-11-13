@@ -23,9 +23,6 @@ export const PAYER_CONTACT_PROBLEM_CODES = [
 ] as const;
 export type PayerContactProblemCode = (typeof PAYER_CONTACT_PROBLEM_CODES)[number];
 
-/** GoPay accepts an e-mail address of at most this length; a longer one does not satisfy the family. */
-const GOPAY_EMAIL_MAXIMUM_LENGTH = 128;
-
 type PaymentGatewayProviderFamily = typeof PaymentGatewayProviderFamilySchema.Type;
 
 const requiredProblem = Option.some<PayerContactProblemCode>('payment_payer_contact_required');
@@ -36,11 +33,10 @@ const textLength = (value: string | undefined): number => value?.length ?? 0;
 /**
  * The payer contact problem, if any, for a COLLECT on a binding of `family`:
  * - COMGATE requires `fullName` and at least one of `email` or `phone`; all three fields are allowed.
- * - GOPAY requires `email` (at most 128 characters) and accepts nothing else.
- * - STRIPE accepts no contact at all.
- * A missing contact where one is required is `payment_payer_contact_required`; a field the family does
- * not use, or any contact for STRIPE, is `payment_payer_contact_not_applicable`. A contact that is
- * present for a family that requires it but does not satisfy its rules is `payment_payer_contact_required`.
+ * - GOPAY and STRIPE accept no contact at all.
+ * A missing contact where one is required is `payment_payer_contact_required`; any contact for GOPAY or
+ * STRIPE is `payment_payer_contact_not_applicable`. A contact that is present for a family that requires it
+ * but does not satisfy its rules is `payment_payer_contact_required`.
  */
 export const payerContactProblemFor = (
   family: PaymentGatewayProviderFamily,
@@ -56,18 +52,6 @@ export const payerContactProblemFor = (
             : requiredProblem,
       }),
     ),
-    Match.when('GOPAY', () =>
-      Option.match(contact, {
-        onNone: () => requiredProblem,
-        onSome: (given) => {
-          if (textLength(given.fullName) > 0 || textLength(given.phone) > 0) {
-            return notApplicableProblem;
-          }
-          const emailLength = textLength(given.email);
-          return emailLength > 0 && emailLength <= GOPAY_EMAIL_MAXIMUM_LENGTH ? Option.none() : requiredProblem;
-        },
-      }),
-    ),
-    Match.when('STRIPE', () => (Option.isSome(contact) ? notApplicableProblem : Option.none())),
+    Match.whenOr('GOPAY', 'STRIPE', () => (Option.isSome(contact) ? notApplicableProblem : Option.none())),
     Match.exhaustive,
   );

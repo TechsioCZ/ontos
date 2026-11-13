@@ -27,7 +27,6 @@ import type {
 } from '../psp/psp-errors.ts';
 import { ProviderObjectIdSchema } from '../psp/psp-request.ts';
 import type {
-  GatewayCancelRequest,
   GatewayCollectRequest,
   GatewayExecutionTarget,
   GatewayExpectedEffect,
@@ -43,63 +42,58 @@ import type {
   ProviderFindingResult,
   ProviderRequestHeader,
 } from '../psp/psp-result.ts';
-import { GOPAY_CAPABILITIES, gopayPayerContactUnavailable } from './gopay-capabilities.ts';
+import { GOPAY_CAPABILITIES, gopayCancelUnsupported } from './gopay-capabilities.ts';
 import {
-  gopayOrderReferenceOf,
   gopayRefundEffectKey,
-  mapGopayCancelAnswer,
+  gopayVerifiedOrderReference,
   mapGopayCreateResponse,
   mapGopayLookup,
   mapGopayRefundResponse,
 } from './gopay-evidence.ts';
-import type { GopayCancelAnswer, GopayLookupResult } from './gopay-evidence.ts';
+import type { GopayLookupResult } from './gopay-evidence.ts';
 import { toGopayAmount } from './gopay-money.ts';
 import { verifyGopayNotification } from './gopay-notification.ts';
 import { GopayOAuthToken, gopayApiBaseUrl } from './gopay-oauth-token.ts';
 import {
   GopayCreatePaymentRequestJsonSchema,
-  GopayCustomerEmailSchema,
   GopayPaymentFromJsonSchema,
-  GopayRefundCreateRequestJsonSchema,
-  GopayRefundFromJsonSchema,
-  GopayRefundListFromJsonSchema,
+  GopayRefundHistoryFromJsonSchema,
+  GopayRefundResponseFromJsonSchema,
   gopayGoidOf,
+  gopayProviderObjectId,
   parseGopayId,
 } from './gopay-wire.ts';
-import type { GopayCreatePaymentRequest, GopayPaymentState } from './gopay-wire.ts';
+import type { GopayCreatePaymentRequest, GopayGoid } from './gopay-wire.ts';
 
 /**
- * GoPay `GatewayProviderAdapter` on Payments API v4 (#1154, #1156, #1157, #1158, #1159; plan D-P1;
- * https://api-docs.gopay.com/llms-full.txt, https://api-docs.gopay.com/spec/en/payments.yaml), built on the single
+ * GoPay `GatewayProviderAdapter` (#1154, #1156, #1157, #1158; plan §4 GoPay), built on the single
  * outbound seam `ProviderHttp` and on `GopayOAuthToken` (which reads `ProviderCredentialStore`).
  *
- * - Collect: `POST /eshops/{goid}/payments` (JSON `amount`, `currency`, `order_number`, `customer.email`,
- *   `callback`), a one-time direct payment; v4 has no preauthorization or recurrence on it. `order_number` is the
- *   operation's order reference and the return URL carries the return token as `?r=`. Without a payer email the
- *   collect is UNAVAILABLE before anything is prepared. One mutate; a lost or unparseable response is
+ * - Collect: `POST /payments/payment` (JSON), a one-time standard payment. The wire shape cannot
+ *   express `preauthorization` or `recurrence`; `order_number` is the operation's order reference and
+ *   the return URL carries the return token as `?r=`. One mutate; a lost or unparseable response is
  *   OUTCOME_UNKNOWN and is never resent (GoPay has no idempotency key).
- * - Cancel: `DELETE /payments/{payment_id}` once, then always `GET /payments/{payment_id}` through the same binding;
- *   the lookup decides (`mapGopayCancelAnswer`). A 404, an unclassified or a lost answer is OUTCOME_UNKNOWN and is
- *   never resent: a recovery lookup decides.
- * - Refund: `POST /payments/{payment_id}/refunds` (JSON `amount`). The 201 refund resource decides (REQUESTED is
- *   pending, SUCCESS confirmed, FAILED not effected) and names the refund by its own id; 409 created nothing.
- *   Lookup by that id is `GET /refunds/{refund_id}`; without it, `GET /payments/{payment_id}/refunds`.
- * - Replay: UNSUPPORTED (no idempotent resend). Order-reference lookup: UNSUPPORTED (not documented).
+ * - Refund: `POST /payments/payment/{id}/refund` (form `amount=<minor>`). FAILED is NOT_EFFECTED;
+ *   ACCEPTED/FINISHED is REFUND_PENDING, followed by one refund-history read that may confirm it.
+ * - Cancel: UNSUPPORTED (`provider_cancel_unsupported`); replay: UNSUPPORTED (no idempotent resend).
+ * - Lookup: by GoPay payment id only; an order-reference lookup is UNSUPPORTED (not documented).
+ * - Order reference of a notified payment: the same payment read, `order_number` only for the binding GoID.
  * - 401/403 drops the cached token and is UNAVAILABLE: GoPay refused the request before any effect.
  *
- * Nothing here logs or puts a body, URL, token, `payment_secret` or credential into an error.
+ * Nothing here logs or puts a body, URL, token or credential into an error.
  */
 
+const GOPAY_PAYMENT_PATH = '/payments/payment';
+const GOPAY_COLLECT_ENDPOINT_REF = `gopay:POST:${GOPAY_PAYMENT_PATH}`;
+const GOPAY_REFUND_ENDPOINT_PATTERN = /^gopay:POST:\/payments\/payment\/(?<paymentId>[1-9][0-9]{0,15})\/refund$/u;
 const RETURN_TOKEN_PARAMETER = 'r';
 const JSON_CONTENT_TYPE = 'application/json';
+const FORM_CONTENT_TYPE = 'application/x-www-form-urlencoded';
 const CONTENT_TYPE_HEADER = 'content-type';
-/** Every lookup uses one origin token, so the same fact seen after a cancel, a notification or in recovery deduplicates. */
+/** Every lookup uses one origin token, so the same fact seen after a notification or in recovery deduplicates. */
 const LOOKUP_ORIGIN = 'RECOVERY_LOOKUP';
+const RESPONSE_ORIGIN = 'DISPATCH_RESPONSE';
 const REJECTED_REASON = 'gopay_request_rejected';
-
-const COLLECT_ENDPOINT_PATTERN = /^gopay:POST:\/eshops\/(?<goid>[1-9][0-9]{0,15})\/payments$/u;
-const REFUND_ENDPOINT_PATTERN = /^gopay:POST:\/payments\/(?<paymentId>[1-9][0-9]{0,19})\/refunds$/u;
-const CANCEL_ENDPOINT_PATTERN = /^gopay:DELETE:\/payments\/(?<paymentId>[1-9][0-9]{0,19})$/u;
 
 const unavailable = (reason: string): GatewayProviderUnavailableError =>
   new GatewayProviderUnavailable({ code: 'gateway_provider_unavailable', family: 'GOPAY', reason });
@@ -119,7 +113,7 @@ const outcomeUnknown = (operationId: string, reason: string): GatewayProviderOut
 
 interface GopayTargetContext {
   readonly baseUrl: string;
-  readonly goid: string;
+  readonly goid: GopayGoid;
 }
 
 /** The binding must be a GoPay binding of a known environment with a canonical GoID. */
@@ -159,15 +153,23 @@ const returnUrlWithToken = (target: GatewayExecutionTarget, returnToken: string)
     }),
   );
 
-/** `customer.email` from the caller-supplied payer contact (plan D-P3); names and phone are never sent. */
-const payerEmailOf = (payerContact: Option.Option<GatewayPayerContact>): Option.Option<string> =>
-  payerContact.pipe(
-    Option.flatMap(({ email }) => email),
-    Option.flatMap(Schema.decodeUnknownOption(GopayCustomerEmailSchema)),
-  );
+const optionalField = <const K extends string, A>(key: K, value: Option.Option<A>) =>
+  Option.match(value, { onNone: () => ({}), onSome: (present) => ({ [key]: present }) });
 
-const ACCEPT_JSON: ProviderRequestHeader = { name: 'accept', value: JSON_CONTENT_TYPE };
-const CONTENT_TYPE_JSON: ProviderRequestHeader = { name: CONTENT_TYPE_HEADER, value: JSON_CONTENT_TYPE };
+/** GoPay `payer.contact` from the optional payer contact. The full name is not split into GoPay first/last name. */
+const payerOf = (payerContact: Option.Option<GatewayPayerContact>): Pick<GopayCreatePaymentRequest, 'payer'> =>
+  Option.match(payerContact, {
+    onNone: () => ({}),
+    onSome: ({ email, phone }) =>
+      Option.isNone(email) && Option.isNone(phone)
+        ? {}
+        : { payer: { contact: { ...optionalField('email', email), ...optionalField('phone_number', phone) } } },
+  });
+
+const headersOf = (contentType: string): readonly ProviderRequestHeader[] => [
+  { name: 'accept', value: JSON_CONTENT_TYPE },
+  { name: CONTENT_TYPE_HEADER, value: contentType },
+];
 
 /** sha256 hex over the endpoint, the non-secret headers and the exact body bytes. */
 const requestHashOf = (endpointRef: string, headers: readonly ProviderRequestHeader[], body: Uint8Array): string => {
@@ -177,56 +179,44 @@ const requestHashOf = (endpointRef: string, headers: readonly ProviderRequestHea
 
 const preparedRequest = (input: {
   readonly body: Uint8Array;
+  readonly contentType: string;
   readonly endpointRef: string;
-  readonly headers: readonly ProviderRequestHeader[];
   readonly orderReference: PreparedProviderRequest['orderReference'];
-}): PreparedProviderRequest => ({
-  body: input.body,
-  endpointRef: input.endpointRef,
-  family: 'GOPAY',
-  headers: input.headers,
-  idempotencyKey: Option.none(),
-  orderReference: input.orderReference,
-  replayWindowMs: Option.none(),
-  requestHash: requestHashOf(input.endpointRef, input.headers, input.body),
-});
+}): PreparedProviderRequest => {
+  const headers = headersOf(input.contentType);
+  return {
+    body: input.body,
+    endpointRef: input.endpointRef,
+    family: 'GOPAY',
+    headers,
+    idempotencyKey: Option.none(),
+    orderReference: input.orderReference,
+    replayWindowMs: Option.none(),
+    requestHash: requestHashOf(input.endpointRef, headers, input.body),
+  };
+};
 
-/** The three routes this adapter prepares; nothing else is ever sent. */
+/** The two routes this adapter prepares; nothing else is ever sent. */
 const GopayEndpointSchema = Schema.Union([
-  Schema.TaggedStruct('COLLECT_ENDPOINT', { goid: Schema.String }),
+  Schema.TaggedStruct('COLLECT_ENDPOINT', {}),
   Schema.TaggedStruct('REFUND_ENDPOINT', { paymentRef: ProviderObjectIdSchema }),
-  Schema.TaggedStruct('CANCEL_ENDPOINT', { paymentRef: ProviderObjectIdSchema }),
 ]);
 type GopayEndpoint = typeof GopayEndpointSchema.Type;
-const [CollectEndpoint, RefundEndpoint, CancelEndpoint] = GopayEndpointSchema.members;
-
-const groupOf = (pattern: RegExp, endpointRef: string, group: string): Option.Option<string> =>
-  Option.fromUndefinedOr(pattern.exec(endpointRef)?.groups?.[group]);
 
 const endpointOf = (endpointRef: string): Option.Option<GopayEndpoint> =>
-  groupOf(COLLECT_ENDPOINT_PATTERN, endpointRef, 'goid').pipe(
-    Option.map((goid): GopayEndpoint => CollectEndpoint.make({ goid })),
-    Option.orElse(() =>
-      groupOf(REFUND_ENDPOINT_PATTERN, endpointRef, 'paymentId').pipe(
+  endpointRef === GOPAY_COLLECT_ENDPOINT_REF
+    ? Option.some(GopayEndpointSchema.members[0].make({}))
+    : Option.fromUndefinedOr(GOPAY_REFUND_ENDPOINT_PATTERN.exec(endpointRef)?.groups?.['paymentId']).pipe(
         Option.flatMap(parseGopayId),
-        Option.map((paymentRef): GopayEndpoint => RefundEndpoint.make({ paymentRef })),
-      ),
-    ),
-    Option.orElse(() =>
-      groupOf(CANCEL_ENDPOINT_PATTERN, endpointRef, 'paymentId').pipe(
-        Option.flatMap(parseGopayId),
-        Option.map((paymentRef): GopayEndpoint => CancelEndpoint.make({ paymentRef })),
-      ),
-    ),
-  );
-
-/** The request path of an endpoint ref (`gopay:POST:/eshops/1/payments` -> `/eshops/1/payments`). */
-const pathOf = (endpointRef: string): string => endpointRef.slice(endpointRef.indexOf(':/') + 1);
+        Option.map((paymentId) =>
+          GopayEndpointSchema.members[1].make({ paymentRef: gopayProviderObjectId(paymentId) }),
+        ),
+      );
 
 /** A GoPay payment ref with a canonical GoPay id; None for any other provider object. */
 const gopayPaymentRefOf = (ref: ProviderObjectRef): Option.Option<ProviderObjectId> =>
   Match.value(ref).pipe(
-    Match.tag('GOPAY_PAYMENT', ({ id }) => parseGopayId(id)),
+    Match.tag('GOPAY_PAYMENT', ({ id }) => parseGopayId(id).pipe(Option.map(gopayProviderObjectId))),
     Match.orElse(() => Option.none()),
   );
 
@@ -240,8 +230,7 @@ interface ExpectedOperation {
 }
 
 /**
- * GoPay refused a collect or refund with a 4xx other than 401/403/429 (for a refund: 409 over the refundable total,
- * a payment neither PAID nor PARTIALLY_REFUNDED, or an early partial card refund), so nothing was created. The
+ * GoPay refused the request with a 4xx other than 401/403/429, so the request had no effect. The
  * NOT_EFFECTED fact belongs to this dispatch response (GoPay returns no object for it).
  */
 const rejectedBeforeEffect = (
@@ -287,10 +276,9 @@ const capabilityOf = (expected: GatewayExpectedEffect): GatewayCapability =>
   );
 
 const decodePayment = Schema.decodeUnknownOption(GopayPaymentFromJsonSchema);
-const decodeRefund = Schema.decodeUnknownOption(GopayRefundFromJsonSchema);
-const decodeRefundList = Schema.decodeUnknownOption(GopayRefundListFromJsonSchema);
+const decodeRefundResponse = Schema.decodeUnknownOption(GopayRefundResponseFromJsonSchema);
+const decodeRefundHistory = Schema.decodeUnknownOption(GopayRefundHistoryFromJsonSchema);
 const encodeCreateRequest = Schema.encodeEffect(GopayCreatePaymentRequestJsonSchema);
-const encodeRefundRequest = Schema.encodeEffect(GopayRefundCreateRequestJsonSchema);
 
 const prepareCollect = Effect.fn('GopayPayment.prepareCollect')(function* prepareCollectEffect(
   target: GatewayExecutionTarget,
@@ -298,7 +286,6 @@ const prepareCollect = Effect.fn('GopayPayment.prepareCollect')(function* prepar
 ) {
   const context = yield* gopayTargetContext(target);
   yield* checkCorrelation(request.operationId, request.correlation);
-  const email = yield* Effect.fromOption(payerEmailOf(request.payerContact), gopayPayerContactUnavailable);
   const returnUrl = yield* Effect.fromOption(returnUrlWithToken(target, request.returnToken), () =>
     unavailable('return_url_unavailable'),
   );
@@ -307,16 +294,18 @@ const prepareCollect = Effect.fn('GopayPayment.prepareCollect')(function* prepar
     amount,
     callback: { notification_url: target.notificationUrl, return_url: returnUrl },
     currency,
-    customer: { email },
+    lang: 'CS',
     order_number: request.correlation.orderReference,
+    ...payerOf(request.payerContact),
+    target: { goid: context.goid, type: 'ACCOUNT' },
   };
   const encoded = yield* encodeCreateRequest(body).pipe(
     Effect.catchTag('SchemaError', () => Effect.fail(unavailable('gopay_request_unencodable'))),
   );
   return preparedRequest({
     body: utf8ToBytes(encoded),
-    endpointRef: `gopay:POST:/eshops/${context.goid}/payments`,
-    headers: [ACCEPT_JSON, CONTENT_TYPE_JSON],
+    contentType: JSON_CONTENT_TYPE,
+    endpointRef: GOPAY_COLLECT_ENDPOINT_REF,
     orderReference: request.correlation.orderReference,
   });
 });
@@ -330,57 +319,22 @@ const prepareRefund = Effect.fn('GopayPayment.prepareRefund')(function* prepareR
   const paymentRef = yield* Effect.fromOption(gopayPaymentRefOf(request.providerTarget), () =>
     unavailable('refund_target_invalid'),
   );
-  const encoded = yield* encodeRefundRequest({ amount: toGopayAmount(request.amount).amount }).pipe(
-    Effect.catchTag('SchemaError', () => Effect.fail(unavailable('gopay_request_unencodable'))),
-  );
   return preparedRequest({
-    body: utf8ToBytes(encoded),
-    endpointRef: `gopay:POST:/payments/${paymentRef}/refunds`,
-    headers: [ACCEPT_JSON, CONTENT_TYPE_JSON],
+    body: utf8ToBytes(`amount=${toGopayAmount(request.amount).amount}`),
+    contentType: FORM_CONTENT_TYPE,
+    endpointRef: `${GOPAY_COLLECT_ENDPOINT_REF}/${paymentRef}/refund`,
     orderReference: request.correlation.orderReference,
   });
 });
 
-const prepareCancel = Effect.fn('GopayPayment.prepareCancel')(function* prepareCancelEffect(
-  target: GatewayExecutionTarget,
-  request: GatewayCancelRequest,
-) {
-  yield* gopayTargetContext(target);
-  const paymentRef = yield* Effect.fromOption(gopayPaymentRefOf(request.providerTarget), () =>
-    unavailable('cancel_target_invalid'),
-  );
-  return preparedRequest({
-    body: new Uint8Array(),
-    endpointRef: `gopay:DELETE:/payments/${paymentRef}`,
-    headers: [ACCEPT_JSON],
-    orderReference: deriveProviderCorrelation(request.operationId).orderReference,
-  });
-});
-
-/** The answer a DELETE produced: 204 or 409; anything else leaves the cancel unknown (never resent). */
-const cancelAnswerOf = (
-  response: ProviderHttpResponse,
+/** The confirming REFUND finding of a refund-history lookup, if any. */
+const confirmedRefundFinding = (
+  findings: readonly ProviderFindingResult[],
   operationId: string,
-): Effect.Effect<GopayCancelAnswer, GatewayProviderOutcomeUnknownError> => {
-  if (response.status === 204) {
-    return Effect.succeed('CANCEL_ACCEPTED');
-  }
-  return response.status === 409
-    ? Effect.succeed('CANCEL_REFUSED')
-    : Effect.fail(outcomeUnknown(operationId, `gopay_cancel_status_${response.status}_unclassified`));
-};
-
-/** A read 200 body that does not decode is ResponseInvalid, never absence; a miss stays None. */
-const decodeBody = <A>(
-  body: Option.Option<string>,
-  decode: (bodyText: string) => Option.Option<A>,
-  invalidReason: string,
-): Effect.Effect<Option.Option<A>, GatewayProviderResponseInvalidError> => {
-  if (Option.isNone(body)) {
-    return Effect.succeedNone;
-  }
-  return Effect.fromOption(decode(body.value), () => responseInvalid(invalidReason)).pipe(Effect.map(Option.some));
-};
+): Option.Option<ProviderFindingResult> =>
+  Option.fromUndefinedOr(
+    findings.find((finding) => finding.finding === 'EFFECT_CONFIRMED' && finding.target.operationId === operationId),
+  );
 
 // ---------------------------------------------------------------------------------------------
 // Service
@@ -398,10 +352,6 @@ const makeGopayPaymentService = Effect.gen(function* buildGopayPaymentService() 
   const refuseAuthorization = (target: GatewayExecutionTarget) =>
     tokens.invalidate(target).pipe(Effect.andThen(Effect.fail(unavailable('gopay_authorization_rejected'))));
 
-  /**
-   * One bounded-retry GET: the body of a 200, None for 404 (a provider miss), the token dropped on 401/403; any
-   * other answer is UNAVAILABLE, never INDETERMINATE.
-   */
   const authorizedRead = Effect.fn('GopayPayment.authorizedRead')(function* authorizedReadEffect(
     target: GatewayExecutionTarget,
     url: string,
@@ -409,93 +359,66 @@ const makeGopayPaymentService = Effect.gen(function* buildGopayPaymentService() 
     const token = yield* tokens.accessToken(target);
     const response = yield* http.read({
       family: 'GOPAY',
-      request: HttpClientRequest.get(url).pipe(HttpClientRequest.acceptJson, HttpClientRequest.bearerToken(token)),
+      request: HttpClientRequest.get(url).pipe(
+        HttpClientRequest.acceptJson,
+        HttpClientRequest.setHeader(CONTENT_TYPE_HEADER, FORM_CONTENT_TYPE),
+        HttpClientRequest.bearerToken(token),
+      ),
     });
-    if (isAuthorizationRefusal(response.status)) {
-      return yield* refuseAuthorization(target);
-    }
-    if (response.status === 404) {
-      return Option.none<string>();
-    }
-    return response.status === 200
-      ? Option.some(response.bodyText)
-      : yield* Effect.fail(unavailable('gopay_read_rejected'));
+    return isAuthorizationRefusal(response.status) ? yield* refuseAuthorization(target) : response;
   });
 
-  const readPayment = (target: GatewayExecutionTarget, context: GopayTargetContext, paymentRef: ProviderObjectId) =>
-    authorizedRead(target, `${context.baseUrl}/payments/${paymentRef}`).pipe(
-      Effect.flatMap((body) => decodeBody(body, decodePayment, 'gopay_payment_response_invalid')),
-    );
-
-  /** `GET /payments/{payment_id}` as a lookup result. */
-  const paymentLookup = Effect.fn('GopayPayment.paymentLookup')(function* paymentLookupEffect(
+  /**
+   * `GET /payments/payment/{id}` (and `/refunds` when asked). Any non-200 answer other than 401/403 is
+   * a provider miss (INDETERMINATE downstream); a 200 that does not decode is ResponseInvalid, never absence.
+   */
+  const readLookupResult = Effect.fn('GopayPayment.readLookupResult')(function* readLookupResultEffect(
     target: GatewayExecutionTarget,
     context: GopayTargetContext,
     paymentRef: ProviderObjectId,
+    withRefunds: boolean,
   ) {
-    const payment = yield* readPayment(target, context, paymentRef);
-    return Option.match(payment, {
-      onNone: (): GopayLookupResult => ({ _tag: 'NOT_FOUND' }),
-      onSome: (found): GopayLookupResult => ({ _tag: 'PAYMENT', payment: found }),
-    });
-  });
-
-  /** A refund without a recorded id: the payment, then its refund list. */
-  const refundListLookup = Effect.fn('GopayPayment.refundListLookup')(function* refundListLookupEffect(
-    target: GatewayExecutionTarget,
-    context: GopayTargetContext,
-    paymentRef: ProviderObjectId,
-  ) {
-    const payment = yield* readPayment(target, context, paymentRef);
-    if (Option.isNone(payment)) {
-      return { _tag: 'NOT_FOUND' } satisfies GopayLookupResult;
+    const paymentUrl = `${context.baseUrl}${GOPAY_PAYMENT_PATH}/${paymentRef}`;
+    const paymentResponse = yield* authorizedRead(target, paymentUrl);
+    if (paymentResponse.status !== 200) {
+      const miss: GopayLookupResult = { _tag: 'NOT_FOUND' };
+      return miss;
     }
-    const refunds = yield* authorizedRead(target, `${context.baseUrl}/payments/${paymentRef}/refunds`).pipe(
-      Effect.flatMap((body) => decodeBody(body, decodeRefundList, 'gopay_refund_list_invalid')),
+    const payment = yield* Effect.fromOption(decodePayment(paymentResponse.bodyText), () =>
+      responseInvalid('gopay_payment_response_invalid'),
     );
-    return Option.match(refunds, {
-      onNone: (): GopayLookupResult => ({ _tag: 'NOT_FOUND' }),
-      onSome: (found): GopayLookupResult => ({ _tag: 'REFUND_LIST', payment: payment.value, refunds: found }),
-    });
+    if (!withRefunds) {
+      const found: GopayLookupResult = { _tag: 'FOUND', payment, refunds: Option.none() };
+      return found;
+    }
+    const refundsResponse = yield* authorizedRead(target, `${paymentUrl}/refunds`);
+    const refunds =
+      refundsResponse.status === 200
+        ? Option.some(
+            yield* Effect.fromOption(decodeRefundHistory(refundsResponse.bodyText), () =>
+              responseInvalid('gopay_refund_history_invalid'),
+            ),
+          )
+        : Option.none();
+    const found: GopayLookupResult = { _tag: 'FOUND', payment, refunds };
+    return found;
   });
 
-  /** A refund with its recorded GoPay id: `GET /refunds/{refund_id}`. */
-  const refundLookup = Effect.fn('GopayPayment.refundLookup')(function* refundLookupEffect(
-    target: GatewayExecutionTarget,
-    context: GopayTargetContext,
-    refundRef: ProviderObjectId,
-  ) {
-    const refund = yield* authorizedRead(target, `${context.baseUrl}/refunds/${refundRef}`).pipe(
-      Effect.flatMap((body) => decodeBody(body, decodeRefund, 'gopay_refund_response_invalid')),
-    );
-    return Option.match(refund, {
-      onNone: (): GopayLookupResult => ({ _tag: 'NOT_FOUND' }),
-      onSome: (found): GopayLookupResult => ({ _tag: 'REFUND', refund: found, refundRef }),
-    });
-  });
-
-  /** Exactly one provider attempt with the persisted method, path, headers and body plus a bearer token added now. */
+  /** Exactly one provider attempt with the persisted body and headers plus a bearer token added now. */
   const mutate = Effect.fn('GopayPayment.mutate')(function* mutateEffect(
     target: GatewayExecutionTarget,
-    context: GopayTargetContext,
+    url: string,
     prepared: PreparedProviderRequest,
     operationId: string,
   ) {
     const token = yield* tokens.accessToken(target);
-    const url = `${context.baseUrl}${pathOf(prepared.endpointRef)}`;
-    const headers = Object.fromEntries(prepared.headers.map(({ name, value }) => [name, value]));
     const contentType = prepared.headers.find(({ name }) => name === CONTENT_TYPE_HEADER)?.value;
-    const base = prepared.endpointRef.startsWith('gopay:DELETE:')
-      ? HttpClientRequest.delete(url).pipe(HttpClientRequest.setHeaders(headers))
-      : HttpClientRequest.post(url).pipe(
-          HttpClientRequest.setHeaders(headers),
-          HttpClientRequest.bodyUint8Array(prepared.body, contentType),
-        );
-    const response: ProviderHttpResponse = yield* http.mutate({
-      family: 'GOPAY',
-      operationId,
-      request: HttpClientRequest.bearerToken(base, token),
-    });
+    const request = HttpClientRequest.post(url).pipe(
+      HttpClientRequest.setHeaders(Object.fromEntries(prepared.headers.map(({ name, value }) => [name, value]))),
+      HttpClientRequest.bodyUint8Array(prepared.body, contentType),
+      HttpClientRequest.bearerToken(token),
+    );
+    const response: ProviderHttpResponse = yield* http.mutate({ family: 'GOPAY', operationId, request });
     if (isAuthorizationRefusal(response.status)) {
       return yield* refuseAuthorization(target);
     }
@@ -508,7 +431,7 @@ const makeGopayPaymentService = Effect.gen(function* buildGopayPaymentService() 
     prepared: PreparedProviderRequest,
     expected: ExpectedOperation,
   ) {
-    const response = yield* mutate(target, context, prepared, expected.operationId);
+    const response = yield* mutate(target, `${context.baseUrl}${GOPAY_PAYMENT_PATH}`, prepared, expected.operationId);
     if (isClientError(response.status)) {
       return rejectedBeforeEffect(expected, yield* DateTime.now, Option.none());
     }
@@ -517,72 +440,73 @@ const makeGopayPaymentService = Effect.gen(function* buildGopayPaymentService() 
       () => outcomeUnknown(expected.operationId, 'gopay_create_response_unparseable'),
     );
     const observedAt = yield* DateTime.now;
-    return mapGopayCreateResponse({ expected, observedAt, payment });
+    return mapGopayCreateResponse({ expected, observedAt, payment, target });
   });
+
+  /** One refund-history read after an accepted refund; a confirmation replaces REFUND_PENDING, anything else keeps it. */
+  const confirmRefund = Effect.fn('GopayPayment.confirmRefund')(
+    function* confirmRefundEffect(
+      target: GatewayExecutionTarget,
+      context: GopayTargetContext,
+      paymentRef: ProviderObjectId,
+      expected: GatewayExpectedEffect & ExpectedOperation,
+      sentAt: DateTime.Utc,
+    ) {
+      const result = yield* readLookupResult(target, context, paymentRef, true);
+      const observedAt = yield* DateTime.now;
+      const findings = mapGopayLookup({
+        observedAt,
+        origin: RESPONSE_ORIGIN,
+        paymentRef,
+        request: {
+          dispatchedAt: Option.some(sentAt),
+          expected,
+          target: { _tag: 'PROVIDER_OBJECT', ref: { _tag: 'GOPAY_PAYMENT', id: paymentRef } },
+        },
+        result,
+        target,
+      });
+      return confirmedRefundFinding(findings, expected.operationId);
+    },
+    Effect.catchTags({
+      GatewayProviderResponseInvalid: () => Effect.succeedNone,
+      GatewayProviderUnavailable: () => Effect.succeedNone,
+    }),
+  );
 
   const sendRefund = Effect.fn('GopayPayment.sendRefund')(function* sendRefundEffect(
     target: GatewayExecutionTarget,
     context: GopayTargetContext,
     prepared: PreparedProviderRequest,
     paymentRef: ProviderObjectId,
-    expected: ExpectedOperation,
+    expected: GatewayExpectedEffect & ExpectedOperation,
   ) {
-    const response = yield* mutate(target, context, prepared, expected.operationId);
+    const sentAt = yield* DateTime.now;
+    const url = `${context.baseUrl}${GOPAY_PAYMENT_PATH}/${paymentRef}/refund`;
+    const response = yield* mutate(target, url, prepared, expected.operationId);
     if (isClientError(response.status)) {
       return rejectedBeforeEffect(expected, yield* DateTime.now, Option.some(paymentRef));
     }
     const refund = yield* Effect.fromOption(
-      isSuccess(response.status) ? decodeRefund(response.bodyText) : Option.none(),
+      isSuccess(response.status) ? decodeRefundResponse(response.bodyText) : Option.none(),
       () => outcomeUnknown(expected.operationId, 'gopay_refund_response_unparseable'),
     );
     const observedAt = yield* DateTime.now;
-    return mapGopayRefundResponse({ expected, observedAt, paymentRef, refund });
-  });
-
-  /** The lookup that decides a sent cancel; a failed lookup leaves the sent cancel unknown. */
-  const confirmCancel = Effect.fn('GopayPayment.confirmCancel')(function* confirmCancelEffect(
-    target: GatewayExecutionTarget,
-    context: GopayTargetContext,
-    paymentRef: ProviderObjectId,
-    expected: GatewayExpectedEffect,
-    answer: GopayCancelAnswer,
-  ) {
-    const result = yield* paymentLookup(target, context, paymentRef).pipe(
-      Effect.catchTags({
-        GatewayProviderResponseInvalid: () =>
-          Effect.fail(outcomeUnknown(expected.operationId, 'gopay_cancel_confirmation_invalid')),
-        GatewayProviderUnavailable: () =>
-          Effect.fail(outcomeUnknown(expected.operationId, 'gopay_cancel_confirmation_unavailable')),
-      }),
-    );
-    const observedAt = yield* DateTime.now;
-    const findings = mapGopayLookup({
-      dispatchedAt: Option.none(),
+    const dispatched = mapGopayRefundResponse({
       expected,
       observedAt,
-      origin: LOOKUP_ORIGIN,
+      origin: RESPONSE_ORIGIN,
       paymentRef,
-      result,
+      response: refund,
     });
-    const state = Match.value(result).pipe(
-      Match.tag('PAYMENT', ({ payment }) => Option.some(payment.state)),
-      Match.orElse(() => Option.none<GopayPaymentState>()),
-    );
-    return mapGopayCancelAnswer({ answer, expected, findings, paymentRef, state });
-  });
-
-  /** One DELETE, then always the confirming lookup through the same binding. */
-  const sendCancel = Effect.fn('GopayPayment.sendCancel')(function* sendCancelEffect(
-    target: GatewayExecutionTarget,
-    context: GopayTargetContext,
-    prepared: PreparedProviderRequest,
-    paymentRef: ProviderObjectId,
-    expected: GatewayExpectedEffect,
-  ) {
-    const response = yield* mutate(target, context, prepared, expected.operationId);
-    return yield* cancelAnswerOf(response, expected.operationId).pipe(
-      Effect.flatMap((answer) => confirmCancel(target, context, paymentRef, expected, answer)),
-    );
+    if (dispatched.finding.finding !== 'ACCEPTED_PENDING') {
+      return dispatched;
+    }
+    const confirmed = yield* confirmRefund(target, context, paymentRef, expected, sentAt);
+    return Option.match(confirmed, {
+      onNone: () => dispatched,
+      onSome: (finding): ProviderDispatchResponse => ({ _tag: 'ACKNOWLEDGED', finding, targetFinding: Option.none() }),
+    });
   });
 
   const send = Effect.fn('GopayPayment.send')(function* sendEffect(
@@ -591,23 +515,16 @@ const makeGopayPaymentService = Effect.gen(function* buildGopayPaymentService() 
     expected: GatewayExpectedEffect,
   ) {
     const context = yield* gopayTargetContext(target);
-    if (
-      prepared.family !== 'GOPAY' ||
-      requestHashOf(prepared.endpointRef, prepared.headers, prepared.body) !== prepared.requestHash
-    ) {
-      return yield* Effect.fail(unavailable('gopay_prepared_request_invalid'));
-    }
-    const endpoint = yield* Effect.fromOption(endpointOf(prepared.endpointRef), () =>
-      unavailable('gopay_endpoint_unknown'),
+    const endpoint = yield* Effect.fromOption(
+      prepared.family === 'GOPAY' ? endpointOf(prepared.endpointRef) : Option.none(),
+      () => unavailable('gopay_endpoint_unknown'),
     );
     return yield* Match.value(endpoint).pipe(
-      Match.tag('COLLECT_ENDPOINT', ({ goid }) =>
-        goid === context.goid
-          ? Match.value(expected).pipe(
-              Match.tag('COLLECT', (collect) => sendCollect(target, context, prepared, collect)),
-              Match.orElse(expectedEffectMismatch),
-            )
-          : Effect.fail(unavailable('gopay_endpoint_goid_mismatch')),
+      Match.tag('COLLECT_ENDPOINT', () =>
+        Match.value(expected).pipe(
+          Match.tag('COLLECT', (collect) => sendCollect(target, context, prepared, collect)),
+          Match.orElse(expectedEffectMismatch),
+        ),
       ),
       Match.tag('REFUND_ENDPOINT', ({ paymentRef }) =>
         Match.value(expected).pipe(
@@ -615,72 +532,36 @@ const makeGopayPaymentService = Effect.gen(function* buildGopayPaymentService() 
           Match.orElse(expectedEffectMismatch),
         ),
       ),
-      Match.tag('CANCEL_ENDPOINT', ({ paymentRef }) =>
-        Match.value(expected).pipe(
-          Match.tag('CANCEL_OR_VOID', (cancel) => sendCancel(target, context, prepared, paymentRef, cancel)),
-          Match.orElse(expectedEffectMismatch),
-        ),
-      ),
       Match.exhaustive,
     );
   });
 
-  const lookupByRef = Effect.fn('GopayPayment.lookupByRef')(function* lookupByRefEffect(
+  const lookupPayment = Effect.fn('GopayPayment.lookupPayment')(function* lookupPaymentEffect(
     target: GatewayExecutionTarget,
     request: GatewayLookupRequest,
     ref: ProviderObjectRef,
   ) {
+    const paymentRef = yield* Effect.fromOption(gopayPaymentRefOf(ref), () =>
+      unsupported('RETRIEVE', 'provider_object_not_gopay_payment'),
+    );
     const context = yield* gopayTargetContext(target);
-    const refundExpected = Match.value(request.expected).pipe(
+    const withRefunds = Match.value(request.expected).pipe(
       Match.tag('REFUND', () => true),
       Match.orElse(() => false),
     );
-    const addressed = yield* Effect.fromOption(
-      Match.value(ref).pipe(
-        Match.tag('GOPAY_PAYMENT', ({ id }) =>
-          parseGopayId(id).pipe(
-            Option.map((paymentRef) => ({
-              paymentRef,
-              read: refundExpected
-                ? refundListLookup(target, context, paymentRef)
-                : paymentLookup(target, context, paymentRef),
-            })),
-          ),
-        ),
-        Match.tag('GOPAY_REFUND', ({ id, paymentId }) =>
-          refundExpected
-            ? Option.all({ paymentRef: parseGopayId(paymentId), refundRef: parseGopayId(id) }).pipe(
-                Option.map(({ paymentRef, refundRef }) => ({
-                  paymentRef,
-                  read: refundLookup(target, context, refundRef),
-                })),
-              )
-            : Option.none(),
-        ),
-        Match.orElse(() => Option.none()),
-      ),
-      () => unsupported('RETRIEVE', 'provider_object_not_gopay'),
-    );
-    const result = yield* addressed.read;
+    const result = yield* readLookupResult(target, context, paymentRef, withRefunds);
     const observedAt = yield* DateTime.now;
-    return mapGopayLookup({
-      dispatchedAt: request.dispatchedAt,
-      expected: request.expected,
-      observedAt,
-      origin: LOOKUP_ORIGIN,
-      paymentRef: addressed.paymentRef,
-      result,
-    });
+    return mapGopayLookup({ observedAt, origin: LOOKUP_ORIGIN, paymentRef, request, result, target });
   });
 
   const lookup = (target: GatewayExecutionTarget, request: GatewayLookupRequest) =>
     Match.value(request.target).pipe(
-      Match.tag('PROVIDER_OBJECT', ({ ref }) => lookupByRef(target, request, ref)),
+      Match.tag('PROVIDER_OBJECT', ({ ref }) => lookupPayment(target, request, ref)),
       Match.tag('ORDER_REFERENCE', () => Effect.fail(unsupported('RETRIEVE', 'order_reference_lookup_unsupported'))),
       Match.exhaustive,
     );
 
-  /** The `order_number` of the notified payment through the binding; another object or a miss is `None`. */
+  /** The `order_number` of a payment of the binding's GoID; another object, GoID or a miss is `None`. */
   const readOrderReference = Effect.fn('GopayPayment.readOrderReference')(function* readOrderReferenceEffect(
     target: GatewayExecutionTarget,
     ref: ProviderObjectRef,
@@ -690,10 +571,11 @@ const makeGopayPaymentService = Effect.gen(function* buildGopayPaymentService() 
       return Option.none<GatewayOrderReference>();
     }
     const context = yield* gopayTargetContext(target);
-    const payment = yield* readPayment(target, context, paymentRef.value);
-    return payment.pipe(
-      Option.filter((found) => found.id === paymentRef.value),
-      Option.flatMap(gopayOrderReferenceOf),
+    const result = yield* readLookupResult(target, context, paymentRef.value, false);
+    return Match.value(result).pipe(
+      Match.tag('FOUND', ({ payment }) => gopayVerifiedOrderReference(target, payment)),
+      Match.tag('NOT_FOUND', () => Option.none<GatewayOrderReference>()),
+      Match.exhaustive,
     );
   });
 
@@ -701,7 +583,7 @@ const makeGopayPaymentService = Effect.gen(function* buildGopayPaymentService() 
     capabilities: GOPAY_CAPABILITIES,
     family: 'GOPAY',
     lookup,
-    prepareCancel,
+    prepareCancel: () => Effect.fail(gopayCancelUnsupported()),
     prepareCollect,
     prepareRefund,
     readOrderReference,

@@ -8,39 +8,19 @@ const decodeContact = Schema.decodeUnknownResult(PaymentPayerContactSchema);
 const fullContact = { email: 'payer@example.test', fullName: 'Test Payer', phone: '+420123456789' };
 
 describe('#1153 operation-specific payer contact dependency', () => {
-  it('#1153 Stripe needs no contact and rejects any contact', () => {
-    expect(payerContactProblemFor('STRIPE', Option.none())).toEqual(Option.none());
-    expect(payerContactProblemFor('STRIPE', Option.some({ email: 'payer@example.test' }))).toEqual(
-      Option.some('payment_payer_contact_not_applicable'),
-    );
-    expect(payerContactProblemFor('STRIPE', Option.some({}))).toEqual(
-      Option.some('payment_payer_contact_not_applicable'),
-    );
-  });
-
-  it('#1153 GoPay needs only an email', () => {
-    expect(payerContactProblemFor('GOPAY', Option.some({ email: 'payer@example.test' }))).toEqual(Option.none());
-    expect(payerContactProblemFor('GOPAY', Option.none())).toEqual(Option.some('payment_payer_contact_required'));
-    expect(payerContactProblemFor('GOPAY', Option.some({ phone: '+420123456789' }))).toEqual(
-      Option.some('payment_payer_contact_not_applicable'),
-    );
-    expect(payerContactProblemFor('GOPAY', Option.some({}))).toEqual(Option.some('payment_payer_contact_required'));
-    expect(payerContactProblemFor('GOPAY', Option.some(fullContact))).toEqual(
-      Option.some('payment_payer_contact_not_applicable'),
-    );
-    expect(payerContactProblemFor('GOPAY', Option.some({ fullName: 'Test Payer' }))).toEqual(
-      Option.some('payment_payer_contact_not_applicable'),
-    );
-  });
-
-  it('#1153 GoPay email is limited to 128 characters', () => {
-    const exact = `${'a'.repeat(115)}@example.test`;
-    const tooLong = `${'a'.repeat(116)}@example.test`;
-    expect(exact.length).toBe(128);
-    expect(payerContactProblemFor('GOPAY', Option.some({ email: exact }))).toEqual(Option.none());
-    expect(payerContactProblemFor('GOPAY', Option.some({ email: tooLong }))).toEqual(
-      Option.some('payment_payer_contact_required'),
-    );
+  it('#1153 Stripe and GoPay need no contact and reject any contact', () => {
+    for (const family of ['STRIPE', 'GOPAY'] as const) {
+      expect(payerContactProblemFor(family, Option.none())).toEqual(Option.none());
+      expect(payerContactProblemFor(family, Option.some({ email: 'payer@example.test' }))).toEqual(
+        Option.some('payment_payer_contact_not_applicable'),
+      );
+      expect(payerContactProblemFor(family, Option.some(fullContact))).toEqual(
+        Option.some('payment_payer_contact_not_applicable'),
+      );
+      expect(payerContactProblemFor(family, Option.some({}))).toEqual(
+        Option.some('payment_payer_contact_not_applicable'),
+      );
+    }
   });
 
   it('#1153 Comgate needs fullName and email or phone, and allows all three', () => {
