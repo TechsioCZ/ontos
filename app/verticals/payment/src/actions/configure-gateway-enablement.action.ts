@@ -30,7 +30,7 @@ const usableAuthority = (authority: PaymentSourceAuthorityView) =>
   authority.status === 'ACTIVE' && (authority.method === undefined || authority.method === 'ONLINE_GATEWAY');
 
 /**
- * The fail-closed prerequisites of enabling one binding (D11, N9). `None` means it may be enabled.
+ * The fail-closed prerequisites of enabling one binding (D11). `None` means it may be enabled.
  * Disabling is never refused here: switching a gateway off must stay possible for any binding.
  */
 export const gatewayEnablementRefusal = (
@@ -42,14 +42,6 @@ export const gatewayEnablementRefusal = (
       gatewayEnablementRejected(
         'gateway_binding_not_current',
         'The binding is retired for new Payment intents and cannot be enabled',
-      ),
-    );
-  }
-  if (binding.providerFamily === 'COMGATE') {
-    return Option.some(
-      gatewayEnablementRejected(
-        'gateway_payer_contact_source_missing',
-        'Comgate collections need a payer contact that no Payment owner supplies yet',
       ),
     );
   }
@@ -82,9 +74,9 @@ const recordBindingLookup = (context: EnablementContext, binding: Option.Option<
 /**
  * #1155: records the Current Gateway Enablement of one provider family for one Customer Configuration
  * in the trusted Selling Legal Entity. It names exactly one Provider Account Binding and environment;
- * enabling requires that binding to be Current, ACTIVE source authorities for its evidence (D11) and a
- * family whose collections can be sent (N9). The Current row changes under its lock with an appended
- * revision and the truthful invocation/Composition provenance; an unchanged state is a no-op.
+ * enabling requires that binding to be Current and ACTIVE source authorities for its evidence (D11). The
+ * Current row changes under its lock with an appended revision and the truthful invocation/Composition
+ * provenance; an unchanged state is a no-op.
  */
 const handleConfigureGatewayEnablement = Effect.fn('ConfigureGatewayEnablement.handle')(
   function* configureGatewayEnablement(payload: ConfigureGatewayEnablementPayload, context: EnablementContext) {
@@ -103,7 +95,7 @@ const handleConfigureGatewayEnablement = Effect.fn('ConfigureGatewayEnablement.h
     const binding = found.value;
     if (payload.enabled) {
       // Authorities matter only once the binding itself could be enabled; they are then read under their locks.
-      const needsAuthorities = binding.status === 'CURRENT' && binding.providerFamily !== 'COMGATE';
+      const needsAuthorities = binding.status === 'CURRENT';
       const authorities = needsAuthorities ? yield* sourceAuthorities.lockGatewayAuthorities(binding) : [];
       if (needsAuthorities) {
         yield* recordPaymentLookup(context, { query: 'source-authorities', resultCount: authorities.length });

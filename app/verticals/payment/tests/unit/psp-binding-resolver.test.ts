@@ -209,7 +209,6 @@ describe('#1155 GatewayBindingResolver over the scoped routines', () => {
 interface CreateFields {
   readonly environment: string;
   readonly merchantIdentity: Readonly<Record<string, string>>;
-  readonly notificationUrl: string;
   readonly reason: string;
   readonly secretRef: string;
 }
@@ -217,7 +216,6 @@ interface CreateFields {
 const createFields = (merchantIdentity: Readonly<Record<string, string>>): CreateFields => ({
   environment: 'SANDBOX',
   merchantIdentity,
-  notificationUrl: 'https://hooks.example.test/psp',
   reason: 'Configure the sandbox account',
   secretRef: 'stripe-sandbox-1',
 });
@@ -234,9 +232,17 @@ describe('#1155 configuration contracts', () => {
     expect(accepted({ _tag: 'STRIPE', goid: '8123456789' })).toBe(false);
     expect(accepted({ _tag: 'GOPAY', goid: 'not-digits' })).toBe(false);
     expect(accepted({ _tag: 'PAYPAL', id: '1' })).toBe(false);
-    // Plain http notification URLs and secret refs with path characters are rejected.
-    expect(accepted({ _tag: 'GOPAY', goid: '1' }, { notificationUrl: 'http://x.test' })).toBe(false);
+    // Secret refs with path characters are rejected.
     expect(accepted({ _tag: 'GOPAY', goid: '1' }, { secretRef: '../x' })).toBe(false);
+    // N11: Payment builds the notification URL itself; a caller-supplied one is not part of the contract.
+    const strict = Schema.decodeUnknownExit(ConfigureProviderAccountBindingPayloadSchema, {
+      onExcessProperty: 'error',
+    });
+    const change = { _tag: 'CREATE', ...createFields({ _tag: 'GOPAY', goid: '1' }) };
+    expect(Exit.isSuccess(strict({ change }))).toBe(true);
+    expect(
+      Exit.isSuccess(strict({ change: { ...change, notificationUrl: 'https://attacker.example.test/hook' } })),
+    ).toBe(false);
   });
 
   it.effect('#1155 the binding view contains no secret_ref', () =>

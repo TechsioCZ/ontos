@@ -10,13 +10,18 @@ import {
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import {
+  PaymentNotificationRouteUnavailable,
   ProviderAccountBindingConflict,
   ProviderAccountBindingNotFound,
 } from '../../shared/actions/configure-provider-account-binding.ts';
 import type { ConfigureProviderAccountBindingPayload } from '../../shared/actions/configure-provider-account-binding.ts';
 import type { RotateProviderCredentialPayload } from '../../shared/actions/rotate-provider-credential.ts';
 import { PaymentUnavailable, paymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
-import { GatewayProviderAccountRefSchema } from '../../shared/domain/psp-configuration.ts';
+import { ProviderBindingRouteKeySchema } from '../../shared/apis/provider-binding-route.ts';
+import {
+  GatewayMerchantIdentitySchema,
+  GatewayProviderAccountRefSchema,
+} from '../../shared/domain/psp-configuration.ts';
 import type {
   GatewayProviderAccountBindingId,
   GatewayProviderAccountRef,
@@ -41,6 +46,12 @@ import {
 } from '../../src/persistence/psp-worker-routines.ts';
 import type { PspPrepareDispatchInput, PspWorkerOrigin } from '../../src/persistence/psp-worker-routines.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
+import {
+  TEST_NOTIFICATION_ORIGIN,
+  testNotificationRouteOf,
+  testNotificationRoutesLive,
+  unconfiguredNotificationRoutesLive,
+} from '../support/route-scope.fixture.ts';
 import {
   COMPOSITION_REVISION,
   collectInput,
@@ -94,10 +105,10 @@ const createInput = Effect.fn('PspBindingTest.createInput')(function* createInpu
   return {
     environment: 'SANDBOX',
     merchantIdentity: GOPAY_IDENTITY,
-    notificationUrl: 'https://hooks.example.test/psp',
     provenance: yield* provenanceFor(scope),
     reason: 'Configure the sandbox gateway account',
     replaces: Option.none(),
+    route: testNotificationRouteOf(scope.tenantId, overrides.merchantIdentity?._tag ?? GOPAY_IDENTITY._tag),
     secretRef: 'gopay-sandbox-1',
     ...overrides,
   } satisfies CreateProviderAccountBindingInput;
@@ -558,7 +569,6 @@ describe('#1155 binding Actions through the Core Action runtime', () => {
             _tag: 'CREATE',
             environment: 'SANDBOX',
             merchantIdentity: { _tag: 'STRIPE', accountId: 'acct_1TestAccount' },
-            notificationUrl: 'https://hooks.example.test/psp',
             reason: 'Configure the sandbox Stripe account',
             secretRef: 'stripe-sandbox-1',
           },
@@ -575,7 +585,9 @@ describe('#1155 binding Actions through the Core Action runtime', () => {
           ownerRegistration: paymentRegistration,
           services,
         });
-        const refusal = yield* denied.runtime.runAction(request).pipe(Effect.flip);
+        const refusal = yield* denied.runtime
+          .runAction(request)
+          .pipe(Effect.provide(testNotificationRoutesLive), Effect.flip);
         expect(Predicate.isTagged(refusal, 'ActionPermissionDenied')).toBe(true);
         expect(denied.snapshot().stages).not.toContain('handler_executed');
         expect(yield* countRows(runtimeClient, scope, 'payment.psp_provider_account_bindings')).toBe(0);
@@ -585,7 +597,7 @@ describe('#1155 binding Actions through the Core Action runtime', () => {
           ownerRegistration: paymentRegistration,
           services,
         });
-        const created = yield* allowed.runtime.runAction(request);
+        const created = yield* allowed.runtime.runAction(request).pipe(Effect.provide(testNotificationRoutesLive));
         expect([created.binding.providerFamily, created.binding.status, created.credential.credentialRevision]).toEqual(
           ['STRIPE', 'CURRENT', 1],
         );
@@ -637,6 +649,112 @@ describe('#1155 binding Actions through the Core Action runtime', () => {
           .runAction({ ...rotateRequest, transport: { ...rotateRequest.transport, idempotencyKey: 'binding-stale' } })
           .pipe(Effect.flip);
         expect(Predicate.isTagged(stale, 'ProviderAccountBindingConflict')).toBe(true);
+      }),
+    ),
+  );
+
+  it.live('#1157 N11 CREATE issues the route and owner-built URL with the binding, in one transaction', () =>
+    Effect.scoped(
+      Effect.gen(function* routeWithBinding() {
+        const { runtime, runtimeClient } = yield* nativeDatabase;
+        const scope = yield* makeTestScope;
+        const allowed = yield* makeActionTestHarness({
+          access: 'allowed',
+          ownerRegistration: paymentRegistration,
+          services: [
+            bindActionTestServices(configureProviderAccountBindingAction, nativeBindingServices(runtime, scope)),
+          ],
+        });
+        const request = (idempotencyKey: string, accountId: string) => ({
+          payload: Schema.decodeUnknownSync(configureProviderAccountBindingAction.descriptor.payloadSchema)({
+            change: {
+              _tag: 'CREATE',
+              environment: 'SANDBOX',
+              merchantIdentity: { _tag: 'STRIPE', accountId },
+              reason: 'Configure the Stripe account',
+              secretRef: 'stripe-sandbox-1',
+            },
+          }),
+          principal: principalOf(scope),
+          registration: configureProviderAccountBindingAction,
+          transport: { correlationId: 'payment-binding-route', idempotencyKey },
+        });
+
+        // A caller-supplied notification URL is not part of the contract.
+        const smuggled = Schema.decodeUnknownOption(configureProviderAccountBindingAction.descriptor.payloadSchema)(
+          {
+            change: {
+              _tag: 'CREATE',
+              environment: 'SANDBOX',
+              merchantIdentity: { _tag: 'STRIPE', accountId: 'acct_1RouteSmuggled' },
+              notificationUrl: 'https://attacker.example.test/hook',
+              reason: 'Configure',
+              secretRef: 'stripe-sandbox-1',
+            },
+          },
+          { onExcessProperty: 'error' },
+        );
+        expect(Option.isNone(smuggled)).toBe(true);
+
+        // Without a public notification origin nothing is written: a typed unavailable refusal.
+        const unconfigured = yield* allowed.runtime
+          .runAction(request('route-unconfigured', 'acct_1RouteUnconfigured'))
+          .pipe(Effect.provide(unconfiguredNotificationRoutesLive), Effect.flip);
+        expect(Schema.is(PaymentNotificationRouteUnavailable)(unconfigured)).toBe(true);
+        expect(yield* countRows(runtimeClient, scope, 'payment.psp_provider_account_bindings')).toBe(0);
+
+        const created = yield* allowed.runtime
+          .runAction(request('route-created', 'acct_1RouteCreated'))
+          .pipe(Effect.provide(testNotificationRoutesLive));
+        const [row] = yield* inScope(
+          runtimeClient,
+          scope,
+          runtimeClient.unsafe<{
+            readonly binding_id: string;
+            readonly environment: string;
+            readonly notification_url: string;
+            readonly provider_family: string;
+            readonly route_key: string;
+            readonly route_revision: number;
+          }>(
+            `select b.binding_id, r.environment, b.notification_url, r.provider_family, r.route_key, r.route_revision
+               from payment.psp_provider_account_bindings b
+               join payment.psp_binding_routes r
+                 on r.tenant_id = b.tenant_id and r.legal_entity_id = b.legal_entity_id and r.binding_id = b.binding_id`,
+          ),
+        );
+        expect(row).toBeDefined();
+        expect([row?.binding_id, row?.provider_family, row?.environment, row?.route_revision]).toEqual([
+          created.binding.bindingId,
+          'STRIPE',
+          'SANDBOX',
+          1,
+        ]);
+        expect(row?.route_key).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+        expect(row?.notification_url).toBe(
+          `${TEST_NOTIFICATION_ORIGIN}/api/payment/v1/notifications/stripe/${scope.tenantId}/${row?.route_key}`,
+        );
+        // The result never shows the route key either.
+        const encoded = yield* Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+          yield* Schema.encodeEffect(configureProviderAccountBindingAction.descriptor.resultSchema)(created),
+        );
+        expect(encoded).not.toContain(row?.route_key ?? 'missing');
+
+        // A route that cannot be stored takes its binding with it: a LIVE binding reusing the stored key.
+        const storedKey = Schema.decodeUnknownSync(ProviderBindingRouteKeySchema)(row?.route_key);
+        const collision = yield* createInput(scope, {
+          environment: 'LIVE',
+          merchantIdentity: Schema.decodeUnknownSync(GatewayMerchantIdentitySchema)({
+            _tag: 'STRIPE',
+            accountId: 'acct_1RouteReused',
+          }),
+          route: { ...testNotificationRouteOf(scope.tenantId, 'STRIPE'), routeKey: storedKey },
+          secretRef: 'stripe-live-1',
+        });
+        const refused = yield* withBindings(runtime, scope, (p) => p.createBinding(collision)).pipe(Effect.flip);
+        expect(Schema.is(PaymentUnavailable)(refused)).toBe(true);
+        expect(yield* countRows(runtimeClient, scope, 'payment.psp_provider_account_bindings')).toBe(1);
+        expect(yield* countRows(runtimeClient, scope, 'payment.psp_binding_routes')).toBe(1);
       }),
     ),
   );

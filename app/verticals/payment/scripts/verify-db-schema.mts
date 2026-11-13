@@ -27,9 +27,11 @@ const routineWrittenTables = ['psp_provider_dispatches', 'psp_provider_evidence'
 const insertOnlyTables = ['psp_operation_payer_contacts'] as const;
 /** Cross-Tenant maintenance routines of the reconciliation driver; they refuse inside an operational scope. */
 const crossTenantRoutines = ['list_due_gateway_reconciliation', 'purge_expired_payer_contacts'] as const;
+/** Tenant-only route resolution of the workload binding route Read; it refuses under a Legal Entity scope. */
+const tenantScopedRoutines = ['psp_resolve_binding_route'] as const;
 /** The only Payment routines the runtime role may execute: SECURITY DEFINER with a pinned search_path. */
 const executableRoutines = EffectArray.sort(
-  [...PSP_WORKER_ROUTINES.map((routine) => routine.name), ...crossTenantRoutines],
+  [...PSP_WORKER_ROUTINES.map((routine) => routine.name), ...crossTenantRoutines, ...tenantScopedRoutines],
   Order.String,
 );
 const expectedTriggers = EffectArray.sort(

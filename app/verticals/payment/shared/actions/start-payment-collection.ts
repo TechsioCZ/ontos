@@ -4,7 +4,7 @@ import { PaymentIdSchema, PaymentOperationKeySchema } from '../domain/payment-id
 import { PaymentMonetaryAmountSchema } from '../domain/payment-money.ts';
 import { PaymentMethodSchema } from '../domain/payment-vocabulary.ts';
 import { PaymentOperationViewSchema } from '../domain/lifecycle-views.ts';
-import { PaymentPayerContactSchema } from '../domain/payment-payer-contact.ts';
+import { PAYER_CONTACT_PROBLEM_CODES, PaymentPayerContactSchema } from '../domain/payment-payer-contact.ts';
 
 /**
  * Start the one COLLECT operation of a Payment (#1148 aggregate collection invariant, #1149). The
@@ -33,3 +33,15 @@ export const StartPaymentCollectionResultSchema = Schema.Struct({
   replayed: Schema.Boolean,
 });
 export type StartPaymentCollectionResult = typeof StartPaymentCollectionResultSchema.Type;
+
+/**
+ * The payer contact does not fit the provider family of the Payment's original gateway binding, or a
+ * contact was given for a binding that sends none (plan D-P3). Nothing was written.
+ */
+export class PaymentPayerContactRefused extends Schema.TaggedError<PaymentPayerContactRefused>()(
+  'PaymentPayerContactRefused',
+  {
+    code: Schema.Literals(PAYER_CONTACT_PROBLEM_CODES),
+    reason: Schema.String,
+  },
+) {}

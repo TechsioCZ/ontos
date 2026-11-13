@@ -7,6 +7,7 @@ import { Cause, Crypto, DateTime, Effect, Exit, Layer, Option, Predicate, Schema
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
+import type { PaymentPayerContact } from '../../shared/domain/payment-payer-contact.ts';
 import type { PaymentGatewayProviderFamilySchema } from '../../shared/domain/payment-vocabulary.ts';
 import type { ProviderNotSentReason } from '../../shared/domain/psp-vocabulary.ts';
 import { GatewayBindingResolver } from '../../src/integrations/psp/binding-resolver.ts';
@@ -38,7 +39,11 @@ import type {
   GatewayProviderUnsupportedError,
 } from '../../src/integrations/psp/psp-errors.ts';
 import { GatewayExecutionTargetSchema, ProviderObjectRefSchema } from '../../src/integrations/psp/psp-request.ts';
-import type { GatewayExecutionTarget, ProviderObjectRef } from '../../src/integrations/psp/psp-request.ts';
+import type {
+  GatewayExecutionTarget,
+  GatewayPayerContact,
+  ProviderObjectRef,
+} from '../../src/integrations/psp/psp-request.ts';
 import { PreparedProviderRequestSchema, ProviderFindingResultSchema } from '../../src/integrations/psp/psp-result.ts';
 import type { PreparedProviderRequest, ProviderDispatchResponse } from '../../src/integrations/psp/psp-result.ts';
 
@@ -102,6 +107,8 @@ interface OperationSpec {
   readonly materialHash?: string;
   readonly operationId: string;
   readonly outcome?: string;
+  /** The payer contact row `psp_read_operation_for_execution` returns for this operation. */
+  readonly payerContact?: PaymentPayerContact;
   readonly targetOperationId?: string;
 }
 
@@ -164,6 +171,8 @@ interface ProviderCall {
   readonly family: Family;
   readonly kind: 'LOOKUP' | 'PREPARE_CANCEL' | 'PREPARE_COLLECT' | 'PREPARE_REFUND' | 'REPLAY' | 'SEND';
   readonly operationId: string;
+  /** The payer contact a COLLECT prepare received. */
+  readonly payerContact?: Option.Option<GatewayPayerContact>;
   readonly providerTarget?: ProviderObjectRef;
 }
 
@@ -217,8 +226,10 @@ const operationRow = (world: World, spec: OperationSpec & { cancelOperationExist
       compositionRevision: 'd'.repeat(64),
     },
   };
+  const contacted = spec.payerContact === undefined ? result : { ...result, payerContact: spec.payerContact };
   return {
-    result: spec.targetOperationId === undefined ? result : { ...result, targetOperationId: spec.targetOperationId },
+    result:
+      spec.targetOperationId === undefined ? contacted : { ...contacted, targetOperationId: spec.targetOperationId },
   };
 };
 
@@ -409,8 +420,9 @@ const adapterOf = (world: World, family: Family): GatewayProviderAdapter => {
         () => preparedOf(family, request.operationId, 'CANCEL'),
       ).pipe(Effect.catchTag('GatewayProviderOutcomeUnknown', (failure) => Effect.die(failure))),
     prepareCollect: (_target, request) =>
-      run({ family, kind: 'PREPARE_COLLECT', operationId: request.operationId }, () =>
-        preparedOf(family, request.operationId, 'COLLECT'),
+      run(
+        { family, kind: 'PREPARE_COLLECT', operationId: request.operationId, payerContact: request.payerContact },
+        () => preparedOf(family, request.operationId, 'COLLECT'),
       ).pipe(Effect.catchTag('GatewayProviderOutcomeUnknown', (failure) => Effect.die(failure))),
     prepareRefund: (_target, request) =>
       run(
@@ -640,6 +652,9 @@ const sends = (world: World, kind: ProviderCall['kind'] = 'SEND') =>
 const factsOf = (world: World) => world.evidence.map((stored) => [stored.operationId, stored.evidence.factKind]);
 
 const at = (millisAfterRequest: number) => TestClock.setTime(DateTime.toEpochMillis(REQUESTED_AT) + millisAfterRequest);
+
+const prepareContacts = (world: World) =>
+  world.calls.filter((call) => call.kind === 'PREPARE_COLLECT').map((call) => call.payerContact);
 
 const collectSpec = (family: Family): OperationSpec => ({ family, kind: 'COLLECT', operationId: COLLECT_ID });
 const cancelSpec = (family: Family): OperationSpec => ({
@@ -1009,6 +1024,42 @@ describe('#1156 #1158 Gateway operation executor', () => {
       expect(world.dispatches.get(COLLECT_ID)?.notSentReason).toEqual(Option.some('PREPARE_UNAVAILABLE'));
       expect(factsOf(world)).toEqual([[COLLECT_ID, 'COLLECTION_NOT_EFFECTED']]);
       expect(sends(world)).toBe(0);
+      // The routine returned no contact row, so every prepare received none.
+      expect(prepareContacts(world)).toEqual([Option.none(), Option.none(), Option.none(), Option.none()]);
+    }),
+  );
+
+  it.effect('#1154 A Comgate collect prepares with the payer contact the routine returns', () =>
+    Effect.gen(function* comgateContactFromRoutine() {
+      yield* at(0);
+      const contact = { email: 'payer@example.test', fullName: 'Test Payer', phone: '+420700000000' };
+      const world = withOperations(newWorld(), { ...collectSpec('COMGATE'), payerContact: contact });
+      expect(Exit.isSuccess(yield* deliver(world, collectSpec('COMGATE')))).toBe(true);
+      expect(prepareContacts(world)).toEqual([
+        Option.some({
+          email: Option.some(contact.email),
+          fullName: Option.some(contact.fullName),
+          phone: Option.some(contact.phone),
+        }),
+      ]);
+      expect(stateOf(world, COLLECT_ID)).toBe('ACKNOWLEDGED');
+    }),
+  );
+
+  it.effect('#1153 H1094-01=A A GoPay email-only contact reaches prepare; a Stripe collect gets none', () =>
+    Effect.gen(function* contactPerFamily() {
+      yield* at(0);
+      const gopay = withOperations(newWorld(), {
+        ...collectSpec('GOPAY'),
+        payerContact: { email: 'payer@example.test' },
+      });
+      expect(Exit.isSuccess(yield* deliver(gopay, collectSpec('GOPAY')))).toBe(true);
+      expect(prepareContacts(gopay)).toEqual([
+        Option.some({ email: Option.some('payer@example.test'), fullName: Option.none(), phone: Option.none() }),
+      ]);
+      const stripe = withOperations(newWorld(), collectSpec('STRIPE'));
+      expect(Exit.isSuccess(yield* deliver(stripe, collectSpec('STRIPE')))).toBe(true);
+      expect(prepareContacts(stripe)).toEqual([Option.none()]);
     }),
   );
 

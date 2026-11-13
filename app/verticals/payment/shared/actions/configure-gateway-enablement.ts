@@ -62,8 +62,6 @@ const GATEWAY_ENABLEMENT_REJECTION_CODES = [
    * REFUND_EXECUTION that is a configured refund route. Its provider evidence could never be accepted.
    */
   'gateway_source_authority_missing',
-  /** N9: Comgate needs a payer contact that no Payment owner supplies yet, so its collections never send. */
-  'gateway_payer_contact_source_missing',
 ] as const;
 
 /** The change does not apply: a stale revision, an unusable binding or a fail-closed prerequisite. Nothing was written. */

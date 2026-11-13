@@ -75,6 +75,7 @@ export const ConfigureProviderAccountBindingActionUnavailableProblemSchema = mak
       'action_transaction_failed',
       'module_state_check_unavailable',
       'operation_context_unavailable',
+      'payment_notification_route_unavailable',
       'payment_unavailable',
     ]),
   },

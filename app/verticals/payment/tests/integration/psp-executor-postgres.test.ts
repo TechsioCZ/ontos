@@ -42,7 +42,11 @@ import type {
   GatewayProviderUnsupportedError,
 } from '../../src/integrations/psp/psp-errors.ts';
 import { ProviderObjectRefSchema } from '../../src/integrations/psp/psp-request.ts';
-import type { GatewayExpectedEffect, ProviderObjectRef } from '../../src/integrations/psp/psp-request.ts';
+import type {
+  GatewayExpectedEffect,
+  GatewayPayerContact,
+  ProviderObjectRef,
+} from '../../src/integrations/psp/psp-request.ts';
 import { PreparedProviderRequestSchema, ProviderFindingResultSchema } from '../../src/integrations/psp/psp-result.ts';
 import type { PreparedProviderRequest, ProviderDispatchResponse } from '../../src/integrations/psp/psp-result.ts';
 import { computePaymentMaterialHash } from '../../src/persistence/payment-aggregate-persistence.ts';
@@ -99,6 +103,8 @@ interface ProviderCall {
   readonly family: Family;
   readonly kind: 'PREPARE_CANCEL' | 'PREPARE_COLLECT' | 'PREPARE_REFUND' | 'REPLAY' | 'SEND';
   readonly operationId: string;
+  /** The payer contact a COLLECT prepare received; none for every other call. */
+  readonly payerContact: Option.Option<GatewayPayerContact>;
   readonly providerTarget: Option.Option<ProviderObjectRef>;
 }
 
@@ -177,10 +183,16 @@ const adapterOf = (provider: Provider, family: Family): GatewayProviderAdapter =
       const failure = provider.failures.get(`${family}:${call.kind}`);
       return failure === undefined ? Effect.sync(success) : failure(call);
     });
-  const call = (kind: ProviderCall['kind'], operationId: string, providerTarget?: ProviderObjectRef) => ({
+  const call = (
+    kind: ProviderCall['kind'],
+    operationId: string,
+    providerTarget?: ProviderObjectRef,
+    payerContact: Option.Option<GatewayPayerContact> = Option.none(),
+  ) => ({
     family,
     kind,
     operationId,
+    payerContact,
     providerTarget: Option.fromUndefinedOr(providerTarget),
   });
   return {
@@ -198,9 +210,9 @@ const adapterOf = (provider: Provider, family: Family): GatewayProviderAdapter =
         preparedOf(family, request.operationId, 'CANCEL'),
       ).pipe(Effect.catchTag('GatewayProviderOutcomeUnknown', (failure) => Effect.die(failure))),
     prepareCollect: (_target, request) =>
-      run(call('PREPARE_COLLECT', request.operationId), () => preparedOf(family, request.operationId, 'COLLECT')).pipe(
-        Effect.catchTag('GatewayProviderOutcomeUnknown', (failure) => Effect.die(failure)),
-      ),
+      run(call('PREPARE_COLLECT', request.operationId, undefined, request.payerContact), () =>
+        preparedOf(family, request.operationId, 'COLLECT'),
+      ).pipe(Effect.catchTag('GatewayProviderOutcomeUnknown', (failure) => Effect.die(failure))),
     prepareRefund: (_target, request) =>
       run(call('PREPARE_REFUND', request.operationId, request.providerTarget), () =>
         preparedOf(family, request.operationId, 'REFUND'),
@@ -312,6 +324,8 @@ const contextOf = (scope: PaymentTestScope) =>
   );
 
 interface Harness {
+  /** Owner connection: only it can read the insert-only payer contact table. */
+  readonly admin: PgClient.PgClient;
   readonly crypto: { draws: number };
   readonly database: PaymentTestDatabase;
   readonly provider: Provider;
@@ -365,10 +379,10 @@ const failureTag = (exit: Exit.Exit<void, unknown>) =>
 // ---------------------------------------------------------------------------------------------
 
 const harnessOf = Effect.gen(function* harness() {
-  const { runtime: runtimeClient } = yield* testDatabaseClients;
+  const { admin, runtime: runtimeClient } = yield* testDatabaseClients;
   const database = yield* makeTestDatabaseFromClient(runtimeClient, paymentTestRelations);
   const scope = yield* makeTestScope;
-  return { crypto: { draws: 0 }, database, provider: newProvider(), runtimeClient, scope } satisfies Harness;
+  return { admin, crypto: { draws: 0 }, database, provider: newProvider(), runtimeClient, scope } satisfies Harness;
 });
 
 const gatewayBindingOf = (family: Family, accountRef: string) =>
@@ -571,6 +585,46 @@ const evidenceOf = (harness: Harness, paymentId: string) =>
       rows.map((row) => [row.operation_id, row.fact_kind, row.reason, row.submission_state, row.evidence_origin]),
     ),
   );
+
+/** The payer contact of a COLLECT as the collection Action stores it: an insert on the runtime role. */
+const rememberContact = (
+  harness: Harness,
+  operationId: string,
+  contact: { readonly email?: string; readonly fullName?: string; readonly phone?: string },
+) =>
+  inScope(
+    harness.runtimeClient,
+    harness.scope,
+    harness.runtimeClient.unsafe(
+      `insert into payment.psp_operation_payer_contacts (tenant_id, legal_entity_id, operation_id, full_name, email, phone)
+       values ($1, $2, $3, $4, $5, $6) on conflict do nothing`,
+      [
+        harness.scope.tenantId,
+        harness.scope.legalEntityId,
+        operationId,
+        contact.fullName ?? null,
+        contact.email ?? null,
+        contact.phone ?? null,
+      ],
+    ),
+  );
+
+interface CountRow extends Record<string, unknown> {
+  readonly count: number;
+}
+
+const storedContactCount = (harness: Harness, operationId: string) =>
+  harness.admin
+    .unsafe<CountRow>(
+      'select count(*)::integer as count from payment.psp_operation_payer_contacts where operation_id = $1',
+      [operationId],
+    )
+    .pipe(Effect.map((rows) => rows[0]?.count ?? -1));
+
+const prepareContacts = (harness: Harness) =>
+  harness.provider.calls
+    .filter((providerCall) => providerCall.kind === 'PREPARE_COLLECT')
+    .map((providerCall) => providerCall.payerContact);
 
 const callsOf = (harness: Harness, kind: ProviderCall['kind']) =>
   harness.provider.calls.filter((providerCall) => providerCall.kind === kind).length;
@@ -811,6 +865,68 @@ it.live('#1156 A missing Comgate payer contact ends NOT_SENT and never dead-lett
       expect(yield* evidenceOf(harness, payload.paymentId)).toEqual([
         [payload.operationId, 'COLLECTION_NOT_EFFECTED', 'prepare_unavailable', 'PENDING_SUBMISSION', 'LOCAL_NOT_SENT'],
       ]);
+      expect(callsOf(harness, 'SEND')).toBe(0);
+      // The routine returned no payer contact, so no prepare received one.
+      expect(prepareContacts(harness).every(Option.isNone)).toBe(true);
+    }),
+  ),
+);
+
+it.live('#1154 A Comgate collect prepares with the stored payer contact, which PREPARED deletes', () =>
+  Effect.scoped(
+    Effect.gen(function* comgateContactPrepared() {
+      const harness = yield* harnessOf;
+      const { payload } = yield* collectionFor(harness, 'COMGATE');
+      yield* rememberContact(harness, payload.operationId, { email: 'payer@example.test', fullName: 'Test Payer' });
+      expect(yield* storedContactCount(harness, payload.operationId)).toBe(1);
+
+      expect(Exit.isSuccess(yield* deliver(harness, payload))).toBe(true);
+      expect(prepareContacts(harness)).toEqual([
+        Option.some({
+          email: Option.some('payer@example.test'),
+          fullName: Option.some('Test Payer'),
+          phone: Option.none(),
+        }),
+      ]);
+      expect(yield* stateOf(harness, payload.operationId)).toEqual(Option.some(['ACKNOWLEDGED', null]));
+      expect(yield* storedContactCount(harness, payload.operationId)).toBe(0);
+    }),
+  ),
+);
+
+it.live('#1153 A collect withheld for its cancellation deletes its payer contact', () =>
+  Effect.scoped(
+    Effect.gen(function* contactDeletedWhenWithheld() {
+      const harness = yield* harnessOf;
+      const collection = yield* collectionFor(harness, 'GOPAY');
+      yield* rememberContact(harness, collection.payload.operationId, { email: 'payer@example.test' });
+      const cancel = yield* cancellationFor(harness, collection);
+      expect(Exit.isSuccess(yield* deliver(harness, cancel))).toBe(true);
+      expect(yield* stateOf(harness, collection.payload.operationId)).toEqual(
+        Option.some(['NOT_SENT', 'WITHHELD_FOR_CANCELLATION']),
+      );
+      expect(yield* storedContactCount(harness, collection.payload.operationId)).toBe(0);
+      expect(callsOf(harness, 'PREPARE_COLLECT')).toBe(0);
+    }),
+  ),
+);
+
+it.live('#1153 A collect that is never sent deletes its payer contact', () =>
+  Effect.scoped(
+    Effect.gen(function* contactDeletedWhenNotSent() {
+      const harness = yield* harnessOf;
+      const { payload } = yield* collectionFor(harness, 'GOPAY');
+      yield* rememberContact(harness, payload.operationId, { email: 'payer@example.test' });
+      harness.provider.failures.set('GOPAY:PREPARE_COLLECT', unavailable('GOPAY', 'credential_entry_malformed'));
+      expect(Option.isSome(deferredWake(yield* deliver(harness, payload)))).toBe(true);
+      // A deferred prepare keeps the contact for the next attempt.
+      expect(yield* storedContactCount(harness, payload.operationId)).toBe(1);
+
+      expect(Exit.isSuccess(yield* deliver(harness, payload, { atMs: createdAtMs(payload) + 24 * HOUR_MS }))).toBe(
+        true,
+      );
+      expect(yield* stateOf(harness, payload.operationId)).toEqual(Option.some(['NOT_SENT', 'PREPARE_UNAVAILABLE']));
+      expect(yield* storedContactCount(harness, payload.operationId)).toBe(0);
       expect(callsOf(harness, 'SEND')).toBe(0);
     }),
   ),

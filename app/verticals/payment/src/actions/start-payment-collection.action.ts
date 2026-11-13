@@ -6,6 +6,7 @@ import { OperationContextUnavailable, defineAction, defineTenantModuleEntrypoint
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
 
 import {
+  PaymentPayerContactRefused,
   StartPaymentCollectionPayloadSchema,
   StartPaymentCollectionResultSchema,
 } from '../../shared/actions/start-payment-collection.ts';
@@ -27,8 +28,11 @@ import {
 import type {
   PaymentBankAccountingReceiptBinding,
   PaymentBankReceiptAuthority,
+  PaymentExecutionBinding,
   PaymentGatewayAccountBinding,
 } from '../../shared/domain/payment-execution-binding.ts';
+import { payerContactProblemFor } from '../../shared/domain/payment-payer-contact.ts';
+import type { PayerContactProblemCode, PaymentPayerContact } from '../../shared/domain/payment-payer-contact.ts';
 import type { PaymentExecutionProvenance } from '../../shared/domain/payment-provenance.ts';
 import { PaymentRejected } from '../../shared/domain/payment-rejected.ts';
 import { PaymentUnavailable, paymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
@@ -48,6 +52,8 @@ import { paymentApplicabilityPersistenceForTransaction } from '../persistence/pa
 import type { PaymentLifecycleServices } from '../persistence/payment-lifecycle-persistence.ts';
 import { paymentRefundPersistenceForTransaction } from '../persistence/payment-refund-persistence.ts';
 import { selectBankReceiptAuthorities } from '../persistence/payment-source-persistence.ts';
+import { pspPayerContactPersistenceForTransaction } from '../persistence/psp-payer-contact-persistence.ts';
+import type { PspPayerContactPersistence } from '../persistence/psp-payer-contact-persistence.ts';
 import { GatewayBindingPort } from '../ports/gateway-binding-port.ts';
 import type { PaymentGatewayBindingEvidence } from '../ports/gateway-binding-port.ts';
 import { PaymentOwnerEvidenceUnavailable } from '../ports/owner-evidence-unavailable.ts';
@@ -62,6 +68,7 @@ const ErrorSchema = Schema.Union([
   PaymentConflict,
   PaymentLifecycleConflict,
   PaymentOwnerEvidenceUnavailable,
+  PaymentPayerContactRefused,
   PaymentRejected,
   PaymentUnavailable,
 ]);
@@ -97,9 +104,30 @@ const verifyGatewayBinding = Effect.fn('StartPaymentCollectionAction.verifyGatew
   },
 );
 
+/**
+ * Which payer contact the binding's provider family needs (plan D-P3). Only a gateway dispatch sends a
+ * contact; any other binding refuses one, so nothing is accepted that no provider call would use.
+ */
+export const payerContactProblemForBinding = (
+  binding: PaymentExecutionBinding,
+  contact: Option.Option<PaymentPayerContact>,
+): Option.Option<PayerContactProblemCode> => {
+  if (isGatewayAccountBinding(binding)) {
+    return payerContactProblemFor(binding.providerFamily, contact);
+  }
+  return Option.isSome(contact) ? Option.some('payment_payer_contact_not_applicable') : Option.none();
+};
+
+const payerContactReasons = {
+  payment_payer_contact_not_applicable: 'The binding of this Payment sends no such payer contact to its provider',
+  payment_payer_contact_required: 'The provider of this Payment needs a payer contact that the request lacks',
+} as const satisfies Record<PayerContactProblemCode, string>;
+
 interface StartCollectionServices extends PaymentLifecycleServices {
   /** Gateway binding evidence bound to this one Action transaction. */
   readonly gateways: PaymentGatewayBindingEvidence;
+  /** Insert-only transient payer contact of a new COLLECT, in this one Action transaction. */
+  readonly payerContacts: PspPayerContactPersistence;
   readonly selectReceiptAuthorities: (
     method: 'BANK_TRANSFER_ADVANCE' | 'DEFERRED_INVOICE',
   ) => Effect.Effect<readonly PaymentBankReceiptAuthority[], PaymentUnavailable>;
@@ -241,6 +269,15 @@ export const handleStartPaymentCollection = Effect.fn('StartPaymentCollectionAct
     );
     // 4. Operation-specific owner evidence (H1094-01=A): only the gateway branch needs C17 here.
     const binding = yield* resolveCollectionBinding(aggregate, context);
+    // The payer contact is checked against the original binding's family only; it never selects one.
+    const payerContact = Option.fromUndefinedOr(payload.payerContact);
+    const contactProblem = payerContactProblemForBinding(binding, payerContact);
+    if (Option.isSome(contactProblem)) {
+      return yield* new PaymentPayerContactRefused({
+        code: contactProblem.value,
+        reason: payerContactReasons[contactProblem.value],
+      });
+    }
     // 5. Insert under the same lock; the partial unique index is the database backstop.
     const inserted = yield* persistence.insertOperation({
       amount: payment.amount,
@@ -260,6 +297,11 @@ export const handleStartPaymentCollection = Effect.fn('StartPaymentCollectionAct
     } satisfies StartPaymentCollectionResult;
     if (!inserted.written) {
       return result;
+    }
+    // Only the invocation that created the COLLECT stores its contact; the dispatch that uses it deletes it.
+    // It is not operation material and stays out of the event and Outbox message below.
+    if (Option.isSome(payerContact)) {
+      yield* context.services.payerContacts.rememberForCollect(inserted.record.operationId, payerContact.value);
     }
     // 6. The durable execution request: the admitted work under this invocation's Composition revision.
     const requested = {
@@ -309,6 +351,7 @@ const lifecycleServices = (transaction: ScopedTransactionExecutor, scope: Operat
           applicability: paymentApplicabilityPersistenceForTransaction(transaction),
           gateways: gatewayBindingFor(transaction, scope),
           lifecycle: paymentLifecyclePersistenceForTransaction(transaction),
+          payerContacts: pspPayerContactPersistenceForTransaction(transaction),
           refunds: paymentRefundPersistenceForTransaction(transaction),
           selectReceiptAuthorities: (method) => selectBankReceiptAuthorities(transaction, method),
         })),

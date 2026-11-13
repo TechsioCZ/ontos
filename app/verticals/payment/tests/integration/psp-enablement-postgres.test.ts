@@ -348,18 +348,27 @@ describe('#1155 configure-gateway-enablement through the Core Action runtime', (
     ),
   );
 
-  it.live('#1155 Comgate enablement is rejected with gateway_payer_contact_source_missing', () =>
+  it.live('#1155 Comgate enablement is no longer refused once its source authorities are active', () =>
     Effect.scoped(
-      Effect.gen(function* comgateRejected() {
+      Effect.gen(function* comgateEnabled() {
         const { runtime, runtimeClient } = yield* nativeDatabase;
         const scope = yield* makeTestScope;
         const comgate = yield* insertBinding(runtimeClient, scope, 'COMGATE');
-        yield* configureAuthorities(runtime, scope, comgate, ['GATEWAY_OUTCOME', 'REFUND_EXECUTION']);
         const harness = yield* harnessFor(runtime, scope, 'allowed');
         expect(yield* rejectionCode(runEnablement(harness, scope, payloadFor(comgate)))).toBe(
-          'gateway_payer_contact_source_missing',
+          'gateway_source_authority_missing',
         );
-        expect(yield* countEnablements(runtimeClient, scope)).toBe(0);
+        yield* configureAuthorities(runtime, scope, comgate, ['GATEWAY_OUTCOME', 'REFUND_EXECUTION']);
+        const enabled = yield* runEnablement(harness, scope, payloadFor(comgate));
+        expect(enabled).toMatchObject({
+          bindingId: comgate.bindingId,
+          changed: true,
+          enabled: true,
+          environment: 'SANDBOX',
+          providerFamily: 'COMGATE',
+          revision: 1,
+        });
+        expect(yield* countEnablements(runtimeClient, scope)).toBe(1);
       }),
     ),
   );

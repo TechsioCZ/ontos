@@ -444,6 +444,8 @@ it.live(
               amount: { amountMinor: 100_000, currency: 'CZK' },
               method: 'ONLINE_GATEWAY',
               operationKey: 'collect-unresolved',
+              // The GoPay binding needs the payer's email (plan D-P3).
+              payerContact: { email: 'payer@example.test' },
               paymentId: created.paymentId,
             },
             principal: payment.principal,
@@ -576,6 +578,8 @@ it.live(
               amount: { amountMinor: 100_000, currency: 'CZK' },
               method: 'ONLINE_GATEWAY',
               operationKey: 'collect-dispatch',
+              // The GoPay binding needs the payer's email (plan D-P3).
+              payerContact: { email: 'payer@example.test' },
               paymentId: created.paymentId,
             },
             principal: payment.principal,

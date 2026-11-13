@@ -34,6 +34,7 @@ import type {
   GatewayProviderUnavailableError,
   GatewayProviderUnsupportedError,
 } from './psp-errors.ts';
+import { toGatewayPayerContact } from './psp-request.ts';
 import type { GatewayExecutionTarget, GatewayExpectedEffect, ProviderObjectRef } from './psp-request.ts';
 import type {
   PreparedProviderRequest,
@@ -454,7 +455,7 @@ const executeCollect = Effect.fn('GatewayOperationExecutor.collect')(function* e
       correlation: deriveProviderCorrelation(payload.operationId),
       issuedAt: execution.now,
       operationId: payload.operationId,
-      payerContact: Option.none(),
+      payerContact: execution.operation.payerContact.pipe(Option.map(toGatewayPayerContact)),
       paymentId: payload.paymentId,
       returnToken,
     }),

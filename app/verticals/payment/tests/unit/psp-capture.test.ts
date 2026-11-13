@@ -1,4 +1,3 @@
-import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
 import type { AccessPrincipalKind } from '@app/core-runtime/access/enforcement';
 import { AccessScopeIdSchema } from '@app/core-runtime/access/ids';
@@ -26,11 +25,19 @@ import { GatewayProviderAdapters } from '../../src/integrations/psp/psp-adapter.
 import type { GatewayProviderAdapter } from '../../src/integrations/psp/psp-adapter.ts';
 import { GatewayNotificationRejected, GatewayProviderUnavailable } from '../../src/integrations/psp/psp-errors.ts';
 import { GatewayExecutionTargetSchema } from '../../src/integrations/psp/psp-request.ts';
+import type { BoundProviderBindingRoute } from '../../src/persistence/psp-binding-route-persistence.ts';
 import type {
   CaptureProviderNotificationInput,
   CaptureProviderNotificationOutcome,
 } from '../../src/persistence/psp-notification-capture-persistence.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
+import {
+  apiKeyPrincipalOf,
+  CAPTURE_ROUTE_OPERATION,
+  routeScopedPrincipalOf,
+  RouteScopeNamespaceRegistryLive,
+} from '../support/route-scope.fixture.ts';
+import type { RouteScopeInput } from '../support/route-scope.fixture.ts';
 
 /**
  * #1157 / #1153 / #1159 boundary of `capture-provider-notification` through the real Core Action runtime with
@@ -42,6 +49,7 @@ const TENANT_ID = '11111111-1111-4111-8111-111111111111';
 const LEGAL_ENTITY_ID = '22222222-2222-4222-8222-222222222222';
 const PRINCIPAL_ID = '33333333-3333-4333-8333-333333333333';
 const BINDING_ID = '44444444-4444-4444-8444-444444444444';
+const OTHER_BINDING_ID = '88888888-8888-4888-8888-888888888888';
 const NOTIFICATION_ID = Schema.decodeUnknownSync(CapturedProviderNotificationIdSchema)(
   '55555555-5555-4555-8555-555555555555',
 );
@@ -49,15 +57,23 @@ const ACCOUNT_REF = `pab_${'a'.repeat(32)}`;
 const INGRESS_WORKLOAD = 'payment.provider-notification-ingress';
 const RECEIVED_AT = DateTime.makeUnsafe('2026-11-12T09:00:00Z');
 
-/** The relay integration principal, authenticated by its API key in the Selling Legal Entity scope. */
-const relayPrincipal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
-  authBindingId: '66666666-6666-4666-8666-666666666666',
-  authContextRef: 'better-auth-api-key:psp-relay',
-  authMethod: 'api_key',
-  legalEntityId: LEGAL_ENTITY_ID,
-  principalId: PRINCIPAL_ID,
-  tenantId: TENANT_ID,
-});
+const RELAY = { legalEntityId: LEGAL_ENTITY_ID, principalId: PRINCIPAL_ID, tenantId: TENANT_ID } as const;
+
+/**
+ * The relay integration principal, authenticated by its API key in the Selling Legal Entity scope, carrying the
+ * Shell-signed route scope of the binding (or of `route` when given).
+ */
+const routedPrincipal = (route: Partial<RouteScopeInput> = {}) =>
+  routeScopedPrincipalOf(RELAY, { bindingId: BINDING_ID, operation: CAPTURE_ROUTE_OPERATION, ...route });
+
+/** The binding's own route, as Payment stored it with the binding. */
+const bindingRoute: BoundProviderBindingRoute = {
+  bindingId: Schema.decodeUnknownSync(GatewayExecutionTargetSchema.fields.bindingId)(BINDING_ID),
+  environment: 'SANDBOX',
+  providerAccountRef: ACCOUNT_REF,
+  providerFamily: 'STRIPE',
+  routeRevision: 1,
+};
 
 const target = Schema.decodeUnknownSync(GatewayExecutionTargetSchema)({
   binding: {
@@ -101,12 +117,17 @@ const authentic = (actionable: boolean): Verdict => AuthenticVerdict.make({ acti
 interface Recorder {
   readonly captured: CaptureProviderNotificationInput[];
   readonly queries: GatewayCaptureTargetQuery[];
+  readonly routeReads: string[];
   readonly verified: RawProviderNotification[];
 }
 
 interface FakeOptions {
   readonly bindingKnown?: boolean;
+  /** The routes Payment stored, by binding id; the binding's own route unless given. */
+  readonly routes?: Readonly<Record<string, BoundProviderBindingRoute>>;
   readonly stored?: CaptureProviderNotificationOutcome['_tag'];
+  /** The binding the resolver answers with; the routed binding unless given. */
+  readonly target?: typeof target;
 }
 
 const unused = () => Effect.die('Only notification verification is exercised here');
@@ -158,7 +179,7 @@ const fakeServices = (
     bindings: {
       resolveForCapture: (query) => {
         recorder.queries.push(query);
-        return Effect.succeed(options.bindingKnown === false ? Option.none() : Option.some(target));
+        return Effect.succeed(options.bindingKnown === false ? Option.none() : Option.some(options.target ?? target));
       },
     },
     notifications: {
@@ -167,10 +188,16 @@ const fakeServices = (
         return Effect.succeed({ _tag: options.stored ?? 'INSERTED', notificationId: NOTIFICATION_ID });
       },
     },
+    routes: {
+      readRouteOfBinding: (bindingId) => {
+        recorder.routeReads.push(bindingId);
+        return Effect.succeed(Option.fromUndefinedOr((options.routes ?? { [BINDING_ID]: bindingRoute })[bindingId]));
+      },
+    },
   };
 };
 
-const newRecorder = (): Recorder => ({ captured: [], queries: [], verified: [] });
+const newRecorder = (): Recorder => ({ captured: [], queries: [], routeReads: [], verified: [] });
 
 /** The adapter registry is replaced by the bound fakes; the layer only satisfies the declared requirement. */
 const AdaptersRequirement = Layer.succeed(GatewayProviderAdapters, {
@@ -199,10 +226,12 @@ const relayPayload = (smuggled: SmuggledFields = {}) => ({
 
 type CaptureHarnessOptions = Omit<ActionTestHarnessOptions, 'services'> & {
   readonly owner: CaptureProviderNotificationServices;
+  /** The invoking context; the relay principal with the binding's route scope unless given. */
+  readonly principal?: ReturnType<typeof routedPrincipal>;
 };
 
 const capture = Effect.fn('PspCaptureTest.capture')(function* capture(
-  { owner, ...options }: CaptureHarnessOptions,
+  { owner, principal = routedPrincipal(), ...options }: CaptureHarnessOptions,
   payload: ReturnType<typeof relayPayload> = relayPayload(),
 ) {
   const harness = yield* makeActionTestHarness({
@@ -214,11 +243,11 @@ const capture = Effect.fn('PspCaptureTest.capture')(function* capture(
   const exit = yield* harness.runtime
     .runAction({
       payload,
-      principal: relayPrincipal,
+      principal,
       registration: captureProviderNotificationAction,
       transport: { correlationId: 'payment-psp-capture-unit', idempotencyKey: 'capture-unit-1' },
     })
-    .pipe(Effect.provide(AdaptersRequirement), Effect.exit);
+    .pipe(Effect.provide(Layer.merge(AdaptersRequirement, RouteScopeNamespaceRegistryLive)), Effect.exit);
   return { exit, snapshot: harness.snapshot() };
 });
 type CaptureOutcome = Effect.Success<ReturnType<typeof capture>>;
@@ -380,6 +409,88 @@ describe('#1157 capture-provider-notification handler', () => {
         expect(failureTagsOf(outcome)).toEqual(['ActionPayloadValidationError']);
         expect(outcome.snapshot.stages).not.toContain('handler_executed');
         expect([recorder.queries, recorder.captured]).toEqual([[], []]);
+      }
+    }),
+  );
+});
+
+describe('#1157 / #1153 owner recheck of the provider binding route', () => {
+  it.effect('#1157 a capture without a verified route scope is refused before anything is read or written', () =>
+    Effect.gen(function* withoutRouteScope() {
+      const recorder = newRecorder();
+      const outcome = yield* capture({
+        owner: fakeServices(authentic(true), recorder),
+        principal: apiKeyPrincipalOf(RELAY),
+      });
+      expect(failureTagsOf(outcome)).toEqual(['PaymentUnavailable']);
+      expect(outcome.snapshot.committed).toEqual([]);
+      expect([recorder.routeReads, recorder.queries, recorder.verified, recorder.captured]).toEqual([[], [], [], []]);
+    }),
+  );
+
+  it.effect('#1157 the binding is resolved by the signed source route, never by the payload alone', () =>
+    Effect.gen(function* signedRouteDecides() {
+      const recorder = newRecorder();
+      const outcome = yield* capture({ owner: fakeServices(authentic(true), recorder) });
+      expect(summaryOf(outcome)).toEqual(['CAPTURED', NOTIFICATION_ID]);
+      expect(recorder.routeReads).toEqual([BINDING_ID]);
+    }),
+  );
+
+  it.effect('#1157 Mismatched binding cannot affect another merchant', () =>
+    Effect.gen(function* mismatchedBinding() {
+      const otherRoute: BoundProviderBindingRoute = {
+        ...bindingRoute,
+        bindingId: Schema.decodeUnknownSync(GatewayExecutionTargetSchema.fields.bindingId)(OTHER_BINDING_ID),
+        providerAccountRef: `pab_${'b'.repeat(32)}`,
+      };
+      const cases = [
+        // The route of another merchant's binding, with this binding's account ref in the payload.
+        {
+          owner: { routes: { [OTHER_BINDING_ID]: otherRoute } },
+          principal: routedPrincipal({ bindingId: OTHER_BINDING_ID }),
+        },
+        // A signed binding that has no route in this scope.
+        { owner: { routes: {} }, principal: routedPrincipal() },
+        // A stale or foreign route revision, and a route scope of another route key.
+        { owner: {}, principal: routedPrincipal({ routeRevision: 2 }) },
+        { owner: {}, principal: routedPrincipal({ overrides: { routeKey: 'symmy-route' } }) },
+        // The routed binding is found, but the resolver answers a different binding.
+        {
+          owner: {
+            target: Schema.decodeUnknownSync(GatewayExecutionTargetSchema)({
+              ...Schema.encodeSync(GatewayExecutionTargetSchema)(target),
+              bindingId: OTHER_BINDING_ID,
+            }),
+          },
+          principal: routedPrincipal(),
+        },
+      ] as const;
+      for (const row of cases) {
+        const recorder = newRecorder();
+        const outcome = yield* capture({
+          owner: fakeServices(authentic(true), recorder, row.owner),
+          principal: row.principal,
+        });
+        expect(summaryOf(outcome)).toEqual(['REJECTED', 'BINDING_UNKNOWN']);
+        expect([recorder.verified, recorder.captured]).toEqual([[], []]);
+        expect(outcome.snapshot.committed[0]?.evidence.outboxMessages).toEqual([]);
+      }
+    }),
+  );
+
+  it.effect('#1155 Callback cannot cross provider environments', () =>
+    Effect.gen(function* environmentFixedByRoute() {
+      // The SANDBOX binding's route never admits a LIVE payload, nor another family's.
+      for (const payload of [
+        { ...relayPayload(), environment: 'LIVE' },
+        { ...relayPayload(), family: 'GOPAY' },
+        { ...relayPayload(), providerAccountRef: `pab_${'c'.repeat(32)}` },
+      ]) {
+        const recorder = newRecorder();
+        const outcome = yield* capture({ owner: fakeServices(authentic(true), recorder) }, payload);
+        expect(summaryOf(outcome)).toEqual(['REJECTED', 'BINDING_UNKNOWN']);
+        expect([recorder.queries, recorder.verified, recorder.captured]).toEqual([[], [], []]);
       }
     }),
   );
