@@ -57,10 +57,11 @@ import type {
  *   platform writer when it creates the principal; no Action or API sets it, and the database refuses any later change)
  *   AND its id is the one derived from tenant, workload and company (`internalWorkloadPrincipalId`); the id is computable,
  *   so it is not proof on its own. No product Action takes a principal id; a principal that already holds a derived id
- *   (created elsewhere before that rule) is reported by name, "id taken by another principal", and never adopted. The
- *   name is never
- *   read for this: it is what a person reads, e.g. `CRM · zakládání klientů · Obchodní firma`, and follows a renamed
- *   company. A registration someone made by hand is neither adopted nor touched, and key provisioning keys none.
+ *   is reported by name and never adopted: "id taken by another principal (tenant …)" for another tenant's, and
+ *   "derived id held by an unmarked principal of the same tenant created by an earlier build" for this tenant's own
+ *   registration from before the marker existed (an operator removes it; ADR-0028 in docs/architecture/DEPLOYMENT.md).
+ *   The name is never read for this: it is what a person reads, e.g. `CRM · zakládání klientů · Obchodní firma`, and
+ *   follows a renamed company. A registration someone made by hand is neither adopted nor touched, and key provisioning keys none.
  * - Acts as the tenant's platform release actor (the system principal the access release activation uses), through
  *   Core's own writers, which take the tenant's workload fence; each tenant is read and written in its own scope.
  * - Each tenant is decided on its own, and each registration in it: one registration's failure stops no other, and
@@ -351,10 +352,14 @@ const performStep = (
 };
 
 /**
- * Who holds a principal id the platform derived, when its creation did not go through: a principal of another tenant
- * (only an id chosen elsewhere can collide; Core derives its own), or one in this tenant without the platform's marker.
+ * Who holds a principal id the platform derived, when its creation did not go through, as the report says it: a
+ * principal of another tenant (only an id chosen elsewhere can collide; Core derives its own), or one in this tenant
+ * without the platform's marker, which an earlier build made before the marker existed. Neither is ever adopted.
  */
-const takenBy = Effect.fn('ReleaseInternalWorkloads.takenBy')(function* takenByOther(principalId: string) {
+const takenBy = Effect.fn('ReleaseInternalWorkloads.takenBy')(function* takenByOther(
+  principalId: string,
+  tenantId: string,
+) {
   const { executor } = yield* CoreDatabase;
   const [holder] = yield* executor
     .select({ platformRole: principals.platformRole, tenantId: principals.tenantId })
@@ -362,7 +367,12 @@ const takenBy = Effect.fn('ReleaseInternalWorkloads.takenBy')(function* takenByO
     .where(eq(principals.principalId, principalId))
     .limit(1)
     .pipe(Effect.orElseSucceed(() => []));
-  return holder === undefined || holder.platformRole === INTERNAL_WORKLOAD_PLATFORM_ROLE ? null : holder.tenantId;
+  if (holder === undefined || holder.platformRole === INTERNAL_WORKLOAD_PLATFORM_ROLE) {
+    return null;
+  }
+  return holder.tenantId === tenantId
+    ? 'derived id held by an unmarked principal of the same tenant created by an earlier build'
+    : `id taken by another principal (tenant ${holder.tenantId})`;
 });
 
 /** One registration's steps, in order; its failure is reported by name and stops no other registration. */
@@ -370,14 +380,12 @@ const performUnit = (database: AccessIntentDatabase, scope: OperationalScope, un
   Effect.forEach(unit.steps, (step) => performStep(database, scope, step, at), { concurrency: 1, discard: true }).pipe(
     Effect.catchTag('ReleaseInternalWorkloadError', (stepError) =>
       unit.steps.some(({ kind }) => kind === 'create-principal')
-        ? takenBy(unit.principalId).pipe(
-            Effect.flatMap((tenant) =>
+        ? takenBy(unit.principalId, scope.tenantId).pipe(
+            Effect.flatMap((holder) =>
               Effect.fail(
-                tenant === null
+                holder === null
                   ? stepError
-                  : refusal(
-                      `${unit.workloadKey} in company ${unit.legalEntityId}: id taken by another principal (tenant ${tenant})`,
-                    ),
+                  : refusal(`${unit.workloadKey} in company ${unit.legalEntityId}: ${holder}`),
               ),
             ),
           )

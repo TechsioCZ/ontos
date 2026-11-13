@@ -8,7 +8,7 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { and, eq, inArray, like, sql } from 'drizzle-orm';
-import { Clock, DateTime, Duration, Effect, Exit, Layer, Redacted, Schema, Stream } from 'effect';
+import { Clock, DateTime, Duration, Effect, Exit, Layer, Option, Redacted, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 
@@ -66,6 +66,7 @@ import {
   ProvisioningOutputJsonSchema,
 } from '../../../../scripts/zerops/module-credentials.mts';
 import { validateManagedApiKeyTarget } from '../../../../packages/core-runtime/src/auth/managed-api-key-scope.ts';
+import { findPostgresFailure } from '../../../../packages/core-runtime/src/database/postgres-failure.ts';
 
 /** The calling modules this release installs, and one it does not (a credential of it must bind nothing). */
 const INSTALLED = ['catalog', 'pricing'] as const;
@@ -1213,6 +1214,114 @@ it.live(
             ),
           );
         expect(workloadBindings).toHaveLength(1);
+
+        // An earlier build registered company E of the first tenant before the marker existed: its principal holds the
+        // derived id without the marker. It is reported by name and never adopted; once removed, the id is made.
+        const companyE = crypto.randomUUID();
+        yield* adminDatabase.insert(legalEntities).values({
+          legalEntityId: companyE,
+          legalName: 'Healing company 4',
+          registrationCountry: 'CZ',
+          registrationNumber: '10000004',
+          status: 'active',
+          tenantId: tenantOne,
+        });
+        yield* adminDatabase.insert(principals).values({
+          displayName: `internal-workload:${INTAKE_WORKLOAD}:${companyE}`,
+          kind: 'service',
+          principalId: principalOf(tenantOne, companyE),
+          status: 'active',
+          tenantId: tenantOne,
+        });
+        const unmarked = yield* register('heal-unmarked');
+        expect(unmarked.find(({ tenantId }) => tenantId === tenantOne)?.failed).toContain(
+          `${INTAKE_WORKLOAD} in company ${companyE}: derived id held by an unmarked principal of the same tenant created by an earlier build`,
+        );
+        const [unmarkedRow] = yield* adminDatabase
+          .select({ platformRole: principals.platformRole, status: principals.status })
+          .from(principals)
+          .where(eq(principals.principalId, principalOf(tenantOne, companyE)));
+        expect(unmarkedRow).toEqual({ platformRole: null, status: 'active' });
+        expect(yield* activeBindingsOf(principalOf(tenantOne, companyE))).toEqual([]);
+        yield* adminDatabase.delete(principals).where(eq(principals.principalId, principalOf(tenantOne, companyE)));
+        const madeAfterRemoval = yield* register('heal-unmarked-removed');
+        expect(madeAfterRemoval.find(({ tenantId }) => tenantId === tenantOne)).toMatchObject({
+          failed: null,
+          registered: 1,
+        });
+        expect(yield* activeBindingsOf(principalOf(tenantOne, companyE))).toEqual([{ legalEntityId: companyE }]);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer))),
+);
+
+it.live('refuses any change to a principal platform role in the database, even by the runtime role', () =>
+  Effect.scoped(
+    Effect.gen(function* platformRoleIsImmutable() {
+      const { adminDatabase, coreDatabase } = yield* platform;
+      const tenantId = crypto.randomUUID();
+      const [workload, releaseActor, unmarked] = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+      yield* adminDatabase.insert(tenants).values({
+        defaultLocale: 'cs',
+        name: 'Platform role',
+        slug: `platform-role-${tenantId}`,
+        status: 'active',
+        tenantId,
+      });
+      yield* adminDatabase.insert(principals).values([
+        {
+          displayName: 'CRM · zakládání klientů · Firma',
+          kind: 'service' as const,
+          platformRole: 'internal_workload',
+          principalId: workload,
+          status: 'active' as const,
+          tenantId,
+        },
+        {
+          displayName: 'Release actor',
+          kind: 'system' as const,
+          platformRole: 'access_release_actor',
+          principalId: releaseActor,
+          status: 'active' as const,
+          tenantId,
+        },
+        {
+          displayName: 'Hand-made service',
+          kind: 'service' as const,
+          principalId: unmarked,
+          status: 'active' as const,
+          tenantId,
+        },
+      ]);
+      // Every write runs as the shared runtime role, in the tenant's scope, as the application's writers do.
+      const asRuntime = (principalId: string, platformRole: (typeof principals.$inferInsert)['platformRole']) =>
+        coreDatabase.transaction((transaction) =>
+          transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantId}, true)`).pipe(
+            Effect.andThen(
+              transaction
+                .update(principals)
+                .set({ platformRole })
+                .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, principalId))),
+            ),
+          ),
+        );
+      for (const [principalId, platformRole] of [
+        [workload, null],
+        [workload, 'access_release_actor'],
+        [releaseActor, null],
+        [unmarked, 'internal_workload'],
+      ] as const) {
+        const refusal = yield* Effect.flip(asRuntime(principalId, platformRole));
+        expect(Option.getOrThrow(findPostgresFailure(refusal)).code).toBe('23514');
+      }
+      const rows = yield* adminDatabase
+        .select({ platformRole: principals.platformRole, principalId: principals.principalId })
+        .from(principals)
+        .where(eq(principals.tenantId, tenantId));
+      expect(Object.fromEntries(rows.map((row) => [row.principalId, row.platformRole]))).toEqual({
+        [releaseActor]: 'access_release_actor',
+        [unmarked]: null,
+        [workload]: 'internal_workload',
+      });
+    }),
+  ).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer))),
 );
