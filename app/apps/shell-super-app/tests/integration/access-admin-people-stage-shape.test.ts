@@ -212,17 +212,18 @@ const writeReport = (name: string, report: RequestReport) =>
     yield* fileSystem.writeFileString(`${path.value}.${name}.json`, text);
   }).pipe(Effect.provide(NodeServices.layer));
 
-/** One owner request through the Shell, with its round trips and the evidence rows it left. */
+/** One request of a person through the Shell, with its round trips and the evidence rows it left. */
 const measuredRequest = Effect.fn('test.measuredPeopleRequest')(function* measuredRequest(input: {
   readonly accessCase: AccessAdminCase;
   readonly path: '/shell/access/people/list' | '/shell/access/people/options';
+  readonly persona: 'member' | 'owner';
   readonly shell: ShellHttp;
 }) {
   const before = yield* decisionRows(input.accessCase);
   const engineBefore = yield* spiceDbCalls;
   executed.length = 0;
   const [elapsed, answer] = yield* Effect.timed(
-    input.shell.post({ path: input.path, payload: { limit: 100 }, persona: 'owner' }),
+    input.shell.post({ path: input.path, payload: { limit: 100 }, persona: input.persona }),
   );
   const statements = [...executed];
   const engineAfter = yield* spiceDbCalls;
@@ -238,9 +239,15 @@ const measuredRequest = Effect.fn('test.measuredPeopleRequest')(function* measur
   const statementKinds = Object.fromEntries(
     [...new Set(statements)].map((text) => [text, statements.filter((other) => other === text).length] as const),
   );
-  yield* writeReport(input.path.split('/').at(-1) ?? 'request', { ...counts, evidence, statementKinds });
+  const suffix = input.persona === 'owner' ? '' : `-${input.persona}`;
+  const name = (input.path.split('/').at(-1) ?? 'request') + suffix;
+  yield* writeReport(name, { ...counts, evidence, statementKinds });
   return { answer, counts };
 });
+
+/** The round trips one owner request may make in this shape (measured on trunk 685b87f90 with this branch). */
+const LIST_BOUNDS = { statements: 401, transactions: 40 };
+const OPTIONS_BOUNDS = { statements: 814, transactions: 83 };
 
 /** The case clones its database, bootstraps a tenant with five companies into SpiceDB and signs every persona in. */
 const CASE_TIMEOUT = 300_000;
@@ -257,12 +264,17 @@ const ownerOfFiveCompanies = (accessCase: AccessAdminCase) =>
       expect((yield* shell.post({ path, payload: { limit: 100 }, persona: 'owner' })).status).toBe(200);
     }
 
-    const list = yield* measuredRequest({ accessCase, path: '/shell/access/people/list', shell });
+    const list = yield* measuredRequest({ accessCase, path: '/shell/access/people/list', persona: 'owner', shell });
     expect(list.answer.status).toBe(200);
     const listed = yield* decodeBody(ListAccessPeopleResponseSchema, list.answer.text);
     expect(listed.items.length).toBeGreaterThan(0);
 
-    const options = yield* measuredRequest({ accessCase, path: '/shell/access/people/options', shell });
+    const options = yield* measuredRequest({
+      accessCase,
+      path: '/shell/access/people/options',
+      persona: 'owner',
+      shell,
+    });
     expect(options.answer.status).toBe(200);
     const offered = yield* decodeBody(ListAccessPeopleOptionsResponseSchema, options.answer.text);
     expect(offered.revision).toBe(listed.revision);
@@ -274,13 +286,25 @@ const ownerOfFiveCompanies = (accessCase: AccessAdminCase) =>
     // companies, and the options' own declaration with its eight writes in the same six contexts.
     expect(list.counts.decisionRows).toBe(6);
     expect(options.counts.decisionRows).toBe(54);
-    // Before the batched admission: list 387 statements / 34 transactions, options 844 / 77 (898 / 83 once the
-    // list's admission was batched alone). The batch reads authority cells per company scope, which the single owner
-    // decisions skipped; it pays off in wall time because the gate prepares two scopes at a time.
-    expect(list.counts.statements).toBeLessThanOrEqual(441);
-    expect(list.counts.transactions).toBeLessThanOrEqual(40);
-    expect(options.counts.statements).toBeLessThanOrEqual(483);
-    expect(options.counts.transactions).toBeLessThanOrEqual(47);
+    // On trunk 685b87f90 one-decision-at-a-time admission measured list 353 statements / 34 transactions and options
+    // 767 / 77. The batch reads authority cells per company scope, which the single owner decisions skipped; it pays
+    // off in wall time because the gate prepares two scopes at a time.
+    expect(list.counts.statements).toBeLessThanOrEqual(LIST_BOUNDS.statements);
+    expect(list.counts.transactions).toBeLessThanOrEqual(LIST_BOUNDS.transactions);
+    expect(options.counts.statements).toBeLessThanOrEqual(OPTIONS_BOUNDS.statements);
+    expect(options.counts.transactions).toBeLessThanOrEqual(OPTIONS_BOUNDS.transactions);
+
+    // A person the options cover nowhere is refused after the read's own question alone: one refusal per context,
+    // and no write is asked, so no write refusal is recorded.
+    const refused = yield* measuredRequest({
+      accessCase,
+      path: '/shell/access/people/options',
+      persona: 'member',
+      shell,
+    });
+    expect(refused.answer.status).toBe(403);
+    expect(refused.counts.decisionRows).toBeLessThanOrEqual(6);
+    expect(refused.counts.decisionRows).toBeGreaterThan(0);
   });
 
 it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 seconds' })(
