@@ -1,11 +1,18 @@
 import { ReadRuntime } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { NodeCrypto } from '@effect/platform-node';
 import { DateTime, Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { auditTrail } from '../../api/auth/demo-accounts.ts';
+
+/** The read's own question: the caller administers the company's agents. */
+const asAgentAdministrator = Effect.provideService(
+  AccessDecisionGate,
+  makeTestAccessDecision({ answers: { 'core.identity.agent-status.manage': { outcome: 'ALLOWED' } } }),
+);
 
 const company = '00000000-0000-4000-8000-000000000002';
 const actorId = '00000000-0000-4000-8000-000000000003';
@@ -91,6 +98,7 @@ const project = (evidence: AuditFixtureEvidence, eventType = 'action.executed', 
     const harness = yield* fixture(evidence, eventType, principalId);
     const entries = yield* auditTrail(caller, transport, 'agents').pipe(
       Effect.provideService(ReadRuntime, harness.runtime),
+      asAgentAdministrator,
     );
     expect(entries).toHaveLength(1);
     expect(entries[0]?.occurredAt).toBe('2026-10-25T12:00:00.000Z');
@@ -103,7 +111,10 @@ it.effect('native scoped audit includes profile, status and operator history wit
   Effect.gen(function* nativeAgentAuditPredicate() {
     const harness = yield* fixture();
     expect(
-      yield* auditTrail(caller, transport, 'agents').pipe(Effect.provideService(ReadRuntime, harness.runtime)),
+      yield* auditTrail(caller, transport, 'agents').pipe(
+        Effect.provideService(ReadRuntime, harness.runtime),
+        asAgentAdministrator,
+      ),
     ).toEqual([]);
     const [query] = harness.snapshot().ownerQueries;
     expect(query?.sql).toContain(
@@ -120,7 +131,10 @@ it.effect('native scoped audit includes profile, status and operator history wit
 it.effect('native people audit excludes agent configurations and derives retained company members internally', () =>
   Effect.gen(function* nativePeopleAuditPredicate() {
     const harness = yield* fixture();
-    yield* auditTrail(caller, transport, 'people').pipe(Effect.provideService(ReadRuntime, harness.runtime));
+    yield* auditTrail(caller, transport, 'people').pipe(
+      Effect.provideService(ReadRuntime, harness.runtime),
+      asAgentAdministrator,
+    );
     const [query] = harness.snapshot().ownerQueries;
     expect(query?.sql).not.toContain('core.identity.configure-agent');
     expect(query?.sql).toContain("->>'principalKind', 'human') <> 'agent'");
@@ -244,6 +258,7 @@ it.effect('fails malformed native display evidence rather than releasing a parti
     const harness = yield* fixture({ displayName: { untrusted: 'not a display name' } });
     const error = yield* auditTrail(caller, transport, 'agents').pipe(
       Effect.provideService(ReadRuntime, harness.runtime),
+      asAgentAdministrator,
       Effect.flip,
     );
     expect(Predicate.isTagged(error, 'DemoAccountUnavailable')).toBe(true);
@@ -256,6 +271,7 @@ it.effect('native company admission denial stays forbidden and runs no audit/nam
     const harness = yield* fixture(undefined, 'action.executed', actorId, false);
     const error = yield* auditTrail(caller, transport, 'agents').pipe(
       Effect.provideService(ReadRuntime, harness.runtime),
+      asAgentAdministrator,
       Effect.flip,
     );
     expect(Predicate.isTagged(error, 'DemoAccountForbidden')).toBe(true);

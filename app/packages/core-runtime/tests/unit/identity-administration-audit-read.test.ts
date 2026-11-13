@@ -1,7 +1,9 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
+import { DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
+import { makeTestAccessDecision } from '../../src/access/enforcement/testing.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import {
   IdentityAdministrationAuditEvidenceSchema,
@@ -32,20 +34,20 @@ const scopeEffect = Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(pr
 );
 const transport = { correlationId: 'original-audit-request' };
 
-it.layer(NodeCrypto.layer)('identity-administration-audit-read', (suite) => {
-  suite.effect('declares only tenant manage_identity OR the original selected-company manage_people', () =>
+/** The company's agent administrator: the read's own v2 question (`core.identity.agent-status.manage`) is ALLOWED. */
+const AGENT_ADMINISTRATOR = Layer.succeed(
+  AccessDecisionGate,
+  makeTestAccessDecision({ answers: { 'core.identity.agent-status.manage': { outcome: 'ALLOWED' } } }),
+);
+
+it.layer(Layer.mergeAll(NodeCrypto.layer, AGENT_ADMINISTRATOR))('identity-administration-audit-read', (suite) => {
+  suite.effect('is admitted in the selected company only, and asks no legacy relation', () =>
     Effect.gen(function* permissionContract() {
       const scope = yield* scopeEffect;
       const resolver = getReadPermissionTargetResolver(identityAdministrationAuditRead);
       expect(Predicate.isFunction(resolver)).toBe(true);
       if (Predicate.isFunction(resolver)) {
-        expect(resolver({ subjects: 'people' }, scope)).toEqual({
-          kind: 'any_of',
-          targets: [
-            { kind: 'tenant', permission: 'manage_identity' },
-            { kind: 'legal_entity', permission: 'manage_people' },
-          ],
-        });
+        expect(resolver({ subjects: 'people' }, scope)).toEqual({ kind: 'legal_entity' });
       }
       expect(identityAdministrationAuditRead.descriptor.legalEntityScope).toBe('required');
       expect(identityAdministrationAuditRead.descriptor.entrypoint.authorization).toEqual({
@@ -118,6 +120,42 @@ it.layer(NodeCrypto.layer)('identity-administration-audit-read', (suite) => {
       }
       expect(allowed.snapshot().ownerQueries).toEqual([]);
     }),
+  );
+
+  suite.effect(
+    "a member who is not the company's agent administrator is DENIED, an unreadable authority unavailable",
+    () =>
+      Effect.gen(function* ownQuestion() {
+        const scope = yield* scopeEffect;
+        for (const [answer, refusal] of [
+          [{ outcome: 'DENIED' }, 'ReadPermissionDenied'],
+          [{ outcome: 'UNAVAILABLE' }, 'ReadHandlerUnavailable'],
+        ] as const) {
+          const harness = yield* makeReadTestHarness({
+            executeOwnerQuery: () => Effect.die('A refused caller reached audit SQL'),
+            operationTime,
+            ownerAuthorizationDecision: 'allowed',
+            permissionDecision: 'allowed',
+            scope,
+          });
+          const failure = yield* harness.runtime
+            .runRead({
+              input: { subjects: 'agents' },
+              principal: scope,
+              registration: identityAdministrationAuditRead,
+              transport,
+            })
+            .pipe(
+              Effect.provideService(
+                AccessDecisionGate,
+                makeTestAccessDecision({ answers: { 'core.identity.agent-status.manage': answer } }),
+              ),
+              Effect.flip,
+            );
+          expect(Predicate.isTagged(failure, refusal)).toBe(true);
+          expect(harness.snapshot().ownerQueries).toEqual([]);
+        }
+      }),
   );
 
   for (const subjects of ['agents', 'people'] as const) {

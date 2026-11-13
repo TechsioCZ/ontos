@@ -10,7 +10,12 @@ import {
   parseDatabaseConfig,
   parseDatabaseConnectionPair,
 } from '@app/core-runtime';
-import type { AccessDeclaration, DatabaseConnectionPair, TrustedPrincipalContext } from '@app/core-runtime';
+import type {
+  AccessDeclaration,
+  ActiveApplicationCompositionSnapshot,
+  DatabaseConnectionPair,
+  TrustedPrincipalContext,
+} from '@app/core-runtime';
 import { AccessCatalogModulesSchema } from '@app/core-runtime/access/catalog';
 import { TenantIntentLoaderLive } from '@app/core-runtime/access/intent/tenant-intent-loader';
 import { CoreDatabase, CoreDatabaseLive } from '@app/core-runtime/db/client';
@@ -1486,7 +1491,38 @@ const personaAuthentication = (
     createFixtureUser: () => unsupportedSession('createFixtureUser'),
     currentSession: () => unsupportedSession('currentSession'),
     resolveDocumentContext: () => unsupportedSession('resolveDocumentContext'),
-    resolveShellContext: () => unsupportedSession('resolveShellContext'),
+    // The same persona as `resolveTenantContext`, as the Shell surfaces that resolve a full shell session read it: with
+    // a company selected the session is `authenticated` in that company, otherwise it stays in the tenant context.
+    resolveShellContext: (headers) => {
+      const principal = principals.get(sessionKey(headers.get(PERSONA_HEADER) ?? '', headers.get(LEGAL_ENTITY_HEADER)));
+      if (principal === undefined) {
+        return Effect.succeed({ setCookieHeaders: [], state: 'anonymous' as const });
+      }
+      const identity = {
+        displayName: 'P14 person',
+        email: 'p14@example.test',
+        principalId: principal.principalId,
+        tenantId: principal.tenantId,
+      };
+      const { legalEntityId } = principal;
+      return Effect.succeed(
+        legalEntityId === undefined
+          ? {
+              availableLegalEntities: [],
+              identity,
+              principal,
+              setCookieHeaders: [],
+              state: 'tenant_authenticated' as const,
+            }
+          : {
+              availableLegalEntities: [{ legalEntityId, legalName: 'P14 company' }],
+              identity: { ...identity, legalEntityId, legalName: 'P14 company' },
+              principal,
+              setCookieHeaders: [],
+              state: 'authenticated' as const,
+            },
+      );
+    },
     resolveTenantContext: (headers) => {
       const principal = principals.get(sessionKey(headers.get(PERSONA_HEADER) ?? '', headers.get(LEGAL_ENTITY_HEADER)));
       return Effect.succeed(
@@ -1526,14 +1562,19 @@ const personaAuthentication = (
  *
  * `api/index.ts` is loaded on first use, so the suites that only need the gate never load the Shell.
  */
-export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* shellHttp(accessCase: AccessAdminCase) {
-  const [shell, authentication, api, bff] = yield* Effect.promise(
+export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* shellHttp(
+  accessCase: AccessAdminCase,
+  /** The installed release a surface reads its module catalog from (a deployed Shell loads it from the composition). */
+  installed?: ActiveApplicationCompositionSnapshot,
+) {
+  const [shell, authentication, api, bff, catalog] = yield* Effect.promise(
     async () =>
       await Promise.all([
         import('../../api/index.ts'),
         import('../../api/auth/service.ts'),
         import('../../shared/browser-api.ts'),
         import('@modern-js/bff-effect/effect-edge'),
+        import('../../api/modules/installed-module-catalog.ts'),
       ]),
   );
   const principals = new Map<string, TrustedPrincipalContext>();
@@ -1551,7 +1592,7 @@ export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* 
     personaAuthentication(authentication.AuthenticationService, principals),
     issuer,
     moduleStates,
-    undefined,
+    installed === undefined ? undefined : catalog.makeInstalledModuleCatalogLoader(Effect.succeed(installed)),
     false,
     undefined,
     undefined,
