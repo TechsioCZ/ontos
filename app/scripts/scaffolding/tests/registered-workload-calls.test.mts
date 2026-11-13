@@ -4,10 +4,11 @@ import { NodeServices } from '@effect/platform-node';
 import { Effect, Exit } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-const { assertRegisteredWorkloadCallsReceived } = await import(
-  /* webpackIgnore: true */
-  '../../check-ontos-module-contracts.mts'
-);
+const { assertRegisteredWorkloadCallers, assertRegisteredWorkloadCallsReceived, REVIEWED_REGISTERED_WORKLOAD_CALLERS } =
+  await import(
+    /* webpackIgnore: true */
+    '../../check-ontos-module-contracts.mts'
+  );
 const { deriveOntosModuleDeploymentContract, registeredWorkloadCallTopologyIssue } = await import(
   /* webpackIgnore: true */
   '../../generate-ontos-module-contract.mts'
@@ -38,6 +39,46 @@ const refusal = (contracts: readonly Contract[]) =>
     Effect.map((exit) => (Exit.isFailure(exit) ? String(exit.cause) : 'accepted')),
   );
 
+const callerRefusal = (contracts: Parameters<typeof assertRegisteredWorkloadCallers>[0]) =>
+  Effect.exit(assertRegisteredWorkloadCallers(contracts)).pipe(
+    Effect.map((exit) => (Exit.isFailure(exit) ? String(exit.cause) : 'accepted')),
+  );
+const declaring = (appId: string, ...workloadKeys: readonly string[]) => ({
+  deployment: { appId },
+  manifest: { registeredWorkloadCalls: workloadKeys.map((workloadKey) => ({ workloadKey })) },
+});
+const sourceWrite = 'commerce.customer-context.source-write';
+const sourceProcessingCheck = 'privacy.core.source-processing-check';
+const symmyIntegration = 'symmy-integration';
+
+it.effect('admits each registered workload only from its reviewed callers', () =>
+  Effect.gen(function* reviewedCallers() {
+    expect(REVIEWED_REGISTERED_WORKLOAD_CALLERS.get(sourceWrite)).toEqual([symmyIntegration]);
+    expect(
+      yield* callerRefusal([
+        declaring(symmyIntegration, sourceWrite, sourceProcessingCheck),
+        declaring('party-registry', sourceProcessingCheck),
+        declaring('catalog'),
+      ]),
+    ).toBe('accepted');
+    // A second declarer of a one-caller workload.
+    expect(yield* callerRefusal([declaring(symmyIntegration, sourceWrite), declaring('pricing', sourceWrite)])).toMatch(
+      /pricing declares a call as registered workload commerce\.customer-context\.source-write, whose reviewed callers are symmy-integration/u,
+    );
+    // A sole declarer the table does not name.
+    expect(yield* callerRefusal([declaring('privacy', sourceWrite)])).toMatch(
+      /privacy declares .* whose reviewed callers are/u,
+    );
+    expect(yield* callerRefusal([declaring('payment', sourceProcessingCheck)])).toMatch(
+      /payment declares .* whose reviewed callers are commerce-customer-context, party-registry, symmy-integration/u,
+    );
+    // A workload without a reviewed entry.
+    expect(yield* callerRefusal([declaring(symmyIntegration, 'commerce.customer-context.source-delete')])).toMatch(
+      /source-delete, which has no reviewed caller/u,
+    );
+  }),
+);
+
 it('refuses at generation a call to a deployment the topology does not have', () => {
   expect(registeredWorkloadCallTopologyIssue([{ audience: 'privacy' }], ['privacy', 'party-registry'])).toBeUndefined();
   expect(registeredWorkloadCallTopologyIssue([{ audience: 'privacy-next' }], ['privacy'])).toMatch(
@@ -63,6 +104,7 @@ it.live(
         expect(contract?.manifest.registeredWorkloadCalls).toBeUndefined();
       }
       expect(yield* refusal(contracts)).toBe('accepted');
+      expect(yield* callerRefusal(contracts)).toBe('accepted');
 
       const first = contracts.find(({ deployment }) => deployment.appId === 'pricing')?.manifest
         .registeredWorkloadCalls?.[0];

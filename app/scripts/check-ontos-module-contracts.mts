@@ -659,6 +659,82 @@ export const assertRegisteredWorkloadCallsReceived = (
     { discard: true },
   );
 
+const symmyIntegration = 'symmy-integration';
+const customerContext = 'commerce-customer-context';
+/**
+ * The reviewed callers of each registered workload (demo divergence exception 8). A receiver admits a registered
+ * workload, not a calling module, so without this table any module could declare a call as another module's workload
+ * and act as its principal wherever a tenant registered that workload (for example as Symmy's
+ * `commerce.customer-context.source-write`, which lets Customer Context's owner overlay skip its Counterparty grant
+ * check). Derived from the declarations in `verticals/*\/src/registered-workload-calls.ts`; a new workload, or a new
+ * caller of an existing one, needs a reviewed entry here. Every write workload has exactly one caller; the five shared
+ * workloads are read or check workloads that main's fixtures give to several source modules.
+ */
+export const REVIEWED_REGISTERED_WORKLOAD_CALLERS: ReadonlyMap<string, readonly [string, ...string[]]> = new Map<
+  string,
+  readonly [string, ...string[]]
+>([
+  ['commerce.assortment.symmy-fixture-currentness', ['assortment']],
+  ['commerce.assortment.symmy-fixture-rule-import', [symmyIntegration]],
+  ['commerce.catalog.symmy-product-import', [symmyIntegration]],
+  ['commerce.catalog.symmy-product-read', ['pricing', symmyIntegration]],
+  ['commerce.catalog.symmy-variant-localized-facts', [symmyIntegration]],
+  ['commerce.catalog.symmy-variant-localized-facts-recovery', [symmyIntegration]],
+  ['commerce.customer-context.organization-ico-facts.read', ['privacy']],
+  ['commerce.customer-context.source-read', [symmyIntegration]],
+  ['commerce.customer-context.source-write', [symmyIntegration]],
+  ['commerce.inventory.source-read', [symmyIntegration]],
+  ['commerce.inventory.source-write', [symmyIntegration]],
+  ['commerce.market-catalog.source-read', ['pricing']],
+  ['commerce.pricing.source-read', [symmyIntegration]],
+  ['commerce.pricing.source-write', [symmyIntegration]],
+  ['integration.symmy.source-organization-facts.read', ['privacy']],
+  ['party.registry.source-read', [customerContext, 'privacy']],
+  ['party.registry.source-write', [symmyIntegration]],
+  ['payment.source-ingress', ['payment']],
+  ['pricing.price-group-catalog.source-read', [customerContext, symmyIntegration]],
+  ['pricing.price-group-catalog.source-write', [symmyIntegration]],
+  ['privacy.core.organization-business-check', [customerContext, 'party-registry']],
+  ['privacy.core.organization-profile-ico-check', [customerContext]],
+  ['privacy.core.source-processing-check', [customerContext, 'party-registry', symmyIntegration]],
+]);
+
+/**
+ * Every registered-workload call is declared by a reviewed caller of its workload: a workload without a reviewed
+ * entry, or a module the entry does not name (a second declarer of a one-caller workload included), is refused.
+ */
+export const assertRegisteredWorkloadCallers = (
+  contracts: readonly {
+    readonly deployment: { readonly appId: string };
+    readonly manifest: { readonly registeredWorkloadCalls?: readonly { readonly workloadKey: string }[] };
+  }[],
+  reviewedCallers: ReadonlyMap<string, readonly string[]> = REVIEWED_REGISTERED_WORKLOAD_CALLERS,
+) =>
+  Effect.forEach(
+    contracts,
+    ({ deployment: { appId }, manifest }) =>
+      Effect.forEach(
+        manifest.registeredWorkloadCalls ?? [],
+        ({ workloadKey }) => {
+          const callers = reviewedCallers.get(workloadKey);
+          if (callers === undefined) {
+            return Effect.fail(
+              failure(`${appId} declares a call as registered workload ${workloadKey}, which has no reviewed caller`),
+            );
+          }
+          return callers.includes(appId)
+            ? Effect.void
+            : Effect.fail(
+                failure(
+                  `${appId} declares a call as registered workload ${workloadKey}, whose reviewed callers are ${callers.join(', ')}`,
+                ),
+              );
+        },
+        { discard: true },
+      ),
+    { discard: true },
+  );
+
 const checkOntosModuleContractsEffect = (workspaceRoot: string) =>
   Effect.gen(function* checkWorkspaceContracts() {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -689,6 +765,7 @@ const checkOntosModuleContractsEffect = (workspaceRoot: string) =>
     if (duplicateModuleId !== undefined) {
       yield* failure(`duplicate OntOS module ID ${duplicateModuleId}`);
     }
+    yield* assertRegisteredWorkloadCallers(contracts.map(({ contract }) => contract));
     yield* assertRegisteredWorkloadCallsReceived(contracts.map(({ contract }) => contract));
     buildInstalledModuleCatalog(contracts);
   });
