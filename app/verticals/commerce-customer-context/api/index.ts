@@ -1212,10 +1212,14 @@ export const makeCommerceCustomerContextApiRuntime = (
     portalAuthEnrollmentApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
     enrollmentCommandRecoveryLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     commercePortalAuthVerificationCommerceApiLive.pipe(GovernedReadLayer.provide(verificationRouteServicesLive)),
-    customerOwnConsentReadApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
+    customerOwnConsentReadApiLive.pipe(
+      GovernedReadLayer.provide(Layer.mergeAll(portalOwnerServicesLive, governedReadRuntimeLive)),
+    ),
     customerOwnConsentUpdateApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
     customerOwnPasswordChangeApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
-    customerOwnProfileReadApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
+    customerOwnProfileReadApiLive.pipe(
+      GovernedReadLayer.provide(Layer.mergeAll(portalOwnerServicesLive, governedReadRuntimeLive)),
+    ),
     customerOwnProfileUpdateApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
     HttpApiBuilder.group(commerceCustomerContextApi, 'ownerActionApprovals', (handlers) =>
       handlers
