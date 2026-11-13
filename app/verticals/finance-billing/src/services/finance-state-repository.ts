@@ -1,7 +1,7 @@
 import { OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
-import { DateTime, Effect, Schema } from 'effect';
+import { Clock, DateTime, Effect, Predicate, Ref, Schema, SchemaIssue } from 'effect';
 import { FinanceConflict, FinancePersistenceUnavailable } from '../../shared/actions/apply-command.ts';
 import { FinanceStateSchema } from '../../shared/apis/records.ts';
 import type { FinanceState } from '../../shared/apis/records.ts';
@@ -37,8 +37,58 @@ const unavailable = (cause?: Error) =>
   );
 
 /** Missing owner state is an empty company; only an Action save materializes the first revision. */
+const STORED_DECODE_WARNING_INTERVAL_MS = 60_000;
+/** When each company's ledger last warned, and how many failures it has not reported since. */
+const storedDecodeWarnings = Ref.makeUnsafe(new Map<string, { readonly at: number; readonly unreported: number }>());
+const pathSegment = (segment: PropertyKey | { readonly key: PropertyKey }) =>
+  String(Predicate.hasProperty(segment, 'key') ? segment.key : segment);
+/** The schema's reason and the field path, without the value it got: the ledger holds amounts and parties. */
+const formatStoredIssues = SchemaIssue.makeFormatterStandardSchemaV1({
+  leafHook: (issue) => SchemaIssue.defaultLeafHook(issue).replace(/, got .*$/su, ''),
+});
+
+/**
+ * A company's stored ledger that does not decode on a read: the read stays unavailable (the decoder is never relaxed),
+ * and one WARN names the module, tenant, company, document, field path and reason, at most once a minute per company,
+ * with how many failures that line stands for. No value of the ledger is logged.
+ */
+const warnUndecodableState = Effect.fn('Finance.warnUndecodableState')(function* warnUndecodableState(
+  scope: Pick<OperationalScope, 'legalEntityId' | 'tenantId'>,
+  error: Schema.SchemaError,
+) {
+  const now = yield* Clock.currentTimeMillis;
+  const key = `${scope.tenantId}|${scope.legalEntityId ?? ''}`;
+  const failures = yield* Ref.modify(storedDecodeWarnings, (warnings) => {
+    const last = warnings.get(key);
+    const quiet = last !== undefined && now - last.at < STORED_DECODE_WARNING_INTERVAL_MS;
+    const next = new Map([
+      ...warnings,
+      [key, quiet ? { at: last.at, unreported: last.unreported + 1 } : { at: now, unreported: 0 }] as const,
+    ]);
+    return [quiet ? 0 : 1 + (last?.unreported ?? 0), next] as const;
+  });
+  if (failures === 0) {
+    return;
+  }
+  yield* Effect.logWarning("A company's stored finance ledger does not decode; the read answers unavailable").pipe(
+    Effect.annotateLogs({
+      company: scope.legalEntityId ?? null,
+      document: 'finance_billing.finance_states.state',
+      failures,
+      issues: formatStoredIssues(error.issue).issues.map((issue) => ({
+        path: (issue.path ?? []).map(pathSegment).join('.'),
+        reason: issue.message,
+      })),
+      module: 'finance.billing',
+      tenant: scope.tenantId,
+    }),
+  );
+});
+
+/** The company's ledger decoded; `scope` names it in the WARN a read writes when the stored ledger does not decode. */
 export const decodeFinanceState = Effect.fn('Finance.decodeState')(function* decodeFinanceState(
   row: StateRow | undefined,
+  scope?: Pick<OperationalScope, 'legalEntityId' | 'tenantId'>,
 ) {
   if (row === undefined) {
     return {
@@ -49,7 +99,10 @@ export const decodeFinanceState = Effect.fn('Finance.decodeState')(function* dec
       } satisfies FinanceState,
     };
   }
-  const state = yield* Schema.decodeEffect(FinanceStateSchema)(row.state).pipe(Effect.mapError(unavailable));
+  const state = yield* Schema.decodeEffect(FinanceStateSchema)(row.state).pipe(
+    Effect.tapError((error) => (scope === undefined ? Effect.void : warnUndecodableState(scope, error))),
+    Effect.mapError(unavailable),
+  );
   return { revision: row.revision, state };
 });
 
