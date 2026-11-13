@@ -607,6 +607,12 @@ const scopeLabelOf = (labels: AccessDirectoryScopeLabels, view: View, scopeId: s
   );
 };
 
+/**
+ * How many of the options' independent reads run at once. The process shares a small database pool among
+ * every owner it serves (six connections per identity on stage), so one request never holds more than two.
+ */
+const OPTIONS_READ_CONCURRENCY = 2;
+
 /** The writes the options report on, each decided by its own declaration. */
 const OPTION_WRITES = [
   'assign',
@@ -774,8 +780,9 @@ const admissionOf = Effect.fn('AccessAdminPeople.admission')(function* admission
       ? [{ legalEntityId, scopeId: String(scopeId) }]
       : [],
   );
+  // One directory read per company, two at a time; each company's candidates keep their own order.
   const candidates = yield* Effect.forEach(companies, (company) => companyCandidates(scope, view, company), {
-    concurrency: 1,
+    concurrency: OPTIONS_READ_CONCURRENCY,
   });
   return { allowed: companies.length > 0, candidates: candidates.flat() };
 });
@@ -837,13 +844,14 @@ const options = Effect.fn('AccessAdminPeople.options')(function* listPeopleOptio
   const { reach, reaches, scope, view } = yield* admitOptions(headers);
   const directory = yield* AccessPeopleDirectory;
   const commands = yield* AccessPeopleCommands;
+  // Three independent reads, each one short transaction: two at a time, never more of the shared pool.
   const [people, labels, catalog] = yield* Effect.all(
     [
       visiblePeople(scope, view, reach),
       directory.scopeLabels(scope).pipe(Effect.mapError(directoryUnavailable)),
       commands.readCatalog(scope).pipe(Effect.mapError(accessPeopleFailureProblem)),
     ],
-    { concurrency: 1 },
+    { concurrency: OPTIONS_READ_CONCURRENCY },
   );
   // One gate answer per write and scope (asked with the read's own admission), so a control shows exactly
   // what the server would admit right now.
