@@ -621,33 +621,44 @@ const OPTION_WRITES = [
 type OptionWrite = (typeof OPTION_WRITES)[number];
 
 /**
- * What each write's own declaration reaches right now, or nothing while the Lidé gate is closed (which
- * asks nothing at all). Every write is asked exactly as `reachFor` asks it, but all of them in one gate
- * batch: asked one decision at a time, a tenant owner's options were 8 writes x every scope single
- * decisions, each its own run of pooled transactions, which held the request for tens of seconds.
+ * The options read's admission and what each write's own declaration reaches right now, asked in ONE gate
+ * batch: the read's own declaration and, while the Lidé gate is open, every write's, each in the tenant
+ * context and in every company's own scope, exactly as `reachFor` asks one of them. Asked one decision at a
+ * time, a tenant owner's options were 8 writes x every scope single decisions, each its own run of pooled
+ * transactions, which held the request for tens of seconds; asked as two batches, every scope was prepared
+ * twice. A closed gate asks the read's own declaration only, and offers no write. A read that covers no scope
+ * is refused like every Lidé read; one unreadable answer refuses the whole request (503).
  */
-const writeReaches = Effect.fn('AccessAdminPeople.writeReaches')(function* writeReachesNow(
-  scope: OperationalScope,
-  view: View,
-  now: Date,
-) {
+const admitOptions = Effect.fn('AccessAdminPeople.admitOptions')(function* admitOptionsRead(headers: Headers) {
+  const scope = yield* requireScope(headers);
+  const view = yield* readView(scope);
+  const now = yield* coreInstant;
   const gate = yield* AccessPeopleWriteAvailability;
-  if (!gate.available) {
-    return Option.none<ReadonlyMap<OptionWrite, PeopleReach>>();
-  }
-  const readable = yield* roleReadScopes({
+  const writes = gate.available ? OPTION_WRITES : [];
+  const [readable, ...writeReadable] = yield* roleReadScopes({
     companies: companiesOf(view),
-    declarations: OPTION_WRITES.map((write) => accessPeopleDeclarations[write]),
+    declarations: [accessPeopleDeclarations.options, ...writes.map((write) => accessPeopleDeclarations[write])],
     now,
     scope,
   });
-  const reaches: ReadonlyMap<OptionWrite, PeopleReach> = new Map(
-    OPTION_WRITES.flatMap((write, index) => {
-      const one = readable[index];
-      return one === undefined ? [] : [[write, reachOf(view, one)] as const];
-    }),
-  );
-  return Option.some(reaches);
+  if (readable === undefined) {
+    return yield* Effect.fail(accessAdminUnavailableProblem());
+  }
+  const reach = reachOf(view, readable);
+  if (coversNoRole(reach.readable)) {
+    return yield* Effect.fail(forbidden(PEOPLE_NOT_AVAILABLE));
+  }
+  const reaches: Option.Option<ReadonlyMap<OptionWrite, PeopleReach>> = gate.available
+    ? Option.some(
+        new Map(
+          writes.flatMap((write, index) => {
+            const one = writeReadable[index];
+            return one === undefined ? [] : [[write, reachOf(view, one)] as const];
+          }),
+        ),
+      )
+    : Option.none();
+  return { reach, reaches, scope, view };
 });
 
 /** Whether this person may run one write anywhere its reach shows; a closed gate offers none. */
@@ -823,7 +834,7 @@ const options = Effect.fn('AccessAdminPeople.options')(function* listPeopleOptio
   headers: Headers,
   payload: ListAccessPeoplePayload,
 ) {
-  const { now, reach, scope, view } = yield* admitRead(headers, accessPeopleDeclarations.options);
+  const { reach, reaches, scope, view } = yield* admitOptions(headers);
   const directory = yield* AccessPeopleDirectory;
   const commands = yield* AccessPeopleCommands;
   const [people, labels, catalog] = yield* Effect.all(
@@ -834,9 +845,8 @@ const options = Effect.fn('AccessAdminPeople.options')(function* listPeopleOptio
     ],
     { concurrency: 1 },
   );
-  // One gate answer per write and scope, so a control shows exactly what the server would admit right
-  // now; all of them travel in one gate batch.
-  const reaches = yield* writeReaches(scope, view, now);
+  // One gate answer per write and scope (asked with the read's own admission), so a control shows exactly
+  // what the server would admit right now.
   const admission = yield* admissionOf(scope, view, reach, reaches);
   const roles = view.roles.filter(({ role }) => roleIsReachable(reach, role.legalEntityId));
   const entryOf = new Map(catalog.map((entry) => [String(entry.key), entry] as const));

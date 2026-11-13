@@ -875,14 +875,37 @@ it.effect('answers an owner options with one gate batch for every write and one 
     const writes = Object.values(offered.writeAvailability).length;
     expect([scopes, companies, writes, offered.admissionCandidates.length]).toEqual([3, 2, 8, 3]);
     expect(Object.values(offered.writeAvailability)).toEqual(Array.from({ length: writes }, () => true));
-    // The read's own admission asks one question per scope in one batch, as every Lidé read does. Every
-    // write control is then one batch of one question per write and scope, never a single decision per
-    // write and scope, which held an owner's options for tens of seconds on a tenant with five companies.
+    // The read's own admission and every write control travel in ONE batch of one question per
+    // declaration and scope, never a single decision per write and scope (which held an owner's options for
+    // tens of seconds on a tenant with five companies) and never a second batch that prepares every scope again.
     expect(owner.asks.singles).toHaveLength(0);
-    expect(owner.asks.batches.map((batch) => batch.length)).toEqual([scopes, writes * scopes]);
+    expect(owner.asks.batches.map((batch) => batch.length)).toEqual([(1 + writes) * scopes]);
     // Candidates come from one directory read per administered company, never one per candidate.
     expect(owner.recorded.directoryReads).toBe(companies);
   }),
+);
+
+it.effect(
+  'asks the options read with its writes, refuses a reader it covers nowhere and asks only the read while closed',
+  () =>
+    Effect.gen(function* optionsAdmission() {
+      const nobody = harness({ persona: 'nobody' });
+      const refused = yield* failureOf(nobody.run((bff) => bff.options(headers, { limit: 100 })));
+      // Refused like every Lidé read that covers no scope, before any directory or catalogue read.
+      expect(refused.status).toBe(403);
+      expect(nobody.recorded.directoryReads).toBe(0);
+      expect(nobody.asks.batches).toHaveLength(1);
+      const closed = harness({ persona: 'owner', writes: false });
+      yield* closed.run((bff) => bff.options(headers, { limit: 100 }));
+      // A closed Lidé gate asks the read's own declaration only: no write is asked or offered.
+      expect(closed.asks.singles).toHaveLength(0);
+      expect(closed.asks.batches.map((batch) => batch.length)).toEqual([view.scopes.length]);
+      expect(
+        closed.asks.batches
+          .flat()
+          .every((question) => question.carrier.accessDeclaration === accessPeopleDeclarations.options),
+      ).toBe(true);
+    }),
 );
 
 it.effect('offers a delegate neither admission nor ending, which only permanent administration may run', () =>
