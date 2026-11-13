@@ -613,7 +613,9 @@ it.effect('refuses a workload or person subject of a module call in a company it
       authority: { cells: [] },
       foreignCompanies: [foreignCompany],
       kinds: kindSource('service'),
-      workloads: workloadRegistry([storefront]),
+      // The workload is registered for the tenant's own company, so the company it is refused in below is
+      // refused for the ownership alone and not for want of a registration (O88 beside D6).
+      workloads: workloadRegistry([storefront], workloadPrincipal, [LegalEntityIdSchema.make(ours)]),
     });
     const single = yield* machine.gate.decide(ask(workloadPrincipal, foreignCompany, 'required'));
     expect(codesOf(single)).toEqual(['deny.scope_mismatch']);
