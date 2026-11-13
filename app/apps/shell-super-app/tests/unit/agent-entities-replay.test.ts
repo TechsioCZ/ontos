@@ -12,6 +12,7 @@ import {
   manageAgentStatusAction,
   mutateAgentProposalsAction,
   ReadRuntime,
+  TenantModuleStateService,
 } from '@app/core-runtime';
 import type { ActionRuntimeService, ReadRuntimeService, withPostgresSessionAdvisoryLock } from '@app/core-runtime';
 import {
@@ -30,6 +31,7 @@ import {
   bindActionTestServices,
   makeActionTestHarness,
 } from '../../../../packages/core-runtime/src/testing/actions.ts';
+import { unusedModuleState } from '../support/unused-module-state.ts';
 import { makeModuleContractFixture } from '../../../../packages/core-runtime/src/testing/module-contract.ts';
 import { makeReadTestHarness } from '../../../../packages/core-runtime/src/testing/reads.ts';
 import {
@@ -374,6 +376,7 @@ const fixture = (options: ReplayOptions = {}) =>
         AgentLifecycleAuthority,
         makeTestAgentLifecycleAuthority({ prepare: () => 'allowed', recheck: () => 'allowed' }),
       ),
+      Effect.provideService(TenantModuleStateService, unusedModuleState),
       Effect.provideService(ActionAuthority, {
         checkActionAuthorities: () => Effect.die('Lifecycle withdrawal does not confer business execution'),
         checkActionProposalPermission: () => Effect.die('Unexpected proposal authority'),
@@ -469,6 +472,7 @@ const fixture = (options: ReplayOptions = {}) =>
         Effect.provideService(AgentReadRequestIdentity, readTransport),
         Effect.provideService(ActionRuntime, runtime),
         Effect.provideService(ContextAccess, makeContextAccessDouble('allowed')),
+        Effect.provideService(TenantModuleStateService, unusedModuleState),
         Effect.provideService(AuthDatabase, {
           get adapter(): AuthDatabase['Service']['adapter'] {
             throw new Error('Unexpected authentication adapter IO');

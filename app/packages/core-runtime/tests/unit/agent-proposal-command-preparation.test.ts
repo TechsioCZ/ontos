@@ -71,6 +71,9 @@ const taskAction = (slug: string) =>
     schemaVersion: '1',
   }) as const;
 
+// A session-setting role installs its scope and reads back the connected role in one statement.
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 const compositionFixture = (
   slugs: readonly string[] = ['update'],
   /** `stale`: a contract from before the module published its command map. */
@@ -192,7 +195,7 @@ for (const [outcome, expected] of [
         if (sql === 'COMMIT' || sql === 'ROLLBACK') {
           transactionOpen = false;
         }
-        if (sql.includes('current_setting')) {
+        if (sql === installAndReadScopeSql) {
           return Effect.succeed([{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
         }
         if (sql.includes('from "core"."principals"')) {
@@ -346,7 +349,7 @@ for (const propose of ['allowed', 'denied'] as const) {
       };
       let duplicateReads = 0;
       const database = yield* makeTestDatabase((sql, params) => {
-        if (sql.includes('current_setting')) {
+        if (sql === installAndReadScopeSql) {
           return Effect.succeed([{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
         }
         if (sql.includes('from "core"."principals"')) {
@@ -463,7 +466,7 @@ for (const [name, actionSlug, command, expectedActions, fixture] of [
         ],
       };
       const database = yield* makeTestDatabase((sql) => {
-        if (sql.includes('current_setting')) {
+        if (sql === installAndReadScopeSql) {
           return Effect.succeed([{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
         }
         if (sql.includes('from "core"."principals"')) {
@@ -550,7 +553,7 @@ it.effect(
         ],
       };
       const database = yield* makeTestDatabase((sql) => {
-        if (sql.includes('current_setting')) {
+        if (sql === installAndReadScopeSql) {
           return Effect.succeed([{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
         }
         if (sql.includes('from "core"."principals"')) {
@@ -600,7 +603,7 @@ for (const [name, execute, proposerPermission, expected] of [
         if (sql === 'COMMIT' || sql === 'ROLLBACK') {
           transactionOpen = false;
         }
-        if (sql.includes('current_setting')) {
+        if (sql === installAndReadScopeSql) {
           return Effect.succeed([{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
         }
         if (sql.includes('from "core"."principals"')) {
@@ -687,7 +690,7 @@ for (const [name, patch] of [
   it.effect(`native preparation denies ${name} before graph lookup`, () =>
     Effect.gen(function* spoofedFacts() {
       const database = yield* makeTestDatabase((sql, params) => {
-        if (sql.includes('current_setting')) {
+        if (sql === installAndReadScopeSql) {
           return Effect.succeed([{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
         }
         if (sql.includes('from "core"."principals"')) {
@@ -749,7 +752,7 @@ for (const mismatch of ['payload', 'scope', 'composition'] as const) {
   it.effect(`one-shot preparation binds the exact ${mismatch}`, () =>
     Effect.gen(function* exactProof() {
       const database = yield* makeTestDatabase((sql, params) => {
-        if (sql.includes('current_setting')) {
+        if (sql === installAndReadScopeSql) {
           return Effect.succeed([{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
         }
         if (sql.includes('from "core"."principals"')) {

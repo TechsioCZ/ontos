@@ -121,30 +121,59 @@ const readVerifiedScope = (
     }),
   );
 
-/** Session-setting authority used by the shared runtime and worker roles. */
+/**
+ * Session-setting authority used by the shared runtime and worker roles. Installing and reading back share one
+ * statement, as in `installOperationalScopeAt`: `set_config` answers the value it set, and the connected role is read
+ * in that same statement. `verify` judges that row by the same rules a separate read would, so a transaction pays one
+ * round trip for its scope instead of two; asked before `install`, it reads the settings itself.
+ */
 const sessionSettingScopeAuthority = (
   transaction: OperationalScopeRawTransaction,
   enrollment: DatabaseIdentityEnrollment,
-): OperationalScopeAuthority => ({
-  install: (scope) =>
-    transaction
-      .execute(
-        sql`select set_config('ontos.tenant_id', ${scope.tenantId}, true), set_config('ontos.legal_entity_id', ${scope.legalEntityId ?? ''}, true)`,
-        'objects',
-      )
-      .pipe(Effect.mapError(operationContextUnavailable), Effect.asVoid),
-  verify: readVerifiedScope(
-    sql`
+): OperationalScopeAuthority => {
+  let installed: readonly ScopeVerificationRow[] | undefined;
+  const judged = (rows: readonly ScopeVerificationRow[]) => {
+    const [row] = rows;
+    if (row === undefined) {
+      return Effect.succeed(Option.none<SettingRow>());
+    }
+    return scopeAuthorityForRole(enrollment, row.role) === 'session_setting'
+      ? Effect.succeedSome<SettingRow>({ legal_entity_id: row.legal_entity_id, tenant_id: row.tenant_id })
+      : Effect.fail(operationContextUnavailable());
+  };
+  return {
+    install: (scope) =>
+      transaction
+        .execute<ScopeVerificationRow>(
+          sql`select current_user::text as role, set_config('ontos.tenant_id', ${scope.tenantId}, true) as tenant_id, set_config('ontos.legal_entity_id', ${scope.legalEntityId ?? ''}, true) as legal_entity_id`,
+          'objects',
+        )
+        .pipe(
+          Effect.mapError(operationContextUnavailable),
+          Effect.tap((rows) =>
+            Effect.sync(() => {
+              installed = rows;
+            }),
+          ),
+          Effect.asVoid,
+        ),
+    verify: Effect.suspend(() =>
+      installed === undefined
+        ? readVerifiedScope(
+            sql`
       select
         current_user::text as role,
         current_setting('ontos.tenant_id', true) as tenant_id,
         current_setting('ontos.legal_entity_id', true) as legal_entity_id
     `,
-    transaction,
-    'session_setting',
-    enrollment,
-  ),
-});
+            transaction,
+            'session_setting',
+            enrollment,
+          )
+        : judged(installed),
+    ),
+  };
+};
 
 /** Establishes the gateway-grant scope and returns the tenant and legal entity the database derived. */
 export const establishGatewayScopeStatement = (assertion: Redacted.Redacted): SQL =>

@@ -245,15 +245,22 @@ it.effect('fails the company list when the registration cannot be read, never as
   }),
 );
 
-it.effect('keeps the tenant-wide company list for the subject of a verified module call (D6)', () =>
+it.effect('pins the subject of a verified module call to its declared companies, as the decision gate does (D6)', () =>
   Effect.gen(function* verifiedModuleSubject() {
-    const { gate, scope } = harness({
+    const pinned = harness({
       candidates: [companyA, companyB],
       company: companyA,
       declaredCompanies: [companyA],
       delegated: true,
     });
-    expect(yield* gate.selectableLegalEntities({ now, scope })).toEqual([companyA, companyB]);
+    // A platform registration acts for exactly one company: the issuer may select no other for it.
+    expect(yield* pinned.gate.selectableLegalEntities({ now, scope: pinned.scope })).toEqual([companyA]);
+    // A module subject whose workload declares no company keeps the tenant's companies.
+    const undeclared = harness({ candidates: [companyA, companyB], company: companyA, delegated: true });
+    expect(yield* undeclared.gate.selectableLegalEntities({ now, scope: undeclared.scope })).toEqual([
+      companyA,
+      companyB,
+    ]);
   }),
 );
 

@@ -32,6 +32,8 @@ const principalId = '30000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const effectiveAt = '2026-09-22T12:00:00.000Z';
 const observedAt = '2026-09-22T12:00:02.000Z';
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 const scope: OperationalScope = {
   authBindingId: '40000000-0000-4000-8000-000000000001',
   authContextRef: 'session:pricing-read-access-boundary',
@@ -64,7 +66,7 @@ const makeHarness = Effect.fn(function* makePricingReadAccessHarness(options: Ha
   const stages: string[] = [];
   const operationalScope = options.operationalScope ?? scope;
   const database = {
-    executor: yield* makeTestDatabase((text) => {
+    executor: yield* makeTestDatabase((text, params) => {
       if (text.includes('transaction_timestamp')) {
         return Effect.succeed([
           {
@@ -78,7 +80,9 @@ const makeHarness = Effect.fn(function* makePricingReadAccessHarness(options: Ha
       if (text.includes('data_access_events')) {
         return Effect.succeed([]);
       }
-      if (text.includes('current_setting')) {
+      // A session-setting role installs its scope and reads back the connected role in one statement.
+      if (text === installAndReadScopeSql) {
+        expect(params).toEqual([operationalScope.tenantId, operationalScope.legalEntityId ?? '']);
         return Effect.succeed([
           {
             legal_entity_id: operationalScope.legalEntityId ?? '',

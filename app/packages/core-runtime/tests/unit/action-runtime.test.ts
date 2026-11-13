@@ -169,8 +169,11 @@ const unusedPrincipalManagementOperation = () =>
   Effect.die('The ambient PrincipalManagementRepository must not be used by the Action runtime');
 const ambientPrincipalManagementRepository: PrincipalManagementRepositoryService = {
   bindApiKey: unusedPrincipalManagementOperation,
+  changePlatformPrincipalStatus: unusedPrincipalManagementOperation,
   changePrincipalStatus: unusedPrincipalManagementOperation,
   createNonHumanPrincipal: unusedPrincipalManagementOperation,
+  createPlatformServicePrincipal: unusedPrincipalManagementOperation,
+  renamePlatformServicePrincipal: unusedPrincipalManagementOperation,
   setApiKeyBindingStatus: unusedPrincipalManagementOperation,
   validateSupportImpersonation: unusedPrincipalManagementOperation,
 };
@@ -183,6 +186,8 @@ const PermissionDecisionSchema = Schema.Literals(['allowed', 'denied', 'unavaila
 type PermissionDecision = typeof PermissionDecisionSchema.Type;
 const transactionOperationAt = DateTime.toDateUtc(DateTime.makeUnsafe(Date.parse('2026-09-28T09:00:00.000Z')));
 const approvedCompositionRevision = 'a'.repeat(64);
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 
 interface TestCompositionAuthority {
   readonly phase: 'active' | 'draining';
@@ -409,17 +414,26 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       }
       return [];
     });
-  const installTestScope = (values: readonly unknown[]) => {
+  /** Records the scope any `set_config` statement installs; answers the row of the one-statement install. */
+  const installTestScope = (text: string, values: readonly unknown[]) => {
+    if (!text.includes('set_config')) {
+      return Option.none();
+    }
     const [tenantId, legalEntityId] = values;
     if (Predicate.isString(tenantId) && Predicate.isString(legalEntityId)) {
       installedTenantId = tenantId;
       installedLegalEntityId = legalEntityId;
     }
+    // A session-setting role installs its scope and reads back the connected role in one statement.
+    return text === installAndReadScopeSql
+      ? Option.some([{ legal_entity_id: installedLegalEntityId, role: 'ontos_runtime', tenant_id: installedTenantId }])
+      : Option.none();
   };
   const query = Effect.fn(function* executeQuery(statement: string, values: readonly unknown[]) {
     const text = statement.toLowerCase();
-    if (text.includes('set_config')) {
-      installTestScope(values);
+    const installedScopeRows = installTestScope(text, values);
+    if (Option.isSome(installedScopeRows)) {
+      return installedScopeRows.value;
     }
     if (text === 'begin') {
       transactionSteps.push('begin');

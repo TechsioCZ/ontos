@@ -17,15 +17,20 @@ const HARNESS = `
 set -eu
 say() { printf 'say: %s\\n' "$*"; }
 PID_DIR="$(mktemp -d)"
+# A fake server as up.sh's are when anything touches them: running (past fork and exec). Killing a background job in
+# the instant between fork and exec runs the launching shell's EXIT trap in that child on Linux (it then removes the
+# channels or holds the output open), which a real server never meets.
+started() { exec sh -c 'touch "$1"; exec sleep 30' sh "$PID_DIR/$1.ready"; }
+ready() { while [ ! -e "$PID_DIR/$1.ready" ]; do sleep 0.05; done; }
 . "$1"
 printf 'dir=%s\\n' "$CHANNEL_DIR"
 
 channel_open dead
-sleep 30 & dead=$!; echo "$dead" > "$PID_DIR/dead.pid"; kill "$dead"; wait "$dead" 2>/dev/null || true
+started dead & dead=$!; ready dead; echo "$dead" > "$PID_DIR/dead.pid"; kill "$dead"; wait "$dead" 2>/dev/null || true
 if hand_over dead 'dead-line'; then echo dead=delivered; else echo dead=refused; fi
 
 channel_open idle
-sleep 30 & idle=$!; echo "$idle" > "$PID_DIR/idle.pid"
+started idle & idle=$!; ready idle; echo "$idle" > "$PID_DIR/idle.pid"
 hand_over idle 'idle-line' && echo idle=returned
 kill "$idle"; wait "$idle" 2>/dev/null || true
 

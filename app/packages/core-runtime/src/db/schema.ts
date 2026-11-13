@@ -218,11 +218,13 @@ export const principals = enableCoreGovernedRls(
       createdAt: createdAt(),
       disabledAt: timestamp('disabled_at', { withTimezone: true }),
       /**
-       * The platform's own role of a `system` principal; set once, when Core creates it, and never changed. The one
-       * role today is the tenant's access release actor (`access/release/activation.ts`), which the role-revision
-       * guard recognises by this marker rather than by its kind or identifier.
+       * The platform's own role of a principal it made; set once, when Core creates it, and never changed. The tenant's
+       * access release actor (`access/release/activation.ts`, a `system` principal) is recognised by the role-revision
+       * guard by this marker rather than by its kind or identifier; a module's internal workload principal in one
+       * company (`internal_workload`, a `service` principal) is recognised by the release step by this marker and its
+       * derived id. No Action or API sets it.
        */
-      platformRole: text('platform_role').$type<'access_release_actor'>(),
+      platformRole: text('platform_role').$type<'access_release_actor' | 'internal_workload'>(),
     },
     (table) => [
       uniqueIndex('core_principals_tenant_id_uk').on(table.tenantId, table.principalId),
@@ -235,7 +237,7 @@ export const principals = enableCoreGovernedRls(
       check('core_principals_status_ck', sql`${table.status} in ('active', 'disabled', 'archived')`),
       check(
         'core_principals_platform_role_ck',
-        sql`${table.platformRole} is null or (${table.platformRole} = 'access_release_actor' and ${table.kind} = 'system')`,
+        sql`${table.platformRole} is null or (${table.platformRole} = 'access_release_actor' and ${table.kind} = 'system') or (${table.platformRole} = 'internal_workload' and ${table.kind} = 'service')`,
       ),
       sharedRuntimeAllPolicy('principals'),
     ],

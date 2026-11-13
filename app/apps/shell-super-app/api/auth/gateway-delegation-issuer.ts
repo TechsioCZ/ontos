@@ -6,7 +6,7 @@ import {
   trustVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { PrincipalResolver, TenantModuleStateService, tenantStatesAllowingAccess } from '@app/core-runtime';
-import type { TenantModuleState } from '@app/core-runtime';
+import type { OperationContextError, TenantModuleState } from '@app/core-runtime';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import type { GatewayActorClaim, GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
 import {
@@ -104,10 +104,16 @@ export const bindingsUnavailable = (cause: GatewayDelegationPolicyUnavailable | 
     ? delegationUnavailable('module_enrolment_unavailable')(cause)
     : delegationUnavailable('installed_release_unavailable')(cause);
 
-const scopeFailure = (cause: unknown) =>
-  Predicate.isTagged(cause, 'OperationContextUnavailable')
-    ? delegationUnavailable('scope_unavailable')(cause)
-    : delegationForbidden('scope_refused')(cause);
+/**
+ * A scope the resolver could not establish. Its failures are exactly `OperationContextError`: unavailable answers
+ * `scope_unavailable`, every refusal `scope_refused`. A principal resolver that could not answer reaches the issuer only
+ * as `OperationContextUnavailable`, so no scope failure is ever named after the calling module's principal.
+ */
+const scopeFailure = (cause: OperationContextError) =>
+  Match.value(cause).pipe(
+    Match.tag('OperationContextUnavailable', delegationUnavailable('scope_unavailable')),
+    Match.orElse(delegationForbidden('scope_refused', 'scope_unavailable')),
+  );
 
 /** Verifies a live request's subject assertion exactly as its source module issued it, then rechecks its authentication. */
 const admitAssertionSubject = Effect.fn('GatewayDelegation.admitAssertion')(function* admitAssertionSubject(input: {
@@ -171,37 +177,66 @@ const admitAssertionSubject = Effect.fn('GatewayDelegation.admitAssertion')(func
  * scope resolver below admits that company only while the workload holds an active binding in the tenant and the
  * company is an active company of it (O73).
  */
-const admitOriginatorSubject = Effect.fn('GatewayDelegation.admitOriginator')(function* admitOriginatorSubject(input: {
-  readonly actionInvocationId: string;
-  readonly legalEntityId: string | undefined;
-  readonly now: number;
-  readonly originatorActions: readonly string[];
-  readonly tenantId: string;
-}) {
-  const evidence = yield* GatewayOriginatorEvidence;
-  const recorded = yield* evidence.load({
-    actionInvocationId: input.actionInvocationId,
-    originatorActions: input.originatorActions,
-    tenantId: input.tenantId,
-  });
-  const recordedCompany = recorded.principal.legalEntityId;
-  if (
-    input.legalEntityId !== undefined &&
-    (recordedCompany === undefined ? !recorded.workload : recordedCompany !== input.legalEntityId)
-  ) {
-    return yield* delegationForbidden('originator_not_admitted')();
-  }
-  const principal: TrustedPrincipalContext =
-    input.legalEntityId === undefined
-      ? recorded.principal
-      : { ...recorded.principal, legalEntityId: input.legalEntityId };
-  return {
-    expiresAtEpochSeconds: input.now + GATEWAY_ASSERTION_TTL_SECONDS,
-    principal,
-    scopePrincipal: principal,
-    sourceKey: input.actionInvocationId,
-  };
-});
+export const admitOriginatorSubject = Effect.fn('GatewayDelegation.admitOriginator')(
+  function* admitOriginatorSubject(input: {
+    readonly actionInvocationId: string;
+    readonly legalEntityId: string | undefined;
+    /** The company of the Outbox message the work handles, as its caller received it from the Outbox. */
+    readonly messageLegalEntityId: string | undefined;
+    readonly now: number;
+    readonly originatorActions: readonly string[];
+    readonly tenantId: string;
+  }) {
+    const evidence = yield* GatewayOriginatorEvidence;
+    const recorded = yield* evidence.load({
+      actionInvocationId: input.actionInvocationId,
+      originatorActions: input.originatorActions,
+      tenantId: input.tenantId,
+    });
+    const recordedCompany = recorded.principal.legalEntityId;
+    if (input.messageLegalEntityId !== undefined) {
+      // The work belongs to the message's company: the context names exactly that company, once Core's own record shows
+      // the invocation published in it, and no other company may be named beside it.
+      if (
+        (recordedCompany !== undefined && recordedCompany !== input.messageLegalEntityId) ||
+        (input.legalEntityId !== undefined && input.legalEntityId !== input.messageLegalEntityId)
+      ) {
+        return yield* delegationForbidden('originator_company_mismatch')();
+      }
+      const published = yield* evidence.messageCompanyRecorded({
+        actionInvocationId: input.actionInvocationId,
+        legalEntityId: input.messageLegalEntityId,
+        tenantId: input.tenantId,
+      });
+      if (!published) {
+        return yield* delegationForbidden('originator_company_not_recorded')();
+      }
+      const bound: TrustedPrincipalContext = { ...recorded.principal, legalEntityId: input.messageLegalEntityId };
+      return {
+        expiresAtEpochSeconds: input.now + GATEWAY_ASSERTION_TTL_SECONDS,
+        principal: bound,
+        scopePrincipal: bound,
+        sourceKey: input.actionInvocationId,
+      };
+    }
+    if (
+      input.legalEntityId !== undefined &&
+      (recordedCompany === undefined ? !recorded.workload : recordedCompany !== input.legalEntityId)
+    ) {
+      return yield* delegationForbidden('originator_not_admitted')();
+    }
+    const principal: TrustedPrincipalContext =
+      input.legalEntityId === undefined
+        ? recorded.principal
+        : { ...recorded.principal, legalEntityId: input.legalEntityId };
+    return {
+      expiresAtEpochSeconds: input.now + GATEWAY_ASSERTION_TTL_SECONDS,
+      principal,
+      scopePrincipal: principal,
+      sourceKey: input.actionInvocationId,
+    };
+  },
+);
 
 const exchangeFingerprint = (input: {
   readonly actor: GatewayActorClaim;
@@ -355,6 +390,7 @@ const issueForBinding = Effect.fn('GatewayDelegation.issueForBinding')(function*
         : admitOriginatorSubject({
             actionInvocationId: originator.actionInvocationId,
             legalEntityId: originator.legalEntityId,
+            messageLegalEntityId: originator.messageLegalEntityId,
             now,
             originatorActions: sourceContract?.manifest.originatorActions ?? [],
             tenantId: originator.tenantId,

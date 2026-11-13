@@ -551,7 +551,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('search persistence', 
       expect(yield* visibleIds(teamMemberOf(teamId))).toEqual([]);
       expect(yield* visibleIds(agentAssignedTo(yield* crypto.randomUUIDv4()))).toEqual([]);
 
-      // 10,001 further rows match the text and the scope but none of them is assigned to the caller.
+      // 10,001 further rows match the text and the scope but none of them is assigned to the caller. They are written
+      // in the current (v2) document shape, the only one the index accepts since the v2 cutover migration.
       yield* queryEffect(
         admin,
         `
@@ -560,7 +561,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('search persistence', 
            title, body_text, deleted, facets_json, projection_version)
         select $1, 'party.registry', 'party.registry.party', gen_random_uuid()::text,
           'AAA invisible needle', 'visible needle', false,
-          '{"schemaVersion":"1","archived":false,"facets":[],"metadata":[]}'::jsonb, 1
+          '{"schemaVersion":"2","archived":false,"facets":[],"metadata":[],"searchableText":["visible needle"]}'::jsonb, 1
         from generate_series(1, 10001)
       `,
         [tenantId],

@@ -1,4 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import type { PgTransactionConfig } from 'drizzle-orm/pg-core';
 import { Cause, Context, Crypto, DateTime, Effect, Exit, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -451,16 +453,24 @@ const tripwired = (what: string): AccessTransactions => ({
 /** A statement the seam is never expected to send through the transaction it was handed. */
 const unexpectedStatement = (what: string) => () => Effect.die(new Error(`the seam ran a ${what} of its own`));
 
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
+
 /**
  * A transaction that answers the operational scope installation and nothing else: the row it returns is
  * the scope the request installed, which is the only statement an access source issues before its body
- * (`installOperationalScope`: `set_config` and then its own verification read).
+ * (`installOperationalScope`: one statement installs the session settings and reads back the connected role).
  */
 const seamTransaction = (scope: OperationalScope, statements: string[]): CoreTransaction =>
   Object.assign(Object.create(null), {
     delete: unexpectedStatement('delete'),
-    execute: () => {
-      statements.push('execute');
+    execute: (statement: SQL) => {
+      const query = new PgDialect().sqlToQuery(statement);
+      statements.push(query.sql);
+      if (query.sql !== installAndReadScopeSql) {
+        return Effect.die(new Error(`the seam ran an unexpected statement: ${query.sql}`));
+      }
+      expect(query.params).toEqual([scope.tenantId, scope.legalEntityId ?? '']);
       return Effect.succeed([
         { legal_entity_id: scope.legalEntityId ?? '', role: 'ontos_runtime', tenant_id: scope.tenantId },
       ]);
@@ -608,8 +618,8 @@ it.layer(NodeCrypto.layer)('live approvals transaction binding', (suite) => {
         .pipe(Effect.orDie);
       expect(read).toBe(pool.transaction);
       expect(pool.opened).toStrictEqual([undefined, { isolationLevel: 'repeatable read' }]);
-      // Each call installed and verified the request's scope on its own transaction: two statements.
-      expect(pool.statements.length).toBe(4);
+      // Each call installed and verified the request's scope on its own transaction in one statement.
+      expect(pool.statements).toEqual([installAndReadScopeSql, installAndReadScopeSql]);
       // A failure of the body reaches the caller unchanged, so a rolled-back read stays a failure.
       const refusal = intentUnavailable('The intent store refused this read');
       expect(yield* Effect.flip(transactions.scoped(jana, new Set<string>(), () => Effect.fail(refusal)))).toBe(
@@ -636,8 +646,8 @@ it.layer(NodeCrypto.layer)('live approvals transaction binding', (suite) => {
         .pipe(Effect.orDie);
       expect(written).toBe(caller);
       expect(read).toBe(caller);
-      // ...and neither opened, ended or partitioned it: the only statements are the scope's own two.
-      expect(statements.length).toBe(4);
+      // ...and neither opened, ended or partitioned it: the only statements are the scope's own, one per call.
+      expect(statements).toEqual([installAndReadScopeSql, installAndReadScopeSql]);
       const refusal = intentUnavailable('The owner transaction refused this read');
       expect(yield* Effect.flip(transactions.scopedRead(jana, new Set<string>(), () => Effect.fail(refusal)))).toBe(
         refusal,

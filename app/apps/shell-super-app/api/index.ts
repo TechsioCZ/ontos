@@ -11,8 +11,7 @@ import {
   AuthenticationNamespaceRegistry,
   makeAuthenticationNamespaceRegistryEffect,
 } from '@app/core-runtime/auth/external-identity-admission';
-import { delegationUnavailable, logDelegationRefusal, refusalTenant } from './auth/gateway-delegation-errors.ts';
-import type { RefusalContext } from './auth/gateway-delegation-errors.ts';
+import { delegationUnavailable, logDelegationRefusal } from './auth/gateway-delegation-errors.ts';
 import { GatewayDelegationVerificationLive } from './auth/gateway-delegation-verification.ts';
 import { gatewayReleaseRefusal } from './auth/gateway-release-refusal.ts';
 import type { GatewayReleaseRefusalHeaders } from './auth/gateway-release-refusal.ts';
@@ -28,6 +27,8 @@ import {
   ModuleCredentialEnrolmentSourceLive,
 } from './auth/gateway-delegation-policy.ts';
 import { GatewayOriginatorEvidenceLive } from './auth/gateway-originator-evidence.service.ts';
+import { PlatformWorkloadKeyAdmission } from './auth/platform-workload-key-admission.ts';
+import { PlatformWorkloadKeyAdmissionLive } from './auth/platform-workload-key-admission.service.ts';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type {
   ActionCoreError,
@@ -297,13 +298,15 @@ import {
 import { ExternalIdentityNotInstalledLive } from './auth/external-identity-runtime.ts';
 import type { ExternalIdentityDeploymentLayer } from './auth/external-identity-runtime.ts';
 import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
-import { GatewayTimings, gatewayTimingCollector, observeGatewayPhase } from './auth/gateway-timing.ts';
+import { GatewayTimings, observeGatewayPhase } from './auth/gateway-timing.ts';
+import { NoServerTimingLive } from './no-server-timing.ts';
 import { preserveSystemPrincipalContextTrust } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { connectedAppsAdministration, tenantReleaseHintAdmitted } from './auth/administration-access.ts';
 import { peopleAdministrationCapability } from './auth/demo-accounts.ts';
 import { rebrandRentalDemoAccounts } from './auth/rental-demo-brand-runtime-infrastructure.ts';
 import { listAgentEntities, manageAgentEntity } from './auth/agent-entities.ts';
 import { IdentityLifecycle, IdentityLifecycleLive } from './auth/identity-lifecycle.ts';
+import { ManagedApiKeyTargetEligibilityLive } from '@app/core-runtime/auth/managed-api-key-eligibility';
 import type { IdentityLifecycleError } from './auth/identity-lifecycle.ts';
 import {
   SupportImpersonationCorrelationId,
@@ -1470,15 +1473,9 @@ const captureShellRelease = Effect.fn('Shell.captureRelease')(function* captureS
   return catalog;
 });
 
-const withGatewayTimings = Effect.fn('ShellGateway.withTimings')(function* withGatewayTimingsEffect<
-  Value,
-  Failure,
-  Requirements,
->(effect: Effect.Effect<Value, Failure, Requirements>) {
-  const collector = yield* gatewayTimingCollector;
-  yield* collector.appendResponseHeader;
-  return yield* effect.pipe(Effect.provideService(GatewayTimings, Option.some(collector.timings)));
-});
+/** Measures this gateway request's phases: each one is logged when it ends. */
+const withGatewayTimings = <Value, Failure, Requirements>(effect: Effect.Effect<Value, Failure, Requirements>) =>
+  effect.pipe(Effect.provideService(GatewayTimings, true));
 
 /**
  * One assertion per audience for an authenticated session principal, from the same issuer as `issueGatewayContext`
@@ -2536,6 +2533,23 @@ export const issueApiKeyContext = Effect.fn('ShellGateway.issueApiKeyContext')(f
     observeGatewayPhase('principal-resolve'),
     Effect.catch((error) => pipe(error, principalResolutionGatewayProblem, failApiKeyGatewayProblem)),
   );
+  // An internal workload principal acts only with the key the platform issued it for this release.
+  yield* (yield* PlatformWorkloadKeyAdmission)
+    .admit({
+      legalEntityId: payload.legalEntityId ?? null,
+      principalId: identity.principalId,
+      providerKeyId: verified.providerKeyId,
+      tenantId: identity.tenantId,
+    })
+    .pipe(
+      Effect.catchTag('GatewayDelegationError', (error) =>
+        failApiKeyGatewayProblem(
+          error.code === 'forbidden'
+            ? withRefusalReason(gatewayForbiddenProblem(), error.reason)
+            : withRefusalReason(gatewayAuthenticationUnavailableProblem(), error.reason),
+        ),
+      ),
+    );
   const principal = withOptionalProperty(
     {
       authBindingId: identity.authBindingId,
@@ -2739,17 +2753,12 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
     )
     .handle('issueDelegatedGatewayContext', ({ headers, payload, request }) =>
       Effect.gen(function* issueDelegatedGatewayContextHandler() {
-        // Before the issuer admits a subject, only an asynchronous subject names its tenant (as the caller states it).
-        const statedContext: RefusalContext = Match.value(payload.subject).pipe(
-          Match.tag('Originator', ({ tenantId }) => refusalTenant(tenantId)),
-          Match.tag('Assertion', () => ({})),
-          Match.exhaustive,
-        );
-        // A refusal before the issuer runs: one warning, and its reason in the problem the caller receives.
+        // A refusal before the issuer runs: one warning, and its reason in the problem the caller receives. Nothing
+        // here is authenticated yet, so the warning names no calling module and no tenant from the request body.
         const refuse = <Problem extends GatewayContextProblem>(refusedProblem: Problem, reason: GatewayRefusalReason) =>
           logDelegationRefusal({
             audience: payload.audience,
-            context: statedContext,
+            context: {},
             reason,
             status: refusedProblem._tag,
           }).pipe(Effect.andThen(failApiKeyGatewayProblem(withRefusalReason(refusedProblem, reason))));
@@ -3014,6 +3023,21 @@ export const agentPlatformKeyCaller = Effect.fn('shell.agentPlatform.keyCaller')
       TenantInactiveError: () => failIdentityProblem(shellAuthenticationRequiredProblem()),
     }),
   );
+  // An internal workload principal acts only with the key the platform issued it, never as an agent caller.
+  yield* (yield* PlatformWorkloadKeyAdmission)
+    .admit({
+      legalEntityId,
+      principalId: identity.principalId,
+      providerKeyId: verified.providerKeyId,
+      tenantId: identity.tenantId,
+    })
+    .pipe(
+      Effect.catchTag('GatewayDelegationError', (error) =>
+        failIdentityProblem(
+          error.code === 'forbidden' ? shellTargetForbiddenProblem() : shellCapabilityUnavailableProblem(),
+        ),
+      ),
+    );
   const principal: AgentPlatformCaller['principal'] = {
     authBindingId: identity.authBindingId,
     authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
@@ -3805,7 +3829,14 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.provide(databaseIdentitiesLive),
   );
   const identityLifecycleLayer = IdentityLifecycleLive.pipe(
-    Layer.provide(Layer.mergeAll(actionRuntimeLayer, runtimeApiKeyServiceLive, runtimePrincipalResolverLive)),
+    Layer.provide(
+      Layer.mergeAll(
+        actionRuntimeLayer,
+        runtimeApiKeyServiceLive,
+        runtimePrincipalResolverLive,
+        ManagedApiKeyTargetEligibilityLive.pipe(Layer.provide(runtimeCorePersistenceLive)),
+      ),
+    ),
   );
   const shellGovernedReadsLayer = Layer.unwrap(
     GatewayIssuer.pipe(
@@ -4080,7 +4111,11 @@ export const makeShellAuthenticationApiRuntime = (
   const moduleCredentialEnrolmentLayer = ModuleCredentialEnrolmentSourceLive.pipe(
     Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive)),
   );
+  const platformWorkloadKeyAdmissionLayer = PlatformWorkloadKeyAdmissionLive.pipe(
+    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive, moduleCatalogLayer)),
+  );
   const handlerDependenciesLive = Layer.mergeAll(
+    platformWorkloadKeyAdmissionLayer,
     emailDeliveryRequestsLive,
     authenticationIsolateLive,
     BetterAuthPersonInvitationIdentityProviderLive,
@@ -4182,6 +4217,8 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.provide(shellTransportServicesLive),
   );
   // The governed handler Layer provides the route middleware as an immutable Layer value, not a constructor call.
+  // NoServerTimingLive is global too: no response leaves the Shell with `server-timing`, whichever route or
+  // in-process Action added it.
   const shellSearchNoStoreLayer = makeShellSearchNoStoreLayer();
   const apiHandlersLive = Layer.mergeAll(
     ShellEmailReceiptHandlersLive,
@@ -4205,7 +4242,7 @@ export const makeShellAuthenticationApiRuntime = (
     oauthConnectionsAdminGroupLive,
     peopleAdministrationGroupLive,
     agentPlatformGroupLive,
-  ).pipe(Layer.provide(apiServicesLive), Layer.provide(shellSearchNoStoreLayer));
+  ).pipe(Layer.provide(apiServicesLive), Layer.provide(shellSearchNoStoreLayer), Layer.provide(NoServerTimingLive));
 
   return assembleEffectBffRuntime({
     api: ShellAuthenticationApi,
