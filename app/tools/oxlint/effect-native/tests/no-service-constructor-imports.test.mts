@@ -2127,7 +2127,13 @@ describe('closes strict scalar observations and rejects computed evaluator capab
 describe('proves the actual Shell API composition factory from current owner source without executing it', () => {
   const { accept, directory, register, write } = recordScenario(serviceRuleTitle);
   const owner = nodePath.join(directory, 'app/apps/shell-super-app');
-  for (const file of ['api/index.ts', 'api/symmy/transport.ts', 'shared/api.ts', 'src/module-api/transport.ts']) {
+  for (const file of [
+    'api/index.ts',
+    'api/payment-gateway/transport.ts',
+    'api/symmy/transport.ts',
+    'shared/api.ts',
+    'src/module-api/transport.ts',
+  ]) {
     const target = nodePath.join(owner, file);
     write(target, readFileSync(nodePath.join(appRoot, 'apps/shell-super-app', file), 'utf-8'));
   }

@@ -16,6 +16,8 @@ import {
   Schema,
 } from 'effect';
 import type { Redacted, Scope } from 'effect';
+import { NodeFileSystem } from '@effect/platform-node';
+import { FileSystem } from 'effect/FileSystem';
 import { FetchHttpClient, HttpClient } from 'effect/http';
 import type { TestContext } from 'effect-rstest';
 
@@ -80,8 +82,9 @@ import {
  * `ProviderHttpLive`, over a fetch client configured like the composition roots (`no-store`,
  * `redirect: 'manual'`, no client span, no retry layer).
  *
- * The hosted payment step needs a human: the scenario prints the redirect URL and polls lookup for up to
- * 15 minutes. Nothing here opens a browser or prints a secret.
+ * The hosted payment step needs a human or a browser agent: the scenario prints the redirect URL and polls lookup
+ * for up to 15 minutes. When `ONTOS_C17_SANDBOX_HOSTED_URL_FILE` is set, each URL is also appended to that file as
+ * one JSON line `{provider, scenario, url}` before polling starts. Nothing here opens a browser or prints a secret.
  */
 
 export const HOSTED_PAYMENT_WAIT = '15 minutes';
@@ -589,3 +592,42 @@ export const withheldObjectId = <A>(
   Effect.map(Ref.get(withheld), (bodies) => Option.flatMap(Option.fromUndefinedOr(bodies.at(-1)), decode));
 
 export const announce = (lines: readonly string[]): Effect.Effect<void> => Console.log(lines.join('\n'));
+
+/** One hosted payment page a human or a browser agent has to complete. */
+const HostedPageLineSchema = Schema.Struct({
+  provider: Schema.Literals(['COMGATE', 'GOPAY', 'STRIPE']),
+  scenario: Schema.String,
+  url: Schema.String,
+});
+const encodeHostedPageLine = Schema.encodeSync(Schema.fromJsonString(HostedPageLineSchema));
+
+/** Names the file that receives one JSON line per hosted page (`{provider, scenario, url}`), when set. */
+export const HOSTED_URL_FILE_VARIABLE = 'ONTOS_C17_SANDBOX_HOSTED_URL_FILE';
+
+/**
+ * Appends the hosted page's line to `ONTOS_C17_SANDBOX_HOSTED_URL_FILE` when that variable is set. A file that
+ * cannot be written fails the scenario: a browser agent must never be left polling for a URL it was not given.
+ */
+const recordHostedPage = (page: typeof HostedPageLineSchema.Type): Effect.Effect<void> =>
+  Effect.gen(function* recordHostedPageEffect() {
+    const file = yield* Config.option(Config.String(HOSTED_URL_FILE_VARIABLE));
+    if (Option.isNone(file)) {
+      return;
+    }
+    const fileSystem = yield* FileSystem;
+    yield* fileSystem.writeFileString(file.value, `${encodeHostedPageLine(page)}\n`, { flag: 'a' });
+  }).pipe(Effect.provide(NodeFileSystem.layer), Effect.orDie);
+
+/**
+ * Prints the hosted page's instructions and redirect URL, after recording the URL in the hosted-URL file (when
+ * configured). Recording happens before the scenario starts polling for the payment result.
+ */
+export const announceHostedPage = (input: {
+  readonly lines: readonly string[];
+  readonly provider: typeof HostedPageLineSchema.Type.provider;
+  readonly scenario: string;
+  readonly url: string;
+}): Effect.Effect<void> =>
+  recordHostedPage({ provider: input.provider, scenario: input.scenario, url: input.url }).pipe(
+    Effect.andThen(announce([...input.lines, input.url])),
+  );

@@ -44,10 +44,11 @@ import {
   gopayNotFoundBody,
   gopayPaymentBody,
 } from '../fixtures/gopay/payment-responses.ts';
-import { gopayRefundBody } from '../fixtures/gopay/refund-responses.ts';
+import { GOPAY_FIXTURE_REFUND_ID, gopayRefundBody } from '../fixtures/gopay/refund-responses.ts';
 import { stripeBalanceObject, stripeEventEnvelope, stripePayoutObject } from '../fixtures/stripe/stripe-events.ts';
 import {
   STRIPE_FIXTURE_PAYMENT_INTENT_ID,
+  STRIPE_FIXTURE_REFUND_ID,
   STRIPE_FIXTURE_SESSION_ID,
   stripeCheckoutSessionObject,
   stripePaymentIntentObject,
@@ -65,6 +66,7 @@ const RETURN_TOKEN = 'AbCdEfGhIjKlMnOpQrSt_-';
 /** The executor fixes `issuedAt` before prepare; the worker clock runs from here. */
 export const CONFORMANCE_CLOCK_MS = Date.UTC(2026, 10, 12, 9, 59, 0);
 const ISSUED_AT = DateTime.makeUnsafe(CONFORMANCE_CLOCK_MS);
+const HOUR_MS = 3_600_000;
 
 export const collectCorrelation = deriveProviderCorrelation(COLLECT_OPERATION_ID);
 const refundCorrelation = deriveProviderCorrelation(REFUND_OPERATION_ID);
@@ -97,6 +99,22 @@ export interface FamilyNotifications {
   readonly wrongEnvironment: RawProviderNotification;
 }
 
+/**
+ * How a refund's completion is proven by the provider's own completion source: the ref the recovery lookup
+ * addresses, the binding it runs through, the documented answers and the clock. `sandboxSource` is false when the
+ * source does not exist for test-mode payments (Comgate settlement statements, plan D-P2): there a sandbox
+ * lookup makes no call and stays INDETERMINATE, so completion can only be shown on a real production refund.
+ */
+export interface FamilyRefundCompletion {
+  readonly atMs: number;
+  readonly confirmed: RouteScript;
+  /** The provider requests the confirming lookup makes, in order. */
+  readonly confirmedRoutes: readonly string[];
+  readonly lookupRef: ProviderObjectRef;
+  readonly sandboxSource: boolean;
+  readonly target: GatewayExecutionTarget;
+}
+
 export interface FamilyConformance {
   readonly amount: ReturnType<typeof czk>;
   readonly cancelRequest: GatewayCancelRequest;
@@ -112,6 +130,7 @@ export interface FamilyConformance {
   readonly notifications: FamilyNotifications;
   readonly paymentRef: ProviderObjectRef;
   readonly refundAmount: ReturnType<typeof czk>;
+  readonly refundCompletion: FamilyRefundCompletion;
   readonly refundRequest: (basis: PaymentRefundBasisKind) => GatewayRefundRequest;
   /** The provider route the refund mutation is sent to. */
   readonly refundRoute: string;
@@ -253,6 +272,20 @@ const GOPAY: FamilyConformance = {
   },
   paymentRef: gopayRef,
   refundAmount: czk(4000),
+  // The refund resource GoPay returned on create is read by its id (v4 `GET /refunds/{id}`).
+  refundCompletion: {
+    atMs: CONFORMANCE_CLOCK_MS + HOUR_MS,
+    confirmed: {
+      [`GET ${GOPAY_API}/refunds/${GOPAY_FIXTURE_REFUND_ID}`]: [
+        respond(200, gopayRefundBody({ amount: 4000, state: 'SUCCESS' })),
+      ],
+      [GOPAY_TOKEN]: [gopayToken],
+    },
+    confirmedRoutes: [GOPAY_TOKEN, `GET ${GOPAY_API}/refunds/${GOPAY_FIXTURE_REFUND_ID}`],
+    lookupRef: refOf({ _tag: 'GOPAY_REFUND', id: GOPAY_FIXTURE_REFUND_ID, paymentId: GOPAY_FIXTURE_PAYMENT_ID }),
+    sandboxSource: true,
+    target: gopayTarget,
+  },
   refundRequest: refundRequestOf(czk(4000), gopayRef),
   refundRoute: GOPAY_REFUND,
   scripts: {
@@ -404,6 +437,22 @@ const STRIPE: FamilyConformance = {
   },
   paymentRef: stripeIntentRef,
   refundAmount: czk(50_000),
+  // The Refund object is retrieved by its id; `succeeded` is the completion.
+  refundCompletion: {
+    atMs: CONFORMANCE_CLOCK_MS + HOUR_MS,
+    confirmed: {
+      [`GET ${STRIPE_API}/v1/refunds/${STRIPE_FIXTURE_REFUND_ID}`]: [
+        respond(
+          200,
+          JSON.stringify(stripeRefundObject({ orderReference: refundCorrelation.orderReference, status: 'succeeded' })),
+        ),
+      ],
+    },
+    confirmedRoutes: [`GET ${STRIPE_API}/v1/refunds/${STRIPE_FIXTURE_REFUND_ID}`],
+    lookupRef: refOf({ _tag: 'STRIPE_REFUND', id: STRIPE_FIXTURE_REFUND_ID }),
+    sandboxSource: true,
+    target: stripeTarget,
+  },
   refundRequest: refundRequestOf(czk(50_000), stripeIntentRef),
   refundRoute: STRIPE_REFUNDS,
   scripts: {
@@ -470,6 +519,13 @@ const COMGATE_CREATE = `POST ${COMGATE_API}/v2.0/payment.json`;
 const COMGATE_STATUS = `GET ${COMGATE_API}/v2.0/payment/transId/${COMGATE_TRANS_ID}.json`;
 const COMGATE_CANCEL = `DELETE ${COMGATE_API}/v2.0/payment/transId/${COMGATE_TRANS_ID}.json`;
 const COMGATE_REFUND = `POST ${COMGATE_API}/v2.0/refund.json`;
+/** The conformance dispatch instant is 2026-11-12 (Prague); its statement is readable from the next morning. */
+const COMGATE_TRANSFER_LIST = `GET ${COMGATE_API}/v2.0/transferList/date/2026-11-12.json`;
+const COMGATE_SINGLE_TRANSFER = `GET ${COMGATE_API}/v2.0/singleTransfer/transferId/1234567.json`;
+const comgateJsonArrayFirst = (name: string): JsonObject =>
+  Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.Record(Schema.String, Schema.Json))))(
+    comgateFixture(name),
+  )[0] ?? {};
 const COMGATE_SECRET = 'comgate-shop-secret-c17-conformance';
 const COMGATE_ACCOUNT_REF = `pab_${'1'.repeat(32)}`;
 const comgateRef = refOf({ _tag: 'COMGATE_TRANSACTION', transId: COMGATE_TRANS_ID });
@@ -545,6 +601,33 @@ const COMGATE: FamilyConformance = {
   },
   paymentRef: comgateRef,
   refundAmount: czk(4000),
+  // No refund status API: the production settlement statement of the dispatch day is the only completion source.
+  refundCompletion: {
+    atMs: CONFORMANCE_CLOCK_MS + 25 * HOUR_MS,
+    confirmed: {
+      [COMGATE_SINGLE_TRANSFER]: [
+        respond(
+          200,
+          JSON.stringify([
+            {
+              ...comgateJson('statement-refund-row.json'),
+              'ID od klienta': refundCorrelation.orderReference,
+              Merchant: '123456',
+              'Potvrzená částka': '-40,00',
+            },
+          ]),
+        ),
+      ],
+      [COMGATE_TRANSFER_LIST]: [respond(200, JSON.stringify([{ ...comgateJsonArrayFirst('transfer-list.json') }]))],
+    },
+    confirmedRoutes: [COMGATE_TRANSFER_LIST, COMGATE_SINGLE_TRANSFER],
+    lookupRef: comgateRef,
+    sandboxSource: false,
+    target: Schema.decodeUnknownSync(GatewayExecutionTargetSchema)({
+      ...Schema.encodeSync(GatewayExecutionTargetSchema)(comgateTarget),
+      binding: { ...comgateTarget.binding, environment: 'LIVE' },
+    }),
+  },
   refundRequest: refundRequestOf(czk(4000), comgateRef),
   refundRoute: COMGATE_REFUND,
   scripts: {
