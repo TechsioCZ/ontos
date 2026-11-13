@@ -18,7 +18,7 @@ import {
   STAFF_AUTHENTICATION_NAMESPACE_ID,
   staffAuthenticationNamespaceRegistryLayer,
 } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { Effect, Layer, Schema } from 'effect';
+import { Effect, Exit, Layer, Schema } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 import { describe, expect, it, rs } from 'effect-rstest';
 
@@ -349,7 +349,7 @@ describe('tenant-only module target admission', () => {
       for (const modulePermission of ['denied', 'unavailable'] as const) {
         const f = yield* fixture({ modulePermission, states: [{ moduleKey: moduleId, state: 'active' }] });
         const exit = yield* f.runTenant({ moduleId }).pipe(Effect.exit);
-        expect(exit._tag).toBe('Failure');
+        expect(Exit.isFailure(exit)).toBe(true);
         expect(f.calls.companyModules).toEqual([]);
         expect(f.calls.legalEntities).toEqual([]);
         expect(f.calls.contextPermissions).toEqual([]);
@@ -442,7 +442,7 @@ describe('tenant-only module target admission', () => {
             Effect.provide(staffAuthenticationNamespaceRegistryLayer([catalog.composition.shell.deployment.appId])),
             Effect.exit,
           );
-        expect(exit._tag).toBe('Failure');
+        expect(Exit.isFailure(exit)).toBe(true);
         // The tenant `access` decision refused before the composition, so no module permission or owner ran.
         expect(calls.contextPermissions).toEqual([]);
         expect(calls.companyModules).toEqual([]);
@@ -468,12 +468,10 @@ describe('tenant-only module target admission', () => {
         modulePermission: 'allowed',
         states: [{ moduleKey: moduleId, state: 'active' }],
       });
-      expect(yield* unknown.runTenant({ moduleId: 'missing.module' }).pipe(Effect.exit)).toMatchObject({
-        _tag: 'Failure',
-      });
-      expect(yield* unknown.runTenant({ canonicalPath: '/missing-route' }).pipe(Effect.exit)).toMatchObject({
-        _tag: 'Failure',
-      });
+      expect(Exit.isFailure(yield* unknown.runTenant({ moduleId: 'missing.module' }).pipe(Effect.exit))).toBe(true);
+      expect(Exit.isFailure(yield* unknown.runTenant({ canonicalPath: '/missing-route' }).pipe(Effect.exit))).toBe(
+        true,
+      );
       expect(unknown.calls.contextPermissions).toEqual([]);
 
       const inactive = yield* fixture({
@@ -551,7 +549,7 @@ describe('resolveModuleTarget dispatch', () => {
           target: resolvedTarget(input.compositionRevision ?? '', `${moduleId}.dashboard`, optedInPageKey),
         }),
       );
-      expect(exit._tag).toBe('Success');
+      expect(Exit.isSuccess(exit)).toBe(true);
       expect(tenantModuleTarget).toHaveBeenCalledTimes(1);
       expect(moduleTarget).not.toHaveBeenCalled();
     }).pipe(Effect.provide(ShellCryptoLive)),
@@ -562,7 +560,7 @@ describe('resolveModuleTarget dispatch', () => {
       const { exit, moduleTarget } = yield* dispatch(tenantSession, neverCalled, () =>
         Effect.succeed({ state: 'selection_required' }),
       );
-      expect(exit._tag).toBe('Failure');
+      expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain('ShellSelectionRequiredProblem');
       expect(moduleTarget).not.toHaveBeenCalled();
     }).pipe(Effect.provide(ShellCryptoLive)),
@@ -576,7 +574,7 @@ describe('resolveModuleTarget dispatch', () => {
           Effect.succeed(resolvedTarget(input.compositionRevision ?? '', `${moduleId}.dashboard`, optedInPageKey)),
         neverCalled,
       );
-      expect(exit._tag).toBe('Success');
+      expect(Exit.isSuccess(exit)).toBe(true);
       expect(moduleTarget).toHaveBeenCalledTimes(1);
       expect(tenantModuleTarget).not.toHaveBeenCalled();
     }).pipe(Effect.provide(ShellCryptoLive)),
@@ -614,7 +612,7 @@ describe('resolveModuleTarget dispatch', () => {
         ),
         Effect.exit,
       );
-      expect(exit._tag).toBe('Failure');
+      expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain('ShellReloadRequiredProblem');
       expect(moduleTarget).not.toHaveBeenCalled();
       expect(tenantModuleTarget).not.toHaveBeenCalled();
@@ -634,7 +632,7 @@ describe('resolveModuleTarget dispatch', () => {
         neverCalled,
         neverCalled,
       );
-      expect(exit._tag).toBe('Failure');
+      expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain('ShellSelectionRequiredProblem');
       expect(moduleTarget).not.toHaveBeenCalled();
       expect(tenantModuleTarget).not.toHaveBeenCalled();
@@ -648,7 +646,7 @@ describe('resolveModuleTarget dispatch', () => {
         neverCalled,
         neverCalled,
       );
-      expect(exit._tag).toBe('Failure');
+      expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain('ShellAuthenticationRequiredProblem');
       expect(moduleTarget).not.toHaveBeenCalled();
       expect(tenantModuleTarget).not.toHaveBeenCalled();

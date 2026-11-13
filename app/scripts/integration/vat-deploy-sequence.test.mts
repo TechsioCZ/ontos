@@ -74,6 +74,7 @@ import {
   DateTime,
   Duration,
   Effect,
+  Exit,
   FileSystem,
   Layer,
   Match,
@@ -958,7 +959,7 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
   expect(report.modules.map(({ moduleKey, outcome }) => [moduleKey, outcome])).toEqual([[taxModuleKey, 'installed']]);
   expect(report.reconciles.map(({ failure }) => failure)).toEqual([undefined]);
   // Before the install the seed could not even read Tax for the company.
-  expect(seedBeforeInstall._tag).toBe('Failure');
+  expect(Exit.isFailure(seedBeforeInstall)).toBe(true);
   // Before the seed Finance's line is refused: the company has no declared regime in Tax.
   const line = { vatClassification: STANDARD, vatRate: 21 };
   expect(lineVatIssue(line, yield* financeChoices(today), OUTGOING)).toBe('vat_regime_not_declared');

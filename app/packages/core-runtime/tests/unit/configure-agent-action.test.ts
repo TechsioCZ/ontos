@@ -69,9 +69,10 @@ it('accepts both native operations and explicit profile clearing without supplyi
   const create = { ...profile, creationReference: 'request-1', operation: 'create-agent' };
   expect(decode(create)).toEqual(create);
   expect(
-    Schema.decodeUnknownResult(ConfigureAgentPayloadSchema)({ ...profile, operation: 'create-agent', principalId })
-      ._tag,
-  ).toBe('Failure');
+    Result.isFailure(
+      Schema.decodeUnknownResult(ConfigureAgentPayloadSchema)({ ...profile, operation: 'create-agent', principalId }),
+    ),
+  ).toBe(true);
   const isProfile = Schema.is(AgentProfileSchema);
   expect(isProfile(profile)).toBe(true);
   for (const requiredField of ['description', 'ownerPrincipalId', 'writePolicy']) {

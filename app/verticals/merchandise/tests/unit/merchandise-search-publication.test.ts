@@ -961,7 +961,7 @@ it.layer(NodeCrypto.layer)('Merchandise governed search publication fence', (sui
             ],
           },
         });
-        expect(denied.exit).toMatchObject({ _tag: 'Success' });
+        expect(Exit.isSuccess(denied.exit)).toBe(true);
         if (Exit.isSuccess(denied.exit)) {
           expect(denied.exit.value).toEqual([]);
         }
@@ -1203,7 +1203,7 @@ it.layer(NodeCrypto.layer)('Merchandise governed search publication fence', (sui
               },
             },
           );
-          expect(denied.exit).toMatchObject({ _tag: 'Success' });
+          expect(Exit.isSuccess(denied.exit)).toBe(true);
           if (Exit.isSuccess(denied.exit)) {
             expect(denied.exit.value).toEqual([]);
           }

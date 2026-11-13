@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Option } from 'effect';
 import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
 
 import { clearBrowserRequestCache, installBrowserRequestCache } from '../../../src/routes/browser-request-cache.ts';
@@ -57,7 +57,7 @@ it.live('a tab told "reload required" asks the Shell for no further gateway cont
     }
     // Neither does the document's batch renewal nor its assertion lookup ask again.
     yield* warmDocumentGatewayAssertions(staleRevision, ['party-registry', 'crm']);
-    expect((yield* documentGatewayAssertion('crm', staleRevision))._tag).toBe('None');
+    expect(Option.isNone(yield* documentGatewayAssertion('crm', staleRevision))).toBe(true);
     expect(platformFetch).toHaveBeenCalledTimes(1);
   }),
 );
