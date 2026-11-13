@@ -295,6 +295,19 @@ const command = Command.make(
       const password = yield* Config.Redacted('ONTOS_DEMO_PASSWORD').pipe(
         Config.withDefault(Redacted.make('password1234')),
       );
+      // With --role the seed only gives existing agents existing roles; it creates nothing.
+      if (role.length > 0) {
+        if (Option.isNone(rolesAdmin) || Option.isNone(rolesCompany)) {
+          yield* new AgentSeedFailure({ message: '--role needs --roles-admin and --roles-company' });
+          return;
+        }
+        yield* assignRoles(origin, password, {
+          adminEmail: rolesAdmin.value,
+          legalEntityId: rolesCompany.value,
+          pairs: role,
+        });
+        return;
+      }
       const failures = yield* Effect.forEach(
         SEEDS,
         (agent) =>
@@ -313,17 +326,6 @@ const command = Command.make(
         { concurrency: 1 },
       );
       commandExitCode = failures.some(Boolean) ? 1 : 0;
-      if (role.length > 0) {
-        if (Option.isNone(rolesAdmin) || Option.isNone(rolesCompany)) {
-          yield* new AgentSeedFailure({ message: '--role needs --roles-admin and --roles-company' });
-          return;
-        }
-        yield* assignRoles(origin, password, {
-          adminEmail: rolesAdmin.value,
-          legalEntityId: rolesCompany.value,
-          pairs: role,
-        });
-      }
     }),
 );
 const abort = new AbortController();
