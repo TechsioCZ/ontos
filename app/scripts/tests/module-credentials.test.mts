@@ -33,6 +33,8 @@ const DELEGATED_CLIENT = /\bacquireDelegatedGatewayContext\b/u;
 const WORKLOAD_CLIENT = /\bacquireWorkloadGatewayContext\b/u;
 const ORDER = 'commerce-order';
 const MERCHANDISE = 'merchandise';
+/** A module that calls no other module through the Shell today. */
+const NEW_CALLER = 'work-tasks';
 const TOPOLOGY_FILE = 'topology/reference-topology.json';
 const FINANCE = 'finance-billing';
 
@@ -86,6 +88,11 @@ describe('declared delegated callers', () => {
     expect([...MODULE_CREDENTIAL_CALLERS]).toEqual([...declared]);
   });
 
+  it('keys Finance and Merchandise from the Tax calls their carriers declare', () => {
+    // VAT declared them as Tax's delegated callers; nobody added them to a list.
+    expect(MODULE_CREDENTIAL_CALLERS).toEqual(expect.arrayContaining([FINANCE, MERCHANDISE]));
+  });
+
   it('a new carrier that admits a new caller adds that caller, with nobody editing a list', () => {
     const [first] = committed.modules;
     const [descriptor] = first?.descriptors ?? [];
@@ -93,16 +100,15 @@ describe('declared delegated callers', () => {
     if (first === undefined || descriptor === undefined) {
       return;
     }
-    // The VAT push: a Tax carrier that admits Merchandise and Finance as its callers.
-    const vatCarrier = Schema.decodeUnknownSync(AccessCatalogArtifactDescriptorSchema)({
+    // A module that calls no other module today starts calling one: its carrier admits it, and it gets a key.
+    expect(MODULE_CREDENTIAL_CALLERS).not.toContain(NEW_CALLER);
+    const carrier = Schema.decodeUnknownSync(AccessCatalogArtifactDescriptorSchema)({
       ...descriptor,
-      actor: { callers: [FINANCE, MERCHANDISE], subject: 'identity' },
+      actor: { callers: [NEW_CALLER], subject: 'identity' },
     });
-    const withVat = [...committed.modules, { ...first, descriptors: [vatCarrier] }];
-    expect(declaredDelegatedCallers(withVat)).toEqual(expect.arrayContaining([FINANCE, MERCHANDISE]));
-    expect(renderModuleCredentialCallers(withVat)).toContain(`'${MERCHANDISE}',`);
-    // Today's release keys neither: no carrier admits them yet.
-    expect(MODULE_CREDENTIAL_CALLERS).not.toContain(MERCHANDISE);
+    const withNewCaller = [...committed.modules, { ...first, descriptors: [carrier] }];
+    expect(declaredDelegatedCallers(withNewCaller)).toContain(NEW_CALLER);
+    expect(renderModuleCredentialCallers(withNewCaller)).toContain(`'${NEW_CALLER}',`);
   });
 
   it('keys no module that only receives calls', () => {
