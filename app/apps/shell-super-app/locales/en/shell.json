@@ -824,6 +824,7 @@
       "seoDescription": "Search authorized resources in the selected OntOS context.",
       "title": "Search results",
       "unavailable": "Search is temporarily unavailable. Try again.",
+      "notGranted": "Search isn't part of your access. Ask your administrator for it.",
       "clear": "Clear search",
       "placeholder": "Search clients, tasks, invoices, contracts…"
     },

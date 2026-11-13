@@ -830,6 +830,7 @@
       "seoDescription": "Vyhledávání autorizovaných zdrojů ve vybraném kontextu OntOS.",
       "title": "Výsledky hledání",
       "unavailable": "Vyhledávání je dočasně nedostupné. Zkuste to znovu.",
+      "notGranted": "Vyhledávání není součástí vašich oprávnění. Požádejte o něj správce.",
       "clear": "Vymazat hledání",
       "placeholder": "Hledat klienty, úkoly, faktury, smlouvy…"
     },
