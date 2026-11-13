@@ -19,7 +19,7 @@ import type { ListAccessResolution } from '../decision/engine.ts';
 import type { ListAccessPredicate } from '../decision/list-access.ts';
 import { accessDecisionUnavailable } from '../decision/errors.ts';
 import { withOptional } from '../decision/optional.ts';
-import { holderIdOf, holderSubjectOf } from '../decision/selector.ts';
+import { holderSubjectOf } from '../decision/selector.ts';
 import { checkedScopeAnswersUnchecked, scopeReadKey } from './checked-scope-reads.ts';
 import {
   AccessScopeIdSchema,

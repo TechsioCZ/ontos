@@ -247,6 +247,9 @@ const realScopeResolver = (registeredCompanies: readonly string[], companies: re
     makeAccessDecisionService({
       authorityFor: () => ({
         readCells: () => Effect.die('A workload subject reads no authority cells'),
+        // This fixture's tenant owns every company it names, so the ownership fence admits and the
+        // registration fence is the one under test here (O88, D6).
+        readCompanyOwnership: () => Effect.succeed(true),
         readConnection: () => Effect.die('A workload subject reads no connection'),
         readScope: () => Effect.die('A workload subject reads no membership scope'),
         readTeamIds: () => Effect.die('A workload subject reads no teams'),

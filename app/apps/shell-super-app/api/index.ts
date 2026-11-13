@@ -304,9 +304,12 @@ import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
 import { GatewayTimings, observeGatewayPhase } from './auth/gateway-timing.ts';
 import { NoServerTimingLive } from './no-server-timing.ts';
 import { preserveSystemPrincipalContextTrust } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { connectedAppsAdministration, tenantReleaseHintAdmitted } from './auth/administration-access.ts';
+import {
+  connectedAppsAdministration,
+  peopleAdministrationDecision,
+  tenantReleaseHintAdmitted,
+} from './auth/administration-access.ts';
 import { peopleAdministrationCapability } from './auth/demo-accounts.ts';
-import { peopleAdministrationDecision } from './auth/administration-access.ts';
 import { rebrandRentalDemoAccounts } from './auth/rental-demo-brand-runtime-infrastructure.ts';
 import { listAgentEntities, manageAgentEntity } from './auth/agent-entities.ts';
 import { IdentityLifecycle, IdentityLifecycleLive } from './auth/identity-lifecycle.ts';
