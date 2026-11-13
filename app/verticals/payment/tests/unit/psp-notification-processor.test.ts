@@ -157,6 +157,7 @@ const recordOf = (input: RecordInput): ProviderDispatchRecord => {
     providerFamily: input.family ?? 'STRIPE',
     providerPaymentRef: Option.fromUndefinedOr(input.payment),
     providerRefundRef: Option.fromUndefinedOr(input.refund),
+    refundBaseline: Option.none(),
     replayExpiresAt: Option.none(),
     replayStartsAt: Option.none(),
     requestBody: Option.none(),

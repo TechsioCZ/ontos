@@ -162,6 +162,7 @@ interface RecordOverrides {
   readonly operationId?: string;
   readonly paymentRef?: Option.Option<unknown>;
   readonly preparedAt?: Option.Option<DateTime.Utc>;
+  readonly refundBaseline?: Option.Option<unknown>;
   readonly state?: ProviderDispatchRecord['state'];
 }
 
@@ -192,6 +193,7 @@ const dispatchRecord = (overrides: RecordOverrides = {}): ProviderDispatchRecord
     providerFamily: family,
     providerPaymentRef: overrides.paymentRef ?? Option.none(),
     providerRefundRef: Option.none(),
+    refundBaseline: overrides.refundBaseline ?? Option.none(),
     replayExpiresAt: replayable(DateTime.add(PREPARED_AT, { milliseconds: WINDOW_MS })),
     replayStartsAt: replayable(PREPARED_AT),
     requestBody: replayable(new TextEncoder().encode(`operation=${id}`)),
@@ -637,21 +639,39 @@ describe('#1158 gateway operation recovery', () => {
     Effect.gen(function* gopayRefundLookup() {
       yield* at(25 * HOUR_MS);
       const paymentRef = { _tag: 'GOPAY_PAYMENT', id: '3000006529' } as const;
-      const { calls, exit } = yield* recoverWith(
-        {
-          lookup: () => Effect.succeed([findingOf({ finding: 'INDETERMINATE', kind: 'REFUND' })]),
-          operations: [operationRow({ family: 'GOPAY', kind: 'REFUND' })],
-          record: Option.some(dispatchRecord({ family: 'GOPAY', kind: 'REFUND', paymentRef: Option.some(paymentRef) })),
-        },
-        { ...recoveryMessage('AUTHORITATIVE_LOOKUP', { family: 'GOPAY' }), operationKind: 'REFUND' },
-      );
-      // GoPay refunds have no id of their own: the payment's refund history is read with the dispatch instant.
-      expect(calls.lookups.map(({ dispatchedAt, target }) => [target, Option.getOrNull(dispatchedAt)])).toEqual([
-        [{ _tag: 'PROVIDER_OBJECT', ref: paymentRef }, PREPARED_AT],
+      const refundBaseline = Option.some({ rowIds: ['4493293835'] });
+      const recover = (state: ProviderDispatchRecord['state']) =>
+        recoverWith(
+          {
+            lookup: () => Effect.succeed([findingOf({ finding: 'INDETERMINATE', kind: 'REFUND' })]),
+            operations: [operationRow({ family: 'GOPAY', kind: 'REFUND' })],
+            record: Option.some(
+              dispatchRecord({
+                family: 'GOPAY',
+                kind: 'REFUND',
+                paymentRef: Option.some(paymentRef),
+                refundBaseline,
+                state,
+              }),
+            ),
+          },
+          { ...recoveryMessage('AUTHORITATIVE_LOOKUP', { family: 'GOPAY' }), operationKind: 'REFUND' },
+        );
+      // GoPay refunds have no id of their own: the payment's refund history is read through the payment. A lost
+      // response gets no baseline, so the history can never confirm it (#1158: no proof for this operation).
+      const lost = yield* recover('OUTCOME_UNKNOWN');
+      expect(
+        lost.calls.lookups.map(({ acknowledgedRefundBaseline, target }) => [target, acknowledgedRefundBaseline]),
+      ).toEqual([[{ _tag: 'PROVIDER_OBJECT', ref: paymentRef }, Option.none()]]);
+      expect(reportOf(lost.exit).providerCall).toBe('LOOKUP_PROVIDER_OBJECT');
+      expect(lost.calls.replays).toEqual([]);
+      expect(lost.calls.resolved.map(({ providerFamily }) => providerFamily)).toEqual(['GOPAY']);
+      // A refund GoPay acknowledged is attributed against the baseline committed before its send.
+      const acknowledged = yield* recover('ACKNOWLEDGED');
+      expect(acknowledged.calls.lookups.map(({ acknowledgedRefundBaseline }) => acknowledgedRefundBaseline)).toEqual([
+        refundBaseline,
       ]);
-      expect(reportOf(exit).providerCall).toBe('LOOKUP_PROVIDER_OBJECT');
-      expect(calls.replays).toEqual([]);
-      expect(calls.resolved.map(({ providerFamily }) => providerFamily)).toEqual(['GOPAY']);
+      expect(acknowledged.calls.replays).toEqual([]);
     }),
   );
 
@@ -682,8 +702,8 @@ describe('#1158 gateway operation recovery', () => {
             },
             { ...recoveryMessage('AUTHORITATIVE_LOOKUP', { family }), operationKind: 'REFUND' },
           ).pipe(Effect.map(({ calls }) => calls.ledger));
-        // GoPay refund history and Comgate statement: the refund has no object of its own; the payment object it was
-        // dispatched against is the recorded ref.
+        // A family lookup that proves existence (Comgate statement; the real GoPay adapter never does for a lost
+        // refund, it gets no baseline): the refund has no object of its own; the payment object is the recorded ref.
         expect(yield* recovered('GOPAY', 'EFFECT_CONFIRMED', [gopayPayment])).toEqual([
           'correlateUnknown:GOPAY_PAYMENT',
         ]);

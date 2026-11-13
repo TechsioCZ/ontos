@@ -18,7 +18,7 @@ import { pspReadOperationForExecution } from '../../persistence/psp-worker-routi
 import type { PspOperationForExecution } from '../../persistence/psp-worker-routines.ts';
 import { GatewayBindingResolver } from './binding-resolver.ts';
 import { ledgerUnavailable, routineUnavailable } from './dispatch-ledger-live.ts';
-import { ProviderDispatchLedger, replayRequestOf } from './dispatch-ledger.ts';
+import { acknowledgedRefundBaselineOf, ProviderDispatchLedger, replayRequestOf } from './dispatch-ledger.ts';
 import type { ProviderDispatchRecord } from './dispatch-ledger.ts';
 import { ProviderEvidenceStore } from './evidence-store.ts';
 import type {
@@ -449,9 +449,10 @@ const provesRefundExists = (finding: ProviderFindingResult): boolean =>
   (finding.finding === 'NOT_EFFECTED' && finding.providerRefs.some(isStripeRefundRef));
 
 /**
- * The provider ref an OUTCOME_UNKNOWN refund records once a lookup of its recorded object (GoPay refund history,
- * Comgate statement) proves it exists: the refund's own object when the provider names one (Stripe), else the
- * payment object the refund was dispatched against (GoPay, Comgate).
+ * The provider ref an OUTCOME_UNKNOWN refund records once a lookup of its recorded object (Comgate statement)
+ * proves it exists: the refund's own object when the provider names one (Stripe), else the payment object the
+ * refund was dispatched against (Comgate). A GoPay history never proves a lost refund: its lookup gets no
+ * baseline (`acknowledgedRefundBaselineOf`), so it stays INDETERMINATE and the payment's refunds stay serialised.
  */
 const refundCorrelationRefOf = (refs: readonly ProviderObjectRef[]) =>
   Option.orElse(Option.fromUndefinedOr(refs.find(isStripeRefundRef)), () => Option.fromUndefinedOr(refs[0]));
@@ -522,7 +523,13 @@ const lookUp = Effect.fn('GatewayOperationRecovery.lookUp')(function* lookUp(
     record.state === 'OUTCOME_UNKNOWN' &&
     (providerCall === 'LOOKUP_ORDER_REFERENCE' || record.operationKind === 'REFUND');
   return yield* adapter
-    .lookup(call.target, { dispatchedAt: record.preparedAt, expected, target: lookupTarget.value })
+    .lookup(call.target, {
+      // GoPay: only an acknowledged refund's baseline can attribute a history row; a lost one stays INDETERMINATE.
+      acknowledgedRefundBaseline: acknowledgedRefundBaselineOf(record),
+      dispatchedAt: record.preparedAt,
+      expected,
+      target: lookupTarget.value,
+    })
     .pipe(
       Effect.flatMap((findings) =>
         (correlate ? correlateFound(call, record, findings, providerCall) : Effect.succeed(true)).pipe(

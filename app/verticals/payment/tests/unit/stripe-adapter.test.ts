@@ -48,6 +48,7 @@ import {
   STRIPE_FIXTURE_REFUND_ID,
   STRIPE_FIXTURE_SESSION_ID,
   stripeCheckoutSessionObject,
+  stripePaidSessionExpireError,
   stripePaymentIntentObject,
   stripePaymentIntentSearchResult,
   stripeRefundObject,
@@ -362,6 +363,7 @@ describe('#1154 Stripe Checkout Session collection', () => {
         adapter.lookup(
           SANDBOX_TARGET,
           Schema.decodeUnknownSync(GatewayLookupRequestSchema)({
+            acknowledgedRefundBaseline: Option.none(),
             dispatchedAt: Option.none(),
             expected: collectExpected,
             target: {
@@ -528,7 +530,12 @@ describe('#1158 Stripe exact replay', () => {
 // ---------------------------------------------------------------------------------------------------
 
 const lookupRequest = (target: GatewayLookupTarget, expected: GatewayExpectedEffect) =>
-  Schema.decodeUnknownSync(GatewayLookupRequestSchema)({ dispatchedAt: Option.none(), expected, target });
+  Schema.decodeUnknownSync(GatewayLookupRequestSchema)({
+    acknowledgedRefundBaseline: Option.none(),
+    dispatchedAt: Option.none(),
+    expected,
+    target,
+  });
 const lookupTargetOf = Schema.decodeUnknownSync(GatewayLookupTargetSchema);
 
 describe('#1158 Stripe lookup', () => {
@@ -766,6 +773,44 @@ describe('#1156 Stripe refund and cancel', () => {
         ),
       ).toEqual(Option.some([COLLECT_OPERATION_ID, 'EFFECT_CONFIRMED', Option.some('COLLECTION_CONFIRMED')]));
       expect(sent.map((recorded) => recorded.kind)).toEqual(['mutate', 'read']);
+    }),
+  );
+
+  it.effect('#1156 The real paid-session expire refusal (no error.code) is decided by lookup, never confirmed', () =>
+    Effect.gen(function* expirePaidSandboxBody() {
+      const paid = stripeCheckoutSessionObject({
+        orderReference: COLLECT_CORRELATION.orderReference,
+        paymentIntent: stripePaymentIntentObject({
+          orderReference: COLLECT_CORRELATION.orderReference,
+          status: 'succeeded',
+        }),
+        paymentStatus: 'paid',
+        status: 'complete',
+      });
+      const { adapter, sent } = yield* harness([
+        respond(400, JSON.stringify(stripePaidSessionExpireError)),
+        respond(200, JSON.stringify(paid)),
+      ]);
+      const prepared = yield* adapter.prepareCancel(SANDBOX_TARGET, cancelRequest);
+      const response = yield* adapter.send(SANDBOX_TARGET, prepared, cancelExpected);
+
+      expect(Object.keys(stripePaidSessionExpireError.error)).not.toContain('code');
+      expect(dispatchOutcomeOf(response)).toBe('REJECTED_BEFORE_EFFECT');
+      expect(response.finding.finding).toBe('NOT_EFFECTED');
+      expect(response.finding.evidence.pipe(Option.map((evidence) => evidence.factKind))).toEqual(
+        Option.some('CANCEL_NOT_EFFECTED'),
+      );
+      expect(
+        response.targetFinding.pipe(
+          Option.map((found) => [
+            found.target.operationId,
+            found.finding,
+            found.evidence.pipe(Option.map((evidence) => evidence.factKind)),
+          ]),
+        ),
+      ).toEqual(Option.some([COLLECT_OPERATION_ID, 'EFFECT_CONFIRMED', Option.some('COLLECTION_CONFIRMED')]));
+      expect(sent.map((recorded) => recorded.kind)).toEqual(['mutate', 'read']);
+      expect(sent[1]?.request.url).toBe(`https://api.stripe.com/v1/checkout/sessions/${STRIPE_FIXTURE_SESSION_ID}`);
     }),
   );
 });

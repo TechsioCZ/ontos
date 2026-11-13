@@ -1,12 +1,14 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 
 import {
+  Array as Arr,
   Config,
   Console,
   Context,
   DateTime,
   Duration,
   Effect,
+  Exit,
   Layer,
   Match,
   Option,
@@ -19,6 +21,7 @@ import type { Redacted, Scope } from 'effect';
 import { NodeFileSystem } from '@effect/platform-node';
 import { FileSystem } from 'effect/FileSystem';
 import { FetchHttpClient, HttpClient } from 'effect/http';
+import type { HttpClientRequest } from 'effect/http';
 import type { TestContext } from 'effect-rstest';
 
 import { PaymentOperationIdSchema } from '../../shared/domain/payment-identifiers.ts';
@@ -34,7 +37,7 @@ import type { ProviderCredentialMaterial } from '../../src/integrations/psp/cred
 import { RawProviderNotificationSchema } from '../../src/integrations/psp/notification-envelope.ts';
 import type { RawProviderNotification } from '../../src/integrations/psp/notification-envelope.ts';
 import { ProviderHttp } from '../../src/integrations/psp/provider-http.ts';
-import type { ProviderHttpContract } from '../../src/integrations/psp/provider-http.ts';
+import type { ProviderHttpContract, ProviderHttpResponse } from '../../src/integrations/psp/provider-http.ts';
 import { ProviderHttpLive } from '../../src/integrations/psp/provider-http-live.ts';
 import type { GatewayProviderAdapter } from '../../src/integrations/psp/psp-adapter.ts';
 import { deriveProviderCorrelation } from '../../src/integrations/psp/psp-correlation.ts';
@@ -54,6 +57,7 @@ import type {
   GatewayExecutionTarget,
   GatewayExpectedEffect,
   GatewayLookupRequest,
+  GatewayRefundBaseline,
   GatewayRefundRequest,
   ProviderObjectRef,
 } from '../../src/integrations/psp/psp-request.ts';
@@ -65,7 +69,8 @@ import {
 
 /**
  * Opt-in provider sandbox conformance (#1159 evidence level 4, plan §6). Run from `app/` with
- * `pnpm --filter @app/payment exec rstest --project sandbox`.
+ * `pnpm --filter @app/payment test:sandbox`; `tests/sandbox/README.md` lists the scenarios and the hosted-page
+ * instruments a browser agent can complete.
  *
  * Every suite reads only its own `ONTOS_C17_SANDBOX_*` variables through `Config` (never `process.env`):
  * - GoPay: `ONTOS_C17_SANDBOX_GOPAY_CLIENT_ID`, `ONTOS_C17_SANDBOX_GOPAY_CLIENT_SECRET`,
@@ -82,7 +87,8 @@ import {
  * `ProviderHttpLive`, over a fetch client configured like the composition roots (`no-store`,
  * `redirect: 'manual'`, no client span, no retry layer).
  *
- * The hosted payment step needs a human or a browser agent: the scenario prints the redirect URL and polls lookup
+ * The hosted payment step needs a human or a browser agent: the scenario prints the redirect URL, the payment
+ * instrument to use and polls lookup
  * for up to 15 minutes. When `ONTOS_C17_SANDBOX_HOSTED_URL_FILE` is set, each URL is also appended to that file as
  * one JSON line `{provider, scenario, url}` before polling starts. Nothing here opens a browser or prints a secret.
  */
@@ -270,9 +276,46 @@ const withholdingProviderHttp = (
   read: live.read,
 });
 
+/** One provider call of `SandboxProvider.adapter`; `response` is None when the seam failed. Never printed. */
+export interface SandboxProviderCall {
+  readonly kind: 'mutate' | 'read';
+  readonly method: string;
+  readonly response: Option.Option<{ readonly bodyText: string; readonly status: number }>;
+  readonly url: string;
+}
+
+const recordedCallOf = (
+  kind: SandboxProviderCall['kind'],
+  request: HttpClientRequest.HttpClientRequest,
+  exit: Exit.Exit<ProviderHttpResponse, unknown>,
+): SandboxProviderCall => ({
+  kind,
+  method: request.method,
+  response: Exit.isSuccess(exit)
+    ? Option.some({ bodyText: exit.value.bodyText, status: exit.value.status })
+    : Option.none(),
+  url: request.url,
+});
+
+/** Records every call that passes through the seam, in order, after it completed or failed. */
+const recordingProviderHttp = (
+  live: ProviderHttpContract,
+  calls: Ref.Ref<readonly SandboxProviderCall[]>,
+): ProviderHttpContract => {
+  const record = (call: SandboxProviderCall) => Ref.update(calls, (previous) => [...previous, call]);
+  return {
+    mutate: (request) =>
+      Effect.onExit(live.mutate(request), (exit) => record(recordedCallOf('mutate', request.request, exit))),
+    read: (request) =>
+      Effect.onExit(live.read(request), (exit) => record(recordedCallOf('read', request.request, exit))),
+  };
+};
+
 export interface SandboxProvider {
   /** The production adapter over the live provider HTTP seam. */
   readonly adapter: GatewayProviderAdapter;
+  /** Every provider call `adapter` made, in order (never the fixture calls on `http` or the calls of `lossy`). */
+  readonly calls: Ref.Ref<readonly SandboxProviderCall[]>;
   /** The live seam itself, for fixture calls that are not adapter operations. */
   readonly http: ProviderHttpContract;
   /** The same adapter whose mutations reach the provider but whose answers are withheld. */
@@ -312,16 +355,23 @@ const buildSandboxProvider = (
   material: ProviderCredentialMaterial,
 ): Effect.Effect<SandboxProvider, never, Scope.Scope> =>
   Effect.gen(function* buildSandboxProviderEffect() {
-    const [seam, withheld] = yield* Effect.all(
-      [Layer.build(ProviderHttpLive.pipe(Layer.provide(providerHttpClientLive))), Ref.make<readonly string[]>([])],
+    const [seam, withheld, calls] = yield* Effect.all(
+      [
+        Layer.build(ProviderHttpLive.pipe(Layer.provide(providerHttpClientLive))),
+        Ref.make<readonly string[]>([]),
+        Ref.make<readonly SandboxProviderCall[]>([]),
+      ],
       { concurrency: 1 },
     );
     const http = Context.get(seam, ProviderHttp);
     const [adapter, lossy] = yield* Effect.all(
-      [buildAdapter(material, http), buildAdapter(material, withholdingProviderHttp(http, withheld))],
+      [
+        buildAdapter(material, recordingProviderHttp(http, calls)),
+        buildAdapter(material, withholdingProviderHttp(http, withheld)),
+      ],
       { concurrency: 1 },
     );
-    return { adapter, http, lossy, withheld };
+    return { adapter, calls, http, lossy, withheld };
   });
 
 export interface SandboxScenarioInput<C> {
@@ -511,12 +561,18 @@ export const cancelExpected = (
     target: { amount, operationId: collection.operationId },
   });
 
-/** A lookup of one provider object for `expected`, dispatched at `dispatchedAt`. */
+/**
+ * A lookup of one provider object for `expected`, dispatched at `dispatchedAt`. `acknowledgedRefundBaseline` is the
+ * `refundBaseline` of a GoPay refund the provider acknowledged (as the ledger hands it to a lookup); without it a
+ * GoPay refund lookup is INDETERMINATE by design.
+ */
 export const objectLookup = (
   ref: ProviderObjectRef,
   expected: GatewayExpectedEffect,
   dispatchedAt: DateTime.Utc,
+  acknowledgedRefundBaseline: Option.Option<GatewayRefundBaseline> = Option.none(),
 ): GatewayLookupRequest => ({
+  acknowledgedRefundBaseline,
   dispatchedAt: Option.some(dispatchedAt),
   expected,
   target: { _tag: 'PROVIDER_OBJECT', ref },
@@ -527,7 +583,9 @@ export const orderReferenceLookup = (
   operation: SandboxOperation,
   expected: GatewayExpectedEffect,
   dispatchedAt: DateTime.Utc,
+  acknowledgedRefundBaseline: Option.Option<GatewayRefundBaseline> = Option.none(),
 ): GatewayLookupRequest => ({
+  acknowledgedRefundBaseline,
   dispatchedAt: Option.some(dispatchedAt),
   expected,
   target: { _tag: 'ORDER_REFERENCE', orderReference: operation.correlation.orderReference },
@@ -583,6 +641,28 @@ export const pollUntil = <A, E, R>(
     ),
     until: settled,
   });
+
+/** The number of calls `provider.adapter` has made so far; pass it to `providerCallsSince`. */
+export const providerCallMark = (provider: SandboxProvider): Effect.Effect<number> =>
+  Effect.map(Ref.get(provider.calls), (calls) => calls.length);
+
+/** The calls `provider.adapter` made after `mark`, in order. */
+export const providerCallsSince = (
+  provider: SandboxProvider,
+  mark: number,
+): Effect.Effect<readonly SandboxProviderCall[]> => Effect.map(Ref.get(provider.calls), (calls) => calls.slice(mark));
+
+/** The body of the last successful call whose URL satisfies `matches`, decoded by `decode`. */
+export const lastProviderBody = <A>(
+  calls: readonly SandboxProviderCall[],
+  matches: (call: SandboxProviderCall) => boolean,
+  decode: (bodyText: string) => Option.Option<A>,
+): Option.Option<A> =>
+  Arr.findFirst(Arr.reverse(calls), (call) => matches(call) && Option.isSome(call.response)).pipe(
+    Option.flatMap((call) => call.response),
+    Option.filter((response) => response.status === 200),
+    Option.flatMap((response) => decode(response.bodyText)),
+  );
 
 /** The answer last withheld from `lossy`, decoded by the family's minimal id decoder. */
 export const withheldObjectId = <A>(

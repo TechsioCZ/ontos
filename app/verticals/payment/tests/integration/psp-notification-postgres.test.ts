@@ -237,6 +237,7 @@ const preparedCollect = Effect.fn('PspNotificationFixture.collect')(function* pr
     ],
     idempotencyKey: Option.some(idempotencyKey),
     orderReference,
+    refundBaseline: Option.none(),
     replayWindowMs: Option.some(86_400_000),
     requestHash: 'a'.repeat(64),
   });

@@ -110,6 +110,9 @@ const PSP_ROUTINE_CONFLICT_REASONS = [
   'material_mismatch',
   'request_mismatch',
   'request_body_invalid',
+  /** A GoPay REFUND prepared without its pre-dispatch refund baseline, or any other dispatch with one. */
+  'refund_baseline_mismatch',
+  'refund_baseline_invalid',
   'credential_not_active',
   'target_not_acknowledged',
   'provider_target_not_applicable',
@@ -187,6 +190,8 @@ const PspDispatchRecordSchema = Schema.Struct({
   providerAccountRef: GatewayProviderAccountRefSchema,
   providerFamily: PaymentGatewayProviderFamilySchema,
   providerPaymentRef: Schema.optionalKey(PspProviderObjectRefTextSchema),
+  /** GoPay REFUND only: the refund-history row ids read before the send. */
+  providerRefundBaseline: Schema.optionalKey(Schema.Array(boundedText)),
   providerRefundRef: Schema.optionalKey(PspProviderObjectRefTextSchema),
   recordedAt: Schema.DateTimeUtcFromString,
   replayExpiresAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
@@ -430,6 +435,7 @@ const prepareDispatchRoutine = defineScopedRoutine({
     { nullable: true, source: 'input', type: 'jsonb' },
     { nullable: true, source: 'input', type: 'integer' },
     { nullable: true, source: 'input', type: 'text' },
+    { nullable: true, source: 'input', type: 'jsonb' },
     ...origin,
   ] as const,
   resultSchema: resultRow(PspPrepareDispatchResultSchema),
@@ -764,6 +770,8 @@ export interface PspPrepareDispatchInput extends PspDispatchIdentity {
   readonly origin: PspWorkerOrigin;
   /** The acknowledged provider payment the CANCEL or REFUND acts on; none for a COLLECT. */
   readonly providerPaymentRef: Option.Option<string>;
+  /** GoPay REFUND only: refund-history row ids read before the send (`provider_refund_baseline`). */
+  readonly refundBaseline: Option.Option<readonly string[]>;
   /** Exact request bytes and non-secret headers, persisted only when a replay window exists. */
   readonly replayRequest: Option.Option<{
     readonly body: Uint8Array;
@@ -791,6 +799,7 @@ export const pspPrepareDispatch = (invoker: ScopedRoutineInvoker, input: PspPrep
         Option.getOrNull(input.replayRequest.pipe(Option.map(({ headers }) => headers))),
         Option.getOrNull(input.replayRequest.pipe(Option.map(({ windowMs }) => windowMs))),
         Option.getOrNull(input.providerPaymentRef),
+        Option.getOrNull(input.refundBaseline),
         ...originValues(input.origin),
       ]),
     ),

@@ -1,56 +1,64 @@
 /**
- * GoPay refund response bodies, taken from the GoPay REST API documentation:
- * - refund response: https://doc.gopay.com/#payment-refund ("Refund request")
- * - refund history: https://doc.gopay.com/#history-of-refunds
+ * GoPay refund bodies captured from the real REST API v3 sandbox on 2026-11-13 (C17 L4 run 2): adapter requests
+ * recorded by a passive fetch recorder, receipts `gopay-hosted-offline-http.jsonl` (bank transfer, partial refund)
+ * and `gopay-card-full-http.jsonl` (card, full refund). The bodies are verbatim.
  *
- * The documented history example is malformed JSON (two objects with a stray trailing comma and no
- * enclosing array); `gopayDocumentedRefundHistoryBody` is that example repaired into the array the
- * endpoint returns, with the documented day-only dates. `gopayTimestampedRefundHistoryBody` keeps the
- * same entry shape with full instants, to exercise `date_requested >= dispatchedAt` binding.
+ * Two facts differ from the documentation example (https://doc.gopay.com/#history-of-refunds), and both decide
+ * how a refund can be proven:
+ * - every history row carries its own id, not the payment id (row 4493293835 under payment 3311079577);
+ * - `date_requested` and `date_last_change` are days (`"2026-11-13"`), never instants.
+ * The refund response `{id, result}` does carry the payment id and nothing that names the refund.
  */
 
-/** https://doc.gopay.com/#payment-refund, response of the documented refund request. */
-export const gopayRefundResponseBody = (result: string): string => `{
-  "id": 3123456789,
-  "result": "${result}"
-}`;
+/** Bank-transfer payment of the captured partial refund (`amount=4000` of 10000 CZK minor units). */
+export const GOPAY_BANK_REFUND_PAYMENT_ID = '3311079577';
+export const GOPAY_BANK_REFUND_ROW_ID = '4493293835';
 
-/** https://doc.gopay.com/#history-of-refunds, the documented example repaired into a JSON array. */
-export const gopayDocumentedRefundHistoryBody = `[
-  {
-    "id": 3123456789,
-    "state": "FAILED",
-    "amount": 50000,
-    "currency": "CZK",
-    "date_requested": "2024-04-04"
-  },
-  {
-    "id": 3123456789,
-    "state": "SUCCESS",
-    "amount": 20000,
-    "currency": "CZK",
-    "date_requested": "2024-04-05",
-    "date_last_change": "2024-04-05"
-  }
-]`;
+/** `POST /payments/payment/3311079577/refund` with `amount=4000`, HTTP 200. */
+export const gopayBankPartialRefundResponseBody = '{"id":3311079577,"result":"FINISHED"}';
 
-export interface GopayRefundHistoryFixtureEntry {
+/** `GET /payments/payment/3311079577/refunds` after that refund, HTTP 200. */
+export const gopayBankPartialRefundHistoryBody =
+  '[{"id":4493293835,"state":"SUCCESS","amount":4000,"currency":"CZK","date_requested":"2026-11-13","date_last_change":"2026-11-13"}]';
+
+/**
+ * Card payment 3311079655 of the captured full refund (`amount=10000`); its refund response had the same shape as the
+ * bank one (`{"id":3311079655,"result":"FINISHED"}`).
+ */
+export const GOPAY_CARD_REFUND_ROW_ID = '4493293846';
+
+/** `GET /payments/payment/3311079655/refunds` after that refund, HTTP 200. */
+export const gopayCardFullRefundHistoryBody =
+  '[{"id":4493293846,"state":"SUCCESS","amount":10000,"currency":"CZK","date_requested":"2026-11-13","date_last_change":"2026-11-13"}]';
+
+/**
+ * A refund response of the captured shape for another documented `result` (ACCEPTED, FINISHED, FAILED) or another
+ * payment id.
+ */
+export const gopayRefundResponseBody = (paymentId: string, result: string): string =>
+  `{"id":${paymentId},"result":"${result}"}`;
+
+export interface GopayRefundHistoryRow {
   readonly amount: number;
-  readonly dateRequested: string;
+  readonly currency?: string;
+  readonly id: string;
   readonly state: string;
 }
 
-/** The documented entry shape with full instants (`date_requested` with a UTC offset). */
-export const gopayTimestampedRefundHistoryBody = (entries: readonly GopayRefundHistoryFixtureEntry[]): string =>
-  `[${entries
+/**
+ * A refund history of the captured row shape (own row id, date-only dates of the capture day) for scenarios the
+ * sandbox run did not produce: earlier rows, several new rows, a FAILED or REQUESTED row, another amount.
+ */
+export const gopayRefundHistoryBody = (rows: readonly GopayRefundHistoryRow[]): string =>
+  `[${rows
     .map(
-      (entry) => `{
-    "id": 3123456789,
-    "state": "${entry.state}",
-    "amount": ${entry.amount},
-    "currency": "CZK",
-    "date_requested": "${entry.dateRequested}",
-    "date_last_change": "${entry.dateRequested}"
-  }`,
+      (row) =>
+        `{"id":${row.id},"state":"${row.state}","amount":${row.amount},"currency":"${row.currency ?? 'CZK'}","date_requested":"2026-11-13","date_last_change":"2026-11-13"}`,
     )
     .join(',')}]`;
+
+/**
+ * The history before a payment's first refund. Not captured: the sandbox run read no history before its refunds,
+ * so the empty JSON array the endpoint's array shape implies is an assumption the next sandbox run must confirm.
+ */
+export const gopayEmptyRefundHistoryBody = '[]';

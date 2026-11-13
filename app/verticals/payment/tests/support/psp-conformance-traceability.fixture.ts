@@ -306,7 +306,7 @@ const T = {
   gopayNotificationTriggersLookupOnly: u(GOPAY_NOTIFICATION, '#1157 GoPay notification triggers lookup only'),
   gopayRefundRecoveryNative: i(
     PSP_RECOVERY_POSTGRES,
-    '#1156 #1158 GoPay refund recovery confirms the one refund-history entry requested after the dispatch',
+    '#1156 #1158 GoPay refund recovery confirms the one refund-history row new since the pre-dispatch baseline',
   ),
   gopayReplayAndOrderReference: u(GOPAY_ADAPTER, '#1158 GoPay replay and order-reference lookup are UNSUPPORTED'),
   historicalInformationDoesNotAuthorize: i(

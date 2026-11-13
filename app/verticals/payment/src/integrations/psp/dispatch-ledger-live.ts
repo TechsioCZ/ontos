@@ -156,6 +156,7 @@ const dispatchRecordOf = Effect.fn('ProviderDispatchLedger.recordOf')(function* 
     providerFamily: row.providerFamily,
     providerPaymentRef,
     providerRefundRef,
+    refundBaseline: Option.fromUndefinedOr(row.providerRefundBaseline).pipe(Option.map((rowIds) => ({ rowIds }))),
     replayExpiresAt: Option.fromUndefinedOr(row.replayExpiresAt),
     replayStartsAt: Option.fromUndefinedOr(row.replayStartsAt),
     requestBody: Option.fromUndefinedOr(row.requestBody),
@@ -209,6 +210,7 @@ const prepare = Effect.fn('ProviderDispatchLedger.prepare')(function* prepare(in
     idempotencyKeyHash: prepared.idempotencyKey.pipe(Option.map(idempotencyKeyHashOf)),
     origin,
     providerPaymentRef,
+    refundBaseline: prepared.refundBaseline.pipe(Option.map(({ rowIds }) => rowIds)),
     replayRequest: prepared.replayWindowMs.pipe(
       Option.map((windowMs) => ({ body: prepared.body, headers: prepared.headers, windowMs })),
     ),

@@ -121,19 +121,27 @@ export const GOPAY_REFUND_STATES = ['SUCCESS', 'FAILED', 'REQUESTED'] as const;
 export const GopayRefundStateSchema = Schema.Literals(GOPAY_REFUND_STATES);
 
 /**
- * A refund history date as provider text. The documentation types it as a date (`2024-04-04`); an
- * instant with a UTC offset may also appear. It is deliberately not decoded to an instant here: a
- * day-only value has no zone, so gopay-evidence.ts places it relative to the dispatch explicitly.
+ * A refund history date as provider text. The documentation types it as a date (`2024-04-04`) and the real
+ * v3 sandbox returns exactly that (`"2026-11-13"`, 2026-11-13 L4 run). A day has no zone and cannot be placed
+ * relative to a dispatch, so it is never used to attribute a row; it is decoded only to keep the shape exact.
  */
 const GopayRefundDateTextSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64));
 
-/** One entry of `GET /payments/payment/{id}/refunds`. Entries carry no refund identifier. */
+/**
+ * Identifier of one row of a payment's refund history. It is the row's own id, not the payment id: the real
+ * v3 sandbox returned row 4493293835 for payment 3311079577 (the documentation example reuses the payment id).
+ * The history is bound to its payment by the endpoint that returned it, never by this id.
+ */
+export const GopayRefundHistoryRowIdSchema = GopayIntegerIdSchema;
+export type GopayRefundHistoryRowId = typeof GopayRefundHistoryRowIdSchema.Type;
+
+/** One row of `GET /payments/payment/{id}/refunds`. No field names the refund request that created it. */
 export const GopayRefundHistoryEntrySchema = Schema.Struct({
   amount: PaymentAmountMinorSchema,
   currency: GopayCurrencyCodeSchema,
   date_last_change: Schema.optionalKey(GopayRefundDateTextSchema),
   date_requested: GopayRefundDateTextSchema,
-  id: GopayPaymentIdSchema,
+  id: GopayRefundHistoryRowIdSchema,
   state: GopayRefundStateSchema,
 });
 export type GopayRefundHistoryEntry = typeof GopayRefundHistoryEntrySchema.Type;
@@ -162,6 +170,10 @@ export const GopayErrorResponseFromJsonSchema = Schema.fromJsonString(GopayError
 /** The OntOS provider object id of a GoPay payment id. */
 export const gopayProviderObjectId = (paymentId: GopayPaymentId): ProviderObjectId =>
   ProviderObjectIdSchema.make(`${paymentId}`);
+
+/** The OntOS provider object id of a GoPay refund-history row (as recorded in a refund baseline). */
+export const gopayRefundHistoryRowObjectId = (rowId: GopayRefundHistoryRowId): ProviderObjectId =>
+  ProviderObjectIdSchema.make(`${rowId}`);
 
 /** Strictly an unsigned base-10 integer without a leading zero, as GoPay ids are rendered. */
 const GopayIdTextSchema = Schema.String.check(Schema.isPattern(/^[1-9][0-9]{0,15}$/u)).pipe(

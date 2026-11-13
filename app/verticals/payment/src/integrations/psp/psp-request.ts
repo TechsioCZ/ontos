@@ -156,10 +156,25 @@ export const GatewayLookupTargetSchema = Schema.Union([
 ]);
 export type GatewayLookupTarget = typeof GatewayLookupTargetSchema.Type;
 
+/**
+ * The provider refund-history rows a payment had before a refund dispatch was sent (GoPay: its history rows name
+ * no request and carry date-only dates). Read through the dispatch's binding before the send and persisted with
+ * the prepared request, so a later lookup can attribute the one row that is new since then.
+ */
+export const GatewayRefundBaselineSchema = Schema.Struct({
+  rowIds: Schema.Array(ProviderObjectIdSchema).check(Schema.isMaxLength(1000)),
+});
+export type GatewayRefundBaseline = typeof GatewayRefundBaselineSchema.Type;
+
 export const GatewayLookupRequestSchema = Schema.Struct({
   /**
-   * The ledger `preparedAt` of the expected operation's dispatch; a provider entry created before it
-   * cannot be that dispatch (GoPay refund history `date_requested >= dispatchedAt`). None when the
+   * The refund baseline of a REFUND dispatch the provider acknowledged with its own dispatch response
+   * (`acknowledgedRefundBaselineOf`). None for any other dispatch, including one whose response was lost: a row
+   * that is new since the baseline proves that dispatch only when the provider accepted it.
+   */
+  acknowledgedRefundBaseline: Schema.Option(GatewayRefundBaselineSchema),
+  /**
+   * The ledger `preparedAt` of the expected operation's dispatch (Comgate statement dates). None when the
    * operation was never prepared.
    */
   dispatchedAt: Schema.Option(Schema.DateTimeUtc),

@@ -359,6 +359,7 @@ describe('#1156 Comgate refund and cancel', () => {
 
       // A SANDBOX refund never appears in a statement (production only): nothing is called.
       const looked = yield* adapter.lookup(target, {
+        acknowledgedRefundBaseline: Option.none(),
         dispatchedAt: Option.some(DateTime.makeUnsafe('2026-04-01T10:00:00.000Z')),
         expected: refund,
         target: { _tag: 'PROVIDER_OBJECT', ref: transactionRef },
@@ -396,6 +397,7 @@ describe('#1156 Comgate refund and cancel', () => {
       ]);
 
       const findings = yield* adapter.lookup(target, {
+        acknowledgedRefundBaseline: Option.none(),
         dispatchedAt: Option.none(),
         expected: cancel,
         target: { _tag: 'PROVIDER_OBJECT', ref: transactionRef },
@@ -459,6 +461,7 @@ describe('#1158 Comgate lookup', () => {
         read: [respond(404, 'Not Found'), respond(200, fixtureText('status-error.json')), respond(401, '')],
       });
       const byTransaction: GatewayLookupRequest = {
+        acknowledgedRefundBaseline: Option.none(),
         dispatchedAt: Option.none(),
         expected: collect,
         target: { _tag: 'PROVIDER_OBJECT', ref: transactionRef },
@@ -478,6 +481,7 @@ describe('#1158 Comgate lookup', () => {
 
       const byOrderReference = yield* outcome(
         adapter.lookup(target, {
+          acknowledgedRefundBaseline: Option.none(),
           dispatchedAt: Option.none(),
           expected: collect,
           target: { _tag: 'ORDER_REFERENCE', orderReference: collectCorrelation.orderReference },
@@ -559,6 +563,7 @@ const DISPATCHED_AT = DateTime.makeUnsafe('2026-04-09T12:48:30.000Z');
 const NOW_MS = Date.UTC(2026, 3, 11, 8, 0, 0);
 
 const statementLookup = (expected: GatewayExpectedEffect, dispatchedAt = Option.some(DISPATCHED_AT)) => ({
+  acknowledgedRefundBaseline: Option.none(),
   dispatchedAt,
   expected,
   target: { _tag: 'PROVIDER_OBJECT' as const, ref: transactionRef },

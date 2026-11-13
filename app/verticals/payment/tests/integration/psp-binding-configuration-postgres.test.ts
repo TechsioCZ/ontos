@@ -213,6 +213,7 @@ const inFlightCollect = Effect.fn('PspBindingTest.inFlightCollect')(function* in
     operationId: collected.record.operationId,
     origin: yield* workerOrigin,
     providerPaymentRef: Option.none(),
+    refundBaseline: Option.none(),
     replayRequest: Option.none(),
     requestHash: 'a'.repeat(64),
     returnToken: Option.some('AbCdEfGhIjKlMnOpQrStUv'),

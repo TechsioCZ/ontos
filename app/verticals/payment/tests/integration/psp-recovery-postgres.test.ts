@@ -60,11 +60,22 @@ import {
   gopayCreateResponseBody,
   gopayInquiryResponseBody,
 } from '../fixtures/gopay/payment-responses.ts';
-import { gopayRefundResponseBody, gopayTimestampedRefundHistoryBody } from '../fixtures/gopay/refund-responses.ts';
-import { credentialConfig, recordedGatewayAdapters, respond } from '../support/psp-conformance-provider.fixture.ts';
+import {
+  GOPAY_BANK_REFUND_ROW_ID,
+  gopayEmptyRefundHistoryBody,
+  gopayRefundHistoryBody,
+  gopayRefundResponseBody,
+} from '../fixtures/gopay/refund-responses.ts';
+import {
+  credentialConfig,
+  dropAfterWrite,
+  recordedGatewayAdapters,
+  respond,
+} from '../support/psp-conformance-provider.fixture.ts';
 import type { CredentialDocument, RouteScript } from '../support/psp-conformance-provider.fixture.ts';
 import {
   deliverExecution,
+  dispatchRecordOf,
   evidenceOf,
   nativeBindingFor,
   nativeCollectionFor,
@@ -285,6 +296,7 @@ const prepareCollect = (runtime: PaymentTestDatabase, fixture: GatewayFixture) =
       headers: stripe ? [{ name: 'idempotency-key', value: idempotencyKey }] : [],
       idempotencyKey: stripe ? Option.some(idempotencyKey) : Option.none(),
       orderReference,
+      refundBaseline: Option.none(),
       replayWindowMs: stripe ? Option.some(86_400_000) : Option.none(),
       requestHash: 'a'.repeat(64),
     });
@@ -833,18 +845,9 @@ const gopayPartiallyRefunded = (orderReference: string) =>
       state: 'PARTIALLY_REFUNDED',
     }),
   );
-/** A GoPay refund history with one 40 CZK entry in `state`, requested one hour after now (after any dispatch). */
+/** The GoPay refund history (captured row shape) with the one 40 CZK row the refund created, in `state`. */
 const gopayRefundHistory = (state: string) =>
-  DateTime.now.pipe(
-    Effect.map((now) =>
-      respond(
-        200,
-        gopayTimestampedRefundHistoryBody([
-          { amount: 4000, dateRequested: DateTime.formatIso(DateTime.add(now, { hours: 1 })), state },
-        ]),
-      ),
-    ),
-  );
+  respond(200, gopayRefundHistoryBody([{ amount: 4000, id: GOPAY_BANK_REFUND_ROW_ID, state }]));
 const PROVIDER_CREDENTIALS: CredentialDocument = {
   'comgate.recovery': { family: 'COMGATE', secret: 'comgate-recovery-not-a-secret' },
   'gopay.recovery': { clientId: 'gopay-client-recovery', clientSecret: 'gopay-recovery-not-a-secret', family: 'GOPAY' },
@@ -870,10 +873,14 @@ const executeThrough = Effect.fn('PspRecoveryFixture.executeThrough')(function* 
   return provider.sent.map(({ route }) => route);
 });
 
-/** An acknowledged collection of 100 CZK and an acknowledged refund of 40 CZK on it, on native PostgreSQL. */
+/**
+ * An acknowledged collection of 100 CZK and a refund of 40 CZK on it, on native PostgreSQL: acknowledged, or with
+ * `LOST` a GoPay refund whose response was lost after the request was written (OUTCOME_UNKNOWN).
+ */
 const acknowledgedRefund = Effect.fn('PspRecoveryFixture.acknowledgedRefund')(function* acknowledgedRefund(
   harness: NativeHarness,
   family: 'COMGATE' | 'GOPAY',
+  gopayRefundResponse: 'ACCEPTED' | 'LOST',
 ) {
   const binding = yield* nativeBindingFor(harness, family, `${family.toLowerCase()}.recovery`);
   const collect = yield* nativeCollectionFor(harness, binding, 10_000);
@@ -899,18 +906,26 @@ const acknowledgedRefund = Effect.fn('PspRecoveryFixture.acknowledgedRefund')(fu
       : { [`POST ${COMGATE_API}/payment.json`]: [respond(200, comgateFixture('create-success.json'))] },
   );
   const refund = yield* nativeRefundFor(harness, binding, collect, 4000);
-  // GoPay: the accepted refund is followed by one refund-history read that still shows it REQUESTED (pending).
-  const gopayRequested = yield* gopayRefundHistory('REQUESTED');
+  // GoPay: prepare reads the empty history (the pre-dispatch baseline); the accepted refund is followed by one
+  // refund-history read that still shows its new row REQUESTED (pending).
+  const gopayRefundRoutes: RouteScript =
+    gopayRefundResponse === 'LOST'
+      ? {
+          [GOPAY_REFUND]: [dropAfterWrite],
+          [GOPAY_REFUND_HISTORY]: [respond(200, gopayEmptyRefundHistoryBody)],
+          [GOPAY_TOKEN]: [gopayToken],
+        }
+      : {
+          [GOPAY_PAYMENT]: [gopayPartiallyRefunded(orderReference)],
+          [GOPAY_REFUND]: [respond(200, gopayRefundResponseBody(GOPAY_FIXTURE_PAYMENT_ID, 'ACCEPTED'))],
+          [GOPAY_REFUND_HISTORY]: [respond(200, gopayEmptyRefundHistoryBody), gopayRefundHistory('REQUESTED')],
+          [GOPAY_TOKEN]: [gopayToken],
+        };
   yield* executeThrough(
     harness,
     refund,
     family === 'GOPAY'
-      ? {
-          [GOPAY_PAYMENT]: [gopayPartiallyRefunded(orderReference)],
-          [GOPAY_REFUND]: [respond(200, gopayRefundResponseBody('ACCEPTED'))],
-          [GOPAY_REFUND_HISTORY]: [gopayRequested],
-          [GOPAY_TOKEN]: [gopayToken],
-        }
+      ? gopayRefundRoutes
       : { [`POST ${COMGATE_API}/refund.json`]: [respond(200, comgateFixture('result-ok.json'))] },
   );
   return { binding, orderReference, refund };
@@ -967,28 +982,55 @@ const refundEvidenceOf = (harness: NativeHarness, refund: OperationRequested) =>
     ),
   );
 
-it.live('#1156 #1158 GoPay refund recovery confirms the one refund-history entry requested after the dispatch', () =>
+it.live(
+  '#1156 #1158 GoPay refund recovery confirms the one refund-history row new since the pre-dispatch baseline',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* gopayRefundRecovery() {
+        yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
+        const harness = yield* nativeRecoveryHarness;
+        const { orderReference, refund } = yield* acknowledgedRefund(harness, 'GOPAY', 'ACCEPTED');
+        const recovered = yield* recoverRefundThrough(harness, refund, {
+          [GOPAY_PAYMENT]: [gopayPartiallyRefunded(orderReference)],
+          [GOPAY_REFUND_HISTORY]: [gopayRefundHistory('SUCCESS')],
+          [GOPAY_TOKEN]: [gopayToken],
+        }).pipe(Effect.provide(credentialConfig(PROVIDER_CREDENTIALS)));
+        // The payment and its refund history are read through the original binding; the refund is never resent.
+        expect(recovered.sent).toEqual([GOPAY_TOKEN, GOPAY_PAYMENT, GOPAY_REFUND_HISTORY]);
+        expect([recovered.report.providerCall, Option.getOrNull(recovered.report.indeterminate)]).toEqual([
+          'LOOKUP_PROVIDER_OBJECT',
+          null,
+        ]);
+        expect(recovered.submitted).toContain('REFUND_CONFIRMED');
+        expect(yield* refundEvidenceOf(harness, refund)).toEqual([
+          ['REFUND_PENDING', 'ACCEPTED'],
+          ['REFUND_CONFIRMED', 'ACCEPTED'],
+        ]);
+      }),
+    ).pipe(Effect.provide(credentialConfig(PROVIDER_CREDENTIALS))),
+);
+
+it.live('#1158 A GoPay refund whose response was lost is never confirmed from the refund history', () =>
   Effect.scoped(
-    Effect.gen(function* gopayRefundRecovery() {
+    Effect.gen(function* gopayLostRefundRecovery() {
       yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
       const harness = yield* nativeRecoveryHarness;
-      const { orderReference, refund } = yield* acknowledgedRefund(harness, 'GOPAY');
+      const { orderReference, refund } = yield* acknowledgedRefund(harness, 'GOPAY', 'LOST');
+      const lost = yield* dispatchRecordOf(harness, refund.operationId).pipe(Effect.flatMap(Effect.fromOption));
+      // The baseline was committed before the send, but the dispatch was never acknowledged by GoPay.
+      expect([lost.state, lost.providerRefundBaseline]).toEqual(['OUTCOME_UNKNOWN', []]);
+      // A new matching SUCCESS row proves that a refund of this amount exists, not that this request made it.
       const recovered = yield* recoverRefundThrough(harness, refund, {
         [GOPAY_PAYMENT]: [gopayPartiallyRefunded(orderReference)],
-        [GOPAY_REFUND_HISTORY]: [yield* gopayRefundHistory('SUCCESS')],
+        [GOPAY_REFUND_HISTORY]: [gopayRefundHistory('SUCCESS')],
         [GOPAY_TOKEN]: [gopayToken],
       }).pipe(Effect.provide(credentialConfig(PROVIDER_CREDENTIALS)));
-      // The payment and its refund history are read through the original binding; the refund is never resent.
-      expect(recovered.sent).toEqual([GOPAY_TOKEN, GOPAY_PAYMENT, GOPAY_REFUND_HISTORY]);
-      expect([recovered.report.providerCall, Option.getOrNull(recovered.report.indeterminate)]).toEqual([
-        'LOOKUP_PROVIDER_OBJECT',
-        null,
-      ]);
-      expect(recovered.submitted).toContain('REFUND_CONFIRMED');
-      expect(yield* refundEvidenceOf(harness, refund)).toEqual([
-        ['REFUND_PENDING', 'ACCEPTED'],
-        ['REFUND_CONFIRMED', 'ACCEPTED'],
-      ]);
+      expect(recovered.sent).not.toContain(GOPAY_REFUND);
+      expect(Option.getOrNull(recovered.report.indeterminate)).toBe('provider_indeterminate');
+      expect(recovered.submitted).not.toContain('REFUND_CONFIRMED');
+      expect(yield* refundEvidenceOf(harness, refund)).toEqual([]);
+      const after = yield* dispatchRecordOf(harness, refund.operationId).pipe(Effect.flatMap(Effect.fromOption));
+      expect(after.state).toBe('OUTCOME_UNKNOWN');
     }),
   ).pipe(Effect.provide(credentialConfig(PROVIDER_CREDENTIALS))),
 );
@@ -998,7 +1040,7 @@ it.live('#1156 #1158 Comgate SANDBOX refund recovery asks no statement and the r
     Effect.gen(function* comgateSandboxRefundRecovery() {
       yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
       const harness = yield* nativeRecoveryHarness;
-      const { refund } = yield* acknowledgedRefund(harness, 'COMGATE');
+      const { refund } = yield* acknowledgedRefund(harness, 'COMGATE', 'ACCEPTED');
       // Statements exist only for production payments (D-P2): a sandbox lookup makes no provider call.
       const recovered = yield* recoverRefundThrough(harness, refund, {}).pipe(
         Effect.provide(credentialConfig(PROVIDER_CREDENTIALS)),

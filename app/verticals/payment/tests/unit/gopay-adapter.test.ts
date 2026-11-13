@@ -7,7 +7,7 @@ import type { HttpClientRequest } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
-import { gopayProviderObjectId } from '../../src/integrations/gopay/gopay-wire.ts';
+import { gopayProviderObjectId, gopayRefundHistoryRowObjectId } from '../../src/integrations/gopay/gopay-wire.ts';
 import { GopayOAuthTokenLive } from '../../src/integrations/gopay/gopay-oauth-token.ts';
 import { GopayPaymentService, GopayPaymentServiceLive } from '../../src/integrations/gopay/gopay-payment.service.ts';
 import { GopayClientIdSchema, ProviderCredentialStore } from '../../src/integrations/psp/credentials.ts';
@@ -31,11 +31,20 @@ import { gopayExecutionTarget } from '../fixtures/gopay/execution-target.ts';
 import {
   GOPAY_FIXTURE_GOID,
   GOPAY_FIXTURE_PAYMENT_ID,
+  gopayBankTransferInquiryResponseBody,
   gopayCreateResponseBody,
   gopayInquiryResponseBody,
   gopayPaymentNotFoundBody,
 } from '../fixtures/gopay/payment-responses.ts';
-import { gopayRefundResponseBody, gopayTimestampedRefundHistoryBody } from '../fixtures/gopay/refund-responses.ts';
+import {
+  GOPAY_BANK_REFUND_PAYMENT_ID,
+  GOPAY_BANK_REFUND_ROW_ID,
+  gopayBankPartialRefundHistoryBody,
+  gopayBankPartialRefundResponseBody,
+  gopayEmptyRefundHistoryBody,
+  gopayRefundHistoryBody,
+  gopayRefundResponseBody,
+} from '../fixtures/gopay/refund-responses.ts';
 
 /**
  * GoPay adapter against a recorded HttpClient (#1154, #1156, #1158). Each provider route answers from
@@ -47,8 +56,10 @@ const SANDBOX = 'https://gw.sandbox.gopay.com/api';
 const TOKEN_ROUTE = `POST ${SANDBOX}/oauth2/token`;
 const CREATE_ROUTE = `POST ${SANDBOX}/payments/payment`;
 const PAYMENT_ROUTE = `GET ${SANDBOX}/payments/payment/${GOPAY_FIXTURE_PAYMENT_ID}`;
-const REFUND_ROUTE = `POST ${SANDBOX}/payments/payment/${GOPAY_FIXTURE_PAYMENT_ID}/refund`;
-const REFUND_HISTORY_ROUTE = `GET ${SANDBOX}/payments/payment/${GOPAY_FIXTURE_PAYMENT_ID}/refunds`;
+// Refunds use the captured bank-transfer payment, so the real refund bodies apply unchanged.
+const BANK_PAYMENT_ROUTE = `GET ${SANDBOX}/payments/payment/${GOPAY_BANK_REFUND_PAYMENT_ID}`;
+const REFUND_ROUTE = `POST ${SANDBOX}/payments/payment/${GOPAY_BANK_REFUND_PAYMENT_ID}/refund`;
+const REFUND_HISTORY_ROUTE = `GET ${SANDBOX}/payments/payment/${GOPAY_BANK_REFUND_PAYMENT_ID}/refunds`;
 
 const CLIENT_ID = 'gopay-client-fixture';
 const CLIENT_SECRET = 'gopay-secret-fixture-91c2';
@@ -165,17 +176,34 @@ const refundRequest: GatewayRefundRequest = {
   amount: czk(4000),
   correlation: deriveProviderCorrelation(refundOperationId),
   operationId: refundOperationId,
-  providerTarget: { _tag: 'GOPAY_PAYMENT', id: gopayProviderObjectId(Number(GOPAY_FIXTURE_PAYMENT_ID)) },
+  providerTarget: { _tag: 'GOPAY_PAYMENT', id: gopayProviderObjectId(Number(GOPAY_BANK_REFUND_PAYMENT_ID)) },
   refundBasisKind: 'REFUNDABLE_ITEMS',
   targetOperationId: collectOperationId,
 };
 const refundExpected: GatewayExpectedEffect = { _tag: 'REFUND', amount: czk(4000), operationId: refundOperationId };
 
-const lookupRequest = (expected: GatewayExpectedEffect): GatewayLookupRequest => ({
+const fixturePaymentRef: GatewayRefundRequest['providerTarget'] = {
+  _tag: 'GOPAY_PAYMENT',
+  id: gopayProviderObjectId(Number(GOPAY_FIXTURE_PAYMENT_ID)),
+};
+
+const lookupRequest = (
+  expected: GatewayExpectedEffect,
+  acknowledgedRefundBaseline: GatewayLookupRequest['acknowledgedRefundBaseline'] = Option.none(),
+  ref: GatewayRefundRequest['providerTarget'] = fixturePaymentRef,
+): GatewayLookupRequest => ({
+  acknowledgedRefundBaseline,
   dispatchedAt: Option.some(DateTime.makeUnsafe('2026-11-12T10:00:00.000Z')),
   expected,
-  target: { _tag: 'PROVIDER_OBJECT', ref: refundRequest.providerTarget },
+  target: { _tag: 'PROVIDER_OBJECT', ref },
 });
+
+const bankInquiryBody = (state: string) =>
+  gopayBankTransferInquiryResponseBody({
+    goid: GOPAY_FIXTURE_GOID,
+    orderNumber: collectCorrelation.orderReference,
+    state,
+  });
 
 const inquiryBody = (state: string, goid: string = GOPAY_FIXTURE_GOID) =>
   gopayInquiryResponseBody({ amount: 10_000, goid, orderNumber: collectCorrelation.orderReference, state });
@@ -416,15 +444,19 @@ describe('#1158 GoPay mutations are sent once', () => {
 });
 
 describe('#1156 GoPay refund and unsupported capabilities', () => {
-  it.effect('#1156 GoPay refund sends the form amount; FAILED is NOT_EFFECTED', () =>
+  it.effect('#1156 #1158 GoPay refund reads its baseline first, sends the form amount; FAILED is NOT_EFFECTED', () =>
     Effect.gen(function* refundFailed() {
       const gopay = yield* recordedGopay({
-        [REFUND_ROUTE]: [respond(200, gopayRefundResponseBody('FAILED'))],
+        [REFUND_HISTORY_ROUTE]: [respond(200, gopayEmptyRefundHistoryBody)],
+        [REFUND_ROUTE]: [respond(200, gopayRefundResponseBody(GOPAY_BANK_REFUND_PAYMENT_ID, 'FAILED'))],
         [TOKEN_ROUTE]: [tokenResponse()],
       });
       const prepared = yield* gopay.adapter.prepareRefund(target, refundRequest);
       expect(new TextDecoder().decode(prepared.body)).toBe('amount=4000');
-      expect(prepared.endpointRef).toBe(`gopay:POST:/payments/payment/${GOPAY_FIXTURE_PAYMENT_ID}/refund`);
+      expect(prepared.endpointRef).toBe(`gopay:POST:/payments/payment/${GOPAY_BANK_REFUND_PAYMENT_ID}/refund`);
+      // The pre-dispatch history is part of the prepared request, so the ledger commits it before the send.
+      expect(prepared.refundBaseline).toEqual(Option.some({ rowIds: [] }));
+      expect(gopay.sent.map(({ route }) => route)).toEqual([TOKEN_ROUTE, REFUND_HISTORY_ROUTE]);
 
       const response = yield* gopay.adapter.send(target, prepared, refundExpected);
       expect(dispatchOutcomeOf(response)).toBe('REJECTED_BEFORE_EFFECT');
@@ -435,47 +467,87 @@ describe('#1156 GoPay refund and unsupported capabilities', () => {
       const [refund] = gopay.callsTo(REFUND_ROUTE);
       expect(refund?.body).toBe('amount=4000');
       expect(refund?.contentType).toBe('application/x-www-form-urlencoded');
-      expect(gopay.callsTo(REFUND_HISTORY_ROUTE)).toHaveLength(0);
+      expect(gopay.callsTo(REFUND_HISTORY_ROUTE)).toHaveLength(1);
+    }),
+  );
+
+  it.effect('#1158 A GoPay refund whose baseline cannot be read is UNAVAILABLE and never sent', () =>
+    Effect.gen(function* baselineUnavailable() {
+      const gopay = yield* recordedGopay({
+        [REFUND_HISTORY_ROUTE]: [respond(404, gopayPaymentNotFoundBody), respond(200, '{"not":"a history"}')],
+        [TOKEN_ROUTE]: [tokenResponse()],
+      });
+      for (const _attempt of [1, 2]) {
+        const error = yield* Effect.flip(gopay.adapter.prepareRefund(target, refundRequest));
+        expect(Schema.is(GatewayProviderUnavailable)(error)).toBe(true);
+        expect(error).toMatchObject({ reason: 'gopay_refund_baseline_unavailable' });
+      }
+      expect(gopay.callsTo(REFUND_ROUTE)).toHaveLength(0);
     }),
   );
 
   it.effect('#1156 An accepted GoPay refund is confirmed only by one matching refund-history entry', () =>
     Effect.gen(function* refundConfirmed() {
+      // The captured bank-transfer sequence: empty history, FINISHED, PARTIALLY_REFUNDED, one SUCCESS row.
       const gopay = yield* recordedGopay({
-        [PAYMENT_ROUTE]: [
-          respond(200, inquiryBody('PARTIALLY_REFUNDED')),
-          respond(200, inquiryBody('PARTIALLY_REFUNDED')),
+        [BANK_PAYMENT_ROUTE]: [
+          respond(200, bankInquiryBody('PARTIALLY_REFUNDED')),
+          respond(200, bankInquiryBody('PARTIALLY_REFUNDED')),
+          respond(200, bankInquiryBody('PARTIALLY_REFUNDED')),
         ],
         [REFUND_HISTORY_ROUTE]: [
-          respond(
-            200,
-            gopayTimestampedRefundHistoryBody([
-              { amount: 4000, dateRequested: '2026-11-12T11:00:00.000+0100', state: 'SUCCESS' },
-            ]),
-          ),
-          respond(
-            200,
-            gopayTimestampedRefundHistoryBody([
-              { amount: 4000, dateRequested: '2026-11-12T11:00:00.000+0100', state: 'REQUESTED' },
-            ]),
-          ),
+          respond(200, gopayEmptyRefundHistoryBody),
+          respond(200, gopayBankPartialRefundHistoryBody),
+          respond(200, gopayBankPartialRefundHistoryBody),
+          respond(200, gopayBankPartialRefundHistoryBody),
         ],
-        [REFUND_ROUTE]: [
-          respond(200, gopayRefundResponseBody('FINISHED')),
-          respond(200, gopayRefundResponseBody('ACCEPTED')),
-        ],
+        [REFUND_ROUTE]: [respond(200, gopayBankPartialRefundResponseBody)],
         [TOKEN_ROUTE]: [tokenResponse()],
       });
-      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-11-12T09:59:00.000Z')));
       const prepared = yield* gopay.adapter.prepareRefund(target, refundRequest);
-
       const confirmed = findingOf(yield* gopay.adapter.send(target, prepared, refundExpected));
       expect(confirmed).toMatchObject({
-        evidence: Option.some({ factFamily: 'REFUND_EXECUTION', factKind: 'REFUND_CONFIRMED' }),
+        evidence: Option.some({
+          factFamily: 'REFUND_EXECUTION',
+          factKind: 'REFUND_CONFIRMED',
+          sourceOccurrenceId: `gopay:dispatch_response:${GOPAY_BANK_REFUND_ROW_ID}:${refundOperationId}:REFUND_CONFIRMED:4000`,
+        }),
         finding: 'EFFECT_CONFIRMED',
         target: { operationId: refundOperationId, operationKind: 'REFUND' },
       });
+      expect(gopay.callsTo(REFUND_ROUTE)).toHaveLength(1);
 
+      // A later lookup confirms through the persisted baseline of the acknowledged dispatch, and only through it.
+      const lookedUp = yield* gopay.adapter.lookup(
+        target,
+        lookupRequest(refundExpected, prepared.refundBaseline, refundRequest.providerTarget),
+      );
+      expect(lookedUp).toMatchObject([{ finding: 'EFFECT_CONFIRMED' }]);
+      const unacknowledged = yield* gopay.adapter.lookup(
+        target,
+        lookupRequest(refundExpected, Option.none(), refundRequest.providerTarget),
+      );
+      expect(unacknowledged).toMatchObject([{ evidence: Option.none(), finding: 'INDETERMINATE' }]);
+      expect(gopay.callsTo(REFUND_ROUTE)).toHaveLength(1);
+    }),
+  );
+
+  it.effect('#1156 A refund whose new history row is still REQUESTED stays pending', () =>
+    Effect.gen(function* refundPending() {
+      const earlier = { amount: 4000, id: GOPAY_BANK_REFUND_ROW_ID, state: 'SUCCESS' };
+      const gopay = yield* recordedGopay({
+        [BANK_PAYMENT_ROUTE]: [respond(200, bankInquiryBody('PARTIALLY_REFUNDED'))],
+        [REFUND_HISTORY_ROUTE]: [
+          respond(200, gopayRefundHistoryBody([earlier])),
+          respond(200, gopayRefundHistoryBody([earlier, { amount: 4000, id: '4493293900', state: 'REQUESTED' }])),
+        ],
+        [REFUND_ROUTE]: [respond(200, gopayRefundResponseBody(GOPAY_BANK_REFUND_PAYMENT_ID, 'ACCEPTED'))],
+        [TOKEN_ROUTE]: [tokenResponse()],
+      });
+      const prepared = yield* gopay.adapter.prepareRefund(target, refundRequest);
+      expect(prepared.refundBaseline).toEqual(
+        Option.some({ rowIds: [gopayRefundHistoryRowObjectId(Number(GOPAY_BANK_REFUND_ROW_ID))] }),
+      );
       const pending = findingOf(yield* gopay.adapter.send(target, prepared, refundExpected));
       expect(pending).toMatchObject({
         evidence: Option.some({ factKind: 'REFUND_PENDING' }),
@@ -527,6 +599,7 @@ describe('#1156 GoPay refund and unsupported capabilities', () => {
 
       const byOrder = yield* Effect.flip(
         gopay.adapter.lookup(target, {
+          acknowledgedRefundBaseline: Option.none(),
           dispatchedAt: Option.none(),
           expected: collectExpected,
           target: { _tag: 'ORDER_REFERENCE', orderReference: collectCorrelation.orderReference },
@@ -540,7 +613,7 @@ describe('#1156 GoPay refund and unsupported capabilities', () => {
 
   it.effect('#1157 GoPay states the order number of a notified payment only for the binding GoID', () =>
     Effect.gen(function* readOrderReference() {
-      const ref = refundRequest.providerTarget;
+      const ref = fixturePaymentRef;
       const own = yield* recordedGopay({
         [PAYMENT_ROUTE]: [respond(200, inquiryBody('PAID'))],
         [TOKEN_ROUTE]: [tokenResponse()],

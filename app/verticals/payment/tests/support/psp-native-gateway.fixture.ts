@@ -484,6 +484,7 @@ export const reprepareDispatch = Effect.fn('PspNativeGateway.reprepare')(functio
         workerKey: record.workerKey,
       },
       providerPaymentRef: Option.fromUndefinedOr(record.providerPaymentRef),
+      refundBaseline: Option.fromUndefinedOr(record.providerRefundBaseline),
       replayRequest,
       requestHash,
       returnToken: Option.fromUndefinedOr(record.returnToken),

@@ -31,8 +31,8 @@ import type { ProviderNotSentReason } from '../../../shared/domain/psp-vocabular
 import { deriveProviderCorrelation, GatewayOrderReferenceSchema } from './psp-correlation.ts';
 import type { GatewayIdempotencyKey, GatewayOrderReference } from './psp-correlation.ts';
 import type { GatewayCorrelationConflictError, GatewayLedgerUnavailableError } from './psp-errors.ts';
-import { ProviderObjectRefSchema } from './psp-request.ts';
-import type { GatewayExecutionTarget, ProviderObjectRef } from './psp-request.ts';
+import { GatewayRefundBaselineSchema, ProviderObjectRefSchema } from './psp-request.ts';
+import type { GatewayExecutionTarget, GatewayRefundBaseline, ProviderObjectRef } from './psp-request.ts';
 import { ProviderReplayRequestSchema, ProviderRequestHeaderSchema } from './psp-result.ts';
 import type { PreparedProviderRequest, ProviderReplayRequest } from './psp-result.ts';
 
@@ -76,6 +76,8 @@ export const ProviderDispatchRecordSchema = Schema.Struct({
   /** Collection object: GoPay payment, Stripe session or payment intent, Comgate transaction. */
   providerPaymentRef: Schema.Option(ProviderObjectRefSchema),
   providerRefundRef: Schema.Option(ProviderObjectRefSchema),
+  /** GoPay REFUND only: the refund-history rows read before the send, committed with the prepared request. */
+  refundBaseline: Schema.Option(GatewayRefundBaselineSchema),
   replayExpiresAt: Schema.Option(Schema.DateTimeUtc),
   replayStartsAt: Schema.Option(Schema.DateTimeUtc),
   /** Exact persisted request bytes and non-secret headers; present only with a replay window (Stripe). */
@@ -271,6 +273,7 @@ export const replayRequestOf = (record: ProviderDispatchRecord): Option.Option<P
           headers,
           idempotencyKey: Option.some(idempotencyKey),
           orderReference: record.orderReference,
+          refundBaseline: record.refundBaseline,
           replayWindowMs: Option.some(DateTime.toEpochMillis(expiresAt) - DateTime.toEpochMillis(startsAt)),
           requestHash,
         },
@@ -279,3 +282,12 @@ export const replayRequestOf = (record: ProviderDispatchRecord): Option.Option<P
     ),
   );
 };
+
+/**
+ * The refund baseline a lookup may attribute against: only that of a REFUND row the provider acknowledged. For
+ * GoPay a REFUND row reaches ACKNOWLEDGED only from its own dispatch response: GoPay never replays, its order
+ * reference names the collection (never a refund row), and recovery correlates a lost refund only on a finding
+ * that already needs this baseline. A lost response (OUTCOME_UNKNOWN) therefore never confirms by the history.
+ */
+export const acknowledgedRefundBaselineOf = (record: ProviderDispatchRecord): Option.Option<GatewayRefundBaseline> =>
+  record.operationKind === 'REFUND' && record.state === 'ACKNOWLEDGED' ? record.refundBaseline : Option.none();

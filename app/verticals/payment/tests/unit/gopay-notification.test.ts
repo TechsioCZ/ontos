@@ -118,7 +118,9 @@ describe('#1157 GoPay notification', () => {
         observedAt: trigger.verifiedAt,
         origin: 'NOTIFICATION_LOOKUP',
         paymentRef: gopayProviderObjectId(foreignPayment.id),
+        refundBaseline: Option.none(),
         request: {
+          acknowledgedRefundBaseline: Option.none(),
           dispatchedAt: Option.none(),
           expected: { _tag: 'COLLECT', amount: { amountMinor: 10_000, currency: 'CZK' }, operationId },
           target: {

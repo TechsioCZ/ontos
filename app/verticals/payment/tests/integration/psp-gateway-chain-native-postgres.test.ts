@@ -28,7 +28,7 @@ import {
   gopayCreateResponseBody,
   gopayInquiryResponseBody,
 } from '../fixtures/gopay/payment-responses.ts';
-import { gopayRefundResponseBody, gopayTimestampedRefundHistoryBody } from '../fixtures/gopay/refund-responses.ts';
+import { gopayRefundHistoryBody, gopayRefundResponseBody } from '../fixtures/gopay/refund-responses.ts';
 import {
   STRIPE_FIXTURE_PAYMENT_INTENT_ID,
   STRIPE_FIXTURE_SESSION_ID,
@@ -88,6 +88,8 @@ const GOPAY_CREATE = `POST ${GOPAY_API}/payments/payment`;
 const GOPAY_PAYMENT = `GET ${GOPAY_API}/payments/payment/${GOPAY_FIXTURE_PAYMENT_ID}`;
 const GOPAY_REFUND = `POST ${GOPAY_API}/payments/payment/${GOPAY_FIXTURE_PAYMENT_ID}/refund`;
 const GOPAY_REFUND_HISTORY = `GET ${GOPAY_API}/payments/payment/${GOPAY_FIXTURE_PAYMENT_ID}/refunds`;
+/** A refund of the payment made outside OntOS before the refund under test (captured v3 row shape). */
+const GOPAY_EARLIER_REFUND_ROW = { amount: 1000, id: '4493293835', state: 'SUCCESS' } as const;
 const GOPAY_AMOUNT = 10_000;
 const COMGATE_SECRET_REF = 'comgate.native.conformance';
 const COMGATE_SECRET = 'comgate-shop-secret-c17-native';
@@ -652,7 +654,9 @@ it.live(
         const credentials = { [COMGATE_SECRET_REF]: comgateEntry, [GOPAY_SECRET_REF]: gopayEntry };
         const harness = yield* nativeHarness;
 
-        // GoPay: refund of 40 CZK on the acknowledged payment, then the refund-history read.
+        // GoPay: the payment's refund history is read first (one earlier refund made outside OntOS) and committed with
+        // the prepared request, then the refund of 40 CZK is sent once and the history read again: the one new row
+        // (captured v3 row shape) is still REQUESTED, so the refund stays pending.
         const gopayBinding = yield* nativeBindingFor(harness, 'GOPAY', GOPAY_SECRET_REF);
         const gopayCollect = yield* nativeCollectionFor(harness, gopayBinding, GOPAY_AMOUNT);
         const gopayOrder = deriveProviderCorrelation(gopayCollect.operationId).orderReference;
@@ -678,12 +682,14 @@ it.live(
                 }),
               ),
             ],
-            [GOPAY_REFUND]: [respond(200, gopayRefundResponseBody('ACCEPTED'))],
+            [GOPAY_REFUND]: [respond(200, gopayRefundResponseBody(GOPAY_FIXTURE_PAYMENT_ID, 'ACCEPTED'))],
             [GOPAY_REFUND_HISTORY]: [
+              respond(200, gopayRefundHistoryBody([GOPAY_EARLIER_REFUND_ROW])),
               respond(
                 200,
-                gopayTimestampedRefundHistoryBody([
-                  { amount: 4000, dateRequested: '2026-11-12T11:00:00.000+0100', state: 'REQUESTED' },
+                gopayRefundHistoryBody([
+                  GOPAY_EARLIER_REFUND_ROW,
+                  { amount: 4000, id: '4493293900', state: 'REQUESTED' },
                 ]),
               ),
             ],
@@ -693,6 +699,19 @@ it.live(
         );
         expect(gopayStep.callsTo(GOPAY_REFUND)).toHaveLength(1);
         expect(gopayStep.callsTo(GOPAY_REFUND)[0]?.body).toContain('amount=4000');
+        expect(gopayStep.sent.map(({ route }) => route)).toEqual([
+          GOPAY_TOKEN,
+          GOPAY_REFUND_HISTORY,
+          GOPAY_REFUND,
+          GOPAY_PAYMENT,
+          GOPAY_REFUND_HISTORY,
+        ]);
+        // The baseline is a column of the dispatch row the prepare committed before the send (#1158).
+        expect(
+          (yield* dispatchRecordOf(harness, gopayRefund.operationId)).pipe(
+            Option.map(({ providerRefundBaseline }) => providerRefundBaseline),
+          ),
+        ).toEqual(Option.some([GOPAY_EARLIER_REFUND_ROW.id]));
         expect((yield* dispatchStateOf(harness, gopayRefund.operationId)).pipe(Option.map(([state]) => state))).toEqual(
           Option.some('ACKNOWLEDGED'),
         );

@@ -222,6 +222,7 @@ const prepareInput = (fixture: GatewayFixture, origin: PspWorkerOrigin): PspPrep
   operationId: fixture.collectOperationId,
   origin,
   providerPaymentRef: Option.none(),
+  refundBaseline: Option.none(),
   replayRequest: Option.some({
     body: new TextEncoder().encode('mode=payment&amount=100000'),
     headers: REQUEST_HEADERS,
@@ -1199,7 +1200,10 @@ it.live('#1156 GoPay refunds of one provider payment are serialized under the co
         return { materialHash: created.record.materialHash, operationId: created.record.operationId };
       });
       const [first, second] = yield* Effect.all([refund('A'), refund('B')], { concurrency: 1 });
-      const prepareRefund = (operation: { readonly materialHash: string; readonly operationId: string }) =>
+      const refundRequest = (
+        operation: { readonly materialHash: string; readonly operationId: string },
+        refundBaseline: Option.Option<readonly string[]>,
+      ) =>
         withRoutines(runtime, scope, (invoker) =>
           pspPrepareDispatch(invoker, {
             ...gopayRequest,
@@ -1207,14 +1211,31 @@ it.live('#1156 GoPay refunds of one provider payment are serialized under the co
             materialHash: operation.materialHash,
             operationId: operation.operationId,
             providerPaymentRef: Option.some(providerPaymentRef),
+            refundBaseline,
           }),
         );
+      const prepareRefund = (operation: { readonly materialHash: string; readonly operationId: string }) =>
+        refundRequest(operation, Option.some(['4493293835']));
+
+      // #1156: a GoPay refund is never prepared without its pre-dispatch refund-history baseline, nor with an
+      // invalid one; nothing is written.
+      const missing = yield* expectTagged(yield* refundRequest(first, Option.none()), 'CONFLICT');
+      expect(missing.reason).toBe('refund_baseline_mismatch');
+      const invalid = yield* expectTagged(
+        yield* refundRequest(first, Option.some(Array.from({ length: 1001 }, (_, index) => `${index + 1}`))),
+        'CONFLICT',
+      );
+      expect(invalid.reason).toBe('refund_baseline_invalid');
+      expect(yield* dispatchCount(runtimeClient, scope, first.operationId)).toBe(0);
 
       // Truly concurrent: exactly one refund is prepared, the other is deferred behind it.
       const raced = yield* Effect.all([prepareRefund(first), prepareRefund(second)], { concurrency: 2 });
       const preparedIndex = raced.findIndex((result) => Predicate.isTagged(result, 'PREPARED'));
       expect(preparedIndex).toBeGreaterThanOrEqual(0);
       const [winner, loser] = preparedIndex === 0 ? [first, second] : [second, first];
+      // The baseline is committed with the prepared request, before anything is sent.
+      const preparedRecord = yield* expectTagged(raced[preparedIndex] ?? raced[0], 'PREPARED');
+      expect(preparedRecord.record.providerRefundBaseline).toEqual(['4493293835']);
       const deferred = yield* expectTagged(raced[1 - preparedIndex] ?? raced[0], 'DEFERRED');
       expect(deferred.unresolvedRefundOperationIds).toEqual([winner.operationId]);
       expect(yield* dispatchCount(runtimeClient, scope, loser.operationId)).toBe(0);
