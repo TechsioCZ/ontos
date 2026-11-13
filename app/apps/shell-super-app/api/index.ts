@@ -3642,18 +3642,20 @@ const peopleAdministrationGroupLive = HttpApiBuilder.group(
       .handle('listCompanyPeople', ({ payload, request }) =>
         Effect.gen(function* listCompanyPeopleHandler() {
           const principal = yield* principalFor(request, 'company');
-          const result = yield* listPeople(principal, payload, correlationFromRequest(request)).pipe(
-            Effect.catch(peopleAdministrationFailure),
-          );
+          const result = yield* listPeople(
+            { principal, transport: { correlationId: correlationFromRequest(request) } },
+            payload,
+          ).pipe(Effect.catch(peopleAdministrationFailure));
           return yield* decodeResponse(PeopleListResponseSchema, result, shellInternalProblem);
         }).pipe(connectionsAdminDefect(request)),
       )
       .handle('listTenantPeople', ({ payload, request }) =>
         Effect.gen(function* listTenantPeopleHandler() {
           const principal = yield* principalFor(request, 'tenant');
-          const result = yield* listPeople(principal, payload, correlationFromRequest(request)).pipe(
-            Effect.catch(peopleAdministrationFailure),
-          );
+          const result = yield* listPeople(
+            { principal, transport: { correlationId: correlationFromRequest(request) } },
+            payload,
+          ).pipe(Effect.catch(peopleAdministrationFailure));
           return yield* decodeResponse(PeopleListResponseSchema, result, shellInternalProblem);
         }).pipe(connectionsAdminDefect(request)),
       )

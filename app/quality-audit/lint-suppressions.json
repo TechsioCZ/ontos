@@ -36,7 +36,7 @@
     "effect-native/no-string-timestamp-schema": 5,
     "effect-native/no-structural-document-walking": 2,
     "effect-native/no-sync-schema-codec": 3,
-    "effect-native/no-threaded-correlation-parameter": 14,
+    "effect-native/no-threaded-correlation-parameter": 13,
     "effect-native/no-throw-in-effect-callback": 1,
     "effect-native/no-unbranded-identifier-schema": 18,
     "effect-native/no-unmanaged-mutable-state": 2,
