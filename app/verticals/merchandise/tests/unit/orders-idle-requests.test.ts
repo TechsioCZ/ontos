@@ -139,6 +139,12 @@ const mount = (component: () => ReturnType<typeof createElement>) =>
     });
   });
 
+const closePage = () =>
+  Effect.sync(() => {
+    unmount?.();
+    unmount = null;
+  });
+
 /** Lets fake time pass in one-second steps, so every timer and every render it causes runs in between. */
 const idle = (seconds: number): Effect.Effect<void> =>
   seconds <= 0
@@ -189,6 +195,24 @@ it.effect('an idle orders list reloads its page every 20 s and warms its rows on
     // A minute: the page and the counts on each expiry of the freshness window, the unchanged rows not again.
     expect(count('list')).toBeGreaterThanOrEqual(2);
     expect(count('list')).toBeLessThanOrEqual(3);
+    expect(count('detail')).toBe(0);
+  }),
+);
+
+it.effect('an opened orders list warms its rows only once the browser is idle', () =>
+  Effect.gen(function* warmWhenIdle() {
+    yield* mount(OrdersList);
+    expect([count('list'), count('detail')]).toEqual([1, 0]);
+    yield* idle(1);
+    expect(count('detail')).toBe(WARMED * DETAIL_READS);
+  }),
+);
+
+it.effect('an orders list unmounted before the browser is idle sends no detail read', () =>
+  Effect.gen(function* leaveBeforeIdle() {
+    yield* mount(OrdersList);
+    yield* closePage();
+    yield* idle(5);
     expect(count('detail')).toBe(0);
   }),
 );
