@@ -9,6 +9,9 @@ import {
   AgentProposalCommandResultSchema,
 } from './agent-proposal-command-contract.ts';
 
+/** The agent's own proposal queue: the one legacy read an agent on its live connection is admitted to. */
+export const agentProposalQueueReadKey = 'core.identity.agent-proposal-queue';
+
 const Uuid = Schema.String.check(Schema.isUUID());
 const PrincipalId = Uuid.pipe(Schema.brand('PrincipalId'));
 const ModuleKey = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(Schema.brand('ModuleKey'));

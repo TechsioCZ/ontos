@@ -13,6 +13,8 @@ import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-reg
 import type { VerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
+import { agentProposalQueueReadKey } from '../../src/auth/agent-proposal-queue-contract.ts';
+import { LegalEntityIdSchema } from '../../src/access/ids.ts';
 import {
   freshOutboxWorkerCompositionSnapshot,
   makeOutboxWorkerComposition,
@@ -1928,7 +1930,10 @@ const principalKindsOf = (kind: AccessPrincipalKind | undefined): AccessPrincipa
   readKind: () => Effect.succeed(Option.fromUndefinedOr(kind)),
 });
 
-const selectedCompanyRead = (target: ResolvedReadPermissionTarget) => {
+const selectedCompanyRead = (
+  target: ResolvedReadPermissionTarget,
+  readKey = 'core.identity.api.selected-company-test',
+) => {
   const { accessDeclaration, ...unprotectedRegistration } = registration().descriptor;
   expect(accessDeclaration?.key).toBe('core.shell.fixture.read');
   return defineRead(
@@ -1944,7 +1949,7 @@ const selectedCompanyRead = (target: ResolvedReadPermissionTarget) => {
       legalEntityScope: 'required',
       owningModuleKey: 'core.identity',
       permissionTarget: 'legal_entity',
-      readKey: 'core.identity.api.selected-company-test',
+      readKey,
     },
     () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
     () => Effect.succeed({}),
@@ -2019,6 +2024,66 @@ it.effect(
       expect(deniedByLegacyRelation(run.outcome)).toBe(true);
       expect(run.asked).toEqual([selectedCompanyId]);
     }
+  }),
+);
+
+/** The agent on its credential-bound connection in its own company, as the MCP transport scopes it. */
+const agentConnectionScope = {
+  ...selectedCompanyScope,
+  authContextRef: 'oauth-grant:00000000-0000-4000-8000-000000000042',
+  authMethod: 'oauth_connection' as const,
+  connection: {
+    agentConnection: { connectionId: '00000000-0000-4000-8000-000000000041', revision: 1 },
+    clientId: 'https://client.example/oauth/metadata.json',
+    clientName: 'Client',
+    grantId: '00000000-0000-4000-8000-000000000042',
+    modules: 'all' as const,
+    writePolicy: 'direct' as const,
+  },
+  delegatedByPrincipalId: '00000000-0000-4000-8000-000000000043',
+};
+
+/** The v2 gate as the agent finds it: only the company list matters, every other question would be a bug here. */
+const agentSelectionGate = (selectable: readonly string[]): BoundAccessGate => ({
+  decide: () => Effect.die('a legacy read never asks the gate for a decision'),
+  list: () => Effect.die('a legacy read never asks the gate for a listing'),
+  selectableLegalEntities: () => Effect.succeed(selectable.map((id) => LegalEntityIdSchema.make(id))),
+});
+
+const runAgentLegacyRead = Effect.fn(function* runAgentLegacyRead(readKey: string, selectable: readonly string[]) {
+  const asked: string[] = [];
+  const harness = yield* makeHarness({
+    accessDecision: agentSelectionGate(selectable),
+    onLegalEntityTarget: (id) => asked.push(id),
+    permissionDecision: 'denied',
+    principalKinds: principalKindsOf('agent'),
+    resolvedScope: agentConnectionScope,
+  });
+  const outcome = yield* Effect.exit(
+    harness.runtime.runRead({
+      input: {},
+      principal: agentConnectionScope,
+      registration: selectedCompanyRead({ kind: 'legal_entity' }, readKey),
+      transport: { correlationId: scope.correlationId },
+    }),
+  );
+  return { asked, outcome };
+});
+
+it.effect(
+  'admits an agent on its live connection only to its own proposal queue, never to another legacy read',
+  Effect.fn(function* agentProposalQueueOnly() {
+    const queue = yield* runAgentLegacyRead(agentProposalQueueReadKey, [selectedCompanyId]);
+    expect(queue.outcome).toMatchObject({ _tag: 'Success' });
+    expect(queue.asked).toEqual([]);
+    // The actors and profiles reads stay on the retired relation, which an agent on v2 never holds.
+    for (const readKey of ['core.identity.agent-activity-actors', 'core.identity.agent-profiles']) {
+      const refused = yield* runAgentLegacyRead(readKey, [selectedCompanyId]);
+      expect(deniedByLegacyRelation(refused.outcome)).toBe(true);
+    }
+    // The gate re-reads the connection row: once it is revoked the agent selects nothing and reads nothing.
+    const revoked = yield* runAgentLegacyRead(agentProposalQueueReadKey, []);
+    expect(deniedByLegacyRelation(revoked.outcome)).toBe(true);
   }),
 );
 

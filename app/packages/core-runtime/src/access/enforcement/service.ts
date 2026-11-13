@@ -31,7 +31,7 @@ import {
 import type { AccessScopeId, LegalEntityId, PrincipalId } from '../ids.ts';
 import type { ActorContext, DecisionReason, Holder } from '../model.ts';
 import { AccessPrincipalKindSource, isWorkloadPrincipalKind, resolveGateActor } from './actor.ts';
-import type { GateActor } from './actor.ts';
+import type { GateActor, GateAgentConnection } from './actor.ts';
 import { capabilityPolicyOf, gateScopeKeyOf, gateScopeOf } from './capability.ts';
 import type { GateScope } from './capability.ts';
 import type {
@@ -1174,6 +1174,30 @@ export const makeAccessDecisionService = (
     },
   );
 
+  /** The connection row as it stands now: active, of this agent and operator, unexpired, at the carried consent. */
+  const agentConnectionIsLive = Effect.fn('AccessDecisionGate.agentConnectionIsLive')(
+    function* agentConnectionIsLiveEffect(input: SelectableLegalEntitiesInput, connection: GateAgentConnection) {
+      const read = yield* Effect.option(
+        ports.authorityFor(input.scope).readConnection({
+          connectionId: connection.connectionId,
+          tenantId: TenantIdSchema.make(input.scope.tenantId),
+        }),
+      );
+      if (Option.isNone(read)) {
+        return yield* accessDecisionUnavailable('The agent connection could not be read');
+      }
+      return Option.exists(
+        read.value,
+        (row) =>
+          row.status === 'active' &&
+          row.agentId === input.scope.principalId &&
+          row.principalId === connection.operatorPrincipalId &&
+          row.consentRevision === connection.consentRevision &&
+          row.deadline > input.now,
+      );
+    },
+  );
+
   const selectableLegalEntities = Effect.fn('AccessDecisionGate.selectableLegalEntities')(
     function* selectableLegalEntitiesGate(input: SelectableLegalEntitiesInput) {
       const calledBy = readVerifiedGatewayActor(input.scope);
@@ -1202,6 +1226,10 @@ export const makeAccessDecisionService = (
       }
       if (candidates.value.length === 0 || actorResolution.workload === true) {
         return candidates.value;
+      }
+      if (actor.agentConnection !== undefined && !(yield* agentConnectionIsLive(input, actor.agentConnection))) {
+        // An agent whose connection ended, lapsed or was consented again selects nothing on it.
+        return [];
       }
       // A person selects a company they may act in. An agent selects one only where the agent itself AND the operator
       // its connection names may act: the engine decides an agent on both sides, so neither stands in for the other.

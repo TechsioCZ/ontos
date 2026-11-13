@@ -17,6 +17,7 @@ import { ConnectionError, SqlError, isSqlError } from 'effect/sql/SqlError';
 /* oxlint-disable sonarjs/no-duplicate-string, eslint/no-use-before-define, anti-slop/no-unknown-parameters, effect-native/no-throw-in-effect-callback, effect-native/no-native-error-construction -- Opaque owner resolver defects are captured immediately by Effect.try and sanitized to a typed Core failure; expires: 2027-03-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { Cause, Context, DateTime, Effect, Exit, Layer, Match, Option, Predicate, Schema } from 'effect';
+import { agentProposalQueueReadKey } from '../auth/agent-proposal-queue-contract.ts';
 import type { AccessDeclaration, AccessFieldGroup, AccessTarget } from '../authorization/access-declaration.ts';
 import type { AccessDecision, AccessRecordTarget, ParentReadRequirement } from '../access/decision/contract.ts';
 import type { GateInput } from '../access/enforcement/contract.ts';
@@ -1469,7 +1470,8 @@ const readRuntimeFromDependencies = <
      * A person's selected-company access is the scope resolution's own gate question (O28): this read resolved its
      * scope, and resolution refuses every company the person may not select. A v2 person holds no tuple of the
      * retired `legal_entity#access` relation, so it is not asked for them. Only a principal Core reads as human is
-     * answered here; a workload, an agent or an unreadable kind keeps the legacy relation check.
+     * answered here, and an agent only for its own proposal queue; a workload, an unreadable kind and an agent on any
+     * other legacy read keep the legacy relation check, which refuses them on v2.
      */
     const isPersonInSelectedCompany = Effect.fn('ReadRuntime.isPersonInSelectedCompany')(
       function* isPersonInSelectedCompanyEffect(target: ResolvedReadPermissionTarget, readScope: OperationalScope) {
@@ -1487,10 +1489,11 @@ const readRuntimeFromDependencies = <
         if (Option.contains(resolved, 'human')) {
           return true;
         }
-        // An agent on its credential-bound connection is in the company exactly when the v2 gate lets it select it:
-        // the agent itself and the operator its connection names must both act there. It holds no legacy tuple.
+        // An agent reads its own proposal queue while the v2 gate lets it select the company: the gate re-reads its
+        // connection row and both the agent and the operator that row names must act there. It holds no legacy tuple.
         const { legalEntityId } = readScope;
         if (
+          input.registration.descriptor.readKey !== agentProposalQueueReadKey ||
           !Option.contains(resolved, 'agent') ||
           accessDecision === undefined ||
           legalEntityId === undefined ||

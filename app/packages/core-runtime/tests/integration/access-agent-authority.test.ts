@@ -605,12 +605,17 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('an agent on authori
       Effect.gen(function* revocations() {
         const { connection, readerAssignment } = yield* connectedReader(tenant);
         expect((yield* decideAs(connection.mcp, readCarrier)).outcome).toBe('ALLOWED');
+        const selectable = (mcp: OperationalScope) =>
+          tenant.gate.selectableLegalEntities({ now: decisionAt, scope: mcp });
+        expect(yield* selectable(connection.mcp)).toEqual([company]);
         // The grant is revoked: its connection ends with it.
         const operatorScope = yield* sessionScope(tenant.tenantId, operator, company);
         yield* tenant.connections.revoke(operatorScope, connection.opened.connectionId);
         const revoked = yield* decideAs(connection.mcp, readCarrier);
         expect(revoked.outcome).toBe('DENIED');
         expect(codesOf(revoked)).toEqual(['deny.connection_inactive']);
+        // The company list re-reads the connection row too: a revoked connection selects nothing.
+        expect(yield* selectable(connection.mcp)).toEqual([]);
         // A new connection works again; then the role is removed through the People commands.
         const second = yield* connect(tenant, operator, [TASK_READ]);
         expect((yield* decideAs(second.mcp, readCarrier)).outcome).toBe('ALLOWED');
