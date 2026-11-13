@@ -27,10 +27,8 @@ import {
   ModuleCredentialEnrolmentSourceLive,
 } from './auth/gateway-delegation-policy.ts';
 import { GatewayOriginatorEvidenceLive } from './auth/gateway-originator-evidence.service.ts';
-import {
-  PlatformWorkloadKeyAdmission,
-  PlatformWorkloadKeyAdmissionLive,
-} from './auth/platform-workload-key-admission.ts';
+import { PlatformWorkloadKeyAdmission } from './auth/platform-workload-key-admission.ts';
+import { PlatformWorkloadKeyAdmissionLive } from './auth/platform-workload-key-admission.service.ts';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type {
   ActionCoreError,
