@@ -1,5 +1,6 @@
 import { makeEffectDrizzleAuthAdapter } from '@app/better-auth-effect-drizzle/server';
 import { ReadRuntime } from '@app/core-runtime';
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { NodeCrypto } from '@effect/platform-node';
@@ -78,12 +79,10 @@ const fixture = (
         );
         return Effect.succeed(options.missingBinding === true ? retainedBindings.slice(0, -1) : retainedBindings);
       },
-      legalEntityPermissionDecisions: { manage_people: options.administratorDenied === true ? 'denied' : 'allowed' },
       operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-25T12:00:00.000Z')),
       ownerAuthorizationDecision: 'allowed',
       permissionDecision: options.denied === true ? 'denied' : 'allowed',
       scope: { ...caller.principal, correlationId: transport.correlationId },
-      tenantPermissionDecisions: { manage_identity: options.administratorDenied === true ? 'denied' : 'allowed' },
     });
     const authQueries: string[] = [];
     const executor = yield* makeWithDefaults({ relations: authRelations }).pipe(
@@ -113,6 +112,17 @@ const fixture = (
     const provider = BetterAuthStaffRoleTemplateAccountProviderLive.pipe(Layer.provide(directory));
     const read = companyRoleTemplates(caller, transport).pipe(
       Effect.provideService(ReadRuntime, harness.runtime),
+      // The read's own question: does the caller administer this company's agents?
+      Effect.provideService(
+        AccessDecisionGate,
+        makeTestAccessDecision({
+          answers: {
+            'core.identity.agent-status.manage': {
+              outcome: options.administratorDenied === true ? 'DENIED' : 'ALLOWED',
+            },
+          },
+        }),
+      ),
       Effect.provide(provider),
     );
     return { authQueries, directory, harness, observations, read };
@@ -162,7 +172,7 @@ it.effect('does not query Auth or Core owner tables before native company admiss
   }),
 );
 
-it.effect('an admitted company without manage_identity or manage_people cannot query the Auth directory', () =>
+it.effect('a member of the company who does not administer its agents cannot query the Auth directory', () =>
   Effect.gen(function* refusesUnprivilegedDirectory() {
     const test = yield* fixture({ administratorDenied: true });
     const failure = yield* test.read.pipe(Effect.flip);
@@ -170,11 +180,13 @@ it.effect('an admitted company without manage_identity or manage_people cannot q
     expect(test.observations).toEqual([]);
     expect(test.authQueries).toEqual([]);
     expect(test.harness.snapshot().ownerQueries).toEqual([]);
+    // Refused by the read's own question in `prepare`: before any Auth or Core owner SQL.
     expect(test.harness.snapshot().stages).toEqual([
       'input_decoded',
       'scope_validated',
       'module_state_checked',
       'permission_checked',
+      'policies_checked',
     ]);
   }),
 );
