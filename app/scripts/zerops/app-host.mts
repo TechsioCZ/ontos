@@ -135,6 +135,7 @@ import type { ObservedArtifact, ObservedModuleDeployment } from '../active-appli
 import {
   ApplicationCompositionAuthorityAdminDatabaseLive,
   publishApplicationCompositionAuthoritySnapshot,
+  renewApplicationCompositionAuthoritySnapshot,
 } from '../application-composition-authority-publication.mts';
 import { ApplicationCompositionLegacyOwnersLive } from '../application-composition-legacy-owners.mts';
 import { OWNER_RUNTIME_CONFIGURATIONS, unitApiBaseUrl } from '../ops/owner-runtime-configuration.mts';
@@ -1880,7 +1881,26 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       );
       return snapshot.composition.revision;
     }).pipe(observeRuntimeJob('composition-publish'));
-  const publish = observeOwners(units, publicOrigin).pipe(Effect.flatMap(publishSnapshot));
+  // The renewal only ever renews: under the publication lock it refuses when the row names another release.
+  const renewHeld = observeOwners(units, publicOrigin).pipe(
+    Effect.flatMap((snapshot) =>
+      Effect.gen(function* renewObservedComposition() {
+        const allowed = yield* publicationAllowed({
+          activeRevision,
+          ownRevision: yield* Ref.get(ownRevision),
+          superseded: drain.superseded,
+        });
+        if (!allowed) {
+          return yield* failure('this host was superseded and never writes the authority again');
+        }
+        yield* renewApplicationCompositionAuthoritySnapshot(snapshot, pointer.publish(snapshot));
+        return yield* Console.log(
+          `[app-host] composition ${snapshot.composition.revision} renewed, valid until ${DateTime.formatIso(snapshot.validUntil)}`,
+        );
+      }),
+    ),
+    observeRuntimeJob('composition-renewal'),
+  );
   // Before this release takes the authority, every active Tenant's canonical access must be proven: its scopes, its
   // owner membership, and a SpiceDB projection that equals PostgreSQL intent (see release-access-verification.mts).
   // The proof is read-only — it never writes, revokes or re-grants — and it is not ignored. A Tenant without v2 intent,
@@ -2025,7 +2045,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     // schedule exists. Superseded, it stops for good.
     const renew = renewWhileHolding({
       interval: ACTIVE_APPLICATION_COMPOSITION_POLICY.refreshInterval,
-      renew: publish.pipe(
+      renew: renewHeld.pipe(
         Effect.tapError((problem) => Console.error(`[app-host] composition renewal failed: ${String(problem)}`)),
         Effect.ignore,
       ),
