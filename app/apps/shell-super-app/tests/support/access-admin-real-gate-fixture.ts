@@ -5,6 +5,7 @@ import { v1 } from '@authzed/authzed-node';
 import {
   AccessDeclarationSchema,
   DatabaseConfig,
+  DatabaseIdentityEnrollmentContext,
   loadDatabaseConnectionPair,
   makeDatabaseIdentityEnrollmentLive,
   parseDatabaseConfig,
@@ -27,8 +28,16 @@ import {
   AccessWorkloadBindingSourceLive,
   LegalEntityCandidatesLive,
 } from '@app/core-runtime/actions/runtime-wiring';
-import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
-import type { AccessDecisionService } from '@app/core-runtime/access/enforcement';
+import {
+  AccessDecisionGate,
+  AccessDecisionLogBatch,
+  AccessDecisionLogBatchLive,
+  AccessIntent,
+  AccessPrincipalKindSource,
+  makeDrizzleSubjectIdentityFacts,
+  makeSubjectAccessInspection,
+} from '@app/core-runtime/access/enforcement';
+import type { AccessDecisionService, SubjectAccessInspectionService } from '@app/core-runtime/access/enforcement';
 import {
   makeAccessProjectionCompiler,
   makeAccessProjectionTransport,
@@ -276,6 +285,8 @@ export interface AccessAdminCase {
    */
   readonly grantRole: (input: RoleGrant) => Effect.Effect<void>;
   readonly ids: ReadonlyMap<Persona, AccessAdminIdentifiers>;
+  /** The real subject inspection over this case's intent and engine (what an administrator asks about someone). */
+  readonly inspection: SubjectAccessInspectionService;
   /** The trusted request scope of one persona (O66), for intent a scenario writes itself. */
   readonly scopeFor: (persona: Persona, legalEntityId?: string) => Effect.Effect<OperationalScope>;
   /** The scope id of one company, or of the tenant context when omitted. */
@@ -959,6 +970,34 @@ export const buildGate = (input: Parameters<typeof buildGateContext>[0]) =>
   buildGateContext(input).pipe(Effect.map((context) => Context.get(context, AccessDecisionGate)));
 
 /** Action execution prepares remote evidence before entering its transaction, then joins that transaction. */
+/**
+ * The real subject inspection over the same intent, engine and evidence ports as the case's gate. Its currentness
+ * check reads a catalog without Actions: a capability question names its own carrier, so none is consulted.
+ */
+export const buildInspection = (input: Parameters<typeof buildGateContext>[0]) =>
+  buildGateContext(input).pipe(
+    Effect.flatMap((context) =>
+      Effect.gen(function* inspectionOverCaseGate() {
+        const database = Context.get(context, CoreDatabase);
+        const enrollment = Context.get(context, DatabaseIdentityEnrollmentContext);
+        const decisionLog = yield* AccessDecisionLogBatch.pipe(
+          Effect.provide(AccessDecisionLogBatchLive),
+          Effect.provide(NodeCrypto.layer),
+          Effect.provideContext(context),
+        );
+        const service: SubjectAccessInspectionService = makeSubjectAccessInspection({
+          authorityFor: Context.get(context, AccessIntent).authorityFor,
+          check: Context.get(context, DecisionCheck),
+          currentCatalog: Effect.succeed({ actions: new Map(), revision: 'access-admin-real-gate' }),
+          decisionLog,
+          identities: makeDrizzleSubjectIdentityFacts({ enrollment, executor: database.executor }),
+          principalKinds: Context.get(context, AccessPrincipalKindSource),
+        });
+        return service;
+      }),
+    ),
+  );
+
 export const buildActionGate = (input: Parameters<typeof buildGateContext>[0]) =>
   buildGateContext(input).pipe(
     Effect.flatMap((context) => bindLiveActionAccessGate.pipe(Effect.provideContext(context))),
@@ -1418,6 +1457,7 @@ export const withAccessAdminCase = <Value, Failure>(
       yield* labelled('reconcile', graph.writer.reconcileTenant({ scope: yield* scopeFor('owner') }));
 
       const live = yield* labelled('gate', buildGate({ configuration, executor: graph.executor }));
+      const inspection = yield* labelled('inspection', buildInspection({ configuration, executor: graph.executor }));
       const dead = yield* labelled(
         'gate-unavailable',
         buildGate({
@@ -1489,6 +1529,7 @@ export const withAccessAdminCase = <Value, Failure>(
         gate: live,
         grantRole,
         ids: identifiersOf(personas),
+        inspection,
         scopeFor,
         scopeIdOf: companyScopeIdFor,
         seeded,
