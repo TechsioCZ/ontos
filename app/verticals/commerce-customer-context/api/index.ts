@@ -641,28 +641,29 @@ const productionOwnerRuntimeServicesLive = commerceCustomerContextOwnerRuntimeSe
   Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
   Layer.provide(profileReconfirmationPolicyUnavailableLive),
 );
-const productionOwnerAuthorizationOverlayLive = commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(
-  Layer.provide(productionOwnerRuntimeServicesLive),
-  // The portal session rule re-proves the admitted session is live through the portal realm's own sessions; a
-  // deployment without the realm has none, and its portal operations are then unavailable, never allowed.
-  Layer.provide(
-    Layer.unwrap(
-      portalAuthRealmConfigured.pipe(
-        Effect.map((configured) =>
-          configured
-            ? CommercePortalSessionLivenessLive.pipe(
-                Layer.provide(
-                  Layer.mergeAll(
-                    CommercePortalAuthDatabaseLive.pipe(Layer.provide(CommercePortalAuthConfigLive)),
-                    commercePortalAuthPlatformCryptoLive,
-                  ),
-                ),
-              )
-            : Layer.empty,
-        ),
-      ),
+/**
+ * The portal session rule re-proves the admitted session is live through the portal realm's own sessions; a
+ * deployment without the realm has none, and its portal operations are then unavailable, never allowed.
+ */
+const deploymentPortalSessionLivenessLive = Layer.unwrap(
+  portalAuthRealmConfigured.pipe(
+    Effect.map((configured) =>
+      configured
+        ? CommercePortalSessionLivenessLive.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                CommercePortalAuthDatabaseLive.pipe(Layer.provide(CommercePortalAuthConfigLive)),
+                commercePortalAuthPlatformCryptoLive,
+              ),
+            ),
+          )
+        : Layer.empty,
     ),
   ),
+);
+const productionOwnerAuthorizationOverlayLive = commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(
+  Layer.provide(productionOwnerRuntimeServicesLive),
+  Layer.provide(deploymentPortalSessionLivenessLive),
 );
 const productionPurchaseLimitPersistenceLive = purchaseLimitPersistenceLayer.pipe(
   Layer.provide(
