@@ -1,8 +1,16 @@
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import nodePath from 'node:path';
+
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Path } from 'effect';
+import { Effect, FileSystem, Path } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { checkPlatformVerticalIds, platformVerticalIdViolations } from '../check-lean-core-dependencies.mts';
+import {
+  checkPlatformVerticalIds,
+  discoverPlatformVerticals,
+  platformVerticalIdViolations,
+} from '../check-lean-core-dependencies.mts';
 
 const verticals = [
   { appId: 'party-registry', moduleId: 'party.registry' },
@@ -11,6 +19,7 @@ const verticals = [
   { appId: 'crm', moduleId: 'demo.crm' },
   { appId: 'privacy', moduleId: 'privacy.core' },
   { appId: 'symmy-integration', moduleId: 'symmy.integration' },
+  { appId: 'payment', moduleId: 'payment.core' },
 ];
 const named = (file: string, source: string) =>
   platformVerticalIdViolations(file, source, verticals).map(({ line, reason }) => `${line} ${reason}`);
@@ -76,6 +85,67 @@ it("exempts main's integration layer, only the audiences mixed files name, and n
     expect(named(file, "const owner = 'crm';")).toEqual([]);
   }
 });
+
+it('admits Payment only in the Payment gateway relay files that carry its contract and transport', () => {
+  const relay = 'apps/shell-super-app/api/payment-gateway';
+  expect(named(`${relay}/transport.ts`, "import { relay } from '@app/payment/payment-gateway-relay';")).toEqual([]);
+  expect(named(`${relay}/owner-release-transport.ts`, "const paymentOwner = 'payment';")).toEqual([]);
+  expect(named(`${relay}/transport.ts`, "const audience = 'crm';")).toEqual([
+    '1 platform source names MicroVertical crm',
+  ]);
+  expect(named(`${relay}/transport.ts`, "const moduleId = 'payment.core';")).toEqual([
+    '1 platform source names MicroVertical payment.core',
+  ]);
+  for (const file of ['defect-boundary.ts', 'relay-credentials.ts', 'new-relay-helper.ts']) {
+    expect(named(`${relay}/${file}`, "const owner = 'payment';")).toEqual([
+      '1 platform source names MicroVertical payment',
+    ]);
+  }
+});
+
+it.live('rejects another Payment gateway file that names a vertical in a workspace tree', () =>
+  Effect.acquireUseRelease(
+    Effect.promise(() => mkdtemp(nodePath.join(os.tmpdir(), 'platform-vertical-ids-'))),
+    (root) =>
+      Effect.gen(function* rejectsUnlistedRelayFile() {
+        yield* Effect.promise(async () => {
+          await mkdir(nodePath.join(root, 'verticals/payment'), { recursive: true });
+          await mkdir(nodePath.join(root, 'apps/shell-super-app/api/payment-gateway'), { recursive: true });
+          await writeFile(
+            nodePath.join(root, 'verticals/payment/package.json'),
+            '{"modernjs":{"appId":"payment","ontosModule":{"moduleId":"payment.core"}}}',
+          );
+          await writeFile(
+            nodePath.join(root, 'apps/shell-super-app/api/payment-gateway/transport.ts'),
+            "export const owner = 'payment';\n",
+          );
+          await writeFile(
+            nodePath.join(root, 'apps/shell-super-app/api/payment-gateway/defect-boundary.ts'),
+            "export const owner = 'payment';\n",
+          );
+        });
+        expect(yield* checkPlatformVerticalIds(root)).toEqual([
+          {
+            file: 'apps/shell-super-app/api/payment-gateway/defect-boundary.ts',
+            line: 1,
+            reason: 'platform source names MicroVertical payment',
+          },
+        ]);
+      }),
+    (root) => Effect.promise(() => rm(root, { force: true, recursive: true })),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('discovers the verticals of this workspace', () =>
+  Effect.gen(function* discoversWorkspaceVerticals() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* path.fromFileUrl(new URL('../..', import.meta.url));
+    const discovered = yield* discoverPlatformVerticals(fileSystem, root, path);
+    expect(discovered.length).toBeGreaterThan(5);
+    expect(discovered).toContainEqual({ appId: 'payment', moduleId: 'payment.core' });
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.effect('finds no vertical id in the Core and Shell platform of this workspace', () =>
   Effect.gen(function* platformHasNoVerticalIds() {

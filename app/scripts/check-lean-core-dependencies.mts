@@ -915,7 +915,6 @@ const PLATFORM_EXEMPT = [
   'apps/shell-super-app/src/demo-guide/guides/',
   'packages/core-runtime/src/testing/',
   'apps/shell-super-app/api/symmy/',
-  'apps/shell-super-app/api/payment-gateway/',
   'apps/shell-super-app/api/auth/gateway-payment-route-scope.ts',
   'apps/shell-super-app/api/auth/gateway-organization-governance-evidence.ts',
   'apps/shell-super-app/api/auth/gateway-privacy-dispatch-evidence.ts',
@@ -931,6 +930,13 @@ const PLATFORM_EXEMPT_IDS = new Map<string, readonly string[]>([
   ['apps/shell-super-app/api/auth/gateway-issuer.ts', ['privacy', 'symmy-integration']],
   ['apps/shell-super-app/api/auth/gateway-originator-evidence.ts', ['privacy.core']],
   ['apps/shell-super-app/api/index.ts', ['symmy-integration']],
+  // The Payment gateway relay names only Payment, and only in the files that carry its relay contract and transport.
+  ['apps/shell-super-app/api/payment-gateway/contract.ts', ['payment']],
+  ['apps/shell-super-app/api/payment-gateway/notification-boundary.ts', ['payment']],
+  ['apps/shell-super-app/api/payment-gateway/notification-contract.ts', ['payment']],
+  ['apps/shell-super-app/api/payment-gateway/owner-release-transport.ts', ['payment']],
+  ['apps/shell-super-app/api/payment-gateway/reconciliation-boundary.ts', ['payment']],
+  ['apps/shell-super-app/api/payment-gateway/transport.ts', ['payment']],
   ['apps/shell-super-app/server/modern.server.ts', ['payment']],
   ['apps/shell-super-app/shared/api.ts', ['payment']],
 ]);
@@ -989,7 +995,8 @@ const VerticalPackageFromJson = Schema.fromJsonString(
   }),
 );
 
-const discoverPlatformVerticals = (
+/** The verticals of the workspace, by app id and module id, read from their package manifests. */
+export const discoverPlatformVerticals = (
   fileSystem: FileSystem.FileSystem,
   root: string,
   path: Path.Path,
