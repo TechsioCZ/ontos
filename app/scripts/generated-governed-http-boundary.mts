@@ -1779,8 +1779,9 @@ const hasConstructorOwnerPair = (
     deployment?.modulePath !== '../shared/ultramodern-build.ts' ||
     deployment.imported !== 'ultramodernDeliveryUnit' ||
     !(
+      // A backend-only registration comes only from the owner's runtime declaration, never its registration module.
       (registration?.modulePath === '../vertical.registration.ts' &&
-        /^[a-z][A-Za-z0-9]*Registration$/u.test(registration.imported)) ||
+        /^[a-z][A-Za-z0-9]*(?<!Backend)Registration$/u.test(registration.imported)) ||
       (backendRegistration !== undefined &&
         registration?.modulePath === '../vertical.runtime-declaration.ts' &&
         registration.imported === backendRegistration)
