@@ -663,6 +663,11 @@ update core.application_composition_authority
 commit;
 ```
 
-If the update matches zero rows, do not retry with looser conditions. Either the revision or the phase is not what you read, or `valid_until` has already passed. An expired lease cannot be returned to `active` by hand: a release whose freshness lapsed is no longer admitted for reads at all (`admitAuthority` requires an unexpired row), so the recovery is to let the next deploy publish — its own publication takes the authority with fresh validity — or, if no deploy can run, to restart the app container so a host republishes its release and renews the lease.
+If the update matches zero rows, do not retry with looser conditions: read the row again (`select revision, phase, valid_until > clock_timestamp() as unexpired from core.application_composition_authority`). A different revision or phase means the situation is not the one this procedure is for. If only the lease has expired, **renew first, then apply the statement**:
+
+1. Restart the OLD app container — the one serving the revision in the row — and nothing else. Its host boots, finds the row naming its own revision, and takes the renewal path: the lease becomes fresh again and the phase stays `draining` (renewal never changes the phase, so the release still refuses reads until step 2). A running old host renews by itself, so an expired lease means its host had stopped; the restart is what brings the renewal back.
+2. Confirm the row is `draining` for that revision and now unexpired, then run the statement above again in a fresh session, including the `pg_try_advisory_lock` proof. It now updates exactly one row and reads return.
+
+Do not try to recover an expired lease by deploying again: a replacement publication refuses an expired authority, and a fresh deploy waits on the same `draining` row.
 
 Record who did it, when and why outside the database until the command exists; this exception leaves no audit row of its own, which is the main reason it is being replaced.
