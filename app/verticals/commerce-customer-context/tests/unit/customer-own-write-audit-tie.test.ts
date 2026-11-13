@@ -195,6 +195,43 @@ it.effect('password: past the call budget the change may still complete, and its
   }),
 );
 
+it.effect(
+  'password: timed-out changes still running hold the in-flight cap; past it a change is refused unavailable',
+  () =>
+    Effect.gen(function* passwordInFlightCap() {
+      // 32 changes whose provider stays silent outlive their requests; each keeps its provider call running.
+      const provider = new EventTarget();
+      let calls = 0;
+      const service = {
+        api: Schema.decodeUnknownSync(Schema.Any)({
+          changePassword: () => {
+            calls += 1;
+            return once(provider, 'answer');
+          },
+        }),
+      };
+      const runs = yield* Effect.forEach(Array.from({ length: 32 }), () => Effect.forkChild(runPassword({ service })));
+      yield* Effect.yieldNow.pipe(Effect.repeat({ times: 50 }));
+      yield* TestClock.adjust('6 seconds');
+      yield* Effect.forEach(runs, (run) => Fiber.join(run), { discard: true });
+      expect(calls).toBe(32);
+      // The 33rd is refused before any provider call, with its one outcome row.
+      const refused = yield* runPassword({ service });
+      expect(calls).toBe(32);
+      expect(tieOf(refused.harness, refused.events).rows).toEqual([
+        { eventType: 'commerce.portal-auth.password-change-requested.v1', outcome: 'requested', tied: true },
+        { eventType: 'commerce.portal-auth.password-change-failed.v1', outcome: 'unavailable', tied: true },
+      ]);
+      // Once the provider answers, the calls settle and give their permits back.
+      provider.dispatchEvent(new Event('answer'));
+      yield* Effect.yieldNow.pipe(Effect.repeat({ times: 50 }));
+      const next = yield* runPassword({
+        service: { api: Schema.decodeUnknownSync(Schema.Any)({ changePassword: () => Promise.resolve(null) }) },
+      });
+      expect(Exit.isSuccess(next.exit)).toBe(true);
+    }),
+);
+
 it.effect('profile: the authorized row and the refusal row share one invocation', () =>
   Effect.gen(function* profileRefused() {
     const events: CommercePortalAuthAuditEvent[] = [];

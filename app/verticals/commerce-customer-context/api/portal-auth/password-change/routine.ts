@@ -1,5 +1,5 @@
 import { isAPIError } from 'better-auth/api';
-import { Duration, Effect, Fiber, Option, Redacted, Result, Schema } from 'effect';
+import { Duration, Effect, Fiber, Option, Redacted, Result, Schema, Semaphore } from 'effect';
 
 import { CommercePortalAuthAudit } from '../../../src/portal-auth/audit/audit.ts';
 import type {
@@ -27,6 +27,13 @@ const passwordChangeRateLimit: CommercePortalAuthRecoveryRateLimitRule = { max: 
 const providerTimeout = Duration.millis(COMMERCE_PORTAL_AUTH_POLICY.accountCreation.providerCallTimeoutMilliseconds);
 /** How long a late provider verdict is still awaited after the customer was told the change may still complete. */
 const lateVerdictBudget = Duration.minutes(5);
+/**
+ * Password changes running against the provider at once in this process, those whose requester stopped waiting
+ * included: a timed-out change keeps its provider call alive up to the late-verdict budget, so the cap bounds what a
+ * burst of timeouts can leave running. Past it a change is refused as unavailable before any provider call.
+ */
+const PASSWORD_CHANGES_IN_FLIGHT = 32;
+const passwordChangesInFlight = Semaphore.makeUnsafe(PASSWORD_CHANGES_IN_FLIGHT);
 
 const FAILED = 'commerce.portal-auth.password-change-failed.v1';
 const CURRENT_INVALID = 'current-invalid';
@@ -133,7 +140,24 @@ export const changeOwnPassword = Effect.fn('CustomerPasswordChange.change')(func
     Result.isSuccess(verdict)
       ? row('commerce.portal-auth.password-changed.v1', 'success')
       : row(FAILED, failureOutcomeOf(verdict.failure));
-  const provider = yield* Effect.forkDetach(call);
+  // One permit per provider call, held until the call itself settles (a timed-out one included), never by the request.
+  // Taking it and starting the call are one uninterruptible step, so no interruption can strand a permit.
+  const started = yield* Effect.uninterruptible(
+    Semaphore.takeIfAvailable(passwordChangesInFlight, 1).pipe(
+      Effect.flatMap((taken) =>
+        taken
+          ? Effect.forkDetach(call.pipe(Effect.ensuring(Semaphore.release(passwordChangesInFlight, 1)))).pipe(
+              Effect.map(Option.some),
+            )
+          : Effect.succeed(Option.none()),
+      ),
+    ),
+  );
+  if (Option.isNone(started)) {
+    yield* row(FAILED, 'unavailable');
+    return yield* Effect.fail(passwordChangeUnavailable());
+  }
+  const provider = started.value;
   const verdict = yield* Fiber.join(provider).pipe(
     Effect.timeoutOrElse({ duration: providerTimeout, orElse: () => Effect.succeed(Option.none<ProviderVerdict>()) }),
   );
