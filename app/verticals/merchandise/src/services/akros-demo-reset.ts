@@ -141,16 +141,14 @@ export const resetToAkrosBaseline = Effect.fn('Merchandise.resetToAkrosBaseline'
   );
   const head = keepLinkedPhotos(yield* decodeAkrosBaselinePart(first), linked);
   // Baseline prices without a stored gross are entered at the company's current rates.
-  const { held, migrated, rates } = yield* currentPricingOf(db, scope);
+  const { held, rates } = yield* currentPricingOf(db, scope);
   yield* deleteScope(db, scope);
-  yield* insertSnapshotPart(db, scope, head, rates, held, migrated);
+  yield* insertSnapshotPart(db, scope, head, rates, held);
   yield* Effect.forEach(
     rest,
     (part) =>
       decodeAkrosBaselinePart(part).pipe(
-        Effect.flatMap((state) =>
-          insertSnapshotPart(db, scope, keepLinkedPhotos(state, linked), rates, held, migrated),
-        ),
+        Effect.flatMap((state) => insertSnapshotPart(db, scope, keepLinkedPhotos(state, linked), rates, held)),
       ),
     { concurrency: 1, discard: true },
   );

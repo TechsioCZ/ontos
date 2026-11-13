@@ -10,6 +10,7 @@ import type {
   StockMovement,
   VariantRecord,
 } from '../../shared/domain/merchandise-model.ts';
+import { heldRateOf } from './tax-rates.ts';
 import type { HeldProductRates, SellableVatRates } from './tax-rates.ts';
 
 /** Stock on hand of one product: the ledger total and each variant's own sum. */
@@ -139,15 +140,15 @@ const toVariantRecord = (
 };
 
 /**
- * The one rate a product's prices use: its held rate while it has one (a product migrated at 10 % keeps selling at
- * 10 % until Tax first prices its company), otherwise the rate its classification sells at. The displayed gross, the
+ * The one rate a product's prices use: its held rate while it has one (a reduced product migrated at 10 % keeps
+ * selling at 10 % until Tax first prices its company), otherwise the rate its classification sells at. The displayed gross, the
  * label and an order line all take this rate.
  */
 export const productRateOf = (
   product: Pick<Product, 'id' | 'taxClassificationCode'>,
   rates: SellableVatRates,
   held: HeldProductRates,
-): number | undefined => held[product.id] ?? rates[product.taxClassificationCode];
+): number | undefined => heldRateOf(held, product) ?? rates[product.taxClassificationCode];
 
 /**
  * Replenishment is a product-level policy: alert only below a positive product minimum.

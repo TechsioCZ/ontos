@@ -67,9 +67,7 @@ it.live('every product document keeps a vatRate the previous release decodes, an
           { concurrency: 1 },
         ).pipe(Effect.orDie),
       );
-      yield* admin.transaction((tx) =>
-        replaceSnapshot(tx, company, state, { held: { held: 10 }, migrated: true, rates: TEST_RATES }),
-      );
+      yield* admin.transaction((tx) => replaceSnapshot(tx, company, state, { held: { held: 10 }, rates: TEST_RATES }));
       const stored = client.unsafe<{ readonly classification: string; readonly id: string; readonly rate: unknown }>(
         `select id, tax_classification_code as classification, document -> 'vatRate' as rate
            from demo_merchandise.products where tenant_id = $1 and legal_entity_id = $2 order by id`,

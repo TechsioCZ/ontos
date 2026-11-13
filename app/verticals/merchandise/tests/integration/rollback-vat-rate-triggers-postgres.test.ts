@@ -1,12 +1,14 @@
 // @effect-diagnostics strictEffectProvide:off -- Integration test entrypoint composes its layers once; expires: 2027-03-31.
 // The expand step's triggers exist for the old release's writes: they classify what it writes and hold a product the old
-// release prices at 10 % (`products_tax_classification`, `products_tax_hold`, `orders_tax_classification`). A write of
-// this release must pass through them as a no-op. Each write this release can make (create, rename, price change,
-// variant add / edit / remove, tier change, bulk change, market offer, storefront order, order edit and status change;
+// release prices at 10 % (`products_tax_classification`, `orders_tax_classification`). They act only on documents (and
+// order lines) without the classification key, which only the old release writes, so every write of this release passes
+// through them as a no-op. Each write this release can make (create, rename, price change,
+// variant add / edit / remove, tier change, bulk change, market offer, storefront order, order edit and status change,
+// a held product reclassified to standard and a standard one to reduced;
 // an AI-approved change is one of those order operations, persisted the same way) runs on two identical companies:
 // once as the deploy's runtime role with the triggers in force, once with them bypassed. The classification column,
 // the migrated holds and every stored price come out identical, in a company still on the migrated rates (BOOK-IT held
-// at 10 %, never moved by any write) and in one Tax has priced.
+// at 10 % until a person reclassifies it, which drops its hold in that write) and in one Tax has priced.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -27,7 +29,9 @@ import {
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { MerchandiseCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
 import { merchandiseRelations } from '../../src/database/schema.ts';
+import { currentPricingOf, loadProducts } from '../../src/services/merchandise-store.ts';
 import { persistenceService } from '../../src/services/persistence.service.ts';
+import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
 import type { PreparedTax } from '../../src/services/persistence.service.ts';
 import { CompanyTaxRatesSchema } from '../../src/services/tax-rates.ts';
 import type { FetchedTaxRates } from '../../src/services/tax-rates.ts';
@@ -133,9 +137,13 @@ const writes = (orderId: () => string): readonly (() => Schema.Json)[] => [
   }),
   () => ({ _tag: 'BulkUpdateProducts', ids: ['book-it', 'p-reduced', 'p2'], patch: { priceChangePercent: 5 } }),
   () => ({ _tag: 'SetProductMarketOffer', marketId: MARKET_ID, offered: false, productId: 'p2' }),
+  // A person reclassifies: the held BOOK-IT to standard (its hold goes with it), a standard product to reduced.
+  () => ({ _tag: 'UpdateProduct', id: 'book-it', patch: { taxClassificationCode: 'cz.vat.standard' } }),
+  () => ({ _tag: 'UpdateProduct', id: 'p2', patch: { taxClassificationCode: 'cz.vat.reduced' } }),
 ];
 
 type AdminClient = Effect.Success<ReturnType<typeof makeTestPgClient>>;
+type AdminDb = Effect.Success<ReturnType<typeof makeTestDatabaseFromClient<typeof merchandiseRelations>>>;
 type RuntimeDb = Effect.Success<ReturnType<typeof makeTestDatabaseFromClient<typeof merchandiseRelations>>>;
 type Company = Effect.Success<ReturnType<typeof makeNativeReadTestContext>>['principal'];
 const scopeOf = (company: Company) => [company.tenantId, company.legalEntityId ?? ''];
@@ -145,7 +153,6 @@ const triggerSwitch = (admin: AdminClient, state: 'DISABLE' | 'ENABLE') =>
   Effect.forEach(
     [
       ['products', 'products_tax_classification'],
-      ['products', 'products_tax_hold'],
       ['orders', 'orders_tax_classification'],
     ] as const,
     ([table, trigger]) => admin.unsafe(`alter table demo_merchandise.${table} ${state} trigger ${trigger}`),
@@ -286,6 +293,37 @@ const migrationsBeforeExpand = Effect.gen(function* beforeExpand() {
   return before;
 });
 
+/** What this release sells each product and variant at, from the state it reads (classifications, holds, prices). */
+const sellingOf = Effect.fn('TriggersNoOp.sellingOf')(function* sellingOf(adminDb: AdminDb, company: Company) {
+  const scope = { legalEntityId: company.legalEntityId ?? '', tenantId: company.tenantId };
+  const { held, rates } = yield* currentPricingOf(adminDb, scope);
+  const loaded = yield* loadProducts(adminDb, scope, undefined, { variants: true });
+  return Object.fromEntries(
+    loaded.map(({ product }) => {
+      const record = toProductRecord(product, stockLevelsOf([], product.id), rates, held);
+      return [
+        product.id,
+        [
+          record.grossPriceMinor ?? null,
+          ...(record.variantRecords ?? []).map((entry) => entry.grossPriceMinor ?? null),
+        ],
+      ];
+    }),
+  );
+});
+
+/**
+ * The old release after a rollback rewrites a product: its decoders drop `taxClassificationCode`, so it writes the
+ * document without it and with the `vatRate` this release wrote (its gross columns aside). The window trigger then
+ * classifies it from that rate and, while the company is on the migrated rates, holds it at 10 % or drops its hold.
+ */
+const oldReleaseRewritesEveryProduct = (admin: AdminClient, company: Company) =>
+  admin.unsafe(
+    `update demo_merchandise.products set document = document - 'taxClassificationCode'
+      where tenant_id = $1 and legal_entity_id = $2`,
+    scopeOf(company),
+  );
+
 it.layer(nativeServices, { excludeTestServices: true })('the window triggers and this release', (suite) => {
   suite.effect(
     'every write of this release passes the window triggers unchanged, on migrated and on Tax-priced rates',
@@ -297,7 +335,7 @@ it.layer(nativeServices, { excludeTestServices: true })('the window triggers and
         });
         yield* isolated.migrateCoreSchema();
         const admin = yield* makeTestPgClient(isolated.connections.admin.connectionString, { maxConnections: 1 });
-        const adminDb = yield* makeTestDatabaseFromClient(admin, merchandiseRelations);
+        const adminDb: AdminDb = yield* makeTestDatabaseFromClient(admin, merchandiseRelations);
         yield* migrate(adminDb, migrationOptions(yield* migrationsBeforeExpand));
         // Four companies (each its own Tenant and person), all of the stage shape the old release wrote.
         const companyContext = makeNativeReadTestContext({
@@ -341,8 +379,7 @@ it.layer(nativeServices, { excludeTestServices: true })('the window triggers and
         };
         // Order ids are minted per company: the order commands name each company's own.
         const orderIds = new Map<Company, string>();
-        const heldAtStart = yield* heldOf(admin, migrated);
-        expect(heldAtStart).toEqual({ 'book-it': 10 });
+        expect(yield* heldOf(admin, migrated)).toEqual({ 'book-it': 10 });
         for (const [inForce, bypassed, regime] of [
           [migrated, migratedBypassed, 'migrated'],
           [taxed, taxedBypassed, 'Tax-priced'],
@@ -362,9 +399,54 @@ it.layer(nativeServices, { excludeTestServices: true })('the window triggers and
             const label = `${regime} write ${String(step + 1)}`;
             expect([label, yield* storedOf(admin, inForce)]).toEqual([label, yield* storedOf(admin, bypassed)]);
             // No write of this release moves a hold.
-            const held = yield* heldOf(admin, inForce);
-            expect([label, regime === 'migrated' ? held : heldAtStart]).toEqual([label, heldAtStart]);
           }
+        }
+        // What the people chose stands: BOOK-IT standard with no hold left, p2 reduced, in either company.
+        for (const company of [migrated, taxed]) {
+          const classes = yield* admin.unsafe<{ readonly classification: string; readonly id: string }>(
+            `select id, tax_classification_code as classification from demo_merchandise.products
+              where tenant_id = $1 and legal_entity_id = $2 and id in ('book-it', 'p2') order by id`,
+            scopeOf(company),
+          );
+          expect(classes).toEqual([
+            { classification: 'cz.vat.standard', id: 'book-it' },
+            { classification: 'cz.vat.reduced', id: 'p2' },
+          ]);
+        }
+        expect(yield* heldOf(admin, migrated)).toEqual({});
+
+        // The round trip: after a rollback the old release rewrites every product; each comes out classified from the
+        // rate this release wrote (21 standard, 10 or 12 reduced), held exactly when the company is still on the
+        // migrated rates and the rate is 10, and a later deploy of this release sells everything at the same prices.
+        for (const [company, regime] of [
+          [migrated, 'migrated'],
+          [taxed, 'Tax-priced'],
+        ] as const) {
+          const before = yield* sellingOf(adminDb, company);
+          yield* oldReleaseRewritesEveryProduct(admin, company);
+          const rows = yield* admin.unsafe<{
+            readonly classification: string;
+            readonly id: string;
+            readonly rate: number;
+          }>(
+            `select id, tax_classification_code as classification, (document ->> 'vatRate')::numeric::integer as rate
+               from demo_merchandise.products where tenant_id = $1 and legal_entity_id = $2 order by id`,
+            scopeOf(company),
+          );
+          for (const row of rows) {
+            expect([regime, row.id, row.rate, row.classification]).toEqual([
+              regime,
+              row.id,
+              row.rate,
+              row.rate === 21 ? 'cz.vat.standard' : 'cz.vat.reduced',
+            ]);
+          }
+          const expectedHolds =
+            regime === 'migrated'
+              ? Object.fromEntries(rows.filter((row) => row.rate === 10).map((row) => [row.id, 10]))
+              : null;
+          expect([regime, yield* heldOf(admin, company)]).toEqual([regime, expectedHolds]);
+          expect([regime, yield* sellingOf(adminDb, company)]).toEqual([regime, before]);
         }
       }),
     240_000,

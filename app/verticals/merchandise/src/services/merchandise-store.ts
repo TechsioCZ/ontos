@@ -33,7 +33,7 @@ import {
 } from '../database/schema.ts';
 import { grossPriceOf, productRateOf, realVariantsOf, stockLevelsOf, toProductRecord } from './stock-levels.ts';
 import type { StockLevels } from './stock-levels.ts';
-import { CompanyTaxRatesSchema, heldRatesOf, migratedOf, sellableRatesOf } from './tax-rates.ts';
+import { CompanyTaxRatesSchema, heldRatesOf, sellableRatesOf } from './tax-rates.ts';
 import type { CompanyTaxRates, HeldProductRates, SellableVatRates } from './tax-rates.ts';
 import { normalizeSearchText } from './storefront-catalog.ts';
 import {
@@ -41,6 +41,7 @@ import {
   CZ_VAT_STANDARD,
   czVatClassificationCodes,
 } from '@app/shared-contracts/cz-vat-classifications';
+import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 
 export class MerchandiseStoreFailure extends Data.TaggedError('MerchandiseStoreFailure')<{
   readonly cause?: unknown;
@@ -169,13 +170,13 @@ const tierRowsOf = (
 
 /** The rates the release before classifications may read for a classification, lowest first: the migration's mapping. */
 const ROLLBACK_RATES = { [CZ_VAT_REDUCED]: [10, 12], [CZ_VAT_STANDARD]: [21] } as const;
-/** The rate the migration's triggers map back to each classification of a product it does not hold. */
-const MIGRATED_DOCUMENT_RATES = { [CZ_VAT_REDUCED]: 12, [CZ_VAT_STANDARD]: 21 } as const;
 
 /**
- * The prices the release before classifications recomputes from the document's `vatRate` (it ignores a stored gross):
- * each real variant without a tier, or the product itself when it has neither real variants nor a tier. With each, the
- * gross this release charges for it. A tiered price is the first tier's in both releases, whatever the rate.
+ * Every price the release before classifications computes from the document's `vatRate`, with what this release
+ * charges for it now: each real variant, or the product itself when it has none. That release sells a tiered price at
+ * its first tier on the storefront, but a line staff add to a VAT-inclusive order it prices from net + `vatRate`,
+ * ignoring tiers; this release charges the first tier's price for both (`storedGrossOf`). So a tiered price counts too,
+ * compared with its first tier.
  */
 const recomputedPricesOf = (product: Product, rate: number | undefined) => {
   const variants = realVariantsOf(product);
@@ -185,31 +186,20 @@ const recomputedPricesOf = (product: Product, rate: number | undefined) => {
       : [{ net: product.currentPriceMinor, priced: product }];
   return entries.flatMap(({ net, priced }) => {
     const charged = grossPriceOf(priced, net, rate);
-    return priced.priceTiers?.[0] === undefined && charged !== undefined ? [{ charged, net }] : [];
+    return charged === undefined ? [] : [{ charged, net }];
   });
 };
 
 /**
  * The rate the release before classifications reads in a product document, until the contract step strips it: that
- * release requires a `vatRate` and recomputes untiered prices from it. This release never reads it.
- *
- * While the company still sells at the migrated rates there is no choice: the migration's hold trigger reads the
- * document's rate (`products_tax_hold`), so a held product writes its held rate, any other reduced product 12 % and a
- * standard one 21 %, and no write of this release ever moves a hold. Once Tax priced the company the trigger does
- * nothing, and the rate is the highest of the classification's rates (reduced: 10 or 12 %, standard: 21 %) at which
- * every price the old release would recompute is at most what this release charges now, so nobody pays more after a
- * rollback; when there is none, the lowest. Either rate maps back to the same classification in the migration's own
- * function, so the window's classification trigger keeps it as it is.
+ * release requires a `vatRate` and computes prices from it. This release never reads it, and the expand step's triggers
+ * never read it from this release's writes (they act only on documents without `taxClassificationCode`, which only the
+ * old release writes). So it is chosen for one purpose, money after a rollback: of the rates the product's current
+ * classification admits (reduced: 10 or 12 %, standard: 21 %), the highest at which every price the old release would
+ * compute is at most what this release charges now, so nobody pays more after a rollback; when there is none, the
+ * lowest. A held product sells at 10 %, so it writes 10 and a rollback keeps it held there.
  */
-export const rollbackVatRateOf = (
-  product: Product,
-  rates: SellableVatRates,
-  held: HeldRates,
-  migrated: boolean,
-): number => {
-  if (migrated) {
-    return held[product.id] ?? MIGRATED_DOCUMENT_RATES[product.taxClassificationCode];
-  }
+export const rollbackVatRateOf = (product: Product, rates: SellableVatRates, held: HeldRates): number => {
   const candidates: readonly number[] = ROLLBACK_RATES[product.taxClassificationCode];
   const prices = recomputedPricesOf(product, productRateOf(product, rates, held));
   const neverHigher = (rate: number) => prices.every(({ charged, net }) => grossUnitPriceMinor(net, rate) <= charged);
@@ -223,7 +213,6 @@ export const productRowsOf = Effect.fn('MerchandiseStore.productRowsOf')(functio
   stock: StockLevels,
   rates: SellableVatRates,
   held: HeldRates,
-  migrated: boolean,
 ) {
   const rate = productRateOf(product, rates, held);
   const encoded = yield* encodeProduct(product);
@@ -239,7 +228,7 @@ export const productRowsOf = Effect.fn('MerchandiseStore.productRowsOf')(functio
     categoryPathIds: [...(product.categoryPathIds ?? [])],
     createdAt: date(product.createdAt),
     currentPriceMinor: product.currentPriceMinor,
-    document: { ...document, vatRate: rollbackVatRateOf(product, rates, held, migrated) },
+    document: { ...document, vatRate: rollbackVatRateOf(product, rates, held) },
     featuredPosition: product.featuredPosition === undefined ? null : Option.getOrNull(product.featuredPosition),
     hasPhoto: hasPhoto(product),
     id: product.id,
@@ -550,7 +539,6 @@ export const insertSnapshotPart = Effect.fn('MerchandiseStore.insertSnapshotPart
   part: MerchandiseState,
   rates: SellableVatRates,
   held: HeldRates,
-  migrated: boolean,
 ) {
   const byProduct = new Map<string, StockMovement[]>();
   for (const movement of part.movements) {
@@ -568,14 +556,7 @@ export const insertSnapshotPart = Effect.fn('MerchandiseStore.insertSnapshotPart
       const productRows = yield* Effect.forEach(
         part.products,
         (product) =>
-          productRowsOf(
-            scope,
-            product,
-            stockLevelsOf(byProduct.get(product.id) ?? [], product.id),
-            rates,
-            held,
-            migrated,
-          ),
+          productRowsOf(scope, product, stockLevelsOf(byProduct.get(product.id) ?? [], product.id), rates, held),
         { concurrency: 1 },
       );
       return { categories: categoryRows, movements: movementRows, orders: orderRows, products: productRows };
@@ -634,8 +615,6 @@ const decodeTaxRates = (value: (typeof catalogHeads.$inferSelect)['taxRates']) =
 /** The rates prices are entered at: each classification's rate now, and the products held at their own rate. */
 export interface StorePricing {
   readonly held: HeldRates;
-  /** The company still sells at the migrated rates (see `migratedOf`). */
-  readonly migrated: boolean;
   readonly rates: SellableVatRates;
 }
 
@@ -651,7 +630,6 @@ export const currentPricingOf = Effect.fn('MerchandiseStore.currentPricingOf')(f
   const stored = yield* decodeTaxRates(rows[0]?.taxRates ?? null);
   return {
     held: heldRatesOf(stored),
-    migrated: migratedOf(stored),
     rates: sellableRatesOf(stored, yield* DateTime.now),
   } satisfies StorePricing;
 });
@@ -664,9 +642,9 @@ export const replaceSnapshot = Effect.fn('MerchandiseStore.replaceSnapshot')(fun
   /** The rates new prices without a stored gross are derived at; by default the company's current rates. */
   pricingNow?: StorePricing,
 ) {
-  const { held, migrated, rates } = pricingNow ?? (yield* currentPricingOf(db, scope));
+  const { held, rates } = pricingNow ?? (yield* currentPricingOf(db, scope));
   yield* deleteScope(db, scope);
-  yield* insertSnapshotPart(db, scope, state, rates, held, migrated);
+  yield* insertSnapshotPart(db, scope, state, rates, held);
   return yield* writeSnapshotHead(db, scope, state);
 });
 
@@ -807,9 +785,12 @@ const grossOfNet = (net: AnyPgColumn, rate: number) => sql<number>`${net} + (${n
  */
 const pricedGroups = (db: MerchandiseDb, scope: StoreScope, rates: SellableVatRates, held: HeldRates) => {
   const heldIds = Object.keys(held);
-  const notHeld = heldIds.length === 0 ? sql`true` : notInArray(products.id, heldIds);
+  // A hold applies only to a reduced product (`heldRateOf`).
+  const notHeldIn = (code: CzVatClassificationCode) =>
+    heldIds.length === 0 || code !== CZ_VAT_REDUCED ? sql`true` : notInArray(products.id, heldIds);
   const byClassification = czVatClassificationCodes.flatMap((code) => {
     const rate = rates[code];
+    const notHeld = notHeldIn(code);
     return rate === undefined
       ? []
       : [
@@ -829,6 +810,7 @@ const pricedGroups = (db: MerchandiseDb, scope: StoreScope, rates: SellableVatRa
       .where(
         and(
           whereScope(products, scope),
+          eq(products.taxClassificationCode, CZ_VAT_REDUCED),
           inArray(
             products.id,
             heldIds.filter((id) => held[id] === rate),
@@ -1574,17 +1556,50 @@ const recordTaxClassificationLive = Effect.fn('MerchandiseStore.recordTaxClassif
     // Once, on the company's head the write holds locked (the scoped executor runs no free-standing statement).
     const [recorded] = yield* query(
       db
-        .select({ current: sql<boolean>`demo_merchandise.record_tax_classification_live()` })
+        .select({ outcome: sql<string>`demo_merchandise.record_tax_classification_live()` })
         .from(catalogHeads)
         .where(whereScope(catalogHeads, scope))
         .limit(1),
       'The serving release could not be recorded',
     );
-    if (recorded?.current === true) {
+    if (recorded?.outcome === 'current') {
       yield* Ref.set(taxClassificationLiveSeen, true);
+    } else if (recorded?.outcome === 'unrecorded') {
+      yield* Effect.logWarning('The serving release could not be recorded; the next catalogue write tries again');
     }
   },
 );
+
+/**
+ * A held product this write reclassified away from reduced loses its hold in the same write: holds apply only to
+ * reduced products, and this release owns its company's holds (the expand step's triggers pass its writes through).
+ */
+const dropReclassifiedHolds = Effect.fn('MerchandiseStore.dropReclassifiedHolds')(function* dropReclassifiedHolds(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  changedProducts: readonly Product[],
+  held: HeldRates,
+) {
+  const dropped = changedProducts.flatMap((product) =>
+    held[product.id] !== undefined && product.taxClassificationCode !== CZ_VAT_REDUCED ? [product.id] : [],
+  );
+  if (dropped.length === 0) {
+    return;
+  }
+  yield* query(
+    db
+      .update(catalogHeads)
+      .set({
+        taxRates: sql`jsonb_set(${catalogHeads.taxRates}, '{heldProductRates}',
+          (${catalogHeads.taxRates} -> 'heldProductRates') - array[${sql.join(
+            dropped.map((id) => sql`${id}`),
+            sql`, `,
+          )}]::text[])`,
+      })
+      .where(and(whereScope(catalogHeads, scope), sql`${catalogHeads.taxRates} ? 'heldProductRates'`)),
+    'The dropped holds could not be written',
+  );
+});
 
 /**
  * Writes exactly what changed between the working set and the command's result: new movements, rewritten
@@ -1599,7 +1614,6 @@ export const persistChange = Effect.fn('MerchandiseStore.persistChange')(functio
   now: DateTime.Utc,
   rates: SellableVatRates,
   held: HeldRates,
-  migrated: boolean,
 ) {
   const before = working.state;
   const changes = stockChangesOf(working, after);
@@ -1608,13 +1622,9 @@ export const persistChange = Effect.fn('MerchandiseStore.persistChange')(functio
     return yield* new MerchandiseStoreFailure({ reason: `Stock movement for an unloaded product ${unknownStock[0]}` });
   }
   const rewritten = yield* query(
-    Effect.forEach(
-      changedProducts,
-      (product) => productRowsOf(scope, product, stockAfter(product.id), rates, held, migrated),
-      {
-        concurrency: 1,
-      },
-    ),
+    Effect.forEach(changedProducts, (product) => productRowsOf(scope, product, stockAfter(product.id), rates, held), {
+      concurrency: 1,
+    }),
     'Changed products do not encode',
   );
   yield* writeBatches(
@@ -1648,6 +1658,7 @@ export const persistChange = Effect.fn('MerchandiseStore.persistChange')(functio
     sliceChanged && after.aiChanges !== undefined
       ? yield* query(encodeSlice(after.aiChanges), 'AI changes do not encode')
       : undefined;
+  yield* dropReclassifiedHolds(db, scope, changedProducts, held);
   yield* recordTaxClassificationLive(db, scope);
   const update = { revision: working.revision + 1, updatedAt: date(now) };
   const heads = yield* query(

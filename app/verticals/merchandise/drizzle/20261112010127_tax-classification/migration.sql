@@ -156,18 +156,22 @@ UPDATE "demo_merchandise"."orders"
 ALTER TABLE "demo_merchandise"."products" ALTER COLUMN "tax_classification_code" SET NOT NULL;--> statement-breakpoint
 CREATE INDEX "demo_merchandise_products_tax_classification" ON "demo_merchandise"."products" ("tenant_id","legal_entity_id","tax_classification_code");--> statement-breakpoint
 ALTER TABLE "demo_merchandise"."products" ADD CONSTRAINT "demo_merchandise_product_tax_classification" CHECK ("tax_classification_code" in ('cz.vat.standard', 'cz.vat.reduced'));--> statement-breakpoint
--- A product written with a `vatRate` gets its classification, in its column and in its document, from that rate on
--- every write, before NOT NULL and the check above see it. The old release writes the rate it chose; this release
--- writes the rate its classification maps back to (`rollbackVatRateOf`), so its own choice stays as it is. A rate
--- nothing maps (0 %) is refused by name, as the preflight above refuses it for stored products.
+-- A product the release before classifications writes gets its classification, in its column and in its document,
+-- from the `vatRate` it wrote, and, while its company is still on the migrated rates (MIGRATION), its hold: a product
+-- written at 10 % is held at 10 %, any other rate drops its hold; nothing about holds changes once Tax priced the
+-- company. That release never writes `taxClassificationCode` (its decoders drop keys they do not know, so every
+-- document it rewrites lacks it), while this release always writes it: a document that carries it is this release's
+-- own and passes through untouched, column, document and holds alike. A rate nothing maps (0 %) is refused by name, as
+-- the preflight above refuses it for stored products.
 CREATE FUNCTION "demo_merchandise"."classify_written_product"() RETURNS trigger
   LANGUAGE plpgsql
   SET search_path = pg_catalog, pg_temp
   AS $$
     DECLARE
       code text;
+      held integer;
     BEGIN
-      IF NOT (NEW.document ? 'vatRate') THEN
+      IF NEW.document ? 'taxClassificationCode' OR NOT (NEW.document ? 'vatRate') THEN
         RETURN NEW;
       END IF;
       code := "demo_merchandise"."product_tax_classification"(NEW.document ->> 'vatRate');
@@ -178,43 +182,25 @@ CREATE FUNCTION "demo_merchandise"."classify_written_product"() RETURNS trigger
       END IF;
       NEW.tax_classification_code := code;
       NEW.document := NEW.document || jsonb_build_object('taxClassificationCode', code);
+      held := "demo_merchandise"."held_product_rate"(NEW.document ->> 'vatRate');
+      UPDATE "demo_merchandise"."catalog_heads" AS h
+         SET tax_rates = CASE
+               WHEN held IS NOT NULL THEN h.tax_rates || jsonb_build_object(
+                 'heldProductRates', coalesce(h.tax_rates -> 'heldProductRates', '{}'::jsonb) || jsonb_build_object(NEW.id, held))
+               ELSE jsonb_set(h.tax_rates, '{heldProductRates}', (h.tax_rates -> 'heldProductRates') - NEW.id)
+             END
+       WHERE h.tenant_id = NEW.tenant_id AND h.legal_entity_id = NEW.legal_entity_id
+         AND h.tax_rates ->> 'source' = 'MIGRATION'
+         AND (held IS NOT NULL OR h.tax_rates -> 'heldProductRates' ? NEW.id);
       RETURN NEW;
     END
   $$;--> statement-breakpoint
 CREATE TRIGGER "products_tax_classification"
   BEFORE INSERT OR UPDATE OF "document", "tax_classification_code" ON "demo_merchandise"."products"
   FOR EACH ROW EXECUTE FUNCTION "demo_merchandise"."classify_written_product"();--> statement-breakpoint
--- The same product's hold, kept in its company's migrated rates while they are still MIGRATION: a product written at
--- 10 % is held at 10 %, any other rate drops its hold. Nothing changes once Tax priced the company.
-CREATE FUNCTION "demo_merchandise"."hold_written_product"() RETURNS trigger
-  LANGUAGE plpgsql
-  SET search_path = pg_catalog, pg_temp
-  AS $$
-    DECLARE
-      held integer;
-    BEGIN
-      IF NOT (NEW.document ? 'vatRate') THEN
-        RETURN NULL;
-      END IF;
-      held := "demo_merchandise"."held_product_rate"(NEW.document ->> 'vatRate');
-      UPDATE "demo_merchandise"."catalog_heads" AS h
-         SET tax_rates = CASE
-               WHEN held IS NOT NULL THEN h.tax_rates || jsonb_build_object(
-                 'heldProductRates', coalesce(h.tax_rates -> 'heldProductRates', '{}'::jsonb) || jsonb_build_object(NEW.id, held))
-               WHEN h.tax_rates ? 'heldProductRates' THEN jsonb_set(
-                 h.tax_rates, '{heldProductRates}', (h.tax_rates -> 'heldProductRates') - NEW.id)
-               ELSE h.tax_rates
-             END
-       WHERE h.tenant_id = NEW.tenant_id AND h.legal_entity_id = NEW.legal_entity_id
-         AND h.tax_rates ->> 'source' = 'MIGRATION'
-         AND (held IS NOT NULL OR h.tax_rates -> 'heldProductRates' ? NEW.id);
-      RETURN NULL;
-    END
-  $$;--> statement-breakpoint
-CREATE TRIGGER "products_tax_hold"
-  AFTER INSERT OR UPDATE OF "document" ON "demo_merchandise"."products"
-  FOR EACH ROW EXECUTE FUNCTION "demo_merchandise"."hold_written_product"();--> statement-breakpoint
--- An order the old release writes: each line it adds or rewrites without a classification is classified as above.
+-- An order the old release writes: each line it adds or rewrites without a classification is classified as above. The
+-- rule is per line: a line that names its classification (every line this release writes at 21 or 12 %, and every line
+-- the backfill classified that the old release has not rewritten) passes through untouched.
 CREATE FUNCTION "demo_merchandise"."classify_written_order"() RETURNS trigger
   LANGUAGE plpgsql
   SET search_path = pg_catalog, pg_temp
@@ -237,8 +223,10 @@ CREATE TABLE "demo_merchandise"."tax_classification_live" (
 	CONSTRAINT "demo_merchandise_tax_classification_live_singleton" CHECK ("singleton")
 );--> statement-breakpoint
 -- Called by this release's catalogue writes, always inside a transaction the composition fence admitted, where the
--- active composition is this release's own. Returns whether the row already named it (nothing to record).
-CREATE FUNCTION "demo_merchandise"."record_tax_classification_live"() RETURNS boolean
+-- active composition is this release's own. Says 'current' when the row already names it, 'recorded' when it wrote it,
+-- and 'unrecorded' when it could not (any error, undone with its own subtransaction): the marker never fails a product
+-- write; the caller logs a warning and the next write tries again.
+CREATE FUNCTION "demo_merchandise"."record_tax_classification_live"() RETURNS text
   LANGUAGE plpgsql
   SECURITY DEFINER
   SET search_path = pg_catalog, pg_temp
@@ -251,20 +239,25 @@ CREATE FUNCTION "demo_merchandise"."record_tax_classification_live"() RETURNS bo
         FROM core.application_composition_authority AS authority
        WHERE authority.authority_key = 'active';
       IF serving IS NULL THEN
-        RETURN false;
+        RETURN 'unrecorded';
       END IF;
       SELECT live.composition_revision INTO recorded FROM "demo_merchandise"."tax_classification_live" AS live;
       IF recorded IS NOT DISTINCT FROM serving THEN
-        RETURN true;
+        RETURN 'current';
       END IF;
       INSERT INTO "demo_merchandise"."tax_classification_live" (composition_revision, first_served_at)
         VALUES (serving, clock_timestamp())
         ON CONFLICT (singleton) DO UPDATE
           SET composition_revision = EXCLUDED.composition_revision, first_served_at = EXCLUDED.first_served_at;
-      RETURN false;
+      RETURN 'recorded';
+    EXCEPTION WHEN OTHERS THEN
+      RETURN 'unrecorded';
     END
   $$;--> statement-breakpoint
 REVOKE ALL ON FUNCTION "demo_merchandise"."record_tax_classification_live"() FROM PUBLIC;--> statement-breakpoint
 GRANT EXECUTE ON FUNCTION "demo_merchandise"."record_tax_classification_live"() TO ontos_runtime;--> statement-breakpoint
+-- Only that function writes the row: the shared runtime role reads it and nothing else (the runtime role bootstrap keeps
+-- exactly this grant, `scripts/postgres/runtime-role-grants.mts`).
+REVOKE ALL ON "demo_merchandise"."tax_classification_live" FROM PUBLIC, ontos_runtime;--> statement-breakpoint
 GRANT SELECT ON "demo_merchandise"."tax_classification_live" TO ontos_runtime;--> statement-breakpoint
 SET LOCAL lock_timeout TO DEFAULT;

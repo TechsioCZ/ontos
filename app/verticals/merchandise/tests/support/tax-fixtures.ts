@@ -47,19 +47,13 @@ export const testTaxBook = (
 export const TEST_TAX_BOOK = testTaxBook();
 export const TEST_RATES: SellableVatRates = { 'cz.vat.reduced': 12, 'cz.vat.standard': 21 };
 /** The test rates with no product held at its own rate. */
-export const TEST_PRICING = { held: {}, migrated: false, rates: TEST_RATES } as const;
+export const TEST_PRICING = { held: {}, rates: TEST_RATES } as const;
 /** Tax's answer as a write prepared it before its transaction opened (given after {@link TEST_COMPANY_TAX_RATES}). */
 export const TEST_FETCHED_TAX: FetchedTaxRates = {
   book: TEST_TAX_BOOK,
   fetchedAt: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
 };
-export const TEST_TAX: CommandTax = {
-  book: TEST_TAX_BOOK,
-  held: {},
-  migrated: false,
-  rates: TEST_RATES,
-  refused: false,
-};
+export const TEST_TAX: CommandTax = { book: TEST_TAX_BOOK, held: {}, rates: TEST_RATES, refused: false };
 export const TEST_COMPANY_TAX_RATES: CompanyTaxRates = {
   book: TEST_TAX_BOOK,
   source: 'TAX',

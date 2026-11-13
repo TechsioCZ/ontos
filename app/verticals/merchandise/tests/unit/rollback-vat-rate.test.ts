@@ -1,8 +1,8 @@
-// After a rollback the release before classifications prices every untiered price from the document's `vatRate`
-// (first tier, else net + vatRate; a product with real variants at its variants' lowest), ignoring any stored gross.
-// While the company still sells at the migrated rates that rate is fixed by the migration's hold trigger (a held product
-// its held rate, reduced 12 %, standard 21 %): it must never move a hold. Once Tax priced the company it is the highest
-// of the classification's rates at which the old release charges nothing above what this release charges now.
+// After a rollback the release before classifications prices from the document's `vatRate`, ignoring any stored gross:
+// on the storefront the first tier, else net + vatRate (a product with real variants at its variants' lowest); a line
+// staff add to a VAT-inclusive order always net + vatRate. The rollback rate is the highest of the product's current
+// classification's rates (reduced 10 / 12 %, standard 21 %) at which it charges nothing above what this release
+// charges now, else the lowest. The window triggers never read it from this release's writes, so it does nothing else.
 import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -35,22 +35,39 @@ const variant = (id: string, priceMinor: number, grossPriceMinor?: number) =>
     ...present('grossPriceMinor', grossPriceMinor),
   ]);
 
-/** Exactly what the release before classifications charges for each price (`stock-levels.ts:111,139-140` there). */
-const oldReleaseCharges = (product: Product, vatRate: number): readonly number[] => {
+/** What the release before classifications charges for each unit: storefront (first tier, else net + rate) and staff. */
+const oldReleaseCharges = (product: Product, vatRate: number): readonly (readonly [number, number])[] => {
   const variants = realVariantsOf(product);
-  return variants.length === 0
-    ? [product.priceTiers?.[0]?.priceMinor ?? grossUnitPriceMinor(product.currentPriceMinor, vatRate)]
-    : variants.map((entry) => entry.priceTiers?.[0]?.priceMinor ?? grossUnitPriceMinor(entry.priceMinor, vatRate));
+  const units =
+    variants.length === 0
+      ? [{ net: product.currentPriceMinor, priced: product }]
+      : variants.map((entry) => ({ net: entry.priceMinor, priced: entry }));
+  return units.map(({ net, priced }) => {
+    const recomputed = grossUnitPriceMinor(net, vatRate);
+    return [priced.priceTiers?.[0]?.priceMinor ?? recomputed, recomputed] as const;
+  });
 };
-/** What this release charges for each price now. */
+/** What this release charges for each unit now, on the storefront and on a staff-added line alike. */
 const newReleaseCharges = (product: Product, held: Readonly<Record<string, number>>): readonly number[] => {
   const record = toProductRecord(product, stockLevelsOf([], product.id), TEST_RATES, held);
   return record.variantRecords === undefined || record.variantRecords.length === 0
     ? [record.grossPriceMinor ?? Number.NaN]
     : record.variantRecords.map((entry) => entry.grossPriceMinor ?? Number.NaN);
 };
+const neverMoreAfterRollback = (product: Product, held: Readonly<Record<string, number>>, written: number) => {
+  const now = newReleaseCharges(product, held);
+  return oldReleaseCharges(product, written).every(
+    ([storefront, staff], unit) => storefront <= (now[unit] ?? 0) && staff <= (now[unit] ?? 0),
+  );
+};
 
-const reduced = (id: string, net: number, gross: number | undefined, variants?: readonly unknown[]) =>
+const productOf = (
+  id: string,
+  taxClassificationCode: 'cz.vat.reduced' | 'cz.vat.standard',
+  net: number,
+  gross: number | undefined,
+  extra: readonly (readonly [string, unknown])[] = [],
+) =>
   decodeProduct(
     Object.fromEntries([
       ...Object.entries(base),
@@ -58,89 +75,84 @@ const reduced = (id: string, net: number, gross: number | undefined, variants?: 
       ['id', id],
       ['name', id],
       ['sku', id.toUpperCase()],
-      ['taxClassificationCode', 'cz.vat.reduced'],
+      ['taxClassificationCode', taxClassificationCode],
       ...present('grossPriceMinor', gross),
-      ...present('variants', variants),
+      ...extra,
     ]),
   );
+const reduced = (id: string, net: number, gross: number | undefined, variants?: readonly unknown[]) =>
+  productOf(id, 'cz.vat.reduced', net, gross, present('variants', variants));
+const tiered = (net: number, firstTier: number) =>
+  productOf('kava', 'cz.vat.reduced', net, firstTier, [
+    ['priceTiers', [{ minimumQuantity: 1, priceExcludingVatMinor: net, priceMinor: firstTier }]],
+  ]);
 const HELD = { 'book-it': 10 };
 const NONE = {};
-const MIGRATED = true;
-const TAX_PRICED = false;
 
-describe('while the company sells at the migrated rates, the document carries exactly the migration rate', () => {
-  it('a held product its held rate, whatever its prices', () => {
-    for (const product of [
+describe("the rollback rate: the highest of the current classification's rates at which nobody pays more", () => {
+  for (const [name, product, held, rate] of [
+    ['BOOK-IT held at 10 % (migrated rates): its prices reproduce at 10', reduced('book-it', 49_000, 53_900), HELD, 10],
+    [
+      'BOOK-IT held, with variants and no stored gross: they sell at 10, so 10',
+      reduced('book-it', 30_000, undefined, [variant('yearly', 30_000), variant('monthly', 40_000)]),
+      HELD,
+      10,
+    ],
+    [
+      'a held product reclassified to standard: no hold applies any more, 21',
+      productOf('book-it', 'cz.vat.standard', 49_000, grossUnitPriceMinor(49_000, 21)),
+      HELD,
+      21,
+    ],
+    [
+      'BOOK-IT after Tax priced the company, its gross still stored at 10 %',
       reduced('book-it', 49_000, 53_900),
-      reduced('book-it', 50_000, grossUnitPriceMinor(50_000, 12)),
-      reduced('book-it', 30_000, undefined, [variant('yearly', 30_000, 33_000), variant('monthly', 40_000)]),
-    ]) {
-      expect(rollbackVatRateOf(product, TEST_RATES, HELD, MIGRATED)).toBe(10);
-    }
-  });
-
-  it('a reduced product not held 12 %, even when its stored gross does not round-trip at 12 % by a haléř', () => {
-    // 25 803 + 12 % is 28 899,36 → 28 899; a gross entered as 28 898 is a haléř below it.
-    const grossEntered = reduced('kava', 25_803, 28_898);
-    expect(grossUnitPriceMinor(25_803, 12)).toBe(28_899);
-    expect(rollbackVatRateOf(grossEntered, TEST_RATES, NONE, MIGRATED)).toBe(12);
-    expect(rollbackVatRateOf(reduced('kava', 25_804, 28_900), TEST_RATES, NONE, MIGRATED)).toBe(12);
-  });
-
-  it('a standard product 21 %', () => {
-    const jacket = decodeProduct({
-      ...base,
-      currentPriceMinor: 1_878_000,
-      grossPriceMinor: 1_062_380,
-      id: 'spyder-jacket',
-      name: 'Pánská bunda Spyder Vyper Jacket – černá',
-      sku: '38SA073510-BLK',
-      taxClassificationCode: 'cz.vat.standard',
-      variants: ['S', 'M', 'L', 'XL', 'XXL'].map((size) => variant(`38SA073510-BLK-${size}`, 878_000, 1_062_380)),
-    });
-    expect(rollbackVatRateOf(jacket, TEST_RATES, NONE, MIGRATED)).toBe(21);
-  });
-});
-
-describe('once Tax priced the company: the highest rate at which nobody pays more after a rollback', () => {
-  for (const [name, product, rate] of [
-    ['BOOK-IT, its gross still stored at 10 % (also after a rename)', reduced('book-it', 49_000, 53_900), 10],
+      NONE,
+      10,
+    ],
     [
       'BOOK-IT after a price change at the 12 % Tax gives',
       reduced('book-it', 50_000, grossUnitPriceMinor(50_000, 12)),
+      NONE,
       12,
     ],
+    ['a reduced price entered a haléř below its 12 % recomputation: 10', reduced('kava', 25_803, 28_898), NONE, 10],
     [
-      'a tiered reduced product (both releases sell its first tier)',
-      decodeProduct({
-        ...base,
-        currentPriceMinor: 25_804,
-        grossPriceMinor: 28_900,
-        id: 'kava',
-        name: 'Káva',
-        priceTiers: [{ minimumQuantity: 1, priceExcludingVatMinor: 25_804, priceMinor: 28_900 }],
-        sku: 'KAVA',
-        taxClassificationCode: 'cz.vat.reduced',
-      }),
+      'a standard product reclassified to reduced, its gross stored at 21 %: 12',
+      reduced('p2', 1000, grossUnitPriceMinor(1000, 21)),
+      NONE,
       12,
     ],
+    ['a reduced product whose first tier was built at 12 %', tiered(25_804, grossUnitPriceMinor(25_804, 12)), NONE, 12],
     [
-      'BOOK-IT with its yearly variant at 10 % and two new variants priced at 12 %: never the majority 12 %',
+      'a reduced product whose first tier was built at 10 %: 10, or staff-added lines would cost more than the tier',
+      tiered(25_804, grossUnitPriceMinor(25_804, 10)),
+      NONE,
+      10,
+    ],
+    [
+      'BOOK-IT with its yearly variant at 10 % and two new variants at 12 %: never the majority 12 %',
       reduced('book-it', 30_000, undefined, [
         variant('yearly', 30_000, 33_000),
         variant('monthly', 40_000, grossUnitPriceMinor(40_000, 12)),
         variant('weekly', 12_000, grossUnitPriceMinor(12_000, 12)),
       ]),
+      NONE,
       10,
     ],
-    ['a reduced price entered a haléř below its 12 % recomputation', reduced('kava', 25_803, 28_898), 10],
+    [
+      "N1's jacket 38SA073510-BLK: product net mistyped, five consistent variants at 21 %",
+      productOf('spyder-jacket', 'cz.vat.standard', 1_878_000, 1_062_380, [
+        ['variants', ['S', 'M', 'L', 'XL', 'XXL'].map((size) => variant(`38SA073510-BLK-${size}`, 878_000, 1_062_380))],
+      ]),
+      NONE,
+      21,
+    ],
   ] as const) {
     it(name, () => {
-      const written = rollbackVatRateOf(product, TEST_RATES, NONE, TAX_PRICED);
+      const written = rollbackVatRateOf(product, TEST_RATES, held);
       expect(written).toBe(rate);
-      const after = oldReleaseCharges(product, written);
-      const now = newReleaseCharges(product, NONE);
-      expect(after.every((charged, index) => charged <= (now[index] ?? 0))).toBe(true);
+      expect(neverMoreAfterRollback(product, held, written)).toBe(true);
     });
   }
 });
@@ -216,34 +228,34 @@ const randomProduct = (random: Random, index: number) => {
 };
 
 /**
- * Exclusion 1, inherent to the old release and on stage today regardless of this deploy: a price stored below what the
- * old release recomputes at the lowest rate this document may carry (standard 21 %, reduced 10 %; while migrated, the
- * migration's own rate). The old release charges that recomputation today already. Exclusion 2 (a non-payer company's
+ * Exclusion 1, inherent to the old release and on stage today regardless of this deploy: a price stored (as a gross or a
+ * first tier) below what the old release computes at the lowest rate the product's classification admits (standard
+ * 21 %, reduced 10 %); the old release charges that computation today already. Exclusion 2 (a non-payer company's
  * prices entered after the deploy, sold at 0 %) is not generated: these products are a VAT payer's.
  */
-const inherentToOldRelease = (product: Product, unit: number, lowest: number) => {
+const inherentToOldRelease = (product: Product, unit: number) => {
   const units = realVariantsOf(product);
   const priced = units[unit] ?? product;
-  const storedGross = priced.priceTiers?.[0] === undefined ? priced.grossPriceMinor : undefined;
-  const recomputed = grossUnitPriceMinor(units[unit]?.priceMinor ?? product.currentPriceMinor, lowest);
-  return storedGross !== undefined && storedGross < recomputed;
+  const stored = priced.priceTiers?.[0]?.priceMinor ?? priced.grossPriceMinor;
+  const lowest = product.taxClassificationCode === 'cz.vat.standard' ? 21 : 10;
+  const computed = grossUnitPriceMinor(units[unit]?.priceMinor ?? product.currentPriceMinor, lowest);
+  return stored !== undefined && stored < computed;
 };
 
 describe('property: after a rollback the old release charges no sellable unit more than this release charges now', () => {
-  it('holds for 5 000 random products, with exactly the two exclusions inherent to the old release', () => {
+  it('holds for 5 000 random products, on the storefront and on staff-added lines, with the two inherent exclusions', () => {
     const random = generator(20_261_113);
     let checked = 0;
     for (let index = 0; index < 5000; index += 1) {
-      const { held, product, standard } = randomProduct(random, index);
-      const migrated = random.chance(0.5);
-      const holds = migrated && held ? HELD : NONE;
-      const written = rollbackVatRateOf(product, TEST_RATES, holds, migrated);
+      const { held, product } = randomProduct(random, index);
+      const holds = held && random.chance(0.5) ? HELD : NONE;
+      const written = rollbackVatRateOf(product, TEST_RATES, holds);
       const now = newReleaseCharges(product, holds);
-      const lowest = migrated ? written : Math.min(...(standard ? [21] : [10, 12]));
-      for (const [unit, charged] of oldReleaseCharges(product, written).entries()) {
-        if (!inherentToOldRelease(product, unit, lowest)) {
+      for (const [unit, [storefront, staff]] of oldReleaseCharges(product, written).entries()) {
+        if (!inherentToOldRelease(product, unit)) {
           checked += 1;
-          expect([index, unit, charged <= (now[unit] ?? Number.NaN)]).toEqual([index, unit, true]);
+          const charging = now[unit] ?? Number.NaN;
+          expect([index, unit, storefront <= charging, staff <= charging]).toEqual([index, unit, true, true]);
         }
       }
     }

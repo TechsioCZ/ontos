@@ -57,7 +57,7 @@ import {
   whereScope,
 } from './merchandise-store.ts';
 import type { MerchandiseDb, StoreScope } from './merchandise-store.ts';
-import { CompanyTaxRatesSchema, heldRatesOf, sellableRatesOf } from './tax-rates.ts';
+import { CompanyTaxRatesSchema, heldRateOf, heldRatesOf, sellableRatesOf } from './tax-rates.ts';
 import type { SellableVariantRecord } from './market-pricing.ts';
 import type { CompanyTaxRates, HeldProductRates, SellableVatRates } from './tax-rates.ts';
 import { toProductRecord } from './stock-levels.ts';
@@ -206,7 +206,10 @@ export const withStorefrontVat = (
   held: HeldProductRates,
 ): ProductRecord => {
   const { taxClassificationCode, ...rest } = record;
-  const vatRate = held[record.id] ?? (taxClassificationCode === undefined ? undefined : rates[taxClassificationCode]);
+  const vatRate =
+    taxClassificationCode === undefined
+      ? undefined
+      : (heldRateOf(held, { id: record.id, taxClassificationCode }) ?? rates[taxClassificationCode]);
   return vatRate === undefined ? rest : { ...rest, vatRate };
 };
 

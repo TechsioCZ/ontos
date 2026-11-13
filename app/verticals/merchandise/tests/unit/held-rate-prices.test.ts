@@ -24,7 +24,7 @@ const decodeCommand = Schema.decodeUnknownSync(MerchandiseCommandSchema);
 type CommandInput = typeof MerchandiseCommandSchema.Encoded;
 
 /** The migrated, unconfirmed state: BOOK-IT keeps selling at its stored 10 %; the reduced rate is 12 %. */
-const HELD_TAX: CommandTax = { ...TEST_TAX, held: { 'book-it': 10 }, migrated: true };
+const HELD_TAX: CommandTax = { ...TEST_TAX, held: { 'book-it': 10 } };
 
 const apply = (state: MerchandiseState, command: CommandInput, resourceId: string, tax: CommandTax = HELD_TAX) =>
   evolveMerchandiseState(state, decodeCommand(command), { actor, now: t0, resourceId, tax });
@@ -176,4 +176,33 @@ it.effect('a held price stored without its gross is shown, labelled and charged 
       vatRate: 10,
     });
   }),
+);
+
+it.effect(
+  'a hold applies only to a reduced product: BOOK-IT reclassified to standard sells at 21 %, its hold notwithstanding',
+  () =>
+    Effect.gen(function* reclassifiedHeldProduct() {
+      const migrated = yield* bookIt;
+      const reclassified = yield* apply(
+        migrated,
+        { _tag: 'UpdateProduct', id: 'book-it', patch: { taxClassificationCode: 'cz.vat.standard' } },
+        'reclassify',
+      );
+      const product = productOf(reclassified.state);
+      expect(product.taxClassificationCode).toBe('cz.vat.standard');
+      // Its own price is the one it was stored with; a price entered now takes 21 %, not the hold's 10 %.
+      const repriced = yield* apply(
+        reclassified.state,
+        { _tag: 'ChangePrice', id: 'book-it', priceMinor: 50_000 },
+        'price',
+      );
+      const record = toProductRecord(
+        productOf(repriced.state),
+        stockLevelsOf([], 'book-it'),
+        TEST_RATES,
+        HELD_TAX.held,
+      );
+      expect(record.grossPriceMinor).toBe(grossUnitPriceMinor(50_000, 21));
+      expect(withStorefrontVat(record, TEST_RATES, HELD_TAX.held).vatRate).toBe(21);
+    }),
 );

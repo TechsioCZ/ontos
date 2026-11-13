@@ -196,10 +196,13 @@ export const heldRatesOf = (stored: CompanyTaxRates | undefined): HeldProductRat
   stored?.source === 'MIGRATION' ? (stored.heldProductRates ?? NO_HELD_RATES) : NO_HELD_RATES;
 
 /**
- * Whether the company still sells at the rates the classification migration stored (Tax has not priced it yet). Only
- * then does the migration's hold trigger read a product document's `vatRate` (`products_tax_hold`).
+ * The rate a product is held at, if any: a hold applies only to a reduced product (a product reclassified to standard
+ * sells at the standard rate; its hold is dropped in that same write).
  */
-export const migratedOf = (stored: CompanyTaxRates | undefined): boolean => stored?.source === 'MIGRATION';
+export const heldRateOf = (
+  held: HeldProductRates,
+  product: { readonly id: string; readonly taxClassificationCode: CzVatClassificationCode },
+): number | undefined => (product.taxClassificationCode === CZ_VAT_REDUCED ? held[product.id] : undefined);
 
 /**
  * Whether Tax's answer prices the company on its own: a non-payer, or a payer with a usable rate for every
@@ -219,8 +222,6 @@ export interface TaxRatesDecision {
   readonly held: HeldProductRates;
   /** Present when the stored state must become this one: Tax's answer took over, or confirmed it again. */
   readonly materialise?: CompanyTaxRates;
-  /** The company stays on the migrated rates with this decision (see {@link migratedOf}). */
-  readonly migrated: boolean;
   /**
    * Whether `book` may price something new (a new order line, a new product price): Tax's answer, the migrated rates
    * (not yet confirmed), or rates Tax confirmed within {@link CONFIRMED_RATES_MAX_AGE} while Tax is unreachable.
@@ -248,12 +249,11 @@ const confirmedRecently = (stored: CompanyTaxRates, at: DateTime.Utc) =>
 
 const keptStored = (stored: CompanyTaxRates | undefined, at: DateTime.Utc): TaxRatesDecision =>
   stored === undefined
-    ? { changed: false, held: NO_HELD_RATES, migrated: false, usable: false }
+    ? { changed: false, held: NO_HELD_RATES, usable: false }
     : {
         book: stored.book,
         changed: false,
         held: heldRatesOf(stored),
-        migrated: migratedOf(stored),
         usable: stored.source === 'MIGRATION' || confirmedRecently(stored, at),
       };
 
@@ -274,7 +274,7 @@ export const decideTaxRates = (
   const { fetched } = answer;
   if (fetched === undefined) {
     return answer.refused && stored?.source === 'TAX'
-      ? { changed: false, held: NO_HELD_RATES, migrated: false, usable: false }
+      ? { changed: false, held: NO_HELD_RATES, usable: false }
       : keptStored(stored, at);
   }
   const { book, fetchedAt } = fetched;
@@ -289,7 +289,7 @@ export const decideTaxRates = (
   }
   const changed = stored?.source !== 'TAX' || stored.book.fingerprint !== book.fingerprint;
   const materialise = { book, source: 'TAX', syncedAt: fetchedAt } satisfies CompanyTaxRates;
-  return { book, changed, held: NO_HELD_RATES, materialise, migrated: false, usable: true };
+  return { book, changed, held: NO_HELD_RATES, materialise, usable: true };
 };
 
 /**

@@ -405,7 +405,6 @@ it('the migrated state keeps selling until Tax prices the company, and holds BOO
       book: MIGRATED.book,
       changed: false,
       held: { 'book-it': 10 },
-      migrated: true,
       usable: true,
     });
   }
@@ -417,7 +416,6 @@ it('the migrated state keeps selling until Tax prices the company, and holds BOO
     changed: true,
     held: {},
     materialise: { book: TEST_TAX_BOOK, source: 'TAX', syncedAt: NOW },
-    migrated: false,
     usable: true,
   });
   const nonPayer = testTaxBook({}, 'NON_PAYER');
@@ -430,7 +428,6 @@ it('once Tax is in charge its answer rules: a gap fails closed, an outage keeps 
     changed: false,
     held: {},
     materialise: CONFIRMED,
-    migrated: false,
     usable: true,
   });
   const standardOnly = testTaxBook({ standard: '21' });
@@ -445,20 +442,10 @@ it('once Tax is in charge its answer rules: a gap fails closed, an outage keeps 
   expect(decideTaxRates(confirmedAt(23), unreachable, NOW)).toMatchObject({ book: TEST_TAX_BOOK, usable: true });
   expect(decideTaxRates(confirmedAt(25), unreachable, NOW)).toMatchObject({ book: TEST_TAX_BOOK, usable: false });
   // Tax refusing a company it was in charge of: nothing is sellable.
-  expect(decideTaxRates(CONFIRMED, refusedByTax, NOW)).toEqual({
-    changed: false,
-    held: {},
-    migrated: false,
-    usable: false,
-  });
+  expect(decideTaxRates(CONFIRMED, refusedByTax, NOW)).toEqual({ changed: false, held: {}, usable: false });
   // A company that never had rates takes whatever Tax answers.
   expect(decideTaxRates(undefined, answered(standardOnly), NOW).materialise?.book).toBe(standardOnly);
-  expect(decideTaxRates(undefined, refusedByTax, NOW)).toEqual({
-    changed: false,
-    held: {},
-    migrated: false,
-    usable: false,
-  });
+  expect(decideTaxRates(undefined, refusedByTax, NOW)).toEqual({ changed: false, held: {}, usable: false });
 });
 
 it('the confirmation time is when Tax gave the answer, and an older answer never replaces a newer one', () => {
@@ -469,7 +456,6 @@ it('the confirmation time is when Tax gave the answer, and an older answer never
     changed: false,
     held: {},
     materialise: { book: TEST_TAX_BOOK, source: 'TAX', syncedAt: givenAt },
-    migrated: false,
     usable: true,
   });
   // The stored state is already that answer, or a later one (another process stored it): nothing changes.
@@ -477,7 +463,6 @@ it('the confirmation time is when Tax gave the answer, and an older answer never
     book: TEST_TAX_BOOK,
     changed: false,
     held: {},
-    migrated: false,
     usable: true,
   });
   const standardOnly = testTaxBook({ standard: '21' });
@@ -485,7 +470,6 @@ it('the confirmation time is when Tax gave the answer, and an older answer never
     book: TEST_TAX_BOOK,
     changed: false,
     held: {},
-    migrated: false,
     usable: true,
   });
 });

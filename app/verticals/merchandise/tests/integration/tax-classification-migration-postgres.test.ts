@@ -78,7 +78,7 @@ const changePriceOnce = Effect.fn('TaxClassificationMigration.changePriceOnce')(
   const working = yield* loadWorkingSet(tx, company, head, workingSetRequestOf(command, 'p1'));
   const now = DateTime.makeUnsafe('2026-11-13T10:00:00.000Z');
   const change = yield* evolveMerchandiseState(working.state, command, { actor, now, resourceId: 'p1', tax: TEST_TAX });
-  return yield* persistChange(tx, company, working, change.state, now, TEST_RATES, {}, false);
+  return yield* persistChange(tx, company, working, change.state, now, TEST_RATES, {});
 });
 
 it.layer(nativeServices, { excludeTestServices: true })('tax classification migration', (suite) => {
@@ -603,9 +603,36 @@ it.layer(nativeServices, { excludeTestServices: true })('tax classification migr
         yield* serving(releaseB);
         expect(yield* write(1200)).toBe(base + 2);
         expect(yield* marker).toEqual([{ revision: releaseB }]);
+        // When recording fails the product write still succeeds: the marker is never a reason to refuse a write.
+        yield* serving('c'.repeat(64));
+        yield* client.unsafe('alter table demo_merchandise.tax_classification_live rename to tax_classification_gone');
+        expect(yield* write(1250)).toBe(base + 3);
+        yield* client.unsafe('alter table demo_merchandise.tax_classification_gone rename to tax_classification_live');
+        expect(yield* marker).toEqual([{ revision: releaseB }]);
+        yield* serving(releaseB);
         // Once the row names this release, its process stops offering it: the row stays as it is.
-        expect(yield* write(1300)).toBe(base + 3);
-        expect(yield* write(1400)).toBe(base + 4);
+        expect(yield* write(1300)).toBe(base + 4);
+        expect(yield* write(1400)).toBe(base + 5);
+        expect(yield* marker).toEqual([{ revision: releaseB }]);
+        // The shared runtime role reads the row and nothing else: only the function writes it.
+        const runtime = yield* makeTestPgClient(isolated.connections.runtime.connectionString, { maxConnections: 1 });
+        expect(
+          yield* runtime.unsafe(
+            'select composition_revision as revision from demo_merchandise.tax_classification_live',
+          ),
+        ).toEqual([{ revision: releaseB }]);
+        for (const statement of [
+          `insert into demo_merchandise.tax_classification_live (composition_revision) values ('forged')`,
+          `update demo_merchandise.tax_classification_live set composition_revision = 'forged'`,
+          'delete from demo_merchandise.tax_classification_live',
+          'truncate demo_merchandise.tax_classification_live',
+        ]) {
+          const refused = yield* runtime.unsafe(statement).pipe(Effect.flip);
+          expect([statement, String(Predicate.hasProperty(refused, 'cause') ? refused.cause : refused)]).toEqual([
+            statement,
+            expect.stringContaining('AuthorizationError'),
+          ]);
+        }
         expect(yield* marker).toEqual([{ revision: releaseB }]);
       }),
     180_000,
