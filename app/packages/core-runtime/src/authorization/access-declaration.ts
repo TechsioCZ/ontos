@@ -153,6 +153,13 @@ const accessDeclarationFields = Schema.Struct({
   admitsAdminSurface: Schema.optionalKey(Schema.Literal(true)),
   /** One scalar money value of the Action payload, or a server-derived total for composites (O18). */
   amountInput: Schema.optionalKey(accessPathSchema),
+  /**
+   * Part of what every Role of a tenant holds, so a signed-in member can load the product at all: the Shell's frame,
+   * never a business record. Every Role write includes it and the release step adds it to Roles that predate it. Only a
+   * routine, basic, unselected read of the Shell may be baseline, so it can grant no business data; exactly `true` or
+   * absent.
+   */
+  baseline: Schema.optionalKey(Schema.Literal(true)),
   /** A short-lived proof that cannot wait for an approval (O22). */
   ephemeral: Schema.optionalKey(Schema.Boolean),
   fieldClass: Schema.optionalKey(accessFieldClassSchema),
@@ -236,6 +243,15 @@ const declarationIssue = (declaration: AccessDeclarationFields): string | undefi
   }
   if (kind !== 'action' && (declaration.amountInput !== undefined || declaration.ephemeral !== undefined)) {
     return 'amountInput and ephemeral are supported only by action declarations';
+  }
+  if (
+    declaration.baseline === true &&
+    (kind !== 'read' ||
+      risk !== 'routine' ||
+      declaration.placement.level !== 'basic' ||
+      declaration.selectors.length > 0)
+  ) {
+    return 'only a routine, basic read without record selectors may be baseline';
   }
   return modesIssue(declaration) ?? lineageIssue(declaration);
 };
@@ -375,6 +391,9 @@ export const accessDeclarationEntrypointIssue = (
   const surfaceIssue = adminSurfaceIssue(declaration, owner);
   if (surfaceIssue !== undefined) {
     return surfaceIssue;
+  }
+  if (declaration.baseline === true && moduleKey !== 'core.shell') {
+    return 'only the Shell frame (core.shell) declares baseline access';
   }
   return isActionCarrier(owner) ? actionEntrypointIssue(declaration) : directEntrypointIssue(declaration, owner);
 };

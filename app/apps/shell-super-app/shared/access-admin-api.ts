@@ -817,6 +817,7 @@ export const AccessDecisionReasonCodeSchema = Schema.Literals([
   'structural.access_admin',
   'structural.access_admin_any',
   'structural.delegation',
+  'structural.member_baseline',
   'structural.owner',
   'unavailable.engine',
   'unavailable.evidence',

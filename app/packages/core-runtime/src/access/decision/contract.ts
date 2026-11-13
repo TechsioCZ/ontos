@@ -50,6 +50,7 @@ export const DECISION_REASON_CODES = [
   'structural.access_admin',
   'structural.access_admin_any',
   'structural.delegation',
+  'structural.member_baseline',
   'unavailable.engine',
   'unavailable.evidence',
   'unavailable.indeterminate',
@@ -69,6 +70,11 @@ export interface DecisionCapabilityPolicy {
    * inherit the admission.
    */
   readonly admitsAdminSurface?: true;
+  /**
+   * Baseline access (the Shell frame, `AccessDeclaration.baseline`): a person whose Roles do not grant it still gets it
+   * as a member of the asked scope, which the graph proves. It is never a role cell and never admits anything else.
+   */
+  readonly baseline?: true;
   readonly capabilityKey: CapabilityKey;
   /** `ephemeral` actions cannot wait for approval and are never proposable (O22). */
   readonly ephemeral?: boolean;
@@ -154,7 +160,7 @@ export interface StructuralAuthorityEvidence {
    * in at least one company, used to enter the administration surface in the tenant context and
    * never to reach a company's data or roles, which are decided in that company's own scope.
    */
-  readonly basis: 'owner' | 'access_admin' | 'access_admin_any' | 'delegation';
+  readonly basis: 'owner' | 'access_admin' | 'access_admin_any' | 'delegation' | 'member_baseline';
   readonly deadline?: Date;
   readonly delegationId?: DelegationId;
   readonly scopeId: AccessScopeId;
