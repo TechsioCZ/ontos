@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'effect-rstest';
-import { DateTime, Effect, Exit, Option, Ref, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Exit, Option, Ref, Schema } from 'effect';
+import { FetchHttpClient } from 'effect/http';
+import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
 import { TestClock } from 'effect/testing';
 import {
   PrivacyNoticeAuthorityFactSchema,
@@ -11,6 +13,7 @@ import type { ActionAuthorizationPreflightInput } from '@app/core-runtime';
 import { ConsentSelfServiceAuthorizationError } from '../../shared/domain/privacy-consent-self-service.ts';
 import {
   CommerceConsentAuthorityLookup,
+  commerceConsentAuthorityLookup,
   preparedCommerceConsentExecution,
 } from '../../src/actions/commerce-consent-authority.ts';
 import type {
@@ -465,3 +468,38 @@ describe('Prepared Commerce evidence lifecycle', () => {
     }),
   );
 });
+
+/** The same address over plain HTTP: refused for any host but loopback. */
+const plainHttp = (address: string) => {
+  const url = new URL(address);
+  url.protocol = 'http:';
+  return url.toString();
+};
+
+it.effect('never presents its gateway key to a plain-HTTP Shell address off the machine', () =>
+  Effect.gen(function* plainHttpShell() {
+    const requested: string[] = [];
+    const fetch: typeof globalThis.fetch = (target, init) => {
+      requested.push(new Request(target, init).url);
+      return Promise.resolve(Response.json({}));
+    };
+    const lookup = yield* commerceConsentAuthorityLookup.pipe(
+      Effect.provide(makeActiveApplicationCompositionLayer(Effect.die('the composition is not reached'))),
+    );
+    const outcome = yield* Effect.exit(
+      lookup.resolve({ credentialRef: 'session:one', preflight: input, request }).pipe(
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromUnknown({
+            COMMERCE_MARKETING_ACTOR_PRINCIPAL_ID: principalId,
+            ONTOS_PRIVACY_GATEWAY_API_KEY: 'privacy-gateway-key-0000',
+            ONTOS_SHELL_GATEWAY_BASE_URL: plainHttp('https://shell.internal.example/shell-super-app-api'),
+          }),
+        ),
+        Effect.provideService(FetchHttpClient.Fetch, fetch),
+      ),
+    );
+    expect(Exit.isFailure(outcome)).toBe(true);
+    expect(requested).toEqual([]);
+  }),
+);

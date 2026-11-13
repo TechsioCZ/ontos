@@ -24,6 +24,8 @@ import {
 const tenantId = randomUUID();
 const legalEntityId = randomUUID();
 const principalId = randomUUID();
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 const stateTable = '"crm_activities"."relationships_states"';
 
 interface StoredRow {
@@ -38,15 +40,14 @@ const harness = (options: { readonly concurrentWinner?: boolean; readonly initia
     const services = yield* Layer.build(
       scriptedPgClientLayer(
         Effect.succeed(
-          testSqlConnection((sql) => {
+          testSqlConnection((sql, params) => {
             statements.push(sql);
             if (/^(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE SAVEPOINT|ROLLBACK TO SAVEPOINT)\b/u.test(sql)) {
               return Effect.succeed([]);
             }
-            if (sql.includes('set_config(')) {
-              return Effect.succeed([{}]);
-            }
-            if (sql.includes('current_user::text as role')) {
+            // A session-setting role installs its scope and reads back the connected role in one statement.
+            if (sql === installAndReadScopeSql) {
+              expect(params).toEqual([tenantId, legalEntityId]);
               return Effect.succeed([{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
             }
             if (sql.includes('"core"."principals"')) {

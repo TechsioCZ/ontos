@@ -2,7 +2,7 @@ import { NodeCrypto } from '@effect/platform-node';
 import { Cause, DateTime, Effect, Exit, Logger, Redacted, Schema } from 'effect';
 // @effect-diagnostics strictEffectProvide:off -- Test-owned logger capture entrypoint; expires: 2026-12-31.
 import { expect, it } from 'effect-rstest';
-import { Headers, HttpServerRequest } from 'effect/http';
+import { FetchHttpClient, Headers, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { classifyReadCoreError, makeGovernedReadHttpHandler } from '../../src/http/governed-read.ts';
@@ -33,6 +33,7 @@ import { ReadRuntime } from '../../src/reads/runtime.ts';
 import type { ReadRuntimeService } from '../../src/reads/runtime.ts';
 import { makeReadTestHarness } from '../../src/testing/reads.ts';
 import { fixtureReadAccess } from '../support/access-declaration-fixtures.ts';
+import { servedResponse } from '../support/served-response.ts';
 
 const problem = <const Kind extends string, const Status extends number>(kind: Kind, status: Status) => ({
   kind,
@@ -733,3 +734,30 @@ it.effect('uses the configured receiver audience instead of an HTTP audience hea
     expect(observed.map((input) => input.audience)).toEqual(['test.receiver.api']);
   }),
 );
+
+it.layer(FetchHttpClient.layer)((suite) => {
+  suite.effect("answers a governed read over HTTP with the owner's phases in server-timing", () =>
+    Effect.gen(function* servedReadTiming() {
+      const handler = makeGovernedReadHttpHandler({
+        authenticatePrincipal: () => Effect.succeed(principal),
+        problems,
+        registration,
+      });
+      // One statement span inside the read, as the real runtime's would be.
+      const counted: ReadRuntimeService = {
+        runRead: (input) => readRuntime.runRead(input).pipe(Effect.withSpan('postgres')),
+      };
+      const response = yield* servedResponse(
+        HttpServerRequest.HttpServerRequest.use((request) =>
+          handler({ payload: { query: 'fixture' }, request }).pipe(
+            Effect.provideService(ReadRuntime, counted),
+            Effect.map((result) => HttpServerResponse.jsonUnsafe(result)),
+          ),
+        ),
+        { authorization: 'Bearer private', 'x-correlation-id': 'served-read' },
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers['server-timing']).toContain('owner-sql-count;dur=1');
+    }),
+  );
+});

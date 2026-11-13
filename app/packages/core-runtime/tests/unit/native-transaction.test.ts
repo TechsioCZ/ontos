@@ -101,6 +101,13 @@ const expectScopeLookup = (
   expect(lookup?.params).toEqual(expectedParams);
 };
 
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
+const establishGatewayScopeSql =
+  "select established_tenant_id::text as tenant_id, coalesce(established_legal_entity_id::text, '') as legal_entity_id from trust.establish_gateway_scope($1)";
+const readGatewayScopeSql =
+  "select current_user::text as role, coalesce(trust.current_tenant_id()::text, '') as tenant_id, coalesce(trust.current_legal_entity_id()::text, '') as legal_entity_id";
+
 const scopedPrincipal = trustVerifiedGatewayPrincipalContext(
   {
     authBindingId: '40000000-0000-4000-8000-000000000001',
@@ -136,21 +143,23 @@ for (const [audience, role, gatewayGrant] of [
 
       yield* makeOperationalScopeRepository({ executor }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).load(principal);
 
-      const [begin, install, verify, lookup, commit] = statements;
-      expect(lookup).toBeDefined();
-      expect(statements).toHaveLength(5);
-      expect(begin?.sql).toBe('BEGIN');
-      expect(install?.sql).toContain(gatewayGrant ? 'trust.establish_gateway_scope' : 'set_config');
-      expect(install?.params).toEqual(gatewayGrant ? ['verified-audience-test-assertion'] : [principal.tenantId, '']);
-      expect(verify?.sql).toContain('current_user::text as role');
-      expect(verify?.sql).toContain(
-        gatewayGrant ? 'trust.current_tenant_id()' : "current_setting('ontos.tenant_id', true)",
+      // A gateway grant establishes its scope, then reads the database-derived scope back; a session-setting
+      // role installs its scope and reads back the connected role in one statement.
+      expect(statements.slice(0, -2)).toEqual(
+        gatewayGrant
+          ? [
+              { params: [], sql: 'BEGIN' },
+              { params: ['verified-audience-test-assertion'], sql: establishGatewayScopeSql },
+              { params: [], sql: readGatewayScopeSql },
+            ]
+          : [
+              { params: [], sql: 'BEGIN' },
+              { params: [principal.tenantId, ''], sql: installAndReadScopeSql },
+            ],
       );
-      expect(verify?.sql).toContain(
-        gatewayGrant ? 'trust.current_legal_entity_id()' : "current_setting('ontos.legal_entity_id', true)",
-      );
-      expectScopeLookup(lookup, principal, gatewayGrant);
-      expect(commit?.sql).toBe('COMMIT');
+      expect(statements).toHaveLength(gatewayGrant ? 5 : 4);
+      expectScopeLookup(statements.at(-2), principal, gatewayGrant);
+      expect(statements.at(-1)?.sql).toBe('COMMIT');
     }),
   );
 
@@ -177,11 +186,13 @@ for (const [audience, role, gatewayGrant] of [
           .load(principal)
           .pipe(Effect.flip);
         expect(Predicate.isTagged(failure, 'OperationContextUnavailable')).toBe(true);
-        expect(statements).toHaveLength(4);
-        expect(statements[0]).toBe('BEGIN');
-        expect(statements[1]).toContain(gatewayGrant ? 'trust.establish_gateway_scope' : 'set_config');
-        expect(statements[2]).toContain('current_user::text as role');
-        expect(statements[3]).toBe('ROLLBACK');
+        // The gateway grant refuses its verification read; the session-setting role refuses the row its one
+        // install-and-read statement answered.
+        expect(statements).toEqual(
+          gatewayGrant
+            ? ['BEGIN', establishGatewayScopeSql, readGatewayScopeSql, 'ROLLBACK']
+            : ['BEGIN', installAndReadScopeSql, 'ROLLBACK'],
+        );
         expect(statements.some((statement) => statement.includes('from "core"."tenants"'))).toBe(false);
       }),
     );

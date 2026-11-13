@@ -7,7 +7,6 @@ import { WorkloadKeySchema } from '../../packages/core-runtime/src/authorization
 
 import {
   IDENTITY_PROVIDER_WORKLOAD,
-  CRM_PARTY_INTAKE_WORKLOAD,
   STOREFRONT_CLIENT_WORKLOAD,
   STOREFRONT_INQUIRY_WORKLOAD,
   STOREFRONT_MERCHANDISE_WORKLOAD,
@@ -15,7 +14,6 @@ import {
   akrosStorefrontPrincipal,
   commercePortalPrincipal,
   companyHumanAccounts,
-  crmPartyIntakePrincipal,
   demoHumanAccounts,
   demoLegalEntityIds,
   demoShellRoutingRoleKey,
@@ -93,7 +91,6 @@ it('binds only the declared workload keys, and only for principals whose caller 
       STOREFRONT_MERCHANDISE_WORKLOAD,
       STOREFRONT_INQUIRY_WORKLOAD,
       IDENTITY_PROVIDER_WORKLOAD,
-      CRM_PARTY_INTAKE_WORKLOAD,
     ]),
   );
   // Every key is one a carrier of this release declares, in that carrier module's own namespace.
@@ -109,9 +106,10 @@ it('binds only the declared workload keys, and only for principals whose caller 
       storefrontPrincipal.principalId,
       akrosStorefrontPrincipal.principalId,
       commercePortalPrincipal.principalId,
-      crmPartyIntakePrincipal.principalId,
     ]),
   );
+  // CRM's internal intake workload is the platform's, registered per company at release: no hand binding names it.
+  expect(keys.has('demo.crm.party-intake')).toBe(false);
   // The identity provider key belongs to the portal alone; the storefronts are clients only.
   expect(
     bindings.filter((binding) => binding.workloadKey === IDENTITY_PROVIDER_WORKLOAD).map((b) => b.principalId),
@@ -141,7 +139,7 @@ it('binds each storefront to what its BFF calls, registered for its own company 
     }
   }
   // Non-storefront workloads keep acting across the tenant: no company is registered for them.
-  for (const principal of [commercePortalPrincipal, crmPartyIntakePrincipal]) {
+  for (const principal of [commercePortalPrincipal]) {
     expect(of(principal.principalId).every(({ legalEntityId }) => legalEntityId === undefined)).toBe(true);
   }
 });

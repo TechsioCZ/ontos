@@ -5,11 +5,22 @@
  * from scratch. Only a well-formed request whose answer depends on the connection's tools (`tools/list`,
  * `tools/call`) describes the connection's authority; discovery and protocol errors never do.
  */
+import { registerBootWarmUpImport } from '@app/core-runtime/runtime/boot-warm-up-imports';
 import { Duration, Effect, Function as Fn, Schema } from 'effect';
 import { HttpServerResponse } from 'effect/http';
 
 import type { DescriptionTiming } from './describe-timing.ts';
 import type { ToolSpec } from './types.ts';
+
+/**
+ * The MCP SDK and the server factory. Only an authenticated MCP request evaluates them (gateway, metadata, preflight,
+ * landing-page and rejected requests do not need that runtime), or, under a Node process host, its boot warm-up first.
+ * This is local module loading, not external I/O; its Promise stays at the Effect adapter boundary.
+ */
+const loadMcpRuntime = Effect.suspend(() =>
+  Effect.promise(Fn.constant(Promise.all([import('@modelcontextprotocol/server'), import('./server-factory.ts')]))),
+);
+registerBootWarmUpImport(Effect.asVoid(loadMcpRuntime));
 
 export const OAUTH_SCOPE = 'ontos';
 
@@ -214,12 +225,7 @@ export const serveMcp = <Failure, Requirements>(deps: McpEndpointDeps<Failure, R
     if (authentication.kind === 'unavailable') {
       return unavailableResponse();
     }
-    // Only an authenticated MCP request evaluates the SDK and its protocol schemas. Gateway,
-    // metadata, preflight, landing-page and rejected requests do not need that runtime.
-    // This is local module loading, not external I/O; its Promise stays at the Effect adapter boundary.
-    const [sdk, { buildMcpServer }] = yield* Effect.promise(
-      Fn.constant(Promise.all([import('@modelcontextprotocol/server'), import('./server-factory.ts')])),
-    );
+    const [sdk, { buildMcpServer }] = yield* loadMcpRuntime;
     // The SDK calls back with Promises; tools and logs run with the services of this request.
     const services = yield* Effect.context();
     const run = Effect.runPromiseWith(services);

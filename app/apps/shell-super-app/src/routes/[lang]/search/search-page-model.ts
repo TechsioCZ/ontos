@@ -11,7 +11,10 @@ import { planShellSearchFilters } from '../../shell-search-match.ts';
 import type { ShellSearchFilterPlan as SearchFilterPlan } from '../../shell-search-match.ts';
 import { shellSearchPresentationIndex } from '../../shell-search-resource-types.ts';
 import type { ShellSearchPresentationIndex } from '../../shell-search-resource-types.ts';
-import { shellAuthenticationClientOptionsFromRequest } from '../../shell-authentication-client-options.ts';
+import {
+  isServerRender,
+  shellAuthenticationClientOptionsFromRequest,
+} from '../../shell-authentication-client-options.ts';
 import { loadHomePageModel, sessionEndedModel } from '../home-page-model.ts';
 import { requireSignedIn } from '../../sign-in-return.ts';
 import type { HomePageModel } from '../home-page-model.ts';
@@ -26,7 +29,8 @@ export type SearchPageModel =
   | {
       readonly query: string;
       readonly shell: HomePageModel;
-      readonly state: 'reload_required' | 'selection_required' | 'unavailable';
+      /** The server render sends the page without results; the browser runs the search after hydration. */
+      readonly state: 'pending' | 'reload_required' | 'selection_required' | 'unavailable';
     }
   | {
       readonly filters: SearchFilterPlan;
@@ -221,6 +225,11 @@ export const loader = ({ request }: SearchLoaderArguments): Promise<SearchPageMo
                 },
               ),
             );
+          }
+          // The search fans out to every module and waits for the slowest one, and the page is not indexable. Keep it
+          // out of the server render so the document is sent at once; the browser loader answers it after hydration.
+          if (isServerRender()) {
+            return Effect.succeed<SearchPageModel>({ query, shell, state: 'pending' });
           }
           return shellAuthenticationClientOptionsFromRequest(request).pipe(
             Effect.flatMap((options) =>

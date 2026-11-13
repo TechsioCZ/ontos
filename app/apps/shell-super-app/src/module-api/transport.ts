@@ -8,7 +8,8 @@ import { Effect, Layer, Predicate } from 'effect';
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
 import { admitModuleApiRequest } from './admission.ts';
-import { ownerServerTimings, relayModuleResponse } from './response-relay.ts';
+import { ownerServerTimings } from './owner-timing.ts';
+import { relayModuleResponse } from './response-relay.ts';
 
 const dispatchApprovedModuleApiRequest = Effect.fn('ModuleApi.dispatchApprovedRequest')(
   function* dispatchApprovedRequest(request: Request, authority: ActiveApplicationCompositionServiceContract) {

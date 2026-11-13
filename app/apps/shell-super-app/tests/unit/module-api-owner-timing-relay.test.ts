@@ -1,14 +1,32 @@
 // @rstest-environment node
 import { expect, it } from 'effect-rstest';
 
+import { OWNER_TIMING_METRICS } from '../../../../packages/core-runtime/src/http/owner-server-timing.ts';
+import { ownerServerTimings } from '../../src/module-api/owner-timing.ts';
 import { relayModuleResponse } from '../../src/module-api/response-relay.ts';
 
-const timingHeader = (value: string) =>
-  relayModuleResponse(new Response(null, { headers: { 'server-timing': value } })).headers.get('server-timing');
+/*
+ * An owner's `server-timing` is read for the Shell's own log line and never relayed: per-request gate, SpiceDB and SQL
+ * timings are a side channel no browser, storefront or MCP client needs.
+ */
+const logged = (value: string) => ownerServerTimings(value).join(', ');
 
-it('relays fixed numeric owner phases without descriptions or unapproved diagnostics', () => {
+it('relays no server-timing of an owner, whatever it reports', () => {
+  for (const header of [
+    'owner-total;dur=40, owner-gate;dur=12',
+    'read-owner;dur=1.25, read-encode;dur=2',
+    'private;desc="secret"',
+    Array.from({ length: 70 }, () => 'read-owner;dur=1').join(', '),
+  ]) {
+    expect(
+      relayModuleResponse(new Response(null, { headers: { 'server-timing': header } })).headers.has('server-timing'),
+    ).toBe(false);
+  }
+});
+
+it('logs fixed numeric owner phases without descriptions or unapproved diagnostics', () => {
   expect(
-    timingHeader(
+    logged(
       [
         ' read-owner ; dur=1.25 ',
         'read-encode;dur=0.0000001',
@@ -39,12 +57,12 @@ it.each([
   'private;dur=1, read-owner;dur=NaN',
   'private;desc="unclosed, read-owner;dur=123456, read-encode;dur=2',
   `read-owner;dur=1, ${'private'.repeat(600)}`,
-])('omits an empty, unsafe, malformed or oversized timing header: %s', (header) => {
-  expect(timingHeader(header)).toBeNull();
+])('logs nothing of an empty, unsafe, malformed or oversized timing header: %s', (header) => {
+  expect(logged(header)).toBe('');
 });
 
-it('bounds relayed metrics before any gateway collector runs', () => {
-  expect(timingHeader(Array.from({ length: 70 }, () => 'read-owner;dur=1').join(', '))).toBe(
+it('bounds the logged metrics', () => {
+  expect(logged(Array.from({ length: 70 }, () => 'read-owner;dur=1').join(', '))).toBe(
     Array.from({ length: 64 }, () => 'read-owner;dur=1').join(', '),
   );
 });
@@ -63,6 +81,11 @@ it('does not change the separately admitted realm cookie policy', () => {
     'https://shell.test',
     ['portal.session_token'],
   );
-  expect(response.headers.get('server-timing')).toBe('read-owner;dur=1');
+  expect(response.headers.get('server-timing')).toBeNull();
   expect(response.headers.getSetCookie()).toEqual([approved]);
+});
+
+it('logs every phase a Core owner reports of its request, and still no other name like them', () => {
+  const reported = OWNER_TIMING_METRICS.map((name, index) => `${name};dur=${index}`);
+  expect(ownerServerTimings([...reported, 'owner-secret;dur=1', 'owner-sql-total;dur=2'].join(', '))).toEqual(reported);
 });

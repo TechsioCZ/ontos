@@ -9,12 +9,19 @@ import type {
   ShellSearchResponse,
   ShellSearchResult,
 } from '../../../../shared/api.ts';
-import { searchFamiliesFromValue, searchReadyModel } from '../../../../src/routes/[lang]/search/search-page-model.ts';
+import {
+  loader,
+  searchFamiliesFromValue,
+  searchReadyModel,
+} from '../../../../src/routes/[lang]/search/search-page-model.ts';
 import type { ShellAuthenticationClientOptions, ShellSearchClientError } from '../../../../src/api/auth-client.ts';
 import { planShellSearchFilters } from '../../../../src/routes/shell-search-match.ts';
 import { shellSearchPresentationIndex } from '../../../../src/routes/shell-search-resource-types.ts';
 import type { ShellSearchPresentationIndex } from '../../../../src/routes/shell-search-resource-types.ts';
 import { authenticatedShellFixture } from '../authenticated-shell-fixture.ts';
+import { shellAuthenticationClientOptionsFromRequest } from '../../../../src/routes/shell-authentication-client-options.ts' with {
+  rstest: 'importActual',
+};
 
 const { searchResourcesMock } = rstest.hoisted(() => ({
   searchResourcesMock:
@@ -27,6 +34,17 @@ const { searchResourcesMock } = rstest.hoisted(() => ({
 }));
 
 rstest.mock('../../../../src/api/auth-client.ts', () => ({ searchResources: searchResourcesMock }));
+
+const { loadShellMock, serverRenderState } = rstest.hoisted(() => ({
+  loadShellMock: rstest.fn(),
+  serverRenderState: { current: false },
+}));
+
+rstest.mock('../../../../src/routes/[lang]/home-page-model.ts', () => ({ loadHomePageModel: loadShellMock }));
+rstest.mock('../../../../src/routes/shell-authentication-client-options.ts', () => ({
+  isServerRender: () => serverRenderState.current,
+  shellAuthenticationClientOptionsFromRequest,
+}));
 
 const compositionRevision = 'a'.repeat(64);
 const metadata = (key: string, order: number) => ({
@@ -263,5 +281,40 @@ it.effect('a partial inventory answer issues one request and offers no filter', 
     expect(recordedPayloads()).toEqual([{ compositionRevision, query: 'novák', resourceTypes: [] }]);
     expect(model.filters).toEqual({ availableFamilies: [], selectedFamilies: [] });
     expect(model.response.partial).toBe(true);
+  }),
+);
+
+const searchUrl = 'https://ontos.test/en/search?q=Morava';
+
+it.effect('a server render returns the shell with the query pending and never runs the search', () =>
+  Effect.gen(function* serverRenderSearch() {
+    searchResourcesMock.mockReset();
+    searchResourcesMock.mockImplementation(() => Effect.succeed(unfilteredHit()));
+    loadShellMock.mockReturnValue(Effect.succeed(authenticatedShellFixture()));
+    serverRenderState.current = true;
+    const model = yield* Effect.promise(() => loader({ request: new Request(searchUrl) })).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          serverRenderState.current = false;
+        }),
+      ),
+    );
+    expect(searchResourcesMock).not.toHaveBeenCalled();
+    expect(model).toMatchObject({ query: 'Morava', state: 'pending' });
+    expect(model.shell.state).toBe('authenticated');
+  }),
+);
+
+it.effect('the browser loader still returns the answered search', () =>
+  Effect.gen(function* browserSearch() {
+    searchResourcesMock.mockReset();
+    searchResourcesMock.mockImplementation(() => Effect.succeed(unfilteredHit()));
+    const shell = authenticatedShellFixture();
+    loadShellMock.mockReturnValue(Effect.succeed(shell));
+    serverRenderState.current = false;
+    const model = yield* Effect.promise(() => loader({ request: new Request(searchUrl) }));
+    expect(recordedPayloads()).toEqual([{ compositionRevision: shell.compositionRevision, query: 'Morava' }]);
+    expect(model).toMatchObject({ query: 'Morava', state: 'ready' });
+    expect(model.state === 'ready' ? model.response.results.map(({ title }) => title) : []).toEqual(['Unfiltered hit']);
   }),
 );
