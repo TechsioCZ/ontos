@@ -68,6 +68,7 @@ import { decideRoleDeclaration, readableRoleScope, roleIsReadable, roleReadRefus
 import {
   AccessAdminSession,
   accessAdminConflictProblem,
+  accessAdminFailureDetail,
   accessAdminForbiddenProblem,
   accessAdminInternalProblem,
   accessAdminSavedPendingProblem,
@@ -215,7 +216,7 @@ export const accessRolesFailureProblem = (failure: {
   readonly code: string;
   readonly reason: string;
 }): AccessAdminProblem => {
-  const text = `${failure.code}: ${failure.reason}`;
+  const text = accessAdminFailureDetail(failure);
   if (
     failure.code === 'access_changes_authority_missing' ||
     failure.code === 'access_changes_agent_cannot_decide' ||

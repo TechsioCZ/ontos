@@ -248,18 +248,31 @@ it.effect('admits one live membership and refuses a duplicate, an agent and a mi
     });
     expect(writeTags(afterSuspension)).toEqual(['EndMembership', 'RecordMembership']);
 
-    // An agent holds no membership in this wave (O67-Q5), management kinds included.
-    const agent = yield* Effect.flip(
+    // An agent is a participant like anyone else: it holds a member row on its own agent side ...
+    const agentMember = yield* planMembershipGrant({
+      ...facts,
+      administration,
+      holder: { _tag: 'Agent', agentId: ids.agent(1) },
+      kind: 'member',
+      membershipId: membershipId(13),
+      memberships: [],
+    });
+    expect(Option.getOrThrow(membershipIn(agentMember.writes[0])).holder).toEqual({
+      _tag: 'Agent',
+      agentId: ids.agent(1),
+    });
+    // ... but never administration: owner and access_admin stay people's (O46, D2).
+    const agentOwner = yield* Effect.flip(
       planMembershipGrant({
         ...facts,
         administration,
         holder: { _tag: 'Agent', agentId: ids.agent(1) },
-        kind: 'member',
+        kind: 'owner',
         membershipId: membershipId(13),
         memberships: [],
       }),
     );
-    expect(agent.code).toBe('people_agent_holder_forbidden');
+    expect(agentOwner.code).toBe('people_agent_holder_forbidden');
 
     // Tenant ownership lives in the tenant scope, company administration in one company (O28).
     const ownerInCompany = yield* Effect.flip(
@@ -1339,6 +1352,7 @@ it.effect('admits a newcomer to the tenant and the company in one plan, behind t
       _tag: 'RequireDirectoryMember',
       legalEntityId: ADMITTED_COMPANY,
       principalId: MEMBER,
+      principalKind: 'human',
     });
     expect(recordedIn(fresh)).toEqual([
       { id: membershipId(40), scopeId: tenantScope },
@@ -1365,8 +1379,18 @@ it.effect('admits a newcomer to the tenant and the company in one plan, behind t
 
     const live = yield* Effect.flip(admission({ memberships: [memberOf(MEMBER), memberOf(MEMBER, companyScope)] }));
     expect(live.code).toBe('people_membership_already_active');
-    const agent = yield* Effect.flip(admission({ holder: { _tag: 'Agent', agentId: ids.agent(7) } }));
-    expect(agent.code).toBe('people_agent_holder_forbidden');
+    // An agent is admitted like a person, its directory precondition naming its own kind.
+    const agent = yield* admission({ holder: { _tag: 'Agent', agentId: ids.agent(7) } });
+    expect(agent.writes[0]).toEqual({
+      _tag: 'RequireDirectoryMember',
+      legalEntityId: ADMITTED_COMPANY,
+      principalId: ids.agent(7),
+      principalKind: 'agent',
+    });
+    expect(recordedIn(agent)).toEqual([
+      { id: membershipId(40), scopeId: tenantScope },
+      { id: membershipId(41), scopeId: companyScope },
+    ]);
   }),
 );
 
@@ -1560,5 +1584,119 @@ it.effect('ending a membership records its reason and leaves delegations that on
       ),
     );
     expect(reassigned.code).toBe('people_holder_not_a_member');
+  }),
+);
+
+const AGENT = ids.agent(30);
+const agentHolder = { _tag: 'Agent' as const, agentId: AGENT };
+const agentMembership = (fixture: { readonly id: number; readonly status?: MembershipStatus }) =>
+  Schema.decodeUnknownSync(AccessMembershipSchema)({
+    createdAt: ELAPSED,
+    holder: agentHolder,
+    id: membershipId(fixture.id),
+    kind: 'member',
+    recordedBy: personId(900),
+    scopeId: tenantScope,
+    status: fixture.status ?? 'active',
+    tenantId: tenant,
+    validFrom: ELAPSED,
+  });
+
+it.effect('assigns a role to an agent on its own agent side, only while the agent is a live member', () =>
+  Effect.gen(function* agentAssignmentNeedsLiveMembership() {
+    yield* TestClock.setTime(AT.getTime());
+    const routine = [makeEntry({ risk: 'routine' })];
+    const assigned = yield* planRoleAssignment({
+      ...assignmentRequest({
+        catalog: routine,
+        memberships: [agentMembership({ id: 31 }), membership({ holder: MANAGER, id: 2 })],
+      }),
+      holder: agentHolder,
+    });
+    expect(writeTags(assigned)).toEqual(['RecordAssignment']);
+    expect(Option.getOrThrow(assignmentIn(assigned.writes[0])).holder).toEqual(agentHolder);
+
+    // A role that runs a critical capability is never an agent's: it may only propose it (O48a).
+    const critical = yield* Effect.flip(
+      planRoleAssignment({
+        ...assignmentRequest({ memberships: [agentMembership({ id: 31 }), membership({ holder: MANAGER, id: 2 })] }),
+        holder: agentHolder,
+      }),
+    );
+    expect(critical.code).toBe('people_agent_holder_forbidden');
+
+    // A person's membership never stands in for the agent's own (guarantee 4).
+    const notMember = yield* Effect.flip(
+      planRoleAssignment({ ...assignmentRequest({ catalog: routine }), holder: agentHolder }),
+    );
+    expect(notMember.code).toBe('people_holder_not_a_member');
+
+    const suspended = yield* Effect.flip(
+      planRoleAssignment({
+        ...assignmentRequest({ catalog: routine, memberships: [agentMembership({ id: 31, status: 'suspended' })] }),
+        holder: agentHolder,
+      }),
+    );
+    expect(suspended.code).toBe('people_holder_not_a_member');
+  }),
+);
+
+it.effect('never assigns to an agent through a delegation envelope, which names people only', () =>
+  Effect.gen(function* delegatedAgentAssignmentRefused() {
+    yield* TestClock.setTime(AT.getTime());
+    const dates = yield* clockDates;
+    const delegation = makeDelegation({
+      capabilityKeys: [ENVELOPE_KEY],
+      managerId: MANAGER,
+      people: [MEMBER],
+      roleIds: [ids.role(1)],
+      validFrom: dates.past,
+      validUntil: dates.future,
+    });
+    const refused = yield* Effect.flip(
+      planRoleAssignment({
+        ...assignmentRequest({
+          delegation: { delegation, managerIsMember: true },
+          memberships: [agentMembership({ id: 31 }), membership({ holder: MANAGER, id: 2 })],
+        }),
+        holder: agentHolder,
+      }),
+    );
+    expect(refused.code).toBe('delegation_holder_outside_envelope');
+  }),
+);
+
+it.effect('ending an agent membership ends its own assignments only, and never its administration', () =>
+  Effect.gen(function* agentMembershipEnd() {
+    yield* TestClock.setTime(AT.getTime());
+    const administration = makeAdministration({ tenantOwners: [ownerRecord({ principalId: MANAGER })] });
+    const member = agentMembership({ id: 31 });
+    const ended = yield* planMembershipEnd(
+      membershipEndRequest({
+        administration,
+        assignments: [
+          makeAssignment({ holder: agentHolder }),
+          makeAssignment({ holder: holderOf(MEMBER), incarnationId: ids.incarnation(2) }),
+        ],
+        membershipId: member.id,
+        memberships: [member, memberOf(MEMBER), membership({ holder: MANAGER, id: 2 })],
+        nextStatus: 'revoked',
+      }),
+    );
+    expect(writeTags(ended)).toEqual(['EndMembership', 'EndAssignment']);
+    expect(ended.ownershipTransferScopeIds).toEqual([]);
+
+    const withSuccessor = yield* Effect.flip(
+      planMembershipEnd(
+        membershipEndRequest({
+          administration,
+          membershipId: member.id,
+          memberships: [member, membership({ holder: MANAGER, id: 2 })],
+          nextStatus: 'revoked',
+          successor: { membershipId: membershipId(40), principalId: MANAGER },
+        }),
+      ),
+    );
+    expect(withSuccessor.code).toBe('people_agent_holder_forbidden');
   }),
 );

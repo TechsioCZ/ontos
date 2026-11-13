@@ -39,6 +39,7 @@ import { AccessChangesWriteAvailability } from './write-gate.ts';
 import {
   AccessAdminSession,
   accessAdminConflictProblem,
+  accessAdminFailureDetail,
   accessAdminForbiddenProblem,
   accessAdminInternalProblem,
   accessAdminUnprocessableProblem,
@@ -201,7 +202,7 @@ export const accessChangesFailureProblem = (failure: {
   readonly code: string;
   readonly reason: string;
 }): AccessAdminProblem => {
-  const text = `${failure.code}: ${failure.reason}`;
+  const text = accessAdminFailureDetail(failure);
   const authority =
     failure.code === 'access_changes_authority_missing' ||
     failure.code === 'access_changes_command_authority_absent' ||

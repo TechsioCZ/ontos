@@ -11,6 +11,7 @@ import {
 } from '@app/core-runtime';
 import type { OperationalScope, OperationalScopeRequest } from '@app/core-runtime';
 import { AccessDecisionGate, SubjectAccessInspection } from '@app/core-runtime/access/enforcement';
+import { AgentConnectionStore } from '@app/core-runtime/access/intent/agent-connections';
 import {
   ConnectionStatusSchema,
   ConnectionSummarySchema as AdminConnectionSummarySchema,
@@ -22,6 +23,7 @@ import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { OAuthCredentials } from '../auth/db/oauth-credentials.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import {
+  checkLiveGrant,
   connectionSummariesOf,
   loadActingAuthority,
   revokeConnection,
@@ -29,6 +31,7 @@ import {
 } from '../oauth-connections/connection-service.ts';
 import type { ConnectionSummaryRead } from '../oauth-connections/connection-service.ts';
 import { toGrantRow } from '../oauth-connections/grant-store.ts';
+import { ConnectionUnavailable } from '../oauth-connections/errors.ts';
 import { OAuthFlow } from '../oauth-connections/oauth-flow.ts';
 import type { GrantRow } from '../oauth-connections/types.ts';
 import { ConnectionsUnavailable } from './connections-unavailable.ts';
@@ -54,6 +57,30 @@ const NO_LIVE_LIMITS: ConnectionLimits = { maxWritePolicy: 'read_only', modules:
 const OUTSIDE_SCOPE = 'Connection outside the requester tenant or company';
 
 /**
+ * The acting authority of one row: a person's own, or an agent's through the credential-bound connection its live
+ * check finds (an agent without a live connection has none, so its row shows nothing permitted).
+ */
+const actingAuthorityOf = (asker: OperationalScope, row: GrantRow) => {
+  const acting = {
+    actingKind: row.actingKind,
+    actingPrincipalId: row.actingPrincipalId,
+    legalEntityId: row.legalEntityId,
+    tenantId: row.tenantId,
+  };
+  if (row.actingKind === 'agent' && row.status !== 'active') {
+    // A grant that no longer acts has no connection to read an agent's authority through.
+    return Effect.fail(new ConnectionUnavailable({ cause: 'An inactive agent grant has no live connection' }));
+  }
+  return row.actingKind === 'agent'
+    ? checkLiveGrant(row.grantId, asker).pipe(
+        Effect.flatMap((live) =>
+          loadActingAuthority(asker, live.agent === undefined ? acting : { ...acting, agent: live.agent }),
+        ),
+      )
+    : loadActingAuthority(asker, acting);
+};
+
+/**
  * Live limits of every distinct acting principal (per company) among the rows, in the asker's own scope. `None` when
  * the authority cannot be loaded: the row stays listed with nothing permitted, as `connectionSummariesOf` leaves it
  * not live.
@@ -62,12 +89,7 @@ const limitsOf = (asker: OperationalScope, rows: readonly GrantRow[]) =>
   Effect.forEach(
     [...new Map(rows.map((row) => [actingKey(row), row])).values()],
     (row) =>
-      loadActingAuthority(asker, {
-        actingKind: row.actingKind,
-        actingPrincipalId: row.actingPrincipalId,
-        legalEntityId: row.legalEntityId,
-        tenantId: row.tenantId,
-      }).pipe(
+      actingAuthorityOf(asker, row).pipe(
         Effect.map((authority): ConnectionLimits => ({
           maxWritePolicy: authority.policyCap,
           modules: authority.offered,
@@ -154,6 +176,7 @@ export const GrantAdminLive = (request: GrantAdminRequest) =>
         Context.add(OAuthGrantOwners, yield* OAuthGrantOwners),
         Context.add(ShellInstalledModuleCatalog, yield* ShellInstalledModuleCatalog),
         Context.add(TenantModuleStateService, yield* TenantModuleStateService),
+        Context.add(AgentConnectionStore, yield* AgentConnectionStore),
       );
 
       /** Only a grant of the asker's own tenant and company is ever read, listed or changed through this port. */

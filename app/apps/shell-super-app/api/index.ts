@@ -145,6 +145,7 @@ import {
 } from '@app/core-runtime/access/compiler/spice-db-compiler';
 import { loadSpiceDbConfig } from '@app/core-runtime/access/spicedb-config';
 import { AccessChangesStoreLive } from '@app/core-runtime/access/changes/persistence/drizzle-store';
+import { AgentConnectionStoreLive } from '@app/core-runtime/access/intent/agent-connections';
 import { AccessMembershipStoreLive } from '@app/core-runtime/access/intent/memberships';
 import { AccessProjectionWriterLive } from '@app/core-runtime/access/intent/projection-writer';
 import { AccessWriteJournalStoreLive } from '@app/core-runtime/access/lifecycle/persistence/journal-store';
@@ -3441,7 +3442,7 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
           yield* noStore;
           const caller = yield* agentPlatformSessionCaller(request);
           const deps = yield* connectionsAdminDeps(caller, { correlationId: correlationFromRequest(request) });
-          const response = yield* listAgentEntities(caller, deps).pipe(
+          const response = yield* listAgentEntities(caller, new Headers(Object.entries(request.headers)), deps).pipe(
             Effect.provideService(AgentReadRequestIdentity, { correlationId: correlationFromRequest(request) }),
             Effect.catch(connectionsAdminFailure),
           );
@@ -3459,7 +3460,12 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
           const caller = yield* agentPlatformSessionCaller(request);
           const transport = { correlationId: correlationFromRequest(request), idempotencyKey };
           const deps = yield* connectionsAdminDeps(caller, transport);
-          const response = yield* manageAgentEntity(caller, payload, deps).pipe(
+          const response = yield* manageAgentEntity(
+            caller,
+            payload,
+            new Headers(Object.entries(request.headers)),
+            deps,
+          ).pipe(
             Effect.provideService(AgentReadRequestIdentity, transport),
             Effect.provideService(AgentActionRequestIdentity, transport),
             Effect.catch(connectionsAdminFailure),
@@ -3522,7 +3528,13 @@ const oauthGrantRegistryLive = OAuthGrantRegistryLive.pipe(Layer.provide(corePer
 const oauthCredentialsLive = OAuthCredentialsLive.pipe(Layer.provide(authPersistenceLive));
 const oauthGrantOwnersLive = OAuthGrantOwnersLive.pipe(Layer.provide(oauthGrantRegistryLive));
 const oauthEndpointGuardDataLive = OAuthEndpointGuardDataLive.pipe(
-  Layer.provide(Layer.merge(oauthGrantRegistryLive, oauthCredentialsLive)),
+  Layer.provide(
+    Layer.mergeAll(
+      oauthGrantRegistryLive,
+      oauthCredentialsLive,
+      AgentConnectionStoreLive.pipe(Layer.provide(Layer.merge(corePersistenceLive, databaseIdentitiesLive))),
+    ),
+  ),
 );
 const principalResolverLive = PrincipalResolverLive({
   authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
@@ -4119,10 +4131,15 @@ export const makeShellAuthenticationApiRuntime = (
   const moduleCredentialEnrolmentLayer = ModuleCredentialEnrolmentSourceLive.pipe(
     Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive)),
   );
+  // The credential-bound agent connections: written at consent, read by every agent request, ended by revocation.
+  const agentConnectionStoreLive = AgentConnectionStoreLive.pipe(
+    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, databaseIdentitiesLive)),
+  );
   const platformWorkloadKeyAdmissionLayer = PlatformWorkloadKeyAdmissionLive.pipe(
     Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive, moduleCatalogLayer)),
   );
   const handlerDependenciesLive = Layer.mergeAll(
+    agentConnectionStoreLive,
     platformWorkloadKeyAdmissionLayer,
     emailDeliveryRequestsLive,
     authenticationIsolateLive,

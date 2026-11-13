@@ -17,6 +17,7 @@ import { ConnectionError, SqlError, isSqlError } from 'effect/sql/SqlError';
 /* oxlint-disable sonarjs/no-duplicate-string, eslint/no-use-before-define, anti-slop/no-unknown-parameters, effect-native/no-throw-in-effect-callback, effect-native/no-native-error-construction -- Opaque owner resolver defects are captured immediately by Effect.try and sanitized to a typed Core failure; expires: 2027-03-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { Cause, Context, DateTime, Effect, Exit, Layer, Match, Option, Predicate, Schema } from 'effect';
+import { agentProposalQueueReadKey } from '../auth/agent-proposal-queue-contract.ts';
 import type { AccessDeclaration, AccessFieldGroup, AccessTarget } from '../authorization/access-declaration.ts';
 import type { AccessDecision, AccessRecordTarget, ParentReadRequirement } from '../access/decision/contract.ts';
 import type { GateInput } from '../access/enforcement/contract.ts';
@@ -1469,12 +1470,18 @@ const readRuntimeFromDependencies = <
      * A person's selected-company access is the scope resolution's own gate question (O28): this read resolved its
      * scope, and resolution refuses every company the person may not select. A v2 person holds no tuple of the
      * retired `legal_entity#access` relation, so it is not asked for them. Only a principal Core reads as human is
-     * answered here; a workload, an agent or an unreadable kind keeps the legacy relation check.
+     * answered here, and an agent only for its own proposal queue. An agent on any other legacy read is refused here
+     * instead of asking the retired relation: v2 writes no legacy tuple for an agent, so that question is a foregone
+     * denial, and asking it would make an agent's refusal depend on a legacy relation this product no longer writes.
+     * A workload and an unreadable kind keep the legacy relation check.
      */
-    const isPersonInSelectedCompany = Effect.fn('ReadRuntime.isPersonInSelectedCompany')(
-      function* isPersonInSelectedCompanyEffect(target: ResolvedReadPermissionTarget, readScope: OperationalScope) {
+    const selectedCompanyDecision = Effect.fn('ReadRuntime.selectedCompanyDecision')(
+      function* selectedCompanyDecisionEffect(
+        target: ResolvedReadPermissionTarget,
+        readScope: OperationalScope,
+      ): Effect.fn.Return<Option.Option<PermissionDecision>> {
         if (options.principalKinds === undefined || !isSelectedCompanyTarget(target, readScope)) {
-          return false;
+          return Option.none();
         }
         const kind = yield* options.principalKinds
           .readKind({
@@ -1483,14 +1490,40 @@ const readRuntimeFromDependencies = <
             tenantId: TenantIdSchema.make(readScope.tenantId),
           })
           .pipe(Effect.option);
-        return Option.contains(Option.flatten(kind), 'human');
+        const resolved = Option.flatten(kind);
+        if (Option.contains(resolved, 'human')) {
+          return Option.some('allowed');
+        }
+        if (!Option.contains(resolved, 'agent')) {
+          return Option.none();
+        }
+        // An agent reads its own proposal queue while the v2 gate lets it select the company: the gate re-reads its
+        // connection row and both the agent and the operator that row names must act there. It holds no legacy tuple.
+        const { legalEntityId } = readScope;
+        if (
+          input.registration.descriptor.readKey !== agentProposalQueueReadKey ||
+          accessDecision === undefined ||
+          legalEntityId === undefined ||
+          readScope.connection?.agentConnection === undefined
+        ) {
+          return Option.some('denied');
+        }
+        const selectable = yield* accessDecision
+          .selectableLegalEntities({ now: yield* DateTime.nowAsDate, scope: readScope })
+          .pipe(Effect.option);
+        return Option.some(
+          Option.exists(selectable, (companies) => companies.some((company) => company === legalEntityId))
+            ? 'allowed'
+            : 'denied',
+        );
       },
     );
 
     const checkLegacyReadAuthorization = Effect.fn('ReadRuntime.checkLegacyReadAuthorization')(
       function* checkLegacyReadAuthorizationEffect(legacy: LegacyReadAuthorization, readScope: OperationalScope) {
-        const permissionDecision = (yield* isPersonInSelectedCompany(legacy.permissionTarget, readScope))
-          ? 'allowed'
+        const answered = yield* selectedCompanyDecision(legacy.permissionTarget, readScope);
+        const permissionDecision = Option.isSome(answered)
+          ? answered.value
           : yield* checkPermissionTarget(
               contextAccess,
               readScope,

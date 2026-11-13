@@ -120,6 +120,7 @@ import { OAuthCredentialsLive } from '../../api/auth/db/oauth-credentials-live.t
 import { OAuthEndpointGuardsLive } from '../../api/auth/oauth-server/endpoint-guards.ts';
 import { OAuthConnectionHooksLive } from '../../api/oauth-connections/better-auth-hooks.ts';
 import { OAuthEndpointGuardDataLive } from '../../api/oauth-connections/grant-store.ts';
+import { testAgentConnectionStoreLive } from '../support/shell-authentication.ts';
 import { OAuthAuthenticationAuditLive } from '../../../../packages/core-runtime/src/auth/oauth-authentication-audit.ts';
 import { OAuthGrantRegistryLive } from '../../../../packages/core-runtime/src/auth/oauth-grant-registry-live.ts';
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
@@ -372,7 +373,7 @@ it.live(
         OAuthEndpointGuardDataLive,
         OAuthConnectionHooksLive.pipe(Layer.provide(OAuthGrantRegistryLive)),
       ).pipe(
-        Layer.provide(Layer.mergeAll(OAuthGrantRegistryLive, OAuthCredentialsLive)),
+        Layer.provide(Layer.mergeAll(OAuthGrantRegistryLive, OAuthCredentialsLive, testAgentConnectionStoreLive)),
         Layer.provide(Layer.mergeAll(Layer.succeed(CoreDatabase, database), Layer.succeed(AuthDatabase, authDatabase))),
       );
       const authenticationFramework = BetterAuthFrameworkLive().pipe(Layer.provideMerge(oauthAuthenticationLayer));

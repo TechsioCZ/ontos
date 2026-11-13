@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { Context, Effect, Layer, Match, Option, Ref, Schema } from 'effect';
 
 import { CoreDatabase } from '../../db/client.ts';
@@ -669,7 +669,7 @@ const requireGrantorAssignments = (
 
 /** The reason a refused precondition gives; the store's own conflict carries the same text. */
 const DIRECTORY_MEMBERSHIP_MISSING = (write: Extract<PeopleIntentWrite, { _tag: 'RequireDirectoryMember' }>) =>
-  `Person ${write.principalId} is not an active human with an active directory membership of company ${write.legalEntityId}`;
+  `Principal ${write.principalId} is not an active ${write.principalKind} with an active directory membership of company ${write.legalEntityId}`;
 
 /**
  * The company directory precondition of an admission, inside the change's own transaction (S2). The
@@ -688,7 +688,7 @@ const requireDirectoryMember = Effect.fn('AccessPeopleStore.requireDirectoryMemb
     yield* transaction
       .execute(sql`select set_config('ontos.legal_entity_id', ${write.legalEntityId}, true)`, 'objects')
       .pipe(durable(PEOPLE_UNIQUE_CONSTRAINTS));
-    // One statement: the active directory row joined to the active human it names, both share-locked.
+    // One statement: the active directory row joined to the active principal of the holder's kind, both share-locked.
     const directory = yield* transaction
       .select({ principalId: principalCompanyMemberships.principalId })
       .from(principalCompanyMemberships)
@@ -705,7 +705,9 @@ const requireDirectoryMember = Effect.fn('AccessPeopleStore.requireDirectoryMemb
           eq(principalCompanyMemberships.legalEntityId, write.legalEntityId),
           eq(principalCompanyMemberships.principalId, write.principalId),
           eq(principalCompanyMemberships.status, 'active'),
-          eq(principals.kind, 'human'),
+          eq(principals.kind, write.principalKind),
+          // An agent's directory row carries no affiliation, exactly as the agent status Action requires.
+          write.principalKind === 'agent' ? isNull(principalCompanyMemberships.affiliation) : undefined,
           eq(principals.status, 'active'),
         ),
       )

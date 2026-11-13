@@ -1,5 +1,5 @@
 import { AgentEntityOverviewSchema } from '@app/shared-contracts/agent-access';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -142,7 +142,7 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
               // the tenant's v2 roles, and no legacy SpiceDB tuple anywhere (the fixture's SpiceDB carries exactly the
               // schema stage serves). Trunk read the company's members and each agent's operators from legacy
               // `legal_entity#member` / `principal#operator` relations: empty on a v2 tenant, unknown to its schema.
-              const [ours = ''] = accessCase.companies;
+              const [ours = '', other = ''] = accessCase.companies;
               const agentId = accessCase.ids.get('agent')?.principalId ?? '';
               const memberId = accessCase.ids.get('member')?.principalId ?? '';
               yield* accessCase.admin
@@ -186,18 +186,103 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
               expect(overview.members.map(({ principalId }) => principalId)).toContain(memberId);
               // The member's refused attempt is in the agent administration audit.
               expect(overview.audit.length).toBeGreaterThan(0);
-              // The presets are exactly the tenant's v2 roles offered in this company: tenant-wide and its own.
+              // The roles offered are the company's own v2 roles (a tenant-wide role lives in the tenant context, never
+              // in a company assignment), and only those an agent may hold.
               const roles = yield* accessCase.admin
-                .unsafe<{ readonly name: string; readonly role_id: string }>(
-                  `select role_id, name from core.access_roles
-                    where tenant_id = $1 and (legal_entity_id is null or legal_entity_id = $2)`,
+                .unsafe<{ readonly role_id: string }>(
+                  `select role_id from core.access_roles where tenant_id = $1 and legal_entity_id = $2`,
                   [accessCase.tenantId, ours],
                 )
                 .pipe(Effect.orDie);
-              expect(roles.length).toBeGreaterThan(0);
-              expect(overview.presets.map(({ key, label }) => `${key}:${label}`).toSorted()).toEqual(
-                roles.map(({ name, role_id }) => `${role_id}:${name}`).toSorted(),
-              );
+              const companyRoleIds = new Set(roles.map(({ role_id }) => role_id));
+              expect(overview.roles.every(({ roleId }) => companyRoleIds.has(roleId))).toBe(true);
+              // Every role the agent holds is named on the page; nothing technical is shown instead.
+              expect((agent?.roles ?? []).every(({ name }) => name !== '')).toBe(true);
+              // The owner gives the agent an assignable company role through the People Action family, and takes it away.
+              const heldRoleIds = new Set((agent?.roles ?? []).map(({ roleId }) => roleId));
+              const offeredRole = overview.roles.find(({ roleId }) => !heldRoleIds.has(roleId));
+              const offered = yield* Effect.fromOption(Option.fromUndefinedOr(offeredRole)).pipe(Effect.orDie);
+              const assigned = yield* shell.post({
+                idempotencyKey: 'agents-real-gate-assign-role',
+                legalEntityId: ours,
+                path: MANAGE_PATH,
+                payload: {
+                  expectedRevision: overview.rolesRevision,
+                  expectedRoleRevisionId: offered.roleRevisionId,
+                  operation: 'assign-role',
+                  principalId: agentId,
+                  roleId: offered.roleId,
+                },
+                persona: 'owner',
+                sameOrigin: true,
+              });
+              expect(assigned.status, assigned.text).toBe(200);
+              const after = yield* shell
+                .post({ legalEntityId: ours, path: LIST_PATH, payload: {}, persona: 'owner' })
+                .pipe(
+                  Effect.flatMap(({ text }) =>
+                    Schema.decodeUnknownEffect(Schema.fromJsonString(AgentEntityOverviewSchema))(text),
+                  ),
+                  Effect.orDie,
+                );
+              const holding = after.agents
+                .find(({ principalId }) => principalId === agentId)
+                ?.roles.find(({ roleId }) => roleId === offered.roleId);
+              expect(holding?.name).toBe(offered.name);
+              const heldAssignmentId = holding?.assignmentId ?? '';
+              // A member may not assign roles: the People rule refuses them here too.
+              const memberAssign = yield* shell.post({
+                idempotencyKey: 'agents-real-gate-member-assign',
+                legalEntityId: ours,
+                path: MANAGE_PATH,
+                payload: {
+                  expectedRevision: after.rolesRevision,
+                  expectedRoleRevisionId: offered.roleRevisionId,
+                  operation: 'assign-role',
+                  principalId: agentId,
+                  roleId: offered.roleId,
+                },
+                persona: 'member',
+                sameOrigin: true,
+              });
+              expect(memberAssign.status).toBe(403);
+              // The agent is also an agent of the other company: removing its role held here from the other company's
+              // agents page is refused, as the page only ends assignments in its own company.
+              yield* accessCase.admin
+                .unsafe(
+                  `insert into core.principal_company_memberships (tenant_id, legal_entity_id, principal_id, affiliation, status)
+                   values ($1, $2, $3, null, 'active')`,
+                  [accessCase.tenantId, other, agentId],
+                )
+                .pipe(Effect.orDie);
+              const elsewhere = yield* shell.post({
+                idempotencyKey: 'agents-real-gate-remove-role-elsewhere',
+                legalEntityId: other,
+                path: MANAGE_PATH,
+                payload: {
+                  assignmentId: heldAssignmentId,
+                  expectedRevision: after.rolesRevision,
+                  operation: 'remove-role',
+                  principalId: agentId,
+                },
+                persona: 'owner',
+                sameOrigin: true,
+              });
+              expect(elsewhere.status, elsewhere.text).toBe(403);
+              const removed = yield* shell.post({
+                idempotencyKey: 'agents-real-gate-remove-role',
+                legalEntityId: ours,
+                path: MANAGE_PATH,
+                payload: {
+                  assignmentId: heldAssignmentId,
+                  expectedRevision: after.rolesRevision,
+                  operation: 'remove-role',
+                  principalId: agentId,
+                },
+                persona: 'owner',
+                sameOrigin: true,
+              });
+              expect(removed.status, removed.text).toBe(200);
               const refused = yield* shell.post({
                 legalEntityId: ours,
                 path: LIST_PATH,
@@ -205,7 +290,7 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
                 persona: 'member',
               });
               expect(refused.status).toBe(403);
-              // Creating and configuring agents is not in this release: a clean refusal, never a 503.
+              // Creating and configuring agents is still not in this release: a clean refusal, never a 503.
               for (const request of [
                 { operation: 'create', operatorPrincipalIds: [memberId] },
                 { operation: 'configure', principalId: agentId },
@@ -217,8 +302,7 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
                   payload: {
                     ...request,
                     description: null,
-                    displayName: 'Agent',
-                    modules: [{ access: 'read', moduleId: 'work.tasks' }],
+                    displayName: `Agent ${request.operation}`,
                     ownerPrincipalId: memberId,
                     writePolicy: 'approval',
                   },

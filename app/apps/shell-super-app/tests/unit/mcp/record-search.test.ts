@@ -67,6 +67,7 @@ import type { ShellSearchResponse } from '../../../shared/api.ts';
 import { makeCompositionSnapshot } from '../../fixtures/application-composition.ts';
 import { grantRegistryFixture, retainedGrant } from '../oauth-connections/grant-registry-fixture.ts';
 import { connectionDescription, fixtureCatalog, FIXTURE_MODULE_ID } from './fixture-vertical.ts';
+import { agentConnectionStoreDouble } from '../../support/agent-connection-store-double.ts';
 
 rs.mock('../../../api/oauth-connections/server-config.ts', () => ({
   get loadOAuthServerConfig() {
@@ -287,6 +288,7 @@ const setup = Effect.fn('recordSearchTest.setup')(function* setup(
   });
   const authority = Layer.mergeAll(
     inspection.layer,
+    agentConnectionStoreDouble().layer,
     Layer.succeed(CapturedShellCompositionCatalog, installed),
     // Credential-verifier port only: no token issuance or forged signed credential. All live connection checks and
     // connectionPrincipalContext run unmocked against the retained-grant/graph service fixtures below.

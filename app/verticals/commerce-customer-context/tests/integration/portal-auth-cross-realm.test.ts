@@ -47,6 +47,7 @@ import type { AuthenticationService } from '../../../../apps/shell-super-app/api
 import { OAuthConnectionHooksLive } from '../../../../apps/shell-super-app/api/oauth-connections/better-auth-hooks.ts';
 import { OAuthEndpointGuardDataLive } from '../../../../apps/shell-super-app/api/oauth-connections/grant-store.ts';
 import { makePrincipalResolverDouble } from '../../../../apps/shell-super-app/tests/support/identity-service-doubles.ts';
+import { testAgentConnectionStoreLive } from '../../../../apps/shell-super-app/tests/support/shell-authentication.ts';
 import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 /**
@@ -212,7 +213,7 @@ const shellAuthentication = Effect.fnUntraced(function* shellAuthentication() {
     OAuthEndpointGuardDataLive,
     OAuthConnectionHooksLive.pipe(Layer.provide(OAuthGrantRegistryLive)),
   ).pipe(
-    Layer.provide(Layer.mergeAll(OAuthGrantRegistryLive, OAuthCredentialsLive)),
+    Layer.provide(Layer.mergeAll(OAuthGrantRegistryLive, OAuthCredentialsLive, testAgentConnectionStoreLive)),
     Layer.provide(CorePersistenceLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, databaseConfiguration)))),
     Layer.provideMerge(
       Layer.mergeAll(

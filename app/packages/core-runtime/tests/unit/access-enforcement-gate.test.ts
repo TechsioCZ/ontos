@@ -23,7 +23,19 @@ import type { AccessWorkloadBindings } from '../../src/access/enforcement/worklo
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { LegalEntityIdSchema, PrincipalIdSchema } from '../../src/access/ids.ts';
 import type { LegalEntityId, PrincipalId } from '../../src/access/ids.ts';
-import { at, cell, makeAuthority, makeCheck, person, recordTarget, tenant, agent } from './access-decision-support.ts';
+import {
+  agent,
+  agentHolder,
+  at,
+  cell,
+  connect,
+  connectionId,
+  makeAuthority,
+  makeCheck,
+  person,
+  recordTarget,
+  tenant,
+} from './access-decision-support.ts';
 import type { AuthoritySpec } from './access-decision-support.ts';
 
 const now = at('2026-11-03T12:00:00Z');
@@ -251,6 +263,110 @@ it.effect('leaves the asker unset when the evaluated actor asked for itself (O86
     const { gate, state } = harness();
     yield* gate.decide(gateOf());
     expect(state.entries[0]?.onBehalfOfPrincipalId).toBeUndefined();
+  }),
+);
+
+/** The trusted scope of an agent's OAuth connection: the agent acts, the operator delegated it, the credential binds it. */
+const agentConnectionScope = (carried?: { readonly connectionId: string; readonly revision: number }) => {
+  const base = {
+    authBindingId: uid(71),
+    authContextRef: `oauth-grant:${uid(72)}`,
+    authMethod: 'oauth_connection',
+    connection: {
+      clientId: 'https://client.example/metadata.json',
+      clientName: 'Client',
+      grantId: uid(72),
+      modules: 'all',
+      writePolicy: 'direct',
+    },
+    delegatedByPrincipalId: person,
+    legalEntityId: uid(73),
+    principalId: agent,
+    tenantId: tenant,
+  };
+  const trusted = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(
+    carried === undefined ? base : { ...base, connection: { ...base.connection, agentConnection: carried } },
+  );
+  return { ...trusted, correlationId: 'access-enforcement-gate' } satisfies OperationalScope;
+};
+
+it.effect('decides an agent on its credential-bound connection as the agent, on both sides', () =>
+  Effect.gen(function* decidesAgentOnConnection() {
+    const agentCell = cell({ capability: 'finance.invoice.void', holder: agentHolder(), mode: 'propose' });
+    const operatorCell = cell({ capability: 'finance.invoice.void', mode: 'propose' });
+    const ceiling = {
+      cells: [{ capabilityKey: agentCell.capabilityKey, mode: 'propose' as const, selector: { _tag: 'all' as const } }],
+    };
+    const { gate, state } = harness({
+      authority: { cells: [agentCell, operatorCell], connection: connect({ ceiling }) },
+      kinds: kindSource('agent'),
+    });
+    const scope = agentConnectionScope({ connectionId, revision: 1 });
+    // A sensitive run by an agent is a proposal a person decides: the engine answers NEEDS_APPROVAL, never ALLOWED.
+    const decision = yield* gate.decide(gateOf({ legalEntityScope: 'required', scope }));
+    expect(decision.outcome).toBe('NEEDS_APPROVAL');
+    // The evidence names the agent, the operator and the connection: the gate decided AS the agent (O46).
+    expect(state.entries[0]?.actor).toEqual({
+      _tag: 'Agent',
+      agentId: agent,
+      connectionId,
+      consentRevision: 1,
+      principalId: person,
+    });
+  }),
+);
+
+it.effect('refuses an agent whose connection the engine cannot find, or whose consent revision is stale', () =>
+  Effect.gen(function* refusesDeadConnection() {
+    const agentCell = cell({ capability: 'finance.invoice.void', holder: agentHolder(), mode: 'propose' });
+    const missing = yield* harness({ authority: { cells: [agentCell] }, kinds: kindSource('agent') }).gate.decide(
+      gateOf({ legalEntityScope: 'required', scope: agentConnectionScope({ connectionId, revision: 1 }) }),
+    );
+    expect(missing.reasons.map(({ code }) => code)).toEqual(['deny.connection_inactive']);
+    const revoked = yield* harness({
+      authority: { cells: [agentCell], connection: connect({ status: 'revoked' }) },
+      kinds: kindSource('agent'),
+    }).gate.decide(
+      gateOf({ legalEntityScope: 'required', scope: agentConnectionScope({ connectionId, revision: 1 }) }),
+    );
+    expect(revoked.reasons.map(({ code }) => code)).toEqual(['deny.connection_inactive']);
+    const stale = yield* harness({
+      authority: { cells: [agentCell], connection: connect({ consentRevision: 2 }) },
+      kinds: kindSource('agent'),
+    }).gate.decide(
+      gateOf({ legalEntityScope: 'required', scope: agentConnectionScope({ connectionId, revision: 1 }) }),
+    );
+    expect(stale.reasons.map(({ code }) => code)).toEqual(['deny.consent_stale']);
+  }),
+);
+
+it.effect('refuses an agent on an OAuth connection that carries no credential-bound connection', () =>
+  Effect.gen(function* refusesUnboundAgent() {
+    const { gate } = harness({ kinds: kindSource('agent') });
+    const decision = yield* gate.decide(gateOf({ legalEntityScope: 'required', scope: agentConnectionScope() }));
+    expect(decision.reasons.map(({ code }) => code)).toEqual(['deny.agent_forbidden']);
+  }),
+);
+
+it.effect('never admits an agent on an administration declaration, even on a live connection', () =>
+  Effect.gen(function* refusesAgentAdministration() {
+    const adminCell = cell({ capability: 'core.identity.support.impersonate', holder: agentHolder() });
+    const { gate } = harness({
+      authority: {
+        cells: [adminCell, cell({ capability: 'core.identity.support.impersonate' })],
+        connection: connect(),
+      },
+      kinds: kindSource('agent'),
+    });
+    const decision = yield* gate.decide(
+      gateOf({
+        carrier: { accessDeclaration: adminDeclarationOf() },
+        legalEntityScope: 'required',
+        scope: agentConnectionScope({ connectionId, revision: 1 }),
+      }),
+    );
+    expect(decision.outcome).toBe('DENIED');
+    expect(decision.reasons.map(({ code }) => code)).toContain('deny.agent_forbidden');
   }),
 );
 
