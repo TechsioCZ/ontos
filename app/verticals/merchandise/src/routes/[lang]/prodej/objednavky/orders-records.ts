@@ -2,7 +2,14 @@ import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-prop
 import { companyVatOf } from '../../provoz/produkty/product-tax-classification.ts';
 import type { CompanyVat } from '../../provoz/produkty/product-tax-classification.ts';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
-import { LIST_WARM_ROWS, makeIntentLimiter, makePointerDwell, rowIntentProps, useHeldSnapshot } from '@app/admin-ui';
+import {
+  LIST_WARM_ROWS,
+  makeIntentLimiter,
+  makePointerDwell,
+  rowIntentProps,
+  useHeldSnapshot,
+  whenBrowserIdle,
+} from '@app/admin-ui';
 import type { RowIntentProps } from '@app/admin-ui';
 import { Data, Effect, Match, MutableRef, Option, Predicate, Random, Result, Schema } from 'effect';
 import {
@@ -845,8 +852,11 @@ export const useOrders = (
         )
       : undefined;
   const warmed = useRef<string>(undefined);
+  // The warm-up waits for an idle browser so it does not compete with the list's first paint and the next click.
+  // Row intent does not wait: it reads through `orderDetailIntent`.
   const prefetch = useEffectEvent((records: RecordsResponse, key: string) =>
-    preloadOrderDetails(input, records).pipe(
+    whenBrowserIdle.pipe(
+      Effect.andThen(preloadOrderDetails(input, records)),
       Effect.andThen(
         Effect.sync(() => {
           warmed.current = key;
