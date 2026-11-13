@@ -961,9 +961,16 @@ const HOP_BY_HOP: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Response headers that never leave the public port: `server-timing` carries per-request authorization and storage
+ * timings (a module owner's gate, SpiceDB and SQL phases and counts, the Shell's gateway phases), a side channel no
+ * outside client needs. The numbers stay in the processes' own logs.
+ */
+const PRIVATE_RESPONSE_HEADERS: ReadonlySet<string> = new Set(['server-timing']);
+
+/**
  * The owner's end-to-end headers. A caller retries an unavailable (503) answer: make it reconnect, so the retry
  * can reach another container instead of reusing a kept-alive socket to this one. A superseded release keeps
- * refusing governed requests until Zerops stops it.
+ * refusing governed requests until Zerops stops it. Private headers stay inside.
  */
 export const relayResponseHeaders = (
   statusCode: number,
@@ -971,7 +978,7 @@ export const relayResponseHeaders = (
 ) => {
   const headers: Record<string, string | readonly string[]> = {};
   for (const [name, value] of Object.entries(upstream)) {
-    if (value !== undefined && !HOP_BY_HOP.has(name)) {
+    if (value !== undefined && !HOP_BY_HOP.has(name) && !PRIVATE_RESPONSE_HEADERS.has(name)) {
       headers[name] = value;
     }
   }

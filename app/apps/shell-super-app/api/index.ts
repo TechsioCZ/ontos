@@ -292,7 +292,8 @@ import {
 import { ExternalIdentityNotInstalledLive } from './auth/external-identity-runtime.ts';
 import type { ExternalIdentityDeploymentLayer } from './auth/external-identity-runtime.ts';
 import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
-import { GatewayTimings, gatewayTimingCollector, observeGatewayPhase } from './auth/gateway-timing.ts';
+import { GatewayTimings, observeGatewayPhase } from './auth/gateway-timing.ts';
+import { NoServerTimingLive } from './no-server-timing.ts';
 import { demoAccountCapability } from './auth/demo-accounts.ts';
 import { rebrandRentalDemoAccounts } from './auth/rental-demo-brand-runtime-infrastructure.ts';
 import { listAgentEntities, manageAgentEntity } from './auth/agent-entities.ts';
@@ -1454,15 +1455,9 @@ const captureShellRelease = Effect.fn('Shell.captureRelease')(function* captureS
   return catalog;
 });
 
-const withGatewayTimings = Effect.fn('ShellGateway.withTimings')(function* withGatewayTimingsEffect<
-  Value,
-  Failure,
-  Requirements,
->(effect: Effect.Effect<Value, Failure, Requirements>) {
-  const collector = yield* gatewayTimingCollector;
-  yield* collector.appendResponseHeader;
-  return yield* effect.pipe(Effect.provideService(GatewayTimings, Option.some(collector.timings)));
-});
+/** Measures this gateway request's phases: each one is logged when it ends. */
+const withGatewayTimings = <Value, Failure, Requirements>(effect: Effect.Effect<Value, Failure, Requirements>) =>
+  effect.pipe(Effect.provideService(GatewayTimings, true));
 
 /**
  * One assertion per audience for an authenticated session principal, from the same issuer as `issueGatewayContext`
@@ -4192,7 +4187,8 @@ export const makeShellAuthenticationApiRuntime = (
   return assembleEffectBffRuntime({
     api: ShellAuthenticationApi,
     handlers: apiHandlersLive,
-    transport: Layer.mergeAll(ShellTransportLive, LiveChangesRouteLive).pipe(
+    // No response leaves the Shell with `server-timing`, whichever route or in-process Action added it.
+    transport: Layer.mergeAll(ShellTransportLive, LiveChangesRouteLive, NoServerTimingLive).pipe(
       // Building the MCP endpoint's route Layer registers it beside the other Shell routes.
       Layer.provide(mcpEndpointRoutesLive),
       Layer.provide(shellTransportServicesLive),

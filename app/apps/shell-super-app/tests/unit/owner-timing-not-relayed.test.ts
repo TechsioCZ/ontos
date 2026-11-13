@@ -5,21 +5,25 @@
  * the response that leaves the Shell.
  */
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
-import type { TrustedPrincipalContext } from '@app/core-runtime';
+import { ActionRuntime, reservePrincipalBindingAction } from '@app/core-runtime';
+import type { ActionRuntimeService, TrustedPrincipalContext } from '@app/core-runtime';
+import { runGovernedActionHttp } from '@app/core-runtime/http/action-runner';
+import { ReservePrincipalBindingPayloadSchema } from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
-import { Context, Crypto, Effect, FiberSet, Layer, Option, Ref } from 'effect';
-import { HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { Context, Crypto, Effect, FiberSet, Layer, Redacted, Schema } from 'effect';
+import { HttpRouter, HttpServerResponse } from 'effect/http';
 import { describe, expect, it, rs } from 'effect-rstest';
 
 import { callModuleAs } from '../../api/agent-platform/module-call.ts';
 import { AgentReadRequestIdentity } from '../../api/auth/agent-request-identity.ts';
 import { GatewayIssuer, ShellCryptoLive } from '../../api/auth/gateway-issuer.ts';
-import { GatewayTimings, gatewayTimingCollector, observeGatewayPhase } from '../../api/auth/gateway-timing.ts';
+import { GatewayTimings, observeGatewayPhase } from '../../api/auth/gateway-timing.ts';
 import { serveMcp } from '../../api/mcp/http.ts';
 import type { McpConnectionTools, McpEndpointConfig } from '../../api/mcp/http.ts';
 import { buildConnectionTools } from '../../api/mcp/tools.ts';
 import type { McpBackend } from '../../api/mcp/types.ts';
 import { ModuleUnavailable } from '../../api/mcp/module-unavailable.ts';
+import { NoServerTimingLive } from '../../api/no-server-timing.ts';
 import { ShellInstalledModuleCatalog } from '../../api/modules/installed-module-catalog.ts';
 import { dispatchModuleApiRequest, ModuleApiTransportLive } from '../../src/module-api/transport.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
@@ -48,13 +52,9 @@ rs.mock('@app/core-runtime/unit-service-fetch', () => ({
     }),
 }));
 
-// As the Shell API root wraps each gateway request.
+// As the Shell API root wraps each gateway request: its phases are measured and logged.
 const withGatewayTimings = <Value, Failure, Requirements>(effect: Effect.Effect<Value, Failure, Requirements>) =>
-  Effect.gen(function* provideRequestTimings() {
-    const collector = yield* gatewayTimingCollector;
-    yield* collector.appendResponseHeader;
-    return yield* effect.pipe(Effect.provideService(GatewayTimings, Option.some(collector.timings)));
-  });
+  effect.pipe(Effect.provideService(GatewayTimings, true));
 
 /** No owner phase name may appear in what leaves the Shell. */
 const expectNoOwnerTiming = (header: string | null | undefined) => {
@@ -68,25 +68,93 @@ const composition = Layer.effect(
   makeCompositionSnapshot([]).pipe(Effect.map((snapshot) => ({ load: Effect.succeed(snapshot) }))),
 );
 
-describe('an owner server-timing never leaves the Shell', () => {
+/** One request to `routes` served as the Shell serves them, with or without its global `server-timing` strip. */
+const served = (routes: Layer.Layer<never, never, HttpRouter.HttpRouter>, request: Request, stripped = true) =>
+  Effect.acquireRelease(
+    Effect.sync(() =>
+      HttpRouter.toWebHandler(stripped ? Layer.mergeAll(routes, NoServerTimingLive) : routes, { disableLogger: true }),
+    ),
+    (handler) => Effect.promise(() => handler.dispose()),
+  ).pipe(Effect.flatMap((route) => Effect.promise(() => route.handler(request, Context.empty()))));
+
+const ownerRead = () =>
+  new Request('https://shell.test/module-api/fixture-notes/build/fixture-notes-api/reads/records', {
+    body: '{}',
+    method: 'POST',
+  });
+
+/** The storefront API-key gateway read's tail: in-process owner dispatch inside its measured gateway phase. */
+const gatewayReadRoute = HttpRouter.add(
+  'POST',
+  '/shell-super-app-api/auth/api-key/gateway-read',
+  dispatchModuleApiRequest(
+    new Request('https://shell.invalid/module-api/fixture-notes/build/fixture-notes-api/reads/records', {
+      body: '{}',
+      method: 'POST',
+    }),
+  ).pipe(
+    observeGatewayPhase('owner-dispatch'),
+    Effect.map(HttpServerResponse.fromWeb),
+    withGatewayTimings,
+    Effect.provide(composition),
+    Effect.orDie,
+  ),
+);
+
+const actionPrincipal: TrustedPrincipalContext = {
+  authBindingId: '00000000-0000-4000-8000-000000000014',
+  authContextRef: 'api-key:owner-timing',
+  authMethod: 'api_key',
+  principalId: '00000000-0000-4000-8000-000000000013',
+  tenantId: '00000000-0000-4000-8000-000000000011',
+};
+
+/** An Action runtime whose run executes one statement, as a real one would: the runner then reports owner phases. */
+const statementRuntime: ActionRuntimeService = {
+  resolveActionCommit: () => Effect.die('Not exercised'),
+  resolveActionExecution: () => Effect.die('Not exercised'),
+  runAction: () => Effect.die('The reservation is refused after its statement').pipe(Effect.withSpan('postgres')),
+};
+
+/** The authorization header an in-process route passes on: none, the workload was verified at the boundary. */
+const noAuthorization = (value?: string) => Redacted.make(value);
+
+/** A principal binding reservation an API-key workload sends. */
+const reservation = Schema.decodeSync(ReservePrincipalBindingPayloadSchema)({
+  authenticationNamespaceId: 'test.third-provider.realm',
+  providerSubjectId: 'Case-Sensitive/ID_01',
+  subjectType: 'user',
+});
+
+/** The reserve route's request, as an API-key workload sends it. */
+const reserveRequest = () =>
+  new Request('https://shell.test/shell-super-app-api/auth/external-identity/bindings/reserve', { method: 'POST' });
+
+/** An in-process Shell Action route: Core's governed Action runner, as the principal binding reserve runs it. */
+const reserveRoute = HttpRouter.add(
+  'POST',
+  '/shell-super-app-api/auth/external-identity/bindings/reserve',
+  runGovernedActionHttp({
+    endpointHeaders: { idempotencyKey: 'reserve-owner-timing', traceId: 'reserve-owner-timing' },
+    internalProblem: () => 'internal' as const,
+    invalidCorrelationProblem: () => 'invalid' as const,
+    mapError: () => 'refused' as const,
+    payload: reservation,
+    principal: { authenticate: () => Effect.succeed(actionPrincipal) },
+    registration: reservePrincipalBindingAction,
+    requestHeaders: { authorization: noAuthorization(), 'x-correlation-id': 'reserve-owner-timing' },
+  }).pipe(
+    Effect.as(HttpServerResponse.text('reserved')),
+    Effect.orElseSucceed(() => HttpServerResponse.empty({ status: 503 })),
+    Effect.provideService(ActionRuntime, statementRuntime),
+  ),
+);
+
+describe('no server-timing leaves the Shell, from an owner or from the Shell itself', () => {
   it.effect('browser: the /module-api relay route answers without it', () =>
     Effect.gen(function* browserPath() {
       owner.calls = 0;
-      const route = yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          HttpRouter.toWebHandler(ModuleApiTransportLive.pipe(Layer.provide(composition)), { disableLogger: true }),
-        ),
-        (handler) => Effect.promise(() => handler.dispose()),
-      );
-      const response = yield* Effect.promise(() =>
-        route.handler(
-          new Request('https://shell.test/module-api/fixture-notes/build/fixture-notes-api/reads/records', {
-            body: '{}',
-            method: 'POST',
-          }),
-          Context.empty(),
-        ),
-      );
+      const response = yield* served(ModuleApiTransportLive.pipe(Layer.provide(composition)), ownerRead());
       expect(owner.calls).toBe(1);
       expect(response.status).toBe(200);
       expect(response.headers.get('server-timing')).toBeNull();
@@ -98,30 +166,28 @@ describe('an owner server-timing never leaves the Shell', () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect('storefront: the API-key gateway read sends only the gateway phases', () =>
+  it.effect("storefront: the API-key gateway read sends neither the owner's nor the gateway's own phases", () =>
     Effect.gen(function* storefrontPath() {
       owner.calls = 0;
-      const sent = yield* Ref.make(HttpServerResponse.empty());
-      // The tail of the gateway read handler: in-process owner dispatch, its phase, and the gateway's timing header.
-      const gatewayRead = dispatchModuleApiRequest(
-        new Request('https://shell.invalid/module-api/fixture-notes/build/fixture-notes-api/reads/records', {
-          body: '{}',
-          method: 'POST',
-        }),
-      ).pipe(observeGatewayPhase('owner-dispatch'), Effect.map(HttpServerResponse.fromWeb), withGatewayTimings);
-      yield* HttpEffect.toHandled(gatewayRead, (_request, response) => Ref.set(sent, response)).pipe(
-        Effect.provideService(
-          HttpServerRequest.HttpServerRequest,
-          HttpServerRequest.fromWeb(new Request('https://shell.test/shell-super-app-api/auth/api-key/gateway-read')),
-        ),
-        Effect.provide(composition),
+      const response = yield* served(
+        gatewayReadRoute,
+        new Request('https://shell.test/shell-super-app-api/auth/api-key/gateway-read', { method: 'POST' }),
       );
-      const response = HttpServerResponse.toWeb(yield* Ref.get(sent));
       expect(owner.calls).toBe(1);
       expect(response.status).toBe(200);
-      expect(response.headers.get('server-timing')).toBe('owner-dispatch;dur=0');
-      expectNoOwnerTiming(response.headers.get('server-timing'));
-    }),
+      expect(response.headers.get('server-timing')).toBeNull();
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reserve: an Action the Shell runs in-process answers without the runner's owner phases", () =>
+    Effect.gen(function* reservePath() {
+      // Without the Shell's strip the runner's owner phases and counts would reach the API-key client.
+      const unstripped = yield* served(reserveRoute, reserveRequest(), false);
+      expect(unstripped.headers.get('server-timing')).toContain('owner-sql-count;dur=1');
+      const response = yield* served(reserveRoute, reserveRequest());
+      expect(response.status).toBe(503);
+      expect(response.headers.get('server-timing')).toBeNull();
+    }).pipe(Effect.scoped),
   );
 
   it.effect('MCP: a tool call that reads an owner answers the MCP client without it', () =>
