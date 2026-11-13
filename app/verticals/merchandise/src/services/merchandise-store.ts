@@ -50,9 +50,12 @@ export class MerchandiseStoreFailure extends Data.TaggedError('MerchandiseStoreF
 
 /** A stored document Merchandise decodes on a read, named as an operator finds it. */
 export const StoredDocumentSchema = Schema.Literals([
+  'catalog_heads.homepage_featured_product_ids',
   'catalog_heads.tax_rates',
   'catalog_heads (storefront head)',
   'categories.document',
+  'market_product_offers',
+  'market_settings',
   'orders.document',
   'product_variants.document',
   'products (list row)',
@@ -65,17 +68,26 @@ export type StoredDocument = typeof StoredDocumentSchema.Type;
 const STORED_DECODE_WARNING_INTERVAL_MS = 60_000;
 /** When each (company, document) last warned, and how many failures it has not reported since. */
 const storedDecodeWarnings = Ref.makeUnsafe(new Map<string, { readonly at: number; readonly unreported: number }>());
-/** The schema's reason and the field path, without the value it got: a stored document may hold prices. */
+/**
+ * The field path and the KIND of each failure (`InvalidType`, `MissingKey`, `UnexpectedKey`, a rule not met), never a
+ * value: a stored document may hold prices, e-mails or whole parties. Every message is built from the issue's kind and
+ * a fixed text; a message the formatter composes itself (a union's, which can quote its input) becomes "invalid".
+ */
+const STORED_RULE_NOT_MET = 'rule not met';
+const STORED_ISSUE_KIND = /^[A-Z][A-Za-z]+$/u;
 const formatStoredIssues = SchemaIssue.makeFormatterStandardSchemaV1({
-  leafHook: (issue) => SchemaIssue.defaultLeafHook(issue).replace(/, got .*$/su, ''),
+  checkHook: () => STORED_RULE_NOT_MET,
+  leafHook: (issue) => issue._tag,
 });
 const pathSegment = (segment: PropertyKey | { readonly key: PropertyKey }) =>
   String(Predicate.hasProperty(segment, 'key') ? segment.key : segment);
-const issuesOf = (cause: unknown) =>
+/** What a stored-document WARN says about each failure: where it is and what kind it is. Exported for its test. */
+export const storedIssuesOf = (cause: unknown) =>
   Schema.isSchemaError(cause)
     ? formatStoredIssues(cause.issue).issues.map((issue) => ({
         path: (issue.path ?? []).map(pathSegment).join('.'),
-        reason: issue.message,
+        reason:
+          issue.message === STORED_RULE_NOT_MET || STORED_ISSUE_KIND.test(issue.message) ? issue.message : 'invalid',
       }))
     : [{ path: '', reason: 'not a schema failure' }];
 
@@ -103,7 +115,7 @@ export const warnStoredDocumentUndecodable = Effect.fn('MerchandiseStore.warnSto
           company: scope.legalEntityId,
           document,
           failures,
-          issues: issuesOf(cause),
+          issues: storedIssuesOf(cause),
           module: 'demo.merchandise',
           tenant: scope.tenantId,
         }),
@@ -1187,8 +1199,10 @@ export const loadHead = Effect.fn('MerchandiseStore.loadHead')(function* loadHea
     [
       query(decodeAiSlice(row.aiChanges), 'AI changes do not decode'),
       query(
-        Schema.decodeUnknownEffect(Schema.Array(ProductIdReferenceSchema))(row.homepageFeaturedProductIds),
-        'AI changes do not decode',
+        Schema.decodeUnknownEffect(Schema.Array(ProductIdReferenceSchema))(row.homepageFeaturedProductIds).pipe(
+          Effect.tapError(storedDocumentUndecodable(scope, 'catalog_heads.homepage_featured_product_ids')),
+        ),
+        'Homepage featured products do not decode',
       ),
       decodeTaxRates(scope, row.taxRates),
     ],

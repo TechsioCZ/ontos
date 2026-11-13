@@ -36,16 +36,23 @@ const unavailable = (cause?: Error) =>
     { value: cause },
   );
 
-/** Missing owner state is an empty company; only an Action save materializes the first revision. */
 const STORED_DECODE_WARNING_INTERVAL_MS = 60_000;
 /** When each company's ledger last warned, and how many failures it has not reported since. */
 const storedDecodeWarnings = Ref.makeUnsafe(new Map<string, { readonly at: number; readonly unreported: number }>());
 const pathSegment = (segment: PropertyKey | { readonly key: PropertyKey }) =>
   String(Predicate.hasProperty(segment, 'key') ? segment.key : segment);
-/** The schema's reason and the field path, without the value it got: the ledger holds amounts and parties. */
+const STORED_RULE_NOT_MET = 'rule not met';
+const STORED_ISSUE_KIND = /^[A-Z][A-Za-z]+$/u;
+/**
+ * The field path and the KIND of each failure, never a value: the ledger holds amounts, e-mails and parties. Messages
+ * come from the issue's kind and a fixed text; one the formatter composes itself becomes "invalid".
+ */
 const formatStoredIssues = SchemaIssue.makeFormatterStandardSchemaV1({
-  leafHook: (issue) => SchemaIssue.defaultLeafHook(issue).replace(/, got .*$/su, ''),
+  checkHook: () => STORED_RULE_NOT_MET,
+  leafHook: (issue) => issue._tag,
 });
+const storedReason = (message: string) =>
+  message === STORED_RULE_NOT_MET || STORED_ISSUE_KIND.test(message) ? message : 'invalid';
 
 /**
  * A company's stored ledger that does not decode on a read: the read stays unavailable (the decoder is never relaxed),
@@ -77,7 +84,7 @@ const warnUndecodableState = Effect.fn('Finance.warnUndecodableState')(function*
       failures,
       issues: formatStoredIssues(error.issue).issues.map((issue) => ({
         path: (issue.path ?? []).map(pathSegment).join('.'),
-        reason: issue.message,
+        reason: storedReason(issue.message),
       })),
       module: 'finance.billing',
       tenant: scope.tenantId,
@@ -85,7 +92,10 @@ const warnUndecodableState = Effect.fn('Finance.warnUndecodableState')(function*
   );
 });
 
-/** The company's ledger decoded; `scope` names it in the WARN a read writes when the stored ledger does not decode. */
+/**
+ * Missing owner state is an empty company; only an Action save materializes the first revision. `scope` names the
+ * company in the WARN a read writes when the stored ledger does not decode.
+ */
 export const decodeFinanceState = Effect.fn('Finance.decodeState')(function* decodeFinanceState(
   row: StateRow | undefined,
   scope?: Pick<OperationalScope, 'legalEntityId' | 'tenantId'>,

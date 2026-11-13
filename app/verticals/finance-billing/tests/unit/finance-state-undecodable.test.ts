@@ -38,7 +38,7 @@ it.effect('an undecodable ledger answers unavailable with one WARN a minute per 
       company: scope.legalEntityId,
       document: 'finance_billing.finance_states.state',
       failures: 1,
-      issues: [{ path: 'opportunitiesAwaitingVat', reason: expect.stringMatching(/^Expected /u) }],
+      issues: [{ path: 'opportunitiesAwaitingVat', reason: 'InvalidType' }],
       module: 'finance.billing',
       tenant: scope.tenantId,
     });

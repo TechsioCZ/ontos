@@ -13,7 +13,7 @@ import { createRoot } from 'react-dom/client';
 import type { Root } from 'react-dom/client';
 import type { VatChangeRights } from '../../src/routes/[lang]/finance/dph/tax-access.ts';
 import { VatPage } from '../../src/routes/[lang]/finance/dph/page.tsx';
-import { vatSettingsData } from '../../src/routes/[lang]/finance/dph/vat-settings-data.ts';
+import { gatewayRefusalState, vatSettingsData } from '../../src/routes/[lang]/finance/dph/vat-settings-data.ts';
 import { financeBrowserRuntime } from '../../src/runtime/browser.ts';
 import { pinDocumentNavigationModules } from '@app/shared-contracts';
 
@@ -222,3 +222,15 @@ it.effect("Tax not installed for the tenant: the page says exactly that, from th
     expect(text()).not.toContain(`${ns}.forbidden`);
   }),
 );
+
+it("the Shell's refusal names the page state: not installed, temporarily unavailable, or no access", () => {
+  const forbidden = 'https://ontos.dev/problems/gateway-forbidden';
+  expect(gatewayRefusalState({ type: 'https://ontos.dev/problems/gateway-module-not-installed' })).toEqual({
+    state: 'notInstalled',
+  });
+  expect(gatewayRefusalState({ reason: 'audience_module_not_active', type: forbidden })).toEqual({
+    state: 'unavailable',
+  });
+  expect(gatewayRefusalState({ reason: 'scope_unavailable', type: forbidden })).toEqual({ state: 'unavailable' });
+  expect(gatewayRefusalState({ reason: 'scope_refused', type: forbidden })).toEqual({ state: 'forbidden' });
+});

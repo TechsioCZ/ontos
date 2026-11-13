@@ -1,11 +1,11 @@
 // A stored Merchandise document that does not decode on a read: the read stays unavailable, and one WARN per company and
 // document per minute names the module, tenant, company, document, field path and reason, never a value of the
 // document (it may hold prices).
-import { Effect, Logger, Schema } from 'effect';
+import { Effect, Logger, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
-import { storedDocumentUndecodable } from '../../src/services/merchandise-store.ts';
+import { storedDocumentUndecodable, storedIssuesOf } from '../../src/services/merchandise-store.ts';
 import { CompanyTaxRatesSchema } from '../../src/services/tax-rates.ts';
 
 const scope = {
@@ -52,7 +52,7 @@ it.effect('a stored document that does not decode answers unavailable with one W
       company: scope.legalEntityId,
       document: 'catalog_heads.tax_rates',
       failures: 1,
-      issues: [{ path: 'heldProductRates', reason: expect.stringMatching(/^Expected /u) }],
+      issues: [{ path: 'heldProductRates', reason: 'InvalidType' }],
       module: 'demo.merchandise',
       tenant: scope.tenantId,
     });
@@ -62,3 +62,27 @@ it.effect('a stored document that does not decode answers unavailable with one W
     expect(lines.join('\n')).not.toContain('migration');
   }),
 );
+
+it('a failed rule check and an unexpected key name the field and the kind, never the value', () => {
+  const Order = Schema.Struct({
+    contact: Schema.Struct({ email: Schema.String.check(Schema.isPattern(/^[^@\s]+@[^@\s]+$/u)) }),
+    totalMinor: Schema.Int,
+  });
+  const failure = Schema.decodeUnknownResult(Order)(
+    { contact: { email: 'tereza ukazkova at example.cz', party: { name: 'Tereza Ukázková' } }, totalMinor: 107_800.5 },
+    { errors: 'all', onExcessProperty: 'error' },
+  );
+  expect(Result.isFailure(failure)).toBe(true);
+  const issues = Result.isFailure(failure) ? storedIssuesOf(failure.failure) : [];
+  expect(issues).toEqual(
+    expect.arrayContaining([
+      { path: 'contact.email', reason: 'rule not met' },
+      { path: 'contact.party', reason: 'UnexpectedKey' },
+      { path: 'totalMinor', reason: 'rule not met' },
+    ]),
+  );
+  const logged = JSON.stringify(issues);
+  for (const value of ['tereza', 'Ukázková', '107800']) {
+    expect(logged).not.toContain(value);
+  }
+});

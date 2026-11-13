@@ -89,11 +89,18 @@ const loadRegime = Effect.fn('VatSettings.regime')(function* loadRegime(now: Dat
 const forbidden = (): Effect.Effect<VatSettings> => Effect.succeed({ state: 'forbidden' });
 
 /**
- * The Shell's refusal of the call to Tax: "not installed" only when it says exactly that (its problem type), any other
- * refusal is the person's own lack of rights. This is the page's one source for whether Tax runs for the company.
+ * The Shell's refusal of the call to Tax: "not installed" only when it says exactly that (its problem type); Tax
+ * stopped for now or a Shell part unavailable is temporary; any other refusal is the person's own lack of rights. This is the page's one source for whether Tax runs for the company.
  */
-export const gatewayRefusalState = (problem: { readonly type: string }): VatSettings =>
-  problem.type === GATEWAY_MODULE_NOT_INSTALLED_TYPE ? { state: 'notInstalled' } : { state: 'forbidden' };
+export const gatewayRefusalState = (problem: { readonly reason?: string; readonly type: string }): VatSettings => {
+  if (problem.type === GATEWAY_MODULE_NOT_INSTALLED_TYPE) {
+    return { state: 'notInstalled' };
+  }
+  // Tax suspended or quarantined for now, or a part of the Shell unavailable: temporary, never "ask for access".
+  return problem.reason === 'audience_module_not_active' || problem.reason?.endsWith('_unavailable') === true
+    ? { state: 'unavailable' }
+    : { state: 'forbidden' };
+};
 
 /** Which of the page's states the loaded settings are: not installed, no regime declared yet, or declared. */
 export const vatPageState = (settings: VatSettings) => {
