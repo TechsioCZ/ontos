@@ -271,21 +271,31 @@ const decodeFirstBoot = Schema.decodeUnknownOption(Schema.NumberFromString);
 /**
  * Reads the container's first-boot marker, writing it (this host's clock, in milliseconds) on the first start. The
  * marker lives in container-local storage (`ONTOS_APP_HOST_BOOT_MARKER`, `/tmp` on Zerops): the platform restarts a
- * process inside its container, while every deploy starts new containers without it. An unreadable marker is written
- * again and counts as a first boot, which is how a host behaved before the marker existed.
+ * process inside its container, while every deploy starts new containers without it. An unreadable marker counts as a
+ * first boot, which is how a host behaved before the marker existed: it is written again, and when the file cannot be
+ * read or written at all, one WARN line says so and the host goes on. The marker never costs availability.
  */
 export const containerBoot = (marker: string) =>
   Effect.gen(function* readContainerBoot() {
-    const fs = yield* FileSystem.FileSystem;
-    const recorded = (yield* fs.exists(marker))
-      ? decodeFirstBoot((yield* fs.readFileString(marker)).trim())
-      : Option.none<number>();
-    if (Option.isSome(recorded)) {
-      return { firstBootMillis: recorded.value, restart: true } satisfies ContainerBoot;
-    }
     const now = yield* Clock.currentTimeMillis;
-    yield* fs.writeFileString(marker, `${String(now)}\n`);
-    return { firstBootMillis: now, restart: false } satisfies ContainerBoot;
+    const firstBoot = { firstBootMillis: now, restart: false } satisfies ContainerBoot;
+    const fs = yield* FileSystem.FileSystem;
+    return yield* Effect.gen(function* readOrWriteMarker() {
+      const recorded = (yield* fs.exists(marker))
+        ? decodeFirstBoot((yield* fs.readFileString(marker)).trim())
+        : Option.none<number>();
+      if (Option.isSome(recorded)) {
+        return { firstBootMillis: recorded.value, restart: true } satisfies ContainerBoot;
+      }
+      yield* fs.writeFileString(marker, `${String(now)}\n`);
+      return firstBoot;
+    }).pipe(
+      Effect.catch((error) =>
+        Console.error(
+          `[app-host] WARN first-boot marker ${marker} unusable (${error.reason._tag}); starting as a first boot`,
+        ).pipe(Effect.as(firstBoot)),
+      ),
+    );
   });
 
 /** The release that holds the authority row, and when (database clock, milliseconds) its revision took it. */

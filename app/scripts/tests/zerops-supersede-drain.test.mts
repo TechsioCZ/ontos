@@ -759,10 +759,12 @@ it.effect('a superseded host never writes the authority again, however long it l
   }),
 );
 
+const MARKER_NAME = 'first-boot';
+
 it.effect('a process restarted in a container a newer release superseded never publishes; its own release does', () =>
   Effect.gen(function* restartGuard() {
     const fs = yield* FileSystem.FileSystem;
-    const marker = path.join(yield* fs.makeTempDirectoryScoped(), 'first-boot');
+    const marker = path.join(yield* fs.makeTempDirectoryScoped(), MARKER_NAME);
     yield* TestClock.adjust('1 hour');
     const first = yield* containerBoot(marker);
     expect(first.restart).toBe(false);
@@ -789,6 +791,37 @@ it.effect('a process restarted in a container a newer release superseded never p
     // A later restart still reads the first boot, not the restart.
     yield* TestClock.adjust('2 hours');
     expect((yield* containerBoot(marker)).firstBootMillis).toBe(bootedAt);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('a first-boot marker that cannot be read or written costs one WARN and counts as a first boot', () =>
+  Effect.gen(function* unusableMarker() {
+    const console = yield* TestConsole.make;
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped();
+    yield* TestClock.adjust('1 hour');
+    // Unwritable: its directory does not exist (a new container with no usable /tmp).
+    const unwritable = path.join(directory, 'missing', MARKER_NAME);
+    // Unreadable: a directory stands where the marker is (a restarted container whose marker went bad).
+    const unreadable = path.join(directory, MARKER_NAME);
+    yield* fs.makeDirectory(unreadable);
+    for (const marker of [unwritable, unreadable]) {
+      const boot = yield* containerBoot(marker).pipe(Effect.provideService(Console.Console, console));
+      expect(boot).toEqual({ firstBootMillis: 3_600_000, restart: false });
+      // A first boot publishes, whatever the row says.
+      expect(
+        restartMayPublish({
+          boot: Option.some(boot),
+          holder: Option.some({ activatedAtMillis: 7_200_000, revision: 'newer' }),
+          ownRevision: 'old',
+        }),
+      ).toBe(true);
+    }
+    const lines = (yield* console.errorLines).map(String);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain(`[app-host] WARN first-boot marker ${unwritable} unusable`);
+    expect(lines[1]).toContain(`[app-host] WARN first-boot marker ${unreadable} unusable`);
+    expect(lines.every((line) => line.endsWith('; starting as a first boot'))).toBe(true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
