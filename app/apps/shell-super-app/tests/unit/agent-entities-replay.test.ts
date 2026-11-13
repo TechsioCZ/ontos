@@ -1,6 +1,7 @@
 import { administrationProjectionLayer } from './oauth-connections-admin/administration-runtime.fixture.ts';
 import { AgentModuleKeySchema, AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
 import { Effect, Layer, Schema } from 'effect' with { rstest: 'importActual' };
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import {
   ActionRuntime,
   ActionAuthorizationPreflight,
@@ -380,7 +381,11 @@ const fixture = (options: ReplayOptions = {}) =>
       Effect.provideService(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
       Effect.provideService(CoreDatabase, { executor: owner }),
       Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(composition) }),
-      Effect.provideService(ContextAccess, makeContextAccessDouble('allowed')),
+      // The caller holds the agent-status right, which alone decides the agent's proposal withdrawal.
+      Effect.provideService(
+        AccessDecisionGate,
+        makeTestAccessDecision({ answers: { 'core.identity.agent-status.manage': { outcome: 'ALLOWED' } } }),
+      ),
       Effect.provideService(ActionAuthority, {
         checkActionAuthorities: () => Effect.die('Lifecycle withdrawal does not confer business execution'),
         checkActionProposalPermission: () => Effect.die('Unexpected proposal authority'),

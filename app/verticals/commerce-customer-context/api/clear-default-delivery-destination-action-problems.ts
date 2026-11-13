@@ -61,10 +61,12 @@ export const clearDefaultDeliveryDestinationActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ClearDefaultDeliveryDestinationActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ClearDefaultDeliveryDestinationActionForbiddenProblem'> =>
     ClearDefaultDeliveryDestinationActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -172,7 +174,8 @@ const mapCoreProblem = (error: ActionCoreError): ClearDefaultDeliveryDestination
       ActionInvocationStateError: (failure) => clearDefaultDeliveryDestinationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: clearDefaultDeliveryDestinationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => clearDefaultDeliveryDestinationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => clearDefaultDeliveryDestinationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        clearDefaultDeliveryDestinationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => clearDefaultDeliveryDestinationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => clearDefaultDeliveryDestinationActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => clearDefaultDeliveryDestinationActionProblem.conflict(failure.code),

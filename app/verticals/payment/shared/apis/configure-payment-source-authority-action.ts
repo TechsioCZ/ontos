@@ -33,6 +33,7 @@ export const ConfigurePaymentSourceAuthorityActionForbiddenProblemSchema = makeP
       'operation_context_invalid',
       'payment_source_authority_forbidden',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ConfigurePaymentSourceAuthorityActionNotFoundProblemSchema = makeProblemDetailsSchema(

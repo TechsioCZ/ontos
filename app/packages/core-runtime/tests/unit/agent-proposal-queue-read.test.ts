@@ -29,6 +29,10 @@ import { OntosModuleDeploymentContractSchema } from '../../src/modules/manifest.
 import { ActionAuthority } from '../../src/permissions/action-authority.ts';
 import type { ActionAuthorityService } from '../../src/permissions/action-authority.ts';
 import { ContextAccess } from '../../src/permissions/context-access.ts';
+import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
+import type { GateInput } from '../../src/access/enforcement/contract.ts';
+import { makeTestAccessDecision } from '../../src/access/enforcement/testing.ts';
+import { testAccessSpecOf } from '../../src/testing/access-gate.ts';
 import { ReadHandlerUnavailable, ReadInputValidationError, ReadPermissionDenied } from '../../src/reads/errors.ts';
 import { makeReadTestHarness } from '../../src/testing/reads.ts';
 import { makeOutboxWorkerComposition, outboxWorkerCompositionLayer } from '../support/outbox-worker-composition.ts';
@@ -396,6 +400,10 @@ it.layer(
       modules: () => Effect.die('Unexpected module access'),
       resources: () => Effect.die('Unexpected resource access'),
       tenants: () => Effect.die('Unexpected tenant access'),
+    }),
+    Layer.succeed(AccessDecisionGate, {
+      ...makeTestAccessDecision(),
+      decide: () => Effect.die('Only lifecycle withdrawal asks the gate'),
     }),
   ),
 )('Native proposal queue', (suite) => {
@@ -1453,8 +1461,14 @@ it.layer(
         permissionDecision: 'allowed',
         scope,
       });
-      const services = yield* Layer.build(harness.layer);
-      const access = Context.get(services, ContextAccess);
+      // This caller holds the agent administration right; the suite's default gate refuses every question, and a
+      // gate the test supplies always wins over the harness's own.
+      const services = yield* Layer.build(harness.layer).pipe(
+        Effect.provideService(
+          AccessDecisionGate,
+          makeTestAccessDecision({ answers: { 'core.identity.agent-status.manage': { outcome: 'ALLOWED' } } }),
+        ),
+      );
       const pages = yield* Effect.gen(function* pages() {
         const first = yield* harness.runtime.runRead({
           input: { agentPrincipalId: targetAgentId, mode: 'withdrawal-batches' },
@@ -1473,16 +1487,7 @@ it.layer(
           transport,
         });
         return [first.withdrawalBatches, second.withdrawalBatches];
-      }).pipe(
-        Effect.provideService(ContextAccess, {
-          ...access,
-          legalEntities: (input) =>
-            input.permission === 'manage_people'
-              ? Effect.succeed([{ decision: 'allowed', key: legalEntityId }])
-              : access.legalEntities(input),
-        }),
-        Effect.provide(services),
-      );
+      }).pipe(Effect.provide(services));
       expect(pages[0]?.batchIds).toEqual(ids.slice(0, 31));
       expect(pages[1]).toEqual({ batchIds: ids.slice(31) });
       expect(new Set(pages.flatMap((page) => page?.batchIds ?? [])).size).toBe(40);
@@ -1530,70 +1535,76 @@ it.layer(
   }
 
   for (const admin of ['allowed', 'denied', 'unavailable'] as const) {
-    suite.effect(`withdrawal discovery requires live native administration (${admin}), not business execution`, () =>
-      Effect.gen(function* lifecycleDiscovery() {
-        const ids = Array.from(
-          { length: 32 },
-          (_value, index) => `50000000-0000-4000-8000-${(index + 1).toString().padStart(12, '0')}`,
-        );
-        const harness = yield* makeReadTestHarness({
-          executeOwnerQuery: (query) => {
-            if (query.sql.includes('from "core"."principals"')) {
-              return Effect.succeed(query.params.includes('agent') ? [{ status: 'disabled' }] : [{ principalId }]);
-            }
-            expect(query.params).toContain(tenantId);
-            expect(query.params).toContain(legalEntityId);
-            expect(query.params).toContain(principalId);
-            expect(query.params).toContain(32);
-            expect(query.sql).toContain('"decided_at" is null');
-            expect(query.sql).toContain('group by');
-            return Effect.succeed(ids.map((id) => ({ batchId: id })));
-          },
-          operationTime,
-          ownerAuthorizationDecision: 'allowed',
-          permissionDecision: 'allowed',
-          scope,
-        });
-        const services = yield* Layer.build(harness.layer);
-        const access = Context.get(services, ContextAccess);
-        const read = harness.runtime
-          .runRead({
-            input: { agentPrincipalId: principalId, mode: 'withdrawal-batches' },
-            principal: scope,
-            registration: agentProposalQueueRead,
-            transport,
-          })
-          .pipe(
-            Effect.provideService(ActionAuthority, {
-              checkActionAuthorities: () => Effect.die('Lifecycle must not require or confer business execution'),
-              checkActionProposalPermission: () => Effect.die('Unexpected propose'),
-            }),
-            Effect.provideService(ContextAccess, {
-              ...access,
-              legalEntities: (input) =>
-                input.permission === 'manage_people'
-                  ? Effect.succeed([{ decision: admin, key: legalEntityId }])
-                  : access.legalEntities(input),
-              tenants: (input) =>
-                input.permission === 'manage_identity'
-                  ? Effect.succeed([{ decision: 'denied', key: tenantId }])
-                  : access.tenants(input),
-            }),
-            Effect.provide(services),
+    suite.effect(
+      `withdrawal discovery requires the agent administration right (${admin}), not business execution`,
+      () =>
+        Effect.gen(function* lifecycleDiscovery() {
+          const ids = Array.from(
+            { length: 32 },
+            (_value, index) => `50000000-0000-4000-8000-${(index + 1).toString().padStart(12, '0')}`,
           );
-        if (admin === 'allowed') {
-          const result = yield* read;
-          expect(result.withdrawalBatches).toEqual({ batchIds: ids.slice(0, 31), nextAfterBatchId: ids[30] });
-          expect(result.proposals).toEqual([]);
-          expect(result.candidates).toEqual([]);
-        } else {
-          const failure = yield* read.pipe(Effect.flip);
-          expect(
-            admin === 'denied' ? Schema.is(ReadPermissionDenied)(failure) : Schema.is(ReadHandlerUnavailable)(failure),
-          ).toBe(true);
-          expect(harness.snapshot().ownerQueries).toHaveLength(0);
-        }
-      }),
+          const harness = yield* makeReadTestHarness({
+            executeOwnerQuery: (query) => {
+              if (query.sql.includes('from "core"."principals"')) {
+                return Effect.succeed(query.params.includes('agent') ? [{ status: 'disabled' }] : [{ principalId }]);
+              }
+              expect(query.params).toContain(tenantId);
+              expect(query.params).toContain(legalEntityId);
+              expect(query.params).toContain(principalId);
+              expect(query.params).toContain(32);
+              expect(query.sql).toContain('"decided_at" is null');
+              expect(query.sql).toContain('group by');
+              return Effect.succeed(ids.map((id) => ({ batchId: id })));
+            },
+            operationTime,
+            ownerAuthorizationDecision: 'allowed',
+            permissionDecision: 'allowed',
+            scope,
+          });
+          const services = yield* Layer.build(harness.layer);
+          const asked: GateInput[] = [];
+          const scripted = makeTestAccessDecision(testAccessSpecOf({ 'core.identity.agent-status.manage': admin }));
+          const read = harness.runtime
+            .runRead({
+              input: { agentPrincipalId: principalId, mode: 'withdrawal-batches' },
+              principal: scope,
+              registration: agentProposalQueueRead,
+              transport,
+            })
+            .pipe(
+              Effect.provideService(ActionAuthority, {
+                checkActionAuthorities: () => Effect.die('Lifecycle must not require or confer business execution'),
+                checkActionProposalPermission: () => Effect.die('Unexpected propose'),
+              }),
+              Effect.provideService(AccessDecisionGate, {
+                ...scripted,
+                decide: (input: GateInput) => {
+                  asked.push(input);
+                  return scripted.decide(input);
+                },
+              }),
+              Effect.provide(services),
+            );
+          if (admin === 'allowed') {
+            const result = yield* read;
+            expect(result.withdrawalBatches).toEqual({ batchIds: ids.slice(0, 31), nextAfterBatchId: ids[30] });
+            expect(result.proposals).toEqual([]);
+            expect(result.candidates).toEqual([]);
+          } else {
+            const failure = yield* read.pipe(Effect.flip);
+            expect(
+              admin === 'denied'
+                ? Schema.is(ReadPermissionDenied)(failure)
+                : Schema.is(ReadHandlerUnavailable)(failure),
+            ).toBe(true);
+            expect(harness.snapshot().ownerQueries).toHaveLength(0);
+          }
+          // The one question is the right the same person uses to disable or archive the agent, in this company.
+          expect(asked.map((input) => input.carrier.accessDeclaration?.key)).toEqual([
+            'core.identity.agent-status.manage',
+          ]);
+          expect(asked[0]).toMatchObject({ legalEntityScope: 'required', scope: { legalEntityId, tenantId } });
+        }),
     );
   }
 });

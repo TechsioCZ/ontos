@@ -100,10 +100,12 @@ export const reviseStorefrontAssociationActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ReviseStorefrontAssociationActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ReviseStorefrontAssociationActionForbiddenProblem'> =>
     ReviseStorefrontAssociationActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -224,7 +226,8 @@ const mapCoreProblem = (error: ActionCoreError): ReviseStorefrontAssociationActi
       ActionInvocationStateError: (failure) => reviseStorefrontAssociationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: reviseStorefrontAssociationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => reviseStorefrontAssociationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => reviseStorefrontAssociationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        reviseStorefrontAssociationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => reviseStorefrontAssociationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => reviseStorefrontAssociationActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => reviseStorefrontAssociationActionProblem.conflict(failure.code),

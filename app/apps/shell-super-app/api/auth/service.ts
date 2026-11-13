@@ -1,6 +1,5 @@
 import type {
   AvailableTenant,
-  ContextAccess,
   LegalEntityContext,
   PrincipalResolutionError,
   ResolvedPrincipalIdentity,
@@ -174,11 +173,7 @@ type ResolveImpersonatedIdentity = (
 
 type ResolveShellContext = (
   requestHeaders: Headers,
-) => Effect.Effect<
-  ShellContextResult,
-  AuthenticationRuntimeError,
-  AccessDecisionGate | ContextAccess | LegalEntityContext
->;
+) => Effect.Effect<ShellContextResult, AuthenticationRuntimeError, AccessDecisionGate | LegalEntityContext>;
 
 type ResolveAuthenticatedContext = (
   resolved: AuthenticatedResolvedSession,
@@ -186,7 +181,7 @@ type ResolveAuthenticatedContext = (
 ) => Effect.Effect<
   Exclude<ShellContextResult, { readonly state: 'anonymous' }>,
   AuthenticationRuntimeError,
-  AccessDecisionGate | ContextAccess | LegalEntityContext
+  AccessDecisionGate | LegalEntityContext
 >;
 
 export type ShellContextResult =
@@ -245,15 +240,11 @@ export interface AuthenticationServiceContract {
       readonly tenants: Result.Result<AvailableTenantsResult, AuthenticationRuntimeError>;
     },
     AuthenticationRuntimeError,
-    AccessDecisionGate | ContextAccess | LegalEntityContext
+    AccessDecisionGate | LegalEntityContext
   >;
   readonly resolveShellContext: (
     requestHeaders: Headers,
-  ) => Effect.Effect<
-    ShellContextResult,
-    AuthenticationRuntimeError,
-    AccessDecisionGate | ContextAccess | LegalEntityContext
-  >;
+  ) => Effect.Effect<ShellContextResult, AuthenticationRuntimeError, AccessDecisionGate | LegalEntityContext>;
   readonly resolveTenantContext: (
     requestHeaders: Headers,
   ) => Effect.Effect<TenantContextResult, AuthenticationRuntimeError, AccessDecisionGate>;
@@ -283,7 +274,7 @@ export interface AuthenticationServiceContract {
   ) => Effect.Effect<
     { readonly setCookieHeaders: readonly string[] },
     AuthenticationRuntimeError | TenantAccessForbiddenFailure,
-    AccessDecisionGate | ContextAccess
+    AccessDecisionGate
   >;
 }
 

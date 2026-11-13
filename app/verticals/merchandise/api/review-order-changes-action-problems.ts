@@ -63,10 +63,12 @@ export const reviewOrderChangesActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ReviewOrderChangesActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ReviewOrderChangesActionForbiddenProblem'> =>
     ReviewOrderChangesActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -176,7 +178,8 @@ const mapCoreProblem = (error: ActionCoreError): ReviewOrderChangesActionProblem
       ActionInvocationStateError: (failure) => reviewOrderChangesActionProblem.conflict(failure.code),
       ActionPayloadValidationError: reviewOrderChangesActionProblem.invalid,
       ActionPermissionCheckError: (failure) => reviewOrderChangesActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => reviewOrderChangesActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        reviewOrderChangesActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => reviewOrderChangesActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => reviewOrderChangesActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => reviewOrderChangesActionProblem.conflict(failure.code),

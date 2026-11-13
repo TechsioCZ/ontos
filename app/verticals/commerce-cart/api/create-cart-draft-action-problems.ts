@@ -81,10 +81,12 @@ export const createCartDraftActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CreateCartDraftActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CreateCartDraftActionForbiddenProblem'> =>
     CreateCartDraftActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -193,7 +195,7 @@ const mapCoreProblem = (error: ActionCoreError): CreateCartDraftActionProblem =>
       ActionInvocationStateError: (failure) => createCartDraftActionProblem.conflict(failure.code),
       ActionPayloadValidationError: createCartDraftActionProblem.invalid,
       ActionPermissionCheckError: (failure) => createCartDraftActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => createCartDraftActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => createCartDraftActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => createCartDraftActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => createCartDraftActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => createCartDraftActionProblem.conflict(failure.code),

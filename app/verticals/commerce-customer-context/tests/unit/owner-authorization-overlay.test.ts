@@ -82,6 +82,13 @@ const factInput = (operationKey: string, ownerFacts?: Readonly<Record<string, st
 
 const grantCounterpartyCommerceAccess = 'commerce.customer-context.grant-counterparty-commerce-access';
 
+/** A refusal names its owner rule and the owner-local right the actor lacks, for the 403 and the log. */
+const refused = (...reasons: readonly string[]) => ({ decision: 'denied', reasons });
+const accessManageGrantMissing = refused(
+  'deny.owner.counterparty_grant_missing',
+  'requires.counterparty.access.manage',
+);
+
 it.effect('denies once the owner row is revoked', () =>
   Effect.gen(function* ownerRevoked() {
     const calls: string[] = [];
@@ -95,7 +102,7 @@ it.effect('denies once the owner row is revoked', () =>
       factInput(grantCounterpartyCommerceAccess, { counterpartyId }),
     );
 
-    expect(decision).toBe('denied');
+    expect(decision).toEqual(accessManageGrantMissing);
     expect(calls).toEqual(['counterparty-access.lock-grant-authority']);
   }),
 );
@@ -140,7 +147,7 @@ it.effect('fences a grant reauthorization against a concurrent revoke', () =>
     revokeCommitted = true;
     yield* Deferred.succeed(releaseFence, null);
 
-    expect(yield* Fiber.join(decisionFiber)).toBe('denied');
+    expect(yield* Fiber.join(decisionFiber)).toEqual(accessManageGrantMissing);
   }),
 );
 
@@ -169,7 +176,7 @@ it.effect('allows the Counterparty the owner granted and denies a different one 
     );
 
     expect(granted).toBe('allowed');
-    expect(other).toBe('denied');
+    expect(other).toEqual(accessManageGrantMissing);
   }),
 );
 
@@ -189,14 +196,14 @@ const UNPUBLISHED_COUNTERPARTY_READ_PERMISSIONS = [
 it.effect('denies a Counterparty-governed read whose fact names a different Counterparty (R5b-1)', () =>
   Effect.gen(function* buyerATargetB() {
     const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
-    for (const [operationKey] of UNPUBLISHED_COUNTERPARTY_READ_PERMISSIONS) {
+    for (const [operationKey, permission] of UNPUBLISHED_COUNTERPARTY_READ_PERMISSIONS) {
       // The buyer holds a grant only for counterparty A; the request names B, so the owner rule
       // must refuse rather than fall through to the scope-wide capability.
       const decision = yield* overlay.authorize(
         transactionWith(grantRowsFor(counterpartyId)),
         factInput(operationKey, { counterpartyId: 'counterparty-two' }),
       );
-      expect(decision).toBe('denied');
+      expect(decision).toEqual(refused('deny.owner.counterparty_grant_missing', `requires.${permission}`));
     }
   }),
 );
@@ -215,7 +222,7 @@ it.effect('admits a Counterparty-governed read only with the exact owner permiss
         factInput(operationKey, { counterpartyId }),
       );
       expect(granted).toBe('allowed');
-      expect(wrongPermission).toBe('denied');
+      expect(wrongPermission).toEqual(refused('deny.owner.counterparty_grant_missing', `requires.${permission}`));
     }
   }),
 );
@@ -229,7 +236,7 @@ it.effect('denies an unmapped operation that carries a Counterparty fact (R5b-1 
       transactionWith(grantRowsFor(counterpartyId)),
       factInput('commerce.customer-context.api.some-unmapped-counterparty-read', { counterpartyId }),
     );
-    expect(decision).toBe('denied');
+    expect(decision).toEqual(refused('deny.owner.operation_unmapped'));
   }),
 );
 
@@ -245,8 +252,8 @@ it.effect('denies a Counterparty capability whose descriptor declares no owner f
       factInput('commerce.customer-context.grant-counterparty-commerce-access', { counterpartyId }),
     );
 
-    expect(noFact).toBe('denied');
-    expect(noRow).toBe('denied');
+    expect(noFact).toEqual(refused('deny.owner.facts_missing', 'requires.counterparty.access.manage'));
+    expect(noRow).toEqual(accessManageGrantMissing);
   }),
 );
 
@@ -258,7 +265,7 @@ it.effect('denies a Counterparty capability whose fact bag names no Counterparty
       factInput('commerce.customer-context.grant-counterparty-commerce-access', { storefrontId: 'storefront-one' }),
     );
 
-    expect(storefrontOnly).toBe('denied');
+    expect(storefrontOnly).toEqual(refused('deny.owner.facts_unrecognized'));
   }),
 );
 
@@ -312,8 +319,8 @@ it.effect('denies a Retail capability whose profile fact or retail permission is
       }),
     );
 
-    expect(profileOnly).toBe('denied');
-    expect(permissionOnly).toBe('denied');
+    expect(profileOnly).toEqual(refused('deny.owner.retail_fact_missing'));
+    expect(permissionOnly).toEqual(refused('deny.owner.retail_fact_missing'));
     // The owner profile has no binding for this principal: the durable owner state is unavailable,
     // which is a 503 and never an allow (fail closed, O48).
     expect(unboundProfile).toBe('unavailable');

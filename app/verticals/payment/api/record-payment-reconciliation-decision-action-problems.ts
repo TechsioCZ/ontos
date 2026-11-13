@@ -154,10 +154,12 @@ export const recordPaymentReconciliationDecisionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RecordPaymentReconciliationDecisionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RecordPaymentReconciliationDecisionActionForbiddenProblem'> =>
     RecordPaymentReconciliationDecisionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -278,7 +280,8 @@ const mapCoreProblem = (error: ActionCoreError): RecordPaymentReconciliationDeci
       ActionPayloadValidationError: recordPaymentReconciliationDecisionActionProblem.invalid,
       ActionPermissionCheckError: (failure) =>
         recordPaymentReconciliationDecisionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => recordPaymentReconciliationDecisionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        recordPaymentReconciliationDecisionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => recordPaymentReconciliationDecisionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         recordPaymentReconciliationDecisionActionProblem.unavailable(failure.code),

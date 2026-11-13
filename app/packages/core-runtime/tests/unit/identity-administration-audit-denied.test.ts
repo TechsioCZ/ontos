@@ -19,6 +19,12 @@ import { OperationalScopeResolver } from '../../src/operations/context.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { makeTestDatabase } from '../support/database.ts';
 import { makeReadTestHarness } from '../../src/testing/reads.ts';
+import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
+import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
+import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { makeTestAccessDecision } from '../../src/access/enforcement/testing.ts';
+import { testAccessSpecOf } from '../../src/testing/access-gate.ts';
+import type { TestAccessOutcome } from '../../src/testing/access-gate.ts';
 
 const principalId = '30000000-0000-4000-8000-000000000001';
 const targetPrincipalId = '30000000-0000-4000-8000-000000000002';
@@ -34,6 +40,27 @@ const principalEffect = Schema.decodeEffect(TrustedPrincipalContextSchema)({
   tenantId,
 });
 const attempt = { operation: 'configure-agent', principalKind: 'agent', targetPrincipalId } as const;
+/** The administration surface the caller was refused on; Core re-asks the gate exactly this question. */
+const declaration = decodeAccessDeclarationOrThrow(
+  {
+    key: 'shell-super-app.access-admin.agents',
+    kind: 'admin',
+    modes: ['run'],
+    placement: { group: 'access', level: 'manage' },
+    risk: 'sensitive',
+    selectors: [],
+  },
+  defineSystemModuleEntrypoint({
+    access: 'read',
+    authorization: { kind: 'protected' },
+    entrypointKey: 'shell-super-app.page.access-agents',
+    moduleKey: 'shell-super-app',
+    role: 'page',
+  }),
+);
+/** The v2 gate answering the Agents administration question, as the gate would for this person. */
+const gateAnswering = (outcome: TestAccessOutcome) =>
+  Layer.succeed(AccessDecisionGate, makeTestAccessDecision(testAccessSpecOf(outcome)));
 
 it.layer(NodeCrypto.layer)('identity-administration-audit-denied', (suite) => {
   it('accepts only real bounded operations with matching subject kind and valid optional target IDs', () => {
@@ -157,11 +184,13 @@ it.layer(NodeCrypto.layer)('identity-administration-audit-denied', (suite) => {
                   Layer.succeed(CoreDatabase, { executor }),
                   Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
                   Layer.succeed(OperationalScopeResolver, testOperationalScopeResolver),
+                  gateAnswering('denied'),
                 ),
               ),
             ),
           );
           const record = Context.get(services, IdentityAdministrationDeniedAudit).record({
+            declaration,
             principal,
             transport: { ...transport, idempotencyKey: 'original-denied-action' },
             ...attempt,
@@ -185,32 +214,35 @@ it.layer(NodeCrypto.layer)('identity-administration-audit-denied', (suite) => {
     );
   }
 
-  suite.effect('an allowed administrator cannot manufacture a denied observation and no SQL is opened', () =>
-    Effect.gen(function* noManufacturedDenial() {
-      const principal = yield* principalEffect;
-      const executor = yield* makeTestDatabase(() => Effect.die('Unproven denial opened SQL'));
-      const harness = yield* makeReadTestHarness({
-        executeOwnerQuery: () => Effect.die('Unexpected owner query'),
-        operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
-        permissionDecision: 'allowed',
-        scope: { ...principal, ...transport },
-      });
-      const services = yield* Layer.build(
-        IdentityAdministrationDeniedAuditLive.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              harness.layer,
-              Layer.succeed(CoreDatabase, { executor }),
-              Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
-              Layer.succeed(OperationalScopeResolver, testOperationalScopeResolver),
+  for (const outcome of ['allowed', 'unavailable'] as const) {
+    suite.effect(`a v2 gate answer of ${outcome} records no denied observation and opens no SQL`, () =>
+      Effect.gen(function* noManufacturedDenial() {
+        const principal = yield* principalEffect;
+        const executor = yield* makeTestDatabase(() => Effect.die('Unproven denial opened SQL'));
+        const harness = yield* makeReadTestHarness({
+          executeOwnerQuery: () => Effect.die('Unexpected owner query'),
+          operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
+          permissionDecision: 'allowed',
+          scope: { ...principal, ...transport },
+        });
+        const services = yield* Layer.build(
+          IdentityAdministrationDeniedAuditLive.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                harness.layer,
+                Layer.succeed(CoreDatabase, { executor }),
+                Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+                Layer.succeed(OperationalScopeResolver, testOperationalScopeResolver),
+                gateAnswering(outcome),
+              ),
             ),
           ),
-        ),
-      );
-      const failure = yield* Context.get(services, IdentityAdministrationDeniedAudit)
-        .record({ principal, transport, ...attempt })
-        .pipe(Effect.flip);
-      expect(failure).toBeInstanceOf(IdentityAdministrationDeniedAuditUnavailable);
-    }),
-  );
+        );
+        const failure = yield* Context.get(services, IdentityAdministrationDeniedAudit)
+          .record({ declaration, principal, transport, ...attempt })
+          .pipe(Effect.flip);
+        expect(failure).toBeInstanceOf(IdentityAdministrationDeniedAuditUnavailable);
+      }),
+    );
+  }
 });

@@ -147,6 +147,8 @@ interface RunOptions {
   /** The owner declared a company and then revoked it: the workload is pinned to none (D6). */
   readonly declaredCompaniesRevoked?: boolean;
   readonly engineFailure?: boolean;
+  /** Companies the asked tenant does not own: their scope read finds nothing. */
+  readonly foreignCompanies?: readonly LegalEntityId[];
   readonly kinds?: AccessPrincipalKinds;
   readonly logFails?: boolean;
   readonly privacyDispatchLive?: boolean;
@@ -172,7 +174,13 @@ const harness = (options: RunOptions = {}) => {
     ...authority.port,
     readScope: (query) => {
       scopes.push(query);
-      return options.scopeMissing === true ? Effect.succeed(Option.none()) : authority.port.readScope(query);
+      // As the loader answers: a company the tenant does not own resolves no scope, whether the request selects it or
+      // names it in the tenant context.
+      const named = query.legalEntityId ?? query.checkedCompany;
+      const foreign = named !== undefined && options.foreignCompanies?.includes(named);
+      return options.scopeMissing === true || foreign === true
+        ? Effect.succeed(Option.none())
+        : authority.port.readScope(query);
     },
   };
   const { log, state } = logWriter(options.logFails === true);
@@ -554,9 +562,27 @@ it.effect('decides an admin capability in its declared scope: tenant context whe
       }),
     );
     expect(decision.outcome).toBe('ALLOWED');
-    expect(scopes[0]?.legalEntityId).toBeUndefined();
+    // The named company is first checked to be the tenant's (no holder), then the decision reads the tenant context.
+    // The named company is checked by the tenant scope read itself: no read of its own, no holder-less read.
+    expect(scopes.every((query) => query.legalEntityId === undefined && query.holders.length > 0)).toBe(true);
+    expect(scopes[0]).toMatchObject({ checkedCompany: legalEntityId });
   }),
 );
+
+for (const legalEntityScope of ['optional', 'forbidden', 'required'] as const) {
+  it.effect(`refuses a company the asked tenant does not own in ${legalEntityScope} scope`, () =>
+    Effect.gen(function* refusesForeignCompany() {
+      const foreignCompany = LegalEntityIdSchema.make(uid(22));
+      const { gate } = harness({ foreignCompanies: [foreignCompany] });
+      const single = yield* gate.decide(gateOf({ legalEntityScope, scope: scopeFor(person, foreignCompany) }));
+      const [batched] = yield* gate.decideMany([gateOf({ legalEntityScope, scope: scopeFor(person, foreignCompany) })]);
+      for (const decision of [single, batched]) {
+        expect(decision?.outcome).toBe('DENIED');
+        expect(decision?.reasons.map(({ code }) => code)).toEqual(['deny.scope_mismatch']);
+      }
+    }),
+  );
+}
 
 it.effect('decides a company-owned capability in the selected legal-entity scope', () =>
   Effect.gen(function* legalEntityScope() {

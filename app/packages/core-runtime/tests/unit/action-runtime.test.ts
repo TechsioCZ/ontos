@@ -47,6 +47,7 @@ import {
   Effect,
   Exit,
   Fiber,
+  Logger,
   Match,
   Option,
   Predicate,
@@ -93,9 +94,13 @@ import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runt
 
 import { makeActionAuthorizationPreflightPermit } from '../../src/actions/owner-proof-preflight.ts';
 import type { ActionAuthorizationPreflightService } from '../../src/actions/owner-proof-preflight.ts';
-import { allowOwnerAuthorizationOverlay } from '../../src/access/enforcement/owner-overlay.ts';
+import {
+  allowOwnerAuthorizationOverlay,
+  ownerAuthorizationDenial,
+} from '../../src/access/enforcement/owner-overlay.ts';
 import type {
   OwnerAuthorizationInput,
+  OwnerAuthorizationOutcome,
   OwnerAuthorizationOverlayService,
 } from '../../src/access/enforcement/owner-overlay.ts';
 import type { PrincipalManagementRepositoryService } from '../../src/auth/principal-management.ts';
@@ -348,7 +353,12 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       if (policyDenial !== undefined) {
         return Effect.succeedSome({ policyReasonCode: policyDenial.reasonCode, stage: 'policy' as const });
       }
-      return Effect.succeed(rejections.length > 0 ? Option.some({ stage: 'authz' as const }) : Option.none());
+      const [rejection] = rejections;
+      return Effect.succeed(
+        rejection === undefined
+          ? Option.none()
+          : Option.some({ reasons: rejection.reasonCodes ?? [], stage: 'authz' as const }),
+      );
     },
     lockInvocation: () => {
       transactionSteps.push('invocation_locked');
@@ -1316,6 +1326,8 @@ it.effect(
     );
 
     expect(Schema.is(ActionPermissionDenied)(failure)).toBe(true);
+    // A bare owner denial still names the rule that refused: "Proč?" cannot see an owner rule.
+    expect(failure).toMatchObject({ code: 'action_permission_denied', reasons: ['deny.owner_rule'] });
     expect(ownerInputs).toHaveLength(1);
     expect(ownerInputs[0]?.operationAt).toEqual(DateTime.makeUnsafe(Date.parse('2026-09-28T09:00:00.000Z')));
     expect(harness.transactionTimestampReads()).toBe(1);
@@ -1327,6 +1339,267 @@ it.effect(
       transitionCount: 0,
     });
     expect(harness.permissionCounts().rejectionCount).toBe(1);
+  }),
+);
+
+it.effect(
+  "carries the owner overlay's own refusal codes, and an unavailable answer stays unavailable",
+  Effect.fn(function* testOwnerOverlayReasons() {
+    const answers: readonly (readonly [string, OwnerAuthorizationOutcome])[] = [
+      [
+        'owner-reasons-denied',
+        ownerAuthorizationDenial('deny.owner.counterparty_grant_missing', 'requires.counterparty.address_book.manage'),
+      ],
+      ['owner-reasons-unavailable', 'unavailable'],
+    ];
+    const [reasoned, unavailable] = yield* Effect.forEach(
+      answers,
+      Effect.fn(function* refusalOf([key, outcome]) {
+        const harness = yield* makeHarness({
+          ownerAuthorizationOverlay: { authorize: () => Effect.succeed(outcome) },
+        });
+        return yield* Effect.flip(
+          harness.runtime.runAction({
+            payload: { amount: 3 },
+            principal,
+            registration: registration(),
+            transport: transport(key),
+          }),
+        );
+      }),
+      { concurrency: 1 },
+    );
+
+    expect(Schema.is(ActionPermissionDenied)(reasoned)).toBe(true);
+    expect(reasoned).toMatchObject({
+      code: 'action_permission_denied',
+      reasons: ['deny.owner.counterparty_grant_missing', 'requires.counterparty.address_book.manage'],
+    });
+    expect(Schema.is(ActionPermissionCheckError)(unavailable)).toBe(true);
+    expect(unavailable).toMatchObject({ code: 'action_permission_check_failed' });
+  }),
+);
+
+const capturedLogs = (entries: string[]) =>
+  Logger.layer([
+    Logger.make((options) => {
+      entries.push(JSON.stringify(Logger.formatStructured.log(options)));
+    }),
+  ]);
+
+/**
+ * Answers outside the owner contract, as a type escape or a separately built owner unit could send:
+ * untyped values the compiler cannot vet. Each is unavailable, never an allow, and nothing runs or commits.
+ */
+const outOfContract = Schema.decodeUnknownEffect(Schema.Any);
+const OUT_OF_CONTRACT_OWNER_ANSWERS: readonly (readonly [string, () => Effect.Effect<OwnerAuthorizationOutcome>])[] = [
+  ['ALLOWED', () => outOfContract('ALLOWED').pipe(Effect.orDie)],
+  ['{}', () => outOfContract({}).pipe(Effect.orDie)],
+  ['{decision: allowed}', () => outOfContract({ decision: 'allowed' }).pipe(Effect.orDie)],
+  ['null', () => outOfContract(null).pipe(Effect.orDie)],
+  ['undefined', () => outOfContract(globalThis.undefined).pipe(Effect.orDie)],
+  ['a thrown defect', () => Effect.die(new Error('owner rule defect'))],
+];
+
+for (const [label, answer] of OUT_OF_CONTRACT_OWNER_ANSWERS) {
+  it.effect(`answers an owner overlay's ${label} as unavailable on the Action path`, () =>
+    Effect.gen(function* outOfContractOwnerAction() {
+      const harness = yield* makeHarness({
+        ownerAuthorizationOverlay: {
+          authorize: answer,
+        },
+      });
+      const failure = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 3 },
+          principal,
+          registration: registration(),
+          transport: transport(`owner-odd-${label}`),
+        }),
+      );
+      expect(Schema.is(ActionPermissionCheckError)(failure)).toBe(true);
+      expect(failure).toMatchObject({ code: 'action_permission_check_failed' });
+      expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+      expect(harness.counts().transitionCount).toBe(0);
+      expect(harness.flushed).toHaveLength(0);
+      expect(harness.permissionCounts().rejectionCount).toBe(0);
+    }),
+  );
+}
+
+it.effect('a synchronous throw inside the owner overlay is unavailable with one warning, never a 500', () =>
+  Effect.gen(function* synchronousOwnerThrow() {
+    const entries: string[] = [];
+    const harness = yield* makeHarness({
+      ownerAuthorizationOverlay: {
+        authorize: () => {
+          throw new TypeError('owner rule private detail');
+        },
+      },
+    });
+    const failure = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 3 },
+        principal,
+        registration: registration(),
+        transport: transport('owner-sync-throw'),
+      }),
+      // @effect-diagnostics-next-line strictEffectProvide:off -- Test-owned diagnostic logger capture.
+    ).pipe(Effect.provide(capturedLogs(entries)));
+    expect(Schema.is(ActionPermissionCheckError)(failure)).toBe(true);
+    expect(failure).toMatchObject({ code: 'action_permission_check_failed' });
+    expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+    const warning = entries.find((entry) => entry.includes('Owner authorization overlay failed'));
+    expect(warning).toContain('"failure":"TypeError"');
+    expect(warning).toContain('"operationKey":"shell.counter.change"');
+    expect(warning).toContain('"owningModuleKey":"core.shell"');
+    expect(warning).not.toContain('private detail');
+  }),
+);
+
+it.effect('an owner answer outside the contract is unavailable with one warning naming its kind, never its value', () =>
+  Effect.gen(function* outOfContractWarning() {
+    const entries: string[] = [];
+    const harness = yield* makeHarness({
+      ownerAuthorizationOverlay: { authorize: () => outOfContract({ secret: 'value' }).pipe(Effect.orDie) },
+    });
+    yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 3 },
+        principal,
+        registration: registration(),
+        transport: transport('owner-odd-warning'),
+      }),
+      // @effect-diagnostics-next-line strictEffectProvide:off -- Test-owned diagnostic logger capture.
+    ).pipe(Effect.provide(capturedLogs(entries)));
+    const warning = entries.find((entry) => entry.includes('Owner authorization answer outside the contract'));
+    expect(warning).toContain('"answerKind":"object"');
+    expect(warning).toContain('"capabilityKey":');
+    expect(warning).toContain('"operationKey":"shell.counter.change"');
+    expect(warning).not.toContain('secret');
+  }),
+);
+
+it.effect('reports only reason codes Core may report; anything else collapses to deny.owner_rule (R3)', () =>
+  Effect.gen(function* ownerReasonsChecked() {
+    const unreportable: readonly (readonly [string, ...string[]])[] = [
+      ['Deny.Owner.Upper'],
+      ['deny.owner.someone@example.test'],
+      ['deny owner spaces'],
+      [`deny.owner.${'x'.repeat(130)}`],
+      ['deny.owner.code_0', ...Array.from({ length: 8 }, (_, index) => `deny.owner.code_${index + 1}`)],
+      ['undotted'],
+    ];
+    for (const [index, reasons] of unreportable.entries()) {
+      const harness = yield* makeHarness({
+        ownerAuthorizationOverlay: {
+          authorize: () => Effect.succeed({ decision: 'denied' as const, reasons }),
+        },
+      });
+      const failure = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 3 },
+          principal,
+          registration: registration(),
+          transport: transport(`owner-unreportable-${index}`),
+        }),
+      );
+      expect(Schema.is(ActionPermissionDenied)(failure)).toBe(true);
+      expect(failure).toMatchObject({ reasons: ['deny.owner_rule'] });
+    }
+  }),
+);
+
+it.effect('writes one refusal warning with the refusing check and no payload values', () =>
+  Effect.gen(function* refusalWarning() {
+    const entries: string[] = [];
+    const harness = yield* makeHarness({
+      ownerAuthorizationOverlay: {
+        authorize: () => Effect.succeed(ownerAuthorizationDenial('deny.owner.counterparty_grant_missing')),
+      },
+    });
+    yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 31_337 },
+        principal,
+        registration: registration(),
+        transport: transport('refusal-warning'),
+      }),
+      // @effect-diagnostics-next-line strictEffectProvide:off -- Test-owned diagnostic logger capture.
+    ).pipe(Effect.provide(capturedLogs(entries)));
+    const warnings = entries.filter((entry) => entry.includes('Action refused'));
+    expect(warnings).toHaveLength(1);
+    const [warning] = warnings;
+    for (const field of [
+      '"refusedAction":"shell.counter.change"',
+      '"code":"action_permission_denied"',
+      '"reasons":"deny.owner.counterparty_grant_missing"',
+      `"refusalTenant":"${principal.tenantId}"`,
+      `"refusalCompany":"${principalLegalEntityId}"`,
+      '"reason":"The owner-local authorization state denies this Action"',
+    ]) {
+      expect(warning).toContain(field);
+    }
+    expect(warning).not.toContain('31337');
+    expect(warning).not.toContain('amount');
+    expect(warning).not.toContain(principal.principalId);
+  }),
+);
+
+it.effect('records the refusal codes and answers a same-key retry with them', () =>
+  Effect.gen(function* retryKeepsCodes() {
+    const harness = yield* makeHarness({
+      ownerAuthorizationOverlay: {
+        authorize: () =>
+          Effect.succeed(
+            ownerAuthorizationDenial(
+              'deny.owner.counterparty_grant_missing',
+              'requires.counterparty.address_book.manage',
+            ),
+          ),
+      },
+    });
+    const run = () =>
+      Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 3 },
+          principal,
+          registration: registration(),
+          transport: transport('retry-keeps-codes'),
+        }),
+      );
+    const first = yield* run();
+    const retried = yield* run();
+    const codes = ['deny.owner.counterparty_grant_missing', 'requires.counterparty.address_book.manage'];
+    expect(harness.rejections[0]?.reasonCodes).toEqual(codes);
+    expect(Schema.is(ActionPermissionDenied)(first)).toBe(true);
+    expect(first).toMatchObject({ reasons: codes });
+    expect(Schema.is(ActionPermissionDenied)(retried)).toBe(true);
+    expect(retried).toMatchObject({ reasons: codes });
+    expect(harness.permissionCounts().rejectionCount).toBe(1);
+  }),
+);
+
+it.effect('a propose request to a result-only endpoint is refused without naming tenant or company', () =>
+  Effect.gen(function* proposeRefusedBeforeValidation() {
+    const entries: string[] = [];
+    const harness = yield* makeHarness();
+    const failure = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 3 },
+        principal,
+        registration: registration(),
+        transport: { ...transport('propose-result-only'), intent: 'propose' as const },
+      }),
+      // @effect-diagnostics-next-line strictEffectProvide:off -- Test-owned diagnostic logger capture.
+    ).pipe(Effect.provide(capturedLogs(entries)));
+    expect(Schema.is(ActionPermissionDenied)(failure)).toBe(true);
+    expect(failure).toMatchObject({ code: 'action_permission_denied' });
+    const warning = entries.find((entry) => entry.includes('Action refused'));
+    expect(warning).toContain('"refusalTenant":"unverified"');
+    expect(warning).toContain('"refusalCompany":"unverified"');
+    expect(warning).not.toContain(principal.tenantId);
+    expect(warning).not.toContain(principalLegalEntityId);
   }),
 );
 

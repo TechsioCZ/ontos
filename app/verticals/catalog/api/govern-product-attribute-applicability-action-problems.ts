@@ -61,10 +61,12 @@ export const governProductAttributeApplicabilityActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'GovernProductAttributeApplicabilityActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'GovernProductAttributeApplicabilityActionForbiddenProblem'> =>
     GovernProductAttributeApplicabilityActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -168,7 +170,8 @@ const mapCoreProblem = (error: ActionCoreError): GovernProductAttributeApplicabi
       ActionPayloadValidationError: governProductAttributeApplicabilityActionProblem.invalid,
       ActionPermissionCheckError: (failure) =>
         governProductAttributeApplicabilityActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => governProductAttributeApplicabilityActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        governProductAttributeApplicabilityActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => governProductAttributeApplicabilityActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         governProductAttributeApplicabilityActionProblem.unavailable(failure.code),

@@ -31,6 +31,7 @@ export const ImportSellerVatRegimeDeclarationsActionForbiddenProblemSchema = mak
       'operation_context_invalid',
       'tax_symmy_fixture_access_denied',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ImportSellerVatRegimeDeclarationsActionNotFoundProblemSchema = makeProblemDetailsSchema(

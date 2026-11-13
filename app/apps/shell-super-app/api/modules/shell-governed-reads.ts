@@ -11,7 +11,7 @@ import {
 import { admitPeopleSystemSearch, corePeopleSystemSearchProvider } from '@app/core-runtime/people/search';
 import type { PeopleSystemSearchAccess, PeopleSystemSearchAdmission } from '@app/core-runtime/people/search';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
-import type { GateInput } from '@app/core-runtime/access/enforcement';
+import type { GateCarrier, GateInput } from '@app/core-runtime/access/enforcement';
 import type {
   OperationalScope,
   ReadCoreError,
@@ -115,6 +115,12 @@ export interface ShellGovernedReadsService {
       readonly moduleId?: string;
     },
   ) => Effect.Effect<ShellTenantModuleTarget, ReadCoreError>;
+  /**
+   * The tenant-context page dispatch Read's own validated carrier (`core.shell.tenant-module-target.resolve`).
+   * The session document's release hint asks the gate exactly this question, so it reaches exactly the people
+   * dispatch admits (O28) and the declaration keeps one literal in the Read descriptor.
+   */
+  readonly tenantModuleTargetCarrier: GateCarrier;
 }
 
 /**
@@ -960,6 +966,7 @@ export const createShellGovernedReadsLayer = (registrations: ShellGovernedReadRe
             transport,
           });
         },
+        tenantModuleTargetCarrier: registrations.tenantModuleTarget.descriptor,
       })),
     ),
   );

@@ -42,7 +42,8 @@ import type { AccessScopeId, LegalEntityId, PrincipalId } from '../ids.ts';
 import type { ActorContext, DecisionReason, Holder } from '../model.ts';
 import { AccessPrincipalKindSource, isWorkloadPrincipalKind, resolveGateActor } from './actor.ts';
 import type { GateActor } from './actor.ts';
-import { capabilityPolicyOf, gateScopeOf } from './capability.ts';
+import { capabilityPolicyOf, gateScopeKeyOf, gateScopeOf } from './capability.ts';
+import type { GateScope } from './capability.ts';
 import type {
   AccessDecisionPorts,
   AccessDecisionService,
@@ -245,8 +246,13 @@ const scopeQueryOf = (
   scope: OperationalScope,
   legalEntityId: LegalEntityId | undefined,
   holders: readonly Holder[],
+  checkedCompany?: LegalEntityId,
 ) => {
-  const base = { holders, tenantId: TenantIdSchema.make(scope.tenantId) };
+  const base = withOptional(
+    { holders, tenantId: TenantIdSchema.make(scope.tenantId) },
+    'checkedCompany',
+    checkedCompany,
+  );
   return legalEntityId === undefined ? base : { ...base, legalEntityId };
 };
 
@@ -458,7 +464,7 @@ const prepareDelegatedEntry = (params: {
   if (isWorkloadPrincipalKind(actor.kind)) {
     return { decision: delegatedWorkloadDecision(params.gate, params.group) };
   }
-  const preamble = params.preambles.get(gateScope.legalEntityId ?? '');
+  const preamble = params.preambles.get(gateScopeKeyOf(gateScope));
   if (preamble?.decision !== undefined) {
     return { decision: preamble.decision };
   }
@@ -548,7 +554,7 @@ const prepareEntry = (params: {
   if (gateScope.refusal !== undefined) {
     return { decision: denialOf([gateScope.refusal]) };
   }
-  const preamble = params.preambles.get(gateScope.legalEntityId ?? '');
+  const preamble = params.preambles.get(gateScopeKeyOf(gateScope));
   if (preamble?.decision !== undefined) {
     return { decision: preamble.decision };
   }
@@ -834,7 +840,12 @@ const sharedPreambleReads = (ports: AccessDecisionPorts): AccessDecisionPorts =>
         ...port,
         readScope: sharedPerKey(
           (query: Parameters<typeof port.readScope>[0]) =>
-            [query.tenantId, query.legalEntityId ?? '', ...query.holders.map(holderIdOf)].join('\u0000'),
+            [
+              query.tenantId,
+              query.legalEntityId ?? '',
+              query.checkedCompany ?? '',
+              ...query.holders.map(holderIdOf),
+            ].join('\u0000'),
           (query) => port.readScope(query),
         ),
       };
@@ -859,8 +870,17 @@ export const makeAccessDecisionService = (
     scope: OperationalScope,
     legalEntityId: LegalEntityId | undefined,
     holders: readonly Holder[],
+    checkedCompany?: LegalEntityId,
   ) {
-    const read = yield* Effect.option(ports.authorityFor(scope).readScope(scopeQueryOf(scope, legalEntityId, holders)));
+    // A tenant-context request that names a company resolves only when the company is the asked tenant's own: the same
+    // scope read answers it, so the check costs no statement and no transaction of its own (O66, O88).
+    const read = yield* Effect.option(
+      ports
+        .authorityFor(scope)
+        .readScope(
+          scopeQueryOf(scope, legalEntityId, holders, legalEntityId === undefined ? checkedCompany : undefined),
+        ),
+    );
     if (Option.isNone(read)) {
       return { decision: seamUnavailable(IDENTITY_UNAVAILABLE) };
     }
@@ -958,7 +978,12 @@ export const makeAccessDecisionService = (
       const scopeId = yield* refusalScopeOf(input.scope, memberHoldersOf(actor));
       return scopeId === undefined ? { decision } : { answer: { actor, decision, delegation, scopeId } };
     }
-    const resolved = yield* resolveGateScope(input.scope, gateScope.legalEntityId, memberHoldersOf(actor));
+    const resolved = yield* resolveGateScope(
+      input.scope,
+      gateScope.legalEntityId,
+      memberHoldersOf(actor),
+      gateScope.checkedCompany,
+    );
     if (resolved.decision !== undefined) {
       return { decision: resolved.decision };
     }
@@ -1067,7 +1092,12 @@ export const makeAccessDecisionService = (
     if (gateScope.refusal !== undefined) {
       return { decision: denialOf([gateScope.refusal]) };
     }
-    const resolved = yield* resolveGateScope(input.scope, gateScope.legalEntityId, memberHoldersOf(actor));
+    const resolved = yield* resolveGateScope(
+      input.scope,
+      gateScope.legalEntityId,
+      memberHoldersOf(actor),
+      gateScope.checkedCompany,
+    );
     if (resolved.decision !== undefined) {
       return { decision: resolved.decision };
     }
@@ -1618,7 +1648,7 @@ export const makeAccessDecisionService = (
   /** One scope read per distinct company context of a group, never one per entry (O66). */
   const scopeReadsOf = Effect.fn('AccessDecisionGate.scopeReads')(function* scopeReadsEffect(params: {
     readonly actor: GateActor | undefined;
-    readonly gateScopes: readonly (LegalEntityId | undefined)[];
+    readonly gateScopes: readonly GateScope[];
     readonly scope: OperationalScope;
   }) {
     const { actor, scope } = params;
@@ -1627,14 +1657,14 @@ export const makeAccessDecisionService = (
       return new Map<string, GatePreamble>();
     }
     const holders = memberHoldersOf(actor);
-    const distinct = new Map<string, LegalEntityId | undefined>();
-    for (const legalEntityId of params.gateScopes) {
-      distinct.set(legalEntityId ?? '', legalEntityId);
+    const distinct = new Map<string, GateScope>();
+    for (const gateScope of params.gateScopes) {
+      distinct.set(gateScopeKeyOf(gateScope), gateScope);
     }
     const entries = [...distinct.entries()];
     const reads = yield* Effect.forEach(
       entries,
-      ([, legalEntityId]) => resolveGateScope(scope, legalEntityId, holders),
+      ([, gateScope]) => resolveGateScope(scope, gateScope.legalEntityId, holders, gateScope.checkedCompany),
       { concurrency: 2 },
     );
     const preambles = new Map<string, GatePreamble>();
@@ -1661,11 +1691,9 @@ export const makeAccessDecisionService = (
         return [];
       }
       if (gate.calledBy !== undefined) {
-        return [gateScopeOf(one.legalEntityScope, scope).legalEntityId];
+        return [gateScopeOf(one.legalEntityScope, scope)];
       }
-      return one.carrier.accessDeclaration === undefined
-        ? []
-        : [gateScopeOf(one.legalEntityScope, scope).legalEntityId];
+      return one.carrier.accessDeclaration === undefined ? [] : [gateScopeOf(one.legalEntityScope, scope)];
     });
     const preambles = yield* scopeReadsOf({ actor: gate.actor, gateScopes, scope });
     const prepared = group.indexes.map((index): GatePrepared => {

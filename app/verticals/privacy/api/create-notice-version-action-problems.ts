@@ -81,10 +81,12 @@ export const createNoticeVersionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CreateNoticeVersionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CreateNoticeVersionActionForbiddenProblem'> =>
     CreateNoticeVersionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -195,7 +197,8 @@ const mapCoreProblem = (error: ActionCoreError): CreateNoticeVersionActionProble
       ActionInvocationStateError: (failure) => createNoticeVersionActionProblem.conflict(failure.code),
       ActionPayloadValidationError: createNoticeVersionActionProblem.invalid,
       ActionPermissionCheckError: (failure) => createNoticeVersionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => createNoticeVersionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        createNoticeVersionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => createNoticeVersionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => createNoticeVersionActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => createNoticeVersionActionProblem.conflict(failure.code),

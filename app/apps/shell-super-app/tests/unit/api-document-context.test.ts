@@ -1,7 +1,6 @@
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import type { GateInput } from '@app/core-runtime/access/enforcement';
 import {
-  ContextAccess,
   LegalEntityContext,
   ReadPermissionDenied,
   ReadRuntime,
@@ -23,9 +22,9 @@ import { ShellGovernedReads } from '../../api/modules/shell-governed-reads.ts';
 import type { ShellGovernedReadsService } from '../../api/modules/shell-governed-reads.ts';
 import { ShellCompositionSchema, ShellDocumentContextSchema } from '../../shared/browser-api.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
-import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { makeShellTestAccessGate } from '../support/access-decision-double.ts';
 import { makeAuthenticationServiceDouble } from '../support/impersonation-service-doubles.ts';
+import { tenantModuleTargetTestCarrier } from '../support/tenant-module-target-carrier.ts';
 
 const principal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
   authBindingId: '40000000-0000-4000-8000-000000000001',
@@ -57,7 +56,10 @@ const request = { headers: { cookie: 'session=document-context', 'x-correlation-
 const denied = [{ decision: 'denied' as const, key: principal.tenantId }];
 const unavailable = [{ decision: 'unavailable' as const, key: principal.tenantId }];
 
-type TenantDecisions = ReturnType<ReturnType<typeof makeContextAccessDouble>['tenants']>;
+/** The scripted answer of one gate question, written as the decision it stands for. */
+type TenantDecisions = Effect.Effect<
+  readonly { readonly decision: 'allowed' | 'denied' | 'unavailable'; readonly key: string }[]
+>;
 
 const fixture = Effect.gen(function* documentFixture() {
   const snapshot = yield* makeCompositionSnapshot([]);
@@ -85,19 +87,29 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
   const { catalog } = yield* fixture;
   const readComposition = rs.fn(composition);
   const issue = rs.fn(() => issueDocument);
-  const tenantSelection = rs.fn((input: GateInput) =>
-    hint.pipe(
+  /** One scripted v2 answer for a question, from the first of the given decisions. */
+  const answer = (decisions: TenantDecisions, input: GateInput) =>
+    decisions.pipe(
       Effect.flatMap(([decision]) =>
         makeShellTestAccessGate({ defaultAnswer: decision?.decision ?? 'unavailable' }).decide(input),
       ),
-    ),
+    );
+  // Each Shell question is told apart by the declaration it carries, as the one gate decides it.
+  const tenantSelection = rs.fn((input: GateInput) => answer(hint, input));
+  const releaseHint = rs.fn((input: GateInput) => answer(tenantAccess, input));
+  const peopleCheck = rs.fn((input: GateInput) =>
+    peopleStarted.pipe(Effect.andThen(answer(Effect.succeed(denied), input))),
   );
-  const tenantPermissions = rs.fn(({ permission }: { readonly permission: string }) => {
-    if (permission === 'access') {
-      return tenantAccess;
+  const decide = (input: GateInput) => {
+    const key = input.carrier.accessDeclaration?.key;
+    if (key === 'core.identity.people-directory.list') {
+      return peopleCheck(input);
     }
-    return peopleStarted.pipe(Effect.as(denied));
-  });
+    if (key === 'core.shell.tenant-module-target.resolve') {
+      return releaseHint(input);
+    }
+    return tenantSelection(input);
+  };
   const response = yield* documentContextHandler(request, {}).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -110,13 +122,7 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
             },
           }),
         ),
-        Layer.succeed(AccessDecisionGate, { ...makeTestAccessDecision(), decide: tenantSelection }),
-        Layer.succeed(ContextAccess, {
-          ...makeContextAccessDouble('allowed'),
-          legalEntities: ({ legalEntityIds }) =>
-            Effect.succeed(legalEntityIds.map((key) => ({ decision: 'denied' as const, key }))),
-          tenants: tenantPermissions,
-        }),
+        Layer.succeed(AccessDecisionGate, { ...makeTestAccessDecision(), decide }),
         Layer.succeed(
           HttpServerRequest.HttpServerRequest,
           HttpServerRequest.fromWeb(new Request('https://shell.test/shell/document-context')),
@@ -124,13 +130,16 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
         Layer.mock(LegalEntityContext, {}),
         Layer.mock(ReadRuntime, {}),
         Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
-        Layer.mock(ShellGovernedReads, { composition: readComposition }),
+        Layer.mock(ShellGovernedReads, {
+          composition: readComposition,
+          tenantModuleTargetCarrier: tenantModuleTargetTestCarrier,
+        }),
         Layer.mock(GatewayIssuer, { issueDocument: issue }),
       ),
     ),
     Effect.flatMap(Schema.decodeUnknownEffect(ShellDocumentContextSchema)),
   );
-  return { issue, readComposition, response, tenantPermissions, tenantSelection };
+  return { issue, peopleCheck, readComposition, releaseHint, response, tenantSelection };
 });
 
 it.live('overlaps the switcher hint with composition and people reads, joining only after document assertions', () =>
@@ -204,13 +213,14 @@ it.effect(
 
 it.effect('does not start permission, composition or assertion reads for an anonymous document', () =>
   Effect.gen(function* anonymousDocument() {
-    const { issue, readComposition, response, tenantPermissions, tenantSelection } = yield* documentTest(
+    const { issue, peopleCheck, readComposition, releaseHint, response, tenantSelection } = yield* documentTest(
       { setCookieHeaders: [], state: 'anonymous' },
       Effect.die('Anonymous documents must not read permissions'),
       () => Effect.die('Anonymous documents must not load composition'),
     );
     expect(response).toEqual({ session: { state: 'anonymous' } });
-    expect(tenantPermissions).not.toHaveBeenCalled();
+    expect(releaseHint).not.toHaveBeenCalled();
+    expect(peopleCheck).not.toHaveBeenCalled();
     expect(tenantSelection).not.toHaveBeenCalled();
     expect(readComposition).not.toHaveBeenCalled();
     expect(issue).not.toHaveBeenCalled();
@@ -268,7 +278,7 @@ for (const state of ['selection_required', 'access_blocked', 'tenant_authenticat
         state === 'tenant_authenticated'
           ? { ...base, availableLegalEntities: [legalEntity], state }
           : { ...base, availableLegalEntities: [], state };
-      const { issue, readComposition, response, tenantPermissions, tenantSelection } = yield* documentTest(
+      const { issue, peopleCheck, readComposition, releaseHint, response, tenantSelection } = yield* documentTest(
         context,
         Effect.succeed(
           state === 'tenant_authenticated' ? [{ decision: 'allowed', key: principal.tenantId }] : unavailable,
@@ -293,13 +303,14 @@ for (const state of ['selection_required', 'access_blocked', 'tenant_authenticat
         legalEntityScope: 'forbidden',
         scope: { principalId: principal.principalId, tenantId: principal.tenantId },
       });
-      expect(tenantPermissions).toHaveBeenCalledTimes(state === 'tenant_authenticated' ? 1 : 0);
+      expect(peopleCheck).not.toHaveBeenCalled();
+      expect(releaseHint).toHaveBeenCalledTimes(state === 'tenant_authenticated' ? 1 : 0);
       expect(response).not.toHaveProperty('compositionRevision');
       if (state === 'tenant_authenticated') {
-        expect(tenantPermissions).toHaveBeenCalledWith({
-          permission: 'access',
-          principalId: principal.principalId,
-          tenantIds: [principal.tenantId],
+        expect(releaseHint.mock.calls[0]?.[0]).toMatchObject({
+          carrier: { accessDeclaration: { key: 'core.shell.tenant-module-target.resolve' } },
+          legalEntityScope: 'optional',
+          scope: { principalId: principal.principalId, tenantId: principal.tenantId },
         });
       }
     }),
@@ -320,7 +331,7 @@ it.effect(
         state: 'tenant_authenticated',
       };
       const { catalog } = yield* fixture;
-      const { issue, readComposition, response, tenantPermissions } = yield* documentTest(
+      const { issue, readComposition, releaseHint, response } = yield* documentTest(
         context,
         Effect.succeed(denied),
         () => Effect.die('Tenant search must not request a company composition'),
@@ -338,16 +349,17 @@ it.effect(
       expect(response).not.toHaveProperty('home');
       expect(issue).not.toHaveBeenCalled();
       expect(readComposition).not.toHaveBeenCalled();
-      expect(tenantPermissions).toHaveBeenCalledWith({
-        permission: 'access',
-        principalId: principal.principalId,
-        tenantIds: [principal.tenantId],
+      // The hint goes exactly to the people tenant-context page dispatch admits (O28).
+      expect(releaseHint.mock.calls[0]?.[0]).toMatchObject({
+        carrier: { accessDeclaration: { key: 'core.shell.tenant-module-target.resolve' } },
+        legalEntityScope: 'optional',
+        scope: { principalId: principal.principalId, tenantId: principal.tenantId },
       });
     }),
 );
 
-for (const decisions of [denied, unavailable, [{ decision: 'allowed' as const, key: 'foreign-tenant' }], []]) {
-  it.effect(`never exposes a search revision for non-canonical tenant admission ${JSON.stringify(decisions)}`, () =>
+for (const decisions of [denied, unavailable]) {
+  it.effect(`never exposes a release revision when tenant page dispatch is ${decisions[0]?.decision}`, () =>
     Effect.gen(function* noTenantSearchRevision() {
       const { legalEntityId, ...tenantPrincipal } = principal;
       void legalEntityId;

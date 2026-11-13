@@ -1,10 +1,10 @@
 import type {
-  OwnerAuthorizationDecision,
   OwnerAuthorizationInput,
+  OwnerAuthorizationOutcome,
   OwnerAuthorizationOverlayService,
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
-import { OwnerAuthorizationOverlay } from '@app/core-runtime';
+import { OwnerAuthorizationOverlay, ownerAuthorizationDenial } from '@app/core-runtime';
 import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement';
 import { Effect, Layer, Result, Schema } from 'effect';
 
@@ -20,15 +20,38 @@ import { RetailPortalPermissionCodeSchema } from '../../shared/domain/profile-co
 import { lockingCurrentOwnerAccessForTransaction } from './access-persistence.ts';
 import { profilePersistenceServicesForTransaction } from './profile-persistence.ts';
 
-const ownerDecision = (decision: 'ALLOWED' | 'DENIED' | 'UNAVAILABLE'): OwnerAuthorizationDecision => {
-  if (decision === 'ALLOWED') {
-    return 'allowed';
-  }
-  if (decision === 'DENIED') {
-    return 'denied';
-  }
-  return 'unavailable';
-};
+/**
+ * The stable reason codes of this owner's refusals. They reach the 403 body and Core's refusal
+ * warning, because neither the v2 gate nor "Proč?" sees an owner rule: a person who holds the
+ * capability is told it is this rule that refuses, and which owner-local right is missing
+ * (`requires.<permission>`).
+ */
+export const OWNER_DENIAL_REASON = {
+  counterpartyFactMissing: 'deny.owner.counterparty_fact_missing',
+  counterpartyGrantMissing: 'deny.owner.counterparty_grant_missing',
+  factsMissing: 'deny.owner.facts_missing',
+  factsUnrecognized: 'deny.owner.facts_unrecognized',
+  operationUnmapped: 'deny.owner.operation_unmapped',
+  retailFactMissing: 'deny.owner.retail_fact_missing',
+} as const;
+
+const requires = (permission: string) => `requires.${permission}`;
+
+/** The retail decision's own outcome names the refusal: `deny.owner.retail_binding_not_found`, … */
+const retailDenialReason = (outcome: string) => `deny.owner.retail_${outcome.toLowerCase()}`;
+
+const ownerDecision =
+  (permission: CounterpartyPermissionCode) =>
+  (decision: 'ALLOWED' | 'DENIED' | 'UNAVAILABLE'): OwnerAuthorizationOutcome => {
+    if (decision === 'ALLOWED') {
+      return 'allowed';
+    }
+    if (decision === 'DENIED') {
+      // No ACTIVE owner grant of this exact permission for this principal on this Counterparty.
+      return ownerAuthorizationDenial(OWNER_DENIAL_REASON.counterpartyGrantMissing, requires(permission));
+    }
+    return 'unavailable';
+  };
 
 /**
  * O70: Core passes the owner's own fact bag (`accessOwnerFacts`) into the overlay unchanged. It is
@@ -75,7 +98,7 @@ const checkCounterpartyFacts = (
   input: OwnerAuthorizationInput,
   facts: Readonly<Record<string, string>>,
   permission: CounterpartyPermissionCode,
-): Effect.Effect<OwnerAuthorizationDecision> => {
+): Effect.Effect<OwnerAuthorizationOutcome> => {
   const counterpartyId = facts[OWNER_FACT_COUNTERPARTY];
   const storefrontId = facts[OWNER_FACT_STOREFRONT];
   const counterpartyRef = Schema.decodeResult(CounterpartyRefSchema)({
@@ -91,7 +114,7 @@ const checkCounterpartyFacts = (
   if (Result.isFailure(counterpartyRef) || Result.isFailure(principal)) {
     // A capability that needs a Counterparty grant cannot be decided without the Counterparty it
     // acts on; a missing or malformed fact is a denial (O70).
-    return Effect.succeed('denied' as const);
+    return Effect.succeed(ownerAuthorizationDenial(OWNER_DENIAL_REASON.counterpartyFactMissing, requires(permission)));
   }
   const { legalEntityId } = input.scope;
   if (legalEntityId === undefined) {
@@ -107,7 +130,7 @@ const checkCounterpartyFacts = (
         ? { kind: 'counterparty' as const }
         : { kind: 'storefront' as const, storefrontKey: storefrontId },
   }).pipe(
-    Effect.map(ownerDecision),
+    Effect.map(ownerDecision(permission)),
     Effect.orElseSucceed(() => 'unavailable' as const),
   );
 };
@@ -117,12 +140,13 @@ const checkRetailFacts = (
   transaction: ScopedTransactionExecutor,
   input: OwnerAuthorizationInput,
   facts: Readonly<Record<string, string>>,
-): Effect.Effect<OwnerAuthorizationDecision> => {
+): Effect.Effect<OwnerAuthorizationOutcome> => {
   const profileId = facts[OWNER_FACT_RETAIL_PROFILE];
   const requiredPermission = facts[OWNER_FACT_RETAIL_PERMISSION];
   const { legalEntityId } = input.scope;
+  const factMissing = Effect.succeed(ownerAuthorizationDenial(OWNER_DENIAL_REASON.retailFactMissing));
   if (profileId === undefined || requiredPermission === undefined || legalEntityId === undefined) {
-    return Effect.succeed('denied' as const);
+    return factMissing;
   }
   const request = Schema.decodeUnknownResult(RetailAccessDecisionRequestSchema)({
     profileRef: {
@@ -134,12 +158,12 @@ const checkRetailFacts = (
     requiredPermission,
   });
   if (Result.isFailure(request)) {
-    return Effect.succeed('denied' as const);
+    return factMissing;
   }
   const profileRef = Schema.decodeResult(RetailCustomerProfileRefSchema)(request.success.profileRef);
   const permission = Schema.decodeResult(RetailPortalPermissionCodeSchema)(request.success.requiredPermission);
   if (Result.isFailure(profileRef) || Result.isFailure(permission)) {
-    return Effect.succeed('denied' as const);
+    return factMissing;
   }
   const services = profilePersistenceServicesForTransaction(transaction, {
     legalEntityId,
@@ -153,14 +177,14 @@ const checkRetailFacts = (
       input.scope.tenantId,
     )
     .pipe(
-      Effect.map(({ decision }) => {
+      Effect.map(({ decision }): OwnerAuthorizationOutcome => {
         if (decision.allowed) {
-          return 'allowed' as const;
+          return 'allowed';
         }
         if (decision.outcome === 'AUTHORIZATION_UNAVAILABLE') {
-          return 'unavailable' as const;
+          return 'unavailable';
         }
-        return 'denied' as const;
+        return ownerAuthorizationDenial(retailDenialReason(decision.outcome), requires(permission.success));
       }),
       Effect.orElseSucceed(() => 'unavailable' as const),
     );
@@ -174,7 +198,7 @@ const decideOwnerFacts = (
   transaction: ScopedTransactionExecutor,
   input: OwnerAuthorizationInput,
   facts: Readonly<Record<string, string>>,
-): Effect.Effect<OwnerAuthorizationDecision> => {
+): Effect.Effect<OwnerAuthorizationOutcome> => {
   if (facts[OWNER_FACT_RETAIL_PROFILE] !== undefined || facts[OWNER_FACT_RETAIL_PERMISSION] !== undefined) {
     return checkRetailFacts(transaction, input, facts);
   }
@@ -184,19 +208,19 @@ const decideOwnerFacts = (
     // Falling through to the scope-wide capability would let a buyer with the read's capability
     // read another counterparty's profile data by naming its ids (O67-Q1, O70).
     return permission === undefined
-      ? Effect.succeed('denied' as const)
+      ? Effect.succeed(ownerAuthorizationDenial(OWNER_DENIAL_REASON.operationUnmapped))
       : checkCounterpartyFacts(transaction, input, facts, permission);
   }
   // A non-empty fact bag that names neither a Counterparty nor a Retail record is not an
   // owner-neutral read: only an explicitly empty bag (a descriptor that published no governed
   // record, handled in `authorize`) is owner-neutral. Anything else fails closed (O70).
-  return Effect.succeed('denied' as const);
+  return Effect.succeed(ownerAuthorizationDenial(OWNER_DENIAL_REASON.factsUnrecognized));
 };
 
 const authorizeStandardOwnerFacts = (
   transaction: ScopedTransactionExecutor,
   input: OwnerAuthorizationInput,
-): Effect.Effect<OwnerAuthorizationDecision> => {
+): Effect.Effect<OwnerAuthorizationOutcome> => {
   // O70: Core computes the owner's fact bag from the descriptor and passes it unchanged; the
   // caller never supplies it (O64) and it never reaches the decision engine.
   const facts = input.ownerFacts;
@@ -204,8 +228,11 @@ const authorizeStandardOwnerFacts = (
     // A capability that needs a Counterparty grant cannot be decided without its owner facts, so
     // a descriptor that declares no resolver denies instead of falling back to the scope-wide
     // capability (O70, fail closed).
+    const permission = counterpartyPermissionByOperation.get(input.operationKey);
     return Effect.succeed(
-      counterpartyPermissionByOperation.has(input.operationKey) ? ('denied' as const) : ('allowed' as const),
+      permission === undefined
+        ? 'allowed'
+        : ownerAuthorizationDenial(OWNER_DENIAL_REASON.factsMissing, requires(permission)),
     );
   }
   if (Object.keys(facts).length === 0) {
@@ -220,7 +247,7 @@ const authorizeSourceOwnerFacts = (
   transaction: ScopedTransactionExecutor,
   input: OwnerAuthorizationInput,
   workloadKey: 'commerce.customer-context.source-write' | 'commerce.customer-context.source-read',
-): Effect.Effect<OwnerAuthorizationDecision> =>
+): Effect.Effect<OwnerAuthorizationOutcome> =>
   readScopedAdmittedWorkload(transaction, input.scope, workloadKey).pipe(
     Effect.flatMap((selected) =>
       selected ? Effect.succeed('allowed' as const) : authorizeStandardOwnerFacts(transaction, input),

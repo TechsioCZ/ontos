@@ -30,6 +30,7 @@ export const RevisePriceActionForbiddenProblemSchema = makeProblemDetailsSchema(
       'operation_context_invalid',
       'revise_price_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const RevisePriceActionNotFoundProblemSchema = makeProblemDetailsSchema(

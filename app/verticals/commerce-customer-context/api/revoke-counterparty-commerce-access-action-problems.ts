@@ -148,7 +148,8 @@ const mapCoreProblem = (error: ActionCoreError): RevokeCounterpartyCommerceAcces
       ActionInvocationStateError: (failure) => revokeCounterpartyCommerceAccessActionProblem.conflict(failure.code),
       ActionPayloadValidationError: revokeCounterpartyCommerceAccessActionProblem.invalid,
       ActionPermissionCheckError: (failure) => revokeCounterpartyCommerceAccessActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => revokeCounterpartyCommerceAccessActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        revokeCounterpartyCommerceAccessActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => revokeCounterpartyCommerceAccessActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => revokeCounterpartyCommerceAccessActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => revokeCounterpartyCommerceAccessActionProblem.conflict(failure.code),

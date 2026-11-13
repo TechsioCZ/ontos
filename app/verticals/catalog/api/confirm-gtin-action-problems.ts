@@ -61,10 +61,12 @@ export const confirmGtinActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ConfirmGtinActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ConfirmGtinActionForbiddenProblem'> =>
     ConfirmGtinActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -167,7 +169,7 @@ const mapCoreProblem = (error: ActionCoreError): ConfirmGtinActionProblem =>
       ActionInvocationStateError: (failure) => confirmGtinActionProblem.conflict(failure.code),
       ActionPayloadValidationError: confirmGtinActionProblem.invalid,
       ActionPermissionCheckError: (failure) => confirmGtinActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => confirmGtinActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => confirmGtinActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => confirmGtinActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => confirmGtinActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => confirmGtinActionProblem.conflict(failure.code),
