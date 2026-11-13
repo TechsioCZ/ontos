@@ -3,7 +3,7 @@ import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { lifecycleQuestionOf } from '../../../../packages/core-runtime/src/auth/agent-proposal-command-preparation.ts';
+import { agentAdministrationQuestionOf } from '../../../../packages/core-runtime/src/auth/agent-administration.ts';
 import { prepareRevocationNotes } from '../../../../packages/core-runtime/src/auth/oauth-connection-revocation-notes-read.ts';
 import { OAuthGrantOwners } from '../../../../packages/core-runtime/src/auth/oauth-grant-owners.ts';
 import { preparePeopleSearch } from '../../../../packages/core-runtime/src/people/people-search.ts';
@@ -121,7 +121,7 @@ const releaseHintFor = Effect.fn('CallSites.releaseHint')(function* releaseHintF
 });
 
 /**
- * The withdrawal's lifecycle question exactly as the preflight builds it (`lifecycleQuestionOf`), answered by the real
+ * The withdrawal's lifecycle question exactly as the preflight builds it (`agentAdministrationQuestionOf`), answered by the real
  * gate. Its preparation and in-transaction re-check are pinned by the preparation's own unit suite.
  */
 const lifecycleFor = Effect.fn('CallSites.lifecycle')(function* lifecycleFor(
@@ -129,7 +129,7 @@ const lifecycleFor = Effect.fn('CallSites.lifecycle')(function* lifecycleFor(
   persona: Persona,
 ) {
   const scope = yield* companyScopeOf(accessCase, persona);
-  return (yield* accessCase.gate.decide(lifecycleQuestionOf(scope, DECISION_AT))).outcome;
+  return (yield* accessCase.gate.decide(agentAdministrationQuestionOf(scope, DECISION_AT))).outcome;
 });
 
 it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 seconds' })(

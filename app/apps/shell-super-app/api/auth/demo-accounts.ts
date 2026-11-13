@@ -202,12 +202,11 @@ export const requireAdministrator = Effect.fn('DemoAccounts.requireAdministrator
 export const auditTrail = Effect.fn('DemoAccounts.auditTrail')(function* auditTrail(
   caller: DemoAccountCaller,
   transport: OperationalScopeRequest,
-  subjects: 'agents' | 'people',
 ) {
   const runtime = yield* ReadRuntime;
   const { entries } = yield* runtime
     .runRead({
-      input: { subjects },
+      input: { subjects: 'agents' },
       principal: caller.principal,
       registration: identityAdministrationAuditRead,
       transport,

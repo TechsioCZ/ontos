@@ -197,7 +197,7 @@ export const listAgentEntities = Effect.fn('AgentEntities.listAgentEntities')(fu
     const agents = snapshot.agents
       .filter((agent) => agent.status !== 'archived')
       .toSorted((left, right) => Number(left.ownerPrincipalId === null) - Number(right.ownerPrincipalId === null));
-    const audit = yield* auditTrail(caller, transport, 'agents').pipe(Effect.mapError(fromDemoAccountError));
+    const audit = yield* auditTrail(caller, transport).pipe(Effect.mapError(fromDemoAccountError));
     return { agents, audit, people: snapshot.people };
   });
   const roles = yield* roleTemplates(caller, transport);
