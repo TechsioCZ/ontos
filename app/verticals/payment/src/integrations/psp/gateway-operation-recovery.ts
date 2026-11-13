@@ -441,20 +441,47 @@ const replayRetained = Effect.fn('GatewayOperationRecovery.replay')(function* re
 });
 
 /**
- * Correlates an OUTCOME_UNKNOWN row found by a Stripe order-reference search (OUTCOME_UNKNOWN → ACKNOWLEDGED
- * with the provider ref), so later refunds and cancels have their provider target. False on a conflict.
+ * A refund lookup's finding that proves the refund reached the provider: completed, accepted and pending, or a
+ * refund object of its own that failed. INDETERMINATE, a conflict or a NOT_EFFECTED without the refund's own
+ * object prove nothing about existence, so the dispatch stays unknown and later refunds stay serialized.
+ */
+const provesRefundExists = (finding: ProviderFindingResult): boolean =>
+  finding.finding === 'EFFECT_CONFIRMED' ||
+  finding.finding === 'ACCEPTED_PENDING' ||
+  (finding.finding === 'NOT_EFFECTED' && finding.providerRefs.some(isRefundRef));
+
+/**
+ * The provider ref an OUTCOME_UNKNOWN refund records once a lookup of its recorded object (GoPay refund list,
+ * Comgate statement) proves it exists: the refund's own object when the provider names one (GoPay), else the
+ * payment object the refund was dispatched against (Comgate).
+ */
+const refundCorrelationRefOf = (refs: readonly ProviderObjectRef[]) =>
+  Option.orElse(Option.fromUndefinedOr(refs.find(isRefundRef)), () => Option.fromUndefinedOr(refs[0]));
+
+/**
+ * Correlates an OUTCOME_UNKNOWN row (OUTCOME_UNKNOWN → ACKNOWLEDGED with the provider ref) found by a Stripe
+ * order-reference search, or a refund whose lookup of its recorded provider object proves it exists, so later
+ * refunds and cancels have their provider target and the refund no longer reads as unresolved. False on a
+ * conflict.
  */
 const correlateFound = Effect.fn('GatewayOperationRecovery.correlateFound')(function* correlateFound(
   call: RecoveryCall,
   record: ProviderDispatchRecord,
   findings: readonly ProviderFindingResult[],
+  providerCall: GatewayRecoveryProviderCall,
 ) {
+  const bySearch = providerCall === 'LOOKUP_ORDER_REFERENCE';
   const own = findings.find(
     (finding) =>
       finding.target.operationId === record.operationId &&
-      Option.contains(finding.orderReference, record.orderReference),
+      (bySearch
+        ? Option.contains(finding.orderReference, record.orderReference)
+        : finding.target.operationKind === 'REFUND' && provesRefundExists(finding)),
   );
-  const providerRef = own === undefined ? Option.none<ProviderObjectRef>() : correlationRefOf(record, own.providerRefs);
+  const refOf = bySearch
+    ? (refs: readonly ProviderObjectRef[]) => correlationRefOf(record, refs)
+    : refundCorrelationRefOf;
+  const providerRef = own === undefined ? Option.none<ProviderObjectRef>() : refOf(own.providerRefs);
   if (Option.isNone(providerRef)) {
     return true;
   }
@@ -493,12 +520,14 @@ const lookUp = Effect.fn('GatewayOperationRecovery.lookUp')(function* lookUp(
     ORDER_REFERENCE: () => 'LOOKUP_ORDER_REFERENCE' as const,
     PROVIDER_OBJECT: () => 'LOOKUP_PROVIDER_OBJECT' as const,
   });
-  const correlate = providerCall === 'LOOKUP_ORDER_REFERENCE' && record.state === 'OUTCOME_UNKNOWN';
+  const correlate =
+    record.state === 'OUTCOME_UNKNOWN' &&
+    (providerCall === 'LOOKUP_ORDER_REFERENCE' || record.operationKind === 'REFUND');
   return yield* adapter
     .lookup(call.target, { dispatchedAt: record.preparedAt, expected, target: lookupTarget.value })
     .pipe(
       Effect.flatMap((findings) =>
-        (correlate ? correlateFound(call, record, findings) : Effect.succeed(true)).pipe(
+        (correlate ? correlateFound(call, record, findings, providerCall) : Effect.succeed(true)).pipe(
           Effect.flatMap((consistent) =>
             consistent
               ? appendFindings(call, expected, findings, providerCall)

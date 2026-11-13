@@ -382,6 +382,27 @@ it.effect('#1158 a Tenant without a key is skipped while the others are requeste
   }),
 );
 
+it.effect('#1158 a keyless Tenant filling every page cannot starve later Tenants; the listing wraps around', () =>
+  Effect.gen(function* rotatingListing() {
+    // Tenant 1 has 200 due rows (the whole bounded scan) and no key; Tenant 2 comes later in keyset order.
+    const rows = [
+      ...Array.from({ length: 200 }, (_, index) => rowOf({ le: 0, op: index, tenant: 1 })),
+      rowOf({ le: 0, op: 900, tenant: 2 }),
+    ];
+    const { harness, sweep } = yield* makeHarness({ keys: new Set([2]), rows });
+    const first = yield* sweep;
+    expect(first).toMatchObject({ listed: 200, requested: 0 });
+    // The next tick continues after the last listed row, so Tenant 2 is listed and requested.
+    const second = yield* sweep;
+    expect(second).toMatchObject({ listed: 1, requested: 1 });
+    expect(yield* calledOperations(harness)).toEqual([op(900)]);
+    // A short page ends the scan, so the tick after it starts from the beginning again.
+    yield* Ref.set(harness.listed, []);
+    yield* sweep;
+    expect(Option.isNone((yield* Ref.get(harness.listed))[0]?.after ?? Option.some(rows[0]))).toBe(true);
+  }),
+);
+
 it.effect('#1158 an unapproved or unreadable release lists nothing, purges nothing and requests nothing', () =>
   Effect.gen(function* unapproved() {
     const rows = [rowOf({ le: 0, op: 1, tenant: 1 })];
