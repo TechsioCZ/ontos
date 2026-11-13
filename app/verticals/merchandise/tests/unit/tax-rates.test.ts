@@ -39,6 +39,7 @@ import {
   resolveVatRate,
   sellableRatesAt,
   shownTaxRates,
+  staffTaxRateBook,
   taxCallFailureOf,
   taxRateViews,
 } from '../../src/services/tax-rates.ts';
@@ -672,5 +673,46 @@ it.effect('a module that holds no module credential reads as an outage that name
       'UNAVAILABLE',
       'GatewayDelegationSourceError: No module credential of merchandise in this process: the host has not handed one over',
     ]);
+  }),
+);
+
+it.effect('the first staff read after Tax is set up takes its answer over itself, without a second read', () =>
+  Effect.gen(function* staffReadSyncs() {
+    yield* TestClock.setTime(Date.parse('2026-11-13T13:30:00.000Z'));
+    const company = scopeOf(randomUUID());
+    const source = { read: () => Effect.succeed(TEST_TAX_BOOK) };
+    // As stage after the seed: no answer in this process yet. A burst of staff reads, nothing read afterwards.
+    const reads = yield* Effect.all([staffTaxRateBook(company), staffTaxRateBook(company), staffTaxRateBook(company)], {
+      concurrency: 'unbounded',
+    }).pipe(Effect.provideService(TaxRateSource, source));
+    for (const read of reads) {
+      expect(read.fetched?.book).toBe(TEST_TAX_BOOK);
+    }
+    // So the read's own decision takes Tax over from the migrated state (and the store writes it on the head).
+    const migrated: CompanyTaxRates = {
+      book: testTaxBook({ reduced: '12', standard: '21' }),
+      heldProductRates: { 'book-it': 10 },
+      source: 'MIGRATION',
+      syncedAt: DateTime.makeUnsafe(0),
+    };
+    const decision = decideTaxRates(migrated, { fetched: reads[0]?.fetched, refused: false }, yield* DateTime.now);
+    expect(decision.materialise?.source).toBe('TAX');
+    // A held product is held no more: BOOK-IT is labelled at the reduced rate (12 %), its stored gross unchanged.
+    expect(decision.held).toEqual({});
+    // Before this change a staff read only started the refresh and served the stored rates.
+    expect(
+      (yield* knownTaxRateBook(scopeOf(randomUUID())).pipe(Effect.provideService(TaxRateSource, source))).fetched,
+    ).toBeUndefined();
+  }),
+);
+
+it.effect('a staff read waits a few seconds at most: without an answer it serves the stored rates', () =>
+  Effect.gen(function* staffReadBounded() {
+    const { release, source } = yield* gatedSource;
+    const company = scopeOf(randomUUID());
+    const read = yield* Effect.forkChild(staffTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source)));
+    yield* TestClock.adjust('3 seconds');
+    expect((yield* Fiber.join(read)).fetched).toBeUndefined();
+    yield* Deferred.succeed(release, TEST_TAX_BOOK);
   }),
 );

@@ -760,6 +760,25 @@ const awaitRefresh = (scope: OperationalScope, explicit = false) =>
   );
 
 /**
+ * Tax's answer for a staff read. A fresh one is used as it is; while the last attempt's wait runs, the stored rates
+ * serve. Otherwise the read asks Tax now and waits at most {@link TAX_REFRESH_TIMEOUT}, so the read that finds the
+ * company's rates stale is the one that takes Tax's answer over: a sync never depends on a later read reaching the
+ * same process. Without an answer in time the read serves the stored rates; the refresh still lands for the next one.
+ */
+export const staffTaxRateBook = Effect.fn('Merchandise.staffTaxRateBook')(function* staffTaxRateBook(
+  scope: OperationalScope,
+) {
+  const answer = yield* known(scope);
+  if (answer.fetched !== undefined || answer.waiting) {
+    return answer;
+  }
+  const fetched = yield* Effect.option(awaitRefresh(scope));
+  return Option.isSome(fetched)
+    ? ({ fetched: fetched.value, refused: false, waiting: false } satisfies KnownTaxRates)
+    : yield* known(scope);
+});
+
+/**
  * Tax's answer for a write that prices something new (a new order line, a new product price): the fresh answer, else
  * the company's single refresh, waited for at most {@link TAX_REFRESH_TIMEOUT}. While the wait after a refresh
  * without an answer runs, it fails at once as that refresh did, without asking Tax.

@@ -118,6 +118,7 @@ import {
   decideTaxRates,
   heldRateOf,
   knownTaxRateBook,
+  staffTaxRateBook,
   NO_SELLABLE_RATES,
   notSellableMessage,
   refreshedTaxRateBook,
@@ -2452,13 +2453,13 @@ export interface RecordsPrepared {
 }
 
 /**
- * Tax's answer for a staff read, as far as this process knows it: never waits for Tax (a stale or missing answer only
- * starts the company's single refresh in the background), so the read answers from the materialised rates.
+ * Tax's answer for a staff read: a fresh one as this process knows it; a stale or missing one is asked for now, waiting
+ * at most a few seconds ({@link staffTaxRateBook}), so this read takes Tax's answer over when it prices the company.
  */
 export const prepareStaffTaxRates = Effect.fn('Merchandise.prepareStaffTaxRates')(function* prepareStaffTaxRates(
   scope: OperationalScope,
 ) {
-  const known = yield* knownTaxRateBook(scope);
+  const known = yield* staffTaxRateBook(scope);
   return { fetched: known.fetched, refused: known.refused } satisfies PreparedTax;
 });
 
