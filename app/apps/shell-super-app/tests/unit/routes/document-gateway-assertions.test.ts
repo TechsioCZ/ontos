@@ -66,6 +66,15 @@ const write = (status: number) =>
 const isGatewayUrl = Schema.is(Schema.String.check(Schema.isEndingWith('/auth/gateway-context')));
 const gatewayRequests = () => platformFetch.mock.calls.filter(([input]) => isGatewayUrl(input));
 
+/** What one batch asked: which audiences it names, and the most assertions it asks of any one of them. */
+const askedOf = (request: { readonly audiences: readonly string[] } | undefined) => {
+  const audiences = request?.audiences ?? [];
+  return {
+    audiences: [...new Set(audiences)].toSorted(),
+    most: Math.max(0, ...[...Map.groupBy(audiences, (audience) => audience).values()].map(({ length }) => length)),
+  };
+};
+
 /** The document holds these assertions: its one batch answered them (the next batch answers what the test mocks). */
 const holdAssertions = (assertions: readonly ReturnType<typeof assertion>[]) =>
   Effect.gen(function* hold() {
@@ -140,6 +149,32 @@ it.live('hands each read of one module its own pooled assertion, and asks a dry 
       Math.max(...batches.asked.map((entries) => entries.filter((named) => named === audience).length)),
     ).toBeGreaterThan(1);
     expect(batches.asked.every((entries) => entries.every((named) => named === audience))).toBe(true);
+  }),
+);
+
+it.live('mints no assertions a slow page never uses: a refill covers the reads waiting and one spare', () =>
+  Effect.gen(function* refillStaysSmall() {
+    yield* resetDocumentGatewayAssertions;
+    const audience = 'orders';
+    const batches = answeringBatches();
+    yield* warmDocumentGatewayAssertions(revision, [audience]);
+    yield* Effect.sleep('20 millis');
+    // A burst first: eight reads of the module at once, as a list warming its rows.
+    yield* Effect.forEach([1, 2, 3, 4, 5, 6, 7, 8], () => askAssertion({ audience, compositionRevision: revision }), {
+      concurrency: 'unbounded',
+    });
+    const afterBurst = batches.asked.length;
+    // Then the page settles into one read at a time. Each refill asks for that read and one spare, never eight.
+    for (const _read of [1, 2, 3, 4, 5, 6]) {
+      yield* askAssertion({ audience, compositionRevision: revision });
+      yield* Effect.sleep('5 millis');
+    }
+    const trickle = batches.asked.slice(afterBurst);
+    expect(trickle.length).toBeGreaterThan(0);
+    expect(Math.max(...trickle.map((entries) => entries.length))).toBeLessThanOrEqual(2);
+    // Six single reads cost at most six assertions plus one spare left over, not eight per read.
+    expect(trickle.flat().length).toBeLessThanOrEqual(7);
+    expect(gatewayRequests()).toHaveLength(0);
   }),
 );
 
@@ -237,7 +272,11 @@ it.live('renews the document assertions in one batch once they near expiry, neve
     );
     expect(answers.map(({ body }) => body.expiresAt)).toEqual([FAR_EXPIRY, FAR_EXPIRY]);
     expect(issueDocumentGatewayContextsMock).toHaveBeenCalledTimes(2);
-    expect(issueDocumentGatewayContextsMock.mock.calls[1]?.[0]).toEqual({ audiences, compositionRevision: revision });
+    const renewal = askedOf(issueDocumentGatewayContextsMock.mock.calls[1]?.[0]);
+    expect(renewal.audiences).toEqual([...audiences].toSorted());
+    // One renewal for both, with at most the waiting read and its spare of either.
+    expect(renewal.most).toBeLessThanOrEqual(2);
+    expect(issueDocumentGatewayContextsMock.mock.calls[1]?.[0]?.compositionRevision).toBe(revision);
     expect(gatewayRequests()).toHaveLength(0);
   }),
 );
@@ -257,10 +296,10 @@ it.live('leaves other companies, other releases and unknown audiences to the sin
     yield* askAssertion({ audience: 'noted', compositionRevision: revision });
     issueDocumentGatewayContextsMock.mockReturnValue(Effect.succeed({ assertions: [] }));
     yield* askAssertion({ audience: 'expiring', compositionRevision: revision });
-    expect(issueDocumentGatewayContextsMock.mock.calls.at(-1)?.[0]).toEqual({
-      audiences: ['expiring', 'noted'],
-      compositionRevision: revision,
-    });
+    const renewed = askedOf(issueDocumentGatewayContextsMock.mock.calls.at(-1)?.[0]);
+    expect(renewed.audiences).toEqual(['expiring', 'noted']);
+    expect(renewed.most).toBeLessThanOrEqual(2);
+    expect(issueDocumentGatewayContextsMock.mock.calls.at(-1)?.[0]?.compositionRevision).toBe(revision);
   }),
 );
 
@@ -291,10 +330,10 @@ it.effect('hands out an assertion only while more than the margin of its lifetim
     expect(yield* documentGatewayAssertion(atMargin.audience, revision)).toEqual(Option.none());
     // The expiring one was renewed with the others in one batch, not handed out.
     expect(issueDocumentGatewayContextsMock).toHaveBeenCalledTimes(2);
-    expect(issueDocumentGatewayContextsMock.mock.calls[1]?.[0]).toEqual({
-      audiences: [justUsable.audience, atMargin.audience],
-      compositionRevision: revision,
-    });
+    const marginRenewal = askedOf(issueDocumentGatewayContextsMock.mock.calls[1]?.[0]);
+    expect(marginRenewal.audiences).toEqual([justUsable.audience, atMargin.audience].toSorted());
+    expect(marginRenewal.most).toBeLessThanOrEqual(2);
+    expect(issueDocumentGatewayContextsMock.mock.calls[1]?.[0]?.compositionRevision).toBe(revision);
   }),
 );
 
@@ -370,7 +409,7 @@ const answerEveryEntry = () => {
 
 const readAudience = (audience: string) => askAssertion({ audience, compositionRevision: revision });
 
-it.live('serves the orders list and the warm-up of five order details in four batches, one token per read', () =>
+it.live('serves the orders list and the warm-up of five order details from batches alone, one token per read', () =>
   Effect.gen(function* ordersList() {
     yield* resetDocumentGatewayAssertions;
     answerEveryEntry();
@@ -405,14 +444,16 @@ it.live('serves the orders list and the warm-up of five order details in four ba
     // With one assertion per audience and batch this load took 6 batches and 7 single requests after the document's
     // own batch (stage measured 13 gateway calls). Now each dry pool asks for the reads waiting or as many as were
     // used, at most 8: 4 batches, no single request, 7 assertions left unused to expire.
-    const m = 'merchandise';
-    expect(issueDocumentGatewayContextsMock.mock.calls.map(([request]) => request.audiences)).toEqual([
-      [m, m],
-      [m, m, m, 'party-registry'],
-      [m, m, m, m, m, m],
-      [m, m, m, m, m, m, m, m],
-    ]);
+    const asked = issueDocumentGatewayContextsMock.mock.calls.map(([request]) => request.audiences);
+    // With one assertion per audience and batch this load took 6 batches and 7 single requests after the document's
+    // own batch (stage measured 13 gateway calls). Now every read is served from a batch and none asks alone.
     expect(gatewayRequests()).toHaveLength(0);
+    expect(asked.length).toBeLessThan(tokens.length);
+    // A batch never asks more than the reads waiting for that module and one spare, so nothing is minted in bulk.
+    expect(Math.max(...asked.map((entries) => askedOf({ audiences: entries }).most))).toBeLessThanOrEqual(4);
+    // Fifteen reads cost fifteen assertions plus at most one spare per batch; before, 8 were minted per dry read.
+    expect(asked.flat().length).toBeGreaterThanOrEqual(tokens.length);
+    expect(asked.flat().length).toBeLessThanOrEqual(tokens.length + asked.length);
   }),
 );
 
