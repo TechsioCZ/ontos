@@ -12,9 +12,11 @@ import type { CoreTransaction } from '../db/types.ts';
 import type { DatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
 import { installOperationalScopeAt } from '../db/scoped-transaction.ts';
 import type { OperationalScope } from '../operations/context.ts';
-import { validateOutboxWorkerSubscriptions } from '../outbox/definition.ts';
+import { isCoreSystemOutboxSubscription, validateOutboxWorkerSubscriptions } from '../outbox/definition.ts';
 import type { OutboxWorkerSubscription } from '../outbox/definition.ts';
 import { CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS } from '../outbox/core-system-subscriptions.ts';
+import { carriesOverToNextRelease } from '../outbox/carry-over.ts';
+import type { OutboxConsumerKey } from '../outbox/repository.ts';
 import type { ActiveApplicationCompositionSnapshot } from './active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from './application-composition-catalog.ts';
 import { OutboxSubscriptionAuthoritySchema } from './manifest.ts';
@@ -165,6 +167,91 @@ export const lockApplicationCompositionPublication = Effect.fn('ApplicationCompo
   },
 );
 
+const subscriptionAuthorityEquivalence = Schema.toEquivalence(OutboxSubscriptionAuthoritySchema);
+const decodeSubscriptionAuthority = Schema.decodeUnknownEffect(Schema.Array(OutboxSubscriptionAuthoritySchema), {
+  onExcessProperty: 'error',
+});
+
+/**
+ * This release's own core-system subscriptions, in the shape the authority stores them, by worker key. Decoding
+ * them through the same schema as the stored set is what makes the two comparable at all.
+ */
+const shippedCoreSystemSubscriptions = decodeSubscriptionAuthority(CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS).pipe(
+  Effect.map(
+    (subscriptions) => new Map(subscriptions.map((subscription) => [subscription.workerKey, subscription] as const)),
+  ),
+  Effect.orElseSucceed(() => new Map<string, typeof OutboxSubscriptionAuthoritySchema.Type>()),
+);
+
+/**
+ * The worker keys whose outstanding work may cross the release boundary instead of blocking the drain.
+ *
+ * Core's own system work is not old-release work in flight: its handler is a whole-tenant reconcile owned by Core,
+ * idempotent, and identical in both releases, so running it after the promotion reaches the same state. A key
+ * qualifies only when the subscription the OLD authority approved is byte-for-byte the subscription this release
+ * ships under that key — identity is proven here, never assumed, so a descriptor that changed between releases
+ * keeps blocking and is drained by the release that approved it.
+ *
+ * Everything else still blocks exactly as before: a tenant module's delivery, anything claimed or already
+ * attempted, an unmatched message, a dead row and tracked completion debt.
+ */
+export const carriedOverCoreSystemWorkerKeys = Effect.fn('ApplicationCompositionAuthority.carriedOverWorkerKeys')(
+  function* carriedOverCoreSystemWorkerKeysEffect(transaction: Pick<CoreTransaction, 'select'>) {
+    const [authority] = yield* transaction
+      .select({ subscriptionsJson: applicationCompositionAuthority.subscriptionsJson })
+      .from(applicationCompositionAuthority)
+      .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+    if (authority === undefined) {
+      const none: readonly string[] = [];
+      return {
+        approvedCoreSystemWorkerKeys: none,
+        approvedWorkerKeys: none,
+        carriedOverWorkerKeys: none,
+        // SAFETY: an empty literal has no element to widen; the annotation only names the element contract.
+        coreSystemConsumers: [] as readonly OutboxConsumerKey[],
+      };
+    }
+    const [approved, shipped] = yield* Effect.all(
+      [
+        decodeSubscriptionAuthority(authority.subscriptionsJson).pipe(
+          Effect.orElseSucceed((): readonly (typeof OutboxSubscriptionAuthoritySchema.Type)[] => []),
+        ),
+        shippedCoreSystemSubscriptions,
+      ],
+      { concurrency: 1 },
+    );
+    const carriedOverWorkerKeys = approved.flatMap((subscription) => {
+      const own = shipped.get(subscription.workerKey);
+      return own !== undefined && subscriptionAuthorityEquivalence(subscription, own) ? [subscription.workerKey] : [];
+    });
+    // Every core-system key the retiring authority approved, identical or not: these are the keys a live host of
+    // that release claims as Core's own work, which is what decides whether its outstanding work can drain at all.
+    const coreSystemConsumers: readonly OutboxConsumerKey[] = approved.flatMap((subscription) =>
+      isCoreSystemOutboxSubscription(subscription)
+        ? [{ consumerModuleKey: subscription.consumerModuleKey, workerKey: subscription.workerKey }]
+        : [],
+    );
+    const approvedCoreSystemWorkerKeys = coreSystemConsumers.map(({ workerKey }) => workerKey);
+    return {
+      approvedCoreSystemWorkerKeys,
+      /** Every worker key the retiring authority approved: a delivery under any other key has no consumer at all. */
+      approvedWorkerKeys: approved.map(({ workerKey }) => workerKey),
+      carriedOverWorkerKeys,
+      coreSystemConsumers,
+    };
+  },
+);
+
+/**
+ * The Outbox work that blocks a drain, with the proven carry-over keys excluded. A carried-over delivery must be
+ * untouched work whose message is matched and carries no completion debt of the retiring revision.
+ */
+const blockingOutboxWork = (carriedOverWorkerKeys: readonly string[]) => {
+  const unfinished = sql`exists (select 1 from ${outboxDeliveries} where ${outboxDeliveries.status} not in ('done', 'released')`;
+  const carriesOver = carriesOverToNextRelease(carriedOverWorkerKeys);
+  return carriesOver === undefined ? sql`${unfinished})` : sql`${unfinished} and not ${carriesOver})`;
+};
+
 const requireNoPendingDurableWork = Effect.fn('ApplicationCompositionAuthority.requireNoPendingDurableWork')(
   function* requireNoPendingDurableWorkEffect(transaction: CoreTransaction) {
     const [work] = yield* transaction.execute<{ readonly blocked: boolean }>(
@@ -284,8 +371,9 @@ export const drainApplicationCompositionAuthority = Effect.fn('ApplicationCompos
 const requireDrainedWork = Effect.fn('ApplicationCompositionAuthority.requireDrainedWork')(
   function* requireDrainedWorkEffect(transaction: CoreTransaction) {
     yield* requireNoPendingDurableWork(transaction);
+    const { carriedOverWorkerKeys } = yield* carriedOverCoreSystemWorkerKeys(transaction);
     const [work] = yield* transaction.execute<{ readonly blocked: boolean }>(
-      sql`select exists(select 1 from ${outboxMessages} where ${outboxMessages.matchedAt} is null) or exists(select 1 from ${outboxDeliveries} where ${outboxDeliveries.status} not in ('done', 'released')) as blocked`,
+      sql`select exists(select 1 from ${outboxMessages} where ${outboxMessages.matchedAt} is null) or ${blockingOutboxWork(carriedOverWorkerKeys)} as blocked`,
       'objects',
     );
     if (work?.blocked !== false) {
@@ -306,8 +394,9 @@ export const isApplicationCompositionWorkDrained = Effect.fn('ApplicationComposi
     if (authority?.revision !== expectedRevision || (authority.phase !== 'draining' && authority.phase !== 'sealed')) {
       return yield* unavailable('Only the exact draining or sealed Application Composition can report drain progress');
     }
+    const { carriedOverWorkerKeys } = yield* carriedOverCoreSystemWorkerKeys(transaction);
     const [work] = yield* transaction.execute<{ readonly blocked: boolean }>(
-      sql`select exists(select 1 from ${applicationCompositionDurableWork}) or exists(select 1 from ${outboxMessages} where ${outboxMessages.matchedAt} is null) or exists(select 1 from ${outboxDeliveries} where ${outboxDeliveries.status} not in ('done', 'released')) as blocked`,
+      sql`select exists(select 1 from ${applicationCompositionDurableWork}) or exists(select 1 from ${outboxMessages} where ${outboxMessages.matchedAt} is null) or ${blockingOutboxWork(carriedOverWorkerKeys)} as blocked`,
       'objects',
     );
     if (work === undefined) {

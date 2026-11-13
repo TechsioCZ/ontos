@@ -40,7 +40,12 @@ import {
 import { installApplicationCompositionCompletionSchema } from './application-composition-schema-expansion.mts';
 import type { ActiveApplicationCompositionSnapshot } from '../packages/core-runtime/src/modules/active-application-composition.ts';
 import {
+  describeUndrainableOutboxWork,
+  listUndrainableOutboxWork,
+} from '../packages/core-runtime/src/outbox/undrainable-work.ts';
+import {
   ApplicationCompositionAuthorityError,
+  carriedOverCoreSystemWorkerKeys,
   closeApplicationCompositionDurableAdmission,
   drainApplicationCompositionAuthority,
   isApplicationCompositionDurableWorkDrained,
@@ -418,6 +423,43 @@ const reportDeadDrainDeliveries = Effect.fn('ApplicationCompositionAuthority.rep
   },
 );
 
+/**
+ * The pre-flight of a drain: it names every delivery the drain would wait for and never get, and fails the
+ * publication before durable admission closes. Nothing is written, the authority stays `active`, and the running
+ * release keeps serving reads and writes. Work that is merely in flight is not reported and still drains.
+ */
+const refuseUndrainableWork = Effect.fn('ApplicationCompositionAuthority.refuseUndrainableWork')(
+  function* refuseUndrainableWorkEffect(budgetMs: number) {
+    const database = yield* CoreDatabase;
+    const undrainable = yield* database.executor
+      .transaction((transaction) =>
+        carriedOverCoreSystemWorkerKeys(transaction).pipe(
+          Effect.flatMap(({ carriedOverWorkerKeys, coreSystemConsumers }) =>
+            listUndrainableOutboxWork(transaction, { budgetMs, carriedOverWorkerKeys, coreSystemConsumers }),
+          ),
+        ),
+      )
+      .pipe(
+        // An unreadable pre-flight is not evidence that the drain is safe, but it is not evidence of debt either:
+        // the drain's own bounded wait and its blocker diagnostics remain.
+        Effect.orElseSucceed(() => []),
+      );
+    if (undrainable.length === 0) {
+      return yield* Effect.void;
+    }
+    // A dead delivery keeps the description the operator commands already use; the other reasons have no command.
+    const dead = yield* describeDeadDrainDeliveries(null).pipe(Effect.orElseSucceed(() => ''));
+    const others = describeUndrainableOutboxWork(undrainable.filter((delivery) => delivery.reason !== 'dead'));
+    return yield* unavailable(
+      [
+        'The Application Composition drain was not started: durable admission is unchanged and the authority stays active, so the running release keeps serving.',
+        ...(dead === '' ? [] : [dead]),
+        ...(others === '' ? [] : [others]),
+      ].join(' '),
+    );
+  },
+);
+
 interface CurrentApplicationCompositionAuthority {
   readonly phase: 'active' | 'draining' | 'sealed' | 'migrated';
   readonly revision: string;
@@ -483,7 +525,7 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
               ...progressState,
               budgetMs,
               message: [
-                'The bounded drain deadline expired; pending work is not proof of a dead owner. The migration did not start and admission was not reopened.',
+                "The bounded drain deadline expired; pending work is not proof of a dead owner. This release's own sealed schema migration did not start and admission was not reopened. The owner migrations of this release ran before the publication and stay applied; they are expand-only and the old release is rehearsed against the migrated database, so it keeps serving.",
                 ...(described === '' ? [] : [described]),
               ].join(' '),
             }),
@@ -502,6 +544,12 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
       }
       yield* Effect.gen(function* finishOldCompositionWork() {
         if (current.phase === 'active') {
+          // Before the authority fence moves: a drain that waits for work nothing can finish would refuse every
+          // read on the running release until its budget expired. Refusing here leaves durable admission open and
+          // the authority active, so the old release keeps serving. (Earlier boot steps — the migrator, workload
+          // registration, credential provisioning and the expand-only completion-schema expansion — have already
+          // run and stay applied; they are safe under the old release.)
+          yield* refuseUndrainableWork(budgetMs);
           progressState.phase = 'close-admission';
           yield* withApplicationCompositionPublicationProgress(
             'close durable admission (authority fence)',
@@ -554,6 +602,67 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
       );
       return yield* Effect.void;
     }).pipe(Effect.timeoutOrElse({ duration: Duration.millis(budgetMs), orElse: budgetExpired }));
+  },
+);
+
+/** How many times a transition may re-drain before it gives up. */
+const DRAINED_TRANSITION_RETRIES = 5;
+/** Nothing of this release's own work is left to wait for, so a re-drain that cannot finish must not run long. */
+const DRAINED_TRANSITION_LEASE_MARGIN = Duration.seconds(30);
+
+/** What the transition's own drain check says when work arrived after the poll observed the Outbox drained. */
+const FRESH_OUTBOX_WORK = 'Outstanding Outbox work';
+const isFreshOutboxWork = (reason: string) => reason.includes(FRESH_OUTBOX_WORK);
+
+/**
+ * Commits one authority transition on a drained composition — the promote, or the seal before a migration —
+ * tolerating work that arrives between the drain poll and the transition.
+ *
+ * The poll ignores a carried-over row, but the transition's own `requireDrainedWork` counts it as blocking if a
+ * live host of the retiring release claimed it in between: a real interleaving now that a host with the claim fix
+ * takes exactly those rows. Failing there would leave the authority in `draining`, so the publisher waits for the
+ * Outbox again and retries. Only the re-drain wait is bounded — the transition itself contains provider I/O and
+ * keeps the caller's own budget — and that wait can never outlive the retiring release's freshness lease, exactly
+ * as the first drain cannot.
+ */
+const withDrainedCompositionTransition = Effect.fn('ApplicationCompositionAuthority.drainedTransition')(
+  function* withDrainedCompositionTransition<Value, Failure, Requirements>(
+    current: CurrentApplicationCompositionAuthority,
+    transition: (transaction: CoreTransaction) => Effect.Effect<Value, Failure, Requirements>,
+  ) {
+    const reported = yield* Ref.make('');
+    const leaseMillis = DateTime.toEpochMillis(DateTime.makeUnsafe(current.validUntil));
+    const redrain = Effect.gen(function* waitForFreshWork() {
+      const remaining =
+        leaseMillis - (yield* Clock.currentTimeMillis) - Duration.toMillis(DRAINED_TRANSITION_LEASE_MARGIN);
+      yield* waitForOutboxPublicationWork(current.revision, reported).pipe(
+        Effect.timeout(Duration.millis(Math.max(1, remaining))),
+        // The original refusal is the operator's evidence: a wait that cannot finish must never replace it.
+        Effect.ignore,
+      );
+    });
+    return yield* withVerifiedLegacyTransition(current.revision, transition).pipe(
+      Effect.tapError((error) =>
+        Schema.is(ApplicationCompositionAuthorityError)(error) && isFreshOutboxWork(error.reason)
+          ? Effect.logInfo('Application Composition transition found fresh Outbox work; draining again').pipe(
+              Effect.andThen(redrain),
+            )
+          : Effect.void,
+      ),
+      Effect.retry({
+        schedule: Schedule.recurs(DRAINED_TRANSITION_RETRIES),
+        while: (error) => Schema.is(ApplicationCompositionAuthorityError)(error) && isFreshOutboxWork(error.reason),
+      }),
+      Effect.catchIf(
+        (error) => Schema.is(ApplicationCompositionAuthorityError)(error) && isFreshOutboxWork(error.reason),
+        () =>
+          Effect.fail(
+            unavailable(
+              `Outbox work kept arriving after ${String(DRAINED_TRANSITION_RETRIES)} re-drains, so the Application Composition transition was abandoned. The authority is left in draining and the running release refuses reads: follow "Returning a stuck authority to active" in docs/architecture/DEPLOYMENT.md, or deploy again once the work finished.`,
+            ),
+          ),
+      ),
+    );
   },
 );
 
@@ -658,7 +767,7 @@ export const runApplicationCompositionMigration = Effect.fn('ApplicationComposit
           state.phase = 'seal';
           yield* verifyInitialCutover;
           yield* requireNoLegacyRuntimeTransactions();
-          yield* withVerifiedLegacyTransition(current.revision, (transaction) =>
+          yield* withDrainedCompositionTransition(current, (transaction) =>
             sealApplicationCompositionAuthority(transaction, current.revision),
           );
           state.authorityPhase = 'sealed';
@@ -701,6 +810,9 @@ export const runApplicationCompositionMigration = Effect.fn('ApplicationComposit
         state.migrationsCompleted = true;
         state.phase = 'migration-complete';
         if (current !== undefined) {
+          // No re-drain retry here, and none is needed: the authority has been `sealed` since before the
+          // migration, and `admitAuthority` refuses a sealed revision for every operation including `worker`, so
+          // no claim can have created fresh Outbox work after the seal.
           yield* database.executor.transaction((transaction) =>
             markApplicationCompositionMigrationComplete(transaction, current.revision),
           );
@@ -831,7 +943,9 @@ export const publishApplicationCompositionAuthoritySnapshot = Effect.fn(
     // Absence of a Core authority row does not imply absence of retained owner history.
     return yield* withApplicationCompositionPublicationProgress(
       'promote native authority and publish provider pointer',
-      withVerifiedLegacyTransition(current?.revision ?? null, promoteAndPublish),
+      current === undefined
+        ? withVerifiedLegacyTransition(null, promoteAndPublish)
+        : withDrainedCompositionTransition(current, promoteAndPublish),
     );
   });
   return yield* withApplicationCompositionPublicationLock(publication);

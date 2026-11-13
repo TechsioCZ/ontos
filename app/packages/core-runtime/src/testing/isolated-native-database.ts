@@ -115,6 +115,8 @@ const exactDeadlinePurpose = 'stabilization-1271-exact-obligation-deadline';
 const shellAuthPurpose = 'stabilization-1287-shell-auth';
 const assortmentAuthorizationPurpose = 'implementation-1290-assortment-authorization';
 const retainedPrivacyPurpose = 'stabilization-1258-privacy-drain';
+/** The core-system Outbox claim and publication-drain suite (`scripts/integration/core-system-outbox-drain`). */
+const coreSystemDrainPurpose = 'publication-drain-core-system';
 type IsolatedNativeDatabaseInput = (
   | {
       readonly compositionSnapshot?: never;
@@ -197,6 +199,7 @@ type IsolatedNativeDatabaseInput = (
         | 'party-verification-removal'
         | 'merchandise-tax-classification'
         | 'finance-won-opportunity-settlement'
+        | typeof coreSystemDrainPurpose
         | typeof exactDeadlinePurpose;
     }
 ) & {
@@ -290,6 +293,7 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
         'stabilization-1235-inventory-release',
         'stabilization-1237-protection-intent',
         'stabilization-1260-privacy-legacy',
+        coreSystemDrainPurpose,
         'stabilization-1264-terminal-protection-health',
         retainedPrivacyPurpose,
         'stabilization-1257-approval-fresh-proof',

@@ -946,3 +946,26 @@ z návrhu. Děkovná věta neslibuje odeslaný e-mail, protože pro něj nativn�
 kontrakt nedává důkaz. Žádná nová komponenta, CSS nebo tokenový override.
 Moje objednávky pro guest nákup nepřidáváme; přihlášená větev zůstává
 samostatnou neověřenou částí.
+
+## 13. 11. — akce mobilních katalogových karet
+
+Čerstvá Figma `31:639` rozlišuje akce podle nákupního stavu. Instance
+`38:2206` a další používají blokový `LinkButton md/secondary/outlined`
+pro Detail nebo Vybrat variantu; `38:2402` používá blokový
+`Button md/primary/solid` Do košíku. ListingCards zachovává stejnou skladbu
+obrázek → název → cena → dostupnost → akce, bez nových stylů primitiv.
+
+Dostupná skupina variant naviguje na skutečný detail a sama variantu nevolí.
+Dostupný jednoduchý produkt se známou cenou používá existující CardPurchase
+v prezentaci listing, bez ikony a kompaktní hustoty. Původní featured
+prezentace zůstává zachována. Neznámý či nedostupný stav nabízí Detail.
+Striktní simpleCardEntry nadále vyžaduje potvrzenou absenci variant, skutečné
+minimum/jednotku/balení, kompatibilní měnu a připravený lokální košík;
+nepřipravený přímý nákup zůstává disabled. Úspěšné lokální přidání používá
+stávající toast, bez automatického otevření minikošíku.
+
+Osm testů pokrývá český/anglický výběr akce a neznámé či nedostupné stavy;
+dva další ověřují zachování minima, jednotky a readiness guardu u listing
+prezentace. Živě ověřeno na touch viewports 320/390: navigace bez implicitní
+varianty, přidání skutečného jednoduchého produktu, toast, badge, minikošík,
+platný owner quote a odebrání lokálního draftu. Nevytváří se objednávka.
