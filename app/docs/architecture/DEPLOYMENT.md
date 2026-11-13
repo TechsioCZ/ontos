@@ -612,3 +612,57 @@ mise exec -- pnpm outbox:dead-delivery release --tenant-id <uuid> --message-id <
 Order finalization retries for about 24.5 hours, so a dead finalization delivery means a lasting owner refusal. When Customer Context refused PROOF revalidation while the approval request was still valid, redrive the delivery once the owner is available. When CONSUME died after commit because the approval was cancelled or revised, the Order already exists and no automatic terminal outcome is safe. First reconcile the buyer-facing Order by hand, then release the delivery with a reason that records that reconciliation.
 
 Privacy still verifies its own successful measure outcome before publication, so a released Privacy delivery does not satisfy the Privacy legacy-completion gate. Redrive Privacy work instead.
+
+## Outbox work that cannot drain, and Core's own work that crosses the boundary
+
+Before a publication closes durable admission it asks what the drain would wait for and refuses to start when some of that work can never finish: a dead delivery; a pending delivery whose consumer module is not background-eligible in its tenant or whose tenant is not active; a delivery whose next attempt falls after the drain budget; and, as a catch-all, work nothing has picked up for longer than a whole drain budget — a due, never-attempted, unclaimed delivery, or a `processing` one whose claim lease expired that long ago. Age is measured from `available_at`, not `created_at`, so a deploy straight after a redrive is not refused for a row that has been claimable for seconds. The refusal names every such row with its reason (`no-eligible-consumer: --tenant-id … --message-id … --worker-key … (consumer …, pending, attempts 0, available at …)`). Durable admission is unchanged and the authority stays `active`, so the running release keeps serving reads and writes. (Earlier boot steps — the migrator, workload registration, credential provisioning and the expand-only completion-schema expansion — have already run and stay applied; they are safe under the old release.)
+
+The consumer and tenant terms are the Outbox claim's own predicates, so the drain cannot wait for work the claim would refuse for those reasons. Two of the claim's terms cannot be asked without a running host — whether each worker's intrinsic provider modules are active for the tenant, and whether any live host registers the worker key at all — and those are what the age catch-all covers: nothing has picked the row up for a whole budget, whatever the cause. Work that is genuinely in flight — claimed, or retrying inside the budget with a live consumer — is not reported and still drains.
+
+An `unclaimed-longer-than-budget` refusal means no process is taking that worker key: check which host should serve it. For a core-system key (`core.authorization.*`, `core.identity.*`) that is the app container's Outbox Worker host, which always serves the Shell's core entry; for a tenant module's key it is that owner's worker in the same host. Compare the key against `ONTOS_OUTBOX_HOST_SERVED_UNITS` at build time and the authority's `subscriptions_json`, and check whether the worker's intrinsic provider modules are active in that tenant (an inactive provider holds its work back without ever attempting it). The refusal clears by itself as soon as something claims the row — re-run `composition:drain-preflight` to confirm — and there is no override: the budget cannot be argued with, only the missing consumer fixed.
+
+A `no-eligible-consumer` refusal blocks every deploy until it is resolved, and no command resolves it today. Resolve it by making the consumer claimable again: reactivate or install the consumer module in that tenant (`core.modules.change-tenant-module-state`, or the release module installation), or reactivate the tenant if that is the reason. There is no supported way to discard such a delivery — the dead-delivery commands only accept a `dead` row, and a pending delivery with no consumer never reaches `dead` because nothing ever attempts it. Until the operator command of the next change (G4) ships, a delivery whose module is intentionally gone needs a hand-written statement with the same care as the recovery below.
+
+Core's own system work crosses the release boundary instead of blocking the drain. A delivery carries over only when all of this holds: its worker key is one of `CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS`, the descriptor the retiring authority approved under that key is identical to the one this release ships, the delivery is `pending` with zero attempts and no claim, its message is matched and carries no completion debt of the retiring revision, and no `core.outbox_delivery_resolutions` row names it (a redriven delivery looks untouched, but an operator chose to run it on _this_ release, so this release drains it). The drain, the pre-flight and `composition:drain-preflight` all ask that one predicate, so what the pre-flight exempts is exactly what the drain carries over.
+
+The descriptor equivalence proves the topic and the entrypoint — not the payload schema and not the handler body. The rest rests on the handler being a whole-tenant reconcile that ignores its message payload and is idempotent, and on one rule: **a core-system payload schema change requires a new topic version.** `scripts/tests/core-system-carry-over.test.mts` pins each core-system worker key to its versioned topic so reusing a topic for a changed shape has to be a reviewed edit. Such work is not old-release work in flight: the handler is a whole-tenant reconcile owned by Core and identical in both releases, so the next release's own Outbox host finishes it under the new authority. A core-system descriptor that changed between releases does not carry over and is drained by the release that approved it.
+
+### Checking before a deploy
+
+Run this from a checkout of the release you are about to deploy, whenever anything looks stuck, before the deploy rather than during it. It writes nothing, takes no advisory lock, and so cannot stall a running publisher or release; its verdict is advisory for that reason, and the publisher re-asks under its own publication lock before it acts. It prints identifiers, worker keys, statuses and times only, never a payload.
+
+```sh
+mise exec -- pnpm composition:drain-preflight [--budget-ms <ms>] [--limit <rows>]
+```
+
+It needs the same database identities as the dead-delivery command — `DATABASE_ADMIN_URL` and `DATABASE_URL` — and reports the authority's phase, revision and durable admission; non-terminal Outbox work counted by worker key and status; for each outstanding delivery whether the next drain would `DRAIN` it (a live consumer can claim it), `CARRY OVER` it (Core's own untouched work, with `identity=identical`) or `BLOCK` on it (with the reason), where `identity` is how that worker key compares with the retiring authority's `subscriptions_json` (`identical`, `differs`, `not-core-system`, `absent`); and the verdict `a publication of this release would start its drain: yes/no`. It exits non-zero on `no`. A `BLOCK` with `identity=absent` is a delivery for a worker key the running composition no longer approves at all.
+
+## Returning a stuck authority to `active` (interim manual exception)
+
+A drain whose budget expires currently leaves the authority in `draining`, and from that moment the running release refuses every read. No code moves `draining` back to `active` yet; the supported command (`pnpm composition:abandon-drain`) and its durable audit record are the next change. Until it ships, an operator may return the row by hand, and only with every precondition below true:
+
+- The deploy failed and no publisher is alive. Prove it in the same session: `select pg_try_advisory_lock(hashtextextended('ontos.application-composition-publication', 0));` must return `true` (a live publisher holds that lock for its whole run). Keep the session open for the update below, and release it with `pg_advisory_unlock` afterwards. The `…-authority` lock in the statement below serialises against matching and owner writes; it does **not** prove a publisher is absent.
+- The authority row is exactly `phase = 'draining'` for the revision the old release serves, and `valid_until` is still in the future.
+- Nothing was sealed: no `sealed` or `migrated` phase was ever recorded for this attempt, so no incompatible schema change ran.
+- `core.application_composition_durable_work` is empty.
+
+Owner migrations of the failed release have already been applied — they run before the publication, are expand-only, and the old release is rehearsed against the migrated database, so returning to `active` is safe.
+
+With the administrative identity (`DATABASE_ADMIN_URL`), inside one transaction that takes the publication lock and must update exactly one row:
+
+```sql
+begin;
+select pg_advisory_xact_lock(hashtextextended('ontos.application-composition-authority', 0));
+update core.application_composition_authority
+   set phase = 'active', durable_work_admission = 'open', updated_at = clock_timestamp()
+ where authority_key = 'active'
+   and revision = '<the revision the old release serves>'
+   and phase = 'draining'
+   and valid_until > clock_timestamp();
+-- Exactly one row must be reported. Roll back on any other count.
+commit;
+```
+
+If the update matches zero rows, do not retry with looser conditions. Either the revision or the phase is not what you read, or `valid_until` has already passed. An expired lease cannot be returned to `active` by hand: a release whose freshness lapsed is no longer admitted for reads at all (`admitAuthority` requires an unexpired row), so the recovery is to let the next deploy publish — its own publication takes the authority with fresh validity — or, if no deploy can run, to restart the app container so a host republishes its release and renews the lease.
+
+Record who did it, when and why outside the database until the command exists; this exception leaves no audit row of its own, which is the main reason it is being replaced.

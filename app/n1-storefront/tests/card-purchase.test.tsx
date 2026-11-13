@@ -178,6 +178,30 @@ describe("simple card purchase uses real native values", () => {
       expect(html).not.toContain("href=");
     });
   }
+  for (const loaded of [true, false]) {
+    it(`keeps the native minimum, unit and readiness guard in the listing action (${loaded})`, () => {
+      const add = rs.fn(() => true);
+      rs.mocked(useCart).mockReturnValue(cartState({ add, loaded }));
+      const d = getDictionary("cs");
+      const html = renderToStaticMarkup(
+        <CardPurchase dictionary={d} presentation="listing" product={product} />,
+      );
+      feedback.actions[0]?.();
+      expect(html).toContain(d.addToCartListing);
+      if (loaded) {
+        expect(add).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ productId: product.id, quantity: 3, unit: "m" }),
+        );
+        expect(feedback.create).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ title: d.shopping.added, type: "success" }),
+        );
+      } else {
+        expect(html).toContain("disabled");
+        expect(add).not.toHaveBeenCalled();
+        expect(feedback.create).not.toHaveBeenCalled();
+      }
+    });
+  }
   it("does not mutate or announce success through a disabled handler", () => {
     const add = rs.fn(() => true);
     rs.mocked(useCart).mockReturnValue(cartState({ add, loaded: false }));

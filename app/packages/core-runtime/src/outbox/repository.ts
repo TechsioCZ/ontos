@@ -23,7 +23,7 @@ import {
   lockApplicationCompositionAuthority,
 } from '../modules/application-composition-authority.ts';
 import type { AnyOutboxWorkerRegistration, OutboxWorkerRetryPolicy } from './definition.ts';
-import { retryBackoffMs } from './definition.ts';
+import { isCoreSystemOutboxSubscription, retryBackoffMs } from './definition.ts';
 import { PersistenceFailure } from '../database/persistence-failure.ts';
 import { OutboxClaimLostError, sanitizeOutboxErrorMessage } from './errors.ts';
 
@@ -35,6 +35,11 @@ const withOptionalProperty = <Base extends object, Key extends PropertyKey, Valu
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 const BACKGROUND_ELIGIBLE_STATES = tenantStatesAllowingAccess('background');
+/** The same states as a comma-separated SQL list, for the eligibility predicate's `in (…)`. */
+const BACKGROUND_ELIGIBLE_STATE_LIST = sql.join(
+  BACKGROUND_ELIGIBLE_STATES.map((state) => sql`${state}`),
+  sql`, `,
+);
 interface OutboxMatchResult {
   readonly deliveriesCreated: number;
   readonly messagesMatched: number;
@@ -135,19 +140,56 @@ const loadClaimInvocationEvidence = Effect.fnUntraced(function* loadClaimInvocat
   );
 });
 
-/** A background-eligible consumer state of the message's tenant; shared by the claim and its idle probe. */
-const backgroundEligibleConsumer = and(
-  eq(tenantModuleStates.tenantId, outboxMessages.tenantId),
-  eq(tenantModuleStates.moduleKey, outboxDeliveries.consumerModuleKey),
-  inArray(tenantModuleStates.state, BACKGROUND_ELIGIBLE_STATES),
-);
+/**
+ * A background-eligible consumer of the message's tenant; shared by the claim and its idle probe.
+ *
+ * A tenant module's own worker is claimed only where that module is installed and background-eligible. Core's own
+ * system work (`isCoreSystemOutboxSubscription`: a `core.*` producer and consumer with a system entrypoint) has no
+ * such row to wait for: Core is not an installable tenant module, so nothing ever writes `core.authorization` or
+ * `core.identity` into `core.tenant_module_states`. Requiring one made every core-system delivery unclaimable —
+ * never attempted, pending for ever, and an Outbox drain that can never finish. The tenant fence is unchanged:
+ * {@link activeMessageTenant} still admits work only for an active tenant, and the worker's own entrypoint
+ * authorization and attested claim still decide what it may do.
+ *
+ * This is a predicate rather than a join for the reason {@link activeMessageTenant} gives: `.for('update')` locks
+ * every row named in the claim's FROM list, and a module state is written by ordinary module-state Actions. A claim
+ * and a concurrent deactivation are serialized by their commits either way — a claim that commits just before a
+ * deactivation is the same as one that commits just after it.
+ */
+export const backgroundEligibleConsumer = (coreSystemConsumers: readonly OutboxConsumerKey[]) =>
+  or(
+    // Each core-system key is paired with the consumer module it belongs to, so a delivery is never admitted on a
+    // worker key alone: the row must name both, exactly as the approved subscription does.
+    coreSystemConsumers.length === 0
+      ? undefined
+      : or(
+          ...coreSystemConsumers.map(({ consumerModuleKey, workerKey }) =>
+            and(eq(outboxDeliveries.workerKey, workerKey), eq(outboxDeliveries.consumerModuleKey, consumerModuleKey)),
+          ),
+        ),
+    sql`exists (select 1 from ${tenantModuleStates} where ${tenantModuleStates.tenantId} = ${outboxMessages.tenantId} and ${tenantModuleStates.moduleKey} = ${outboxDeliveries.consumerModuleKey} and ${tenantModuleStates.state} in (${BACKGROUND_ELIGIBLE_STATE_LIST}))`,
+  );
+
+/** One approved core-system subscription's identity in the claim: its worker key and the module that consumes it. */
+export interface OutboxConsumerKey {
+  readonly consumerModuleKey: string;
+  readonly workerKey: string;
+}
+
+/** The core-system subscriptions of these registrations, each as its worker key and consumer module. */
+const coreSystemConsumersOf = (registrations: readonly AnyOutboxWorkerRegistration[]): readonly OutboxConsumerKey[] =>
+  registrations.flatMap(({ descriptor }) =>
+    isCoreSystemOutboxSubscription(descriptor)
+      ? [{ consumerModuleKey: descriptor.consumerModuleKey, workerKey: descriptor.workerKey }]
+      : [],
+  );
 // A tenant that is no longer active must not have background work claimed at all. This is a predicate rather than a
 // join on purpose: `.for('update')` in the claim locks every row named in the FROM list, and `core.tenants` is the
 // per-tenant serialization anchor held FOR UPDATE by every event-emitting action, so joining it would make claim
 // transactions contend with ordinary writes. Keeping ineligible deliveries pending means resuming the work resumes with
 // the tenant; for an archived tenant, which is terminal, they stay pending rather than being retried, and cancelling
 // them belongs with the archive procedure that changes the status.
-const activeMessageTenant = sql`exists (select 1 from ${tenants} where ${tenants.tenantId} = ${outboxMessages.tenantId} and ${tenants.status} = 'active')`;
+export const activeMessageTenant = sql`exists (select 1 from ${tenants} where ${tenants.tenantId} = ${outboxMessages.tenantId} and ${tenants.status} = 'active')`;
 const dueDelivery = (now: Date) =>
   or(
     and(eq(outboxDeliveries.status, 'pending'), lte(outboxDeliveries.availableAt, now)),
@@ -193,15 +235,21 @@ const hasDueDelivery = Effect.fnUntraced(
     executor: CoreDbExecutor,
     claimable: SQL | undefined,
     workerKeys: readonly string[],
+    coreSystemConsumers: readonly OutboxConsumerKey[],
     now: Date,
   ) {
     const rows = yield* executor
       .select({ deliveryId: outboxDeliveries.outboxDeliveryId })
       .from(outboxDeliveries)
       .innerJoin(outboxMessages, eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId))
-      .innerJoin(tenantModuleStates, backgroundEligibleConsumer)
       .where(
-        and(inArray(outboxDeliveries.workerKey, [...workerKeys]), claimable, activeMessageTenant, dueDelivery(now)),
+        and(
+          inArray(outboxDeliveries.workerKey, [...workerKeys]),
+          backgroundEligibleConsumer(coreSystemConsumers),
+          claimable,
+          activeMessageTenant,
+          dueDelivery(now),
+        ),
       )
       .limit(1);
     return rows.length > 0;
@@ -289,6 +337,7 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
       const byWorkerKey = new Map(
         registrations.map((registration) => [registration.descriptor.workerKey, registration]),
       );
+      const coreSystemConsumers = coreSystemConsumersOf(registrations);
       return Effect.gen(function* nativeClaimAdmission() {
         // Admission precedes every statement, the idle probe included: an unadmitted worker issues no SQL at all.
         const admission = yield* prepareNativeOutboxClaimAdmission(registrations, compositionRevision).pipe(
@@ -302,7 +351,7 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
           ),
         );
         const claimable = intrinsicProvidersActive(registrations, admission.intrinsic);
-        if (!(yield* hasDueDelivery(executor, claimable, [...byWorkerKey.keys()], now))) {
+        if (!(yield* hasDueDelivery(executor, claimable, [...byWorkerKey.keys()], coreSystemConsumers, now))) {
           return Option.none<OutboxClaim>();
         }
         return yield* executor
@@ -329,10 +378,10 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
                 .from(outboxDeliveries)
                 .innerJoin(outboxMessages, eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId))
                 .innerJoin(domainEvents, eq(domainEvents.domainEventId, outboxMessages.domainEventId))
-                .innerJoin(tenantModuleStates, backgroundEligibleConsumer)
                 .where(
                   and(
                     inArray(outboxDeliveries.workerKey, [...byWorkerKey.keys()]),
+                    backgroundEligibleConsumer(coreSystemConsumers),
                     claimable,
                     activeMessageTenant,
                     dueDelivery(now),
