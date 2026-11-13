@@ -7,23 +7,42 @@ import {
   executeApplicableTaxRuleSetWithAuthorization,
   executeSellerVatRegimeAtInstantWithAuthorization,
 } from '@app/tax/api/client';
-import { Context, Crypto, Effect, Layer, Match } from 'effect';
+import { Context, Crypto, Effect, Layer, Match, Schema } from 'effect';
+import { GATEWAY_MODULE_NOT_INSTALLED_TYPE } from '@app/shared-contracts';
 import { FinanceReferenceUnavailable } from '../../shared/actions/apply-command.ts';
 import type { VatChoices, VatClassificationRate } from '../../shared/apis/vat-choices.ts';
 import { pragueDayStart } from '../../shared/domain/line-vat.ts';
 
 const TAX_AUDIENCE = 'tax';
 
-/** One stable refusal for every way Tax cannot answer: not installed, unreachable, or refusing this call. */
+const NotInstalledSchema = Schema.TaggedStruct('GatewayForbiddenProblem', {
+  type: Schema.Literal(GATEWAY_MODULE_NOT_INSTALLED_TYPE),
+});
+/** The reason when the Shell answered that Tax is not installed for the Tenant: an answer, not an outage. */
+export const TAX_NOT_INSTALLED_REASON = 'Tax is not installed for the Tenant, so the company has no VAT rates yet';
+
+/**
+ * One stable refusal for every way Tax cannot answer: not installed, unreachable, or refusing this call. Only "not
+ * installed" says so in its reason, decided here from the call's own failure.
+ */
 const taxUnavailable = (cause?: unknown) =>
   Object.defineProperty(
     new FinanceReferenceUnavailable({
       code: 'finance_reference_unavailable',
-      reason: 'The VAT rates of the company are unavailable',
+      reason: Schema.is(NotInstalledSchema)(cause)
+        ? TAX_NOT_INSTALLED_REASON
+        : 'The VAT rates of the company are unavailable',
     }),
     'cause',
     { value: cause },
   );
+
+/**
+ * Whether Tax's unavailability was the Shell's answer that Tax is not installed for the Tenant (an answer: the company
+ * is not set up yet), not an outage, a missing credential or a refusal of this call.
+ */
+export const taxNotInstalled = (failure: FinanceReferenceUnavailable): boolean =>
+  failure.reason === TAX_NOT_INSTALLED_REASON;
 
 /** A Tax rate Finance can store: one whole percent between 1 and 100. */
 const wholePercent = (ratePercent: string): number | undefined => {

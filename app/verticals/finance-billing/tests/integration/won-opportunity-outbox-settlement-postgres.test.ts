@@ -1,8 +1,8 @@
 // A won opportunity the worker cannot or need not draft is an ordinary outcome of selling, not a system failure: its
 // Outbox delivery completes. Run through Core's real Outbox runtime and repository on PostgreSQL, each business outcome
 // leaves its delivery `done`, and the app host's startup gate (`scripts/zerops/outbox-dead-startup-gate.mts`, over
-// `listDeadOutboxDeliveries`) still lets the next boot start. A system failure (no company keeps a ledger at all) stays
-// pending for its retry, never dead on its first attempt.
+// `listDeadOutboxDeliveries`) still lets the next boot start. A system failure (Tax unreachable, even past the
+// not-ready window) stays pending for its retry.
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import type { OutboxWorkerLegalEntityScope } from '@app/core-runtime';
@@ -47,6 +47,8 @@ const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeCrypto.layer),
 );
 const registration = draftInvoiceFromWonOpportunityWorker;
+/** Attempts before the one past the 72-hour not-ready window (the 20th, at least 84 hours after the first). */
+const AFTER_WINDOW = 19;
 /** A stage change: from, to, and the Sales Pipeline revision it happened at. */
 interface Stage {
   readonly from: string;
@@ -153,6 +155,8 @@ it.layer(nativeServices, { excludeTestServices: true })('won opportunity Outbox 
       const publish = Effect.fn('WonSettlement.publish')(function* publish(
         payload: typeof OutboxPayloadSchema.Encoded,
         eventCompany: string | null,
+        /** Attempts the delivery already had: 19 puts the next one past the 72-hour not-ready window. */
+        attemptsBefore = 0,
       ) {
         const now = yield* DateTime.nowAsDate;
         const [invocation] = yield* executor
@@ -196,6 +200,7 @@ it.layer(nativeServices, { excludeTestServices: true })('won opportunity Outbox 
         const [delivery] = yield* executor
           .insert(outboxDeliveries)
           .values({
+            attemptsCount: attemptsBefore,
             availableAt: now,
             consumerModuleKey: registration.descriptor.consumerModuleKey,
             outboxMessageId: Option.getOrThrow(Option.fromNullishOr(message)).id,
@@ -241,7 +246,6 @@ it.layer(nativeServices, { excludeTestServices: true })('won opportunity Outbox 
 
       const taxDown = FinanceTaxRates.of({ choices: down, choicesFor: down });
       const today = DateTime.formatIsoDateUtc(yield* DateTime.now);
-      const fourDaysAgo = DateTime.formatIso(DateTime.subtract(yield* DateTime.now, { days: 4 }));
       const nowIso = DateTime.formatIso(yield* DateTime.now);
       /** The stage change as Sales Pipeline encodes it (decoded and encoded again, so it is a valid message). */
       const message = (opportunityId: string, vatRate: number, changedAt: string, moved: Stage = WON) =>
@@ -265,6 +269,7 @@ it.layer(nativeServices, { excludeTestServices: true })('won opportunity Outbox 
       const leftWonLedger = ownLedger();
       const leftWonOpportunity = yield* uuid;
       const cases: readonly {
+        readonly attemptsBefore?: number;
         readonly code: string;
         readonly company: string | null;
         readonly payload: typeof OutboxPayloadSchema.Encoded;
@@ -272,17 +277,18 @@ it.layer(nativeServices, { excludeTestServices: true })('won opportunity Outbox 
         readonly tax: FinanceTaxRates['Service'];
       }[] = [
         {
+          attemptsBefore: AFTER_WINDOW,
           code: 'VAT_NOT_SET_UP',
           company,
-          payload: message(yield* uuid, 21, fourDaysAgo),
+          payload: message(yield* uuid, 21, nowIso),
           scopes: [ownLedger()],
           tax: answering(() => baselineVatChoices(tenantId, today, 'NOT_DECLARED')),
         },
         {
-          code: 'TAX_STILL_UNAVAILABLE',
+          code: 'FINANCE_LEDGER_MISSING',
           company,
-          payload: message(yield* uuid, 21, fourDaysAgo),
-          scopes: [ownLedger()],
+          payload: message(yield* uuid, 21, nowIso),
+          scopes: [memoryLedger(tenantId, company, false)],
           tax: taxDown,
         },
         {
@@ -323,7 +329,7 @@ it.layer(nativeServices, { excludeTestServices: true })('won opportunity Outbox 
         },
       ];
       for (const entry of cases) {
-        const deliveryId = yield* publish(entry.payload, entry.company);
+        const deliveryId = yield* publish(entry.payload, entry.company, entry.attemptsBefore ?? 0);
         const result = yield* cycle(entry.tax, entry.scopes);
         expect([entry.code, result.succeeded, result.dead, yield* statusOf(deliveryId)]).toEqual([
           entry.code,
@@ -334,9 +340,9 @@ it.layer(nativeServices, { excludeTestServices: true })('won opportunity Outbox 
         expect([entry.code, yield* deadNow]).toEqual([entry.code, []]);
       }
 
-      // A system failure keeps its retry: no company keeps a ledger at all. Pending, never dead on its first attempt.
-      const systemFailure = yield* publish(message(yield* uuid, 21, nowIso), company);
-      const failed = yield* cycle(taxDown, [memoryLedger(tenantId, company, false)]);
+      // A system failure keeps its retry, past the not-ready window too: Tax unreachable. Pending, never dead.
+      const systemFailure = yield* publish(message(yield* uuid, 21, nowIso), company, AFTER_WINDOW);
+      const failed = yield* cycle(taxDown, [ownLedger()]);
       expect([failed.retried, failed.dead, yield* statusOf(systemFailure)]).toEqual([1, 0, 'pending']);
       expect(yield* deadNow).toEqual([]);
     }),

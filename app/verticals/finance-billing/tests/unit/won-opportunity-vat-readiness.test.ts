@@ -9,13 +9,13 @@ import {
   outboxTopic,
 } from '@app/sales-pipeline/outbox/opportunity-stage-changed';
 import { Effect, Exit, Logger, Option, Schema } from 'effect';
-import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
+import { TestClock } from 'effect/testing';
 import { FinanceReferenceUnavailable } from '../../shared/actions/apply-command.ts';
 import { FinanceStateSchema } from '../../shared/apis/records.ts';
 import type { InvoiceLine } from '../../shared/apis/records.ts';
 import type { VatChoices } from '../../shared/apis/vat-choices.ts';
-import { FinanceTaxRates } from '../../src/integrations/tax-rates.ts';
+import { FinanceTaxRates, TAX_NOT_INSTALLED_REASON } from '../../src/integrations/tax-rates.ts';
 import {
   DraftInvoiceFromWonOpportunityRejected,
   draftInvoiceFromWonOpportunityWorker,
@@ -147,8 +147,9 @@ const deliver = (
   scope: OutboxWorkerLegalEntityScope | readonly OutboxWorkerLegalEntityScope[],
   tax: FinanceTaxRates['Service'],
   payload: typeof OutboxPayloadSchema.Type,
+  context: OutboxWorkerHandlerContext = won,
 ) =>
-  handleDraftInvoiceFromWonOpportunity(payload, won).pipe(
+  handleDraftInvoiceFromWonOpportunity(payload, context).pipe(
     Effect.provideService(FinanceTaxRates, tax),
     Effect.provideService(OpportunityInvoiceLedger, opportunityInvoiceLedgerLive),
     Effect.provideService(OutboxWorkerLegalEntityScopeFanout, {
@@ -158,9 +159,9 @@ const deliver = (
   );
 
 /** The first claim of the won message, as Core's Outbox hands it to this worker. */
-const firstClaim = (message: typeof OutboxPayloadSchema.Encoded): OutboxClaim => ({
+const firstClaim = (message: typeof OutboxPayloadSchema.Encoded, attemptNumber = 1): OutboxClaim => ({
   attemptId: '51000000-0000-4000-8000-000000000006',
-  attemptNumber: 1,
+  attemptNumber,
   claimId: won.claimId,
   consumerModuleKey: 'finance.billing',
   deliveryId: won.deliveryId,
@@ -185,8 +186,9 @@ const settleFirstAttempt = (
   scope: OutboxWorkerLegalEntityScope | readonly OutboxWorkerLegalEntityScope[],
   tax: FinanceTaxRates['Service'],
   message: typeof OutboxPayloadSchema.Encoded,
+  attemptNumber = 1,
 ) => {
-  const claims = [firstClaim(message)];
+  const claims = [firstClaim(message, attemptNumber)];
   const scopes = Array.isArray(scope) ? scope : [scope];
   const outbox: OutboxRepositoryService = {
     claimNext: () => Effect.sync(() => Option.fromNullishOr(claims.shift())),
@@ -441,70 +443,120 @@ it.layer(NodeCrypto.layer)('Won opportunity priced exactly as the invoice form p
   );
 });
 
-const HOUR_MS = 3_600_000;
-const wonAtMs = Date.parse(wonOn2Nov.changedAt);
+/**
+ * The 72-hour window runs from the delivery's first attempt: Core's back-off doubles from one second up to a day, so the
+ * 19th attempt comes at least 60 hours after the first and the 20th at least 84 hours after it.
+ */
+const LAST_ATTEMPT_IN_WINDOW = 19;
+const FIRST_ATTEMPT_AFTER_WINDOW = 20;
+const attempt = (attemptNumber: number): OutboxWorkerHandlerContext =>
+  attestOutboxWorkerHandlerContext({ ...won, attemptNumber });
+const notDeclared = () => taxAnswering(() => baselineVatChoices(tenantId, '2026-11-02', 'NOT_DECLARED'));
+/** Tax not installed for the Tenant: the Shell's own answer, not an outage. */
+const notInstalled = () =>
+  FinanceTaxRates.of({
+    choices: () => Effect.die('The worker asks Tax for the originator only'),
+    choicesFor: () =>
+      Effect.fail(
+        new FinanceReferenceUnavailable({
+          code: 'finance_reference_unavailable',
+          reason: TAX_NOT_INSTALLED_REASON,
+        }),
+      ),
+  });
 
-it.layer(NodeCrypto.layer)('A company that has not set up VAT within 72 hours of the win', (suite) => {
-  suite.effect('71 hours after the win a company without a declared regime is still retried', () =>
+it.layer(NodeCrypto.layer)('A company that has not set up VAT within 72 hours of the first attempt', (suite) => {
+  suite.effect('within the window a company without a declared regime, or without Tax installed, is retried', () =>
     Effect.gen(function* withinWindow() {
-      yield* TestClock.setTime(wonAtMs + 71 * HOUR_MS);
       const { ledger, scope } = makeLedger();
-      const tax = taxAnswering(() => baselineVatChoices(tenantId, '2026-11-02', 'NOT_DECLARED'));
-      expect(yield* settleFirstAttempt(scope, tax, wonMessage(21))).toEqual({ dead: 0, retried: 1, succeeded: 0 });
-      expect((yield* failureOf(deliver(scope, tax, yield* wonPayload(21)))).retryable).toBe(true);
+      for (const tax of [notDeclared(), notInstalled()]) {
+        expect(yield* settleFirstAttempt(scope, tax, wonMessage(21), LAST_ATTEMPT_IN_WINDOW)).toEqual({
+          dead: 0,
+          retried: 1,
+          succeeded: 0,
+        });
+        expect(
+          (yield* failureOf(deliver(scope, tax, yield* wonPayload(21), attempt(LAST_ATTEMPT_IN_WINDOW)))).code,
+        ).toBe('VAT_NOT_READY');
+      }
       expect(ledger.saves).toBe(0);
     }),
   );
 
-  suite.effect('72 hours after the win the delivery completes without a draft, naming the company in its log', () =>
+  suite.effect('72 hours after the first attempt the delivery completes without a draft, naming the company', () =>
     Effect.gen(function* afterWindow() {
-      yield* TestClock.setTime(wonAtMs + 72 * HOUR_MS);
       const { invoices, ledger, scope } = makeLedger();
-      const tax = taxAnswering(() => baselineVatChoices(tenantId, '2026-11-02', 'NOT_DECLARED'));
-      expect(yield* settleFirstAttempt(scope, tax, wonMessage(21))).toEqual({ dead: 0, retried: 0, succeeded: 1 });
-      const failure = yield* failureOf(deliver(scope, tax, yield* wonPayload(21)));
+      expect(yield* settleFirstAttempt(scope, notDeclared(), wonMessage(21), FIRST_ATTEMPT_AFTER_WINDOW)).toEqual({
+        dead: 0,
+        retried: 0,
+        succeeded: 1,
+      });
+      const failure = yield* failureOf(
+        deliver(scope, notDeclared(), yield* wonPayload(21), attempt(FIRST_ATTEMPT_AFTER_WINDOW)),
+      );
       expect(failure).toEqual({
         code: 'VAT_NOT_SET_UP',
-        reason: `VAT is not set up for company ${legalEntityId} (no declared regime or no rate) after 72 hours; the won opportunity's invoice was not drafted`,
+        reason: `VAT is not set up for company ${legalEntityId} (vat_regime_not_declared) 72 hours after the first attempt; the won opportunity's invoice was not drafted`,
         retryable: false,
       });
       expect(ledger.saves).toBe(0);
       expect(invoices()).toEqual([]);
+      // Tax not installed and no published rate end the same way.
+      for (const tax of [
+        notInstalled(),
+        taxAnswering(() => ({ ...baselineVatChoices(tenantId, '2026-11-02'), rates: [] })),
+      ]) {
+        expect(
+          (yield* failureOf(deliver(scope, tax, yield* wonPayload(21), attempt(FIRST_ATTEMPT_AFTER_WINDOW)))).code,
+        ).toBe('VAT_NOT_SET_UP');
+      }
     }),
   );
 
-  suite.effect('no published rate 72 hours after the win also completes without a draft, the company named', () =>
-    Effect.gen(function* noRateAfterWindow() {
-      yield* TestClock.setTime(wonAtMs + 80 * HOUR_MS);
-      const { scope } = makeLedger();
-      const tax = taxAnswering(() => ({ ...baselineVatChoices(tenantId, '2026-11-02'), rates: [] }));
-      expect(yield* settleFirstAttempt(scope, tax, wonMessage(21))).toEqual({ dead: 0, retried: 0, succeeded: 1 });
-      const failure = yield* failureOf(deliver(scope, tax, yield* wonPayload(21)));
-      expect(failure.reason).toContain('VAT is not set up');
-      expect(failure.reason).toContain(legalEntityId);
-    }),
-  );
-
-  suite.effect('Tax still unavailable 72 hours after the win completes without a draft too', () =>
+  suite.effect('Tax unreachable is never completed by the window: it keeps the retry policy, however late', () =>
     Effect.gen(function* taxDownAfterWindow() {
-      yield* TestClock.setTime(wonAtMs + 72 * HOUR_MS);
       const { scope } = makeLedger();
       const tax = FinanceTaxRates.of({ choices: down, choicesFor: down });
-      expect(yield* settleFirstAttempt(scope, tax, wonMessage(21))).toEqual({ dead: 0, retried: 0, succeeded: 1 });
-      const failure = yield* failureOf(deliver(scope, tax, yield* wonPayload(21)));
-      expect(failure.code).toBe('TAX_STILL_UNAVAILABLE');
-      expect(failure.reason).toContain(legalEntityId);
+      expect(yield* settleFirstAttempt(scope, tax, wonMessage(21), FIRST_ATTEMPT_AFTER_WINDOW)).toEqual({
+        dead: 0,
+        retried: 1,
+        succeeded: 0,
+      });
+      expect((yield* failureOf(deliver(scope, tax, yield* wonPayload(21), attempt(60)))).code).toBe('TAX_UNAVAILABLE');
+    }),
+  );
+
+  suite.effect('a backlog after a deploy: won ten days ago, Tax down at the first attempt, retried, then drafted', () =>
+    Effect.gen(function* backlogAfterDeploy() {
+      const { invoices, scope } = makeLedger();
+      const tenDaysAgo: WonOn = { changedAt: '2026-10-23T09:00:00.000Z', opportunityId };
+      // Now is ten days after the win: only the first attempt's time may start the window, never the win's.
+      yield* TestClock.setTime(Date.parse('2026-11-02T09:00:00.000Z'));
+      expect(
+        yield* settleFirstAttempt(
+          scope,
+          FinanceTaxRates.of({ choices: down, choicesFor: down }),
+          wonMessage(21, tenDaysAgo),
+        ),
+      ).toEqual({ dead: 0, retried: 1, succeeded: 0 });
+      yield* deliver(
+        scope,
+        taxAnswering(() => baselineVatChoices(tenantId, '2026-10-23')),
+        yield* wonPayload(21, tenDaysAgo),
+        attempt(2),
+      );
+      expect(invoices().map((invoice) => invoice.opportunityId)).toEqual([opportunityId]);
     }),
   );
 
   suite.effect('a company that sets VAT up within the window gets its invoice', () =>
     Effect.gen(function* setUpInTime() {
-      yield* TestClock.setTime(wonAtMs + 71 * HOUR_MS);
       const { invoices, scope } = makeLedger();
       yield* deliver(
         scope,
         taxAnswering(() => baselineVatChoices(tenantId, '2026-11-02')),
         yield* wonPayload(21),
+        attempt(LAST_ATTEMPT_IN_WINDOW),
       );
       expect(invoices().map((invoice) => invoice.opportunityId)).toEqual([opportunityId]);
     }),
@@ -635,6 +687,7 @@ const runRegistered = (
   tax: FinanceTaxRates['Service'],
   payload: typeof OutboxPayloadSchema.Type,
   context: OutboxWorkerHandlerContext = won,
+  ledger: OpportunityInvoiceLedger['Service'] = opportunityInvoiceLedgerLive,
 ) => {
   const entries: string[] = [];
   const logged = Logger.layer([
@@ -644,7 +697,7 @@ const runRegistered = (
   ]);
   return getOutboxWorkerHandler(draftInvoiceFromWonOpportunityWorker)(payload, context).pipe(
     Effect.provideService(FinanceTaxRates, tax),
-    Effect.provideService(OpportunityInvoiceLedger, opportunityInvoiceLedgerLive),
+    Effect.provideService(OpportunityInvoiceLedger, ledger),
     Effect.provideService(OutboxWorkerLegalEntityScopeFanout, {
       forEachScope: (_claim, observe) =>
         Effect.forEach(Array.isArray(scope) ? scope : [scope], observe, { discard: true }),
@@ -662,23 +715,21 @@ const outcome = (entries: readonly string[]) =>
     )(entry);
     return { level: parsed.level, message: parsed.message };
   });
-const fields = (code: string, company: string | null = legalEntityId) => [
+const fields = (code: string, reason: string, company: string | null = legalEntityId) => [
   "Won opportunity's invoice not drafted",
-  { code, company, opportunityId, tenantId },
+  { code, company, opportunityId, reason, tenantId },
 ];
 
 it.layer(NodeCrypto.layer)('Business outcomes complete the delivery; only system failures are retried', (suite) => {
   suite.effect('each business outcome completes with exactly one line: its code, tenant, company and opportunity', () =>
     Effect.gen(function* settledOutcomes() {
-      yield* TestClock.setTime(wonAtMs + 72 * HOUR_MS);
-      const notDeclared = taxAnswering(() => baselineVatChoices(tenantId, '2026-11-02', 'NOT_DECLARED'));
       const cases = [
-        ['VAT_NOT_SET_UP', 'WARN', makeLedger().scope, notDeclared, yield* wonPayload(21)],
+        ['VAT_NOT_SET_UP', 'WARN', makeLedger().scope, notDeclared(), yield* wonPayload(21)],
         [
-          'TAX_STILL_UNAVAILABLE',
+          'FINANCE_LEDGER_MISSING',
           'WARN',
-          makeLedger().scope,
-          FinanceTaxRates.of({ choices: down, choicesFor: down }),
+          makeLedger(legalEntityId, false).scope,
+          taxNeverAsked().tax,
           yield* wonPayload(21),
         ],
         [
@@ -697,8 +748,18 @@ it.layer(NodeCrypto.layer)('Business outcomes complete the delivery; only system
         ],
       ] as const;
       for (const [code, level, scope, tax, payload] of cases) {
-        const run = yield* runRegistered(scope, tax, payload);
-        expect([code, run.succeeded, outcome(run.entries)]).toEqual([code, true, [{ level, message: fields(code) }]]);
+        const run = yield* runRegistered(scope, tax, payload, attempt(FIRST_ATTEMPT_AFTER_WINDOW));
+        expect([code, run.succeeded, outcome(run.entries).map(({ level: logged }) => logged)]).toEqual([
+          code,
+          true,
+          [level],
+        ]);
+        expect(outcome(run.entries)[0]?.message[1]).toMatchObject({
+          code,
+          company: legalEntityId,
+          opportunityId,
+          tenantId,
+        });
       }
       // Lost after it was won: simply nothing to draft, logged as information.
       const lost = makeLedger();
@@ -710,7 +771,15 @@ it.layer(NodeCrypto.layer)('Business outcomes complete the delivery; only system
       const noLongerWon = yield* runRegistered(lost.scope, taxNeverAsked().tax, yield* wonPayload(21));
       expect([noLongerWon.succeeded, outcome(noLongerWon.entries)]).toEqual([
         true,
-        [{ level: 'INFO', message: fields('OPPORTUNITY_NO_LONGER_WON') }],
+        [
+          {
+            level: 'INFO',
+            message: fields(
+              'OPPORTUNITY_NO_LONGER_WON',
+              'The opportunity left WON at Sales Pipeline revision 2, after this won message (revision 1); its invoice was not drafted',
+            ),
+          },
+        ],
       ]);
       // A stage change that names no company: nothing to draft there.
       const { originatorLegalEntityId: _company, ...withoutCompany } = won;
@@ -723,26 +792,36 @@ it.layer(NodeCrypto.layer)('Business outcomes complete the delivery; only system
       );
       expect([unnamed.succeeded, outcome(unnamed.entries)]).toEqual([
         true,
-        [{ level: 'WARN', message: fields('OPPORTUNITY_WITHOUT_COMPANY', null) }],
+        [
+          {
+            level: 'WARN',
+            message: fields(
+              'OPPORTUNITY_WITHOUT_COMPANY',
+              'The stage change names no company of the opportunity',
+              null,
+            ),
+          },
+        ],
       ]);
     }),
   );
 
   suite.effect('a system failure, and VAT not ready within the window, still fail and are retried', () =>
     Effect.gen(function* systemFailures() {
-      yield* TestClock.setTime(wonAtMs + 71 * HOUR_MS);
       const notReady = yield* runRegistered(
         makeLedger().scope,
-        taxAnswering(() => baselineVatChoices(tenantId, '2026-11-02', 'NOT_DECLARED')),
+        notDeclared(),
         yield* wonPayload(21),
+        attempt(LAST_ATTEMPT_IN_WINDOW),
       );
       expect([notReady.succeeded, notReady.entries]).toEqual([false, []]);
-      const noLedgerAnywhere = yield* runRegistered(
-        makeLedger(legalEntityId, false).scope,
-        taxNeverAsked().tax,
-        yield* wonPayload(21),
-      );
-      expect([noLedgerAnywhere.succeeded, noLedgerAnywhere.entries]).toEqual([false, []]);
+      // A ledger that exists and still yields no invoice is a failure, not an outcome of selling.
+      const draftsNothing = yield* runRegistered(makeLedger().scope, taxNeverAsked().tax, yield* wonPayload(21), won, {
+        draft: () => Effect.succeed(Option.none()),
+        holds: () => Effect.succeed(true),
+        recordLeftWon: () => Effect.succeed(true),
+      });
+      expect([draftsNothing.succeeded, draftsNothing.entries]).toEqual([false, []]);
       const foreign = yield* runRegistered(
         makeLedger().scope,
         taxNeverAsked().tax,
