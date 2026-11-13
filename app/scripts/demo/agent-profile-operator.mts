@@ -124,12 +124,15 @@ const actionRuntime = Layer.unwrap(
 const reads = Layer.effect(
   AgentProfileReadDatabase,
   Effect.gen(function* readOnlyOperatorDatabase() {
-    // Privileged connection is deliberately exposed as SELECT-only. All identity writes use runtime scoped transactions.
+    // Reads only. The privileged connection writes in exactly one place, the seed writer below; every other identity
+    // write runs through runtime-scoped Action transactions. This module is operator-only: it runs from scripts and is
+    // never bundled into a unit, a vertical, a package or the Shell (scripts/tests/module-credential-reader-boundary).
     const database = yield* CoreDatabase;
     return { executor: database.executor };
   }),
 ).pipe(Layer.provide(CoreAdminDatabaseLive));
-// The operator's own connection seeds a reviewed agent's fixed id; nothing a tenant user calls reaches it.
+// The operator's privileged connection seeds a reviewed agent's fixed id: its only write; nothing a tenant user calls
+// reaches it.
 const seedWriter = Layer.effect(
   AgentSeedIdentityWriter,
   Effect.gen(function* operatorSeedWriter() {

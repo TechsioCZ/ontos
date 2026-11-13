@@ -53,6 +53,16 @@ const specifiersOf = (file: string) => {
 const importersOf = (pattern: RegExp) =>
   production.filter((file) => specifiersOf(file).some((specifier) => pattern.test(specifier)));
 
+it('keeps the operator programs and their privileged seed writer out of every unit and the Shell', () => {
+  // The agent-profile operator holds the privileged connection, and its seed writer writes with it: operator-only,
+  // run from scripts, never bundled into a unit, a vertical, a package or the Shell.
+  for (const pattern of [/agent-profile-operator(?:\.mts)?$/u, /agent-seed-identity(?:\.mts)?$/u]) {
+    const importers = importersOf(pattern);
+    expect(importers.length).toBeGreaterThan(0);
+    expect(importers.filter((file) => !file.startsWith('scripts/'))).toEqual([]);
+  }
+});
+
 it('lets only the delegated gateway client read an owner slot, and only the host fill one', () => {
   // The reader: a module's own credential, read by the delegated client with the calling module's app id.
   expect(importersOf(/owner-module-credential(?:\.ts)?$/u)).toEqual([
