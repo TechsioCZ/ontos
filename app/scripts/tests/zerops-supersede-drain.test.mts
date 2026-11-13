@@ -4,8 +4,9 @@ import type { IncomingHttpHeaders } from 'node:http';
 import { connect } from 'node:net';
 import path from 'node:path';
 
-import { NodeHttpServer } from '@effect/platform-node';
+import { NodeHttpServer, NodeServices } from '@effect/platform-node';
 import {
+  Clock,
   Console,
   Context,
   Duration,
@@ -23,6 +24,7 @@ import {
 import { expect, it } from 'effect-rstest';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { NetAddress } from 'effect/net';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { TestConsole } from 'effect/testing';
 
 import { hostApplication } from '../zerops/app-host.mts';
@@ -492,4 +494,67 @@ it.live('a request target reaches the unit as received, directly and through a d
       });
     }
   }),
+);
+
+/** An upload whose body never ends: its headers and a first chunk, then nothing; resolves with the response head. */
+const unfinishedUpload = (port: number) =>
+  Effect.callback<string>((resume) => {
+    const socket = connect(port, '127.0.0.1', () => {
+      socket.write(
+        'POST /_m/crm/upload HTTP/1.1\r\nHost: stage.test\r\nTransfer-Encoding: chunked\r\n\r\n10\r\n0123456789abcdef\r\n',
+      );
+    });
+    const chunks: Buffer[] = [];
+    socket.on('data', (chunk: Buffer) => {
+      chunks.push(chunk);
+    });
+    socket.on('close', () => {
+      resume(Effect.succeed(Buffer.concat(chunks).toString('utf-8')));
+    });
+  });
+
+it.live(
+  'on SIGTERM a host ends its relayed event stream and the upload in flight, then closes, well within the bound',
+  () =>
+    Effect.gen(function* stopSignalHandling() {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fixture = path.join(import.meta.dirname, '../integration/fixtures/stop-signal-host.mts');
+      const child = yield* spawner.spawn(ChildProcess.make(process.execPath, [fixture], { stderr: 'inherit' }));
+      const lines = yield* Ref.make<readonly string[]>([]);
+      yield* Effect.forkChild(
+        child.stdout.pipe(
+          Stream.decodeText(),
+          Stream.splitLines,
+          Stream.runForEach((line) => Ref.update(lines, (all) => [...all, line])),
+        ),
+      );
+      const portLine = yield* Ref.get(lines).pipe(
+        Effect.map((all) => all.find((line) => line.startsWith('PORT '))),
+        Effect.repeat({ schedule: Schedule.spaced('50 millis'), until: (line) => line !== undefined }),
+        Effect.timeout('30 seconds'),
+      );
+      const port = Number(portLine?.slice('PORT '.length));
+      const events = yield* Effect.forkChild(send(port, '/_m/crm/events'));
+      const upload = yield* Effect.forkChild(unfinishedUpload(port));
+      yield* Effect.sleep('300 millis');
+      const started = yield* Clock.currentTimeMillis;
+      yield* child.kill({ forceKillAfter: '25 seconds', killSignal: 'SIGTERM' });
+      const stoppedAfter = (yield* Clock.currentTimeMillis) - started;
+      expect(yield* child.exitCode).toBe(0);
+      // The public port's own cap is the server's 20 s graceful timeout; ending streams and uploads first leaves it
+      // nothing to wait for.
+      expect(stoppedAfter).toBeLessThan(5000);
+      const stream = yield* Fiber.join(events);
+      expect(stream.status).toBe(200);
+      expect(stream.error).toBeUndefined();
+      expect(stream.body).toContain('data: tick');
+      expect(yield* Fiber.join(upload)).toMatch(/^HTTP\/1\.1 503 /u);
+      expect(yield* Ref.get(lines)).toEqual(
+        expect.arrayContaining([
+          '[app-host] SIGTERM received; stopping gracefully',
+          '[fixture] closing the public port',
+          '[fixture] public port closed',
+        ]),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
 );

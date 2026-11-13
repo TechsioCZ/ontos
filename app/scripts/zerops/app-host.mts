@@ -1064,6 +1064,7 @@ const relay = Effect.fn('AppHost.relay')(function* relay(
   target: RelayTarget,
   reportCut: (problem: RelayFailure) => Effect.Effect<void>,
   cutoffOf: (eventStream: boolean) => RelayCutoff,
+  stopping: Effect.Effect<unknown>,
 ) {
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(request.headers)) {
@@ -1093,7 +1094,12 @@ const relay = Effect.fn('AppHost.relay')(function* relay(
         path: target.path,
         signal,
       }),
-  });
+  }).pipe(
+    // A host that stops does not wait for an answer still to come (an upload in flight): it answers 503 at once.
+    Effect.raceFirst(
+      stopping.pipe(Effect.andThen(Effect.fail(new RelayFailure({ code: 'HOST_STOPPING', stage: 'request' })))),
+    ),
+  );
   if (target.drainPeer === true && response.headers[DRAIN_REFUSED_HEADER] !== undefined) {
     response.body.resume();
     return yield* new RelayFailure({ code: 'PEER_DRAINING', stage: 'request' });
@@ -1227,6 +1233,14 @@ const routedUnit = (url: string) => {
   return separator === -1 ? rest : rest.slice(0, separator);
 };
 
+/**
+ * The one way the public port closes (drain end, stop signal, any end of the host): first `stopping`, so relayed
+ * event streams end, other relayed responses are cut and relays awaiting an answer answer 503, then the server's
+ * graceful close, which then has nothing left to wait for. Runs once, whoever asks first.
+ */
+export const publicPortClosing = (publicScope: Scope.Closeable, drain: SupersedeDrain) =>
+  Effect.cached(Deferred.succeed(drain.stopping, true).pipe(Effect.andThen(Scope.close(publicScope, Exit.void))));
+
 /** The answer a caller already retries: 503 on a fresh connection (which can reach another container). */
 const retryableUnavailable = () =>
   HttpServerResponse.text('Service temporarily unavailable\n', {
@@ -1329,9 +1343,10 @@ const forwardDuringDrain = Effect.fn('AppHost.forwardDuringDrain')(function* for
         },
         (problem) => refuse(problem.code, target).pipe(Effect.asVoid),
         (eventStream) => {
-          const ended = Deferred.await(drain.ended);
-          return eventStream ? { end: ended } : { cut: ended };
+          const over = Effect.raceFirst(Deferred.await(drain.ended), Deferred.await(drain.stopping));
+          return eventStream ? { end: over } : { cut: over };
         },
+        Deferred.await(drain.stopping),
       ).pipe(Effect.result);
       if (Result.isSuccess(answer)) {
         yield* drain.count('forwarded');
@@ -1433,10 +1448,18 @@ export const hostApplication = <Failure, Requirements>(
       { headersTimeout: RELAY_HEADERS_TIMEOUT, origin: loopbackOrigin(port), path: upstreamPath },
       (problem) => report(problem, 'cut'),
       // An event stream of this release ends once a newer one took over, so its browser reconnects to the new one.
-      (eventStream) => (eventStream ? { end: Deferred.await(drain.superseded) } : {}),
+      // An event stream of this release ends once a newer one took over or the host stops, so its browser reconnects;
+      // every other response is cut when the host stops.
+      (eventStream) =>
+        eventStream
+          ? { end: Effect.raceFirst(Deferred.await(drain.superseded), Deferred.await(drain.stopping)) }
+          : { cut: Deferred.await(drain.stopping) },
+      Deferred.await(drain.stopping),
     ).pipe(
       Effect.catchTag('RelayFailure', (problem) =>
-        report(problem, 502).pipe(Effect.as(HttpServerResponse.text('Upstream unavailable\n', { status: 502 }))),
+        problem.code === 'HOST_STOPPING'
+          ? Effect.succeed(retryableUnavailable())
+          : report(problem, 502).pipe(Effect.as(HttpServerResponse.text('Upstream unavailable\n', { status: 502 }))),
       ),
     );
   });
@@ -1618,7 +1641,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   yield* HttpServer.serveEffect(hostControlApplication(published, pointer.load, refusals));
   const publicScope = yield* Scope.make();
   // Closing waits for in-flight requests (the server's graceful shutdown) and happens once, whoever asks first.
-  const closePublicPort = yield* Effect.cached(Scope.close(publicScope, Exit.void));
+  const closePublicPort = yield* publicPortClosing(publicScope, drain);
   yield* Effect.addFinalizer(() => closePublicPort);
   const openPublicPort = NodeHttpServer.make(withKeepAlive(createServer), { host: '0.0.0.0', port: publicPort }).pipe(
     Effect.mapError(() => failure(`public port ${String(publicPort)} could not be opened`)),
@@ -1674,9 +1697,8 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   // units stop.
   yield* Effect.addFinalizer(() =>
     Console.log(
-      '[app-host] stopping: ending event streams, finishing in-flight requests, closing the public port',
+      '[app-host] stopping: ending relayed event streams and uploads in flight, then closing the public port',
     ).pipe(
-      Effect.andThen(Deferred.succeed(drain.superseded, true)),
       Effect.andThen(closePublicPort),
       Effect.andThen(Console.log('[app-host] public port closed; stopping the units')),
     ),
@@ -1926,7 +1948,7 @@ export const ReleaseAccessIntentReaderLive = Layer.effect(
  * once traffic moved; racing it interrupts the host, so its finalizers run in order: the public port ends event
  * streams, finishes in-flight requests and closes, then the units stop.
  */
-const stopSignal = Effect.callback<string>((resume) => {
+export const stopSignal = Effect.callback<string>((resume) => {
   const stop = (signal: string) => resume(Effect.succeed(signal));
   process.once('SIGTERM', stop);
   process.once('SIGINT', stop);

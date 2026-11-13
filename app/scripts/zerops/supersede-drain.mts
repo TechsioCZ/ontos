@@ -76,6 +76,12 @@ export interface SupersedeDrain {
   readonly finish: Effect.Effect<DrainCounts>;
   readonly livePeers: Effect.Effect<readonly DrainPeer[]>;
   readonly refresh: Effect.Effect<readonly DrainPeer[]>;
+  /**
+   * Completes before the public port closes (drain end or stop signal): every relayed event stream ends, every other
+   * relayed response is cut and every relay still waiting for its answer (an upload in flight) answers 503, so the
+   * port's graceful close never waits on them.
+   */
+  readonly stopping: Deferred.Deferred<true>;
   readonly superseded: Deferred.Deferred<true>;
 }
 
@@ -98,6 +104,7 @@ export const makeSupersedeDrain = (): SupersedeDrain => {
   const counts = Ref.makeUnsafe<DrainCounts>({ dropped: 0, failed: 0, forwarded: 0, looped: 0 });
   const superseded = Deferred.makeUnsafe<true>();
   const ended = Deferred.makeUnsafe<true>();
+  const stopping = Deferred.makeUnsafe<true>();
   const live = ({ dropped, peers }: DrainState) => peers.filter((peer) => !dropped.has(peerKey(peer)));
   const count = (outcome: keyof DrainCounts) =>
     Ref.update(counts, (current) => ({ ...current, [outcome]: current[outcome] + 1 }));
@@ -134,6 +141,7 @@ export const makeSupersedeDrain = (): SupersedeDrain => {
       const next = yield* Ref.updateAndGet(state, (latest) => ({ ...latest, peers, resolvedAt: now }));
       return live(next);
     }),
+    stopping,
     superseded,
   };
 };
