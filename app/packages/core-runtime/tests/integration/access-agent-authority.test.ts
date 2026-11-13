@@ -711,4 +711,47 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('an agent on authori
       }).pipe(Effect.provideService(AccessDecisionGate, tenant.gate)),
     ),
   );
+
+  suite.effect('is decided on both sides and within its consent in batches, listings and up to its deadline', () =>
+    withTenant((tenant) =>
+      Effect.gen(function* bothSides() {
+        // The operator only reads; the agent's role also changes and proposes deletions.
+        const reader = yield* tenant.createRole([TASK_READ]);
+        const worker = yield* tenant.createRole(
+          [TASK_READ, TASK_CREATE, TASK_DELETE],
+          (cell) => cell.capabilityKey !== TASK_DELETE || cell.mode === 'propose',
+        );
+        yield* assign(tenant, tenant.owner, reader, operator);
+        yield* admitAgent(tenant);
+        yield* assign(tenant, tenant.owner, worker, 'agent');
+        yield* seedOperators(tenant.admin, tenant.tenantId, [operator], 1);
+        const full = yield* connect(tenant, operator, [TASK_READ, TASK_CREATE, TASK_DELETE]);
+        const ask = (mcp: OperationalScope, carrier: typeof readCarrier, now = decisionAt) => ({
+          carrier,
+          legalEntityScope: 'required' as const,
+          now,
+          scope: mcp,
+        });
+        // The agent's broad role never reaches past its operator: what the operator lacks, the agent lacks too.
+        const batch = yield* tenant.gate.decideMany(
+          [readCarrier, createCarrier, deleteCarrier].map((carrier) => ask(full.mcp, carrier)),
+        );
+        expect(batch.map(({ outcome }) => outcome)).toEqual(['ALLOWED', 'DENIED', 'DENIED']);
+        const listed = yield* tenant.gate.list(ask(full.mcp, readCarrier));
+        expect(listed.decision.outcome).toBe('ALLOWED');
+        // A consent that left reading out holds in a batch and in a listing as in a single decision.
+        const narrow = yield* connect(tenant, operator, [TASK_CREATE]);
+        const [narrowRead] = yield* tenant.gate.decideMany([ask(narrow.mcp, readCarrier)]);
+        expect(narrowRead?.outcome).toBe('DENIED');
+        expect(codesOf(narrowRead ?? listed.decision)).toContain('deny.connection_ceiling');
+        const narrowList = yield* tenant.gate.list(ask(narrow.mcp, readCarrier));
+        expect(narrowList.decision.outcome).toBe('DENIED');
+        expect(narrowList.predicate).toBeUndefined();
+        // The consent stands until its deadline (365 days from consent in the product) and not a moment longer.
+        const lapsed = yield* tenant.gate.decide(ask(full.mcp, readCarrier, connectionEnd));
+        expect(lapsed.outcome).toBe('DENIED');
+        expect(codesOf(lapsed)).toEqual(['deny.connection_inactive']);
+      }),
+    ),
+  );
 });

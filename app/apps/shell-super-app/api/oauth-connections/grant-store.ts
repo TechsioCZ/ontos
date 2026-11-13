@@ -203,6 +203,12 @@ export const OAuthEndpointGuardDataLive = Layer.effect(
           if (row.referenceId !== grant.grantId || row.clientId !== grant.clientId) {
             return yield* unavailable('Refresh family does not match retained grant');
           }
+          // A replayed refresh family ends an agent's credential-bound connection first, before the grant's status.
+          if (grant.actingKind === 'agent') {
+            yield* connections
+              .revoke(connectionScopeOf(grant), agentConnectionIdOfGrant(grant.grantId))
+              .pipe(Effect.mapError(unavailable));
+          }
           const disabled = yield* registry
             .setGrantStatus({
               grantId: grant.grantId,
@@ -213,12 +219,6 @@ export const OAuthEndpointGuardDataLive = Layer.effect(
             .pipe(Effect.mapError(unavailable));
           if (Option.isNone(disabled)) {
             return yield* unavailable('Retained grant disappeared before authorization disablement');
-          }
-          // A replayed refresh family ends an agent's credential-bound connection with the grant, before Auth cleanup.
-          if (grant.actingKind === 'agent') {
-            yield* connections
-              .revoke(connectionScopeOf(grant), agentConnectionIdOfGrant(grant.grantId))
-              .pipe(Effect.mapError(unavailable));
           }
         }
         return yield* credentials.revokeFamily(row).pipe(Effect.mapError(unavailable));
