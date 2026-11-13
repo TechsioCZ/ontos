@@ -1,6 +1,5 @@
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { EmptyState, formatDate, PageHeader, SectionCard, Toaster } from '@app/admin-ui';
-import { documentNavigationModules } from '@app/shared-contracts';
 import { modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -15,7 +14,14 @@ import '../../../index.css';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { financePageScope } from '../finance-page-scope.ts';
 import { RateDialog, RegimeDialog, WithdrawDialog } from './vat-dialogs.tsx';
-import { changeRegime, planNewRate, setFirstRate, vatSettingsData, withdrawPlannedRate } from './vat-settings-data.ts';
+import {
+  changeRegime,
+  planNewRate,
+  setFirstRate,
+  vatPageState,
+  vatSettingsData,
+  withdrawPlannedRate,
+} from './vat-settings-data.ts';
 import type { VatRegimeView, VatSettings } from './vat-settings-data.ts';
 import type { VatChangeRights } from './tax-access.ts';
 import type { ClassificationView, RateRevision, RegimePeriod } from './vat-settings-model.ts';
@@ -26,7 +32,6 @@ const resources = {
 } as const;
 
 const ns = 'finance-billing.vatSettings';
-const TAX_MODULE = 'commerce.tax';
 
 const day = (instant: DateTime.Utc) => formatDate(DateTime.formatIso(instant));
 /** Periods are half-open: the last day shown is the day before the next period starts. */
@@ -279,6 +284,9 @@ const VatSettingsBody = ({ scope }: { readonly scope: string }) => {
   if (settings.state === 'forbidden') {
     return <EmptyState description={t(`${ns}.forbiddenDescription`)} title={t(`${ns}.forbidden`)} />;
   }
+  if (settings.state === 'notInstalled') {
+    return <EmptyState description={t(`${ns}.notInstalledDescription`)} title={t(`${ns}.notInstalled`)} />;
+  }
   if (settings.state === 'unavailable') {
     return (
       <StatusText showIcon status="error">
@@ -286,21 +294,21 @@ const VatSettingsBody = ({ scope }: { readonly scope: string }) => {
       </StatusText>
     );
   }
-  return <ReadyVatSettings settings={settings} />;
-};
-
-/** Whether the company runs Tax, from the Shell's per-document hint; without the hint Tax answers for itself. */
-const taxInstalled = () => {
-  const modules = documentNavigationModules();
-  return modules === undefined || modules.has(TAX_MODULE);
+  return (
+    <>
+      {vatPageState(settings) === 'notDeclared' && (
+        <EmptyState description={t(`${ns}.notDeclaredDescription`)} title={t(`${ns}.notDeclared`)} />
+      )}
+      <ReadyVatSettings settings={settings} />
+    </>
+  );
 };
 
 const VatSettingsContent = ({ scope }: { readonly scope: string | undefined }) => {
   const { t } = useModernI18n();
+  // Whether Tax runs for the company is Tax's (and the Shell's) own answer to the page's reads, never navigation.
   let body = <VatSettingsBody scope={scope ?? ''} />;
-  if (!taxInstalled()) {
-    body = <EmptyState description={t(`${ns}.notInstalledDescription`)} title={t(`${ns}.notInstalled`)} />;
-  } else if (scope === undefined) {
+  if (scope === undefined) {
     body = (
       <StatusText showIcon status="error">
         {t(`${ns}.unavailable`)}
@@ -322,7 +330,7 @@ const VatSettingsContent = ({ scope }: { readonly scope: string | undefined }) =
 /** The Shell runs this before it reveals the page, so the first paint already shows the company's VAT. */
 export const preloadPage = modulePagePreload((props) => {
   const scope = financePageScope(props.context);
-  return scope === undefined || !taxInstalled() ? Effect.void : vatSettingsData.preload(scope);
+  return scope === undefined ? Effect.void : vatSettingsData.preload(scope);
 });
 
 /** "DPH": the company's VAT regime and the rates Finance uses on invoices, managed in Tax by people with Tax rights. */

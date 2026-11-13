@@ -1,4 +1,5 @@
 // The VAT settings page's data and changes, each one a real Tax read or Action for the signed-in person.
+import { GATEWAY_MODULE_NOT_INSTALLED_TYPE } from '@app/shared-contracts';
 import { czVatClassificationCodes } from '@app/shared-contracts/cz-vat-classifications';
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import { definePageData } from '@app/shared-contracts/page-data';
@@ -42,6 +43,8 @@ const NO_CHANGES: VatChangeRights = {
 /** The whole page, or why it cannot be shown. A failed Tax read is part of the value, never a thrown error. */
 export type VatSettings =
   | { readonly state: 'forbidden' }
+  /** The Shell answered that Tax is not installed for the tenant (absent, switched off or retired). */
+  | { readonly state: 'notInstalled' }
   | { readonly state: 'unavailable' }
   | {
       readonly classifications: readonly ClassificationView[];
@@ -85,6 +88,21 @@ const loadRegime = Effect.fn('VatSettings.regime')(function* loadRegime(now: Dat
 
 const forbidden = (): Effect.Effect<VatSettings> => Effect.succeed({ state: 'forbidden' });
 
+/**
+ * The Shell's refusal of the call to Tax: "not installed" only when it says exactly that (its problem type), any other
+ * refusal is the person's own lack of rights. This is the page's one source for whether Tax runs for the company.
+ */
+export const gatewayRefusalState = (problem: { readonly type: string }): VatSettings =>
+  problem.type === GATEWAY_MODULE_NOT_INSTALLED_TYPE ? { state: 'notInstalled' } : { state: 'forbidden' };
+
+/** Which of the page's states the loaded settings are: not installed, no regime declared yet, or declared. */
+export const vatPageState = (settings: VatSettings) => {
+  if (settings.state !== 'ready') {
+    return settings.state;
+  }
+  return settings.regime.current === 'NOT_DECLARED' ? 'notDeclared' : 'declared';
+};
+
 const loadVatSettings = Effect.fn('VatSettings.load')(function* loadVatSettings() {
   const now = yield* DateTime.now;
   return yield* Effect.all(
@@ -104,7 +122,7 @@ const loadVatSettings = Effect.fn('VatSettings.load')(function* loadVatSettings(
     // Tax (or the Shell, for a company where Tax is not open to the person) refuses: the page says so plainly.
     Effect.catchTags({
       ApplicableTaxRuleSetForbiddenProblem: forbidden,
-      GatewayForbiddenProblem: forbidden,
+      GatewayForbiddenProblem: (problem) => Effect.succeed(gatewayRefusalState(problem)),
       SellerVatRegimeAtInstantForbiddenProblem: forbidden,
       TaxRuleHistoryForbiddenProblem: forbidden,
     }),

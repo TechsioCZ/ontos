@@ -15,10 +15,13 @@ import type { VatChangeRights } from '../../src/routes/[lang]/finance/dph/tax-ac
 import { VatPage } from '../../src/routes/[lang]/finance/dph/page.tsx';
 import { vatSettingsData } from '../../src/routes/[lang]/finance/dph/vat-settings-data.ts';
 import { financeBrowserRuntime } from '../../src/runtime/browser.ts';
+import { pinDocumentNavigationModules } from '@app/shared-contracts';
 
 const TENANT = 'a0000000-0000-4000-8000-000000000001';
-const { rights } = rstest.hoisted(() => ({
+const { rights, taxState } = rstest.hoisted(() => ({
   rights: { current: { createRevision: false, createRule: false, declareRegime: false, endRevision: false } },
+  /** What Tax (through the Shell) answers for the company. */
+  taxState: { current: 'declared' },
 }));
 
 const ruleRef = {
@@ -47,10 +50,20 @@ rstest.mock('../../src/routes/[lang]/finance/dph/tax-access.ts', () => ({
       outcome: 'SELECTED',
     }),
   readRegimeAt: () =>
-    Effect.succeed({
-      headRevision: 1,
-      selection: { _tag: 'DECLARED', regime: 'VAT_PAYER' },
-    }),
+    // The Shell's own refusal when Tax is not installed for the tenant.
+    taxState.current === 'notInstalled'
+      ? Effect.fail({
+          _tag: 'GatewayForbiddenProblem',
+          detail: 'The module the call is for is not installed for the tenant.',
+          status: 403,
+          title: 'Module not installed',
+          type: 'https://ontos.dev/problems/gateway-module-not-installed',
+        })
+      : Effect.succeed({
+          headRevision: taxState.current === 'declared' ? 1 : 0,
+          selection:
+            taxState.current === 'declared' ? { _tag: 'DECLARED', regime: 'VAT_PAYER' } : { _tag: 'NOT_DECLARED' },
+        }),
   readRegimeHistory: () =>
     Effect.sync(() => ({
       changeRights: rights.current,
@@ -128,6 +141,9 @@ const editing = [`${ns}.regimeChange`, `${ns}.plan`, `${ns}.withdraw`, `${ns}.fi
 
 beforeEach(() => {
   rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  taxState.current = 'declared';
+  // As on stage: the Shell pins the navigation of the person's company, and Tax has no navigation entry of its own.
+  pinDocumentNavigationModules(['finance.billing', 'demo.merchandise', 'sales.pipeline'], document);
   vatSettingsData.invalidate();
 });
 
@@ -175,5 +191,34 @@ it.effect('a person who may only end a planned rate is offered only the withdraw
   Effect.gen(function* endOnly() {
     yield* showWith({ createRevision: false, createRule: false, declareRegime: false, endRevision: true });
     expect(offered()).toEqual([`${ns}.withdraw`]);
+  }),
+);
+
+it.effect('Tax without a navigation entry still runs for the company: the page shows its regime and rates', () =>
+  Effect.gen(function* withoutNavigationEntry() {
+    // The navigation hint lists no `commerce.tax`, exactly as stage: the page must not read that as "not installed".
+    yield* showWith({ createRevision: false, createRule: false, declareRegime: false, endRevision: false });
+    expect(text()).not.toContain(`${ns}.notInstalled`);
+    expect(text()).toContain(`${ns}.currentRate`);
+  }),
+);
+
+it.effect('Tax installed but no regime declared: the page says so and what to do, not that Tax is off', () =>
+  Effect.gen(function* notDeclared() {
+    taxState.current = 'notDeclared';
+    yield* render();
+    yield* waitUntil(() => text().includes(`${ns}.notDeclared`));
+    expect(text()).toContain(`${ns}.notDeclaredDescription`);
+    expect(text()).not.toContain(`${ns}.notInstalled`);
+  }),
+);
+
+it.effect("Tax not installed for the tenant: the page says exactly that, from the Shell's own answer", () =>
+  Effect.gen(function* notInstalled() {
+    taxState.current = 'notInstalled';
+    yield* render();
+    yield* waitUntil(() => text().includes(`${ns}.notInstalled`));
+    expect(text()).toContain(`${ns}.notInstalledDescription`);
+    expect(text()).not.toContain(`${ns}.forbidden`);
   }),
 );
