@@ -530,7 +530,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('an agent on authori
     ),
   );
 
-  suite.effect('is refused in another company and in another tenant', () =>
+  suite.effect('is refused in another company, in another tenant and on its own API key', () =>
     withTenant((tenant) =>
       Effect.gen(function* otherScopes() {
         const { connection } = yield* connectedReader(tenant);
@@ -543,6 +543,31 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('an agent on authori
         expect((yield* decideAs(elsewhere, readCarrier)).outcome).toBe('DENIED');
         const foreignTenant = { ...connection.mcp, tenantId: TenantIdSchema.make(yield* tenant.newId) };
         expect((yield* decideAs(foreignTenant, readCarrier)).outcome).not.toBe('ALLOWED');
+        // The agent's own API key carries no connection: proposing or running anything with it is refused, and it
+        // selects no company, whatever role the agent holds.
+        const apiKey = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+          authBindingId: uid(302),
+          authContextRef: 'better-auth-api-key:agent-key',
+          authMethod: 'api_key',
+          legalEntityId: company,
+          principalId: agent,
+          tenantId: tenant.tenantId,
+        }).pipe(
+          Effect.map(
+            (context) => ({ ...context, correlationId: 'access-agent-authority:key' }) satisfies OperationalScope,
+          ),
+          Effect.orDie,
+        );
+        for (const carrier of [readCarrier, createCarrier]) {
+          expect((yield* decideAs(apiKey, carrier)).outcome).toBe('DENIED');
+          const proposed = yield* AccessDecisionGate.pipe(
+            Effect.flatMap((gate) =>
+              gate.decide({ carrier, legalEntityScope: 'required', mode: 'propose', now: decisionAt, scope: apiKey }),
+            ),
+          );
+          expect(proposed.outcome).toBe('DENIED');
+        }
+        expect(yield* tenant.gate.selectableLegalEntities({ now: decisionAt, scope: apiKey })).toEqual([]);
       }).pipe(Effect.provideService(AccessDecisionGate, tenant.gate)),
     ),
   );
