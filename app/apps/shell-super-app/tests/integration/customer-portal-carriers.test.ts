@@ -83,10 +83,11 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
           expect(yield* answersFor(accessCase, 'workload', companyB)).toEqual(all(['deny.workload_unbound']));
           // Another tenant's company named in this tenant: refused by the company-of-tenant rule.
           expect(yield* answersFor(accessCase, 'workload', foreign)).toEqual(all(['deny.scope_mismatch']));
-          // People and agents never run these carriers, whatever they hold.
-          for (const persona of ['owner', 'companyAdmin', 'member', 'agent'] as const) {
+          // People never run these carriers, whatever they hold; an agent is refused as an agent before that.
+          for (const persona of ['owner', 'companyAdmin', 'member'] as const) {
             expect(yield* answersFor(accessCase, persona, companyA)).toEqual(all(['deny.workload_only']));
           }
+          expect(yield* answersFor(accessCase, 'agent', companyA)).toEqual(all(['deny.agent_forbidden']));
         }),
       ),
     );
