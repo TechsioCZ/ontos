@@ -42,8 +42,18 @@ const TAX_AUDIENCE = 'tax';
  * change is already in the answer's dated periods, so the rate at any instant stays exact in between.
  */
 export const TAX_RATE_FRESHNESS = Duration.minutes(12);
+/**
+ * How long an answer that does not price the company (no regime declared, a classification without a rate) or Tax's
+ * "not installed" is used before Tax is asked again: a company set up in Tax a moment ago is picked up within it.
+ */
+export const TAX_NEGATIVE_FRESHNESS = Duration.minutes(1);
 /** How long a write that prices something new waits for the company's refresh from Tax. */
 export const TAX_REFRESH_TIMEOUT = Duration.seconds(3);
+/**
+ * How long one refresh may wait for Tax at all. A Tax that accepts the call and never answers ends the attempt as an
+ * outage at this point, so the back-off starts instead of every reader joining a call that hangs.
+ */
+export const TAX_CALL_TIMEOUT = Duration.seconds(10);
 /** While Tax is unreachable, rates it confirmed at most this long ago still price new lines and prices. */
 export const CONFIRMED_RATES_MAX_AGE = Duration.hours(24);
 /** After a refresh that got no answer, the wait before the next one: doubling from this up to {@link TAX_RATE_FRESHNESS}. */
@@ -105,6 +115,11 @@ export const CompanyTaxRatesSchema = Schema.Struct({
   book: TaxRateBookSchema,
   /** Only in the migrated state: products whose stored rate differs from their classification's seeded rate. */
   heldProductRates: Schema.optionalKey(HeldProductRatesSchema),
+  /**
+   * The catalogue revision a sync with Tax produced when it stored this state. A person's save based on the revision
+   * just before it is not refused for that sync alone: nothing the person saw changed but the rates' confirmation.
+   */
+  revision: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   source: CompanyTaxRatesSourceSchema,
   syncedAt: Schema.DateTimeUtcFromString,
 });
@@ -363,11 +378,13 @@ export const taxRateViews = (book: TaxRateBook, at: DateTime.Utc): TaxRateView[]
  * retired with the tenant), exactly as the Shell says when it refuses the module call for that reason. `UNAVAILABLE`:
  * everything else, an outage: Tax or the Shell did not answer, or refused the call for another reason (Tax suspended
  * or quarantined for now, a missing or retired module credential, another release, a requester not admitted), named
- * in `refusal`; the stored rates keep serving under the outage rule.
+ * in `refusal`; the stored rates keep serving under the outage rule. `CALLER`: the Shell refused this caller, not the
+ * company's call (the person's session ended, or the person may not act for the company here): no outage and no wait
+ * for the company; the stored rates serve this read and the next caller asks again.
  */
 export class TaxRatesFailure extends Schema.TaggedError<TaxRatesFailure>()('TaxRatesFailure', {
   cause: Schema.optionalKey(Schema.Defect()),
-  kind: Schema.Literals(['REFUSED', 'UNAVAILABLE']),
+  kind: Schema.Literals(['CALLER', 'REFUSED', 'UNAVAILABLE']),
   /** Set when Tax was not asked: the wait after the last attempt without an answer runs until then. */
   nextAttemptAt: Schema.optionalKey(Schema.DateTimeUtc),
   /** The refusal an outage came from (problem, status and type), for the log line. */
@@ -398,10 +415,29 @@ const refusalOf = (cause: unknown): string | undefined => {
     : undefined;
 };
 
-/** Only the Shell's own "module not installed for the tenant" refusal is a refusal; every other failure is an outage. */
+/** The Shell's refusals that are about the caller (the person behind the read), never about the company or Tax. */
+const CallerRefusalSchema = Schema.Struct({
+  _tag: Schema.Literals(['GatewayAuthenticationRequiredProblem', 'GatewayForbiddenProblem']),
+  reason: Schema.Literals([
+    'originator_company_mismatch',
+    'originator_company_not_recorded',
+    'originator_not_admitted',
+    'scope_refused',
+    'subject_authentication_ended',
+    'subject_not_delegable',
+  ]),
+});
+
+/**
+ * Only the Shell's own "module not installed for the tenant" refusal is a refusal; one about the caller is the caller's
+ * (no outage); every other failure is an outage.
+ */
 export const taxCallFailureOf = (cause: unknown): TaxRatesFailure => {
   if (Schema.is(NotInstalledSchema)(cause)) {
     return new TaxRatesFailure({ cause, kind: 'REFUSED' });
+  }
+  if (Schema.is(CallerRefusalSchema)(cause)) {
+    return new TaxRatesFailure({ cause, kind: 'CALLER', refusal: cause.reason });
   }
   const refusal = refusalOf(cause);
   return refusal === undefined
@@ -575,6 +611,8 @@ interface CompanyTaxAnswer {
   readonly fetched?: FetchedTaxRates;
   /** The single refresh of this company in flight; every caller joins it instead of asking Tax again. */
   readonly inflight?: Deferred.Deferred<FetchedTaxRates, TaxRatesFailure>;
+  /** The refresh in flight already made one staff read wait its whole wait: later reads do not wait on it again. */
+  readonly inflightWaitedOut?: Deferred.Deferred<FetchedTaxRates, TaxRatesFailure>;
   /** Tax refused the company at the last refresh (not installed for it, or no longer admits Merchandise). */
   readonly refused: boolean;
   /** The last refresh that got no answer (an outage or a refusal), and how long to wait before the next one. */
@@ -598,9 +636,13 @@ const answerAfter = (
   if (Result.isSuccess(result)) {
     return { fetched: result.success, refused: false };
   }
+  if (result.failure.kind === 'CALLER') {
+    // Refused for the caller, not the company: nothing about the company changes and nothing waits.
+    return kept;
+  }
   if (result.failure.kind === 'REFUSED') {
-    // Tax is not installed for the company (or does not admit Merchandise): asked again once per freshness window.
-    return { refused: true, retry: { after: TAX_RATE_FRESHNESS, attemptedAt: at } };
+    // Tax is not installed for the company: asked again once the short negative window has passed.
+    return { refused: true, retry: { after: TAX_NEGATIVE_FRESHNESS, attemptedAt: at } };
   }
   if (explicit) {
     return kept;
@@ -634,8 +676,9 @@ const settleRefresh = Effect.fn('Merchandise.settleTaxRatesRefresh')(function* s
     if (entry.inflight !== done) {
       return answers;
     }
-    const { inflight: _ended, ...rest } = entry;
+    const { inflight: _ended, inflightWaitedOut: _waited, ...rest } = entry;
     void _ended;
+    void _waited;
     return new Map([...answers, [key, recorded ? rest : answerAfter(rest, Result.fail(lost), at, explicit)]]);
   });
   yield* Deferred.fail(done, lost);
@@ -643,6 +686,11 @@ const settleRefresh = Effect.fn('Merchandise.settleTaxRatesRefresh')(function* s
 
 /** Says why a refresh got no answer: a refusal of the call is logged loudly, it is an outage of the price guard. */
 const logFailedRefresh = (failure: TaxRatesFailure) => {
+  if (failure.kind === 'CALLER') {
+    return Effect.logInfo('The Shell refused this caller a call to Tax; the stored VAT rates serve this read').pipe(
+      Effect.annotateLogs({ reason: failure.refusal ?? 'unknown' }),
+    );
+  }
   if (failure.kind === 'REFUSED') {
     return Effect.logWarning('Tax is not installed for the company: nothing of it sells until it is');
   }
@@ -663,7 +711,20 @@ const runRefresh = Effect.fn('Merchandise.runTaxRatesRefresh')(function* runRefr
   // Tax answers for the instant it is asked about (its replies carry no time of their own): that instant, not when the
   // calls finished, is the confirmation time.
   const askedAt = yield* DateTime.now;
-  const read = yield* Effect.result(source.read(scope));
+  const read = yield* Effect.result(
+    source.read(scope).pipe(
+      Effect.timeoutOrElse({
+        duration: TAX_CALL_TIMEOUT,
+        orElse: () =>
+          Effect.fail(
+            new TaxRatesFailure({
+              kind: 'UNAVAILABLE',
+              refusal: `no answer within ${Duration.format(TAX_CALL_TIMEOUT)}`,
+            }),
+          ),
+      }),
+    ),
+  );
   if (Result.isFailure(read)) {
     yield* logFailedRefresh(read.failure);
   }
@@ -724,8 +785,11 @@ const known = Effect.fn('Merchandise.knownTaxRates')(function* known(scope: Oper
     !DateTime.isGreaterThan(since, now) && Duration.isLessThan(ageOf(since, now), window);
   const { retry } = entry;
   const waiting = retry !== undefined && recent(retry.attemptedAt, retry.after);
+  // An answer that prices the company is used for the full window; one that does not (nothing declared yet) briefly.
+  const freshness =
+    entry.fetched !== undefined && pricesCompany(entry.fetched.book, now) ? TAX_RATE_FRESHNESS : TAX_NEGATIVE_FRESHNESS;
   const answer: KnownTaxRates =
-    entry.fetched !== undefined && recent(entry.fetched.fetchedAt, TAX_RATE_FRESHNESS)
+    entry.fetched !== undefined && recent(entry.fetched.fetchedAt, freshness)
       ? { fetched: entry.fetched, refused: false, waiting }
       : { refused: entry.refused, waiting };
   return waiting && retry !== undefined
@@ -772,9 +836,25 @@ export const staffTaxRateBook = Effect.fn('Merchandise.staffTaxRateBook')(functi
   if (answer.fetched !== undefined || answer.waiting) {
     return answer;
   }
-  const fetched = yield* Effect.option(awaitRefresh(scope));
-  return Option.isSome(fetched)
-    ? ({ fetched: fetched.value, refused: false, waiting: false } satisfies KnownTaxRates)
+  const key = companyKey(scope);
+  const entry = entryOf(yield* Ref.get(companyAnswers), key);
+  if (entry.inflight !== undefined && entry.inflightWaitedOut === entry.inflight) {
+    // A read already waited out this refresh: Tax is slow now; this read serves the stored rates at once.
+    return answer;
+  }
+  const pending = yield* refreshOf(scope);
+  const fetched = yield* Deferred.await(pending).pipe(Effect.timeoutOption(TAX_REFRESH_TIMEOUT), Effect.option);
+  if (Option.isSome(fetched) && Option.isNone(fetched.value)) {
+    yield* Ref.update(companyAnswers, (answers) => {
+      const current = entryOf(answers, key);
+      return current.inflight === pending
+        ? new Map([...answers, [key, { ...current, inflightWaitedOut: pending }]])
+        : answers;
+    });
+  }
+  const got = Option.flatten(fetched);
+  return Option.isSome(got)
+    ? ({ fetched: got.value, refused: false, waiting: false } satisfies KnownTaxRates)
     : yield* known(scope);
 });
 

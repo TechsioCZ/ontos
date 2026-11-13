@@ -140,6 +140,31 @@ type TaxSource = Effect.Success<typeof TaxRateSource>;
 const linesOf = (document: typeof FixtureOrderSchema.Type.document) =>
   document.lines.map(({ quantity, sku, unitPriceMinor, vatRate }) => ({ quantity, sku, unitPriceMinor, vatRate }));
 
+/** One staff command (a price change) based on `expectedRevision`, through Merchandise's own preparation and write. */
+const changePrice = Effect.fn('VatTransition.changePrice')(function* changePrice(
+  input: {
+    readonly db: RuntimeDb;
+    readonly principal: Effect.Success<ReturnType<typeof makeNativeReadTestContext>>['principal'];
+    readonly source: TaxSource;
+  },
+  expectedRevision: number,
+) {
+  const payload = Schema.decodeUnknownSync(MerchandiseCommandPayloadSchema)({
+    command: { _tag: 'ChangePrice', id: 'p1', priceMinor: 1100 },
+    expectedRevision,
+  });
+  const scope = { ...input.principal, correlationId: 'vat-transition-change-price' };
+  const tax = yield* prepareCommandTax(payload.command, scope).pipe(Effect.provideService(TaxRateSource, input.source));
+  return yield* input.db.transaction((tx) =>
+    installOperationalScope(tx, scope, defineDatabaseIdentityEnrollment([])).pipe(
+      Effect.flatMap((scoped) =>
+        persistenceService(scoped, { prepared: { actionInvocationId: scope.correlationId, payload, tax }, scope }),
+      ),
+      Effect.flatMap((services) => services.apply(payload.command, expectedRevision, scope.correlationId)),
+    ),
+  );
+});
+
 /** A fixture's storefront order (a fresh client request id), placed through Merchandise's own preparation and write. */
 const placeOrder = Effect.fn('VatTransition.placeOrder')(function* placeOrder(
   input: {
@@ -362,6 +387,19 @@ it.layer(nativeServices, { excludeTestServices: true })('VAT classification depl
         expectJacketAtVariantPrice(priced);
         const again = yield* placeSameOrder(fixture.jacketOrder, 'vat-transition-order-jacket-priced');
         expect(again?.lines.map((line) => line.unitPriceMinor)).toEqual([JACKET_GROSS, INFORMATIONAL_GROSS]);
+
+        // 3. A person's save racing a sync: the page was read at `beforeSync`, then a staff read stored Tax's changed
+        //    answer (one revision up, stamped as a sync). The save is not refused for that sync alone.
+        const beforeSync = yield* revisionNow;
+        yield* Ref.set(taxSource, () => Effect.succeed({ ...BASELINE, fingerprint: 'tax:baseline-2024-again' }));
+        yield* Ref.set(clockShift, Duration.sum(Duration.times(TAX_RATE_FRESHNESS, 2), Duration.seconds(2)));
+        yield* read(staffView);
+        expect(yield* revisionNow).toBe(beforeSync + 1);
+        expect((yield* changePrice(orders, beforeSync)).revision).toBe(beforeSync + 2);
+        // A save based on a revision older than the sync's predecessor is still a real conflict.
+        expect(yield* changePrice(orders, beforeSync).pipe(Effect.flip)).toMatchObject({
+          code: 'merchandise_revision_conflict',
+        });
       }).pipe(Effect.provideServiceEffect(Clock.Clock, Clock.Clock.pipe(Effect.map((real) => laterClock(real))))),
     240_000,
   );

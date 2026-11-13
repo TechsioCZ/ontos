@@ -1130,8 +1130,12 @@ export const materialiseTaxRatesIfIdle = Effect.fn('MerchandiseStore.materialise
     now: DateTime.Utc,
     changed: boolean,
   ) {
-    const encoded = yield* query(encodeTaxRates(value), 'Company tax rates do not encode');
     const next = changed ? revision + 1 : revision;
+    // A sync that advances the revision stamps it, so a save based on the revision before it is not refused for it.
+    const encoded = yield* query(
+      encodeTaxRates(changed ? { ...value, revision: next } : value),
+      'Company tax rates do not encode',
+    );
     const idle = sql`exists (select 1 from ${catalogHeads} as idle
       where idle.tenant_id = ${scope.tenantId}::uuid and idle.legal_entity_id = ${scope.legalEntityId}::uuid
         and idle.revision = ${revision} for update skip locked)`;
