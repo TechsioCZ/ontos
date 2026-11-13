@@ -155,10 +155,20 @@ const fixture = (options: FixtureOptions = {}) => {
       return Effect.succeed(options.foreignCompany !== true);
     },
   };
-  const originalAuthority: DecisionAuthorityPort =
-    options.scopeAbsent === true || options.foreignCompany === true
-      ? { ...ownedAuthority, readScope: () => Effect.succeed(Option.none()) }
-      : ownedAuthority;
+  // As the loader answers: a scope read naming another tenant's company resolves nothing; the tenant itself resolves.
+  const foreignAuthority: DecisionAuthorityPort = {
+    ...ownedAuthority,
+    readScope: (query) =>
+      query.legalEntityId === undefined && query.checkedCompany === undefined
+        ? ownedAuthority.readScope(query)
+        : Effect.succeed(Option.none()),
+  };
+  const absentAuthority: DecisionAuthorityPort = { ...ownedAuthority, readScope: () => Effect.succeed(Option.none()) };
+  const authorities: readonly (readonly [boolean | undefined, DecisionAuthorityPort])[] = [
+    [options.scopeAbsent, absentAuthority],
+    [options.foreignCompany, foreignAuthority],
+  ];
+  const originalAuthority = authorities.find(([chosen]) => chosen === true)?.[1] ?? ownedAuthority;
   const service = makeSubjectAccessInspection({
     authorityFor: (scope) => {
       calls.push({ port: 'authority', scope });
@@ -250,7 +260,7 @@ it.effect(
         expect(single.decision.reasons.map(({ code }) => code)).toEqual(['deny.scope_mismatch']);
         expect(f.entries).toHaveLength(0);
       }
-      // In one batch, a tenant-context question naming the company reads ownership once and is refused with the rest.
+      // In one batch, a tenant-context question naming the company is refused by its scope read, with no read of its own.
       const f = fixture({ foreignCompany: true });
       const answers = yield* f.service.capabilities({
         ...base,
@@ -266,7 +276,7 @@ it.effect(
         ['deny.scope_mismatch'],
         ['deny.scope_mismatch'],
       ]);
-      expect(f.ownership).toEqual([{ legalEntityId: company, tenantId: tenant }]);
+      expect(f.ownership).toEqual([]);
     }),
 );
 

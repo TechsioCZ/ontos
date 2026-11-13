@@ -217,6 +217,11 @@ export type AccessIntentSource = (typeof AccessIntent)['Service'];
 export interface ActorContextInput {
   /** The authenticated principal, or the agent together with its connection and consent revision. */
   readonly actor: ActorContext;
+  /**
+   * A tenant-context request that names a company (O66, O88): checked by the actor's own scope read, which then
+   * resolves only when the company is one of the tenant's. Ignored when `legalEntityId` is set.
+   */
+  readonly checkedCompany?: LegalEntityId;
   /** The trusted legal-entity context from the request; omitted for tenant-context capabilities (O28). */
   readonly legalEntityId?: LegalEntityId;
   readonly tenantId: TenantId;
@@ -254,12 +259,15 @@ const agentIdentityOf = (actor: ActorContext) =>
   );
 
 const scopeQueryOf = (input: ActorContextInput): ScopeQuery => {
-  const { legalEntityId, tenantId } = input;
+  const { checkedCompany, legalEntityId, tenantId } = input;
   const principalHolder = holderOf('principal', input.actor);
   const agentHolder = Option.getOrUndefined(agentIdentityOf(input.actor));
   const holders: readonly Holder[] =
     agentHolder === undefined ? [principalHolder] : [principalHolder, holderOf('agent', input.actor)];
-  return legalEntityId === undefined ? { holders, tenantId } : { holders, legalEntityId, tenantId };
+  if (legalEntityId !== undefined) {
+    return { holders, legalEntityId, tenantId };
+  }
+  return checkedCompany === undefined ? { holders, tenantId } : { checkedCompany, holders, tenantId };
 };
 
 /**

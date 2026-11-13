@@ -10,7 +10,6 @@ import { resolveActorContext } from '../decision/authority.ts';
 import type {
   ActorContextInput,
   AuthorityCellQuery,
-  CompanyOwnershipQuery,
   DecisionAuthorityPort,
   ResolvedActor,
   ScopeQuery,
@@ -24,7 +23,6 @@ import type { AccessMode, ActorContext } from '../model.ts';
 import type { AccessPrincipalKinds } from './actor.ts';
 import { capabilityPolicyOf, gateScopeKeyOf, gateScopeOf } from './capability.ts';
 import type { GateScope } from './capability.ts';
-import { companyOwnershipRefusalOf } from './company-ownership.ts';
 import type { AccessDecisionPorts } from './contract.ts';
 import { shouldRecordDecision } from './decision-log.ts';
 import type { AccessDecisionLogBatchWriter } from './decision-log-batch.ts';
@@ -185,7 +183,9 @@ const sharedPerKey = <Query, Value, Failure>(
 };
 
 const scopeQueryKey = (query: ScopeQuery): string =>
-  [query.tenantId, query.legalEntityId ?? '', ...query.holders.map(holderIdOf)].join('\u0000');
+  [query.tenantId, query.legalEntityId ?? '', query.checkedCompany ?? '', ...query.holders.map(holderIdOf)].join(
+    '\u0000',
+  );
 
 /**
  * The intent port of ONE batch: the same port, but a question its questions share — the scope, the cells of one
@@ -203,11 +203,7 @@ const batchAuthorityOf = (authority: DecisionAuthorityPort, scope: Scope.Scope):
             authority.readCells,
             scope,
           ),
-          readCompanyOwnership: sharedPerKey(
-            (query: CompanyOwnershipQuery) => [query.tenantId, query.legalEntityId].join('\u0000'),
-            authority.readCompanyOwnership,
-            scope,
-          ),
+          readCompanyOwnership: authority.readCompanyOwnership,
           readConnection: authority.readConnection,
           readScope: sharedPerKey(scopeQueryKey, authority.readScope, scope),
           readTeamIds: authority.readTeamIds,
@@ -439,24 +435,19 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
     instant: Effect.Effect<Date>,
     context: InspectionContext,
   ) {
-    // The gate's one company-of-tenant rule: a question never names another tenant's company (O66, O88).
-    const ownership = yield* companyOwnershipRefusalOf(authority, {
-      legalEntityId: context.checkedCompany,
-      tenantId: input.requesterScope.tenantId,
-    });
-    if (ownership?.outcome === 'UNAVAILABLE') {
-      return yield* unavailable(ownership.reasons);
-    }
-    if (ownership !== undefined) {
-      return { authority, decision: ownership };
-    }
-    const { legalEntityId } = context;
+    const { checkedCompany, legalEntityId } = context;
     const selected = yield* actorFor(input, legalEntityId);
     if (selected.actor === undefined) {
       return { authority, decision: selected.decision ?? seamRefusal(PRINCIPAL_FORBIDDEN) };
     }
     const now = yield* instant;
-    const resolution = yield* resolveActorContext(authority, selected.actor, now);
+    // The gate's one company-of-tenant rule (O66, O88): a tenant-context question naming a company is checked by the
+    // actor's own scope read, which resolves nothing for another tenant's company. No read of its own.
+    const resolution = yield* resolveActorContext(
+      authority,
+      withOptional(selected.actor, 'checkedCompany', checkedCompany),
+      now,
+    );
     if (resolution.unavailable !== undefined) {
       return yield* unavailable();
     }
