@@ -242,7 +242,10 @@ it.live(
         ),
       );
       yield* Effect.sleep('400 millis');
-      const drain = yield* Effect.forkChild(hosts.supersede().pipe(Effect.provideService(Console.Console, console)));
+      // The drain outlasts the sampler by about a second: no sample starts after the listener closed, whatever the load.
+      const drain = yield* Effect.forkChild(
+        hosts.supersede(undefined, Duration.seconds(2)).pipe(Effect.provideService(Console.Console, console)),
+      );
       yield* Fiber.join(sampler);
       const answers = yield* Ref.get(samples);
       expect(answers.length).toBe(12);
@@ -255,9 +258,7 @@ it.live(
       yield* Fiber.join(drain);
       expect((yield* send(hosts.oldPort, ECHO)).error).toBe('ECONNREFUSED');
       const lines = (yield* console.logLines).map(String);
-      expect(lines[0]).toMatch(
-        /drain started: public port \d+ relays to 1 peer\(s\) 127\.0\.0\.1:\d+ for up to 0\.8s/u,
-      );
+      expect(lines[0]).toMatch(/drain started: public port \d+ relays to 1 peer\(s\) 127\.0\.0\.1:\d+ for up to 2s/u);
       expect(lines[1]).toMatch(
         /^\[app-host\] drain ended \(deadline\): forwarded=\d+ failed=0 looped=0 dropped=0; closing public port/u,
       );
