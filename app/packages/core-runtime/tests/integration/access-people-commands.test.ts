@@ -654,6 +654,35 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('people commands on 
     ),
   );
 
+  suite.effect('decodes a published release once per process and still resolves which release is current', () =>
+    withTenant((tenant) =>
+      Effect.gen(function* releaseKeptByIdentity() {
+        const first = Option.getOrThrow(yield* tenant.peopleStore.loadCatalogSnapshot(tenant.owner));
+        const again = Option.getOrThrow(yield* tenant.peopleStore.loadCatalogSnapshot(tenant.owner));
+        const pinned = Option.getOrThrow(
+          yield* tenant.peopleStore.loadCatalogSnapshot(tenant.owner, tenant.release.id),
+        );
+        // The same immutable release, by id and digest, is the one decoded value however it is named.
+        expect(again).toBe(first);
+        expect(pinned).toBe(first);
+        expect(first.id).toBe(tenant.release.id);
+        const next = yield* Effect.fromResult(
+          buildAccessCatalogRelease({
+            installedModuleKeys: [ModuleKeySchema.make(MODULE)],
+            modules: nextModules,
+            publishedAt: nextReleaseAt,
+          }),
+        );
+        yield* tenant.changes.publishCatalog({ snapshot: next });
+        // A newer release is current at once: the header is read every time, only its decoded content is kept.
+        const newest = Option.getOrThrow(yield* tenant.peopleStore.loadCatalogSnapshot(tenant.owner));
+        expect(newest.id).toBe(next.id);
+        expect(newest).not.toBe(first);
+        expect(keysOf(newest.entries)).toEqual([NOTE_ARCHIVE, NOTE_DELETE, NOTE_READ]);
+      }).pipe(Effect.orDie),
+    ),
+  );
+
   suite.effect('serializes a new assignment against an edit of its role, so every holder pins the head', () =>
     withTenant((tenant) =>
       Effect.gen(function* assignmentRacesRoleEdit() {

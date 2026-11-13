@@ -757,9 +757,35 @@ const applyWrite = (
   );
 
 /**
+ * Decoded published releases by identity: release id and digest. A published release never changes under that
+ * identity: its header and entries are append-only (the core triggers refuse every update, delete and truncate) and
+ * its digest, computed over its entries, is the release identity a publication is checked against. So this holds
+ * global catalogue content only, nothing of any tenant or person, and every read still resolves through the caller's
+ * scope which release it names. Releases are few; the oldest held one gives way past `KNOWN_RELEASE_LIMIT`.
+ */
+const knownReleases = Ref.makeUnsafe(new Map<string, CatalogSnapshot>());
+const KNOWN_RELEASE_LIMIT = 4;
+
+const releaseIdentity = (header: { readonly catalogSnapshotId: string; readonly digest: string }) =>
+  `${header.catalogSnapshotId}\u0000${header.digest}`;
+
+const rememberRelease = (snapshot: CatalogSnapshot) =>
+  Ref.update(knownReleases, (known) => {
+    const next = new Map([
+      ...known,
+      [releaseIdentity({ catalogSnapshotId: snapshot.id, digest: snapshot.digest }), snapshot] as const,
+    ]);
+    for (const identity of [...next.keys()].slice(0, Math.max(0, next.size - KNOWN_RELEASE_LIMIT))) {
+      next.delete(identity);
+    }
+    return next;
+  });
+
+/**
  * One release: the named one, or with no id the newest published one, which is the one a new envelope
  * names its capabilities from. Every release names the same capability keys again, so the entries are
- * read for the one release the header resolved to, never across releases.
+ * read for the one release the header resolved to, never across releases, and not at all when this
+ * process already decoded that release.
  */
 const readRelease = Effect.fn('AccessPeopleStore.readRelease')(function* readReleaseEffect(
   transaction: CoreTransaction,
@@ -778,11 +804,15 @@ const readRelease = Effect.fn('AccessPeopleStore.readRelease')(function* readRel
   if (header === undefined) {
     return Option.none();
   }
-  const entries = yield* transaction
-    .select({ entryJson: accessCatalogEntries.entryJson })
-    .from(accessCatalogEntries)
-    .where(eq(accessCatalogEntries.catalogSnapshotId, header.catalogSnapshotId));
-  return Option.some({ entries, snapshot: header });
+  const known = Option.fromUndefinedOr((yield* Ref.get(knownReleases)).get(releaseIdentity(header)));
+  // A release this process decoded already needs no entry rows.
+  const entries = Option.isSome(known)
+    ? []
+    : yield* transaction
+        .select({ entryJson: accessCatalogEntries.entryJson })
+        .from(accessCatalogEntries)
+        .where(eq(accessCatalogEntries.catalogSnapshotId, header.catalogSnapshotId));
+  return Option.some({ entries, known, snapshot: header });
 });
 
 /** The roles a change adds holders to: each is locked before its head is read (`lockRoles`). */
@@ -983,21 +1013,27 @@ const makeAccessPeopleDrizzleStore = (database: AccessIntentDatabase): AccessPeo
     if (Option.isNone(read)) {
       return Option.none<CatalogSnapshot>();
     }
-    const { entries, snapshot } = read.value;
-    return Option.some(
-      yield* decodeStored(
-        Schema.decodeResult(
-          CatalogSnapshotSchema,
-          ACCESS_MODEL_PARSE_OPTIONS,
-        )({
-          digest: snapshot.digest,
-          entries: entries.map((row) => row.entryJson),
-          id: snapshot.catalogSnapshotId,
-          publishedAt: asDate(snapshot.publishedAt),
-        }),
-        `catalog snapshot ${snapshot.catalogSnapshotId}`,
-      ),
+    const { entries, known, snapshot } = read.value;
+    if (Option.isSome(known)) {
+      return known;
+    }
+    const decoded = yield* decodeStored(
+      Schema.decodeResult(
+        CatalogSnapshotSchema,
+        ACCESS_MODEL_PARSE_OPTIONS,
+      )({
+        digest: snapshot.digest,
+        entries: entries.map((row) => row.entryJson),
+        id: snapshot.catalogSnapshotId,
+        publishedAt: asDate(snapshot.publishedAt),
+      }),
+      `catalog snapshot ${snapshot.catalogSnapshotId}`,
     );
+    // Remembered under the identity the stored header carried, which the decoded release repeats.
+    if (decoded.id === snapshot.catalogSnapshotId && decoded.digest === snapshot.digest) {
+      yield* rememberRelease(decoded);
+    }
+    return Option.some(decoded);
   });
 
   const applyPeopleChange: AccessPeopleStoreService['applyPeopleChange'] = Effect.fn(
