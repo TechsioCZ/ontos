@@ -19,5 +19,5 @@ interface CommercePortalAuthHttpPort {
  * is the narrow worker surface.
  */
 export class CommercePortalAuthService extends Context.Service<CommercePortalAuthService, CommercePortalAuthHttpPort>()(
-  '@app/commerce-customer-context/api/portal-auth/session/http/CommercePortalAuthService',
+  '@app/commerce-customer-context/api/portal-auth/session/auth-service/CommercePortalAuthService',
 ) {}
