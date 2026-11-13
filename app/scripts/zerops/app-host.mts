@@ -36,6 +36,8 @@ import {
   drainSupersededHost,
   makeSupersedeDrain,
   platformDrainPeers,
+  publicationAllowed,
+  renewWhileHolding,
 } from './supersede-drain.mts';
 import type { DrainPeer, SupersedeDrain } from './supersede-drain.mts';
 import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
@@ -1773,9 +1775,23 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   yield* Console.log(`[app-host] Shell runtime ${runtime}; owners and Outbox runtime node`);
   yield* Console.log(`[app-host] serving ${String(units.length)} units; migrating`);
 
+  // The revision this host published, once it did; a superseded host never writes the authority row again.
+  const ownRevision = yield* Ref.make(Option.none<string>());
+  const activeRevision = readAuthority.pipe(
+    Effect.map((rows) => Option.map(EffectArray.head(rows), ({ revision }) => revision)),
+  );
   const publishSnapshot = (snapshot: ActiveApplicationCompositionSnapshot) =>
     Effect.gen(function* publishObservedComposition() {
+      const allowed = yield* publicationAllowed({
+        activeRevision,
+        ownRevision: yield* Ref.get(ownRevision),
+        superseded: drain.superseded,
+      });
+      if (!allowed) {
+        return yield* failure('this host was superseded and never writes the authority again');
+      }
       yield* publishApplicationCompositionAuthoritySnapshot(snapshot, pointer.publish(snapshot), Effect.void);
+      yield* Ref.set(ownRevision, Option.some(snapshot.composition.revision));
       yield* Console.log(
         `[app-host] composition ${snapshot.composition.revision} (${String(snapshot.composition.modules.length)} owners) valid until ${DateTime.formatIso(snapshot.validUntil)}`,
       );
@@ -1922,13 +1938,16 @@ export const runAppHost = Effect.gen(function* runAppHost() {
         Effect.orElseSucceed(() => true),
       ),
     ).pipe(Effect.forkChild);
-    // The host renews its own lease well inside the validity window; no external refresh schedule exists.
-    const renew = publish.pipe(
-      Effect.tapError((problem) => Console.error(`[app-host] composition renewal failed: ${String(problem)}`)),
-      Effect.ignore,
-      Effect.delay(ACTIVE_APPLICATION_COMPOSITION_POLICY.refreshInterval),
-      Effect.forever,
-    );
+    // The host renews its own lease well inside the validity window while it holds the authority; no external refresh
+    // schedule exists. Superseded, it stops for good.
+    const renew = renewWhileHolding({
+      interval: ACTIVE_APPLICATION_COMPOSITION_POLICY.refreshInterval,
+      renew: publish.pipe(
+        Effect.tapError((problem) => Console.error(`[app-host] composition renewal failed: ${String(problem)}`)),
+        Effect.ignore,
+      ),
+      superseded: drain.superseded,
+    });
     return yield* Effect.raceFirst(outbox, renew);
   });
   return yield* Effect.raceFirst(Effect.raceAllFirst(exits), takesAuthority ? startup : observeOnly);

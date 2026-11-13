@@ -25,7 +25,7 @@ import { expect, it } from 'effect-rstest';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { NetAddress } from 'effect/net';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
-import { TestConsole } from 'effect/testing';
+import { TestClock, TestConsole } from 'effect/testing';
 
 import { hostApplication } from '../zerops/app-host.mts';
 import { workspaceRoot } from '../zerops/hosted-units.mts';
@@ -36,6 +36,8 @@ import {
   drainSupersededHost,
   makeSupersedeDrain,
   platformDrainPeers,
+  publicationAllowed,
+  renewWhileHolding,
 } from '../zerops/supersede-drain.mts';
 import type { DrainPeer, SupersedeDrain } from '../zerops/supersede-drain.mts';
 
@@ -609,4 +611,48 @@ it.live(
       expect(relayed.status).toBe(200);
       expect(relayed.hop).toEqual(Option.some(false));
     }),
+);
+
+it.effect('a superseded host never writes the authority again, however long it lives', () =>
+  Effect.gen(function* neverRenewsAgain() {
+    const console = yield* TestConsole.make;
+    const drain = makeSupersedeDrain();
+    const writes = yield* Ref.make(0);
+    const renewal = yield* Effect.forkChild(
+      renewWhileHolding({
+        interval: Duration.hours(6),
+        renew: Ref.update(writes, (count) => count + 1),
+        superseded: drain.superseded,
+      }).pipe(Effect.provideService(Console.Console, console)),
+    );
+    yield* TestClock.adjust('6 hours');
+    yield* TestClock.adjust('6 hours');
+    expect(yield* Ref.get(writes)).toBe(2);
+    yield* drain.begin([], Effect.succeed([]));
+    yield* TestClock.adjust('365 days');
+    expect(yield* Ref.get(writes)).toBe(2);
+    // It idles: the host neither exits (an exit would let the platform restart this old release) nor publishes.
+    expect(renewal.pollUnsafe()).toBeUndefined();
+    expect((yield* console.logLines).map(String)).toEqual([
+      '[app-host] superseded: this host never renews or publishes the authority again',
+    ]);
+  }),
+);
+
+it.effect('a host publishes first freely, then only while the authority still names its own revision', () =>
+  Effect.gen(function* publicationGuard() {
+    const drain = makeSupersedeDrain();
+    const allowed = (
+      ownRevision: Option.Option<string>,
+      activeRevision: Effect.Effect<Option.Option<string>, string>,
+    ) => publicationAllowed({ activeRevision, ownRevision, superseded: drain.superseded });
+    expect(yield* allowed(Option.none(), Effect.succeed(Option.some('other')))).toBe(true);
+    expect(yield* allowed(Option.some('own'), Effect.succeed(Option.some('own')))).toBe(true);
+    expect(yield* allowed(Option.some('own'), Effect.succeed(Option.some('newer')))).toBe(false);
+    expect(yield* allowed(Option.some('own'), Effect.succeed(Option.none()))).toBe(false);
+    expect(yield* allowed(Option.some('own'), Effect.fail('database unavailable'))).toBe(false);
+    yield* drain.begin([], Effect.succeed([]));
+    expect(yield* allowed(Option.some('own'), Effect.succeed(Option.some('own')))).toBe(false);
+    expect(yield* allowed(Option.none(), Effect.succeed(Option.none()))).toBe(false);
+  }),
 );

@@ -19,7 +19,7 @@
 import { promises as dns } from 'node:dns';
 import { networkInterfaces } from 'node:os';
 
-import { Clock, Console, Deferred, Duration, Effect, Ref } from 'effect';
+import { Clock, Console, Deferred, Duration, Effect, Option, Ref } from 'effect';
 
 /**
  * How long a superseded host relays: the readiness probe period (`zerops.yaml` app `retryPeriod: 10s`) plus the
@@ -225,4 +225,50 @@ export const drainSupersededHost = (input: {
       );
     yield* Effect.sleep(input.duration).pipe(Effect.onInterrupt(() => end('stop signal')));
     return yield* end('deadline');
+  });
+
+/**
+ * Whether this host may write the authority row now. Never once it was superseded; after its first publication only
+ * while the row still names its own revision (a failed read refuses: it cannot prove it still holds the authority).
+ * A superseded host that published again would take the authority back from the newer release.
+ */
+export const publicationAllowed = <E, R>(input: {
+  readonly activeRevision: Effect.Effect<Option.Option<string>, E, R>;
+  readonly ownRevision: Option.Option<string>;
+  readonly superseded: Deferred.Deferred<true>;
+}) =>
+  Effect.gen(function* allowPublication() {
+    if (yield* Deferred.isDone(input.superseded)) {
+      return false;
+    }
+    if (Option.isNone(input.ownRevision)) {
+      return true;
+    }
+    const own = input.ownRevision.value;
+    const active = yield* input.activeRevision.pipe(Effect.option, Effect.map(Option.flatten));
+    return Option.isSome(active) && active.value === own;
+  });
+
+/**
+ * Renews the authority every `interval` while this host holds it, and never again once it was superseded: the loop
+ * then idles for the rest of the host's life (the host neither exits nor publishes; an exit would let the platform
+ * restart this old release, whose boot would publish again).
+ */
+export const renewWhileHolding = <E, R>(input: {
+  readonly interval: Duration.Duration;
+  readonly renew: Effect.Effect<unknown, E, R>;
+  readonly superseded: Deferred.Deferred<true>;
+}): Effect.Effect<never, E, R> =>
+  Effect.gen(function* renewAuthority() {
+    for (;;) {
+      const superseded = yield* Effect.raceFirst(
+        Effect.sleep(input.interval).pipe(Effect.as(false)),
+        Deferred.await(input.superseded),
+      );
+      if (superseded) {
+        yield* Console.log('[app-host] superseded: this host never renews or publishes the authority again');
+        return yield* Effect.never;
+      }
+      yield* input.renew;
+    }
   });
