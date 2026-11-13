@@ -6,7 +6,6 @@ import { Hex } from 'effect/encoding';
 import {
   ActionRuntime,
   companyAgentDirectoryRead,
-  openPrincipalOperators,
   OperationalScopeResolver,
   ReadRuntime,
   replaceAgentOperatorsAction,
@@ -179,11 +178,9 @@ export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
         agentPrincipalId: string,
       ) {
         yield* reconcile();
-        // Archive removes company membership. Confirm graph cleanup without emitting a second command.
-        const operators = yield* Effect.scoped(
-          openPrincipalOperators.pipe(Effect.flatMap((port) => port.operatorsOf(agentPrincipalId))),
-        ).pipe(Effect.mapError(unavailable));
-        if (operators.length !== 0) {
+        // Archive takes the agent out of the company's directory. Confirm it there without emitting a second command.
+        const remaining = (yield* loadSnapshot).agents.find((agent) => agent.principalId === agentPrincipalId);
+        if (remaining !== undefined && remaining.status !== 'archived') {
           return yield* unavailable('Archived agent cleanup has not converged; reload and retry');
         }
         return yield* Effect.void;
