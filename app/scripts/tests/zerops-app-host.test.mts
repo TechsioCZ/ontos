@@ -100,6 +100,16 @@ describe('relayResponseHeaders', () => {
     ).toStrictEqual({ etag: '"a"' });
   });
 
+  it('never relays server-timing to a public caller, from a module owner or from the Shell', () => {
+    expect(
+      relayResponseHeaders(200, {
+        'content-type': 'application/json',
+        'server-timing': 'owner-total;dur=40, owner-gate;dur=12, owner-sql-count;dur=7',
+      }),
+    ).toStrictEqual({ 'content-type': 'application/json' });
+    expect(relayResponseHeaders(503, { 'server-timing': 'key-verify;dur=3' })).toStrictEqual({ connection: 'close' });
+  });
+
   it('keeps the caller connection reusable for every other answer and drops hop-by-hop headers', () => {
     expect(relayResponseHeaders(200, { connection: 'keep-alive', etag: '"a"' })).toStrictEqual({
       etag: '"a"',

@@ -103,6 +103,9 @@ const variantRow = (id: string, ownerProductId: string, currentRevision: number)
     variantId: id,
   });
 
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
+
 type Query = (statement: string, params: readonly unknown[]) => Effect.Effect<readonly object[], SqlError>;
 
 /** One scripted native connection and a genuine installed owner transaction; no admission is claimed. */
@@ -118,11 +121,9 @@ const withOwnerSql = <Value, Failure, Requirements>(
         if (/^(?:BEGIN|COMMIT|ROLLBACK)$/u.test(statement)) {
           return Effect.succeed([]);
         }
-        if (statement.includes("set_config('ontos.tenant_id'")) {
+        // A session-setting role installs its scope and reads back the connected role in one statement.
+        if (statement === installAndReadScopeSql) {
           expect(params).toEqual([tenantId, '']);
-          return Effect.succeed([]);
-        }
-        if (statement.includes('current_user::text as role')) {
           return Effect.succeed([{ legal_entity_id: '', role: 'ontos_runtime', tenant_id: tenantId }]);
         }
         return query(statement, params);

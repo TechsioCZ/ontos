@@ -173,6 +173,8 @@ const fixtureDelete = () => ({
 // The scripted connection uses the declared shared runtime identity, whose scope authority is
 // session settings. Unknown roles must not acquire that authority merely by returning the settings.
 const fixtureRuntimeRole = SHARED_RUNTIME_IDENTITY.role;
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 
 /** The real pool closes with the scope that owns it; mirror that so a test can prove both pools die. */
 const closeFixtureDatabaseWithScope = (role: string) =>
@@ -190,13 +192,21 @@ const makeFixtureTransactionExecutor = (role: string) => {
       const query = new PgDialect().sqlToQuery(statement);
       // Statements run when the Effect is run, not when the Core builds it, so a verify that is built
       // before the install reads the settings the install has written by then.
-      if (query.sql.includes('set_config(')) {
+      // A session-setting role installs its scope and reads back the connected role in one statement:
+      // `set_config` answers the value it set.
+      if (query.sql === installAndReadScopeSql) {
         const [tenantId, legalEntityId] = query.params;
         return Effect.sync(() => {
           transport.executeStatement(query.sql);
           sessionSettings.set('ontos.tenant_id', String(tenantId));
           sessionSettings.set('ontos.legal_entity_id', String(legalEntityId));
-          return [];
+          return [
+            {
+              legal_entity_id: sessionSettings.get('ontos.legal_entity_id') ?? '',
+              role,
+              tenant_id: sessionSettings.get('ontos.tenant_id') ?? '',
+            },
+          ];
         });
       }
       if (query.sql.includes('current_setting(')) {

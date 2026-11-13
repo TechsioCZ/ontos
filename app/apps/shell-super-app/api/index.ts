@@ -300,7 +300,8 @@ import {
 import { ExternalIdentityNotInstalledLive } from './auth/external-identity-runtime.ts';
 import type { ExternalIdentityDeploymentLayer } from './auth/external-identity-runtime.ts';
 import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
-import { GatewayTimings, gatewayTimingCollector, observeGatewayPhase } from './auth/gateway-timing.ts';
+import { GatewayTimings, observeGatewayPhase } from './auth/gateway-timing.ts';
+import { NoServerTimingLive } from './no-server-timing.ts';
 import { preserveSystemPrincipalContextTrust } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { peopleAdministrationCapability } from './auth/demo-accounts.ts';
 import { rebrandRentalDemoAccounts } from './auth/rental-demo-brand-runtime-infrastructure.ts';
@@ -1474,15 +1475,9 @@ const captureShellRelease = Effect.fn('Shell.captureRelease')(function* captureS
   return catalog;
 });
 
-const withGatewayTimings = Effect.fn('ShellGateway.withTimings')(function* withGatewayTimingsEffect<
-  Value,
-  Failure,
-  Requirements,
->(effect: Effect.Effect<Value, Failure, Requirements>) {
-  const collector = yield* gatewayTimingCollector;
-  yield* collector.appendResponseHeader;
-  return yield* effect.pipe(Effect.provideService(GatewayTimings, Option.some(collector.timings)));
-});
+/** Measures this gateway request's phases: each one is logged when it ends. */
+const withGatewayTimings = <Value, Failure, Requirements>(effect: Effect.Effect<Value, Failure, Requirements>) =>
+  effect.pipe(Effect.provideService(GatewayTimings, true));
 
 /**
  * One assertion per audience for an authenticated session principal, from the same issuer as `issueGatewayContext`
@@ -4232,6 +4227,8 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.provide(shellTransportServicesLive),
   );
   // The governed handler Layer provides the route middleware as an immutable Layer value, not a constructor call.
+  // NoServerTimingLive is global too: no response leaves the Shell with `server-timing`, whichever route or
+  // in-process Action added it.
   const shellSearchNoStoreLayer = makeShellSearchNoStoreLayer();
   const apiHandlersLive = Layer.mergeAll(
     ShellEmailReceiptHandlersLive,
@@ -4255,7 +4252,7 @@ export const makeShellAuthenticationApiRuntime = (
     oauthConnectionsAdminGroupLive,
     peopleAdministrationGroupLive,
     agentPlatformGroupLive,
-  ).pipe(Layer.provide(apiServicesLive), Layer.provide(shellSearchNoStoreLayer));
+  ).pipe(Layer.provide(apiServicesLive), Layer.provide(shellSearchNoStoreLayer), Layer.provide(NoServerTimingLive));
 
   return assembleEffectBffRuntime({
     api: ShellAuthenticationApi,

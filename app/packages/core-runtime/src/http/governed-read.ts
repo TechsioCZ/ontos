@@ -1,6 +1,8 @@
 /* oxlint-disable anti-slop/no-unknown-parameters -- The HTTP mapper is a schema-decoded generic boundary and revalidates every value before release; expires: 2027-03-31. */
 import { Cause, Effect, Match, Option, Redacted, Result, Schema } from 'effect';
 import { HttpEffect, HttpServerResponse } from 'effect/http';
+
+import { withOwnerServerTiming } from './owner-server-timing.ts';
 import type { HttpServerRequest } from 'effect/http';
 
 import type { OperationalScopeRequest } from '../operations/context.ts';
@@ -576,7 +578,8 @@ export function makeGovernedReadHttpHandler<
         );
     });
 
-    return yield* execute.pipe(
+    // The owner's phases go back to its caller in `server-timing`, whatever the read ends in.
+    return yield* withOwnerServerTiming(execute).pipe(
       Effect.catchCauseIf(Cause.hasDies, () =>
         Effect.annotateLogs(Effect.logError('Unexpected governed-read HTTP defect'), {
           correlationId: correlationId === undefined || correlationId.trim().length === 0 ? 'missing' : correlationId,
