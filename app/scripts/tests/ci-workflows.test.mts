@@ -335,6 +335,16 @@ it('builds every delivery unit of the topology in exactly one build shard of eac
 
 const readArtifactBuildJobs = () => Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(readGateWorkflow()).jobs;
 
+it('writes the app host entry of every served unit it builds, after its build, as the app host build does', () => {
+  const { steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
+  const build = steps.find(({ run }) => run?.includes(`"\${filters[@]}" run build\n`) === true)?.run ?? '';
+  // The native hosted-owner fixtures start an owner only from its dist/zerops-entry.mjs, from these same artifacts.
+  const entry = build.indexOf(`mise exec -- node scripts/zerops/owner-entry.mts "\${entries[@]}"`);
+  expect(entry).toBeGreaterThan(build.indexOf('run build\n'));
+  expect(build).toContain('require("./topology/application-release-intent.json")');
+  expect(build).toContain('console.log("apps/shell-super-app")');
+});
+
 it('proves each target on its own shards only after every other shard of the target uploaded its outputs', () => {
   const jobs = readArtifactBuildJobs();
   for (const [job, proofs, artifacts] of [[NODE_ARTIFACT_BUILD_JOB, ['node'], NODE_BUILD_ARTIFACT_PATTERN]] as const) {

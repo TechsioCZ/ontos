@@ -867,6 +867,22 @@ jobs:
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
           mise exec -- pnpm -r --no-sort --workspace-concurrency=1 "${filters[@]}" run build
+          # The app host serves the Shell and every released module from the unit's dist/zerops-entry.mjs, which
+          # scripts/zerops/build-app.sh writes after the build; the native hosted-owner fixtures start them so too.
+          served="$(mise exec -- node -e '
+            const intent = require("./topology/application-release-intent.json");
+            for (const { appId } of intent.modules) console.log(`verticals/${appId}`);
+            console.log("apps/shell-super-app");
+          ')"
+          entries=()
+          for unit in "${units[@]}"; do
+            if grep -qxF "$unit" <<<"$served"; then
+              entries+=("$unit")
+            fi
+          done
+          if [ "${#entries[@]}" -gt 0 ]; then
+            mise exec -- node scripts/zerops/owner-entry.mts "${entries[@]}"
+          fi
 
       # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
       - name: Pack the shard's build outputs
