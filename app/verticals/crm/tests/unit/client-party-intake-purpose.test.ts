@@ -41,6 +41,7 @@ const gateFor = (kind: 'human' | 'service', bound: boolean) =>
   makeAccessDecisionService({
     authorityFor: () => ({
       readCells: () => Effect.succeed([]),
+      readCompanyOwnership: () => Effect.succeed(true),
       readConfigureBases: () => Effect.succeed([]),
       readConnection: () => Effect.succeed(Option.none()),
       readScope: () =>

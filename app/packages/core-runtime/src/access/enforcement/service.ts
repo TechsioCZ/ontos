@@ -44,6 +44,7 @@ import type {
 } from './contract.ts';
 import { AccessDecisionGate } from './contract.ts';
 import { AccessWorkloadBindingSource } from './workload-port.ts';
+import { companyOwnershipRefusalOf } from './company-ownership.ts';
 import { seamAdmission, seamDenial, seamRefusal, seamUnavailable } from './decisions.ts';
 import type { AccessDecisionDelegation, AccessDecisionLogEntry } from './decision-log.ts';
 import { AccessDecisionLog, shouldRecordDecision, shouldRecordDelegatedDecision } from './decision-log.ts';
@@ -347,6 +348,11 @@ interface GroupGate {
   readonly companyDeclaration?: WorkloadCompanyDeclaration | undefined;
   /** The declaration could not be read; only a workload-marked entry is then UNAVAILABLE (O48, D6). */
   readonly companyDeclarationUnavailable?: boolean | undefined;
+  /**
+   * A workload's request names a company the tenant does not own (or ownership is unreadable): read once for the
+   * group, beside its keys, and answered by every workload-marked entry of it (O66, O88).
+   */
+  readonly companyOwnershipRefusal?: AccessDecision | undefined;
   readonly decision?: AccessDecision | undefined;
   readonly refusalScopeId?: AccessScopeId | undefined;
   readonly subjectDecision?: AccessDecision | undefined;
@@ -367,6 +373,8 @@ interface GatePrepared {
 interface DelegatedGroup {
   readonly actor?: GateActor | undefined;
   readonly calledBy: VerifiedGatewayActor;
+  /** A workload subject's request names a company the tenant does not own; read once for the group (O66, O88). */
+  readonly companyOwnershipRefusal?: AccessDecision | undefined;
   /** The subject's tenant scope, read once for the group when one of its refusals is evidenced there. */
   readonly refusalScopeId?: AccessScopeId | undefined;
   readonly subjectDecision?: AccessDecision | undefined;
@@ -389,6 +397,9 @@ const delegatedWorkloadDecision = (gate: GateInput, group: DelegatedGroup): Acce
   }
   if (group.workloadRegistryUnavailable === true) {
     return seamUnavailable(IDENTITY_UNAVAILABLE);
+  }
+  if (group.companyOwnershipRefusal !== undefined) {
+    return group.companyOwnershipRefusal;
   }
   return admitsSubjectWorkload(workloadCarrier.declared, group.workloadKeys ?? NO_WORKLOADS)
     ? seamAdmission(workloadCarrier.declared.subject === 'workload' ? ALLOW_WORKLOAD : ALLOW_ACTOR_IDENTITY)
@@ -482,6 +493,8 @@ const prepareEntry = (params: {
   readonly companyDeclaration: WorkloadCompanyDeclaration | undefined;
   /** The declaration could not be read; only a workload-marked entry is then UNAVAILABLE (O48, D6). */
   readonly companyDeclarationUnavailable: boolean;
+  /** The workload names a company the tenant does not own, read once for the batch (O66, O88). */
+  readonly companyOwnershipRefusal: AccessDecision | undefined;
   readonly gate: GateInput;
   readonly index: number;
   readonly preambles: ReadonlyMap<string, GatePreamble>;
@@ -506,6 +519,9 @@ const prepareEntry = (params: {
     }
     if (!admitsWorkload(accessWorkload, params.workloadKeys)) {
       return { decision: denialOf([{ code: WORKLOAD_UNBOUND }]) };
+    }
+    if (params.companyOwnershipRefusal !== undefined) {
+      return { decision: params.companyOwnershipRefusal };
     }
     if (params.companyDeclarationUnavailable) {
       return { decision: seamUnavailable(IDENTITY_UNAVAILABLE) };
@@ -726,6 +742,11 @@ const sharedPreambleReads = (ports: AccessDecisionPorts): AccessDecisionPorts =>
       }
       const shared = {
         ...port,
+        readCompanyOwnership: sharedPerKey(
+          (query: Parameters<typeof port.readCompanyOwnership>[0]) =>
+            [query.tenantId, query.legalEntityId].join('\u0000'),
+          (query) => port.readCompanyOwnership(query),
+        ),
         readScope: sharedPerKey(
           (query: Parameters<typeof port.readScope>[0]) =>
             [
@@ -791,6 +812,45 @@ export const makeAccessDecisionService = (
    * carrier's `subject` says whether the subject's rights are decided (`rights`) or the subject is
    * admitted on its identity alone (`identity`).
    */
+  /**
+   * A workload subject of a module call is decided exactly as a direct workload call is: by its registered binding,
+   * never by a membership or a v2 grant, and it leaves no v2 evidence row, because a workload is never a v2 subject
+   * (O29, O73). The company checks still hold — a company carrier never runs without one, and never in another
+   * tenant's company — and an `admin` declaration refuses a machine here exactly as the direct path does (O81).
+   */
+  const delegatedWorkloadSubjectOf = Effect.fn('AccessDecisionGate.delegatedWorkloadSubject')(
+    function* delegatedWorkloadSubjectEffect(
+      input: Pick<GateInput, 'carrier' | 'mode' | 'scope'>,
+      calledBy: VerifiedGatewayActor,
+      actor: GateActor,
+      gateScope: GateScope,
+    ) {
+      if (gateScope.refusal !== undefined) {
+        return { decision: denialOf([gateScope.refusal]) };
+      }
+      const carrier = delegatedWorkloadCarrierOf(input, calledBy);
+      if ('refusal' in carrier) {
+        return { decision: carrier.refusal };
+      }
+      const ownership = yield* companyOwnershipRefusalOf(ports.authorityFor(input.scope), input.scope);
+      if (ownership !== undefined) {
+        return { decision: ownership };
+      }
+      const bound = yield* Effect.option(
+        (ports.workloadBindings ?? FAIL_CLOSED_WORKLOADS).readActiveWorkloadKeys(workloadQueryOf(input.scope, actor)),
+      );
+      if (Option.isNone(bound)) {
+        return { decision: seamUnavailable(IDENTITY_UNAVAILABLE) };
+      }
+      return admitsSubjectWorkload(carrier.declared, bound.value)
+        ? {
+            decision: seamAdmission(carrier.declared.subject === 'workload' ? ALLOW_WORKLOAD : ALLOW_ACTOR_IDENTITY),
+            workloadAdmitted: true as const,
+          }
+        : { decision: seamRefusal(ACTOR_SUBJECT_INVALID) };
+    },
+  );
+
   const delegatedPreambleOf = Effect.fn('AccessDecisionGate.delegatedPreamble')(function* delegatedPreambleEffect(
     input: {
       readonly carrier: GateInput['carrier'];
@@ -818,29 +878,7 @@ export const makeAccessDecisionService = (
     }
     const gateScope = gateScopeOf(input.legalEntityScope, input.scope);
     if (isWorkloadPrincipalKind(actor.kind)) {
-      // A workload subject is decided exactly as a direct workload call is: by its registered binding, never by a
-      // membership or a v2 grant, and it leaves no v2 evidence row, because a workload is never a v2 subject (O29,
-      // O73). The company check still holds, so a company carrier never runs without one, and an `admin`
-      // declaration refuses a machine here exactly as the direct path does (O81).
-      if (gateScope.refusal !== undefined) {
-        return { decision: denialOf([gateScope.refusal]) };
-      }
-      const carrier = delegatedWorkloadCarrierOf(input, calledBy);
-      if ('refusal' in carrier) {
-        return { decision: carrier.refusal };
-      }
-      const bound = yield* Effect.option(
-        (ports.workloadBindings ?? FAIL_CLOSED_WORKLOADS).readActiveWorkloadKeys(workloadQueryOf(input.scope, actor)),
-      );
-      if (Option.isNone(bound)) {
-        return { decision: seamUnavailable(IDENTITY_UNAVAILABLE) };
-      }
-      return admitsSubjectWorkload(carrier.declared, bound.value)
-        ? {
-            decision: seamAdmission(carrier.declared.subject === 'workload' ? ALLOW_WORKLOAD : ALLOW_ACTOR_IDENTITY),
-            workloadAdmitted: true as const,
-          }
-        : { decision: seamRefusal(ACTOR_SUBJECT_INVALID) };
+      return yield* delegatedWorkloadSubjectOf(input, calledBy, actor, gateScope);
     }
     if (gateScope.refusal !== undefined) {
       // A refused company is evidenced in the tenant scope, the one scope a company-less request is decided in.
@@ -933,6 +971,11 @@ export const makeAccessDecisionService = (
       }
       if (!admitsWorkload(accessWorkload, bound.value)) {
         return { decision: denialOf([{ code: WORKLOAD_UNBOUND }]) };
+      }
+      // A workload never acts in another tenant's company, whatever its binding or company declaration say.
+      const ownership = yield* companyOwnershipRefusalOf(ports.authorityFor(input.scope), input.scope);
+      if (ownership !== undefined) {
+        return { decision: ownership };
       }
       // A declared company narrows the workload to it. The declaration is read here, on every decision,
       // from the caller's own transaction when it has one (O75): a revoked registration therefore ends
@@ -1235,12 +1278,13 @@ export const makeAccessDecisionService = (
       if (!namesWorkloads) {
         return { actor, calledBy, workloadKeys: NO_WORKLOADS, workloadRegistryUnavailable: false };
       }
+      const companyOwnershipRefusal = yield* companyOwnershipRefusalOf(ports.authorityFor(params.scope), params.scope);
       const bound = yield* Effect.option(
         (ports.workloadBindings ?? FAIL_CLOSED_WORKLOADS).readActiveWorkloadKeys(workloadQueryOf(params.scope, actor)),
       );
       return Option.isNone(bound)
-        ? { actor, calledBy, workloadKeys: NO_WORKLOADS, workloadRegistryUnavailable: true }
-        : { actor, calledBy, workloadKeys: bound.value, workloadRegistryUnavailable: false };
+        ? { actor, calledBy, companyOwnershipRefusal, workloadKeys: NO_WORKLOADS, workloadRegistryUnavailable: true }
+        : { actor, calledBy, companyOwnershipRefusal, workloadKeys: bound.value, workloadRegistryUnavailable: false };
     }
     // A carrier that declares only `accessActor` never admits a module-less call, so it reads no identity (D6).
     const declared = params.group.indexes.some((index) => {
@@ -1287,13 +1331,22 @@ export const makeAccessDecisionService = (
       // No key of this group admits any workload, so no entry reaches the company declaration (D6).
       return { actor, workloadKeys: NO_WORKLOADS, workloadRegistryUnavailable: false };
     }
+    // The group's company is checked to be the tenant's once, beside its keys (O66, O88).
+    const companyOwnershipRefusal = yield* companyOwnershipRefusalOf(ports.authorityFor(params.scope), params.scope);
     // The company declaration is read once for the whole group, beside its keys (D6).
     const companyDeclaration = yield* Effect.option(registry.readCompanyDeclaration(query));
     return Option.isNone(companyDeclaration)
-      ? { actor, companyDeclarationUnavailable: true, workloadKeys: bound.value, workloadRegistryUnavailable: false }
+      ? {
+          actor,
+          companyDeclarationUnavailable: true,
+          companyOwnershipRefusal,
+          workloadKeys: bound.value,
+          workloadRegistryUnavailable: false,
+        }
       : {
           actor,
           companyDeclaration: companyDeclaration.value,
+          companyOwnershipRefusal,
           workloadKeys: bound.value,
           workloadRegistryUnavailable: false,
         };
@@ -1361,6 +1414,7 @@ export const makeAccessDecisionService = (
           group: {
             actor: gate.actor,
             calledBy: gate.calledBy,
+            companyOwnershipRefusal: gate.companyOwnershipRefusal,
             refusalScopeId: gate.refusalScopeId,
             subjectDecision: gate.subjectDecision,
             subjectEvidence: gate.subjectEvidence,
@@ -1383,6 +1437,7 @@ export const makeAccessDecisionService = (
             actor: gate.actor,
             companyDeclaration: gate.companyDeclaration,
             companyDeclarationUnavailable: gate.companyDeclarationUnavailable ?? false,
+            companyOwnershipRefusal: gate.companyOwnershipRefusal,
             gate: one,
             index,
             preambles,

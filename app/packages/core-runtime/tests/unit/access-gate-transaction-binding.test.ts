@@ -233,6 +233,7 @@ it.layer(NodeCrypto.layer)(
           intent: {
             authorityFor: () => ({
               readCells: () => Effect.succeed([]),
+              readCompanyOwnership: () => Effect.succeed(false),
               readConfigureBases: () => Effect.succeed([]),
               readConnection: () => Effect.succeed(Option.none()),
               readScope: () => Effect.succeed(Option.none()),

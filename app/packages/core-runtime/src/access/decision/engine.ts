@@ -25,6 +25,7 @@ import type {
   ActorResolution,
   AuthorityCell,
   AuthorityCellQuery,
+  CompanyOwnershipQuery,
   ConnectionQuery,
   DecisionAuthorityPort,
   ResolvedActor,
@@ -1370,6 +1371,8 @@ const permittedReads = (authority: DecisionAuthorityPort, permits: Semaphore.Sem
     withOptional(
       {
         readCells: (query: AuthorityCellQuery) => permits.withPermit(authority.readCells(query)),
+        readCompanyOwnership: (query: CompanyOwnershipQuery) =>
+          permits.withPermit(authority.readCompanyOwnership(query)),
         readConnection: (query: ConnectionQuery) => permits.withPermit(authority.readConnection(query)),
         readScope: (query: ScopeQuery) => permits.withPermit(authority.readScope(query)),
         readTeamIds: (query: TeamMembershipQuery) => permits.withPermit(authority.readTeamIds(query)),
@@ -1481,6 +1484,7 @@ const preloadedAuthority = (
       ? Effect.succeed(read.cells)
       : Effect.fail(accessDecisionUnavailable('The access intent of this request could not be read'));
   },
+  readCompanyOwnership: authority.readCompanyOwnership,
   readConnection: authority.readConnection,
   readScope: authority.readScope,
   readTeamIds: authority.readTeamIds,

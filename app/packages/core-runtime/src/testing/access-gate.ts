@@ -70,6 +70,7 @@ const inertPortAnswer = () => Effect.fail(accessDecisionUnavailable('The scripte
 /** The one authority the inert source answers with; it reads nothing, so every answer is the same. */
 const inertAuthority = Object.freeze({
   readCells: inertPortAnswer,
+  readCompanyOwnership: inertPortAnswer,
   readConnection: inertPortAnswer,
   readScope: inertPortAnswer,
   readTeamIds: inertPortAnswer,

@@ -169,6 +169,8 @@ const membersOnly = (port: DecisionAuthorityPort, members: readonly string[] | u
 const harness = (
   options: {
     readonly authority?: AuthoritySpec;
+    /** Companies the asked tenant does not own: every gate path refuses a request naming one. */
+    readonly foreignCompanies?: readonly string[];
     readonly kinds?: AccessPrincipalKinds;
     readonly legalEntities?: AccessLegalEntityCandidates;
     readonly logFails?: boolean;
@@ -181,7 +183,16 @@ const harness = (
   };
   const authority = makeAuthority(authoritySpec);
   const check = makeCheck({ authority: authoritySpec });
-  const port: DecisionAuthorityPort = membersOnly(authority.port, options.members);
+  const members = membersOnly(authority.port, options.members);
+  const foreign = (company: string | undefined): boolean =>
+    company !== undefined && options.foreignCompanies?.includes(company) === true;
+  const port: DecisionAuthorityPort = {
+    ...members,
+    readCompanyOwnership: (query) => Effect.succeed(!foreign(query.legalEntityId)),
+    // As the loader answers: a scope read naming a company the tenant does not own resolves nothing.
+    readScope: (query) =>
+      foreign(query.legalEntityId ?? query.checkedCompany) ? Effect.succeed(Option.none()) : members.readScope(query),
+  };
   const { log, state } = logWriter(options.logFails === true);
   const gate = makeAccessDecisionService({
     authorityFor: () => port,
@@ -554,6 +565,42 @@ it.effect('admits a bound workload subject on a company carrier although it hold
     });
     expect(listed.decision.outcome).toBe('ALLOWED');
     expect(listed.predicate).toEqual({ groups: [] });
+  }),
+);
+
+it.effect('refuses a workload or person subject of a module call in a company its tenant does not own', () =>
+  Effect.gen(function* refusesForeignSubjectCompany() {
+    const caller = callerOf('commerce-customer-context');
+    const ours = uid(61);
+    const foreignCompany = uid(62);
+    const carrier: GateCarrier = {
+      accessActor: workloadActorDeclaration({ callers: ['commerce-customer-context'] }),
+      accessDeclaration: declarationOf(),
+    };
+    const ask = (principal: string, company: string, legalEntityScope: GateInput['legalEntityScope']): GateInput => ({
+      carrier,
+      legalEntityScope,
+      now,
+      scope: delegatedScopeOf(caller, principal, company),
+    });
+    const machine = harness({
+      authority: { cells: [] },
+      foreignCompanies: [foreignCompany],
+      kinds: kindSource('service'),
+      workloads: workloadRegistry([storefront]),
+    });
+    const single = yield* machine.gate.decide(ask(workloadPrincipal, foreignCompany, 'required'));
+    expect(codesOf(single)).toEqual(['deny.scope_mismatch']);
+    const batched = yield* machine.gate.decideMany([
+      ask(workloadPrincipal, ours, 'required'),
+      ask(workloadPrincipal, foreignCompany, 'required'),
+    ]);
+    expect(batched.map(({ outcome }) => outcome)).toEqual(['ALLOWED', 'DENIED']);
+    expect(codesOf(batched[1] ?? single)).toEqual(['deny.scope_mismatch']);
+    // A person subject asked in the tenant context that names a foreign company is refused the same way.
+    const human = harness({ foreignCompanies: [foreignCompany], members: [person] });
+    const tenantContext = yield* human.gate.decide(ask(person, foreignCompany, 'optional'));
+    expect(codesOf(tenantContext)).toEqual(['deny.scope_mismatch']);
   }),
 );
 

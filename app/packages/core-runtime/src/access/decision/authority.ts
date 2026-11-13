@@ -88,6 +88,12 @@ export interface ScopeQuery {
   readonly tenantId: TenantId;
 }
 
+/** A company a request names, and the tenant it must belong to (O66, O88). */
+export interface CompanyOwnershipQuery {
+  readonly legalEntityId: LegalEntityId;
+  readonly tenantId: TenantId;
+}
+
 /** The freshly read connection of an agent: consent revisions are never cached. */
 export interface ResolvedAgentConnection {
   /** The one agent this consent was granted to; a connection never authorizes another agent. */
@@ -157,6 +163,11 @@ export interface DecisionAuthorityPort {
   readonly readCellsMany?: (
     queries: readonly AuthorityCellQuery[],
   ) => Effect.Effect<readonly (readonly AuthorityCell[])[], AccessDecisionUnavailable>;
+  /**
+   * Whether the company a request names is one of the asked tenant's own: the one company-of-tenant read every gate
+   * path asks before deciding (O66, O88). It reads no membership.
+   */
+  readonly readCompanyOwnership: (query: CompanyOwnershipQuery) => Effect.Effect<boolean, AccessDecisionUnavailable>;
   /** Fresh Core configure authority for a structural admin decision (O81). An absent port is unavailable. */
   readonly readConfigureBases?: (query: {
     readonly actor: PrincipalId;

@@ -173,6 +173,8 @@ export const subjectInspectionFixture = (input: {
           ),
         readConfigureBases: ({ actor }) =>
           Effect.succeed(input.owners?.includes(actor) === true ? [{ _tag: 'Owner' as const }] : []),
+        // The fixture's one tenant owns every company its requester names.
+        readCompanyOwnership: (query) => Effect.succeed(query.tenantId === requesterScope.tenantId),
         readConnection: () => Effect.succeed(Option.none()),
         readScope: (query) => {
           const principal = query.holders.find((holder) => holder._tag === 'Principal');

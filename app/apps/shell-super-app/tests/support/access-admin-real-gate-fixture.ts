@@ -234,11 +234,24 @@ export interface RoleGrant {
   readonly persona: Persona;
 }
 
+/** One workload binding a scenario registers. */
+export interface WorkloadBinding {
+  /** The companies the binding is registered for; none leaves it unregistered (tenant-wide, no company). */
+  readonly legalEntityIds: readonly string[];
+  readonly persona: Persona;
+  readonly workloadKey: string;
+}
+
 /** The Shell BFF a test drives: one real handler, one fixture-owned session source, one real gate. */
 
 export interface AccessAdminCase {
   /** The case's own admin connection, for reading back what a write persisted. */
   readonly admin: PgClient.PgClient;
+  /**
+   * Registers one active workload binding of a persona (`core.access_workload_bindings`) and, for each named
+   * company, its company registration (`core.access_workload_company_bindings`), as the install path writes them.
+   */
+  readonly bindWorkload: (input: WorkloadBinding) => Effect.Effect<void>;
   /** The published catalog this case bootstrapped: exactly the declarations the gate can decide. */
   readonly catalog: readonly AccessCatalogModule[];
   readonly companies: readonly string[];
@@ -1414,6 +1427,23 @@ export const withAccessAdminCase = <Value, Failure>(
       );
 
       const questionContext: QuestionContext = { companyA, declarations, scopeFor };
+      const bindWorkload = (binding: WorkloadBinding) =>
+        Effect.gen(function* registerScenarioWorkload() {
+          const bindingId = yield* crypto.randomUUIDv4();
+          yield* admin.unsafe(
+            `insert into core.access_workload_bindings
+               (binding_id, tenant_id, incarnation, principal_id, workload_key, status)
+             values ('${bindingId}', '${tenantId}', gen_random_uuid(), '${holderOf(binding.persona)}',
+                     '${binding.workloadKey}', 'active')`,
+          );
+          for (const legalEntityId of binding.legalEntityIds) {
+            yield* admin.unsafe(
+              `insert into core.access_workload_company_bindings
+                 (company_binding_id, tenant_id, incarnation, legal_entity_id, workload_binding_id, status)
+               values (gen_random_uuid(), '${tenantId}', gen_random_uuid(), '${legalEntityId}', '${bindingId}', 'active')`,
+            );
+          }
+        }).pipe(Effect.orDie);
       const grantRole = (grant: RoleGrant) =>
         Effect.gen(function* grantScenarioRole() {
           const role: SeededRole = {
@@ -1446,6 +1476,7 @@ export const withAccessAdminCase = <Value, Failure>(
 
       return yield* run({
         admin,
+        bindWorkload,
         catalog,
         companies,
         databases,
