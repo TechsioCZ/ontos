@@ -84,7 +84,6 @@ const httpBridgeTimeoutPolicy = Effect.timeoutOrElse({
     ),
 });
 
-
 const PROBLEM_TYPE_PREFIX = 'https://ontos.dev/problems/commerce-portal-auth-session-';
 const problemStatus = {
   authentication: 401,

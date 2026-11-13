@@ -100,7 +100,10 @@ const portal =
       // The late verdict of a change that completes past the call budget does reach a composition read, so this
       // service answers with a real snapshot and the test needs no composition snapshot in the environment.
       Effect.provideService(ActiveApplicationCompositionService, {
-        load: makeApplicationCompositionSnapshotFixture(['commerce-customer-context'], ultramodernApiMarker.buildMarker),
+        load: makeApplicationCompositionSnapshotFixture(
+          ['commerce-customer-context'],
+          ultramodernApiMarker.buildMarker,
+        ),
       }),
       Effect.provideService(CommerceEnrollmentOwnerTransactionRunner, Schema.decodeUnknownSync(Schema.Any)({})),
       Effect.provide(NodeCrypto.layer),

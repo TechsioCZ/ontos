@@ -252,9 +252,7 @@ const pathsAgree = (
     ];
     expect(answers.map(({ outcome }) => outcome)).toEqual(Array.from({ length: 4 }, () => input.expected));
     expect(answers.flatMap(refusalCodesOf)).toEqual(
-      input.expected === 'DENIED'
-        ? Array.from({ length: 4 }, () => input.refusal ?? 'deny.workload_unbound')
-        : [],
+      input.expected === 'DENIED' ? Array.from({ length: 4 }, () => input.refusal ?? 'deny.workload_unbound') : [],
     );
     // The company list the Shell asks while issuing the module call, and the one the workload selects alone.
     const listed = [
