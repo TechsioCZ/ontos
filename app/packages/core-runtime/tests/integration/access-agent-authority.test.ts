@@ -10,7 +10,8 @@ import { TenantAccessBootstrap, TenantAccessBootstrapLive } from '../../src/acce
 import { compileFullAccessRole } from '../../src/access/bootstrap/full-access-role.ts';
 import { legalEntityScopeId, tenantContextScopeId } from '../../src/access/bootstrap/persistence.ts';
 import { AccessChangesStoreLive } from '../../src/access/changes/persistence/drizzle-store.ts';
-import { writeRoleCreation } from '../../src/access/changes/role-revision.ts';
+import { toSortedCells } from '../../src/access/changes/cells.ts';
+import { writeRoleCreation, writeRoleRevision } from '../../src/access/changes/role-revision.ts';
 import {
   makeAccessProjectionCompiler,
   makeAccessProjectionTransport,
@@ -264,6 +265,12 @@ interface Tenant {
     readonly roleId: RoleId;
     readonly roleRevisionId: RoleRevisionId;
   }>;
+  /** Records the role's next revision through the role editor's writer: from the cells `before` to `after`. */
+  readonly editRole: (
+    role: { readonly roleId: RoleId; readonly roleRevisionId: RoleRevisionId },
+    before: readonly Cell[],
+    after: readonly Cell[],
+  ) => Effect.Effect<Option.Option<{ readonly code: string; readonly reason: string }>>;
   readonly gate: (typeof AccessDecisionGate)['Service'];
   readonly newId: Effect.Effect<string>;
   readonly owner: OperationalScope;
@@ -271,6 +278,8 @@ interface Tenant {
   readonly release: CatalogSnapshot;
   readonly tenantId: TenantId;
 }
+
+const without = (kept: readonly Cell[], gone: readonly Cell[]) => kept.filter((cell) => !gone.includes(cell));
 
 const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value, Failure>) =>
   Effect.gen(function* tenantScenario() {
@@ -366,11 +375,33 @@ const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value
         });
         return { roleId: created.roleId, roleRevisionId: created.roleRevisionId };
       }).pipe(Effect.provideContext(context), Effect.orDie);
+    const editRole: Tenant['editRole'] = (role, before, cellsAfter) =>
+      Effect.gen(function* editRoleEffect() {
+        yield* writeRoleRevision({
+          catalogSnapshotId: release.id,
+          decidedAt: yield* DateTime.nowAsDate,
+          edit: {
+            addedCells: toSortedCells(without(cellsAfter, before)),
+            cells: toSortedCells(cellsAfter),
+            removedCells: toSortedCells(without(before, cellsAfter)),
+            roleId: role.roleId,
+            sourceRevisionId: role.roleRevisionId,
+            targetRevisionId: RoleRevisionIdSchema.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie)),
+          },
+          scope: ownerScope,
+        });
+        return Option.none();
+      }).pipe(
+        Effect.provideContext(context),
+        Effect.catchTag('AccessChangesStoreConflictError', ({ code, reason }) => Effect.succeedSome({ code, reason })),
+        Effect.orDie,
+      );
     return yield* run({
       admin,
       cellsOf,
       connections: Context.get(context, AgentConnectionStore),
       createRole,
+      editRole,
       gate: Context.get(context, AccessDecisionGate),
       newId: crypto.randomUUIDv4().pipe(Effect.orDie),
       owner: ownerScope,
@@ -621,6 +652,47 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('an agent on authori
         );
         expect(admin.code).toBe('people_authority_missing');
       }),
+    ),
+  );
+
+  suite.effect('keeps a role an agent holds free of sensitive runs, and never stops the tenant over one', () =>
+    withTenant((tenant) =>
+      Effect.gen(function* sensitiveRole() {
+        const { everything } = yield* connectedReader(tenant);
+        const reconnected = yield* connect(tenant, operator, [TASK_READ, TASK_CREATE, TASK_DELETE]);
+        // (a) The role editor refuses to make a role an agent holds run a sensitive capability, and names the agent.
+        const proposesOnly = (cell: Cell) => cell.capabilityKey !== TASK_DELETE || cell.mode === 'propose';
+        const worker = yield* tenant.createRole([TASK_READ, TASK_CREATE, TASK_DELETE], proposesOnly);
+        yield* assign(tenant, tenant.owner, worker, 'agent');
+        const all = tenant.cellsOf([TASK_READ, TASK_CREATE, TASK_DELETE]);
+        const before = all.filter(proposesOnly);
+        const refused = Option.getOrThrow(yield* tenant.editRole(worker, before, all));
+        expect(refused.code).toBe('access_changes_write_refused');
+        expect(refused.reason).toContain('Agent úkolů');
+        // A routine edit of the same role is recorded as usual.
+        expect(yield* tenant.editRole(worker, before, tenant.cellsOf([TASK_READ, TASK_CREATE]))).toStrictEqual(
+          Option.none(),
+        );
+        // (b) A sensitive role that reached the agent anyway (written past both rules) is withheld from the
+        // projection: the agent gets none of its cells, its other roles keep working, and the tenant's other
+        // writes still project.
+        yield* tenant.admin
+          .unsafe(
+            `insert into core.access_assignments
+               (incarnation_id, tenant_id, scope_id, agent_id, role_id, role_revision_id, status, valid_from, assigned_by)
+             values ('${yield* tenant.newId}', '${tenant.tenantId}', '${companyScopeId(tenant)}', '${agent}',
+                     '${everything.roleId}', '${everything.roleRevisionId}', 'active', now() - interval '1 hour',
+                     '${owner}')`,
+          )
+          .pipe(Effect.orDie);
+        const reader = yield* tenant.createRole([TASK_READ]);
+        yield* assign(tenant, tenant.owner, reader, bystander).pipe(Effect.orDie);
+        const bystanderScope = yield* sessionScope(tenant.tenantId, bystander, company);
+        expect((yield* decideAs(bystanderScope, readCarrier)).outcome).toBe('ALLOWED');
+        expect((yield* decideAs(reconnected.mcp, readCarrier)).outcome).toBe('ALLOWED');
+        expect((yield* decideAs(reconnected.mcp, createCarrier)).outcome).toBe('ALLOWED');
+        expect((yield* decideAs(reconnected.mcp, deleteCarrier)).outcome).toBe('DENIED');
+      }).pipe(Effect.provideService(AccessDecisionGate, tenant.gate)),
     ),
   );
 });

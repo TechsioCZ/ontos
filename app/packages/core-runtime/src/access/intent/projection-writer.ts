@@ -284,6 +284,18 @@ const planTenantIntent = Effect.fn('AccessProjectionWriter.planTenantIntent')(fu
   if (Result.isFailure(planned)) {
     return yield* projectionWriteViolation('access_projection_write_plan_refused', planned.failure.map(violationText));
   }
+  // An agent assignment whose role runs a capability an agent may only propose is left out of the graph: the agent
+  // lacks that role, the tenant projects. Said once per tenant, role and agent, so an operator can repair the role.
+  yield* Effect.forEach(
+    new Map(
+      planned.success.withheldAgentAssignments.map((held) => [`${held.tenantId} ${held.roleId} ${held.agentId}`, held]),
+    ).values(),
+    (held) =>
+      Effect.logWarning('Access projection withheld an agent role the agent may not run').pipe(
+        Effect.annotateLogs({ agentId: held.agentId, reason: held.reason, roleId: held.roleId }),
+      ),
+    { concurrency: 1, discard: true },
+  );
   return { digest: planDigest(planned.success), intent, plan: planned.success } satisfies PlannedIntent;
 });
 

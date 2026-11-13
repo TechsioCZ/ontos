@@ -44,7 +44,6 @@ import {
   accessScopeId,
   agentHolder,
   assignment,
-  catalogEntry,
   cell,
   ceiling,
   connection,
@@ -162,32 +161,33 @@ it('refuses a service, integration or system principal in any projected relation
   }
 });
 
-it('refuses an agent run cell of a sensitive capability and allows the propose cell (O48a)', () => {
-  expect(
-    failureCodes({
-      assignments: [assignment({ holder: agentHolder(AGENT) })],
-      roleRevisions: [revision({ cells: [cell({ capabilityKey: CAP_MARGINS, mode: 'run' })] })],
-    }),
-  ).toContain('access_projection_agent_sensitive_run');
-  expect(
-    failureCodes({
-      assignments: [assignment({ holder: agentHolder(AGENT) })],
-      roleRevisions: [
-        revision({
-          cells: [cell({ capabilityKey: CAP_MARGINS, mode: 'propose' }), cell({ capabilityKey: CAP_PAY, mode: 'run' })],
-        }),
-      ],
-    }),
-  ).toEqual([]);
-});
-
-it('refuses an agent run cell whose risk intent does not declare', () => {
-  expect(
-    failureCodes(
-      { assignments: [assignment({ holder: agentHolder(AGENT) })] },
-      { catalogEntries: [catalogEntry({ key: CAP_NOTE })] },
-    ),
-  ).toContain('access_projection_agent_sensitive_run');
+it('withholds an agent role that runs a sensitive capability, never the tenant, and keeps the propose cell (O48a)', () => {
+  const sensitive = {
+    assignments: [assignment({ holder: agentHolder(AGENT) })],
+    roleRevisions: [revision({ cells: [cell({ capabilityKey: CAP_MARGINS, mode: 'run' })] })],
+  };
+  // The tenant still projects: nothing is refused.
+  expect(failureCodes(sensitive)).toEqual([]);
+  const planned = compile(sensitive);
+  // The agent's assignment is not in the graph, so the agent lacks that role, and the plan says so once.
+  expect(planned.withheldAgentAssignments).toEqual([
+    expect.objectContaining({ agentId: AGENT, roleId: ROLE, tenantId: TENANT }),
+  ]);
+  const unit = planned.units.find((candidate) => candidate.kind === 'scope');
+  expect(unit?.relationships.some((relationship) => relationship.relation === 'agent_holder')).toBe(false);
+  expect(unit?.relationships.some((relationship) => relationship.relation === 'agent_member')).toBe(false);
+  // A role whose sensitive capability the agent only proposes is projected for it as usual.
+  const proposing = compile({
+    assignments: [assignment({ holder: agentHolder(AGENT) })],
+    roleRevisions: [
+      revision({
+        cells: [cell({ capabilityKey: CAP_MARGINS, mode: 'propose' }), cell({ capabilityKey: CAP_PAY, mode: 'run' })],
+      }),
+    ],
+  });
+  expect(proposing.withheldAgentAssignments).toEqual([]);
+  const projected = proposing.units.find((candidate) => candidate.kind === 'scope');
+  expect(projected?.relationships.some((relationship) => relationship.relation === 'agent_member')).toBe(true);
 });
 
 it('shares one binding and one grant cell across every holder of a role (M1)', () => {
