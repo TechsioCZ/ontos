@@ -11,15 +11,19 @@ import { simpleCardEntry } from "./card-purchase-model";
 /** Same native cart draft and toast contract as ProductPurchase; no eager owner reads. */
 export const CardPurchase = ({
   dictionary: d,
+  presentation = "featured",
   product,
 }: {
   dictionary: Dictionary;
+  presentation?: "featured" | "listing";
   product: ProductCardModel;
 }) => {
   const cart = useCart();
   const toaster = useToast();
   const active = useRef(false);
   const entry = simpleCardEntry(product, cart);
+  const listing = presentation === "listing";
+  const label = listing ? d.addToCartListing : d.addToCart;
   const addToCart = () => {
     if (active.current || entry === null || cart === null) {
       return;
@@ -36,17 +40,18 @@ export const CardPurchase = ({
   };
   return (
     <Button
-      aria-label={entry === null ? `${d.addToCart}: ${d.commerceUnavailable}` : d.addToCart}
-      density="compact"
+      {...(listing ? {} : { icon: "token-icon-cart" })}
+      aria-label={entry === null ? `${label}: ${d.commerceUnavailable}` : label}
+      block={listing}
+      density={listing ? undefined : "compact"}
       disabled={entry === null}
-      icon="token-icon-cart"
       iconPosition="left"
       onClick={addToCart}
-      size="sm"
+      size={listing ? "md" : "sm"}
       theme="solid"
-      variant="secondary"
+      variant={listing ? "primary" : "secondary"}
     >
-      {d.addToCart}
+      {label}
     </Button>
   );
 };

@@ -10,8 +10,9 @@ import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import type { Dictionary } from "@/i18n";
 import type { CatalogModel } from "@/ontos/catalog-model";
 import { priceProps } from "./price-props";
+import { CardPurchase } from "./card-purchase";
 
-/** Figma mobile category cards differ from homepage cards: image, name, price, availability, detail. */
+/** Mobile category cards keep the authored image, name, price, availability and action order. */
 export const ListingCards = ({
   catalog,
   dictionary: d,
@@ -24,6 +25,9 @@ export const ListingCards = ({
   <div className="grid gap-6">
     {catalog.products.map((product, index) => {
       const href = `/${locale}/produkt/${encodeURIComponent(product.slug)}`;
+      const available = product.stock === "available" || product.stock === "limited";
+      const chooseVariant = available && (product.variantCount ?? 0) > 0;
+      const directPurchase = available && product.variantCount === 0 && product.priceMinor !== null;
       return (
         <ProductCard key={product.id} layout="column" shadow={false}>
           <Link aria-hidden="true" as={NextLink} href={href} tabIndex={-1}>
@@ -59,9 +63,20 @@ export const ListingCards = ({
             <AvailabilityStatus label={d.stock[product.stock]} status={product.stock} />
           </div>
           <div>
-            <LinkButton as={NextLink} href={href} size="md" theme="outlined" variant="secondary">
-              {d.detail}
-            </LinkButton>
+            {directPurchase ? (
+              <CardPurchase dictionary={d} presentation="listing" product={product} />
+            ) : (
+              <LinkButton
+                as={NextLink}
+                block
+                href={href}
+                size="md"
+                theme="outlined"
+                variant="secondary"
+              >
+                {chooseVariant ? d.selectVariantListing : d.detail}
+              </LinkButton>
+            )}
           </div>
         </ProductCard>
       );

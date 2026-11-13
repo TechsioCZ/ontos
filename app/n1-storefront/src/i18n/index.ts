@@ -67,6 +67,7 @@ const cs = {
   address: "Generála Šišky 1990/8, 143 00 Praha 4 – Modřany",
   addToCart: "DO KOŠÍKU",
   addToCartDetail: "Přidat do košíku",
+  addToCartListing: "Do košíku",
   addToFavorites: "Vložit do oblíbených",
   allResults: "Zobrazit všechny výsledky",
   auth: {
@@ -370,6 +371,7 @@ const cs = {
   selectedVariant: "Zvolená varianta",
   selectVariant: "Zvolte variantu",
   selectVariantAction: "Vyberte variantu",
+  selectVariantListing: "Vybrat variantu",
   sendToFriend: "Poslat kamarádovi",
   shipping: "Způsoby dopravy",
   shippingOptions: "Možnosti dopravy",
@@ -508,6 +510,7 @@ const en: typeof cs = {
   address: "Generála Šišky 1990/8, 143 00 Praha 4 – Modřany",
   addToCart: "ADD TO CART",
   addToCartDetail: "Add to cart",
+  addToCartListing: "Add to cart",
   addToFavorites: "Add to favourites",
   allResults: "View all results",
   auth: {
@@ -814,6 +817,7 @@ const en: typeof cs = {
   selectedVariant: "Selected variant",
   selectVariant: "Select a variant",
   selectVariantAction: "Choose a variant",
+  selectVariantListing: "Choose a variant",
   sendToFriend: "Send to a friend",
   shipping: "Shipping methods",
   shippingOptions: "Shipping options",
