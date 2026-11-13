@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { DateTime, Effect, Exit, Redacted, Schema } from 'effect';
@@ -24,6 +24,8 @@ import {
   AccessCatalogArtifactDescriptorSchema,
   AccessCatalogArtifactSchema,
   declaredDelegatedCallers,
+  REGISTERED_WORKLOAD_CALLS_PATH,
+  registeredWorkloadCallers,
   renderModuleCredentialCallers,
 } from '../authorization-catalog-artifact.mts';
 import { installedCallersOf } from '../zerops/provision-module-credentials.mts';
@@ -69,13 +71,28 @@ describe('MODULE_CREDENTIAL_CALLERS', () => {
   });
 });
 
+/** A module's own file, or nothing when it has none. */
+const optionalSource = (file: string) => (existsSync(file) ? readFileSync(file, 'utf-8') : '');
+
+/** Each topology module's manifest and registered-workload calls file (exception 8), as the generator reads them. */
+const registeredCallSources = () => {
+  const topology = Schema.decodeUnknownSync(Schema.fromJsonString(TopologySchema))(
+    readFileSync(path.join(workspace, TOPOLOGY_FILE), 'utf-8'),
+  );
+  return topology.verticals.map(({ id, path: directory }) => ({
+    appId: id,
+    calls: optionalSource(path.join(workspace, directory, REGISTERED_WORKLOAD_CALLS_PATH)),
+    manifest: optionalSource(path.join(workspace, directory, 'vertical.manifest.ts')),
+  }));
+};
+
 describe('declared delegated callers', () => {
   const committed = Schema.decodeUnknownSync(Schema.fromJsonString(AccessCatalogArtifactSchema))(
     readFileSync(path.join(workspace, 'topology/authorization-catalog.json'), 'utf-8'),
   );
 
   it('keys every module a carrier admits as its caller: provisioning of a release that installs it issues its key', () => {
-    const declared = declaredDelegatedCallers(committed.modules);
+    const declared = declaredDelegatedCallers(committed.modules, registeredWorkloadCallers(registeredCallSources()));
     expect(declared.length).toBeGreaterThan(0);
     // A release that installs every topology module: each declared caller must be among the modules that get a key.
     const topology = Schema.decodeUnknownSync(Schema.fromJsonString(TopologySchema))(
@@ -111,6 +128,21 @@ describe('declared delegated callers', () => {
     expect(renderModuleCredentialCallers(withNewCaller)).toContain(`'${NEW_CALLER}',`);
   });
 
+  it('keys every module whose manifest declares registered-workload calls, also one that calls only itself', () => {
+    // Payment's workers call Payment's own public Action through the Shell with Payment's credential.
+    expect(registeredWorkloadCallers(registeredCallSources())).toEqual(
+      expect.arrayContaining(['assortment', 'payment', 'privacy', 'symmy-integration']),
+    );
+    const calls = "export const calls = [{ audience: 'payment' }];";
+    expect(
+      registeredWorkloadCallers([
+        { appId: 'payment', calls, manifest: 'registeredWorkloadCalls: paymentRegisteredWorkloadCalls,' },
+        { appId: 'tax', calls, manifest: 'requirements: {}' },
+        { appId: 'crm', calls: '', manifest: 'registeredWorkloadCalls: [],' },
+      ]),
+    ).toEqual(['payment']);
+  });
+
   it('keys no module that only receives calls', () => {
     expect(installedCallersOf([{ deployment: { appId: 'tax' } }, { deployment: { appId: 'crm' } }])).toEqual(['crm']);
   });
@@ -123,14 +155,20 @@ describe('declared delegated callers', () => {
  * conflict resolves to the derived list and this pin takes that commit's hand list.
  */
 const LAST_HAND_KEPT_CALLERS = [
+  'assortment',
   'catalog',
   'commerce-cart',
   'commerce-customer-context',
   'commerce-market-catalog',
   'commerce-order',
   'crm',
+  'finance-billing',
+  'merchandise',
   'party-registry',
+  'payment',
   'pricing',
+  'privacy',
+  'symmy-integration',
 ] as const;
 
 describe('the derived callers keep every caller the hand-kept list had', () => {
