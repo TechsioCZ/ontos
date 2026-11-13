@@ -26,9 +26,6 @@ import { AuthDatabase } from '../../api/auth/db/client.ts';
 import { AuthConfig } from '../../api/auth/config.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from '../../api/auth/authentication-namespace-registry.ts';
 import { derivedUuid } from '../../api/auth/demo-accounts.ts' with { rstest: 'importActual' };
-import { agentModuleOptions, agentRolePreset } from '../../api/auth/agent-entities-model.ts' with {
-  rstest: 'importActual',
-};
 import type { DemoAccountCaller } from '../../api/auth/demo-accounts.ts';
 import { makeInstalledModuleCatalogLayer } from '../../api/modules/installed-module-catalog.ts';
 import type { ConnectionsAdminDeps } from '../../api/oauth-connections-admin/ports.ts';
@@ -36,11 +33,7 @@ import { makeCompositionSnapshot } from '../fixtures/application-composition.ts'
 import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { nativeDemoAccountTestServices } from '../support/native-demo-account-services.ts';
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
-
-const templateReads = rs.hoisted(() => {
-  const entries: { readonly caller: DemoAccountCaller; readonly transport: { readonly correlationId: string } }[] = [];
-  return entries;
-});
+import { AccessPeopleBff, unusedAccessPeopleBff } from '../support/access-people-bff-double.ts';
 
 // Keep the real consumer, Action descriptors and principal derivation; replace external authority and lock IO.
 rs.mock('../../../../packages/core-runtime/src/install/demo-account-administration.ts', () => ({
@@ -58,24 +51,16 @@ rs.mock('../../../../packages/core-runtime/src/db/session-advisory-lock.ts', () 
 rs.mock('../../api/auth/demo-accounts.ts', () => ({
   auditForbiddenAttempt: () => Effect.void,
   auditTrail: () => Effect.succeed([]),
-  companyRoleTemplates: (selected: DemoAccountCaller, readTransport: { readonly correlationId: string }) =>
-    Effect.sync(() => {
-      templateReads.push({ caller: selected, transport: readTransport });
-      return [];
-    }),
   get derivedUuid() {
     return derivedUuid;
   },
-  requireAdministrator: () => Effect.void,
+}));
+rs.mock('../../api/auth/administration-access.ts', () => ({
+  agentAdministrationDecision: () => Effect.succeed({ outcome: 'ALLOWED', reasons: [] }),
 }));
 rs.mock('../../api/auth/agent-entities-model.ts', () => ({
   agentDraftProblem: () => null,
-  get agentModuleOptions() {
-    return agentModuleOptions;
-  },
-  get agentRolePreset() {
-    return agentRolePreset;
-  },
+  usableModulesOf: () => [],
 }));
 
 const principal: DemoAccountCaller['principal'] = {
@@ -91,7 +76,6 @@ const caller: DemoAccountCaller = { legalName: 'Company', principal };
 const create = Schema.decodeUnknownSync(ManageAgentEntityRequestSchema)({
   description: null,
   displayName: 'Agent',
-  modules: [{ access: 'write', moduleId: 'fixture.notes' }],
   operation: 'create',
   operatorPrincipalIds: [principal.principalId],
   ownerPrincipalId: principal.principalId,
@@ -208,10 +192,11 @@ const fixture = (selected: DemoAccountCaller, principalId: string) =>
       transport,
       makeContextAccessDouble('allowed'),
     );
-    const run = manageAgentEntity(selected, create, deps).pipe(
+    const run = manageAgentEntity(selected, create, new Headers(), deps).pipe(
       Effect.provide(nativeServices),
       Effect.provide(StaffAuthenticationNamespaceRegistryLive),
       Effect.provideService(ActionRuntime, runtime),
+      Effect.provideService(AccessPeopleBff, unusedAccessPeopleBff),
       Effect.provideService(ContextAccess, makeContextAccessDouble('allowed')),
       Effect.provideService(AuthDatabase, {
         get adapter(): AuthDatabase['Service']['adapter'] {
@@ -254,8 +239,6 @@ it.effect(
       expect(result.principalId).toBe(expectedId);
       expect(test.actions.principals[0]).toBe(principal);
       expect(test.transports[0]).toBe(transport);
-      expect(templateReads.at(-1)?.caller).toBe(caller);
-      expect(templateReads.at(-1)?.transport).toBe(transport);
       expect(test.events).toEqual(['snapshot', 'action', 'projection', 'snapshot', 'operators']);
       expect(test.actions.snapshot().committed.map(({ actionKey }) => actionKey)).toEqual([
         'core.identity.configure-agent',

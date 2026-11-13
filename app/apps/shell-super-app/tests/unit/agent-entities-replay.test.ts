@@ -57,7 +57,6 @@ import { proposalSubcommandKey } from '../../api/agent-platform/proposal-store.t
 import { manageAgentEntity } from '../../api/auth/agent-entities.ts';
 import { AuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase } from '../../api/auth/db/client.ts';
-import { DemoAccountForbidden } from '../../api/auth/demo-accounts.ts' with { rstest: 'importActual' };
 import type { DemoAccountCaller } from '../../api/auth/demo-accounts.ts';
 import { DemoAccountUnavailable } from '../../api/auth/demo-account-unavailable.ts';
 import { makeInstalledModuleCatalogLayer } from '../../api/modules/installed-module-catalog.ts';
@@ -70,13 +69,13 @@ import { makeCompositionSnapshot } from '../fixtures/application-composition.ts'
 import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { nativeDemoAccountTestServices } from '../support/native-demo-account-services.ts';
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
+import { AccessPeopleBff, unusedAccessPeopleBff } from '../support/access-people-bff-double.ts';
 
 interface CleanupState {
   administrator: boolean;
   connections: string[];
   events: string[];
   failStep: string | null;
-  grants: number;
   proposals: number;
 }
 const external = rs.hoisted(() => {
@@ -85,7 +84,6 @@ const external = rs.hoisted(() => {
     connections: ['connection-1', 'connection-2'],
     events: [],
     failStep: null,
-    grants: 2,
     proposals: 1,
   };
   return state;
@@ -100,21 +98,6 @@ const step = (name: string) =>
     }
     return Effect.void;
   });
-rs.mock('../../../../packages/core-runtime/src/install/demo-account-administration.ts', () => ({
-  get openDemoAccountGrants() {
-    return Effect.succeed({
-      replaceAgentGrants: () =>
-        step('grants').pipe(
-          Effect.map(() => {
-            const revoked = external.grants;
-            external.grants = 0;
-            return { granted: 0, revoked };
-          }),
-        ),
-      rolePolicyOf: () => Effect.succeed([]),
-    });
-  },
-}));
 rs.mock('../../../../packages/core-runtime/src/db/session-advisory-lock.ts', () => ({
   withPostgresSessionAdvisoryLock: <A, E, R>(
     _connection: Parameters<typeof withPostgresSessionAdvisoryLock>[0],
@@ -125,10 +108,12 @@ rs.mock('../../../../packages/core-runtime/src/db/session-advisory-lock.ts', () 
 rs.mock('../../api/auth/demo-accounts.ts', () => ({
   auditForbiddenAttempt: () =>
     step('denied-audit').pipe(Effect.mapError((cause) => new DemoAccountUnavailable({ cause }))),
-  requireAdministrator: () =>
-    Effect.suspend(() => {
+}));
+rs.mock('../../api/auth/administration-access.ts', () => ({
+  agentAdministrationDecision: () =>
+    Effect.sync(() => {
       external.events.push('administrator');
-      return external.administrator ? Effect.void : Effect.fail(new DemoAccountForbidden({ reason: 'Denied' }));
+      return { outcome: external.administrator ? 'ALLOWED' : 'DENIED', reasons: [] };
     }),
 }));
 beforeEach(() => {
@@ -136,7 +121,6 @@ beforeEach(() => {
   external.connections = ['connection-1', 'connection-2'];
   external.events = [];
   external.failStep = null;
-  external.grants = 2;
   external.proposals = 1;
 });
 
@@ -469,7 +453,8 @@ const fixture = (options: ReplayOptions = {}) =>
     };
     const nativeServices = yield* nativeDemoAccountTestServices(caller, transport, makeContextAccessDouble('allowed'));
     const run = (request: ManageAgentEntityRequest) =>
-      manageAgentEntity(caller, request, deps).pipe(
+      manageAgentEntity(caller, request, new Headers(), deps).pipe(
+        Effect.provideService(AccessPeopleBff, unusedAccessPeopleBff),
         Effect.provideService(ReadRuntime, readRuntime),
         Effect.provideService(AgentProposalCommandPreparation, preparation),
         Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(composition) }),
@@ -572,7 +557,7 @@ it.effect('resumes a committed status change after projection interruption despi
 it.effect('resumes archive cleanup after the target disappears without reading hidden archived profiles', () =>
   Effect.gen(function* committedArchiveRetry() {
     const test = yield* fixture();
-    external.failStep = 'grants';
+    external.failStep = 'confirm-archived';
     expect(yield* test.run(archive).pipe(Effect.flip)).toBeInstanceOf(ConnectionsUnavailable);
     expect(test.state.status).toBe('archived');
     expect(external.events).toEqual([
@@ -587,26 +572,24 @@ it.effect('resumes archive cleanup after the target disappears without reading h
       'connection-2',
       'proposals',
       'withdraw-action',
-      'grants',
+      'confirm-archived',
     ]);
     external.events = [];
     const result = yield* test.run(archive);
     expect(result.status).toBe('archived');
     expect(result.revokedConnections).toBe(0);
-    expect(result.grantsRevoked).toBe(2);
+    expect(result.grantsRevoked).toBe(0);
     expect(external.events).toEqual([
       'administrator',
       'action',
       'projection',
       'connections',
       'proposals',
-      'grants',
       'confirm-archived',
     ]);
     expect(test.actions[0]?.payload).toEqual(test.actions[1]?.payload);
     expect(test.harness.snapshot().committed).toHaveLength(2);
     expect(test.proposalActions).toHaveLength(1);
-    expect(external.grants).toBe(0);
   }),
 );
 
@@ -653,7 +636,6 @@ it.effect('fails closed when denied-attempt auditing fails and performs no Actio
     expect(test.harness.snapshot().committed).toHaveLength(0);
     expect(external.connections).toEqual(['connection-1', 'connection-2']);
     expect(external.proposals).toBe(1);
-    expect(external.grants).toBe(2);
     expect(test.state.status).toBe('active');
   }),
 );
@@ -690,14 +672,13 @@ it.effect('keeps native optimistic status conflict enforcement for a fresh reque
   }),
 );
 
-it.effect('finishes interrupted revocations before withdrawing proposals or removing grants/operators', () =>
+it.effect('finishes interrupted revocations before withdrawing proposals or confirming the archive', () =>
   Effect.gen(function* interruptedRevocation() {
     const test = yield* fixture();
     external.failStep = 'connection-2';
     yield* test.run(archive).pipe(Effect.flip);
     expect(external.connections).toEqual(['connection-2']);
     expect(external.proposals).toBe(1);
-    expect(external.grants).toBe(2);
     external.events = [];
     yield* test.run(archive);
     expect(external.events).toEqual([
@@ -708,7 +689,6 @@ it.effect('finishes interrupted revocations before withdrawing proposals or remo
       'connection-2',
       'proposals',
       'withdraw-action',
-      'grants',
       'confirm-archived',
     ]);
     expect(test.harness.snapshot().committed).toHaveLength(2);
@@ -724,8 +704,6 @@ for (const request of [disable, archive]) {
       expect(test.state.status).toBe(request.operation === 'delete' ? 'archived' : 'disabled');
       expect(external.connections).toEqual([]);
       expect(external.proposals).toBe(1);
-      expect(external.grants).toBe(2);
-      expect(external.events).not.toContain('grants');
       expect(external.events).not.toContain('confirm-archived');
       expect(test.proposalActions).toHaveLength(0);
       external.events = [];

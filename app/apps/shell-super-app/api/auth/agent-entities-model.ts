@@ -1,30 +1,13 @@
-// Agent entities, pure part (lane agent-entities): module choices, role presets and the draft rules the company
-// administrator sees as Czech reasons. No database or Effect imports.
-import type { AgentModuleGrant, AgentModuleOption, AgentRolePreset } from '@app/shared-contracts/agent-access';
-
-/** Module choices for agents of a company: highest access any role has, sorted by Czech label. */
-export const agentModuleOptions = (
-  access: readonly AgentModuleGrant[],
-  labelOf: (moduleId: string) => string,
-): readonly AgentModuleOption[] =>
-  access
-    .map(({ access: maxAccess, moduleId }) => ({ label: labelOf(moduleId), maxAccess, moduleId }))
-    .toSorted((left, right) => left.label.localeCompare(right.label, 'cs'));
-
-export const agentRolePreset = (
-  role: { readonly key: string; readonly label: string },
-  modules: readonly AgentModuleGrant[],
-): AgentRolePreset => ({ key: role.key, label: role.label, modules });
+// Agent entities, pure part (lane agent-entities): the draft rules the company administrator sees as Czech reasons and
+// the per-module summary of what an agent can actually use. No database or Effect imports.
+import type { AgentUsableModule } from '@app/shared-contracts/agent-access';
+import { AgentModuleKeySchema } from '@app/shared-contracts/agent-proposals';
 
 export interface AgentDraftInput {
   readonly displayName: string;
   readonly existingNames: readonly string[];
-  /** Czech label of a module key (from the composed modules). */
-  readonly labelOf: (moduleId: string) => string;
   readonly memberIds: readonly string[];
-  readonly modules: readonly AgentModuleGrant[];
   readonly operatorPrincipalIds: readonly string[];
-  readonly options: readonly AgentModuleOption[];
   readonly ownerPrincipalId: string;
 }
 
@@ -39,28 +22,6 @@ export const agentDraftProblem = (input: AgentDraftInput): string | null => {
   if (input.existingNames.some((name) => sameName(name, input.displayName))) {
     return 'Agent s tímto názvem už ve firmě je.';
   }
-  if (input.modules.length === 0) {
-    return 'Vyberte aspoň jeden modul.';
-  }
-  const moduleIds = new Set(input.modules.map((module) => module.moduleId));
-  if (moduleIds.size !== input.modules.length) {
-    return 'Každý modul vyberte jen jednou.';
-  }
-  const optionsByModule = new Map<string, AgentModuleOption>();
-  for (const option of input.options) {
-    if (!optionsByModule.has(option.moduleId)) {
-      optionsByModule.set(option.moduleId, option);
-    }
-  }
-  for (const module of input.modules) {
-    const option = optionsByModule.get(module.moduleId);
-    if (option === undefined) {
-      return `Modul ${input.labelOf(module.moduleId)} tato firma nemá.`;
-    }
-    if (module.access === 'write' && option.maxAccess !== 'write') {
-      return `${option.label}: zápis tu nemá žádná role, agent ho dostat nemůže.`;
-    }
-  }
   const members = new Set(input.memberIds);
   if (!members.has(input.ownerPrincipalId)) {
     return 'Za agenta může odpovídat jen aktivní člověk z firmy.';
@@ -69,4 +30,36 @@ export const agentDraftProblem = (input: AgentDraftInput): string | null => {
     return 'Agenta mohou připojit jen aktivní lidé z firmy.';
   }
   return null;
+};
+
+const READ_KINDS: ReadonlySet<string> = new Set(['export', 'field_read', 'read']);
+
+/** One capability the agent can use: its module, its kind and whether it runs it itself or only proposes it. */
+export interface AgentUsableCapabilityFact {
+  readonly kind: string;
+  readonly moduleKey: string;
+  readonly use: 'approval' | 'direct';
+}
+
+/**
+ * Per module of the installed composition: whether the agent reads there, and how it changes things there (direct
+ * wins over approval). A module the composition does not carry is not shown; nothing technical is named.
+ */
+export const usableModulesOf = (
+  facts: readonly AgentUsableCapabilityFact[],
+  labelOf: (moduleId: string) => string,
+  installed: ReadonlySet<string>,
+): readonly AgentUsableModule[] => {
+  const modules = new Map<string, { reads: boolean; writes: AgentUsableModule['writes'] }>();
+  for (const fact of facts.filter(({ moduleKey }) => installed.has(moduleKey))) {
+    const current = modules.get(fact.moduleKey) ?? { reads: false, writes: 'none' };
+    if (READ_KINDS.has(fact.kind)) {
+      modules.set(fact.moduleKey, { ...current, reads: true });
+    } else {
+      modules.set(fact.moduleKey, { ...current, writes: current.writes === 'direct' ? 'direct' : fact.use });
+    }
+  }
+  return [...modules.entries()]
+    .map(([moduleId, usage]) => ({ label: labelOf(moduleId), moduleId: AgentModuleKeySchema.make(moduleId), ...usage }))
+    .toSorted((left, right) => left.label.localeCompare(right.label, 'cs'));
 };

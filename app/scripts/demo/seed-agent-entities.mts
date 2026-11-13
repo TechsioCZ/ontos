@@ -4,9 +4,12 @@
  * (Lidé a role › Agentní entity: POST /shell-super-app-api/auth/identity/agent-entities, Core Action
  * core.identity.manage-demo-account, full audit), exactly as a company administrator does it in the app.
  * Idempotent by agent name: an existing agent is kept and only missing operators are added back.
- * `--regrant` re-saves existing seeded agents (rewrites their SpiceDB grants after a SpiceDB reset; one audit row each).
+ * An agent is created with no rights: rights come only from roles. `--role` gives an existing company role to an
+ * existing agent through the same endpoint the agents page uses (People rules, audit); it never creates a role.
  *
- *   node scripts/demo/seed-agent-entities.mts [--regrant]
+ *   node scripts/demo/seed-agent-entities.mts
+ *   node scripts/demo/seed-agent-entities.mts --roles-admin obchod@demo.ontos \
+ *     --roles-company 71000000-0000-4000-8000-000000000020 --role 'AI agent B · čtení + úkoly (Obchodní firma)=<role>'
  *
  * Environment: ONTOS_DEMO_SEED_URL (default http://localhost:3020), ONTOS_DEMO_PASSWORD (password1234).
  */
@@ -21,16 +24,12 @@ import {
   ManageAgentEntityRequestSchema,
   ManageAgentEntityResponseSchema,
 } from '@app/shared-contracts/agent-access';
-import type {
-  AgentModuleAccess,
-  AgentModuleGrant,
-  AgentModuleGrantSchema,
-  AgentWritePolicy,
-} from '@app/shared-contracts/agent-access';
+import type { AgentWritePolicy } from '@app/shared-contracts/agent-access';
 import { demoId, demoTenantId } from './fixture-ids.mts';
 
 const USAGE = `Usage:
-  node scripts/demo/seed-agent-entities.mts [--regrant]
+  node scripts/demo/seed-agent-entities.mts
+  node scripts/demo/seed-agent-entities.mts --roles-admin <email> --roles-company <company id> --role '<agent>=<role>'...
 
 Environment: ONTOS_DEMO_SEED_URL (default http://localhost:3020), ONTOS_DEMO_PASSWORD (password1234).`;
 
@@ -39,17 +38,12 @@ const MANAGE = '/shell-super-app-api/auth/identity/agent-entities';
 const OPERATORS = '/shell-super-app-api/auth/identity/agent-entities/operators';
 const SECURE_COOKIE_PREFIX = '__Secure-';
 const principalNamespace = 'core.principal';
-const tasksModule = 'work.tasks';
-const grantRead = 'read';
 
-type Access = AgentModuleAccess;
-type ModuleGrant = AgentModuleGrant;
 interface SeedAgent {
   adminEmail: string;
   description: string;
   displayName: string;
   legalEntityId: string;
-  modules: readonly Schema.Codec.Encoded<typeof AgentModuleGrantSchema>[];
   operatorPrincipalIds: readonly string[];
   ownerPrincipalId: string;
   writePolicy: AgentWritePolicy;
@@ -60,13 +54,6 @@ const SEEDS: readonly SeedAgent[] = [
     description: 'Hlídá závady, revize a úkoly provozu areálu. Změny jen navrhuje, schvaluje je člověk.',
     displayName: 'Asistent provozu',
     legalEntityId: '71000000-0000-4000-8000-000000000021',
-    modules: [
-      { access: grantRead, moduleId: 'property.portfolio' },
-      { access: grantRead, moduleId: 'property.leasing' },
-      { access: grantRead, moduleId: 'facility.operations' },
-      { access: grantRead, moduleId: 'legal.agreements' },
-      { access: 'write', moduleId: tasksModule },
-    ],
     operatorPrincipalIds: ['72000000-0000-4000-8000-000000000021', '72000000-0000-4000-8000-000000000022'],
     ownerPrincipalId: '72000000-0000-4000-8000-000000000022',
     writePolicy: 'approval',
@@ -76,12 +63,6 @@ const SEEDS: readonly SeedAgent[] = [
     description: 'Připravuje přehledy klientů a návštěv a zakládá obchodníkům úkoly.',
     displayName: 'Obchodní asistent',
     legalEntityId: '71000000-0000-4000-8000-000000000022',
-    modules: [
-      { access: grantRead, moduleId: 'demo.crm' },
-      { access: grantRead, moduleId: 'party.registry' },
-      { access: grantRead, moduleId: 'commerce.customer-context' },
-      { access: 'write', moduleId: tasksModule },
-    ],
     operatorPrincipalIds: [demoId(principalNamespace, 'hanak-spravce'), demoId(principalNamespace, 'hanak-vedouci')],
     ownerPrincipalId: demoId(principalNamespace, 'hanak-vedouci'),
     writePolicy: 'direct',
@@ -91,11 +72,6 @@ const SEEDS: readonly SeedAgent[] = [
     description: 'Odpovídá na dotazy k produktům, skladu a objednávkám e-shopu. Nic nemění.',
     displayName: 'Asistent e-shopu',
     legalEntityId: '71000000-0000-4000-8000-000000000024',
-    modules: [
-      { access: grantRead, moduleId: 'demo.merchandise' },
-      { access: grantRead, moduleId: 'party.registry' },
-      { access: grantRead, moduleId: tasksModule },
-    ],
     operatorPrincipalIds: [demoId(principalNamespace, 'sroubarna-eshop')],
     ownerPrincipalId: demoId(principalNamespace, 'sroubarna-eshop'),
     writePolicy: 'read_only',
@@ -158,7 +134,68 @@ const makeSession = (origin: string) =>
   });
 const idempotencyHeaders = () => ({ 'idempotency-key': `seed-agent-entity-${randomUUID()}` });
 
-const seed = (agent: SeedAgent, origin: string, password: Redacted.Redacted, regrant: boolean) =>
+/** Signs the company administrator in and selects the demo tenant and the company. */
+const adminSession = (origin: string, password: Redacted.Redacted, email: string, legalEntityId: string) =>
+  Effect.gen(function* openAdminSession() {
+    const session = yield* makeSession(origin);
+    const done = Effect.flatMap((response: HttpClientResponse.HttpClientResponse) => response.text);
+    yield* session
+      .post('/shell-super-app-api/auth/sign-in', SignInSchema, { email, password }, 'roles sign-in')
+      .pipe(done, Effect.asVoid);
+    yield* session
+      .post('/shell-super-app-api/auth/tenant/switch', TenantSchema, { tenantId: demoTenantId }, 'roles tenant')
+      .pipe(done, Effect.asVoid);
+    yield* session
+      .post('/shell-super-app-api/auth/legal-entity/switch', CompanySchema, { legalEntityId }, 'roles company')
+      .pipe(done, Effect.asVoid);
+    return session;
+  });
+
+/**
+ * Gives each named agent the named EXISTING role of the company, idempotently (a held role is kept). A role or agent
+ * that does not exist fails and lists what does: the seed never invents a role or an agent.
+ */
+const assignRoles = (
+  origin: string,
+  password: Redacted.Redacted,
+  input: { readonly adminEmail: string; readonly legalEntityId: string; readonly pairs: readonly string[] },
+) =>
+  Effect.gen(function* assignSeedRoles() {
+    const session = yield* adminSession(origin, password, input.adminEmail, input.legalEntityId);
+    for (const pair of input.pairs) {
+      const [agentName = '', roleName = ''] = pair.split('=', 2).map((part) => part.trim());
+      const overview = yield* session
+        .post(LIST, EmptySchema, {}, `${pair} overview`)
+        .pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(AgentEntityOverviewSchema)));
+      const agent = overview.agents.find((candidate) => candidate.displayName === agentName);
+      const role = overview.roles.find((candidate) => candidate.name === roleName);
+      if (agent === undefined || role === undefined) {
+        const known = overview.roles.map((candidate) => candidate.name).join(', ');
+        return yield* new AgentSeedFailure({
+          message: `${pair}: ${agent === undefined ? 'no such agent' : 'no such role'}; roles: ${known}`,
+        });
+      }
+      if (agent.roles.some((held) => held.roleId === role.roleId)) {
+        yield* Console.log(`[seed-agent-entities] ${agentName} already has ${roleName}`);
+        continue;
+      }
+      const request = yield* Schema.decodeUnknownEffect(ManageAgentEntityRequestSchema)({
+        expectedRevision: overview.rolesRevision,
+        expectedRoleRevisionId: role.roleRevisionId,
+        operation: 'assign-role',
+        principalId: agent.principalId,
+        roleId: role.roleId,
+      });
+      yield* session.post(MANAGE, ManageAgentEntityRequestSchema, request, `${pair} assign`, idempotencyHeaders()).pipe(
+        Effect.flatMap((response) => response.text),
+        Effect.asVoid,
+      );
+      yield* Console.log(`[seed-agent-entities] ${agentName} now has ${roleName}`);
+    }
+    return yield* Effect.void;
+  });
+
+const seed = (agent: SeedAgent, origin: string, password: Redacted.Redacted) =>
   Effect.gen(function* seedAgent() {
     const session = yield* makeSession(origin);
     const name = agent.displayName;
@@ -203,22 +240,11 @@ const seed = (agent: SeedAgent, origin: string, password: Redacted.Redacted, reg
         message: `${name}: owner ${agent.ownerPrincipalId} is not an active member`,
       });
     }
-    const modules: ModuleGrant[] = [];
-    for (const wanted of agent.modules) {
-      const option = overview.modules.find((module) => module.moduleId === wanted.moduleId);
-      if (option === undefined) {
-        yield* Console.log(`[seed-agent-entities] ${name}: module ${wanted.moduleId} not available, skipped`);
-        continue;
-      }
-      const access: Access = wanted.access === 'write' && option.maxAccess === 'write' ? 'write' : 'read';
-      modules.push({ access, moduleId: option.moduleId });
-    }
     const existing = overview.agents.find((agentEntity) => agentEntity.displayName === name);
     if (existing === undefined) {
       const request = yield* Schema.decodeUnknownEffect(ManageAgentEntityRequestSchema)({
         description: agent.description,
         displayName: name,
-        modules,
         operation: 'create',
         operatorPrincipalIds: operators,
         ownerPrincipalId,
@@ -245,29 +271,7 @@ const seed = (agent: SeedAgent, origin: string, password: Redacted.Redacted, reg
       );
       yield* Console.log(`[seed-agent-entities] ${name}: added operators ${missing.join(', ')}`);
     }
-    if (regrant) {
-      const request = yield* Schema.decodeUnknownEffect(ManageAgentEntityRequestSchema)({
-        description: Option.getOrNull(existing.description),
-        displayName: existing.displayName,
-        modules: existing.modules,
-        operation: 'configure',
-        ownerPrincipalId: Option.match(existing.owner, {
-          onNone: () => ownerPrincipalId,
-          onSome: (owner) => owner.principalId,
-        }),
-        principalId: existing.principalId,
-        writePolicy: existing.writePolicy,
-      });
-      yield* session
-        .post(MANAGE, ManageAgentEntityRequestSchema, request, `${name} regrant`, idempotencyHeaders())
-        .pipe(
-          Effect.flatMap((response) => response.text),
-          Effect.asVoid,
-        );
-      yield* Console.log(`[seed-agent-entities] re-granted ${name} (${existing.principalId})`);
-    } else {
-      yield* Console.log(`[seed-agent-entities] kept ${name} (${existing.principalId})`);
-    }
+    yield* Console.log(`[seed-agent-entities] kept ${name} (${existing.principalId})`);
     return yield* Effect.void;
   });
 
@@ -276,9 +280,11 @@ const command = Command.make(
   'seed-agent-entities',
   {
     help: Flag.Boolean('help').pipe(Flag.withAlias('h')),
-    regrant: Flag.Boolean('regrant'),
+    role: Flag.String('role').pipe(Flag.atLeast(0)),
+    rolesAdmin: Flag.String('roles-admin').pipe(Flag.optional),
+    rolesCompany: Flag.String('roles-company').pipe(Flag.optional),
   },
-  ({ help, regrant }) =>
+  ({ help, role, rolesAdmin, rolesCompany }) =>
     Effect.gen(function* seedDemoAgents() {
       if (help) {
         yield* Console.log(USAGE);
@@ -292,7 +298,7 @@ const command = Command.make(
       const failures = yield* Effect.forEach(
         SEEDS,
         (agent) =>
-          seed(agent, origin, password, regrant).pipe(
+          seed(agent, origin, password).pipe(
             Effect.as(false),
             Effect.catchCause((cause) => {
               if (Cause.hasInterrupts(cause)) {
@@ -307,6 +313,17 @@ const command = Command.make(
         { concurrency: 1 },
       );
       commandExitCode = failures.some(Boolean) ? 1 : 0;
+      if (role.length > 0) {
+        if (Option.isNone(rolesAdmin) || Option.isNone(rolesCompany)) {
+          yield* new AgentSeedFailure({ message: '--role needs --roles-admin and --roles-company' });
+          return;
+        }
+        yield* assignRoles(origin, password, {
+          adminEmail: rolesAdmin.value,
+          legalEntityId: rolesCompany.value,
+          pairs: role,
+        });
+      }
     }),
 );
 const abort = new AbortController();

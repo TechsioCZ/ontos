@@ -256,21 +256,40 @@ export const AgentAuditEntrySchema = Schema.Struct({
 });
 export type AgentAuditEntry = typeof AgentAuditEntrySchema.Type;
 
-export const AgentModuleOptionSchema = Schema.Struct({
-  label: Schema.String,
-  /** Highest access any role of the company has in this module. */
-  maxAccess: AgentModuleAccessSchema,
-  moduleId: AgentModuleKeySchema,
-});
-export type AgentModuleOption = typeof AgentModuleOptionSchema.Type;
+export const AgentRoleIdSchema = Schema.String.pipe(Schema.brand('AgentRoleId'));
+export const AgentRoleRevisionIdSchema = Schema.String.pipe(Schema.brand('AgentRoleRevisionId'));
+export const AgentAssignmentIdSchema = Schema.String.pipe(Schema.brand('AgentAssignmentId'));
 
-/** A human role of the company as a module preset ("Převzít oprávnění z role"). */
-export const AgentRolePresetSchema = Schema.Struct({
-  key: Schema.String,
-  label: Schema.String,
-  modules: Schema.Array(AgentModuleGrantSchema),
+/** A role of the company, from the same source as the People page; an agent gets rights only from roles. */
+export const AgentRoleOptionSchema = Schema.Struct({
+  name: Schema.String,
+  roleId: AgentRoleIdSchema,
+  /** The revision the screen read; an assignment pins it and is refused when the role changed meanwhile. */
+  roleRevisionId: AgentRoleRevisionIdSchema,
 });
-export type AgentRolePreset = typeof AgentRolePresetSchema.Type;
+export type AgentRoleOption = typeof AgentRoleOptionSchema.Type;
+
+/** One role an agent holds in the company. */
+export const AgentRoleAssignmentSchema = Schema.Struct({
+  assignmentId: AgentAssignmentIdSchema,
+  name: Schema.String,
+  roleId: AgentRoleIdSchema,
+});
+export type AgentRoleAssignment = typeof AgentRoleAssignmentSchema.Type;
+
+/**
+ * What the agent can actually use of its roles in one module: an agent never administers and never approves, a
+ * sensitive read is never its own, and a non-routine change it only proposes for a person to decide.
+ */
+export const AgentUsableModuleSchema = Schema.Struct({
+  label: Schema.String,
+  moduleId: AgentModuleKeySchema,
+  /** The agent reads in this module. */
+  reads: Schema.Boolean,
+  /** How the agent changes things here: itself, only as a proposal a person decides, or not at all. */
+  writes: Schema.Literals(['direct', 'approval', 'none']),
+});
+export type AgentUsableModule = typeof AgentUsableModuleSchema.Type;
 
 export const AgentEntitySchema = Schema.Struct({
   /** Active connections acting as this agent. */
@@ -280,15 +299,18 @@ export const AgentEntitySchema = Schema.Struct({
   displayName: Schema.String,
   /** Whether an audited agent profile has been configured. */
   hasProfile: Schema.Boolean,
-  modules: Schema.Array(AgentModuleGrantSchema),
-  /** People allowed to connect the agent (SpiceDB `principal:{agent}#operator`). */
+  /** People allowed to connect the agent (its latest committed operator command). */
   operators: Schema.Array(PrincipalRefSchema),
   /** Revision of the agent's operator set (0 before the first change); sent back as `expectedRevision` on save. */
   operatorsRevision: Schema.Int,
   /** Person of the company responsible for the agent; null when no audited profile owner was chosen. */
   owner: Schema.OptionFromNullOr(PrincipalRefSchema),
   principalId: AgentPrincipalIdSchema,
+  /** The company roles the agent holds; empty means the agent has no rights at all ("bez rolí"). */
+  roles: Schema.Array(AgentRoleAssignmentSchema),
   status: AgentStatusSchema,
+  /** What the agent can actually use of its roles, per module, sorted by label (cs). */
+  usable: Schema.Array(AgentUsableModuleSchema),
   writePolicy: AgentWritePolicySchema,
 });
 export type AgentEntity = typeof AgentEntitySchema.Type;
@@ -302,34 +324,47 @@ export const AgentEntityOverviewSchema = Schema.Struct({
   company: Schema.Struct({ legalEntityId: AgentLegalEntityIdSchema, legalName: Schema.String }),
   /** Active people of the company: the only allowed owners and operators. */
   members: Schema.Array(PrincipalRefSchema),
-  /** Modules an agent of this company may get, sorted by label (cs). */
-  modules: Schema.Array(AgentModuleOptionSchema),
-  /** The company's human roles as module presets, in role order. */
-  presets: Schema.Array(AgentRolePresetSchema),
+  /** The People revision this overview was read at; a role change sends it back and is refused when stale. */
+  rolesRevision: Schema.String,
+  /** The company's roles, the same ones the People page assigns, sorted by name (cs). */
+  roles: Schema.Array(AgentRoleOptionSchema),
 });
 export type AgentEntityOverview = typeof AgentEntityOverviewSchema.Type;
 
 /**
- * `create`      new agent; `modules` may only use `AgentEntityOverview.modules` (access <= maxAccess); owner and
- *               operators must be active people of the company. Grants follow the module list and the write policy.
- * `configure`   replaces name, description, owner, modules and write policy (operators: `CONNECTION_MANAGEMENT_PATHS.operators`).
+ * `create`      new agent with no rights; owner and operators must be active people of the company.
+ * `configure`   replaces name, description, owner and write policy (operators: `CONNECTION_MANAGEMENT_PATHS.operators`).
+ * `assign-role` gives the agent one company role, under the People page's own rule (and admits the agent to the
+ *               company first when it is not a member yet, under the People page's admission rule).
+ * `remove-role` ends one of the agent's role assignments, under the People page's own rule.
  * `change-status` deactivate (`reason` required) or reactivate. Deactivation revokes the agent's active connections.
- * `delete`      archives the agent: its grants, operators and active connections are removed; it leaves the list.
+ * `delete`      archives the agent: its operators and active connections are removed; it leaves the list.
  */
 export const ManageAgentEntityRequestSchema = Schema.Union([
   Schema.Struct({
     description: Schema.OptionFromNullOr(Text(AGENT_DESCRIPTION_MAX)),
     displayName: Text(AGENT_NAME_MAX),
-    modules: Schema.Array(AgentModuleGrantSchema),
     operation: Schema.Literal('create'),
     operatorPrincipalIds: Schema.Array(AgentPrincipalIdSchema),
     ownerPrincipalId: AgentPrincipalIdSchema,
     writePolicy: AgentWritePolicySchema,
   }),
   Schema.Struct({
+    expectedRevision: Schema.String,
+    expectedRoleRevisionId: AgentRoleRevisionIdSchema,
+    operation: Schema.Literal('assign-role'),
+    principalId: AgentPrincipalIdSchema,
+    roleId: AgentRoleIdSchema,
+  }),
+  Schema.Struct({
+    assignmentId: AgentAssignmentIdSchema,
+    expectedRevision: Schema.String,
+    operation: Schema.Literal('remove-role'),
+    principalId: AgentPrincipalIdSchema,
+  }),
+  Schema.Struct({
     description: Schema.OptionFromNullOr(Text(AGENT_DESCRIPTION_MAX)),
     displayName: Text(AGENT_NAME_MAX),
-    modules: Schema.Array(AgentModuleGrantSchema),
     operation: Schema.Literal('configure'),
     ownerPrincipalId: AgentPrincipalIdSchema,
     principalId: AgentPrincipalIdSchema,
@@ -355,7 +390,7 @@ export type ManageAgentEntityRequest = typeof ManageAgentEntityRequestSchema.Typ
 export const ManageAgentEntityResponseSchema = Schema.Struct({
   grantsGranted: Schema.Finite,
   grantsRevoked: Schema.Finite,
-  operation: Schema.Literals(['create', 'configure', 'change-status', 'delete']),
+  operation: Schema.Literals(['create', 'configure', 'assign-role', 'remove-role', 'change-status', 'delete']),
   principalId: AgentPrincipalIdSchema,
   /** Active connections of the agent revoked by this change (deactivation, deletion). */
   revokedConnections: Schema.Finite,

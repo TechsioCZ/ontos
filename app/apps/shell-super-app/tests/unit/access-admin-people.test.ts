@@ -517,7 +517,11 @@ it.effect('assigns a role with an incarnation named by the idempotency key, in t
     expect(answer.revision).toBe(revision);
     expect(recorded.calls.map(({ operation }) => operation)).toEqual(['assignRole', 'assignRole']);
     const [first, retry] = recorded.calls.map(({ command }) => command);
-    expect(first).toMatchObject({ principalId: ALICE, roleId: ROLE_A, scopeId: A_SCOPE });
+    expect(first).toMatchObject({
+      holder: { _tag: 'Principal', principalId: ALICE },
+      roleId: ROLE_A,
+      scopeId: A_SCOPE,
+    });
     // A retry names the very same incarnation, so it can never fork a second assignment.
     expect(retry).toEqual(first);
   }),
@@ -876,7 +880,7 @@ it.effect('admits a candidate with tenant and company rows named by the idempote
     yield* run(admit);
     yield* run(admit);
     const [first, retry] = recorded.calls.map(({ command }) => command);
-    expect(first).toMatchObject({ legalEntityId: COMPANY_A, principalId: DANA });
+    expect(first).toMatchObject({ holder: { _tag: 'Principal', principalId: DANA }, legalEntityId: COMPANY_A });
     // A retry names the very same two rows, and the tenant row is never the company row.
     expect(retry).toEqual(first);
     const rows = recorded.calls.flatMap(({ command }) =>
@@ -924,7 +928,11 @@ it.effect('ends a membership in the named scope and passes the reason on to Core
     const { recorded, run } = harness({ persona: 'owner' });
     const end = eightWrites(revision).endMembership;
     yield* run(end);
-    expect(recorded.calls[0]?.command).toEqual({ principalId: ALICE, reason: 'odchod z firmy', scopeId: A_SCOPE });
+    expect(recorded.calls[0]?.command).toEqual({
+      holder: { _tag: 'Principal', principalId: ALICE },
+      reason: 'odchod z firmy',
+      scopeId: A_SCOPE,
+    });
     const adminRevision = yield* revisionFor('companyAdmin');
     const admin = harness({ persona: 'companyAdmin' });
     const bobInB = yield* failureOf(

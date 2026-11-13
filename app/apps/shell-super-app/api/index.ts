@@ -3404,7 +3404,7 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
           yield* noStore;
           const caller = yield* agentPlatformSessionCaller(request);
           const deps = yield* connectionsAdminDeps(caller, { correlationId: correlationFromRequest(request) });
-          const response = yield* listAgentEntities(caller, deps).pipe(
+          const response = yield* listAgentEntities(caller, new Headers(Object.entries(request.headers)), deps).pipe(
             Effect.provideService(AgentReadRequestIdentity, { correlationId: correlationFromRequest(request) }),
             Effect.catch(connectionsAdminFailure),
           );
@@ -3422,7 +3422,12 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
           const caller = yield* agentPlatformSessionCaller(request);
           const transport = { correlationId: correlationFromRequest(request), idempotencyKey };
           const deps = yield* connectionsAdminDeps(caller, transport);
-          const response = yield* manageAgentEntity(caller, payload, deps).pipe(
+          const response = yield* manageAgentEntity(
+            caller,
+            payload,
+            new Headers(Object.entries(request.headers)),
+            deps,
+          ).pipe(
             Effect.provideService(AgentReadRequestIdentity, transport),
             Effect.provideService(AgentActionRequestIdentity, transport),
             Effect.catch(connectionsAdminFailure),

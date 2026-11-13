@@ -1,7 +1,7 @@
 import { AgentModuleKeySchema } from '@app/shared-contracts/agent-proposals';
 import { expect, test } from 'effect-rstest';
 
-import { agentDraftProblem, agentModuleOptions } from '../../api/auth/agent-entities-model.ts';
+import { agentDraftProblem, usableModulesOf } from '../../api/auth/agent-entities-model.ts';
 
 /** Labels the composed modules declare in their contributions. */
 const LABELS = new Map([
@@ -10,33 +10,15 @@ const LABELS = new Map([
 ]);
 const labelOf = (moduleId: string): string => LABELS.get(moduleId) ?? moduleId;
 
-const options = agentModuleOptions(
-  [
-    { access: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') },
-    { access: 'read', moduleId: AgentModuleKeySchema.make('facility.operations') },
-  ],
-  labelOf,
-);
-
 const valid = {
   displayName: 'Asistent provozu',
   existingNames: [],
-  labelOf,
   memberIds: ['p1', 'p2'],
-  modules: [{ access: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') }],
   operatorPrincipalIds: ['p1'],
-  options,
   ownerPrincipalId: 'p2',
 } as const;
 
-test('module options carry the highest access and are sorted by Czech label', () => {
-  expect(options).toEqual([
-    { label: 'Provoz', maxAccess: 'read', moduleId: AgentModuleKeySchema.make('facility.operations') },
-    { label: 'Úkoly a projekty', maxAccess: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') },
-  ]);
-});
-
-test('a valid draft has no problem', () => {
+test('a valid draft has no problem; an agent needs no module list, its rights come from roles', () => {
   expect(agentDraftProblem(valid)).toBeNull();
 });
 
@@ -50,31 +32,6 @@ test('a name that matches an existing one ignores case', () => {
   );
 });
 
-test('a draft without modules is rejected', () => {
-  expect(agentDraftProblem({ ...valid, modules: [] })).toBe('Vyberte aspoň jeden modul.');
-});
-
-test('a module listed twice is rejected', () => {
-  expect(
-    agentDraftProblem({
-      ...valid,
-      modules: [
-        { access: 'read', moduleId: AgentModuleKeySchema.make('work.tasks') },
-        { access: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') },
-      ],
-    }),
-  ).toBe('Každý modul vyberte jen jednou.');
-});
-
-test('write on a module the company offers only read for is rejected', () => {
-  expect(
-    agentDraftProblem({
-      ...valid,
-      modules: [{ access: 'write', moduleId: AgentModuleKeySchema.make('facility.operations') }],
-    }),
-  ).toBe('Provoz: zápis tu nemá žádná role, agent ho dostat nemůže.');
-});
-
 test('an owner who is not an active person of the company is rejected', () => {
   expect(agentDraftProblem({ ...valid, ownerPrincipalId: 'p3' })).toBe(
     'Za agenta může odpovídat jen aktivní člověk z firmy.',
@@ -85,4 +42,24 @@ test('an operator who is not an active person of the company is rejected', () =>
   expect(agentDraftProblem({ ...valid, operatorPrincipalIds: ['p3'] })).toBe(
     'Agenta mohou připojit jen aktivní lidé z firmy.',
   );
+});
+
+test('what an agent can use is shown per installed module, direct before approval, sorted by Czech label', () => {
+  const installed = new Set(['facility.operations', 'work.tasks']);
+  expect(
+    usableModulesOf(
+      [
+        { kind: 'read', moduleKey: 'work.tasks', use: 'direct' },
+        { kind: 'action', moduleKey: 'work.tasks', use: 'approval' },
+        { kind: 'action', moduleKey: 'work.tasks', use: 'direct' },
+        { kind: 'action', moduleKey: 'facility.operations', use: 'approval' },
+        { kind: 'read', moduleKey: 'not.installed', use: 'direct' },
+      ],
+      labelOf,
+      installed,
+    ),
+  ).toEqual([
+    { label: 'Provoz', moduleId: AgentModuleKeySchema.make('facility.operations'), reads: false, writes: 'approval' },
+    { label: 'Úkoly a projekty', moduleId: AgentModuleKeySchema.make('work.tasks'), reads: true, writes: 'direct' },
+  ]);
 });

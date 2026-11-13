@@ -11,8 +11,8 @@ const overview = {
   audit: [],
   company: { legalEntityId: '71000000-0000-4000-8000-000000000022', legalName: 'Testovací firma' },
   members: [],
-  modules: [],
-  presets: [],
+  roles: [],
+  rolesRevision: 'r0',
 };
 
 it.effect('automatically recovers an unavailable agent list with exponential backoff and no user refresh', () =>
