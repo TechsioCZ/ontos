@@ -43,6 +43,7 @@ import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
 // finance-specific client comes from the owner service module, so this file imports that module once.
 import { FinanceRedemptionClientLive } from '../src/services/gateway-redemption.ts';
 import { FinanceTaxRatesLive } from '../src/integrations/tax-rates.ts';
+import { FinanceReferenceValidatorsLive } from '../src/services/reference-validation.ts';
 // <generated-governed-http-handler-support-imports>
 import {
   ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive,
@@ -164,6 +165,8 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
     ),
   ),
   // </generated-governed-http-handler-support-layers>
+  // apply-command builds its reference validators per request from that request's scope.
+  GovernedReadLayer.provide(FinanceReferenceValidatorsLive),
   GovernedReadLayer.provide(FinanceRedemptionClientLive.pipe(GovernedReadLayer.provide(Reactivity.layer))),
   // Invoice VAT choices and their command checks read Tax as Finance, for the admitted person.
   GovernedReadLayer.provide(FinanceTaxRatesLive),

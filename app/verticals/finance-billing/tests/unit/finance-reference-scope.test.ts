@@ -1,3 +1,4 @@
+import type { CustomerListRequest } from '@app/party-registry/api/client';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { Deferred, Effect } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
@@ -19,17 +20,26 @@ import {
  */
 
 const mocks = rstest.hoisted(() => ({
-  customers: rstest.fn(),
+  /** The customer rows one customer-list read answers. */
+  customers: rstest.fn<(request: CustomerListRequest) => Effect.Effect<readonly unknown[], string>>(),
   fetch: rstest.fn(),
   location: { search: {}, searchStr: '' },
   opportunities: rstest.fn(),
-  products: rstest.fn(),
+  /** The catalog rows one Merchandise records read answers (only the fields the hook reads). */
+  products: rstest.fn<() => Effect.Effect<readonly { readonly id: string; readonly name: string }[], string>>(),
   records: rstest.fn(),
 }));
 
-rstest.mock('@app/party-registry/api/client', () => ({ listCustomers: mocks.customers }));
+// `mocks.customers` answers the customer rows; the customer-list read wraps them as its `items`.
+rstest.mock('@app/party-registry/apis/customer-list/client', () => ({
+  executeCustomerList: (request: CustomerListRequest) =>
+    mocks.customers(request).pipe(Effect.map((items) => ({ items }))),
+}));
 rstest.mock('@app/sales-pipeline/clients/records', () => ({ executeRecords: mocks.opportunities }));
-rstest.mock('@app/merchandise/clients/records', () => ({ listProducts: mocks.products }));
+// `mocks.products` answers the catalog rows; the records read wraps them as its `products` collection.
+rstest.mock('@app/merchandise/apis/records/client', () => ({
+  executeRecords: () => mocks.products().pipe(Effect.map((products) => ({ products }))),
+}));
 rstest.mock('@app/property-portfolio/clients/records', () => ({ executeRecords: () => Effect.fail('no objects') }));
 rstest.mock('@app/legal-agreements/clients/records', () => ({ executeRecords: () => Effect.fail('no contracts') }));
 rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));

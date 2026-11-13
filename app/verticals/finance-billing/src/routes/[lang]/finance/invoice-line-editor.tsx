@@ -1,4 +1,3 @@
-import type { ProductRecord } from '@app/merchandise/contracts/records';
 import { formatMoney, matchesSearch, comboboxTranslations, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -18,6 +17,7 @@ import {
 import type { DraftDiscountKind, DraftLine, DraftLineIssue } from '../../../../shared/domain/invoice-draft.ts';
 import { lineDiscountMinor } from '../../../../shared/domain/invoice-totals.ts';
 import { lineVatChoice, lineVatOf } from '../../../../shared/domain/line-vat.ts';
+import type { ProductRecord } from './use-finance-references.ts';
 import type { InvoiceDirection } from '../../../../shared/domain/line-vat.ts';
 import type { PriceListItem } from '../../../../shared/apis/records.ts';
 import { formLabelProps } from './invoice-view.ts';

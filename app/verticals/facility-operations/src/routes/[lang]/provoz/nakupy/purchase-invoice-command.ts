@@ -1,12 +1,12 @@
 import type { executeApplyCommand } from '@app/finance-billing/clients/apply-command';
 import {
-  CalendarDateSchema,
   FinanceCompanyIdSchema,
   FinanceTextSchema,
   InvoiceLinesSchema,
   MoneyMinorSchema,
   SourceOrderSchema,
 } from '@app/finance-billing/contracts/records';
+import { CalendarDateWireSchema } from '@app/shared-contracts';
 import { Option, Schema } from 'effect';
 import type { PurchaseOrder, Supplier } from '../../../../../shared/domain/purchasing.ts';
 
@@ -16,8 +16,8 @@ type IncomingInvoice = Extract<FinanceCommand, { readonly _tag: 'RecordIncomingI
 /** The incoming-invoice fields a purchase order fills, decoded with Finance's published field schemas. */
 const IncomingInvoiceDraftSchema = Schema.TaggedStruct('RecordIncomingInvoice', {
   documentNumber: FinanceTextSchema,
-  dueDate: CalendarDateSchema,
-  issueDate: CalendarDateSchema,
+  dueDate: CalendarDateWireSchema,
+  issueDate: CalendarDateWireSchema,
   lines: Schema.optionalKey(InvoiceLinesSchema),
   note: Schema.optionalKey(FinanceTextSchema),
   sourceOrder: Schema.optionalKey(SourceOrderSchema),

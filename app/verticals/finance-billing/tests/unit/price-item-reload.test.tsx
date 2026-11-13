@@ -34,8 +34,8 @@ rstest.mock('@app/shared-contracts', () => ({
 }));
 rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));
 rstest.mock('../../src/api/apply-command-action-client.ts', () => ({ executeApplyCommand: mocks.apply }));
-rstest.mock('@app/merchandise/clients/records', () => ({ listProducts: () => Effect.never }));
-rstest.mock('@app/party-registry/api/client', () => ({ listCustomers: () => Effect.never }));
+rstest.mock('@app/merchandise/apis/records/client', () => ({ executeRecords: () => Effect.never }));
+rstest.mock('@app/party-registry/apis/customer-list/client', () => ({ executeCustomerList: () => Effect.never }));
 rstest.mock('@app/sales-pipeline/clients/records', () => ({ executeRecords: () => Effect.never }));
 rstest.mock('@app/legal-agreements/clients/records', () => ({ executeRecords: () => Effect.never }));
 rstest.mock('@app/property-portfolio/clients/records', () => ({ executeRecords: () => Effect.never }));

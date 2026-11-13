@@ -1,7 +1,7 @@
 import { executeCustomerList } from '@app/party-registry/apis/customer-list/client';
-import { listMovements, listOrders, listProducts } from '@app/merchandise/clients/records';
+import { executeRecords as executeMerchandiseRecords } from '@app/merchandise/apis/records/client';
 import { executeRecords as executeOpportunityRecords } from '@app/sales-pipeline/clients/records';
-import { listInvoices } from '@app/finance-billing/clients/records';
+import { executeRecords as executeFinanceRecords } from '@app/finance-billing/apis/records/client';
 import { executeRecords as executeTaskRecords } from '@app/work-tasks/clients/records';
 import { executeRecords as executeTagRecords } from '@app/tagging/clients/records';
 import { SubjectIdsQuerySchema } from '@app/tagging/contracts/records';
@@ -330,15 +330,15 @@ const entityData = {
   invoices: sourceData(
     'invoices',
     requestId('invoices').pipe(
-      Effect.flatMap((id) => listInvoices({}, id)),
-      Effect.map((items) => items.map(toInvoice)),
+      Effect.flatMap((id) => executeFinanceRecords({}, id)),
+      Effect.map((response) => response.state.invoices.map(toInvoice)),
     ),
   ),
   movements: sourceData(
     'movements',
     requestId('movements').pipe(
-      Effect.flatMap((id) => listMovements(id)),
-      Effect.map((items) => items.map(toMovement)),
+      Effect.flatMap((id) => executeMerchandiseRecords({}, id)),
+      Effect.map(({ movements }) => movements.map(toMovement)),
     ),
   ),
   opportunities: sourceData(
@@ -351,15 +351,15 @@ const entityData = {
   orders: sourceData(
     'orders',
     requestId('orders').pipe(
-      Effect.flatMap((id) => listOrders(id)),
-      Effect.map((items) => items.map(toOrder)),
+      Effect.flatMap((id) => executeMerchandiseRecords({}, id)),
+      Effect.map(({ orders }) => orders.map(toOrder)),
     ),
   ),
   products: sourceData(
     'products',
     requestId('products').pipe(
-      Effect.flatMap((id) => listProducts(id)),
-      Effect.map((items) => items.map(toProduct)),
+      Effect.flatMap((id) => executeMerchandiseRecords({}, id)),
+      Effect.map(({ products }) => products.map(toProduct)),
     ),
   ),
   tags: sourceData(

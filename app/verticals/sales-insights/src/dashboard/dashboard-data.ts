@@ -1,5 +1,5 @@
 import { executeRecords as executeOpportunityRecords } from '@app/sales-pipeline/clients/records';
-import { listInvoices } from '@app/finance-billing/clients/records';
+import { executeRecords as executeFinanceRecords } from '@app/finance-billing/apis/records/client';
 import { executeRecords as executeTaskRecords } from '@app/work-tasks/clients/records';
 import { definePageData } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
@@ -62,7 +62,12 @@ const correlation = Random.nextInt.pipe(Effect.map((id) => `crm-dashboard:${id}`
 export const loadDashboard = Effect.gen(function* loadDashboardEffect() {
   const result = yield* Effect.all(
     {
-      invoices: settleDashboardSource(correlation.pipe(Effect.flatMap((id) => listInvoices({}, id)))),
+      invoices: settleDashboardSource(
+        correlation.pipe(
+          Effect.flatMap((id) => executeFinanceRecords({}, id)),
+          Effect.map((response) => response.state.invoices),
+        ),
+      ),
       opportunities: settleDashboardSource(
         correlation.pipe(
           Effect.flatMap((id) => executeOpportunityRecords({}, id)),
