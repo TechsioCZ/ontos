@@ -217,6 +217,15 @@ export const withStorefrontVat = (
 };
 
 /**
+ * A product as staff see it: its classification AND the rate that prices it today (`vatRate`), the same rate the
+ * storefront shows. A product held at its stored rate is priced at that rate while its classification names another.
+ */
+export const withStaffVat = (record: ProductRecord, rates: SellableVatRates, held: HeldProductRates): ProductRecord => {
+  const { vatRate } = withStorefrontVat(record, rates, held);
+  return vatRate === undefined ? record : { ...record, vatRate };
+};
+
+/**
  * One page of product records. `variants: false` (list rows) leaves variants out and takes the derived stock
  * fields from their stored columns; detail pages hydrate variants and derive records exactly like a write does.
  */
@@ -484,10 +493,10 @@ export const staffProducts = (
           const { contentHistory: _history, ...summary } = record;
           void _history;
           const row = { ...summary, priceHistory: [] };
-          return storefront ? withStorefrontVat(row, page.rates, page.held) : row;
+          return storefront ? withStorefrontVat(row, page.rates, page.held) : withStaffVat(row, page.rates, page.held);
         }
         if (!storefront) {
-          return record;
+          return withStaffVat(record, page.rates, page.held);
         }
         const { contentHistory: _content, variants: _raw, ...publicProduct } = record;
         void _raw;

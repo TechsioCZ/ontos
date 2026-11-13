@@ -311,6 +311,8 @@
           "tab": "Detail",
           "back": "Back to products",
           "priceExplanation": "You edit the price excluding VAT. The stored price including VAT does not change with a VAT rate; a new price excluding VAT stores a new price including VAT at the rate in force when you save.",
+          "heldRate": "The price is set at {{rate}} % now (kept from before the VAT rate change).",
+          "heldRateExplanation": "The e-shop sells the product at it too. A new net price is saved with its gross at this rate. Once the company confirms its rates in Tax, or when you choose another rate for the product, the rate chosen above applies; the stored gross price does not change with it.",
           "vatShareOnly": "The price including VAT stays the same; only the VAT share inside it changes.",
           "variantsExplanation": "Informational variants share the product SKU, price and stock.",
           "addVariant": "Add variant",
