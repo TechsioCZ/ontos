@@ -177,10 +177,19 @@ export const draftOpportunityInvoiceInScope = Effect.fn('Finance.draftOpportunit
   },
 );
 
+/** The ledger state without the opportunity's recorded wait for VAT; undefined when it has none. */
+const withoutVatWait = (state: FinanceState, opportunityId: string): FinanceState | undefined => {
+  const awaiting = state.opportunitiesAwaitingVat ?? [];
+  return awaiting.some((record) => record.opportunityId === opportunityId)
+    ? { ...state, opportunitiesAwaitingVat: awaiting.filter((record) => record.opportunityId !== opportunityId) }
+    : undefined;
+};
+
 /**
  * Remembers in this Legal Entity's ledger that the opportunity left WON, so its older won message, still waiting to
  * retry, no longer drafts an invoice. Nothing to remember once its invoice is drafted (the old message converges on
- * it) or when a later move is already recorded. False means this Legal Entity keeps no finance ledger.
+ * it) or when a later move is already recorded. Its wait for VAT, if any, ends with it: won again later, it waits a
+ * fresh 72 hours. False means this Legal Entity keeps no finance ledger.
  */
 export const recordOpportunityLeftWonInScope = Effect.fn('Finance.recordOpportunityLeftWonInScope')(
   function* recordOpportunityLeftWonInScope(
@@ -191,12 +200,17 @@ export const recordOpportunityLeftWonInScope = Effect.fn('Finance.recordOpportun
     if (Option.isNone(ledger)) {
       return false;
     }
-    const { revision, state } = ledger.value;
+    const { revision } = ledger.value;
+    const waitEnded = withoutVatWait(ledger.value.state, left.opportunityId);
+    const state = waitEnded ?? ledger.value.state;
     const recorded = state.opportunitiesLeftWon ?? [];
     if (
       state.invoices.some((invoice) => invoice.opportunityId === left.opportunityId) ||
       recorded.some((record) => record.opportunityId === left.opportunityId && record.revision >= left.revision)
     ) {
+      if (waitEnded !== undefined) {
+        yield* saveLedger(scope, revision, waitEnded);
+      }
       return true;
     }
     const keepFrom = DateTime.subtract(yield* DateTime.now, { days: LEFT_WON_RETENTION_DAYS });
@@ -209,6 +223,26 @@ export const recordOpportunityLeftWonInScope = Effect.fn('Finance.recordOpportun
       opportunitiesLeftWon: [...kept, left].slice(-LEFT_WON_MAX_RECORDS),
     });
     return true;
+  },
+);
+
+/**
+ * Ends the opportunity's wait for VAT, if it has one, when its delivery settles without a draft for another reason
+ * (it left WON, or its lines are refused): a later won message waits a fresh 72 hours.
+ */
+export const endOpportunityVatWaitInScope = Effect.fn('Finance.endOpportunityVatWaitInScope')(
+  function* endOpportunityVatWaitInScope(
+    scope: OutboxWorkerLegalEntityScope,
+    opportunityId: OpportunityAwaitingVat['opportunityId'],
+  ): Effect.fn.Return<void, FinanceError> {
+    const ledger = yield* readLedger(scope);
+    if (Option.isNone(ledger)) {
+      return;
+    }
+    const waitEnded = withoutVatWait(ledger.value.state, opportunityId);
+    if (waitEnded !== undefined) {
+      yield* saveLedger(scope, ledger.value.revision, waitEnded);
+    }
   },
 );
 
@@ -270,6 +304,10 @@ export interface OpportunityInvoiceLedgerService {
     originator: OpportunityWonOriginator,
     wonRevision: number,
   ) => Effect.Effect<Option.Option<Invoice>, FinanceError | OpportunityNoLongerWon, Crypto.Crypto | FinanceTaxRates>;
+  readonly endVatWait: (
+    scope: OutboxWorkerLegalEntityScope,
+    opportunityId: OpportunityAwaitingVat['opportunityId'],
+  ) => Effect.Effect<void, FinanceError>;
   readonly holds: (scope: OutboxWorkerLegalEntityScope) => Effect.Effect<boolean, FinanceError>;
   readonly recordLeftWon: (
     scope: OutboxWorkerLegalEntityScope,
@@ -289,6 +327,7 @@ export class OpportunityInvoiceLedger extends Context.Service<
 
 export const opportunityInvoiceLedgerLive = Object.freeze({
   draft: draftOpportunityInvoiceInScope,
+  endVatWait: endOpportunityVatWaitInScope,
   holds: holdsOpportunityLedgerInScope,
   recordLeftWon: recordOpportunityLeftWonInScope,
   vatNotReady: recordOpportunityVatNotReadyInScope,

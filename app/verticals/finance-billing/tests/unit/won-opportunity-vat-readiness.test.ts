@@ -669,6 +669,51 @@ const taxNeverAsked = () => {
 };
 
 it.layer(NodeCrypto.layer)('A won opportunity that later left WON', (suite) => {
+  suite.effect('won, not ready, lost, won again five days later and still not ready: a fresh 72-hour wait', () =>
+    Effect.gen(function* wonAgainAfterWait() {
+      const { awaiting, scope } = makeLedger();
+      yield* TestClock.setTime(firstNotReadyMs);
+      expect((yield* failureOf(deliver(scope, notDeclared(), yield* wonPayload(21)))).code).toBe('VAT_NOT_READY');
+      expect(awaiting()).toEqual([[opportunityId, '2026-11-02T10:00:00.000Z']]);
+      // Lost at revision 2: its wait ends with it.
+      yield* deliver(scope, notDeclared(), yield* Schema.decodeEffect(OutboxPayloadSchema)(leftWonMessage('LOST', 2)));
+      expect(awaiting()).toEqual([]);
+      // Won again at revision 3, five days after the first "not ready": a new wait starts now, not one long over.
+      yield* TestClock.setTime(firstNotReadyMs + 5 * 24 * HOUR_MS);
+      const wonAgain = yield* Schema.decodeEffect(OutboxPayloadSchema)({ ...wonMessage(21), revision: 3 });
+      expect((yield* failureOf(deliver(scope, notDeclared(), wonAgain))).code).toBe('VAT_NOT_READY');
+      expect(awaiting()).toEqual([[opportunityId, '2026-11-07T10:00:00.000Z']]);
+      yield* TestClock.setTime(firstNotReadyMs + (5 * 24 + 71) * HOUR_MS);
+      expect((yield* failureOf(deliver(scope, notDeclared(), wonAgain))).code).toBe('VAT_NOT_READY');
+    }),
+  );
+
+  suite.effect('an older won message settled as no longer won, or lines refused, ends a wait it left behind', () =>
+    Effect.gen(function* settledEndsWait() {
+      // The wait of revision 1, recorded before the move out of WON was known to this ledger.
+      const { awaiting, scope } = makeLedger();
+      yield* TestClock.setTime(firstNotReadyMs);
+      yield* failureOf(deliver(scope, notDeclared(), yield* wonPayload(21)));
+      const lostAt = yield* Schema.decodeUnknownEffect(FinanceStateSchema)({
+        financialPlanEntries: [],
+        invoices: [],
+        opportunitiesAwaitingVat: [{ firstNotReadyAt: '2026-11-02T10:00:00.000Z', opportunityId }],
+        opportunitiesLeftWon: [{ leftAt: '2026-11-02T11:00:00.000Z', opportunityId, revision: 2 }],
+      });
+      const stale = makeLedger();
+      stale.ledger.state = yield* Schema.encodeEffect(FinanceStateSchema)(lostAt);
+      expect((yield* failureOf(deliver(stale.scope, notDeclared(), yield* wonPayload(21)))).code).toBe(
+        'OPPORTUNITY_NO_LONGER_WON',
+      );
+      expect(stale.awaiting()).toEqual([]);
+      // Lines Finance refuses for good (10 % names no classification) end the wait too.
+      expect(awaiting()).toEqual([[opportunityId, '2026-11-02T10:00:00.000Z']]);
+      const declared = taxAnswering(() => baselineVatChoices(tenantId, '2026-11-02'));
+      expect((yield* failureOf(deliver(scope, declared, yield* wonPayload(10)))).code).toBe('FINANCE_REJECTED');
+      expect(awaiting()).toEqual([]);
+    }),
+  );
+
   suite.effect('its older won delivery, still waiting to retry, completes without a draft or a Tax call', () =>
     Effect.gen(function* lostAfterWon() {
       const { invoices, scope } = makeLedger();
@@ -876,6 +921,7 @@ it.layer(NodeCrypto.layer)('Business outcomes complete the delivery; only system
       // A ledger that exists and still yields no invoice is a failure, not an outcome of selling.
       const draftsNothing = yield* runRegistered(makeLedger().scope, taxNeverAsked().tax, yield* wonPayload(21), won, {
         draft: () => Effect.succeed(Option.none()),
+        endVatWait: () => Effect.die('Nothing settles without a draft here'),
         holds: () => Effect.succeed(true),
         recordLeftWon: () => Effect.succeed(true),
         vatNotReady: () => Effect.die('Tax is never asked here'),

@@ -121,6 +121,14 @@ const isVatNotReady = (failure: FinanceError | OpportunityNoLongerWon): boolean 
   (Predicate.isTagged(failure, 'FinanceReferenceUnavailable') && taxNotInstalled(failure));
 
 /**
+ * Whether a failure of the draft settles the delivery without a draft for good: the opportunity left WON, or Finance
+ * refused its lines for a reason no VAT setup changes. Either ends the opportunity's wait for VAT.
+ */
+const settlesWithoutDraft = (failure: FinanceError | OpportunityNoLongerWon): boolean =>
+  Predicate.isTagged(failure, 'OpportunityNoLongerWon') ||
+  (Predicate.isTagged(failure, 'FinanceRejected') && !vatNotReadyIssues.has(failure.reason));
+
+/**
  * How long one delivery attempt may run: well below its lease (`LEASE_MS`), so Core never re-claims a delivery a slow
  * but healthy attempt still works on. Neither the Shell's delegated issuance nor the Tax client has a timeout of its
  * own; this deadline is the one that bounds them. A hit is Tax being unavailable: a normal failure, with back-off.
@@ -199,8 +207,12 @@ const draftInScope = Effect.fn('DraftInvoiceFromWonOpportunityWorker.draftInScop
     }
     return;
   }
-  // Tax said "not ready": record (or read) the wait in this company's ledger, then fail with where it stands.
+  // Tax said "not ready": record (or read) the wait in this company's ledger, then fail with where it stands. Settled
+  // without a draft for another reason: its wait, if any, ends, so a later won message waits a fresh 72 hours.
   const invoice = yield* ledger.draft(scope, command, originator, wonRevision).pipe(
+    Effect.tapError((failure) =>
+      settlesWithoutDraft(failure) ? ledger.endVatWait(scope, command.opportunityId) : Effect.void,
+    ),
     Effect.catchIf(isVatNotReady, (notReady) =>
       ledger.vatNotReady(scope, command.opportunityId).pipe(
         Effect.flatMap((wait) =>
