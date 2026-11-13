@@ -23,6 +23,7 @@ import {
   makeHostRefusalLog,
   relayFailureCode,
   requestPathOnly,
+  loggableRoute,
 } from './host-refusal-log.mts';
 import type { HostRefusalLog } from './host-refusal-log.mts';
 import {
@@ -1114,10 +1115,10 @@ const relay = Effect.fn('AppHost.relay')(function* relay(
 const isLoopbackPeer = (request: HttpServerRequest.HttpServerRequest) =>
   Option.exists(request.remoteAddress, isLoopbackHostname);
 
-/** Fields of a refusal the host answered itself: the method and the path, never the query, headers or body. */
+/** Fields of a refusal the host answered itself: the method and the route shape, never the path, query or body. */
 const refusedRequest = (request: HttpServerRequest.HttpServerRequest, status: number) => ({
   method: request.method,
-  path: requestPathOnly(request.url),
+  route: loggableRoute(request.url),
   status,
 });
 
@@ -1254,8 +1255,8 @@ const forwardDuringDrain = Effect.fn('AppHost.forwardDuringDrain')(function* for
             cause,
             elapsedMs: now - started,
             method: request.method,
-            path: requestPathOnly(request.url),
             peer,
+            route: loggableRoute(request.url),
             status: 503,
           },
           key: 'drain-forward',
@@ -1361,7 +1362,7 @@ export const hostApplication = <Failure, Requirements>(
               cause: problem.code,
               elapsedMs: now - started,
               method: request.method,
-              path: requestPathOnly(request.url),
+              route: loggableRoute(request.url),
               stage: problem.stage,
               status,
               unit,

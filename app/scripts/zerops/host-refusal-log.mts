@@ -9,7 +9,9 @@
  * summary line per key with that count and the last refusal's fields. A key therefore writes at most one line per
  * 10 seconds, however many requests it refuses.
  *
- * Fields carry the method and the path only: never a query string, header, cookie, token or body.
+ * Fields carry the method and a redacted route only (`loggableRoute`), never a raw path, query string, header, cookie,
+ * token or body: some routes keep a secret in the path (a password-reset link carries its token as a segment).
+ * Every value is capped at 200 characters.
  */
 import { Clock, Console, Duration, Effect, Option, Schema } from 'effect';
 
@@ -36,16 +38,63 @@ interface RefusalWindow {
   suppressed: number;
 }
 
+const MAX_VALUE_LENGTH = 200;
+
+const capped = (value: string) => (value.length > MAX_VALUE_LENGTH ? `${value.slice(0, MAX_VALUE_LENGTH)}…` : value);
+
 const formatFields = (fields: HostRefusalFields) =>
   Object.entries(fields)
-    .map(([name, value]) => `${name}=${String(value)}`)
+    .map(([name, value]) => `${name}=${capped(String(value))}`)
     .join(' ');
 
 const line = (refusal: HostRefusal, extra: HostRefusalFields) =>
   `[app-host] WARN ${refusal.what}: ${formatFields({ ...refusal.fields, ...extra })}`;
 
-/** A request's method and path, without its query string or fragment. */
+/** A request's path, without its query string or fragment. Never logged as is: see `loggableRoute`. */
 export const requestPathOnly = (url: string) => url.split(/[?#]/u, 1)[0] ?? '';
+
+/** Segments that may be a secret even when short: identifiers mixing letters and digits, hex, encoded bytes. */
+const SECRET_LIKE = [
+  /^(?=.*\d)(?=.*[A-Za-z])[\w.~+=-]{12,}$/u,
+  /^[\dA-Fa-f]{8,}$/u,
+  /^[\dA-Fa-f]{8}-[\dA-Fa-f]{4}-/u,
+  /%/u,
+];
+const MAX_SEGMENT_LENGTH = 24;
+const KEPT_SEGMENTS = 2;
+
+const redactSegment = (segment: string) =>
+  segment.length > MAX_SEGMENT_LENGTH || SECRET_LIKE.some((pattern) => pattern.test(segment)) ? ':x' : segment;
+
+/** A unit id is kebab-case; anything else in its place, or anything secret-like, is redacted. */
+const UNIT_ID = /^[a-z][a-z\d-]{0,63}$/u;
+const redactUnit = (segment: string) =>
+  UNIT_ID.test(segment) && !SECRET_LIKE.some((pattern) => pattern.test(segment)) ? segment : ':x';
+
+/**
+ * The route a request asked for, safe to log: its path without the scheme, authority (and so any `user:pass@`) of an
+ * absolute-form target and without query or fragment; after the `/_m/<unit>` prefix only the first two segments are
+ * kept, every further segment is `:x`, and any segment that is long or looks like a token, UUID, hex or encoded value
+ * is `:x` too, the unit's own segment included.
+ */
+export const loggableRoute = (target: string) => {
+  const withoutQuery = requestPathOnly(target);
+  const authority = /^[A-Za-z][\w+.-]*:\/\/[^/]*/u.exec(withoutQuery);
+  const pathname = authority === null ? withoutQuery : withoutQuery.slice(authority[0].length);
+  const segments = pathname.split('/').slice(1);
+  const prefix = segments[0] === '_m' ? 2 : 0;
+  const redactAt = (segment: string, index: number) => {
+    if (index === 0 && prefix > 0) {
+      return segment;
+    }
+    if (index < prefix) {
+      return redactUnit(segment);
+    }
+    return index - prefix < KEPT_SEGMENTS ? redactSegment(segment) : ':x';
+  };
+  const redacted = segments.map(redactAt);
+  return capped(`/${redacted.join('/')}`);
+};
 
 export const makeHostRefusalLog = (): HostRefusalLog => {
   const windows = new Map<string, RefusalWindow>();

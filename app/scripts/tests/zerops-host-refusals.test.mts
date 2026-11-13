@@ -1,12 +1,12 @@
 import { createServer } from 'node:net';
 
 import { Console, Effect, Option, Ref, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { describe, expect, it } from 'effect-rstest';
 import { HttpServerRequest } from 'effect/http';
 import { TestClock, TestConsole } from 'effect/testing';
 
 import { hostApplication, hostControlApplication } from '../zerops/app-host.mts';
-import { makeHostRefusalLog } from '../zerops/host-refusal-log.mts';
+import { loggableRoute, makeHostRefusalLog } from '../zerops/host-refusal-log.mts';
 
 const decodeBoundAddress = Schema.decodeUnknownOption(Schema.Struct({ port: Schema.Number }));
 
@@ -49,7 +49,7 @@ it.effect('a relay to a unit that does not listen answers 502 and logs one WARN 
     for (const field of [
       'cause=ECONNREFUSED',
       'method=GET',
-      'path=/_m/crm/crm-api/records',
+      'route=/_m/crm/crm-api/records',
       'stage=request',
       'status=502',
       'unit=crm',
@@ -113,12 +113,75 @@ it.effect('the host logs its own refusals: an unknown control path, a published 
 
     const lines = (yield* console.errorLines).map(String);
     expect(lines).toHaveLength(3);
-    expect(lines[0]).toBe('[app-host] WARN control port refused: method=GET path=/_host/other status=404');
+    expect(lines[0]).toBe('[app-host] WARN control port refused: method=GET route=/_host/other status=404');
     expect(lines[1]).toBe(
-      '[app-host] WARN composition source unavailable: method=GET path=/_host/composition status=503 reason=no snapshot the authority admits',
+      '[app-host] WARN composition source unavailable: method=GET route=/_host/composition status=503 reason=no snapshot the authority admits',
     );
     expect(lines[2]).toBe(
-      '[app-host] WARN no unit serves this path: method=GET path=/_m/uninstalled/remoteEntry.js status=404 unit=uninstalled',
+      '[app-host] WARN no unit serves this path: method=GET route=/_m/uninstalled/remoteEntry.js status=404 unit=uninstalled',
     );
+  }),
+);
+
+describe('loggableRoute', () => {
+  // Every route of the repository that carries a secret in its path, and the forms a client can send.
+  const RESET_TOKEN = 'Q7mXk2vN9pLr4TzA8bWcE1sY';
+  it.each([
+    // Customer Context password reset link: the token is the fourth segment.
+    [
+      `/_m/commerce-customer-context/api/portal-auth/reset-password/${RESET_TOKEN}`,
+      '/_m/commerce-customer-context/api/portal-auth/:x/:x',
+    ],
+    [`/api/portal-auth/reset-password/${RESET_TOKEN}`, '/api/portal-auth/:x/:x'],
+    // Enrollment claims carry the attempt id.
+    [
+      '/_m/commerce-customer-context/api/portal-auth/enrollment/9f0c2a1e-3b4d-4e5f-8a6b-7c8d9e0f1a2b/claim-invitation',
+      '/_m/commerce-customer-context/api/portal-auth/:x/:x/:x',
+    ],
+    // OAuth callbacks and verification links carry their codes in the query, which is never logged.
+    ['/shell-super-app-api/oauth/callback?code=SECRETCODE123&state=abc', '/shell-super-app-api/oauth/:x'],
+    [
+      '/_m/commerce-customer-context/api/portal-auth/verify-email?token=SECRET',
+      '/_m/commerce-customer-context/api/portal-auth/:x',
+    ],
+    // A short secret, hex digests and UUIDs in the first segments.
+    ['/invite/Zx9QpL2mR7tK', '/invite/:x'],
+    ['/d41d8cd98f00b204e9800998ecf8427e/download', '/:x/download'],
+    ['/_m/9f0c2a1e-3b4d-4e5f-8a6b-7c8d9e0f1a2b/x', '/_m/:x/x'],
+    ['/files/report%20secret.pdf', '/files/:x'],
+    // An absolute-form target: scheme, host and `user:pass@` are never logged.
+    ['http://user:hunter2@evil.example/_m/crm/crm-api/records?x=1', '/_m/crm/crm-api/records'],
+    // Plain routes keep their first two segments.
+    ['/cs/crm/klienti', '/cs/crm/:x'],
+    ['/shell-super-app-api/auth/api-key/gateway-read', '/shell-super-app-api/auth/:x/:x'],
+  ])('%s logs as %s', (target, expected) => {
+    expect(loggableRoute(target)).toBe(expected);
+  });
+
+  it('caps a logged route at 200 characters', () => {
+    expect(loggableRoute(`/${'a'.repeat(20)}`.repeat(30)).length).toBeLessThanOrEqual(201);
+  });
+});
+
+it.effect('a refused password-reset link never puts its token into the log', () =>
+  Effect.gen(function* resetLink() {
+    const console = yield* TestConsole.make;
+    const port = yield* closedPort;
+    const published = yield* Ref.make(true);
+    const app = hostApplication(
+      new Map([['commerce-customer-context', port]]),
+      published,
+      Effect.succeed(Option.none()),
+    );
+    const token = 'Q7mXk2vN9pLr4TzA8bWcE1sY';
+    const response = yield* app.pipe(
+      at(`https://stage.test/_m/commerce-customer-context/api/portal-auth/reset-password/${token}`),
+      Effect.provideService(Console.Console, console),
+    );
+    expect(response.status).toBe(502);
+    const lines = (yield* console.errorLines).map(String);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('route=/_m/commerce-customer-context/api/portal-auth/:x/:x');
+    expect(lines.join('\n')).not.toContain(token);
   }),
 );

@@ -318,7 +318,7 @@ it.live('a relay that cannot reach its peer answers the retryable 503 and logs o
     const lines = (yield* console.errorLines).map(String);
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatch(
-      /^\[app-host\] WARN drain relay failed: cause=ECONNREFUSED elapsedMs=\d+ method=GET path=\/_m\/crm\/echo peer=http:\/\/127\.0\.0\.1:9 status=503$/u,
+      /^\[app-host\] WARN drain relay failed: cause=ECONNREFUSED elapsedMs=\d+ method=GET peer=http:\/\/127\.0\.0\.1:9 route=\/_m\/crm\/echo status=503$/u,
     );
   }),
 );
