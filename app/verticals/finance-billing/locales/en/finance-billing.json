@@ -552,6 +552,8 @@
       "forbiddenDescription": "The VAT regime and rates are managed by an accountant with access to Tax. Ask the company administrator for access.",
       "notInstalled": "Tax is not turned on for this company",
       "notInstalledDescription": "Without Tax the company has no VAT rates. Ask the administrator to turn it on.",
+      "notDeclared": "The company has no VAT regime yet",
+      "notDeclaredDescription": "Tax is turned on, but nobody has set yet whether this company is a VAT payer. Until then Finance cannot fill in a VAT rate on new lines. An accountant with Tax rights sets it with “Change regime” below.",
       "regimeTitle": "VAT regime",
       "regimeChange": "Change regime",
       "regimeHistoryHidden": "Only people with access to tax records see the regime history.",

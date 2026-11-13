@@ -7,7 +7,7 @@ import type { ReadServiceFactory } from '@app/core-runtime';
 import { and, asc, desc, eq, inArray, isNotNull, isNull, like, notInArray, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
-import { Data, DateTime, Effect, Option, Ref, Schema } from 'effect';
+import { Clock, Data, DateTime, Effect, Option, Predicate, Ref, Schema, SchemaIssue } from 'effect';
 import type { MerchandiseAiSlice, MerchandiseState } from '../../shared/apis/records.ts';
 import { MerchandiseAiSliceSchema } from '../../shared/apis/records.ts';
 import {
@@ -47,6 +47,86 @@ export class MerchandiseStoreFailure extends Data.TaggedError('MerchandiseStoreF
   readonly cause?: unknown;
   readonly reason: string;
 }> {}
+
+/** A stored document Merchandise decodes on a read, named as an operator finds it. */
+export const StoredDocumentSchema = Schema.Literals([
+  'catalog_heads.homepage_featured_product_ids',
+  'catalog_heads.tax_rates',
+  'catalog_heads (storefront head)',
+  'categories.document',
+  'market_product_offers',
+  'market_settings',
+  'orders.document',
+  'product_variants.document',
+  'products (list row)',
+  'products (search row)',
+  'products.document',
+  'stock_movements',
+]);
+export type StoredDocument = typeof StoredDocumentSchema.Type;
+
+const STORED_DECODE_WARNING_INTERVAL_MS = 60_000;
+/** When each (company, document) last warned, and how many failures it has not reported since. */
+const storedDecodeWarnings = Ref.makeUnsafe(new Map<string, { readonly at: number; readonly unreported: number }>());
+/**
+ * The field path and the KIND of each failure (`InvalidType`, `MissingKey`, `UnexpectedKey`, a rule not met), never a
+ * value: a stored document may hold prices, e-mails or whole parties. Every message is built from the issue's kind and
+ * a fixed text; a message the formatter composes itself (a union's, which can quote its input) becomes "invalid".
+ */
+const STORED_RULE_NOT_MET = 'rule not met';
+const STORED_ISSUE_KIND = /^[A-Z][A-Za-z]+$/u;
+const formatStoredIssues = SchemaIssue.makeFormatterStandardSchemaV1({
+  checkHook: () => STORED_RULE_NOT_MET,
+  leafHook: (issue) => issue._tag,
+});
+const pathSegment = (segment: PropertyKey | { readonly key: PropertyKey }) =>
+  String(Predicate.hasProperty(segment, 'key') ? segment.key : segment);
+/** What a stored-document WARN says about each failure: where it is and what kind it is. Exported for its test. */
+export const storedIssuesOf = (cause: unknown) =>
+  Schema.isSchemaError(cause)
+    ? formatStoredIssues(cause.issue).issues.map((issue) => ({
+        path: (issue.path ?? []).map(pathSegment).join('.'),
+        reason:
+          issue.message === STORED_RULE_NOT_MET || STORED_ISSUE_KIND.test(issue.message) ? issue.message : 'invalid',
+      }))
+    : [{ path: '', reason: 'not a schema failure' }];
+
+/**
+ * Writes the WARN for a stored document that does not decode on a read: the module, tenant, company, document, field
+ * path and reason, at most once a minute per company and document, with how many failures that line stands for. No
+ * value of the document is logged. The read itself stays unavailable: the decoder is never relaxed, no row skipped.
+ */
+export const warnStoredDocumentUndecodable = Effect.fn('MerchandiseStore.warnStoredDocumentUndecodable')(
+  function* warnStoredDocumentUndecodable(scope: StoreScope, document: StoredDocument, cause: unknown) {
+    const now = yield* Clock.currentTimeMillis;
+    const key = `${scope.tenantId}|${scope.legalEntityId}|${document}`;
+    const failures = yield* Ref.modify(storedDecodeWarnings, (warnings) => {
+      const last = warnings.get(key);
+      const quiet = last !== undefined && now - last.at < STORED_DECODE_WARNING_INTERVAL_MS;
+      const next = new Map([
+        ...warnings,
+        [key, quiet ? { at: last.at, unreported: last.unreported + 1 } : { at: now, unreported: 0 }] as const,
+      ]);
+      return [quiet ? 0 : 1 + (last?.unreported ?? 0), next] as const;
+    });
+    if (failures > 0) {
+      yield* Effect.logWarning('A stored Merchandise document does not decode; the read answers unavailable').pipe(
+        Effect.annotateLogs({
+          company: scope.legalEntityId,
+          document,
+          failures,
+          issues: storedIssuesOf(cause),
+          module: 'demo.merchandise',
+          tenant: scope.tenantId,
+        }),
+      );
+    }
+  },
+);
+
+/** Logs (rate-limited) and keeps the failure: `Effect.tapError(storedDocumentUndecodable(scope, document))`. */
+export const storedDocumentUndecodable = (scope: StoreScope, document: StoredDocument) => (cause: unknown) =>
+  warnStoredDocumentUndecodable(scope, document, cause);
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
 export type MerchandiseDb = Pick<ScopedTransaction, 'delete' | 'insert' | 'select' | 'update'>;
@@ -545,17 +625,28 @@ const dropReclassifiedHolds = Effect.fn('MerchandiseStore.dropReclassifiedHolds'
   if (dropped.length === 0) {
     return;
   }
+  const droppedIds = sql`array[${sql.join(
+    dropped.map((id) => sql`${id}`),
+    sql`, `,
+  )}]::text[]`;
   yield* query(
     db
       .update(catalogHeads)
       .set({
-        taxRates: sql`jsonb_set(${catalogHeads.taxRates}, '{heldProductRates}',
-          (${catalogHeads.taxRates} -> 'heldProductRates') - array[${sql.join(
-            dropped.map((id) => sql`${id}`),
-            sql`, `,
-          )}]::text[])`,
+        // The last hold dropped leaves the key absent, as Merchandise decodes it: never an empty map, never null.
+        taxRates: sql`case
+          when (${catalogHeads.taxRates} -> 'heldProductRates') - ${droppedIds} = '{}'::jsonb
+            then ${catalogHeads.taxRates} - 'heldProductRates'
+          else jsonb_set(${catalogHeads.taxRates}, '{heldProductRates}',
+            (${catalogHeads.taxRates} -> 'heldProductRates') - ${droppedIds})
+        end`,
       })
-      .where(and(whereScope(catalogHeads, scope), sql`${catalogHeads.taxRates} ? 'heldProductRates'`)),
+      .where(
+        and(
+          whereScope(catalogHeads, scope),
+          sql`jsonb_typeof(${catalogHeads.taxRates} -> 'heldProductRates') = 'object'`,
+        ),
+      ),
     'The dropped holds could not be written',
   );
 });
@@ -640,10 +731,13 @@ export const writeSnapshotHead = Effect.fn('MerchandiseStore.writeSnapshotHead')
 });
 
 /** The stored `tax_rates` document, decoded; null before the company's first sync. */
-const decodeTaxRates = (value: (typeof catalogHeads.$inferSelect)['taxRates']) =>
+const decodeTaxRates = (scope: StoreScope, value: (typeof catalogHeads.$inferSelect)['taxRates']) =>
   value === null
     ? Effect.succeed(Option.getOrUndefined(Option.none<CompanyTaxRates>()))
-    : query(Schema.decodeUnknownEffect(CompanyTaxRatesSchema)(value), 'Company tax rates do not decode');
+    : Schema.decodeUnknownEffect(CompanyTaxRatesSchema)(value).pipe(
+        Effect.tapError(storedDocumentUndecodable(scope, 'catalog_heads.tax_rates')),
+        Effect.mapError((cause) => new MerchandiseStoreFailure({ cause, reason: 'Company tax rates do not decode' })),
+      );
 
 /** The rates prices are entered at: each classification's rate now, and the products held at their own rate. */
 export interface StorePricing {
@@ -660,7 +754,7 @@ export const currentPricingOf = Effect.fn('MerchandiseStore.currentPricingOf')(f
     db.select({ taxRates: catalogHeads.taxRates }).from(catalogHeads).where(whereScope(catalogHeads, scope)).limit(1),
     'Company tax rates could not be read',
   );
-  const stored = yield* decodeTaxRates(rows[0]?.taxRates ?? null);
+  const stored = yield* decodeTaxRates(scope, rows[0]?.taxRates ?? null);
   return {
     held: heldRatesOf(stored),
     rates: sellableRatesOf(stored, yield* DateTime.now),
@@ -754,7 +848,10 @@ export const loadProducts = Effect.fn('MerchandiseStore.loadProducts')(function*
       ),
     'Price tiers could not be read',
   );
-  return yield* query(hydrateProducts(rows, variantRows, tierRows), 'Stored product does not decode');
+  return yield* hydrateProducts(rows, variantRows, tierRows).pipe(
+    Effect.tapError(storedDocumentUndecodable(scope, 'products.document')),
+    Effect.mapError((cause) => new MerchandiseStoreFailure({ cause, reason: 'Stored product does not decode' })),
+  );
 });
 
 export interface CatalogHead {
@@ -1045,8 +1142,12 @@ export const materialiseTaxRatesIfIdle = Effect.fn('MerchandiseStore.materialise
     now: DateTime.Utc,
     changed: boolean,
   ) {
-    const encoded = yield* query(encodeTaxRates(value), 'Company tax rates do not encode');
     const next = changed ? revision + 1 : revision;
+    // A sync that advances the revision stamps it, so a save based on the revision before it is not refused for it.
+    const encoded = yield* query(
+      encodeTaxRates(changed ? { ...value, revision: next } : value),
+      'Company tax rates do not encode',
+    );
     const idle = sql`exists (select 1 from ${catalogHeads} as idle
       where idle.tenant_id = ${scope.tenantId}::uuid and idle.legal_entity_id = ${scope.legalEntityId}::uuid
         and idle.revision = ${revision} for update skip locked)`;
@@ -1098,10 +1199,12 @@ export const loadHead = Effect.fn('MerchandiseStore.loadHead')(function* loadHea
     [
       query(decodeAiSlice(row.aiChanges), 'AI changes do not decode'),
       query(
-        Schema.decodeUnknownEffect(Schema.Array(ProductIdReferenceSchema))(row.homepageFeaturedProductIds),
-        'AI changes do not decode',
+        Schema.decodeUnknownEffect(Schema.Array(ProductIdReferenceSchema))(row.homepageFeaturedProductIds).pipe(
+          Effect.tapError(storedDocumentUndecodable(scope, 'catalog_heads.homepage_featured_product_ids')),
+        ),
+        'Homepage featured products do not decode',
       ),
-      decodeTaxRates(row.taxRates),
+      decodeTaxRates(scope, row.taxRates),
     ],
     { concurrency: 1 },
   );

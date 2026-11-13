@@ -241,7 +241,9 @@ it.effect('preserves mandatory verification, source-pin publication and honest n
     expect(jobs.verify['timeout-minutes']).toBe(20);
     expect(jobs.verify.if).toBe("always() && needs.deploy.result == 'success'");
     expect(jobs.record.if).toContain("needs.verify.result == 'success'");
-    const probe = jobs.verify.steps.find((step) => step.name === 'Time /cs, OAuth metadata and the storefront home');
+    const probe = jobs.verify.steps.find(
+      (step) => step.name === 'Time /cs and OAuth metadata; every storefront home must list products',
+    );
     const oauth = jobs.verify.steps.find((step) => step.name === 'Prove MCP over OAuth end to end');
     for (const step of [probe, oauth]) {
       expect(step).toBeDefined();
