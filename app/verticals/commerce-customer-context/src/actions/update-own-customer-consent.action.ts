@@ -26,7 +26,7 @@ import type {
 } from '../../shared/portal-auth/own-session.ts';
 import { CommercePortalAuthAudit } from '../portal-auth/audit/audit.ts';
 import type { CommercePortalAuthAuditRecorder } from '../portal-auth/audit/audit.ts';
-import { recordOwnPortalRow, refusalOutcomeOf } from '../portal-auth/audit/own-portal-outcome.ts';
+import { recordAppliedOutcome, recordOwnPortalRow, refusalOutcomeOf } from '../portal-auth/audit/own-portal-outcome.ts';
 import type { OwnPortalAuditSubject } from '../portal-auth/audit/own-portal-outcome.ts';
 
 const domainEvents = {} as const;
@@ -116,8 +116,9 @@ const changeOwnConsentAfterCommit = Effect.fn('UpdateOwnCustomerConsentAction.af
     providerSubjectId: attempt.payload.session.providerSubjectId,
     sessionRef: exchange.sessionRef,
   };
-  // Exactly one outcome row for the committed authorization: the recorded choice, or its refusal with its class.
-  const saved = yield* changeOwnConsent(attempt, audit, subject).pipe(
+  // Exactly one outcome row for the committed authorization: the recorded choice, or its refusal with its class. The
+  // change and its row run as one uninterruptible step, so a request going away never leaves it without its row.
+  const changed = changeOwnConsent(attempt, audit, subject).pipe(
     Effect.tapError((failure) =>
       recordOwnPortalRow(audit, subject, {
         eventType: 'commerce.portal-auth.consent-failed.v1',
@@ -132,10 +133,18 @@ const changeOwnConsentAfterCommit = Effect.fn('UpdateOwnCustomerConsentAction.af
       }).pipe(Effect.ignore),
     ),
   );
-  yield* recordOwnPortalRow(audit, subject, {
-    eventType: 'commerce.portal-auth.consent-recorded.v1',
-    outcome: 'success',
-  }).pipe(Effect.mapError(consentUnavailable));
+  // The choice is recorded by then: a success row that cannot be written records `outcome_unknown` instead, and the
+  // buyer still gets the saved choice, never a 503.
+  const saved = yield* Effect.uninterruptible(
+    changed.pipe(
+      Effect.tap(() =>
+        recordAppliedOutcome(audit, subject, {
+          success: 'commerce.portal-auth.consent-recorded.v1',
+          unknown: 'commerce.portal-auth.consent-outcome-unknown.v1',
+        }),
+      ),
+    ),
+  );
   // The owner routine returned only after its scoped transaction committed.
   yield* exchange.deliver(saved);
   return SETTLED;

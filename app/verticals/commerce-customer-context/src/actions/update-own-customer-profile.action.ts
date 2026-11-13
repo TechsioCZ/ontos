@@ -28,7 +28,7 @@ import {
 } from '../../shared/portal-auth/profile-api.ts';
 import { CommercePortalAuthAudit } from '../portal-auth/audit/audit.ts';
 import type { CommercePortalAuthAuditRecorder } from '../portal-auth/audit/audit.ts';
-import { recordOwnPortalRow, refusalOutcomeOf } from '../portal-auth/audit/own-portal-outcome.ts';
+import { recordAppliedOutcome, recordOwnPortalRow, refusalOutcomeOf } from '../portal-auth/audit/own-portal-outcome.ts';
 import type { OwnPortalAuditSubject } from '../portal-auth/audit/own-portal-outcome.ts';
 
 const domainEvents = {} as const;
@@ -119,8 +119,9 @@ const changeOwnProfileAfterCommit = Effect.fn('UpdateOwnCustomerProfileAction.af
     providerSubjectId: attempt.payload.session.providerSubjectId,
     sessionRef: exchange.sessionRef,
   };
-  // Exactly one outcome row for the committed authorization: the change, or its refusal with its class.
-  const profile = yield* changeOwnProfile(attempt, audit, subject).pipe(
+  // Exactly one outcome row for the committed authorization: the change, or its refusal with its class. The change and
+  // its row run as one uninterruptible step, so a request going away never leaves an applied change without its row.
+  const changed = changeOwnProfile(attempt, audit, subject).pipe(
     Effect.tapError((failure) =>
       recordOwnPortalRow(audit, subject, {
         eventType: 'commerce.portal-auth.profile-update-failed.v1',
@@ -135,11 +136,18 @@ const changeOwnProfileAfterCommit = Effect.fn('UpdateOwnCustomerProfileAction.af
       }).pipe(Effect.ignore),
     ),
   );
-  // Completion follows native persistence and a fresh owner read; failure here is never reported as success.
-  yield* recordOwnPortalRow(audit, subject, {
-    eventType: 'commerce.portal-auth.profile-updated.v1',
-    outcome: 'success',
-  }).pipe(Effect.mapError(profileUnavailable));
+  // Completion follows native persistence and a fresh owner read. The change is applied by then: a success row that
+  // cannot be written records `outcome_unknown` instead, and the buyer still gets the changed profile, never a 503.
+  const profile = yield* Effect.uninterruptible(
+    changed.pipe(
+      Effect.tap(() =>
+        recordAppliedOutcome(audit, subject, {
+          success: 'commerce.portal-auth.profile-updated.v1',
+          unknown: 'commerce.portal-auth.profile-update-outcome-unknown.v1',
+        }),
+      ),
+    ),
+  );
   yield* exchange.deliver(profile);
   return SETTLED;
 });

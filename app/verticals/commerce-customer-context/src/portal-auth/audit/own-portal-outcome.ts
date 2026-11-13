@@ -26,6 +26,29 @@ export const recordOwnPortalRow = (
   },
 ) => DateTime.nowAsDate.pipe(Effect.flatMap((occurredAt) => recorder.record({ ...subject, ...row, occurredAt })));
 
+/**
+ * The final row of a change that was applied. Its write failing must not turn the applied change into a refusal: the
+ * row then says `outcome_unknown` (written if it can be) and the change is still delivered to the buyer.
+ */
+export const recordAppliedOutcome = (
+  recorder: CommercePortalAuthAuditRecorder,
+  subject: OwnPortalAuditSubject,
+  events: { readonly success: CommercePortalAuthAuditEventType; readonly unknown: CommercePortalAuthAuditEventType },
+) =>
+  recordOwnPortalRow(recorder, subject, { eventType: events.success, outcome: 'success' }).pipe(
+    Effect.matchEffect({
+      onFailure: (failure) =>
+        Effect.logWarning('Applied portal change without its success row; recording outcome_unknown').pipe(
+          Effect.annotateLogs({ failure: failure._tag, operation: subject.operation }),
+          Effect.andThen(
+            recordOwnPortalRow(recorder, subject, { eventType: events.unknown, outcome: 'outcome_unknown' }),
+          ),
+          Effect.ignore,
+        ),
+      onSuccess: () => Effect.void,
+    }),
+  );
+
 /** The class of a refused routine: a conflict the owner reported (409) is `state_conflict`, anything else `unavailable`. */
 export const refusalOutcomeOf = (failure: {
   readonly status: number;
