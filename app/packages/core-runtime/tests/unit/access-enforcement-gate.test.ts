@@ -1087,6 +1087,25 @@ it.effect("reads one subject's kind and scope once for a page of LISTs, never on
   }),
 );
 
+it.effect('a page of LISTs with a company selected reads its scope once: the engine takes the checked read', () =>
+  Effect.gen(function* checkedScopeShared() {
+    const company = LegalEntityIdSchema.make(uid(26));
+    // Tenant-context declarations asked with a company selected: the gate checks the company in its scope read.
+    const page = listPage.map((input) => ({ ...input, scope: scopeFor(person, company) }));
+    const shared = { authority: { cells: [cell({ capability: 'finance.invoice.void' })] } };
+    const alone = harness(shared);
+    const one = yield* Effect.forEach(page, (input) => alone.gate.list(input), { concurrency: 1 });
+    const together = harness(shared);
+    expect(yield* together.gate.listMany(page)).toEqual(one);
+    // The tenant-context LISTs: one checked read, the engine's company-less read of the same holders answered by it.
+    // The one `required` LIST reads its company. Two reads, as on trunk; before this, the engine's read was a third.
+    expect(together.scopes.map((query) => [query.legalEntityId, query.checkedCompany])).toEqual([
+      [undefined, company],
+      [company, undefined],
+    ]);
+  }),
+);
+
 it.effect("never shares a scope read through a caller's transaction across a page of LISTs", () =>
   Effect.gen(function* joinedScopeNotShared() {
     const spec = { cells: [cell({ capability: 'finance.invoice.void' })] };
