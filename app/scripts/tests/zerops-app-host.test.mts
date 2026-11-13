@@ -94,6 +94,12 @@ describe('relayResponseHeaders', () => {
     });
   });
 
+  it('never passes on the drain headers only a host sets', () => {
+    expect(
+      relayResponseHeaders(200, { etag: '"a"', 'x-ontos-drain-forwarded': '1', 'x-ontos-drain-refused': 'draining' }),
+    ).toStrictEqual({ etag: '"a"' });
+  });
+
   it('keeps the caller connection reusable for every other answer and drops hop-by-hop headers', () => {
     expect(relayResponseHeaders(200, { connection: 'keep-alive', etag: '"a"' })).toStrictEqual({
       etag: '"a"',

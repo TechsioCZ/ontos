@@ -1575,6 +1575,8 @@ export interface ShellHttpRequest {
   readonly payload: unknown;
   /** The signed-in persona; a request without one has no session at all. */
   readonly persona?: Persona;
+  /** A request the Shell's own page sends (`sec-fetch-site: same-origin`), as its origin-checked writes require. */
+  readonly sameOrigin?: boolean;
 }
 
 export interface ShellHttp {
@@ -1736,6 +1738,9 @@ export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* 
       }
       if (request.idempotencyKey !== undefined) {
         headers.set('idempotency-key', request.idempotencyKey);
+      }
+      if (request.sameOrigin === true) {
+        headers.set('sec-fetch-site', 'same-origin');
       }
       const body = yield* encodeJson(request.payload).pipe(Effect.orDie);
       const response = yield* Effect.promise(

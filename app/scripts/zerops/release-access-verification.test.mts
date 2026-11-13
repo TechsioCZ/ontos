@@ -164,7 +164,9 @@ it('app-host verifies the release before publishing it, does not ignore a failur
   const host = readFileSync(new URL('app-host.mts', import.meta.url), 'utf-8');
   const verify = host.indexOf('yield* verifyReleaseAccessIntent(releaseSnapshot)');
   const publish = host.indexOf('yield* publishSnapshot(releaseSnapshot)');
-  const openPort = host.indexOf('yield* openPublicPort;\n    yield* Ref.set(published, true);\n    yield* closePublic');
+  const openPort = host.indexOf(
+    'yield* openPublicPort;\n    yield* Ref.set(published, true);\n    yield* drainWhenSuperseded',
+  );
   expect(verify).toBeGreaterThan(-1);
   expect(publish).toBeGreaterThan(verify);
   expect(openPort).toBeGreaterThan(publish);

@@ -16,6 +16,32 @@ import {
 } from './heap-limits.mts';
 import { withKeepAlive } from './http-keep-alive.mts';
 import { compositionSnapshotResponse } from './composition-source-response.mts';
+import {
+  HOST_REFUSAL_LOG_WINDOW,
+  RelayFailure,
+  decodeRelayCause,
+  makeHostRefusalLog,
+  relayFailureCode,
+  requestPathOnly,
+  loggableRoute,
+} from './host-refusal-log.mts';
+import type { HostRefusalLog } from './host-refusal-log.mts';
+import {
+  APP_SERVICE_HOSTNAME,
+  DRAIN_FORWARDED_HEADER,
+  DRAIN_FORWARD_CONNECT_TIMEOUT,
+  DRAIN_REFUSED_HEADER,
+  DRAIN_FORWARD_HEADERS_TIMEOUT,
+  SUPERSEDED_DRAIN,
+  containerBoot,
+  drainSupersededHost,
+  makeSupersedeDrain,
+  platformDrainPeers,
+  publicationAllowed,
+  renewWhileHolding,
+  restartMayPublish,
+} from './supersede-drain.mts';
+import type { DrainPeer, SupersedeDrain } from './supersede-drain.mts';
 import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
 import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
 import {
@@ -55,12 +81,14 @@ import { authenticationQueryRedactions, credentialSubmissionRedirect } from '@ap
  */
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
+import type { Server } from 'node:http';
 import { hostname } from 'node:os';
 import path from 'node:path';
 
 import { NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { fromReadable, toReadable } from '@effect/platform-node/NodeStream';
-import { request as requestLoopback } from '@effect/platform-node/Undici';
+import { Agent, getGlobalDispatcher } from '@effect/platform-node/Undici';
+import type { Dispatcher } from '@effect/platform-node/Undici';
 import { sql } from 'drizzle-orm';
 import {
   Array as EffectArray,
@@ -70,9 +98,11 @@ import {
   Context,
   Console,
   DateTime,
+  Deferred,
   Duration,
   Effect,
   Exit,
+  Fiber,
   FileSystem,
   Layer,
   Option,
@@ -80,6 +110,7 @@ import {
   Redacted,
   Queue,
   Ref,
+  Result,
   Schedule,
   Schema,
   Scope,
@@ -106,6 +137,7 @@ import type { ObservedArtifact, ObservedModuleDeployment } from '../active-appli
 import {
   ApplicationCompositionAuthorityAdminDatabaseLive,
   publishApplicationCompositionAuthoritySnapshot,
+  renewApplicationCompositionAuthoritySnapshot,
 } from '../application-composition-authority-publication.mts';
 import { ApplicationCompositionLegacyOwnersLive } from '../application-composition-legacy-owners.mts';
 import { OWNER_RUNTIME_CONFIGURATIONS, unitApiBaseUrl } from '../ops/owner-runtime-configuration.mts';
@@ -363,10 +395,24 @@ const startChild = Effect.fn('AppHost.startChild')(function* startChild(
     stdin: 'ignore',
     stdout: 'inherit',
   }).pipe(Effect.mapError(() => failure(`${name} failed to start`)));
+  const started = yield* Clock.currentTimeMillis;
+  // The supervisor restarts nothing itself: any exit stops the host, and Zerops restarts the container.
+  const exited = (outcome: string) =>
+    Clock.currentTimeMillis.pipe(
+      Effect.flatMap((now) =>
+        Console.error(
+          `[app-host] ${name} ${outcome} after ${String(Math.round((now - started) / 1000))}s up; the host stops so Zerops restarts the container`,
+        ),
+      ),
+    );
   return handle.exitCode.pipe(
     Effect.matchEffect({
-      onFailure: () => Effect.fail(failure(`${name} failed while running`)),
-      onSuccess: (code) => Effect.fail(failure(`${name} exited with code ${String(code)}`)),
+      onFailure: () =>
+        exited('could no longer be watched').pipe(Effect.andThen(Effect.fail(failure(`${name} failed while running`)))),
+      onSuccess: (code) =>
+        exited(`exited with code ${String(code)}`).pipe(
+          Effect.andThen(Effect.fail(failure(`${name} exited with code ${String(code)}`))),
+        ),
     }),
   );
 });
@@ -950,15 +996,51 @@ const waitForOwner = (owner: HostedUnit) => {
   );
 };
 
+const unitAddress = ({ id, port }: HostedUnit) => `${id} 127.0.0.1:${String(port)}`;
+
+/** Waits until every unit serves its contract, then names each unit and its port in one line. */
+const waitForUnits = (units: readonly HostedUnit[]) =>
+  Effect.forEach(units, waitForOwner, { concurrency: 'unbounded', discard: true }).pipe(
+    Effect.andThen(
+      Console.log(`[app-host] all ${String(units.length)} units serving: ${units.map(unitAddress).join(', ')}`),
+    ),
+  );
+
+/**
+ * Request headers this host answers itself and never passes on: the drain marker, and `Expect`, whose 100-continue
+ * this host's server already answered to the client (undici rejects any `expect` header, so passing it on turned every
+ * such upload, curl's default above 1 MiB, into a 502, and into a 503 during a drain).
+ */
+const HOST_ANSWERED: ReadonlySet<string> = new Set([DRAIN_FORWARDED_HEADER, 'expect']);
+
 const HOP_BY_HOP: ReadonlySet<string> = new Set([
   'connection',
   'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
   'proxy-connection',
   'te',
   'trailer',
   'transfer-encoding',
   'upgrade',
 ]);
+
+/**
+ * Response headers only a host sets: a unit's answer never carries them on, or a draining host relaying through this
+ * one would read a unit's `x-ontos-drain-refused` as this host refusing, and drop a serving peer.
+ */
+const HOST_SIGNALS: ReadonlySet<string> = new Set([DRAIN_FORWARDED_HEADER, DRAIN_REFUSED_HEADER]);
+
+/** The headers a `Connection` header names are hop-by-hop too (RFC 9110, 7.6.1). */
+type HeaderValue = string | readonly string[] | undefined;
+const connectionNamed = (connection: HeaderValue): ReadonlySet<string> =>
+  new Set(
+    [connection ?? []]
+      .flat()
+      .flatMap((value) => value.split(','))
+      .map((name) => name.trim().toLowerCase())
+      .filter((name) => name !== ''),
+  );
 
 /**
  * The owner's end-to-end headers. A caller retries an unavailable (503) answer: make it reconnect, so the retry
@@ -970,8 +1052,9 @@ export const relayResponseHeaders = (
   upstream: Readonly<Record<string, string | readonly string[] | undefined>>,
 ) => {
   const headers: Record<string, string | readonly string[]> = {};
+  const named = connectionNamed(upstream.connection);
   for (const [name, value] of Object.entries(upstream)) {
-    if (value !== undefined && !HOP_BY_HOP.has(name)) {
+    if (value !== undefined && !HOP_BY_HOP.has(name) && !named.has(name) && !HOST_SIGNALS.has(name)) {
       headers[name] = value;
     }
   }
@@ -981,67 +1064,152 @@ export const relayResponseHeaders = (
   return headers;
 };
 
-/** Relays one request byte-for-byte to a loopback owner; its compressed body and every header pass unchanged. */
+/** Where one relayed request goes: a loopback unit, or (while this host drains) a peer app container. */
+interface RelayTarget {
+  readonly dispatcher?: Agent;
+  /** A peer app container: its refusal as a draining host is a failure, so the relaying host tries the next one. */
+  readonly drainPeer?: boolean;
+  /** Headers the target receives in addition to the request's own end-to-end headers. */
+  readonly extraHeaders?: Readonly<Record<string, string>>;
+  readonly headersTimeout: Duration.Duration;
+  readonly origin: string;
+  readonly path: string;
+}
+
+/**
+ * When a relayed response must stop before its unit ends it. `end` completes it cleanly (an event stream: its client
+ * reconnects); `cut` fails it, so the connection drops instead of a truncated body passing as complete.
+ */
+interface RelayCutoff {
+  readonly cut?: Effect.Effect<unknown>;
+  readonly end?: Effect.Effect<unknown>;
+}
+
+const isEventStream = (headers: Readonly<Record<string, string | readonly string[] | undefined>>) =>
+  String(headers['content-type'] ?? '').startsWith('text/event-stream');
+
+/**
+ * Relays one request byte-for-byte; its body streams (never buffered), its compressed response and every end-to-end
+ * header pass unchanged. Hop-by-hop headers and the drain marker never pass: a client cannot hand a unit or a peer
+ * the marker, and an upgrade request reaches the target as a plain request, which it answers.
+ */
 const relay = Effect.fn('AppHost.relay')(function* relay(
   request: HttpServerRequest.HttpServerRequest,
-  port: number,
-  pathname: string,
+  target: RelayTarget,
+  reportCut: (problem: RelayFailure) => Effect.Effect<void>,
+  cutoffOf: (eventStream: boolean) => RelayCutoff,
+  stopping: Effect.Effect<unknown>,
 ) {
   const headers: Record<string, string> = {};
+  const named = connectionNamed(request.headers.connection);
   for (const [name, value] of Object.entries(request.headers)) {
-    if (!HOP_BY_HOP.has(name)) {
+    if (!HOP_BY_HOP.has(name) && !named.has(name) && !HOST_ANSWERED.has(name)) {
       headers[name] = value;
     }
   }
   headers['x-forwarded-host'] ??= request.headers.host ?? '';
   headers['x-forwarded-proto'] ??= 'https';
+  Object.assign(headers, target.extraHeaders);
   const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
   const body = hasBody
     ? yield* toReadable(request.stream.pipe(Stream.mapError(() => failure('relay request body'))))
     : null;
   const response = yield* Effect.tryPromise({
-    catch: () => failure('relay owner unavailable'),
-    try: (signal): PromiseLike<Awaited<ReturnType<typeof requestLoopback>>> =>
-      requestLoopback(`${loopbackOrigin(port)}${pathname}`, {
+    catch: (cause) => new RelayFailure({ code: relayFailureCode(decodeRelayCause(cause)), stage: 'request' }),
+    // The dispatcher takes the path as it is: no URL parsing, so `//`, `\\`, dot segments and encodings reach the
+    // target exactly as the client sent them.
+    try: (signal): PromiseLike<Dispatcher.ResponseData> =>
+      (target.dispatcher ?? getGlobalDispatcher()).request({
         body,
         bodyTimeout: 0,
         headers,
-        headersTimeout: Duration.toMillis(RELAY_HEADERS_TIMEOUT),
+        headersTimeout: Duration.toMillis(target.headersTimeout),
         method: request.method,
+        origin: target.origin,
+        path: target.path,
         signal,
       }),
-  });
+  }).pipe(
+    // A host that stops does not wait for an answer still to come (an upload in flight): it answers 503 at once.
+    Effect.raceFirst(
+      stopping.pipe(Effect.andThen(Effect.fail(new RelayFailure({ code: 'HOST_STOPPING', stage: 'request' })))),
+    ),
+  );
+  if (target.drainPeer === true && response.headers[DRAIN_REFUSED_HEADER] !== undefined) {
+    response.body.resume();
+    return yield* new RelayFailure({ code: 'PEER_DRAINING', stage: 'request' });
+  }
   const responseHeaders = relayResponseHeaders(response.statusCode, response.headers);
   const noBody = request.method === 'HEAD' || [204, 205, 304].includes(response.statusCode);
   if (noBody) {
     response.body.resume();
     return HttpServerResponse.empty({ headers: responseHeaders, status: response.statusCode });
   }
-  return HttpServerResponse.stream(
-    fromReadable<Uint8Array, AppHostError>({
-      evaluate: () => response.body,
-      onError: () => failure('relay owner response body'),
-    }),
-    { headers: responseHeaders, status: response.statusCode },
-  );
+  const cutoff = cutoffOf(isEventStream(response.headers));
+  const cutProblem = new RelayFailure({ code: 'DRAIN_ENDED', stage: 'response body' });
+  // The status and headers are sent by then: a unit that fails its body cuts the response, and that is logged.
+  let body$ = fromReadable<Uint8Array, RelayFailure>({
+    evaluate: () => response.body,
+    onError: (cause) => new RelayFailure({ code: relayFailureCode(decodeRelayCause(cause)), stage: 'response body' }),
+  });
+  if (cutoff.end !== undefined) {
+    body$ = body$.pipe(Stream.interruptWhen(cutoff.end));
+  }
+  if (cutoff.cut !== undefined) {
+    body$ = body$.pipe(Stream.interruptWhen(cutoff.cut.pipe(Effect.andThen(Effect.fail(cutProblem)))));
+  }
+  return HttpServerResponse.stream(body$.pipe(Stream.tapError(reportCut)), {
+    headers: responseHeaders,
+    status: response.statusCode,
+  });
 });
 
 const isLoopbackPeer = (request: HttpServerRequest.HttpServerRequest) =>
   Option.exists(request.remoteAddress, isLoopbackHostname);
 
-/** Only processes inside this container read the composition; public peers get 404. */
+/** Fields of a refusal the host answered itself: the method and the route shape, never the path, query or body. */
+const refusedRequest = (request: HttpServerRequest.HttpServerRequest, status: number) => ({
+  method: request.method,
+  route: loggableRoute(request.url),
+  status,
+});
+
+/**
+ * Only processes inside this container read the composition; public peers get 404 without a log line (a public probe
+ * of an internal path is expected noise). A process inside the container that is refused is logged: a reader with a
+ * wrong method, or a published host that has no snapshot it may serve (before publication, 503 is the expected
+ * answer while the host starts).
+ */
 const compositionSourceResponse = <Failure, Requirements>(
   request: HttpServerRequest.HttpServerRequest,
+  published: Ref.Ref<boolean>,
   load: Effect.Effect<Option.Option<string>, Failure, Requirements>,
+  refusals: HostRefusalLog,
 ) =>
   Effect.gen(function* serveApprovedSnapshot() {
-    if (request.method !== 'GET' || !isLoopbackPeer(request)) {
+    if (!isLoopbackPeer(request)) {
+      return HttpServerResponse.empty({ status: 404 });
+    }
+    if (request.method !== 'GET') {
+      yield* refusals.record({
+        fields: refusedRequest(request, 404),
+        key: 'composition',
+        what: 'composition source refused',
+      });
       return HttpServerResponse.empty({ status: 404 });
     }
     const current = yield* load.pipe(Effect.option, Effect.map(Option.flatten));
-    return Option.isSome(current)
-      ? compositionSnapshotResponse(current.value, request.headers['if-none-match'])
-      : HttpServerResponse.empty({ status: 503 });
+    if (Option.isSome(current)) {
+      return compositionSnapshotResponse(current.value, request.headers['if-none-match']);
+    }
+    if (yield* Ref.get(published)) {
+      yield* refusals.record({
+        fields: { ...refusedRequest(request, 503), reason: 'no snapshot the authority admits' },
+        key: 'composition',
+        what: 'composition source unavailable',
+      });
+    }
+    return HttpServerResponse.empty({ status: 503 });
   });
 
 /** Liveness, readiness and the loopback composition source; none for every application path. */
@@ -1049,15 +1217,17 @@ const hostControlResponse = <Failure, Requirements>(
   request: HttpServerRequest.HttpServerRequest,
   published: Ref.Ref<boolean>,
   loadComposition: Effect.Effect<Option.Option<string>, Failure, Requirements>,
+  refusals: HostRefusalLog,
 ) =>
   Effect.gen(function* answerHostControl() {
     if (request.url === COMPOSITION_PATH) {
-      return Option.some(yield* compositionSourceResponse(request, loadComposition));
+      return Option.some(yield* compositionSourceResponse(request, published, loadComposition, refusals));
     }
     if (request.url === LIVE_PATH) {
       return Option.some(HttpServerResponse.text('live\n', { headers: { 'cache-control': 'no-store' } }));
     }
     if (request.url === READY_PATH) {
+      // A readiness probe before publication is expected to answer 503; the boot lines say why.
       const ready = yield* Ref.get(published);
       return Option.some(
         HttpServerResponse.text(ready ? 'ready\n' : 'starting\n', {
@@ -1069,24 +1239,259 @@ const hostControlResponse = <Failure, Requirements>(
     return Option.none<HttpServerResponse.HttpServerResponse>();
   });
 
-/** The loopback control port: Zerops probes and the composition source, never application traffic. */
+/**
+ * The loopback control port: Zerops probes and the composition source, never application traffic. Only processes
+ * of this container reach it, so any other path is a misconfigured caller and is logged.
+ */
 export const hostControlApplication = <Failure, Requirements>(
   published: Ref.Ref<boolean>,
   loadComposition: Effect.Effect<Option.Option<string>, Failure, Requirements>,
+  refusals: HostRefusalLog = makeHostRefusalLog(),
 ) =>
   Effect.gen(function* routeControlRequest() {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const control = yield* hostControlResponse(request, published, loadComposition);
-    return Option.getOrElse(control, () => HttpServerResponse.empty({ status: 404 }));
+    const control = yield* hostControlResponse(request, published, loadComposition, refusals);
+    if (Option.isSome(control)) {
+      return control.value;
+    }
+    yield* refusals.record({ fields: refusedRequest(request, 404), key: 'control', what: 'control port refused' });
+    return HttpServerResponse.empty({ status: 404 });
   });
+
+/** The unit a public path is relayed to: `/_m/<appId>/…` names an owner, everything else is the Shell's. */
+const routedUnit = (url: string) => {
+  if (!url.startsWith(MODULE_ASSET_PREFIX)) {
+    return SHELL_ID;
+  }
+  const rest = requestPathOnly(url).slice(MODULE_ASSET_PREFIX.length);
+  const separator = rest.indexOf('/');
+  return separator === -1 ? rest : rest.slice(0, separator);
+};
+
+/**
+ * The one way the public port closes (drain end, stop signal, any end of the host): first `stopping`, so relayed
+ * event streams end, other relayed responses are cut and relays awaiting an answer answer 503, then the server's
+ * graceful close, which then has nothing left to wait for. Runs once, whoever asks first.
+ */
+/**
+ * Stops accepting connections on the public port, nothing more: Node closes the idle kept-alive ones, and every
+ * request already on its way finishes (the drain's end; its relays keep their answers).
+ */
+export const stopAccepting = (server: Server) =>
+  Effect.sync(() => {
+    if (server.listening) {
+      server.close();
+    }
+  });
+
+/**
+ * Bounds of the public port's stop. The platform's stop timeout is not documented in this repository; it is assumed
+ * to be 30 s, so the port closes well inside it and leaves the units their time. After `stopping`, connections that are
+ * kept alive or hold a half-sent request get a 2 s grace, then are closed; the server's graceful close is capped at
+ * 10 s whatever happens.
+ */
+export const PUBLIC_PORT_FORCE_CLOSE_AFTER = Duration.seconds(2);
+export const PUBLIC_PORT_GRACEFUL_CLOSE_CAP = Duration.seconds(10);
+
+export const publicPortClosing = (publicScope: Scope.Closeable, drain: SupersedeDrain, server: Server) =>
+  Effect.cached(
+    Effect.gen(function* closePublicPort() {
+      yield* Deferred.succeed(drain.stopping, true);
+      yield* Effect.sync(() => {
+        server.closeIdleConnections();
+      });
+      const force = yield* Effect.forkChild(
+        Effect.sleep(PUBLIC_PORT_FORCE_CLOSE_AFTER).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              server.closeAllConnections();
+            }),
+          ),
+        ),
+      );
+      yield* Scope.close(publicScope, Exit.void);
+      // Never cancelled: once the drain's deadline closed the listener, the server's shutdown returns at once, and a
+      // connection holding a half-sent request would otherwise keep the process alive until the platform kills it.
+      yield* Fiber.join(force);
+    }),
+  );
+
+/**
+ * The answer when a request may already have reached its target (its peer or unit could have acted on it): 502, or
+ * 504 when no answer came in time, and never `Retry-After`, so a caller without an idempotency key does not write
+ * twice.
+ */
+const mayHaveReachedTarget = (code: string) =>
+  HttpServerResponse.text(code === 'UND_ERR_HEADERS_TIMEOUT' ? 'Gateway timeout\n' : 'Upstream unavailable\n', {
+    headers: { 'cache-control': 'no-store', connection: 'close' },
+    status: code === 'UND_ERR_HEADERS_TIMEOUT' ? 504 : 502,
+  });
+
+/** 503 when nothing reached the target; 504 when it may have but did not answer in time; 502 otherwise. */
+const failureStatus = (code: string, reached: boolean) => {
+  if (!reached) {
+    return 503;
+  }
+  return code === 'UND_ERR_HEADERS_TIMEOUT' ? 504 : 502;
+};
+
+/** The answer a caller already retries: 503 on a fresh connection (which can reach another container). */
+const retryableUnavailable = () =>
+  HttpServerResponse.text('Service temporarily unavailable\n', {
+    headers: { 'cache-control': 'no-store', connection: 'close', 'retry-after': '1' },
+    status: 503,
+  });
+
+const ABSOLUTE_FORM = /^[A-Za-z][\w+.-]*:\/\/[^/?#]*/u;
+const SINGLE_SLASH_PATH = /^\/(?!\/)/u;
+
+/**
+ * The request target relayed, byte for byte: an origin-form target starting with exactly one `/` as received; of an
+ * absolute-form target only its path and query, as received (its scheme, host and any user:pass@ choose nothing).
+ * Anything else (`*`, `//x`, an authority-form target) is not relayed.
+ */
+export const relayedTarget = (url: string): Option.Option<string> => {
+  if (SINGLE_SLASH_PATH.test(url)) {
+    return Option.some(url);
+  }
+  const authority = ABSOLUTE_FORM.exec(url);
+  if (authority === null) {
+    return Option.none();
+  }
+  const rest = url.slice(authority[0].length);
+  if (rest === '' || rest.startsWith('?')) {
+    return Option.some(`/${rest}`);
+  }
+  return SINGLE_SLASH_PATH.test(rest) ? Option.some(rest) : Option.none();
+};
+
+const hostLiteral = (address: string) => (address.includes(':') ? `[${address}]` : address);
+const peerOrigin = ({ address, port }: DrainPeer) => `http://${hostLiteral(address)}:${String(port)}`;
+
+/** Failures before a single request byte left: the next peer may take the request, its body included. */
+const CONNECT_FAILURES: ReadonlySet<string> = new Set([
+  'EADDRNOTAVAIL',
+  'ECONNREFUSED',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+
+/**
+ * While this host drains, it serves nothing itself: every public request goes to a peer app container of the same
+ * service, unchanged but for the drain marker, so every cookie, token and gateway check runs there exactly as for a
+ * direct request. A request that already carries the marker came from another draining host (two deploys in a row):
+ * it is refused, marked so that host drops this one. Peers are tried in turn; a peer that refuses as draining or
+ * refuses the connection is dropped for the rest of the drain. A request with a body moves to the next peer only
+ * when the connection was refused (nothing sent yet), never after its bytes may have been sent. When every known
+ * peer failed, the peers are resolved again (at most once per second). Every failure answers the retryable 503.
+ */
+const forwardDuringDrain = Effect.fn('AppHost.forwardDuringDrain')(function* forwardDuringDrain(
+  request: HttpServerRequest.HttpServerRequest,
+  relayed: string,
+  drain: SupersedeDrain,
+  refusals: HostRefusalLog,
+  dispatcher: Agent,
+) {
+  const started = yield* Clock.currentTimeMillis;
+  /** Nothing reached a peer (refused connections, a draining peer's refusal): the caller may retry elsewhere. */
+  const refuse = (cause: string, peer: string, reached = false) =>
+    Clock.currentTimeMillis.pipe(
+      Effect.flatMap((now) =>
+        refusals.record({
+          fields: {
+            cause,
+            elapsedMs: now - started,
+            method: request.method,
+            peer,
+            route: loggableRoute(request.url),
+            status: failureStatus(cause, reached),
+          },
+          key: 'drain-forward',
+          what: 'drain relay failed',
+        }),
+      ),
+      Effect.as(reached ? mayHaveReachedTarget(cause) : retryableUnavailable()),
+    );
+  if (request.headers[DRAIN_FORWARDED_HEADER] !== undefined) {
+    yield* drain.count('looped');
+    return yield* refuse('ALREADY_RELAYED', 'none').pipe(
+      Effect.map(HttpServerResponse.setHeader(DRAIN_REFUSED_HEADER, 'draining')),
+    );
+  }
+  const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
+  let last = new RelayFailure({ code: 'NO_PEER', stage: 'request' });
+  let lastPeer = 'none';
+  for (const round of [1, 2]) {
+    const peers = round === 1 ? yield* drain.livePeers : yield* drain.refresh;
+    for (const peer of peers) {
+      const target = peerOrigin(peer);
+      const answer = yield* relay(
+        request,
+        {
+          dispatcher,
+          drainPeer: true,
+          extraHeaders: { [DRAIN_FORWARDED_HEADER]: '1' },
+          headersTimeout: DRAIN_FORWARD_HEADERS_TIMEOUT,
+          origin: target,
+          path: relayed,
+        },
+        (problem) => refuse(problem.code, target, true).pipe(Effect.asVoid),
+        // At the drain's end event streams end (their clients reconnect elsewhere); any other relayed answer finishes,
+        // and only the host's stop cuts it.
+        (eventStream) =>
+          eventStream
+            ? { end: Effect.raceFirst(Deferred.await(drain.ended), Deferred.await(drain.stopping)) }
+            : { cut: Deferred.await(drain.stopping) },
+        Deferred.await(drain.stopping),
+      ).pipe(Effect.result);
+      if (Result.isSuccess(answer)) {
+        yield* drain.count('forwarded');
+        return answer.success;
+      }
+      last = answer.failure;
+      lastPeer = target;
+      const refusedConnection = CONNECT_FAILURES.has(last.code);
+      if (refusedConnection || last.code === 'PEER_DRAINING') {
+        yield* drain.drop(peer, refusedConnection ? 'refused' : 'draining');
+      }
+      if (!refusedConnection && last.code !== 'PEER_DRAINING') {
+        // The request may have reached this peer: it is never sent to another one, and the caller is not told to retry.
+        yield* drain.count('failed');
+        return yield* refuse(last.code, lastPeer, true);
+      }
+      if (hasBody && !refusedConnection) {
+        yield* drain.count('failed');
+        return yield* refuse(last.code, lastPeer);
+      }
+    }
+  }
+  yield* drain.count('failed');
+  return yield* refuse(last.code, lastPeer);
+});
 
 export const hostApplication = <Failure, Requirements>(
   ports: ReadonlyMap<string, number>,
   published: Ref.Ref<boolean>,
   loadComposition: Effect.Effect<Option.Option<string>, Failure, Requirements>,
-) =>
-  Effect.gen(function* routeHostRequest() {
+  refusals: HostRefusalLog = makeHostRefusalLog(),
+  drain: SupersedeDrain = makeSupersedeDrain(),
+) => {
+  const forwardDispatcher = new Agent({
+    bodyTimeout: 0,
+    connect: { timeout: Duration.toMillis(DRAIN_FORWARD_CONNECT_TIMEOUT) },
+    headersTimeout: Duration.toMillis(DRAIN_FORWARD_HEADERS_TIMEOUT),
+  });
+  return Effect.gen(function* routeHostRequest() {
     const request = yield* HttpServerRequest.HttpServerRequest;
+    const relayed = relayedTarget(request.url);
+    if (Option.isNone(relayed)) {
+      yield* refusals.tally('invalidTarget');
+      return HttpServerResponse.empty({ status: 400 });
+    }
+    if (yield* drain.active) {
+      return yield* forwardDuringDrain(request, relayed.value, drain, refusals, forwardDispatcher);
+    }
     const location = credentialSubmissionRedirect(new URL(request.url, 'https://host.invalid'), request.method);
     if (location !== undefined) {
       return HttpServerResponse.empty({
@@ -1095,22 +1500,76 @@ export const hostApplication = <Failure, Requirements>(
       });
     }
     if (new URL(request.url, 'https://host.invalid').pathname === STAGE_CIMD_FIXTURE_PATH) {
-      return yield* stageCimdFixtureResponse;
+      const fixture = yield* stageCimdFixtureResponse;
+      // It exists only on stage under the stage origin; any client can ask it wrongly, so refusals are counted.
+      if (fixture.status >= 400) {
+        yield* refusals.tally('stageClientMetadata');
+      }
+      return fixture;
     }
-    const control = yield* hostControlResponse(request, published, loadComposition);
+    const control = yield* hostControlResponse(request, published, loadComposition, refusals);
     if (Option.isSome(control)) {
       return control.value;
     }
-    const route = routeRequest(request.url, ports);
+    const route = routeRequest(relayed.value, ports);
+    const unit = routedUnit(relayed.value);
     if (Option.isNone(route)) {
+      // Any client can ask for a module path no unit serves: counted, never a line of its own.
+      yield* refusals.tally('unroutedModulePath');
       return HttpServerResponse.empty({ status: 404 });
     }
-    return yield* relay(request, route.value.port, route.value.path).pipe(
-      Effect.catchTag('AppHostError', () =>
-        Effect.succeed(HttpServerResponse.text('Upstream unavailable\n', { status: 502 })),
+    const { path: upstreamPath, port } = route.value;
+    const started = yield* Clock.currentTimeMillis;
+    const report = (problem: RelayFailure, status: number | 'cut') =>
+      Clock.currentTimeMillis.pipe(
+        Effect.flatMap((now) =>
+          refusals.record({
+            fields: {
+              cause: problem.code,
+              elapsedMs: now - started,
+              method: request.method,
+              route: loggableRoute(request.url),
+              stage: problem.stage,
+              status,
+              unit,
+              upstream: `loopback:${String(port)}`,
+            },
+            key: unit,
+            what: status === 'cut' ? 'relayed response cut by its unit' : 'relay refused',
+          }),
+        ),
+      );
+    return yield* relay(
+      request,
+      { headersTimeout: RELAY_HEADERS_TIMEOUT, origin: loopbackOrigin(port), path: upstreamPath },
+      (problem) => report(problem, 'cut'),
+      // An event stream of this release ends once a newer one took over, so its browser reconnects to the new one.
+      // An event stream of this release ends once a newer one took over or the host stops, so its browser reconnects;
+      // every other response is cut when the host stops.
+      (eventStream) =>
+        eventStream
+          ? { end: Effect.raceFirst(Deferred.await(drain.superseded), Deferred.await(drain.stopping)) }
+          : { cut: Deferred.await(drain.stopping) },
+      Deferred.await(drain.stopping),
+    ).pipe(
+      Effect.catchTag('RelayFailure', (problem) =>
+        problem.code === 'HOST_STOPPING' || !CONNECT_FAILURES.has(problem.code)
+          ? report(problem, problem.code === 'UND_ERR_HEADERS_TIMEOUT' ? 504 : 502).pipe(
+              Effect.as(mayHaveReachedTarget(problem.code)),
+            )
+          : report(problem, 502).pipe(Effect.as(HttpServerResponse.text('Upstream unavailable\n', { status: 502 }))),
       ),
     );
-  });
+  }).pipe(
+    // Once the listener stopped (the drain's end) or the host stops, every answer closes its connection, so the client's
+    // next request opens a new one, on a container that still serves.
+    Effect.map((response) =>
+      Deferred.isDoneUnsafe(drain.ended) || Deferred.isDoneUnsafe(drain.stopping)
+        ? HttpServerResponse.setHeader(response, 'connection', 'close')
+        : response,
+    ),
+  );
+};
 
 // ---------------------------------------------------------------------------------------------------------------
 // Composition
@@ -1243,6 +1702,11 @@ const recordReleaseAccessStatus = (status: Omit<Parameters<typeof recordReleaseA
 
 export const runAppHost = Effect.gen(function* runAppHost() {
   yield* startProcessObservability('supervisor');
+  // First thing: a restart inside this container must know when the container first booted (restartMayPublish).
+  const boot = yield* Config.String('ONTOS_APP_HOST_BOOT_MARKER').pipe(
+    Config.option,
+    Effect.flatMap((marker) => Effect.transposeOption(marker.pipe(Option.map(containerBoot)))),
+  );
   const publicPort = yield* Config.Int('PORT').pipe(Config.withDefault(3000));
   const publicOrigin = (yield* Config.schema(PublicOriginSchema, 'ONTOS_PUBLIC_ORIGIN')).origin;
   const storefrontOrigin = (yield* Config.schema(PublicOriginSchema, 'ONTOS_STOREFRONT_ORIGIN')).origin;
@@ -1269,35 +1733,55 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   const published = yield* Ref.make(false);
   const database = yield* CoreDatabase;
   const readAuthority = database.executor.execute<{
+    readonly activatedAtMillis: number;
     readonly phase: string;
     readonly revision: string;
     readonly validUntilMillis: number;
   }>(
-    sql`select phase, revision, (extract(epoch from valid_until) * 1000)::double precision as "validUntilMillis" from core.application_composition_authority where authority_key = 'active'`,
+    sql`select phase, revision, (extract(epoch from valid_until) * 1000)::double precision as "validUntilMillis", (extract(epoch from revision_activated_at) * 1000)::double precision as "activatedAtMillis" from core.application_composition_authority where authority_key = 'active'`,
     'objects',
   );
   const pointer = yield* makeCompositionPointer(readAuthority);
 
   // The provided server is the loopback control port. The public port opens below, once this host can serve, and
   // closes when a newer release takes the authority: from then on this host refuses every governed request.
-  yield* HttpServer.serveEffect(hostControlApplication(published, pointer.load));
+  // One refusal log for the control and the public port; it writes the counts it held back every 10 seconds.
+  const refusals = makeHostRefusalLog();
+  // Superseded, this host keeps its public port open as a relay to the new release (supersede-drain.mts).
+  const drain = makeSupersedeDrain();
+  yield* refusals.flush.pipe(Effect.repeat(Schedule.spaced(HOST_REFUSAL_LOG_WINDOW)), Effect.forkScoped);
+  yield* HttpServer.serveEffect(hostControlApplication(published, pointer.load, refusals));
   const publicScope = yield* Scope.make();
-  yield* Effect.addFinalizer(() => Scope.close(publicScope, Exit.void));
-  const openPublicPort = NodeHttpServer.make(withKeepAlive(createServer), { host: '0.0.0.0', port: publicPort }).pipe(
+  // Closing waits for in-flight requests (the server's graceful shutdown) and happens once, whoever asks first.
+  // The public server is made here so the host can stop its listener alone (the drain's end) or close it whole (stop).
+  const publicServer = withKeepAlive(createServer)();
+  const closePublicPort = yield* publicPortClosing(publicScope, drain, publicServer);
+  yield* Effect.addFinalizer(() => closePublicPort);
+  const openPublicPort = NodeHttpServer.make(() => publicServer, {
+    gracefulShutdownTimeout: PUBLIC_PORT_GRACEFUL_CLOSE_CAP,
+    host: '0.0.0.0',
+    port: publicPort,
+  }).pipe(
     Effect.mapError(() => failure(`public port ${String(publicPort)} could not be opened`)),
-    Effect.flatMap((server) => server.serve(hostApplication(ports, published, pointer.load))),
+    Effect.flatMap((server) => server.serve(hostApplication(ports, published, pointer.load, refusals, drain))),
     Scope.provide(publicScope),
     Effect.andThen(Console.log(`[app-host] accepting application traffic on port ${String(publicPort)}`)),
   );
-  const closePublicPortWhenSuperseded = (ownRevision: string) =>
+  const drainWhenSuperseded = (ownRevision: string) =>
     awaitSupersedingRevision(
       ownRevision,
       readAuthority.pipe(Effect.map((rows) => Option.map(EffectArray.head(rows), ({ revision }) => revision))),
     ).pipe(
       Effect.flatMap((revision) =>
-        Console.log(`[app-host] superseded by composition ${revision}; closing public port ${String(publicPort)}`),
+        drainSupersededHost({
+          drain,
+          duration: SUPERSEDED_DRAIN,
+          peers: platformDrainPeers(APP_SERVICE_HOSTNAME, publicPort),
+          publicPort,
+          revision,
+          stopAccepting: stopAccepting(publicServer),
+        }),
       ),
-      Effect.andThen(Scope.close(publicScope, Exit.void)),
     );
 
   // Two processes serve every unit: the Shell alone (its SSR owns the Module Federation host runtime), and every
@@ -1326,6 +1810,17 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     startUnitProcess(ownerIds, runtime, ownersEnvironment.environment, memoryBytes, channel),
   );
   const exits = [yield* startUnitProcess([SHELL_ID], runtime, shellEnvironment.environment, memoryBytes), owners.exit];
+  // Registered after the units started, so it runs before they are stopped: on a stop signal (or any end) the
+  // public port first ends this release's event streams, lets in-flight requests finish and closes; then the
+  // units stop.
+  yield* Effect.addFinalizer(() =>
+    Console.log(
+      '[app-host] stopping: ending relayed event streams and uploads in flight, then closing the public port',
+    ).pipe(
+      Effect.andThen(closePublicPort),
+      Effect.andThen(Console.log('[app-host] public port closed; stopping the units')),
+    ),
+  );
   const credentialHolders = yield* Ref.make<readonly Pick<CredentialHolder, 'handOver'>[]>([owners]);
   const replacedKeys = yield* makeReplacedKeyLedger;
   const heldCredentials = yield* Ref.make(noProvisionedCredentials(callers));
@@ -1380,15 +1875,48 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   yield* Console.log(`[app-host] Shell runtime ${runtime}; owners and Outbox runtime node`);
   yield* Console.log(`[app-host] serving ${String(units.length)} units; migrating`);
 
+  // The revision this host published, once it did; a superseded host never writes the authority row again.
+  const ownRevision = yield* Ref.make(Option.none<string>());
+  const activeRevision = readAuthority.pipe(
+    Effect.map((rows) => Option.map(EffectArray.head(rows), ({ revision }) => revision)),
+  );
   const publishSnapshot = (snapshot: ActiveApplicationCompositionSnapshot) =>
     Effect.gen(function* publishObservedComposition() {
+      const allowed = yield* publicationAllowed({
+        activeRevision,
+        ownRevision: yield* Ref.get(ownRevision),
+        superseded: drain.superseded,
+      });
+      if (!allowed) {
+        return yield* failure('this host was superseded and never writes the authority again');
+      }
       yield* publishApplicationCompositionAuthoritySnapshot(snapshot, pointer.publish(snapshot), Effect.void);
+      yield* Ref.set(ownRevision, Option.some(snapshot.composition.revision));
       yield* Console.log(
         `[app-host] composition ${snapshot.composition.revision} (${String(snapshot.composition.modules.length)} owners) valid until ${DateTime.formatIso(snapshot.validUntil)}`,
       );
       return snapshot.composition.revision;
     }).pipe(observeRuntimeJob('composition-publish'));
-  const publish = observeOwners(units, publicOrigin).pipe(Effect.flatMap(publishSnapshot));
+  // The renewal only ever renews: under the publication lock it refuses when the row names another release.
+  const renewHeld = observeOwners(units, publicOrigin).pipe(
+    Effect.flatMap((snapshot) =>
+      Effect.gen(function* renewObservedComposition() {
+        const allowed = yield* publicationAllowed({
+          activeRevision,
+          ownRevision: yield* Ref.get(ownRevision),
+          superseded: drain.superseded,
+        });
+        if (!allowed) {
+          return yield* failure('this host was superseded and never writes the authority again');
+        }
+        yield* renewApplicationCompositionAuthoritySnapshot(snapshot, pointer.publish(snapshot));
+        return yield* Console.log(
+          `[app-host] composition ${snapshot.composition.revision} renewed, valid until ${DateTime.formatIso(snapshot.validUntil)}`,
+        );
+      }),
+    ),
+    observeRuntimeJob('composition-renewal'),
+  );
   // Before this release takes the authority, every active Tenant's canonical access must be proven: its scopes, its
   // owner membership, and a SpiceDB projection that equals PostgreSQL intent (see release-access-verification.mts).
   // The proof is read-only — it never writes, revokes or re-grants — and it is not ignored. A Tenant without v2 intent,
@@ -1430,7 +1958,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   // environment can be checked beside the one that still holds it.
   const takesAuthority = yield* Config.Boolean('ONTOS_APP_HOST_PUBLISH').pipe(Config.withDefault(true));
   const observeOnly = Effect.gen(function* observeWithoutAuthority() {
-    yield* Effect.forEach(units, waitForOwner, { concurrency: 'unbounded', discard: true });
+    yield* waitForUnits(units);
     const snapshot = yield* observeOwners(units, publicOrigin);
     const release = hostReleaseOf(snapshot);
     yield* provisionForRelease(release);
@@ -1464,22 +1992,33 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     yield* Effect.all(
       [
         runChild('migrator', node, ['scripts/run-zerops-migrator.mjs'], workspaceRoot, { MIGRATOR_ONCE: 'true' }),
-        Effect.forEach(units, waitForOwner, { concurrency: 'unbounded', discard: true }),
+        waitForUnits(units),
       ],
       { concurrency: 'unbounded' },
     );
     const releaseSnapshot = yield* observeOwners(units, publicOrigin);
+    // A process restarted inside a container that a newer release superseded never publishes its old release again.
+    const holder = Option.map(EffectArray.head(yield* readAuthority), ({ activatedAtMillis, revision }) => ({
+      activatedAtMillis,
+      revision,
+    }));
+    if (!restartMayPublish({ boot, holder, ownRevision: releaseSnapshot.composition.revision })) {
+      yield* Console.error(
+        `[app-host] WARN restarted in a superseded container: composition ${Option.match(holder, { onNone: () => 'none', onSome: ({ revision }) => revision })} took the authority after this container first booted; composition ${releaseSnapshot.composition.revision} is not published and the public port stays closed`,
+      );
+      return yield* Effect.never;
+    }
     // After migrations, the role bootstrap and schema verification (all inside the migrator) and before this host
     // serves anything: the observed release's keys are issued and handed to the owners.
     const release = hostReleaseOf(releaseSnapshot);
     yield* provisionForRelease(release);
     yield* verifyReleaseAccessIntent(releaseSnapshot);
     const revision = yield* publishSnapshot(releaseSnapshot);
-    // From this commit on the old release refuses every governed request and closes its public port, so this one
-    // serves internal callers and reports ready to the Zerops balancer at once.
+    // From this commit on Core refuses the old release's governed requests, and the old host relays its public
+    // traffic here until the balancer moved (supersede-drain.mts); this one serves at once and reports ready.
     yield* openPublicPort;
     yield* Ref.set(published, true);
-    yield* closePublicPortWhenSuperseded(revision).pipe(Effect.forkChild);
+    yield* drainWhenSuperseded(revision).pipe(Effect.forkChild);
     // Once in-flight delegated calls had time to finish, this host retires its own earlier boots' keys and, as it holds
     // the authority now, the credentials its release superseded. The provisioning program checks the authority row
     // itself: only while this release holds it, and only credentials bound before its revision took it.
@@ -1529,13 +2068,16 @@ export const runAppHost = Effect.gen(function* runAppHost() {
         Effect.orElseSucceed(() => true),
       ),
     ).pipe(Effect.forkChild);
-    // The host renews its own lease well inside the validity window; no external refresh schedule exists.
-    const renew = publish.pipe(
-      Effect.tapError((problem) => Console.error(`[app-host] composition renewal failed: ${String(problem)}`)),
-      Effect.ignore,
-      Effect.delay(ACTIVE_APPLICATION_COMPOSITION_POLICY.refreshInterval),
-      Effect.forever,
-    );
+    // The host renews its own lease well inside the validity window while it holds the authority; no external refresh
+    // schedule exists. Superseded, it stops for good.
+    const renew = renewWhileHolding({
+      interval: ACTIVE_APPLICATION_COMPOSITION_POLICY.refreshInterval,
+      renew: renewHeld.pipe(
+        Effect.tapError((problem) => Console.error(`[app-host] composition renewal failed: ${String(problem)}`)),
+        Effect.ignore,
+      ),
+      superseded: drain.superseded,
+    });
     return yield* Effect.raceFirst(outbox, renew);
   });
   return yield* Effect.raceFirst(Effect.raceAllFirst(exits), takesAuthority ? startup : observeOnly);
@@ -1566,9 +2108,25 @@ export const ReleaseAccessIntentReaderLive = Layer.effect(
   ),
 );
 
+/**
+ * Ends when the platform stops this container (SIGTERM; SIGINT locally). Zerops stops the old container this way
+ * once traffic moved; racing it interrupts the host, so its finalizers run in order: the public port ends event
+ * streams, finishes in-flight requests and closes, then the units stop.
+ */
+export const stopSignal = Effect.callback<string>((resume) => {
+  const stop = (signal: string) => resume(Effect.succeed(signal));
+  process.once('SIGTERM', stop);
+  process.once('SIGINT', stop);
+  return Effect.sync(() => {
+    process.off('SIGTERM', stop);
+    process.off('SIGINT', stop);
+  });
+}).pipe(Effect.flatMap((signal) => Console.log(`[app-host] ${signal} received; stopping gracefully`)));
+
 if (import.meta.main) {
   const program = runAppHost.pipe(
     Effect.scoped,
+    Effect.raceFirst(stopSignal),
     Effect.provide(NodeHttpServer.layer(withKeepAlive(createServer), { host: '127.0.0.1', port: CONTROL_PORT })),
     Effect.provide(ReleaseAccessIntentReaderLive),
     // Every authority transition re-observes legacy owner completion, as the operator publisher does.

@@ -1,30 +1,22 @@
 /**
- * Agent entities of the selected company (Lidé a role › Agentní entity). The company administrator lists, creates,
- * configures, deactivates / reactivates and deletes agents. Every change runs the Core Action
- * `core.identity.configure-agent` for profiles and `core.identity.manage-agent-status` for status/archive, with sensitive
- * audit; then its company-scoped role policy is rebuilt from the selected module access and write policy,
- * and its operators are written with principal#tenant. Deactivation and deletion revoke the agent's active OAuth
- * connections at once and withdraw its waiting proposals. Changes of one company's agents run one at a time
- * (a private session advisory lock, without an open SQL transaction), so two parallel creates cannot both pass the
- * unique-name check. No tokens or API keys: agents connect only through the OAuth consent ('Za agenta'). Errors are
- * Connections* errors with Czech reasons.
+ * Agent entities of the selected company (Lidé a role › Agentní entity). The company administrator lists agents and
+ * deactivates / reactivates and deletes them through the Core Action `core.identity.manage-agent-status`, with
+ * sensitive audit. Deactivation and deletion revoke the agent's active OAuth connections at once and withdraw its
+ * waiting proposals. Creating and configuring agents is not available in this release: an agent holds no authority on
+ * Authorization v2 yet, so both are refused before any read. Changes of one company's agents run one at a time (a
+ * private session advisory lock, without an open SQL transaction). Everything here reads PostgreSQL and the v2 intent;
+ * no SpiceDB relation is read or written. Errors are Connections* errors with Czech reasons.
  */
 import {
   ActionRuntime,
-  agentModuleAccessOf,
   manageAgentStatusAction,
-  configureAgentAction,
-  openDemoAccountGrants,
   OperationalScopeResolver,
+  TenantModuleStateService,
   withPostgresSessionAdvisoryLock,
 } from '@app/core-runtime';
-import type {
-  DemoAccountGrants,
-  ManageAgentStatusPayload,
-  OperationalScopeRequest,
-  TrustedPrincipalContext,
-} from '@app/core-runtime';
+import type { ManageAgentStatusPayload, TrustedPrincipalContext } from '@app/core-runtime';
 import { AccessProjectionWriter } from '@app/core-runtime/access/intent/projection-writer';
+import { AccessPeopleCommands } from '@app/core-runtime/access/lifecycle/people-service';
 import type {
   AgentEntity,
   ManageAgentEntityRequest,
@@ -35,11 +27,7 @@ import {
   AgentEntityOverviewSchema,
   AgentAuditEntrySchema,
 } from '@app/shared-contracts/agent-access';
-import {
-  AgentLegalEntityIdSchema,
-  AgentModuleKeySchema,
-  AgentPrincipalIdSchema,
-} from '@app/shared-contracts/agent-proposals';
+import { AgentLegalEntityIdSchema, AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
 import { Effect, Match, Option, Predicate, Redacted, Schema } from 'effect';
 
 import { composedModulesOf } from '../agent-platform/composed-modules.ts';
@@ -50,18 +38,10 @@ import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog
 import { ConnectionsForbidden } from '../oauth-connections-admin/connections-forbidden.ts';
 import { ConnectionsGone } from '../oauth-connections-admin/connections-gone.ts';
 import { ConnectionsInvalid } from '../oauth-connections-admin/connections-invalid.ts';
-import { ConnectionsNotFound } from '../oauth-connections-admin/connections-not-found.ts';
 import { ConnectionsUnavailable } from '../oauth-connections-admin/connections-unavailable.ts';
 import type { ConnectionsAdminDeps } from '../oauth-connections-admin/ports.ts';
-import { agentDraftProblem, agentModuleOptions, agentRolePreset } from './agent-entities-model.ts';
-import { legalEntityWriteRelationsOf } from './agent-write-relations.ts';
-import {
-  auditForbiddenAttempt,
-  auditTrail,
-  companyRoleTemplates,
-  derivedUuid,
-  requireAdministrator,
-} from './demo-accounts.ts';
+import { agentCatalogOf } from './agent-entities-model.ts';
+import { auditForbiddenAttempt, auditTrail, requireAdministrator } from './demo-accounts.ts';
 import { AgentActionRequestIdentity } from './agent-action-request-identity.ts';
 import { AgentReadRequestIdentity } from './agent-request-identity.ts';
 import { AuthConfig } from './config.ts';
@@ -123,58 +103,43 @@ const fromActionError = (error: { readonly _tag: string }) =>
     Match.orElse((failure) => new ConnectionsUnavailable({ cause: failure })),
   );
 
-const cleanDescription = (value: Option.Option<string>) => {
-  const trimmed = Option.getOrElse(value, () => '').trim();
-  return trimmed === '' ? null : trimmed;
-};
+/** Creating or configuring an agent: refused in this release, before any read (agents hold no v2 authority yet). */
+const AGENT_CHANGES_NOT_AVAILABLE = 'Vytváření a úpravy agentů nejsou v této verzi k dispozici.';
 
-const roleTemplates = (caller: DemoAccountCaller, transport: OperationalScopeRequest) =>
-  companyRoleTemplates(caller, transport).pipe(Effect.mapError(fromDemoAccountError));
-
+/**
+ * The Agents page catalogue from the tenant's v2 intent, never a SpiceDB relation: the roles and the published release
+ * the People page reads (`AccessPeopleCommands`), the tenant's active modules (`TenantModuleStateService`) and the
+ * release's composition.
+ */
 export const companyCatalog = Effect.fn('AgentEntities.companyCatalog')(function* readCompanyCatalog(
-  legalEntityId: string,
-  roles: Effect.Success<ReturnType<typeof roleTemplates>>,
-  grants: Pick<DemoAccountGrants, 'rolePolicyOf'>,
+  principal: DemoAccountCaller['principal'],
 ) {
-  // Native role policy expansion is bounded per template principal. Two roles plus one operator read leave the sixth
-  // Worker connection for PostgreSQL. Unbounded fan-out can cancel a queued fetch before it makes progress.
-  const templates = yield* Effect.forEach(
-    roles,
-    (role) =>
-      grants.rolePolicyOf(role.templatePrincipalId).pipe(Effect.map((relationships) => ({ relationships, role }))),
-    { concurrency: 2 },
-  ).pipe(Effect.mapError(unavailable));
-  const union = templates.flatMap(({ relationships }) => relationships);
+  const { correlationId } = yield* AgentReadRequestIdentity;
+  const scope = yield* (yield* OperationalScopeResolver)
+    .resolve({ correlationId, legalEntityScope: 'required', principal })
+    .pipe(Effect.mapError(unavailable));
+  const people = yield* AccessPeopleCommands;
+  const [view, capabilities] = yield* Effect.all([people.read(scope), people.readCatalog(scope)], {
+    concurrency: 1,
+  }).pipe(Effect.mapError(unavailable));
+  const active = yield* (yield* TenantModuleStateService)
+    .listActiveTenantModules(principal.tenantId)
+    .pipe(Effect.mapError(unavailable));
   const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError(unavailable));
-  const { labelOf } = composedModulesOf(mcpModulesOf(installed.composition));
-  return {
-    actions: installed.contracts.flatMap(({ manifest }) =>
-      manifest.publicSurface.actions.map((action) => ({
-        actionKey: action.actionKey,
-        legalEntityScope: action.legalEntityScope,
-        owningModuleKey: action.owningModuleId,
-      })),
-    ),
-    labelOf,
-    legalEntityWriteRelations: legalEntityWriteRelationsOf(installed.composition),
-    options: agentModuleOptions(
-      agentModuleAccessOf(union, legalEntityId).map((module) => ({
-        ...module,
-        moduleId: AgentModuleKeySchema.make(module.moduleId),
-      })),
-      labelOf,
-    ),
-    presets: templates.map(({ relationships, role }) =>
-      agentRolePreset(
-        role,
-        agentModuleAccessOf(relationships, legalEntityId).map((module) => ({
-          ...module,
-          moduleId: AgentModuleKeySchema.make(module.moduleId),
-        })),
-      ),
-    ),
-    union,
-  };
+  const composed = composedModulesOf(mcpModulesOf(installed.composition));
+  return agentCatalogOf({
+    activeModuleKeys: active.map(({ moduleKey }) => moduleKey),
+    capabilities: capabilities.map(({ key, kind, moduleKey }) => ({ key, kind, moduleKey })),
+    composedModuleKeys: composed.all.map(({ moduleId }) => moduleId),
+    labelOf: composed.labelOf,
+    legalEntityId: principal.legalEntityId,
+    roles: view.roles.map(({ revision, role }) => ({
+      capabilityKeys: revision.cells.map(({ capabilityKey }) => capabilityKey),
+      id: role.id,
+      legalEntityId: role.legalEntityId ?? null,
+      name: role.name,
+    })),
+  });
 });
 
 export const listAgentEntities = Effect.fn('AgentEntities.listAgentEntities')(function* readAgentEntities<R>(
@@ -183,8 +148,7 @@ export const listAgentEntities = Effect.fn('AgentEntities.listAgentEntities')(fu
 ) {
   const transport = yield* AgentReadRequestIdentity;
   const { legalEntityId, tenantId } = caller.principal;
-  const grants = yield* openDemoAccountGrants.pipe(Effect.mapError(unavailable));
-  yield* requireAdministrator(caller, grants).pipe(
+  yield* requireAdministrator(caller).pipe(
     Effect.mapError((error) =>
       Predicate.isTagged(error, 'DemoAccountForbidden')
         ? new ConnectionsForbidden({ reason: 'Agenty spravuje jen správce firmy.' })
@@ -200,11 +164,9 @@ export const listAgentEntities = Effect.fn('AgentEntities.listAgentEntities')(fu
     const audit = yield* auditTrail(caller, transport).pipe(Effect.mapError(fromDemoAccountError));
     return { agents, audit, people: snapshot.people };
   });
-  const roles = yield* roleTemplates(caller, transport);
-  const [catalog, { agents, audit, people }] = yield* Effect.all(
-    [companyCatalog(legalEntityId, roles, grants), company],
-    { concurrency: 2 },
-  );
+  const [catalog, { agents, audit, people }] = yield* Effect.all([companyCatalog(caller.principal), company], {
+    concurrency: 2,
+  });
   // Connection summaries have their own live-authority reads; do not overlap them with role/operator fan-out.
   const active = yield* deps.grants.list({ legalEntityId, statuses: ['active'], tenantId });
   const entries = agents.map((agent): AgentEntity =>
@@ -276,12 +238,10 @@ const revokeAgentConnections = Effect.fn('AgentEntities.revokeAgentConnections')
 // This transport is Core's persisted Action request identity, not an ambient log/span identifier.
 const changeAgent = Effect.fn('AgentEntities.changeAgent')(function* applyAgentChange<R>(
   caller: DemoAccountCaller,
-  request: ManageAgentEntityRequest,
+  request: Exclude<ManageAgentEntityRequest, { readonly operation: 'configure' | 'create' }>,
   deps: ConnectionsAdminDeps<R>,
-  grants: DemoAccountGrants,
 ) {
   const transport = yield* AgentActionRequestIdentity;
-  const { legalEntityId, tenantId } = caller.principal;
   const runtime = yield* ActionRuntime;
   const run = Effect.fn('AgentEntities.commitOrResumeAgentStatus')(function* commitOrResumeAgentStatus(
     payload: ManageAgentStatusPayload,
@@ -311,121 +271,6 @@ const changeAgent = Effect.fn('AgentEntities.changeAgent')(function* applyAgentC
       ),
       Effect.mapError(unavailable),
     );
-
-  if (request.operation === 'create') {
-    const snapshot = yield* deps.directory.snapshot;
-    const agents = snapshot.agents.filter((agent) => agent.status !== 'archived');
-    const memberIds = snapshot.people.map((person) => person.principalId);
-    // Same idempotency key = same principal id: a retry replays the Core Action instead of failing the name check.
-    const principalId = derivedUuid(`${tenantId}:${legalEntityId}:${transport.idempotencyKey}:agent`);
-    const catalog = yield* companyCatalog(legalEntityId, yield* roleTemplates(caller, transport), grants);
-    const problem = agentDraftProblem({
-      displayName: request.displayName,
-      existingNames: agents.flatMap((agent) => (agent.principalId === principalId ? [] : [agent.displayName])),
-      labelOf: catalog.labelOf,
-      memberIds,
-      modules: request.modules,
-      operatorPrincipalIds: request.operatorPrincipalIds,
-      options: catalog.options,
-      ownerPrincipalId: request.ownerPrincipalId,
-    });
-    if (problem !== null) {
-      return yield* new ConnectionsInvalid({ reason: problem });
-    }
-    // A retry of a committed create (ActionAlreadyCommitted) finishes the same agent's grants and operators again.
-    const result = yield* runtime
-      .runAction({
-        payload: {
-          description: cleanDescription(request.description),
-          displayName: request.displayName.trim(),
-          modules: request.modules,
-          operation: 'create-agent',
-          ownerPrincipalId: request.ownerPrincipalId,
-          principalId,
-          writePolicy: request.writePolicy,
-        },
-        principal: caller.principal,
-        registration: configureAgentAction,
-        transport,
-      })
-      .pipe(
-        Effect.catchTag('ActionAlreadyCommitted', () => Effect.succeed({ principalId })),
-        Effect.mapError(fromActionError),
-      );
-    yield* reconcileTenantProjection(caller.principal);
-    // Creation changes membership; read its governed post-create snapshot before setting operators.
-    yield* deps.directory.replaceOperators({
-      agentPrincipalId: result.principalId,
-      context: 'agent-created',
-      operatorPrincipalIds: [...new Set(request.operatorPrincipalIds)],
-      revokedConnections: 0,
-      snapshot: yield* deps.directory.snapshot,
-    });
-    const created: ManageAgentEntityResponse = {
-      grantsGranted: 0,
-      grantsRevoked: 0,
-      operation: 'create',
-      principalId: AgentPrincipalIdSchema.make(result.principalId),
-      revokedConnections: 0,
-      status: 'active',
-    };
-    return created;
-  }
-
-  if (request.operation === 'configure') {
-    const snapshot = yield* deps.directory.snapshot;
-    const agents = snapshot.agents.filter((agent) => agent.status !== 'archived');
-    const memberIds = snapshot.people.map((person) => person.principalId);
-    const agent = agents.find((candidate) => candidate.principalId === request.principalId);
-    if (agent === undefined) {
-      return yield* new ConnectionsNotFound({ reason: 'Agent v této firmě neexistuje.' });
-    }
-    const catalog = yield* companyCatalog(legalEntityId, yield* roleTemplates(caller, transport), grants);
-    const problem = agentDraftProblem({
-      displayName: request.displayName,
-      existingNames: agents.flatMap((other) => (other.principalId === agent.principalId ? [] : [other.displayName])),
-      labelOf: catalog.labelOf,
-      memberIds,
-      modules: request.modules,
-      operatorPrincipalIds: [],
-      options: catalog.options,
-      ownerPrincipalId: request.ownerPrincipalId,
-    });
-    if (problem !== null) {
-      return yield* new ConnectionsInvalid({ reason: problem });
-    }
-    const result = yield* runtime
-      .runAction({
-        payload: {
-          description: cleanDescription(request.description),
-          displayName: request.displayName.trim(),
-          modules: request.modules,
-          operation: 'configure-agent',
-          ownerPrincipalId: request.ownerPrincipalId,
-          principalId: agent.principalId,
-          writePolicy: request.writePolicy,
-        },
-        principal: caller.principal,
-        registration: configureAgentAction,
-        transport,
-      })
-      .pipe(
-        Effect.catchTag('ActionAlreadyCommitted', () =>
-          Effect.succeed({ principalId: agent.principalId, status: agent.status }),
-        ),
-        Effect.mapError(fromActionError),
-      );
-    yield* reconcileTenantProjection(caller.principal);
-    const configured: ManageAgentEntityResponse = {
-      grantsGranted: 0,
-      grantsRevoked: 0,
-      operation: 'configure',
-      principalId: AgentPrincipalIdSchema.make(agent.principalId),
-      revokedConnections: 0,
-      status: result.status === 'active' ? 'active' : 'disabled',
-    };
-    return configured;
-  }
 
   if (request.operation === CHANGE_STATUS) {
     const reason = request.reason?.trim() ?? '';
@@ -473,13 +318,10 @@ const changeAgent = Effect.fn('AgentEntities.changeAgent')(function* applyAgentC
   });
   const revokedConnections = yield* revokeActive(request.principalId, reason);
   yield* withdrawProposals(request.principalId, `Agent byl smazán: ${reason}`);
-  const removed = yield* grants
-    .replaceAgentGrants({ desired: [], legalEntityId, principalId: request.principalId, tenantId })
-    .pipe(Effect.mapError(unavailable));
   yield* deps.directory.confirmArchived(request.principalId);
   const deleted: ManageAgentEntityResponse = {
     grantsGranted: 0,
-    grantsRevoked: removed.revoked,
+    grantsRevoked: 0,
     operation: 'delete',
     principalId: request.principalId,
     revokedConnections,
@@ -497,8 +339,7 @@ export const manageAgentEntity = Effect.fn('AgentEntities.manageAgentEntity')(fu
   yield* AgentActionRequestIdentity;
   yield* AgentReadRequestIdentity;
   const { legalEntityId, tenantId } = caller.principal;
-  const grants = yield* openDemoAccountGrants.pipe(Effect.mapError(unavailable));
-  yield* requireAdministrator(caller, grants).pipe(
+  yield* requireAdministrator(caller).pipe(
     Effect.tapError((error) =>
       Predicate.isTagged(error, 'DemoAccountForbidden')
         ? auditForbiddenAttempt(
@@ -511,5 +352,8 @@ export const manageAgentEntity = Effect.fn('AgentEntities.manageAgentEntity')(fu
     ),
     Effect.mapError(fromDemoAccountError),
   );
-  return yield* withCompanyAgentLock(tenantId, legalEntityId, changeAgent(caller, request, deps, grants));
+  if (request.operation === 'create' || request.operation === 'configure') {
+    return yield* new ConnectionsInvalid({ reason: AGENT_CHANGES_NOT_AVAILABLE });
+  }
+  return yield* withCompanyAgentLock(tenantId, legalEntityId, changeAgent(caller, request, deps));
 }, Effect.scoped);

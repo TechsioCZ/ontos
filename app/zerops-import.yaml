@@ -11,11 +11,13 @@ services:
     # The Shell, the owners, the Outbox worker and the host share one container. At a 2.5 GiB floor it throttled
     # at memory.high and swapped with no users (2026-11-11), so RAM is fixed at 4 GiB; the host derives each child's
     # heap limit from it (scripts/zerops/heap-limits.mts).
-    # Reserve one CPU for the Shell, owners and Outbox while every menu destination is prefetched.
+    # Four dedicated CPUs: the host, the Shell, the owners and the Outbox worker are four Node processes, and on one
+    # CPU they blocked one another (2026-11-13: the Outbox loop stalled 610 ms while using 75 ms of CPU itself). This
+    # file only creates a service; the running one was resized in Zerops on 2026-11-13.
     verticalAutoscaling:
       cpuMode: DEDICATED
-      minCpu: 1
-      maxCpu: 1
+      minCpu: 4
+      maxCpu: 4
       minRam: 4
       maxRam: 4
       minFreeRamGB: 0.5

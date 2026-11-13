@@ -1,8 +1,7 @@
-import { v1 } from '@authzed/authzed-node';
-import { and, eq, inArray, or } from 'drizzle-orm';
+import { and, eq, or } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
 
-import { principals } from '../db/schema.ts';
+import { principalCompanyMemberships, principals } from '../db/schema.ts';
 import { requireAgentAdministration } from './agent-administration.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import { ConfigureAgentAuditEvidenceSchema } from '../modules/actions/configure-agent.action.ts';
@@ -11,11 +10,6 @@ import {
   ReplaceAgentOperatorsAuditEvidenceSchema,
 } from '../modules/actions/agent-operator-command.ts';
 import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
-import { fullyConsistent } from '../permissions/client.ts';
-import { loadSpiceDbConfig } from '../permissions/config.ts';
-import { toLegalEntityAccessObjectId } from '../permissions/context-access.ts';
-import { openSpiceDbRpc } from '../permissions/spicedb-transaction-guard.ts';
-import type { SpiceDbRpc } from '../permissions/spicedb-rpc.ts';
 import type { ReadFinishContext, ReadLoadContext, ReadPrepareContext } from '../reads/context.ts';
 import { defineRead } from '../reads/definition.ts';
 import { ReadHandlerUnavailable } from '../reads/errors.ts';
@@ -56,69 +50,17 @@ const unavailable = (cause: unknown) =>
     'cause',
     { value: cause },
   );
-const openDirectoryRpc = Effect.acquireRelease(
-  loadSpiceDbConfig().pipe(
-    Effect.mapError(unavailable),
-    Effect.flatMap((configuration) =>
-      Effect.try({ catch: unavailable, try: () => openSpiceDbRpc(configuration, 5000) }),
-    ),
-  ),
-  (rpc) => Effect.sync(() => rpc.close()),
-);
-
-/** Exact graph relationships, never SQL membership or permission lookup expansion. */
-const relatedPrincipalIds = Effect.fn('CompanyAgentDirectory.relatedPrincipalIds')(function* relatedPrincipalIds(
-  rpc: SpiceDbRpc,
-  resourceType: 'legal_entity' | 'principal',
-  resourceId: string,
-  relation: 'member' | 'operator',
-) {
-  const responses = yield* rpc
-    .readRelationships(
-      v1.ReadRelationshipsRequest.create({
-        consistency: fullyConsistent,
-        relationshipFilter: {
-          optionalRelation: relation,
-          optionalResourceId: resourceId,
-          optionalSubjectFilter: { subjectType: 'principal' },
-          resourceType,
-        },
-      }),
-    )
-    .pipe(Effect.mapError(unavailable));
-  return yield* Effect.forEach(
-    responses,
-    ({ relationship: edge }) => {
-      if (
-        edge?.resource?.objectType !== resourceType ||
-        edge.resource.objectId !== resourceId ||
-        edge.relation !== relation ||
-        edge.subject?.object?.objectType !== 'principal' ||
-        edge.subject.optionalRelation !== ''
-      ) {
-        return Effect.fail(unavailable('Unexpected directory relationship'));
-      }
-      return Schema.decodeEffect(PrincipalIdSchema)(edge.subject.object.objectId).pipe(Effect.mapError(unavailable));
-    },
-    { concurrency: 1 },
-  );
-});
-
 const prepare = Effect.fn('CompanyAgentDirectory.prepare')(function* prepare(
   _input: typeof CompanyAgentDirectoryInputSchema.Type,
   context: ReadPrepareContext,
 ) {
   // The directory behind the Agents administration page: only the company's agent administrators read it.
   yield* requireAgentAdministration(context.scope);
-  const { legalEntityId, tenantId } = context.scope;
-  const companyObjectId =
-    legalEntityId === undefined ? undefined : toLegalEntityAccessObjectId(tenantId, legalEntityId);
-  if (companyObjectId === undefined) {
+  const { legalEntityId } = context.scope;
+  if (legalEntityId === undefined) {
     return yield* unavailable('An exact company context is required');
   }
-  return yield* Effect.scoped(
-    openDirectoryRpc.pipe(Effect.flatMap((rpc) => relatedPrincipalIds(rpc, 'legal_entity', companyObjectId, 'member'))),
-  );
+  return legalEntityId;
 });
 
 const agentStatus = (status: string): 'active' | 'archived' | 'disabled' => {
@@ -129,11 +71,10 @@ const agentStatus = (status: string): 'active' | 'archived' | 'disabled' => {
 };
 
 const directoryFromTransaction = (transaction: ScopedTransactionExecutor) => ({
-  load: Effect.fn('CompanyAgentDirectory.load')(function* load(memberIds: readonly string[]) {
-    if (memberIds.length === 0) {
-      return { agents: [], people: [] };
-    }
+  load: Effect.fn('CompanyAgentDirectory.load')(function* load(legalEntityId: string) {
     const { tenantId } = transaction.scope;
+    // The company's members are its active Core company memberships, the rows the People directory reads; never a
+    // SpiceDB relation (a v2 tenant has no legacy `legal_entity#member` tuples, so they would read as nobody).
     const rows = yield* transaction
       .select({
         displayName: principals.displayName,
@@ -141,11 +82,19 @@ const directoryFromTransaction = (transaction: ScopedTransactionExecutor) => ({
         principalId: principals.principalId,
         status: principals.status,
       })
-      .from(principals)
+      .from(principalCompanyMemberships)
+      .innerJoin(
+        principals,
+        and(
+          eq(principals.tenantId, principalCompanyMemberships.tenantId),
+          eq(principals.principalId, principalCompanyMemberships.principalId),
+        ),
+      )
       .where(
         and(
-          eq(principals.tenantId, tenantId),
-          inArray(principals.principalId, [...memberIds]),
+          eq(principalCompanyMemberships.tenantId, tenantId),
+          eq(principalCompanyMemberships.legalEntityId, legalEntityId),
+          eq(principalCompanyMemberships.status, 'active'),
           or(eq(principals.kind, 'agent'), and(eq(principals.kind, 'human'), eq(principals.status, 'active'))),
         ),
       )
@@ -175,52 +124,41 @@ const directoryFromTransaction = (transaction: ScopedTransactionExecutor) => ({
       { concurrency: 1 },
     );
     const commands = new Map(commandEntries);
-    const agents = agentRows
-      .map((row) => ({
-        ...(profiles.get(row.principalId) ?? DEFAULT_AGENT_PROFILE),
-        displayName: row.displayName,
-        operatorCommand: commands.get(row.principalId) ?? null,
-        principalId: row.principalId,
-        status: agentStatus(row.status),
-      }))
-      .toSorted((left, right) => left.displayName.localeCompare(right.displayName, 'cs'));
     const people = rows
       .flatMap((row) => (row.kind === 'human' ? [{ displayName: row.displayName, principalId: row.principalId }] : []))
       .toSorted((left, right) => left.displayName.localeCompare(right.displayName, 'cs'));
-    return { agents, people };
+    const activePeople = new Set(people.map((person) => person.principalId));
+    const agents = agentRows
+      .map((row) => {
+        const operatorCommand = commands.get(row.principalId) ?? null;
+        return {
+          ...(profiles.get(row.principalId) ?? DEFAULT_AGENT_PROFILE),
+          displayName: row.displayName,
+          operatorCommand,
+          // The operators are the latest committed operator command's people who are still active in the company: the
+          // v2 schema projects no operator relation, so the committed command is the only record of them.
+          operatorPrincipalIds: (operatorCommand?.desiredOperatorPrincipalIds ?? []).filter((id) =>
+            activePeople.has(id),
+          ),
+          principalId: row.principalId,
+          status: agentStatus(row.status),
+        };
+      })
+      .toSorted((left, right) => left.displayName.localeCompare(right.displayName, 'cs'));
+    return { agents, members: rows.map((row) => row.principalId), people };
   }),
 });
 type Services = ReturnType<typeof directoryFromTransaction>;
 type Loaded = Effect.Success<ReturnType<Services['load']>>;
-const load = (
-  _input: typeof CompanyAgentDirectoryInputSchema.Type,
-  context: ReadLoadContext<Services, readonly string[]>,
-) => context.services.load(context.prepared);
+const load = (_input: typeof CompanyAgentDirectoryInputSchema.Type, context: ReadLoadContext<Services, string>) =>
+  context.services.load(context.prepared);
 const finish = Effect.fn('CompanyAgentDirectory.finish')(function* finish(
   _input: typeof CompanyAgentDirectoryInputSchema.Type,
-  context: ReadFinishContext<readonly string[], Loaded>,
+  context: ReadFinishContext<string, Loaded>,
 ) {
-  const agents =
-    context.loaded.agents.length === 0
-      ? []
-      : yield* Effect.scoped(
-          Effect.gen(function* operatorsOutsideSql() {
-            const rpc = yield* openDirectoryRpc;
-            return yield* Effect.forEach(
-              context.loaded.agents,
-              (agent) =>
-                relatedPrincipalIds(rpc, 'principal', agent.principalId, 'operator').pipe(
-                  Effect.map((operatorPrincipalIds) => ({ ...agent, operatorPrincipalIds })),
-                ),
-              { concurrency: 4 },
-            );
-          }),
-        );
-  const result = yield* Schema.decodeEffect(CompanyAgentDirectoryResultSchema)({
-    agents,
-    members: context.prepared,
-    people: context.loaded.people,
-  }).pipe(Effect.mapError(unavailable));
+  const result = yield* Schema.decodeEffect(CompanyAgentDirectoryResultSchema)(context.loaded).pipe(
+    Effect.mapError(unavailable),
+  );
   return { evidence: { resultCount: result.agents.length + result.people.length }, result };
 });
 
