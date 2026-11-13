@@ -92,6 +92,7 @@ import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { account, user } from '../../api/auth/db/schema.ts';
 import { moduleCredentialReleaseOf } from '../../api/auth/module-credential-attestation.ts';
 import {
+  MODULE_CREDENTIAL_LIFETIME,
   provisionModuleCredentials,
   retireOwnModuleCredentials,
 } from '../../api/auth/module-credential-provisioning.service.ts';
@@ -924,7 +925,7 @@ it.live(
             // A key of the workload principal the platform did not attest (a tenant-managed one, or one left from
             // before): bound to the very principal, yet refused at the Shell.
             const unattested = yield* keys.issueServerOwned({
-              expiresInSeconds: 3600,
+              expiresInSeconds: Duration.toSeconds(MODULE_CREDENTIAL_LIFETIME),
               issuerPrincipalId: principalOf(companyA),
               lifecycleOperationId: yield* crypto.randomUUIDv4(),
               name: 'tenant-managed workload key',
