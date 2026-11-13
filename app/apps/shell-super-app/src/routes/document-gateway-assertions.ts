@@ -16,10 +16,10 @@ import { issueDocumentGatewayContexts } from '../api/auth-client.ts';
  * five modules waited for five `/auth/gateway-context` round trips (1-3 s each on a loaded stage) before any read
  * could start. The Shell obtains a document's assertions in one batch as soon as it renders (and a client-side
  * navigation while the page's target and remote load), and the browser request cache answers each remote's request
- * from here. Each assertion is claimed once. An audience whose pool runs dry is refilled in a batch that asks for as
- * many of its assertions as the reads waiting for one, or as many as the document has used of it so far, whichever is
- * more (at most `DOCUMENT_GATEWAY_ASSERTIONS_PER_AUDIENCE`): a list that warms its rows' details takes a few batches
- * instead of one round trip per read. Concurrent consumers never share a token.
+ * from here. Each assertion is claimed once. An audience whose pool runs dry is refilled in a batch that asks for the
+ * reads waiting for one and a single spare (at most `DOCUMENT_GATEWAY_ASSERTIONS_PER_AUDIENCE`): a list that warms its
+ * rows' details takes a few batches instead of one round trip per read, while a page that reads one row at a time
+ * mints no assertions it never uses. Concurrent consumers never share a token.
  *
  * Nothing is persisted: sign-out and tenant or legal-entity switches reload the document, which drops them, and a new
  * composition revision replaces them. Each assertion keeps its own audience and lifetime; modules authorize every call.
@@ -36,6 +36,12 @@ const BATCH_TIMEOUT = '30 seconds';
 const BATCH_CONCURRENCY = 4;
 /** A read waits for at most this many refills of its audience before it asks for its assertion alone. */
 const CLAIM_ROUNDS = 2;
+/**
+ * One assertion beyond the reads waiting, so a trickle of reads costs one batch per two reads instead of one each: the
+ * spare is handed to the next read. The refill is never sized by what the document used over its lifetime; every
+ * assertion is signed and registered on the Shell, and one nobody claims only expires.
+ */
+const REFILL_SPARE = 1;
 
 /** One batch request: how many assertions it asks per audience. It grows until the request leaves. */
 interface Batch {
@@ -45,8 +51,6 @@ interface Batch {
 interface Pool {
   /** Assertions on their way to this pool in batches already asked. */
   expected: number;
-  /** Assertions handed out: the next refill asks at least as many again. */
-  handedOut: number;
   readonly ready: GatewayContextResponse[];
   /** Settles with how many assertions the batch that settled it added, then is replaced. */
   settled: Deferred.Deferred<number>;
@@ -114,7 +118,7 @@ const poolOf = (owned: DocumentAssertions, audience: string): Pool => {
   if (known !== undefined) {
     return known;
   }
-  const fresh: Pool = { expected: 0, handedOut: 0, ready: [], settled: Deferred.makeUnsafe<number>(), waiting: 0 };
+  const fresh: Pool = { expected: 0, ready: [], settled: Deferred.makeUnsafe<number>(), waiting: 0 };
   owned.pools.set(audience, fresh);
   return fresh;
 };
@@ -271,7 +275,6 @@ const claim = Effect.fn('DocumentGatewayAssertions.claim')(function* claimEffect
   // Claim synchronously: only this caller removes this assertion.
   const claimed = pool.ready.shift();
   if (claimed !== undefined) {
-    pool.handedOut += 1;
     return Option.some(claimed);
   }
   if (
@@ -282,10 +285,10 @@ const claim = Effect.fn('DocumentGatewayAssertions.claim')(function* claimEffect
     return Option.none<GatewayContextResponse>();
   }
   if (pool.waiting >= pool.expected) {
-    // Ask for every read now waiting here, or as many as this document has used of the audience so far.
+    // Ask for the reads waiting here that no batch covers yet (this one included) and one spare, never more.
     const count = Math.min(
       DOCUMENT_GATEWAY_ASSERTIONS_PER_AUDIENCE,
-      Math.max(pool.waiting + 1 - pool.expected, pool.handedOut),
+      Math.max(1, pool.waiting + 1 - pool.expected) + REFILL_SPARE,
     );
     yield* fillEmpty(owned, now, { audience, count });
   }
