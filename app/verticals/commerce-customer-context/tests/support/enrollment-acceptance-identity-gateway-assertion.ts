@@ -58,7 +58,8 @@ export interface AcceptanceGatewayPrincipal {
   readonly authBindingId: string;
   readonly authContextRef: string;
   readonly authenticationNamespaceId: string;
-  readonly authMethod: 'session';
+  /** A portal session, or a Storefront client presenting its API key (a `service` principal of the staff namespace). */
+  readonly authMethod: 'api_key' | 'session';
   /** Omitted for a caller whose operation forbids a Legal Entity in its operational scope. */
   readonly legalEntityId?: string;
   readonly principalId: string;
