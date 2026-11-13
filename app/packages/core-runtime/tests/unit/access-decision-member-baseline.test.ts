@@ -10,10 +10,19 @@ import type {
 import { decideAccess, decideAccessMany, resolveListAccess } from '../../src/access/decision/engine.ts';
 import { accessDecisionUnavailable } from '../../src/access/decision/errors.ts';
 import { capabilityPolicyOf } from '../../src/access/enforcement/capability.ts';
+import { shouldRecordDecision } from '../../src/access/enforcement/decision-log.ts';
 import type { AccessDeclarationInput } from '../../src/authorization/access-declaration.ts';
 import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
-import { agent, at, connectionId, makeAuthority, person, tenant } from './access-decision-support.ts';
+import {
+  agent,
+  at,
+  capability as capabilityKeyOf,
+  connectionId,
+  makeAuthority,
+  person,
+  tenant,
+} from './access-decision-support.ts';
 
 /*
  * Baseline access (the Shell frame): a person whose Roles do not grant a baseline capability is admitted as a member
@@ -137,5 +146,27 @@ it.effect('answers a batch and a LIST exactly as one decision, the LIST over the
       outcome: 'ALLOWED',
       predicate: { groups: [] },
     });
+  }),
+);
+
+it.effect('refuses the flag at decision time on anything but the Shell frame read, whatever a release row says', () =>
+  Effect.gen(function* decisionTimeGuard() {
+    // Policies a decoded declaration can never produce, as a tampered release row could carry them.
+    for (const forged of [
+      { ...frame(), capabilityKey: capabilityKeyOf('billing.invoices.invoice.read') },
+      { ...frame(), kind: 'action' as const },
+      { ...frame(), risk: 'sensitive' as const },
+      { ...frame(), selectors: ['assigned' as const] },
+    ]) {
+      const { decision, sent } = yield* decideFor('has', forged);
+      expect({ outcome: decision.outcome, sent: sent.length }).toEqual({ outcome: 'DENIED', sent: 0 });
+    }
+  }),
+);
+
+it.effect('records every fallback admission as evidence, though the read is routine', () =>
+  Effect.gen(function* recordedAdmission() {
+    const { decision } = yield* decideFor('has');
+    expect(shouldRecordDecision(decision, frame())).toBe(true);
   }),
 );

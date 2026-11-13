@@ -73,7 +73,12 @@ export class AccessDecisionLog extends Context.Service<AccessDecisionLog, Access
 export const shouldRecordDecision = (
   decision: AccessDecision,
   capability: Pick<DecisionCapabilityPolicy, 'risk'>,
-): boolean => decision.outcome !== 'UNAVAILABLE' && (decision.outcome !== 'ALLOWED' || capability.risk !== 'routine');
+): boolean =>
+  decision.outcome !== 'UNAVAILABLE' &&
+  // A member admitted to the Shell frame without a Role granting it is evidence, routine read or not.
+  (decision.outcome !== 'ALLOWED' ||
+    capability.risk !== 'routine' ||
+    decision.structuralEvidence?.basis === 'member_baseline');
 
 /**
  * A delegated request always leaves its evidence row (D6), routine allows included, because the row is

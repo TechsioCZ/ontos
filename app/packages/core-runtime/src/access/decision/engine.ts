@@ -939,12 +939,26 @@ const adminSurfaceAnyDecision = (
  * of a grant. The graph proves the membership itself (`access_scope#access`) in its own snapshot; an engine failure is
  * UNAVAILABLE, never an admission. Every page, contribution and record stays decided by its own right.
  */
+/**
+ * A baseline capability as the decision sees it: the flag AND the only shape a baseline may have, the Shell frame's
+ * routine, unselected read. The declaration decoder already refuses anything else; this holds even for a release row
+ * that carries the flag on another capability.
+ */
+const isFrameBaseline = (capability: DecisionCapabilityPolicy): boolean =>
+  capability.baseline === true &&
+  capability.capabilityKey.startsWith('core.shell.') &&
+  capability.kind === 'read' &&
+  capability.risk === 'routine' &&
+  capability.selectors.length === 0 &&
+  capability.modes.length === 1 &&
+  capability.modes[0] === RUN_MODE;
+
 const needsMemberBaseline = (
   resolved: ResolvedActor,
   request: Pick<AccessDecisionRequest, 'capability'>,
   decided: AccessDecision,
 ): boolean =>
-  request.capability.baseline === true &&
+  isFrameBaseline(request.capability) &&
   decided.outcome === 'DENIED' &&
   decided.reasons.every(({ code }) => code === INSUFFICIENT_GRANT.code) &&
   Option.isSome(principalIdOf(resolved.actor));

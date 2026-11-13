@@ -53,8 +53,10 @@ const frameDecision = Effect.fn('ShellBaseline.frameDecision')(function* frameDe
   accessCase: AccessAdminCase,
   persona: Persona,
   key: string,
+  company?: string,
 ) {
-  const [ours = ''] = accessCase.companies;
+  const [first = ''] = accessCase.companies;
+  const ours = company ?? first;
   const declaration = accessCase.declarations.get(key);
   if (declaration === undefined) {
     return yield* Effect.die(new Error(`${key} is not published`));
@@ -66,6 +68,27 @@ const frameDecision = Effect.fn('ShellBaseline.frameDecision')(function* frameDe
     scope: yield* accessCase.scopeFor(persona, ours),
   });
   return { codes: decision.reasons.map(({ code }) => code), key, outcome: decision.outcome };
+});
+
+/** The frame's answer for the people whose membership, not their Roles, decides it. */
+const membershipCasesOf = Effect.fn('ShellBaseline.membershipCases')(function* membershipCasesOf(
+  accessCase: AccessAdminCase,
+) {
+  const [ours = '', other = ''] = accessCase.companies;
+  const cases: readonly (readonly [Persona, string])[] = [
+    ['suspended', ours],
+    ['lapsed', other],
+    ['directoryMember', ours],
+    ['departed', ours],
+    ['companyAdmin', other],
+    ['expiredAssignment', ours],
+  ];
+  const decisions = yield* Effect.forEach(
+    cases,
+    ([persona, company]) => frameDecision(accessCase, persona, FRAME_KEYS[0], company),
+    { concurrency: 1 },
+  );
+  return decisions.map(({ outcome }, index) => ({ allowed: outcome === 'ALLOWED', persona: cases[index]?.[0] }));
 });
 
 it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 seconds' })(
@@ -93,6 +116,31 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
               const frame = yield* frameOf(shell, ours, MEMBER);
               expect(frame).toEqual(yield* frameOf(shell, ours, 'owner'));
               expect(Object.values(frame).some((status) => status === 401 || status === 403)).toBe(false);
+              // Evidence: every fallback admission leaves its decision row, routine read or not.
+              const evidence = yield* accessCase.admin
+                .unsafe<{ readonly rows: number }>(
+                  `select count(*)::int as rows from core.access_decision_logs
+                    where tenant_id = $1 and actor_principal_id = $2
+                      and reasons_json @> '[{"code":"structural.member_baseline"}]'::jsonb`,
+                  [accessCase.tenantId, accessCase.ids.get(MEMBER)?.principalId ?? ''],
+                )
+                .pipe(Effect.orDie);
+              expect(evidence[0]?.rows ?? 0).toBeGreaterThan(0);
+
+              // Who is a member decides it, as the graph holds memberships: a suspended or lapsed holder, a person
+              // in the directory only, a departed one and a member of the other company only get no frame; a member
+              // whose Role assignment ended is still a member.
+              const membershipCases = yield* membershipCasesOf(accessCase);
+              yield* Effect.log(`membership cases: ${JSON.stringify(membershipCases)}`);
+              expect(membershipCases).toEqual([
+                { allowed: false, persona: 'suspended' },
+                { allowed: false, persona: 'lapsed' },
+                { allowed: false, persona: 'directoryMember' },
+                { allowed: false, persona: 'departed' },
+                { allowed: false, persona: 'companyAdmin' },
+                { allowed: true, persona: 'expiredAssignment' },
+              ]);
+
               // The baseline admits the frame and nothing else: an administration page and a Shell read that is not
               // baseline stay decided by the member's Roles, which grant neither.
               const beyond = yield* Effect.all(
