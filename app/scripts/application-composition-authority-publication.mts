@@ -40,7 +40,12 @@ import {
 import { installApplicationCompositionCompletionSchema } from './application-composition-schema-expansion.mts';
 import type { ActiveApplicationCompositionSnapshot } from '../packages/core-runtime/src/modules/active-application-composition.ts';
 import {
+  describeUndrainableOutboxWork,
+  listUndrainableOutboxWork,
+} from '../packages/core-runtime/src/outbox/undrainable-work.ts';
+import {
   ApplicationCompositionAuthorityError,
+  carriedOverCoreSystemWorkerKeys,
   closeApplicationCompositionDurableAdmission,
   drainApplicationCompositionAuthority,
   isApplicationCompositionDurableWorkDrained,
@@ -418,6 +423,47 @@ const reportDeadDrainDeliveries = Effect.fn('ApplicationCompositionAuthority.rep
   },
 );
 
+/**
+ * The pre-flight of a drain: it names every delivery the drain would wait for and never get, and fails the
+ * publication before durable admission closes. Nothing is written, the authority stays `active`, and the running
+ * release keeps serving reads and writes. Work that is merely in flight is not reported and still drains.
+ */
+const refuseUndrainableWork = Effect.fn('ApplicationCompositionAuthority.refuseUndrainableWork')(
+  function* refuseUndrainableWorkEffect(budgetMs: number) {
+    const database = yield* CoreDatabase;
+    const undrainable = yield* database.executor
+      .transaction((transaction) =>
+        carriedOverCoreSystemWorkerKeys(transaction).pipe(
+          Effect.flatMap(({ approvedCoreSystemWorkerKeys, carriedOverWorkerKeys }) =>
+            listUndrainableOutboxWork(database.executor, {
+              budgetMs,
+              carriedOverWorkerKeys,
+              coreSystemWorkerKeys: approvedCoreSystemWorkerKeys,
+            }),
+          ),
+        ),
+      )
+      .pipe(
+        // An unreadable pre-flight is not evidence that the drain is safe, but it is not evidence of debt either:
+        // the drain's own bounded wait and its blocker diagnostics remain.
+        Effect.orElseSucceed(() => []),
+      );
+    if (undrainable.length === 0) {
+      return yield* Effect.void;
+    }
+    // A dead delivery keeps the description the operator commands already use; the other reasons have no command.
+    const dead = yield* describeDeadDrainDeliveries(null).pipe(Effect.orElseSucceed(() => ''));
+    const others = describeUndrainableOutboxWork(undrainable.filter((delivery) => delivery.reason !== 'dead'));
+    return yield* unavailable(
+      [
+        'The Application Composition drain was not started, so this release keeps serving and nothing was written.',
+        ...(dead === '' ? [] : [dead]),
+        ...(others === '' ? [] : [others]),
+      ].join(' '),
+    );
+  },
+);
+
 interface CurrentApplicationCompositionAuthority {
   readonly phase: 'active' | 'draining' | 'sealed' | 'migrated';
   readonly revision: string;
@@ -483,7 +529,7 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
               ...progressState,
               budgetMs,
               message: [
-                'The bounded drain deadline expired; pending work is not proof of a dead owner. The migration did not start and admission was not reopened.',
+                "The bounded drain deadline expired; pending work is not proof of a dead owner. This release's own sealed schema migration did not start and admission was not reopened. The owner migrations of this release ran before the publication and stay applied; they are expand-only and the old release is rehearsed against the migrated database, so it keeps serving.",
                 ...(described === '' ? [] : [described]),
               ].join(' '),
             }),
@@ -502,6 +548,9 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
       }
       yield* Effect.gen(function* finishOldCompositionWork() {
         if (current.phase === 'active') {
+          // Before anything is written: a drain that waits for work nothing can finish would refuse every read on
+          // the running release until its budget expired. Refusing to start leaves the old release serving.
+          yield* refuseUndrainableWork(budgetMs);
           progressState.phase = 'close-admission';
           yield* withApplicationCompositionPublicationProgress(
             'close durable admission (authority fence)',

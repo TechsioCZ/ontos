@@ -612,3 +612,37 @@ mise exec -- pnpm outbox:dead-delivery release --tenant-id <uuid> --message-id <
 Order finalization retries for about 24.5 hours, so a dead finalization delivery means a lasting owner refusal. When Customer Context refused PROOF revalidation while the approval request was still valid, redrive the delivery once the owner is available. When CONSUME died after commit because the approval was cancelled or revised, the Order already exists and no automatic terminal outcome is safe. First reconcile the buyer-facing Order by hand, then release the delivery with a reason that records that reconciliation.
 
 Privacy still verifies its own successful measure outcome before publication, so a released Privacy delivery does not satisfy the Privacy legacy-completion gate. Redrive Privacy work instead.
+
+## Outbox work that cannot drain, and Core's own work that crosses the boundary
+
+Before a publication closes durable admission it asks what the drain would wait for and refuses to start when some of that work can never finish: a dead delivery, a pending delivery whose consumer module is not background-eligible in its tenant or whose tenant is not active, and a delivery whose next attempt falls after the drain budget. The refusal names every such row (`no-eligible-consumer: --tenant-id … --message-id … --worker-key … (consumer …, pending, attempts 0, available at …)`), writes nothing, and leaves the authority `active`, so the running release keeps serving reads and writes. Eligibility is asked with the same predicates the Outbox claim uses, so a drain can no longer wait for work the claim would never offer. Work that is merely in flight — claimed, or retrying inside the budget — is not reported and still drains.
+
+Core's own system work crosses the release boundary instead of blocking the drain. A delivery carries over only when all of this holds: its worker key is one of `CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS`, the descriptor the retiring authority approved under that key is identical to the one this release ships, the delivery is `pending` with zero attempts and no claim, and its message is matched and carries no completion debt of the retiring revision. Such work is not old-release work in flight: the handler is a whole-tenant reconcile owned by Core and identical in both releases, so the next release's own Outbox host finishes it under the new authority. A core-system descriptor that changed between releases does not carry over and is drained by the release that approved it.
+
+## Returning a stuck authority to `active` (interim manual exception)
+
+A drain whose budget expires currently leaves the authority in `draining`, and from that moment the running release refuses every read. No code moves `draining` back to `active` yet; the supported command (`pnpm composition:abandon-drain`) and its durable audit record are the next change. Until it ships, an operator may return the row by hand, and only with every precondition below true:
+
+- The deploy failed and no publisher is alive (no process holds the publication lock).
+- The authority row is exactly `phase = 'draining'` for the revision the old release serves, and `valid_until` is still in the future.
+- Nothing was sealed: no `sealed` or `migrated` phase was ever recorded for this attempt, so no incompatible schema change ran.
+- `core.application_composition_durable_work` is empty.
+
+Owner migrations of the failed release have already been applied — they run before the publication, are expand-only, and the old release is rehearsed against the migrated database, so returning to `active` is safe.
+
+With the administrative identity (`DATABASE_ADMIN_URL`), inside one transaction that takes the publication lock and must update exactly one row:
+
+```sql
+begin;
+select pg_advisory_xact_lock(hashtextextended('ontos.application-composition-authority', 0));
+update core.application_composition_authority
+   set phase = 'active', durable_work_admission = 'open', updated_at = clock_timestamp()
+ where authority_key = 'active'
+   and revision = '<the revision the old release serves>'
+   and phase = 'draining'
+   and valid_until > clock_timestamp();
+-- Exactly one row must be reported. Roll back on any other count.
+commit;
+```
+
+Record who did it, when and why outside the database until the command exists; this exception leaves no audit row of its own, which is the main reason it is being replaced.

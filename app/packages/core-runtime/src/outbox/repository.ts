@@ -156,7 +156,7 @@ const loadClaimInvocationEvidence = Effect.fnUntraced(function* loadClaimInvocat
  * and a concurrent deactivation are serialized by their commits either way — a claim that commits just before a
  * deactivation is the same as one that commits just after it.
  */
-const backgroundEligibleConsumer = (coreSystemWorkerKeys: readonly string[]) =>
+export const backgroundEligibleConsumer = (coreSystemWorkerKeys: readonly string[]) =>
   or(
     coreSystemWorkerKeys.length === 0 ? undefined : inArray(outboxDeliveries.workerKey, [...coreSystemWorkerKeys]),
     sql`exists (select 1 from ${tenantModuleStates} where ${tenantModuleStates.tenantId} = ${outboxMessages.tenantId} and ${tenantModuleStates.moduleKey} = ${outboxDeliveries.consumerModuleKey} and ${tenantModuleStates.state} in (${BACKGROUND_ELIGIBLE_STATE_LIST}))`,
@@ -171,7 +171,7 @@ const coreSystemWorkerKeysOf = (registrations: readonly AnyOutboxWorkerRegistrat
 // transactions contend with ordinary writes. Keeping ineligible deliveries pending means resuming the work resumes with
 // the tenant; for an archived tenant, which is terminal, they stay pending rather than being retried, and cancelling
 // them belongs with the archive procedure that changes the status.
-const activeMessageTenant = sql`exists (select 1 from ${tenants} where ${tenants.tenantId} = ${outboxMessages.tenantId} and ${tenants.status} = 'active')`;
+export const activeMessageTenant = sql`exists (select 1 from ${tenants} where ${tenants.tenantId} = ${outboxMessages.tenantId} and ${tenants.status} = 'active')`;
 const dueDelivery = (now: Date) =>
   or(
     and(eq(outboxDeliveries.status, 'pending'), lte(outboxDeliveries.availableAt, now)),
