@@ -5,6 +5,8 @@ import { expect, it } from 'effect-rstest';
 
 import { AccessOperationIdSchema, AccessScopeIdSchema, CommandDigestSchema } from '../../src/access/ids.ts';
 import { AccessProjectionWriter } from '../../src/access/intent/projection-writer.ts';
+import { projectionWriteRefusal } from '../../src/access/intent/projection-write-error.ts';
+import type { AccessProjectionWriteError } from '../../src/access/intent/projection-write-error.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
 import { refuseInsideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
 import { ActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
@@ -72,6 +74,8 @@ interface FixtureOptions {
   readonly registrations?: readonly CoreWorker[];
   readonly selected?: CoreWorker;
   readonly sqlAuthority?: 'expired' | 'sealed' | 'stale';
+  /** The projection writer refuses with this instead of reconciling. */
+  readonly writerRefusal?: AccessProjectionWriteError;
 }
 
 const runEntry = Effect.fn('TestCoreOutbox.runEntry')(function* runEntry(options: FixtureOptions = {}) {
@@ -199,6 +203,7 @@ const runEntry = Effect.fn('TestCoreOutbox.runEntry')(function* runEntry(options
       Layer.succeed(AccessProjectionWriter, {
         reconcileTenant: ({ scope }) =>
           refuseInsideDatabaseTransaction('spicedb', 'scripted-core-projection').pipe(
+            Effect.andThen(options.writerRefusal === undefined ? Effect.void : Effect.fail(options.writerRefusal)),
             Effect.andThen(
               Effect.sync(() => {
                 expect(openTransactions).toBe(0);
@@ -446,6 +451,39 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
       expect(lock).toBeGreaterThanOrEqual(0);
       expect(authority).toBeGreaterThan(lock);
       expect(candidates).toBeGreaterThan(authority);
+    }),
+  );
+
+  // The shipped tuple's third worker; the first case pins its key, so a reordering cannot silently test another.
+  const lifecycleWorker = coreSystemOutboxWorkers[2];
+
+  suite.effect('settles a lifecycle wake-up whose tenant another writer is projecting right now', () =>
+    Effect.gen(function* settlesBusyFence() {
+      expect(lifecycleWorker.descriptor.workerKey).toBe('core.authorization.reconcile-principal-lifecycle');
+      // A fence held by another live operation is somebody else projecting the tenant from intent that already
+      // includes this change; burning a retry on it only risked turning carried-over work dead.
+      const fixture = yield* runEntry({
+        selected: lifecycleWorker,
+        writerRefusal: projectionWriteRefusal(
+          'access_projection_write_fence_refused',
+          'fence_held_by_other_operation: Scope 1 is held by operation release-modules (closed, revision 4) whose hold has not lapsed, so nothing may write',
+        ),
+      });
+      expect(fixture.failures).toEqual([]);
+      expect(fixture.completed).toBe(true);
+      expect(fixture.results[0]).toMatchObject({ claimed: 1, failed: 0, succeeded: 1 });
+    }),
+  );
+
+  suite.effect('still fails a lifecycle wake-up whose projection was genuinely refused', () =>
+    Effect.gen(function* failsGenuineRefusal() {
+      // Only a busy fence is left to another writer; an engine failure is this reconcile's own and must retry.
+      const fixture = yield* runEntry({
+        selected: lifecycleWorker,
+        writerRefusal: projectionWriteRefusal('access_projection_write_unavailable', 'the engine did not complete'),
+      });
+      expect(fixture.completed).toBe(false);
+      expect(fixture.results[0]).toMatchObject({ claimed: 1, failed: 1, succeeded: 0 });
     }),
   );
 

@@ -1,5 +1,8 @@
 import { withOptional } from '../access/decision/optional.ts';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
+
+import { isFenceBusy } from '../access/intent/projection-writer.ts';
+import { AccessProjectionWriteError } from '../access/intent/projection-write-error.ts';
 
 import { projectPeopleLifecycleSearch, rebuildPeopleSearch } from '../people/people-search-workers.ts';
 import { ActionAuthorizationLifecycle } from '../permissions/action-authorization-lifecycle.ts';
@@ -63,7 +66,25 @@ const reconcileTenantFromClaim = Effect.fn('CoreSystemWorker.reconcileTenant')(f
     ),
   ).pipe(Effect.mapError((cause) => new ActionAuthorizationLifecycleError({ cause, reason: cause.reason })));
   const lifecycle = yield* ActionAuthorizationLifecycle;
-  return yield* lifecycle.reconcileTenant(scope);
+  return yield* lifecycle.reconcileTenant(scope).pipe(
+    Effect.asVoid,
+    // Another operation holds the tenant's fence, or projected the tenant since this reconcile pinned it: somebody
+    // is projecting this tenant right now, so the wake-up is already being served (the same rule as the fence sweep
+    // and the release activation, `isFenceBusy`). This is sound because of how intent and the fence interlock: the
+    // change that emitted this message committed its intent while the fence was `Ready`, holding the fence's lock,
+    // so no fence take could complete across that commit. Any hold present now was therefore taken after it, and a
+    // holder reads the intent again once it holds the fence, so it projects this change; if it fails part-way, the
+    // fence stays closed and its take-over projects fresh intent. Counting this as a failure only burned retries:
+    // a switch-over, where the new host's release steps project every tenant while its Outbox host starts, saw a
+    // carried-over delivery declare three failures before it ran.
+    Effect.catchIf(
+      (error) => Schema.is(AccessProjectionWriteError)(error.cause) && isFenceBusy(error.cause),
+      () =>
+        Effect.logInfo('Core lifecycle wake-up left to the writer already projecting the tenant').pipe(
+          Effect.annotateLogs({ tenantId: scope.tenantId }),
+        ),
+    ),
+  );
 });
 
 const installationWorker = defineOutboxWorker(
