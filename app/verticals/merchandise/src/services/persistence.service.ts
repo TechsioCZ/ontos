@@ -375,7 +375,9 @@ const lineTaxOf = (input: MerchandiseCommandInput, product: Product) => {
 };
 
 /** Shipping carries the standard rate (none for a non-payer). */
-const shippingVatResolution = (input: MerchandiseCommandInput) => {
+const shippingVatResolution = (
+  input: MerchandiseCommandInput,
+): { readonly message: string } | { readonly vatRate: LineTax['vatRate'] } => {
   const resolved = lineTaxResolution(input.tax, CZ_VAT_STANDARD, input.now);
   return 'message' in resolved
     ? { message: resolved.message.replace('Produkt nelze prodat', 'Dopravu nelze účtovat') }
