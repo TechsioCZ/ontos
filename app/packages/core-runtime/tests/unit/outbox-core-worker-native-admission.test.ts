@@ -413,7 +413,11 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
       expect(fixture.failures).toEqual([]);
       expect(fixture.results[0]?.claimed).toBe(0);
       const claim = fixture.statements.find(({ sql }) => sql.includes('skip locked'));
-      expect(claim?.sql).toContain('inner join "core"."tenant_module_states"');
+      // Core is not an installable tenant module, so its own work is eligible by worker key. A tenant module's
+      // worker still waits for a background-eligible module state, now asked as a predicate rather than a join
+      // so the claim's row lock never reaches a module state row.
+      expect(claim?.sql).not.toContain('inner join "core"."tenant_module_states"');
+      expect(claim?.sql).toContain('exists (select 1 from "core"."tenant_module_states"');
       expect(claim?.sql).toContain('from "core"."tenants"');
       expect(claim?.params).toContain('active');
       for (const worker of workers) {
