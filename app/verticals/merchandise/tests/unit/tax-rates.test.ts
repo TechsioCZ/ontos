@@ -557,7 +557,8 @@ it('only the Shell saying Tax is not installed for the tenant reads as not insta
   expect(taxCallFailureOf(problem('GatewayForbiddenProblem', 403, GATEWAY_MODULE_NOT_INSTALLED_TYPE))).toMatchObject({
     kind: 'REFUSED',
   });
-  // A retired or wrong module credential, another release, a requester not admitted: the Shell's plain 403.
+  // A retired or wrong module credential, another release, a requester not admitted, and Tax installed but suspended,
+  // quarantined, inactive or archived for the tenant (`audience_module_not_active`): the Shell's plain 403, an outage.
   expect(
     taxCallFailureOf(problem('GatewayForbiddenProblem', 403, 'https://ontos.dev/problems/gateway-forbidden')),
   ).toMatchObject({

@@ -15,7 +15,8 @@ import { FinanceReferenceUnavailable } from '../../shared/actions/apply-command.
 import { FinanceStateSchema } from '../../shared/apis/records.ts';
 import type { InvoiceLine } from '../../shared/apis/records.ts';
 import type { VatChoices } from '../../shared/apis/vat-choices.ts';
-import { FinanceTaxRates, TAX_NOT_INSTALLED_REASON } from '../../src/integrations/tax-rates.ts';
+import { FinanceTaxRates, TAX_NOT_INSTALLED_REASON, taxUnavailableReasonOf } from '../../src/integrations/tax-rates.ts';
+import { GATEWAY_MODULE_NOT_INSTALLED_TYPE } from '@app/shared-contracts';
 import {
   DraftInvoiceFromWonOpportunityRejected,
   draftInvoiceFromWonOpportunityWorker,
@@ -831,4 +832,23 @@ it.layer(NodeCrypto.layer)('Business outcomes complete the delivery; only system
       expect(foreign.succeeded).toBe(false);
     }),
   );
+});
+
+/** The Shell's 403 problem for a refused delegated call to Tax. */
+const forbiddenProblem = (type: string, reason: string) => ({
+  _tag: 'GatewayForbiddenProblem',
+  reason,
+  status: 403,
+  type,
+});
+
+it('only Tax absent for the tenant reads as not installed; Tax installed but not readable now is an outage', () => {
+  expect(
+    taxUnavailableReasonOf(forbiddenProblem(GATEWAY_MODULE_NOT_INSTALLED_TYPE, 'audience_module_not_installed')),
+  ).toBe(TAX_NOT_INSTALLED_REASON);
+  expect(
+    taxUnavailableReasonOf(
+      forbiddenProblem('https://ontos.dev/problems/gateway-forbidden', 'audience_module_not_active'),
+    ),
+  ).not.toBe(TAX_NOT_INSTALLED_REASON);
 });

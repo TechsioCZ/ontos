@@ -91,7 +91,13 @@ interface DelegationCase {
   readonly malformed?: boolean;
   readonly missingDeployment?: 'catalog' | 'party-registry';
   /** `destination-not-installed`: the calling module is active for the tenant, the module it calls is not. */
-  readonly moduleState?: 'suspended' | 'quarantined' | 'missing' | 'unavailable' | 'destination-not-installed';
+  readonly moduleState?:
+    | 'suspended'
+    | 'quarantined'
+    | 'missing'
+    | 'unavailable'
+    | 'destination-not-installed'
+    | 'destination-suspended';
   readonly originalBindingRevoked?: boolean;
   /**
    * `tenant` is a workload requester of work started in the tenant context — the Storefront client — and
@@ -176,6 +182,14 @@ const scopeResolverDouble = (failure: DelegationCase['contextFailure'], requests
 });
 
 /** The module states a case's tenant holds: active unless the case names a missing or unavailable state. */
+/** One module's state in a case: every module suspended or quarantined, or only the destination suspended. */
+const moduleStateOf = (moduleId: string, moduleState: DelegationCase['moduleState']) => {
+  if (moduleState === 'suspended' || moduleState === 'quarantined') {
+    return moduleState;
+  }
+  return moduleState === 'destination-suspended' && moduleId === 'party.registry' ? 'suspended' : 'active';
+};
+
 const moduleStatesFor = (
   modules: readonly { readonly moduleId: string }[],
   moduleState: DelegationCase['moduleState'],
@@ -183,7 +197,7 @@ const moduleStatesFor = (
   modules.map((module) =>
     Schema.decodeUnknownSync(TenantModuleStateRecordSchema)({
       moduleKey: module.moduleId,
-      state: moduleState === 'suspended' || moduleState === 'quarantined' ? moduleState : 'active',
+      state: moduleStateOf(module.moduleId, moduleState),
     }),
   );
 
@@ -776,6 +790,8 @@ const cryptoNegatives: readonly (readonly [string, DelegationCase, GatewayDelega
   ['missing-module-state', { moduleState: 'missing' }, 'forbidden'],
   // Only this refusal tells the calling module that the module it calls is not installed for the tenant.
   ['destination-not-installed', { moduleState: 'destination-not-installed' }, 'module_not_installed'],
+  // Installed but suspended is a plain refusal: the calling module must not read it as "not installed".
+  ['destination-suspended', { moduleState: 'destination-suspended' }, 'forbidden'],
   ['originator-denied', { originator: 'denied' }, 'forbidden'],
   ['originator-unavailable', { originator: 'unavailable' }, 'unavailable'],
   ['originator-is-the-calling-module', { originator: 'caller' }, 'forbidden'],
@@ -804,6 +820,8 @@ const refusalReasons: readonly (readonly [string, DelegationCase, GatewayRefusal
   ['unavailable-current-context', { contextFailure: 'unavailable' }, 'scope_unavailable'],
   ['unavailable-module-state', { moduleState: 'unavailable' }, 'module_states_unavailable'],
   ['suspended-module', { moduleState: 'suspended' }, 'module_not_active'],
+  ['destination-not-installed', { moduleState: 'destination-not-installed' }, 'audience_module_not_installed'],
+  ['destination-suspended', { moduleState: 'destination-suspended' }, 'audience_module_not_active'],
   ['originator-denied', { originator: 'denied' }, 'originator_not_admitted'],
   ['originator-unavailable', { originator: 'unavailable' }, 'originator_evidence_unavailable'],
   ['late-ledger-replay', { ledgerFailure: 'replay' }, 'exchange_replayed'],

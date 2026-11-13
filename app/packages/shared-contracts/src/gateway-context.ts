@@ -279,7 +279,11 @@ export const GatewayRefusalReasonSchema = Schema.Literals([
   'scope_refused',
   'module_states_unavailable',
   'module_not_active',
-  // The module the call is for is not active for the subject's tenant: the caller may read it as "not installed".
+  // The module the call is for has no state for the subject's tenant: the only refusal a caller may read as "not
+  // installed" (403 with GATEWAY_MODULE_NOT_INSTALLED_TYPE).
+  'audience_module_not_installed',
+  // It is installed but not readable now (suspended, quarantined, inactive, archived): a plain refusal, never "not
+  // installed", so a caller treats it as an outage, not as an answer.
   'audience_module_not_active',
   'exchange_ledger_unavailable',
   'exchange_replayed',
@@ -318,8 +322,9 @@ export const GatewayInternalProblemSchema = Schema.TaggedStruct('GatewayInternal
   status: Schema.Literal(500),
 }).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(500));
 /**
- * The `type` of the 403 a delegated module call gets when the module it calls is not installed (or not active) for
- * the subject's tenant. Every other refusal of the call is a plain `GatewayForbiddenProblem`.
+ * The `type` of the 403 a delegated module call gets when the module it calls is not installed for the subject's
+ * tenant (it has no state there at all). Every other refusal of the call, a module installed but not readable now
+ * included, is a plain `GatewayForbiddenProblem`.
  */
 export const GATEWAY_MODULE_NOT_INSTALLED_TYPE = 'https://ontos.dev/problems/gateway-module-not-installed';
 

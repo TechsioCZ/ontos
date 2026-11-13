@@ -263,9 +263,13 @@ const issueForSubject = Effect.fn('GatewayDelegation.issueForSubject')(function*
   if (!readable(sourceContract.manifest.module.id)) {
     return yield* delegationForbidden('module_not_active')();
   }
-  // The one refusal a calling module may read as "not installed": the module it calls is not active for the tenant.
+  // The one refusal a calling module may read as "not installed": the module it calls has no state for the tenant. One
+  // that is installed but not readable now (suspended, quarantined, inactive, archived) is a plain refusal: an outage
+  // to the caller, never an answer.
   if (!readable(destination.manifest.module.id)) {
-    return yield* new GatewayDelegationError({ code: 'module_not_installed', reason: 'audience_module_not_active' });
+    return yield* states.some((state) => state.moduleKey === destination.manifest.module.id)
+      ? delegationForbidden('audience_module_not_active')()
+      : new GatewayDelegationError({ code: 'module_not_installed', reason: 'audience_module_not_installed' });
   }
 
   const ledger = yield* GatewayDelegationExchangeLedger;
