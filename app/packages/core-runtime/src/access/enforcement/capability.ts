@@ -18,23 +18,28 @@ export const capabilityPolicyOf = (declaration: AccessDeclaration): DecisionCapa
   withOptional(
     withOptional(
       withOptional(
-        {
-          capabilityKey: CapabilityKeySchema.make(declaration.key),
-          kind: declaration.kind,
-          modes: declaration.modes,
-          risk: declaration.risk,
-          selectors: declaration.selectors,
-        },
-        'ephemeral',
-        declaration.ephemeral,
+        withOptional(
+          {
+            capabilityKey: CapabilityKeySchema.make(declaration.key),
+            kind: declaration.kind,
+            modes: declaration.modes,
+            risk: declaration.risk,
+            selectors: declaration.selectors,
+          },
+          'ephemeral',
+          declaration.ephemeral,
+        ),
+        'fieldClass',
+        declaration.fieldClass,
       ),
-      'fieldClass',
-      declaration.fieldClass,
+      // O88: the surface marker of a page reaches the engine only through the declaration, so no
+      // caller flag, key prefix or selected company can ever stand in for it.
+      'admitsAdminSurface',
+      declaration.admitsAdminSurface,
     ),
-    // O88: the surface marker of a page reaches the engine only through the declaration, so no
-    // caller flag, key prefix or selected company can ever stand in for it.
-    'admitsAdminSurface',
-    declaration.admitsAdminSurface,
+    // The Shell frame's baseline likewise reaches the engine only from its validated declaration.
+    'baseline',
+    declaration.baseline,
   );
 
 /** One scalar money value: minor units of one currency, as the amount caveat reads it (O18). */

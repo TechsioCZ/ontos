@@ -21,6 +21,7 @@ import { makeTestOperationOwner } from '../support/action-runtime-options.ts';
 import type { AccessPrincipalKinds, AccessPrincipalKind } from '../../src/access/enforcement/actor.ts';
 import { accessDecisionUnavailable } from '../../src/access/decision/errors.ts';
 import type { DecisionAuthorityPort } from '../../src/access/decision/authority.ts';
+import type { DecisionCheckPort } from '../../src/access/decision/engine.ts';
 import type { GateCarrier, GateInput, ListGateInput } from '../../src/access/enforcement/contract.ts';
 import { makeAccessDecisionService } from '../../src/access/enforcement/service.ts';
 import type { AccessDecisionLogEntry, AccessDecisionLogWriter } from '../../src/access/enforcement/decision-log.ts';
@@ -180,6 +181,8 @@ const harness = (
     readonly legalEntities?: AccessLegalEntityCandidates;
     readonly logFails?: boolean;
     readonly members?: readonly string[];
+    /** The graph proves every asked `access_scope#access` membership (the Shell frame's baseline). */
+    readonly scopeMember?: boolean;
     readonly workloads?: AccessWorkloadBindings;
   } = {},
 ) => {
@@ -188,11 +191,26 @@ const harness = (
   };
   const authority = makeAuthority(authoritySpec);
   const check = makeCheck({ authority: authoritySpec });
+  const checkPort: DecisionCheckPort =
+    options.scopeMember === true
+      ? {
+          checkBulk: (items) =>
+            check.port
+              .checkBulk(items)
+              .pipe(
+                Effect.map((results) =>
+                  results.map((result, index) =>
+                    items[index]?.resource.type === 'access_scope' ? { permissionship: 'has' as const } : result,
+                  ),
+                ),
+              ),
+        }
+      : check.port;
   const port: DecisionAuthorityPort = membersOnly(authority.port, options.members);
   const { log, state } = logWriter(options.logFails === true);
   const gate = makeAccessDecisionService({
     authorityFor: () => port,
-    check: check.port,
+    check: checkPort,
     decisionLog: log,
     legalEntities: options.legalEntities ?? noLegalEntities,
     principalKinds: options.kinds ?? kindSource('human'),
@@ -1102,4 +1120,81 @@ it.effect('records a refused company of a delegated batch in the tenant scope, r
     expect(workload.singleRows).toEqual([]);
     expect(workload.batchedRows).toEqual([]);
   }),
+);
+
+/** The Shell frame's composition read: the one shape a baseline capability may have. */
+const frameCarrier = {
+  accessDeclaration: decodeAccessDeclarationOrThrow(
+    {
+      baseline: true,
+      key: 'core.shell.composition.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'shell', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    } satisfies AccessDeclarationInput,
+    { access: 'read', authorization: { kind: 'protected' }, moduleKey: 'core.shell', role: 'api' },
+  ),
+} satisfies GateCarrier;
+
+const directPersonScope: OperationalScope = {
+  ...Schema.decodeSync(TrustedPrincipalContextSchema)({
+    authBindingId: uid(70),
+    authContextRef: 'session-frame',
+    authMethod: 'session',
+    principalId: person,
+    tenantId: tenant,
+  }),
+  correlationId: 'frame-direct-person',
+};
+
+it.effect(
+  'admits the Shell frame by membership only to a person asking directly: no agent, workload or module call',
+  () =>
+    Effect.gen(function* frameOnlyForPeople() {
+      const scopeChecks = (h: ReturnType<typeof harness>) =>
+        h.check.sent.filter(({ resource }) => resource.type === 'access_scope').length;
+      // The control: a member whose Roles hold no frame cell, on their own session, is admitted and evidenced.
+      const member = harness({ authority: { cells: [] }, scopeMember: true });
+      expect(codesOf(yield* member.gate.decide(gateOf(frameCarrier, directPersonScope)))).toEqual([
+        'structural.member_baseline',
+      ]);
+      expect(member.state.entries.length).toBe(1);
+      // An agent or a workload on the same direct call never borrows a membership.
+      for (const kind of ['agent', 'integration', 'service', 'system'] as const) {
+        const h = harness({ authority: { cells: [] }, kinds: kindSource(kind), scopeMember: true });
+        const decision = yield* h.gate.decide(
+          gateOf(frameCarrier, kind === 'agent' ? directPersonScope : directWorkloadScope),
+        );
+        expect({ kind, outcome: decision.outcome, scopeChecks: scopeChecks(h) }).toEqual({
+          kind,
+          outcome: 'DENIED',
+          scopeChecks: 0,
+        });
+      }
+      // A module call for a person: the frame declares no accessActor, so it is refused before any membership.
+      const delegated = harness({ authority: { cells: [] }, scopeMember: true });
+      const forPerson = yield* delegated.gate.decide(
+        gateOf(frameCarrier, delegatedScopeOf(callerOf('commerce-order'))),
+      );
+      expect({ codes: codesOf(forPerson), scopeChecks: scopeChecks(delegated) }).toEqual({
+        codes: ['deny.actor_forbidden'],
+        scopeChecks: 0,
+      });
+      // A module call whose subject is a bound workload: refused too.
+      const machine = harness({
+        authority: { cells: [] },
+        kinds: kindSource('service'),
+        scopeMember: true,
+        workloads: workloadRegistry([storefront]),
+      });
+      const forWorkload = yield* machine.gate.decide(
+        gateOf(frameCarrier, delegatedScopeOf(callerOf('commerce-order'), workloadPrincipal)),
+      );
+      expect({ outcome: forWorkload.outcome, scopeChecks: scopeChecks(machine) }).toEqual({
+        outcome: 'DENIED',
+        scopeChecks: 0,
+      });
+    }),
 );

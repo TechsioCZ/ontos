@@ -2,7 +2,12 @@ import type { CoreSearchPresentationEntry } from '@app/core-runtime/search-contr
 import { Effect, Schema } from 'effect';
 import { expect, it, rstest, test } from 'effect-rstest';
 
-import { ModuleIdSchema, ResourceIdSchema, TenantIdSchema } from '../../../../shared/api.ts';
+import {
+  ModuleIdSchema,
+  ResourceIdSchema,
+  ShellTargetForbiddenProblemSchema,
+  TenantIdSchema,
+} from '../../../../shared/api.ts';
 import type {
   ShellSearchPayload,
   ShellSearchPresentationInventory,
@@ -11,6 +16,7 @@ import type {
 } from '../../../../shared/api.ts';
 import {
   loader,
+  searchFailureModel,
   searchFamiliesFromValue,
   searchReadyModel,
 } from '../../../../src/routes/[lang]/search/search-page-model.ts';
@@ -92,6 +98,17 @@ const inventory = (): ShellSearchPresentationIndex => {
   }
   return index;
 };
+
+test('a search the Roles do not grant says so plainly, not that search is unavailable', () => {
+  const forbidden = Schema.decodeUnknownSync(ShellTargetForbiddenProblemSchema)({
+    _tag: 'ShellTargetForbiddenProblem',
+    detail: 'The principal cannot search here.',
+    status: 403,
+    title: 'Shell target forbidden',
+    type: 'https://ontos.dev/problems/shell-target-forbidden',
+  });
+  expect(searchFailureModel(forbidden, authenticatedShellFixture(), 'dvorak').state).toBe('notGranted');
+});
 
 test('no selected family omits resourceTypes and lists the declared families in owner order', () => {
   const plan = planShellSearchFilters({ index: inventory(), partial: false, requestedFamilies: [] });

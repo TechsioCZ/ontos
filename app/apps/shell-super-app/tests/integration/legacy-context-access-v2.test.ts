@@ -189,7 +189,9 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '120 se
       withAccessAdminCase((accessCase) =>
         Effect.gen(function* tenantReleaseHintRows() {
           expect(yield* tenantReleaseHint(accessCase, 'owner')).toBe('ALLOWED');
-          expect(yield* tenantReleaseHint(accessCase, 'member')).toBe('DENIED');
+          // Tenant-context page dispatch is part of the Shell frame (baseline): a member of the tenant may load it as
+          // a member, though no Role of theirs grants it; the page itself is still decided by its own right.
+          expect(yield* tenantReleaseHint(accessCase, 'member')).toBe('ALLOWED');
           expect(yield* tenantReleaseHint(accessCase, 'foreignOwner')).toBe('DENIED');
         }),
       ),

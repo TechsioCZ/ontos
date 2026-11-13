@@ -53,6 +53,7 @@ const ownsKey = (moduleId: string, key: string): boolean => {
  */
 export interface CatalogEntryInput {
   readonly amountInput?: string;
+  readonly baseline?: true;
   readonly ephemeral?: true;
   readonly fieldClass?: string;
   readonly key: string;
@@ -90,9 +91,10 @@ const projectEntry = (
       : { ...withFieldClass, amountInput: declaration.amountInput };
   const withLineage =
     declaration.lineage === undefined ? withAmountInput : { ...withAmountInput, lineage: declaration.lineage };
+  const withBaseline = declaration.baseline === true ? { ...withLineage, baseline: true as const } : withLineage;
   // A field group carries the declaration its access rides; the snapshot schema refuses a parent on
   // anything else and a field group without one, so nothing here decides that rule twice (O87).
-  return withOptional(withLineage, 'parentKey', parentKey);
+  return withOptional(withBaseline, 'parentKey', parentKey);
 };
 
 /** One catalog entry, validated against the model's snapshot schema (O1, O5). */

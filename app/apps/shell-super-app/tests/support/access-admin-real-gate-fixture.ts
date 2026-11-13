@@ -1465,6 +1465,8 @@ export interface ShellHttpRequest {
 }
 
 export interface ShellHttp {
+  /** A GET of the Shell API: the payload is ignored. */
+  readonly get: (request: Omit<ShellHttpRequest, 'payload'>) => Effect.Effect<ShellHttpAnswer>;
   readonly post: (request: ShellHttpRequest) => Effect.Effect<ShellHttpAnswer>;
 }
 
@@ -1568,6 +1570,11 @@ export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* 
   accessCase: AccessAdminCase,
   /** The installed release a surface reads its module catalog from (a deployed Shell loads it from the composition). */
   installed?: ActiveApplicationCompositionSnapshot,
+  /**
+   * `frame`: also pin the Shell's own read authority to that release, so the Shell's governed reads (composition, module
+   * target) are admitted end to end; the suite then writes the release's active authority row itself.
+   */
+  serves?: 'frame',
 ) {
   const [shell, authentication, api, bff, catalog] = yield* Effect.promise(
     async () =>
@@ -1601,7 +1608,7 @@ export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* 
     undefined,
     undefined,
     undefined,
-    undefined,
+    serves === 'frame' && installed !== undefined ? { load: Effect.succeed(installed) } : undefined,
     accessCase.databases,
   );
   const { apiPrefix } = api.shellAuthenticationApiContract;
@@ -1612,9 +1619,9 @@ export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* 
     (created) => Effect.promise(created.dispose.bind(created)),
   );
   const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
-  const post = (request: ShellHttpRequest) =>
-    Effect.gen(function* postJson() {
-      const headers = new Headers({ 'content-type': 'application/json' });
+  const send = (request: ShellHttpRequest, method: 'GET' | 'POST') =>
+    Effect.gen(function* sendRequest() {
+      const headers = new Headers(method === 'POST' ? { 'content-type': 'application/json' } : {});
       if (request.persona !== undefined) {
         headers.set(PERSONA_HEADER, request.persona);
       }
@@ -1627,15 +1634,16 @@ export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* 
       if (request.sameOrigin === true) {
         headers.set('sec-fetch-site', 'same-origin');
       }
-      const body = yield* encodeJson(request.payload).pipe(Effect.orDie);
-      const response = yield* Effect.promise(
-        async () =>
-          await handler.handler(
-            new Request(`http://shell.test${apiPrefix}${request.path}`, { body, headers, method: 'POST' }),
-          ),
-      );
+      const url = `http://shell.test${apiPrefix}${request.path}`;
+      const init: RequestInit =
+        method === 'POST'
+          ? { body: yield* encodeJson(request.payload).pipe(Effect.orDie), headers, method }
+          : { headers };
+      const response = yield* Effect.promise(async () => await handler.handler(new Request(url, init)));
       const text = yield* Effect.promise(async () => await response.text());
       return { status: response.status, text } satisfies ShellHttpAnswer;
     });
-  return { post } satisfies ShellHttp;
+  const post = (request: ShellHttpRequest) => send(request, 'POST');
+  const get = (request: Omit<ShellHttpRequest, 'payload'>) => send({ ...request, payload: null }, 'GET');
+  return { get, post } satisfies ShellHttp;
 });

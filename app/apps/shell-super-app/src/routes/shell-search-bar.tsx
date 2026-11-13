@@ -49,8 +49,10 @@ const keepFieldFocus = (event: { readonly preventDefault: () => void }) => {
   event.preventDefault();
 };
 
-const suggestionStatus = (suggestions: ShellSearchSuggestionsState): 'empty' | 'loading' | 'none' | 'unavailable' => {
-  if (suggestions.status === 'loading' || suggestions.status === 'unavailable') {
+const suggestionStatus = (
+  suggestions: ShellSearchSuggestionsState,
+): 'empty' | 'forbidden' | 'loading' | 'none' | 'unavailable' => {
+  if (suggestions.status === 'loading' || suggestions.status === 'unavailable' || suggestions.status === 'forbidden') {
     return suggestions.status;
   }
   return suggestions.status === 'ready' && suggestions.groups.length === 0 ? 'empty' : 'none';
@@ -193,6 +195,7 @@ export const ShellSearchBar = ({
               {t('shell.search.unavailable')}
             </StatusText>
           ) : null}
+          {status === 'forbidden' ? <StatusText status="default">{t('shell.search.notGranted')}</StatusText> : null}
           {status === 'empty' && suggestions.status === 'ready' ? (
             <StatusText status="default">
               {t('shell.search.suggestions.empty', { query: suggestions.query })}

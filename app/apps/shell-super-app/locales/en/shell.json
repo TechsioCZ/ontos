@@ -118,7 +118,8 @@
           "owner": "You are the owner of this organization",
           "access_admin": "You administer access in this company",
           "delegation": "You hold a delegated access administration",
-          "access_admin_any": "You administer access in at least one company"
+          "access_admin_any": "You administer access in at least one company",
+          "member_baseline": "You are a member here, so you may open the application; everything else is decided by your roles"
         }
       },
       "role": {
@@ -821,6 +822,7 @@
       "seoDescription": "Search authorized resources in the selected OntOS context.",
       "title": "Search results",
       "unavailable": "Search is temporarily unavailable. Try again.",
+      "notGranted": "Search isn't part of your access. Ask your administrator for it.",
       "clear": "Clear search",
       "placeholder": "Search clients, tasks, invoices, contracts…"
     },

@@ -120,7 +120,8 @@
           "owner": "Jste vlastník této organizace",
           "access_admin": "Spravujete přístup v této firmě",
           "delegation": "Máte delegovanou správu přístupu",
-          "access_admin_any": "Spravujete přístup alespoň v jedné firmě"
+          "access_admin_any": "Spravujete přístup alespoň v jedné firmě",
+          "member_baseline": "Jste členem této firmy, proto smíte otevřít aplikaci; vše ostatní rozhodují vaše role"
         }
       },
       "role": {
@@ -827,6 +828,7 @@
       "seoDescription": "Vyhledávání autorizovaných zdrojů ve vybraném kontextu OntOS.",
       "title": "Výsledky hledání",
       "unavailable": "Vyhledávání je dočasně nedostupné. Zkuste to znovu.",
+      "notGranted": "Vyhledávání není součástí vašich oprávnění. Požádejte o něj správce.",
       "clear": "Vymazat hledání",
       "placeholder": "Hledat klienty, úkoly, faktury, smlouvy…"
     },
