@@ -30,6 +30,11 @@ export interface PlatformRegistration {
   readonly companyBindingCount: number;
   /** The principal's display name now; empty for a registration not made yet. */
   readonly displayName: string;
+  /**
+   * Active company bindings on the active workload binding for any company but this registration's own: one binding
+   * acts for one company (D6), so each is revoked.
+   */
+  readonly extraCompanyBindingIds: readonly string[];
   readonly legalEntityId: string;
   readonly principalId: string;
   readonly principalStatus: 'active' | 'archived' | 'disabled' | 'missing';
@@ -76,7 +81,17 @@ export type InternalWorkloadStep =
   | { readonly bindingId: string; readonly kind: 'revoke-workload' }
   | { readonly kind: 'disable-principal'; readonly principalId: string };
 
+/** The steps of one registration, performed in order and on their own: one registration's failure stops no other. */
+export interface RegistrationUnit {
+  readonly legalEntityId: string;
+  readonly principalId: string;
+  readonly steps: readonly InternalWorkloadStep[];
+  readonly workloadKey: string;
+}
+
 export interface TenantWorkloadPlan {
+  /** Extra company bindings revoked from registrations (D6: one binding, one company). */
+  readonly corrected: number;
   /** Registrations that stay as they are although wanted: a principal someone else disabled or archived. */
   readonly held: readonly PlatformRegistration[];
   readonly registered: number;
@@ -85,6 +100,8 @@ export interface TenantWorkloadPlan {
   readonly retired: number;
   readonly steps: readonly InternalWorkloadStep[];
   readonly unchanged: number;
+  /** The same steps, one unit per registration: wanted ones first, then the ones retired. */
+  readonly units: readonly RegistrationUnit[];
 }
 
 /** A workload binding's id and incarnation, derived from its principal and how many it had before. */
@@ -138,6 +155,7 @@ const missingRegistration = (wanted: WantedRegistration): PlatformRegistration =
   activeWorkloadBindingId: null,
   companyBindingCount: 0,
   displayName: '',
+  extraCompanyBindingIds: [],
   legalEntityId: wanted.legalEntityId,
   principalId: wanted.principalId,
   principalStatus: 'missing',
@@ -179,8 +197,15 @@ const ensureSteps = (registration: PlatformRegistration, displayName: string): r
   ];
 };
 
+/** Revokes every company binding a registration holds beyond its own company. */
+const correctionSteps = (registration: PlatformRegistration): readonly InternalWorkloadStep[] =>
+  registration.extraCompanyBindingIds.map(
+    (companyBindingId) => ({ companyBindingId, kind: 'revoke-company' }) as const,
+  );
+
 /** The steps that retire one registration that is no longer wanted: company, then workload, then principal. */
 const retireSteps = (registration: PlatformRegistration): readonly InternalWorkloadStep[] => [
+  ...correctionSteps(registration),
   ...(registration.activeCompanyBindingId === null
     ? []
     : [{ companyBindingId: registration.activeCompanyBindingId, kind: 'revoke-company' } as const]),
@@ -204,11 +229,22 @@ export const planTenantInternalWorkloads = (
   const byPrincipal = new Map(state.registrations.map((registration) => [registration.principalId, registration]));
   const wanted = wantedIn(state, declarations);
   const wantedIds = new Set(wanted.map(({ principalId }) => principalId));
-  const steps: InternalWorkloadStep[] = [];
+  const units: RegistrationUnit[] = [];
   const kept: PlatformRegistration[] = [];
+  let corrected = 0;
   let registered = 0;
   let renamed = 0;
   let unchanged = 0;
+  const unitOf = (registration: PlatformRegistration, steps: readonly InternalWorkloadStep[]) => {
+    if (steps.length > 0) {
+      units.push({
+        legalEntityId: registration.legalEntityId,
+        principalId: registration.principalId,
+        steps,
+        workloadKey: registration.workloadKey,
+      });
+    }
+  };
   for (const wish of wanted) {
     const registration = byPrincipal.get(wish.principalId) ?? missingRegistration(wish);
     if (
@@ -223,22 +259,35 @@ export const planTenantInternalWorkloads = (
       registration.principalStatus !== 'missing' && registration.displayName !== wish.displayName
         ? [{ displayName: wish.displayName, kind: 'rename-principal', principalId: wish.principalId } as const]
         : [];
+    const correction = correctionSteps(registration);
+    if (correction.length > 0) {
+      corrected += correction.length;
+    }
     if (ensure.length > 0) {
       registered += 1;
     } else if (rename.length > 0) {
       renamed += 1;
-    } else {
+    } else if (correction.length === 0) {
       unchanged += 1;
     }
-    steps.push(...ensure, ...rename);
+    unitOf(registration, [...correction, ...ensure, ...rename]);
   }
   let retired = 0;
   for (const registration of state.registrations.filter(({ principalId }) => !wantedIds.has(principalId))) {
     const retire = retireSteps(registration);
     if (retire.length > 0) {
       retired += 1;
-      steps.push(...retire);
+      unitOf(registration, retire);
     }
   }
-  return { held: kept, registered, renamed, retired, steps, unchanged };
+  return {
+    corrected,
+    held: kept,
+    registered,
+    renamed,
+    retired,
+    steps: units.flatMap((unit) => unit.steps),
+    unchanged,
+    units,
+  };
 };

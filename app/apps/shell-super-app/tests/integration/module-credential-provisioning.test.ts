@@ -65,6 +65,7 @@ import {
   MODULE_INTERNAL_WORKLOADS,
   ProvisioningOutputJsonSchema,
 } from '../../../../scripts/zerops/module-credentials.mts';
+import { validateManagedApiKeyTarget } from '../../../../packages/core-runtime/src/auth/managed-api-key-scope.ts';
 
 /** The calling modules this release installs, and one it does not (a credential of it must bind nothing). */
 const INSTALLED = ['catalog', 'pricing'] as const;
@@ -706,6 +707,48 @@ const INTAKE_WORKLOAD = 'demo.crm.party-intake';
 const CRM_MODULE = 'demo.crm';
 
 /** One tenant's counts in a run's report. */
+type PlatformDatabases = Effect.Success<typeof platform>;
+
+/** The platform's release step over these databases, for the given declarations: one run per call. */
+const releaseRegistration = (
+  coreDatabase: PlatformDatabases['coreDatabase'],
+  declarations: Parameters<typeof registerReleaseInternalWorkloads>[1]['declarations'],
+) => {
+  const enrollment = APP_DATABASE_IDENTITY_ENROLLMENT;
+  const runtime = Layer.mergeAll(
+    Layer.succeed(CoreDatabase, { executor: coreDatabase }),
+    AccessReleaseStoreLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(CoreDatabase, { executor: coreDatabase }),
+          makeDatabaseIdentityEnrollmentLive(enrollment),
+        ),
+      ),
+    ),
+  );
+  return (run: string) =>
+    registerReleaseInternalWorkloads({ enrollment, executor: coreDatabase }, { declarations, runReference: run }).pipe(
+      Effect.provide(runtime),
+    );
+};
+
+/** The companies a principal's active workload binding acts for, by its active company bindings. */
+const activeCompaniesOf = (adminDatabase: PlatformDatabases['adminDatabase'], principalId: string) =>
+  adminDatabase
+    .select({ legalEntityId: accessWorkloadCompanyBindings.legalEntityId })
+    .from(accessWorkloadCompanyBindings)
+    .innerJoin(
+      accessWorkloadBindings,
+      eq(accessWorkloadBindings.bindingId, accessWorkloadCompanyBindings.workloadBindingId),
+    )
+    .where(
+      and(
+        eq(accessWorkloadBindings.principalId, principalId),
+        eq(accessWorkloadBindings.status, 'active'),
+        eq(accessWorkloadCompanyBindings.status, 'active'),
+      ),
+    );
+
 const counts = (reports: readonly ReleaseInternalWorkloadTenantReport[], tenantId: string) => {
   const report = reports.find((candidate) => candidate.tenantId === tenantId);
   return report === undefined
@@ -729,8 +772,8 @@ it.live(
         const [companyA, companyB, companyC] = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
         const owners = [crypto.randomUUID(), crypto.randomUUID()];
         const foreignPrincipal = crypto.randomUUID();
-        // A company that is not active, and a principal someone created with exactly the id the platform would derive for
-        // it (two Actions accept a caller-chosen principal id) but without the platform's marker: never the platform's.
+        // A company that is not active, and a principal created (before Core assigned every id) with exactly the id the
+        // platform would derive for it, but without the platform's marker: never the platform's.
         const companyX = crypto.randomUUID();
         const squatter = internalWorkloadPrincipalId({
           legalEntityId: companyX,
@@ -853,22 +896,7 @@ it.live(
           new Set([INTAKE_WORKLOAD]),
           INTERNAL_WORKLOAD_LABELS,
         );
-        const registrationRuntime = Layer.mergeAll(
-          Layer.succeed(CoreDatabase, { executor: coreDatabase }),
-          AccessReleaseStoreLive.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                Layer.succeed(CoreDatabase, { executor: coreDatabase }),
-                makeDatabaseIdentityEnrollmentLive(enrollment),
-              ),
-            ),
-          ),
-        );
-        const register = (run: string) =>
-          registerReleaseInternalWorkloads(
-            { enrollment, executor: coreDatabase },
-            { declarations, runReference: run },
-          ).pipe(Effect.provide(registrationRuntime));
+        const register = releaseRegistration(coreDatabase, declarations);
         const provision = provisionModuleCredentials({
           appIds: ['catalog', 'crm'],
           bootId: crypto.randomUUID(),
@@ -914,21 +942,7 @@ it.live(
           );
         expect(registered.every(({ kind, status }) => kind === 'service' && status === 'active')).toBe(true);
         expect(registered).toHaveLength(4);
-        const activeCompanyOf = (principalId: string) =>
-          adminDatabase
-            .select({ legalEntityId: accessWorkloadCompanyBindings.legalEntityId })
-            .from(accessWorkloadCompanyBindings)
-            .innerJoin(
-              accessWorkloadBindings,
-              eq(accessWorkloadBindings.bindingId, accessWorkloadCompanyBindings.workloadBindingId),
-            )
-            .where(
-              and(
-                eq(accessWorkloadBindings.principalId, principalId),
-                eq(accessWorkloadBindings.status, 'active'),
-                eq(accessWorkloadCompanyBindings.status, 'active'),
-              ),
-            );
+        const activeCompanyOf = (principalId: string) => activeCompaniesOf(adminDatabase, principalId);
         expect(yield* activeCompanyOf(principalOf(tenantOne, companyB))).toEqual([{ legalEntityId: companyB }]);
         expect(yield* activeCompanyOf(principalOf(tenantTwo, companyC))).toEqual([{ legalEntityId: companyC }]);
         expect(yield* activeCompanyOf(foreignPrincipal)).toEqual([{ legalEntityId: companyA }]);
@@ -959,6 +973,24 @@ it.live(
         // The squatter has the derived id but no marker: not adopted, not retired, not keyed (the keyed list above).
         expect(nameOf(squatter)).toMatchObject({ platformRole: null });
         expect(yield* activeCompanyOf(squatter)).toEqual([{ legalEntityId: companyX }]);
+
+        // Only the platform keys the platform's principals: no tenant-managed key may be issued to, enabled, disabled
+        // or revoked on its workload principal, and none issued to a principal someone bound to its workload by hand
+        // (whose existing keys stay manageable, so an administrator can still revoke them).
+        const keyTarget = (principalId: string, issuing: boolean) =>
+          Effect.exit(
+            validateManagedApiKeyTarget(adminDatabase, {
+              issuing,
+              legalEntityId: companyA,
+              principalId,
+              scope: 'tenant-managed',
+              tenantId: tenantOne,
+            }),
+          );
+        expect(Exit.isFailure(yield* keyTarget(principalOf(tenantOne, companyA), true))).toBe(true);
+        expect(Exit.isFailure(yield* keyTarget(principalOf(tenantOne, companyA), false))).toBe(true);
+        expect(Exit.isFailure(yield* keyTarget(foreignPrincipal, true))).toBe(true);
+        expect(Exit.isSuccess(yield* keyTarget(foreignPrincipal, false))).toBe(true);
 
         // Re-running changes nothing.
         const again = yield* register('run-2');
@@ -1032,6 +1064,140 @@ it.live(
         // The first tenant converged four times: registration, the company rename, retirement and the company's return.
         expect(audits.filter(({ tenantId }) => tenantId === tenantOne)).toHaveLength(4);
         expect(audits.filter(({ tenantId }) => tenantId === tenantTwo)).toHaveLength(2);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer))),
+);
+
+it.live(
+  'reports a derived id another tenant took, keeps registering the rest, heals once it is free, and converges when two hosts run at once',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* releaseHealing() {
+        const { adminDatabase, coreDatabase } = yield* platform;
+        const enrollment = APP_DATABASE_IDENTITY_ENROLLMENT;
+        const [tenantOne, tenantTwo] = [crypto.randomUUID(), crypto.randomUUID()];
+        const [companyA, companyB, companyC, companyD] = [
+          crypto.randomUUID(),
+          crypto.randomUUID(),
+          crypto.randomUUID(),
+          crypto.randomUUID(),
+        ];
+        const owners = [crypto.randomUUID(), crypto.randomUUID()];
+        const principalOf = (tenantId: string, legalEntityId: string) =>
+          internalWorkloadPrincipalId({ legalEntityId, tenantId, workloadKey: INTAKE_WORKLOAD });
+        // Another tenant's principal sits at the id the platform derives for company B of the first tenant.
+        const squatted = principalOf(tenantOne, companyB);
+        // A principal someone named like the platform's old registrations, with a random id: never the platform's.
+        const lookalike = crypto.randomUUID();
+        yield* adminDatabase.insert(tenants).values(
+          [tenantOne, tenantTwo].map((tenantId, index) => ({
+            defaultLocale: 'cs',
+            name: `Healing ${String(index)}`,
+            slug: `healing-${tenantId}`,
+            status: 'active',
+            tenantId,
+          })),
+        );
+        yield* adminDatabase.insert(legalEntities).values(
+          [
+            [companyA, tenantOne],
+            [companyB, tenantOne],
+            [companyC, tenantTwo],
+          ].map(([legalEntityId = '', tenantId = ''], index) => ({
+            legalEntityId,
+            legalName: `Healing company ${String(index)}`,
+            registrationCountry: 'CZ',
+            registrationNumber: `1000000${String(index)}`,
+            status: 'active',
+            tenantId,
+          })),
+        );
+        yield* adminDatabase.insert(principals).values([
+          ...[tenantOne, tenantTwo].map((tenantId, index) => ({
+            displayName: 'Owner',
+            kind: 'human' as const,
+            principalId: owners[index] ?? '',
+            status: 'active' as const,
+            tenantId,
+          })),
+          {
+            displayName: 'Agent placed at a derived id',
+            kind: 'agent' as const,
+            principalId: squatted,
+            status: 'active' as const,
+            tenantId: tenantTwo,
+          },
+          {
+            displayName: `internal-workload:${INTAKE_WORKLOAD}:${companyA}`,
+            kind: 'service' as const,
+            principalId: lookalike,
+            status: 'active' as const,
+            tenantId: tenantOne,
+          },
+        ]);
+        yield* adminDatabase
+          .insert(tenantModuleStates)
+          .values([tenantOne, tenantTwo].map((tenantId) => ({ moduleKey: CRM_MODULE, state: 'active', tenantId })));
+        for (const [index, tenantId] of [tenantOne, tenantTwo].entries()) {
+          yield* writeTestTenantScopes(coreDatabase, {
+            databaseIdentities: enrollment,
+            legalEntityIds: tenantId === tenantOne ? [companyA, companyB] : [companyC],
+            principalId: owners[index] ?? '',
+            tenantId,
+          });
+        }
+        const declarations = internalWorkloadDeclarations(
+          MODULE_INTERNAL_WORKLOADS,
+          new Set([INTAKE_WORKLOAD]),
+          INTERNAL_WORKLOAD_LABELS,
+        );
+        const register = releaseRegistration(coreDatabase, declarations);
+        const activeBindingsOf = (principalId: string) => activeCompaniesOf(adminDatabase, principalId);
+
+        // Company B's registration cannot be made, and says why by name; company A's is made all the same.
+        const first = yield* register('heal-1');
+        const firstOne = first.find(({ tenantId }) => tenantId === tenantOne);
+        expect(firstOne?.failed).toContain(`id taken by another principal (tenant ${tenantTwo})`);
+        expect(yield* activeBindingsOf(principalOf(tenantOne, companyA))).toEqual([{ legalEntityId: companyA }]);
+        expect(yield* activeBindingsOf(squatted)).toEqual([]);
+        // The lookalike is neither adopted nor touched.
+        const [lookalikeRow] = yield* adminDatabase
+          .select({ platformRole: principals.platformRole, status: principals.status })
+          .from(principals)
+          .where(eq(principals.principalId, lookalike));
+        expect(lookalikeRow).toEqual({ platformRole: null, status: 'active' });
+        expect(yield* activeBindingsOf(lookalike)).toEqual([]);
+
+        // The id is free again: the next run makes company B's registration and nothing else changes.
+        yield* adminDatabase.delete(principals).where(eq(principals.principalId, squatted));
+        const healed = yield* register('heal-2');
+        expect(counts(healed, tenantOne)).toEqual({ failed: null, registered: 1, retired: 0, unchanged: 1 });
+        expect(yield* activeBindingsOf(principalOf(tenantOne, companyB))).toEqual([{ legalEntityId: companyB }]);
+
+        // Two hosts run the step at the same moment for a new company: whatever either reports, the next run finds
+        // exactly one registration, one binding and one company binding.
+        yield* adminDatabase.insert(legalEntities).values({
+          legalEntityId: companyD,
+          legalName: 'Healing company 3',
+          registrationCountry: 'CZ',
+          registrationNumber: '10000003',
+          status: 'active',
+          tenantId: tenantTwo,
+        });
+        yield* Effect.all([register('host-1'), register('host-2')], { concurrency: 2 });
+        const settled = yield* register('heal-3');
+        expect(counts(settled, tenantTwo)).toEqual({ failed: null, registered: 0, retired: 0, unchanged: 2 });
+        expect(yield* activeBindingsOf(principalOf(tenantTwo, companyD))).toEqual([{ legalEntityId: companyD }]);
+        const workloadBindings = yield* adminDatabase
+          .select({ bindingId: accessWorkloadBindings.bindingId })
+          .from(accessWorkloadBindings)
+          .where(
+            and(
+              eq(accessWorkloadBindings.principalId, principalOf(tenantTwo, companyD)),
+              eq(accessWorkloadBindings.status, 'active'),
+            ),
+          );
+        expect(workloadBindings).toHaveLength(1);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer))),
 );

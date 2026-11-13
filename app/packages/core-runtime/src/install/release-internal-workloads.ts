@@ -4,6 +4,7 @@ import { DateTime, Effect, Match, Result, Schema } from 'effect';
 import { AccessReleaseStore } from '../access/changes/persistence/release-store.ts';
 import { LegalEntityIdSchema, PrincipalIdSchema, TenantIdSchema } from '../access/ids.ts';
 import type { AccessIntentDatabase } from '../access/intent/persistence.ts';
+import { intentUnavailable } from '../access/intent/errors.ts';
 import { runScoped } from '../access/intent/persistence.ts';
 import { RELEASE_ACTOR_DISPLAY_NAME, releaseActorId } from '../access/release/activation.ts';
 import { makeAccessWorkloadBindingDrizzleStore, writeWorkloadBindings } from '../access/workloads/binding-store.ts';
@@ -35,6 +36,7 @@ import type { OperationalScope } from '../operations/context.ts';
 import { planTenantInternalWorkloads } from './internal-workload-plan.ts';
 import type {
   InternalWorkloadDeclaration,
+  RegistrationUnit,
   InternalWorkloadStep,
   PlatformRegistration,
   TenantWorkloadState,
@@ -53,13 +55,16 @@ import type {
  *   provisioning then stops keying it and retires its key at its next pass.
  * - Recognises only what it made: the principal carries the platform's `internal_workload` marker (set only by Core's
  *   platform writer when it creates the principal; no Action or API sets it, and the database refuses any later change)
- *   AND its id is the one derived from tenant, workload and company (`internalWorkloadPrincipalId`). Two Actions accept
- *   a caller-chosen principal id (agent configuration, demo accounts), so the id alone is not proof. The name is never
+ *   AND its id is the one derived from tenant, workload and company (`internalWorkloadPrincipalId`); the id is computable,
+ *   so it is not proof on its own. No product Action takes a principal id; a principal that already holds a derived id
+ *   (created elsewhere before that rule) is reported by name, "id taken by another principal", and never adopted. The
+ *   name is never
  *   read for this: it is what a person reads, e.g. `CRM · zakládání klientů · Obchodní firma`, and follows a renamed
  *   company. A registration someone made by hand is neither adopted nor touched, and key provisioning keys none.
  * - Acts as the tenant's platform release actor (the system principal the access release activation uses), through
  *   Core's own writers, which take the tenant's workload fence; each tenant is read and written in its own scope.
- * - Each tenant is decided on its own; a failure is reported by name and the next run heals from what is true.
+ * - Each tenant is decided on its own, and each registration in it: one registration's failure stops no other, and
+ *   retirements always run. A failure is reported by name and the next run heals from what is true.
  */
 
 export const RELEASE_INTERNAL_WORKLOAD_JOB = registerSystemWorkload({
@@ -76,6 +81,9 @@ const refusal = (reason: string) => new ReleaseInternalWorkloadError({ reason })
 
 /** What one tenant holds after the run, as counts of registrations; never an identifier of a key. */
 export interface ReleaseInternalWorkloadTenantReport {
+  /** Extra company bindings revoked from the platform's registrations (one binding acts for one company). */
+  readonly corrected: number;
+  /** Why the tenant, or some of its registrations, did not converge; null when everything did. */
   readonly failed: string | null;
   readonly held: number;
   readonly registered: number;
@@ -200,6 +208,11 @@ const readTenant = Effect.fn('ReleaseInternalWorkloads.readTenant')(function* re
             activeWorkloadBindingId: active?.bindingId ?? null,
             companyBindingCount: written.length,
             displayName: principal.displayName,
+            extraCompanyBindingIds: written.flatMap((company) =>
+              company.status === 'active' && company.legalEntityId !== principal.legalEntityId
+                ? [company.companyBindingId]
+                : [],
+            ),
             legalEntityId: principal.legalEntityId,
             principalId: principal.principalId,
             principalStatus: principalStatusOf(principal.status),
@@ -269,7 +282,7 @@ const performStep = (
           reason: reactivate ? 'The internal workload is wanted here again' : RETIREMENT_REASON,
           tenantId,
         })
-        .pipe(Effect.orDie),
+        .pipe(Effect.mapError((cause) => intentUnavailable(cause.reason, cause))),
     ).pipe(Effect.asVoid, Effect.mapError(stepFailed('the workload principal status could not be changed')));
   return Match.value(step).pipe(
     Match.discriminatorsExhaustive('kind')({
@@ -307,7 +320,7 @@ const performStep = (
               principalId: principal.principalId,
               tenantId,
             })
-            .pipe(Effect.orDie),
+            .pipe(Effect.mapError((cause) => intentUnavailable(cause.reason, cause))),
         ).pipe(Effect.asVoid, Effect.mapError(stepFailed('the workload principal could not be created'))),
       'disable-principal': (principal) => principalStatus(principal.principalId, false),
       'reactivate-principal': (principal) => principalStatus(principal.principalId, true),
@@ -319,7 +332,7 @@ const performStep = (
               principalId: principal.principalId,
               tenantId,
             })
-            .pipe(Effect.orDie),
+            .pipe(Effect.mapError((cause) => intentUnavailable(cause.reason, cause))),
         ).pipe(Effect.asVoid, Effect.mapError(stepFailed('the workload principal could not be renamed'))),
       'revoke-company': (company) =>
         makeAccessWorkloadCompanyBindingDrizzleStore(database)
@@ -336,7 +349,43 @@ const performStep = (
   );
 };
 
-/** One tenant: read, plan, perform; never fails, the report says what is true. */
+/**
+ * Who holds a principal id the platform derived, when its creation did not go through: a principal of another tenant
+ * (only an id chosen elsewhere can collide; Core derives its own), or one in this tenant without the platform's marker.
+ */
+const takenBy = Effect.fn('ReleaseInternalWorkloads.takenBy')(function* takenByOther(principalId: string) {
+  const { executor } = yield* CoreDatabase;
+  const [holder] = yield* executor
+    .select({ platformRole: principals.platformRole, tenantId: principals.tenantId })
+    .from(principals)
+    .where(eq(principals.principalId, principalId))
+    .limit(1)
+    .pipe(Effect.orElseSucceed(() => []));
+  return holder === undefined || holder.platformRole === INTERNAL_WORKLOAD_PLATFORM_ROLE ? null : holder.tenantId;
+});
+
+/** One registration's steps, in order; its failure is reported by name and stops no other registration. */
+const performUnit = (database: AccessIntentDatabase, scope: OperationalScope, unit: RegistrationUnit, at: Date) =>
+  Effect.forEach(unit.steps, (step) => performStep(database, scope, step, at), { concurrency: 1, discard: true }).pipe(
+    Effect.catchTag('ReleaseInternalWorkloadError', (stepError) =>
+      unit.steps.some(({ kind }) => kind === 'create-principal')
+        ? takenBy(unit.principalId).pipe(
+            Effect.flatMap((tenant) =>
+              Effect.fail(
+                tenant === null
+                  ? stepError
+                  : refusal(
+                      `${unit.workloadKey} in company ${unit.legalEntityId}: id taken by another principal (tenant ${tenant})`,
+                    ),
+              ),
+            ),
+          )
+        : Effect.fail(stepError),
+    ),
+    Effect.result,
+  );
+
+/** One tenant: read, plan, perform each registration on its own; never fails, the report says what is true. */
 const registerTenant = Effect.fn('ReleaseInternalWorkloads.registerTenant')(function* registerTenant(
   database: AccessIntentDatabase,
   tenantId: string,
@@ -351,7 +400,13 @@ const registerTenant = Effect.fn('ReleaseInternalWorkloads.registerTenant')(func
       ),
       declarations,
     );
-    const report: ReleaseInternalWorkloadTenantReport = {
+    if (plan.corrected > 0) {
+      yield* Effect.logWarning('internal workload registrations held extra company bindings; revoking them').pipe(
+        Effect.annotateLogs({ extraCompanyBindings: plan.corrected, tenant: tenantId }),
+      );
+    }
+    const planned: ReleaseInternalWorkloadTenantReport = {
+      corrected: plan.corrected,
       failed: null,
       held: plan.held.length,
       registered: plan.registered,
@@ -360,47 +415,52 @@ const registerTenant = Effect.fn('ReleaseInternalWorkloads.registerTenant')(func
       tenantId,
       unchanged: plan.unchanged,
     };
-    if (plan.steps.length === 0) {
-      return report;
+    if (plan.units.length === 0) {
+      return planned;
     }
     const scope = yield* releaseScopeOf(tenantId, runReference);
     const at = yield* DateTime.nowAsDate;
-    // In order: a principal before its bindings, a binding before its company; retirement company-first.
-    yield* Effect.forEach(plan.steps, (step) => performStep(database, scope, step, at), {
+    // Each registration on its own, wanted ones first and retirements always: a principal before its bindings, a
+    // binding before its company; retirement company-first.
+    const results = yield* Effect.forEach(plan.units, (unit) => performUnit(database, scope, unit, at), {
       concurrency: 1,
-      discard: true,
     });
+    const failures = results.flatMap((result) => (Result.isFailure(result) ? [result.failure.reason] : []));
+    const report: ReleaseInternalWorkloadTenantReport = {
+      ...planned,
+      failed: failures.length === 0 ? null : failures.join('; '),
+    };
     yield* runScoped(database, scope, NO_CONSTRAINTS, (transaction) =>
-      transaction
-        .insert(auditEvents)
-        .values({
-          auditProfile: 'sensitive',
-          authContextRef: `job:${RELEASE_INTERNAL_WORKLOAD_JOB.jobKey}:run:${runReference}`,
-          authMethod: 'system',
-          eventType: 'core.access.internal-workloads-registered-by-release',
-          evidenceJson: {
-            held: report.held,
-            registered: report.registered,
-            renamed: report.renamed,
-            retired: report.retired,
-            runReference,
-            unchanged: report.unchanged,
-          },
-          outcome: 'succeeded',
-          outcomeCode: 'internal_workloads_converged',
-          outcomeStage: 'execution',
-          principalId: releaseActorId(tenantId),
-          targetResourceId: tenantId,
-          targetResourceType: 'internal-workload-registrations',
-          tenantId,
-        })
-        .pipe(Effect.orDie),
+      transaction.insert(auditEvents).values({
+        auditProfile: 'sensitive',
+        authContextRef: `job:${RELEASE_INTERNAL_WORKLOAD_JOB.jobKey}:run:${runReference}`,
+        authMethod: 'system',
+        eventType: 'core.access.internal-workloads-registered-by-release',
+        evidenceJson: {
+          corrected: report.corrected,
+          failedRegistrations: failures.length,
+          held: report.held,
+          registered: report.registered,
+          renamed: report.renamed,
+          retired: report.retired,
+          runReference,
+          unchanged: report.unchanged,
+        },
+        outcome: failures.length === 0 ? 'succeeded' : 'failed',
+        outcomeCode: failures.length === 0 ? 'internal_workloads_converged' : 'internal_workloads_partly_converged',
+        outcomeStage: 'execution',
+        principalId: releaseActorId(tenantId),
+        targetResourceId: tenantId,
+        targetResourceType: 'internal-workload-registrations',
+        tenantId,
+      }),
     ).pipe(Effect.mapError((cause) => refusal(`the registration audit record could not be written (${cause._tag})`)));
     return report;
   }).pipe(Effect.result);
   return Result.isSuccess(outcome)
     ? outcome.success
     : ({
+        corrected: 0,
         failed: outcome.failure.reason,
         held: 0,
         registered: 0,

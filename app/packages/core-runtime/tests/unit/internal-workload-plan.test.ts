@@ -48,6 +48,7 @@ const whole = (legalEntityId: string, tenantId = TENANT): PlatformRegistration =
     activeWorkloadBindingId: binding.bindingId,
     companyBindingCount: 1,
     displayName: `${LABEL} · ${COMPANY_NAMES.get(legalEntityId) ?? ''}`,
+    extraCompanyBindingIds: [],
     legalEntityId,
     principalId,
     principalStatus: 'active',
@@ -88,7 +89,16 @@ describe('planTenantInternalWorkloads', () => {
     const plan = planTenantInternalWorkloads(stateOf({ registrations: [whole(COMPANY_A), whole(COMPANY_B)] }), [
       INTAKE,
     ]);
-    expect(plan).toEqual({ held: [], registered: 0, renamed: 0, retired: 0, steps: [], unchanged: 2 });
+    expect(plan).toEqual({
+      corrected: 0,
+      held: [],
+      registered: 0,
+      renamed: 0,
+      retired: 0,
+      steps: [],
+      unchanged: 2,
+      units: [],
+    });
   });
 
   it('registers nothing where the module is not installed, and retires what it made when the module is uninstalled', () => {
@@ -200,5 +210,27 @@ describe('planTenantInternalWorkloads', () => {
       [INTAKE],
     );
     expect(retiring.steps.some(({ kind }) => kind === 'rename-principal')).toBe(false);
+  });
+
+  it('revokes a company binding a registration holds beyond its own company (one binding, one company)', () => {
+    const extra = 'aaaaaaaa-0000-4000-8000-000000000001';
+    const plan = planTenantInternalWorkloads(
+      stateOf({ registrations: [{ ...whole(COMPANY_A), extraCompanyBindingIds: [extra] }, whole(COMPANY_B)] }),
+      [INTAKE],
+    );
+    expect(plan).toMatchObject({ corrected: 1, registered: 0, unchanged: 1 });
+    expect(plan.steps).toEqual([{ companyBindingId: extra, kind: 'revoke-company' }]);
+  });
+
+  it('groups the steps by registration, wanted ones first, so one failing registration stops no other', () => {
+    const plan = planTenantInternalWorkloads(
+      stateOf({ activeCompanies: new Set([COMPANY_B]), registrations: [whole(COMPANY_A)] }),
+      [INTAKE],
+    );
+    expect(plan.units.map(({ legalEntityId, steps }) => [legalEntityId, steps.map(({ kind }) => kind)])).toEqual([
+      [COMPANY_B, ['create-principal', 'bind-workload', 'bind-company']],
+      [COMPANY_A, ['revoke-company', 'revoke-workload', 'disable-principal']],
+    ]);
+    expect(plan.steps).toEqual(plan.units.flatMap(({ steps }) => steps));
   });
 });
