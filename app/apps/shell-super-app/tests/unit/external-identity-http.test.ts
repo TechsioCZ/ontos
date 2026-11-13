@@ -15,8 +15,10 @@ import type { ModuleCredentialEnrolmentSource } from '../../api/auth/gateway-del
 import { makeApiKeyServiceDouble, makePrincipalResolverDouble } from '../support/identity-service-doubles.ts';
 import {
   enrolledModuleCredentials,
+  noInternalWorkloadPrincipals,
   unreadableModuleCredentialEnrolment,
 } from '../support/module-credential-enrolment.ts';
+import type { PlatformWorkloadKeyAdmission } from '../../api/auth/platform-workload-key-admission.ts';
 
 const tenantId = '30000000-0000-4000-8000-000000000001';
 const workloadPrincipalId = '40000000-0000-4000-8000-000000000001';
@@ -70,6 +72,7 @@ const makeAuthorization = (
       ),
   });
   const dependencies = Layer.mergeAll(
+    noInternalWorkloadPrincipals,
     Layer.succeed(ApiKeyService, apiKeyService),
     Layer.succeed(ExternalIdentityHttpConfigurationService, overrides.configuration ?? configuration),
     Layer.succeed(PrincipalResolver, principalResolver),
@@ -83,6 +86,7 @@ const makeAuthorization = (
       | ApiKeyService
       | PrincipalResolver
       | ExternalIdentityHttpConfigurationService
+      | PlatformWorkloadKeyAdmission
     >,
   ) => effect.pipe(Effect.provide(dependencies));
   return { authorize, resolutions: () => resolutions, verificationCalls: () => verificationCalls };

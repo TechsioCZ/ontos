@@ -27,6 +27,10 @@ import {
   ModuleCredentialEnrolmentSourceLive,
 } from './auth/gateway-delegation-policy.ts';
 import { GatewayOriginatorEvidenceLive } from './auth/gateway-originator-evidence.service.ts';
+import {
+  PlatformWorkloadKeyAdmission,
+  PlatformWorkloadKeyAdmissionLive,
+} from './auth/platform-workload-key-admission.ts';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type {
   ActionCoreError,
@@ -2524,6 +2528,23 @@ export const issueApiKeyContext = Effect.fn('ShellGateway.issueApiKeyContext')(f
     observeGatewayPhase('principal-resolve'),
     Effect.catch((error) => pipe(error, principalResolutionGatewayProblem, failApiKeyGatewayProblem)),
   );
+  // An internal workload principal acts only with the key the platform issued it for this release.
+  yield* (yield* PlatformWorkloadKeyAdmission)
+    .admit({
+      legalEntityId: payload.legalEntityId ?? null,
+      principalId: identity.principalId,
+      providerKeyId: verified.providerKeyId,
+      tenantId: identity.tenantId,
+    })
+    .pipe(
+      Effect.catchTag('GatewayDelegationError', (error) =>
+        failApiKeyGatewayProblem(
+          error.code === 'forbidden'
+            ? withRefusalReason(gatewayForbiddenProblem(), error.reason)
+            : withRefusalReason(gatewayAuthenticationUnavailableProblem(), error.reason),
+        ),
+      ),
+    );
   const principal = withOptionalProperty(
     {
       authBindingId: identity.authBindingId,
@@ -2996,6 +3017,21 @@ export const agentPlatformKeyCaller = Effect.fn('shell.agentPlatform.keyCaller')
       TenantInactiveError: () => failIdentityProblem(shellAuthenticationRequiredProblem()),
     }),
   );
+  // An internal workload principal acts only with the key the platform issued it, never as an agent caller.
+  yield* (yield* PlatformWorkloadKeyAdmission)
+    .admit({
+      legalEntityId,
+      principalId: identity.principalId,
+      providerKeyId: verified.providerKeyId,
+      tenantId: identity.tenantId,
+    })
+    .pipe(
+      Effect.catchTag('GatewayDelegationError', (error) =>
+        failIdentityProblem(
+          error.code === 'forbidden' ? shellTargetForbiddenProblem() : shellCapabilityUnavailableProblem(),
+        ),
+      ),
+    );
   const principal: AgentPlatformCaller['principal'] = {
     authBindingId: identity.authBindingId,
     authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
@@ -4058,7 +4094,11 @@ export const makeShellAuthenticationApiRuntime = (
   const moduleCredentialEnrolmentLayer = ModuleCredentialEnrolmentSourceLive.pipe(
     Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive)),
   );
+  const platformWorkloadKeyAdmissionLayer = PlatformWorkloadKeyAdmissionLive.pipe(
+    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive, moduleCatalogLayer)),
+  );
   const handlerDependenciesLive = Layer.mergeAll(
+    platformWorkloadKeyAdmissionLayer,
     emailDeliveryRequestsLive,
     authenticationIsolateLive,
     BetterAuthPersonInvitationIdentityProviderLive,

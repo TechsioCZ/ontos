@@ -9,6 +9,7 @@ import {
   ModuleCredentialBootIdSchema,
   ModuleCredentialHostIdSchema,
 } from '../../api/auth/module-credential-attestation.ts';
+import { PlatformWorkloadKeyAdmission } from '../../api/auth/platform-workload-key-admission.ts';
 
 /** What a test credential's issuing host attested: the module build and the release revision. */
 export interface TestModuleCredentialRelease {
@@ -67,3 +68,6 @@ export const unreadableModuleCredentialEnrolment: Layer.Layer<ModuleCredentialEn
   ModuleCredentialEnrolmentSource,
   { load: unreadable, loadAttested: unreadable },
 );
+
+/** No principal these tests use is a module's internal workload: every key passes the platform workload check. */
+export const noInternalWorkloadPrincipals = Layer.succeed(PlatformWorkloadKeyAdmission, { admit: () => Effect.void });

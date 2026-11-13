@@ -68,7 +68,11 @@ import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 
 import { legalEntities, tenantModuleStates } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { AccessReleaseStoreLive } from '../../../../packages/core-runtime/src/access/changes/persistence/drizzle-store.ts';
-import { internalWorkloadPrincipalId } from '../../../../packages/core-runtime/src/auth/module-credentials.ts';
+import {
+  bindPlatformCredential,
+  internalWorkloadPrincipalId,
+} from '../../../../packages/core-runtime/src/auth/module-credentials.ts';
+import { PLATFORM_KEY_OWNER } from '../../api/auth/platform-key-owner.ts';
 import { registerReleaseInternalWorkloads } from '../../../../packages/core-runtime/src/install/release-internal-workloads.ts';
 import { writeTestTenantScopes } from '../../../../packages/core-runtime/src/testing/tenant-access.ts';
 import { internalWorkloadDeclarations } from '../../../../scripts/demo/release-internal-workloads.mts';
@@ -895,8 +899,9 @@ it.live(
               expect(personParty.refused).toBe(403);
             }
 
-            // 2. Where the workload key is accepted, another module's key is refused: the Shell admits it at the API-key
-            // gateway context as an ordinary key of the registered principal, never a module credential.
+            // 2. Where the workload key is accepted, another module's key is refused. The Shell admits it at the API-key
+            // gateway context only as the key the platform issued that principal: its metadata attests exactly this
+            // principal, tenant and company at the release the Shell serves. Any other key of the principal is refused.
             const accepted = yield* requireIssued(yield* workloadContext('crm'));
             const verified = yield* Effect.tryPromise(() =>
               jwtVerify(Redacted.value(accepted), signingKeyPair.publicKey, {
@@ -916,6 +921,24 @@ it.live(
             expect(yield* workloadContext('crm', workloadKeyB, companyA)).toEqual({ refused: 403 });
             expect(yield* workloadContext('crm', partyModuleKey)).toEqual({ refused: 403 });
             expect(yield* workloadContext('crm', crmModuleKey)).toEqual({ refused: 403 });
+            // A key of the workload principal the platform did not attest (a tenant-managed one, or one left from
+            // before): bound to the very principal, yet refused at the Shell.
+            const unattested = yield* keys.issueServerOwned({
+              expiresInSeconds: 3600,
+              issuerPrincipalId: principalOf(companyA),
+              lifecycleOperationId: yield* crypto.randomUUIDv4(),
+              name: 'tenant-managed workload key',
+              ownerUserId: PLATFORM_KEY_OWNER.id,
+              tenantId: core.tenantId,
+            });
+            yield* runtimeDatabase.transaction((transaction) =>
+              bindPlatformCredential(transaction, {
+                principalId: principalOf(companyA),
+                providerKeyId: unattested.providerKeyId,
+                tenantId: core.tenantId,
+              }),
+            );
+            expect(yield* workloadContext('crm', unattested.secret)).toEqual({ refused: 403 });
 
             // 3. The workload key is refused on every endpoint other than the one it is for.
             // The delegated endpoint takes module credentials only: the workload key binds nothing there, while CRM's

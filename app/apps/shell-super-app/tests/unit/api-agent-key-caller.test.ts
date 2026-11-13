@@ -16,6 +16,7 @@ import { ApiKeyService } from '../../api/auth/api-key-service.ts';
 import { agentPlatformKeyCaller } from '../../api/index.ts';
 import {
   enrolledModuleCredentials,
+  noInternalWorkloadPrincipals,
   unreadableModuleCredentialEnrolment,
 } from '../support/module-credential-enrolment.ts';
 import { makeShellTestAccessGate } from '../support/access-decision-double.ts';
@@ -75,6 +76,7 @@ const run = Effect.fn('test.agentKeyCaller')(function* run(
     Effect.provide(
       Layer.mergeAll(
         NodeCrypto.layer,
+        noInternalWorkloadPrincipals,
         Layer.succeed(
           ApiKeyService,
           makeApiKeyServiceDouble({

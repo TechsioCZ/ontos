@@ -268,6 +268,8 @@ export const GatewayRefusalReasonSchema = Schema.Literals([
   'caller_principal_unresolved',
   'caller_not_service',
   'caller_build_not_installed',
+  'workload_key_not_platform_issued',
+  'workload_admission_unavailable',
   // The release.
   'installed_release_unavailable',
   'release_changed',
