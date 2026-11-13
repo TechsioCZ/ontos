@@ -288,7 +288,14 @@ const prepareThroughLedger = (
     const prepared = yield* preparedFor(fixture.collect, family);
     const returnToken = Option.some(yield* returnTokenFor(returnTokenSeed));
     return yield* inWorker(runtime, fixture.scope, ({ ledger, scope, workerContext }) =>
-      ledger.prepare({ identity: fixture.collect, prepared, returnToken, scope, workerContext }),
+      ledger.prepare({
+        identity: fixture.collect,
+        prepared,
+        refundDispatchCount: Option.none(),
+        returnToken,
+        scope,
+        workerContext,
+      }),
     );
   });
 

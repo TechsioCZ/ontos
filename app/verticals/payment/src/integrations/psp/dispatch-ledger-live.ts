@@ -25,7 +25,6 @@ import type {
 import { idempotencyKeyHashOf, ProviderDispatchLedger, ProviderDispatchRecordSchema } from './dispatch-ledger.ts';
 import type {
   CorrelateUnknownInput,
-  HasUnresolvedRefundInput,
   PrepareDispatchInput,
   ProviderDispatchIdentity,
   ProviderDispatchLedgerContract,
@@ -37,6 +36,8 @@ import type {
   RecordNotSentInput,
   RecordTransitionInput,
   RecordUnsupportedInput,
+  RefundSerialization,
+  RefundSerializationInput,
   RegisterCancelInput,
 } from './dispatch-ledger.ts';
 import { GatewayCorrelationConflict, GatewayLedgerUnavailable } from './psp-errors.ts';
@@ -211,6 +212,7 @@ const prepare = Effect.fn('ProviderDispatchLedger.prepare')(function* prepare(in
     origin,
     providerPaymentRef,
     refundBaseline: prepared.refundBaseline.pipe(Option.map(({ rowIds }) => rowIds)),
+    refundDispatchCount: input.refundDispatchCount,
     replayRequest: prepared.replayWindowMs.pipe(
       Option.map((windowMs) => ({ body: prepared.body, headers: prepared.headers, windowMs })),
     ),
@@ -241,6 +243,7 @@ const prepare = Effect.fn('ProviderDispatchLedger.prepare')(function* prepare(in
       dispatchRecordOf(input.scope, record).pipe(
         Effect.map((stored): ProviderPrepareResult => ({ _tag: 'PREPARED', record: stored })),
       ),
+    REFUND_BASELINE_STALE: () => Effect.succeed<ProviderPrepareResult>({ _tag: 'REFUND_BASELINE_STALE' }),
     WITHHELD: ({ record }) =>
       dispatchRecordOf(input.scope, record).pipe(
         Effect.map((stored): ProviderPrepareResult => ({ _tag: 'WITHHELD', record: stored })),
@@ -434,20 +437,19 @@ const readByProviderRef = Effect.fn('ProviderDispatchLedger.readByProviderRef')(
   return yield* optionalRecordOf(input.scope, Option.fromUndefinedOr(owners[0]));
 });
 
-const hasUnresolvedRefund = Effect.fn('ProviderDispatchLedger.hasUnresolvedRefund')(function* hasUnresolvedRefund(
-  input: HasUnresolvedRefundInput,
+const refundSerialization = Effect.fn('ProviderDispatchLedger.refundSerialization')(function* refundSerialization(
+  input: RefundSerializationInput,
 ) {
-  const unresolved = yield* pspHasUnresolvedRefund(invokerOf(input.scope), {
+  const { refundDispatchCount, unresolved } = yield* pspHasUnresolvedRefund(invokerOf(input.scope), {
     bindingId: input.bindingId,
     excludingOperationId: Option.none(),
     providerPaymentRef: providerRefText(input.providerPaymentRef),
   }).pipe(Effect.mapError(routineUnavailable));
-  return unresolved.unresolved;
+  return { refundDispatchCount, unresolved } satisfies RefundSerialization;
 });
 
 const providerDispatchLedger: ProviderDispatchLedgerContract = Object.freeze({
   correlateUnknown,
-  hasUnresolvedRefund,
   prepare,
   readByOperation,
   readByOrderReference,
@@ -458,6 +460,7 @@ const providerDispatchLedger: ProviderDispatchLedgerContract = Object.freeze({
   recordRejected,
   recordTargetUnresolved,
   recordUnsupported,
+  refundSerialization,
   registerCancel,
 });
 

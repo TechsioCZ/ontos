@@ -373,7 +373,6 @@ const recoverWith = (script: Script, message: RecoveryRequested) => {
         calls.ledger.push(`correlateUnknown:${input.providerRef._tag}`);
         return Option.some({ ...recordOf(), state: 'ACKNOWLEDGED' as const });
       }),
-    hasUnresolvedRefund: unused,
     prepare: unused,
     readByOperation: () => Effect.succeed(script.record),
     readByOrderReference: unused,
@@ -401,6 +400,7 @@ const recoverWith = (script: Script, message: RecoveryRequested) => {
       }),
     recordTargetUnresolved: unused,
     recordUnsupported: unused,
+    refundSerialization: unused,
     registerCancel: unused,
   });
   const store = Layer.succeed(ProviderEvidenceStore, {

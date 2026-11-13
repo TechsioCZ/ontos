@@ -391,7 +391,6 @@ const layerFor = (setup: Setup, world: World) => {
         yield* Ref.set(world.records, updated);
         return Option.fromUndefinedOr(updated.find((record) => record.orderReference === orderReference));
       }),
-    hasUnresolvedRefund: unexpected('hasUnresolvedRefund'),
     prepare: unexpected('prepare'),
     readByOperation: unexpected('readByOperation'),
     readByOrderReference: ({ bindingId, orderReference }) =>
@@ -414,6 +413,7 @@ const layerFor = (setup: Setup, world: World) => {
     recordRejected: unexpected('recordRejected'),
     recordTargetUnresolved: unexpected('recordTargetUnresolved'),
     recordUnsupported: unexpected('recordUnsupported'),
+    refundSerialization: unexpected('refundSerialization'),
     registerCancel: unexpected('registerCancel'),
   });
   const evidenceStore = Layer.succeed(ProviderEvidenceStore, {

@@ -485,6 +485,8 @@ export const reprepareDispatch = Effect.fn('PspNativeGateway.reprepare')(functio
       },
       providerPaymentRef: Option.fromUndefinedOr(record.providerPaymentRef),
       refundBaseline: Option.fromUndefinedOr(record.providerRefundBaseline),
+      // Required with a baseline; the existing row answers before any count is compared.
+      refundDispatchCount: Option.fromUndefinedOr(record.providerRefundBaseline).pipe(Option.map(() => 0)),
       replayRequest,
       requestHash,
       returnToken: Option.fromUndefinedOr(record.returnToken),

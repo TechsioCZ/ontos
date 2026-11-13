@@ -221,6 +221,7 @@ const prepareInput = (
   origin,
   providerPaymentRef,
   refundBaseline: Option.none(),
+  refundDispatchCount: Option.none(),
   replayRequest: Option.none(),
   requestHash: 'a'.repeat(64),
   returnToken: Option.none(),
@@ -592,8 +593,10 @@ const refundableFixture = Effect.fn('PspPhase2Fixture.refundable')(function* ref
     withRoutines(runtime, scope, (invoker) =>
       pspPrepareDispatch(invoker, {
         ...prepareInput(operation, binding, origin, Option.some(providerPaymentRef)),
-        // Only a GoPay refund carries (and must carry) its pre-dispatch refund-history baseline.
+        // Only a GoPay refund carries (and must carry) its pre-dispatch refund-history baseline, with the refund
+        // dispatch count it was read under (none existed when these baselines were read).
         refundBaseline: binding.family === 'GOPAY' ? Option.some([]) : Option.none(),
+        refundDispatchCount: binding.family === 'GOPAY' ? Option.some(0) : Option.none(),
       }),
     );
   return { binding, origin, prepareRefund, refund };
@@ -626,7 +629,7 @@ it.live('#1158 A Comgate refund waits only for a prepared or unknown refund, GoP
           providerPaymentRef: 'AB12-CD34-EF56',
         }),
       );
-      expect(unresolved).toEqual({ operationIds: [second.operationId], unresolved: true });
+      expect(unresolved).toEqual({ operationIds: [second.operationId], refundDispatchCount: 2, unresolved: true });
 
       // GoPay keeps the strict rule: an acknowledged refund without terminal evidence still blocks.
       const gopayScope = yield* makeTestScope;

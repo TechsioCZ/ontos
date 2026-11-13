@@ -291,6 +291,7 @@ const unknownCollect = Effect.fn('DriverNative.unknownCollect')(function* unknow
           origin,
           providerPaymentRef: Option.none(),
           refundBaseline: Option.none(),
+          refundDispatchCount: Option.none(),
           replayRequest: Option.none(),
           requestHash: 'a'.repeat(64),
           returnToken: Option.none(),
