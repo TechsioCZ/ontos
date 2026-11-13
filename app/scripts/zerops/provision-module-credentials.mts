@@ -138,17 +138,24 @@ const issue = Command.make(
     }),
 );
 
+/** The installed modules that get a key: each one a carrier admits as its delegated caller. */
+export const installedCallersOf = (
+  contracts: readonly { readonly deployment: { readonly appId: string } }[],
+): readonly string[] =>
+  contracts.flatMap(({ deployment }) =>
+    MODULE_CREDENTIAL_CALLERS.includes(deployment.appId) ? [deployment.appId] : [],
+  );
+
 const issueInstalled = Command.make(
   'issue-installed',
   { bootId: BOOT_ID, hostId: HOST_ID, operationId: OPERATION_ID },
   ({ bootId, hostId, operationId }) =>
     Effect.gen(function* issueForInstalledRelease() {
       const installed = yield* installedModuleCatalog;
-      const callers = installed.contracts.filter(({ deployment }) =>
-        MODULE_CREDENTIAL_CALLERS.includes(deployment.appId),
-      );
+      const appIds = installedCallersOf(installed.contracts);
+      const callers = installed.contracts.filter(({ deployment }) => appIds.includes(deployment.appId));
       return yield* issueFor({
-        appIds: callers.map(({ deployment }) => deployment.appId),
+        appIds,
         bootId,
         hostId,
         operationId,

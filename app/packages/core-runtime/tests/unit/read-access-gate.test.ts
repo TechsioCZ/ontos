@@ -70,6 +70,8 @@ const scope: OperationalScope = Object.freeze({
   correlationId: 'correlation-c21',
 });
 const operationAt = DateTime.toDateUtc(DateTime.makeUnsafe(Date.parse('2026-11-03T09:00:00.000Z')));
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 
 const declarationOf = (key: string, overrides: Partial<AccessDeclarationInput> = {}): AccessDeclarationInput => ({
   key,
@@ -263,8 +265,9 @@ const makeRuntime = Effect.fn('ReadAccessGateSuite.makeRuntime')(function* makeR
       if (text.includes("current_setting('transaction_isolation')")) {
         return Effect.succeed([{ isolation: 'read committed' }]);
       }
-      if (text.includes('set_config')) {
-        return Effect.succeed([]);
+      // A session-setting role installs its scope and reads back the connected role in one statement.
+      if (text === installAndReadScopeSql) {
+        return Effect.succeed([{ legal_entity_id: '', role: 'ontos_runtime', tenant_id: tenant }]);
       }
       if (text.includes('transaction_timestamp')) {
         return Effect.succeed([{ operation_at: operationAt }]);

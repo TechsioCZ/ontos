@@ -15,7 +15,6 @@ import { policyReleaseEntries, policyRoleCellRows } from '../demo/access-policy.
 import {
   crmAssignCapability,
   crmDemoRoles,
-  crmPartyIntakePrincipal,
   crmReadCapability,
   crmWriteCapability,
   demoModuleIds,
@@ -130,8 +129,7 @@ it.effect('does not turn purpose-only intake into a human or machine Role in the
     expect(catalog.some(({ key }) => retiredPurposeKeys.has(key))).toBe(false);
     const workloadOnlyKeys = new Set(['demo.crm.api.pending-client-intake', 'demo.crm.intake-client-party']);
     expect(catalog.some(({ key }) => workloadOnlyKeys.has(key))).toBe(false);
-    for (const { principalId, role } of reviewedDemoAssignments()) {
-      expect(principalId).not.toBe(crmPartyIntakePrincipal.principalId);
+    for (const { role } of reviewedDemoAssignments()) {
       const cells = yield* Effect.fromResult(policyRoleCellRows(role, catalog));
       expect(
         cells.some(({ capabilityKey }) => retiredPurposeKeys.has(capabilityKey) || workloadOnlyKeys.has(capabilityKey)),

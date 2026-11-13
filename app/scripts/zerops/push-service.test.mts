@@ -22,6 +22,7 @@ const shims = {
 zerops="${ZEROPS_API_ORIGIN}"
 args=()
 for arg in "$@"; do args+=("\${arg/#"$zerops"/$FAKE_ZEROPS_ORIGIN}"); done
+printf '%s\\n' "$*" >>"$RUNNER_TEMP/curl-calls"
 exec "$REAL_CURL" "\${args[@]}"
 `,
   find: `#!/usr/bin/env bash
@@ -57,7 +58,14 @@ const localOrigin = Effect.gen(function* localServerOrigin() {
   return url.origin;
 });
 
-const runPush = (answer: ProcessAnswer, environment: Readonly<Record<string, string>> = {}) =>
+/** What follows the fake API's origin in the upload URL it hands out. */
+const PLAIN_UPLOAD = '/upload';
+
+const runPush = (
+  answer: ProcessAnswer,
+  environment: Readonly<Record<string, string>> = {},
+  upload: { readonly origin?: (origin: string) => string; readonly target?: string } = {},
+) =>
   Effect.gen(function* pushAgainstFakeApi() {
     const fs = yield* FileSystem.FileSystem;
     const calls: string[] = [];
@@ -69,9 +77,13 @@ const runPush = (answer: ProcessAnswer, environment: Readonly<Record<string, str
         calls.push(route);
         yield* request.arrayBuffer.pipe(Effect.ignore);
         if (route === `POST /api/rest/public/service-stack/${SERVICE_ID}/app-version`) {
-          return json({ id: 'version-1', uploadUrl: `${yield* localOrigin}/upload` });
+          const origin = yield* localOrigin;
+          return json({
+            id: 'version-1',
+            uploadUrl: `${upload.origin?.(origin) ?? origin}${upload.target ?? PLAIN_UPLOAD}`,
+          });
         }
-        if (route === 'PUT /upload') {
+        if (route.startsWith('PUT /upload')) {
           return HttpServerResponse.empty({ status: 200 });
         }
         if (route === 'PUT /api/rest/public/app-version/version-1/build-and-deploy') {
@@ -115,7 +127,9 @@ const runPush = (answer: ProcessAnswer, environment: Readonly<Record<string, str
           extendEnv: true,
         }),
       );
-      return { ...result, calls, polls };
+      const curlCalls = path.join(directory, 'curl-calls');
+      const curlArguments = (yield* fs.exists(curlCalls)) ? yield* fs.readFileString(curlCalls) : '';
+      return { ...result, calls, curlArguments, polls };
     }).pipe(Effect.provide(api));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
@@ -151,7 +165,8 @@ it.live(
         'package: NK (N bytes)',
         'app version create started (attempt N)',
         'app version create ended (attempt N): version version-N',
-        'upload started (attempt N, N bytes)',
+        'upload started (attempt N, N bytes): host N.N, family IPvN, same address as project entry: unknown',
+        'upload timing (attempt N): namelookup=N connect=N appconnect=N pretransfer=N starttransfer=N total=N speed_upload=N size_upload=N http_code=N',
         'upload ended (attempt N, N bytes): uploaded in Ns (attempt N)',
         'build and deploy request started',
         'build and deploy request ended',
@@ -162,6 +177,52 @@ it.live(
       expect(result.stdout).not.toContain('test-token');
       expect(result.stdout).not.toContain('/upload');
     }),
+);
+
+it.live('the upload URL never reaches the log: only its host, with no user info, port, path or signed query', () =>
+  Effect.gen(function* uploadHost() {
+    const result = yield* runPush(
+      () => processState('FINISHED'),
+      {},
+      {
+        origin: (origin) => origin.replace('//', '//uploader:SECRET-PASSWORD@'),
+        target: '/upload/SECRET-PATH?X-Amz-Signature=SECRET-SIGNATURE&token=SECRET-TOKEN#SECRET-FRAGMENT',
+      },
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(': host 127.0.0.1, family IPv4, ');
+    expect(`${result.stdout}${result.stderr}`).not.toContain('SECRET');
+    expect(result.stdout).not.toMatch(/127\.0\.0\.1:\d/u);
+  }),
+);
+
+it.live('each attempt says whether the upload host shares an address with the project hostnames', () =>
+  Effect.gen(function* projectEntry() {
+    const same = yield* runPush(() => processState('FINISHED'), { PUSH_PROJECT_HOSTS: '192.0.2.7 127.0.0.1' });
+    expect(same.stdout).toContain('family IPv4, same address as project entry: yes');
+    const other = yield* runPush(() => processState('FINISHED'), { PUSH_PROJECT_HOSTS: '192.0.2.7' });
+    expect(other.stdout).toContain('family IPv4, same address as project entry: no');
+  }),
+);
+
+/** The curl calls that uploaded the package. */
+const uploads = (curlArguments: string) => curlArguments.split('\n').filter((call) => call.includes(' -T '));
+
+it.live('the upload rate limit is an experiment: off by default, passed to curl when set, refused when malformed', () =>
+  Effect.gen(function* rateLimit() {
+    const plain = yield* runPush(() => processState('FINISHED'));
+    expect(uploads(plain.curlArguments)).toHaveLength(1);
+    expect(plain.curlArguments).not.toContain('--limit-rate');
+    expect(plain.stdout).not.toContain('rate limited');
+    const limited = yield* runPush(() => processState('FINISHED'), { ONTOS_PUSH_UPLOAD_LIMIT_RATE: '8M' });
+    expect(limited.status).toBe(0);
+    expect(limited.stdout).toContain('upload rate limited to 8M (experiment)');
+    expect(uploads(limited.curlArguments).map((call) => call.includes('--limit-rate 8M'))).toEqual([true]);
+    const malformed = yield* runPush(() => processState('FINISHED'), { ONTOS_PUSH_UPLOAD_LIMIT_RATE: '8M; rm -rf /' });
+    expect(malformed.status).toBe(1);
+    expect(malformed.stderr).toContain('ONTOS_PUSH_UPLOAD_LIMIT_RATE must be a curl rate such as 8M');
+    expect(malformed.calls).toEqual([]);
+  }),
 );
 
 it.live('a deploy poll that only ever meets 502s fails once its retry budget is spent', () =>

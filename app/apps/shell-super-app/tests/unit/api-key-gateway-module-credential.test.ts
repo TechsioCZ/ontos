@@ -16,6 +16,7 @@ import {
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import {
   enrolledModuleCredentials,
+  noInternalWorkloadPrincipals,
   unreadableModuleCredentialEnrolment,
 } from '../support/module-credential-enrolment.ts';
 import { makeApiKeyServiceDouble, makePrincipalResolverDouble } from '../support/identity-service-doubles.ts';
@@ -52,6 +53,7 @@ const issue = Effect.fn('test.apiKeyGatewayContext')(function* issue(
     Effect.provide(
       Layer.mergeAll(
         NodeCrypto.layer,
+        noInternalWorkloadPrincipals,
         options.enrolmentUnreadable === true
           ? unreadableModuleCredentialEnrolment
           : enrolledModuleCredentials([{ appId: 'commerce-customer-context', providerKeyId: MODULE_KEY }]),

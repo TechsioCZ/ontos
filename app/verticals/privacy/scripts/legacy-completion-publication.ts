@@ -52,7 +52,9 @@ const PrivacyLegacyClientLive = Layer.effect(
     const configuration = yield* configureDatabasePool(Redacted.make(connections.admin.connectionString)).pipe(
       Effect.mapError(unavailable),
     );
-    return yield* PgClient.make({ ...configuration, maxConnections: 1 }).pipe(Effect.mapError(unavailable));
+    return yield* PgClient.make({ ...configuration, maxConnections: 1, minConnections: 0 }).pipe(
+      Effect.mapError(unavailable),
+    );
   }),
 ).pipe(Layer.provideMerge(PrivacyLegacyConnectionsLive), Layer.provide(Reactivity.layer));
 
@@ -74,7 +76,7 @@ const PrivacyLegacyDatabaseLive = Layer.effect(
     const runtimeConfiguration = yield* configureDatabasePool(Redacted.make(connections.runtime.connectionString)).pipe(
       Effect.mapError(unavailable),
     );
-    const runtimeClient = yield* PgClient.make({ ...runtimeConfiguration, maxConnections: 1 }).pipe(
+    const runtimeClient = yield* PgClient.make({ ...runtimeConfiguration, maxConnections: 1, minConnections: 0 }).pipe(
       Effect.mapError(unavailable),
     );
     return { connections, executor, runtimeClient };

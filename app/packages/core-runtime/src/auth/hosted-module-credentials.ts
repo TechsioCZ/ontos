@@ -9,10 +9,24 @@ export const ModuleAppIdSchema = Schema.String.check(Schema.isPattern(/^[a-z][a-
 );
 
 const MINIMUM_KEY_LENGTH = 16;
-const WORKLOAD_ENTRY =
-  /^[a-z][a-z0-9-]{0,99}\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+\/[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/u;
+const UUID = String.raw`[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}`;
+const WORKLOAD_ENTRY = new RegExp(
+  `^[a-z][a-z0-9-]{0,99}/[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+/${UUID}/${UUID}$`,
+  'u',
+);
 
-/** Owners' internal workload credentials (O73), keyed `<app id>/<workload key>/<tenant id>`. */
+/**
+ * The handover entry of one internal workload credential: the module, its workload, and the tenant and company the
+ * workload acts for (one active workload binding acts for one company, so each company has its own key).
+ */
+export const internalWorkloadEntryId = (entry: {
+  readonly appId: string;
+  readonly legalEntityId: string;
+  readonly tenantId: string;
+  readonly workloadKey: string;
+}): string => `${entry.appId}/${entry.workloadKey}/${entry.tenantId}/${entry.legalEntityId}`;
+
+/** Owners' internal workload credentials (O73), keyed `<app id>/<workload key>/<tenant id>/<company id>`. */
 export const WorkloadCredentialsSchema = Schema.Record(
   Schema.String,
   Schema.RedactedFromValue(Schema.String.check(Schema.isMinLength(MINIMUM_KEY_LENGTH))),
@@ -20,7 +34,7 @@ export const WorkloadCredentialsSchema = Schema.Record(
   Schema.makeFilter((workloads) =>
     Object.keys(workloads).every((entry) => WORKLOAD_ENTRY.test(entry))
       ? undefined
-      : 'Workload credentials are keyed by app id, workload key and tenant',
+      : 'Workload credentials are keyed by app id, workload key, tenant and company',
   ),
 );
 
@@ -40,8 +54,8 @@ export const HostedModuleCredentialsSchema = Schema.Struct({
   ),
   schemaVersion: Schema.Literal(1),
   /**
-   * Owners' internal workload credentials, keyed `<app id>/<workload key>/<tenant id>`: the key of the principal the
-   * operator registered for one of the owner's own workloads in one tenant (O73).
+   * Owners' internal workload credentials, keyed `<app id>/<workload key>/<tenant id>/<company id>`: the key of the
+   * principal the platform registered for one of the owner's own workloads in one company of one tenant (O73).
    */
   workloads: Schema.optionalKey(WorkloadCredentialsSchema),
 });

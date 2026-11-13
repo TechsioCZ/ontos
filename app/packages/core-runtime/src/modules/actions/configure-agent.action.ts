@@ -18,6 +18,7 @@ import type { ScopedTransactionExecutor } from '../../db/scoped-transaction.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 import { AgentGrantAccessSchema, AgentGrantWritePolicySchema } from '../../install/agent-entity-grants.ts';
 import { principalLifecycleDomainEvents, recordPrincipalLifecycleChange } from './principal-lifecycle-event.ts';
+import { actionCreatedPrincipalId } from '../../auth/action-principal-ids.ts';
 
 const PrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('AgentProfilePrincipalId'),
@@ -46,14 +47,27 @@ export const AgentProfileSchema = Schema.Struct({
   ownerPrincipalId: Schema.NullOr(PrincipalIdSchema),
   writePolicy: AgentGrantWritePolicySchema,
 });
-export const ConfigureAgentPayloadSchema = Schema.Struct({
-  ...AgentProfileSchema.fields,
-  operation: Schema.Literals(['create-agent', 'configure-agent']),
-  principalId: PrincipalIdSchema,
-});
+export const ConfigureAgentOperationSchema = Schema.Literals(['create-agent', 'configure-agent']);
+/**
+ * Creating an agent names no principal: Core gives the new principal its id (`actionCreatedPrincipalId`), so no caller
+ * can place a principal at an id the platform derives for itself. Configuring names the agent it changes.
+ */
+export const ConfigureAgentPayloadSchema = Schema.Union([
+  Schema.Struct({
+    ...AgentProfileSchema.fields,
+    /** The creating client's reference of this creation (its request's idempotency key); never a principal id. */
+    creationReference: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+    operation: Schema.Literal('create-agent'),
+  }),
+  Schema.Struct({
+    ...AgentProfileSchema.fields,
+    operation: Schema.Literal('configure-agent'),
+    principalId: PrincipalIdSchema,
+  }),
+]);
 export type ConfigureAgentPayload = typeof ConfigureAgentPayloadSchema.Type;
 export const ConfigureAgentResultSchema = Schema.Struct({
-  operation: ConfigureAgentPayloadSchema.fields.operation,
+  operation: ConfigureAgentOperationSchema,
   principalId: PrincipalIdSchema,
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   status: Schema.Literals(['active', 'disabled']),
@@ -61,7 +75,7 @@ export const ConfigureAgentResultSchema = Schema.Struct({
 export const ConfigureAgentAuditEvidenceSchema = Schema.Struct({
   ...AgentProfileSchema.fields,
   legalEntityId: LegalEntityIdSchema,
-  operation: ConfigureAgentPayloadSchema.fields.operation,
+  operation: ConfigureAgentOperationSchema,
   // oxlint-disable-next-line effect-native/no-nullable-schema-field -- Null records that no previous audited profile existed; it is not a default profile.
   previousProfile: Schema.NullOr(AgentProfileSchema),
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
@@ -92,6 +106,10 @@ const handleConfigureAgent = Effect.fn('ConfigureAgentAction.handle')(function* 
   if (legalEntityId === undefined) {
     return yield* invalid('An exact company context is required');
   }
+  const principalId =
+    payload.operation === 'create-agent'
+      ? actionCreatedPrincipalId({ kind: 'agent', reference: payload.creationReference, tenantId })
+      : payload.principalId;
   if (new Set(payload.modules.map((module) => module.moduleId)).size !== payload.modules.length) {
     return yield* invalid('An agent module may occur only once');
   }
@@ -125,7 +143,7 @@ const handleConfigureAgent = Effect.fn('ConfigureAgentAction.handle')(function* 
   const [target] = yield* transaction
     .select({ displayName: principals.displayName, kind: principals.kind, status: principals.status })
     .from(principals)
-    .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, payload.principalId)))
+    .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, principalId)))
     .limit(1)
     .for('update')
     .pipe(Effect.mapError(persistenceFailure));
@@ -140,14 +158,14 @@ const handleConfigureAgent = Effect.fn('ConfigureAgentAction.handle')(function* 
       .values({
         displayName: payload.displayName,
         kind: 'agent',
-        principalId: payload.principalId,
+        principalId,
         status: 'active',
         tenantId,
       })
       .pipe(Effect.mapError(persistenceFailure));
     yield* transaction
       .insert(principalCompanyMemberships)
-      .values({ affiliation: null, legalEntityId, principalId: payload.principalId, status: 'active', tenantId })
+      .values({ affiliation: null, legalEntityId, principalId, status: 'active', tenantId })
       .pipe(Effect.mapError(persistenceFailure));
   } else {
     if (target === undefined || target.kind !== 'agent' || target.status === 'archived') {
@@ -160,7 +178,7 @@ const handleConfigureAgent = Effect.fn('ConfigureAgentAction.handle')(function* 
         and(
           eq(principalCompanyMemberships.tenantId, tenantId),
           eq(principalCompanyMemberships.legalEntityId, legalEntityId),
-          eq(principalCompanyMemberships.principalId, payload.principalId),
+          eq(principalCompanyMemberships.principalId, principalId),
         ),
       )
       .limit(1)
@@ -178,7 +196,7 @@ const handleConfigureAgent = Effect.fn('ConfigureAgentAction.handle')(function* 
           eq(auditEvents.eventType, 'action.executed'),
           eq(auditEvents.outcome, 'succeeded'),
           sql`${auditEvents.evidenceJson}->>'actionKey' = ${actionKey}`,
-          sql`${auditEvents.evidenceJson}->>'targetPrincipalId' = ${payload.principalId}`,
+          sql`${auditEvents.evidenceJson}->>'targetPrincipalId' = ${principalId}`,
         ),
       )
       .orderBy(
@@ -215,7 +233,7 @@ const handleConfigureAgent = Effect.fn('ConfigureAgentAction.handle')(function* 
     yield* transaction
       .update(principals)
       .set({ displayName: payload.displayName })
-      .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, payload.principalId)))
+      .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, principalId)))
       .pipe(Effect.mapError(persistenceFailure));
   }
   yield* context.recordAuditEvidence({
@@ -227,13 +245,13 @@ const handleConfigureAgent = Effect.fn('ConfigureAgentAction.handle')(function* 
     ownerPrincipalId: payload.ownerPrincipalId,
     previousProfile,
     revision,
-    targetPrincipalId: payload.principalId,
+    targetPrincipalId: principalId,
     writePolicy: payload.writePolicy,
   });
-  yield* recordPrincipalLifecycleChange(context, payload.principalId);
+  yield* recordPrincipalLifecycleChange(context, principalId);
   return {
     operation: payload.operation,
-    principalId: payload.principalId,
+    principalId,
     revision,
     status: target?.status === 'disabled' ? ('disabled' as const) : ('active' as const),
   };

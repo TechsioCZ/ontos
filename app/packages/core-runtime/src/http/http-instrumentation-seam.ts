@@ -12,6 +12,7 @@ import { transportIdentifier } from '../actions/string-schemas.ts';
 import type { OperationalScopeRequest } from '../operations/context.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import { ActionRuntime } from '../actions/runtime.ts';
+import { withOwnerServerTiming } from './owner-server-timing.ts';
 
 export { ActionProposalAcceptedSchema } from '../actions/proposal-accepted.ts';
 
@@ -319,8 +320,9 @@ export const runGovernedActionHttp = <
     return yield* endpointResult.pipe(Effect.mapError(input.mapError));
   });
 
+  // The owner's phases go back to its caller in `server-timing`, whatever the Action ends in.
   return recoverUnexpectedDefect(
-    program,
+    withOwnerServerTiming(program),
     input.registration.descriptor.actionKey,
     safeCorrelationId,
     input.internalProblem,

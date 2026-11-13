@@ -104,11 +104,13 @@ const fixture = (missing?: MissingAuthority) =>
         if (['begin', 'commit', 'rollback'].includes(statement)) {
           return [];
         }
+        // A session-setting role installs its scope and reads back the connected role in one statement.
         if (
-          statement === "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)"
+          statement ===
+          "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id"
         ) {
           [tenantId, legalEntityId] = yield* Schema.decodeUnknownEffect(scopeSettings)(params).pipe(Effect.orDie);
-          return [];
+          return [{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }];
         }
         if (statement.startsWith('select current_user::text as role,')) {
           return [{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }];

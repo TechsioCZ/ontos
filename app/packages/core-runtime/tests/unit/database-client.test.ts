@@ -6,6 +6,7 @@ import { ConfigProvider, Context, Deferred, Effect, Exit, Fiber, Layer, Predicat
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 
+import { guardedPgClientLayer } from '../../src/db/client.ts';
 import { DatabasePoolRegistryLive, DatabasePools, openDatabaseClient } from '../../src/db/database-client.ts';
 import { configureDatabasePool } from '../../src/db/pool-configuration.ts';
 
@@ -19,6 +20,8 @@ interface FakeSession {
 
 interface FakePostgres {
   readonly sessions: FakeSession[];
+  /** Completes once at least this many sessions have sent their startup packet. */
+  readonly started: (count: number) => Effect.Effect<undefined>;
   readonly url: (role: string) => Redacted.Redacted;
 }
 
@@ -53,7 +56,7 @@ const rowDescription = (sql: string) =>
  * A minimal PostgreSQL backend: trust authentication, the simple and extended query protocols, transaction
  * status, an error for any statement containing `fail`, and the server's `ROLLBACK` answer to a failed COMMIT.
  */
-const serveSession = (socket: Socket, sessions: FakeSession[]) => {
+const serveSession = (socket: Socket, sessions: FakeSession[], onStarted: () => void) => {
   const session: FakeSession = { closed: false, socket, statements: [], user: '' };
   sessions.push(session);
   socket.on('close', () => {
@@ -187,6 +190,7 @@ const serveSession = (socket: Socket, sessions: FakeSession[]) => {
     const fields = frame.subarray(8).toString('utf-8').split('\0');
     session.user = fields[fields.indexOf('user') + 1] ?? '';
     started = true;
+    onStarted();
     return [message('R', int32(0)), message('K', int32(1), int32(1)), message('Z', Buffer.from('I'))];
   };
 
@@ -204,14 +208,42 @@ const serveSession = (socket: Socket, sessions: FakeSession[]) => {
   });
 };
 
+const startedSessionCount = (sessions: readonly FakeSession[]) => {
+  let count = 0;
+  for (const { user } of sessions) {
+    count += user === '' ? 0 : 1;
+  }
+  return count;
+};
+
+/** Completes once `count` sessions have started; each started session calls every listener. */
+const awaitStartedSessions = (sessions: readonly FakeSession[], listeners: Set<() => void>, count: number) =>
+  Effect.callback<undefined>((resume) => {
+    const check = () => {
+      if (startedSessionCount(sessions) >= count) {
+        listeners.delete(check);
+        resume(Effect.undefined);
+      }
+    };
+    listeners.add(check);
+    check();
+    return Effect.sync(() => listeners.delete(check));
+  });
+
 const fakePostgres = Effect.acquireRelease(
   Effect.callback<{ readonly fake: FakePostgres; readonly server: Server; readonly sockets: Set<Socket> }>((resume) => {
     const sessions: FakeSession[] = [];
     const sockets = new Set<Socket>();
+    const listeners = new Set<() => void>();
     const server = createServer((socket) => {
       sockets.add(socket);
-      serveSession(socket, sessions);
+      serveSession(socket, sessions, () => {
+        for (const listener of listeners) {
+          listener();
+        }
+      });
     });
+    const started = (count: number) => awaitStartedSessions(sessions, listeners, count);
     server.listen(0, '127.0.0.1', () => {
       const address = server.address();
       const port = Predicate.hasProperty(address, 'port') ? String(address.port) : '';
@@ -219,6 +251,7 @@ const fakePostgres = Effect.acquireRelease(
         Effect.succeed({
           fake: {
             sessions,
+            started,
             url: (role) => Redacted.make(`postgresql://${role}:secret@127.0.0.1:${port}/ontos`),
           },
           server,
@@ -236,17 +269,20 @@ const fakePostgres = Effect.acquireRelease(
     }),
 ).pipe(Effect.map(({ fake }) => fake));
 
-const sharedPools = <A, E, R>(program: Effect.Effect<A, E, R>) =>
-  Effect.gen(function* withSharedPools() {
-    const context = yield* Layer.build(DatabasePoolRegistryLive.pipe(Layer.provide(Reactivity.layer)));
-    return yield* program.pipe(Effect.provideContext(context));
-  }).pipe(
-    Effect.scoped,
-    Effect.provideService(
-      ConfigProvider.ConfigProvider,
-      ConfigProvider.fromUnknown({ ONTOS_DATABASE_POOL_SHARED: 'true' }),
-    ),
-  );
+const sharedPoolsWith =
+  (environment: Readonly<Record<string, string>>) =>
+  <A, E, R>(program: Effect.Effect<A, E, R>) =>
+    Effect.gen(function* withSharedPools() {
+      const context = yield* Layer.build(DatabasePoolRegistryLive.pipe(Layer.provide(Reactivity.layer)));
+      return yield* program.pipe(Effect.provideContext(context));
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromUnknown({ ...environment, ONTOS_DATABASE_POOL_SHARED: 'true' }),
+      ),
+    );
+const sharedPools = sharedPoolsWith({});
 const privatePools = Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({}));
 
 /** One owner's client, open until its own scope closes. */
@@ -478,6 +514,59 @@ it.live('does not share pools with different explicit limits or server deadlines
     expect(first.config).not.toBe(second.config);
     expect(first.config).not.toBe(deadline.config);
     expect(fake.sessions).toHaveLength(3);
+  }).pipe(Effect.scoped, sharedPools),
+);
+
+it.live('opens the configured minimum for the shared runtime-role pool only, before any statement', () =>
+  Effect.gen(function* warmMinimum() {
+    const fake = yield* fakePostgres;
+    const scope = yield* Effect.scope;
+    const runtime = yield* ownerClient(fake.url('ontos_runtime'), scope);
+    const party = yield* ownerClient(fake.url('party_registry_runtime'), scope);
+    // The pool opens its minimum in the background; another role's pool opens nothing.
+    yield* fake.started(2);
+    expect((yield* party.poolStatistics ?? Effect.die('no pool statistics')).total).toBe(0);
+    expect(fake.sessions.map(({ statements, user }) => ({ statements, user }))).toStrictEqual([
+      { statements: [], user: 'ontos_runtime' },
+      { statements: [], user: 'ontos_runtime' },
+    ]);
+
+    // A request reuses a warm session instead of opening another.
+    yield* query(runtime, 'select 1 as warm');
+    expect(fake.sessions).toHaveLength(2);
+
+    // A private advisory-lock session on the same role opens only the one session it locks with.
+    yield* Effect.scoped(
+      Effect.gen(function* privateLockSession() {
+        const services = yield* Layer.build(
+          guardedPgClientLayer(fake.url('ontos_runtime'), { maxConnections: 1, pooling: 'private' }),
+        );
+        yield* Context.get(services, PgClient.PgClient).unsafe("select pg_try_advisory_lock(hashtextextended('k', 0))");
+      }),
+    );
+    expect(fake.sessions).toHaveLength(3);
+  }).pipe(
+    Effect.scoped,
+    sharedPoolsWith({ ONTOS_DATABASE_POOL_MAX_CONNECTIONS: '6', ONTOS_DATABASE_POOL_MIN_CONNECTIONS: '2' }),
+  ),
+);
+
+it.live('does not share pools with different minimums', () =>
+  Effect.gen(function* distinctMinimums() {
+    const fake = yield* fakePostgres;
+    const configuration = yield* configureDatabasePool(fake.url('ontos_runtime'));
+    const reactivity = yield* Reactivity.make;
+    const open = (minConnections: number) =>
+      openDatabaseClient({ ...configuration, minConnections }).pipe(
+        Effect.provideService(Reactivity.Reactivity, reactivity),
+      );
+    const cold = yield* open(0);
+    const warm = yield* open(1);
+    expect(cold.config).not.toBe(warm.config);
+    yield* fake.started(1);
+    expect((yield* cold.poolStatistics ?? Effect.die('no pool statistics')).total).toBe(0);
+    yield* query(warm, 'select 1 as warm');
+    expect(fake.sessions).toHaveLength(1);
   }).pipe(Effect.scoped, sharedPools),
 );
 

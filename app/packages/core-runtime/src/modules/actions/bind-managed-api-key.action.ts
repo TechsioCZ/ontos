@@ -100,6 +100,7 @@ export const bindManagedApiKeyAction = defineAction(
       validateTarget: (input: BindManagedApiKeyPayload) =>
         validateManagedApiKeyTarget(transaction, {
           ...input,
+          issuing: true,
           legalEntityId: scope.legalEntityId,
           requireActive: true,
           tenantId: scope.tenantId,
