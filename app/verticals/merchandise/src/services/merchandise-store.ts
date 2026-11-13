@@ -530,6 +530,37 @@ export const deleteScope = Effect.fn('MerchandiseStore.deleteScope')(function* d
 });
 
 /**
+ * A held product this write reclassified away from reduced loses its hold in the same write: holds apply only to
+ * reduced products, and this release owns its company's holds (the expand step's triggers pass its writes through).
+ */
+const dropReclassifiedHolds = Effect.fn('MerchandiseStore.dropReclassifiedHolds')(function* dropReclassifiedHolds(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  changedProducts: readonly Product[],
+  held: HeldRates,
+) {
+  const dropped = changedProducts.flatMap((product) =>
+    held[product.id] !== undefined && product.taxClassificationCode !== CZ_VAT_REDUCED ? [product.id] : [],
+  );
+  if (dropped.length === 0) {
+    return;
+  }
+  yield* query(
+    db
+      .update(catalogHeads)
+      .set({
+        taxRates: sql`jsonb_set(${catalogHeads.taxRates}, '{heldProductRates}',
+          (${catalogHeads.taxRates} -> 'heldProductRates') - array[${sql.join(
+            dropped.map((id) => sql`${id}`),
+            sql`, `,
+          )}]::text[])`,
+      })
+      .where(and(whereScope(catalogHeads, scope), sql`${catalogHeads.taxRates} ? 'heldProductRates'`)),
+    'The dropped holds could not be written',
+  );
+});
+
+/**
  * Inserts `part` in batched statements: its categories, products (stock derived from the part's movements, so a
  * part must carry every movement of its products), movements and orders. Rows insert in the part's order.
  */
@@ -573,6 +604,8 @@ export const insertSnapshotPart = Effect.fn('MerchandiseStore.insertSnapshotPart
   yield* writeBatches(rows.orders, 400, (batch) =>
     query(db.insert(orders).values([...batch]), 'Orders could not be written'),
   );
+  // A held product written here as no longer reduced (a reset, a seed, an import) loses its stale hold as well.
+  yield* dropReclassifiedHolds(db, scope, part.products, held);
 });
 
 /**
@@ -1569,37 +1602,6 @@ const recordTaxClassificationLive = Effect.fn('MerchandiseStore.recordTaxClassif
     }
   },
 );
-
-/**
- * A held product this write reclassified away from reduced loses its hold in the same write: holds apply only to
- * reduced products, and this release owns its company's holds (the expand step's triggers pass its writes through).
- */
-const dropReclassifiedHolds = Effect.fn('MerchandiseStore.dropReclassifiedHolds')(function* dropReclassifiedHolds(
-  db: MerchandiseDb,
-  scope: StoreScope,
-  changedProducts: readonly Product[],
-  held: HeldRates,
-) {
-  const dropped = changedProducts.flatMap((product) =>
-    held[product.id] !== undefined && product.taxClassificationCode !== CZ_VAT_REDUCED ? [product.id] : [],
-  );
-  if (dropped.length === 0) {
-    return;
-  }
-  yield* query(
-    db
-      .update(catalogHeads)
-      .set({
-        taxRates: sql`jsonb_set(${catalogHeads.taxRates}, '{heldProductRates}',
-          (${catalogHeads.taxRates} -> 'heldProductRates') - array[${sql.join(
-            dropped.map((id) => sql`${id}`),
-            sql`, `,
-          )}]::text[])`,
-      })
-      .where(and(whereScope(catalogHeads, scope), sql`${catalogHeads.taxRates} ? 'heldProductRates'`)),
-    'The dropped holds could not be written',
-  );
-});
 
 /**
  * Writes exactly what changed between the working set and the command's result: new movements, rewritten

@@ -95,3 +95,38 @@ it.live('every product document keeps a vatRate the previous release decodes, an
     }),
   ).pipe(Effect.provide(NodeCrypto.layer)),
 );
+
+it.live(
+  'a reset writing a held product as standard drops its stale hold, so it cannot reappear on a later reclassification',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* resetDropsStaleHold() {
+        const connections = yield* loadDatabaseConnectionPair();
+        const client = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
+        const admin = yield* makeTestDatabaseFromClient(client, merchandiseRelations);
+        const company = { legalEntityId: randomUUID(), tenantId: randomUUID() };
+        yield* Effect.addFinalizer(() =>
+          Effect.all(
+            [priceTiers, productVariants, stockMovements, products, catalogHeads].map((table) =>
+              admin.delete(table).where(whereScope(table, company)),
+            ),
+            { concurrency: 1 },
+          ).pipe(Effect.orDie),
+        );
+        // The company on the migrated rates, both "held" and "standard" held at 10 % before the reset.
+        yield* client.unsafe(
+          `insert into demo_merchandise.catalog_heads (tenant_id, legal_entity_id, tax_rates)
+         values ($1, $2, jsonb_build_object('source', 'MIGRATION', 'heldProductRates', '{"held": 10, "standard": 10}'::jsonb))`,
+          [company.tenantId, company.legalEntityId],
+        );
+        const held = { held: 10, standard: 10 };
+        yield* admin.transaction((tx) => replaceSnapshot(tx, company, state, { held, rates: TEST_RATES }));
+        const [head] = yield* client.unsafe<{ readonly held: unknown }>(
+          `select tax_rates -> 'heldProductRates' as held from demo_merchandise.catalog_heads
+          where tenant_id = $1 and legal_entity_id = $2`,
+          [company.tenantId, company.legalEntityId],
+        );
+        expect(head?.held).toEqual({ held: 10 });
+      }),
+    ).pipe(Effect.provide(NodeCrypto.layer)),
+);
