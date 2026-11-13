@@ -83,17 +83,8 @@ const httpBridgeTimeoutPolicy = Effect.timeoutOrElse({
     ),
 });
 
-/**
- * Better Auth is a foreign HTTP provider; its Promise surface is supplied by the root layer. Only
- * the typed API is exposed: the raw `auth.handler` proxy is no longer part of this transport.
- */
-interface CommercePortalAuthHttpPort {
-  readonly api: Pick<CommercePortalAuth['api'], 'changePassword' | 'getSession' | 'signOut'>;
-}
-
-export class CommercePortalAuthService extends Context.Service<CommercePortalAuthService, CommercePortalAuthHttpPort>()(
-  '@app/commerce-customer-context/api/portal-auth/session/http/CommercePortalAuthService',
-) {}
+// The tag lives in `auth-service.ts` so a caller that only asks for the capability does not pull this transport in.
+export { CommercePortalAuthService } from './auth-service.ts';
 
 const PROBLEM_TYPE_PREFIX = 'https://ontos.dev/problems/commerce-portal-auth-session-';
 const problemStatus = {

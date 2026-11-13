@@ -11,7 +11,7 @@ import type { OwnPortalAuditSubject } from '../../../src/portal-auth/audit/own-p
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../provider/config.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../rate-limit-service.ts';
 import { consumeRateLimitBudget } from '../rate-limit-service.ts';
-import { CommercePortalAuthService } from '../session/http.ts';
+import { CommercePortalAuthService } from '../session/auth-service.ts';
 import { outcomeUnknownLanguageOf } from './outcome-unknown-texts.ts';
 import {
   passwordChangeCurrentInvalid,

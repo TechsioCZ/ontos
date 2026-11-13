@@ -6,7 +6,6 @@ import { Context, Effect, Layer, Redacted } from 'effect';
 import { Base64Url } from 'effect/encoding';
 import type { Scope } from 'effect';
 
-import { CommercePortalAuthDatabase } from '../persistence/portal-auth-database.ts';
 import type { CommercePortalAuthDatabaseExecutor } from '../persistence/portal-auth-database-types.ts';
 import type { CommercePortalAuthAuditEvent } from './audit-contracts.ts';
 import { commercePortalAuthAuditUnavailable } from './audit-unavailable.ts';
@@ -117,9 +116,3 @@ export const makeCommercePortalAuthAuditRecorder = (
       .values(commercePortalAuthAuditRow(event))
       .pipe(Effect.asVoid, Effect.mapError(commercePortalAuthAuditUnavailable)),
 });
-
-/** The single Layer the composition root wires for Commerce portal authentication audit evidence. */
-export const CommercePortalAuthAuditLive = Layer.effect(
-  CommercePortalAuthAudit,
-  CommercePortalAuthDatabase.pipe(Effect.map((database) => makeCommercePortalAuthAuditRecorder(database.executor))),
-);

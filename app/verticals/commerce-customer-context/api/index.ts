@@ -95,7 +95,7 @@ import {
 } from '../src/integrations/party-registry-retail-party-resolver.ts';
 import { retailEnrollmentTargetIdentityLive } from '../src/integrations/retail-enrollment-binding-live.ts';
 import { CommercePortalAuthDatabaseLive } from '../src/portal-auth/persistence/portal-auth-database.ts';
-import { CommercePortalAuthAuditLive } from '../src/portal-auth/audit/audit.ts';
+import { CommercePortalAuthAuditLive } from '../src/portal-auth/audit/audit-live.ts';
 import { CommercePortalAuthAccountLookupLive } from '../src/portal-auth/persistence/portal-auth-account-lookup.ts';
 import { CommercePortalAuthAccountCreationReconciliationLive } from '../src/portal-auth/persistence/portal-auth-account-creation-reconciliation.ts';
 import {
