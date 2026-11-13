@@ -36,6 +36,7 @@ export const SetSupportedCurrenciesActionForbiddenProblemSchema = makeProblemDet
       'operation_context_invalid',
       'supported_currencies_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const SetSupportedCurrenciesActionNotFoundProblemSchema = makeProblemDetailsSchema(

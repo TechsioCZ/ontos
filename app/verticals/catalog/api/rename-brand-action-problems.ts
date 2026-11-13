@@ -73,10 +73,12 @@ export const renameBrandActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RenameBrandActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RenameBrandActionForbiddenProblem'> =>
     RenameBrandActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -184,7 +186,7 @@ const mapCoreProblem = (error: ActionCoreError): RenameBrandActionProblem =>
       ActionInvocationStateError: (failure) => renameBrandActionProblem.conflict(failure.code),
       ActionPayloadValidationError: renameBrandActionProblem.invalid,
       ActionPermissionCheckError: (failure) => renameBrandActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => renameBrandActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => renameBrandActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => renameBrandActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => renameBrandActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => renameBrandActionProblem.conflict(failure.code),

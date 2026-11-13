@@ -139,7 +139,8 @@ const mapCoreProblem = (error: ActionCoreError): ReroutePurchaseApprovalRequestA
       ActionInvocationStateError: (failure) => reroutePurchaseApprovalRequestActionProblem.conflict(failure.code),
       ActionPayloadValidationError: reroutePurchaseApprovalRequestActionProblem.invalid,
       ActionPermissionCheckError: (failure) => reroutePurchaseApprovalRequestActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => reroutePurchaseApprovalRequestActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        reroutePurchaseApprovalRequestActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => reroutePurchaseApprovalRequestActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => reroutePurchaseApprovalRequestActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => reroutePurchaseApprovalRequestActionProblem.conflict(failure.code),

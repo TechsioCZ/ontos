@@ -238,8 +238,12 @@ export interface AccessAdminCase {
   /** Every declaration the published catalog carries, keyed the way the gate asks for it. */
   readonly declarations: ReadonlyMap<string, PublishedDeclaration>;
   /** The foreign tenant's own principals (its owner and its directory member among them). */
+  /** The foreign tenant's own companies. */
+  readonly foreignCompanies: readonly string[];
   readonly foreignIds: ReadonlyMap<Persona, AccessAdminIdentifiers>;
   readonly foreignTenantId: string;
+  /** The real gate itself, for code under test that asks the gate through its own service (O62). */
+  readonly gate: AccessDecisionService;
   readonly ids: ReadonlyMap<Persona, AccessAdminIdentifiers>;
   /** The trusted request scope of one persona (O66), for intent a scenario writes itself. */
   readonly scopeFor: (persona: Persona, legalEntityId?: string) => Effect.Effect<OperationalScope>;
@@ -1401,8 +1405,10 @@ export const withAccessAdminCase = <Value, Failure>(
         decide: askWith(live, questionContext),
         decideUnavailable: askWith(dead, questionContext),
         declarations,
+        foreignCompanies,
         foreignIds: identifiersOf(foreignPersonas),
         foreignTenantId,
+        gate: live,
         ids: identifiersOf(personas),
         scopeFor,
         scopeIdOf: companyScopeIdFor,

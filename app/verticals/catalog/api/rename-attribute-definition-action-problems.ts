@@ -61,10 +61,12 @@ export const renameAttributeDefinitionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RenameAttributeDefinitionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RenameAttributeDefinitionActionForbiddenProblem'> =>
     RenameAttributeDefinitionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -170,7 +172,8 @@ const mapCoreProblem = (error: ActionCoreError): RenameAttributeDefinitionAction
       ActionInvocationStateError: (failure) => renameAttributeDefinitionActionProblem.conflict(failure.code),
       ActionPayloadValidationError: renameAttributeDefinitionActionProblem.invalid,
       ActionPermissionCheckError: (failure) => renameAttributeDefinitionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => renameAttributeDefinitionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        renameAttributeDefinitionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => renameAttributeDefinitionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => renameAttributeDefinitionActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => renameAttributeDefinitionActionProblem.conflict(failure.code),

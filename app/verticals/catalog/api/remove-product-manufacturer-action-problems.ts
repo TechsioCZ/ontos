@@ -80,10 +80,12 @@ export const removeProductManufacturerActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RemoveProductManufacturerActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RemoveProductManufacturerActionForbiddenProblem'> =>
     RemoveProductManufacturerActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -206,7 +208,8 @@ const mapCoreProblem = (error: ActionCoreError): RemoveProductManufacturerAction
       ActionInvocationStateError: (failure) => removeProductManufacturerActionProblem.conflict(failure.code),
       ActionPayloadValidationError: removeProductManufacturerActionProblem.invalid,
       ActionPermissionCheckError: (failure) => removeProductManufacturerActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => removeProductManufacturerActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        removeProductManufacturerActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => removeProductManufacturerActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => removeProductManufacturerActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => removeProductManufacturerActionProblem.conflict(failure.code),

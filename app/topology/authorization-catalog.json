@@ -14128,6 +14128,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "core.identity.oauth-connection.administer",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "identity",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.identity.oauth-connection-administration",
+            "moduleKey": "core.identity",
+            "role": "api",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "core.identity.people-directory.list",
             "kind": "read",
             "modes": [

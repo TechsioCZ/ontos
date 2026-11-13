@@ -61,10 +61,12 @@ export const repeatCounterpartyOrderActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RepeatCounterpartyOrderActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RepeatCounterpartyOrderActionForbiddenProblem'> =>
     RepeatCounterpartyOrderActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -168,7 +170,8 @@ const mapCoreProblem = (error: ActionCoreError): RepeatCounterpartyOrderActionPr
       ActionInvocationStateError: (failure) => repeatCounterpartyOrderActionProblem.conflict(failure.code),
       ActionPayloadValidationError: repeatCounterpartyOrderActionProblem.invalid,
       ActionPermissionCheckError: (failure) => repeatCounterpartyOrderActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => repeatCounterpartyOrderActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        repeatCounterpartyOrderActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => repeatCounterpartyOrderActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => repeatCounterpartyOrderActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => repeatCounterpartyOrderActionProblem.conflict(failure.code),

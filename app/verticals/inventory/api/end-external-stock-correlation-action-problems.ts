@@ -61,10 +61,12 @@ export const endExternalStockCorrelationActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'EndExternalStockCorrelationActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'EndExternalStockCorrelationActionForbiddenProblem'> =>
     EndExternalStockCorrelationActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -166,7 +168,8 @@ const mapCoreProblem = (error: ActionCoreError): EndExternalStockCorrelationActi
       ActionInvocationStateError: (failure) => endExternalStockCorrelationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: endExternalStockCorrelationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => endExternalStockCorrelationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => endExternalStockCorrelationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        endExternalStockCorrelationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => endExternalStockCorrelationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => endExternalStockCorrelationActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => endExternalStockCorrelationActionProblem.conflict(failure.code),

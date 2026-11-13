@@ -37,6 +37,7 @@ export const PlaceStorefrontOrderActionForbiddenProblemSchema = makeProblemDetai
       'merchandise_permission_denied',
       'merchandise_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const PlaceStorefrontOrderActionNotFoundProblemSchema = makeProblemDetailsSchema(

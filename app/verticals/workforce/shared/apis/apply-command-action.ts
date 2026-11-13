@@ -31,6 +31,7 @@ export const ApplyCommandActionForbiddenProblemSchema = makeProblemDetailsSchema
       'workforce_permission_denied',
       'workforce_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ApplyCommandActionNotFoundProblemSchema = makeProblemDetailsSchema(

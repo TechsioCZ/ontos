@@ -34,6 +34,7 @@ export const ManageQuotationActionForbiddenProblemSchema = makeProblemDetailsSch
       'operation_context_invalid',
       'manage_quotation_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ManageQuotationActionNotFoundProblemSchema = makeProblemDetailsSchema(

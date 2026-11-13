@@ -31,6 +31,7 @@ export const AcknowledgePrivacyNoticeActionForbiddenProblemSchema = makeProblemD
       'operation_context_invalid',
       'privacy_notice_acknowledgement_denied',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const AcknowledgePrivacyNoticeActionNotFoundProblemSchema = makeProblemDetailsSchema(

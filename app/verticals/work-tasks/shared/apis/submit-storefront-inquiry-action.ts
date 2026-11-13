@@ -32,6 +32,7 @@ export const SubmitStorefrontInquiryActionForbiddenProblemSchema = makeProblemDe
       'operation_context_invalid',
       'work_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const SubmitStorefrontInquiryActionNotFoundProblemSchema = makeProblemDetailsSchema(

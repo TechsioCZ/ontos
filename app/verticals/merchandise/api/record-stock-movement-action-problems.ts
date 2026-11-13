@@ -86,10 +86,12 @@ export const recordStockMovementActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RecordStockMovementActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RecordStockMovementActionForbiddenProblem'> =>
     RecordStockMovementActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -212,7 +214,8 @@ const mapCoreProblem = (error: ActionCoreError): RecordStockMovementActionProble
       ActionInvocationStateError: (failure) => recordStockMovementActionProblem.conflict(failure.code),
       ActionPayloadValidationError: recordStockMovementActionProblem.invalid,
       ActionPermissionCheckError: (failure) => recordStockMovementActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => recordStockMovementActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        recordStockMovementActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => recordStockMovementActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => recordStockMovementActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => recordStockMovementActionProblem.conflict(failure.code),

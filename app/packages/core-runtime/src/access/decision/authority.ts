@@ -77,6 +77,11 @@ export interface ResolvedAccessScope {
 }
 
 export interface ScopeQuery {
+  /**
+   * A tenant-context request that names a company (O66, O88): the scope resolves only when that company is one of the
+   * tenant's own scopes, answered from the scope rows this read loads anyway, never by a read of its own.
+   */
+  readonly checkedCompany?: LegalEntityId;
   /** Every holder that takes part in the decision: the person and, for an agent, the agent. */
   readonly holders: readonly Holder[];
   readonly legalEntityId?: LegalEntityId;

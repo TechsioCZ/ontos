@@ -74,10 +74,12 @@ export const retireConfigurationUnitActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RetireConfigurationUnitActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RetireConfigurationUnitActionForbiddenProblem'> =>
     RetireConfigurationUnitActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -189,7 +191,8 @@ const mapCoreProblem = (error: ActionCoreError): RetireConfigurationUnitActionPr
       ActionInvocationStateError: (failure) => retireConfigurationUnitActionProblem.conflict(failure.code),
       ActionPayloadValidationError: retireConfigurationUnitActionProblem.invalid,
       ActionPermissionCheckError: (failure) => retireConfigurationUnitActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => retireConfigurationUnitActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        retireConfigurationUnitActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => retireConfigurationUnitActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => retireConfigurationUnitActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => retireConfigurationUnitActionProblem.conflict(failure.code),

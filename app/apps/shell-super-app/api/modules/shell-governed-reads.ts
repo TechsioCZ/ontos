@@ -5,6 +5,7 @@ import {
   ReadPermissionDenied,
   ReadRuntime,
   TenantModuleStateService,
+  decodeAccessDeclarationOrThrow,
   defineRead,
   defineSystemModuleEntrypoint,
 } from '@app/core-runtime';
@@ -13,6 +14,7 @@ import type { PeopleSystemSearchAccess, PeopleSystemSearchAdmission } from '@app
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import type { GateInput } from '@app/core-runtime/access/enforcement';
 import type {
+  AccessDeclaration,
   OperationalScope,
   ReadCoreError,
   ReadFinishContext,
@@ -247,6 +249,19 @@ const tenantModuleTargetEntrypoint = defineSystemModuleEntrypoint({
   moduleKey: 'core.shell',
   role: 'api',
 });
+/** The tenant-context page dispatch capability; the session document's release hint asks it too. */
+const TENANT_MODULE_TARGET_DECLARATION = {
+  key: 'core.shell.tenant-module-target.resolve',
+  kind: 'read',
+  modes: ['run'],
+  placement: { group: 'shell', level: 'basic' },
+  risk: 'routine',
+  selectors: [],
+} as const;
+export const TENANT_MODULE_TARGET_ACCESS_DECLARATION: AccessDeclaration = decodeAccessDeclarationOrThrow(
+  TENANT_MODULE_TARGET_DECLARATION,
+  tenantModuleTargetEntrypoint,
+);
 const resourceDetailEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'protected' },
@@ -668,14 +683,7 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
   );
   const tenantModuleTarget = defineRead(
     {
-      accessDeclaration: {
-        key: 'core.shell.tenant-module-target.resolve',
-        kind: 'read',
-        modes: ['run'],
-        placement: { group: 'shell', level: 'basic' },
-        risk: 'routine',
-        selectors: [],
-      },
+      accessDeclaration: TENANT_MODULE_TARGET_DECLARATION,
       accessKind: 'detail',
       entrypoint: tenantModuleTargetEntrypoint,
       evidencePolicy: {

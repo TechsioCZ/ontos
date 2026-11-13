@@ -81,10 +81,12 @@ export const recordDsrDeliveryEvidenceActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RecordDsrDeliveryEvidenceActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RecordDsrDeliveryEvidenceActionForbiddenProblem'> =>
     RecordDsrDeliveryEvidenceActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -198,7 +200,8 @@ const mapCoreProblem = (error: ActionCoreError): RecordDsrDeliveryEvidenceAction
       ActionInvocationStateError: (failure) => recordDsrDeliveryEvidenceActionProblem.conflict(failure.code),
       ActionPayloadValidationError: recordDsrDeliveryEvidenceActionProblem.invalid,
       ActionPermissionCheckError: (failure) => recordDsrDeliveryEvidenceActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => recordDsrDeliveryEvidenceActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        recordDsrDeliveryEvidenceActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => recordDsrDeliveryEvidenceActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => recordDsrDeliveryEvidenceActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => recordDsrDeliveryEvidenceActionProblem.conflict(failure.code),

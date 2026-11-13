@@ -56,10 +56,12 @@ export const assignSkuActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'AssignSkuActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'AssignSkuActionForbiddenProblem'> =>
     AssignSkuActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -160,7 +162,7 @@ const mapCoreProblem = (error: ActionCoreError): AssignSkuActionProblem =>
       ActionInvocationStateError: (failure) => assignSkuActionProblem.conflict(failure.code),
       ActionPayloadValidationError: assignSkuActionProblem.invalid,
       ActionPermissionCheckError: (failure) => assignSkuActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => assignSkuActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => assignSkuActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => assignSkuActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => assignSkuActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => assignSkuActionProblem.conflict(failure.code),

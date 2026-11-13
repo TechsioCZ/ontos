@@ -32,6 +32,7 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import type {
   ActionCoreError,
   ActiveApplicationCompositionServiceContract,
+  ContextAccess,
   DatabaseConnectionPair,
   PrincipalManagementError,
   PrincipalResolutionError,
@@ -47,7 +48,7 @@ import {
   AgentProposalCommandPreparationLive,
   AgentProposalCommandAuthorizationPreflightLive,
   IdentityAdministrationDeniedAuditLive,
-  ContextAccess,
+  oauthConnectionAdministrationRead,
   ActiveApplicationCompositionUnavailableError,
   makeReadRuntimeLive,
   ContextAccessLive,
@@ -297,7 +298,8 @@ import { ExternalIdentityNotInstalledLive } from './auth/external-identity-runti
 import type { ExternalIdentityDeploymentLayer } from './auth/external-identity-runtime.ts';
 import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
 import { GatewayTimings, gatewayTimingCollector, observeGatewayPhase } from './auth/gateway-timing.ts';
-import { demoAccountCapability } from './auth/demo-accounts.ts';
+import { preserveSystemPrincipalContextTrust } from '@app/core-runtime/auth/system-principal-context-provenance';
+import { peopleAdministrationCapability } from './auth/demo-accounts.ts';
 import { rebrandRentalDemoAccounts } from './auth/rental-demo-brand-runtime-infrastructure.ts';
 import { listAgentEntities, manageAgentEntity } from './auth/agent-entities.ts';
 import { IdentityLifecycle, IdentityLifecycleLive } from './auth/identity-lifecycle.ts';
@@ -342,6 +344,7 @@ import { CapturedShellCompositionCatalog, capturedShellCatalog } from './modules
 import { ShellGovernedReadDefinitions } from './modules/shell-governed-read-definitions.ts';
 import {
   ShellGovernedReads,
+  TENANT_MODULE_TARGET_ACCESS_DECLARATION,
   createShellGovernedReadsLayer,
   createShellGovernedReadDefinitionsLayer,
 } from './modules/shell-governed-reads.ts';
@@ -1701,12 +1704,7 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
             return yield* Effect.fail(authenticationInternalProblem());
           }
           const capability = yield* Effect.forkChild(
-            demoAccountCapability({
-              legalName:
-                context.availableLegalEntities.find((entry) => entry.legalEntityId === legalEntityId)?.legalName ??
-                legalEntityId,
-              principal,
-            }).pipe(
+            peopleAdministrationCapability({ principal }).pipe(
               Effect.map(({ canManage }) => canManage),
               Effect.orElseSucceed(() => false),
             ),
@@ -1790,14 +1788,19 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
     );
     let tenantRelease = Option.none<string>();
     if (context.state === 'tenant_authenticated') {
-      const access = yield* ContextAccess;
-      const decisions = yield* access.tenants({
-        permission: 'access',
-        principalId: context.principal.principalId,
-        tenantIds: [context.principal.tenantId],
+      // The release hint serves only tenant-context page dispatch, so it goes to exactly the people that
+      // dispatch admits: `core.shell.tenant-module-target.resolve`, asked in the tenant context (O28).
+      const gate = yield* AccessDecisionGate;
+      const decision = yield* gate.decide({
+        carrier: { accessDeclaration: TENANT_MODULE_TARGET_ACCESS_DECLARATION },
+        legalEntityScope: 'optional',
+        now: yield* DateTime.nowAsDate,
+        scope: preserveSystemPrincipalContextTrust(context.principal, {
+          ...context.principal,
+          correlationId: correlationFromRequest(request),
+        }),
       });
-      const [decision] = decisions;
-      if (decisions.length === 1 && decision?.key === context.principal.tenantId && decision.decision === 'allowed') {
+      if (decision.outcome === 'ALLOWED') {
         tenantRelease = yield* captureShellRelease(payload.compositionRevision).pipe(
           Effect.map((catalog) => catalog.composition.revision),
           Effect.option,
@@ -2093,7 +2096,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
         request,
         Effect.gen(function* demoAccountCapabilityHandler() {
           const caller = yield* demoAccountCaller(request);
-          const response = yield* demoAccountCapability(caller);
+          const response = yield* peopleAdministrationCapability(caller);
           yield* noStore;
           return yield* decodeResponse(DemoAccountCapabilitySchema, response, shellInternalProblem);
         }),
@@ -3215,11 +3218,20 @@ const connectionsCaller = Effect.fn('shell.connectionsAdmin.caller')(function* c
   withAdminRight: boolean,
 ) {
   const caller = yield* agentPlatformSessionCaller(request);
+  // The company's connected applications are administered through Core's own capability carrier,
+  // `core.identity.oauth-connection.administer`: admitting the read is the answer.
   const isCompanyAdmin = withAdminRight
-    ? yield* demoAccountCapability(caller).pipe(
-        Effect.map((capability) => capability.canManage),
-        Effect.orElseSucceed(() => false),
-      )
+    ? yield* (yield* ReadRuntime)
+        .runRead({
+          input: {},
+          principal: caller.principal,
+          registration: oauthConnectionAdministrationRead,
+          transport: { correlationId: correlationFromRequest(request) },
+        })
+        .pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        )
     : false;
   const result: ConnectionsCaller = {
     isCompanyAdmin,
@@ -3863,7 +3875,7 @@ export const makeShellAuthenticationApiRuntime = (
           Layer.provide(
             Layer.mergeAll(
               readRuntimeLayer,
-              contextAccessLayer,
+              accessEnforcementLive,
               PeopleSearchReadLive.pipe(
                 Layer.provide(
                   CoreSearchProjectionStoreLive.pipe(
@@ -3958,7 +3970,6 @@ export const makeShellAuthenticationApiRuntime = (
     Effect.gen(function* approvalOwnerIdentityLayer() {
       const authentication = yield* AuthenticationService;
       const gate = yield* AccessDecisionGate;
-      const contextAccess = yield* ContextAccess;
       const legalEntityContext = yield* LegalEntityContext;
       return {
         resolve: Effect.fn('ShellApi.approvalOwnerIdentity')(function* resolveApprovalOwnerIdentity(
@@ -3972,7 +3983,6 @@ export const makeShellAuthenticationApiRuntime = (
               : yield* authentication.resolveShellContext(headers);
           }).pipe(
             Effect.provideService(AccessDecisionGate, gate),
-            Effect.provideService(ContextAccess, contextAccess),
             Effect.provideService(LegalEntityContext, legalEntityContext),
             Effect.mapError((error) =>
               Match.value(error).pipe(

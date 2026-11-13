@@ -61,10 +61,12 @@ export const endClosedAssortmentBoundaryActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'EndClosedAssortmentBoundaryActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'EndClosedAssortmentBoundaryActionForbiddenProblem'> =>
     EndClosedAssortmentBoundaryActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -168,7 +170,8 @@ const mapCoreProblem = (error: ActionCoreError): EndClosedAssortmentBoundaryActi
       ActionInvocationStateError: (failure) => endClosedAssortmentBoundaryActionProblem.conflict(failure.code),
       ActionPayloadValidationError: endClosedAssortmentBoundaryActionProblem.invalid,
       ActionPermissionCheckError: (failure) => endClosedAssortmentBoundaryActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => endClosedAssortmentBoundaryActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        endClosedAssortmentBoundaryActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => endClosedAssortmentBoundaryActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => endClosedAssortmentBoundaryActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => endClosedAssortmentBoundaryActionProblem.conflict(failure.code),

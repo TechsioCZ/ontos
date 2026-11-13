@@ -1,4 +1,7 @@
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Schema } from 'effect';
+
+import { AccessDecisionGate } from '../access/enforcement/contract.ts';
+import type { AccessDeclaration } from '../authorization/access-declaration.ts';
 
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
@@ -10,7 +13,6 @@ import { auditEvents } from '../db/schema.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import { OperationalScopeResolver } from '../operations/context.ts';
 import type { OperationalScope, OperationalScopeRequest } from '../operations/context.ts';
-import { ContextAccess } from '../permissions/context-access.ts';
 import { IdentityAdministrationDeniedAuditUnavailable } from './identity-administration-audit-unavailable.ts';
 
 const PrincipalId = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrincipalId'));
@@ -53,6 +55,11 @@ const transportSchema = Schema.Struct({
 });
 
 export interface IdentityAdministrationDeniedAuditInput {
+  /**
+   * The administration declaration the caller was refused on (the Agents administration surface). Core
+   * asks the gate this same question in the original admitted company and records only a definite DENIED.
+   */
+  readonly declaration: AccessDeclaration;
   readonly operation: string;
   readonly principal: TrustedPrincipalContext;
   readonly principalKind: 'agent' | null;
@@ -115,7 +122,7 @@ export const IdentityAdministrationDeniedAuditLive = Layer.effect(
     const { executor } = yield* CoreDatabase;
     const enrollment = yield* DatabaseIdentityEnrollmentContext;
     const resolver = yield* OperationalScopeResolver;
-    const access = yield* ContextAccess;
+    const gate = yield* AccessDecisionGate;
     return {
       record: Effect.fn('IdentityAdministrationDeniedAudit.record')(
         function* record(input: IdentityAdministrationDeniedAuditInput) {
@@ -151,26 +158,15 @@ export const IdentityAdministrationDeniedAuditLive = Layer.effect(
               reason: 'An original admitted company scope is required',
             });
           }
-          const [tenant, company] = yield* Effect.all(
-            [
-              access.tenants({ permission: 'manage_identity', principalId, tenantIds: [tenantId] }),
-              access.legalEntities({
-                legalEntityIds: [legalEntityId],
-                permission: 'manage_people',
-                principalId,
-                tenantId,
-              }),
-            ],
-            { concurrency: 2 },
-          );
-          if (
-            tenant.length !== 1 ||
-            company.length !== 1 ||
-            tenant[0]?.key !== tenantId ||
-            company[0]?.key !== legalEntityId ||
-            tenant[0]?.decision !== 'denied' ||
-            company[0]?.decision !== 'denied'
-          ) {
+          // The same v2 question the caller was refused on, in the same admitted company (O62, O81). Only
+          // a definite refusal is recorded; an allow or an unreadable answer records nothing.
+          const decision = yield* gate.decide({
+            carrier: { accessDeclaration: input.declaration },
+            legalEntityScope: 'required',
+            now: DateTime.toDateUtc(yield* DateTime.now),
+            scope,
+          });
+          if (decision.outcome !== 'DENIED') {
             return yield* new IdentityAdministrationDeniedAuditUnavailable({
               cause: 'A definite current administration denial was not established',
               reason: 'The denied administration observation could not be verified',

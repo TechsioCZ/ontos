@@ -139,7 +139,8 @@ const mapCoreProblem = (error: ActionCoreError): CreatePurchaseProposalRevisionA
       ActionInvocationStateError: (failure) => createPurchaseProposalRevisionActionProblem.conflict(failure.code),
       ActionPayloadValidationError: createPurchaseProposalRevisionActionProblem.invalid,
       ActionPermissionCheckError: (failure) => createPurchaseProposalRevisionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => createPurchaseProposalRevisionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        createPurchaseProposalRevisionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => createPurchaseProposalRevisionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => createPurchaseProposalRevisionActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => createPurchaseProposalRevisionActionProblem.conflict(failure.code),
