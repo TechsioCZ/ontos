@@ -244,12 +244,13 @@ it.live(
         if (Result.isSuccess(otherTenant)) {
           return yield* Effect.die('Another tenant reached this Counterparty profile');
         }
-        // A second person of the owner's own company holds no grant of their own, so the owner rule names it.
+        // Another person id cannot borrow this admitted request: it is refused at the operation context, before the
+        // owner rule is ever consulted, so the grant written above is reachable by nobody else.
         const otherPerson = yield* addAs({ ...principal, principalId: randomUUID() });
         if (Result.isSuccess(otherPerson)) {
           return yield* Effect.die('A person without a Counterparty grant added an address');
         }
-        expect(otherPerson.failure).toMatchObject({ code: 'action_permission_denied', reasons: ownerRuleReasons });
+        expect(otherPerson.failure).toMatchObject({ code: 'operation_context_denied' });
         return true;
       }),
     ).pipe(Effect.provide(services)),
