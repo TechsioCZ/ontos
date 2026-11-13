@@ -12,13 +12,13 @@
 #                                   slower, steadier upload avoids the project-wide stall. A rate below package size / 25 s
 #                                   (about 10M for the 230 MB app package) makes every attempt slower than the limit
 #                                   below, so the upload goes three times and the push fails.
-#   ONTOS_PUSH_UPLOAD_WARMUP=true   an experiment, off unless set: before the first real upload of a push step, one tiny
-#                                   throwaway HEAD to the same upload host. The first upload of a push step stops every
-#                                   hostname of the project for 20-30 s whatever the package size (86 MB and 230 MB
-#                                   alike) and a second upload is clean, so this tells whether the first transfer of the
-#                                   step, rather than the first large transfer, is what stalls. The warm-up can never
-#                                   fail the push: any answer, curl error or timeout (cap 40 s) is logged and the push
-#                                   carries on unchanged.
+#   ONTOS_PUSH_UPLOAD_WARMUP=true   an experiment, off unless set: before the first real upload of this service (once
+#                                   per push-service.sh run, so up to four times per push step), one tiny throwaway HEAD
+#                                   to the same upload host. The first upload of a service stops every hostname of the
+#                                   project for 20-30 s whatever the package size (86 MB and 230 MB alike) and a second
+#                                   upload is clean, so this tells whether the first transfer, rather than the first
+#                                   large transfer, is what stalls. The warm-up can never fail the push: any answer,
+#                                   curl error or timeout (cap 15 s) is logged and the push carries on unchanged.
 #
 # Keep the package small and push one service at a time: Zerops silently truncates an upload that runs longer
 # than about 30 s, so a slower upload goes again (UPLOAD_LIMIT_SECONDS, default 25).
@@ -115,8 +115,8 @@ if [ -n "${ONTOS_PUSH_UPLOAD_LIMIT_RATE:-}" ]; then
   log "upload rate limited to $ONTOS_PUSH_UPLOAD_LIMIT_RATE (experiment)"
 fi
 
-# Off unless set; see the header. Only the two documented words are accepted, so a typo can neither turn the experiment
-# on by accident nor read as a warm-up that ran. The value is checked before any remote mutation.
+# Off unless set; see the header. Only the words below are accepted, so a typo can neither turn the experiment on by
+# accident nor read as a warm-up that ran. The value is checked before any remote mutation.
 warmup_enabled=''
 case "${ONTOS_PUSH_UPLOAD_WARMUP:-}" in
   '') ;;
@@ -130,11 +130,12 @@ esac
 
 timing_format='namelookup=%{time_namelookup} connect=%{time_connect} appconnect=%{time_appconnect} pretransfer=%{time_pretransfer} starttransfer=%{time_starttransfer} total=%{time_total} speed_upload=%{speed_upload} size_upload=%{size_upload} http_code=%{http_code}'
 
-# One tiny throwaway request to the host the upload goes to, before the first real upload of a push step. A HEAD to the
+# One tiny throwaway request to the host the upload goes to, before the first real upload of this service. A HEAD to the
 # host root: the same address, TLS and proxy entry the upload reaches, but no path, no signed query, no user info and
 # never the token, so it cannot consume the signed upload URL, cannot store anything and sends no credential anywhere
-# new. Any answer, curl error or timeout is logged on the one fact line and the push continues unchanged.
-warmup_timeout_seconds=40
+# new. Any answer, curl error or timeout is logged on the one fact line and the push continues unchanged. The cap is
+# shorter than UPLOAD_LIMIT_SECONDS below, so a warm-up that hangs cannot eat the attempt's truncation budget.
+warmup_timeout_seconds=15
 warmup_upload() {
   local attempt="$1" host="$2" url="$3" started timing exit_code=0 note=''
   started="$(stamp)"
@@ -156,12 +157,14 @@ for attempt in 1 2 3; do
   version_id="$(jq -er '.id' <<<"$created")"
   upload_url="$(jq -er '.uploadUrl' <<<"$created")"
   log "app version create ended (attempt $attempt): version $version_id"
-  started="$(date +%s)"
   upload_host="$(url_host "$upload_url")"
   log "upload started (attempt $attempt, $package_bytes bytes): host $upload_host, $(upload_route "$upload_host")"
   if ((attempt == 1)) && [ -n "$warmup_enabled" ]; then
     warmup_upload "$attempt" "$upload_host" "$(url_origin "$upload_url")"
   fi
+  # The clock starts after the warm-up: only the real upload is judged by the limit below, and "uploaded in N s" means
+  # the upload's own duration.
+  started="$(date +%s)"
   timing="$(curl -fsS --http1.1 --retry 2 "${rate_args[@]}" -X PUT -T "$work/package.tar.gz" "$upload_url" -o /dev/null \
     -w "$timing_format")"
   took=$(($(date +%s) - started))
