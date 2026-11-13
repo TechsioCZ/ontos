@@ -1,5 +1,5 @@
 import { Effect, Redacted, Schema } from 'effect';
-import { Headers } from 'effect/http';
+import { FetchHttpClient, Headers, HttpServerResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { ProposalIdSchema } from '../../src/access/ids.ts';
@@ -18,6 +18,7 @@ import {
   decodeActionEndpointHeaders,
   runGovernedActionHttp,
 } from '../../src/http/http-instrumentation-seam.ts';
+import { servedResponse } from '../support/served-response.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 
 const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
@@ -460,3 +461,33 @@ it.effect('decodes only the Action transport headers among open browser headers'
     }
   }),
 );
+
+it.layer(FetchHttpClient.layer)((suite) => {
+  suite.effect("answers an Action over HTTP with the owner's phases in server-timing", () =>
+    Effect.gen(function* servedActionTiming() {
+      // One statement span inside the Action, as the real runtime's would be.
+      const runtime: ActionRuntimeService = {
+        resolveActionCommit: () => Effect.die('Not exercised'),
+        resolveActionExecution: () => Effect.die('Not exercised'),
+        runAction: () => Effect.succeed(acceptedProposal).pipe(Effect.withSpan('postgres')),
+      };
+      const response = yield* servedResponse(
+        runGovernedActionHttp({
+          endpointHeaders: { idempotencyKey: 'timed-invocation', traceId: 'timed-trace' },
+          internalProblem: () => internalProblem,
+          invalidCorrelationProblem: () => invalidProblem,
+          mapError: () => internalProblem,
+          payload: {},
+          principal: { authenticate: () => Effect.succeed(principal) },
+          registration,
+          requestHeaders: { authorization: authorization(), 'x-correlation-id': 'timed-action' },
+        }).pipe(
+          Effect.provideService(ActionRuntime, runtime),
+          Effect.map(() => HttpServerResponse.text('ok')),
+        ),
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers['server-timing']).toContain('owner-sql-count;dur=1');
+    }),
+  );
+});

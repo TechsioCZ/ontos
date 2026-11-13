@@ -305,9 +305,11 @@ curl -fsS -o /dev/null --max-time 10 "http://localhost:$SHELL_PORT/" || say "WAR
 
 # 6. Sales-demo accounts, role grants and the agent-bot API key (needs the running shell; idempotent).
 step demo-permissions "${WITH_ENV[@]}" node scripts/demo/reset-permissions.mts
-# The permissions registered the modules' internal workloads (CRM's Party intake): issue their keys now and hand them
-# to the running callers, beside fresh module keys, exactly as the app host does. Nobody issues such a key by hand.
-say "provisioning module and internal workload credentials after the permissions"
+# The platform registers every module's own declared internal workload (CRM's Party intake) per tenant and company, as
+# the app host does at release, and then issues their keys and hands them to the running callers beside fresh module
+# keys. Nobody registers or keys an internal workload by hand.
+step internal-workloads "${WITH_ENV[@]}" node scripts/demo/release-internal-workloads.mts
+say "provisioning module and internal workload credentials after the registrations"
 MODULE_CREDENTIALS="$(ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="http://127.0.0.1:$COMPOSITION_PORT/active" \
   "${WITH_ENV[@]}" node scripts/zerops/provision-module-credentials.mts issue-installed \
   --operation="$(uuidgen | tr '[:upper:]' '[:lower:]')" --host="local-demo:$(hostname -s)" \

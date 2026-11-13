@@ -31,7 +31,7 @@ import type { ShellSearchResult as SharedShellSearchResult } from '../../shared/
 import type { ShellAccessDecision, ShellAccessGate } from './shell-access-decisions.ts';
 import { shellAccessOutcome } from './shell-access-decisions.ts';
 import type { InstalledModuleCatalogError, ShellInstalledCatalog } from './installed-module-catalog.ts';
-import { withShellSearchRequestBudget } from './shell-governed-search.ts';
+import { SHELL_SEARCH_PROVIDER_DEADLINE_MILLIS, withShellSearchRequestBudget } from './shell-governed-search.ts';
 import { observeShellSearchProvider } from './shell-search-diagnostics.ts';
 import { compileShellSearchPresentation } from './shell-search-presentation.ts';
 
@@ -838,8 +838,21 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
                 }),
               ),
             ),
-            // Retry only this read with a fresh single-use assertion, inside the unchanged request deadline.
+            // Retry only this read with a fresh single-use assertion, inside the unchanged provider deadline.
             Effect.retry({ times: 1, while: (failure) => !Schema.is(ReadPermissionDenied)(failure) }),
+            // One slow owner must not hold the whole answer. Past its deadline it counts as unavailable, like any failed
+            // owner: the Shell stops waiting and drops its request. The owner itself is not told and finishes its read.
+            Effect.timeoutOrElse({
+              duration: SHELL_SEARCH_PROVIDER_DEADLINE_MILLIS,
+              orElse: () =>
+                Effect.logWarning('Shell search provider passed its deadline').pipe(
+                  Effect.annotateLogs({
+                    search_module: provider.moduleId,
+                    search_provider: provider.contribution.searchKey,
+                  }),
+                  Effect.andThen(Effect.fail(unavailable())),
+                ),
+            }),
             captureSearch,
             Effect.map((result) => ({ provider, result })),
           );

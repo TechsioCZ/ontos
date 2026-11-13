@@ -213,7 +213,7 @@ for (const [file, before, after] of [
   ],
   [
     RUNTIME_FILE,
-    ').pipe(Layer.provide(apiServicesLive), Layer.provide(shellSearchNoStoreLayer));',
+    ').pipe(Layer.provide(apiServicesLive), Layer.provide(shellSearchNoStoreLayer), Layer.provide(NoServerTimingLive));',
     ').pipe(() => unrelatedHandlers);',
   ],
 ] as const) {
