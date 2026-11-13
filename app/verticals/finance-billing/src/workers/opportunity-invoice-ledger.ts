@@ -1,10 +1,10 @@
 import { defineScopedRoutine } from '@app/core-runtime';
 import type { OutboxWorkerLegalEntityScope } from '@app/core-runtime/outbox/worker';
-import { Context, Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { Context, Crypto, DateTime, Duration, Effect, Option, Schema } from 'effect';
 import type { FinanceError } from '../../shared/actions/apply-command.ts';
 import { FinanceConflict, FinancePersistenceUnavailable } from '../../shared/actions/apply-command.ts';
 import { FinanceStateSchema } from '../../shared/apis/records.ts';
-import type { FinanceState, Invoice, OpportunityLeftWon } from '../../shared/apis/records.ts';
+import type { FinanceState, Invoice, OpportunityAwaitingVat, OpportunityLeftWon } from '../../shared/apis/records.ts';
 import type { CreateInvoiceFromOpportunityCommand } from '../../shared/outbox-consumers/opportunity-won-invoice.ts';
 import { FinanceTaxRates } from '../integrations/tax-rates.ts';
 import { OpportunityNoLongerWon } from './opportunity-no-longer-won.ts';
@@ -92,6 +92,11 @@ const unavailable = (cause: unknown) =>
  */
 const LEFT_WON_RETENTION_DAYS = 100;
 const LEFT_WON_MAX_RECORDS = 1000;
+/** How long a won opportunity waits for its company's VAT once Tax first answered "not ready". */
+export const NOT_READY_WINDOW = Duration.hours(72);
+/** A wait record no delivery has looked at for this long is gone (its delivery completed or was resolved). */
+const AWAITING_VAT_RETENTION_DAYS = 30;
+const AWAITING_VAT_MAX_RECORDS = 1000;
 
 /** This Legal Entity's finance ledger and the revision it was read at; none when it keeps no ledger. */
 const readLedger = Effect.fn('Finance.readOpportunityLedger')(function* readLedger(
@@ -155,8 +160,18 @@ export const draftOpportunityInvoiceInScope = Effect.fn('Finance.draftOpportunit
       yield* workerValidators(scope, originator),
       { attemptId, now, resourceId },
     );
-    if (result.changed) {
-      yield* saveLedger(scope, revision, result.state);
+    // A drafted invoice ends its wait for VAT.
+    const awaiting = result.state.opportunitiesAwaitingVat ?? [];
+    const waitEnded =
+      result.invoice !== undefined && awaiting.some((record) => record.opportunityId === command.opportunityId);
+    const saved = waitEnded
+      ? {
+          ...result.state,
+          opportunitiesAwaitingVat: awaiting.filter((record) => record.opportunityId !== command.opportunityId),
+        }
+      : result.state;
+    if (result.changed || waitEnded) {
+      yield* saveLedger(scope, revision, saved);
     }
     return Option.fromUndefinedOr(result.invoice);
   },
@@ -197,6 +212,53 @@ export const recordOpportunityLeftWonInScope = Effect.fn('Finance.recordOpportun
   },
 );
 
+/** Where a won opportunity's wait for its company's VAT stands after Tax answered "not ready" once more. */
+export interface VatWait {
+  readonly firstNotReadyAt: DateTime.Utc;
+  /** The wait is over (72 hours since the first "not ready"); its record is gone. */
+  readonly over: boolean;
+}
+
+/**
+ * Records, on Tax's first "not ready" for the opportunity, when that was; on a later one says whether 72 hours have
+ * passed since, and if so removes the record (the delivery then completes without a draft). The wait is real time,
+ * kept in the company's ledger: lease re-claims and retries that come quickly cannot shorten it. A ledger the old
+ * release rewrote after a rollback has no record (it drops fields it does not know): the wait simply starts again.
+ */
+export const recordOpportunityVatNotReadyInScope = Effect.fn('Finance.recordOpportunityVatNotReadyInScope')(
+  function* recordOpportunityVatNotReadyInScope(
+    scope: OutboxWorkerLegalEntityScope,
+    opportunityId: OpportunityAwaitingVat['opportunityId'],
+  ): Effect.fn.Return<VatWait, FinanceError> {
+    const now = yield* DateTime.now;
+    const ledger = yield* readLedger(scope);
+    if (Option.isNone(ledger)) {
+      return { firstNotReadyAt: now, over: false };
+    }
+    const { revision, state } = ledger.value;
+    const awaiting = state.opportunitiesAwaitingVat ?? [];
+    const recorded = awaiting.find((record) => record.opportunityId === opportunityId);
+    if (recorded !== undefined) {
+      const over = Duration.isGreaterThanOrEqualTo(DateTime.distance(recorded.firstNotReadyAt, now), NOT_READY_WINDOW);
+      if (over) {
+        yield* saveLedger(scope, revision, {
+          ...state,
+          opportunitiesAwaitingVat: awaiting.filter((record) => record.opportunityId !== opportunityId),
+        });
+      }
+      return { firstNotReadyAt: recorded.firstNotReadyAt, over };
+    }
+    const keepFrom = DateTime.subtract(now, { days: AWAITING_VAT_RETENTION_DAYS });
+    const kept = awaiting.filter((record) => DateTime.isGreaterThanOrEqualTo(record.firstNotReadyAt, keepFrom));
+    const first: OpportunityAwaitingVat = { firstNotReadyAt: now, opportunityId };
+    yield* saveLedger(scope, revision, {
+      ...state,
+      opportunitiesAwaitingVat: [...kept, first].slice(-AWAITING_VAT_MAX_RECORDS),
+    });
+    return { firstNotReadyAt: now, over: false };
+  },
+);
+
 /** Whether this Legal Entity keeps a finance ledger at all. */
 export const holdsOpportunityLedgerInScope = (scope: OutboxWorkerLegalEntityScope) =>
   readLedger(scope).pipe(Effect.map(Option.isSome));
@@ -213,6 +275,10 @@ export interface OpportunityInvoiceLedgerService {
     scope: OutboxWorkerLegalEntityScope,
     left: OpportunityLeftWon,
   ) => Effect.Effect<boolean, FinanceError>;
+  readonly vatNotReady: (
+    scope: OutboxWorkerLegalEntityScope,
+    opportunityId: OpportunityAwaitingVat['opportunityId'],
+  ) => Effect.Effect<VatWait, FinanceError>;
 }
 
 /** Owner-local seam over the finance ledger; the worker host binds the scoped-routine adapter. */
@@ -225,4 +291,5 @@ export const opportunityInvoiceLedgerLive = Object.freeze({
   draft: draftOpportunityInvoiceInScope,
   holds: holdsOpportunityLedgerInScope,
   recordLeftWon: recordOpportunityLeftWonInScope,
+  vatNotReady: recordOpportunityVatNotReadyInScope,
 }) satisfies OpportunityInvoiceLedgerService;

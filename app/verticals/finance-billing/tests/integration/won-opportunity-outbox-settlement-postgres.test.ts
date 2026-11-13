@@ -32,6 +32,7 @@ import { makeOutboxRepository } from '../../../../packages/core-runtime/src/outb
 import { makeOutboxRuntime } from '../../../../packages/core-runtime/src/outbox/runtime.ts';
 import { makeNativeOutboxWorkerFixture } from '../../../../packages/core-runtime/tests/support/outbox-worker-native-fixture.ts';
 import { FinanceReferenceUnavailable } from '../../shared/actions/apply-command.ts';
+import type { OpportunityAwaitingVatSchema } from '../../shared/apis/records.ts';
 import type { VatChoices } from '../../shared/apis/vat-choices.ts';
 import { FinanceTaxRates } from '../../src/integrations/tax-rates.ts';
 import { draftInvoiceFromWonOpportunityWorker } from '../../src/workers/draft-invoice-from-won-opportunity.worker.ts';
@@ -47,8 +48,8 @@ const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeCrypto.layer),
 );
 const registration = draftInvoiceFromWonOpportunityWorker;
-/** Attempts before the one past the 72-hour not-ready window (the 20th, at least 84 hours after the first). */
-const AFTER_WINDOW = 19;
+/** A delivery Core has already retried this often (its back-off has grown to hours). */
+const MANY_ATTEMPTS = 19;
 /** A stage change: from, to, and the Sales Pipeline revision it happened at. */
 interface Stage {
   readonly from: string;
@@ -66,8 +67,16 @@ interface StoredLedger {
 }
 
 /** One company's finance ledger in memory, saved with a revision check exactly like the worker routines. */
-const memoryLedger = (tenantId: string, company: string, keepsLedger: boolean): OutboxWorkerLegalEntityScope => {
-  const ledger: StoredLedger = { revision: 0, state: { financialPlanEntries: [], invoices: [] } };
+const memoryLedger = (
+  tenantId: string,
+  company: string,
+  keepsLedger: boolean,
+  opportunitiesAwaitingVat: readonly (typeof OpportunityAwaitingVatSchema.Encoded)[] = [],
+): OutboxWorkerLegalEntityScope => {
+  const ledger: StoredLedger = {
+    revision: 0,
+    state: { financialPlanEntries: [], invoices: [], opportunitiesAwaitingVat },
+  };
   return {
     completionPublisher: { publish: () => Effect.die('Invoice drafting must not publish completion evidence') },
     legalEntityId: company,
@@ -266,6 +275,9 @@ it.layer(nativeServices, { excludeTestServices: true })('won opportunity Outbox 
         );
       const ownLedger = () => memoryLedger(tenantId, company, true);
 
+      // Tax first said this company is not ready 72 hours ago (and a minute), and still says so.
+      const unsetOpportunity = yield* uuid;
+      const waitedSince = DateTime.formatIso(DateTime.subtract(yield* DateTime.now, { hours: 72, minutes: 1 }));
       const leftWonLedger = ownLedger();
       const leftWonOpportunity = yield* uuid;
       const cases: readonly {
@@ -277,11 +289,12 @@ it.layer(nativeServices, { excludeTestServices: true })('won opportunity Outbox 
         readonly tax: FinanceTaxRates['Service'];
       }[] = [
         {
-          attemptsBefore: AFTER_WINDOW,
           code: 'VAT_NOT_SET_UP',
           company,
-          payload: message(yield* uuid, 21, nowIso),
-          scopes: [ownLedger()],
+          payload: message(unsetOpportunity, 21, nowIso),
+          scopes: [
+            memoryLedger(tenantId, company, true, [{ firstNotReadyAt: waitedSince, opportunityId: unsetOpportunity }]),
+          ],
           tax: answering(() => baselineVatChoices(tenantId, today, 'NOT_DECLARED')),
         },
         {
@@ -340,10 +353,17 @@ it.layer(nativeServices, { excludeTestServices: true })('won opportunity Outbox 
         expect([entry.code, yield* deadNow]).toEqual([entry.code, []]);
       }
 
-      // A system failure keeps its retry, past the not-ready window too: Tax unreachable. Pending, never dead.
-      const systemFailure = yield* publish(message(yield* uuid, 21, nowIso), company, AFTER_WINDOW);
+      // A system failure keeps its retry however often it was retried: Tax unreachable. Pending, never dead.
+      const systemFailure = yield* publish(message(yield* uuid, 21, nowIso), company, MANY_ATTEMPTS);
       const failed = yield* cycle(taxDown, [ownLedger()]);
       expect([failed.retried, failed.dead, yield* statusOf(systemFailure)]).toEqual([1, 0, 'pending']);
+      // Not ready, first seen now after as many attempts: its 72 hours start now. Pending, never completed.
+      const firstSeen = yield* publish(message(yield* uuid, 21, nowIso), company, MANY_ATTEMPTS);
+      const waiting = yield* cycle(
+        answering(() => baselineVatChoices(tenantId, today, 'NOT_DECLARED')),
+        [ownLedger()],
+      );
+      expect([waiting.retried, waiting.dead, yield* statusOf(firstSeen)]).toEqual([1, 0, 'pending']);
       expect(yield* deadNow).toEqual([]);
     }),
   );

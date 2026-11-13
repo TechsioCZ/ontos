@@ -6,14 +6,14 @@
 import type { OutboxWorkerHandlerContext, OutboxWorkerLegalEntityScope } from '@app/core-runtime';
 import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { OutboxWorkerLegalEntityScopeError } from '@app/core-runtime/outbox/worker';
-import { OutboxWorkerLegalEntityScopeFanout, retryBackoffMs } from '@app/core-runtime/outbox/worker';
+import { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
 import type { OutboxPayload } from '@app/sales-pipeline/outbox/opportunity-stage-changed';
 import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/sales-pipeline/outbox/opportunity-stage-changed';
-import { Duration, Effect, Option, Predicate, Ref, Schema } from 'effect';
+import { DateTime, Duration, Effect, Option, Predicate, Ref, Schema } from 'effect';
 import type { Crypto } from 'effect';
 import type { FinanceError } from '../../shared/actions/apply-command.ts';
 import type { LineVatIssue } from '../../shared/domain/line-vat.ts';
@@ -25,6 +25,7 @@ import type { CreateInvoiceFromOpportunityCommand } from '../../shared/outbox-co
 import { OpportunityInvoiceLedger } from './opportunity-invoice-ledger.ts';
 import type { OpportunityWonOriginator } from './opportunity-invoice-ledger.ts';
 import type { OpportunityNoLongerWon } from './opportunity-no-longer-won.ts';
+import { OpportunityVatNotReady } from './opportunity-vat-not-ready.ts';
 import { taxNotInstalled } from '../integrations/tax-rates.ts';
 import type { FinanceTaxRates } from '../integrations/tax-rates.ts';
 
@@ -108,49 +109,29 @@ const deliveryMatchesWorker = (context: OutboxWorkerHandlerContext): boolean =>
  */
 const vatNotReadyIssues: ReadonlySet<string> = new Set<LineVatIssue>(['vat_regime_not_declared', 'vat_rate_changed']);
 
-/**
- * How long a won opportunity waits for its company's VAT once Tax answers that it is not ready: 72 hours from this
- * delivery's first attempt (so a backlog drained after a deploy gets its whole window), spanning a release's
- * deploy-to-seed gap and a weekend. After it the delivery completes without a draft, logging the company. The time since
- * the first attempt is known from the attempt number: Core waits at least `retryBackoffMs` after each failed attempt.
- */
-const NOT_READY_WINDOW_HOURS = 72;
-const NOT_READY_WINDOW_MS = Duration.toMillis(Duration.hours(NOT_READY_WINDOW_HOURS));
-
-/** At least how long ago this delivery's first attempt was: the back-offs Core waited before this attempt. */
-const sinceFirstAttemptMs = (attemptNumber: number) => {
-  const policy = draftInvoiceFromWonOpportunityRetryPolicy;
-  let waited = 0;
-  for (let completed = 1; completed < attemptNumber; completed += 1) {
-    waited += retryBackoffMs(policy, completed);
-  }
-  return waited;
-};
-
-/** What one delivery maps its failures with: the opportunity's company and whether its not-ready window is over. */
+/** What one delivery maps its failures with: the opportunity's company and the won message's revision. */
 interface FailureContext {
   readonly company: string;
-  readonly notReadyWindowOver: boolean;
   readonly wonRevision: number;
 }
 
+/** Whether a failure of the draft is Tax answering "not ready" (never an outage). */
+const isVatNotReady = (failure: FinanceError | OpportunityNoLongerWon): boolean =>
+  (Predicate.isTagged(failure, 'FinanceRejected') && vatNotReadyIssues.has(failure.reason)) ||
+  (Predicate.isTagged(failure, 'FinanceReferenceUnavailable') && taxNotInstalled(failure));
+
 /**
- * Tax answered that the company is not ready (no declared regime, no rate for a line's classification, or Tax not
- * installed for the Tenant): retried within the window, after it a business outcome naming the company.
+ * How long one delivery attempt may run: well below its lease (`LEASE_MS`), so Core never re-claims a delivery a slow
+ * but healthy attempt still works on. Neither the Shell's delegated issuance nor the Tax client has a timeout of its
+ * own; this deadline is the one that bounds them. A hit is Tax being unavailable: a normal failure, with back-off.
  */
-const notReady = (reason: string, { company, notReadyWindowOver }: FailureContext) =>
-  notReadyWindowOver
-    ? rejected(
-        'VAT_NOT_SET_UP',
-        `VAT is not set up for company ${company} (${reason}) ${NOT_READY_WINDOW_HOURS} hours after the first attempt; the won opportunity's invoice was not drafted`,
-        false,
-      )
-    : rejected('VAT_NOT_READY', reason, true);
+const LEASE_MS = 60_000;
+const ATTEMPT_DEADLINE = Duration.seconds(30);
 
 const mapFailure =
   (context: FailureContext) =>
   (
-    failure: FinanceError | OpportunityNoLongerWon | OutboxWorkerLegalEntityScopeError,
+    failure: FinanceError | OpportunityNoLongerWon | OpportunityVatNotReady | OutboxWorkerLegalEntityScopeError,
   ): DraftInvoiceFromWonOpportunityRejected => {
     if (Predicate.isTagged(failure, 'OutboxWorkerLegalEntityScopeError')) {
       return failure.code === 'outbox_worker_scope_context_invalid'
@@ -165,16 +146,23 @@ const mapFailure =
       );
     }
     if (Predicate.isTagged(failure, 'FinanceRejected')) {
-      return vatNotReadyIssues.has(failure.reason)
-        ? notReady(failure.reason, context)
-        : rejected('FINANCE_REJECTED', failure.reason, false);
+      return rejected('FINANCE_REJECTED', failure.reason, false);
     }
-    // Tax not installed for the Tenant is an answer: not ready. Anything else that kept a reference from answering (Tax
-    // unreachable, a missing gateway credential, another reference read's outage) is a system failure: the retry policy.
+    // Tax said "not ready": retried until 72 hours after the first such answer (recorded in the company's ledger), then
+    // a business outcome naming the company.
+    if (Predicate.isTagged(failure, 'OpportunityVatNotReady')) {
+      return failure.over
+        ? rejected(
+            'VAT_NOT_SET_UP',
+            `VAT is not set up for company ${context.company} (${failure.reason}) 72 hours after Tax first said so (${DateTime.formatIso(failure.firstNotReadyAt)}); the won opportunity's invoice was not drafted`,
+            false,
+          )
+        : rejected('VAT_NOT_READY', failure.reason, true);
+    }
+    // Anything else that kept a reference from answering (Tax unreachable, a missing gateway credential, Tax installed
+    // but not readable now, another reference read's outage) is a system failure: the retry policy.
     if (Predicate.isTagged(failure, 'FinanceReferenceUnavailable')) {
-      return taxNotInstalled(failure)
-        ? notReady('vat_module_not_installed', context)
-        : rejected('TAX_UNAVAILABLE', failure.reason, true);
+      return rejected('TAX_UNAVAILABLE', failure.reason, true);
     }
     return rejected('PERSISTENCE_UNAVAILABLE', failure.reason, true);
   };
@@ -211,7 +199,22 @@ const draftInScope = Effect.fn('DraftInvoiceFromWonOpportunityWorker.draftInScop
     }
     return;
   }
-  const invoice = yield* ledger.draft(scope, command, originator, wonRevision);
+  // Tax said "not ready": record (or read) the wait in this company's ledger, then fail with where it stands.
+  const invoice = yield* ledger.draft(scope, command, originator, wonRevision).pipe(
+    Effect.catchIf(isVatNotReady, (notReady) =>
+      ledger.vatNotReady(scope, command.opportunityId).pipe(
+        Effect.flatMap((wait) =>
+          Effect.fail(
+            new OpportunityVatNotReady({
+              firstNotReadyAt: wait.firstNotReadyAt,
+              over: wait.over,
+              reason: Predicate.isTagged(notReady, 'FinanceRejected') ? notReady.reason : 'vat_module_not_installed',
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
   if (Option.isSome(invoice)) {
     yield* Ref.update(progress, (current) => ({ ...current, drafted: true }));
   } else if (yield* ledger.holds(scope)) {
@@ -257,7 +260,6 @@ export const handleDraftInvoiceFromWonOpportunity = Effect.fn('DraftInvoiceFromW
     }
     const failureContext: FailureContext = {
       company,
-      notReadyWindowOver: sinceFirstAttemptMs(context.attemptNumber) >= NOT_READY_WINDOW_MS,
       wonRevision: payload.revision,
     };
     const fanout = yield* OutboxWorkerLegalEntityScopeFanout;
@@ -324,21 +326,31 @@ export const draftInvoiceFromWonOpportunityWorker = defineOutboxWorker(
       moduleKey,
       role: 'worker',
     }),
-    leaseDurationMs: 30_000,
+    leaseDurationMs: LEASE_MS,
     legalEntityScope: 'required',
     payloadSchema: OutboxPayloadSchema,
     producerModuleKey: outboxProducerModuleKey,
-    // Core retries every failure on this one schedule and gives up (dead) at maxAttempts. A not-ready delivery (Tax
-    // answered: no regime, no rate, not installed) retries for 72 hours from its first attempt, then completes without
-    // a draft (NOT_READY_WINDOW_HOURS): the back-off doubles from one second up to a day, so the window ends at the 20th
-    // attempt of the 100, at least 84 hours after the first. Business outcomes complete at once (SETTLED_WITHOUT_DRAFT); only system failures keep the Outbox's longest
-    // back-off (Core's limits: 100 attempts, one day apart).
+    // Core retries every failure on this one schedule and gives up (dead) at maxAttempts. Tax answering "not ready"
+    // (no regime, no rate, not installed) retries until 72 hours after its first such answer, recorded in the company's
+    // ledger, then completes without a draft. Business outcomes complete at once (SETTLED_WITHOUT_DRAFT); only system
+    // failures keep the Outbox's longest back-off (Core's limits: 100 attempts, one day apart).
     retryPolicy: draftInvoiceFromWonOpportunityRetryPolicy,
     topic: outboxTopic,
     workerKey,
   },
   (payload, context) =>
     handleDraftInvoiceFromWonOpportunity(payload, context).pipe(
+      Effect.timeoutOrElse({
+        duration: ATTEMPT_DEADLINE,
+        orElse: () =>
+          Effect.fail(
+            rejected(
+              'TAX_UNAVAILABLE',
+              `The attempt did not finish within its ${Duration.format(ATTEMPT_DEADLINE)} deadline (lease ${String(LEASE_MS / 1000)} s); retried after the back-off`,
+              true,
+            ),
+          ),
+      }),
       Effect.catchTag('DraftInvoiceFromWonOpportunityRejected', settleBusinessOutcome(payload, context)),
     ),
 );

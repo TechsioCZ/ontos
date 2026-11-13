@@ -435,6 +435,16 @@ export const OpportunityLeftWonSchema = Schema.Struct({
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export type OpportunityLeftWon = typeof OpportunityLeftWonSchema.Type;
+/**
+ * A won opportunity whose invoice waits for its company's VAT: when Tax first answered that the company is not ready
+ * (no declared regime, no rate, Tax not installed). The wait is measured from then; the record goes when the invoice is
+ * drafted or the wait ends.
+ */
+export const OpportunityAwaitingVatSchema = Schema.Struct({
+  firstNotReadyAt: Schema.DateTimeUtcFromString,
+  opportunityId: FinanceOpportunityIdSchema,
+});
+export type OpportunityAwaitingVat = typeof OpportunityAwaitingVatSchema.Type;
 export const FinanceStateSchema = Schema.Struct({
   accountingExports: Schema.optionalKey(Schema.Array(AccountingExportSchema).check(Schema.isMaxLength(200))),
   accountingSetup: Schema.optionalKey(AccountingSetupSchema),
@@ -444,6 +454,9 @@ export const FinanceStateSchema = Schema.Struct({
   financialPlanEntries: Schema.Array(FinancialPlanEntrySchema).check(Schema.isMaxLength(1000)),
   invoices: Schema.Array(InvoiceSchema).check(Schema.isMaxLength(1000)),
   manualPayments: Schema.optionalKey(Schema.Array(ManualPaymentSchema).check(Schema.isMaxLength(5000))),
+  opportunitiesAwaitingVat: Schema.optionalKey(
+    Schema.Array(OpportunityAwaitingVatSchema).check(Schema.isMaxLength(1000)),
+  ),
   opportunitiesLeftWon: Schema.optionalKey(Schema.Array(OpportunityLeftWonSchema).check(Schema.isMaxLength(1000))),
   planItems: Schema.optionalKey(Schema.Array(PlanItemSchema).check(Schema.isMaxLength(2000))),
   priceList: Schema.optionalKey(Schema.Array(PriceListItemSchema).check(Schema.isMaxLength(500))),

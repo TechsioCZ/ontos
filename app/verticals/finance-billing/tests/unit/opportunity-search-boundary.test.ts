@@ -193,6 +193,7 @@ const committedDraft = Effect.gen(function* committedDraftDoesNotProject() {
         }),
       holds: () => Effect.die('The opportunity company is the only scope'),
       recordLeftWon: () => Effect.die('A won message records no move out of WON'),
+      vatNotReady: () => Effect.die('The fake Tax answers every opportunity'),
     }),
     Effect.provideService(OutboxWorkerLegalEntityScopeFanout, {
       forEachScope: (claim, observe) => {
