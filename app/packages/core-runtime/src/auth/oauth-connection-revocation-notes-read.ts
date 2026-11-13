@@ -46,7 +46,8 @@ export const latestOAuthRevocationNotes = (
   return [...notes].map(([grantId, note]) => ({ grantId, note }));
 };
 
-const prepare = Effect.fn('OAuthConnectionRevocationNotes.prepare')(function* prepare(
+/** The read's `prepare`: whether others' notes are read is decided here, before the audit transaction. */
+export const prepareRevocationNotes = Effect.fn('OAuthConnectionRevocationNotes.prepare')(function* prepare(
   input: typeof OAuthConnectionRevocationNotesInputSchema.Type,
   context: ReadPrepareContext,
 ) {
@@ -131,7 +132,7 @@ export const oauthConnectionRevocationNotesRead = defineRead(
     resultSchema: OAuthConnectionRevocationNotesResultSchema,
     schemaVersion: '1',
   },
-  { load, prepare },
+  { load, prepare: prepareRevocationNotes },
   (transaction) => Effect.succeed(notesFromTransaction(transaction)),
   () => ({ kind: 'legal_entity' }),
 );

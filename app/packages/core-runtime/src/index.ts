@@ -267,6 +267,7 @@ export {
 export {
   OAuthConnectionAdministrationInputSchema,
   OAuthConnectionAdministrationResultSchema,
+  administersOAuthConnections,
   oauthConnectionAdministrationRead,
 } from './auth/oauth-connection-administration-read.ts';
 // @ontos-codesmith-core-read-exports:start

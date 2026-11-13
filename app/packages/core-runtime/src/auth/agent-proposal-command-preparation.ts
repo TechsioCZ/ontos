@@ -83,7 +83,7 @@ const preflightUnavailable = (cause: unknown) =>
  * asked by the one gate in the request's own company (O81). It is not a new right, never a module's
  * execution right and never a caller-supplied capability.
  */
-const lifecycleQuestionOf = (scope: OperationalScope, now: Date): GateInput => ({
+export const lifecycleQuestionOf = (scope: OperationalScope, now: Date): GateInput => ({
   carrier: { accessDeclaration: manageAgentStatusAction.descriptor.accessDeclaration },
   legalEntityScope: 'required',
   now,

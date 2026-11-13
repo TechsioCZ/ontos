@@ -49,7 +49,6 @@ import {
   AgentProposalCommandPreparationLive,
   AgentProposalCommandAuthorizationPreflightLive,
   IdentityAdministrationDeniedAuditLive,
-  oauthConnectionAdministrationRead,
   ActiveApplicationCompositionUnavailableError,
   makeReadRuntimeLive,
   ContextAccessLive,
@@ -296,6 +295,7 @@ import type { ExternalIdentityDeploymentLayer } from './auth/external-identity-r
 import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
 import { GatewayTimings, gatewayTimingCollector, observeGatewayPhase } from './auth/gateway-timing.ts';
 import { preserveSystemPrincipalContextTrust } from '@app/core-runtime/auth/system-principal-context-provenance';
+import { connectedAppsAdministration, tenantReleaseHintAdmitted } from './auth/administration-access.ts';
 import { peopleAdministrationCapability } from './auth/demo-accounts.ts';
 import { rebrandRentalDemoAccounts } from './auth/rental-demo-brand-runtime-infrastructure.ts';
 import { listAgentEntities, manageAgentEntity } from './auth/agent-entities.ts';
@@ -341,7 +341,6 @@ import { CapturedShellCompositionCatalog, capturedShellCatalog } from './modules
 import { ShellGovernedReadDefinitions } from './modules/shell-governed-read-definitions.ts';
 import {
   ShellGovernedReads,
-  TENANT_MODULE_TARGET_ACCESS_DECLARATION,
   createShellGovernedReadsLayer,
   createShellGovernedReadDefinitionsLayer,
 } from './modules/shell-governed-reads.ts';
@@ -1776,19 +1775,14 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
     );
     let tenantRelease = Option.none<string>();
     if (context.state === 'tenant_authenticated') {
-      // The release hint serves only tenant-context page dispatch, so it goes to exactly the people that
-      // dispatch admits: `core.shell.tenant-module-target.resolve`, asked in the tenant context (O28).
-      const gate = yield* AccessDecisionGate;
-      const decision = yield* gate.decide({
-        carrier: { accessDeclaration: TENANT_MODULE_TARGET_ACCESS_DECLARATION },
-        legalEntityScope: 'optional',
-        now: yield* DateTime.nowAsDate,
-        scope: preserveSystemPrincipalContextTrust(context.principal, {
+      // The release hint goes to exactly the people tenant-context page dispatch admits.
+      const admitted = yield* tenantReleaseHintAdmitted(
+        preserveSystemPrincipalContextTrust(context.principal, {
           ...context.principal,
           correlationId: correlationFromRequest(request),
         }),
-      });
-      if (decision.outcome === 'ALLOWED') {
+      );
+      if (admitted) {
         tenantRelease = yield* captureShellRelease(payload.compositionRevision).pipe(
           Effect.map((catalog) => catalog.composition.revision),
           Effect.option,
@@ -3205,20 +3199,15 @@ const connectionsCaller = Effect.fn('shell.connectionsAdmin.caller')(function* c
   withAdminRight: boolean,
 ) {
   const caller = yield* agentPlatformSessionCaller(request);
-  // The company's connected applications are administered through Core's own capability carrier,
-  // `core.identity.oauth-connection.administer`: admitting the read is the answer.
+  // The company's connected applications are administered through Core's own capability,
+  // `core.identity.oauth-connection.administer`, asked in the caller's selected company.
   const isCompanyAdmin = withAdminRight
-    ? yield* (yield* ReadRuntime)
-        .runRead({
-          input: {},
-          principal: caller.principal,
-          registration: oauthConnectionAdministrationRead,
-          transport: { correlationId: correlationFromRequest(request) },
-        })
-        .pipe(
-          Effect.as(true),
-          Effect.orElseSucceed(() => false),
-        )
+    ? yield* connectedAppsAdministration(
+        preserveSystemPrincipalContextTrust(caller.principal, {
+          ...caller.principal,
+          correlationId: correlationFromRequest(request),
+        }),
+      )
     : false;
   const result: ConnectionsCaller = {
     isCompanyAdmin,
