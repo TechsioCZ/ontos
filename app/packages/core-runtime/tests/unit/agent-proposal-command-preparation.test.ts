@@ -20,7 +20,11 @@ import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identi
 import { canonicalizeApplicationComposition } from '../../src/modules/application-composition.ts';
 import { OntosModuleDeploymentContractSchema } from '../../src/modules/manifest.ts';
 import { ActionAuthority } from '../../src/permissions/action-authority.ts';
-import { ContextAccess } from '../../src/permissions/context-access.ts';
+import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
+import type { AccessDecisionService, GateInput } from '../../src/access/enforcement/contract.ts';
+import { makeTestAccessDecision } from '../../src/access/enforcement/testing.ts';
+import { testAccessSpecOf } from '../../src/testing/access-gate.ts';
+import type { TestAccessOutcome } from '../../src/testing/access-gate.ts';
 import {
   agentId,
   batchId,
@@ -131,11 +135,33 @@ const preflightInput = (payload: Schema.Json = claimPayload) => ({
   scope,
 });
 const forbiddenContext = () => Effect.die('No people, tenant or resource permissions authorize lifecycle commands');
+/** A gate no lifecycle-free command may ask: only withdrawal asks the agent administration right. */
+const unaskedGate: AccessDecisionService = {
+  ...makeTestAccessDecision(),
+  decide: () => Effect.die('Only an agent withdrawal asks the gate here'),
+};
+/** The gate answering `core.identity.agent-status.manage`, and recording what it was asked. */
+const agentStatusGate = (
+  outcome: TestAccessOutcome,
+  asked: GateInput[],
+  transactionOpen: () => boolean,
+): AccessDecisionService => {
+  const scripted = makeTestAccessDecision(testAccessSpecOf({ 'core.identity.agent-status.manage': outcome }));
+  return {
+    ...scripted,
+    decide: (input: GateInput) => {
+      // The authority is asked outside any SQL transaction, as every remote question is.
+      expect(transactionOpen()).toBe(false);
+      asked.push(input);
+      return scripted.decide(input);
+    },
+  };
+};
 
 // Capture one real preparation service in the native test scope so prepare/consume share its one-shot state.
 const makePreparation = Effect.fn('AgentProposalCommandPreparationTest.make')(function* makePreparation(
   database: (typeof CoreDatabase.Service)['executor'],
-  contextAccess: typeof ContextAccess.Service,
+  gate: AccessDecisionService,
   authority: typeof ActionAuthority.Service,
   fixture: typeof composition = composition,
 ) {
@@ -146,7 +172,7 @@ const makePreparation = Effect.fn('AgentProposalCommandPreparationTest.make')(fu
           Layer.succeed(CoreDatabase, { executor: database }),
           Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
           outboxWorkerCompositionLayer(fixture),
-          Layer.succeed(ContextAccess, contextAccess),
+          Layer.succeed(AccessDecisionGate, gate),
           Layer.succeed(ActionAuthority, authority),
         ),
       ),
@@ -155,91 +181,78 @@ const makePreparation = Effect.fn('AgentProposalCommandPreparationTest.make')(fu
   return Context.get(services, AgentProposalCommandPreparation);
 });
 
-for (const [people, identity, expected] of [
-  ['allowed', 'denied', 'not_applicable'],
-  ['denied', 'allowed', 'not_applicable'],
-  ['denied', 'denied', 'denied'],
+for (const [outcome, expected] of [
+  ['allowed', 'not_applicable'],
+  ['denied', 'denied'],
 ] as const) {
-  it.effect(
-    `withdrawal uses native manage_people=${people} or manage_identity=${identity}, never business execute`,
-    () =>
-      Effect.gen(function* administration() {
-        let transactionOpen = false;
-        const database = yield* makeTestDatabase((sql, params) => {
-          if (sql === 'BEGIN') {
-            transactionOpen = true;
-          }
-          if (sql === 'COMMIT' || sql === 'ROLLBACK') {
-            transactionOpen = false;
-          }
-          if (sql === installAndReadScopeSql) {
-            return Effect.succeed([{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
-          }
-          if (sql.includes('from "core"."principals"')) {
-            const isAgent = params.includes(agentId);
-            return Effect.succeed([
-              {
-                displayName: 'Actor',
-                kind: isAgent ? 'agent' : 'human',
-                principalId: isAgent ? agentId : humanId,
-                status: isAgent ? 'disabled' : 'active',
-              },
-            ]);
-          }
-          // Lifecycle withdrawal remains possible after the business module has left the composition.
-          return Effect.succeed(
-            sql.includes('from "core"."agent_proposals"')
-              ? [proposalSqlRow(proposalRow({ appId: 'removed', moduleKey: 'removed.module' }))]
-              : [],
-          );
-        });
-        yield* Effect.gen(function* preparedWithdrawal() {
-          const preparation = yield* AgentProposalCommandPreparation;
-          const payload = { batchId, note: 'Agent disabled', operation: 'withdraw-pending-of-agent' as const };
-          const decision = yield* preparation.prepare(preflightInput(payload));
-          expect(decision.outcome).toBe(expected);
-          if (expected === 'not_applicable') {
-            // NOT_APPLICABLE preserves the real Action's explicit execution gate; this is not a permission grant.
-            const snapshot = yield* preparation.consume({
-              actionInvocationId: nextInvocationId,
-              compositionRevision: composition.revision,
-              payload,
-              scope,
-            });
-            expect(snapshot.proposer.status).toBe('disabled');
-          }
-        }).pipe(
-          Effect.provideService(
-            AgentProposalCommandPreparation,
-            yield* makePreparation(
-              database,
-              {
-                legalEntities: (input) => {
-                  expect(transactionOpen).toBe(false);
-                  expect(input).toEqual({
-                    legalEntityIds: [legalEntityId],
-                    permission: 'manage_people',
-                    principalId: humanId,
-                    tenantId,
-                  });
-                  return Effect.succeed([{ decision: people, key: legalEntityId }]);
-                },
-                modules: forbiddenContext,
-                resources: forbiddenContext,
-                tenants: (input) => {
-                  expect(transactionOpen).toBe(false);
-                  expect(input).toEqual({ permission: 'manage_identity', principalId: humanId, tenantIds: [tenantId] });
-                  return Effect.succeed([{ decision: identity, key: tenantId }]);
-                },
-              },
-              {
-                checkActionAuthorities: forbiddenContext,
-                checkActionProposalPermission: forbiddenContext,
-              },
-            ),
-          ),
+  it.effect(`withdrawal is decided by the agent administration right (${outcome}), never by business execute`, () =>
+    Effect.gen(function* administration() {
+      const asked: GateInput[] = [];
+      let transactionOpen = false;
+      const database = yield* makeTestDatabase((sql, params) => {
+        if (sql === 'BEGIN') {
+          transactionOpen = true;
+        }
+        if (sql === 'COMMIT' || sql === 'ROLLBACK') {
+          transactionOpen = false;
+        }
+        if (sql === installAndReadScopeSql) {
+          return Effect.succeed([{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
+        }
+        if (sql.includes('from "core"."principals"')) {
+          const isAgent = params.includes(agentId);
+          return Effect.succeed([
+            {
+              displayName: 'Actor',
+              kind: isAgent ? 'agent' : 'human',
+              principalId: isAgent ? agentId : humanId,
+              status: isAgent ? 'disabled' : 'active',
+            },
+          ]);
+        }
+        // Lifecycle withdrawal remains possible after the business module has left the composition.
+        return Effect.succeed(
+          sql.includes('from "core"."agent_proposals"')
+            ? [proposalSqlRow(proposalRow({ appId: 'removed', moduleKey: 'removed.module' }))]
+            : [],
         );
-      }),
+      });
+      yield* Effect.gen(function* preparedWithdrawal() {
+        const preparation = yield* AgentProposalCommandPreparation;
+        const payload = { batchId, note: 'Agent disabled', operation: 'withdraw-pending-of-agent' as const };
+        const decision = yield* preparation.prepare(preflightInput(payload));
+        expect(decision.outcome).toBe(expected);
+        if (expected === 'not_applicable') {
+          // NOT_APPLICABLE preserves the real Action's explicit execution gate; this is not a permission grant.
+          const snapshot = yield* preparation.consume({
+            actionInvocationId: nextInvocationId,
+            compositionRevision: composition.revision,
+            payload,
+            scope,
+          });
+          expect(snapshot.proposer.status).toBe('disabled');
+        }
+      }).pipe(
+        Effect.provideService(
+          AgentProposalCommandPreparation,
+          yield* makePreparation(
+            database,
+            agentStatusGate(outcome, asked, () => transactionOpen),
+            {
+              checkActionAuthorities: forbiddenContext,
+              checkActionProposalPermission: forbiddenContext,
+            },
+          ),
+        ),
+      );
+      // The one question is the agent-status right, in the request's own company.
+      expect(asked).toHaveLength(1);
+      expect(asked[0]).toMatchObject({
+        carrier: { accessDeclaration: { key: 'core.identity.agent-status.manage' } },
+        legalEntityScope: 'required',
+        scope: { legalEntityId, principalId: humanId, tenantId },
+      });
+    }),
   );
 }
 
@@ -290,29 +303,20 @@ for (const propose of ['allowed', 'denied'] as const) {
       }).pipe(
         Effect.provideService(
           AgentProposalCommandPreparation,
-          yield* makePreparation(
-            database,
-            {
-              legalEntities: forbiddenContext,
-              modules: forbiddenContext,
-              resources: forbiddenContext,
-              tenants: forbiddenContext,
+          yield* makePreparation(database, unaskedGate, {
+            // One gate question over the acting request's own trusted scope (O66): the Action key is
+            // the only scalar the caller names, and `insert` reads the Action's own propose answer.
+            checkActionAuthorities: (query) => {
+              expect(query.actionKeys).toEqual(['work.tasks.update']);
+              expect(query.scope.legalEntityId).toBe(legalEntityId);
+              expect(query.scope.principalId).toBe(agentId);
+              expect(query.scope.tenantId).toBe(tenantId);
+              return Effect.succeed(
+                query.actionKeys.map((actionKey) => ({ actionKey, execute: 'denied' as const, propose })),
+              );
             },
-            {
-              // One gate question over the acting request's own trusted scope (O66): the Action key is
-              // the only scalar the caller names, and `insert` reads the Action's own propose answer.
-              checkActionAuthorities: (query) => {
-                expect(query.actionKeys).toEqual(['work.tasks.update']);
-                expect(query.scope.legalEntityId).toBe(legalEntityId);
-                expect(query.scope.principalId).toBe(agentId);
-                expect(query.scope.tenantId).toBe(tenantId);
-                return Effect.succeed(
-                  query.actionKeys.map((actionKey) => ({ actionKey, execute: 'denied' as const, propose })),
-                );
-              },
-              checkActionProposalPermission: forbiddenContext,
-            },
-          ),
+            checkActionProposalPermission: forbiddenContext,
+          }),
         ),
       );
       expect(result.outcome).toBe(propose === 'allowed' ? 'not_applicable' : 'denied');
@@ -412,12 +416,7 @@ for (const [name, actionSlug, command, expectedActions, fixture] of [
           AgentProposalCommandPreparation,
           yield* makePreparation(
             database,
-            {
-              legalEntities: forbiddenContext,
-              modules: forbiddenContext,
-              resources: forbiddenContext,
-              tenants: forbiddenContext,
-            },
+            unaskedGate,
             {
               checkActionAuthorities: (query) => {
                 asked.push([...query.actionKeys]);
@@ -495,42 +494,28 @@ it.effect(
         expect(sql.startsWith('insert')).toBe(false);
         return Effect.succeed([]);
       });
-      const legacyModuleQuestions: string[] = [];
       const result = yield* Effect.gen(function* prepareInsert() {
         const preparation = yield* AgentProposalCommandPreparation;
         return yield* preparation.prepare({ ...preflightInput(), payload, principal: ownerScope, scope: ownerScope });
       }).pipe(
         Effect.provideService(
           AgentProposalCommandPreparation,
-          yield* makePreparation(
-            database,
-            {
-              legalEntities: forbiddenContext,
-              modules: (target) => {
-                legacyModuleQuestions.push(...target.moduleIds);
-                return Effect.succeed(target.moduleIds.map((key) => ({ decision: 'denied' as const, key })));
-              },
-              resources: forbiddenContext,
-              tenants: forbiddenContext,
+          yield* makePreparation(database, unaskedGate, {
+            checkActionAuthorities: (query) => {
+              expect(query.scope).toBe(ownerScope);
+              return Effect.succeed(
+                query.actionKeys.map((actionKey) => ({
+                  actionKey,
+                  execute: 'allowed' as const,
+                  propose: 'allowed' as const,
+                })),
+              );
             },
-            {
-              checkActionAuthorities: (query) => {
-                expect(query.scope).toBe(ownerScope);
-                return Effect.succeed(
-                  query.actionKeys.map((actionKey) => ({
-                    actionKey,
-                    execute: 'allowed' as const,
-                    propose: 'allowed' as const,
-                  })),
-                );
-              },
-              checkActionProposalPermission: forbiddenContext,
-            },
-          ),
+            checkActionProposalPermission: forbiddenContext,
+          }),
         ),
       );
       expect(result.outcome).toBe('not_applicable');
-      expect(legacyModuleQuestions).toEqual([]);
     }),
 );
 
@@ -601,13 +586,8 @@ for (const [name, execute, proposerPermission, expected] of [
           AgentProposalCommandPreparation,
           yield* makePreparation(
             database,
-            {
-              legalEntities: forbiddenContext,
-              // The Action's own answer is its module's; the retired `module_access` relation is never asked.
-              modules: forbiddenContext,
-              resources: forbiddenContext,
-              tenants: forbiddenContext,
-            },
+            // The Action's own answer is its module's; no legacy relation is asked at all.
+            unaskedGate,
             {
               // The actor and, for a claim, the proposer each ask in their own scope; one call per
               // identity is what the runner proves happened, and the transaction is already closed.
@@ -663,19 +643,10 @@ for (const [name, patch] of [
       }).pipe(
         Effect.provideService(
           AgentProposalCommandPreparation,
-          yield* makePreparation(
-            database,
-            {
-              legalEntities: forbiddenContext,
-              modules: forbiddenContext,
-              resources: forbiddenContext,
-              tenants: forbiddenContext,
-            },
-            {
-              checkActionAuthorities: forbiddenContext,
-              checkActionProposalPermission: forbiddenContext,
-            },
-          ),
+          yield* makePreparation(database, unaskedGate, {
+            checkActionAuthorities: forbiddenContext,
+            checkActionProposalPermission: forbiddenContext,
+          }),
         ),
       );
       expect(result.outcome).toBe('denied');
@@ -698,19 +669,10 @@ it.effect('requires the original admitted principal and rejects authority-shaped
     }).pipe(
       Effect.provideService(
         AgentProposalCommandPreparation,
-        yield* makePreparation(
-          database,
-          {
-            legalEntities: forbiddenContext,
-            modules: forbiddenContext,
-            resources: forbiddenContext,
-            tenants: forbiddenContext,
-          },
-          {
-            checkActionAuthorities: forbiddenContext,
-            checkActionProposalPermission: forbiddenContext,
-          },
-        ),
+        yield* makePreparation(database, unaskedGate, {
+          checkActionAuthorities: forbiddenContext,
+          checkActionProposalPermission: forbiddenContext,
+        }),
       ),
     );
   }),
@@ -763,26 +725,17 @@ for (const mismatch of ['payload', 'scope', 'composition'] as const) {
       }).pipe(
         Effect.provideService(
           AgentProposalCommandPreparation,
-          yield* makePreparation(
-            database,
-            {
-              legalEntities: forbiddenContext,
-              modules: forbiddenContext,
-              resources: forbiddenContext,
-              tenants: forbiddenContext,
-            },
-            {
-              checkActionAuthorities: (query) =>
-                Effect.succeed(
-                  query.actionKeys.map((actionKey) => ({
-                    actionKey,
-                    execute: 'allowed' as const,
-                    propose: 'allowed' as const,
-                  })),
-                ),
-              checkActionProposalPermission: forbiddenContext,
-            },
-          ),
+          yield* makePreparation(database, unaskedGate, {
+            checkActionAuthorities: (query) =>
+              Effect.succeed(
+                query.actionKeys.map((actionKey) => ({
+                  actionKey,
+                  execute: 'allowed' as const,
+                  propose: 'allowed' as const,
+                })),
+              ),
+            checkActionProposalPermission: forbiddenContext,
+          }),
         ),
       );
     }),

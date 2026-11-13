@@ -61,10 +61,12 @@ export const assignCatalogMediaActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'AssignCatalogMediaActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'AssignCatalogMediaActionForbiddenProblem'> =>
     AssignCatalogMediaActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -166,7 +168,8 @@ const mapCoreProblem = (error: ActionCoreError): AssignCatalogMediaActionProblem
       ActionInvocationStateError: (failure) => assignCatalogMediaActionProblem.conflict(failure.code),
       ActionPayloadValidationError: assignCatalogMediaActionProblem.invalid,
       ActionPermissionCheckError: (failure) => assignCatalogMediaActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => assignCatalogMediaActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        assignCatalogMediaActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => assignCatalogMediaActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => assignCatalogMediaActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => assignCatalogMediaActionProblem.conflict(failure.code),

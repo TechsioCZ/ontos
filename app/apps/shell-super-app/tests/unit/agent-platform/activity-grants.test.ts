@@ -22,7 +22,7 @@ rs.mock('../../../api/agent-platform/caller.ts', () => ({
   callerModuleAccess: () => Effect.succeed({ access: new Set(['fixture.notes']), write: new Set(['fixture.notes']) }),
 }));
 rs.mock('../../../api/auth/demo-accounts.ts', () => ({
-  demoAccountCapability: () => Effect.succeed({ canManage: true }),
+  peopleAdministrationCapability: () => Effect.succeed({ canManage: true }),
 }));
 
 const tenantId = '00000000-0000-4000-8000-000000000001';

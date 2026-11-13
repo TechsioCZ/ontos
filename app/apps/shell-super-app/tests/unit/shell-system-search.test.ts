@@ -2,12 +2,12 @@ import { requestPeopleSearchRebuild } from '../../api/people-search-rebuild.ts';
 import { actionSuccess, actionCoreFailure, makeActionRuntimeDouble } from '../support/action-runtime-double.ts';
 import { RequestPeopleSearchRebuildHttpHeadersSchema } from '../../shared/core-actions/request-people-search-rebuild.ts';
 import { NodeCrypto } from '@effect/platform-node';
-import { ActionRuntime, ActionPermissionDenied, ContextAccess, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { ActionRuntime, ActionPermissionDenied, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { corePeopleSystemSearchProvider, PeopleSearchResponseSchema } from '@app/core-runtime/people/search';
 import type { PeopleSearchResponse } from '@app/core-runtime/people/search';
 import { interpretCoreSystemSearchPresentation } from '@app/core-runtime/search-contract';
-import { Context, DateTime, Effect, Fiber, Layer, Result, Schema } from 'effect';
+import { DateTime, Effect, Fiber, Layer, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 import { authorizePeopleSearchResults, mergeShellSystemSearch } from '../../api/modules/shell-system-search.ts';
@@ -243,25 +243,13 @@ it.effect('all providers unavailable remains a typed failure, while denied Core 
   }),
 );
 it.layer(NodeCrypto.layer)('Core system row authorization', (suite) => {
-  for (const decision of ['allowed', 'denied', 'unavailable'] as const) {
-    suite.effect(`Shell independently applies ${decision} per-person resource permission`, () =>
-      Effect.gen(function* rowPermission() {
-        const harness = yield* makeReadTestHarness({
-          executeOwnerQuery: () => Effect.die('Shell system validation must never query owner SQL'),
-          operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-02T12:00:00.000Z')),
-          permissionDecision: decision,
-          scope,
-        });
-        const environment = yield* Layer.build(harness.layer);
-        const result = authorizePeopleSearchResults(scope, [person]).pipe(Effect.provideContext(environment));
-        if (decision === 'unavailable') {
-          expect(Schema.is(ShellProviderUnavailableError)(yield* result.pipe(Effect.flip))).toBe(true);
-        } else {
-          expect(yield* result).toHaveLength(decision === 'allowed' ? 1 : 0);
-        }
-      }),
-    );
-  }
+  suite.effect('passes the company people rows the Core read admitted through unchanged', () =>
+    Effect.gen(function* coreDecides() {
+      // Who may see a person is decided once, by the Core read itself (the People list's capability);
+      // the Shell keeps only the exact system contract and no legacy per-person relation.
+      expect(yield* authorizePeopleSearchResults(scope, [person])).toEqual([{ ...person, kind: 'resource' }]);
+    }),
+  );
   suite.effect('discards wrong tenant and company even when graph permits both, and rejects foreign types', () =>
     Effect.gen(function* trustedContext() {
       const harness = yield* makeReadTestHarness({
@@ -294,7 +282,7 @@ it.layer(NodeCrypto.layer)('Core system row authorization', (suite) => {
     [{ ...person, ref: { ...person.ref, ...unexpectedCoreFields } }],
     [{ ...person, ...unexpectedCoreFields }],
   ] satisfies readonly PeopleSearchResponse[]) {
-    suite.effect(`rejects malformed Core rows before checking resource permissions: ${JSON.stringify(values)}`, () =>
+    suite.effect(`rejects malformed Core rows: ${JSON.stringify(values)}`, () =>
       Effect.gen(function* malformedCoreRows() {
         const harness = yield* makeReadTestHarness({
           executeOwnerQuery: () => Effect.die('No owner SQL'),
@@ -304,10 +292,7 @@ it.layer(NodeCrypto.layer)('Core system row authorization', (suite) => {
         });
         const environment = yield* Layer.build(harness.layer);
         const failure = yield* authorizePeopleSearchResults(scope, values).pipe(
-          Effect.provideService(ContextAccess, {
-            ...Context.get(environment, ContextAccess),
-            resources: () => Effect.die('Malformed Core rows must fail before permission checks'),
-          }),
+          Effect.provideContext(environment),
           Effect.flip,
         );
         expect(Schema.is(ShellProviderUnavailableError)(failure)).toBe(true);

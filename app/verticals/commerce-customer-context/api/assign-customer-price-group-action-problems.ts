@@ -163,7 +163,8 @@ const mapCoreProblem = (error: ActionCoreError): AssignCustomerPriceGroupActionP
       ActionInvocationStateError: (failure) => assignCustomerPriceGroupActionProblem.conflict(failure.code),
       ActionPayloadValidationError: assignCustomerPriceGroupActionProblem.invalid,
       ActionPermissionCheckError: (failure) => assignCustomerPriceGroupActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => assignCustomerPriceGroupActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        assignCustomerPriceGroupActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => assignCustomerPriceGroupActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => assignCustomerPriceGroupActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => assignCustomerPriceGroupActionProblem.conflict(failure.code),

@@ -61,10 +61,12 @@ export const endApplicabilityBindingActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'EndApplicabilityBindingActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'EndApplicabilityBindingActionForbiddenProblem'> =>
     EndApplicabilityBindingActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -169,7 +171,8 @@ const mapCoreProblem = (error: ActionCoreError): EndApplicabilityBindingActionPr
       ActionInvocationStateError: (failure) => endApplicabilityBindingActionProblem.conflict(failure.code),
       ActionPayloadValidationError: endApplicabilityBindingActionProblem.invalid,
       ActionPermissionCheckError: (failure) => endApplicabilityBindingActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => endApplicabilityBindingActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        endApplicabilityBindingActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => endApplicabilityBindingActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => endApplicabilityBindingActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => endApplicabilityBindingActionProblem.conflict(failure.code),

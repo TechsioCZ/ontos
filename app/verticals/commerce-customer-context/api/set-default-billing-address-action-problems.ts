@@ -61,10 +61,12 @@ export const setDefaultBillingAddressActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'SetDefaultBillingAddressActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'SetDefaultBillingAddressActionForbiddenProblem'> =>
     SetDefaultBillingAddressActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -170,7 +172,8 @@ const mapCoreProblem = (error: ActionCoreError): SetDefaultBillingAddressActionP
       ActionInvocationStateError: (failure) => setDefaultBillingAddressActionProblem.conflict(failure.code),
       ActionPayloadValidationError: setDefaultBillingAddressActionProblem.invalid,
       ActionPermissionCheckError: (failure) => setDefaultBillingAddressActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => setDefaultBillingAddressActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        setDefaultBillingAddressActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => setDefaultBillingAddressActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => setDefaultBillingAddressActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => setDefaultBillingAddressActionProblem.conflict(failure.code),

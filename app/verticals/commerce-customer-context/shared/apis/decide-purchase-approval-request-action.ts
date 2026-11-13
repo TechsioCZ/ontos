@@ -32,6 +32,7 @@ export const DecidePurchaseApprovalRequestActionForbiddenProblemSchema = makePro
       'BUYER_PERMISSION_DENIED',
       'PERMISSION_DENIED',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const DecidePurchaseApprovalRequestActionNotFoundProblemSchema = makeProblemDetailsSchema(

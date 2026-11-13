@@ -81,10 +81,12 @@ export const recordDsrSubstantiveDecisionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RecordDsrSubstantiveDecisionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RecordDsrSubstantiveDecisionActionForbiddenProblem'> =>
     RecordDsrSubstantiveDecisionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -199,7 +201,8 @@ const mapCoreProblem = (error: ActionCoreError): RecordDsrSubstantiveDecisionAct
       ActionInvocationStateError: (failure) => recordDsrSubstantiveDecisionActionProblem.conflict(failure.code),
       ActionPayloadValidationError: recordDsrSubstantiveDecisionActionProblem.invalid,
       ActionPermissionCheckError: (failure) => recordDsrSubstantiveDecisionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => recordDsrSubstantiveDecisionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        recordDsrSubstantiveDecisionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => recordDsrSubstantiveDecisionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => recordDsrSubstantiveDecisionActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => recordDsrSubstantiveDecisionActionProblem.conflict(failure.code),

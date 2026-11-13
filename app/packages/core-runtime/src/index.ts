@@ -223,6 +223,7 @@ export {
   AgentProposalCommandPreparation,
   AgentProposalCommandPreparationLive,
   AgentProposalCommandAuthorizationPreflightLive,
+  proposalLifecycleAdministrator,
 } from './auth/agent-proposal-command-preparation.ts';
 export { agentProposalQueueRead } from './auth/agent-proposal-queue-read.ts';
 export {
@@ -261,6 +262,11 @@ export {
   OAuthConnectionRevocationNotesResultSchema,
   oauthConnectionRevocationNotesRead,
 } from './auth/oauth-connection-revocation-notes-read.ts';
+export {
+  OAuthConnectionAdministrationInputSchema,
+  OAuthConnectionAdministrationResultSchema,
+  oauthConnectionAdministrationRead,
+} from './auth/oauth-connection-administration-read.ts';
 // @ontos-codesmith-core-read-exports:start
 
 // @ontos-core-read legal-entity-detail
@@ -423,16 +429,23 @@ export type {
 } from './permissions/context-access.ts';
 export type { LegalEntityPermissionKey, TenantPermissionKey } from './permissions/context-permissions.ts';
 export {
+  OWNER_RULE_DENIED_REASON,
   OwnerAuthorizationDecisionSchema,
   OwnerAuthorizationOverlay,
   OwnerAuthorizationOverlayAllowLive,
   allowOwnerAuthorizationOverlay,
   failClosedOwnerAuthorizationDecision,
   failClosedOwnerAuthorizationOverlay,
+  decodeOwnerAuthorizationOutcome,
+  ownerAuthorizationFromExit,
+  ownerAuthorizationDenial,
 } from './access/enforcement/owner-overlay.ts';
 export type {
   OwnerAccessFacts,
   OwnerAuthorizationDecision,
+  DecodedOwnerAuthorization,
+  OwnerAuthorizationDenial,
+  OwnerAuthorizationOutcome,
   OwnerAuthorizationInput,
   OwnerAuthorizationOverlayService,
   OwnerAuthorizationTarget,

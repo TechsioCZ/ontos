@@ -107,10 +107,12 @@ export const manageQuantityTierActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ManageQuantityTierActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ManageQuantityTierActionForbiddenProblem'> =>
     ManageQuantityTierActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -233,7 +235,8 @@ const mapCoreProblem = (error: ActionCoreError): ManageQuantityTierActionProblem
       ActionInvocationStateError: (failure) => manageQuantityTierActionProblem.conflict(failure.code),
       ActionPayloadValidationError: manageQuantityTierActionProblem.invalid,
       ActionPermissionCheckError: (failure) => manageQuantityTierActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => manageQuantityTierActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        manageQuantityTierActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => manageQuantityTierActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => manageQuantityTierActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => manageQuantityTierActionProblem.conflict(failure.code),

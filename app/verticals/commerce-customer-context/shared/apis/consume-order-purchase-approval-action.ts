@@ -41,6 +41,7 @@ export const ConsumeOrderPurchaseApprovalActionForbiddenProblemSchema = makeProb
       'BUYER_PERMISSION_DENIED',
       'PERMISSION_DENIED',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ConsumeOrderPurchaseApprovalActionNotFoundProblemSchema = makeProblemDetailsSchema(

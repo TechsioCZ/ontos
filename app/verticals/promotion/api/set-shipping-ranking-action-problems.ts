@@ -85,10 +85,12 @@ export const setShippingRankingActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'SetShippingRankingActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'SetShippingRankingActionForbiddenProblem'> =>
     SetShippingRankingActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -199,7 +201,8 @@ const mapCoreProblem = (error: ActionCoreError): SetShippingRankingActionProblem
       ActionInvocationStateError: (failure) => setShippingRankingActionProblem.conflict(failure.code),
       ActionPayloadValidationError: setShippingRankingActionProblem.invalid,
       ActionPermissionCheckError: (failure) => setShippingRankingActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => setShippingRankingActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        setShippingRankingActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => setShippingRankingActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => setShippingRankingActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => setShippingRankingActionProblem.conflict(failure.code),

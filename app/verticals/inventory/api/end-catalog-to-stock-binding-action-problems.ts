@@ -61,10 +61,12 @@ export const endCatalogToStockBindingActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'EndCatalogToStockBindingActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'EndCatalogToStockBindingActionForbiddenProblem'> =>
     EndCatalogToStockBindingActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -166,7 +168,8 @@ const mapCoreProblem = (error: ActionCoreError): EndCatalogToStockBindingActionP
       ActionInvocationStateError: (failure) => endCatalogToStockBindingActionProblem.conflict(failure.code),
       ActionPayloadValidationError: endCatalogToStockBindingActionProblem.invalid,
       ActionPermissionCheckError: (failure) => endCatalogToStockBindingActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => endCatalogToStockBindingActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        endCatalogToStockBindingActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => endCatalogToStockBindingActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => endCatalogToStockBindingActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => endCatalogToStockBindingActionProblem.conflict(failure.code),

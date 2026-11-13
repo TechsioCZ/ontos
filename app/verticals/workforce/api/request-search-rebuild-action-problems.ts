@@ -59,10 +59,12 @@ export const requestSearchRebuildActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RequestSearchRebuildActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RequestSearchRebuildActionForbiddenProblem'> =>
     RequestSearchRebuildActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -153,7 +155,8 @@ const mapCoreProblem = (error: ActionCoreError): RequestSearchRebuildActionProbl
       ActionInvocationStateError: (failure) => requestSearchRebuildActionProblem.conflict(failure.code),
       ActionPayloadValidationError: requestSearchRebuildActionProblem.invalid,
       ActionPermissionCheckError: (failure) => requestSearchRebuildActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => requestSearchRebuildActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        requestSearchRebuildActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => requestSearchRebuildActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => requestSearchRebuildActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => requestSearchRebuildActionProblem.conflict(failure.code),

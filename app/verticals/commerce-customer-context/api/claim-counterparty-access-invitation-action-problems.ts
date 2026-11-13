@@ -148,7 +148,8 @@ const mapCoreProblem = (error: ActionCoreError): ClaimCounterpartyAccessInvitati
       ActionInvocationStateError: (failure) => claimCounterpartyAccessInvitationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: claimCounterpartyAccessInvitationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => claimCounterpartyAccessInvitationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => claimCounterpartyAccessInvitationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        claimCounterpartyAccessInvitationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => claimCounterpartyAccessInvitationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         claimCounterpartyAccessInvitationActionProblem.unavailable(failure.code),

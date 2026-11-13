@@ -92,10 +92,12 @@ export const terminatePortalEnrollmentActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'TerminatePortalEnrollmentActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'TerminatePortalEnrollmentActionForbiddenProblem'> =>
     TerminatePortalEnrollmentActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -219,7 +221,8 @@ const mapCoreProblem = (error: ActionCoreError): TerminatePortalEnrollmentAction
       ActionInvocationStateError: (failure) => terminatePortalEnrollmentActionProblem.conflict(failure.code),
       ActionPayloadValidationError: terminatePortalEnrollmentActionProblem.invalid,
       ActionPermissionCheckError: (failure) => terminatePortalEnrollmentActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => terminatePortalEnrollmentActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        terminatePortalEnrollmentActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => terminatePortalEnrollmentActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => terminatePortalEnrollmentActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => terminatePortalEnrollmentActionProblem.conflict(failure.code),

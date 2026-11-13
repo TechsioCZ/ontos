@@ -61,10 +61,12 @@ export const submitStorefrontInquiryActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'SubmitStorefrontInquiryActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'SubmitStorefrontInquiryActionForbiddenProblem'> =>
     SubmitStorefrontInquiryActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -170,7 +172,8 @@ const mapCoreProblem = (error: ActionCoreError): SubmitStorefrontInquiryActionPr
       ActionInvocationStateError: (failure) => submitStorefrontInquiryActionProblem.conflict(failure.code),
       ActionPayloadValidationError: submitStorefrontInquiryActionProblem.invalid,
       ActionPermissionCheckError: (failure) => submitStorefrontInquiryActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => submitStorefrontInquiryActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        submitStorefrontInquiryActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => submitStorefrontInquiryActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => submitStorefrontInquiryActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => submitStorefrontInquiryActionProblem.conflict(failure.code),

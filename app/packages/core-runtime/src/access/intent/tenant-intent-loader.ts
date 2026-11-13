@@ -808,6 +808,11 @@ const makeIntentLoaderOver = (
       [readScopeRows(transaction, query.tenantId), readMemberships(transaction, query.tenantId)],
       { concurrency: 1 },
     );
+    const { checkedCompany } = query;
+    if (checkedCompany !== undefined && !scopeRows.some((candidate) => candidate.legalEntityId === checkedCompany)) {
+      // The request pairs the tenant with a company it does not own: nothing here is decided (O66, O88).
+      return Option.none<ResolvedAccessScope>();
+    }
     const row = scopeRows.find((candidate) =>
       query.legalEntityId === undefined
         ? candidate.legalEntityId === null

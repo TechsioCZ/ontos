@@ -1,9 +1,8 @@
 import type { AccessDecision } from '../../src/access/decision/contract.ts';
 import { NodeCrypto } from '@effect/platform-node';
-import { Context, DateTime, Effect, Layer, Schema } from 'effect';
+import { DateTime, Effect, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
-import { ContextAccess } from '../../src/permissions/context-access.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
 import type { TestAccessOutcome } from '../../src/testing/access-gate.ts';
@@ -73,10 +72,7 @@ interface CandidatePerson {
   readonly kind: string;
   readonly principalId: string;
 }
-const searchCurrentCandidates = Effect.fn(function* searchCurrentCandidates(
-  candidates: readonly CandidatePerson[],
-  deniedId: string,
-) {
+const searchCurrentCandidates = Effect.fn(function* searchCurrentCandidates(candidates: readonly CandidatePerson[]) {
   const harness = yield* makeReadTestHarness({
     access: 'allowed',
     executeOwnerQuery: (query) => {
@@ -104,19 +100,7 @@ const searchCurrentCandidates = Effect.fn(function* searchCurrentCandidates(
   const environment = yield* Layer.build(
     Layer.mergeAll(harness.layer, Layer.succeed(CoreSearchQueryRuntime, { search: () => Effect.succeed(hits) })),
   );
-  const access = Context.get(environment, ContextAccess);
-  const checked = Context.add(environment, ContextAccess, {
-    ...access,
-    resources: ({ resources }) =>
-      Effect.succeed(
-        resources.map((ref) => ({
-          decision:
-            ref.resourceId === personResourceId(companyId, deniedId) ? ('denied' as const) : ('allowed' as const),
-          key: `${ref.moduleId}:${ref.resourceType}:${ref.resourceId}`,
-        })),
-      ),
-  });
-  const result = yield* runPeopleSearch(request).pipe(Effect.provideContext(checked));
+  const result = yield* runPeopleSearch(request).pipe(Effect.provideContext(environment));
   expect(harness.snapshot().ownerQueries).toHaveLength(candidates.length === 0 ? 0 : 1);
   return result;
 });
@@ -211,20 +195,8 @@ it.layer(NodeCrypto.layer)('people search governed read', (suite) => {
         const environment = yield* Layer.build(
           Layer.mergeAll(harness.layer, Layer.succeed(CoreSearchQueryRuntime, runtime)),
         );
-        let resourceDecision: 'allowed' | 'denied' | 'unavailable' = 'allowed';
-        const access = Context.get(environment, ContextAccess);
-        const checked = Context.add(environment, ContextAccess, {
-          ...access,
-          resources: ({ resources }) =>
-            Effect.succeed(
-              resources.map((ref) => ({
-                decision: resourceDecision,
-                key: `${ref.moduleId}:${ref.resourceType}:${ref.resourceId}`,
-              })),
-            ),
-        });
         const search = (query: string) =>
-          runPeopleSearch({ ...request, input: { query } }).pipe(Effect.provideContext(checked));
+          runPeopleSearch({ ...request, input: { query } }).pipe(Effect.provideContext(environment));
         for (const query of ['Žofie', 'Novakova Zofie']) {
           expect(yield* search(query)).toEqual([]);
         }
@@ -238,11 +210,6 @@ it.layer(NodeCrypto.layer)('people search governed read', (suite) => {
         for (const query of ['Božena Nováková', 'bozena novakova', 'Nováková Božena', 'novakova bozena']) {
           expect(yield* search(query)).toEqual(expected);
         }
-        resourceDecision = 'denied';
-        expect(yield* search('bozena novakova')).toEqual([]);
-        resourceDecision = 'unavailable';
-        expect(Schema.is(ReadHandlerUnavailable)(yield* search('bozena novakova').pipe(Effect.flip))).toBe(true);
-        resourceDecision = 'allowed';
         const beforeRename = harness.snapshot().ownerQueries.length;
         currentName = 'Anežka Dvořáková';
         expect(yield* search('bozena novakova')).toEqual([]);
@@ -261,12 +228,10 @@ it.layer(NodeCrypto.layer)('people search governed read', (suite) => {
         { displayName: 'Žofie Integrace', kind: 'integration', principalId: '30000000-0000-4000-8000-000000000008' },
         { displayName: 'Žofie Systém', kind: 'system', principalId: '30000000-0000-4000-8000-000000000009' },
       ];
-      const deniedId = '30000000-0000-4000-8000-000000000005';
       // Service, integration and system principals are excluded by their principal kind in the owner query,
-      // never by a role key: the retired warm-up role heuristic is gone, so a human or agent row is decided
-      // only by the live resource decision below.
-      const searchCandidates = (candidates: readonly CandidatePerson[]) =>
-        searchCurrentCandidates(candidates, deniedId);
+      // never by a role key; every current human or agent of the company is visible to a person who may
+      // list the company's people (no per-person legacy relation is asked).
+      const searchCandidates = searchCurrentCandidates;
       const batched = yield* searchCandidates(people);
       const independent = yield* Effect.forEach(people, (person) => searchCandidates([person]), { concurrency: 1 });
       expect(batched).toEqual(
@@ -292,6 +257,11 @@ it.layer(NodeCrypto.layer)('people search governed read', (suite) => {
           ref: { ...hit.ref, resourceId: personResourceId(companyId, '30000000-0000-4000-8000-000000000006') },
           selectedLegalEntityId: companyId,
           title: 'Žofie Systémová',
+        },
+        {
+          ref: { ...hit.ref, resourceId: personResourceId(companyId, '30000000-0000-4000-8000-000000000005') },
+          selectedLegalEntityId: companyId,
+          title: 'Žofie Zamítnutá',
         },
       ]);
       expect(yield* searchCandidates([])).toEqual([]);
@@ -412,43 +382,42 @@ it.layer(NodeCrypto.layer)('people search governed read', (suite) => {
       }),
     );
   }
-  for (const displayName of ['Žofie Nováková', 'Božena Dvořáková']) {
-    for (const outcome of ['denied', 'unavailable'] as const) {
-      suite.effect(`${outcome} current result ${displayName} retains the live resource decision`, () =>
-        Effect.gen(function* resultPermission() {
-          const harness = yield* makeReadTestHarness({
-            access: 'allowed',
-            executeOwnerQuery: () => Effect.succeed([{ display_name: displayName, principal_id: target }]),
-            operationTime,
-            ownerAuthorizationDecision: 'allowed',
-            scope,
-          });
-          const environment = yield* Layer.build(
-            Layer.mergeAll(
-              harness.layer,
-              Layer.succeed(CoreSearchQueryRuntime, { search: () => Effect.succeed([hit]) }),
-            ),
-          );
-          const access = Context.get(environment, ContextAccess);
-          const scoped = Context.add(environment, ContextAccess, {
-            ...access,
-            resources: ({ resources }) =>
-              Effect.succeed(
-                resources.map((ref) => ({
-                  decision: outcome,
-                  key: `${ref.moduleId}:${ref.resourceType}:${ref.resourceId}`,
-                })),
-              ),
-          });
-          const effect = runPeopleSearch(request).pipe(Effect.provideContext(scoped));
-          if (outcome === 'unavailable') {
-            expect(Schema.is(ReadHandlerUnavailable)(yield* effect.pipe(Effect.flip))).toBe(true);
-          } else {
-            expect(yield* effect).toEqual([]);
-          }
-        }),
-      );
-    }
+  for (const outcome of ['denied', 'unavailable'] as const) {
+    suite.effect(`a person whose People list right is ${outcome} finds no one and learns nothing`, () =>
+      Effect.gen(function* withoutPeopleListRight() {
+        let indexQueries = 0;
+        const harness = yield* makeReadTestHarness({
+          // The search read itself admits the person; who may be found is the People list's own right.
+          access: { 'core.identity.people-directory.list': outcome, 'core.identity.people-search.query': 'allowed' },
+          executeOwnerQuery: () => Effect.die('Owner SQL must not run without the People list right'),
+          operationTime,
+          ownerAuthorizationDecision: 'allowed',
+          scope,
+        });
+        const environment = yield* Layer.build(
+          Layer.mergeAll(
+            harness.layer,
+            Layer.succeed(CoreSearchQueryRuntime, {
+              search: () =>
+                Effect.sync(() => {
+                  indexQueries += 1;
+                  return [hit];
+                }),
+            }),
+          ),
+        );
+        const effect = runPeopleSearch(request).pipe(Effect.provideContext(environment));
+        if (outcome === 'unavailable') {
+          expect(Schema.is(ReadHandlerUnavailable)(yield* effect.pipe(Effect.flip))).toBe(true);
+        } else {
+          // No hit, no count and no existence signal: the index is never asked and the evidence counts zero.
+          expect(yield* effect).toEqual([]);
+          expect(harness.snapshot().evidenceWrites).toBe(1);
+        }
+        expect(indexQueries).toBe(0);
+        expect(harness.snapshot().ownerQueries).toEqual([]);
+      }),
+    );
   }
 });
 type DecisionPropertyValue = AccessDecision[keyof AccessDecision] | 'granted';

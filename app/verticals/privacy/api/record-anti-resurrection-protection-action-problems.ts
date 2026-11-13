@@ -81,10 +81,12 @@ export const recordAntiResurrectionProtectionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RecordAntiResurrectionProtectionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RecordAntiResurrectionProtectionActionForbiddenProblem'> =>
     RecordAntiResurrectionProtectionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -199,7 +201,8 @@ const mapCoreProblem = (error: ActionCoreError): RecordAntiResurrectionProtectio
       ActionInvocationStateError: (failure) => recordAntiResurrectionProtectionActionProblem.conflict(failure.code),
       ActionPayloadValidationError: recordAntiResurrectionProtectionActionProblem.invalid,
       ActionPermissionCheckError: (failure) => recordAntiResurrectionProtectionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => recordAntiResurrectionProtectionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        recordAntiResurrectionProtectionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => recordAntiResurrectionProtectionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => recordAntiResurrectionProtectionActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => recordAntiResurrectionProtectionActionProblem.conflict(failure.code),

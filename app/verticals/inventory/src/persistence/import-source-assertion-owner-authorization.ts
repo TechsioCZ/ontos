@@ -1,6 +1,6 @@
 import { OwnerAuthorizationOverlay, failClosedOwnerAuthorizationOverlay } from '@app/core-runtime';
 import type {
-  OwnerAuthorizationDecision,
+  OwnerAuthorizationOutcome,
   OwnerAuthorizationInput,
   OwnerAuthorizationOverlayService,
   OwnerAccessFacts,
@@ -41,7 +41,7 @@ export const importSourceAssertionOwnerAuthorizationOverlay: OwnerAuthorizationO
   authorize: Effect.fn('InventoryImportOwnerAuthorization.authorize')(function* authorize(
     transaction: ScopedTransactionExecutor,
     input: OwnerAuthorizationInput,
-  ): Effect.fn.Return<OwnerAuthorizationDecision> {
+  ): Effect.fn.Return<OwnerAuthorizationOutcome> {
     if (
       input.operation !== 'action' ||
       input.capabilityKey !== IMPORT_SOURCE_ASSERTION_CAPABILITY ||

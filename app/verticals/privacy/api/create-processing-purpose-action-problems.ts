@@ -61,10 +61,12 @@ export const createProcessingPurposeActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CreateProcessingPurposeActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CreateProcessingPurposeActionForbiddenProblem'> =>
     CreateProcessingPurposeActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -166,7 +168,8 @@ const mapCoreProblem = (error: ActionCoreError): CreateProcessingPurposeActionPr
       ActionInvocationStateError: (failure) => createProcessingPurposeActionProblem.conflict(failure.code),
       ActionPayloadValidationError: createProcessingPurposeActionProblem.invalid,
       ActionPermissionCheckError: (failure) => createProcessingPurposeActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => createProcessingPurposeActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        createProcessingPurposeActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => createProcessingPurposeActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => createProcessingPurposeActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => createProcessingPurposeActionProblem.conflict(failure.code),

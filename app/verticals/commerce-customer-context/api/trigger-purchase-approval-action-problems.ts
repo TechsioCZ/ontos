@@ -61,10 +61,12 @@ export const triggerPurchaseApprovalActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'TriggerPurchaseApprovalActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'TriggerPurchaseApprovalActionForbiddenProblem'> =>
     TriggerPurchaseApprovalActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -166,7 +168,8 @@ const mapCoreProblem = (error: ActionCoreError): TriggerPurchaseApprovalActionPr
       ActionInvocationStateError: (failure) => triggerPurchaseApprovalActionProblem.conflict(failure.code),
       ActionPayloadValidationError: triggerPurchaseApprovalActionProblem.invalid,
       ActionPermissionCheckError: (failure) => triggerPurchaseApprovalActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => triggerPurchaseApprovalActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        triggerPurchaseApprovalActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => triggerPurchaseApprovalActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => triggerPurchaseApprovalActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => triggerPurchaseApprovalActionProblem.conflict(failure.code),

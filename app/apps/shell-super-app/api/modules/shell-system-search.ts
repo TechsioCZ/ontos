@@ -1,4 +1,3 @@
-import { ContextAccess } from '@app/core-runtime';
 import {
   runPeopleSearch,
   PeopleSearchResponseSchema,
@@ -15,11 +14,15 @@ import type { ShellResourceContext } from './shell-resources.ts';
 import { observeShellSearchProvider } from './shell-search-diagnostics.ts';
 
 const unavailable = (cause?: unknown) => new ShellProviderUnavailableError(cause === undefined ? {} : { cause });
-/** Core remains outside the installed business-module catalog. This branch admits one exact system contract. */
+/**
+ * Core remains outside the installed business-module catalog. This branch admits one exact system contract:
+ * only rows of the selected company's own people projection. Who may see a person at all is decided by the
+ * owner read itself (`core.identity.people-directory.list`, the People list's capability).
+ */
 export const authorizePeopleSearchResults: (
   scope: ShellResourceContext,
   values: PeopleSearchResponse,
-) => Effect.Effect<ShellSearchResponse['results'], ShellProviderUnavailableError, ContextAccess> = Effect.fn(
+) => Effect.Effect<ShellSearchResponse['results'], ShellProviderUnavailableError> = Effect.fn(
   'ShellSystemSearch.authorizePeopleResults',
 )(function* authorize(scope: ShellResourceContext, values: PeopleSearchResponse) {
   const decoded = yield* Schema.decodeEffect(PeopleSearchResponseSchema, {
@@ -39,29 +42,7 @@ export const authorizePeopleSearchResults: (
       person.value.legalEntityId === scope.legalEntityId
     );
   });
-  const access = yield* ContextAccess;
-  const decisions = yield* access.resources({
-    legalEntityId: scope.legalEntityId,
-    principalId: scope.principalId,
-    resources: scoped.map(({ ref }) => ref),
-    tenantId: scope.tenantId,
-  });
-  if (
-    decisions.length !== scoped.length ||
-    decisions.some((decision, index) => {
-      const row = scoped[index];
-      return (
-        row === undefined ||
-        decision.decision === 'unavailable' ||
-        decision.key !== `${row.ref.moduleId}:${row.ref.resourceType}:${row.ref.resourceId}`
-      );
-    })
-  ) {
-    return yield* unavailable();
-  }
-  const results = scoped.flatMap((row, index) =>
-    decisions[index]?.decision === 'allowed' ? [{ ...row, kind: 'resource' as const }] : [],
-  );
+  const results = scoped.map((row) => ({ ...row, kind: 'resource' as const }));
   const response = yield* Schema.decodeEffect(ShellSearchResponseSchema)({ partial: false, results }).pipe(
     Effect.mapError(unavailable),
   );
@@ -79,37 +60,34 @@ export class ShellSystemSearch extends Context.Service<
 >()('@app/shell-super-app/api/modules/shell-system-search/ShellSystemSearch') {}
 
 /** The application root supplies one existing ReadRuntime/persistence graph, captured once, not per search. */
-export const ShellPeopleSystemSearchLive: Layer.Layer<
-  ShellSystemSearch,
-  never,
-  PeopleSearchRequirements | ContextAccess
-> = Layer.effect(
-  ShellSystemSearch,
-  Effect.gen(function* live() {
-    const environment = yield* Effect.context<Effect.Services<ReturnType<typeof runPeopleSearch>> | ContextAccess>();
-    return {
-      search: Effect.fn('ShellSystemSearch.people')(
-        function* search(scope: ShellResourceContext, query: string) {
-          if (scope.legalEntityId === undefined || query.trim().length === 0) {
-            return { partial: false, results: [] };
-          }
-          const operation = runPeopleSearch({
-            input: { query },
-            principal: scope,
-            transport: { correlationId: scope.correlationId },
-          }).pipe(
-            Effect.mapError(unavailable),
-            Effect.flatMap((values) => authorizePeopleSearchResults(scope, values)),
-            Effect.map((results) => ({ partial: false, results })),
-          );
-          // Both attempts, owner decoding and the independent result permission check share the request deadline.
-          return yield* operation.pipe(Effect.retry({ times: 1 }), Effect.provideContext(environment));
-        },
-        (program) => withShellSearchRequestBudget(program, unavailable),
-      ),
-    };
-  }),
-);
+export const ShellPeopleSystemSearchLive: Layer.Layer<ShellSystemSearch, never, PeopleSearchRequirements> =
+  Layer.effect(
+    ShellSystemSearch,
+    Effect.gen(function* live() {
+      const environment = yield* Effect.context<Effect.Services<ReturnType<typeof runPeopleSearch>>>();
+      return {
+        search: Effect.fn('ShellSystemSearch.people')(
+          function* search(scope: ShellResourceContext, query: string) {
+            if (scope.legalEntityId === undefined || query.trim().length === 0) {
+              return { partial: false, results: [] };
+            }
+            const operation = runPeopleSearch({
+              input: { query },
+              principal: scope,
+              transport: { correlationId: scope.correlationId },
+            }).pipe(
+              Effect.mapError(unavailable),
+              Effect.flatMap((values) => authorizePeopleSearchResults(scope, values)),
+              Effect.map((results) => ({ partial: false, results })),
+            );
+            // Both attempts, owner decoding and the independent result permission check share the request deadline.
+            return yield* operation.pipe(Effect.retry({ times: 1 }), Effect.provideContext(environment));
+          },
+          (program) => withShellSearchRequestBudget(program, unavailable),
+        ),
+      };
+    }),
+  );
 
 const resultKey = (row: ShellSearchResponse['results'][number]) =>
   `${row.ref.tenantId ?? ''}:${row.ref.moduleId}:${row.ref.resourceType}:${row.ref.resourceId}`;

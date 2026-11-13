@@ -29,6 +29,7 @@ export const ApplyCommandActionForbiddenProblemSchema = makeProblemDetailsSchema
       'sales_insights_permission_denied',
       'sales_insights_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ApplyCommandActionNotFoundProblemSchema = makeProblemDetailsSchema(

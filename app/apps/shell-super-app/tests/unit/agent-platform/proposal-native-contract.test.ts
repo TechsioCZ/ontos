@@ -1,3 +1,4 @@
+import type { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import {
   AgentProposalCommandPayloadSchema,
   AgentProposalCommandRecoverySchema,
@@ -10,7 +11,6 @@ import type {
   AgentProposalCommandResult,
   AgentProposalQueueModuleReview,
   AgentProposalReservation,
-  ContextAccess,
   ReadRuntime,
   TenantModuleStateService,
 } from '@app/core-runtime';
@@ -193,7 +193,7 @@ it('keeps lifecycle withdrawal requirements concrete instead of leaking an unkno
     | AgentReadRequestIdentity
     | ActionAuthority
     | ActiveApplicationCompositionService
-    | ContextAccess
+    | AccessDecisionGate
     | AgentProposalQueueModuleReview
     | AgentProposalCommandPreparation
     | TenantModuleStateService

@@ -31,7 +31,7 @@ import type { AgentProposalCommandPayload } from '@app/core-runtime';
 
 import { AgentActionRequestIdentity } from '../auth/agent-action-request-identity.ts';
 import { AgentReadRequestIdentity } from '../auth/agent-request-identity.ts';
-import { demoAccountCapability, derivedUuid } from '../auth/demo-accounts.ts';
+import { derivedUuid, peopleAdministrationCapability } from '../auth/demo-accounts.ts';
 import type { McpModule } from '../mcp/catalog.ts';
 import { listGrants } from '../oauth-connections/grant-store.ts';
 import { CompanyDirectory } from '../oauth-connections-admin/company-directory.ts';
@@ -452,7 +452,7 @@ export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(fu
   ).pipe(Effect.map((reads) => reads.flat()));
   // Same live capability as the destination. Never turn approval rights into identity-administration rights.
   const identityRead = Effect.gen(function* identityLinks() {
-    const canManage = yield* demoAccountCapability(caller).pipe(
+    const canManage = yield* peopleAdministrationCapability(caller).pipe(
       Effect.map((capability) => capability.canManage),
       Effect.orElseSucceed(() => false),
     );

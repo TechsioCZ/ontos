@@ -61,10 +61,12 @@ export const createCustomerGroupActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CreateCustomerGroupActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CreateCustomerGroupActionForbiddenProblem'> =>
     CreateCustomerGroupActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -169,7 +171,8 @@ const mapCoreProblem = (error: ActionCoreError): CreateCustomerGroupActionProble
       ActionInvocationStateError: (failure) => createCustomerGroupActionProblem.conflict(failure.code),
       ActionPayloadValidationError: createCustomerGroupActionProblem.invalid,
       ActionPermissionCheckError: (failure) => createCustomerGroupActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => createCustomerGroupActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        createCustomerGroupActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => createCustomerGroupActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => createCustomerGroupActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => createCustomerGroupActionProblem.conflict(failure.code),

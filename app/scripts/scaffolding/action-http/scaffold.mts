@@ -458,7 +458,7 @@ export { ${type}PayloadSchema } from '../actions/${action}.ts';
 ${proposalAccepted ? "export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';\n" : ''}
 export const ${type}ActionInvalidProblemSchema = makeProblemDetailsSchema('${type}ActionInvalidProblem', 400);
 export const ${type}ActionAuthenticationProblemSchema = makeProblemDetailsSchema('${type}ActionAuthenticationProblem', 401);
-export const ${type}ActionForbiddenProblemSchema = makeProblemDetailsSchema('${type}ActionForbiddenProblem', 403, { code: ${literalList(codes.forbidden)} });
+export const ${type}ActionForbiddenProblemSchema = makeProblemDetailsSchema('${type}ActionForbiddenProblem', 403, { code: ${literalList(codes.forbidden)}, reasons: Schema.optionalKey(Schema.Array(Schema.String)) });
 export const ${type}ActionNotFoundProblemSchema = makeProblemDetailsSchema('${type}ActionNotFoundProblem', 404, { code: ${literalList(codes.notFound)} });
 export const ${type}ActionConflictProblemSchema = makeProblemDetailsSchema('${type}ActionConflictProblem', 409, { code: ${literalList(codes.conflict)} });
 export const ${type}ActionIneligibleProblemSchema = makeProblemDetailsSchema('${type}ActionIneligibleProblem', 422, { code: ${literalList(codes.ineligible)} });
@@ -689,7 +689,7 @@ ${domainMaps}
 export const ${toCamelCase(action)}ActionProblem = {
   authentication: (): ProblemOf<'${type}ActionAuthenticationProblem'> => ${type}ActionAuthenticationProblemSchema.make({ detail: 'A valid audience-scoped Bearer assertion is required.', status: problemStatus.authentication, title: 'Authentication required', type: 'https://ontos.dev/problems/operation-authentication-required' }),
   conflict: (code: ProblemOf<'${type}ActionConflictProblem'>['code']): ProblemOf<'${type}ActionConflictProblem'> => ${type}ActionConflictProblemSchema.make({ code, detail: 'The Action conflicts with current state.', status: problemStatus.conflict, title: 'Action conflict', type: 'https://ontos.dev/problems/action-conflict' }),
-  forbidden: (code: ProblemOf<'${type}ActionForbiddenProblem'>['code']): ProblemOf<'${type}ActionForbiddenProblem'> => ${type}ActionForbiddenProblemSchema.make({ code, detail: 'The principal is not permitted to perform this Action.', status: problemStatus.forbidden, title: 'Action forbidden', type: 'https://ontos.dev/problems/action-forbidden' }),
+  forbidden: (code: ProblemOf<'${type}ActionForbiddenProblem'>['code'], reasons: readonly string[] = []): ProblemOf<'${type}ActionForbiddenProblem'> => ${type}ActionForbiddenProblemSchema.make({ code, reasons, detail: 'The principal is not permitted to perform this Action.', status: problemStatus.forbidden, title: 'Action forbidden', type: 'https://ontos.dev/problems/action-forbidden' }),
   ineligible: (code: ProblemOf<'${type}ActionIneligibleProblem'>['code']): ProblemOf<'${type}ActionIneligibleProblem'> => ${type}ActionIneligibleProblemSchema.make({ code, detail: 'The request is not eligible for this Action.', status: problemStatus.ineligible, title: 'Action ineligible', type: 'https://ontos.dev/problems/action-ineligible' }),
   internal: (): ProblemOf<'${type}ActionInternalProblem'> => ${type}ActionInternalProblemSchema.make({ detail: 'The Action could not be completed.', status: problemStatus.internal, title: 'Action failed', type: 'https://ontos.dev/problems/action-failed' }),
   invalid: (): ProblemOf<'${type}ActionInvalidProblem'> => ${type}ActionInvalidProblemSchema.make({ detail: 'The ${action} Action request is invalid.', status: problemStatus.invalid, title: 'Invalid Action request', type: 'https://ontos.dev/problems/action-invalid' }),
@@ -731,7 +731,7 @@ const mapCoreProblem = (error: ActionCoreError): ${type}ActionProblem => Match.v
     ActionInvocationStateError: (failure) => ${toCamelCase(action)}ActionProblem.conflict(failure.code),
     ActionPayloadValidationError: ${toCamelCase(action)}ActionProblem.invalid,
     ActionPermissionCheckError: (failure) => ${toCamelCase(action)}ActionProblem.unavailable(failure.code),
-    ActionPermissionDenied: (failure) => ${toCamelCase(action)}ActionProblem.forbidden(failure.code),
+    ActionPermissionDenied: (failure) => ${toCamelCase(action)}ActionProblem.forbidden(failure.code, failure.reasons ?? []),
     ActionPolicyDenied: (failure) => ${toCamelCase(action)}ActionProblem.ineligible(failure.code),
     ActionPolicyEvaluationError: (failure) => ${toCamelCase(action)}ActionProblem.unavailable(failure.code),
     ActionRequestHashConflict: (failure) => ${toCamelCase(action)}ActionProblem.conflict(failure.code),

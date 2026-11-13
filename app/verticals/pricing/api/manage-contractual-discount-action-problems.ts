@@ -112,10 +112,12 @@ export const manageContractualDiscountActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ManageContractualDiscountActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ManageContractualDiscountActionForbiddenProblem'> =>
     ManageContractualDiscountActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -251,7 +253,8 @@ const mapCoreProblem = (error: ActionCoreError): ManageContractualDiscountAction
       ActionInvocationStateError: (failure) => manageContractualDiscountActionProblem.conflict(failure.code),
       ActionPayloadValidationError: manageContractualDiscountActionProblem.invalid,
       ActionPermissionCheckError: (failure) => manageContractualDiscountActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => manageContractualDiscountActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        manageContractualDiscountActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => manageContractualDiscountActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => manageContractualDiscountActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => manageContractualDiscountActionProblem.conflict(failure.code),
