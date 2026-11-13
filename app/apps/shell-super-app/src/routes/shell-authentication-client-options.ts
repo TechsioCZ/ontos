@@ -9,36 +9,52 @@ export const isServerRender = (): boolean => !('document' in globalThis);
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 /**
- * The Shell's own API on this machine, as the app host derives it from its own port (never from a request). Server
- * rendering sends the visitor's cookie there, so it must be plain HTTP to a loopback host or HTTPS, without credentials.
+ * The Shell's own API on this machine, which the app host derives from its own port (never from a request) for server
+ * rendering alone. Server rendering sends the visitor's cookie there, so it must name a loopback host, without
+ * credentials or fragment; any other value fails the read.
  */
-const ShellLoopbackApiBase = Config.schema(
+const ShellRenderApiUrl = Config.schema(
   Schema.URLFromString.check(
     Schema.makeFilter((url) =>
-      (url.protocol === 'https:' || (url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname))) &&
+      (url.protocol === 'http:' || url.protocol === 'https:') &&
+      LOOPBACK_HOSTS.has(url.hostname) &&
       url.username === '' &&
       url.password === '' &&
       url.hash === ''
         ? undefined
-        : 'The Shell loopback API requires HTTPS or plain HTTP to a loopback host, without credentials or fragment',
+        : 'The Shell render API must be a loopback address without credentials or fragment',
     ),
   ),
-  'ONTOS_SHELL_GATEWAY_BASE_URL',
+  'ONTOS_SHELL_RENDER_API_URL',
+);
+
+/** A production process renders only over the host's loopback address: without it the read fails closed. */
+const isProduction = Config.String('NODE_ENV').pipe(
+  Config.withDefault(''),
+  Config.map((environment) => environment === 'production'),
 );
 
 /**
  * Where a loader reaches the Shell BFF. Server rendering calls its own process over the loopback address the app host
  * provides: through the public origin every document's reads left the container, crossed the balancer and came back
  * through the host's relay. The BFF answers exactly as for any other request (the same cookie, the same session,
- * context and governed-read checks). Without that address (a development server) it uses the configured public origin.
+ * context and governed-read checks). Only a development or test process without that address uses the configured
+ * public origin, or the document's own; a production process never sends the cookie to an address a request named.
+ * The browser keeps its own origin.
  */
 const shellApiOrigin = Effect.fn('ShellAuthenticationClientOptions.shellApiOrigin')(function* shellApiOriginEffect(
   request: Request,
 ) {
-  const loopback = isServerRender() ? yield* Config.option(ShellLoopbackApiBase) : Option.none<URL>();
-  return Option.isSome(loopback)
-    ? loopback.value.origin
-    : yield* Config.URL('BETTER_AUTH_URL').pipe(Config.withDefault(new URL(request.url)));
+  if (isServerRender()) {
+    const loopback = yield* Config.option(ShellRenderApiUrl);
+    if (Option.isSome(loopback)) {
+      return loopback.value.origin;
+    }
+    if (yield* isProduction) {
+      return yield* ShellRenderApiUrl;
+    }
+  }
+  return yield* Config.URL('BETTER_AUTH_URL').pipe(Config.withDefault(new URL(request.url)));
 });
 
 export const shellAuthenticationClientOptionsFromRequest = (request: Request) =>

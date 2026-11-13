@@ -46,7 +46,7 @@ const optionsWith = (environment: Readonly<Record<string, string>>) =>
 it.effect('server rendering reaches its own BFF over the host loopback address with the same cookie', () =>
   Effect.gen(function* loopback() {
     const options = yield* asServerRender(
-      optionsWith({ BETTER_AUTH_URL: PUBLIC_ORIGIN, ONTOS_SHELL_GATEWAY_BASE_URL: LOOPBACK_API }),
+      optionsWith({ BETTER_AUTH_URL: PUBLIC_ORIGIN, NODE_ENV: 'production', ONTOS_SHELL_RENDER_API_URL: LOOPBACK_API }),
     );
     expect(String(options.baseUrl)).toBe(LOOPBACK_API);
     // The visitor's credentials pass verbatim: the BFF authenticates and authorizes this read as any other.
@@ -55,27 +55,48 @@ it.effect('server rendering reaches its own BFF over the host loopback address w
   }),
 );
 
-it.effect('server rendering never lets the request choose where the visitor cookie goes', () =>
-  Effect.gen(function* requestCannotChoose() {
-    const configured = yield* asServerRender(optionsWith({ BETTER_AUTH_URL: PUBLIC_ORIGIN }));
-    expect(String(configured.baseUrl)).toBe(`${PUBLIC_ORIGIN}/shell-super-app-api`);
+it.effect('server rendering sends the cookie only to a loopback address, never one a request or gateway names', () =>
+  Effect.gen(function* loopbackOnly() {
     for (const refused of [
+      'https://gateway.example.test/shell-super-app-api',
       'http://shell.internal.example.test:3000/shell-super-app-api',
       'http://user:secret@127.0.0.1:3000/shell-super-app-api',
       'not a url',
     ]) {
       const exit = yield* asServerRender(
-        optionsWith({ BETTER_AUTH_URL: PUBLIC_ORIGIN, ONTOS_SHELL_GATEWAY_BASE_URL: refused }),
+        optionsWith({ BETTER_AUTH_URL: PUBLIC_ORIGIN, NODE_ENV: 'production', ONTOS_SHELL_RENDER_API_URL: refused }),
       ).pipe(Effect.exit);
-      // A misconfigured address fails the read (the page shows "unavailable"); the public origin is not a fallback.
+      // A misconfigured address fails the read (the page shows "unavailable"); no other address is a fallback.
       expect(Exit.isFailure(exit)).toBe(true);
     }
+    // The module gateway's address is the workers' setting, never the render's.
+    const gatewayOnly = yield* asServerRender(
+      optionsWith({ NODE_ENV: 'production', ONTOS_SHELL_GATEWAY_BASE_URL: 'https://gateway.example.test/x' }),
+    ).pipe(Effect.exit);
+    expect(Exit.isFailure(gatewayOnly)).toBe(true);
+  }),
+);
+
+it.effect('a production render without the loopback address fails closed instead of following the request', () =>
+  Effect.gen(function* productionFailsClosed() {
+    for (const environment of [
+      { NODE_ENV: 'production' },
+      { BETTER_AUTH_URL: PUBLIC_ORIGIN, NODE_ENV: 'production' },
+    ]) {
+      const exit = yield* asServerRender(optionsWith(environment)).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+    }
+    // A development server keeps its configured public origin, and only without one the document's own.
+    const configured = yield* asServerRender(optionsWith({ BETTER_AUTH_URL: PUBLIC_ORIGIN, NODE_ENV: 'development' }));
+    expect(String(configured.baseUrl)).toBe(`${PUBLIC_ORIGIN}/shell-super-app-api`);
+    const unconfigured = yield* asServerRender(optionsWith({ NODE_ENV: 'development' }));
+    expect(String(unconfigured.baseUrl)).toBe('https://attacker.example.test/shell-super-app-api');
   }),
 );
 
 it.effect('the browser keeps its own origin even where the loopback address is configured', () =>
   Effect.gen(function* browserUnchanged() {
-    const options = yield* optionsWith({ ONTOS_SHELL_GATEWAY_BASE_URL: LOOPBACK_API });
+    const options = yield* optionsWith({ NODE_ENV: 'production', ONTOS_SHELL_RENDER_API_URL: LOOPBACK_API });
     expect(String(options.baseUrl)).toBe('https://attacker.example.test/shell-super-app-api');
   }),
 );
