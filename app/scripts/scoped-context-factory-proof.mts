@@ -39,6 +39,8 @@ import {
   describeNativeSqlExecute,
   describeNativeSqlTextSelection,
   isReviewedCoreDatabaseGuardModule,
+  isReviewedCoreDatabaseModule,
+  privateSessionPoolSettings,
 } from './native-sql-success-proof.mts';
 import type {
   NativeSqlSourceReference,
@@ -7884,13 +7886,21 @@ class FactoryResolver {
       this.contextProvisionReads(module, call, readModule, read)
     );
   }
+  /** The settings a guarded pool acquisition is opened with; a private session's literal minimum only added. */
+  guardedCorePoolSettings(module: Module, call: CallExpression): Expression | undefined {
+    const [given] = call.arguments;
+    const node = given === undefined || given.type === 'SpreadElement' ? undefined : unwrap(given);
+    const spread = node === undefined ? undefined : privateSessionPoolSettings(node);
+    return spread !== undefined && this.native(module, call.callee, 'PgClient', 'make') ? unwrap(spread) : node;
+  }
   /**
    * Security fence: guarded Core pool (transaction I/O guard + session-role check). Inside Core's `db/client.ts`,
    * the pool acquisition the guards wrap (native `PgClient.make` or Core's `openDatabaseClient`) over the plain
-   * pool settings Core's `configureDatabasePool` returned provides no service and runs no effect it is handed.
+   * pool settings Core's `configureDatabasePool` returned provides no service and runs no effect it is handed. A
+   * private session's `PgClient.make({ ...settings, minConnections: 0 })` adds only that literal minimum.
    */
   guardedCorePoolAcquisition(module: Module, call: CallExpression): boolean {
-    const [argument] = call.arguments;
+    const argument = this.guardedCorePoolSettings(module, call);
     const settings = argument?.type === 'Identifier' ? bindingAt(module, argument.name, argument) : undefined;
     const init = settings?.init === undefined ? undefined : unwrap(settings.init);
     const configured =
@@ -7932,7 +7942,7 @@ class FactoryResolver {
   }
   /**
    * An import, in Core's own `db/client.ts` (at the workspace root, never a path suffix), of the export declared by
-   * that exact sibling Core module; a guard module only as reviewed.
+   * that exact sibling Core module, exactly as reviewed (the guard modules and the pool configuration are pinned).
    */
   coreDatabaseImport(module: Module, callee: Expression, name: string, file: string): boolean {
     const directory = this.coreDatabaseDirectory();
@@ -7944,7 +7954,7 @@ class FactoryResolver {
       module.file === `${directory}client.ts` &&
       binding?.origin?.imported === name &&
       dependency?.file === `${directory}${file}` &&
-      (file === 'pool-configuration.ts' || this.reviewedCoreDatabaseGuardModule(dependency)) &&
+      isReviewedCoreDatabaseModule(dependency, directory) &&
       declared?.module === dependency &&
       declared.binding.origin === undefined &&
       declared.binding.kind === 'const'

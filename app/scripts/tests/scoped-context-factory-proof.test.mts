@@ -3407,8 +3407,10 @@ const sessionIdentityGuard = 'session-identity';
 const transactionIoGuard = 'transaction-io-guard';
 const coreDatabaseGuardFiles = [databaseClientGuard, sessionIdentityGuard, transactionIoGuard] as const;
 const foreignGuardSource = 'export const guardPoolAcquisition = (client) => client;';
-const coreAcquisition =
-  "session.pooling === 'pooled' ? openDatabaseClient(configuration) : PgClient.make(configuration)";
+const privateAcquisition = 'PgClient.make({ ...configuration, minConnections: 0 })';
+const coreAcquisition = `session.pooling === 'pooled'
+          ? openDatabaseClient(configuration)
+          : ${privateAcquisition}`;
 const guardedReturn = 'return guardPoolAcquisition(client);';
 const sessionRoleCheck =
   'verifySessionRoleOnFirstUse(Context.get(context, PgClient.PgClient), configuration.expectedRole)';
@@ -3428,7 +3430,11 @@ const guardedPoolEdits = {
       "import { refuseInsideDatabaseTransaction } from './transaction-io-guard.ts';import { guardPoolAcquisition } from './foreign-guard.ts';",
     ),
   'injected codec options': (source: string) =>
-    replaceOnce(source, 'PgClient.make(configuration)', 'PgClient.make({ ...configuration, types: foreignRegistry })'),
+    replaceOnce(
+      source,
+      privateAcquisition,
+      'PgClient.make({ ...configuration, minConnections: 0, types: foreignRegistry })',
+    ),
   'look-alike session-role check': (source: string) =>
     replaceOnce(
       source,
@@ -3442,6 +3448,32 @@ const guardedPoolEdits = {
       source,
       "yield* refuseInsideDatabaseTransaction('pool-acquisition', 'PostgreSQL connection pool');",
       '',
+    ),
+  'nonzero private minimum': (source: string) =>
+    replaceOnce(source, privateAcquisition, 'PgClient.make({ ...configuration, minConnections: 5 })'),
+  'pool settings rebuilt in the client module': (source: string) =>
+    replaceOnce(
+      source,
+      privateAcquisition,
+      "PgClient.make({ url: configuration.url, startupParameters: { search_path: 'attacker' } })",
+    ),
+  'search_path startup parameter added in the client module': (source: string) =>
+    replaceOnce(
+      source,
+      privateAcquisition,
+      "PgClient.make({ ...configuration, minConnections: 0, startupParameters: { search_path: 'attacker' } })",
+    ),
+  'search_path startup parameters for the shared pool': (source: string) =>
+    replaceOnce(
+      source,
+      'openDatabaseClient(configuration)',
+      "openDatabaseClient({ ...configuration, startupParameters: { search_path: 'attacker' } })",
+    ),
+  'search_path startup parameters replacing the private minimum': (source: string) =>
+    replaceOnce(
+      source,
+      privateAcquisition,
+      "PgClient.make({ ...configuration, startupParameters: { search_path: 'attacker' } })",
     ),
   'unguarded openDatabaseClient pool': (source: string) =>
     replaceOnce(
@@ -3527,6 +3559,27 @@ const guardModuleEdits = {
       ),
   ],
 } satisfies Readonly<Record<string, readonly [(typeof coreDatabaseGuardFiles)[number], (source: string) => string]>>;
+/**
+ * Security fence: guarded Core pool. Core's pool configuration is trusted only as reviewed source, so any edit to it,
+ * a `search_path` startup parameter as much as a reworded comment, must be refused until its digest is reviewed.
+ */
+const poolConfigurationEdits = {
+  'pool configuration with a reworded comment': (source: string) =>
+    replaceOnce(
+      source,
+      '/** The native pool opens at most ten connections',
+      '/** The native pool opens up to ten connections',
+    ),
+  'pool configuration with a search_path startup parameter': (source: string) =>
+    replaceOnce(
+      source,
+      'const startupParameters: Record<string, string> = {};',
+      "const startupParameters: Record<string, string> = { search_path: 'attacker' };",
+    ),
+} satisfies Readonly<Record<string, (source: string) => string>>;
+/** The named pool configuration edit, or the unchanged source. */
+const poolConfigurationEdit = (name: string): ((source: string) => string) =>
+  Object.entries(poolConfigurationEdits).find(([edit]) => edit === name)?.[1] ?? ((source) => source);
 const guardModuleEdit = (name: string, guard: string) =>
   Object.entries(guardModuleEdits).find(([edit, [file]]) => edit === name && file === guard)?.[1][1];
 /** Core's database modules copied outside Core's own directory are not Core, whatever their path suffix. */
@@ -3543,6 +3596,7 @@ it.effect.each([
   'overridden error evaluator payload',
   ...Object.keys(guardedPoolEdits),
   ...Object.keys(guardModuleEdits),
+  ...Object.keys(poolConfigurationEdits),
   relocatedCoreDatabase,
   relocatedRowRewritingCoreDatabase,
 ])('proves the real Core database constructor source: %s', (name) =>
@@ -3558,6 +3612,7 @@ it.effect.each([
     const original = yield* Effect.tryPromise(() => readFile(nodePath.join(coreDb, 'client.ts'), 'utf-8'));
     const clientSource = guardedPoolEdit(name)?.(original) ?? original;
     let poolSource = yield* Effect.tryPromise(() => readFile(nodePath.join(coreDb, 'pool-configuration.ts'), 'utf-8'));
+    poolSource = poolConfigurationEdit(name)(poolSource);
     let errorSource = yield* Effect.tryPromise(() => readFile(nodePath.join(coreDb, 'connection-error.ts'), 'utf-8'));
     if (name === 'counterfeit error native') {
       errorSource = errorSource.replace("from 'effect'", "from 'counterfeit'");
@@ -3757,7 +3812,11 @@ it.effect('retains native error evaluator payload success as a real success alte
 
 const reachedHelperIdentity = 'reached helper identity';
 const reachedDeferredOverride = 'reached helper deferred override';
+const editedPoolConfiguration = 'pool configuration with a search_path startup parameter';
 const sqlRootConfigSource = (source: string, name: string, variant: string): string => {
+  if (name === 'pool-configuration' && variant === editedPoolConfiguration) {
+    return poolConfigurationEdits[editedPoolConfiguration](source);
+  }
   if (name !== 'config') {
     return source;
   }
@@ -3780,6 +3839,7 @@ it.effect.each([
   reachedHelperIdentity,
   'reached helper override',
   reachedDeferredOverride,
+  editedPoolConfiguration,
 ])('keeps the same SQL acquisition AST root-scoped: %s', (variant) =>
   Effect.gen(function* actualSqlRoot() {
     const path = yield* Path.Path;

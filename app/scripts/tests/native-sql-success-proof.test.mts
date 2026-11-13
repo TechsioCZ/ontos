@@ -11,6 +11,7 @@ import {
   describeNativeSqlExecute,
   describeNativeSqlTextSelection,
   isReviewedCoreDatabaseGuardModule,
+  isReviewedCoreDatabaseModule,
   parseClosedNativeSelectProjection,
 } from '../native-sql-success-proof.mts';
 import type {
@@ -454,18 +455,47 @@ it.effect('keeps trusted capture facts private when public map storage is replac
 
 /*
  * Security fence: guarded Core pool. The proofs trust Core's transaction I/O, session-role and pool-client guard
- * modules only as reviewed source. A failure here means one of them changed: review the change as a security change
- * to the guarded pool, then update its digest in `reviewedCoreDatabaseGuardModules`.
+ * modules and Core's pool configuration only as reviewed source. A failure here means one of them changed: review
+ * the change as a security change to the guarded pool, then update its digest in `reviewedCoreDatabaseGuardModules`
+ * (guard modules) or `reviewedCorePoolConfigurationDigest` (pool configuration).
  */
+const coreDatabaseDirectory = `${nodePath.resolve(import.meta.dirname, '../../packages/core-runtime/src/db')}/`;
+const coreDatabaseModule = (name: string) => {
+  const file = `${coreDatabaseDirectory}${name}`;
+  const source = readFileSync(file, 'utf-8');
+  return {
+    module: (text: string) => ({ file, program: parseSync(file, text).program, source: text }),
+    source,
+  };
+};
+const reviewDigest = (name: string) =>
+  `Core's ${name} changed: review the change as a security change to the guarded pool and update the digest`;
 it.each(['database-client.ts', 'session-identity.ts', 'transaction-io-guard.ts'])(
   "pins Core's reviewed guard module %s",
   (name) => {
-    const directory = `${nodePath.resolve(import.meta.dirname, '../../packages/core-runtime/src/db')}/`;
-    const file = `${directory}${name}`;
-    const source = readFileSync(file, 'utf-8');
-    const module = (text: string) => ({ file, program: parseSync(file, text).program, source: text });
-    expect(isReviewedCoreDatabaseGuardModule(module(source), directory)).toBe(true);
+    const { module, source } = coreDatabaseModule(name);
+    expect(isReviewedCoreDatabaseGuardModule(module(source), coreDatabaseDirectory), reviewDigest(name)).toBe(true);
     expect(isReviewedCoreDatabaseGuardModule(module(source), '/elsewhere/packages/core-runtime/src/db/')).toBe(false);
-    expect(isReviewedCoreDatabaseGuardModule(module(`${source}\nexport const appended = 1;`), directory)).toBe(false);
+    expect(
+      isReviewedCoreDatabaseGuardModule(module(`${source}\nexport const appended = 1;`), coreDatabaseDirectory),
+    ).toBe(false);
   },
 );
+it("pins Core's reviewed pool configuration without exempting its code from the proofs", () => {
+  const name = 'pool-configuration.ts';
+  const { module, source } = coreDatabaseModule(name);
+  expect(isReviewedCoreDatabaseModule(module(source), coreDatabaseDirectory), reviewDigest(name)).toBe(true);
+  expect(isReviewedCoreDatabaseModule(module(source), '/elsewhere/packages/core-runtime/src/db/')).toBe(false);
+  expect(
+    isReviewedCoreDatabaseModule(
+      module(
+        source.replace(
+          'const startupParameters: Record<string, string> = {};',
+          "const startupParameters: Record<string, string> = { search_path: 'attacker' };",
+        ),
+      ),
+      coreDatabaseDirectory,
+    ),
+  ).toBe(false);
+  expect(isReviewedCoreDatabaseGuardModule(module(source), coreDatabaseDirectory)).toBe(false);
+});

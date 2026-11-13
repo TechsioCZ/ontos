@@ -359,22 +359,33 @@ const coreDatabaseExports = new Map([
  * and equally a reworded comment) fails closed until the guard is reviewed again and its digest updated here.
  */
 const reviewedCoreDatabaseGuardModules = new Map([
-  ['database-client.ts', '1f749b737c5a0eb691cd602f6aa14a4145ff66913b73d1839a17ab55752036c8'],
+  ['database-client.ts', '227325c0b8730b20cd2363ea1796af5876e826353af3d548ed127ba8803cf111'],
   ['session-identity.ts', 'f3f193b79b717163ec79197fb3db7abc829a86d6939c13cab5e6f374fca01223'],
   [transactionIoGuardModule, '4417b2144e1b7b549e5fe0d842f6191076ddb94f12a8538e154dab7ec7499599'],
+]);
+/**
+ * Security fence: guarded Core pool. Core's pool configuration decides every setting of the guarded pool (URL,
+ * deadlines, sizes and the `startupParameters` sent in each connection's startup packet), so it is trusted only as
+ * the exact reviewed source too. Unlike the guard modules its own code is still proved like any other Core module.
+ */
+const reviewedCorePoolConfigurationModule = 'pool-configuration.ts';
+const reviewedCorePoolConfigurationDigest = '2cf48adda3fdfca78de4dcf4fe1af76f6e5376cf8fbffded9d7e0462ea00f761';
+const reviewedCoreDatabaseModules = new Map([
+  ...reviewedCoreDatabaseGuardModules,
+  [reviewedCorePoolConfigurationModule, reviewedCorePoolConfigurationDigest],
 ]);
 const reviewedSources = new WeakMap<Program, boolean>();
 const isCoreDatabaseClient = (environment: NativeSqlProofEnvironment, file: string): boolean =>
   file === `${environment.coreDatabaseDirectory}${coreDatabaseClient}`;
-/** One of Core's guard modules, at Core's own database directory, exactly as reviewed. */
-export const isReviewedCoreDatabaseGuardModule = (
+/** One of Core's pinned database modules, at Core's own database directory, exactly as reviewed. */
+export const isReviewedCoreDatabaseModule = (
   module: Pick<NativeSqlProofModule, 'file' | 'program' | 'source'>,
   coreDatabaseDirectory: string,
 ): boolean => {
   const name = module.file.startsWith(coreDatabaseDirectory)
     ? module.file.slice(coreDatabaseDirectory.length)
     : undefined;
-  const reviewed = name === undefined ? undefined : reviewedCoreDatabaseGuardModules.get(name);
+  const reviewed = name === undefined ? undefined : reviewedCoreDatabaseModules.get(name);
   if (reviewed === undefined) {
     return false;
   }
@@ -385,6 +396,13 @@ export const isReviewedCoreDatabaseGuardModule = (
   }
   return matches;
 };
+/** One of Core's guard modules, at Core's own database directory, exactly as reviewed. */
+export const isReviewedCoreDatabaseGuardModule = (
+  module: Pick<NativeSqlProofModule, 'file' | 'program' | 'source'>,
+  coreDatabaseDirectory: string,
+): boolean =>
+  reviewedCoreDatabaseGuardModules.has(module.file.slice(coreDatabaseDirectory.length)) &&
+  isReviewedCoreDatabaseModule(module, coreDatabaseDirectory);
 /** One exported top-level `const` of this name, and no other top-level declaration of it. */
 const declaresExportedConst = (module: NativeSqlProofModule, name: string): boolean => {
   let exported = 0;
@@ -435,8 +453,8 @@ const coreDatabaseExport = (
       : undefined;
   const reviewed =
     module !== undefined &&
-    (!reviewedCoreDatabaseGuardModules.has(declaredIn) ||
-      isReviewedCoreDatabaseGuardModule(module, environment.coreDatabaseDirectory));
+    (!reviewedCoreDatabaseModules.has(declaredIn) ||
+      isReviewedCoreDatabaseModule(module, environment.coreDatabaseDirectory));
   return module !== undefined && reviewed && declaresExportedConst(module, binding.origin.imported)
     ? binding.origin.imported
     : undefined;
@@ -1088,10 +1106,68 @@ const soleConstIdentifier = (statement: Statement | undefined) =>
   statement.declarations[0].init !== undefined
     ? { id: statement.declarations[0].id, init: statement.declarations[0].init }
     : undefined;
+/**
+ * Security fence: guarded Core pool. The settings an acquisition opens its pool with are exactly the pinned Core
+ * pool configuration: that `configuration` const itself, or a private session's `{ ...configuration, minConnections: 0 }`.
+ * No other key (a `startupParameters` with a `search_path`, a URL, codecs) can come from the unpinned client module,
+ * and the configuration itself must resolve to the pinned module's closed settings object (an error the pinned
+ * source yields cannot stand in for it).
+ */
+const guardedPoolConfigKeys = new Set([
+  'url',
+  'connectTimeout',
+  'idleTimeout',
+  'maxConnections',
+  'minConnections',
+  'processShared',
+  'startupParameters',
+]);
+/**
+ * Security fence: guarded Core pool. A private session's `{ ...settings, minConnections: 0 }`: exactly one spread and
+ * that literal minimum, answered as the spread settings.
+ */
+export const privateSessionPoolSettings = (expression: Expression): Expression | undefined => {
+  const [spread, minimum] = expression.type === 'ObjectExpression' ? expression.properties : [];
+  return expression.type === 'ObjectExpression' &&
+    expression.properties.length === 2 &&
+    spread?.type === 'SpreadElement' &&
+    minimum?.type === 'Property' &&
+    minimum.kind === 'init' &&
+    !minimum.computed &&
+    !minimum.method &&
+    minimum.key.type === 'Identifier' &&
+    minimum.key.name === 'minConnections' &&
+    minimum.value.type === 'Literal' &&
+    minimum.value.value === 0
+    ? spread.argument
+    : undefined;
+};
+const isPinnedPoolConfiguration = (
+  environment: NativeSqlProofEnvironment,
+  reference: NativeSqlSourceReference,
+  expression: Expression,
+  configuration: Expression,
+): boolean => {
+  const isConfiguration = (candidate: Expression) => {
+    const binding = candidate.type === 'Identifier' ? bindingAt(environment, reference.file, candidate) : undefined;
+    return (
+      binding?.kind === 'const' &&
+      binding.origin === undefined &&
+      binding.init === configuration &&
+      objectKeys(environment, { ...reference, expression: candidate }, guardedPoolConfigKeys)?.has('url') === true
+    );
+  };
+  if (isConfiguration(expression)) {
+    return true;
+  }
+  const spread = privateSessionPoolSettings(expression);
+  return spread !== undefined && isConfiguration(spread);
+};
 /** `pooled ? openDatabaseClient(configuration) : PgClient.make(configuration)`, or one of them alone. */
 const poolAcquisitions = (
   environment: NativeSqlProofEnvironment,
   reference: NativeSqlSourceReference,
+  configuration: Expression,
 ): readonly NativeSqlSourceReference[] | undefined => {
   const node =
     reference.expression.type === 'ParenthesizedExpression' ? reference.expression.expression : reference.expression;
@@ -1107,12 +1183,22 @@ const poolAcquisitions = (
   const acquisitions = branches.map((branch) => ({ ...reference, expression: branch }));
   return acquisitions.every((acquisition) => {
     const call = callOf(acquisition);
+    const [settings] = call?.arguments ?? [];
+    if (
+      call === undefined ||
+      call.arguments.length !== 1 ||
+      settings === undefined ||
+      settings.type === 'SpreadElement'
+    ) {
+      return false;
+    }
+    if (nativeIdentity(environment, { ...acquisition, expression: call.callee }) === nativePgMake) {
+      return isPinnedPoolConfiguration(environment, acquisition, settings, configuration);
+    }
     return (
-      call !== undefined &&
-      call.arguments.length === 1 &&
-      call.arguments[0]?.type !== 'SpreadElement' &&
-      (nativeIdentity(environment, { ...acquisition, expression: call.callee }) === nativePgMake ||
-        coreCallOf(environment, acquisition, call, 'openDatabaseClient', 1) !== undefined)
+      coreCallOf(environment, acquisition, call, 'openDatabaseClient', 1) !== undefined &&
+      isPinnedPoolConfiguration(environment, acquisition, settings, configuration) &&
+      settings.type === 'Identifier'
     );
   })
     ? acquisitions
@@ -1210,7 +1296,7 @@ const guardedLayerAcquisitions = (
   }
   const pooled = delegatedOperand(environment, { ...program, expression: client.init });
   const receiver = pooled === undefined ? undefined : pipedReceiver(environment, pooled, nativeProvideService);
-  return receiver === undefined ? undefined : poolAcquisitions(environment, receiver);
+  return receiver === undefined ? undefined : poolAcquisitions(environment, receiver, configuration.init);
 };
 /** `yield* Layer.build(layer).pipe(Effect.mapError(...))`, answered as the layer it builds. */
 const builtLayer = (
@@ -1298,14 +1384,6 @@ const guardedClientClosed = (
   }).visit(module.program);
   return reads.length > 0 && reads.every((read) => provisions.includes(read));
 };
-const guardedPoolConfigKeys = new Set([
-  'url',
-  'connectTimeout',
-  'idleTimeout',
-  'maxConnections',
-  'processShared',
-  'startupParameters',
-]);
 const copyNativeSource = (
   environment: NativeSqlProofEnvironment,
   reference: NativeSqlSourceReference,
@@ -1391,8 +1469,8 @@ const describeNativePgMakeDatabase = (
 const notGuarded = 'not guarded';
 /**
  * Security fence: guarded Core pool (transaction I/O guard + session-role check). The guards wrap a pool
- * acquisition whose configuration names the URL and pool settings only, never codecs. `not guarded` hands the
- * provider to the native `PgClient.make` proof unchanged.
+ * acquisition opened with exactly Core's pinned pool configuration, never codecs or a foreign setting. `not guarded`
+ * hands the provider to the native `PgClient.make` proof unchanged.
  */
 const guardedCorePoolDatabase = (
   environment: NativeSqlProofEnvironment,
@@ -1405,12 +1483,7 @@ const guardedCorePoolDatabase = (
   if (guarded === undefined || provided === undefined) {
     return notGuarded;
   }
-  const configured = guarded.acquisitions.every((acquisition) => {
-    const config = resolveArgument(environment, acquisition, 0);
-    return config !== undefined && objectKeys(environment, config, guardedPoolConfigKeys)?.has('url') === true;
-  });
-  return configured &&
-    guardedClientClosed(environment, provider, provided, guarded.client) &&
+  return guardedClientClosed(environment, provider, provided, guarded.client) &&
     hasClosedNativeInstance(environment, resolved)
     ? nativeDatabaseToken(environment, guarded.client, resolved)
     : undefined;
