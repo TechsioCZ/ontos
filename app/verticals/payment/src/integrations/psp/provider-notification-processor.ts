@@ -9,7 +9,7 @@ import type { PspOperationForExecution } from '../../persistence/psp-worker-rout
 import { stripeSignedObjectOrderReference } from '../stripe/stripe-event.ts';
 import { GatewayBindingResolver } from './binding-resolver.ts';
 import { routineUnavailable } from './dispatch-ledger-live.ts';
-import { ProviderDispatchLedger } from './dispatch-ledger.ts';
+import { acknowledgedRefundBaselineOf, ProviderDispatchLedger } from './dispatch-ledger.ts';
 import type { ProviderDispatchRecord } from './dispatch-ledger.ts';
 import { ProviderEvidenceStore, ProviderEvidenceSubmissionOutcomeSchema } from './evidence-store.ts';
 import type { ProviderEvidenceSubmissionOutcome, StoredProviderEvidence } from './evidence-store.ts';
@@ -213,6 +213,7 @@ const lookupFor = Effect.fn('ProviderNotificationProcessor.lookup')(function* lo
     return yield* uncorrelated('operation_unknown');
   }
   const findings = yield* context.adapter.lookup(context.target, {
+    acknowledgedRefundBaseline: acknowledgedRefundBaselineOf(located.record),
     dispatchedAt: located.record.preparedAt,
     expected: expected.value,
     target: { _tag: 'PROVIDER_OBJECT', ref: located.ref },

@@ -38,10 +38,15 @@ import type {
   GatewayProviderUnavailableError,
   GatewayProviderUnsupportedError,
 } from '../../src/integrations/psp/psp-errors.ts';
-import { GatewayExecutionTargetSchema, ProviderObjectRefSchema } from '../../src/integrations/psp/psp-request.ts';
+import {
+  GatewayExecutionTargetSchema,
+  GatewayRefundBaselineSchema,
+  ProviderObjectRefSchema,
+} from '../../src/integrations/psp/psp-request.ts';
 import type {
   GatewayExecutionTarget,
   GatewayPayerContact,
+  GatewayRefundBaseline,
   ProviderObjectRef,
 } from '../../src/integrations/psp/psp-request.ts';
 import { PreparedProviderRequestSchema, ProviderFindingResultSchema } from '../../src/integrations/psp/psp-result.ts';
@@ -174,6 +179,8 @@ interface ProviderCall {
   /** The payer contact a COLLECT prepare received. */
   readonly payerContact?: Option.Option<GatewayPayerContact>;
   readonly providerTarget?: ProviderObjectRef;
+  /** The refund baseline a SEND received with its prepared request. */
+  readonly refundBaseline?: Option.Option<GatewayRefundBaseline>;
 }
 
 type AnyProviderFailure =
@@ -297,6 +304,10 @@ const resolverOf = (world: World) =>
     resolveForNotification: () => Effect.die('The executor never resolves notifications'),
   });
 
+const GOPAY_REFUND_BASELINE: GatewayRefundBaseline = Schema.decodeUnknownSync(GatewayRefundBaselineSchema)({
+  rowIds: ['4493293835'],
+});
+
 const preparedOf = (family: Family, operationId: string, kind: string): PreparedProviderRequest => {
   const { idempotencyKey, orderReference } = deriveProviderCorrelation(operationId);
   const stripe = family === 'STRIPE';
@@ -307,6 +318,8 @@ const preparedOf = (family: Family, operationId: string, kind: string): Prepared
     headers: [{ name: 'content-type', value: 'application/x-www-form-urlencoded' }],
     idempotencyKey: stripe ? Option.some(idempotencyKey) : Option.none(),
     orderReference,
+    // A GoPay refund prepare reads the payment's refund history first (here: one earlier refund row).
+    refundBaseline: family === 'GOPAY' && kind === 'REFUND' ? Option.some(GOPAY_REFUND_BASELINE) : Option.none(),
     replayWindowMs: stripe ? Option.some(86_400_000) : Option.none(),
     requestHash: `${operationId.slice(-1).repeat(63)}0`,
   });
@@ -434,8 +447,11 @@ const adapterOf = (world: World, family: Family): GatewayProviderAdapter => {
       run({ family, kind: 'REPLAY', operationId: expected.operationId }, () => request).pipe(
         Effect.andThen(respond({ family, kind: 'REPLAY', operationId: expected.operationId })),
       ),
-    send: (_target, _prepared, expected) =>
-      run({ family, kind: 'SEND', operationId: expected.operationId }, () => expected).pipe(
+    send: (_target, prepared, expected) =>
+      run(
+        { family, kind: 'SEND', operationId: expected.operationId, refundBaseline: prepared.refundBaseline },
+        () => expected,
+      ).pipe(
         Effect.andThen(respond({ family, kind: 'SEND', operationId: expected.operationId })),
         Effect.catchTag('GatewayProviderUnsupported', (failure) => Effect.die(failure)),
       ),
@@ -471,6 +487,7 @@ const recordOf = (
     providerFamily: identity.target.binding.providerFamily,
     providerPaymentRef: Option.none(),
     providerRefundRef: Option.none(),
+    refundBaseline: Option.none(),
     replayExpiresAt: Option.none(),
     replayStartsAt: Option.none(),
     requestBody: Option.none(),
@@ -535,6 +552,7 @@ const ledgerOf = (world: World): ProviderDispatchLedgerContract => ({
         idempotencyKeyHash: prepared.idempotencyKey.pipe(Option.map(idempotencyKeyHashOf)),
         preparedAt: Option.some(now),
         providerPaymentRef: targetRef,
+        refundBaseline: prepared.refundBaseline,
         replayExpiresAt: replay ? Option.some(DateTime.add(now, { milliseconds: 86_400_000 })) : Option.none(),
         replayStartsAt: replay ? Option.some(now) : Option.none(),
         requestBody: replay ? Option.some(prepared.body) : Option.none(),
@@ -893,6 +911,35 @@ describe('#1156 #1158 Gateway operation executor', () => {
       expect(world.dispatches.get(second.operationId)?.notSentReason).toEqual(Option.some('PRIOR_REFUND_UNRESOLVED'));
       expect(factsOf(world).at(-1)).toEqual([second.operationId, 'REFUND_NOT_EFFECTED']);
       expect(sends(world, 'PREPARE_REFUND')).toBe(1);
+    }),
+  );
+
+  it.effect('#1158 A GoPay refund commits its pre-dispatch refund baseline with the request before the send', () =>
+    Effect.gen(function* gopayRefundBaseline() {
+      yield* at(0);
+      const refund: OperationSpec = {
+        family: 'GOPAY',
+        kind: 'REFUND',
+        operationId: REFUND_ID,
+        targetOperationId: COLLECT_ID,
+      };
+      const world = withOperations(newWorld(), collectSpec('GOPAY'), refund);
+      expect(Exit.isSuccess(yield* deliver(world, collectSpec('GOPAY')))).toBe(true);
+      // The prepare commit is the durable handoff: a crash while the request is in flight finds the baseline
+      // already committed on the row, and the request that left carried exactly that baseline.
+      world.failures.set('GOPAY:SEND', () => Effect.die('process crashed after the request left'));
+      expect(Exit.isFailure(yield* deliver(world, refund))).toBe(true);
+      expect(world.dispatches.get(REFUND_ID)?.refundBaseline).toEqual(Option.some(GOPAY_REFUND_BASELINE));
+      expect(world.calls.filter((call) => call.operationId === REFUND_ID)).toEqual([
+        { family: 'GOPAY', kind: 'PREPARE_REFUND', operationId: REFUND_ID, providerTarget: PAYMENT_REFS.GOPAY },
+        { family: 'GOPAY', kind: 'SEND', operationId: REFUND_ID, refundBaseline: Option.some(GOPAY_REFUND_BASELINE) },
+      ]);
+      // Redelivery never prepares (so never re-reads a baseline) and never resends.
+      world.failures.delete('GOPAY:SEND');
+      expect(Exit.isSuccess(yield* deliver(world, refund))).toBe(true);
+      expect(sends(world, 'PREPARE_REFUND')).toBe(1);
+      expect(world.calls.filter((call) => call.kind === 'SEND' && call.operationId === REFUND_ID)).toHaveLength(1);
+      expect(world.dispatches.get(REFUND_ID)?.state).toBe('OUTCOME_UNKNOWN');
     }),
   );
 

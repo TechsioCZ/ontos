@@ -34,6 +34,7 @@ import type {
   GatewayCollectRequest,
   GatewayExecutionTarget,
   GatewayExpectedEffect,
+  GatewayRefundBaseline,
   GatewayRefundRequest,
   ProviderObjectRef,
 } from '../../src/integrations/psp/psp-request.ts';
@@ -45,7 +46,12 @@ import {
   gopayInquiryResponseBody,
   gopayPaymentNotFoundBody,
 } from '../fixtures/gopay/payment-responses.ts';
-import { gopayRefundResponseBody, gopayTimestampedRefundHistoryBody } from '../fixtures/gopay/refund-responses.ts';
+import {
+  gopayBankPartialRefundHistoryBody,
+  gopayEmptyRefundHistoryBody,
+  gopayRefundHistoryBody,
+  gopayRefundResponseBody,
+} from '../fixtures/gopay/refund-responses.ts';
 import { stripeBalanceObject, stripeEventEnvelope, stripePayoutObject } from '../fixtures/stripe/stripe-events.ts';
 import {
   STRIPE_FIXTURE_PAYMENT_INTENT_ID,
@@ -107,6 +113,8 @@ export interface FamilyNotifications {
  * lookup makes no call and stays INDETERMINATE, so completion can only be shown on a real production refund.
  */
 export interface FamilyRefundCompletion {
+  /** The baseline the acknowledged refund dispatch committed before its send (GoPay); None for other families. */
+  readonly acknowledgedRefundBaseline: Option.Option<GatewayRefundBaseline>;
   readonly atMs: number;
   readonly confirmed: RouteScript;
   /** The provider requests the confirming lookup makes, in order. */
@@ -276,20 +284,15 @@ const GOPAY: FamilyConformance = {
   },
   paymentRef: gopayRef,
   refundAmount: czk(4000),
-  // GoPay refunds have no id of their own: the payment's refund history is read and one entry requested after the
-  // dispatch with the exact amount in state SUCCESS confirms.
+  // GoPay refunds have no id of their own and history rows carry only a day: the one row that is new since the
+  // baseline the acknowledged dispatch committed before its send, with the exact amount in state SUCCESS, confirms
+  // (real v3 sandbox history of the 2026-11-13 bank-transfer refund).
   refundCompletion: {
+    acknowledgedRefundBaseline: Option.some({ rowIds: [] }),
     atMs: CONFORMANCE_CLOCK_MS + HOUR_MS,
     confirmed: {
       [GOPAY_PAYMENT]: [gopayInquiry('PARTIALLY_REFUNDED')],
-      [GOPAY_REFUND_HISTORY]: [
-        respond(
-          200,
-          gopayTimestampedRefundHistoryBody([
-            { amount: 4000, dateRequested: '2026-11-12T11:00:00.000+0100', state: 'SUCCESS' },
-          ]),
-        ),
-      ],
+      [GOPAY_REFUND_HISTORY]: [respond(200, gopayBankPartialRefundHistoryBody)],
       [GOPAY_TOKEN]: [gopayToken],
     },
     confirmedRoutes: [GOPAY_TOKEN, GOPAY_PAYMENT, GOPAY_REFUND_HISTORY],
@@ -315,14 +318,12 @@ const GOPAY: FamilyConformance = {
     lostCreate: { [GOPAY_CREATE]: [dropAfterWrite], [GOPAY_TOKEN]: [gopayToken] },
     refundAccepted: {
       [GOPAY_PAYMENT]: [gopayInquiry('PARTIALLY_REFUNDED')],
-      [GOPAY_REFUND]: [respond(200, gopayRefundResponseBody('ACCEPTED'))],
+      [GOPAY_REFUND]: [respond(200, gopayRefundResponseBody(GOPAY_FIXTURE_PAYMENT_ID, 'ACCEPTED'))],
+      // Each prepare reads the pre-dispatch baseline; the read after the accepted send finds the new row REQUESTED.
       [GOPAY_REFUND_HISTORY]: [
-        respond(
-          200,
-          gopayTimestampedRefundHistoryBody([
-            { amount: 4000, dateRequested: '2026-11-12T11:00:00.000+0100', state: 'REQUESTED' },
-          ]),
-        ),
+        respond(200, gopayEmptyRefundHistoryBody),
+        respond(200, gopayEmptyRefundHistoryBody),
+        respond(200, gopayRefundHistoryBody([{ amount: 4000, id: '4493293835', state: 'REQUESTED' }])),
       ],
       [GOPAY_TOKEN]: [gopayToken],
     },
@@ -450,6 +451,7 @@ const STRIPE: FamilyConformance = {
   refundAmount: czk(50_000),
   // The Refund object is retrieved by its id; `succeeded` is the completion.
   refundCompletion: {
+    acknowledgedRefundBaseline: Option.none(),
     atMs: CONFORMANCE_CLOCK_MS + HOUR_MS,
     confirmed: {
       [`GET ${STRIPE_API}/v1/refunds/${STRIPE_FIXTURE_REFUND_ID}`]: [
@@ -614,6 +616,7 @@ const COMGATE: FamilyConformance = {
   refundAmount: czk(4000),
   // No refund status API: the production settlement statement of the dispatch day is the only completion source.
   refundCompletion: {
+    acknowledgedRefundBaseline: Option.none(),
     atMs: CONFORMANCE_CLOCK_MS + 25 * HOUR_MS,
     confirmed: {
       [COMGATE_SINGLE_TRANSFER]: [

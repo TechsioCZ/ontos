@@ -158,3 +158,15 @@ export const stripeResourceMissingError = {
     type: 'invalid_request_error',
   },
 };
+
+/**
+ * The exact body the real Stripe sandbox returned (HTTP 400, 2026-11-13, agent-scratch L4 run 2) when a complete,
+ * paid Checkout Session was expired. Unlike the documented example above it has no `code`, `param` or `doc_url`.
+ */
+export const stripePaidSessionExpireError = {
+  error: {
+    message:
+      'Only Checkout Sessions with a status in ["open"] can be expired. This Checkout Session has a status of `complete`. (This is an unclaimed Stripe sandbox. Dashboard links in this error message will not work until the sandbox is claimed.)',
+    type: 'invalid_request_error',
+  },
+};

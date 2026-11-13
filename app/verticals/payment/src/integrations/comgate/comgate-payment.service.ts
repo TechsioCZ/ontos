@@ -228,6 +228,7 @@ const makePrepared = (input: {
       headers: input.headers,
       idempotencyKey: Option.none(),
       orderReference: input.orderReference,
+      refundBaseline: Option.none(),
       replayWindowMs: Option.none(),
       requestHash: requestHashOf(input.endpointRef, input.headers, input.body),
     })),

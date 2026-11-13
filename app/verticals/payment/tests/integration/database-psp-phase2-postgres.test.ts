@@ -220,6 +220,7 @@ const prepareInput = (
   operationId: target.operationId,
   origin,
   providerPaymentRef,
+  refundBaseline: Option.none(),
   replayRequest: Option.none(),
   requestHash: 'a'.repeat(64),
   returnToken: Option.none(),
@@ -589,7 +590,11 @@ const refundableFixture = Effect.fn('PspPhase2Fixture.refundable')(function* ref
   });
   const prepareRefund = (operation: { readonly materialHash: string; readonly operationId: string }) =>
     withRoutines(runtime, scope, (invoker) =>
-      pspPrepareDispatch(invoker, prepareInput(operation, binding, origin, Option.some(providerPaymentRef))),
+      pspPrepareDispatch(invoker, {
+        ...prepareInput(operation, binding, origin, Option.some(providerPaymentRef)),
+        // Only a GoPay refund carries (and must carry) its pre-dispatch refund-history baseline.
+        refundBaseline: binding.family === 'GOPAY' ? Option.some([]) : Option.none(),
+      }),
     );
   return { binding, origin, prepareRefund, refund };
 });

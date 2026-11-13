@@ -59,6 +59,7 @@ const adapterOf = (
 ) => harness.adapters.forFamily(conformance.family);
 
 const lookupOf = (conformance: FamilyConformance, expected: GatewayExpectedEffect): GatewayLookupRequest => ({
+  acknowledgedRefundBaseline: Option.none(),
   dispatchedAt: Option.some(DateTime.makeUnsafe(CONFORMANCE_CLOCK_MS)),
   expected,
   target: { _tag: 'PROVIDER_OBJECT', ref: conformance.paymentRef },
@@ -66,6 +67,7 @@ const lookupOf = (conformance: FamilyConformance, expected: GatewayExpectedEffec
 
 /** The recovery lookup of the conformance refund, dispatched at the conformance instant. */
 const refundCompletionLookupOf = (conformance: FamilyConformance): GatewayLookupRequest => ({
+  acknowledgedRefundBaseline: conformance.refundCompletion.acknowledgedRefundBaseline,
   dispatchedAt: Option.some(DateTime.makeUnsafe(CONFORMANCE_CLOCK_MS)),
   expected: refundExpected(conformance),
   target: { _tag: 'PROVIDER_OBJECT', ref: conformance.refundCompletion.lookupRef },

@@ -66,5 +66,30 @@ export const gopayInquiryResponseBody = (input: {
   "gw_url": "https://gw.sandbox.gopay.com/gw/v3/..."
 }`;
 
+/**
+ * Real v3 sandbox shapes (C17 L4 run 2, 2026-11-13, receipts `gopay-basic-http.jsonl` and
+ * `gopay-hosted-offline-http.jsonl`), with the binding GoID and order reference substituted like the documented
+ * bodies above. They differ from the documentation: a minimal create answers `payer: {}` and `lang: "cs"`, the
+ * hosted page lives under `/gw-ui/rest/v3/` (the receipt redacts its 32-character token; a zero placeholder of the
+ * same shape stands in), and a bank-transfer inquiry names `BANK_ACCOUNT`, `payer.bank_account` and a `sub_state`
+ * instead of a payment card.
+ */
+export const GOPAY_SANDBOX_GW_URL = 'https://gw.sandbox.gopay.com/gw-ui/rest/v3/00000000000000000000000000000000';
+
+/** `POST /payments/payment` without payer contact, HTTP 200 (captured payment 3311079330). */
+export const gopayMinimalCreateResponseBody = (input: {
+  readonly goid: string;
+  readonly orderNumber: string;
+}): string =>
+  `{"id":3311079330,"order_number":"${input.orderNumber}","state":"CREATED","amount":10000,"currency":"CZK","payer":{},"target":{"type":"ACCOUNT","goid":${input.goid}},"lang":"cs","gw_url":"${GOPAY_SANDBOX_GW_URL}"}`;
+
+/** `GET /payments/payment/3311079577` of the offline bank transfer once paid (captured state PAID, sub_state _3001). */
+export const gopayBankTransferInquiryResponseBody = (input: {
+  readonly goid: string;
+  readonly orderNumber: string;
+  readonly state: string;
+}): string =>
+  `{"id":3311079577,"order_number":"${input.orderNumber}","state":"${input.state}","sub_state":"_3001","payment_instrument":"BANK_ACCOUNT","amount":10000,"currency":"CZK","payer":{"bank_account":{"account_number":"7654322","bank_code":"0100"},"contact":{"email":"c17-sandbox@example.test","country_code":"CZE"}},"target":{"type":"ACCOUNT","goid":${input.goid}},"lang":"cs","gw_url":"${GOPAY_SANDBOX_GW_URL}"}`;
+
 /** https://doc.gopay.com/#payment-data-archivation, the error body of an archived (not found) payment. */
 export const gopayPaymentNotFoundBody = '{"result": "FAILED", "errors": [{"error_code": "PAYMENT_NOT_FOUND"}]}';

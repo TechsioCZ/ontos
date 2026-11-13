@@ -127,6 +127,8 @@ const preparedOf = (family: Family, operationId: string, kind: string): Prepared
     headers: stripe ? [...headers, { name: 'idempotency-key', value: idempotencyKey }] : headers,
     idempotencyKey: stripe ? Option.some(idempotencyKey) : Option.none(),
     orderReference,
+    // The ledger refuses a GoPay refund without its pre-dispatch refund-history baseline, and any other with one.
+    refundBaseline: family === 'GOPAY' && kind === 'REFUND' ? Option.some({ rowIds: [] }) : Option.none(),
     replayWindowMs: stripe ? Option.some(86_400_000) : Option.none(),
     requestHash: 'a'.repeat(64),
   });

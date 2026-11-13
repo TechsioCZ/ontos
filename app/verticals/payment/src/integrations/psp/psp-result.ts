@@ -16,7 +16,7 @@ import { GatewayHttpsUrlSchema } from '../../../shared/domain/psp-configuration.
 import { ProviderEvidenceFactKindSchema, ProviderFindingSchema } from '../../../shared/domain/psp-vocabulary.ts';
 import { GatewayIdempotencyKeySchema, GatewayOrderReferenceSchema } from './psp-correlation.ts';
 import { ProviderAmountDiscrepancySchema, ProviderReportedAmountSchema } from './psp-money.ts';
-import { ProviderObjectRefSchema } from './psp-request.ts';
+import { GatewayRefundBaselineSchema, ProviderObjectRefSchema } from './psp-request.ts';
 import type { GatewayExpectedEffect } from './psp-request.ts';
 
 /**
@@ -111,6 +111,11 @@ export const PreparedProviderRequestSchema = Schema.Struct({
   headers: Schema.Array(ProviderRequestHeaderSchema),
   idempotencyKey: Schema.Option(GatewayIdempotencyKeySchema),
   orderReference: GatewayOrderReferenceSchema,
+  /**
+   * GoPay REFUND only: the payment's refund-history rows read before the send. Persisted with the request but not
+   * covered by `requestHash` (it is never sent); None for every other request.
+   */
+  refundBaseline: Schema.Option(GatewayRefundBaselineSchema),
   /** sha256 hex over the endpoint, body and non-secret headers. */
   requestHash: PaymentMaterialHashSchema,
   /** Stripe 86_400_000; GoPay and Comgate never replay. */

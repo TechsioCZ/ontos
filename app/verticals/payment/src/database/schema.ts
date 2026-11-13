@@ -1260,6 +1260,12 @@ export const pspProviderDispatches = paymentSchema.table.withRLS(
     providerAccountRef: text('provider_account_ref').notNull(),
     providerFamily: text('provider_family').$type<PaymentGatewayProviderFamily>().notNull(),
     providerPaymentRef: text('provider_payment_ref'),
+    /**
+     * GoPay REFUND only: the payment's refund-history row ids read before the send (#1156, #1158 durable handoff).
+     * Written once by `psp_prepare_dispatch` with the prepared request; the refund is attributed to the one row
+     * that is new since this baseline.
+     */
+    providerRefundBaseline: jsonb('provider_refund_baseline').$type<readonly string[]>(),
     providerRefundRef: text('provider_refund_ref'),
     replayExpiresAt: timestamp('replay_expires_at', { withTimezone: true }),
     replayStartsAt: timestamp('replay_starts_at', { withTimezone: true }),
@@ -1375,6 +1381,12 @@ export const pspProviderDispatches = paymentSchema.table.withRLS(
         and (${table.requestBody} is null or (${table.preparedAt} is not null and octet_length(${table.requestBody}) <= ${MAXIMUM_OPAQUE_BYTES}))
         and (${table.requestBody} is null) = (${table.requestHeaders} is null)
         and (${table.requestHeaders} is null or jsonb_typeof(${table.requestHeaders}) = 'array')`,
+    ),
+    check(
+      'payment_psp_dispatches_refund_baseline_ck',
+      sql`${table.providerRefundBaseline} is null or (${table.operationKind} = 'REFUND' and ${table.providerFamily} = 'GOPAY' and ${table.preparedAt} is not null
+        and jsonb_typeof(${table.providerRefundBaseline}) = 'array' and jsonb_array_length(${table.providerRefundBaseline}) <= 1000
+        and not jsonb_path_exists(${table.providerRefundBaseline}, '$[*] ? (@.type() != "string")'))`,
     ),
     check(
       'payment_psp_dispatches_replay_ck',

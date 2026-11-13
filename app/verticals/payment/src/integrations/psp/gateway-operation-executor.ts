@@ -513,6 +513,7 @@ const refundProviderTarget = Effect.fn('GatewayOperationExecutor.refundProviderT
   }
   const findings = yield* adapter
     .lookup(execution.target, {
+      acknowledgedRefundBaseline: Option.none(),
       dispatchedAt: targetRecord.preparedAt,
       expected: { _tag: 'COLLECT', amount: amount.value, operationId: targetRecord.operationId },
       target: { _tag: 'PROVIDER_OBJECT', ref: collectionRef },

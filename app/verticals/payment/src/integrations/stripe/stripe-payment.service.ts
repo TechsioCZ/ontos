@@ -316,6 +316,7 @@ const preparedOf = (input: {
     headers,
     idempotencyKey: Option.some(input.correlation.idempotencyKey),
     orderReference: input.correlation.orderReference,
+    refundBaseline: Option.none(),
     replayWindowMs: Option.some(STRIPE_REPLAY_WINDOW_MS),
     requestHash: requestHashOf(endpointRef, headers, input.correlation.idempotencyKey, body),
   }).pipe(Effect.catchTag('SchemaError', () => Effect.fail(unavailable('prepared_request_invalid'))));
