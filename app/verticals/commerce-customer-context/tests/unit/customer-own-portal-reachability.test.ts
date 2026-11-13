@@ -24,8 +24,16 @@ import { customerOwnProfileRead } from '../../src/portal-auth/reads/customer-own
  */
 
 const REGISTRATIONS = [
-  ['src/portal-auth/reads/customer-own-profile.read.ts', customerOwnProfileRead.descriptor, 'api/portal-auth/profile/http.ts'],
-  ['src/portal-auth/reads/customer-own-consent.read.ts', customerOwnConsentRead.descriptor, 'api/portal-auth/consent/http.ts'],
+  [
+    'src/portal-auth/reads/customer-own-profile.read.ts',
+    customerOwnProfileRead.descriptor,
+    'api/portal-auth/profile/http.ts',
+  ],
+  [
+    'src/portal-auth/reads/customer-own-consent.read.ts',
+    customerOwnConsentRead.descriptor,
+    'api/portal-auth/consent/http.ts',
+  ],
   [
     'src/actions/update-own-customer-profile.action.ts',
     updateOwnCustomerProfileAction.descriptor,
