@@ -142,6 +142,7 @@ import {
 import { AuthConfig, parseAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { account, user } from '../../api/auth/db/schema.ts';
+import { principals } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
 
 import {
@@ -818,6 +819,64 @@ const assertDelegatedRefusalsBeforeBinding = Effect.fn('ServerOwnerRelayNative.a
     );
     expect(unbound.status).toBe(403);
     expect(unbound.reason).toEqual(Option.some('module_credential_unbound'));
+  },
+);
+
+/**
+ * The Shell endpoint the people administration calls to disable or archive a principal: an identity administrator may
+ * archive an ordinary service principal, but never the platform's internal workload principal, which stays active.
+ */
+const assertPlatformPrincipalStatusRefused = Effect.fn('ServerOwnerRelayNative.assertPlatformPrincipalStatusRefused')(
+  function* assertPlatformPrincipalStatusRefused(input: {
+    readonly apiPrefix: string;
+    readonly cookie: Redacted.Redacted;
+    readonly database: NativeCoreDatabase;
+    readonly fixture: NativeShellUserFixture;
+  }) {
+    const crypto = yield* Crypto.Crypto;
+    const client = yield* HttpClient.HttpClient;
+    const { tenantId } = input.fixture.core;
+    const [workloadPrincipal, ordinaryPrincipal] = [yield* crypto.randomUUIDv4(), yield* crypto.randomUUIDv4()];
+    yield* input.database.insert(principals).values([
+      {
+        displayName: 'CRM · zakládání klientů · Firma',
+        kind: 'service',
+        platformRole: 'internal_workload',
+        principalId: workloadPrincipal,
+        status: 'active',
+        tenantId,
+      },
+      {
+        displayName: 'Ordinary integration',
+        kind: 'service',
+        principalId: ordinaryPrincipal,
+        status: 'active',
+        tenantId,
+      },
+    ]);
+    const archive = Effect.fn('ServerOwnerRelayNative.archivePrincipal')(function* archivePrincipal(
+      principalId: string,
+    ) {
+      const response = yield* client.post(`${input.fixture.origin}${input.apiPrefix}/auth/identity/principal-status`, {
+        body: yield* HttpBody.json({ expectedStatus: 'active', newStatus: 'archived', principalId, reason: 'Retire' }),
+        headers: {
+          cookie: Redacted.value(input.cookie),
+          'idempotency-key': yield* crypto.randomUUIDv4(),
+          origin: input.fixture.origin,
+        },
+      });
+      const [row] = yield* input.database
+        .select({ status: principals.status })
+        .from(principals)
+        .where(eq(principals.principalId, principalId));
+      return { status: response.status, stored: row?.status };
+    });
+    // The administrator's right holds: an ordinary service principal is archived.
+    expect(yield* archive(ordinaryPrincipal)).toEqual({ status: 200, stored: 'archived' });
+    // The platform's own principal is refused and stays active.
+    const refused = yield* archive(workloadPrincipal);
+    expect(refused.status).not.toBe(200);
+    expect(refused.stored).toBe('active');
   },
 );
 
@@ -3407,6 +3466,7 @@ it.live(
             }
             const realAuthContextRef = `better-auth-session:${realSession.id}`;
             expect(realAuthContextRef === fixture.core.manager.authContextRef).toBe(false);
+            yield* assertPlatformPrincipalStatusRefused({ apiPrefix: shell.apiPrefix, cookie, database, fixture });
             yield* assertDelegatedRefusalsBeforeBinding({ composition: current, database, fixture });
             // The module credential, provisioned by the platform exactly as on every boot; no person issues it.
             const issued = yield* provisionSourceModuleCredential({

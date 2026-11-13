@@ -26,6 +26,7 @@ const repositoryDefaults: PrincipalManagementPersistence = {
   loadPrincipal: () => unconfigured('loadPrincipal'),
   loadSupportBindings: () => unconfigured('loadSupportBindings'),
   renamePlatformPrincipal: () => unconfigured('renamePlatformPrincipal'),
+  setPlatformPrincipalStatus: () => unconfigured('setPlatformPrincipalStatus'),
   updateApiKeyBindingStatus: () => unconfigured('updateApiKeyBindingStatus'),
   updatePrincipalStatus: () => unconfigured('updatePrincipalStatus'),
 };
@@ -62,7 +63,33 @@ it.effect('never lets a tenant administrator change the status of a platform sys
   Effect.gen(function* rejectsSystemPrincipalStatusChange() {
     const updated: string[] = [];
     const transaction = repository({
-      loadPrincipal: () => Effect.succeed(Option.some({ kind: 'system' as const, status: 'active' as const })),
+      loadPrincipal: () =>
+        Effect.succeed(
+          Option.some({ kind: 'system' as const, platformRole: 'access_release_actor', status: 'active' as const }),
+        ),
+      updatePrincipalStatus: (input) =>
+        Effect.sync(() => {
+          updated.push(input.principalId);
+          return Option.none();
+        }),
+    });
+    for (const newStatus of ['disabled', 'archived'] as const) {
+      const failure = yield* Effect.flip(
+        changePrincipalStatus({ expectedStatus: 'active', newStatus, principalId, reason: 'Stop', tenantId }).pipe(
+          provideRepository(transaction),
+        ),
+      );
+      expect(Predicate.isTagged(failure, 'IdentityTargetInvalidError')).toBe(true);
+    }
+    expect(updated).toEqual([]);
+  }),
+);
+it.effect('never lets a tenant administrator change the status of a module internal workload principal', () =>
+  Effect.gen(function* rejectsWorkloadPrincipalStatusChange() {
+    const updated: string[] = [];
+    const transaction = repository({
+      loadPrincipal: () =>
+        Effect.succeedSome({ kind: 'service' as const, platformRole: 'internal_workload', status: 'active' as const }),
       updatePrincipalStatus: (input) =>
         Effect.sync(() => {
           updated.push(input.principalId);
@@ -84,6 +111,7 @@ it.effect('rejects human principal administration and managed keys targeting hum
   Effect.gen(function* rejectsHumanPrincipalAdministration() {
     const transaction = selectingPrincipal({
       kind: 'human',
+      platformRole: null,
       status: 'active',
     });
     const principalError = yield* Effect.flip(
@@ -215,7 +243,7 @@ it.effect('binds only eligible active self and managed principal kinds without s
           inserted = value;
           return Option.some({ authBindingId });
         }),
-      loadPrincipal: () => Effect.succeedSome({ kind: 'service', status: 'active' }),
+      loadPrincipal: () => Effect.succeedSome({ kind: 'service', platformRole: null, status: 'active' }),
     });
     const result = yield* bindApiKey({
       managed: true,
@@ -235,7 +263,7 @@ it.effect('maps an existing API key binding to a lifecycle conflict', () =>
   Effect.gen(function* mapsExistingBindingToConflict() {
     const transaction = repository({
       insertApiKeyBinding: () => Effect.succeedNone,
-      loadPrincipal: () => Effect.succeedSome({ kind: 'service', status: 'active' }),
+      loadPrincipal: () => Effect.succeedSome({ kind: 'service', platformRole: null, status: 'active' }),
     });
 
     const error = yield* Effect.flip(

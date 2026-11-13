@@ -1174,6 +1174,21 @@ it.live(
         expect(counts(healed, tenantOne)).toEqual({ failed: null, registered: 1, retired: 0, unchanged: 1 });
         expect(yield* activeBindingsOf(principalOf(tenantOne, companyB))).toEqual([{ legalEntityId: companyB }]);
 
+        // An administrator set the platform's registration aside by hand (archived): the platform owns it, so the
+        // next run makes it active again with its binding, and reports it as healed.
+        yield* adminDatabase
+          .update(principals)
+          .set({ status: 'archived' })
+          .where(eq(principals.principalId, principalOf(tenantOne, companyA)));
+        const afterArchive = yield* register('heal-archived');
+        expect(afterArchive.find(({ tenantId }) => tenantId === tenantOne)).toMatchObject({ failed: null, healed: 1 });
+        const [restoredRow] = yield* adminDatabase
+          .select({ status: principals.status })
+          .from(principals)
+          .where(eq(principals.principalId, principalOf(tenantOne, companyA)));
+        expect(restoredRow?.status).toBe('active');
+        expect(yield* activeBindingsOf(principalOf(tenantOne, companyA))).toEqual([{ legalEntityId: companyA }]);
+
         // Two hosts run the step at the same moment for a new company: whatever either reports, the next run finds
         // exactly one registration, one binding and one company binding.
         yield* adminDatabase.insert(legalEntities).values({

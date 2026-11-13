@@ -18,21 +18,12 @@ import {
   INTERNAL_WORKLOAD_PLATFORM_ROLE,
   principalManagementRepositoryFromTransaction,
 } from './principal-management.ts';
+import { PLATFORM_TENANT } from './platform-tenant.ts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from './staff-authentication-namespace.ts';
 
 export { ModuleCredentialUnavailableError } from './module-credential-unavailable-error.ts';
 
-/**
- * The platform tenant. The platform creates it and nobody administers it: it has no person, membership, Role or
- * company, so no Action, grant or tenant-managed key can reach what it holds. It holds exactly one service
- * principal per calling module, and the module credentials the platform issues to those principals.
- */
-export const PLATFORM_TENANT = Object.freeze({
-  defaultLocale: 'cs',
-  name: 'OntOS platform',
-  slug: 'ontos-platform',
-  tenantId: stableUuid('ontos.platform/tenant'),
-});
+export { PLATFORM_TENANT } from './platform-tenant.ts';
 
 /**
  * Whether a tenant serves people and so holds access: every tenant but the platform's own. The platform tenant holds

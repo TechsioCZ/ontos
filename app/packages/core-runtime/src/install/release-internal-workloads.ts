@@ -85,7 +85,8 @@ export interface ReleaseInternalWorkloadTenantReport {
   readonly corrected: number;
   /** Why the tenant, or some of its registrations, did not converge; null when everything did. */
   readonly failed: string | null;
-  readonly held: number;
+  /** Wanted registrations something other than the platform disabled or archived, made active again. */
+  readonly healed: number;
   readonly registered: number;
   readonly renamed: number;
   readonly retired: number;
@@ -272,11 +273,11 @@ const performStep = (
   at: Date,
 ): Effect.Effect<void, ReleaseInternalWorkloadError> => {
   const { tenantId } = scope;
+  // The platform's own status writer: no Action reaches it, and it touches only principals the platform registered.
   const principalStatus = (principalId: string, reactivate: boolean) =>
     runScoped(database, scope, NO_CONSTRAINTS, (transaction) =>
       principalManagementRepositoryFromTransaction(transaction)
-        .changePrincipalStatus({
-          expectedStatus: reactivate ? 'disabled' : 'active',
+        .changePlatformPrincipalStatus({
           newStatus: reactivate ? 'active' : 'disabled',
           principalId,
           reason: reactivate ? 'The internal workload is wanted here again' : RETIREMENT_REASON,
@@ -408,7 +409,7 @@ const registerTenant = Effect.fn('ReleaseInternalWorkloads.registerTenant')(func
     const planned: ReleaseInternalWorkloadTenantReport = {
       corrected: plan.corrected,
       failed: null,
-      held: plan.held.length,
+      healed: plan.healed,
       registered: plan.registered,
       renamed: plan.renamed,
       retired: plan.retired,
@@ -439,7 +440,7 @@ const registerTenant = Effect.fn('ReleaseInternalWorkloads.registerTenant')(func
         evidenceJson: {
           corrected: report.corrected,
           failedRegistrations: failures.length,
-          held: report.held,
+          healed: report.healed,
           registered: report.registered,
           renamed: report.renamed,
           retired: report.retired,
@@ -462,7 +463,7 @@ const registerTenant = Effect.fn('ReleaseInternalWorkloads.registerTenant')(func
     : ({
         corrected: 0,
         failed: outcome.failure.reason,
-        held: 0,
+        healed: 0,
         registered: 0,
         renamed: 0,
         retired: 0,

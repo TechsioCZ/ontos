@@ -92,8 +92,11 @@ export interface RegistrationUnit {
 export interface TenantWorkloadPlan {
   /** Extra company bindings revoked from registrations (D6: one binding, one company). */
   readonly corrected: number;
-  /** Registrations that stay as they are although wanted: a principal someone else disabled or archived. */
-  readonly held: readonly PlatformRegistration[];
+  /**
+   * Wanted registrations whose principal something other than the platform's own retirement disabled or archived: the
+   * platform owns them, so they are made active again.
+   */
+  readonly healed: number;
   readonly registered: number;
   /** Registrations that were whole but carried another name (a company or the workload's label was renamed). */
   readonly renamed: number;
@@ -170,8 +173,9 @@ const ensureSteps = (registration: PlatformRegistration, displayName: string): r
     registration.principalStatus === 'missing'
       ? [{ displayName, kind: 'create-principal', legalEntityId, principalId, workloadKey }]
       : [];
-  if (registration.principalStatus === 'disabled' && registration.activeWorkloadBindingId === null) {
-    // Retired by the platform before (company or module gone, now back): the same principal takes the workload again.
+  if (registration.principalStatus === 'disabled' || registration.principalStatus === 'archived') {
+    // Retired by the platform before (company or module gone, now back), or set aside by anything else: the platform
+    // owns this principal, so the same principal takes the workload again.
     principalSteps.push({ kind: 'reactivate-principal', principalId });
   }
   if (registration.activeWorkloadBindingId !== null) {
@@ -220,7 +224,7 @@ const retireSteps = (registration: PlatformRegistration): readonly InternalWorkl
 /**
  * The plan for one tenant. Wanted registrations are made whole; registrations the platform made that are no longer
  * wanted (module not active, workload no longer declared or internal, company not active) are retired, never deleted.
- * A wanted registration whose principal someone else disabled (its binding still active) or archived is held as set.
+ * A wanted registration whose principal something else disabled or archived is healed: the platform owns it.
  */
 export const planTenantInternalWorkloads = (
   state: TenantWorkloadState,
@@ -230,8 +234,8 @@ export const planTenantInternalWorkloads = (
   const wanted = wantedIn(state, declarations);
   const wantedIds = new Set(wanted.map(({ principalId }) => principalId));
   const units: RegistrationUnit[] = [];
-  const kept: PlatformRegistration[] = [];
   let corrected = 0;
+  let healed = 0;
   let registered = 0;
   let renamed = 0;
   let unchanged = 0;
@@ -247,12 +251,13 @@ export const planTenantInternalWorkloads = (
   };
   for (const wish of wanted) {
     const registration = byPrincipal.get(wish.principalId) ?? missingRegistration(wish);
+    // The platform's own retirement revokes the bindings before it disables; a principal set aside with its binding
+    // still active, or archived, was changed by something else and is healed.
     if (
       registration.principalStatus === 'archived' ||
       (registration.principalStatus === 'disabled' && registration.activeWorkloadBindingId !== null)
     ) {
-      kept.push(registration);
-      continue;
+      healed += 1;
     }
     const ensure = ensureSteps(registration, wish.displayName);
     const rename =
@@ -282,7 +287,7 @@ export const planTenantInternalWorkloads = (
   }
   return {
     corrected,
-    held: kept,
+    healed,
     registered,
     renamed,
     retired,

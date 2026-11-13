@@ -10,7 +10,7 @@ import {
   principalCompanyMemberships,
   principals,
 } from '../db/schema.ts';
-import { PLATFORM_TENANT } from './module-credentials.ts';
+import { PLATFORM_TENANT } from './platform-tenant.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import { ConfigureAgentAuditEvidenceSchema } from '../modules/actions/configure-agent.action.ts';
 import { IdentityPersistenceUnavailableError, IdentityTargetInvalidError } from './principal-management-errors.ts';

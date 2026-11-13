@@ -91,7 +91,7 @@ describe('planTenantInternalWorkloads', () => {
     ]);
     expect(plan).toEqual({
       corrected: 0,
-      held: [],
+      healed: 0,
       registered: 0,
       renamed: 0,
       retired: 0,
@@ -149,12 +149,15 @@ describe('planTenantInternalWorkloads', () => {
     expect(binding).toMatchObject({ bindingId: workloadBindingIdsOf(retired.principalId, 1).bindingId });
   });
 
-  it('holds a registration whose principal an administrator disabled or archived instead of reviving it', () => {
+  it('heals a registration whose principal something else disabled or archived: the platform owns it', () => {
     const disabled: PlatformRegistration = { ...whole(COMPANY_A), principalStatus: 'disabled' };
     const archived: PlatformRegistration = { ...whole(COMPANY_B), principalStatus: 'archived' };
     const plan = planTenantInternalWorkloads(stateOf({ registrations: [disabled, archived] }), [INTAKE]);
-    expect(plan.steps).toEqual([]);
-    expect(plan.held).toEqual([disabled, archived]);
+    expect(plan.healed).toBe(2);
+    expect(plan.steps).toEqual([
+      { kind: 'reactivate-principal', principalId: disabled.principalId },
+      { kind: 'reactivate-principal', principalId: archived.principalId },
+    ]);
   });
 
   it('never mixes two tenants: the same company and workload give each tenant its own principal', () => {
@@ -197,14 +200,22 @@ describe('planTenantInternalWorkloads', () => {
         principalId: whole(COMPANY_A).principalId,
       },
     ]);
-    const held: PlatformRegistration = {
+    const setAside: PlatformRegistration = {
       ...whole(COMPANY_A),
       displayName: 'Renamed by an administrator',
       principalStatus: 'archived',
     };
-    expect(planTenantInternalWorkloads(stateOf({ registrations: [held, whole(COMPANY_B)] }), [INTAKE]).steps).toEqual(
-      [],
-    );
+    // Healed and given back its name in one unit.
+    expect(
+      planTenantInternalWorkloads(stateOf({ registrations: [setAside, whole(COMPANY_B)] }), [INTAKE]).steps,
+    ).toEqual([
+      { kind: 'reactivate-principal', principalId: setAside.principalId },
+      {
+        displayName: 'CRM · zakládání klientů · Obchodní firma',
+        kind: 'rename-principal',
+        principalId: setAside.principalId,
+      },
+    ]);
     const retiring = planTenantInternalWorkloads(
       stateOf({ activeModuleKeys: new Set(), registrations: [{ ...whole(COMPANY_A), displayName: 'old' }] }),
       [INTAKE],

@@ -10,6 +10,7 @@ import {
   IdentityPersistenceUnavailableError,
   IdentityTargetInvalidError,
 } from './principal-management-errors.ts';
+import { PLATFORM_TENANT } from './platform-tenant.ts';
 
 const persistenceFailure = <FailureCause>(cause?: FailureCause) => {
   const failure = new IdentityPersistenceUnavailableError({
@@ -33,6 +34,7 @@ const invalid = (reason: string) => new IdentityTargetInvalidError({ code: 'iden
 
 type PrincipalRecord = Readonly<{
   readonly kind: PrincipalKind;
+  readonly platformRole: string | null;
   readonly status: PrincipalStatus;
 }>;
 const ApiKeyBindingStatusSchema = Schema.Literals(['active', 'disabled', 'revoked']);
@@ -82,6 +84,9 @@ export interface PrincipalManagementPersistence {
   readonly renamePlatformPrincipal: (
     input: RenamePlatformServicePrincipalInput,
   ) => Effect.Effect<Option.Option<{ readonly principalId: string }>, IdentityPersistenceUnavailableError>;
+  readonly setPlatformPrincipalStatus: (
+    input: ChangePlatformPrincipalStatusInput,
+  ) => Effect.Effect<Option.Option<{ readonly principalId: string }>, IdentityPersistenceUnavailableError>;
   readonly updateApiKeyBindingStatus: (
     input: SetApiKeyBindingStatusInput,
   ) => Effect.Effect<Option.Option<{ readonly status: BindingStatus }>, IdentityPersistenceUnavailableError>;
@@ -94,6 +99,10 @@ export interface PrincipalManagementRepositoryService {
   readonly bindApiKey: (
     input: BindApiKeyInput,
   ) => Effect.Effect<{ readonly authBindingId: string; readonly status: 'active' }, PrincipalManagementError>;
+  /** The release step's own status change of such a principal; touches no principal without its marker. */
+  readonly changePlatformPrincipalStatus: (
+    input: ChangePlatformPrincipalStatusInput,
+  ) => Effect.Effect<void, PrincipalManagementError>;
   readonly changePrincipalStatus: (input: ChangePrincipalStatusInput) => Effect.Effect<
     {
       readonly previousStatus: PrincipalStatus;
@@ -226,7 +235,7 @@ const principalManagementPersistenceFromTransaction = (
           ),
   loadPrincipal: (tenantId, principalId) =>
     transaction
-      .select({ kind: principals.kind, status: principals.status })
+      .select({ kind: principals.kind, platformRole: principals.platformRole, status: principals.status })
       .from(principals)
       .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, principalId)))
       .limit(1)
@@ -284,6 +293,25 @@ const principalManagementPersistenceFromTransaction = (
       .pipe(
         Effect.mapError(persistenceFailure),
         Effect.map(([renamed]) => Option.fromNullishOr(renamed)),
+      ),
+  setPlatformPrincipalStatus: (input) =>
+    transaction
+      .update(principals)
+      .set({
+        disabledAt: input.newStatus === 'active' ? null : DateTime.toDateUtc(DateTime.nowUnsafe()),
+        status: input.newStatus,
+      })
+      .where(
+        and(
+          eq(principals.tenantId, input.tenantId),
+          eq(principals.principalId, input.principalId),
+          eq(principals.platformRole, INTERNAL_WORKLOAD_PLATFORM_ROLE),
+        ),
+      )
+      .returning({ principalId: principals.principalId })
+      .pipe(
+        Effect.mapError(persistenceFailure),
+        Effect.map(([changed]) => Option.fromNullishOr(changed)),
       ),
   updateApiKeyBindingStatus: (input) => {
     if (authenticationNamespaceId === undefined) {
@@ -372,6 +400,30 @@ const createPlatformServicePrincipalFor = (persistence: PrincipalManagementPersi
     return { principalId: created.value.principalId, status: 'active' as const };
   });
 
+/** The status the release step sets on a principal it registered: active while wanted, disabled once retired. */
+export interface ChangePlatformPrincipalStatusInput {
+  readonly newStatus: 'active' | 'disabled';
+  readonly principalId: string;
+  readonly reason: string;
+  readonly tenantId: string;
+}
+
+/**
+ * The release step's own status writer for the principals it registered. No Action or API reaches it; it touches only
+ * a principal carrying the platform's internal workload marker, and it heals what anything else set: an archived or
+ * disabled registration that is still wanted becomes active again.
+ */
+const changePlatformPrincipalStatusFor = (persistence: PrincipalManagementPersistence) =>
+  Effect.fn('PrincipalManagement.changePlatformPrincipalStatus')(function* changePlatformStatus(
+    input: ChangePlatformPrincipalStatusInput,
+  ) {
+    const changed = yield* persistence.setPlatformPrincipalStatus(input);
+    if (Option.isNone(changed)) {
+      return yield* persistenceFailure();
+    }
+    return yield* Effect.void;
+  });
+
 const renamePlatformServicePrincipalFor = (persistence: PrincipalManagementPersistence) =>
   Effect.fn('PrincipalManagement.renamePlatformServicePrincipal')(function* renamePlatformPrincipal(
     input: RenamePlatformServicePrincipalInput,
@@ -421,9 +473,15 @@ const changePrincipalStatusFor = (persistence: PrincipalManagementPersistence) =
     if (Option.isNone(target) || target.value.kind === 'human') {
       return yield* invalid('The target is not a tenant-local non-human principal');
     }
-    // The platform's own principals (the release actor) are not tenant-managed: disabling one would stop the
-    // platform's work for the whole tenant, so no administrator changes their status. The database refuses it too.
-    if (target.value.kind === 'system') {
+    // The platform's own principals are not tenant-managed: the release actor (a `system` principal, which the
+    // database refuses too), a module's internal workload principal in one company (marked `internal_workload`) and
+    // anything in the platform tenant. Disabling one would stop the platform's work for the tenant; only the
+    // platform's own writer (`changePlatformPrincipalStatus`, which no Action reaches) changes their status.
+    if (
+      target.value.kind === 'system' ||
+      target.value.platformRole !== null ||
+      input.tenantId === PLATFORM_TENANT.tenantId
+    ) {
       return yield* invalid('The platform manages its own principals');
     }
     if (target.value.status !== input.expectedStatus) {
@@ -565,6 +623,7 @@ export const principalManagementRepositoryFromPersistence = (
 ): PrincipalManagementRepositoryService =>
   Object.freeze({
     bindApiKey: bindApiKeyFor(persistence),
+    changePlatformPrincipalStatus: changePlatformPrincipalStatusFor(persistence),
     changePrincipalStatus: changePrincipalStatusFor(persistence),
     createNonHumanPrincipal: createNonHumanPrincipalFor(persistence),
     createPlatformServicePrincipal: createPlatformServicePrincipalFor(persistence),

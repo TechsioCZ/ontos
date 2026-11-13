@@ -74,9 +74,9 @@ export const reportLine = (report: ReleaseInternalWorkloadTenantReport): string 
   if (report.failed !== null) {
     return `${LOG_PREFIX} tenant ${report.tenantId}: FAILED (${report.failed}); what was done before the failure stays and the next run completes it`;
   }
-  const held = report.held === 0 ? '' : `, ${String(report.held)} held as an administrator set them`;
+  const healed = report.healed === 0 ? '' : `, ${String(report.healed)} made active again after being set aside`;
   const renamed = report.renamed === 0 ? '' : `, ${String(report.renamed)} renamed`;
-  return `${LOG_PREFIX} tenant ${report.tenantId}: ${String(report.registered)} registered, ${String(report.retired)} retired, ${String(report.unchanged)} unchanged${renamed}${held}`;
+  return `${LOG_PREFIX} tenant ${report.tenantId}: ${String(report.registered)} registered, ${String(report.retired)} retired, ${String(report.unchanged)} unchanged${renamed}${healed}`;
 };
 
 const ReleaseRuntimeLive = Layer.unwrap(

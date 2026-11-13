@@ -168,6 +168,7 @@ const unusedPrincipalManagementOperation = () =>
   Effect.die('The ambient PrincipalManagementRepository must not be used by the Action runtime');
 const ambientPrincipalManagementRepository: PrincipalManagementRepositoryService = {
   bindApiKey: unusedPrincipalManagementOperation,
+  changePlatformPrincipalStatus: unusedPrincipalManagementOperation,
   changePrincipalStatus: unusedPrincipalManagementOperation,
   createNonHumanPrincipal: unusedPrincipalManagementOperation,
   createPlatformServicePrincipal: unusedPrincipalManagementOperation,
