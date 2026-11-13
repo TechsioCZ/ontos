@@ -2447,8 +2447,9 @@ export const prepareCommandTax = Effect.fn('Merchandise.prepareCommandTax')(func
 
 /**
  * Whether a person's save based on `expectedRevision` may write over the head as it is now: the same revision, or the
- * one a sync with Tax advanced it to right after (`taxRates.revision`), which changed nothing the person saw but the
- * confirmation of the rates. Any other change since is a real conflict.
+ * one a sync with Tax advanced it to right after (`taxRates.revision`). The sync stamps its revision only when the rates
+ * it stored changed, so such a save is accepted and priced at the rates now in force, as the page's note says. Any other
+ * change since is a real conflict.
  */
 const revisionMatches = (
   head: { readonly revision: number; readonly taxRates: CompanyTaxRates | undefined },
