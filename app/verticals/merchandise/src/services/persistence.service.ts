@@ -118,6 +118,7 @@ import {
   decideTaxRates,
   heldRateOf,
   knownTaxRateBook,
+  staffTaxRateBook,
   NO_SELLABLE_RATES,
   notSellableMessage,
   refreshedTaxRateBook,
@@ -2412,19 +2413,37 @@ export const prepareCommandTax = Effect.fn('Merchandise.prepareCommandTax')(func
     return { fetched: outcome.success, refused: false } satisfies PreparedTax;
   }
   const { nextAttemptAt } = outcome.failure;
-  yield* nextAttemptAt === undefined
-    ? Effect.logWarning('Merchandise could not read VAT rates from Tax').pipe(
-        Effect.annotateLogs({ reason: outcome.failure.kind }),
-      )
-    : Effect.logInfo(
-        `Merchandise uses the stored VAT rates; Tax was not asked, next attempt at ${DateTime.formatIso(nextAttemptAt)}`,
-      );
+  if (outcome.failure.kind === 'CALLER') {
+    // The Shell refused this caller (session ended, no right here): not an outage of Tax.
+    yield* Effect.logInfo('Merchandise did not read VAT rates from Tax for this caller').pipe(
+      Effect.annotateLogs({ reason: outcome.failure.refusal ?? 'unknown' }),
+    );
+  } else if (nextAttemptAt === undefined) {
+    yield* Effect.logWarning('Merchandise could not read VAT rates from Tax').pipe(
+      Effect.annotateLogs({ reason: outcome.failure.kind }),
+    );
+  } else {
+    yield* Effect.logInfo(
+      `Merchandise uses the stored VAT rates; Tax was not asked, next attempt at ${DateTime.formatIso(nextAttemptAt)}`,
+    );
+  }
   return {
     fetched: Option.getOrUndefined(Option.none<FetchedTaxRates>()),
     refused: outcome.failure.kind === 'REFUSED',
     unavailable: outcome.failure.kind === 'UNAVAILABLE',
   } satisfies PreparedTax;
 });
+
+/**
+ * Whether a person's save based on `expectedRevision` may write over the head as it is now: the same revision, or the
+ * one a sync with Tax advanced it to right after (`taxRates.revision`). The sync stamps its revision only when the rates
+ * it stored changed, so such a save is accepted and priced at the rates now in force, as the page's note says. Any other
+ * change since is a real conflict.
+ */
+const revisionMatches = (
+  head: { readonly revision: number; readonly taxRates: CompanyTaxRates | undefined },
+  expected: number,
+) => head.revision === expected || (head.revision === expected + 1 && head.taxRates?.revision === head.revision);
 
 /** The staff response's view of the company's VAT: its current and scheduled rates and its declared regime. */
 export const staffTaxFields = (state: CompanyTaxRates | undefined, now: DateTime.Utc) => ({
@@ -2442,13 +2461,13 @@ export interface RecordsPrepared {
 }
 
 /**
- * Tax's answer for a staff read, as far as this process knows it: never waits for Tax (a stale or missing answer only
- * starts the company's single refresh in the background), so the read answers from the materialised rates.
+ * Tax's answer for a staff read: a fresh one as this process knows it; a stale or missing one is asked for now, waiting
+ * at most a few seconds ({@link staffTaxRateBook}), so this read takes Tax's answer over when it prices the company.
  */
 export const prepareStaffTaxRates = Effect.fn('Merchandise.prepareStaffTaxRates')(function* prepareStaffTaxRates(
   scope: OperationalScope,
 ) {
-  const known = yield* knownTaxRateBook(scope);
+  const known = yield* staffTaxRateBook(scope);
   return { fetched: known.fetched, refused: known.refused } satisfies PreparedTax;
 });
 
@@ -2615,7 +2634,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
     ) {
       // The head row lock serializes every write of this company; reads never wait for it.
       const locked = yield* lockedHead(false);
-      if (!ownRevisionGuard(command) && locked.revision !== expectedRevision) {
+      if (!ownRevisionGuard(command) && !revisionMatches(locked, expectedRevision)) {
         return yield* revisionConflict();
       }
       const { head, synced, tax } = yield* syncTax(locked, command);

@@ -39,7 +39,10 @@ import {
   VatRateResolutionSchema,
   resolveVatRate,
   sellableRatesAt,
+  TAX_CALL_TIMEOUT,
+  TAX_NEGATIVE_FRESHNESS,
   shownTaxRates,
+  staffTaxRateBook,
   taxCallFailureOf,
   taxRateViews,
 } from '../../src/services/tax-rates.ts';
@@ -243,6 +246,8 @@ it.effect('a write waits for Tax at most 3 seconds; the refresh still lands for 
 
 it.effect('reuses Tax answer for 12 minutes per company and refreshes it afterwards in the background', () =>
   Effect.gen(function* freshness() {
+    // A day the test book prices the company: its answer is a full-window one.
+    yield* TestClock.setTime(Date.parse('2026-11-13T13:30:00.000Z'));
     const calls = yield* Ref.make(0);
     const source = { read: () => Ref.update(calls, (count) => count + 1).pipe(Effect.as(TEST_TAX_BOOK)) };
     const company = scopeOf(randomUUID());
@@ -292,6 +297,8 @@ it.effect('never hands over an answer older than 12 minutes, and drops it when T
 
 it.effect('while Tax does not answer, reads and writes ask it at most once per wait, which grows to 12 minutes', () =>
   Effect.gen(function* backoff() {
+    // A day the test book prices the company: its answer is a full-window one.
+    yield* TestClock.setTime(Date.parse('2026-11-13T13:30:00.000Z'));
     const calls = yield* Ref.make(0);
     const outcome = yield* Ref.make<TaxRatesFailure['kind']>('UNAVAILABLE');
     const source = {
@@ -319,17 +326,18 @@ it.effect('while Tax does not answer, reads and writes ask it at most once per w
       asked.push(yield* callsAfter(Duration.seconds(minutes * 60 - 1)), yield* callsAfter(Duration.seconds(1)));
     }
     expect(asked).toEqual([1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7]);
-    // A company Tax is not installed for: asked again only after the whole freshness window, writes refused at once.
+    // A company Tax is not installed for: asked again after the short negative window (a company that gets Tax
+    // installed is picked up within a minute), writes refused at once meanwhile.
     yield* Ref.set(outcome, 'REFUSED');
     const other = scopeOf(randomUUID());
     const write = currentTaxRateBook(other).pipe(Effect.provideService(TaxRateSource, source), Effect.flip);
     yield* Ref.set(calls, 0);
     expect((yield* write).kind).toBe('REFUSED');
     expect([(yield* write).kind, yield* Ref.get(calls)]).toEqual(['REFUSED', 1]);
-    yield* TestClock.adjust('11 minutes');
+    yield* TestClock.adjust('59 seconds');
     yield* write;
     expect(yield* Ref.get(calls)).toBe(1);
-    yield* TestClock.adjust('1 minute');
+    yield* TestClock.adjust('1 second');
     yield* write;
     expect(yield* Ref.get(calls)).toBe(2);
   }),
@@ -670,4 +678,133 @@ it.effect('a module that holds no module credential reads as an outage that name
       'GatewayDelegationSourceError: No module credential of merchandise in this process: the host has not handed one over',
     ]);
   }),
+);
+
+it.effect('the first staff read after Tax is set up takes its answer over itself, without a second read', () =>
+  Effect.gen(function* staffReadSyncs() {
+    yield* TestClock.setTime(Date.parse('2026-11-13T13:30:00.000Z'));
+    const company = scopeOf(randomUUID());
+    let asked = 0;
+    const source = {
+      read: () =>
+        Effect.sync(() => {
+          asked += 1;
+          return TEST_TAX_BOOK;
+        }),
+    };
+    // As stage after the seed: no answer in this process yet. A burst of staff reads, nothing read afterwards.
+    const reads = yield* Effect.all([staffTaxRateBook(company), staffTaxRateBook(company), staffTaxRateBook(company)], {
+      concurrency: 'unbounded',
+    }).pipe(Effect.provideService(TaxRateSource, source));
+    for (const read of reads) {
+      expect(read.fetched?.book).toBe(TEST_TAX_BOOK);
+    }
+    // One call to Tax for the company, shared by every read that wanted it.
+    expect(asked).toBe(1);
+    // So the read's own decision takes Tax over from the migrated state (and the store writes it on the head).
+    const migrated: CompanyTaxRates = {
+      book: testTaxBook({ reduced: '12', standard: '21' }),
+      heldProductRates: { 'book-it': 10 },
+      source: 'MIGRATION',
+      syncedAt: DateTime.makeUnsafe(0),
+    };
+    const decision = decideTaxRates(migrated, { fetched: reads[0]?.fetched, refused: false }, yield* DateTime.now);
+    expect(decision.materialise?.source).toBe('TAX');
+    // A held product is held no more: BOOK-IT is labelled at the reduced rate (12 %), its stored gross unchanged.
+    expect(decision.held).toEqual({});
+    // Before this change a staff read only started the refresh and served the stored rates.
+    expect(
+      (yield* knownTaxRateBook(scopeOf(randomUUID())).pipe(Effect.provideService(TaxRateSource, source))).fetched,
+    ).toBeUndefined();
+  }),
+);
+
+it.effect('a staff read waits a few seconds at most: without an answer it serves the stored rates', () =>
+  Effect.gen(function* staffReadBounded() {
+    const { release, source } = yield* gatedSource;
+    const company = scopeOf(randomUUID());
+    const read = yield* Effect.forkChild(staffTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source)));
+    yield* TestClock.adjust('3 seconds');
+    expect((yield* Fiber.join(read)).fetched).toBeUndefined();
+    yield* Deferred.succeed(release, TEST_TAX_BOOK);
+  }),
+);
+
+it.effect("a session that ended mid-call is the caller's refusal: no outage, no wait for the company", () =>
+  Effect.gen(function* callerRefused() {
+    const company = scopeOf(randomUUID());
+    let answer: Effect.Effect<TaxRateBook, TaxRatesFailure> = Effect.fail(
+      taxCallFailureOf({ _tag: 'GatewayForbiddenProblem', reason: 'subject_authentication_ended', status: 403 }),
+    );
+    const source = { read: () => answer };
+    const refused = yield* staffTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source));
+    expect([refused.fetched, refused.waiting, refused.refused]).toEqual([undefined, false, false]);
+    // The next caller asks Tax again at once (no back-off), and gets the company's answer.
+    yield* Effect.yieldNow;
+    answer = Effect.succeed(TEST_TAX_BOOK);
+    const next = yield* staffTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source));
+    expect(next.fetched?.book).toBe(TEST_TAX_BOOK);
+    // Tax unreachable is an outage: the company waits before the next attempt.
+    const offline = scopeOf(randomUUID());
+    const down = { read: () => Effect.fail(new TaxRatesFailure({ kind: 'UNAVAILABLE' })) };
+    yield* staffTaxRateBook(offline).pipe(Effect.provideService(TaxRateSource, down));
+    expect((yield* knownTaxRateBook(offline).pipe(Effect.provideService(TaxRateSource, down))).waiting).toBe(true);
+  }),
+);
+
+it.effect('an answer that does not price the company is used one minute, one that does twelve', () =>
+  Effect.gen(function* negativeFreshness() {
+    yield* TestClock.setTime(Date.parse('2026-11-13T13:30:00.000Z'));
+    const company = scopeOf(randomUUID());
+    let book = testTaxBook(undefined, 'NOT_DECLARED');
+    let asked = 0;
+    const source = {
+      read: () =>
+        Effect.sync(() => {
+          asked += 1;
+          return book;
+        }),
+    };
+    yield* staffTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source));
+    // The company is set up in Tax: a minute later the next staff read sees it.
+    book = TEST_TAX_BOOK;
+    yield* TestClock.adjust(TAX_NEGATIVE_FRESHNESS);
+    const after = yield* staffTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source));
+    expect([after.fetched?.book, asked]).toEqual([TEST_TAX_BOOK, 2]);
+    // A pricing answer is kept for the full window: eleven minutes later Tax is not asked again.
+    yield* TestClock.adjust('11 minutes');
+    yield* staffTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source));
+    expect(asked).toBe(2);
+  }),
+);
+
+it.effect(
+  'a Tax that never answers: the first staff read waits 3 s, later ones do not, and the hang starts the back-off',
+  () =>
+    Effect.gen(function* hungTax() {
+      const company = scopeOf(randomUUID());
+      let asked = 0;
+      const hung = {
+        read: () =>
+          Effect.sync(() => {
+            asked += 1;
+          }).pipe(Effect.andThen(Effect.never)),
+      };
+      const read = staffTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, hung));
+      // The first read waits its 3 seconds and serves the stored rates.
+      const first = yield* Effect.forkChild(read);
+      yield* TestClock.adjust('3 seconds');
+      expect((yield* Fiber.join(first)).fetched).toBeUndefined();
+      // Reads right after it do not wait on the same hung call again.
+      for (let index = 0; index < 3; index += 1) {
+        const next = yield* Effect.forkChild(read);
+        yield* Effect.yieldNow;
+        expect(next.pollUnsafe()).toBeDefined();
+      }
+      // At its own time limit the call ends as an outage: the company's back-off starts, nobody waits during it.
+      yield* TestClock.adjust(TAX_CALL_TIMEOUT);
+      yield* Effect.yieldNow;
+      expect((yield* knownTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, hung))).waiting).toBe(true);
+      expect(asked).toBe(1);
+    }),
 );

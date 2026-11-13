@@ -37,7 +37,6 @@ import {
   TAX_RATE_FRESHNESS,
   TaxRateSource,
   TaxRatesFailure,
-  currentTaxRateBook,
 } from '../../src/services/tax-rates.ts';
 import type { TaxRateBook } from '../../src/services/tax-rates.ts';
 import { merchandiseRegistration } from '../../vertical.registration.ts';
@@ -141,6 +140,31 @@ type TaxSource = Effect.Success<typeof TaxRateSource>;
 const linesOf = (document: typeof FixtureOrderSchema.Type.document) =>
   document.lines.map(({ quantity, sku, unitPriceMinor, vatRate }) => ({ quantity, sku, unitPriceMinor, vatRate }));
 
+/** One staff command (a price change) based on `expectedRevision`, through Merchandise's own preparation and write. */
+const changePrice = Effect.fn('VatTransition.changePrice')(function* changePrice(
+  input: {
+    readonly db: RuntimeDb;
+    readonly principal: Effect.Success<ReturnType<typeof makeNativeReadTestContext>>['principal'];
+    readonly source: TaxSource;
+  },
+  expectedRevision: number,
+) {
+  const payload = Schema.decodeUnknownSync(MerchandiseCommandPayloadSchema)({
+    command: { _tag: 'ChangePrice', id: 'p1', priceMinor: 1100 },
+    expectedRevision,
+  });
+  const scope = { ...input.principal, correlationId: 'vat-transition-change-price' };
+  const tax = yield* prepareCommandTax(payload.command, scope).pipe(Effect.provideService(TaxRateSource, input.source));
+  return yield* input.db.transaction((tx) =>
+    installOperationalScope(tx, scope, defineDatabaseIdentityEnrollment([])).pipe(
+      Effect.flatMap((scoped) =>
+        persistenceService(scoped, { prepared: { actionInvocationId: scope.correlationId, payload, tax }, scope }),
+      ),
+      Effect.flatMap((services) => services.apply(payload.command, expectedRevision, scope.correlationId)),
+    ),
+  );
+});
+
 /** A fixture's storefront order (a fresh client request id), placed through Merchandise's own preparation and write. */
 const placeOrder = Effect.fn('VatTransition.placeOrder')(function* placeOrder(
   input: {
@@ -212,7 +236,7 @@ it.layer(nativeServices, { excludeTestServices: true })('VAT classification depl
         const fs = yield* FileSystem.FileSystem;
         const before = yield* fs.makeTempDirectoryScoped({ prefix: 'ontos-merchandise-vat-transition-' });
         for (const name of yield* fs.readDirectory(migrations)) {
-          if (name === TAX_CLASSIFICATION || !(yield* fs.exists(`${migrations}/${name}/migration.sql`))) {
+          if (name >= TAX_CLASSIFICATION || !(yield* fs.exists(`${migrations}/${name}/migration.sql`))) {
             continue;
           }
           yield* fs.makeDirectory(`${before}/${name}`);
@@ -332,16 +356,12 @@ it.layer(nativeServices, { excludeTestServices: true })('VAT classification depl
         expect(after).toEqual(fixture.after);
         expectJacketAtVariantPrice(after);
 
-        // 2. Tax is installed and seeded, and the wait after its refusal has passed; staff reads sync the company with
-        //    no person involved. The first one answers from the materialised rates at once and starts the refresh;
-        //    once that refresh has landed, the next one materialises Tax's answer.
+        // 2. Tax is installed and seeded, and the wait after its refusal has passed; one staff read syncs the company
+        //    with no person involved: with no fresh answer it asks Tax (a few seconds at most) and stores the answer in
+        //    the same read. No second read and no other caller of Tax in between (stage did exactly this).
         yield* Ref.set(taxSource, () => Effect.succeed(BASELINE));
         yield* Ref.set(clockShift, Duration.sum(TAX_RATE_FRESHNESS, Duration.seconds(1)));
         const staffView = { view: { limit: 0, ordersLimit: 0, summary: true } };
-        expect((yield* read(staffView)).taxRatesConfirmedAt).toEqual(Option.none());
-        yield* currentTaxRateBook({ ...native.principal, correlationId: 'vat-transition' }).pipe(
-          Effect.provideService(TaxRateSource, source),
-        );
         const staff = yield* read(staffView);
         expect(Option.isSome(staff.taxRatesConfirmedAt ?? Option.none())).toBe(true);
         expect(staff.sellerVatRegime).toEqual(Option.some('VAT_PAYER'));
@@ -367,6 +387,19 @@ it.layer(nativeServices, { excludeTestServices: true })('VAT classification depl
         expectJacketAtVariantPrice(priced);
         const again = yield* placeSameOrder(fixture.jacketOrder, 'vat-transition-order-jacket-priced');
         expect(again?.lines.map((line) => line.unitPriceMinor)).toEqual([JACKET_GROSS, INFORMATIONAL_GROSS]);
+
+        // 3. A person's save racing a sync: the page was read at `beforeSync`, then a staff read stored Tax's changed
+        //    answer (one revision up, stamped as a sync). The save is not refused for that sync alone.
+        const beforeSync = yield* revisionNow;
+        yield* Ref.set(taxSource, () => Effect.succeed({ ...BASELINE, fingerprint: 'tax:baseline-2024-again' }));
+        yield* Ref.set(clockShift, Duration.sum(Duration.times(TAX_RATE_FRESHNESS, 2), Duration.seconds(2)));
+        yield* read(staffView);
+        expect(yield* revisionNow).toBe(beforeSync + 1);
+        expect((yield* changePrice(orders, beforeSync)).revision).toBe(beforeSync + 2);
+        // A save based on a revision older than the sync's predecessor is still a real conflict.
+        expect(yield* changePrice(orders, beforeSync).pipe(Effect.flip)).toMatchObject({
+          code: 'merchandise_revision_conflict',
+        });
       }).pipe(Effect.provideServiceEffect(Clock.Clock, Clock.Clock.pipe(Effect.map((real) => laterClock(real))))),
     240_000,
   );

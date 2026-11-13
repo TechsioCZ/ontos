@@ -125,7 +125,7 @@ export const recordsRead = defineRead(
     finish: Effect.fn('recordsRead.finish')(
       function* recordsFinish(input: RecordsRequest, context: ReadFinishContext<boolean, LoadedRecords>) {
         const canWrite = context.prepared;
-        const { revision, state } = yield* decodeFinanceState(context.loaded.row);
+        const { revision, state } = yield* decodeFinanceState(context.loaded.row, context.scope);
         const businessDate = pragueCalendarDate(DateTime.toEpochMillis(yield* DateTime.now));
         const result = projectFinanceRecords(state, revision, input, businessDate);
         const metadata =

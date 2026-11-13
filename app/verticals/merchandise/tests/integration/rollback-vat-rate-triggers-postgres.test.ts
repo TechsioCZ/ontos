@@ -283,7 +283,7 @@ const migrationsBeforeExpand = Effect.gen(function* beforeExpand() {
   const fs = yield* FileSystem.FileSystem;
   const before = yield* fs.makeTempDirectoryScoped({ prefix: 'ontos-merchandise-before-tax-' });
   for (const name of yield* fs.readDirectory(migrations)) {
-    if (name === TAX_CLASSIFICATION || !(yield* fs.exists(`${migrations}/${name}/migration.sql`))) {
+    if (name >= TAX_CLASSIFICATION || !(yield* fs.exists(`${migrations}/${name}/migration.sql`))) {
       continue;
     }
     yield* fs.makeDirectory(`${before}/${name}`);
@@ -417,7 +417,8 @@ it.layer(nativeServices, { excludeTestServices: true })('the window triggers and
             { classification: 'cz.vat.reduced', id: 'p2' },
           ]);
         }
-        expect(yield* heldOf(admin, migrated)).toEqual({});
+        // The last hold dropped: the key is absent (SQL null here), never JSON null or an empty map.
+        expect(yield* heldOf(admin, migrated)).toBeNull();
 
         // The round trip: after a rollback the old release rewrites every product; each comes out classified from the
         // rate this release wrote (21 standard, 10 or 12 reduced), held exactly when the company is still on the
@@ -451,15 +452,12 @@ it.layer(nativeServices, { excludeTestServices: true })('the window triggers and
               row.rate === 21 ? 'cz.vat.standard' : 'cz.vat.reduced',
             ]);
           }
-          // The rewrite never adds a hold: a held product written at 10 % keeps it, every other one loses it.
-          const expectedHolds =
-            regime === 'migrated'
-              ? Object.fromEntries(
-                  rows
-                    .filter((row) => row.rate === 10 && Object.hasOwn(holdsBefore, row.id))
-                    .map((row) => [row.id, 10]),
-                )
-              : null;
+          // The rewrite never adds a hold: a held product written at 10 % keeps it, every other one loses it. Without
+          // any hold left the key is absent (SQL null here), never JSON null or an empty map.
+          const keptHolds = Object.fromEntries(
+            rows.filter((row) => row.rate === 10 && Object.hasOwn(holdsBefore, row.id)).map((row) => [row.id, 10]),
+          );
+          const expectedHolds = regime === 'migrated' && Object.keys(keptHolds).length > 0 ? keptHolds : null;
           expect([regime, yield* heldOf(admin, company)]).toEqual([regime, expectedHolds]);
           // Prices and the VAT split are those of before the rollback, product by product: the imported coffee
           // (written at 10 % for money, never held) stays at 12 %.

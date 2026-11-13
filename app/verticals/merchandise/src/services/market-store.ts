@@ -17,7 +17,7 @@ import {
 } from '../../shared/domain/market-offers.ts';
 import type { MarketId, MarketOfferMode, MarketSettings, OrderMarket } from '../../shared/domain/market-offers.ts';
 import { marketProductOffers, marketSettings, products } from '../database/schema.ts';
-import { query, whereScope } from './merchandise-store.ts';
+import { query, storedDocumentUndecodable, whereScope } from './merchandise-store.ts';
 import type { MerchandiseDb, MerchandiseStoreFailure, StoreScope } from './merchandise-store.ts';
 import type { OrderMarketContext } from './market-pricing.ts';
 
@@ -59,7 +59,11 @@ const encodedMarket = (row: MarketRow) => ({
   exchangeRate: normalizeExchangeRate(row.exchangeRate),
   updatedAt: row.updatedAt.toISOString(),
 });
-const storedMarketOf = (row: MarketRow) => query(decodeStoredMarket(encodedMarket(row)), STORED_MARKET_REASON);
+const storedMarketOf = (scope: StoreScope, row: MarketRow) =>
+  query(
+    decodeStoredMarket(encodedMarket(row)).pipe(Effect.tapError(storedDocumentUndecodable(scope, 'market_settings'))),
+    STORED_MARKET_REASON,
+  );
 
 /** The order snapshot (price list) of a stored market. */
 export const orderMarketOf = (market: StoredMarket): OrderMarket => ({
@@ -85,7 +89,7 @@ export const loadMarket = Effect.fn('MarketStore.loadMarket')(function* loadMark
     'Market settings could not be read',
   );
   const [row] = rows;
-  return row === undefined ? Option.none() : Option.some(yield* storedMarketOf(row));
+  return row === undefined ? Option.none() : Option.some(yield* storedMarketOf(scope, row));
 });
 
 const outerMarketId = sql.raw('"market_settings"."market_id"');
@@ -112,7 +116,9 @@ export const listMarkets = Effect.fn('MarketStore.listMarkets')(function* listMa
     Effect.forEach(
       rows,
       ({ notOffered, offered, ...row }) =>
-        decodeMarketSettings({ ...encodedMarket(row), exceptionCounts: { notOffered, offered } }),
+        decodeMarketSettings({ ...encodedMarket(row), exceptionCounts: { notOffered, offered } }).pipe(
+          Effect.tapError(storedDocumentUndecodable(scope, 'market_settings')),
+        ),
       { concurrency: 1 },
     ),
     STORED_MARKET_REASON,
@@ -165,7 +171,10 @@ export const marketExceptionPage = Effect.fn('MarketStore.marketExceptionPage')(
             .offset(input.offset ?? 0),
           EXCEPTIONS_READ,
         );
-  const items = yield* query(decodeExceptionItems(rows), 'Stored market exceptions do not decode');
+  const items = yield* query(
+    decodeExceptionItems(rows).pipe(Effect.tapError(storedDocumentUndecodable(scope, 'market_product_offers'))),
+    'Stored market exceptions do not decode',
+  );
   return { items, marketId: input.marketId, total };
 });
 
@@ -195,7 +204,7 @@ export const productMarketRows = Effect.fn('MarketStore.productMarketRows')(func
   return yield* Effect.forEach(
     rows,
     ({ exception, ...row }) =>
-      storedMarketOf(row).pipe(
+      storedMarketOf(scope, row).pipe(
         Effect.map((market) => ({
           exception: exception === null ? Option.none<boolean>() : Option.some(exception),
           market,
