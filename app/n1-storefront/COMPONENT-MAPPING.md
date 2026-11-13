@@ -826,6 +826,16 @@ ponechává výchozí end. Mění se jen responzivní flex zarovnání app wrapp
 nikoli vzhled nebo interakční kontrakt knihovní komponenty. Skutečné count,
 stránka a query zůstávají datové; návrhových 182 stránek se nekopíruje.
 
+Doplnění 13. 11.: mobilní instance `38:2409` používá knihovní `size="md"`.
+CatalogPagination proto pod `md` používá nativní 44px ovladače. Od stávajícího
+breakpointu `n1-compact` zobrazuje číselné odkazy se `siblingCount={0}`; na
+užším displeji zachovává knihovní compact přehled. Desktop od `md` nadále
+používá `size="sm"` a `siblingCount={1}`. Jde pouze o podporované props a
+responzivní zobrazení instancí, bez vzhledových přepisů nebo změny breakpointů.
+Skutečné lokální GET průchody na 1440/390/320 px ověřily rozdílné produkty
+stránek 1/2, Enter na Další, čistou URL první stránky a historii Zpět/Vpřed.
+Mobilní vyhledávání navíc zachovalo skutečný dotaz `q=fox`.
+
 ### Vyprodaný produkt — 57:2965
 
 Figma zobrazuje AvailabilityStatus unavailable a na mobilu zakázané tlačítko
