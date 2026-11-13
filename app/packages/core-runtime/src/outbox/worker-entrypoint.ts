@@ -11,6 +11,10 @@ export { defineAction, defineActionOwnerPermissions, defineActionResourcePermiss
 export { ActionPermissionCheckError, ActionResultValidationError } from '../actions/errors.ts';
 export { commitActionThenReject, TrustedPrincipalContextSchema } from '../actions/context.ts';
 export { ActionRuntime } from '../actions/runtime.ts';
+export {
+  ActionAuthorizationPreflightDatabase,
+  ActionAuthorizationPreflightDatabaseLive,
+} from '../actions/owner-proof-preflight.ts';
 export { defineMicroverticalPolicy, denyPolicy } from '../actions/policy.ts';
 export { decodeAccessDeclarationOrThrow } from '../authorization/access-declaration.ts';
 export {
@@ -50,11 +54,14 @@ export {
   ActiveApplicationCompositionService,
   validateActiveApplicationCompositionSnapshot,
 } from '../modules/active-application-composition.ts';
-export { ApplicationCompositionSchema } from '../modules/application-composition.ts';
+export {
+  ApplicationCompositionModuleSchema,
+  ApplicationCompositionSchema,
+} from '../modules/application-composition.ts';
 export { defineOntosModuleManifest, OntosModuleIdSchema } from '../modules/manifest.ts';
 export { defineOntosMcpContribution } from '../modules/mcp-contribution.ts';
 export { defineTenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
-export { defineScopedRoutine } from '../db/scoped-routine.ts';
+export { defineScopedRoutine, ScopedRoutineInvocationError } from '../db/scoped-routine.ts';
 export { findPostgresFailure, isPostgresUniqueViolation } from '../database/postgres-failure.ts';
 export { DatabaseTransactionFailure, decodeDatabaseDriverFailure } from '../database/driver-failure.ts';
 export {

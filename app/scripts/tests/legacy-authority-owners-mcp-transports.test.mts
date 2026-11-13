@@ -284,36 +284,32 @@ it.effect(
 
 it('all five owners publish canonical clients and schema-only contracts, with no private-path or legacy dispatch alias', () => {
   const require = createRequire(new URL('../../package.json', import.meta.url));
-  const operations = [
+  const resolvesTo = (specifier: string, file: string) =>
+    expect(require.resolve(specifier)).toBe(fileURLToPath(new URL(`../../verticals/${file}`, import.meta.url)));
+  const actionOwners = [
     { owner: 'crm-activities', slugs: [createSlug] },
     { owner: 'tagging', slugs: [createSlug, 'assign-tag', 'delete-tag', 'unassign-tag', 'update-tag'] },
     { owner: 'workforce', slugs: [createSlug, 'update-employee'] },
     { owner: salesInsightsAppId, slugs: [createSlug, 'assign-metric', 'change-metric-state', 'update-metric'] },
-    {
-      owner: 'merchandise',
-      slugs: [
-        createSlug,
-        'change-order-status',
-        'change-product-images',
-        'cleanup-demo',
-        'manage-catalog',
-        'manage-markets',
-        'place-storefront-order',
-        'propose-order-changes',
-        'record-stock-movement',
-        'review-order-changes',
-      ],
-    },
   ];
-  for (const { owner, slugs } of operations) {
+  for (const { owner, slugs } of actionOwners) {
     for (const slug of slugs) {
-      expect(require.resolve(`@app/${owner}/clients/${slug}`)).toBe(
-        fileURLToPath(new URL(`../../verticals/${owner}/src/api/${slug}-action-client.ts`, import.meta.url)),
-      );
-      expect(require.resolve(`@app/${owner}/contracts/${slug}`)).toBe(
-        fileURLToPath(new URL(`../../verticals/${owner}/shared/actions/${slug}.ts`, import.meta.url)),
-      );
+      resolvesTo(`@app/${owner}/clients/${slug}`, `${owner}/src/api/${slug}-action-client.ts`);
+      resolvesTo(`@app/${owner}/contracts/${slug}`, `${owner}/shared/actions/${slug}.ts`);
     }
+  }
+  // Merchandise publishes main's generated per-operation clients beside their proven public contracts. Only the
+  // storefront's checkout keeps its Action client and the two Action contracts it decodes.
+  for (const api of ['manage-markets-action', 'records', 'review-order-changes-action']) {
+    resolvesTo(`@app/merchandise/apis/${api}/client`, `merchandise/src/api/${api}-client.ts`);
+    resolvesTo(`@app/merchandise/apis/${api}`, `merchandise/shared/apis/${api}.ts`);
+  }
+  resolvesTo(
+    '@app/merchandise/clients/place-storefront-order',
+    'merchandise/src/api/place-storefront-order-action-client.ts',
+  );
+  for (const slug of [createSlug, 'place-storefront-order']) {
+    resolvesTo(`@app/merchandise/contracts/${slug}`, `merchandise/shared/actions/${slug}.ts`);
   }
 });
 
