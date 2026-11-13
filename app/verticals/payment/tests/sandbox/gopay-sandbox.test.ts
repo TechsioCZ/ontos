@@ -245,8 +245,8 @@ const refundAndProve = (input: GopayScenario, created: CreatedPayment, amount: S
     const refund = yield* newOperation;
     const prepareMark = yield* providerCallMark(input.provider);
     const refundedAt = yield* sandboxNow;
-    // A history read that is not a decodable 200 fails prepare (nothing is sent), so this also checks the
-    // unverified assumption that a never-refunded payment answers `200 []`.
+    // A history read that is not a decodable 200 fails prepare (nothing is sent), so a never-refunded payment
+    // must answer `200 []` for the first refund to proceed.
     const prepared = yield* input.provider.adapter.prepareRefund(
       input.target,
       refundRequestOf({ amount, collection: created.operation, providerTarget: created.payment, refund }),
@@ -280,7 +280,7 @@ const refundAndProve = (input: GopayScenario, created: CreatedPayment, amount: S
     // Then the adapter's verdict, which may rest only on that row.
     expect(findingKindFor(settled, refund.operationId)).toBe('EFFECT_CONFIRMED');
     expect(factKindOf(settled, refund.operationId)).toEqual(Option.some('REFUND_CONFIRMED'));
-    return { after, refund };
+    return { added, after, baseline, refund };
   });
 
 describe('#1159 GoPay sandbox conformance', () => {
@@ -339,7 +339,7 @@ describe('#1159 GoPay sandbox conformance', () => {
   );
 
   it.live(
-    '#1159 GoPay sandbox: the hosted payment is confirmed by lookup and partially refunded',
+    '#1159 GoPay sandbox: the hosted payment is confirmed by lookup and partially refunded twice, each refund from its own history row',
     (ctx) =>
       gopay(ctx, (input) =>
         Effect.gen(function* hostedPaymentAndRefund() {
@@ -351,7 +351,17 @@ describe('#1159 GoPay sandbox conformance', () => {
           });
           expect(findingKindFor(paid, created.operation.operationId)).toBe('EFFECT_CONFIRMED');
 
-          yield* refundAndProve(input, created, PARTIAL_REFUND_AMOUNT);
+          const first = yield* refundAndProve(input, created, PARTIAL_REFUND_AMOUNT);
+          const firstRowIds = first.added.map((row) => row.id);
+
+          // The second equal partial refund must be baselined on the first refund's row and confirmed from its own new row.
+          const second = yield* refundAndProve(input, created, PARTIAL_REFUND_AMOUNT);
+          expect(second.baseline.map((row) => row.id)).toEqual(expect.arrayContaining(firstRowIds));
+          expect(second.added).toHaveLength(1);
+          expect(second.added[0]).not.toEqual(first.added[0]);
+          const successRows = second.after.filter((row) => row.state === 'SUCCESS');
+          expect(successRows).toHaveLength(2);
+          expect(new Set(successRows.map((row) => row.id)).size).toBe(2);
         }),
       ),
     HOSTED_SCENARIO_TIMEOUT_MS,

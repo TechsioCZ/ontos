@@ -33,7 +33,7 @@ Stripe source: <https://docs.stripe.com/testing>.
 | Provider | Scenario                                                                                                                               | Hosted page             |
 | -------- | -------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
 | GoPay    | create and retrieve; fractional amount 159950 (1 599,50 CZK) kept on create and lookup                                                 | no                      |
-| GoPay    | paid by bank transfer, confirmed by lookup, **partial** refund proven                                                                  | bank-transfer simulator |
+| GoPay    | paid by bank transfer, confirmed by lookup, **two equal partial** refunds proven, each confirmed from its own new history row          | bank-transfer simulator |
 | GoPay    | paid by card, confirmed by lookup, **full** refund proven                                                                              | card, amount ending 00  |
 | GoPay    | declined card (amount ending 04) ends CANCELED and NOT_EFFECTED                                                                        | card, amount ending 04  |
 | GoPay    | cancel is UNSUPPORTED; callback is a lookup trigger; lost create recovered by callback id                                              | no                      |
@@ -54,5 +54,5 @@ check that this baseline is exactly what GoPay returned, then pass it to the set
 an acknowledged refund. They pass only when GoPay shows exactly one new SUCCESS row of the exact amount **and**
 the adapter confirms the refund. An unproven refund must stay unconfirmed.
 
-The first refund of a payment also checks the one unverified assumption: that a payment without refunds answers
-`200 []`.
+The first refund of a payment requires a payment without refunds to answer `200 []`. The sandbox run captured that
+shape on 2026-11-13 for a PAID card payment and a PAID bank-transfer payment.
