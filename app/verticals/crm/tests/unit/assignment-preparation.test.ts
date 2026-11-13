@@ -96,6 +96,10 @@ const registeredAssignment = (scenario: Scenario) =>
           sqlDepth -= 1;
           return Effect.succeed([]);
         }
+        // Main's scope authority probes the connected role before it installs a scope.
+        if (sql === 'select current_user::text as role') {
+          return Effect.succeed([{ role: SHARED_RUNTIME_IDENTITY.role }]);
+        }
         // A session-setting role installs its scope and reads back the connected role in one statement.
         if (sql === installAndReadScopeSql) {
           expect(params).toEqual([scope.tenantId, scope.legalEntityId]);

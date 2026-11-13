@@ -145,6 +145,10 @@ it.effect(
           ),
       };
       const connection = testSqlConnection((sql, params) => {
+        // Main's scope authority probes the connected role before it installs a scope.
+        if (sql === 'select current_user::text as role') {
+          return Effect.succeed([{ role: 'ontos_runtime' }]);
+        }
         // A session-setting role installs its scope and reads back the connected role in one statement.
         if (sql === installAndReadScopeSql) {
           expect(params).toEqual([tenantId, '']);

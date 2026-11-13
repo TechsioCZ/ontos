@@ -45,6 +45,10 @@ const harness = (options: { readonly concurrentWinner?: boolean; readonly initia
             if (/^(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE SAVEPOINT|ROLLBACK TO SAVEPOINT)\b/u.test(sql)) {
               return Effect.succeed([]);
             }
+            // Main's scope authority probes the connected role before it installs a scope.
+            if (sql === 'select current_user::text as role') {
+              return Effect.succeed([{ role: 'ontos_runtime' }]);
+            }
             // A session-setting role installs its scope and reads back the connected role in one statement.
             if (sql === installAndReadScopeSql) {
               scope = { legalEntityId: String(params[1]), tenantId: String(params[0]) };

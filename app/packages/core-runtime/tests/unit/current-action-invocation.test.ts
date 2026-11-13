@@ -36,7 +36,8 @@ const fixture = Effect.fn('CurrentActionFixture.make')(function* fixture(
   readRows: (sql: string, parameters: readonly unknown[]) => Effect.Effect<readonly object[], SqlError>,
 ) {
   const database = yield* makeTestDatabase((sql, parameters) => {
-    if (sql.includes('current_setting')) {
+    // The session-setting role's one install-and-read statement answers the scope it set.
+    if (sql.includes("set_config('ontos.tenant_id'")) {
       return Effect.succeed([
         { legal_entity_id: scope.legalEntityId, role: 'ontos_runtime', tenant_id: scope.tenantId },
       ]);
