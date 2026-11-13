@@ -212,3 +212,31 @@ export const detailGrossOf = (
     ? { kind: 'preview', minor: priceMinor + orderLineVatMinor({ quantity: 1, unitPriceMinor: priceMinor, vatRate }) }
     : { kind: 'preview', minor: null };
 };
+
+/** The rate that prices a product in the detail form, and whether it is a held one (not its classification's rate). */
+export interface DetailVat {
+  /** The rate a saved price is entered at: the held rate while the product keeps its classification. */
+  readonly appliedRate: number | undefined;
+  /** The rate the chosen classification names. */
+  readonly classificationRate: number | undefined;
+  /** Priced at a rate kept from before the rate change (until the company is confirmed by Tax, or reclassified). */
+  readonly held: boolean;
+}
+
+/**
+ * Which rate prices the product in the form. A held product (`vatRate` from the server differs from its
+ * classification's rate) keeps its held rate while the form keeps its classification: a new net price is stored at that
+ * rate, exactly as it then sells. Choosing another classification drops the hold: the new classification's rate applies.
+ */
+export const detailVatOf = (
+  product: Pick<ProductRecord, 'taxClassificationCode' | 'vatRate'>,
+  draftClassification: ProductRecord['taxClassificationCode'],
+  classificationRate: number | undefined,
+): DetailVat => {
+  const held =
+    product.vatRate !== undefined &&
+    classificationRate !== undefined &&
+    draftClassification === product.taxClassificationCode &&
+    product.vatRate !== classificationRate;
+  return { appliedRate: held ? product.vatRate : classificationRate, classificationRate, held };
+};

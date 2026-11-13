@@ -40,16 +40,28 @@ const record = (url: string, init: RequestInit) => ({
   url,
 });
 
-const response = (status = 200, body: StageResponse['body'] = Effect.void, headers = new Headers()): StageResponse => ({
+/** A healthy storefront home: product cards linking under `/produkt/`, above the size floor. */
+const HEALTHY_HOME = `<html><body>${'<a href="/cs/produkt/sroub-m8">Šroub M8</a>'.repeat(3)}${' '.repeat(120_000)}</body></html>`;
+
+const response = (
+  status = 200,
+  body: StageResponse['body'] = Effect.succeed(''),
+  headers = new Headers(),
+): StageResponse => ({
   body,
   headers,
   status,
 });
 
-const signInResponse = (body: StageResponse['body'] = Effect.void) =>
+const signInResponse = (body: StageResponse['body'] = Effect.succeed('')) =>
   response(200, body, new Headers({ 'set-cookie': 'ontos.session=issued; Path=/; HttpOnly' }));
 
-const defaultTransport = (url: string) => Effect.succeed(pathOf(url) === SIGN_IN ? signInResponse() : response());
+const defaultTransport = (url: string) =>
+  Effect.succeed(
+    pathOf(url) === SIGN_IN
+      ? signInResponse()
+      : response(200, Effect.succeed(pathOf(url) === STOREFRONT_HOME ? HEALTHY_HOME : '')),
+  );
 
 const fixture = (respond: StageTransport = defaultTransport) =>
   Effect.gen(function* makeFixture() {
@@ -163,7 +175,7 @@ it.effect('includes the complete document body in the page budget and fails on f
         return Effect.succeed(response(503));
       }
       return path === STOREFRONT_HOME
-        ? Effect.succeed(response(200, Effect.sleep(SLOW_DOCUMENT)))
+        ? Effect.succeed(response(200, Effect.sleep(SLOW_DOCUMENT).pipe(Effect.as(HEALTHY_HOME))))
         : defaultTransport(url);
     });
     const fiber = yield* Effect.forkChild(test.run);
@@ -180,7 +192,9 @@ it.effect('includes the complete document body in the page budget and fails on f
 it.effect.each([1500, 1501])('warns past the fixed document-body budget at %i milliseconds', (duration) =>
   Effect.gen(function* checksDocumentBoundary() {
     const test = yield* fixture((url) =>
-      pathOf(url) === STOREFRONT_HOME ? Effect.succeed(response(200, Effect.sleep(duration))) : defaultTransport(url),
+      pathOf(url) === STOREFRONT_HOME
+        ? Effect.succeed(response(200, Effect.sleep(duration).pipe(Effect.as(HEALTHY_HOME))))
+        : defaultTransport(url),
     );
     const fiber = yield* Effect.forkChild(test.run);
     yield* TestClock.adjust(duration);
@@ -329,7 +343,7 @@ it.effect('passes the command with a GitHub warning when only the page budget is
   Effect.gen(function* warnsWithoutFailing() {
     const test = yield* fixture((url) =>
       pathOf(url) === STOREFRONT_HOME
-        ? Effect.succeed(response(200, Effect.sleep(SLOW_DOCUMENT)))
+        ? Effect.succeed(response(200, Effect.sleep(SLOW_DOCUMENT).pipe(Effect.as(HEALTHY_HOME))))
         : defaultTransport(url),
     );
     const fiber = yield* Effect.forkChild(
@@ -405,5 +419,26 @@ it.effect('rejects an invalid credential payload without disclosing credentials 
     expect(failures.map((failure) => failure.message)).toEqual(['sign-in payload did not match the Shell contract']);
     expect(failures[0]?.reason).toBe('payload');
     expect(test.calls.some((call) => call.path === SIGN_IN)).toBe(false);
+  }),
+);
+
+it.effect('a storefront home that answers 200 without products, with an unavailable marker or near-empty fails', () =>
+  Effect.gen(function* storefrontContent() {
+    const homes = {
+      empty: `<html><body>${' '.repeat(70_000)}</body></html>`,
+      unavailable: `${HEALTHY_HOME}<script>{"_tag":"RecordsUnavailableProblem","status":503}</script>`,
+    };
+    for (const [kind, html] of Object.entries(homes)) {
+      const test = yield* fixture((url) =>
+        pathOf(url) === STOREFRONT_HOME ? Effect.succeed(response(200, Effect.succeed(html))) : defaultTransport(url),
+      );
+      const { failures } = yield* test.run;
+      expect([kind, failures.map((failure) => failure.reason)]).toEqual([
+        kind,
+        kind === 'empty' ? ['content', 'content'] : ['content'],
+      ]);
+    }
+    const healthy = yield* fixture();
+    expect((yield* healthy.run).failures).toEqual([]);
   }),
 );

@@ -88,7 +88,7 @@ Probes:
 
 1. **Build units**: seven shards, as above.
 2. **Deploy** (environment `stage-edge`): syncs the owner secret bundle to the `app` service, then pushes the `app` and `storefront` setups in parallel with `scripts/zerops/push-service.sh`, using the commit SHA as the version name. That script uploads over HTTP/1.1 with curl, because Zerops silently drops an upload that runs longer than about 30 seconds. On failure the job prints the app log.
-3. **Verify**: runs the timing probe (`/cs`, OAuth metadata and the storefront home) and the MCP OAuth proof, both blocking. The newsletter grant and withdrawal proof only warns.
+3. **Verify**: runs the timing probe (`/cs` and OAuth metadata) and checks that every storefront home lists products and the MCP OAuth proof, both blocking. The newsletter grant and withdrawal proof only warns.
 
 Environment `stage-edge` needs the variables `ZEROPS_PROJECT_ID`, `ZEROPS_APP_SERVICE_ID` and `ZEROPS_STOREFRONT_SERVICE_ID`, and the secrets `ZEROPS_TOKEN` and `DEMO_IMMUTABLE_RELEASE_SECRETS`.
 

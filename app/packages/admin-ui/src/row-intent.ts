@@ -19,6 +19,31 @@ export const LIST_WARM_ROWS = 5;
 export const INTENT_READ_CONCURRENCY = 2;
 
 /**
+ * Longest one wait for an idle browser lasts: a page that never goes idle must still be warmed. A list that restarts its
+ * warm-up (new rows, a refresh) starts a new wait.
+ */
+const IDLE_WARM_CAP_MS = 1000;
+
+/**
+ * Wait used where `requestIdleCallback` is missing (Safari, the test environment): about as long as a list's filters
+ * stay busy after its rows are shown (0.2 to 0.4 s on stage, 2026-11-13).
+ */
+const IDLE_WARM_FALLBACK_MS = 200;
+
+/**
+ * Completes when the browser reports an idle period, or once the cap passes. Interrupting it cancels the pending
+ * callback or timer, so a list that unmounts first warms nothing.
+ */
+const idleCallbackWait = Effect.callback<undefined>((resume) => {
+  const handle = globalThis.requestIdleCallback(() => resume(Effect.undefined), { timeout: IDLE_WARM_CAP_MS });
+  return Effect.sync(() => globalThis.cancelIdleCallback(handle));
+});
+
+export const whenBrowserIdle = Effect.suspend(() =>
+  'requestIdleCallback' in globalThis ? idleCallbackWait : Effect.sleep(Duration.millis(IDLE_WARM_FALLBACK_MS)),
+);
+
+/**
  * Bounds the reads that row intent starts. A pointer swept across many stale rows started one read per row at once;
  * now at most `concurrency` run, and while they do only the newest intent waits: an older waiting row is dropped,
  * since the pointer has already left it. `start` receives `done`, which it must call once its read settles (it may

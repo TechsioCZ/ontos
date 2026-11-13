@@ -552,6 +552,8 @@
       "forbiddenDescription": "Režim a sazby DPH spravuje účetní s oprávněním k modulu Daně. Požádejte správce firmy o přístup.",
       "notInstalled": "Modul Daně není pro tuto firmu zapnutý",
       "notInstalledDescription": "Bez modulu Daně nemá firma žádné sazby DPH. Požádejte správce, aby modul zapnul.",
+      "notDeclared": "Firma zatím nemá nastavený režim DPH",
+      "notDeclaredDescription": "Modul Daně je zapnutý, ale pro tuto firmu ještě nikdo nenastavil, zda je plátcem DPH. Dokud to není nastavené, Finance nedoplní sazbu DPH do nových položek. Účetní s oprávněním k modulu Daně nastaví režim tlačítkem „Změnit režim“ níže.",
       "regimeTitle": "Režim DPH",
       "regimeChange": "Změnit režim",
       "regimeHistoryHidden": "Historii režimu vidí jen lidé s oprávněním k daňové evidenci.",
