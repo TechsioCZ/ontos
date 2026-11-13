@@ -27,6 +27,14 @@ export interface WorkloadBindingQuery {
  * that declare one of `workloadKeys` and acts only in `activeCompanyIds`, on its direct calls and as the subject of
  * a module call alike. Company authority is always a registration, never its absence: a workload with no active
  * registration acts in no company, and revoking a registration or the binding that carries it only removes one.
+ *
+ * A workload with no registration is therefore left with exactly the carriers that name no company. Today those are
+ * five, all `legalEntityScope: 'forbidden'` and none answering a company: `core.identity-provider`'s two Actions
+ * (`reserve-principal-binding`, `activate-principal-binding`) and its three reads in
+ * `auth/external-identity/read.ts`. Two further carriers are `optional`, so their caller chooses whether to name a
+ * company — `commerce.storefront-client`'s `start-portal-enrollment` and `claim-portal-enrollment-transition`. The
+ * gate cannot fence those by scope alone, so each one checks the company of the record it acts on against this set
+ * in its own preflight, before anything is written.
  */
 export interface WorkloadAuthority {
   /** Every company an active registration of an active binding names right now, each an active company of this tenant. */

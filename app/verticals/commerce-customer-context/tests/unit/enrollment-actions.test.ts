@@ -8,7 +8,11 @@ import type {
   ActionAccessEvidencePolicy,
   DomainEventContractMap,
 } from '../../../../packages/core-runtime/src/actions/events.ts';
-import { claimPortalEnrollmentTransitionAction } from '../../src/actions/claim-portal-enrollment-transition.action.ts';
+import {
+  claimAttemptCompanyRefusal,
+  claimPortalEnrollmentTransitionAction,
+  prepareClaimPortalEnrollmentTransition,
+} from '../../src/actions/claim-portal-enrollment-transition.action.ts';
 import { recordPortalEnrollmentOutcomeAction } from '../../src/actions/record-portal-enrollment-outcome.action.ts';
 import {
   prepareStartPortalEnrollment,
@@ -234,6 +238,23 @@ const preparationContext = (preparationScope: OperationalScope) => ({
   compositionRevision: 'c'.repeat(64),
   scope: preparationScope,
   transaction: () => Effect.die('The enrollment preflight opens no owner transaction'),
+});
+
+it('a claim admits only an Attempt of a company the caller may act for, and refuses every other (D6)', () => {
+  // The preflight is registered, so no claim reaches the owner transaction without this decision.
+  expect(getActionServicePreflight(claimPortalEnrollmentTransitionAction)).toBe(prepareClaimPortalEnrollmentTransition);
+  // Its own company: admitted.
+  expect(claimAttemptCompanyRefusal({ selectable: [legalEntityId], target: legalEntityId })).toBeUndefined();
+  // Another company of the same tenant, claimed with no company named: refused as a workload outside its company.
+  expect(claimAttemptCompanyRefusal({ selectable: [legalEntityId], target: otherLegalEntityId })).toMatchObject({
+    code: 'action_permission_denied',
+    reasons: ['deny.workload_unbound'],
+  });
+  // A caller registered for no company reaches no Attempt at all.
+  expect(claimAttemptCompanyRefusal({ selectable: [], target: legalEntityId })).toMatchObject({
+    code: 'action_permission_denied',
+    reasons: ['deny.workload_unbound'],
+  });
 });
 
 it.effect('start in the tenant context admits only a target company the caller is registered for (D6)', () =>
