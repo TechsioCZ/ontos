@@ -25,9 +25,15 @@ const shims = {
 zerops="${ZEROPS_API_ORIGIN}"
 printf '%s\\n' "$*" >>"$RUNNER_TEMP/curl-calls"
 # FAKE_CURL_HEAD_FAIL makes the warm-up HEAD fail the way curl does: 7 cannot connect, 28 timed out.
+# FAKE_CURL_HEAD_DELAY holds the warm-up HEAD for that many seconds before the real curl runs.
 if [ -n "\${FAKE_CURL_HEAD_FAIL:-}" ]; then
   for arg in "$@"; do
     if [ "$arg" = -I ]; then exit "$FAKE_CURL_HEAD_FAIL"; fi
+  done
+fi
+if [ -n "\${FAKE_CURL_HEAD_DELAY:-}" ]; then
+  for arg in "$@"; do
+    if [ "$arg" = -I ]; then sleep "$FAKE_CURL_HEAD_DELAY"; fi
   done
 fi
 args=()
@@ -304,7 +310,7 @@ it.live('a warm-up that cannot connect is logged and the deploy carries on uncha
   }),
 );
 
-it.live('a warm-up that times out inside its 40 s cap is logged and the deploy carries on unchanged', () =>
+it.live('a warm-up that times out inside its 15 s cap is logged and the deploy carries on unchanged', () =>
   Effect.gen(function* uploadWarmupTimeout() {
     const result = yield* runPush(() => processState('FINISHED'), {
       FAKE_CURL_HEAD_FAIL: '28',
@@ -313,8 +319,32 @@ it.live('a warm-up that times out inside its 40 s cap is logged and the deploy c
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(DEPLOYED);
     expect(result.stdout).toContain('curl_exit=28 (the warm-up failed; the push continues)');
-    expect(warmups(result.curlArguments)[0]).toContain('--max-time 40');
+    expect(warmups(result.curlArguments)[0]).toContain('--max-time 15');
     expect(uploads(result.curlArguments)).toHaveLength(1);
+  }),
+);
+
+it.live('a slow warm-up is not charged to the upload: the attempt keeps its budget and its own duration', () =>
+  Effect.gen(function* uploadWarmupNotCharged() {
+    const delaySeconds = 3;
+    const result = yield* runPush(() => processState('FINISHED'), {
+      FAKE_CURL_HEAD_DELAY: `${delaySeconds}`,
+      ONTOS_PUSH_UPLOAD_WARMUP: 'true',
+      UPLOAD_LIMIT_SECONDS: '2',
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(DEPLOYED);
+    // The warm-up ate the whole limit, but the real upload is fast, so the package goes up once and is never redone.
+    expect(warmups(result.curlArguments)).toHaveLength(1);
+    expect(uploads(result.curlArguments)).toHaveLength(1);
+    expect(result.stdout).toContain('upload warm-up (attempt 1, 0 bytes)');
+    expect(result.stdout).not.toContain('upload started (attempt 2');
+    // "uploaded in N s" is the upload's own duration, so it excludes the warm-up it followed.
+    const logged = /upload ended \(attempt 1, \d+ bytes\): uploaded in (?<seconds>\d+)s \(attempt 1\)/u.exec(
+      result.stdout,
+    );
+    expect(logged).not.toBeNull();
+    expect(Number(logged?.groups?.seconds)).toBeLessThan(delaySeconds);
   }),
 );
 
