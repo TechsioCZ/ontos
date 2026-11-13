@@ -376,8 +376,13 @@ it.effect('uses the registered search declaration and its exact LIST answer in t
     expect(harness.snapshot().ownerQueries).toEqual([]);
     expect(gate.accessDecision.askedLists.length).toBeGreaterThan(0);
     for (const question of gate.accessDecision.askedLists) {
-      expect(question.carrier).toEqual({ accessDeclaration: marketsRead.descriptor.accessDeclaration });
+      expect(question.carrier).toEqual({
+        accessDeclaration: marketsRead.descriptor.accessDeclaration,
+        entrypoint: marketsRead.descriptor.entrypoint,
+        schemaVersion: marketsRead.descriptor.schemaVersion,
+      });
       expect(question.carrier.accessDeclaration).toBe(marketsRead.descriptor.accessDeclaration);
+      expect(question.carrier.entrypoint).toBe(marketsRead.descriptor.entrypoint);
       expect(question.legalEntityScope).toBe(marketsRead.descriptor.legalEntityScope);
       expect(question.scope).toEqual(expectedScope);
       expect(question.now).toEqual(operationTime);
@@ -407,8 +412,13 @@ it.effect('does not substitute another capability grant for the registered searc
     expect(harness.snapshot().stages).not.toContain('handler_executed');
     expect(gate.accessDecision.askedLists.length).toBeGreaterThan(0);
     for (const question of gate.accessDecision.askedLists) {
-      expect(question.carrier).toEqual({ accessDeclaration: marketsRead.descriptor.accessDeclaration });
+      expect(question.carrier).toEqual({
+        accessDeclaration: marketsRead.descriptor.accessDeclaration,
+        entrypoint: marketsRead.descriptor.entrypoint,
+        schemaVersion: marketsRead.descriptor.schemaVersion,
+      });
       expect(question.carrier.accessDeclaration).toBe(marketsRead.descriptor.accessDeclaration);
+      expect(question.carrier.entrypoint).toBe(marketsRead.descriptor.entrypoint);
     }
   }).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
 );

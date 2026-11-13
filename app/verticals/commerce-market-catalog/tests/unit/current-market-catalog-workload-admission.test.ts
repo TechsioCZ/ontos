@@ -11,6 +11,8 @@ const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
 const principalId = '33333333-3333-4333-8333-333333333333';
 const storefrontWorkload = 'commerce.storefront-client';
+/** Main's enrolled source-integration workload, merged beside the storefront workload. */
+const sourceReadWorkload = 'commerce.market-catalog.source-read';
 const at = new Date('2030-06-01T00:00:00.000Z');
 
 /** The trusted scope of a storefront BFF's direct API-key request: a service principal of one company. */
@@ -68,12 +70,12 @@ const gateFor = (options: { readonly boundWorkloadKeys?: readonly string[]; read
 };
 
 describe('Commerce Market Catalog current read workload admission', () => {
-  it('declares the reviewed storefront workload beside the preserved human declaration and Pricing actor', () => {
+  it('declares the reviewed storefront and source-read workloads beside the preserved human declaration and Pricing actor', () => {
     const { descriptor } = currentMarketCatalogRead;
     expect(descriptor.accessWorkload).toEqual({
       reason:
-        'The registered Storefront BFF reads the current Market catalog for its own storefronts before any human session exists',
-      workloads: [storefrontWorkload],
+        'The registered Storefront BFF reads the current Market catalog for its own storefronts before any human session exists; explicitly enrolled source integrations read it for their registered route',
+      workloads: [storefrontWorkload, sourceReadWorkload],
     });
     expect(descriptor.accessDeclaration).toMatchObject({
       key: 'commerce.market-catalog.market-catalog.read',
@@ -82,7 +84,7 @@ describe('Commerce Market Catalog current read workload admission', () => {
       risk: 'routine',
     });
     expect(descriptor.accessActor).toMatchObject({ callers: ['pricing'], subject: 'identity' });
-    expect(descriptor.accessActor?.subjectWorkloads).toBeUndefined();
+    expect(descriptor.accessActor?.subjectWorkloads).toEqual([sourceReadWorkload]);
     expect(descriptor.legalEntityScope).toBe('required');
   });
 
