@@ -62,16 +62,17 @@ export interface ReloadRequiredHomePageModel {
 }
 
 /**
- * Server rendering only: the answers the browser's own Shell reads (session, composition, legal entities, tenants and
- * the people-administration hint) would get right after hydration. The document context resolved them once for this
- * person in this company, from the same handlers and checks as those endpoints; the browser keeps them in its read
- * caches instead of asking again. Nothing else: no other person's or company's data, no token or assertion.
+ * Server rendering only: the answers the browser's own Shell reads (composition, legal entities, tenants and the
+ * people-administration hint) would get right after hydration. The document context resolved them once for this person
+ * in this company, from the same handlers and checks as those endpoints; the browser keeps them in its read caches,
+ * keyed by that person, tenant and company, instead of asking again. The session itself is not among them: the
+ * browser reads it fresh, so a person or company that changed since the render never meets these answers. Nothing
+ * else: no other person's or company's data, no token or assertion.
  */
 export interface ServerBrowserReads {
   readonly canManagePeople: boolean;
   readonly composition: Extract<ShellComposition, { readonly state: 'available' }>;
   readonly legalEntities: AvailableLegalEntitiesResponse;
-  readonly session: Extract<CurrentSession, { readonly state: 'authenticated' }>;
   readonly tenants: AvailableTenantsResponse;
 }
 
@@ -283,6 +284,7 @@ const primedReads = MutableRef.make(Option.none<ServerBrowserReads>());
  * document model and never over an entry the cache already holds; a session boundary drops them like any read.
  */
 export const primeBrowserReads = Effect.fn('HomePageModel.primeBrowserReads')(function* primeBrowserReadsEffect(
+  identity: SafeTenantIdentity,
   reads: ServerBrowserReads,
   documentUrl: string = globalThis.location.href,
 ) {
@@ -296,9 +298,7 @@ export const primeBrowserReads = Effect.fn('HomePageModel.primeBrowserReads')(fu
   if (cacheBaseUrl === undefined) {
     return;
   }
-  const { identity } = reads.session;
   const key = browserReadKey(cacheBaseUrl, identity);
-  yield* browserSessionCache.prime(cacheBaseUrl, reads.session);
   yield* browserCompositionCache.prime(
     browserReadKey(cacheBaseUrl, identity, reads.composition.compositionRevision),
     reads.composition,
@@ -314,7 +314,6 @@ export const primeBrowserReads = Effect.fn('HomePageModel.primeBrowserReads')(fu
  */
 const serverBrowserReads = (
   context: ShellDocumentContext,
-  session: ServerBrowserReads['session'],
   composition: ServerBrowserReads['composition'],
 ): ServerBrowserReads | undefined =>
   context.legalEntities === undefined || context.tenants?.state !== 'available'
@@ -323,7 +322,6 @@ const serverBrowserReads = (
         canManagePeople: context.canManagePeople ?? false,
         composition,
         legalEntities: context.legalEntities,
-        session,
         tenants: { tenants: context.tenants.tenants },
       };
 
@@ -517,7 +515,7 @@ const serverHomePageModel = (context: ShellDocumentContext): HomePageModel => {
     state: 'authenticated',
     tenants,
   };
-  const browserReads = serverBrowserReads(context, session, composition);
+  const browserReads = serverBrowserReads(context, composition);
   return {
     ...(browserReads === undefined ? model : { ...model, browserReads }),
     ...homeFields(Option.fromUndefinedOr(context.home)),
