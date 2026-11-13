@@ -37,7 +37,6 @@ import {
   TAX_RATE_FRESHNESS,
   TaxRateSource,
   TaxRatesFailure,
-  currentTaxRateBook,
 } from '../../src/services/tax-rates.ts';
 import type { TaxRateBook } from '../../src/services/tax-rates.ts';
 import { merchandiseRegistration } from '../../vertical.registration.ts';
@@ -332,16 +331,12 @@ it.layer(nativeServices, { excludeTestServices: true })('VAT classification depl
         expect(after).toEqual(fixture.after);
         expectJacketAtVariantPrice(after);
 
-        // 2. Tax is installed and seeded, and the wait after its refusal has passed; staff reads sync the company with
-        //    no person involved. The first one answers from the materialised rates at once and starts the refresh;
-        //    once that refresh has landed, the next one materialises Tax's answer.
+        // 2. Tax is installed and seeded, and the wait after its refusal has passed; one staff read syncs the company
+        //    with no person involved: with no fresh answer it asks Tax (a few seconds at most) and stores the answer in
+        //    the same read. No second read and no other caller of Tax in between (stage did exactly this).
         yield* Ref.set(taxSource, () => Effect.succeed(BASELINE));
         yield* Ref.set(clockShift, Duration.sum(TAX_RATE_FRESHNESS, Duration.seconds(1)));
         const staffView = { view: { limit: 0, ordersLimit: 0, summary: true } };
-        expect((yield* read(staffView)).taxRatesConfirmedAt).toBeNull();
-        yield* currentTaxRateBook({ ...native.principal, correlationId: 'vat-transition' }).pipe(
-          Effect.provideService(TaxRateSource, source),
-        );
         const staff = yield* read(staffView);
         expect(staff.taxRatesConfirmedAt).not.toBeNull();
         expect(staff.sellerVatRegime).toBe('VAT_PAYER');
