@@ -4169,6 +4169,8 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.provide(shellTransportServicesLive),
   );
   // The governed handler Layer provides the route middleware as an immutable Layer value, not a constructor call.
+  // NoServerTimingLive is global too: no response leaves the Shell with `server-timing`, whichever route or
+  // in-process Action added it.
   const shellSearchNoStoreLayer = makeShellSearchNoStoreLayer();
   const apiHandlersLive = Layer.mergeAll(
     ShellEmailReceiptHandlersLive,
@@ -4192,12 +4194,7 @@ export const makeShellAuthenticationApiRuntime = (
     oauthConnectionsAdminGroupLive,
     peopleAdministrationGroupLive,
     agentPlatformGroupLive,
-  ).pipe(
-    Layer.provide(apiServicesLive),
-    Layer.provide(shellSearchNoStoreLayer),
-    // Global: no response leaves the Shell with `server-timing`, whichever route or in-process Action added it.
-    Layer.provide(NoServerTimingLive),
-  );
+  ).pipe(Layer.provide(apiServicesLive), Layer.provide(shellSearchNoStoreLayer), Layer.provide(NoServerTimingLive));
 
   return assembleEffectBffRuntime({
     api: ShellAuthenticationApi,
