@@ -408,10 +408,13 @@ const checkCoverage = (
 };
 
 /** The authored text of one tool, before its optional description is added. */
-type ToolTextFieldsDraft = Mutable<Pick<OntosMcpTool, 'title' | 'description'>>;
+type ToolTextFieldsDraft = Mutable<Pick<OntosMcpTool, 'title' | 'description' | 'genericOnly'>>;
 /** The authored write metadata of one tool, before its optional live right is added. */
 type ToolWriteFieldsDraft = Mutable<
-  Pick<OntosMcpTool, 'title' | 'description' | 'agentProposalOnly' | 'destructive' | 'referenceAudiences' | 'liveRight'>
+  Pick<
+    OntosMcpTool,
+    'title' | 'description' | 'genericOnly' | 'agentProposalOnly' | 'destructive' | 'referenceAudiences' | 'liveRight'
+  >
 >;
 /** The published contribution, before its optional authored sections are added. */
 type ContributionDraft = Mutable<OntosMcpContribution>;
@@ -420,6 +423,9 @@ const textFields = (entry: OntosMcpToolTextInput) => {
   const fields: ToolTextFieldsDraft = { title: entry.title };
   if (entry.description !== undefined) {
     fields.description = entry.description;
+  }
+  if (entry.genericOnly === true) {
+    fields.genericOnly = true;
   }
   return fields;
 };

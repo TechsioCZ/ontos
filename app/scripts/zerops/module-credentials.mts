@@ -64,6 +64,8 @@ export const MODULE_CREDENTIAL_CALLERS: readonly string[] = Object.freeze([
   'commerce-market-catalog',
   'commerce-order',
   'crm',
+  'finance-billing',
+  'merchandise',
   'party-registry',
   'pricing',
   'privacy',

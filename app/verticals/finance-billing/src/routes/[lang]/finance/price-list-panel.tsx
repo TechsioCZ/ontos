@@ -1,7 +1,7 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { financeBrowserRuntime } from '../../../runtime/browser.ts';
-import { Effect, Option } from 'effect';
+import { DateTime, Effect, Option } from 'effect';
 import {
   SaveBar,
   SectionCard,
@@ -21,9 +21,9 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@app/admin-ui/form-controls';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useEffect, useRef, useState } from 'react';
-import type { PriceListItem, VatRate } from '../../../../shared/apis/records.ts';
+import type { PriceListItem } from '../../../../shared/apis/records.ts';
+import { defaultLineVatChoice, lineVatOf } from '../../../../shared/domain/line-vat.ts';
 import { lineDiscountMinor } from '../../../../shared/domain/invoice-totals.ts';
 import { invoiceLineKey, isPendingApproval, outcomeNotice, withOccurrenceKeys } from './finance-ui.tsx';
 import type { FinanceCommandDraft, FinanceNotice, FinanceViewModel } from './finance-ui.tsx';
@@ -39,8 +39,13 @@ import {
   sameItemDraft,
 } from './price-list-draft.ts';
 import type { ItemDraft } from './price-list-draft.ts';
+import { choicesOf, useVatChoices } from './use-vat-choices.ts';
+import type { VatChoicesState } from './use-vat-choices.ts';
+import { VatChoiceSelect, VatLabel } from './vat-choice-select.tsx';
 
-const VAT_CHOICES: readonly VatRate[] = [21, 12, 0];
+/** The company's VAT today: a price-list item stores the classification, its rate as Tax publishes it today. */
+const useTodayVatChoices = (vm: FinanceViewModel): VatChoicesState =>
+  useVatChoices(vm.scope, vm.referenceDate === '' ? DateTime.formatIsoDateUtc(DateTime.nowUnsafe()) : vm.referenceDate);
 
 /** Error props for a field, spread so `validateStatus` is absent (not undefined) when the field is valid. */
 const invalidField = (invalid: boolean, message: string) =>
@@ -51,10 +56,12 @@ const PriceItemFields = ({
   draft,
   onChange,
   showErrors,
+  vat,
 }: {
   readonly draft: ItemDraft;
   readonly onChange: (patch: Partial<ItemDraft>) => void;
   readonly showErrors: boolean;
+  readonly vat: VatChoicesState;
 }) => {
   const { t } = useModernI18n();
   const problems = itemProblems(draft);
@@ -96,22 +103,13 @@ const PriceItemFields = ({
           value={draft.price}
           {...invalidField(showErrors && problems.price, t('finance-billing.financeUi.priceList.priceRequired'))}
         />
-        <SelectTemplate
-          items={VAT_CHOICES.map((rate) => ({
-            displayValue: `${rate} %`,
-            label: `${rate} %`,
-            value: String(rate),
-          }))}
-          label={t('finance-billing.financeUi.common.vatRate')}
-          labelProps={{ className: 'font-label text-label-md' }}
-          onValueChange={({ value }) => {
-            const rate = VAT_CHOICES.find((entry) => String(entry) === value[0]);
-            if (rate !== undefined) {
-              onChange({ vatRate: rate });
-            }
-          }}
-          size="sm"
-          value={[String(draft.vatRate)]}
+        <VatChoiceSelect
+          choice={draft.vat}
+          direction="OUTGOING"
+          invalid={showErrors && lineVatOf(draft.vat, choicesOf(vat)) === undefined}
+          name="price-vat"
+          onChange={(next) => onChange({ vat: next })}
+          vat={vat}
         />
       </div>
     </>
@@ -134,6 +132,8 @@ const PriceItemEditDialog = ({
 }) => {
   const { language, t } = useModernI18n();
   const [error, setError] = useState<FinanceNotice>();
+  const vat = useTodayVatChoices(vm);
+  const choices = choicesOf(vat);
   const server = itemDraftOf(item);
   /** The version of the item the draft builds on: what it opened with, last saved or reloaded. */
   const base = useRef(server);
@@ -157,10 +157,10 @@ const PriceItemEditDialog = ({
       : Effect.succeed<SaveOutcome>('conflict');
   const record = useRecordDraft<ItemDraft, never>({
     equals: sameItemDraft,
-    isValid: (value) => Option.isSome(itemCommandOf(value, item, vm.actorLabel)),
+    isValid: (value) => Option.isSome(itemCommandOf(value, choices, item, vm.actorLabel)),
     runtime: financeBrowserRuntime,
     save: (value) =>
-      Option.match(itemCommandOf(value, item, vm.actorLabel), {
+      Option.match(itemCommandOf(value, choices, item, vm.actorLabel), {
         onNone: () => Effect.succeed<SaveOutcome>('failed'),
         onSome: (command) => send(value, command),
       }),
@@ -211,7 +211,7 @@ const PriceItemEditDialog = ({
               {error.text}
             </StatusText>
           )}
-          <PriceItemFields draft={record.draft} onChange={handleChange} showErrors />
+          <PriceItemFields draft={record.draft} onChange={handleChange} showErrors vat={vat} />
         </div>
       </Dialog>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
@@ -235,6 +235,8 @@ const PriceItemCreateDialog = ({
   const { language, t } = useModernI18n();
   const [draft, setDraft] = useState<ItemDraft>(initial);
   const [error, setError] = useState<FinanceNotice>();
+  const vat = useTodayVatChoices(vm);
+  const choices = choicesOf(vat);
   const settle = (outcome: Parameters<typeof financeSaveOutcome>[0]) => {
     setError(outcome.ok ? undefined : outcomeNotice(vm, outcome));
     if (outcome.ok) {
@@ -243,10 +245,10 @@ const PriceItemCreateDialog = ({
   };
   const settled = (outcome: Parameters<typeof financeSaveOutcome>[0]) => Effect.sync(() => settle(outcome));
   const record = useDraftSave<ItemDraft, never>({
-    isValid: (value) => Option.isSome(itemCommandOf(value, undefined, vm.actorLabel)),
+    isValid: (value) => Option.isSome(itemCommandOf(value, choices, undefined, vm.actorLabel)),
     runtime: financeBrowserRuntime,
     save: (value) =>
-      Option.match(itemCommandOf(value, undefined, vm.actorLabel), {
+      Option.match(itemCommandOf(value, choices, undefined, vm.actorLabel), {
         onNone: () => Effect.succeed<SaveOutcome>('failed'),
         onSome: (command) =>
           vm.execute(command, 'Položka ceníku přidána').pipe(Effect.tap(settled), Effect.map(financeSaveOutcome)),
@@ -299,6 +301,7 @@ const PriceItemCreateDialog = ({
             draft={draft}
             onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
             showErrors={record.status === 'invalid' || error?.status === 'error'}
+            vat={vat}
           />
         </div>
       </Dialog>
@@ -330,8 +333,15 @@ const usePriceListPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
       id: item.id,
       name: item.name,
       unitPriceMinor: item.unitPriceMinor,
+      // Offering or withdrawing an item leaves its VAT exactly as stored.
       vatRate: item.vatRate,
     };
+    if (item.vatClassification !== undefined) {
+      upsertPriceListItemCommand.vatClassification = item.vatClassification;
+    }
+    if (item.vatTreatment !== undefined) {
+      upsertPriceListItemCommand.vatTreatment = item.vatTreatment;
+    }
     if (item.code !== undefined) {
       upsertPriceListItemCommand.code = item.code;
     }
@@ -357,7 +367,7 @@ export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
             <Button
               icon="icon-[mdi--plus]"
               onClick={() => {
-                setDraft(emptyItem);
+                setDraft(emptyItem(defaultLineVatChoice('OUTGOING')));
               }}
               size="sm"
               variant="primary"
@@ -407,7 +417,7 @@ export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
                       {formatMoney(item.unitPriceMinor)}
                     </Table.Cell>
                     <Table.Cell align="end" className="tabular-nums">
-                      {item.vatRate} %
+                      <VatLabel line={item} />
                     </Table.Cell>
                     <Table.Cell>
                       <Badge size="sm" variant={item.active ? 'success' : 'warning'}>

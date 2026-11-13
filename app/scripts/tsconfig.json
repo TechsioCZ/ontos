@@ -6,6 +6,7 @@
   ],
   "exclude": [
     "scaffolding",
-    "demo/email-dispatcher"
+    "demo/email-dispatcher",
+    "integration/tests/*.old-release.mts"
   ]
 }

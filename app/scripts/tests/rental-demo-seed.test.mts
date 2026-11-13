@@ -9,6 +9,7 @@ import {
 } from '../../verticals/merchandise/shared/apis/records.ts';
 import { evolveMerchandiseState } from '../../verticals/merchandise/src/services/persistence.service.ts';
 import { computeProductRecords } from '../../verticals/merchandise/src/services/stock-levels.ts';
+import { TEST_RATES, TEST_TAX } from '../../verticals/merchandise/tests/support/tax-fixtures.ts';
 import { buildAkrosEncoded } from '../../verticals/merchandise/scripts/akros-catalog.mts';
 import { seedAkrosStock } from '../demo/seed-akros-stock.mts';
 import { applyImportsCommand, ImportsCommandSchema } from '../../verticals/crm/shared/commands/imports.ts';
@@ -906,7 +907,7 @@ it.effect('repairs every stock page through native updates and reruns without mo
           const offset = view?.offset ?? 0;
           offsets.push(offset);
           const records = EffectArray.sort(
-            computeProductRecords(state),
+            computeProductRecords(state, TEST_RATES, {}),
             Order.mapInput(Order.String, (product: ReturnType<typeof computeProductRecords>[number]) => product.sku),
           );
           return HttpClientResponse.fromWeb(
@@ -921,6 +922,7 @@ it.effect('repairs every stock page through native updates and reruns without mo
             actor: { principalId: demoId('test', 'stock-owner'), tenantId: target.tenantId },
             now: DateTime.makeUnsafe(seedTestInstant),
             resourceId: `stock-repair-${revision}`,
+            tax: TEST_TAX,
           });
           ({ state } = result);
           revision += 1;
@@ -1005,6 +1007,7 @@ it.effect('cancels only the exact QA order through native staff status change, w
             actor,
             now: DateTime.makeUnsafe(seedTestInstant),
             resourceId: `cancel-${revision}`,
+            tax: TEST_TAX,
           });
           ({ state } = result);
           revision += 1;

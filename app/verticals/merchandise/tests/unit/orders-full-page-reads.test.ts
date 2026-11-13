@@ -44,6 +44,8 @@ const orders = Array.from({ length: ROWS }, (_, index) =>
           productName: 'Cable',
           quantity: 1,
           sku: 'CABLE',
+          taxClassificationCode: 'cz.vat.standard',
+          taxRuleRevisionId: 'tax-rule-revision-standard-21',
           unitPriceMinor: 100,
           vatRate: 21,
         },
@@ -71,9 +73,9 @@ const product = Schema.encodeSync(ProductRecordSchema)(
     sku: 'CABLE',
     stockOnHand: 10,
     stockValueMinor: 1000,
+    taxClassificationCode: 'cz.vat.standard',
     unit: 'ks',
     updatedAt: instant,
-    vatRate: 21,
   }),
 );
 
@@ -92,6 +94,7 @@ const responseOf = (rows: { readonly orders?: typeof orders; readonly products?:
     orders: rows.orders ?? [],
     products: rows.products ?? [],
     revision: register.revision,
+    taxRates: [],
     totalOrders: ROWS,
   });
 

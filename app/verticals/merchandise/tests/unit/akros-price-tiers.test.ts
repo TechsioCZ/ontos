@@ -14,7 +14,7 @@ const requireFixture = <T>(value: T | null | undefined): T => {
 const base = { minimumQuantity: 1, priceExcludingVatMinor: 433, priceMinor: 524 };
 
 it('gives a selected product three price levels by whole packages, gross rounded like the owner', () => {
-  const tiered = applyDemoPriceTiers({ id: 'product-35372', packageQuantity: 100, priceTiers: [base], vatRate: 21 });
+  const tiered = applyDemoPriceTiers({ id: 'product-35372', packageQuantity: 100, priceTiers: [base] });
   expect(tiered.priceTiers).toEqual([
     base,
     { minimumQuantity: 500, priceExcludingVatMinor: 411, priceMinor: 497 },

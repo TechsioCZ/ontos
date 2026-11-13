@@ -75,6 +75,7 @@ it('keeps every shared runtime exception within its exact owner privileges', () 
       privileges: ['select', 'insert'],
       table: 'symmy_integration.job_effects',
     },
+    { privileges: ['select'], table: 'demo_merchandise.tax_classification_live' },
     { privileges: ['select', 'insert'], table: 'promotion.policy_changes' },
     { privileges: ['select', 'insert', 'update'], table: 'promotion.tenant_generations' },
     { privileges: ['select', 'insert', 'update'], table: 'promotion.promotion_drafts' },

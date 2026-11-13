@@ -103,10 +103,22 @@ export const OntosModuleIdentitySchema = Schema.Struct({
 
 export const OntosModuleActivationSchema = Schema.Struct({
   defaultState: OntosModuleActivationStateSchema,
+  /**
+   * Other modules a Tenant gets with this one: activating this module installs each of them `active` in the same
+   * transaction when the Tenant has no state for it yet. A state somebody set is never changed. Unlike an intrinsic
+   * requirement, it never refuses an operation of this module.
+   */
+  installsWith: Schema.optionalKey(Schema.Array(OntosModuleIdSchema).check(Schema.isMaxLength(64))),
   preservesHistoryWhenInactive: Schema.Boolean,
   scope: Schema.Literal('tenant'),
   supportedStates: Schema.Array(OntosModuleActivationStateSchema),
 });
+
+/** A module never installs itself with itself, and names each module it installs with once. */
+const installsWithIssue = (moduleId: string, installsWith: readonly string[] | undefined): string | undefined =>
+  installsWith === undefined || (new Set(installsWith).size === installsWith.length && !installsWith.includes(moduleId))
+    ? undefined
+    : 'activation installsWith must name distinct modules other than the module itself';
 
 export const OntosActionContractSchema = Schema.Struct({
   accessActor: Schema.optionalKey(AccessActorSchema),
@@ -297,6 +309,7 @@ export const OntosSerializedModuleManifestSchema = Schema.Struct({
     const pageIssue = shellSearchPresentationPageIssue(manifest.publicSurface.shellContributions);
     return (
       pageIssue ??
+      installsWithIssue(manifest.module.id, manifest.activation.installsWith) ??
       shellSearchPresentationBindingIssue(manifest.publicSurface.shellContributions, {
         moduleId: manifest.module.id,
         resourceTypeKeys: new Set(manifest.publicSurface.resourceTypes.map(({ key }) => key)),
@@ -654,6 +667,10 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
     throw invalidManifest('activation defaultState must be included in supportedStates');
   }
   assertUnique(input.activation.supportedStates, 'activation state');
+  const installsWithProblem = installsWithIssue(input.module.id, input.activation.installsWith);
+  if (installsWithProblem !== undefined) {
+    throw invalidManifest(installsWithProblem);
+  }
   const originatorActions = (input.originatorActions ?? []).map((key) => exactDecode(OntosModuleIdSchema, key));
   assertUnique(originatorActions, 'originator Action key');
   const registeredWorkloadCalls =
@@ -822,7 +839,15 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   }
   const manifest = {
     ...input,
-    activation: freezePlain({ ...input.activation, supportedStates: [...input.activation.supportedStates] }),
+    activation: freezePlain(
+      input.activation.installsWith === undefined
+        ? { ...input.activation, supportedStates: [...input.activation.supportedStates] }
+        : {
+            ...input.activation,
+            installsWith: Object.freeze([...input.activation.installsWith]),
+            supportedStates: [...input.activation.supportedStates],
+          },
+    ),
     module: freezePlain({ ...input.module }),
     originatorActions: Object.freeze(originatorActions),
     publicSurface: Object.freeze(publicSurface),

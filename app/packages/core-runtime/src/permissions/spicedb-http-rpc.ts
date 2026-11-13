@@ -128,6 +128,9 @@ export const spiceDbHttpRpc = (endpoint: SpiceDbHttpEndpoint): SpiceDbHttpRpc =>
     HttpClient.execute(
       HttpClientRequest.post(new URL(path, endpoint.origin)).pipe(
         HttpClientRequest.bearerToken(endpoint.preSharedKey),
+        // The gateway turns `Grpc-Timeout` into the call's deadline, so SpiceDB itself ends a request the client gave
+        // up on, as the gRPC client's deadline does; the abort below only ends this side of the exchange.
+        HttpClientRequest.setHeader('Grpc-Timeout', `${String(endpoint.timeoutMilliseconds)}m`),
         HttpClientRequest.acceptJson,
         HttpClientRequest.bodyText(type.toJsonString(request), 'application/json'),
       ),

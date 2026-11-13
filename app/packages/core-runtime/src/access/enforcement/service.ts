@@ -180,6 +180,11 @@ const admitsWorkload = (
 const admitsSubjectWorkload = (declared: AccessActor, bound: ReadonlySet<string>): boolean =>
   declared.subjectWorkloads?.some((key) => bound.has(key)) === true;
 
+/** Whether this caller may bring a workload subject at all: `subjectWorkloadCallers` absent means every caller. */
+const callerMayBringWorkload = (declared: AccessActor, calledBy: VerifiedGatewayActor): boolean =>
+  declared.subjectWorkloadCallers === undefined ||
+  declared.subjectWorkloadCallers.some((caller) => caller === calledBy.appId);
+
 const admittedWorkloadDecision = (
   input: Pick<GateInput, 'carrier' | 'scope'>,
   declaredKeys: readonly string[],
@@ -238,7 +243,9 @@ const delegatedWorkloadCarrierOf = (
   if (carrier.declared.subject === 'workload' && (input.mode ?? DEFAULT_MODE) !== DEFAULT_MODE) {
     return { refusal: seamRefusal('deny.mode_unsupported') };
   }
-  return carrier.declared.subjectWorkloads === undefined ? { refusal: seamRefusal(ACTOR_SUBJECT_INVALID) } : carrier;
+  return carrier.declared.subjectWorkloads === undefined || !callerMayBringWorkload(carrier.declared, calledBy)
+    ? { refusal: seamRefusal(ACTOR_SUBJECT_INVALID) }
+    : carrier;
 };
 
 /** The scope query names the holders whose membership it proves, in the one context this request resolved (O66). */

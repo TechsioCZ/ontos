@@ -6,7 +6,19 @@ import { Effect, Option, Predicate, Schema } from 'effect';
 /** A refused delegated issuance: the status class (`code`) and the stable step that refused it (`reason`). */
 export class GatewayDelegationError extends Schema.TaggedError<GatewayDelegationError>()('GatewayDelegationError', {
   cause: Schema.optionalKey(Schema.Defect()),
-  code: Schema.Literals(['authentication_required', 'forbidden', 'unavailable', 'reload_required']),
+  /**
+   * `module_not_installed`: the module the call is for is not installed for the subject's tenant (absent there,
+   * switched off or retired with the tenant).
+   * Every other refusal (an unknown or retired module credential, another release, a subject not admitted) is
+   * `forbidden`.
+   */
+  code: Schema.Literals([
+    'authentication_required',
+    'forbidden',
+    'module_not_installed',
+    'unavailable',
+    'reload_required',
+  ]),
   reason: GatewayRefusalReasonSchema,
 }) {}
 

@@ -291,6 +291,47 @@ it('renders one exact typed Action endpoint and exhaustive domain mapping', () =
   expect(problems).toContain('Match.exhaustive');
 });
 
+it('keeps a custom domain Problem out of the identities a multi-code error maps to', () => {
+  const errors = [
+    {
+      code: 'manual_rate_conflict',
+      discriminator: 'code' as const,
+      kind: 'conflict' as const,
+      tag: 'ManualRateConflict',
+      value: 'manual_rate_conflict',
+    },
+    {
+      code: 'manual_rate_superseded',
+      discriminator: 'code' as const,
+      kind: 'conflict' as const,
+      tag: 'ManualRateConflict',
+      value: 'manual_rate_superseded',
+    },
+    {
+      code: 'manual_rate_not_implemented',
+      discriminator: '_tag' as const,
+      kind: 'ineligible' as const,
+      tag: 'ManualRateNotImplemented',
+      value: 'ManualRateNotImplemented',
+    },
+  ];
+  const problems = renderActionHttpProblems(vertical, FIXTURE_ACTION, errors, [
+    {
+      mapper: 'mapManualRateNotImplementedProblem',
+      module: 'shared/manual-rate-problems.ts',
+      schema: 'ManualRateNotImplementedProblemSchema',
+      specification:
+        'ManualRateNotImplemented=shared/manual-rate-problems.ts#ManualRateNotImplementedProblemSchema#mapManualRateNotImplementedProblem',
+      tag: 'ManualRateNotImplemented',
+    },
+  ]);
+  expect(problems).toContain(
+    "interface DomainProblemIdentity { readonly code: 'manual_rate_conflict' | 'manual_rate_superseded'; readonly kind: 'conflict' }",
+  );
+  expect(problems).not.toContain("'manual_rate_not_implemented'; readonly kind");
+  expect(problems).toContain('ManualRateNotImplemented: (failure) => mapManualRateNotImplementedProblem(failure),');
+});
+
 it.live(
   'preserves the existing Action runtime position among owner-specific injected services',
   Effect.fn(function* ownerRuntimeArgumentPosition() {

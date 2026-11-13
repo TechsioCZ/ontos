@@ -1,5 +1,6 @@
 import { documentNavigationModules } from '@app/shared-contracts';
-import { listProducts } from '@app/merchandise/clients/records';
+import { vatRateAt } from '@app/shared-contracts/cz-vat-classifications';
+import { executeRecords } from '@app/merchandise/clients/records';
 import type { ProductRecord } from '@app/merchandise/contracts/records';
 import { listCustomers } from '@app/party-registry/api/client';
 import type { CustomerListItem } from '@app/party-registry/api/client';
@@ -7,9 +8,10 @@ import { SubjectIdSchema } from '@app/tagging/contracts/records';
 import type { SubjectId, SubjectKind, TagId } from '@app/tagging/contracts/records';
 import { executeRecords as executeEmployeeRecords } from '@app/workforce/clients/records';
 import type { Employee } from '@app/workforce/contracts/records';
-import { Effect, Option, Random, Schema } from 'effect';
+import { DateTime, Effect, Option, Random, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
+import { VatRateSchema } from '../../../../../shared/model/opportunity.ts';
 import type { OpportunityLine } from '../../../../../shared/model/opportunity.ts';
 import {
   EmployeeIdSchema,
@@ -85,15 +87,27 @@ const toEmployeeOption = (item: Employee): Option.Option<EmployeeOption> =>
     id,
   }));
 
-const toProductOption = (item: ProductRecord): Option.Option<ProductOption> =>
-  Option.map(Schema.decodeOption(ProductIdSchema)(item.id), (id) => ({
-    active: item.active,
-    currentPriceMinor: item.currentPriceMinor,
-    id,
-    name: item.name,
-    sku: item.sku,
-    vatRate: item.vatRate,
-  }));
+/** A product is offered only with the VAT rate Merchandise sells it at now (from Tax); otherwise it is left out. */
+const toProductOption = ({
+  product: item,
+  vatRate,
+}: {
+  readonly product: ProductRecord;
+  readonly vatRate: number | undefined;
+}): Option.Option<ProductOption> =>
+  Option.all({
+    id: Schema.decodeOption(ProductIdSchema)(item.id),
+    vatRate: Schema.decodeUnknownOption(VatRateSchema)(vatRate),
+  }).pipe(
+    Option.map(({ id, vatRate: rate }) => ({
+      active: item.active,
+      currentPriceMinor: item.currentPriceMinor,
+      id,
+      name: item.name,
+      sku: item.sku,
+      vatRate: rate,
+    })),
+  );
 
 const loadCustomers = listCustomers({}).pipe(
   Effect.map((items) => items.flatMap((item) => Option.toArray(toCustomerOption(item)))),
@@ -110,8 +124,18 @@ const loadProducts = catalogReadable.pipe(
   Effect.flatMap((readable) =>
     readable
       ? correlated('products').pipe(
-          Effect.flatMap((id) => listProducts(id, { limit: 250, ordersLimit: 0, summary: true })),
-          Effect.map((items) => items.flatMap((item) => Option.toArray(toProductOption(item)))),
+          Effect.flatMap((id) => executeRecords({ view: { limit: 250, ordersLimit: 0, summary: true } }, id)),
+          Effect.flatMap((response) =>
+            DateTime.now.pipe(
+              Effect.map((now) =>
+                response.products.flatMap((product) =>
+                  Option.toArray(
+                    toProductOption({ product, vatRate: vatRateAt(response, product.taxClassificationCode, now) }),
+                  ),
+                ),
+              ),
+            ),
+          ),
         )
       : Effect.succeed<readonly ProductOption[]>([]),
   ),

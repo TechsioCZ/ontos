@@ -164,6 +164,7 @@ const model = (reminders: readonly InvoiceReminder[]): RemindersModel => ({
   relatedCustomer: false,
   reload: constVoid,
   requestVoid: constVoid,
+  scope: 'finance-reminder-test-scope',
   selected: absent<Invoice>(),
   snapshot: {
     canWrite: true,

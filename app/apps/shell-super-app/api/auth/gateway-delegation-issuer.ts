@@ -13,6 +13,7 @@ import { admitRegisteredAssertionWorkload } from './gateway-registered-assertion
 import { admitRegisteredGatewayWorkload } from './gateway-workload-evidence.ts';
 import { OperationalScopeResolver } from '@app/core-runtime/operations/context';
 import { PrincipalResolver, TenantModuleStateService, tenantStatesAllowingAccess } from '@app/core-runtime';
+import type { TenantModuleState } from '@app/core-runtime';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import type { GatewayActorClaim, GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
 import {
@@ -95,6 +96,12 @@ interface AdmittedSubject {
   /** The signed-in requester's own token window (kept exactly), or undefined for a fresh window. */
   readonly sourceValidity?: { readonly expiresAt: number; readonly issuedAt: number } | undefined;
 }
+
+/**
+ * Lasting, deliberate states of an installed module that its callers read as "not installed": switched off for the
+ * tenant (`inactive`) or retired with it (`archived`). `suspended` and `quarantined` are temporary: an outage.
+ */
+const NOT_INSTALLED_STATES: ReadonlySet<TenantModuleState> = new Set<TenantModuleState>(['archived', 'inactive']);
 
 /**
  * A tenant-scoped copy of a principal: the same identity and trust, without its Legal Entity. A trusted Storefront
@@ -260,10 +267,17 @@ const issueForSubject = Effect.fn('GatewayDelegation.issueForSubject')(function*
 
   const moduleKeys = [sourceContract.manifest.module.id, destination.manifest.module.id];
   const states = yield* loadModuleStates(principal.tenantId, moduleKeys);
-  yield* requireModuleStates(
-    states,
-    moduleKeys.map((moduleKey) => ({ access: 'read', moduleKey })),
-  );
+  yield* requireModuleStates(states, [{ access: 'read', moduleKey: sourceContract.manifest.module.id }]);
+  // A calling module may read the refusal as "not installed" when the module it calls is absent for the tenant, or in a
+  // lasting, deliberate state: switched off (`inactive`) or retired with its tenant (`archived`). One that is only
+  // stopped for now (`suspended`, `quarantined`) is a plain refusal: an outage to the caller, never an answer.
+  const readableStates: ReadonlySet<string> = new Set(tenantStatesAllowingAccess('read'));
+  const destinationState = states.find((state) => state.moduleKey === destination.manifest.module.id)?.state;
+  if (destinationState === undefined || !readableStates.has(destinationState)) {
+    return yield* destinationState === undefined || NOT_INSTALLED_STATES.has(destinationState)
+      ? new GatewayDelegationError({ code: 'module_not_installed', reason: 'audience_module_not_installed' })
+      : delegationForbidden('audience_module_not_active')();
+  }
 
   const requestFingerprint = yield* fingerprintOf(
     {

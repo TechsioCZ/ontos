@@ -35,6 +35,9 @@ const TRUST_TABLES = [
 ] as const;
 const RUNTIME_ROLES = DATABASE_IDENTITIES.map(({ role }) => role);
 const runtimeRoleList = RUNTIME_ROLES.map(quoteIdentifier).join(', ');
+/** The fence sweep's SECURITY DEFINER read of lapsed holds (tenant ids only); executable by `ontos_runtime` alone. */
+export const ACCESS_FENCE_SWEEP_ROUTINE = 'core.lapsed_access_fence_tenants(integer,interval,uuid[])';
+
 const SHARED_RUNTIME_SCHEMAS = [
   'core',
   'auth',
@@ -345,6 +348,12 @@ export const grantSharedRuntimeRole = (
         client,
         'revoke all on function core.track_application_composition_durable_work(text,text,text,boolean) from public, ontos_runtime',
       );
+    }
+    // The access fence sweep's one cross-tenant read: its migration grants it only when `ontos_runtime` already exists,
+    // so the bootstrap owns the grant, to the shared runtime role alone.
+    if (yield* exists(client, routineExistsQuery, ACCESS_FENCE_SWEEP_ROUTINE)) {
+      yield* query(client, `revoke all on function ${ACCESS_FENCE_SWEEP_ROUTINE} from public, ontos_runtime`);
+      yield* query(client, `grant execute on function ${ACCESS_FENCE_SWEEP_ROUTINE} to ontos_runtime`);
     }
     if (yield* exists(client, schemaExistsQuery, 'pricing')) {
       yield* query(client, 'revoke all on schema pricing from public, ontos_runtime');

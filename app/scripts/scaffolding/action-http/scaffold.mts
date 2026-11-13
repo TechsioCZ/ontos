@@ -578,13 +578,15 @@ export const renderActionHttpProblems = (
       return `    ${tag}: (failure) => mapDomainIdentity(${mapName}[failure.${identity.discriminator}]),`;
     })
     .join('\n');
+  // A custom domain Problem keeps its own mapper: its codes are no identity the generic mapping returns.
+  const mapped = errors.filter(({ tag }) => !customProblems.some((problem) => problem.tag === tag));
   const domainKinds = (
     ['conflict', 'forbidden', 'ineligible', 'notFound', 'rateLimited', 'timeout', 'unavailable'] as const
-  ).filter((kind) => errors.some((error) => error.kind === kind));
+  ).filter((kind) => mapped.some((error) => error.kind === kind));
   const domainProblemIdentity = domainKinds
     .map(
       (kind) =>
-        `  | { readonly code: ${domainCodes(errors, kind)
+        `  | { readonly code: ${domainCodes(mapped, kind)
           .map((code) => `'${code}'`)
           .join(' | ')}; readonly kind: '${kind}' }`,
     )
@@ -594,7 +596,7 @@ export const renderActionHttpProblems = (
     if (domainKinds.length === 1) {
       const [domainKind = 'ineligible'] = domainKinds;
       domainProblemIdentityDefinition = `interface DomainProblemIdentity { readonly code: ${domainCodes(
-        errors,
+        mapped,
         domainKind,
       )
         .map((code) => `'${code}'`)

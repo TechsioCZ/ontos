@@ -5,6 +5,7 @@ import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import { OrderSchema } from '../../shared/domain/merchandise-model.ts';
 import { decodeOrderDocument, orderRowOf } from '../../src/services/merchandise-store.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
+import { TEST_TAX } from '../support/tax-fixtures.ts';
 
 const at = '2026-10-19T08:00:00.000Z';
 const actor = { principalId: '20000000-0000-4000-8000-000000000002', tenantId: '20000000-0000-4000-8000-000000000001' };
@@ -22,9 +23,9 @@ const state = Schema.decodeUnknownSync(MerchandiseStateSchema)({
       name: 'Šroub',
       priceHistory: [],
       sku: 'SKU-1',
+      taxClassificationCode: 'cz.vat.standard',
       unit: 'ks',
       updatedAt: at,
-      vatRate: 21,
     },
   ],
 });
@@ -41,7 +42,7 @@ const command = {
   partyId: 'customer-party',
   shippingMethod: 'OSOBNI_ODBER',
 };
-const input = { actor, now: DateTime.makeUnsafe(at), resourceId: 'order-1' };
+const input = { actor, now: DateTime.makeUnsafe(at), resourceId: 'order-1', tax: TEST_TAX };
 
 it.effect('preserves a separate recipient through native command decoding, placement and stored order encoding', () =>
   Effect.gen(function* preservesStorefrontRecipient() {

@@ -161,6 +161,8 @@ const toObserved = (cells: readonly WireCell[]) => cells.map((cell) => ({ plain:
 
 const saveStepOf = (role: DesiredRole, roleId: (typeof AccessRoleSchema.Type)['id'], snapshot: string) =>
   SaveRoleStep.make({
+    // A role saved for the first time adds every one of its cells.
+    addedCells: role.cells,
     adminCells: role.adminCells,
     catalogSnapshotId: Schema.decodeUnknownSync(AccessRoleSchema.fields.catalogSnapshotId)(snapshot),
     cells: role.cells,

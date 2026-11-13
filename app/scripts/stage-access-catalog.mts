@@ -109,15 +109,22 @@ const carrierRef = (carrier: ScannedCarrier): string => `${carrier.file}: ${carr
 export interface StageAccessActor {
   readonly callers: readonly string[];
   readonly subject: AccessActor['subject'];
+  /** The callers that may bring such a workload subject, when narrower than every caller. */
+  readonly subjectWorkloadCallers?: readonly string[];
   /** The workload keys that may stand as the subject of an identity call (workload subject), when declared. */
   readonly subjectWorkloads?: readonly string[];
 }
 
 /** The module caller of a descriptor as the pinned artifact records it: the decoded carrier, minus its reason. */
-const stageActorOf = (actor: AccessActor): StageAccessActor =>
-  actor.subjectWorkloads === undefined
-    ? { callers: actor.callers, subject: actor.subject }
-    : { callers: actor.callers, subject: actor.subject, subjectWorkloads: actor.subjectWorkloads };
+const stageActorOf = (actor: AccessActor): StageAccessActor => {
+  if (actor.subjectWorkloads === undefined) {
+    return { callers: actor.callers, subject: actor.subject };
+  }
+  const withWorkloads = { callers: actor.callers, subject: actor.subject, subjectWorkloads: actor.subjectWorkloads };
+  return actor.subjectWorkloadCallers === undefined
+    ? withWorkloads
+    : { ...withWorkloads, subjectWorkloadCallers: actor.subjectWorkloadCallers };
+};
 
 /** A catalog descriptor, plus the module caller a call to it declares when it carries one. */
 export type StageAccessDescriptor = AccessCatalogDescriptor & {

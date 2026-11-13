@@ -673,6 +673,7 @@ export const merchandiseSearchRefreshTarget = (
       ResetDemoData: () => ({ ...base, rebuild: true }),
       SetMarketProductOffers: () => base,
       SetProductMarketOffer: () => base,
+      SyncTaxRates: () => base,
       UpdateCategory: () => base,
       UpdateProduct: (value) => ({ ...base, productIds: [value.id] }),
     }),

@@ -563,7 +563,15 @@ const runProviderBoundary = Effect.fn('MerchandiseSearchPublicationTest.provider
         }
         return Effect.succeed(
           sql.includes('"homepage_featured_product_ids"')
-            ? [{ aiChanges: null, bootstrapCheckpoint: checkpoint, homepageFeaturedProductIds: [], revision: 1 }]
+            ? [
+                {
+                  aiChanges: null,
+                  bootstrapCheckpoint: checkpoint,
+                  homepageFeaturedProductIds: [],
+                  revision: 1,
+                  taxRates: null,
+                },
+              ]
             : [{ bootstrapCheckpoint: checkpoint }],
         );
       }

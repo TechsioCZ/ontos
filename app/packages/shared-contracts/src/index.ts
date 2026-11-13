@@ -100,6 +100,7 @@ export {
   GatewayContextProtectedHeaderSchema,
   GatewayContextRequestSchema,
   GatewayContextResponseSchema,
+  GATEWAY_MODULE_NOT_INSTALLED_TYPE,
   GatewayForbiddenProblemSchema,
   GatewayInternalProblemSchema,
   GatewayRateLimitedProblemSchema,
