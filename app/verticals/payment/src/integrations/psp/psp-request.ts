@@ -27,7 +27,7 @@ import { GatewayOrderReferenceSchema, ProviderCorrelationSchema } from './psp-co
 
 const credentialRevisionSchema = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1));
 
-/** Opaque provider object identifier (GoPay payment or refund id, Stripe `cs_`/`pi_`/`re_` id, Comgate transId). */
+/** Opaque provider object identifier (GoPay payment id, Stripe `cs_`/`pi_`/`re_` id, Comgate transId). */
 export const ProviderObjectIdSchema = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(255),
@@ -35,18 +35,13 @@ export const ProviderObjectIdSchema = Schema.String.check(
 ).pipe(Schema.brand('ProviderObjectId'));
 export type ProviderObjectId = typeof ProviderObjectIdSchema.Type;
 
-/**
- * A provider object, typed by what it is. Only the owning family produces and consumes its variants. A GoPay
- * refund (Payments API v4 `Refund-Details`) has its own id but does not name its payment, so the reference keeps
- * both: the payment id binds the refund to the refunded collection and its economic effect key.
- */
+/** A provider object, typed by what it is. Only the owning family produces and consumes its variants. */
 export const ProviderObjectRefSchema = Schema.Union([
   Schema.TaggedStruct('GOPAY_PAYMENT', { id: ProviderObjectIdSchema }),
   Schema.TaggedStruct('STRIPE_CHECKOUT_SESSION', { id: ProviderObjectIdSchema }),
   Schema.TaggedStruct('STRIPE_PAYMENT_INTENT', { id: ProviderObjectIdSchema }),
   Schema.TaggedStruct('STRIPE_REFUND', { id: ProviderObjectIdSchema }),
   Schema.TaggedStruct('COMGATE_TRANSACTION', { transId: ProviderObjectIdSchema }),
-  Schema.TaggedStruct('GOPAY_REFUND', { id: ProviderObjectIdSchema, paymentId: ProviderObjectIdSchema }),
 ]);
 export type ProviderObjectRef = typeof ProviderObjectRefSchema.Type;
 
@@ -75,7 +70,7 @@ const contactText = (maximumLength: number) =>
   Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(maximumLength), Schema.isTrimmed());
 
 /**
- * Payer contact handed to a provider adapter for providers that require it (Comgate, GoPay). Its source is
+ * Payer contact handed to a provider adapter for providers that require it (Comgate). Its source is
  * the caller-supplied `PaymentPayerContact` on the start-payment-collection Action (plan D-P3, N9), converted
  * by `toGatewayPayerContact` during dispatch preparation only.
  */

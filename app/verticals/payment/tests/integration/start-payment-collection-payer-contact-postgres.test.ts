@@ -241,7 +241,7 @@ const requestedPayloadOf = (s: Setup, operationId: string) =>
     );
 
 it.live(
-  '#1153 H1094-01=A A Stripe collection needs no contact, GoPay only an email, Comgate a full name and an email or phone',
+  '#1153 H1094-01=A Stripe and GoPay collections need no contact, Comgate a full name and an email or phone',
   () =>
     native(
       Effect.gen(function* contactPerFamily() {
@@ -257,17 +257,15 @@ it.live(
         expect(stripeCollected.replayed).toBe(false);
         expect(yield* contactRows(s.admin, stripeCollected.operation.operationId)).toEqual([]);
 
-        // GoPay: the email is required, a full name or phone is not applicable.
+        // GoPay: like Stripe, no contact needed; a supplied one is not applicable.
         const gopay = yield* s.createPayment('GOPAY');
-        expect(yield* refusalCode(s.collect(gopay, 'collect-1', Option.none()))).toBe('payment_payer_contact_required');
-        expect(
-          yield* refusalCode(s.collect(gopay, 'collect-1', Option.some({ email: EMAIL, fullName: 'Test Payer' }))),
-        ).toBe('payment_payer_contact_not_applicable');
+        expect(yield* refusalCode(s.collect(gopay, 'collect-1', Option.some({ email: EMAIL })))).toBe(
+          'payment_payer_contact_not_applicable',
+        );
         expect(yield* operationsOf(s, gopay)).toBe(0);
-        const gopayCollected = yield* s.collect(gopay, 'collect-1', Option.some({ email: EMAIL }));
-        expect(yield* contactRows(s.admin, gopayCollected.operation.operationId)).toEqual([
-          { email: EMAIL, full_name: null, phone: null },
-        ]);
+        const gopayCollected = yield* s.collect(gopay, 'collect-1', Option.none());
+        expect(gopayCollected.replayed).toBe(false);
+        expect(yield* contactRows(s.admin, gopayCollected.operation.operationId)).toEqual([]);
 
         // Comgate: a full name plus an email or a phone.
         const comgate = yield* s.createPayment('COMGATE');
@@ -289,7 +287,7 @@ it.live(
         expect(yield* contactRows(s.admin, comgateCollected.operation.operationId)).toEqual([
           { email: null, full_name: 'Test Payer', phone: '+420700000000' },
         ]);
-        expect(yield* contactRowsOfTenant(s)).toBe(2);
+        expect(yield* contactRowsOfTenant(s)).toBe(1);
       }),
     ),
 );

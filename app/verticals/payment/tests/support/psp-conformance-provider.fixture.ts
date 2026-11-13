@@ -61,8 +61,7 @@ const answer = (request: HttpClientRequest.HttpClientRequest, step: RecordedStep
       ),
     ),
     Match.tag('Respond', ({ body, status }) =>
-      // A 204 (GoPay cancel) has no body by definition.
-      Effect.succeed(HttpClientResponse.fromWeb(request, new Response(status === 204 ? null : body, { status }))),
+      Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body, { status }))),
     ),
     Match.exhaustive,
   );

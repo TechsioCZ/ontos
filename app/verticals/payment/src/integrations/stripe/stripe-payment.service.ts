@@ -223,8 +223,13 @@ const stripeEnvironmentOf = (
   );
 };
 
+/**
+ * Test keys: secret `sk_test_`, restricted `rk_test_` (https://docs.stripe.com/keys), and the claimable sandbox's
+ * limited restricted key `rkcs_test_` issued by `stripe sandbox create` (https://docs.stripe.com/cli/sandbox).
+ * Live keys: `sk_live_` and `rk_live_` only; Stripe documents no live claimable-sandbox key.
+ */
 const keyEnvironmentOf = (secretKey: string): Option.Option<GatewayEnvironment> => {
-  if (/^(?:sk|rk)_test_/u.test(secretKey)) {
+  if (/^(?:sk|rk|rkcs)_test_/u.test(secretKey)) {
     return Option.some('SANDBOX');
   }
   if (/^(?:sk|rk)_live_/u.test(secretKey)) {
@@ -750,7 +755,7 @@ const lookupObject = (
     Match.tag('STRIPE_CHECKOUT_SESSION', ({ id }) => lookupCollectionSession(context, id, expected)),
     Match.tag('STRIPE_PAYMENT_INTENT', ({ id }) => lookupPaymentIntent(context, id, expected)),
     Match.tag('STRIPE_REFUND', ({ id }) => lookupRefund(context, id, expected)),
-    Match.tag('GOPAY_PAYMENT', 'GOPAY_REFUND', 'COMGATE_TRANSACTION', () =>
+    Match.tag('GOPAY_PAYMENT', 'COMGATE_TRANSACTION', () =>
       Effect.fail(unsupported('RETRIEVE', 'stripe_lookup_foreign_ref')),
     ),
     Match.exhaustive,
@@ -840,9 +845,7 @@ const readOrderReferenceOf = (
         ),
       ),
     ),
-    Match.tag('GOPAY_PAYMENT', 'GOPAY_REFUND', 'COMGATE_TRANSACTION', () =>
-      Effect.succeed(Option.none<GatewayOrderReference>()),
-    ),
+    Match.tag('GOPAY_PAYMENT', 'COMGATE_TRANSACTION', () => Effect.succeed(Option.none<GatewayOrderReference>())),
     Match.exhaustive,
   );
 

@@ -142,7 +142,7 @@ const recordOf = (input: RecordInput): ProviderDispatchRecord => {
     credentialRevision: 1,
     customerRedirectUrl: Option.none(),
     endpointRef: Option.some(
-      input.family === 'GOPAY' ? 'gopay:POST:/eshops/8123456789/payments' : 'stripe:POST:/v1/checkout/sessions',
+      input.family === 'GOPAY' ? 'gopay:POST:/payments/payment' : 'stripe:POST:/v1/checkout/sessions',
     ),
     environment: 'SANDBOX',
     idempotencyKeyHash: Option.none(),

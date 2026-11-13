@@ -58,8 +58,9 @@ import {
   GOPAY_FIXTURE_GOID,
   GOPAY_FIXTURE_PAYMENT_ID,
   gopayCreateResponseBody,
+  gopayInquiryResponseBody,
 } from '../fixtures/gopay/payment-responses.ts';
-import { GOPAY_FIXTURE_REFUND_ID, gopayRefundBody } from '../fixtures/gopay/refund-responses.ts';
+import { gopayRefundResponseBody, gopayTimestampedRefundHistoryBody } from '../fixtures/gopay/refund-responses.ts';
 import { credentialConfig, recordedGatewayAdapters, respond } from '../support/psp-conformance-provider.fixture.ts';
 import type { CredentialDocument, RouteScript } from '../support/psp-conformance-provider.fixture.ts';
 import {
@@ -807,17 +808,43 @@ it.live('#1156 Lookup through the original binding after a binding is retired fo
 );
 
 /*
- * Refund recovery through the production adapters (#1156 #1158, phase 2 D-P1/D-P2): the executor acknowledged a
+ * Refund recovery through the production adapters (#1156 #1158, phase 2 D-P2): the executor acknowledged a
  * refund on native PostgreSQL; the recovery worker then looks it up through the original binding with the
  * production GoPay or Comgate adapter over recorded documented bodies. The A8 submitter stays scripted.
  */
 
-const GOPAY_API = 'https://gw.sandbox.gopay.com/gp-gw/api/4.0';
+const GOPAY_API = 'https://gw.sandbox.gopay.com/api';
 const GOPAY_TOKEN = `POST ${GOPAY_API}/oauth2/token`;
+const GOPAY_PAYMENT = `GET ${GOPAY_API}/payments/payment/${GOPAY_FIXTURE_PAYMENT_ID}`;
+const GOPAY_REFUND = `POST ${GOPAY_API}/payments/payment/${GOPAY_FIXTURE_PAYMENT_ID}/refund`;
+const GOPAY_REFUND_HISTORY = `${GOPAY_PAYMENT}/refunds`;
 const gopayToken = respond(
   200,
-  '{"token_type":"bearer","access_token":"gopay-access-token-recovery","scope":"payment:read payment:write","expires_in":900}',
+  '{"token_type":"bearer","access_token":"gopay-access-token-recovery","expires_in":1800}',
 );
+/** The GoPay inquiry of the collection `orderReference`, partially refunded. */
+const gopayPartiallyRefunded = (orderReference: string) =>
+  respond(
+    200,
+    gopayInquiryResponseBody({
+      amount: 10_000,
+      goid: GOPAY_FIXTURE_GOID,
+      orderNumber: orderReference,
+      state: 'PARTIALLY_REFUNDED',
+    }),
+  );
+/** A GoPay refund history with one 40 CZK entry in `state`, requested one hour after now (after any dispatch). */
+const gopayRefundHistory = (state: string) =>
+  DateTime.now.pipe(
+    Effect.map((now) =>
+      respond(
+        200,
+        gopayTimestampedRefundHistoryBody([
+          { amount: 4000, dateRequested: DateTime.formatIso(DateTime.add(now, { hours: 1 })), state },
+        ]),
+      ),
+    ),
+  );
 const PROVIDER_CREDENTIALS: CredentialDocument = {
   'comgate.recovery': { family: 'COMGATE', secret: 'comgate-recovery-not-a-secret' },
   'gopay.recovery': { clientId: 'gopay-client-recovery', clientSecret: 'gopay-recovery-not-a-secret', family: 'GOPAY' },
@@ -825,11 +852,11 @@ const PROVIDER_CREDENTIALS: CredentialDocument = {
 const COMGATE_API = 'https://payments.comgate.cz/v2.0';
 const comgateFixture = (name: string) => readFileSync(new URL(`../fixtures/comgate/${name}`, import.meta.url), 'utf-8');
 
-/** The payer contact each family's collection Action input carries, stored by the production persistence. */
+/** The payer contact a Comgate collection Action input carries; a GoPay collection takes none (plan D-P3). */
 const payerContactOf = (binding: NativeBinding) =>
-  binding.executionBinding.providerFamily === 'GOPAY'
-    ? { email: 'payer@example.test' }
-    : { email: 'payer@example.test', fullName: 'Test Payer' };
+  binding.executionBinding.providerFamily === 'COMGATE'
+    ? Option.some({ email: 'payer@example.test', fullName: 'Test Payer' })
+    : Option.none();
 
 /** One production executor delivery over recorded provider answers; it must complete. */
 const executeThrough = Effect.fn('PspRecoveryFixture.executeThrough')(function* executeThrough(
@@ -850,43 +877,43 @@ const acknowledgedRefund = Effect.fn('PspRecoveryFixture.acknowledgedRefund')(fu
 ) {
   const binding = yield* nativeBindingFor(harness, family, `${family.toLowerCase()}.recovery`);
   const collect = yield* nativeCollectionFor(harness, binding, 10_000);
-  yield* harness.database.transaction((transaction: PaymentTestTransaction) =>
-    installOperationalScope(transaction, operationalScopeOf(harness.scope)).pipe(
-      Effect.flatMap((scoped) =>
-        pspPayerContactPersistenceForTransaction(scoped).rememberForCollect(
-          collect.operationId,
-          payerContactOf(binding),
+  const contact = payerContactOf(binding);
+  if (Option.isSome(contact)) {
+    yield* harness.database.transaction((transaction: PaymentTestTransaction) =>
+      installOperationalScope(transaction, operationalScopeOf(harness.scope)).pipe(
+        Effect.flatMap((scoped) =>
+          pspPayerContactPersistenceForTransaction(scoped).rememberForCollect(collect.operationId, contact.value),
         ),
       ),
-    ),
-  );
+    );
+  }
   const { orderReference } = deriveProviderCorrelation(collect.operationId);
   yield* executeThrough(
     harness,
     collect,
     family === 'GOPAY'
       ? {
-          [`POST ${GOPAY_API}/eshops/${GOPAY_FIXTURE_GOID}/payments`]: [
-            respond(201, gopayCreateResponseBody(orderReference)),
-          ],
+          [`POST ${GOPAY_API}/payments/payment`]: [respond(200, gopayCreateResponseBody(orderReference))],
           [GOPAY_TOKEN]: [gopayToken],
         }
       : { [`POST ${COMGATE_API}/payment.json`]: [respond(200, comgateFixture('create-success.json'))] },
   );
   const refund = yield* nativeRefundFor(harness, binding, collect, 4000);
+  // GoPay: the accepted refund is followed by one refund-history read that still shows it REQUESTED (pending).
+  const gopayRequested = yield* gopayRefundHistory('REQUESTED');
   yield* executeThrough(
     harness,
     refund,
     family === 'GOPAY'
       ? {
-          [`POST ${GOPAY_API}/payments/${GOPAY_FIXTURE_PAYMENT_ID}/refunds`]: [
-            respond(201, gopayRefundBody({ amount: 4000, state: 'REQUESTED' })),
-          ],
+          [GOPAY_PAYMENT]: [gopayPartiallyRefunded(orderReference)],
+          [GOPAY_REFUND]: [respond(200, gopayRefundResponseBody('ACCEPTED'))],
+          [GOPAY_REFUND_HISTORY]: [gopayRequested],
           [GOPAY_TOKEN]: [gopayToken],
         }
       : { [`POST ${COMGATE_API}/refund.json`]: [respond(200, comgateFixture('result-ok.json'))] },
   );
-  return { binding, refund };
+  return { binding, orderReference, refund };
 });
 
 /** One recovery delivery of `refund` with the production adapters over `routes`; the A8 answer is ACCEPTED. */
@@ -940,20 +967,19 @@ const refundEvidenceOf = (harness: NativeHarness, refund: OperationRequested) =>
     ),
   );
 
-it.live('#1156 #1158 GoPay v4 refund recovery reads the refund by the id GoPay returned and confirms it', () =>
+it.live('#1156 #1158 GoPay refund recovery confirms the one refund-history entry requested after the dispatch', () =>
   Effect.scoped(
     Effect.gen(function* gopayRefundRecovery() {
       yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
       const harness = yield* nativeRecoveryHarness;
-      const { refund } = yield* acknowledgedRefund(harness, 'GOPAY');
+      const { orderReference, refund } = yield* acknowledgedRefund(harness, 'GOPAY');
       const recovered = yield* recoverRefundThrough(harness, refund, {
-        [`GET ${GOPAY_API}/refunds/${GOPAY_FIXTURE_REFUND_ID}`]: [
-          respond(200, gopayRefundBody({ amount: 4000, state: 'SUCCESS' })),
-        ],
+        [GOPAY_PAYMENT]: [gopayPartiallyRefunded(orderReference)],
+        [GOPAY_REFUND_HISTORY]: [yield* gopayRefundHistory('SUCCESS')],
         [GOPAY_TOKEN]: [gopayToken],
       }).pipe(Effect.provide(credentialConfig(PROVIDER_CREDENTIALS)));
-      // Only the refund resource is read; the refund is never resent and the payment's refund list is not needed.
-      expect(recovered.sent).toEqual([GOPAY_TOKEN, `GET ${GOPAY_API}/refunds/${GOPAY_FIXTURE_REFUND_ID}`]);
+      // The payment and its refund history are read through the original binding; the refund is never resent.
+      expect(recovered.sent).toEqual([GOPAY_TOKEN, GOPAY_PAYMENT, GOPAY_REFUND_HISTORY]);
       expect([recovered.report.providerCall, Option.getOrNull(recovered.report.indeterminate)]).toEqual([
         'LOOKUP_PROVIDER_OBJECT',
         null,

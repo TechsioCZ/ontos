@@ -127,12 +127,10 @@ const decodeGuarantee = Schema.decodeUnknownOption(PaymentProviderReplayGuarante
 const decodeEnvironment = Schema.decodeUnknownOption(GatewayEnvironmentSchema);
 const REPLAYABLE_STATES: ReadonlySet<ProviderDispatchRecord['state']> = new Set(['PREPARED', 'OUTCOME_UNKNOWN']);
 
-/** A refund's own provider object (Stripe refund, GoPay v4 refund); every other ref is a collection object. */
-const isRefundRef = (ref: ProviderObjectRef): boolean =>
+const isStripeRefundRef = (ref: ProviderObjectRef): boolean =>
   Match.valueTags(ref, {
     COMGATE_TRANSACTION: () => false,
     GOPAY_PAYMENT: () => false,
-    GOPAY_REFUND: () => true,
     STRIPE_CHECKOUT_SESSION: () => false,
     STRIPE_PAYMENT_INTENT: () => false,
     STRIPE_REFUND: () => true,
@@ -202,8 +200,8 @@ export const recoveryModeAtDispatch = (
 
 /**
  * The provider object a lookup by reference reads: the refund object when known, else the collection object.
- * A Stripe refund is a separate provider object, so only its refund ref addresses it; a GoPay refund is read by its
- * recorded refund ref and otherwise through its payment's refund list; Comgate reads a refund through its payment.
+ * A Stripe refund is a separate provider object, so only its refund ref addresses it; GoPay and Comgate read a
+ * refund through its payment.
  */
 export const recordedLookupRefOf = (record: ProviderDispatchRecord): Option.Option<ProviderObjectRef> => {
   if (record.operationKind !== 'REFUND') {
@@ -237,7 +235,7 @@ export const lookupTargetOf = (record: ProviderDispatchRecord, now: DateTime.Utc
 
 /** The provider ref a correlated OUTCOME_UNKNOWN row records: a refund object for a refund, else the collection object. */
 const correlationRefOf = (record: ProviderDispatchRecord, refs: readonly ProviderObjectRef[]) =>
-  Option.fromUndefinedOr(refs.find((ref) => isRefundRef(ref) === (record.operationKind === 'REFUND')));
+  Option.fromUndefinedOr(refs.find((ref) => isStripeRefundRef(ref) === (record.operationKind === 'REFUND')));
 
 const unavailable = (family: PaymentGatewayAccountBinding['providerFamily'], reason: string) =>
   new GatewayProviderUnavailable({ code: 'gateway_provider_unavailable', family, reason });
@@ -400,10 +398,10 @@ const recordReplayResponse = Effect.fn('GatewayOperationRecovery.recordReplayRes
           customerRedirectUrl: acknowledged.finding.customerAction.pipe(Option.map(({ redirectUrl }) => redirectUrl)),
           providerPaymentRef:
             record.operationKind === 'COLLECT'
-              ? Option.fromUndefinedOr(refs.find((ref) => !isRefundRef(ref)))
+              ? Option.fromUndefinedOr(refs.find((ref) => !isStripeRefundRef(ref)))
               : Option.none(),
           providerRefundRef:
-            record.operationKind === 'REFUND' ? Option.fromUndefinedOr(refs.find(isRefundRef)) : Option.none(),
+            record.operationKind === 'REFUND' ? Option.fromUndefinedOr(refs.find(isStripeRefundRef)) : Option.none(),
           respondedAt: now,
         })
         .pipe(Effect.as(acknowledged.finding));
@@ -448,15 +446,15 @@ const replayRetained = Effect.fn('GatewayOperationRecovery.replay')(function* re
 const provesRefundExists = (finding: ProviderFindingResult): boolean =>
   finding.finding === 'EFFECT_CONFIRMED' ||
   finding.finding === 'ACCEPTED_PENDING' ||
-  (finding.finding === 'NOT_EFFECTED' && finding.providerRefs.some(isRefundRef));
+  (finding.finding === 'NOT_EFFECTED' && finding.providerRefs.some(isStripeRefundRef));
 
 /**
- * The provider ref an OUTCOME_UNKNOWN refund records once a lookup of its recorded object (GoPay refund list,
- * Comgate statement) proves it exists: the refund's own object when the provider names one (GoPay), else the
- * payment object the refund was dispatched against (Comgate).
+ * The provider ref an OUTCOME_UNKNOWN refund records once a lookup of its recorded object (GoPay refund history,
+ * Comgate statement) proves it exists: the refund's own object when the provider names one (Stripe), else the
+ * payment object the refund was dispatched against (GoPay, Comgate).
  */
 const refundCorrelationRefOf = (refs: readonly ProviderObjectRef[]) =>
-  Option.orElse(Option.fromUndefinedOr(refs.find(isRefundRef)), () => Option.fromUndefinedOr(refs[0]));
+  Option.orElse(Option.fromUndefinedOr(refs.find(isStripeRefundRef)), () => Option.fromUndefinedOr(refs[0]));
 
 /**
  * Correlates an OUTCOME_UNKNOWN row (OUTCOME_UNKNOWN → ACKNOWLEDGED with the provider ref) found by a Stripe

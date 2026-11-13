@@ -197,7 +197,7 @@ const adapterOf = (provider: Provider, family: Family): GatewayProviderAdapter =
   });
   return {
     capabilities: {
-      CANCEL_OR_VOID: 'SUPPORTED',
+      CANCEL_OR_VOID: family === 'GOPAY' ? 'UNSUPPORTED' : 'SUPPORTED',
       COLLECT: 'SUPPORTED',
       NOTIFICATION: 'SUPPORTED',
       REFUND: 'SUPPORTED',
@@ -803,8 +803,6 @@ it.live('#1156 Unsupported provider operation yields typed unsupported, no fallb
       yield* collectionFor(harness, 'STRIPE');
       expect(Exit.isSuccess(yield* deliver(harness, collection.payload))).toBe(true);
       const cancel = yield* cancellationFor(harness, collection);
-      // Every Launch family declares a cancel path (GoPay: v4 DELETE); this stub adapter refuses one anyway, so the
-      // executor's generic typed-Unsupported path is proven without any fallback.
       harness.provider.failures.set('GOPAY:PREPARE_CANCEL', () =>
         Effect.fail(
           new GatewayProviderUnsupported({
@@ -898,8 +896,11 @@ it.live('#1153 A collect withheld for its cancellation deletes its payer contact
   Effect.scoped(
     Effect.gen(function* contactDeletedWhenWithheld() {
       const harness = yield* harnessOf;
-      const collection = yield* collectionFor(harness, 'GOPAY');
-      yield* rememberContact(harness, collection.payload.operationId, { email: 'payer@example.test' });
+      const collection = yield* collectionFor(harness, 'COMGATE');
+      yield* rememberContact(harness, collection.payload.operationId, {
+        email: 'payer@example.test',
+        fullName: 'Test Payer',
+      });
       const cancel = yield* cancellationFor(harness, collection);
       expect(Exit.isSuccess(yield* deliver(harness, cancel))).toBe(true);
       expect(yield* stateOf(harness, collection.payload.operationId)).toEqual(
@@ -915,9 +916,9 @@ it.live('#1153 A collect that is never sent deletes its payer contact', () =>
   Effect.scoped(
     Effect.gen(function* contactDeletedWhenNotSent() {
       const harness = yield* harnessOf;
-      const { payload } = yield* collectionFor(harness, 'GOPAY');
-      yield* rememberContact(harness, payload.operationId, { email: 'payer@example.test' });
-      harness.provider.failures.set('GOPAY:PREPARE_COLLECT', unavailable('GOPAY', 'credential_entry_malformed'));
+      const { payload } = yield* collectionFor(harness, 'COMGATE');
+      yield* rememberContact(harness, payload.operationId, { email: 'payer@example.test', fullName: 'Test Payer' });
+      harness.provider.failures.set('COMGATE:PREPARE_COLLECT', unavailable('COMGATE', 'credential_entry_malformed'));
       expect(Option.isSome(deferredWake(yield* deliver(harness, payload)))).toBe(true);
       // A deferred prepare keeps the contact for the next attempt.
       expect(yield* storedContactCount(harness, payload.operationId)).toBe(1);

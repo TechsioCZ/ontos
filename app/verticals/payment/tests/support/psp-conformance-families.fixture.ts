@@ -17,6 +17,7 @@ import type {
   PaymentGatewayProviderFamilySchema,
   PaymentRefundBasisKind,
 } from '../../shared/domain/payment-vocabulary.ts';
+import { gopayProviderObjectId } from '../../src/integrations/gopay/gopay-wire.ts';
 import { RawProviderNotificationSchema } from '../../src/integrations/psp/notification-envelope.ts';
 import type { RawProviderNotification } from '../../src/integrations/psp/notification-envelope.ts';
 import { deriveProviderCorrelation } from '../../src/integrations/psp/psp-correlation.ts';
@@ -41,10 +42,10 @@ import {
   GOPAY_FIXTURE_GOID,
   GOPAY_FIXTURE_PAYMENT_ID,
   gopayCreateResponseBody,
-  gopayNotFoundBody,
-  gopayPaymentBody,
+  gopayInquiryResponseBody,
+  gopayPaymentNotFoundBody,
 } from '../fixtures/gopay/payment-responses.ts';
-import { GOPAY_FIXTURE_REFUND_ID, gopayRefundBody } from '../fixtures/gopay/refund-responses.ts';
+import { gopayRefundResponseBody, gopayTimestampedRefundHistoryBody } from '../fixtures/gopay/refund-responses.ts';
 import { stripeBalanceObject, stripeEventEnvelope, stripePayoutObject } from '../fixtures/stripe/stripe-events.ts';
 import {
   STRIPE_FIXTURE_PAYMENT_INTENT_ID,
@@ -203,29 +204,30 @@ const notificationOf = (encoded: typeof RawProviderNotificationSchema.Encoded) =
 const FOREIGN_ACCOUNT_REF = `pab_${'f'.repeat(32)}`;
 
 // -------------------------------------------------------------------------------------------------
-// GoPay Payments API v4 (https://api-docs.gopay.com/llms-full.txt, https://api-docs.gopay.com/spec/en/payments.yaml)
+// GoPay (https://doc.gopay.com)
 // -------------------------------------------------------------------------------------------------
 
-const GOPAY_API = 'https://gw.sandbox.gopay.com/gp-gw/api/4.0';
+const GOPAY_API = 'https://gw.sandbox.gopay.com/api';
 const GOPAY_TOKEN = `POST ${GOPAY_API}/oauth2/token`;
-const GOPAY_CREATE = `POST ${GOPAY_API}/eshops/${GOPAY_FIXTURE_GOID}/payments`;
-const GOPAY_PAYMENT = `GET ${GOPAY_API}/payments/${GOPAY_FIXTURE_PAYMENT_ID}`;
-const GOPAY_CANCEL = `DELETE ${GOPAY_API}/payments/${GOPAY_FIXTURE_PAYMENT_ID}`;
-const GOPAY_REFUND = `POST ${GOPAY_API}/payments/${GOPAY_FIXTURE_PAYMENT_ID}/refunds`;
+const GOPAY_CREATE = `POST ${GOPAY_API}/payments/payment`;
+const GOPAY_PAYMENT = `GET ${GOPAY_API}/payments/payment/${GOPAY_FIXTURE_PAYMENT_ID}`;
+const GOPAY_REFUND = `POST ${GOPAY_API}/payments/payment/${GOPAY_FIXTURE_PAYMENT_ID}/refund`;
+const GOPAY_REFUND_HISTORY = `GET ${GOPAY_API}/payments/payment/${GOPAY_FIXTURE_PAYMENT_ID}/refunds`;
 const gopayToken = respond(
   200,
-  '{"token_type":"bearer","access_token":"gopay-access-token-fixture","scope":"payment:read payment:write","expires_in":900}',
+  '{"token_type":"bearer","access_token":"gopay-access-token-fixture","expires_in":1800}',
 );
-const gopayPayment = (state: string, overrides: { readonly amount?: number; readonly orderNumber?: string } = {}) =>
+const gopayInquiry = (state: string, overrides: { readonly amount?: number; readonly goid?: string } = {}) =>
   respond(
     200,
-    gopayPaymentBody({
+    gopayInquiryResponseBody({
       amount: overrides.amount ?? 10_000,
-      orderNumber: overrides.orderNumber ?? collectCorrelation.orderReference,
+      goid: overrides.goid ?? GOPAY_FIXTURE_GOID,
+      orderNumber: collectCorrelation.orderReference,
       state,
     }),
   );
-const gopayRef = refOf({ _tag: 'GOPAY_PAYMENT', id: GOPAY_FIXTURE_PAYMENT_ID });
+const gopayRef = refOf({ _tag: 'GOPAY_PAYMENT', id: gopayProviderObjectId(Number(GOPAY_FIXTURE_PAYMENT_ID)) });
 const gopayTarget = gopayExecutionTarget();
 const gopayCallback = (overrides: Partial<typeof RawProviderNotificationSchema.Encoded> = {}) =>
   notificationOf({
@@ -243,8 +245,10 @@ const gopayCallback = (overrides: Partial<typeof RawProviderNotificationSchema.E
 const GOPAY: FamilyConformance = {
   amount: czk(10_000),
   cancelRequest: cancelRequestOf(gopayRef),
-  // GoPay v4 requires `customer.email` and takes nothing else of the payer (plan D-P3).
-  collectRequest: collectRequestOf(czk(10_000), Option.some({ email: 'payer@example.test', fullName: Option.none() })),
+  collectRequest: collectRequestOf(
+    czk(10_000),
+    Option.some({ email: 'payer@example.test', fullName: Option.some('Payer Example') }),
+  ),
   createRoute: GOPAY_CREATE,
   credentials: {
     [gopayTarget.credentialSecretRef]: {
@@ -254,7 +258,7 @@ const GOPAY: FamilyConformance = {
     },
   },
   family: 'GOPAY',
-  forbiddenCollectFragments: ['preauthorization', 'recurrence', 'recurrent', 'order_description', 'first_name'],
+  forbiddenCollectFragments: ['preauthorization', 'recurrence', 'recurrent'],
   foreignFamilyRef: refOf({ _tag: 'COMGATE_TRANSACTION', transId: 'AB12-CD34-EF56' }),
   notifications: {
     expectedAuthenticity: 'LOOKUP_REQUIRED',
@@ -272,50 +276,57 @@ const GOPAY: FamilyConformance = {
   },
   paymentRef: gopayRef,
   refundAmount: czk(4000),
-  // The refund resource GoPay returned on create is read by its id (v4 `GET /refunds/{id}`).
+  // GoPay refunds have no id of their own: the payment's refund history is read and one entry requested after the
+  // dispatch with the exact amount in state SUCCESS confirms.
   refundCompletion: {
     atMs: CONFORMANCE_CLOCK_MS + HOUR_MS,
     confirmed: {
-      [`GET ${GOPAY_API}/refunds/${GOPAY_FIXTURE_REFUND_ID}`]: [
-        respond(200, gopayRefundBody({ amount: 4000, state: 'SUCCESS' })),
+      [GOPAY_PAYMENT]: [gopayInquiry('PARTIALLY_REFUNDED')],
+      [GOPAY_REFUND_HISTORY]: [
+        respond(
+          200,
+          gopayTimestampedRefundHistoryBody([
+            { amount: 4000, dateRequested: '2026-11-12T11:00:00.000+0100', state: 'SUCCESS' },
+          ]),
+        ),
       ],
       [GOPAY_TOKEN]: [gopayToken],
     },
-    confirmedRoutes: [GOPAY_TOKEN, `GET ${GOPAY_API}/refunds/${GOPAY_FIXTURE_REFUND_ID}`],
-    lookupRef: refOf({ _tag: 'GOPAY_REFUND', id: GOPAY_FIXTURE_REFUND_ID, paymentId: GOPAY_FIXTURE_PAYMENT_ID }),
+    confirmedRoutes: [GOPAY_TOKEN, GOPAY_PAYMENT, GOPAY_REFUND_HISTORY],
+    lookupRef: gopayRef,
     sandboxSource: true,
     target: gopayTarget,
   },
   refundRequest: refundRequestOf(czk(4000), gopayRef),
   refundRoute: GOPAY_REFUND,
   scripts: {
-    // The token, the single DELETE (204), then the confirming lookup (CANCELED).
-    cancel: Option.some({
-      [GOPAY_CANCEL]: [respond(204, '')],
-      [GOPAY_PAYMENT]: [gopayPayment('CANCELED')],
-      [GOPAY_TOKEN]: [gopayToken],
-    }),
+    cancel: Option.none(),
     create: {
-      [GOPAY_CREATE]: [respond(201, gopayCreateResponseBody(collectCorrelation.orderReference))],
+      [GOPAY_CREATE]: [respond(200, gopayCreateResponseBody(collectCorrelation.orderReference))],
       [GOPAY_TOKEN]: [gopayToken],
     },
-    // v4 payments carry no GoID: a payment of another eshop or merchant states an order this operation never sent.
     lookupForeignMerchant: {
-      [GOPAY_PAYMENT]: [gopayPayment('PAID', { orderNumber: '2025010199' })],
+      [GOPAY_PAYMENT]: [gopayInquiry('PAID', { goid: '8123456780' })],
       [GOPAY_TOKEN]: [gopayToken],
     },
-    lookupMismatch: { [GOPAY_PAYMENT]: [gopayPayment('PAID', { amount: 9900 })], [GOPAY_TOKEN]: [gopayToken] },
-    lookupMiss: { [GOPAY_PAYMENT]: [respond(404, gopayNotFoundBody)], [GOPAY_TOKEN]: [gopayToken] },
-    lookupPaid: { [GOPAY_PAYMENT]: [gopayPayment('PAID')], [GOPAY_TOKEN]: [gopayToken] },
+    lookupMismatch: { [GOPAY_PAYMENT]: [gopayInquiry('PAID', { amount: 9900 })], [GOPAY_TOKEN]: [gopayToken] },
+    lookupMiss: { [GOPAY_PAYMENT]: [respond(404, gopayPaymentNotFoundBody)], [GOPAY_TOKEN]: [gopayToken] },
+    lookupPaid: { [GOPAY_PAYMENT]: [gopayInquiry('PAID')], [GOPAY_TOKEN]: [gopayToken] },
     lostCreate: { [GOPAY_CREATE]: [dropAfterWrite], [GOPAY_TOKEN]: [gopayToken] },
     refundAccepted: {
-      [GOPAY_REFUND]: [respond(201, gopayRefundBody({ amount: 4000, state: 'REQUESTED' }))],
+      [GOPAY_PAYMENT]: [gopayInquiry('PARTIALLY_REFUNDED')],
+      [GOPAY_REFUND]: [respond(200, gopayRefundResponseBody('ACCEPTED'))],
+      [GOPAY_REFUND_HISTORY]: [
+        respond(
+          200,
+          gopayTimestampedRefundHistoryBody([
+            { amount: 4000, dateRequested: '2026-11-12T11:00:00.000+0100', state: 'REQUESTED' },
+          ]),
+        ),
+      ],
       [GOPAY_TOKEN]: [gopayToken],
     },
-    unavailableCreate: {
-      [GOPAY_CREATE]: [respond(503, '{"code":503,"error":"SERVICE_UNAVAILABLE"}')],
-      [GOPAY_TOKEN]: [gopayToken],
-    },
+    unavailableCreate: { [GOPAY_CREATE]: [respond(503, '{"errors":[]}')], [GOPAY_TOKEN]: [gopayToken] },
   },
   target: gopayTarget,
 };

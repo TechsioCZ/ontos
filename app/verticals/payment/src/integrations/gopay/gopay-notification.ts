@@ -5,14 +5,13 @@ import type { RawProviderNotification, VerifiedNotificationCapture } from '../ps
 import { GatewayNotificationRejected } from '../psp/psp-errors.ts';
 import type { GatewayNotificationRejectedError, GatewayNotificationRejectionReason } from '../psp/psp-errors.ts';
 import type { GatewayExecutionTarget } from '../psp/psp-request.ts';
-import { parseGopayId } from './gopay-wire.ts';
+import { gopayProviderObjectId, parseGopayId } from './gopay-wire.ts';
 
 /**
- * GoPay HTTP notification (#1157; Payments API v4, https://api-docs.gopay.com/llms-full.txt "Return URL and
- * notification URL"). GoPay sends an unsigned HTTP GET with an empty body to the create-time `notification_url`
- * with `?id=<payment id>` (and `&parent_id=` only for recurring payments). It carries no state: the trigger is
- * LOOKUP_REQUIRED and nothing in it is evidence. Only `GET /payments/{payment_id}` through the original binding
- * decides. The signed v4 eshop webhooks are not used.
+ * GoPay HTTP notification (#1157; https://doc.gopay.com/#receiving-the-http-notification). GoPay
+ * sends an unsigned HTTP GET to the create-time `notification_url` with `?id=<payment id>` (and
+ * `&parent_id=` only for recurring payments). It carries no state: the trigger is LOOKUP_REQUIRED and
+ * nothing in it is evidence. Only the inquiry through the original binding decides.
  *
  * Rejections (never stored): another family or binding → BINDING_UNKNOWN; another environment →
  * ENVIRONMENT_MISMATCH; an absent or malformed `id`, a malformed `parent_id`, a non-empty body or a
@@ -58,7 +57,7 @@ export const verifyGopayNotification = Effect.fn('GopayNotification.verifyGopayN
     if (recurring && Option.isNone(notification.query.parentPaymentRef.pipe(Option.flatMap(parseGopayId)))) {
       return yield* Effect.fail(reject('MALFORMED'));
     }
-    const paymentRef = paymentId.value;
+    const paymentRef = gopayProviderObjectId(paymentId.value);
     const deliveryIdentity = `gopay:${paymentRef}:${notification.transportDeliveryRef}`;
     if (deliveryIdentity.length > DELIVERY_IDENTITY_MAX_LENGTH) {
       return yield* Effect.fail(reject('MALFORMED'));

@@ -395,7 +395,7 @@ const adapterOf = (world: World, family: Family): GatewayProviderAdapter => {
     });
   return {
     capabilities: {
-      CANCEL_OR_VOID: 'SUPPORTED',
+      CANCEL_OR_VOID: family === 'GOPAY' ? 'UNSUPPORTED' : 'SUPPORTED',
       COLLECT: 'SUPPORTED',
       NOTIFICATION: 'SUPPORTED',
       REFUND: 'SUPPORTED',
@@ -938,8 +938,6 @@ describe('#1156 #1158 Gateway operation executor', () => {
       yield* at(0);
       const world = withOperations(newWorld(), collectSpec('GOPAY'), cancelSpec('GOPAY'));
       expect(Exit.isSuccess(yield* deliver(world, collectSpec('GOPAY')))).toBe(true);
-      // Every Launch family declares a cancel path (GoPay: v4 DELETE); this stub adapter refuses one anyway, so the
-      // executor's generic typed-Unsupported path is proven without any fallback.
       world.failures.set('GOPAY:PREPARE_CANCEL', () =>
         Effect.fail(
           new GatewayProviderUnsupported({
@@ -1046,20 +1044,14 @@ describe('#1156 #1158 Gateway operation executor', () => {
     }),
   );
 
-  it.effect('#1153 H1094-01=A A GoPay email-only contact reaches prepare; a Stripe collect gets none', () =>
+  it.effect('#1153 H1094-01=A A GoPay or Stripe collect prepares without a payer contact', () =>
     Effect.gen(function* contactPerFamily() {
       yield* at(0);
-      const gopay = withOperations(newWorld(), {
-        ...collectSpec('GOPAY'),
-        payerContact: { email: 'payer@example.test' },
-      });
-      expect(Exit.isSuccess(yield* deliver(gopay, collectSpec('GOPAY')))).toBe(true);
-      expect(prepareContacts(gopay)).toEqual([
-        Option.some({ email: Option.some('payer@example.test'), fullName: Option.none(), phone: Option.none() }),
-      ]);
-      const stripe = withOperations(newWorld(), collectSpec('STRIPE'));
-      expect(Exit.isSuccess(yield* deliver(stripe, collectSpec('STRIPE')))).toBe(true);
-      expect(prepareContacts(stripe)).toEqual([Option.none()]);
+      for (const family of ['GOPAY', 'STRIPE'] as const) {
+        const world = withOperations(newWorld(), collectSpec(family));
+        expect(Exit.isSuccess(yield* deliver(world, collectSpec(family)))).toBe(true);
+        expect(prepareContacts(world)).toEqual([Option.none()]);
+      }
     }),
   );
 

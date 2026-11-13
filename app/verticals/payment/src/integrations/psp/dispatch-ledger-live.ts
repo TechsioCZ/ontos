@@ -70,31 +70,17 @@ export const workerOriginOf = (context: OutboxWorkerHandlerContext) =>
 
 const invokerOf = (scope: OutboxWorkerLegalEntityScope): ScopedRoutineInvoker => scope.routineInvoker;
 
-/** Persisted text form of a provider object reference (a GoPay refund as `GOPAY_REFUND:<paymentId>:<refundId>`). */
+/** Persisted text form of a provider object reference. */
 export const providerRefText = (ref: ProviderObjectRef): string =>
   `${ref._tag}:${Match.valueTags(ref, {
     COMGATE_TRANSACTION: ({ transId }) => transId,
     GOPAY_PAYMENT: ({ id }) => id,
-    GOPAY_REFUND: ({ id, paymentId }) => `${paymentId}:${id}`,
     STRIPE_CHECKOUT_SESSION: ({ id }) => id,
     STRIPE_PAYMENT_INTENT: ({ id }) => id,
     STRIPE_REFUND: ({ id }) => id,
   })}`;
 
 const COMGATE_TRANSACTION_TAG = 'COMGATE_TRANSACTION';
-const GOPAY_REFUND_TAG = 'GOPAY_REFUND';
-
-/** The encoded reference of a persisted tag and its text after the tag. */
-const encodedRefOf = (tag: string, text: string) => {
-  if (tag === COMGATE_TRANSACTION_TAG) {
-    return { _tag: tag, transId: text };
-  }
-  if (tag === GOPAY_REFUND_TAG) {
-    const separator = text.indexOf(':');
-    return { _tag: tag, id: text.slice(separator + 1), paymentId: separator <= 0 ? '' : text.slice(0, separator) };
-  }
-  return { _tag: tag, id: text };
-};
 
 /** The typed reference of a persisted text; `None` for any text this ledger did not write. */
 export const providerRefOfText = (text: string): Option.Option<ProviderObjectRef> => {
@@ -104,7 +90,9 @@ export const providerRefOfText = (text: string): Option.Option<ProviderObjectRef
   }
   const tag = text.slice(0, separator);
   const id = text.slice(separator + 1);
-  return Schema.decodeUnknownOption(ProviderObjectRefSchema)(encodedRefOf(tag, id));
+  return Schema.decodeUnknownOption(ProviderObjectRefSchema)(
+    tag === COMGATE_TRANSACTION_TAG ? { _tag: tag, transId: id } : { _tag: tag, id },
+  );
 };
 
 const storedRefOf = (text: string | undefined, column: string) =>
@@ -367,12 +355,11 @@ const recordUnsupported = Effect.fn('ProviderDispatchLedger.recordUnsupported')(
   );
 });
 
-/** A Stripe or GoPay refund object is the refund's own reference; every other object is the provider payment. */
+/** A Stripe refund object is the refund's own reference; every other object is the provider payment. */
 const isRefundObject = (ref: ProviderObjectRef): boolean =>
   Match.valueTags(ref, {
     COMGATE_TRANSACTION: () => false,
     GOPAY_PAYMENT: () => false,
-    GOPAY_REFUND: () => true,
     STRIPE_CHECKOUT_SESSION: () => false,
     STRIPE_PAYMENT_INTENT: () => false,
     STRIPE_REFUND: () => true,

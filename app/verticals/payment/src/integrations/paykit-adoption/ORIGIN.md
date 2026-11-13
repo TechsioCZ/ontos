@@ -36,7 +36,6 @@ Adoption means reading these ranges as reference for OntOS-owned code. Source is
 - **Stripe:** `createCheckout`/`retrieve`/`update`/`deleteCheckout` (143-279); customers (284-354); subscriptions (356-478); `updatePayment` (654-704); `capturePayment` (798-818); off-session and stored-method branch of `createPayment` (559-651); invoice, customer and subscription webhook branches (958-1099).
 - **GoPay:** checkout (198-340); customers (342-369); subscriptions and recurrence (371-775); `capturePayment` (922-973); `updatePayment` (999-1018); subscription and invoice webhook branches (1212-1292).
 - **Comgate:** `createCheckout` (174-235); `capturePayment` and preauth confirm (439-478); subscriptions and customers (266-301, 542-607); `deletePayment` (397-413); Invoice mapping (35-61); `invoice.generated` (773-778).
-- **GoPay v3 (removed in phase 2):** every GoPay row of the inventory above (`packages/gopay/src/gopay-provider.ts`, `packages/gopay/src/schema.ts`, `packages/gopay/src/utils/mapper.ts`) is no longer adopted and no longer a reference. The GoPay adapter (`src/integrations/gopay/`) is written against Payments API v4 from the v4 documentation. Its OAuth2 token cache is the OntOS module `gopay/gopay-oauth-token.ts`.
 - **Other packages:** `adapters/medusajs`, `examples/medusa-shop` (MIT, Medusa), `react`, `registry`, `custom-provider`, `apps/*`, root tooling, and the other 13 providers (bachs, chapa, lemonsqueezy, mercadopago, moneygram, monnify, paypal, paystack, polar, razorpay, redsys, remita, xendit). Stray `packages/comgate/pnpm-lock.yaml` is not adopted.
 - **Dependencies:** no upstream npm package is added as a runtime dependency. External SDK use (for example the Stripe SDK) is a separate decision recorded in the payment vertical.
 
@@ -78,19 +77,19 @@ Each gap is listed with the OntOS resolution and the file that carries it. Paths
 
 ### GoPay (G-P1 to G-P11)
 
-| Gap                                                    | OntOS resolution                                                                                                                               | Resolved in                                                     |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| G-P1 Direct capture                                    | Kept as direct capture; no capture call                                                                                                        | `gopay/gopay-payment.service.ts`                                |
-| G-P2 Random `order_number`                             | `order_number` is the operation's order reference                                                                                              | `gopay/gopay-payment.service.ts`, `psp/psp-correlation.ts`      |
-| G-P3 Local refund id as proof                          | Refund read by its v4 refund id (`GET /refunds/{id}`); the refund list is read only after a lost answer, and only one matching refund confirms | `gopay/gopay-payment.service.ts`, `gopay/gopay-evidence.ts`     |
-| G-P4 Raw amount and currency                           | Exact minor units; response amount and currency checked                                                                                        | `gopay/gopay-money.ts`, `gopay/gopay-wire.ts`                   |
-| G-P5 Hardcoded CZK fallback                            | Currency always sent as `CZK`; no fallback; reported currency kept as reported                                                                 | `gopay/gopay-money.ts`                                          |
-| G-P6 Callback trusted as state                         | Callback is a trigger only; state read again by payment id; goid and order reference checked                                                   | `gopay/gopay-notification.ts`, `gopay/gopay-evidence.ts`        |
-| G-P7 Refunded treated as canceled                      | Collection proven when refunded; refund evidence kept separately                                                                               | `gopay/gopay-evidence.ts`                                       |
-| G-P8 Void on a non-preauthorized payment               | v4 DELETE + lookup (D-P1); no void and no v3 pre-authorization; merge gate open (N8)                                                           | `gopay/gopay-capabilities.ts`, `gopay/gopay-payment.service.ts` |
-| G-P9 Mutation retries                                  | Mutations sent once; OAuth token POST is a read                                                                                                | `psp/provider-http-live.ts`, `gopay/gopay-oauth-token.ts`       |
-| G-P10 Unsafe casts                                     | Schema decoding of every response                                                                                                              | `gopay/gopay-wire.ts`                                           |
-| G-P11 Misc (PII in description, lang default, id hash) | No email in `order_description`; no lang default; identity from the provider id                                                                | `gopay/gopay-payment.service.ts`, `gopay/gopay-notification.ts` |
+| Gap                                                    | OntOS resolution                                                                             | Resolved in                                                     |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| G-P1 Direct capture                                    | Kept as direct capture; no capture call                                                      | `gopay/gopay-payment.service.ts`                                |
+| G-P2 Random `order_number`                             | `order_number` is the operation's order reference                                            | `gopay/gopay-payment.service.ts`, `psp/psp-correlation.ts`      |
+| G-P3 Local refund id as proof                          | Refund result mapped to pending, confirmed or not effected; history read decides             | `gopay/gopay-payment.service.ts`, `gopay/gopay-evidence.ts`     |
+| G-P4 Raw amount and currency                           | Exact minor units; response amount and currency checked                                      | `gopay/gopay-money.ts`, `gopay/gopay-wire.ts`                   |
+| G-P5 Hardcoded CZK fallback                            | Currency always sent as `CZK`; no fallback; reported currency kept as reported               | `gopay/gopay-money.ts`                                          |
+| G-P6 Callback trusted as state                         | Callback is a trigger only; state read again by payment id; goid and order reference checked | `gopay/gopay-notification.ts`, `gopay/gopay-evidence.ts`        |
+| G-P7 Refunded treated as canceled                      | Collection proven when refunded; refund evidence kept separately                             | `gopay/gopay-evidence.ts`                                       |
+| G-P8 Void on a non-preauthorized payment               | Cancel is UNSUPPORTED (N8)                                                                   | `gopay/gopay-capabilities.ts`, `gopay/gopay-payment.service.ts` |
+| G-P9 Mutation retries                                  | Mutations sent once; OAuth token POST is a read                                              | `psp/provider-http-live.ts`, `gopay/gopay-oauth-token.ts`       |
+| G-P10 Unsafe casts                                     | Schema decoding of every response                                                            | `gopay/gopay-wire.ts`                                           |
+| G-P11 Misc (PII in description, lang default, id hash) | No email in `order_description`; no lang default; identity from the provider id              | `gopay/gopay-payment.service.ts`, `gopay/gopay-notification.ts` |
 
 ### Comgate (C-1 to C-12)
 
@@ -131,4 +130,4 @@ Statement assumptions not yet verified against live data: refund rows in the JSO
 
 ## Rule
 
-Every later manual upstream source import requires a full C17 conformance rerun (#1159:161). Any import must cite the line ranges in this record, and the record must be updated with the new commit and gap entries before the import is merged. Phase 2 changed the GoPay and Comgate adapters without a new upstream import, so this rule is unchanged.
+Every later manual upstream source import requires a full C17 conformance rerun (#1159:161). Any import must cite the line ranges in this record, and the record must be updated with the new commit and gap entries before the import is merged. Phase 2 changed the Comgate adapter without a new upstream import, so this rule is unchanged.

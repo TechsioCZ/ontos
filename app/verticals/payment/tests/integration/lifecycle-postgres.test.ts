@@ -366,9 +366,7 @@ const lifecycleScenario = Effect.fn('LifecycleScenario.make')(function* lifecycl
   ) =>
     runtimes.actions
       .runAction({
-        // Every gateway binding here is GoPay, which needs the payer's email; other bindings take no contact (D-P3).
-        payload:
-          payload.method === 'ONLINE_GATEWAY' ? { ...payload, payerContact: { email: 'payer@example.test' } } : payload,
+        payload,
         principal,
         registration: startPaymentCollectionAction,
         transport: { correlationId: 'payment-lifecycle-collect', idempotencyKey },

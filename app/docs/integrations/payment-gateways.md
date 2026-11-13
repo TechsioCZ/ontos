@@ -11,7 +11,7 @@ The adapters live in the `payment.core` module (`app/verticals/payment`), not in
 - `shared/domain/psp-*.ts`: browser-safe schemas.
 - `src/integrations/paykit-adoption/`: the upstream PayKit adoption record (see `ORIGIN.md` next to it).
 
-No provider SDK is used. Outbound calls go through the Effect `HttpClient`. The Stripe SDK is not a dependency; Stripe webhook signatures are checked with the documented v1 scheme. GoPay is called on its Payments API v4 only.
+No provider SDK is used. Outbound calls go through the Effect `HttpClient`. The Stripe SDK is not a dependency; Stripe webhook signatures are checked with the documented v1 scheme. GoPay is called on its REST API v3 (`/api`).
 
 ## What the module exposes
 
@@ -93,33 +93,19 @@ Nothing retries inside a tick. A lost answer is sent again with the same key in 
 
 ## Capability matrix (Launch)
 
-| Capability                    | GoPay                                                           | Stripe                     | Comgate                                                                   |
-| ----------------------------- | --------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------- |
-| Collect (hosted payment page) | Built on v4; payer email required, live sandbox pending         | Supported                  | Built; payer full name plus email or phone required, live sandbox pending |
-| Retrieve (lookup)             | Supported                                                       | Supported                  | Supported                                                                 |
-| Notification                  | Supported (lookup only)                                         | Supported (signed)         | Supported (shared secret plus lookup)                                     |
-| Refund                        | Supported (refund resource; lost answer checked by refund list) | Supported                  | Pending on send; proof from production statements only                    |
-| Cancel or void                | Built on API v4 (DELETE, then lookup); merge gate open (N8)     | Supported (expire session) | Supported (lookup decides on refusal)                                     |
+| Capability                    | GoPay                                 | Stripe                     | Comgate                                                                   |
+| ----------------------------- | ------------------------------------- | -------------------------- | ------------------------------------------------------------------------- |
+| Collect (hosted payment page) | Supported; no payer contact           | Supported                  | Built; payer full name plus email or phone required, live sandbox pending |
+| Retrieve (lookup)             | Supported                             | Supported                  | Supported                                                                 |
+| Notification                  | Supported (lookup only)               | Supported (signed)         | Supported (shared secret plus lookup)                                     |
+| Refund                        | Supported (proof from refund history) | Supported                  | Pending on send; proof from production statements only                    |
+| Cancel or void                | **Unsupported** (N8)                  | Supported (expire session) | Supported (lookup decides on refusal)                                     |
 
 Limitations, in plain words:
 
-- **GoPay cancel.** GoPay v4 cancels only before the payer chooses a payment method. The adapter sends one `DELETE` and then always reads the payment again. The result depends on the state GoPay reports:
-
-  | `DELETE` answer                 | Lookup after it            | Cancel result                     | Collection result                       |
-  | ------------------------------- | -------------------------- | --------------------------------- | --------------------------------------- |
-  | 204                             | CANCELED                   | Confirmed                         | Not effected                            |
-  | 204                             | anything else              | Indeterminate                     | Follows the state found                 |
-  | 409                             | PAYMENT_METHOD_CHOSEN      | Not effected                      | Still pending                           |
-  | 409                             | PAID or any REFUNDED state | Not effected                      | Confirmed (a refund needs its own call) |
-  | 409                             | CANCELED or TIMEOUTED      | Confirmed                         | Not effected                            |
-  | 409                             | CREATED                    | Indeterminate                     | —                                       |
-  | 404, unreadable, or lost answer | Lookup during recovery     | Outcome unknown; never sent again | —                                       |
-  - Cancel confirmed means the provider states that the payment can no longer be paid. It can be corrected by later contrary evidence. The product owner still has to confirm this meaning for all three providers (N14).
-  - Not verified yet: a late QR bank transfer after a 204 cancel; the exact v4 error body; whether a repeated `DELETE` after a lost answer is safe.
-  - There is no fallback to another operation. There is no v3 pre-authorization or void path.
-  - **Merge gate, still open:** a v4 sandbox run must pass create, lookup, cancel (204 path) and refund, and GoPay must confirm in writing that the production merchant can use v4. If either fails, the GoPay change is dropped and GoPay cancel stays unsupported (N8).
-
-- **GoPay refund.** A refund is sent once. A `REQUESTED` answer is pending, `SUCCESS` is confirmed, `FAILED` and a 409 are not effected. A lost answer is resolved by reading the payment's refunds. Only exactly one refund with the expected amount and a creation time after the dispatch counts. Zero or several matches stay indeterminate.
+- **GoPay cancel.** GoPay's API v3 has no cancel for a standard payment. The attempt is recorded as unsupported, and the collection is not erased. Evidence is recorded as "cancel not effected" (`provider_cancel_unsupported`) and waits for a governed submission. There is no fallback to another operation.
+  - API v4 has a cancel (`DELETE` before the payer chooses a method), but v4 access was refused in the sandbox on 2026-11-13 (HTTP 403 `Scope not allowed: payment:read`). Moving to v4 is a follow-up once GoPay confirms v4 access for the production merchant (N8).
+- **GoPay refund.** A refund is sent once. `FAILED` is not effected. `ACCEPTED` and `FINISHED` are pending: GoPay gives no refund id, so completion comes from the payment's refund history. Only exactly one `SUCCESS` entry with the expected amount, requested at or after the dispatch, confirms it. Zero or several candidates stay indeterminate. A new GoPay refund waits until the previous refund of the same payment is confirmed or not effected.
 - **Comgate refund.** Comgate's send answer alone never proves a refund. Codes `1400`, `1401` and `1402` mean not effected. Code `0` means pending. Proof comes from the production settlement statement, which Payment reads for each day from the dispatch date for up to 24 days:
   - One debit row with the same merchant, order reference and currency, and the same amount, confirms the refund.
   - The same reference with another amount or currency, a credit row, or more than one row is a conflict.
@@ -137,12 +123,11 @@ The caller of `start-payment-collection` may send `payerContact` with `fullName`
 
 | Payment method or family                | Contact required                   | Any other contact                                      |
 | --------------------------------------- | ---------------------------------- | ------------------------------------------------------ |
-| GoPay                                   | `email` (at most 128 characters)   | `fullName` or `phone` is refused as not applicable     |
 | Comgate                                 | `fullName` plus `email` or `phone` | All three fields are used; nothing is refused as extra |
-| Stripe                                  | Nothing                            | Any contact is refused as not applicable               |
+| GoPay, Stripe                           | Nothing                            | Any contact is refused as not applicable               |
 | Bank transfer, cash on delivery, pickup | Nothing                            | Any contact is refused as not applicable               |
 
-- A missing required contact, or one that breaks the family's rule (for example a GoPay email over 128 characters), gives 422 `payment_payer_contact_required`.
+- A missing required contact, or one that breaks the family's rule (for example a Comgate contact without `email` or `phone`), gives 422 `payment_payer_contact_required`.
 - A contact or field the method does not use gives 422 `payment_payer_contact_not_applicable`.
 - Contact data is kept in a short-lived row. It is written only when a new collection is created. A replay stores nothing, so the first contact wins.
 - The row is deleted when the operation is prepared, withheld or not sent. The driver purges any row older than 48 hours.
@@ -200,7 +185,8 @@ Per provider, after the relay accepts a notification:
   { "<secretRef>": { "family": "GOPAY", "clientId": "...", "clientSecret": "..." } }
   ```
 
-- GoPay entries are used with the v4 API. The GoID comes from the binding, not from the entry.
+- GoPay entries are used with the REST API v3. The GoID comes from the binding, not from the entry.
+- A Stripe key must match the binding's environment. A SANDBOX binding takes `sk_test_`, `rk_test_` or a claimable sandbox's `rkcs_test_`. A LIVE binding takes only `sk_live_` or `rk_live_`. Any other key is refused before a request is sent.
 - Each entry is decoded on its own. A missing variable, malformed JSON, or a malformed, unknown or wrong-family entry fails only the resolve that needs it, with a typed unavailable result.
 - Layer construction never reads the value. A broken GoPay entry does not stop Stripe or non-gateway Payment.
 - Errors never contain the raw value or a decode message.
@@ -210,11 +196,11 @@ Per provider, after the relay accepts a notification:
 
 The sandbox run is opt-in and reports `NOT RUN (credentials absent)` when a variable is missing. It never reports a pass.
 
-| Gateway | Variables                                                                                                                                                         |
-| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GoPay   | `ONTOS_C17_SANDBOX_GOPAY_CLIENT_ID`, `ONTOS_C17_SANDBOX_GOPAY_CLIENT_SECRET`, `ONTOS_C17_SANDBOX_GOPAY_GOID`; optional `ONTOS_C17_SANDBOX_GOPAY_NOTIFICATION_URL` |
-| Stripe  | `ONTOS_C17_SANDBOX_STRIPE_SECRET_KEY` (`sk_test_` or restricted `rk_test_`), `ONTOS_C17_SANDBOX_STRIPE_WEBHOOK_SECRET`, `ONTOS_C17_SANDBOX_STRIPE_ACCOUNT_ID`     |
-| Comgate | `ONTOS_C17_SANDBOX_COMGATE_MERCHANT_ID`, `ONTOS_C17_SANDBOX_COMGATE_SECRET`; the runner's public IPv4 must be on the shop's allowed list                          |
+| Gateway | Variables                                                                                                                                                                                          |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GoPay   | `ONTOS_C17_SANDBOX_GOPAY_CLIENT_ID`, `ONTOS_C17_SANDBOX_GOPAY_CLIENT_SECRET`, `ONTOS_C17_SANDBOX_GOPAY_GOID`; optional `ONTOS_C17_SANDBOX_GOPAY_NOTIFICATION_URL`                                  |
+| Stripe  | `ONTOS_C17_SANDBOX_STRIPE_SECRET_KEY` (`sk_test_`, restricted `rk_test_`, or a claimable sandbox's `rkcs_test_`), `ONTOS_C17_SANDBOX_STRIPE_WEBHOOK_SECRET`, `ONTOS_C17_SANDBOX_STRIPE_ACCOUNT_ID` |
+| Comgate | `ONTOS_C17_SANDBOX_COMGATE_MERCHANT_ID`, `ONTOS_C17_SANDBOX_COMGATE_SECRET`; the runner's public IPv4 must be on the shop's allowed list                                                           |
 
 Hosted payment pages need someone to complete them with a test card or the Comgate simulator. Two ways:
 
@@ -225,9 +211,10 @@ Run it from `app/` with `mise exec -- pnpm --filter @app/payment test:sandbox`. 
 
 - A hosted scenario fails when nobody pays within 15 minutes.
 - Pay the GoPay hosted payment by bank transfer; the partial refund scenario needs it.
-- GoPay needs v4 sandbox credentials. A GoPay test merchant that is not an OntOS account is used only with the user's agreement.
+- GoPay needs API v3 sandbox credentials with the `payment-all` scope. A GoPay test merchant that is not an OntOS account is used only with the user's agreement.
 - Comgate needs the runner's public IPv4 on the shop's allowed-IP list and a Client Portal user with the Tester role.
-- The Stripe account must accept CZK.
+- The Stripe account must accept CZK. The suite takes the account id from `ONTOS_C17_SANDBOX_STRIPE_ACCOUNT_ID` and never reads `/v1/account`, which a claimable sandbox key may not read. The key needs read access to Events.
+- Two Stripe refund scenarios use Stripe's delayed refund test cards and wait up to 10 minutes each: pending then succeeded, and succeeded then failed (ends as not effected).
 - Test contacts use fake values only.
 
 ## Known gaps
@@ -244,10 +231,10 @@ Run it from `app/` with `mise exec -- pnpm --filter @app/payment test:sandbox`. 
 - **N5** Source authorities and principals (operator setup, relay, driver, receiving system principal per tenant).
 - **N6** Stripe without the SDK, as the "official" webhook verification.
 - **N7** Release intent: Payment must be in the application release intent file. Without it, the driver never runs in host mode.
-- **N8** GoPay cancel: implemented on API v4. Still open until the v4 sandbox run passes and GoPay confirms in writing. If either fails, GoPay cancel stays unsupported.
+- **N8** GoPay cancel stays unsupported on API v3 and ends as "cancel not effected". The product owner accepts that or rejects GoPay cancel at A6. The v4 move was dropped after the sandbox refused v4 access (HTTP 403) on 2026-11-13; it returns only once GoPay confirms v4 access for the merchant.
 - **N10** Comgate refund proof: statement lookup is built. Production proof needs one real refund and a product owner decision. Blocks Comgate refund conformance until then.
 - **N12** Wording and location of the licence notice for the PayKit adoption.
 - **N13** Sandbox accounts and a human operator for the live-sandbox run.
 - **N14** Meaning of "cancel confirmed" for a collection that was never sent. The owner confirms it once for all three providers.
 - **N15** Settlement and remittance mapping. Deferred for all three providers.
-- **Privacy** Declare Payment as a transient processor, with Comgate and GoPay as recipients. Payer contacts are kept for up to 48 hours.
+- **Privacy** Declare Payment as a transient processor, with Comgate as the only recipient. Payer contacts are kept for up to 48 hours.

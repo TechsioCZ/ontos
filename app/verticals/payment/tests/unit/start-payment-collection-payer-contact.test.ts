@@ -48,9 +48,9 @@ describe('#1153 H1094-01=A payer contact by original binding', () => {
     expect(problem(gateway('STRIPE'), EMAIL_ONLY)).toEqual(Option.some('payment_payer_contact_not_applicable'));
   });
 
-  it('#1153 H1094-01=A A GoPay collection needs only an email', () => {
-    expect(problem(gateway('GOPAY'), EMAIL_ONLY)).toEqual(Option.none());
-    expect(problem(gateway('GOPAY'))).toEqual(Option.some('payment_payer_contact_required'));
+  it('#1153 H1094-01=A A GoPay collection needs no contact and refuses one', () => {
+    expect(problem(gateway('GOPAY'))).toEqual(Option.none());
+    expect(problem(gateway('GOPAY'), EMAIL_ONLY)).toEqual(Option.some('payment_payer_contact_not_applicable'));
     expect(problem(gateway('GOPAY'), FULL)).toEqual(Option.some('payment_payer_contact_not_applicable'));
   });
 
