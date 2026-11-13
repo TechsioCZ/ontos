@@ -270,8 +270,17 @@ const ownerOfFiveCompanies = (accessCase: AccessAdminCase) =>
     expect(offered.capabilities.length).toBeGreaterThan(800);
 
     yield* Effect.logInfo('people stage shape', { list: list.counts, options: options.counts });
-    expect(list.counts.statements).toBeGreaterThan(0);
-    expect(options.counts.statements).toBeGreaterThan(0);
+    // Every decision keeps its evidence row: the list's own declaration in the tenant context and each of the five
+    // companies, and the options' own declaration with its eight writes in the same six contexts.
+    expect(list.counts.decisionRows).toBe(6);
+    expect(options.counts.decisionRows).toBe(54);
+    // Before the batched admission: list 387 statements / 34 transactions, options 844 / 77 (898 / 83 once the
+    // list's admission was batched alone). The batch reads authority cells per company scope, which the single owner
+    // decisions skipped; it pays off in wall time because the gate prepares two scopes at a time.
+    expect(list.counts.statements).toBeLessThanOrEqual(441);
+    expect(list.counts.transactions).toBeLessThanOrEqual(40);
+    expect(options.counts.statements).toBeLessThanOrEqual(483);
+    expect(options.counts.transactions).toBeLessThanOrEqual(47);
   });
 
 it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 seconds' })(
