@@ -1,12 +1,15 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
 import { CoreDatabase } from '../../db/client.ts';
 import { DatabaseIdentityEnrollmentContext } from '../../db/database-identities.ts';
+import { foldAgentProfiles } from '../../auth/agent-profile-projection.ts';
+import type { AgentProfile } from '../../auth/agent-profile-projection.ts';
 import {
   accessAgentConnections,
   accessConsentSnapshots,
   accessScopes,
+  auditEvents,
   principalCompanyMemberships,
   principals,
 } from '../../db/schema.ts';
@@ -14,7 +17,13 @@ import type { CoreTransaction } from '../../db/types.ts';
 import { readLatestAgentOperatorCommand } from '../../modules/actions/agent-operator-command.ts';
 import type { OperationalScope } from '../../operations/context.ts';
 import { stableUuid } from '../catalog/stable-id.ts';
-import { AccessScopeIdSchema, AgentConnectionIdSchema, AgentIdSchema, PrincipalIdSchema } from '../ids.ts';
+import {
+  AccessScopeIdSchema,
+  AgentConnectionIdSchema,
+  AgentIdSchema,
+  LegalEntityIdSchema,
+  PrincipalIdSchema,
+} from '../ids.ts';
 import type { AccessScopeId, AgentConnectionId, AgentId, LegalEntityId, PrincipalId } from '../ids.ts';
 import { ConsentCeilingSchema } from '../model.ts';
 import type { ConsentCeiling, LifecycleStatus } from '../model.ts';
@@ -60,6 +69,25 @@ export interface OpenAgentConnection {
   readonly validUntil: Date;
 }
 
+/** An agent the scoped person may connect: active in the company and naming them as one of its operators. */
+export interface OperableAgent {
+  readonly agentId: AgentId;
+  readonly displayName: string;
+  /** The administrator's write policy for the agent (its profile); a connection never writes beyond it. */
+  readonly writePolicy: AgentProfile['writePolicy'];
+}
+
+/** What every request of an agent's OAuth connection re-checks before the gate is asked (none of it is cached). */
+export interface AgentConnectionLiveFacts {
+  /** The agent is an active agent with an active directory membership of the connection's company. */
+  readonly agentInCompany: boolean;
+  /** The connection row of the grant, when there is one. */
+  readonly connection: Option.Option<AgentConnectionState>;
+  /** The connection's operator is still one of the agent's operators (latest committed operator command). */
+  readonly operatorHolds: boolean;
+  readonly writePolicy: AgentProfile['writePolicy'];
+}
+
 /** The live facts of one connection, as the OAuth transport carries them. */
 export interface AgentConnectionState {
   readonly agentId: AgentId;
@@ -72,6 +100,16 @@ export interface AgentConnectionState {
 }
 
 export interface AgentConnectionStoreService {
+  /** The facts a live connection re-checks on every request, read in the connection's own scope. */
+  readonly liveFacts: (
+    scope: OperationalScope,
+    input: {
+      readonly agentId: AgentId;
+      readonly connectionId: AgentConnectionId;
+      readonly legalEntityId: LegalEntityId;
+      readonly operatorPrincipalId: PrincipalId;
+    },
+  ) => Effect.Effect<AgentConnectionLiveFacts, AccessIntentError>;
   /**
    * Opens the connection the scoped person consents to as the operator of `agentId` in the scope's company. In ONE
    * transaction it share-locks and proves: the agent is an active agent with an active directory membership of that
@@ -83,6 +121,11 @@ export interface AgentConnectionStoreService {
     scope: OperationalScope,
     input: OpenAgentConnection,
   ) => Effect.Effect<AgentConnectionState, AgentConnectionRefused | AccessIntentError>;
+  /**
+   * The agents of the scope's company that name the scoped person as an operator and are active members of the
+   * company. It reveals only the person's own operator relation, never another person's.
+   */
+  readonly operableAgents: (scope: OperationalScope) => Effect.Effect<readonly OperableAgent[], AccessIntentError>;
   /** The row the transport reads to carry its exact id and revision; none when the grant has no connection. */
   readonly read: (
     scope: OperationalScope,
@@ -247,6 +290,92 @@ const openInTransaction = Effect.fn('AgentConnectionStore.openInTransaction')(fu
   return Option.none();
 });
 
+/** The configured profiles of these agents in the scope's company, folded from the configure-agent evidence. */
+const profilesOf = Effect.fn('AgentConnectionStore.profilesOf')(function* profilesOf(
+  transaction: CoreTransaction,
+  scope: OperationalScope,
+  legalEntityId: LegalEntityId,
+  agentIds: readonly string[],
+) {
+  if (agentIds.length === 0) {
+    return foldAgentProfiles(legalEntityId, [], []);
+  }
+  const rows = yield* transaction
+    .select({ evidence: auditEvents.evidenceJson })
+    .from(auditEvents)
+    .where(
+      and(
+        eq(auditEvents.tenantId, scope.tenantId),
+        eq(auditEvents.legalEntityId, legalEntityId),
+        eq(auditEvents.eventType, 'action.executed'),
+        eq(auditEvents.outcome, 'succeeded'),
+        sql`${auditEvents.evidenceJson}->>'actionKey' = 'core.identity.configure-agent'`,
+        sql`${auditEvents.evidenceJson}->>'operation' in ('create-agent', 'configure-agent')`,
+        inArray(sql<string>`${auditEvents.evidenceJson}->>'targetPrincipalId'`, [...agentIds]),
+      ),
+    )
+    .orderBy(asc(auditEvents.occurredAt), asc(auditEvents.auditEventId));
+  return foldAgentProfiles(legalEntityId, agentIds, rows);
+});
+
+/** The active agents with an active directory row of the company (the company's own directory, PostgreSQL). */
+const activeAgentsOfCompany = (transaction: CoreTransaction, scope: OperationalScope, legalEntityId: LegalEntityId) =>
+  transaction
+    .select({ displayName: principals.displayName, principalId: principals.principalId })
+    .from(principalCompanyMemberships)
+    .innerJoin(
+      principals,
+      and(
+        eq(principals.tenantId, principalCompanyMemberships.tenantId),
+        eq(principals.principalId, principalCompanyMemberships.principalId),
+      ),
+    )
+    .where(
+      and(
+        eq(principalCompanyMemberships.tenantId, scope.tenantId),
+        eq(principalCompanyMemberships.legalEntityId, legalEntityId),
+        eq(principalCompanyMemberships.status, 'active'),
+        eq(principals.kind, 'agent'),
+        eq(principals.status, 'active'),
+      ),
+    );
+
+const operatorsOf = (transaction: CoreTransaction, scope: OperationalScope, agentId: string) =>
+  readLatestAgentOperatorCommand(transaction, scope.tenantId, agentId).pipe(
+    Effect.map((command) => command?.desiredOperatorPrincipalIds ?? []),
+    Effect.mapError((cause) => intentUnavailable('The operators of the agent could not be read', cause)),
+  );
+
+const principalIdOf = (agent: { readonly principalId: string }) => agent.principalId;
+
+const operableOf = (
+  agent: { readonly displayName: string; readonly principalId: string },
+  profiles: ReadonlyMap<string, AgentProfile>,
+): OperableAgent => ({
+  agentId: AgentIdSchema.make(agent.principalId),
+  displayName: agent.displayName,
+  writePolicy: profiles.get(agent.principalId)?.writePolicy ?? 'read_only',
+});
+
+/** Whether the scoped person is one of the agent's operators (its latest committed operator command). */
+const operatedBy =
+  (transaction: CoreTransaction, scope: OperationalScope) => (agent: { readonly principalId: string }) =>
+    operatorsOf(transaction, scope, agent.principalId).pipe(
+      Effect.map((operators) => operators.includes(scope.principalId)),
+    );
+
+/** The company's active agents that name the scoped person as an operator, with their write policies. */
+const operableInTransaction = Effect.fn('AgentConnectionStore.operableInTransaction')(function* operableIn(
+  transaction: CoreTransaction,
+  scope: OperationalScope,
+  company: LegalEntityId,
+) {
+  const agents = yield* activeAgentsOfCompany(transaction, scope, company);
+  const operated = yield* Effect.filter(agents, operatedBy(transaction, scope), { concurrency: 1 });
+  const profiles = yield* profilesOf(transaction, scope, company, operated.map(principalIdOf));
+  return operated.map((agent) => operableOf(agent, profiles));
+});
+
 export const makeAgentConnectionStore = (database: AccessIntentDatabase): AgentConnectionStoreService => {
   const open = Effect.fn('AgentConnectionStore.open')(function* openConnection(
     scope: OperationalScope,
@@ -306,7 +435,51 @@ export const makeAgentConnectionStore = (database: AccessIntentDatabase): AgentC
     );
   });
 
-  return Object.freeze({ open, read, revoke });
+  const operableAgents = Effect.fn('AgentConnectionStore.operableAgents')(function* operableAgentsOf(
+    scope: OperationalScope,
+  ) {
+    const { legalEntityId } = scope;
+    if (legalEntityId === undefined) {
+      return [];
+    }
+    const company = LegalEntityIdSchema.make(legalEntityId);
+    return yield* runScoped(database, scope, CONNECTION_CONSTRAINTS, (transaction) =>
+      operableInTransaction(transaction, scope, company).pipe(durable(CONNECTION_CONSTRAINTS)),
+    );
+  });
+
+  const liveFacts = Effect.fn('AgentConnectionStore.liveFacts')(function* liveFactsOf(
+    scope: OperationalScope,
+    input: {
+      readonly agentId: AgentId;
+      readonly connectionId: AgentConnectionId;
+      readonly legalEntityId: LegalEntityId;
+      readonly operatorPrincipalId: PrincipalId;
+    },
+  ) {
+    return yield* runScoped(database, scope, CONNECTION_CONSTRAINTS, (transaction) =>
+      Effect.gen(function* liveFactsInTransaction() {
+        // One transaction serves one statement at a time, so the four reads run in order.
+        const [connection, agentInCompany, operators, profiles] = yield* Effect.all(
+          [
+            readRow(transaction, scope, input.connectionId),
+            agentIsActiveInCompany(transaction, scope, input.agentId, input.legalEntityId),
+            operatorsOf(transaction, scope, input.agentId),
+            profilesOf(transaction, scope, input.legalEntityId, [input.agentId]),
+          ],
+          { concurrency: 1 },
+        );
+        return {
+          agentInCompany,
+          connection,
+          operatorHolds: operators.includes(input.operatorPrincipalId),
+          writePolicy: profiles.get(input.agentId)?.writePolicy ?? 'read_only',
+        } satisfies AgentConnectionLiveFacts;
+      }).pipe(durable(CONNECTION_CONSTRAINTS)),
+    );
+  });
+
+  return Object.freeze({ liveFacts, open, operableAgents, read, revoke });
 };
 
 export const AgentConnectionStoreLive = Layer.effect(

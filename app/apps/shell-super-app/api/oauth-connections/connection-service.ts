@@ -9,12 +9,12 @@ import {
   decideModuleStateAccess,
   OAuthAuthenticationAudit,
   OAuthConnectionCompanies,
-  openDemoAccountGrants,
-  openPrincipalOperators,
   TenantModuleStateService,
 } from '@app/core-runtime';
-import type { OperationalScope, TenantModuleState } from '@app/core-runtime';
+import type { OAuthAgentConnection, OperationalScope, TenantModuleState } from '@app/core-runtime';
 import { SubjectAccessInspection, SubjectInspectionUnavailable } from '@app/core-runtime/access/enforcement';
+import { AgentIdSchema, LegalEntityIdSchema, PrincipalIdSchema } from '@app/core-runtime/access/ids';
+import { AgentConnectionStore, agentConnectionIdOfGrant } from '@app/core-runtime/access/intent/agent-connections';
 import {
   ConnectionClientIdSchema,
   ConnectionGrantIdSchema,
@@ -24,7 +24,6 @@ import {
   ConnectionPrincipalIdSchema,
   ConnectionProfileIdSchema,
   ConnectionTenantIdSchema,
-  OAUTH_GRANT_CONTEXT_PREFIX,
 } from '@app/shared-contracts/oauth-connections';
 import type {
   ConnectionActingKind,
@@ -47,7 +46,13 @@ import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog
 import { ConnectionForbidden, ConnectionInvalid, ConnectionUnauthorized, ConnectionUnavailable } from './errors.ts';
 import type { ConnectionUnauthorizedCode } from './errors.ts';
 import { OAuthFlow } from './oauth-flow.ts';
-import { effectiveAuthority, isModulesRequestWithin, isPolicyWithin, offeredModules } from './effective-authority.ts';
+import {
+  effectiveAuthority,
+  isModulesRequestWithin,
+  isPolicyWithin,
+  minWritePolicy,
+  offeredModules,
+} from './effective-authority.ts';
 import type { LiveRights } from './effective-authority.ts';
 import {
   findGrant,
@@ -58,6 +63,7 @@ import {
   setGrantStatus,
   updateGrantAccess,
 } from './grant-store.ts';
+import { connectionScopeOf } from './connection-scope.ts';
 import type { GrantRow } from './types.ts';
 
 /** Facts gathered by `loadLiveConnection` for one grant; every check of `evaluateLiveChecks` reads these. */
@@ -67,6 +73,8 @@ export interface LiveFacts {
   /** Always true for `human`. */
   readonly agentInCompany: boolean;
   readonly bindingStatus: string | undefined;
+  /** The grant's credential-bound access connection is active and names this agent, operator and company. */
+  readonly connectionLive: boolean;
   readonly grantStatus: ConnectionGrantStatus;
   /** The original OAuth owner may select this exact company through the canonical inspection. */
   readonly hasCompanyAccess: boolean;
@@ -109,6 +117,10 @@ export const evaluateLiveChecks = (facts: LiveFacts): LiveVerdict => {
   if (agent && !facts.operatorHolds) {
     return { code: 'operator_removed', ok: false, revoke: 'operator_removed' };
   }
+  if (agent && !facts.connectionLive) {
+    // An agent acts only through its credential-bound connection; without a live one the grant carries nothing.
+    return { code: 'grant_inactive', ok: false, revoke: null };
+  }
   return { ok: true };
 };
 
@@ -128,38 +140,19 @@ type PrincipalNames = ReadonlyMap<
 >;
 
 /**
- * The trusted `oauth_connection` scope of one persisted grant (O66): the connection's own principal, with
- * the consent ceiling the row records. It is the scope an MCP request's acting principal is evaluated in
- * when no session asks for it, and it names no binding and mints no id the row does not already carry.
+ * The credential-bound connection an agent's authority is read through, and the administrator's write policy for the
+ * agent. Present exactly for an agent: the gate decides an agent only on its connection, as the agent and on both sides.
  */
-export const connectionScopeOf = (grant: GrantRow): OperationalScope => {
-  const scope: OperationalScope = {
-    authContextRef: `${OAUTH_GRANT_CONTEXT_PREFIX}${grant.grantId}`,
-    authMethod: 'oauth_connection',
-    connection: {
-      clientId: grant.clientId,
-      clientName: grant.clientName.slice(0, 200),
-      grantId: grant.grantId,
-      modules:
-        grant.modules === 'all'
-          ? 'all'
-          : grant.modules.map((module) => ({ access: module.access, moduleId: String(module.moduleId) })),
-      writePolicy: grant.writePolicy,
-    },
-    correlationId: `oauth-connection:${grant.grantId}`,
-    legalEntityId: grant.legalEntityId,
-    principalId: grant.actingPrincipalId,
-    tenantId: grant.tenantId,
-  };
-  if (grant.actingKind === 'agent') {
-    return Object.freeze({ ...scope, delegatedByPrincipalId: grant.userPrincipalId });
-  }
-  return Object.freeze(scope);
-};
+export interface ActingAgentConnection {
+  readonly connection: OAuthAgentConnection;
+  readonly operatorPrincipalId: string;
+  readonly writePolicy: ConnectionWritePolicy;
+}
 
 /**
- * Read-only connection ceilings, evaluated under the original requester. OAuth grants currently carry
- * no canonical credential-bound agent connection, so an agent remains explicitly not provisioned.
+ * Read-only connection ceilings, evaluated under the original requester. A person's authority is their own; an agent's
+ * is asked of the gate as the agent on its credential-bound connection (with the operator on the other side), so what
+ * it offers is exactly what the gate would admit. An agent without a connection has no authority to read.
  */
 export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingAuthority')(
   function* loadActingAuthority(
@@ -167,6 +160,7 @@ export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingA
     input: {
       readonly actingKind: ConnectionActingKind;
       readonly actingPrincipalId: string;
+      readonly agent?: ActingAgentConnection;
       readonly legalEntityId: string;
       readonly tenantId: string;
     },
@@ -176,11 +170,24 @@ export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingA
     if (asker.tenantId !== input.tenantId || asker.legalEntityId !== input.legalEntityId) {
       return yield* new SubjectInspectionUnavailable({ reason: 'Connection scope differs from requester scope' });
     }
-    if (input.actingKind === 'agent') {
+    const { agent } = input;
+    if (input.actingKind === 'agent' && agent === undefined) {
       return yield* new SubjectInspectionUnavailable({
-        reason: 'OAuth agent has no credential-bound access connection and consent revision',
+        reason: 'An OAuth agent is read only through its credential-bound access connection',
       });
     }
+    const subject =
+      input.actingKind === 'agent' && agent !== undefined
+        ? {
+            agentContext: {
+              connectionId: agent.connection.connectionId,
+              consentRevision: agent.connection.revision,
+              principalId: agent.operatorPrincipalId,
+            },
+            principalId: input.actingPrincipalId,
+            tenantId: input.tenantId,
+          }
+        : { principalId: input.actingPrincipalId, tenantId: input.tenantId };
     // A module is usable only while the tenant's own state admits the access, exactly as its entrypoints are gated,
     // so a connection reaches no other module. The states are read first, and only modules whose state admits a read
     // (every state that admits a write admits a read) are asked about: the answers for any other module were always
@@ -192,7 +199,7 @@ export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingA
       {
         queryScope: { legalEntityId: input.legalEntityId, tenantId: input.tenantId },
         requesterScope: asker,
-        subject: { principalId: input.actingPrincipalId, tenantId: input.tenantId },
+        subject,
       },
       trace,
       (moduleIds) =>
@@ -224,19 +231,25 @@ export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingA
     // A module the person may only propose to cannot take a direct write, so while one exists the ceiling is approval.
     // The MCP execution path enforces the same thing per call; this keeps the offer and the consent truthful.
     const proposeOnly = [...propose].some((moduleId) => !run.has(moduleId));
-    const policyCap: ConnectionWritePolicy = proposeOnly ? 'approval' : 'direct';
+    const rightsCap: ConnectionWritePolicy = proposeOnly ? 'approval' : 'direct';
+    // An agent never writes beyond the write policy its administrator set for it.
+    const policyCap = agent === undefined ? rightsCap : minWritePolicy(rightsCap, agent.writePolicy);
     return { labelOf, live, offered: offeredModules(live, policyCap, labelOf), policyCap };
   },
   Effect.mapError(toUnavailable),
 );
 
 export interface LiveConnection {
+  /** Exactly for an agent: the credential-bound connection the request's trusted context carries to the gate. */
+  readonly agentConnection?: OAuthAgentConnection;
   readonly description: ConnectionDescription;
   readonly grant: GrantRow;
 }
 
 /** An active grant whose live checks passed now: who it acts for and the scope its authority is asked in. */
 export interface LiveGrant {
+  /** Exactly for an agent: the credential-bound connection the live check found active, and the agent's write policy. */
+  readonly agent?: ActingAgentConnection;
   readonly grant: GrantRow;
   readonly names: PrincipalNames;
   readonly requesterScope: OperationalScope;
@@ -246,8 +259,23 @@ const sameConnectionScope = (scope: OperationalScope, grant: GrantRow): boolean 
   scope.tenantId === grant.tenantId && scope.legalEntityId === grant.legalEntityId;
 
 /**
+ * Ends an agent grant's credential-bound access connection for good, so the gate refuses the agent from the next
+ * decision on whatever still holds the grant's credential. A person's grant has no connection; nothing happens.
+ */
+export const endAgentConnectionOf = Effect.fn('OAuthConnectionService.endAgentConnectionOf')(function* endConnection(
+  grant: GrantRow,
+) {
+  if (grant.actingKind !== 'agent') {
+    return;
+  }
+  yield* (yield* AgentConnectionStore)
+    .revoke(connectionScopeOf(grant), agentConnectionIdOfGrant(grant.grantId))
+    .pipe(Effect.mapError(toUnavailable));
+});
+
+/**
  * Side effects after a grant left `active` (its row and binding are already updated): drops its OAuth tokens and
- * consent, forgets the cached live check and writes `oauth.connection.revoked`.
+ * consent, ends an agent's access connection and writes `oauth.connection.revoked`.
  */
 export const finishRevocation = Effect.fn('OAuthConnectionService.finishRevocation')(function* finishRevocation(input: {
   readonly actorPrincipalId: string | null;
@@ -256,6 +284,7 @@ export const finishRevocation = Effect.fn('OAuthConnectionService.finishRevocati
   readonly reason: ConnectionRevokeReason;
 }) {
   yield* (yield* OAuthFlow).deleteGrantTokens(input.grant.grantId);
+  yield* endAgentConnectionOf(input.grant);
   yield* (yield* OAuthAuthenticationAudit)
     .record({
       authBindingId: null,
@@ -313,6 +342,79 @@ export const revokeConnection = Effect.fn('OAuthConnectionService.revokeConnecti
 });
 
 /**
+ * The PostgreSQL facts an agent grant re-checks on every request: the agent is an active agent of the company, the
+ * grant's person is still one of its operators, the administrator's write policy for it, and the credential-bound
+ * connection of this grant is active and names exactly this agent, operator and company.
+ */
+const liveAgentFactsOf = Effect.fn('OAuthConnectionService.liveAgentFactsOf')(function* liveAgentFactsOf(
+  grant: GrantRow,
+) {
+  const connectionId = agentConnectionIdOfGrant(grant.grantId);
+  const facts = yield* (yield* AgentConnectionStore)
+    .liveFacts(connectionScopeOf(grant), {
+      agentId: AgentIdSchema.make(grant.actingPrincipalId),
+      connectionId,
+      legalEntityId: LegalEntityIdSchema.make(grant.legalEntityId),
+      operatorPrincipalId: PrincipalIdSchema.make(grant.userPrincipalId),
+    })
+    .pipe(Effect.mapError(toUnavailable));
+  const row = Option.getOrUndefined(facts.connection);
+  const live =
+    row !== undefined &&
+    row.status === 'active' &&
+    row.agentId === grant.actingPrincipalId &&
+    row.principalId === grant.userPrincipalId;
+  const now = yield* DateTime.nowAsDate;
+  const connection: OAuthAgentConnection | undefined =
+    live && now < row.validUntil ? { connectionId: row.connectionId, revision: row.revision } : undefined;
+  return {
+    agentInCompany: facts.agentInCompany,
+    connection,
+    operatorHolds: facts.operatorHolds,
+    writePolicy: facts.writePolicy,
+  };
+});
+
+/**
+ * The grant that passed its live check. An agent is read in its connection's own scope, now carrying the exact
+ * connection the credential is bound to; a person in the scope the check was asked in.
+ */
+const liveGrantOf = (input: {
+  readonly agentFacts: Effect.Success<ReturnType<typeof liveAgentFactsOf>> | undefined;
+  readonly asker: OperationalScope | undefined;
+  readonly grant: GrantRow;
+  readonly names: PrincipalNames;
+  readonly requesterScope: OperationalScope;
+}): LiveGrant => {
+  const { agentFacts, asker, grant, names, requesterScope } = input;
+  if (agentFacts?.connection === undefined) {
+    return { grant, names, requesterScope };
+  }
+  return {
+    agent: {
+      connection: agentFacts.connection,
+      operatorPrincipalId: grant.userPrincipalId,
+      writePolicy: agentFacts.writePolicy,
+    },
+    grant,
+    names,
+    requesterScope: asker ?? connectionScopeOf(grant, agentFacts.connection),
+  };
+};
+
+/** The agent-only live facts; a person's grant has none to fail, so each is true for it. */
+const agentLiveFactsOf = (
+  facts: Effect.Success<ReturnType<typeof liveAgentFactsOf>> | undefined,
+): Pick<LiveFacts, 'agentInCompany' | 'connectionLive' | 'operatorHolds'> =>
+  facts === undefined
+    ? { agentInCompany: true, connectionLive: true, operatorHolds: true }
+    : {
+        agentInCompany: facts.agentInCompany,
+        connectionLive: facts.connection !== undefined,
+        operatorHolds: facts.operatorHolds,
+      };
+
+/**
  * Live check of an active grant, on every call: the grant, its user, acting principal, binding, company selection
  * and (for an agent) its company and operator. A failed check revokes the grant when the verdict says so and then
  * fails with `ConnectionUnauthorized`. It does not describe the grant's authority (`describeLiveGrant`).
@@ -348,29 +450,14 @@ export const checkLiveGrant = Effect.fn('OAuthConnectionService.checkLiveGrant')
       subject: { principalId: grant.userPrincipalId, tenantId: grant.tenantId },
     })
     .pipe(Effect.mapError(toUnavailable));
-  let agentInCompany = true;
-  let operatorHolds = true;
-  if (agent) {
-    const companies = yield* openDemoAccountGrants.pipe(
-      Effect.flatMap((grants) => grants.companiesOf(grant.actingPrincipalId)),
-      Effect.scoped,
-      Effect.mapError(toUnavailable),
-    );
-    agentInCompany = companies.includes(grant.legalEntityId);
-    operatorHolds = yield* openPrincipalOperators.pipe(
-      Effect.flatMap((operators) => operators.canOperate(grant.actingPrincipalId, grant.userPrincipalId)),
-      Effect.scoped,
-      Effect.mapError(toUnavailable),
-    );
-  }
+  const agentFacts = agent ? yield* liveAgentFactsOf(grant) : undefined;
   const verdict = evaluateLiveChecks({
+    ...agentLiveFactsOf(agentFacts),
     actingKind: grant.actingKind,
     actingPrincipalStatus: names.get(grant.actingPrincipalId)?.status,
-    agentInCompany,
     bindingStatus,
     grantStatus: grant.status,
     hasCompanyAccess: access.decision === 'allowed',
-    operatorHolds,
     userBanned: user?.banned ?? false,
     userEmailVerified: user?.emailVerified ?? false,
     userExists: user !== undefined,
@@ -384,26 +471,28 @@ export const checkLiveGrant = Effect.fn('OAuthConnectionService.checkLiveGrant')
     }
     return yield* new ConnectionUnauthorized({ code: verdict.code });
   }
-  const live: LiveGrant = { grant, names, requesterScope };
-  return live;
+  return liveGrantOf({ agentFacts, asker, grant, names, requesterScope });
 });
 
 /**
  * The current description of a grant that passed `checkLiveGrant`: its acting authority over the installed modules,
  * narrowed by the grant's own ceiling and write policy. Nothing is cached; every call asks the gate again.
  */
-export const describeLiveGrant = Effect.fn('OAuthConnectionService.describeLiveGrant')(function* describeLiveGrant({
-  grant,
-  names,
-  requesterScope,
-}: LiveGrant) {
+export const describeLiveGrant = Effect.fn('OAuthConnectionService.describeLiveGrant')(function* describeLiveGrant(
+  liveGrant: LiveGrant,
+) {
+  const { grant, names, requesterScope } = liveGrant;
   const agent = grant.actingKind === 'agent';
-  const authority = yield* loadActingAuthority(requesterScope, {
+  const acting = {
     actingKind: grant.actingKind,
     actingPrincipalId: grant.actingPrincipalId,
     legalEntityId: grant.legalEntityId,
     tenantId: grant.tenantId,
-  });
+  };
+  const authority = yield* loadActingAuthority(
+    requesterScope,
+    liveGrant.agent === undefined ? acting : { ...acting, agent: liveGrant.agent },
+  );
   const effective = effectiveAuthority({
     labelOf: authority.labelOf,
     live: authority.live,
@@ -444,7 +533,10 @@ export const describeLiveGrant = Effect.fn('OAuthConnectionService.describeLiveG
     tenantId: ConnectionTenantIdSchema.make(grant.tenantId),
     writePolicy: effective.writePolicy,
   };
-  const live: LiveConnection = { description, grant };
+  const live: LiveConnection =
+    liveGrant.agent === undefined
+      ? { description, grant }
+      : { agentConnection: liveGrant.agent.connection, description, grant };
   return live;
 });
 

@@ -14,7 +14,10 @@ import type {
 } from '@app/shared-contracts/oauth-connections';
 import { Context, Effect, Layer, Option, Schema } from 'effect';
 
+import { AgentConnectionStore, agentConnectionIdOfGrant } from '@app/core-runtime/access/intent/agent-connections';
+
 import { OAuthCredentials } from '../auth/db/oauth-credentials.ts';
+import { connectionScopeOf } from './connection-scope.ts';
 import { ConnectionUnavailable } from './errors.ts';
 import type { GrantListFilter, GrantRow, NewDraftGrant, OAuthRefreshGuardRow } from './types.ts';
 
@@ -161,6 +164,7 @@ export const OAuthEndpointGuardDataLive = Layer.effect(
   Effect.gen(function* oauthEndpointGuardDataService() {
     const registry = yield* OAuthGrantRegistry;
     const credentials = yield* OAuthCredentials;
+    const connections = yield* AgentConnectionStore;
     return {
       consentApproved: Effect.fn('OAuthEndpointGuardData.consentApproved')(function* consentApproved(session: {
         readonly sessionId: string;
@@ -209,6 +213,12 @@ export const OAuthEndpointGuardDataLive = Layer.effect(
             .pipe(Effect.mapError(unavailable));
           if (Option.isNone(disabled)) {
             return yield* unavailable('Retained grant disappeared before authorization disablement');
+          }
+          // A replayed refresh family ends an agent's credential-bound connection with the grant, before Auth cleanup.
+          if (grant.actingKind === 'agent') {
+            yield* connections
+              .revoke(connectionScopeOf(grant), agentConnectionIdOfGrant(grant.grantId))
+              .pipe(Effect.mapError(unavailable));
           }
         }
         return yield* credentials.revokeFamily(row).pipe(Effect.mapError(unavailable));

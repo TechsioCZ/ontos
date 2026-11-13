@@ -33,6 +33,7 @@ import {
   ActiveApplicationCompositionService,
 } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { AgentConnectionStoreLive } from '@app/core-runtime/access/intent/agent-connections';
 import { AccessPeopleDirectoryLive } from '@app/core-runtime/access/intent/people-directory';
 import { CoreAdminDatabaseLive, CoreDatabase } from '@app/core-runtime/db/client';
 import { OAuthFlowLive } from '../../apps/shell-super-app/api/auth/db/oauth-flow-live.ts';
@@ -72,7 +73,11 @@ const resolver = PrincipalResolverLive({ authenticationNamespaceId: STAFF_AUTHEN
 );
 const oauthRegistry = OAuthGrantRegistryLive.pipe(Layer.provide(persistence));
 const oauthCredentials = OAuthCredentialsLive.pipe(Layer.provide(authDatabase));
-const oauthGuards = OAuthEndpointGuardDataLive.pipe(Layer.provide(Layer.merge(oauthRegistry, oauthCredentials)));
+// A refresh-token replay ends an agent grant's credential-bound access connection with the grant.
+const agentConnections = AgentConnectionStoreLive.pipe(Layer.provide(Layer.merge(persistence, databaseIdentitiesLive)));
+const oauthGuards = OAuthEndpointGuardDataLive.pipe(
+  Layer.provide(Layer.mergeAll(oauthRegistry, oauthCredentials, agentConnections)),
+);
 const oauthAudit = OAuthAuthenticationAuditLive.pipe(Layer.provide(persistence));
 const authenticationDependencies = Layer.mergeAll(
   authConfig,

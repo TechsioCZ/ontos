@@ -596,6 +596,8 @@ export type {
   RunActionInput,
 } from './actions/runtime.ts';
 export { TrustedCompanyPrincipalContextSchema } from './actions/principal-context.ts';
+export { OAuthAgentConnectionSchema } from './actions/principal-context.ts';
+export type { OAuthAgentConnection } from './actions/principal-context.ts';
 export {
   ActionTransportMetadataSchema,
   TrustedPrincipalContextSchema,
@@ -1194,8 +1196,6 @@ export type {
 export { demoAccountObjectIdParts, openDemoAccountGrants } from './install/demo-account-administration.ts';
 export type { DemoAccountGrants } from './install/demo-account-administration.ts';
 export type { DemoAccountRelationship } from './install/demo-account-administration.ts';
-export { openPrincipalOperators, operatorChanges } from './permissions/principal-operators.ts';
-export type { PrincipalOperators } from './permissions/principal-operators.ts';
 export {
   agentGrantRelationships,
   agentModuleAccessOf,

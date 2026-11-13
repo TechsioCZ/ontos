@@ -148,21 +148,25 @@ export const OAuthAccessTokensLive = Layer.effect(
 export const connectionPrincipalContext = (live: LiveConnection) => {
   const { description, grant } = live;
   const agent = grant.actingKind === 'agent';
+  const base = {
+    clientId: grant.clientId,
+    clientName: grant.clientName.slice(0, 200),
+    grantId: grant.grantId,
+    modules: description.modules.map((module) => ({
+      access: module.write ? ('write' as const) : ('read' as const),
+      moduleId: module.moduleId,
+    })),
+    writePolicy: description.writePolicy,
+  };
+  // An agent carries the exact credential-bound connection its live check found; the gate decides it on that row.
+  const connection =
+    agent && live.agentConnection !== undefined ? { ...base, agentConnection: live.agentConnection } : base;
   const principal = {
     authBindingId: grant.authBindingId ?? '',
     authContextRef: `${OAUTH_GRANT_CONTEXT_PREFIX}${grant.grantId}`,
     authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
     authMethod: 'oauth_connection' as const,
-    connection: {
-      clientId: grant.clientId,
-      clientName: grant.clientName.slice(0, 200),
-      grantId: grant.grantId,
-      modules: description.modules.map((module) => ({
-        access: module.write ? ('write' as const) : ('read' as const),
-        moduleId: module.moduleId,
-      })),
-      writePolicy: description.writePolicy,
-    },
+    connection,
     legalEntityId: grant.legalEntityId,
     principalId: grant.actingPrincipalId,
     tenantId: grant.tenantId,

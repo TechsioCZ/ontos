@@ -7,6 +7,8 @@ import type { Assignment, CatalogSnapshotEntry, Cell, ConsentCeiling, Role, Role
 import { sameHolder } from '../model.ts';
 import { assignmentIsLive } from './people-commands.ts';
 
+export type { CatalogSnapshotEntry, Cell } from '../model.ts';
+
 /*
  * What an agent can actually use of its roles. An agent's rights come only from the roles assigned to it, like
  * anybody's, but the engine admits from an agent's cells only what an agent may do at all (`agentTier`): never

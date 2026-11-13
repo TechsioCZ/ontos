@@ -140,6 +140,7 @@ import {
 } from '@app/core-runtime/access/compiler/spice-db-compiler';
 import { loadSpiceDbConfig } from '@app/core-runtime/access/spicedb-config';
 import { AccessChangesStoreLive } from '@app/core-runtime/access/changes/persistence/drizzle-store';
+import { AgentConnectionStoreLive } from '@app/core-runtime/access/intent/agent-connections';
 import { AccessMembershipStoreLive } from '@app/core-runtime/access/intent/memberships';
 import { AccessProjectionWriterLive } from '@app/core-runtime/access/intent/projection-writer';
 import { AccessWriteJournalStoreLive } from '@app/core-runtime/access/lifecycle/persistence/journal-store';
@@ -3484,7 +3485,13 @@ const oauthGrantRegistryLive = OAuthGrantRegistryLive.pipe(Layer.provide(corePer
 const oauthCredentialsLive = OAuthCredentialsLive.pipe(Layer.provide(authPersistenceLive));
 const oauthGrantOwnersLive = OAuthGrantOwnersLive.pipe(Layer.provide(oauthGrantRegistryLive));
 const oauthEndpointGuardDataLive = OAuthEndpointGuardDataLive.pipe(
-  Layer.provide(Layer.merge(oauthGrantRegistryLive, oauthCredentialsLive)),
+  Layer.provide(
+    Layer.mergeAll(
+      oauthGrantRegistryLive,
+      oauthCredentialsLive,
+      AgentConnectionStoreLive.pipe(Layer.provide(Layer.merge(corePersistenceLive, databaseIdentitiesLive))),
+    ),
+  ),
 );
 const principalResolverLive = PrincipalResolverLive({
   authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
@@ -4074,7 +4081,13 @@ export const makeShellAuthenticationApiRuntime = (
   const moduleCredentialEnrolmentLayer = ModuleCredentialEnrolmentSourceLive.pipe(
     Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive)),
   );
+  // The credential-bound agent connections: written at consent, read by every agent request, ended by revocation.
+  const agentConnectionStoreLive = AgentConnectionStoreLive.pipe(
+    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, databaseIdentitiesLive)),
+  );
   const handlerDependenciesLive = Layer.mergeAll(
+    agentConnectionStoreLive,
+    accessAdminPeopleCommandsLive,
     emailDeliveryRequestsLive,
     authenticationIsolateLive,
     BetterAuthPersonInvitationIdentityProviderLive,
