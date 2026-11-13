@@ -96,6 +96,10 @@ const changeOwnProfile = Effect.fn('UpdateOwnCustomerProfileAction.change')(func
   const correlationDigest = yield* crypto
     .digest('SHA-256', new TextEncoder().encode(scope.requestCorrelation))
     .pipe(Effect.map(Hex.encode), Effect.mapError(profileUnavailable));
+  // The session was proven live by the owner overlay inside this Action's transaction; the change below runs right after
+  // that commit, in the same request. A sign-out landing in between lets this one in-flight change complete, exactly
+  // as a sign-out landing just after it would; it is not re-checked here (review #2: the liveness port is the overlay's,
+  // and giving it to this hook is a wiring change of the portal route groups, deferred).
   // A durable intent is mandatory before the first native command. No network call holds an owner DB transaction.
   yield* recordOwnPortalRow(audit, subject, {
     correlationDigest,

@@ -94,6 +94,10 @@ const changeOwnConsent = Effect.fn('UpdateOwnCustomerConsentAction.change')(func
   const correlationDigest = yield* crypto
     .digest('SHA-256', new TextEncoder().encode(input.requestId))
     .pipe(Effect.map(Hex.encode), Effect.mapError(consentUnavailable));
+  // The session was proven live by the owner overlay inside this Action's transaction; the change below runs right after
+  // that commit, in the same request. A sign-out landing in between lets this one in-flight change complete, exactly
+  // as a sign-out landing just after it would; it is not re-checked here (review #2: the liveness port is the overlay's,
+  // and giving it to this hook is a wiring change of the portal route groups, deferred).
   yield* recordOwnPortalRow(audit, subject, {
     correlationDigest,
     eventType: 'commerce.portal-auth.consent-requested.v1',
