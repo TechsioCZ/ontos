@@ -4192,13 +4192,17 @@ export const makeShellAuthenticationApiRuntime = (
     oauthConnectionsAdminGroupLive,
     peopleAdministrationGroupLive,
     agentPlatformGroupLive,
-  ).pipe(Layer.provide(apiServicesLive), Layer.provide(shellSearchNoStoreLayer));
+  ).pipe(
+    Layer.provide(apiServicesLive),
+    Layer.provide(shellSearchNoStoreLayer),
+    // Global: no response leaves the Shell with `server-timing`, whichever route or in-process Action added it.
+    Layer.provide(NoServerTimingLive),
+  );
 
   return assembleEffectBffRuntime({
     api: ShellAuthenticationApi,
     handlers: apiHandlersLive,
-    // No response leaves the Shell with `server-timing`, whichever route or in-process Action added it.
-    transport: Layer.mergeAll(ShellTransportLive, LiveChangesRouteLive, NoServerTimingLive).pipe(
+    transport: Layer.mergeAll(ShellTransportLive, LiveChangesRouteLive).pipe(
       // Building the MCP endpoint's route Layer registers it beside the other Shell routes.
       Layer.provide(mcpEndpointRoutesLive),
       Layer.provide(shellTransportServicesLive),
