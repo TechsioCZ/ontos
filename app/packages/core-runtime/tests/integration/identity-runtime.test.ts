@@ -362,8 +362,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('identity runtime', (s
           .insert(tenants)
           .values({ ...PLATFORM_TENANT, status: 'active' })
           .onConflictDoNothing();
+        // Any principal of the platform tenant is refused; it is never named like a module principal, so it can never
+        // stand beside the platform's own `module:<app id>` principals that other suites on this database resolve.
         yield* admin.insert(principals).values({
-          displayName: 'module:catalog',
+          displayName: `identity-runtime platform-tenant principal ${platformModulePrincipalId}`,
           kind: 'service',
           principalId: platformModulePrincipalId,
           status: 'active',
