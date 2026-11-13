@@ -24,11 +24,17 @@ import {
   PasswordChangeRateLimitedProblemSchema,
   PasswordChangeUnavailableProblemSchema,
 } from '../../shared/portal-auth/password-change-api.ts';
+import { CommercePortalAuthAudit } from '../portal-auth/audit/audit.ts';
+import { recordOwnPortalRow } from '../portal-auth/audit/own-portal-outcome.ts';
+import type { OwnPortalAuditSubject } from '../portal-auth/audit/own-portal-outcome.ts';
 
 const domainEvents = {} as const;
-/** The only evidence this Action records: the operation's name. A closed schema, so nothing else can be recorded. */
+/**
+ * The only evidence this Action records: that the operation was authorized. What the routine then did is the portal
+ * audit's outcome row under the same invocation. A closed schema, so nothing else can be recorded.
+ */
 const OPERATION = 'customer-password-change';
-const OwnPortalEvidenceSchema = Schema.Struct({ operation: Schema.Literal(OPERATION) });
+const OwnPortalEvidenceSchema = Schema.Struct({ authorized: Schema.Literal(OPERATION) });
 
 const PasswordChangeErrorSchema = Schema.Union([
   PasswordChangeCurrentInvalidProblemSchema,
@@ -44,7 +50,7 @@ const authorizeOwnPasswordChange = Effect.fn('ChangeOwnCustomerPasswordAction.ha
   context: ActionHandlerContext<typeof domainEvents>,
 ) {
   // Evidence names the operation only: no password, no hash and no length of one ever reaches Core's rows.
-  yield* context.recordAuditEvidence({ operation: OPERATION });
+  yield* context.recordAuditEvidence({ authorized: OPERATION });
   const authorized: CustomerOwnWriteAuthorized = { authorized: true };
   return authorized;
 });
@@ -72,13 +78,29 @@ const changeOwnPasswordAfterCommit = Effect.fn('ChangeOwnCustomerPasswordAction.
     return SETTLED;
   }
   const exchange = yield* CustomerOwnPasswordChangeExchange;
+  const audit = yield* CommercePortalAuthAudit;
+  const subject: OwnPortalAuditSubject = {
+    actionInvocationId: attempt.actionInvocationId,
+    operation: OPERATION,
+    providerSubjectId: attempt.payload.session.providerSubjectId,
+    sessionRef: exchange.sessionRef,
+  };
   yield* changeOwnPassword({
+    actionInvocationId: attempt.actionInvocationId,
     currentPassword: exchange.currentPassword,
     newPassword: exchange.newPassword,
     providerSubjectId: attempt.payload.session.providerSubjectId,
     requestHeaders: exchange.requestHeaders,
     sessionRef: exchange.sessionRef,
-  });
+  }).pipe(
+    // The routine writes each refusal's row itself; a defect is never left without one either.
+    Effect.tapDefect(() =>
+      recordOwnPortalRow(audit, subject, {
+        eventType: 'commerce.portal-auth.password-change-failed.v1',
+        outcome: 'unavailable',
+      }).pipe(Effect.ignore),
+    ),
+  );
   return SETTLED;
 });
 

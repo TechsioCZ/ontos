@@ -19,6 +19,7 @@ const CommercePortalAuthAuditEventTypeSchema = Schema.Literals([
   'commerce.portal-auth.mfa-verification-requested.v1',
   'commerce.portal-auth.mfa-verified.v1',
   'commerce.portal-auth.password-change-failed.v1',
+  'commerce.portal-auth.password-change-outcome-unknown.v1',
   'commerce.portal-auth.password-change-requested.v1',
   'commerce.portal-auth.password-changed.v1',
   'commerce.portal-auth.profile-update-requested.v1',
@@ -52,6 +53,7 @@ const CommercePortalAuthAuditOutcomeSchema = Schema.Literals([
   'account_disabled',
   'authentication_failed',
   'mfa_required',
+  'outcome_unknown',
   'provider_unavailable',
   'rate_limited',
   'requested',
@@ -67,6 +69,11 @@ export type CommercePortalAuthAuditOutcome = Schema.Schema.Type<typeof CommerceP
 
 /** The in-process event handed to the audit port; `occurredAt` is supplied by the caller's clock. */
 export interface CommercePortalAuthAuditEvent {
+  /**
+   * The Core Action invocation whose authorization this row follows: a storefront write committed its authorization in
+   * Core's audit under this id, and the portal rows of the routine it admitted carry the same id.
+   */
+  readonly actionInvocationId?: string | undefined;
   /**
    * Ties a pre-mutation intent row to the completion row for the same attempt: the recovery
    * ledger's token digest, or the keyed digest of the sign-in attempt's client key. It is always a
@@ -92,6 +99,7 @@ export interface CommercePortalAuthAuditEvent {
  * the audit table has no column for them.
  */
 export interface CommercePortalAuthAuditRecord {
+  readonly actionInvocationId: string | undefined;
   readonly correlationDigest: string | undefined;
   readonly eventType: CommercePortalAuthAuditEventType;
   readonly operation: string | undefined;

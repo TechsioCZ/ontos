@@ -4,7 +4,7 @@
 import { ConsentAuthorityUnavailableProblemSchema } from '@app/consent-authority-contracts/api';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext, ActionPostAttemptHook } from '@app/core-runtime';
-import { Crypto, DateTime, Effect, Match, Schema } from 'effect';
+import { Crypto, Effect, Match, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import { writeDemoNewsletterChoice } from '../../api/portal-auth/consent/choice-persistence.ts';
@@ -25,11 +25,17 @@ import type {
   UpdateOwnCustomerConsentPayload,
 } from '../../shared/portal-auth/own-session.ts';
 import { CommercePortalAuthAudit } from '../portal-auth/audit/audit.ts';
+import type { CommercePortalAuthAuditRecorder } from '../portal-auth/audit/audit.ts';
+import { recordOwnPortalRow, refusalOutcomeOf } from '../portal-auth/audit/own-portal-outcome.ts';
+import type { OwnPortalAuditSubject } from '../portal-auth/audit/own-portal-outcome.ts';
 
 const domainEvents = {} as const;
-/** The only evidence this Action records: the operation's name. A closed schema, so nothing else can be recorded. */
+/**
+ * The only evidence this Action records: that the operation was authorized. What the routine then did is the portal
+ * audit's outcome row under the same invocation. A closed schema, so nothing else can be recorded.
+ */
 const OPERATION = 'customer-newsletter-consent';
-const OwnPortalEvidenceSchema = Schema.Struct({ operation: Schema.Literal(OPERATION) });
+const OwnPortalEvidenceSchema = Schema.Struct({ authorized: Schema.Literal(OPERATION) });
 
 const ConsentChangeErrorSchema = Schema.Union([ConsentConflictProblemSchema, ConsentAuthorityUnavailableProblemSchema]);
 type ConsentChangeError = typeof ConsentChangeErrorSchema.Type;
@@ -46,7 +52,7 @@ const authorizeOwnConsentChange = Effect.fn('UpdateOwnCustomerConsentAction.hand
   if (payload.update.noticeVersionId !== DEMO_NEWSLETTER_NOTICE.noticeVersionId) {
     return yield* Effect.fail(consentConflict());
   }
-  yield* context.recordAuditEvidence({ operation: OPERATION });
+  yield* context.recordAuditEvidence({ authorized: OPERATION });
   const authorized: CustomerOwnWriteAuthorized = { authorized: true };
   return authorized;
 });
@@ -66,13 +72,12 @@ const isCommitted = (outcome: Attempt['outcome']): boolean =>
     Match.tag('Committed', () => true),
     Match.orElse(() => false),
   );
-const changeOwnConsentAfterCommit = Effect.fn('UpdateOwnCustomerConsentAction.afterCommit')(function* afterCommit(
+/** The routine up to the choice write: the session's own direct Party, the intent row, then the choice. */
+const changeOwnConsent = Effect.fn('UpdateOwnCustomerConsentAction.change')(function* changeOwnConsent(
   attempt: Attempt,
+  audit: CommercePortalAuthAuditRecorder,
+  subject: OwnPortalAuditSubject,
 ) {
-  if (!isCommitted(attempt.outcome)) {
-    return SETTLED;
-  }
-  const exchange = yield* CustomerOwnConsentUpdateExchange;
   const scope = yield* ownPortalScope(
     {
       compositionRevision: attempt.compositionRevision,
@@ -85,48 +90,52 @@ const changeOwnConsentAfterCommit = Effect.fn('UpdateOwnCustomerConsentAction.af
   // Archived/merged/aliased Parties require real owner reconciliation, not a guessed successor.
   yield* readDirectCustomerParty(scope).pipe(Effect.mapError(consentUnavailable));
   const input = attempt.payload.update;
-  const audit = yield* CommercePortalAuthAudit;
   const crypto = yield* Crypto.Crypto;
   const correlationDigest = yield* crypto
     .digest('SHA-256', new TextEncoder().encode(input.requestId))
     .pipe(Effect.map(Hex.encode), Effect.mapError(consentUnavailable));
-  const event = {
+  yield* recordOwnPortalRow(audit, subject, {
     correlationDigest,
+    eventType: 'commerce.portal-auth.consent-requested.v1',
+    outcome: 'requested',
+  }).pipe(Effect.mapError(consentUnavailable));
+  return yield* writeDemoNewsletterChoice(scope, input);
+});
+
+const changeOwnConsentAfterCommit = Effect.fn('UpdateOwnCustomerConsentAction.afterCommit')(function* afterCommit(
+  attempt: Attempt,
+) {
+  if (!isCommitted(attempt.outcome)) {
+    return SETTLED;
+  }
+  const exchange = yield* CustomerOwnConsentUpdateExchange;
+  const audit = yield* CommercePortalAuthAudit;
+  const subject: OwnPortalAuditSubject = {
+    actionInvocationId: attempt.actionInvocationId,
     operation: OPERATION,
     providerSubjectId: attempt.payload.session.providerSubjectId,
     sessionRef: exchange.sessionRef,
   };
-  yield* audit
-    .record({
-      ...event,
-      eventType: 'commerce.portal-auth.consent-requested.v1',
-      occurredAt: yield* DateTime.nowAsDate,
-      outcome: 'requested',
-    })
-    .pipe(Effect.mapError(consentUnavailable));
-  const saved = yield* writeDemoNewsletterChoice(scope, input).pipe(
-    Effect.tapError(() =>
-      DateTime.nowAsDate.pipe(
-        Effect.flatMap((occurredAt) =>
-          audit.record({
-            ...event,
-            eventType: 'commerce.portal-auth.consent-failed.v1',
-            occurredAt,
-            outcome: 'unavailable',
-          }),
-        ),
-        Effect.mapError(consentUnavailable),
-      ),
+  // Exactly one outcome row for the committed authorization: the recorded choice, or its refusal with its class.
+  const saved = yield* changeOwnConsent(attempt, audit, subject).pipe(
+    Effect.tapError((failure) =>
+      recordOwnPortalRow(audit, subject, {
+        eventType: 'commerce.portal-auth.consent-failed.v1',
+        outcome: refusalOutcomeOf(failure),
+      }).pipe(Effect.mapError(consentUnavailable)),
+    ),
+    // A defect is never left without its row either; the defect itself goes on to the route's seam.
+    Effect.tapDefect(() =>
+      recordOwnPortalRow(audit, subject, {
+        eventType: 'commerce.portal-auth.consent-failed.v1',
+        outcome: 'unavailable',
+      }).pipe(Effect.ignore),
     ),
   );
-  yield* audit
-    .record({
-      ...event,
-      eventType: 'commerce.portal-auth.consent-recorded.v1',
-      occurredAt: yield* DateTime.nowAsDate,
-      outcome: 'success',
-    })
-    .pipe(Effect.mapError(consentUnavailable));
+  yield* recordOwnPortalRow(audit, subject, {
+    eventType: 'commerce.portal-auth.consent-recorded.v1',
+    outcome: 'success',
+  }).pipe(Effect.mapError(consentUnavailable));
   // The owner routine returned only after its scoped transaction committed.
   yield* exchange.deliver(saved);
   return SETTLED;

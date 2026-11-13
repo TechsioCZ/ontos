@@ -1,14 +1,22 @@
 import { isAPIError } from 'better-auth/api';
-import { DateTime, Duration, Effect, Redacted, Result, Schema } from 'effect';
+import { Duration, Effect, Fiber, Option, Redacted, Result, Schema } from 'effect';
 
 import { CommercePortalAuthAudit } from '../../../src/portal-auth/audit/audit.ts';
+import type {
+  CommercePortalAuthAuditEventType,
+  CommercePortalAuthAuditOutcome,
+} from '../../../src/portal-auth/audit/audit-contracts.ts';
+import { recordOwnPortalRow } from '../../../src/portal-auth/audit/own-portal-outcome.ts';
+import type { OwnPortalAuditSubject } from '../../../src/portal-auth/audit/own-portal-outcome.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../provider/config.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../rate-limit-service.ts';
 import { consumeRateLimitBudget } from '../rate-limit-service.ts';
 import { CommercePortalAuthService } from '../session/http.ts';
+import { outcomeUnknownLanguageOf } from './outcome-unknown-texts.ts';
 import {
   passwordChangeCurrentInvalid,
   passwordChangeInvalid,
+  passwordChangeOutcomeUnknown,
   passwordChangeRateLimited,
   passwordChangeUnavailable,
 } from './problems.ts';
@@ -17,18 +25,15 @@ const ROUTE = '/change-password';
 /** A stolen session may guess the current password only this often per account. */
 const passwordChangeRateLimit: CommercePortalAuthRecoveryRateLimitRule = { max: 5, windowSeconds: 900 };
 const providerTimeout = Duration.millis(COMMERCE_PORTAL_AUTH_POLICY.accountCreation.providerCallTimeoutMilliseconds);
+/** How long a late provider verdict is still awaited after the customer was told the change may still complete. */
+const lateVerdictBudget = Duration.minutes(5);
 
+const FAILED = 'commerce.portal-auth.password-change-failed.v1';
 const CURRENT_INVALID = 'current-invalid';
 const INVALID = 'invalid';
 const UNAVAILABLE = 'unavailable';
 export const PasswordChangeFailureClass = Schema.Literals([CURRENT_INVALID, INVALID, UNAVAILABLE]);
 export type PasswordChangeFailureKind = typeof PasswordChangeFailureClass.Type;
-
-/** The provider did not answer inside the call budget; the change is then reported as unavailable. */
-class PasswordChangeProviderTimeout extends Schema.TaggedError<PasswordChangeProviderTimeout>()(
-  'PasswordChangeProviderTimeout',
-  {},
-) {}
 
 const WRONG_CURRENT_CODE = 'INVALID_PASSWORD';
 const REJECTED_NEW_CODES = new Set(['PASSWORD_TOO_LONG', 'PASSWORD_TOO_SHORT']);
@@ -51,6 +56,8 @@ export const classifyPasswordChangeFailure = (cause: unknown): PasswordChangeFai
 
 /** What the routine needs of the admitted session and its request; the passwords stay redacted until Better Auth. */
 export interface OwnPasswordChange {
+  /** The Core invocation whose committed authorization admitted this change; every portal row carries it. */
+  readonly actionInvocationId: string;
   readonly currentPassword: Redacted.Redacted;
   readonly newPassword: Redacted.Redacted;
   readonly providerSubjectId: string;
@@ -58,15 +65,34 @@ export interface OwnPasswordChange {
   readonly sessionRef: string;
 }
 
+/** The provider's verdict on the change, as a value: it settles on its own fiber, whoever is still waiting. */
+type ProviderVerdict = Result.Result<unknown, PasswordChangeFailureKind>;
+
+const failureOutcomeOf = (failure: PasswordChangeFailureKind) =>
+  failure === CURRENT_INVALID ? ('authentication_failed' as const) : ('unavailable' as const);
+
 /**
- * Changes the password of the admitted session's own account. Better Auth verifies the current
- * password and revokes the account's other sessions; the owner rate-limits and records evidence. The
- * passwords are never logged, stored or returned: the portal audit records the operation, the session
- * and the outcome only.
+ * Changes the password of the admitted session's own account. Better Auth verifies the current password and revokes
+ * the account's other sessions; the owner rate-limits and records evidence. Every attempt whose authorization
+ * committed gets exactly one outcome row (changed, refused with its class, or outcome unknown), tied to the Core
+ * invocation. The passwords are never logged, stored or returned, and no provider message is recorded.
+ *
+ * Better Auth's call cannot be cancelled, so it is never abandoned silently: past the call budget the customer is told
+ * the change may still complete, the row says `outcome_unknown`, and the provider's eventual verdict is recorded when
+ * it arrives, under the same invocation.
  */
 export const changeOwnPassword = Effect.fn('CustomerPasswordChange.change')(function* changeOwnPassword(
   change: OwnPasswordChange,
 ) {
+  const audit = yield* CommercePortalAuthAudit;
+  const subject: OwnPortalAuditSubject = {
+    actionInvocationId: change.actionInvocationId,
+    operation: 'customer-password-change',
+    providerSubjectId: change.providerSubjectId,
+    sessionRef: change.sessionRef,
+  };
+  const row = (eventType: CommercePortalAuthAuditEventType, outcome: CommercePortalAuthAuditOutcome) =>
+    recordOwnPortalRow(audit, subject, { eventType, outcome }).pipe(Effect.mapError(passwordChangeUnavailable));
   const allowed = yield* consumeRateLimitBudget(
     `password-change|${change.providerSubjectId}`,
     passwordChangeRateLimit,
@@ -74,69 +100,61 @@ export const changeOwnPassword = Effect.fn('CustomerPasswordChange.change')(func
       route: ROUTE,
       unavailable: passwordChangeUnavailable,
     },
-  );
+  ).pipe(Effect.tapError(() => row(FAILED, 'unavailable')));
   if (!allowed) {
+    yield* row(FAILED, 'rate_limited');
     return yield* Effect.fail(passwordChangeRateLimited());
   }
-  const audit = yield* CommercePortalAuthAudit;
-  const event = {
-    operation: 'customer-password-change',
-    providerSubjectId: change.providerSubjectId,
-    sessionRef: change.sessionRef,
-  };
   // The intent row is strict: no password is changed unless the attempt is evidenced first.
-  yield* audit
-    .record({
-      ...event,
-      eventType: 'commerce.portal-auth.password-change-requested.v1',
-      occurredAt: yield* DateTime.nowAsDate,
-      outcome: 'requested',
-    })
-    .pipe(Effect.mapError(passwordChangeUnavailable));
-  const service = yield* CommercePortalAuthService;
-  const attempt = yield* Effect.result(
-    Effect.tryPromise({
-      catch: classifyPasswordChangeFailure,
-      try: service.api.changePassword.bind(service.api, {
-        body: {
-          currentPassword: Redacted.value(change.currentPassword),
-          newPassword: Redacted.value(change.newPassword),
-          revokeOtherSessions: true,
-        },
-        headers: change.requestHeaders,
-      }),
-    }).pipe(
-      Effect.timeoutOrElse({
-        duration: providerTimeout,
-        orElse: () => Effect.fail(new PasswordChangeProviderTimeout()),
-      }),
-    ),
+  yield* row('commerce.portal-auth.password-change-requested.v1', 'requested').pipe(
+    Effect.tapError(() => row(FAILED, 'unavailable')),
   );
-  if (Result.isFailure(attempt)) {
-    const failure = Schema.is(PasswordChangeFailureClass)(attempt.failure) ? attempt.failure : UNAVAILABLE;
-    yield* audit
-      .record({
-        ...event,
-        eventType: 'commerce.portal-auth.password-change-failed.v1',
-        occurredAt: yield* DateTime.nowAsDate,
-        outcome: failure === CURRENT_INVALID ? 'authentication_failed' : 'unavailable',
-      })
-      .pipe(Effect.mapError(passwordChangeUnavailable));
+  const service = yield* CommercePortalAuthService;
+  const call: Effect.Effect<Option.Option<ProviderVerdict>> = Effect.tryPromise({
+    catch: classifyPasswordChangeFailure,
+    try: service.api.changePassword.bind(service.api, {
+      body: {
+        currentPassword: Redacted.value(change.currentPassword),
+        newPassword: Redacted.value(change.newPassword),
+        revokeOtherSessions: true,
+      },
+      headers: change.requestHeaders,
+    }),
+  }).pipe(
+    Effect.result,
+    Effect.map(Option.some),
+    // The verdict is awaited this long at most; past it nothing more is recorded and `outcome_unknown` stands.
+    Effect.timeoutOrElse({
+      duration: lateVerdictBudget,
+      orElse: () => Effect.succeed(Option.none<ProviderVerdict>()),
+    }),
+  );
+  const settle = (verdict: ProviderVerdict): Effect.Effect<void, ReturnType<typeof passwordChangeUnavailable>> =>
+    Result.isSuccess(verdict)
+      ? row('commerce.portal-auth.password-changed.v1', 'success')
+      : row(FAILED, failureOutcomeOf(verdict.failure));
+  const provider = yield* Effect.forkDetach(call);
+  const verdict = yield* Fiber.join(provider).pipe(
+    Effect.timeoutOrElse({ duration: providerTimeout, orElse: () => Effect.succeed(Option.none<ProviderVerdict>()) }),
+  );
+  if (Option.isNone(verdict)) {
+    yield* row('commerce.portal-auth.password-change-outcome-unknown.v1', 'outcome_unknown');
+    // The provider's eventual verdict, recorded when it arrives under the same invocation; nobody waits for it.
+    yield* Effect.forkDetach(
+      Fiber.join(provider).pipe(
+        Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: settle })),
+        Effect.ignore,
+      ),
+    );
+    return yield* Effect.fail(passwordChangeOutcomeUnknown(outcomeUnknownLanguageOf(change.requestHeaders)));
+  }
+  yield* settle(verdict.value);
+  if (Result.isFailure(verdict.value)) {
+    const { failure } = verdict.value;
     if (failure === CURRENT_INVALID) {
       return yield* Effect.fail(passwordChangeCurrentInvalid());
     }
-    if (failure === INVALID) {
-      return yield* Effect.fail(passwordChangeInvalid());
-    }
-    return yield* Effect.fail(passwordChangeUnavailable());
+    return yield* Effect.fail(failure === INVALID ? passwordChangeInvalid() : passwordChangeUnavailable());
   }
-  yield* audit
-    .record({
-      ...event,
-      eventType: 'commerce.portal-auth.password-changed.v1',
-      occurredAt: yield* DateTime.nowAsDate,
-      outcome: 'success',
-    })
-    .pipe(Effect.mapError(passwordChangeUnavailable));
   return yield* Effect.void;
 });

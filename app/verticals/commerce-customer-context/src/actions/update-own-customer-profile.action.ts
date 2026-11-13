@@ -3,7 +3,7 @@
 // @ontos-action-slug update-own-customer-profile
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext, ActionPostAttemptHook } from '@app/core-runtime';
-import { Crypto, DateTime, Effect, Match, Schema } from 'effect';
+import { Crypto, Effect, Match, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import { ownPortalScope } from '../../api/portal-auth/own/own-portal-scope.ts';
@@ -27,11 +27,17 @@ import {
   ProfileUnavailableProblemSchema,
 } from '../../shared/portal-auth/profile-api.ts';
 import { CommercePortalAuthAudit } from '../portal-auth/audit/audit.ts';
+import type { CommercePortalAuthAuditRecorder } from '../portal-auth/audit/audit.ts';
+import { recordOwnPortalRow, refusalOutcomeOf } from '../portal-auth/audit/own-portal-outcome.ts';
+import type { OwnPortalAuditSubject } from '../portal-auth/audit/own-portal-outcome.ts';
 
 const domainEvents = {} as const;
-/** The only evidence this Action records: the operation's name. A closed schema, so nothing else can be recorded. */
+/**
+ * The only evidence this Action records: that the operation was authorized. What the routine then did is the portal
+ * audit's outcome row under the same invocation. A closed schema, so nothing else can be recorded.
+ */
 const OPERATION = 'customer-profile-update';
-const OwnPortalEvidenceSchema = Schema.Struct({ operation: Schema.Literal(OPERATION) });
+const OwnPortalEvidenceSchema = Schema.Struct({ authorized: Schema.Literal(OPERATION) });
 
 const ProfileChangeErrorSchema = Schema.Union([
   ProfileConflictProblemSchema,
@@ -45,7 +51,7 @@ const authorizeOwnProfileChange = Effect.fn('UpdateOwnCustomerProfileAction.hand
   _payload: UpdateOwnCustomerProfilePayload,
   context: ActionHandlerContext<typeof domainEvents>,
 ) {
-  yield* context.recordAuditEvidence({ operation: OPERATION });
+  yield* context.recordAuditEvidence({ authorized: OPERATION });
   const authorized: CustomerOwnWriteAuthorized = { authorized: true };
   return authorized;
 });
@@ -66,13 +72,12 @@ const isCommitted = (outcome: Attempt['outcome']): boolean =>
     Match.tag('Committed', () => true),
     Match.orElse(() => false),
   );
-const changeOwnProfileAfterCommit = Effect.fn('UpdateOwnCustomerProfileAction.afterCommit')(function* afterCommit(
+/** The routine up to the Party Registry commands: the session's own Party, its current version, the intent row. */
+const changeOwnProfile = Effect.fn('UpdateOwnCustomerProfileAction.change')(function* changeOwnProfile(
   attempt: Attempt,
+  audit: CommercePortalAuthAuditRecorder,
+  subject: OwnPortalAuditSubject,
 ) {
-  if (!isCommitted(attempt.outcome)) {
-    return SETTLED;
-  }
-  const exchange = yield* CustomerOwnProfileUpdateExchange;
   const scope = yield* ownPortalScope(
     {
       compositionRevision: attempt.compositionRevision,
@@ -87,49 +92,54 @@ const changeOwnProfileAfterCommit = Effect.fn('UpdateOwnCustomerProfileAction.af
   if (before.profile.version !== input.version) {
     return yield* Effect.fail(profileConflict());
   }
-  const audit = yield* CommercePortalAuthAudit;
   const crypto = yield* Crypto.Crypto;
   const correlationDigest = yield* crypto
     .digest('SHA-256', new TextEncoder().encode(scope.requestCorrelation))
     .pipe(Effect.map(Hex.encode), Effect.mapError(profileUnavailable));
-  const event = {
+  // A durable intent is mandatory before the first native command. No network call holds an owner DB transaction.
+  yield* recordOwnPortalRow(audit, subject, {
     correlationDigest,
+    eventType: 'commerce.portal-auth.profile-update-requested.v1',
+    outcome: 'requested',
+  }).pipe(Effect.mapError(profileUnavailable));
+  return yield* updateCustomerPartyProfile(scope, input, before);
+});
+
+const changeOwnProfileAfterCommit = Effect.fn('UpdateOwnCustomerProfileAction.afterCommit')(function* afterCommit(
+  attempt: Attempt,
+) {
+  if (!isCommitted(attempt.outcome)) {
+    return SETTLED;
+  }
+  const exchange = yield* CustomerOwnProfileUpdateExchange;
+  const audit = yield* CommercePortalAuthAudit;
+  const subject: OwnPortalAuditSubject = {
+    actionInvocationId: attempt.actionInvocationId,
     operation: OPERATION,
     providerSubjectId: attempt.payload.session.providerSubjectId,
     sessionRef: exchange.sessionRef,
   };
-  // A durable intent is mandatory before the first native command. No network call holds an owner DB transaction.
-  yield* audit
-    .record({
-      ...event,
-      eventType: 'commerce.portal-auth.profile-update-requested.v1',
-      occurredAt: yield* DateTime.nowAsDate,
-      outcome: 'requested',
-    })
-    .pipe(Effect.mapError(profileUnavailable));
-  const profile = yield* updateCustomerPartyProfile(scope, input, before).pipe(
-    Effect.tapError(
-      Effect.fn('UpdateOwnCustomerProfileAction.recordFailure')(function* recordFailure(failure) {
-        yield* audit
-          .record({
-            ...event,
-            eventType: 'commerce.portal-auth.profile-update-failed.v1',
-            occurredAt: yield* DateTime.nowAsDate,
-            outcome: failure.status === 409 ? 'state_conflict' : 'unavailable',
-          })
-          .pipe(Effect.mapError(profileUnavailable));
-      }),
+  // Exactly one outcome row for the committed authorization: the change, or its refusal with its class.
+  const profile = yield* changeOwnProfile(attempt, audit, subject).pipe(
+    Effect.tapError((failure) =>
+      recordOwnPortalRow(audit, subject, {
+        eventType: 'commerce.portal-auth.profile-update-failed.v1',
+        outcome: refusalOutcomeOf(failure),
+      }).pipe(Effect.mapError(profileUnavailable)),
+    ),
+    // A defect is never left without its row either; the defect itself goes on to the route's seam.
+    Effect.tapDefect(() =>
+      recordOwnPortalRow(audit, subject, {
+        eventType: 'commerce.portal-auth.profile-update-failed.v1',
+        outcome: 'unavailable',
+      }).pipe(Effect.ignore),
     ),
   );
   // Completion follows native persistence and a fresh owner read; failure here is never reported as success.
-  yield* audit
-    .record({
-      ...event,
-      eventType: 'commerce.portal-auth.profile-updated.v1',
-      occurredAt: yield* DateTime.nowAsDate,
-      outcome: 'success',
-    })
-    .pipe(Effect.mapError(profileUnavailable));
+  yield* recordOwnPortalRow(audit, subject, {
+    eventType: 'commerce.portal-auth.profile-updated.v1',
+    outcome: 'success',
+  }).pipe(Effect.mapError(profileUnavailable));
   yield* exchange.deliver(profile);
   return SETTLED;
 });
