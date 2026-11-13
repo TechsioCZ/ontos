@@ -1209,7 +1209,11 @@ export const makeCommerceCustomerContextApiRuntime = (
      * enrollment-aware Action runtime every other governed route uses. A deployment without the
      * realm gets the fail-closed realm here exactly as the other four groups do.
      */
-    portalAuthEnrollmentApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
+    // The enrollment routes preflight on the v2 gate, so the gate is on their composition path (D6).
+    portalAuthEnrollmentApiLive.pipe(
+      GovernedReadLayer.provide(portalOwnerServicesLive),
+      Layer.provide(accessEnforcementLive),
+    ),
     enrollmentCommandRecoveryLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     commercePortalAuthVerificationCommerceApiLive.pipe(GovernedReadLayer.provide(verificationRouteServicesLive)),
     customerOwnConsentReadApiLive.pipe(
@@ -1247,7 +1251,10 @@ export const makeCommerceCustomerContextApiRuntime = (
     changePrincipalPurchaseLimitOverrideActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     changeRetailPaymentTermPreferenceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     claimCounterpartyAccessInvitationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    claimPortalEnrollmentTransitionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    claimPortalEnrollmentTransitionActionApiLive.pipe(
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+      Layer.provide(accessEnforcementLive),
+    ),
     clearDefaultBillingAddressActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     clearDefaultDeliveryDestinationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     commerceQuantityPolicyCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -1345,7 +1352,10 @@ export const makeCommerceCustomerContextApiRuntime = (
     savedAddressListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     setDefaultBillingAddressActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     setDefaultDeliveryDestinationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    startPortalEnrollmentActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    startPortalEnrollmentActionApiLive.pipe(
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+      Layer.provide(accessEnforcementLive),
+    ),
     submitPurchaseApprovalRequestActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     suspendCustomerProfileActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     terminatePortalEnrollmentActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
