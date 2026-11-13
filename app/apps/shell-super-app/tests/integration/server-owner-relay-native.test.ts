@@ -825,9 +825,12 @@ const assertDelegatedRefusalsBeforeBinding = Effect.fn('ServerOwnerRelayNative.a
 /**
  * The Shell endpoint the people administration calls to disable or archive a principal: an identity administrator may
  * archive an ordinary service principal, but never the platform's internal workload principal, which stays active.
+ * The archive publishes a principal-lifecycle Outbox message no worker of this suite matches; it is released here, as
+ * every disposable fixture releases its queue, or each later composition publication would refuse outstanding work.
  */
 const assertPlatformPrincipalStatusRefused = Effect.fn('ServerOwnerRelayNative.assertPlatformPrincipalStatusRefused')(
   function* assertPlatformPrincipalStatusRefused(input: {
+    readonly admin: PgClient.PgClient;
     readonly apiPrefix: string;
     readonly cookie: Redacted.Redacted;
     readonly database: NativeCoreDatabase;
@@ -877,6 +880,8 @@ const assertPlatformPrincipalStatusRefused = Effect.fn('ServerOwnerRelayNative.a
     const refused = yield* archive(workloadPrincipal);
     expect(refused.status).not.toBe(200);
     expect(refused.stored).toBe('active');
+    yield* deleteTestCoreOutbox(input.admin, tenantId);
+    expect(yield* input.database.query.outboxMessages.findMany({ where: { tenantId } })).toHaveLength(0);
   },
 );
 
@@ -3466,7 +3471,13 @@ it.live(
             }
             const realAuthContextRef = `better-auth-session:${realSession.id}`;
             expect(realAuthContextRef === fixture.core.manager.authContextRef).toBe(false);
-            yield* assertPlatformPrincipalStatusRefused({ apiPrefix: shell.apiPrefix, cookie, database, fixture });
+            yield* assertPlatformPrincipalStatusRefused({
+              admin,
+              apiPrefix: shell.apiPrefix,
+              cookie,
+              database,
+              fixture,
+            });
             yield* assertDelegatedRefusalsBeforeBinding({ composition: current, database, fixture });
             // The module credential, provisioned by the platform exactly as on every boot; no person issues it.
             const issued = yield* provisionSourceModuleCredential({
