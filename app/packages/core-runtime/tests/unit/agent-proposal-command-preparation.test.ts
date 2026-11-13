@@ -276,7 +276,7 @@ it.effect('a withdrawal whose agent right is revoked between preparation and exe
     let revoked = false;
     let rechecks = 0;
     const database = yield* makeTestDatabase((sql, params) => {
-      if (sql.includes('current_setting')) {
+      if (sql === installAndReadScopeSql) {
         return Effect.succeed([{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
       }
       if (sql.includes('from "core"."principals"')) {
