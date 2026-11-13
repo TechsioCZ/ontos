@@ -33,12 +33,10 @@ import { expect, it } from 'effect-rstest';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../../packages/core-runtime/tests/support/database.ts';
 import { ApplyCommandPayloadSchema } from '../../verticals/finance-billing/shared/actions/apply-command.ts';
 import { computeInvoiceTotals } from '../../verticals/finance-billing/shared/domain/invoice-totals.ts';
-import {
-  CommandReferenceValidators,
-  prepareApplyCommandServices,
-} from '../../verticals/finance-billing/src/actions/apply-command.action.ts';
+import { prepareApplyCommandServices } from '../../verticals/finance-billing/src/actions/apply-command.action.ts';
 import { financeStates } from '../../verticals/finance-billing/src/database/schema.ts';
 import { FinanceTaxRates } from '../../verticals/finance-billing/src/integrations/tax-rates.ts';
+import { FinanceReferenceValidators } from '../../verticals/finance-billing/src/services/reference-validation.ts';
 import { MerchandiseCommandPayloadSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
 import {
   TaxRuleRevisionIdSchema,
@@ -113,10 +111,10 @@ const JacketVariantSchema = Schema.StructWithRest(Schema.Struct({ name: Schema.S
 const StorefrontPricesSchema = Schema.Struct({
   products: Schema.Array(
     Schema.Struct({
-      grossPriceMinor: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+      grossPriceMinor: Schema.OptionFromOptionalNullOr(Schema.Number),
       id: Schema.String,
       variantRecords: Schema.optionalKey(
-        Schema.Array(Schema.Struct({ grossPriceMinor: Schema.optionalKey(Schema.NullOr(Schema.Number)) })),
+        Schema.Array(Schema.Struct({ grossPriceMinor: Schema.OptionFromOptionalNullOr(Schema.Number) })),
       ),
     }),
   ),
@@ -339,8 +337,8 @@ it.live('this release writes products, orders and invoices in its own shape for 
         .map((product) => [
           product.id,
           [
-            product.grossPriceMinor ?? null,
-            ...(product.variantRecords ?? []).map((entry) => entry.grossPriceMinor ?? null),
+            Option.getOrNull(product.grossPriceMinor),
+            ...(product.variantRecords ?? []).map((entry) => Option.getOrNull(entry.grossPriceMinor)),
           ],
         ]),
     );
@@ -382,7 +380,9 @@ it.live('this release writes products, orders and invoices in its own shape for 
       };
       // The lines carry their VAT as this release priced it; references are not what this rehearsal checks.
       const factory = yield* prepareApplyCommandServices(payload, context).pipe(
-        Effect.provideService(CommandReferenceValidators, { invoice: () => Effect.void }),
+        Effect.provideService(FinanceReferenceValidators, {
+          forScope: () => Effect.succeed({ invoice: () => Effect.void }),
+        }),
       );
       return yield* financeDb.transaction((tx) =>
         installOperationalScope(tx, financeScope, defineDatabaseIdentityEnrollment([])).pipe(

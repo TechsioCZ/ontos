@@ -4013,7 +4013,13 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
         ].map((folder) => Effect.promise(() => readPricingSourceTree(root, folder))),
       ),
       Effect.all(
-        [`${owner}/package.json`, `${owner}/vertical.manifest.ts`, `${owner}/vertical.registration.ts`].map((file) =>
+        [
+          `${owner}/package.json`,
+          `${owner}/vertical.manifest.ts`,
+          `${owner}/vertical.registration.ts`,
+          SHARED_CONTRACTS_PACKAGE_JSON_PATH,
+          'packages/shared-contracts/src/external-identity-client.ts',
+        ].map((file) =>
           Effect.promise(() => readFile(path.join(root, file), 'utf-8')).pipe(
             Effect.map((source) => [file, source] as const),
           ),
@@ -6406,6 +6412,12 @@ for (const [subpath, publicBinding] of [
 const makeActualCustomerContextAggregateFixture = Effect.fn(function* actualCustomerContextAggregateFixture() {
   const root = yield* makePortalPublicRoleFixture();
   const workspace = path.resolve(import.meta.dirname, '../..');
+  const identityClient = 'packages/shared-contracts/src/external-identity-client.ts';
+  yield* write(
+    root,
+    identityClient,
+    yield* Effect.promise(() => readFile(path.join(workspace, identityClient), 'utf-8')),
+  );
   for (const folder of [
     CUSTOMER_CONTEXT_VERTICAL_PATH,
     'packages/customer-market-retirement-contracts',

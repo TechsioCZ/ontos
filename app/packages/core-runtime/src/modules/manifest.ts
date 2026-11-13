@@ -650,6 +650,18 @@ const validateSearchDescriptorReferences = (
   }
 };
 
+/** The default state is a supported one, supported states are distinct, and `installsWith` names other modules once. */
+const validateActivationDeclaration = (moduleId: string, activation: OntosModuleActivation): void => {
+  if (!activation.supportedStates.includes(activation.defaultState)) {
+    throw invalidManifest('activation defaultState must be included in supportedStates');
+  }
+  assertUnique(activation.supportedStates, 'activation state');
+  const installsWithProblem = installsWithIssue(moduleId, activation.installsWith);
+  if (installsWithProblem !== undefined) {
+    throw invalidManifest(installsWithProblem);
+  }
+};
+
 /**
  * Defines the owner-authored contract. Executable values remain direct references in this
  * in-process value and are never part of the serializable deployment contract.
@@ -663,14 +675,7 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   if (input.module.kind !== 'business_module') {
     throw invalidManifest('V0 MicroVertical deployments may define only one business_module');
   }
-  if (!input.activation.supportedStates.includes(input.activation.defaultState)) {
-    throw invalidManifest('activation defaultState must be included in supportedStates');
-  }
-  assertUnique(input.activation.supportedStates, 'activation state');
-  const installsWithProblem = installsWithIssue(input.module.id, input.activation.installsWith);
-  if (installsWithProblem !== undefined) {
-    throw invalidManifest(installsWithProblem);
-  }
+  validateActivationDeclaration(input.module.id, input.activation);
   const originatorActions = (input.originatorActions ?? []).map((key) => exactDecode(OntosModuleIdSchema, key));
   assertUnique(originatorActions, 'originator Action key');
   const registeredWorkloadCalls =

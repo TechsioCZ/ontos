@@ -181,8 +181,9 @@ const RefusalSchema = Schema.Struct({
   status: Schema.Number,
   type: Schema.optionalKey(Schema.String),
 });
-const refusalOf = (failure: unknown) =>
-  Option.match(Schema.decodeUnknownOption(RefusalSchema)(failure), {
+const decodeRefusal = Schema.decodeUnknownOption(RefusalSchema);
+const refusalOf = (refusal: Option.Option<typeof RefusalSchema.Type>) =>
+  Option.match(refusal, {
     onNone: () => 'refused (no status)',
     onSome: ({ reason, status, type }) =>
       [String(status), reason, type === undefined ? undefined : `(${type})`]
@@ -191,7 +192,7 @@ const refusalOf = (failure: unknown) =>
   });
 /** What one call came to: `onSuccess` of its answer, or the status and reason code it was refused with. */
 const outcomeOf = <A, E>(result: Result.Result<A, E>, onSuccess: (answer: A) => string) =>
-  Result.match(result, { onFailure: (failure) => `refused ${refusalOf(failure)}`, onSuccess });
+  Result.match(result, { onFailure: (failure) => `refused ${refusalOf(decodeRefusal(failure))}`, onSuccess });
 
 /** Publishes the checked-in authorization catalog, so every Tenant pins the release of every module. */
 const publishCatalogRelease = Effect.fn('VatRealShell.publishCatalogRelease')(function* publishCatalogRelease(
@@ -632,7 +633,7 @@ const seedTax = Effect.fn('VatRealShell.seedTax')(function* seedTax(
       ),
       Effect.mapError((cause) => ({
         _tag: 'TaxCallRefused' as const,
-        refusal: { _tag: 'Conflict' as const, detail: refusalOf(cause) },
+        refusal: { _tag: 'Conflict' as const, detail: refusalOf(decodeRefusal(cause)) },
       })),
     );
   const correlation = 'vat-real-shell-seed';
@@ -724,6 +725,10 @@ const interestingLines = (diagnostics: readonly Redacted.Redacted[]) =>
 const ratesOf = (records: { readonly taxRates?: readonly { readonly code: string; readonly ratePercent: number }[] }) =>
   (records.taxRates ?? []).map((rate) => `${rate.code} ${String(rate.ratePercent)} %`).join(', ');
 
+/** Where the staff read's rates came from (`none` when it names no source). */
+const ratesSourceOf = (records: { readonly taxRatesSource?: Option.Option<string> }) =>
+  Option.getOrElse(records.taxRatesSource ?? Option.none(), () => 'none');
+
 /**
  * A fresh Merchandise process on its topology port (so the release's backend address still holds), knowing nothing of
  * Tax yet. The previous one may still be letting go of the port: the start is retried a few times.
@@ -789,8 +794,8 @@ const staffRead = Effect.fn('VatRealShell.staffRead')(function* staffRead(
       decisions,
       outcome:
         after === before
-          ? `rates not refreshed (${records.taxRatesSource ?? 'none'})`
-          : `refreshed from ${records.taxRatesSource ?? 'none'}: ${ratesOf(records)}`,
+          ? `rates not refreshed (${ratesSourceOf(records)})`
+          : `refreshed from ${ratesSourceOf(records)}: ${ratesOf(records)}`,
       persona,
       route: 'session → Merchandise staff read → Shell delegated issuance (Merchandise key) → Tax rate reads',
       shell: after === before ? 'not issued (see Merchandise log)' : 'issued',
@@ -1033,7 +1038,7 @@ it.live(
               expect([persona, read.after === read.before, read.records.taxRatesSource]).toEqual([
                 persona,
                 false,
-                'TAX',
+                Option.some('TAX'),
               ]);
               expect(read.outcome.decisions.length).toBeGreaterThan(0);
               expect(

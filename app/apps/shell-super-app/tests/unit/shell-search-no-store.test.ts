@@ -28,6 +28,7 @@ import { ShellAuthenticationApi } from '../../shared/browser-api.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { makeAuthenticationServiceDouble } from '../support/impersonation-service-doubles.ts';
+import { tenantModuleTargetTestCarrier } from '../support/tenant-module-target-carrier.ts';
 
 const principal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
   authBindingId: '40000000-0000-4000-8000-000000000001',
@@ -80,7 +81,7 @@ const searchHttpResponse = Effect.fn('test.searchNoStoreResponse')(function* sea
     Layer.succeed(ContextAccess, makeContextAccessDouble('allowed')),
     Layer.mock(LegalEntityContext, {}),
     Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
-    Layer.mock(ShellGovernedReads, { search }),
+    Layer.mock(ShellGovernedReads, { search, tenantModuleTargetCarrier: tenantModuleTargetTestCarrier }),
   );
   const server = yield* Effect.acquireRelease(
     Effect.sync(() =>

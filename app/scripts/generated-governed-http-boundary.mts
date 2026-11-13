@@ -4602,6 +4602,8 @@ export const hasGeneratedActionHttpRunnerBinding = (source: string, layer: strin
 };
 
 const hasCompleteGeneratedActionHttpSeam = (input: {
+  /** Demo-only exceptions 1 and 3: an owner's proven conditional Action mount (`hasOriginalConditionalActionMount`). */
+  readonly additionalMount?: (layer: string, actionFile: string) => boolean;
   readonly deploymentAppId: string;
   readonly handlerRoot: string;
   readonly manifest: string;
@@ -4691,7 +4693,9 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
           `\\b${escapedLayerValue}\\.pipe\\(\\s*GovernedReadLayer\\.provide\\(governedActionRuntimeLive\\),?\\s*\\),`,
           'gu',
         ),
-      ) || hasNativeHttpActionMount(input.handlerRoot, layerValue),
+      ) ||
+        hasNativeHttpActionMount(input.handlerRoot, layerValue) ||
+        input.additionalMount?.(layerValue, `${input.verticalPath}/src/actions/${slug}.action.ts`) === true,
       hasGeneratedActionClientPublication(clientRoot, slug, clientImport),
       slotHasExactlyOneCodeMatch(
         input.manifest,
@@ -5618,6 +5622,13 @@ export const hasCompleteGeneratedModuleApiSeam = (
     readsAreComplete &&
     approvalPublished &&
     hasCompleteGeneratedActionHttpSeam({
+      additionalMount: (layer, actionFile) =>
+        hasOriginalConditionalActionMount(
+          { ownerPath: inputs.verticalPath, rootFile: `${inputs.verticalPath}/api/index.ts`, sources },
+          layer,
+          actionFile,
+          diagnostics,
+        ),
       deploymentAppId,
       handlerRoot: inputs.handlerRoot,
       manifest: inputs.manifest,

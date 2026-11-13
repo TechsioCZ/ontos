@@ -43,6 +43,7 @@ import type { ResolveModuleTargetPayload } from '../../shared/browser-api.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { makeAuthenticationServiceDouble } from '../support/impersonation-service-doubles.ts';
+import { tenantModuleTargetTestCarrier } from '../support/tenant-module-target-carrier.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
@@ -529,7 +530,11 @@ const dispatch = Effect.fn('TenantModuleTarget.dispatch')(function* dispatch(
           HttpServerRequest.fromWeb(new Request('https://shell.test/shell/module-target', { method: 'POST' })),
         ),
         Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
-        Layer.mock(ShellGovernedReads, { moduleTarget, tenantModuleTarget }),
+        Layer.mock(ShellGovernedReads, {
+          moduleTarget,
+          tenantModuleTarget,
+          tenantModuleTargetCarrier: tenantModuleTargetTestCarrier,
+        }),
       ),
     ),
     Effect.exit,
@@ -600,7 +605,11 @@ describe('resolveModuleTarget dispatch', () => {
               HttpServerRequest.fromWeb(new Request('https://shell.test/shell/module-target', { method: 'POST' })),
             ),
             Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
-            Layer.mock(ShellGovernedReads, { moduleTarget, tenantModuleTarget }),
+            Layer.mock(ShellGovernedReads, {
+              moduleTarget,
+              tenantModuleTarget,
+              tenantModuleTargetCarrier: tenantModuleTargetTestCarrier,
+            }),
           ),
         ),
         Effect.exit,

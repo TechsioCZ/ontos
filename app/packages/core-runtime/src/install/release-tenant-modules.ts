@@ -7,7 +7,10 @@ import type { TenantProjectionWrite } from '../access/intent/projection-writer.t
 import type { AccessProjectionWriteError } from '../access/intent/projection-write-error.ts';
 import { RELEASE_ACTOR_DISPLAY_NAME, releaseActorId } from '../access/release/activation.ts';
 import { tenantServesPeople } from '../auth/module-credentials.ts';
-import { makeSystemPrincipalContextResolver, registerSystemWorkload } from '../auth/system-principal-context.ts';
+import {
+  registerSystemWorkload,
+  SystemPrincipalContextResolverFromCoreDatabase,
+} from '../auth/system-principal-context.ts';
 import { preserveSystemPrincipalContextTrust } from '../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../db/client.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
@@ -392,11 +395,11 @@ const releaseScopeOf = Effect.fn('ReleaseTenantModules.releaseScope')(function* 
   runReference: string,
 ) {
   const releases = yield* AccessReleaseStore;
-  const { executor } = yield* CoreDatabase;
+  const resolver = yield* SystemPrincipalContextResolverFromCoreDatabase;
   yield* releases
     .ensureReleaseActor({ displayName: RELEASE_ACTOR_DISPLAY_NAME, principalId: releaseActorId(tenantId), tenantId })
     .pipe(Effect.mapError((cause) => refusal(`${cause.code}: ${cause.reason}`, cause)));
-  const resolved = yield* makeSystemPrincipalContextResolver({ executor })
+  const resolved = yield* resolver
     .resolve({
       principalId: releaseActorId(tenantId),
       registration: RELEASE_MODULE_INSTALLATION_JOB,

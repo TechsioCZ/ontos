@@ -76,6 +76,7 @@ import {
   Effect,
   FileSystem,
   Layer,
+  Match,
   Option,
   Predicate,
   Redacted,
@@ -369,13 +370,14 @@ const delegationHandler = (input: {
     const payload = yield* request.json.pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(GatewayDelegatedContextRequestSchema)),
     );
-    if (payload.subject._tag !== 'Assertion' || payload.audience !== taxMarker.appId) {
+    const sourceAssertion = Match.value(payload.subject).pipe(
+      Match.tag('Assertion', (subject) => Option.some(subject.sourceAssertion)),
+      Match.orElse(() => Option.none()),
+    );
+    if (Option.isNone(sourceAssertion) || payload.audience !== taxMarker.appId) {
       return forbidden();
     }
-    const principal = yield* input.gateway.sourcePrincipal(
-      Redacted.value(payload.subject.sourceAssertion),
-      caller.module.appId,
-    );
+    const principal = yield* input.gateway.sourcePrincipal(Redacted.value(sourceAssertion.value), caller.module.appId);
     const installed = yield* input.admin.unsafe<{ readonly module_key: string }>(
       "select module_key from core.tenant_module_states where tenant_id = $1 and state = 'active'",
       [principal.tenantId],
@@ -723,7 +725,7 @@ const builtMerchandiseReadsTax = Effect.fn('VatDeploy.builtMerchandise')(functio
   expect(input.issued.slice(issuedBefore).length).toBeGreaterThan(0);
   expect(input.issued.slice(issuedBefore).every((app) => app === 'merchandise')).toBe(true);
   const records = yield* staffRead;
-  expect([records.sellerVatRegime, records.taxRatesSource]).toEqual(['VAT_PAYER', 'TAX']);
+  expect([records.sellerVatRegime, records.taxRatesSource]).toEqual([Option.some('VAT_PAYER'), Option.some('TAX')]);
   expect(records.taxRates?.map((rate) => [rate.code, rate.ratePercent])).toEqual([
     [STANDARD, 21],
     ['cz.vat.reduced', 12],
@@ -880,9 +882,12 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
     );
     const order = Predicate.hasProperty(result, 'storefrontOrder') ? result.storefrontOrder : undefined;
     return {
-      order: Schema.encodeSync(Schema.UndefinedOr(StorefrontOrderResultSchema))(
-        Schema.decodeUnknownSync(Schema.UndefinedOr(StorefrontOrderResultSchema))(order),
-      ),
+      order:
+        order === undefined
+          ? undefined
+          : Schema.encodeSync(StorefrontOrderResultSchema)(
+              Schema.decodeUnknownSync(StorefrontOrderResultSchema)(order),
+            ),
       prepared,
     };
   });
@@ -990,7 +995,7 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
         .pipe(Effect.provide(native.layer), Effect.provideService(AccessDecisionGate, allowAll.accessDecision)),
     ),
   );
-  expect([synced.sellerVatRegime, synced.taxRatesSource]).toEqual(['VAT_PAYER', 'TAX']);
+  expect([synced.sellerVatRegime, synced.taxRatesSource]).toEqual([Option.some('VAT_PAYER'), Option.some('TAX')]);
   expect(synced.taxRates?.map((rate) => [rate.code, rate.ratePercent, DateTime.formatIso(rate.effectiveFrom)])).toEqual(
     [
       [STANDARD, 21, TAX_BASELINE_EFFECTIVE_FROM],

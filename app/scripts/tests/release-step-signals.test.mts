@@ -1,10 +1,11 @@
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { createServer } from 'node:net';
-import type { Server } from 'node:net';
 import { fileURLToPath } from 'node:url';
 
-import { Deferred, Effect, Schema } from 'effect';
+import { NodeSocketServer } from '@effect/platform-node';
+import { Deferred, Effect, Match, Stream } from 'effect';
+import { NetAddress } from 'effect/net';
+import { Socket } from 'effect/socket';
 import { expect, it } from 'effect-rstest';
 
 import { accessReleaseActivationArguments } from '../access-release-activation-child.mts';
@@ -17,22 +18,20 @@ import { accessReleaseActivationArguments } from '../access-release-activation-c
  * moment it connects.
  */
 const appDirectory = fileURLToPath(new URL('../../', import.meta.url));
-const PortSchema = Schema.Struct({ port: Schema.Number });
 const PEM = '-----BEGIN CERTIFICATE-----\nMIIBsilent\n-----END CERTIFICATE-----';
 
 /** A server that accepts and never answers; `connected` completes on the first connection. */
 const silentServer = Effect.gen(function* silentServerEffect() {
   const connected = yield* Deferred.make<boolean>();
-  const server = yield* Effect.acquireRelease(
-    Effect.callback<Server>((resume) => {
-      const listening = createServer(() => {
-        Deferred.doneUnsafe(connected, Effect.succeed(true));
-      });
-      listening.listen(0, '127.0.0.1', () => resume(Effect.succeed(listening)));
-    }),
-    (listening) => Effect.sync(() => listening.close()),
+  const server = yield* NodeSocketServer.make({ host: '127.0.0.1', port: 0 });
+  // Each handler drains its socket, so the listener owns every accepted connection and can close.
+  yield* server
+    .run((socket) => Deferred.succeed(connected, true).pipe(Effect.andThen(Stream.runDrain(Socket.toStream(socket)))))
+    .pipe(Effect.forkScoped);
+  const { port } = yield* Match.value(server.address).pipe(
+    Match.when(NetAddress.isInetAddress, (inetAddress) => Effect.succeed(inetAddress)),
+    Match.orElse(() => Effect.die('The silent listener did not bind to TCP')),
   );
-  const { port } = yield* Schema.decodeUnknownEffect(PortSchema)(server.address());
   return { connected, port };
 });
 

@@ -237,9 +237,9 @@ export type ActionRecordedRejection =
   | { readonly reasons?: readonly string[]; readonly stage: 'authz' }
   | { readonly policyReasonCode: string; readonly stage: 'policy' };
 
-const RecordedReasonCodesSchema = Schema.Struct({ reasonCodes: ReportableReasonCodesSchema });
-/** The codes a recorded refusal kept, or none when the row predates them or holds anything else. */
-const decodeRecordedReasonCodes = Schema.decodeUnknownOption(RecordedReasonCodesSchema);
+/** Evidence carrying the codes a recorded refusal kept; a row that predates them, or holds anything else, has none. */
+// A guard, not a decoder: published hash routines import this module, so it may only allocate native schemas.
+const hasRecordedReasonCodes = Schema.is(Schema.Struct({ reasonCodes: ReportableReasonCodesSchema }));
 
 /** A refusal's evidence: the denied-audit fields, the Action key and, when it has any, its reportable codes. */
 const rejectionEvidence = (input: RejectPermissionDeniedInput) => {
@@ -701,10 +701,9 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
       .pipe(Effect.mapError((cause) => persistenceFailure('Unable to load the recorded Action rejection', cause)));
     const [rejection] = rows;
     if (rejection?.outcomeStage === 'authz') {
-      const reasons = Option.match(decodeRecordedReasonCodes(rejection.evidence), {
-        onNone: (): readonly string[] => [],
-        onSome: ({ reasonCodes }) => reasonCodes,
-      });
+      const reasons: readonly string[] = hasRecordedReasonCodes(rejection.evidence)
+        ? rejection.evidence.reasonCodes
+        : [];
       return Option.some<ActionRecordedRejection>({ reasons, stage: 'authz' });
     }
     if (rejection?.outcomeStage === 'policy') {

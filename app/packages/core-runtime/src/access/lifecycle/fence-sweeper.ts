@@ -5,7 +5,10 @@ import { AccessReleaseStore } from '../changes/persistence/release-store.ts';
 import { AccessProjectionWriter, isFenceBusy } from '../intent/projection-writer.ts';
 import { RELEASE_ACTOR_DISPLAY_NAME, releaseActorId } from '../release/activation.ts';
 import { tenantServesPeople } from '../../auth/module-credentials.ts';
-import { makeSystemPrincipalContextResolver, registerSystemWorkload } from '../../auth/system-principal-context.ts';
+import {
+  registerSystemWorkload,
+  SystemPrincipalContextResolverFromCoreDatabase,
+} from '../../auth/system-principal-context.ts';
 import { preserveSystemPrincipalContextTrust } from '../../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../../db/client.ts';
 import type { OperationalScope } from '../../operations/context.ts';
@@ -21,7 +24,7 @@ import { ACCESS_FENCE_CLOCK_SKEW_MARGIN, ACCESS_FENCE_PRE_LEASE_IDLE } from './f
  * reconciles a few of them through the one writer under the tenant's platform release actor. A tenant that fails is
  * tried again later, its wait doubling up to a ceiling. With nothing lapsed a tick is that one statement.
  *
- * The host owns the loop and the backoff record (`makeAccessFenceSweepBackoffs`), and provides the writer, the
+ * The host owns the loop and the backoff record (an `AccessFenceSweepBackoffs` Ref), and provides the writer, the
  * release store and the database at its root.
  */
 
@@ -140,11 +143,11 @@ const sweepScopeOf = Effect.fn('AccessFenceSweeper.scope')(function* sweepScopeE
   runReference: string,
 ) {
   const releases = yield* AccessReleaseStore;
-  const { executor } = yield* CoreDatabase;
+  const resolver = yield* SystemPrincipalContextResolverFromCoreDatabase;
   yield* releases
     .ensureReleaseActor({ displayName: RELEASE_ACTOR_DISPLAY_NAME, principalId: releaseActorId(tenantId), tenantId })
     .pipe(Effect.mapError(sweepFailure('the release actor could not be ensured')));
-  const resolved = yield* makeSystemPrincipalContextResolver({ executor })
+  const resolved = yield* resolver
     .resolve({ principalId: releaseActorId(tenantId), registration: ACCESS_FENCE_SWEEP_JOB, runReference, tenantId })
     .pipe(Effect.mapError(sweepFailure('the release actor could not act')));
   return preserveSystemPrincipalContextTrust(resolved, {
