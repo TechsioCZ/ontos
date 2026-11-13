@@ -1483,7 +1483,25 @@ const readRuntimeFromDependencies = <
             tenantId: TenantIdSchema.make(readScope.tenantId),
           })
           .pipe(Effect.option);
-        return Option.contains(Option.flatten(kind), 'human');
+        const resolved = Option.flatten(kind);
+        if (Option.contains(resolved, 'human')) {
+          return true;
+        }
+        // An agent on its credential-bound connection is in the company exactly when the v2 gate lets it select it:
+        // the agent itself and the operator its connection names must both act there. It holds no legacy tuple.
+        const { legalEntityId } = readScope;
+        if (
+          !Option.contains(resolved, 'agent') ||
+          accessDecision === undefined ||
+          legalEntityId === undefined ||
+          readScope.connection?.agentConnection === undefined
+        ) {
+          return false;
+        }
+        const selectable = yield* accessDecision
+          .selectableLegalEntities({ now: yield* DateTime.nowAsDate, scope: readScope })
+          .pipe(Effect.option);
+        return Option.exists(selectable, (companies) => companies.some((company) => company === legalEntityId));
       },
     );
 
