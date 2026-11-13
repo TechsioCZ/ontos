@@ -171,64 +171,66 @@ const admitAssertionSubject = Effect.fn('GatewayDelegation.admitAssertion')(func
  * scope resolver below admits that company only while the workload holds an active binding in the tenant and the
  * company is an active company of it (O73).
  */
-const admitOriginatorSubject = Effect.fn('GatewayDelegation.admitOriginator')(function* admitOriginatorSubject(input: {
-  readonly actionInvocationId: string;
-  readonly legalEntityId: string | undefined;
-  /** The company of the Outbox message the work handles, as its caller received it from the Outbox. */
-  readonly messageLegalEntityId: string | undefined;
-  readonly now: number;
-  readonly originatorActions: readonly string[];
-  readonly tenantId: string;
-}) {
-  const evidence = yield* GatewayOriginatorEvidence;
-  const recorded = yield* evidence.load({
-    actionInvocationId: input.actionInvocationId,
-    originatorActions: input.originatorActions,
-    tenantId: input.tenantId,
-  });
-  const recordedCompany = recorded.principal.legalEntityId;
-  if (input.messageLegalEntityId !== undefined) {
-    // The work belongs to the message's company: the context names exactly that company, once Core's own record shows
-    // the invocation published in it, and no other company may be named beside it.
-    if (
-      (recordedCompany !== undefined && recordedCompany !== input.messageLegalEntityId) ||
-      (input.legalEntityId !== undefined && input.legalEntityId !== input.messageLegalEntityId)
-    ) {
-      return yield* delegationForbidden('originator_company_mismatch')();
-    }
-    const published = yield* evidence.messageCompanyRecorded({
+export const admitOriginatorSubject = Effect.fn('GatewayDelegation.admitOriginator')(
+  function* admitOriginatorSubject(input: {
+    readonly actionInvocationId: string;
+    readonly legalEntityId: string | undefined;
+    /** The company of the Outbox message the work handles, as its caller received it from the Outbox. */
+    readonly messageLegalEntityId: string | undefined;
+    readonly now: number;
+    readonly originatorActions: readonly string[];
+    readonly tenantId: string;
+  }) {
+    const evidence = yield* GatewayOriginatorEvidence;
+    const recorded = yield* evidence.load({
       actionInvocationId: input.actionInvocationId,
-      legalEntityId: input.messageLegalEntityId,
+      originatorActions: input.originatorActions,
       tenantId: input.tenantId,
     });
-    if (!published) {
-      return yield* delegationForbidden('originator_company_not_recorded')();
+    const recordedCompany = recorded.principal.legalEntityId;
+    if (input.messageLegalEntityId !== undefined) {
+      // The work belongs to the message's company: the context names exactly that company, once Core's own record shows
+      // the invocation published in it, and no other company may be named beside it.
+      if (
+        (recordedCompany !== undefined && recordedCompany !== input.messageLegalEntityId) ||
+        (input.legalEntityId !== undefined && input.legalEntityId !== input.messageLegalEntityId)
+      ) {
+        return yield* delegationForbidden('originator_company_mismatch')();
+      }
+      const published = yield* evidence.messageCompanyRecorded({
+        actionInvocationId: input.actionInvocationId,
+        legalEntityId: input.messageLegalEntityId,
+        tenantId: input.tenantId,
+      });
+      if (!published) {
+        return yield* delegationForbidden('originator_company_not_recorded')();
+      }
+      const bound: TrustedPrincipalContext = { ...recorded.principal, legalEntityId: input.messageLegalEntityId };
+      return {
+        expiresAtEpochSeconds: input.now + GATEWAY_ASSERTION_TTL_SECONDS,
+        principal: bound,
+        scopePrincipal: bound,
+        sourceKey: input.actionInvocationId,
+      };
     }
-    const bound: TrustedPrincipalContext = { ...recorded.principal, legalEntityId: input.messageLegalEntityId };
+    if (
+      input.legalEntityId !== undefined &&
+      (recordedCompany === undefined ? !recorded.workload : recordedCompany !== input.legalEntityId)
+    ) {
+      return yield* delegationForbidden('originator_not_admitted')();
+    }
+    const principal: TrustedPrincipalContext =
+      input.legalEntityId === undefined
+        ? recorded.principal
+        : { ...recorded.principal, legalEntityId: input.legalEntityId };
     return {
       expiresAtEpochSeconds: input.now + GATEWAY_ASSERTION_TTL_SECONDS,
-      principal: bound,
-      scopePrincipal: bound,
+      principal,
+      scopePrincipal: principal,
       sourceKey: input.actionInvocationId,
     };
-  }
-  if (
-    input.legalEntityId !== undefined &&
-    (recordedCompany === undefined ? !recorded.workload : recordedCompany !== input.legalEntityId)
-  ) {
-    return yield* delegationForbidden('originator_not_admitted')();
-  }
-  const principal: TrustedPrincipalContext =
-    input.legalEntityId === undefined
-      ? recorded.principal
-      : { ...recorded.principal, legalEntityId: input.legalEntityId };
-  return {
-    expiresAtEpochSeconds: input.now + GATEWAY_ASSERTION_TTL_SECONDS,
-    principal,
-    scopePrincipal: principal,
-    sourceKey: input.actionInvocationId,
-  };
-});
+  },
+);
 
 const exchangeFingerprint = (input: {
   readonly actor: GatewayActorClaim;
