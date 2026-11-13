@@ -1470,9 +1470,10 @@ const readRuntimeFromDependencies = <
      * A person's selected-company access is the scope resolution's own gate question (O28): this read resolved its
      * scope, and resolution refuses every company the person may not select. A v2 person holds no tuple of the
      * retired `legal_entity#access` relation, so it is not asked for them. Only a principal Core reads as human is
-     * answered here, and an agent only for its own proposal queue. An agent on any other legacy read is refused here,
-     * without asking the retired relation (a v2 graph has no such definition to deny it); a workload and an unreadable
-     * kind keep the legacy relation check.
+     * answered here, and an agent only for its own proposal queue. An agent on any other legacy read is refused here
+     * instead of asking the retired relation: v2 writes no legacy tuple for an agent, so that question is a foregone
+     * denial, and asking it would make an agent's refusal depend on a legacy relation this product no longer writes.
+     * A workload and an unreadable kind keep the legacy relation check.
      */
     const selectedCompanyDecision = Effect.fn('ReadRuntime.selectedCompanyDecision')(
       function* selectedCompanyDecisionEffect(

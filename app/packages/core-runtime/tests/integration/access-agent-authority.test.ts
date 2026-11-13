@@ -69,11 +69,16 @@ import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identi
 
 /*
  * An agent on authorization v2, end to end on the real stores, the real projection and the real gate over a
- * SpiceDB that carries exactly the schema a v2 stage runs (`ONTOS_SPICEDB_SCHEMA`, no legacy definition of its own):
+ * SpiceDB carrying only the v2 definitions of `ONTOS_SPICEDB_SCHEMA` (stricter than stage, which keeps the pruned
+ * legacy definitions but never a legacy tuple, so nothing in an agent's path can lean on one):
  * the owner admits the agent to the company and assigns it a role through the People commands, the operator opens
  * the agent's credential-bound connection, and the gate decides each request AS the agent on that connection. Every
  * revocation path that Core owns is asked again on the next decision.
  */
+/** The v2 part of the schema alone: a graph without the legacy definitions cannot answer a legacy question at all. */
+const V2_MARKER = '// Authorization v2 engine';
+const V2_ONLY_SCHEMA = `use expiration\n\n${ONTOS_SPICEDB_SCHEMA.slice(ONTOS_SPICEDB_SCHEMA.indexOf(V2_MARKER))}`;
+
 const uid = (value: number) => `00000000-0000-4000-8000-${value.toString().padStart(12, '0')}`;
 
 const MODULE = 'desk.tasks';
@@ -302,12 +307,13 @@ const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value
       maxConnections: 3,
     });
     const executor = yield* makeTestDatabaseFromClient(runtime, coreRelations);
-    // Exactly the schema a v2 stage runs: the cutover writes ONTOS_SPICEDB_SCHEMA and nothing else.
+    // Only the v2 definitions: nothing in an agent's path may lean on a legacy definition that denies by absence.
+    expect(ONTOS_SPICEDB_SCHEMA.indexOf(V2_MARKER)).toBeGreaterThan(0);
     yield* Effect.acquireUseRelease(
       Effect.sync(() => newSpiceDbGrpcClient(configuration)),
       (client) =>
         Effect.tryPromise(() =>
-          client.promises.writeSchema(v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA })),
+          client.promises.writeSchema(v1.WriteSchemaRequest.create({ schema: V2_ONLY_SCHEMA })),
         ).pipe(Effect.orDie),
       (client) => Effect.sync(() => client.close()),
     );

@@ -2024,7 +2024,7 @@ it.effect(
       expect(deniedByLegacyRelation(run.outcome)).toBe(true);
       expect(run.asked).toEqual([selectedCompanyId]);
     }
-    // An agent holds nothing on the retired relation, and a v2 graph has no definition to ask: it is refused here.
+    // An agent holds nothing on the retired relation and v2 never writes one: it is refused without asking at all.
     const agent = yield* runSelectedCompanyRead({ kind: 'legal_entity' }, 'agent');
     expect(deniedByLegacyRelation(agent.outcome)).toBe(true);
     expect(agent.asked).toEqual([]);
@@ -2081,7 +2081,7 @@ it.effect(
     expect(queue.outcome).toMatchObject({ _tag: 'Success' });
     expect(queue.asked).toEqual([]);
     // The actors and profiles reads refuse the agent even in a company it may select, and never ask the retired
-    // relation: a v2-only graph (stage's) has no definition that could answer it.
+    // relation: no agent ever holds a tuple of it on v2.
     for (const readKey of ['core.identity.agent-activity-actors', 'core.identity.agent-profiles']) {
       const refused = yield* runAgentLegacyRead(readKey, [selectedCompanyId]);
       expect(deniedByLegacyRelation(refused.outcome)).toBe(true);
