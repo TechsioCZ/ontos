@@ -246,6 +246,8 @@ const fixture = (input: FixtureInput = {}) => {
   const loader: TenantIntentLoaderService = {
     loadAuthorityCells: () => Effect.succeed([]),
     loadAuthorityCellsMany: (_scope, queries) => Effect.succeed(queries.map(() => [])),
+    // One fixture tenant: every company a request names is its own.
+    loadCompanyOwnership: () => Effect.succeed(true),
     loadConfigureBases: () => Effect.succeed(input.bases ?? [{ _tag: 'Owner' }]),
     loadConnection: () => Effect.succeed(Option.none()),
     loadProjection: () => Effect.succeed(intent(assignments)),

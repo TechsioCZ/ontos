@@ -370,6 +370,8 @@ const fixture = (input: FixtureInput = {}) => {
   const loader: TenantIntentLoaderService = {
     loadAuthorityCells: () => Effect.succeed([]),
     loadAuthorityCellsMany: (_scope, queries) => Effect.succeed(queries.map(() => [])),
+    // One fixture tenant: every company a request names is its own.
+    loadCompanyOwnership: () => Effect.succeed(true),
     // Authority comes from the gate, never from the loader's membership reader (O88).
     loadConfigureBases: unusedCall,
     loadConnection: () => Effect.succeed(Option.none()),
