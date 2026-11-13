@@ -137,6 +137,33 @@ it.live('a deploy poll that meets two 502s asks again and reports the deploy', (
   }),
 );
 
+it.live(
+  'every step line carries a UTC timestamp with milliseconds and the service, and never the token or upload URL',
+  () =>
+    Effect.gen(function* stepLines() {
+      const result = yield* runPush(() => processState('FINISHED'), { PUSH_SERVICE_NAME: 'app' });
+      const lines = result.stdout.trim().split('\n');
+      for (const line of lines) {
+        expect(line).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z \[app\] /u);
+      }
+      const steps = lines.map((line) => line.replace(/^\S+ \[app\] /u, '').replaceAll(/\d+(?:\.\d+)?/gu, 'N'));
+      expect(steps).toEqual([
+        'package: NK (N bytes)',
+        'app version create started (attempt N)',
+        'app version create ended (attempt N): version version-N',
+        'upload started (attempt N, N bytes)',
+        'upload ended (attempt N, N bytes): uploaded in Ns (attempt N)',
+        'build and deploy request started',
+        'build and deploy request ended',
+        'build and deploy process process-N for app version version-N',
+        'process state: FINISHED',
+        'app deployed in Ns',
+      ]);
+      expect(result.stdout).not.toContain('test-token');
+      expect(result.stdout).not.toContain('/upload');
+    }),
+);
+
 it.live('a deploy poll that only ever meets 502s fails once its retry budget is spent', () =>
   Effect.gen(function* persistentGateway() {
     const result = yield* runPush(() => badGateway);
