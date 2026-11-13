@@ -7,6 +7,7 @@ import {
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { GatewayContextV2ClaimsSchema, GatewayTrustedPrincipalContextSchema } from '@app/shared-contracts';
 import type { GatewayTrustedPrincipalContext } from '@app/shared-contracts';
+import { PAYMENT_GATEWAY_RELAY_PATH_PREFIX } from '@app/payment/payment-gateway-relay';
 import { SYMMY_REST_PREFIX } from '@app/shared-contracts/symmy/route-catalog';
 import { jwtVerify } from 'jose';
 import { NodeSocketServer } from '@effect/platform-node';
@@ -110,6 +111,8 @@ interface PackagedApplicationInput {
     readonly privateJwk?: Redacted.Redacted;
     readonly publicJwks: string;
   };
+  /** Shell only: the per-tenant relay keys of the Payment notification relay (#1157). */
+  readonly paymentNotificationRelayCredentials?: Redacted.Redacted;
   readonly port?: number;
   readonly relativeDirectory: string;
   readonly relaySource?: { readonly apiKey: Redacted.Redacted; readonly shellBaseUrl: string };
@@ -167,6 +170,11 @@ const makePackagedEnvironment = Effect.fn('ServerOwnerRelayNative.makePackagedEn
       if (input.gateway.privateJwk !== undefined) {
         Object.assign(environment, { ONTOS_GATEWAY_PRIVATE_JWK: Redacted.value(input.gateway.privateJwk) });
       }
+    }
+    if (input.paymentNotificationRelayCredentials !== undefined) {
+      Object.assign(environment, {
+        ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS: Redacted.value(input.paymentNotificationRelayCredentials),
+      });
     }
     if (input.relaySource !== undefined) {
       Object.assign(environment, {
@@ -447,14 +455,19 @@ export const allocateLoopbackPort = Effect.fn('ServerOwnerRelayNative.allocateLo
   },
 );
 
-/** Serve the actual local Node compiler output without claiming a promotable release envelope. */
+/**
+ * Serve the actual local Node compiler output without claiming a promotable release envelope. The Payment
+ * relay mount is always compiled in; the internal Symmy mount is required unless `internalSymmyIngress` is false.
+ */
 export const startCompiledSymmyShell = Effect.fn('ServerOwnerRelayNative.startCompiledSymmyShell')(
   function* startCompiledSymmyShell(
     input: PackagedApplicationInput & {
       readonly appId: typeof SHELL_APP_ID;
       readonly authentication: NonNullable<PackagedApplicationInput['authentication']>;
+      readonly internalSymmyIngress?: false;
     },
   ) {
+    const symmyIngress = input.internalSymmyIngress !== false;
     const filesystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const directory = path.resolve(input.relativeDirectory);
@@ -463,7 +476,10 @@ export const startCompiledSymmyShell = Effect.fn('ServerOwnerRelayNative.startCo
       .readFileString(path.join(dist, 'route.json'))
       .pipe(Effect.flatMap(Schema.decodeEffect(ApiRoutesDocumentSchema)));
     const prefixes = routes.filter(({ isApi }) => isApi === true).map(({ urlPath }) => urlPath);
-    if (prefixes[0] !== '/shell-super-app-api' || !prefixes.includes(SYMMY_REST_PREFIX)) {
+    if (prefixes[0] !== '/shell-super-app-api' || !prefixes.includes(PAYMENT_GATEWAY_RELAY_PATH_PREFIX)) {
+      return yield* new PackagedOwnerStartupError({ reason: 'Compiled Shell lacks the Payment gateway relay mount' });
+    }
+    if (symmyIngress && !prefixes.includes(SYMMY_REST_PREFIX)) {
       return yield* new PackagedOwnerStartupError({ reason: 'Compiled Shell lacks the internal Symmy Node mount' });
     }
     const contractSchema = Schema.fromJsonString(OntosShellRuntimeContractSchema);
@@ -479,7 +495,7 @@ export const startCompiledSymmyShell = Effect.fn('ServerOwnerRelayNative.startCo
     const environment = yield* makePackagedEnvironment(input);
     const child = yield* ChildProcess.make('mise', ['exec', '--', 'pnpm', 'serve'], {
       cwd: directory,
-      env: { ...environment, ONTOS_INTERNAL_SYMMY_INGRESS: '1' },
+      env: symmyIngress ? { ...environment, ONTOS_INTERNAL_SYMMY_INGRESS: '1' } : environment,
       extendEnv: false,
       forceKillAfter: '3 seconds',
       stderr: 'pipe',

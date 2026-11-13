@@ -19,7 +19,7 @@ import {
   SETTLE_POLL,
   StripeCheckoutSessionRefSchema,
   StripeRefundRefSchema,
-  announce,
+  announceHostedPage,
   cancelExpected,
   cancelRequestOf,
   collectExpected,
@@ -51,6 +51,13 @@ import type { SandboxOperation, SandboxScenarioInput, StripeSandboxCredentials }
  *
  * The refund scenario confirms its PaymentIntent through the API with the documented test PaymentMethod
  * `pm_card_visa`, so only the hosted Checkout scenario needs a human (test card 4242 4242 4242 4242).
+ *
+ * Account route only (plan D-P6), for the three variables above:
+ * 1. Create or use a Stripe account and open its sandbox in the Dashboard.
+ * 2. API keys (sandbox): copy the `sk_test_` secret key, or a restricted `rk_test_` key with the scopes above.
+ * 3. `ONTOS_C17_SANDBOX_STRIPE_ACCOUNT_ID`: the `acct_` value from Settings → Account, or `GET /v1/account` with the key.
+ * 4. `ONTOS_C17_SANDBOX_STRIPE_WEBHOOK_SECRET`: `stripe listen --print-secret` on an authenticated Stripe CLI (`stripe login`).
+ * Do not use the anonymous `stripe sandbox create` keys (`rkcs_test_`): the adapter accepts only `sk_test_` and `rk_test_`.
  */
 
 const COLLECT_AMOUNT = { amountMinor: 10_000, currency: 'CZK' } as const;
@@ -201,11 +208,15 @@ describe('#1159 Stripe sandbox conformance', () => {
       stripe(ctx, (input) =>
         Effect.gen(function* hostedPayment() {
           const created = yield* createSession(input);
-          yield* announce([
-            'Stripe hosted payment step (human): open this URL and pay with test card 4242 4242 4242 4242,',
-            `any future expiry and any CVC. Polling lookup for up to ${HOSTED_PAYMENT_WAIT}.`,
-            created.redirectUrl,
-          ]);
+          yield* announceHostedPage({
+            lines: [
+              'Stripe hosted payment step (human): open this URL and pay with test card 4242 4242 4242 4242,',
+              `any future expiry and any CVC. Polling lookup for up to ${HOSTED_PAYMENT_WAIT}.`,
+            ],
+            provider: 'STRIPE',
+            scenario: 'hosted-payment',
+            url: created.redirectUrl,
+          });
           const findings = yield* pollUntil(
             lookupCollection(input, created.operation, created.session, created.issuedAt),
             (current) => findingKindFor(current, created.operation.operationId) === 'EFFECT_CONFIRMED',

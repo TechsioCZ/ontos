@@ -159,9 +159,6 @@ export const PaymentGatewayHostMountLive = HttpRouter.middleware(
   { global: true },
 );
 
-const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
-  Effect.succeed(HttpServerResponse.setHeader(response, 'cache-control', 'no-store')),
-);
 /**
  * Shell's API key resolution adds an API key challenge to a failed verification. A PSP never holds that
  * key, so a notification reply never names an authentication scheme.
@@ -290,7 +287,6 @@ const captureNotification = Effect.fn('PaymentNotificationRelay.capture')(functi
 const relayNotification = Effect.fn('PaymentNotificationRelay.relay')(function* relay(
   notification: ProviderNotification,
 ) {
-  yield* noStore;
   const rawBody = yield* notification.body;
   const apiKey = yield* resolveNotificationRelayCredential(notification.tenantId);
   if (Option.isNone(apiKey)) {
@@ -429,7 +425,6 @@ const requestRecovery = Effect.fn('PaymentReconciliationRelay.requestRecovery')(
   readonly payload: PaymentReconciliationRecoveryPayload;
   readonly routeKey: PaymentRouteAuthorizationInput['routeKey'];
 }) {
-  yield* noStore;
   const relayService = yield* PaymentGatewayRelay;
   const authority = yield* relayService
     .authorize({

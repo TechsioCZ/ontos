@@ -638,7 +638,7 @@ const gopayCollection = Effect.fn('PspGatewayChainTest.gopayCollection')(functio
 });
 
 it.live(
-  '#1156 #1159 L3-14 boundary executor+ledger routines+production GoPay adapter: a GoPay v4 cancel is sent once and decided by the lookup (204 CANCELED confirmed, 409 PAYMENT_METHOD_CHOSEN not effected)',
+  '#1156 #1159 L3-14 boundary executor+ledger routines+production GoPay adapter: a GoPay v4 cancel is sent once and decided by the lookup (204 CANCELED confirmed; 409 PAYMENT_METHOD_CHOSEN or PAID not effected)',
   () =>
     Effect.scoped(
       Effect.gen(function* gopayCancel() {
@@ -720,6 +720,37 @@ it.live(
         expect((yield* dispatchStateOf(harness, chosen.operationId)).pipe(Option.map(([state]) => state))).toEqual(
           Option.some('ACKNOWLEDGED'),
         );
+
+        // (c) 409 because the payment is already paid: the cancel is not effected and the lookup proves the
+        // collection; returning the funds needs its own REFUND.
+        const paid = yield* contactedCollectionFor(harness, binding, GOPAY_AMOUNT);
+        const paidOrder = yield* gopayCollection(harness, paid, credentials);
+        const tooLate = yield* nativeCancellationFor(harness, binding, paid);
+        const tooLateStep = yield* adaptersOver(
+          {
+            [GOPAY_CANCEL]: [respond(409, gopayConflictBody)],
+            [GOPAY_PAYMENT]: [respond(200, gopayPaymentBody({ orderNumber: paidOrder, state: 'PAID' }))],
+            [GOPAY_TOKEN]: [gopayToken],
+          },
+          credentials,
+        );
+        expect(
+          Exit.isSuccess(
+            yield* deliverExecution(harness, tooLate, tooLateStep.adapters).pipe(
+              Effect.provide(credentialConfig(credentials)),
+            ),
+          ),
+        ).toBe(true);
+        expect(tooLateStep.sent.map(({ route }) => route)).toEqual([GOPAY_TOKEN, GOPAY_CANCEL, GOPAY_PAYMENT]);
+        expect((yield* dispatchStateOf(harness, tooLate.operationId)).pipe(Option.map(([state]) => state))).toEqual(
+          Option.some('REJECTED_BEFORE_EFFECT'),
+        );
+        expect(yield* evidenceFor(harness, tooLate.paymentId, tooLate.operationId)).toEqual([
+          ['CANCEL_NOT_EFFECTED', 'PENDING_SUBMISSION'],
+        ]);
+        expect(yield* evidenceFor(harness, tooLate.paymentId, paid.operationId)).toEqual([
+          ['COLLECTION_CONFIRMED', 'PENDING_SUBMISSION'],
+        ]);
       }),
     ),
 );

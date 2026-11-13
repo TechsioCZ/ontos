@@ -42,11 +42,11 @@ process.stdout.write(JSON.stringify(config.bff.prefix));`,
   );
 };
 
-it('adds the Symmy mount after the primary Shell BFF in the internal Node profile', () => {
-  expect(evaluateBffPrefix('node', true)).toEqual(['/shell-super-app-api', '/api/symmy/v1']);
+it('adds the Symmy mount after the primary Shell BFF and the Payment relay in the internal Node profile', () => {
+  expect(evaluateBffPrefix('node', true)).toEqual(['/shell-super-app-api', '/api/payment/v1', '/api/symmy/v1']);
 });
 
 it('keeps the Symmy mount out of the ordinary Node and Cloudflare profiles', () => {
-  expect(evaluateBffPrefix('node', false)).toBe('/shell-super-app-api');
-  expect(evaluateBffPrefix('cloudflare', true)).toBe('/shell-super-app-api');
+  expect(evaluateBffPrefix('node', false)).toEqual(['/shell-super-app-api', '/api/payment/v1']);
+  expect(evaluateBffPrefix('cloudflare', true)).toEqual(['/shell-super-app-api', '/api/payment/v1']);
 });

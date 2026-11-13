@@ -20,7 +20,7 @@ import {
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { HttpApi } from '@modern-js/bff-effect/effect-client';
 import { dispatchEffectBffRequest } from '@modern-js/bff-effect/effect-edge';
-import { ConfigProvider, Effect, Layer, Logger, Option, Redacted, Schema } from 'effect';
+import { ConfigProvider, Effect, Exit, Layer, Logger, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -658,8 +658,8 @@ const capturePayloadOfSize = (size: number) => ({
 describe('relay contract pins', () => {
   it('keeps the relay body limit equal to the captured notification limit', () => {
     const decode = Schema.decodeUnknownExit(CaptureProviderNotificationPayloadSchema);
-    expect(decode(capturePayloadOfSize(PAYMENT_NOTIFICATION_MAXIMUM_BYTES))._tag).toBe('Success');
-    expect(decode(capturePayloadOfSize(PAYMENT_NOTIFICATION_MAXIMUM_BYTES + 1))._tag).toBe('Failure');
+    expect(Exit.isSuccess(decode(capturePayloadOfSize(PAYMENT_NOTIFICATION_MAXIMUM_BYTES)))).toBe(true);
+    expect(Exit.isFailure(decode(capturePayloadOfSize(PAYMENT_NOTIFICATION_MAXIMUM_BYTES + 1)))).toBe(true);
   });
 
   it('keeps the relay 409 and 422 code lists equal to the A10 problem schemas', () => {

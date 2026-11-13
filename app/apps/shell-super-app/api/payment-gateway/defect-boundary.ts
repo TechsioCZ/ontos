@@ -1,5 +1,7 @@
 import { Context, Effect, Layer } from 'effect';
 import type { Cause, Types } from 'effect';
+import { HttpEffect } from '@modern-js/bff-effect/effect-edge';
+import { HttpServerResponse } from 'effect/http';
 import { HttpApiError } from 'effect/http-api';
 
 import {
@@ -20,6 +22,11 @@ import { PaymentReconciliationBoundary } from './reconciliation-boundary.ts';
  * answered with the retryable 503. Request bodies, provider secrets, signatures, API keys and route keys
  * can sit in defect values and annotations, so none of them is ever logged or replied.
  */
+
+/** Every relay reply, schema refusals and the off-mount 404 included, is never cached. */
+const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
+  Effect.succeed(HttpServerResponse.setHeader(response, 'cache-control', 'no-store')),
+);
 
 /** Shell's one defect seam (`recoverUnexpectedDefect` in `api/index.ts`), bound to the relay's sanitizer. */
 export class PaymentGatewayDefectSeam extends Context.Service<
@@ -44,6 +51,7 @@ export const PaymentNotificationBoundaryLive = Layer.effect(
   Effect.gen(function* paymentNotificationBoundary() {
     const seam = yield* PaymentGatewayDefectSeam;
     return Effect.fn('PaymentNotificationBoundary.apply')(function* applyPaymentNotificationBoundary(operation) {
+      yield* noStore;
       if (!(yield* PaymentGatewayHostMount)) {
         return yield* Effect.fail(paymentNotificationNotFoundProblem);
       }
@@ -66,6 +74,7 @@ export const PaymentReconciliationBoundaryLive = Layer.effect(
   Effect.gen(function* paymentReconciliationBoundary() {
     const seam = yield* PaymentGatewayDefectSeam;
     return Effect.fn('PaymentReconciliationBoundary.apply')(function* applyPaymentReconciliationBoundary(operation) {
+      yield* noStore;
       if (!(yield* PaymentGatewayHostMount)) {
         return yield* Effect.fail(paymentReconciliationNotFoundProblem);
       }

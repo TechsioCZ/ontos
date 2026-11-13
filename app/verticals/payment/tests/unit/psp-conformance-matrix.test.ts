@@ -11,6 +11,7 @@ import { PROVIDER_EVIDENCE_FACT_KINDS } from '../../shared/domain/psp-vocabulary
 import {
   CONFORMANCE_CLOCK_MS,
   CONFORMANCE_FAMILIES,
+  REFUND_OPERATION_ID,
   cancelExpected,
   collectExpected,
   refundExpected,
@@ -61,6 +62,13 @@ const lookupOf = (conformance: FamilyConformance, expected: GatewayExpectedEffec
   dispatchedAt: Option.some(DateTime.makeUnsafe(CONFORMANCE_CLOCK_MS)),
   expected,
   target: { _tag: 'PROVIDER_OBJECT', ref: conformance.paymentRef },
+});
+
+/** The recovery lookup of the conformance refund, dispatched at the conformance instant. */
+const refundCompletionLookupOf = (conformance: FamilyConformance): GatewayLookupRequest => ({
+  dispatchedAt: Option.some(DateTime.makeUnsafe(CONFORMANCE_CLOCK_MS)),
+  expected: refundExpected(conformance),
+  target: { _tag: 'PROVIDER_OBJECT', ref: conformance.refundCompletion.lookupRef },
 });
 
 const factKindOf = (finding: ProviderFindingResult | undefined) =>
@@ -307,6 +315,21 @@ for (const conformance of CONFORMANCE_FAMILIES) {
       ),
     );
 
+    it.effect(`#1159 L2 ${family} refund completion is confirmed only by the provider's own completion source`, () =>
+      caseOf(conformance, conformance.refundCompletion.confirmed, (harness) =>
+        Effect.gen(function* refundCompletion() {
+          const completion = conformance.refundCompletion;
+          yield* TestClock.setTime(completion.atMs);
+          const adapter = yield* adapterOf(conformance, harness);
+          const findings = yield* adapter.lookup(completion.target, refundCompletionLookupOf(conformance));
+          const finding = findingFor(findings, REFUND_OPERATION_ID);
+          expect(finding?.finding).toBe('EFFECT_CONFIRMED');
+          expect(factKindOf(finding)).toEqual(Option.some('REFUND_CONFIRMED'));
+          expect(harness.sent.map(({ route }) => route)).toEqual(completion.confirmedRoutes);
+        }),
+      ),
+    );
+
     it.effect(`#1159 L2 ${family} lost refund response is OUTCOME_UNKNOWN and the refund is never resent`, () =>
       caseOf(
         conformance,
@@ -425,3 +448,32 @@ for (const conformance of CONFORMANCE_FAMILIES) {
     );
   });
 }
+
+describe('#1159 L2 refund completion sources that do not exist in test mode', () => {
+  for (const conformance of CONFORMANCE_FAMILIES.filter(({ refundCompletion }) => !refundCompletion.sandboxSource)) {
+    const { family } = conformance;
+    it.effect(
+      `#1159 L2 ${family} sandbox refund completion asks nothing and stays INDETERMINATE (production statement only)`,
+      () =>
+        caseOf(conformance, conformance.refundCompletion.confirmed, (harness) =>
+          Effect.gen(function* sandboxRefundCompletion() {
+            yield* TestClock.setTime(conformance.refundCompletion.atMs);
+            const adapter = yield* adapterOf(conformance, harness);
+            const findings = yield* adapter.lookup(conformance.target, refundCompletionLookupOf(conformance));
+            expect(findings.map(({ evidence, finding }) => [finding, Option.isNone(evidence)])).toEqual([
+              ['INDETERMINATE', true],
+            ]);
+            expect(harness.sent).toEqual([]);
+          }),
+        ),
+    );
+  }
+
+  it('#1159 L2 only Comgate lacks a test-mode refund completion source', () => {
+    expect(
+      CONFORMANCE_FAMILIES.filter(({ refundCompletion }) => !refundCompletion.sandboxSource).map(
+        ({ family }) => family,
+      ),
+    ).toEqual(['COMGATE']);
+  });
+});

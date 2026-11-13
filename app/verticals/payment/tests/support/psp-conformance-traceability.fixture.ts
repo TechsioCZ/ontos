@@ -47,6 +47,9 @@ const MATRIX = `${P}/unit/psp-conformance-matrix.test.ts`;
 const CHAIN = `${P}/integration/psp-gateway-chain-native-postgres.test.ts`;
 const SHELL = 'apps/shell-super-app/tests/integration/payment-self-registered-workload-probe.test.ts';
 const CORE_OUTBOX = 'packages/core-runtime/tests/integration/outbox-runtime.test.ts';
+const SHELL_RELAY_NATIVE = 'apps/shell-super-app/tests/integration/payment-gateway-ingress-native.test.ts';
+const SHELL_RELAY_UNIT = 'apps/shell-super-app/tests/unit/payment-gateway-ingress.test.ts';
+const shellRelay = (title: string): TracedTest => ({ file: SHELL_RELAY_UNIT, title });
 
 const u = (file: string, title: string): TracedTest => ({ file: `${P}/unit/${file}.test.ts`, title });
 const i = (file: string, title: string): TracedTest => ({ file: `${P}/integration/${file}.test.ts`, title });
@@ -84,6 +87,10 @@ const GATEWAY_WORKER_RETRY_POLICY = 'gateway-worker-retry-policy';
 const GOPAY_NOTIFICATION = 'gopay-notification';
 const STRIPE_EVENT = 'stripe-event';
 const PSP_RECOVERY = 'psp-recovery';
+const RECOVERY_ROUTE_SCOPE_POSTGRES = 'recovery-route-scope-postgres';
+const GATEWAY_RECONCILIATION_DRIVER = 'gateway-reconciliation-driver';
+const GATEWAY_RECONCILIATION_DRIVER_POSTGRES = 'gateway-reconciliation-driver-postgres';
+const START_PAYMENT_COLLECTION_PAYER_CONTACT_POSTGRES = 'start-payment-collection-payer-contact-postgres';
 const PSP_CREDENTIALS = 'psp-credentials';
 const COMGATE_PUSH = 'comgate-push';
 const AUTHORIZATION_NATIVE_RUNTIME = 'authorization-native-runtime';
@@ -92,6 +99,14 @@ const ACCEPTANCE_INGRESS_PERMISSION_POSTGRES = 'acceptance-ingress-permission-po
 const ACCEPTANCE_ENTRYPOINT_CLASSIFICATION = 'acceptance-entrypoint-classification';
 
 const T = {
+  a10RoutedReconciliationWorkload: i(
+    RECOVERY_ROUTE_SCOPE_POSTGRES,
+    '#1153 a routed request must be admitted as the reconciliation workload',
+  ),
+  a10RouteOfAnotherBinding: i(
+    RECOVERY_ROUTE_SCOPE_POSTGRES,
+    '#1153 A10 with a route of another binding is refused; nothing is written',
+  ),
   a5xxMutationIsOutcome: u(
     PSP_PROVIDER_HTTP,
     '#1158 A 5xx mutation is OUTCOME_UNKNOWN and is never resent (inverts the donor POST retry)',
@@ -144,7 +159,15 @@ const T = {
     '#1153 Capture is refused while the module is suspended/read_only/quarantined',
   ),
   captureMethodIsExplicitlyAutomatic: u(STRIPE_ADAPTER, '#1154 capture_method is explicitly automatic'),
+  captureRechecksTheSignedRoute: i(
+    PSP_CAPTURE_POSTGRES,
+    '#1157 #1153 capture rechecks the signed binding route before anything is stored',
+  ),
   captureWithAnUnboundWorkload: u(PSP_CAPTURE, '#1159 Capture with an unbound workload principal is denied'),
+  captureWithoutRouteScope: u(
+    PSP_CAPTURE,
+    '#1157 a capture without a verified route scope is refused before anything is read or written',
+  ),
   chainBrokenGopay: {
     file: CHAIN,
     title:
@@ -158,7 +181,7 @@ const T = {
   chainGopayCancel: {
     file: CHAIN,
     title:
-      '#1156 #1159 L3-14 boundary executor+ledger routines+production GoPay adapter: a GoPay v4 cancel is sent once and decided by the lookup (204 CANCELED confirmed, 409 PAYMENT_METHOD_CHOSEN not effected)',
+      '#1156 #1159 L3-14 boundary executor+ledger routines+production GoPay adapter: a GoPay v4 cancel is sent once and decided by the lookup (204 CANCELED confirmed; 409 PAYMENT_METHOD_CHOSEN or PAID not effected)',
   },
   chainGopayComgateRefund: {
     file: CHAIN,
@@ -183,8 +206,32 @@ const T = {
     REFUND_REQUEST_POSTGRES,
     '#1150 Collected payment but commitment proves no Order: compensation reserves the exact remainder',
   ),
+  comgateCollectCarriesCallerContact: i(
+    START_PAYMENT_COLLECTION_PAYER_CONTACT_POSTGRES,
+    '#1154 A Comgate collect reaches the provider create with the caller contact, and PREPARED deletes the stored row',
+  ),
   comgatePushTestFlagMismatch: u(COMGATE_PUSH, '#1157 Comgate push test flag mismatch is rejected'),
+  comgatePushWithoutShopSecret: i(
+    PSP_CAPTURE_POSTGRES,
+    '#1155 #1157 A Comgate push is captured without its shop secret',
+  ),
   comgateRefundIsPendingOnly: u(COMGATE_ADAPTER, '#1156 Comgate refund is pending only'),
+  comgateRefundRecoveryReachesStatement: u(
+    PSP_RECOVERY,
+    '#1156 #1158 A Comgate refund recovery reaches the statement: LIVE confirms from a debit row or stays INDETERMINATE, SANDBOX asks nothing',
+  ),
+  comgateSandboxRefundRecoveryNative: i(
+    PSP_RECOVERY_POSTGRES,
+    '#1156 #1158 Comgate SANDBOX refund recovery asks no statement and the refund stays pending',
+  ),
+  comgateStatementMissing: u(
+    COMGATE_ADAPTER,
+    '#1158 A refund missing from the statement is INDETERMINATE, never NOT_EFFECTED',
+  ),
+  comgateStatementRowConfirms: u(
+    COMGATE_ADAPTER,
+    '#1156 A statement row with the refund refId, amount and merchant is REFUND_CONFIRMED',
+  ),
   concurrentCollectionAndCancellationNever: i(
     PSP_EXECUTOR_POSTGRES,
     '#1156 Concurrent collection and cancellation never send a withheld collection',
@@ -214,6 +261,23 @@ const T = {
     ACCEPTANCE_COMPOSITION_FENCE_POSTGRES,
     '#1153 Drain is blocked while gateway dispatch is unfinished',
   ),
+  driverConcurrentTicks: i(
+    GATEWAY_RECONCILIATION_DRIVER_POSTGRES,
+    '#1158 two concurrent driver ticks over the same debt create exactly one recovery and one Outbox message',
+  ),
+  driverIdenticalKey: u(
+    GATEWAY_RECONCILIATION_DRIVER,
+    '#1158 the same listed row gets the identical idempotency key and payload, from one or two drivers',
+  ),
+  driverOutOfRounds: i(
+    GATEWAY_RECONCILIATION_DRIVER_POSTGRES,
+    '#1158 an operation out of rounds is no longer listed, and its debt Read still lists it',
+  ),
+  driverReadOnlyModule: i(
+    GATEWAY_RECONCILIATION_DRIVER_POSTGRES,
+    '#1153 a read-only Payment module gets no recovery, and its debt Read still lists the operation',
+  ),
+  driverRelayAnswers: u(GATEWAY_RECONCILIATION_DRIVER, '#1158 relay answers map to the driver outcome table'),
   duplicateAndCorroboratingObservationsThrough: i(
     ACCEPTANCE_EVIDENCE_BOUNDARY_POSTGRES,
     '#1151 Duplicate and corroborating observations through the accept Action',
@@ -240,6 +304,10 @@ const T = {
     '#1148 genuine NOT_EFFECTED_CONFIRMED allows a new COLLECT under the unchanged meaning and binding',
   ),
   gopayNotificationTriggersLookupOnly: u(GOPAY_NOTIFICATION, '#1157 GoPay notification triggers lookup only'),
+  gopayRefundRecoveryNative: i(
+    PSP_RECOVERY_POSTGRES,
+    '#1156 #1158 GoPay v4 refund recovery reads the refund by the id GoPay returned and confirms it',
+  ),
   gopayReplayAndOrderReference: u(GOPAY_ADAPTER, '#1158 GoPay replay and order-reference lookup are UNSUPPORTED'),
   historicalInformationDoesNotAuthorize: i(
     ACCEPTANCE_MODULE_STATE_POSTGRES,
@@ -268,6 +336,12 @@ const T = {
     `#1159 L2 ${FAMILY} notification: authentic delivery is a trigger; forged, foreign and wrong-environment deliveries are rejected`,
   ),
   l2Refund: l2(`#1159 L2 ${FAMILY} refund: both refund bases send the exact amount and acceptance stays pending`),
+  l2RefundCompletion: l2(
+    `#1159 L2 ${FAMILY} refund completion is confirmed only by the provider's own completion source`,
+  ),
+  l2RefundCompletionSandbox: l2(
+    `#1159 L2 ${FAMILY} sandbox refund completion asks nothing and stays INDETERMINATE (production statement only)`,
+  ),
   l2Retrieve: l2(
     `#1159 L2 ${FAMILY} retrieve: an exact paid lookup is COLLECTION_CONFIRMED for the expected operation`,
   ),
@@ -306,6 +380,10 @@ const T = {
   observedAmountMismatchIsA: u(PSP_MONEY, '#1156 Observed amount mismatch is a discrepancy, never a confirmation'),
   oneDispatchPerPaymentOperation: i(DATABASE_PSP_GUARDS_POSTGRES, '#1158 One dispatch per Payment Operation'),
   oneProviderOutageDoesNot: i(PSP_ENABLEMENT_POSTGRES, '#1155 One provider outage does not gate unrelated providers'),
+  payerContactRules: i(
+    START_PAYMENT_COLLECTION_PAYER_CONTACT_POSTGRES,
+    '#1153 H1094-01=A A Stripe collection needs no contact, GoPay only an email, Comgate a full name and an email or phone',
+  ),
   providerIdempotencyWindowHasExpired: i(
     EVIDENCE_RECOVERY_POSTGRES,
     '#1151 Provider idempotency window has expired: recovery falls back to lookup, never a replay',
@@ -348,6 +426,25 @@ const T = {
     title:
       '#1159 Payment workers reach A8 as a RegisteredWorkload only for workload-admitted originals in their own scope',
   },
+  shellReconciliationA10Refusals: shellRelay(
+    'passes A10 refusals through with their codes and answers everything undetermined with 503',
+  ),
+  shellReconciliationRouteScope: shellRelay(
+    'calls A10 under the route scope and forwards the idempotency key unchanged',
+  ),
+  shellRelayAcknowledgesOnlyRecorded: shellRelay(
+    'acknowledges only recorded notifications and lets the provider retry everything else',
+  ),
+  shellRelayExactStripeBytes: shellRelay(
+    'relays exact Stripe bytes that still verify against their signature, under route-owned facts',
+  ),
+  shellRelayFreshAttemptKeys: shellRelay('uses a fresh idempotency key and delivery reference for every attempt'),
+  shellRelayGopayQuery: shellRelay('maps the GoPay callback query to the capture query with an empty body'),
+  shellRelayModernMount: {
+    file: SHELL_RELAY_NATIVE,
+    title: '#1157 the real Modern server mounts the Payment relay prefix with its transport headers and no aliases',
+  },
+  shellRelayRefusedAuthority: shellRelay('answers a refused or unavailable relay authority with the retryable 503'),
   stripeLostCreateResponseIs: u(
     STRIPE_ADAPTER,
     '#1158 Stripe lost create response is recovered by exact replay inside 24 h',
@@ -419,12 +516,19 @@ const rows: readonly RowInput[] = [
     capability: 'GoPay standard payment; Stripe Checkout Session mode=payment; Comgate REST v2 create',
     expected: 'CUSTOMER_ACTION_REQUIRED with redirect; COLLECTION_PENDING at most, never EFFECT_CONFIRMED',
     id: 'MIN-1',
-    limits: 'Provider acceptance of the request body is not proven without a sandbox',
+    limits:
+      'Provider acceptance of the request body is not proven without a sandbox; GoPay and Comgate creates carry the payer contact the collection caller supplies (D-P3)',
     mapping: '{gopay,stripe,comgate}-payment.service.ts prepareCollect/send',
     requirement: 'one-shot create / direct collection',
     rule: 'Payment authorizes one COLLECT on its exact binding; ACK or browser return never proves collection',
     sandbox: SANDBOX_NOT_RUN,
-    tests: [T.l2Create, T.l2Selected, T.captureMethodIsExplicitlyAutomatic],
+    tests: [
+      T.l2Create,
+      T.l2Selected,
+      T.captureMethodIsExplicitlyAutomatic,
+      T.payerContactRules,
+      T.comgateCollectCarriesCallerContact,
+    ],
   },
   {
     capability: 'GoPay payment inquiry; Stripe PaymentIntent / Checkout Session retrieve; Comgate status',
@@ -459,12 +563,13 @@ const rows: readonly RowInput[] = [
   },
   {
     capability:
-      'GoPay v4 refund resource (REQUESTED/SUCCESS/FAILED); Stripe Refunds API; Comgate refund (no completion API, N10)',
+      'GoPay v4 refund resource (REQUESTED/SUCCESS/FAILED); Stripe Refunds API; Comgate refund (no status API; completion only in the production settlement statement, D-P2)',
     expected: 'ACCEPTED_PENDING + REFUND_PENDING on acceptance; REFUND_CONFIRMED only from provider proof',
     id: 'MIN-4',
     limits:
-      'Comgate refund completion cannot be proven (N10); GoPay refuses an early partial card refund with 409 (L4)',
-    mapping: '{gopay,stripe,comgate}-payment.service.ts prepareRefund/send',
+      'Comgate refund completion is read only from a LIVE statement: sandbox has none, so it needs one small real production refund (N10); statement row shape unverified live; GoPay refuses an early partial card refund with 409 (L4)',
+    mapping:
+      '{gopay,stripe,comgate}-payment.service.ts prepareRefund/send; comgate statement lookup (transferList + singleTransfer)',
     requirement: 'amount-based refund',
     rule: 'A REFUND sends exactly the Payment-authorized amount on the original binding',
     sandbox: SANDBOX_NOT_RUN,
@@ -474,6 +579,12 @@ const rows: readonly RowInput[] = [
       T.anAcceptedGopayRefundIs,
       T.comgateRefundIsPendingOnly,
       T.chainGopayComgateRefund,
+      T.l2RefundCompletion,
+      T.l2RefundCompletionSandbox,
+      T.comgateStatementRowConfirms,
+      T.comgateRefundRecoveryReachesStatement,
+      T.gopayRefundRecoveryNative,
+      T.comgateSandboxRefundRecoveryNative,
     ],
   },
   {
@@ -481,23 +592,43 @@ const rows: readonly RowInput[] = [
     expected:
       'Authentic delivery -> trigger (lookup required); forged/foreign/wrong environment -> rejected, nothing stored',
     id: 'MIN-5',
-    limits: 'Real provider delivery to a public endpoint not exercised (relay surface N1)',
-    mapping: 'stripe-webhook-signature.ts, stripe-event.ts, gopay-notification.ts, comgate-push.ts',
+    limits:
+      'No real provider delivery to a deployed endpoint (needs a stage deploy); a successful relay capture through the real Shell, Core gate and Payment release is not one native test (Shell relay unit + Payment capture native + real Modern mount)',
+    mapping:
+      'Shell paymentNotifications relay; stripe-webhook-signature.ts, stripe-event.ts, gopay-notification.ts, comgate-push.ts',
     requirement: 'callback / webhook / notification verification',
     rule: 'A notification is a trigger, never a financial fact; it cannot bypass owner admission',
     sandbox: SANDBOX_NOT_RUN,
-    tests: [T.l2Notification, T.forgedStripeSignatureCannotMutate],
+    tests: [
+      T.l2Notification,
+      T.forgedStripeSignatureCannotMutate,
+      T.comgatePushWithoutShopSecret,
+      T.captureRechecksTheSignedRoute,
+      T.shellRelayExactStripeBytes,
+      T.shellRelayGopayQuery,
+      T.shellRelayModernMount,
+    ],
   },
   {
     capability: 'Stripe Idempotency-Key 24 h; GoPay/Comgate no idempotency (no replay)',
     expected: 'OUTCOME_UNKNOWN -> INDETERMINATE; Stripe exact replay in window; otherwise lookup, never a blind resend',
     id: 'MIN-6',
-    limits: 'Provider-side idempotency behaviour not sandbox-verified',
-    mapping: 'provider-http-live.ts, gateway-operation-executor.ts, gateway-operation-recovery.ts',
+    limits:
+      'Provider-side idempotency behaviour not sandbox-verified; the driver -> Shell relay -> A10 hop is native only on each side (driver with the in-process A10, relay unit)',
+    mapping:
+      'provider-http-live.ts, gateway-operation-executor.ts, gateway-operation-recovery.ts, gateway-reconciliation-driver.ts',
     requirement: 'lost-response / recovery behavior',
     rule: 'An unknown effect is debt until proven; no competing new key or operation',
     sandbox: SANDBOX_NOT_RUN,
-    tests: [T.l2LostCreate, T.chainLostCreate, T.stripeLostResponseRecoveredInside, T.timeoutOrLostResponseBecomes],
+    tests: [
+      T.l2LostCreate,
+      T.chainLostCreate,
+      T.stripeLostResponseRecoveredInside,
+      T.timeoutOrLostResponseBecomes,
+      T.driverConcurrentTicks,
+      T.driverOutOfRounds,
+      T.shellReconciliationRouteScope,
+    ],
   },
   {
     capability: 'Provider-reported amount and currency in minor units',
@@ -569,7 +700,13 @@ const rows: readonly RowInput[] = [
     requirement: 'disabled / wrong merchant / environment',
     rule: 'Only Current Gateway Enablement offers a gateway; operations keep their binding',
     sandbox: SANDBOX_NOT_RUN,
-    tests: [T.disabledGatewayIsNotOffered, T.pspEnvironmentIsNotInterchangeable, T.l2Foreign],
+    tests: [
+      T.disabledGatewayIsNotOffered,
+      T.pspEnvironmentIsNotInterchangeable,
+      T.l2Foreign,
+      T.captureRechecksTheSignedRoute,
+      T.a10RouteOfAnotherBinding,
+    ],
   },
   {
     capability: 'Stripe v1 signature; Comgate secret; GoPay id shape + lookup',
@@ -580,7 +717,7 @@ const rows: readonly RowInput[] = [
     requirement: 'invalid webhook / signature / verification',
     rule: 'Only verified notifications are captured',
     sandbox: SANDBOX_NOT_RUN,
-    tests: [T.forgedStripeSignatureCannotMutate, T.l2Notification],
+    tests: [T.forgedStripeSignatureCannotMutate, T.l2Notification, T.shellRelayAcknowledgesOnlyRecorded],
   },
   {
     capability: 'Provider return URL carries no financial proof',
@@ -717,18 +854,27 @@ const rows: readonly RowInput[] = [
       T.historicalInformationDoesNotAuthorize,
       T.captureIsRefusedWhileThe,
       T.captureWithAnUnboundWorkload,
+      T.captureWithoutRouteScope,
+      T.a10RoutedReconciliationWorkload,
+      T.driverReadOnlyModule,
     ],
   },
   {
     capability: 'Relay ACK semantics',
     expected: 'ACK only after the durable capture commits; nothing claims financial completion',
     id: 'NEG-15',
-    limits: 'The relay HTTP surface itself is N1 (not built)',
-    mapping: 'capture-provider-notification Action',
+    limits:
+      'The Shell relay maps capture results at unit level; on the real Modern server only refusals ran natively (no successful capture through Shell, Core and Payment in one test)',
+    mapping: 'capture-provider-notification Action; Shell paymentNotifications relay',
     requirement: 'durable ACK only after authorized safe ingress capture',
     rule: 'Durable capture before acknowledgement',
     sandbox: SANDBOX_NOT_APPLICABLE,
-    tests: [T.authenticNotificationIsDurablyCaptured, T.aRejectedOrUnboundNotification],
+    tests: [
+      T.authenticNotificationIsDurablyCaptured,
+      T.aRejectedOrUnboundNotification,
+      T.shellRelayAcknowledgesOnlyRecorded,
+      T.shellRelayModernMount,
+    ],
   },
   {
     capability: 'Merchant replacement and credential rotation',
@@ -767,6 +913,8 @@ const rows: readonly RowInput[] = [
       T.theWindowBoundaryItselfIs,
       T.waitsStartAtSDouble,
       T.nativeReplayKeepsTheOriginal,
+      T.shellRelayFreshAttemptKeys,
+      T.driverIdenticalKey,
     ],
   },
   {
@@ -890,7 +1038,13 @@ const rows: readonly RowInput[] = [
     requirement: 'Unknown provider result and expired deduplication window',
     rule: 'Unknown effect stays debt',
     sandbox: SANDBOX_NOT_RUN,
-    tests: [T.providerIdempotencyWindowHasExpired, T.lookupMissStaysIndeterminate, T.l2Miss],
+    tests: [
+      T.providerIdempotencyWindowHasExpired,
+      T.lookupMissStaysIndeterminate,
+      T.l2Miss,
+      T.driverRelayAnswers,
+      T.shellReconciliationA10Refusals,
+    ],
   },
   {
     capability: NONE,
@@ -938,7 +1092,7 @@ const rows: readonly RowInput[] = [
     requirement: 'GoPay callback contains a payment id',
     rule: 'Only verified lookup evidence reaches Payment',
     sandbox: SANDBOX_NOT_RUN,
-    tests: [T.gopayNotificationTriggersLookupOnly, T.l2Notification, T.l2Retrieve],
+    tests: [T.gopayNotificationTriggersLookupOnly, T.l2Notification, T.l2Retrieve, T.shellRelayGopayQuery],
   },
   {
     capability: 'Stripe livemode; Comgate test flag; binding environment',
@@ -971,18 +1125,31 @@ const rows: readonly RowInput[] = [
     requirement: 'Signature verified but owner write is not authorized',
     rule: 'Owner admission required',
     sandbox: SANDBOX_NOT_APPLICABLE,
-    tests: [T.verifiedNotificationStillNeedsThe, T.shellA8],
+    tests: [
+      T.verifiedNotificationStillNeedsThe,
+      T.shellA8,
+      T.captureWithoutRouteScope,
+      T.captureRechecksTheSignedRoute,
+      T.shellRelayRefusedAuthority,
+    ],
   },
   {
     capability: 'Relay ACK semantics',
     expected: 'No durable ACK; no financial claim',
     id: 'G1157-6',
-    limits: 'Relay surface N1',
-    mapping: 'capture Action',
+    limits:
+      'A crash between the capture commit and the relay reply is not injected; the PSP retry of that delivery is then acknowledged as DUPLICATE',
+    mapping: 'capture Action; Shell paymentNotifications relay',
     requirement: 'Crash before durable ingress handoff',
     rule: 'Durable capture before acknowledgement',
     sandbox: SANDBOX_NOT_APPLICABLE,
-    tests: [T.authenticNotificationIsDurablyCaptured, T.aRejectedOrUnboundNotification],
+    tests: [
+      T.authenticNotificationIsDurablyCaptured,
+      T.aRejectedOrUnboundNotification,
+      T.shellRelayAcknowledgesOnlyRecorded,
+      T.shellRelayRefusedAuthority,
+      T.duplicateDeliveryIsAcknowledgedIdempotently,
+    ],
   },
   {
     capability: NONE,
@@ -1392,7 +1559,7 @@ const rows: readonly RowInput[] = [
   {
     capability: 'GoPay v4 DELETE /payments/{id} then GET /payments/{id}',
     expected:
-      '204+CANCELED: CANCEL_CONFIRMED + COLLECTION_NOT_EFFECTED; 409+PAYMENT_METHOD_CHOSEN: CANCEL_NOT_EFFECTED; never resent',
+      '204+CANCELED: CANCEL_CONFIRMED + COLLECTION_NOT_EFFECTED; 409+PAYMENT_METHOD_CHOSEN: CANCEL_NOT_EFFECTED; 409+PAID: CANCEL_NOT_EFFECTED + COLLECTION_CONFIRMED; never resent',
     id: 'L3-14',
     limits: 'GoPay v4 cancel not sandbox-verified (N8 merge gate)',
     mapping: 'gopay prepareCancel/send, mapGopayCancelAnswer',
@@ -1440,7 +1607,7 @@ export const REQUIRED_TRACE_IDS: readonly string[] = [
 ];
 
 /** Conformance blockers returned to PO (#1159 completion gate); no gateway is silently dropped. */
-export const PO_BLOCKERS = ['N8', 'N9', 'N10', 'N15'] as const;
+export const PO_BLOCKERS = ['N2', 'N8', 'N10', 'N14', 'N15', 'Privacy'] as const;
 
 /** README columns of the traceability table, in order. */
 export const TRACE_TABLE_HEADER = [

@@ -1,4 +1,4 @@
-import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Logger, Option, Redacted, References, Schema } from 'effect';
 import type { Scope } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import type { TestContext } from 'effect-rstest';
@@ -13,7 +13,7 @@ import {
   HOSTED_SCENARIO_TIMEOUT_MS,
   SANDBOX_NOTIFICATION_URL,
   SANDBOX_RETURN_URL,
-  announce,
+  announceHostedPage,
   cancelExpected,
   cancelRequestOf,
   collectExpected,
@@ -111,6 +111,26 @@ const decodeCreatedTransaction = (bodyText: string): Option.Option<ProviderObjec
     Option.map((transId) => ({ _tag: 'COMGATE_TRANSACTION', transId })),
   );
 
+const COMGATE_TEST_MODE_STATEMENT_REASON = 'statement_unavailable_in_test_mode';
+
+/**
+ * Runs `effect` and collects the `reason` log annotation of each adapter log line it writes. The adapter reports why a
+ * statement lookup settled nothing only through its log, so the scenario reads the reason from there.
+ */
+const captureStatementReasons = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<{ readonly reasons: readonly string[]; readonly value: A }, E, R> =>
+  Effect.suspend(() => {
+    const reasons: string[] = [];
+    const collector = Logger.make((options) => {
+      const { reason } = options.fiber.getRef(References.CurrentLogAnnotations);
+      if (Schema.is(Schema.String)(reason)) {
+        reasons.push(reason);
+      }
+    });
+    return Effect.map(Effect.withLogger(effect, collector), (value) => ({ reasons: [...reasons], value }));
+  });
+
 /** The transId of a COMGATE_TRANSACTION ref. */
 const transIdOf = (ref: ProviderObjectRef): string =>
   Option.getOrThrow(Option.map(Schema.decodeUnknownOption(ComgateTransactionRefSchema)(ref), (known) => known.transId));
@@ -139,12 +159,16 @@ describe('#1159 Comgate sandbox conformance', () => {
       comgate(ctx, (input) =>
         Effect.gen(function* hostedPaymentAndRefund() {
           const created = yield* createPayment(input);
-          yield* announce([
-            'Comgate hosted payment step (human): open this URL and complete the test payment, or mark',
-            `transaction ${transIdOf(created.transaction)} PAID in the Client Portal (Tester role).`,
-            `Polling lookup for up to ${HOSTED_PAYMENT_WAIT}.`,
-            created.redirectUrl,
-          ]);
+          yield* announceHostedPage({
+            lines: [
+              'Comgate hosted payment step (human): open this URL and complete the test payment, or mark',
+              `transaction ${transIdOf(created.transaction)} PAID in the Client Portal (Tester role).`,
+              `Polling lookup for up to ${HOSTED_PAYMENT_WAIT}.`,
+            ],
+            provider: 'COMGATE',
+            scenario: 'hosted-payment-and-refund',
+            url: created.redirectUrl,
+          });
           const paid = yield* pollUntil(
             lookupCollection(input, created.operation, created.transaction, created.issuedAt),
             (current) => findingKindFor(current, created.operation.operationId) === 'EFFECT_CONFIRMED',
@@ -153,6 +177,7 @@ describe('#1159 Comgate sandbox conformance', () => {
           expect(findingKindFor(paid, created.operation.operationId)).toBe('EFFECT_CONFIRMED');
 
           const refund = yield* newOperation;
+          const refundedAt = yield* sandboxNow;
           const prepared = yield* input.provider.adapter.prepareRefund(
             input.target,
             refundRequestOf({
@@ -173,6 +198,17 @@ describe('#1159 Comgate sandbox conformance', () => {
           expect(response.finding.evidence.pipe(Option.map((evidence) => evidence.factKind))).toEqual(
             Option.some('REFUND_PENDING'),
           );
+
+          // Comgate generates no settlement statement for test payments: the refund recovery lookup stays
+          // INDETERMINATE with the documented test-mode reason (logged by the adapter), never NOT_EFFECTED.
+          const recovery = yield* captureStatementReasons(
+            input.provider.adapter.lookup(
+              input.target,
+              objectLookup(created.transaction, refundExpected(refund, REFUND_AMOUNT), refundedAt),
+            ),
+          );
+          expect(findingKindFor(recovery.value, refund.operationId)).toBe('INDETERMINATE');
+          expect(recovery.reasons).toEqual([COMGATE_TEST_MODE_STATEMENT_REASON]);
         }),
       ),
     HOSTED_SCENARIO_TIMEOUT_MS,

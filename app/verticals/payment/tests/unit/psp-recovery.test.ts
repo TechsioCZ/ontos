@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import type { ScopedRoutineInvoker } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext, OutboxWorkerLegalEntityScope } from '@app/core-runtime/outbox/worker';
 import { DateTime, Effect, Exit, Layer, Option, Predicate, Schema } from 'effect';
@@ -57,6 +59,7 @@ import type {
   ProviderFindingResult,
   ProviderReplayRequest,
 } from '../../src/integrations/psp/psp-result.ts';
+import { credentialConfig, recordedGatewayAdapters, respond } from '../support/psp-conformance-provider.fixture.ts';
 
 /**
  * #1157 #1158 recovery of one gateway operation over scripted ports: mode at dispatch, exact Stripe replay,
@@ -92,10 +95,10 @@ const HOUR_MS = 3_600_000;
 const WINDOW_MS = 24 * HOUR_MS;
 const AMOUNT = { amountMinor: 100_000, currency: 'CZK' } as const;
 
-const bindingOf = (family: Family) =>
+const bindingOf = (family: Family, environment: 'LIVE' | 'SANDBOX' = 'SANDBOX') =>
   ({
     _tag: 'GATEWAY_ACCOUNT',
-    environment: 'SANDBOX',
+    environment,
     providerAccountRef: accountRef,
     providerFamily: family,
   }) as const;
@@ -304,6 +307,8 @@ const storedPending = (id: string, occurrence: string, forOperation = operationI
   });
 
 interface Script {
+  /** The production adapters over a recorded provider (`recordedGatewayAdapters`) instead of the scripted lookup. */
+  readonly adapters?: typeof GatewayProviderAdapters.Service;
   readonly appendConflicts?: ReadonlySet<string>;
   readonly lookup?: (request: GatewayLookupRequest) => Effect.Effect<readonly ProviderFindingResult[], LookupFailure>;
   readonly operations: readonly OperationRow[];
@@ -456,31 +461,34 @@ const recoverWith = (script: Script, message: RecoveryRequested) => {
       }),
     resolveForNotification: unused,
   });
-  const adapters = Layer.succeed(GatewayProviderAdapters, {
-    forFamily: (family) =>
-      Effect.succeed({
-        capabilities: GATEWAY_LAUNCH_CAPABILITIES[family],
-        family,
-        lookup: (_target, request) =>
-          Effect.suspend(() => {
-            calls.lookups.push(request);
-            calls.expected.push(request.expected);
-            return script.lookup?.(request) ?? Effect.succeed([]);
-          }),
-        prepareCancel: unused,
-        prepareCollect: unused,
-        prepareRefund: unused,
-        readOrderReference: unused,
-        replay: (_target, request, expected) =>
-          Effect.suspend(() => {
-            calls.replays.push(request);
-            calls.expected.push(expected);
-            return script.replay?.(request, expected) ?? Effect.die('no replay scripted');
-          }),
-        send: unused,
-        verifyNotification: unused,
-      }),
-  });
+  const adapters = Layer.succeed(
+    GatewayProviderAdapters,
+    script.adapters ?? {
+      forFamily: (family) =>
+        Effect.succeed({
+          capabilities: GATEWAY_LAUNCH_CAPABILITIES[family],
+          family,
+          lookup: (_target, request) =>
+            Effect.suspend(() => {
+              calls.lookups.push(request);
+              calls.expected.push(request.expected);
+              return script.lookup?.(request) ?? Effect.succeed([]);
+            }),
+          prepareCancel: unused,
+          prepareCollect: unused,
+          prepareRefund: unused,
+          readOrderReference: unused,
+          replay: (_target, request, expected) =>
+            Effect.suspend(() => {
+              calls.replays.push(request);
+              calls.expected.push(expected);
+              return script.replay?.(request, expected) ?? Effect.die('no replay scripted');
+            }),
+          send: unused,
+          verifyNotification: unused,
+        }),
+    },
+  );
   return recoverGatewayOperationInScope(message, { ...scope, routineInvoker }, workerContext).pipe(
     Effect.provide(Layer.mergeAll(ledger, store, submitter, resolver, adapters)),
     Effect.exit,
@@ -500,6 +508,19 @@ const failureOf = <Value>(
   );
 
 const at = (offsetMs: number) => TestClock.setTime(preparedMs + offsetMs);
+
+const COMGATE_RECOVERY_SECRET_REF = 'comgate.recovery';
+const COMGATE_MERCHANT_ID = '123456';
+const COMGATE_STATEMENT_API = 'https://payments.comgate.cz/v2.0';
+/** The official monthly sample's refund row (fixtures/comgate/README.md) for `orderReference`, 1 000,00 CZK debited. */
+const comgateStatementRow = (orderReference: string) => ({
+  ...Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)))(
+    readFileSync(new URL('../fixtures/comgate/statement-refund-row.json', import.meta.url), 'utf-8'),
+  ),
+  'ID od klienta': orderReference,
+  Merchant: COMGATE_MERCHANT_ID,
+  'Potvrzená částka': '-1000,00',
+});
 
 describe('#1158 gateway operation recovery', () => {
   it.effect('#1158 A lost Stripe response is looked up by order reference after the window and submitted', () =>
@@ -940,5 +961,115 @@ describe('#1158 gateway operation recovery', () => {
       ]);
       expect(reportOf(exit).providerCall).toBe('LOOKUP_PROVIDER_OBJECT');
     }),
+  );
+  it.effect(
+    '#1156 #1158 A Comgate refund recovery reaches the statement: LIVE confirms from a debit row or stays INDETERMINATE, SANDBOX asks nothing',
+    () =>
+      Effect.gen(function* comgateRefundStatementRecovery() {
+        // Prepared 2026-11-12 11:00 Prague, recovered 2026-11-13 12:00 Prague: only the dispatch day's statement is
+        // readable (dispatch date .. yesterday).
+        yield* at(25 * HOUR_MS);
+        const credentials = {
+          [COMGATE_RECOVERY_SECRET_REF]: { family: 'COMGATE', secret: 'comgate-recovery-not-a-secret' },
+        };
+        const transactionRef = { _tag: 'COMGATE_TRANSACTION', transId: 'AB12-CD34-EF56' } as const;
+        const refundReference = deriveProviderCorrelation(
+          Schema.decodeUnknownSync(ProviderDispatchRecordSchema.fields.operationId)(operationId),
+        ).orderReference;
+        const statementReads = (orderReference: string) => ({
+          [`GET ${COMGATE_STATEMENT_API}/singleTransfer/transferId/7654321.json`]: [
+            respond(
+              200,
+              Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.Unknown)))([
+                comgateStatementRow(orderReference),
+              ]),
+            ),
+          ],
+          [`GET ${COMGATE_STATEMENT_API}/transferList/date/2026-11-12.json`]: [
+            respond(
+              200,
+              '[{"transferId":7654321,"transferDate":"2026-11-12","accountCounterparty":"0/0000","accountOutgoing":"123456789/0000","variableSymbol":"12345678"}]',
+            ),
+          ],
+        });
+        const recovered = (environment: 'LIVE' | 'SANDBOX', routes: Parameters<typeof recordedGatewayAdapters>[0]) =>
+          Effect.gen(function* recoverComgateRefund() {
+            const provider = yield* recordedGatewayAdapters(routes);
+            const binding = bindingOf('COMGATE', environment);
+            const run = yield* recoverWith(
+              {
+                adapters: provider.adapters,
+                operations: [{ ...operationRow({ family: 'COMGATE', kind: 'REFUND' }), binding }],
+                record: Option.some(
+                  Schema.decodeUnknownSync(ProviderDispatchRecordSchema)({
+                    ...Schema.encodeSync(ProviderDispatchRecordSchema)(
+                      dispatchRecord({
+                        family: 'COMGATE',
+                        kind: 'REFUND',
+                        paymentRef: Option.some(transactionRef),
+                        state: 'ACKNOWLEDGED',
+                      }),
+                    ),
+                    environment,
+                  }),
+                ),
+                resolve: () =>
+                  Effect.succeed(
+                    Schema.decodeUnknownSync(GatewayExecutionTargetSchema)({
+                      ...Schema.encodeSync(GatewayExecutionTargetSchema)(executionTarget('COMGATE')),
+                      binding,
+                      credentialSecretRef: COMGATE_RECOVERY_SECRET_REF,
+                      merchantIdentity: { _tag: 'COMGATE', merchantId: COMGATE_MERCHANT_ID },
+                    }),
+                  ),
+              },
+              {
+                ...recoveryMessage('AUTHORITATIVE_LOOKUP', { family: 'COMGATE' }),
+                binding,
+                operationKind: 'REFUND',
+              },
+            );
+            return { ...run, sent: provider.sent.map(({ route }) => route) };
+          }).pipe(Effect.provide(credentialConfig(credentials)));
+
+        // LIVE: the debit row with the refund's own refId, merchant, currency and amount is the completion proof.
+        const confirmed = yield* recovered('LIVE', statementReads(refundReference));
+        expect(confirmed.sent).toEqual([
+          `GET ${COMGATE_STATEMENT_API}/transferList/date/2026-11-12.json`,
+          `GET ${COMGATE_STATEMENT_API}/singleTransfer/transferId/7654321.json`,
+        ]);
+        expect([
+          reportOf(confirmed.exit).providerCall,
+          Option.getOrNull(reportOf(confirmed.exit).indeterminate),
+        ]).toEqual(['LOOKUP_PROVIDER_OBJECT', null]);
+        expect(
+          confirmed.calls.appended.map(({ evidence, operationId: target, origin }) => [
+            target,
+            origin,
+            evidence.factKind,
+            evidence.sourceOccurrenceId,
+          ]),
+        ).toEqual([
+          [
+            operationId,
+            'RECOVERY_LOOKUP',
+            'REFUND_CONFIRMED',
+            `comgate:statement:7654321:${operationId}:REFUND_CONFIRMED:100000`,
+          ],
+        ]);
+        expect(confirmed.calls.replays).toEqual([]);
+
+        // LIVE without the refund's row (another refId only): INDETERMINATE, never NOT_EFFECTED, nothing appended.
+        const absent = yield* recovered('LIVE', statementReads('f'.repeat(32)));
+        expect(absent.sent).toHaveLength(2);
+        expect(Option.getOrNull(reportOf(absent.exit).indeterminate)).toBe('provider_indeterminate');
+        expect(absent.calls.appended).toEqual([]);
+
+        // SANDBOX: statements exist only for production payments, so nothing is asked and the refund stays open.
+        const sandbox = yield* recovered('SANDBOX', {});
+        expect(sandbox.sent).toEqual([]);
+        expect(Option.getOrNull(reportOf(sandbox.exit).indeterminate)).toBe('provider_indeterminate');
+        expect(sandbox.calls.appended).toEqual([]);
+      }),
   );
 });

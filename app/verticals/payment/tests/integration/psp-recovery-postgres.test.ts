@@ -1,6 +1,8 @@
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime/outbox/worker';
 import type { PgClient } from '@effect/sql-pg';
-import { DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
+import { readFileSync } from 'node:fs';
+
+import { DateTime, Effect, Exit, Layer, Option, Predicate, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -52,6 +54,25 @@ import {
 import type { ProviderFindingResult } from '../../src/integrations/psp/psp-result.ts';
 import { pspBindingPersistenceForTransaction } from '../../src/persistence/psp-binding-persistence.ts';
 import { testNotificationRouteOf } from '../support/route-scope.fixture.ts';
+import {
+  GOPAY_FIXTURE_GOID,
+  GOPAY_FIXTURE_PAYMENT_ID,
+  gopayCreateResponseBody,
+} from '../fixtures/gopay/payment-responses.ts';
+import { GOPAY_FIXTURE_REFUND_ID, gopayRefundBody } from '../fixtures/gopay/refund-responses.ts';
+import { credentialConfig, recordedGatewayAdapters, respond } from '../support/psp-conformance-provider.fixture.ts';
+import type { CredentialDocument, RouteScript } from '../support/psp-conformance-provider.fixture.ts';
+import {
+  deliverExecution,
+  evidenceOf,
+  nativeBindingFor,
+  nativeCollectionFor,
+  nativeHarnessOf,
+  nativeRefundFor,
+} from '../support/psp-native-gateway.fixture.ts';
+import type { NativeBinding, NativeHarness } from '../support/psp-native-gateway.fixture.ts';
+import { pspPayerContactPersistenceForTransaction } from '../../src/persistence/psp-payer-contact-persistence.ts';
+import type { OutboxPayload as OperationRequested } from '../../shared/outbox/payment-core-operation-requested-v1.ts';
 import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import {
   COMPOSITION_REVISION,
@@ -783,4 +804,185 @@ it.live('#1156 Lookup through the original binding after a binding is retired fo
       ]);
     }),
   ),
+);
+
+/*
+ * Refund recovery through the production adapters (#1156 #1158, phase 2 D-P1/D-P2): the executor acknowledged a
+ * refund on native PostgreSQL; the recovery worker then looks it up through the original binding with the
+ * production GoPay or Comgate adapter over recorded documented bodies. The A8 submitter stays scripted.
+ */
+
+const GOPAY_API = 'https://gw.sandbox.gopay.com/gp-gw/api/4.0';
+const GOPAY_TOKEN = `POST ${GOPAY_API}/oauth2/token`;
+const gopayToken = respond(
+  200,
+  '{"token_type":"bearer","access_token":"gopay-access-token-recovery","scope":"payment:read payment:write","expires_in":900}',
+);
+const PROVIDER_CREDENTIALS: CredentialDocument = {
+  'comgate.recovery': { family: 'COMGATE', secret: 'comgate-recovery-not-a-secret' },
+  'gopay.recovery': { clientId: 'gopay-client-recovery', clientSecret: 'gopay-recovery-not-a-secret', family: 'GOPAY' },
+};
+const COMGATE_API = 'https://payments.comgate.cz/v2.0';
+const comgateFixture = (name: string) => readFileSync(new URL(`../fixtures/comgate/${name}`, import.meta.url), 'utf-8');
+
+/** The payer contact each family's collection Action input carries, stored by the production persistence. */
+const payerContactOf = (binding: NativeBinding) =>
+  binding.executionBinding.providerFamily === 'GOPAY'
+    ? { email: 'payer@example.test' }
+    : { email: 'payer@example.test', fullName: 'Test Payer' };
+
+/** One production executor delivery over recorded provider answers; it must complete. */
+const executeThrough = Effect.fn('PspRecoveryFixture.executeThrough')(function* executeThrough(
+  harness: NativeHarness,
+  payload: OperationRequested,
+  routes: RouteScript,
+) {
+  const provider = yield* recordedGatewayAdapters(routes);
+  const exit = yield* deliverExecution(harness, payload, provider.adapters);
+  expect(Exit.isSuccess(exit)).toBe(true);
+  return provider.sent.map(({ route }) => route);
+});
+
+/** An acknowledged collection of 100 CZK and an acknowledged refund of 40 CZK on it, on native PostgreSQL. */
+const acknowledgedRefund = Effect.fn('PspRecoveryFixture.acknowledgedRefund')(function* acknowledgedRefund(
+  harness: NativeHarness,
+  family: 'COMGATE' | 'GOPAY',
+) {
+  const binding = yield* nativeBindingFor(harness, family, `${family.toLowerCase()}.recovery`);
+  const collect = yield* nativeCollectionFor(harness, binding, 10_000);
+  yield* harness.database.transaction((transaction: PaymentTestTransaction) =>
+    installOperationalScope(transaction, operationalScopeOf(harness.scope)).pipe(
+      Effect.flatMap((scoped) =>
+        pspPayerContactPersistenceForTransaction(scoped).rememberForCollect(
+          collect.operationId,
+          payerContactOf(binding),
+        ),
+      ),
+    ),
+  );
+  const { orderReference } = deriveProviderCorrelation(collect.operationId);
+  yield* executeThrough(
+    harness,
+    collect,
+    family === 'GOPAY'
+      ? {
+          [`POST ${GOPAY_API}/eshops/${GOPAY_FIXTURE_GOID}/payments`]: [
+            respond(201, gopayCreateResponseBody(orderReference)),
+          ],
+          [GOPAY_TOKEN]: [gopayToken],
+        }
+      : { [`POST ${COMGATE_API}/payment.json`]: [respond(200, comgateFixture('create-success.json'))] },
+  );
+  const refund = yield* nativeRefundFor(harness, binding, collect, 4000);
+  yield* executeThrough(
+    harness,
+    refund,
+    family === 'GOPAY'
+      ? {
+          [`POST ${GOPAY_API}/payments/${GOPAY_FIXTURE_PAYMENT_ID}/refunds`]: [
+            respond(201, gopayRefundBody({ amount: 4000, state: 'REQUESTED' })),
+          ],
+          [GOPAY_TOKEN]: [gopayToken],
+        }
+      : { [`POST ${COMGATE_API}/refund.json`]: [respond(200, comgateFixture('result-ok.json'))] },
+  );
+  return { binding, refund };
+});
+
+/** One recovery delivery of `refund` with the production adapters over `routes`; the A8 answer is ACCEPTED. */
+const recoverRefundThrough = Effect.fn('PspRecoveryFixture.recoverRefundThrough')(function* recoverRefundThrough(
+  harness: NativeHarness,
+  refund: OperationRequested,
+  routes: RouteScript,
+) {
+  const provider = yield* recordedGatewayAdapters(routes);
+  const [provenance, recoveryId] = yield* Effect.all([provenanceFor(harness.scope), randomUuid], { concurrency: 1 });
+  const message: RecoveryRequested = {
+    amount: refund.amount,
+    binding: refund.binding,
+    materialHash: refund.materialHash,
+    mode: 'AUTHORITATIVE_LOOKUP',
+    operationId: refund.operationId,
+    operationKey: refund.operationKey,
+    operationKind: 'REFUND',
+    operationOutcome: 'INDETERMINATE',
+    originalActionInvocationId: refund.provenance.actionInvocationId,
+    originalCompositionRevision: refund.provenance.compositionRevision,
+    paymentId: refund.paymentId,
+    provenance,
+    recoveryId,
+  };
+  const submitted: string[] = [];
+  const submitter = Layer.succeed(ProviderEvidenceSubmitter, {
+    submit: (submission) =>
+      Effect.sync(() => {
+        submitted.push(submission.evidence.evidence.factKind);
+        return { observationId: Option.none(), outcome: 'ACCEPTED' as const };
+      }),
+  });
+  const report = yield* inWorker(harness.database, harness.scope, ({ scope, workerContext }) =>
+    recoverGatewayOperationInScope(message, scope, workerContext),
+  ).pipe(
+    Effect.provide(Layer.mergeAll(storesLayer, Layer.succeed(GatewayProviderAdapters, provider.adapters), submitter)),
+  );
+  return { report: Option.getOrThrow(report), sent: provider.sent.map(({ route }) => route), submitted };
+});
+
+const nativeRecoveryHarness = Effect.gen(function* nativeRecoveryHarness() {
+  const { runtime, runtimeClient } = yield* databases;
+  return nativeHarnessOf(runtime, runtimeClient, yield* makeTestScope);
+});
+
+const refundEvidenceOf = (harness: NativeHarness, refund: OperationRequested) =>
+  evidenceOf(harness, refund.paymentId).pipe(
+    Effect.map((rows) =>
+      rows.filter(([id]) => id === refund.operationId).map(([, factKind, state]) => [factKind, state]),
+    ),
+  );
+
+it.live('#1156 #1158 GoPay v4 refund recovery reads the refund by the id GoPay returned and confirms it', () =>
+  Effect.scoped(
+    Effect.gen(function* gopayRefundRecovery() {
+      yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
+      const harness = yield* nativeRecoveryHarness;
+      const { refund } = yield* acknowledgedRefund(harness, 'GOPAY');
+      const recovered = yield* recoverRefundThrough(harness, refund, {
+        [`GET ${GOPAY_API}/refunds/${GOPAY_FIXTURE_REFUND_ID}`]: [
+          respond(200, gopayRefundBody({ amount: 4000, state: 'SUCCESS' })),
+        ],
+        [GOPAY_TOKEN]: [gopayToken],
+      }).pipe(Effect.provide(credentialConfig(PROVIDER_CREDENTIALS)));
+      // Only the refund resource is read; the refund is never resent and the payment's refund list is not needed.
+      expect(recovered.sent).toEqual([GOPAY_TOKEN, `GET ${GOPAY_API}/refunds/${GOPAY_FIXTURE_REFUND_ID}`]);
+      expect([recovered.report.providerCall, Option.getOrNull(recovered.report.indeterminate)]).toEqual([
+        'LOOKUP_PROVIDER_OBJECT',
+        null,
+      ]);
+      expect(recovered.submitted).toContain('REFUND_CONFIRMED');
+      expect(yield* refundEvidenceOf(harness, refund)).toEqual([
+        ['REFUND_PENDING', 'ACCEPTED'],
+        ['REFUND_CONFIRMED', 'ACCEPTED'],
+      ]);
+    }),
+  ).pipe(Effect.provide(credentialConfig(PROVIDER_CREDENTIALS))),
+);
+
+it.live('#1156 #1158 Comgate SANDBOX refund recovery asks no statement and the refund stays pending', () =>
+  Effect.scoped(
+    Effect.gen(function* comgateSandboxRefundRecovery() {
+      yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
+      const harness = yield* nativeRecoveryHarness;
+      const { refund } = yield* acknowledgedRefund(harness, 'COMGATE');
+      // Statements exist only for production payments (D-P2): a sandbox lookup makes no provider call.
+      const recovered = yield* recoverRefundThrough(harness, refund, {}).pipe(
+        Effect.provide(credentialConfig(PROVIDER_CREDENTIALS)),
+      );
+      expect(recovered.sent).toEqual([]);
+      expect([recovered.report.providerCall, Option.getOrNull(recovered.report.indeterminate)]).toEqual([
+        'LOOKUP_PROVIDER_OBJECT',
+        'provider_indeterminate',
+      ]);
+      expect(yield* refundEvidenceOf(harness, refund)).toEqual([['REFUND_PENDING', 'ACCEPTED']]);
+    }),
+  ).pipe(Effect.provide(credentialConfig(PROVIDER_CREDENTIALS))),
 );

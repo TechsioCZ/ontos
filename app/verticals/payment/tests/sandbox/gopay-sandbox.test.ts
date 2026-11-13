@@ -16,6 +16,7 @@ import {
   SANDBOX_RETURN_URL,
   SETTLE_POLL,
   announce,
+  announceHostedPage,
   cancelExpected,
   cancelRequestOf,
   collectExpected,
@@ -149,12 +150,16 @@ describe('#1159 GoPay sandbox conformance', () => {
       gopay(ctx, (input) =>
         Effect.gen(function* hostedPaymentAndRefund() {
           const created = yield* createPayment(input);
-          yield* announce([
-            'GoPay hosted payment step (human): open this URL and pay by BANK TRANSFER in the sandbox',
-            '(partial refunds cannot be tested on card payments).',
-            `Polling lookup for up to ${HOSTED_PAYMENT_WAIT}.`,
-            created.redirectUrl,
-          ]);
+          yield* announceHostedPage({
+            lines: [
+              'GoPay hosted payment step (human): open this URL and pay by BANK TRANSFER in the sandbox',
+              '(partial refunds cannot be tested on card payments).',
+              `Polling lookup for up to ${HOSTED_PAYMENT_WAIT}.`,
+            ],
+            provider: 'GOPAY',
+            scenario: 'hosted-payment-and-refund',
+            url: created.redirectUrl,
+          });
           const paid = yield* pollUntil(
             lookupCollection(input, created.operation, created.payment, created.issuedAt),
             (current) => findingKindFor(current, created.operation.operationId) === 'EFFECT_CONFIRMED',
