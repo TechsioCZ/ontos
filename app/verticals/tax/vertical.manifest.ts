@@ -29,6 +29,7 @@ import { TaxRuleHistoryApi } from './shared/apis/tax-rule-history.ts';
 import { taxRuleManagePermission } from './shared/permissions/tax-rule-manage.ts';
 import { taxRuleResourceDescriptor } from './shared/resources/tax-rule.ts';
 import { taxRuleRevisionResourceDescriptor } from './shared/resources/tax-rule-revision.ts';
+import { VatChangeRightsApi } from './shared/apis/vat-change-rights.ts';
 // </generated-module-manifest-imports>
 import { taxMcpContribution } from './shared/mcp/contribution.ts';
 
@@ -71,6 +72,7 @@ export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
       'tax-materiality-comparison': TaxMaterialityComparisonApi,
       'tax-privacy-owner-coverage': TaxPrivacyOwnerCoverageApi,
       'tax-rule-history': TaxRuleHistoryApi,
+      'vat-change-rights': VatChangeRightsApi,
       // </generated-module-manifest-apis>
     },
     businessPermissions: [

@@ -67,6 +67,7 @@ import { taxEvaluationReadApiLive } from './tax-evaluation-read-server.ts';
 import { taxMaterialityComparisonReadApiLive } from './tax-materiality-comparison-read-server.ts';
 import { taxPrivacyOwnerCoverageReadApiLive } from './tax-privacy-owner-coverage-read-server.ts';
 import { taxRuleHistoryReadApiLive } from './tax-rule-history-read-server.ts';
+import { vatChangeRightsReadApiLive } from './vat-change-rights-read-server.ts';
 // </generated-governed-http-handler-imports>
 
 const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
@@ -205,6 +206,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   taxMaterialityComparisonReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   taxPrivacyOwnerCoverageReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   taxRuleHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  vatChangeRightsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(
   // <generated-governed-http-handler-support-layers>
@@ -213,8 +215,8 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   ),
   // </generated-governed-http-handler-support-layers>
   Layer.provide(compositionSourceLive),
-  // ReadRuntime keeps its admission gate private: the regime history read decides the reader's VAT change rights on
-  // Tax's own Actions with the owner's gate (as Finance's records read decides its write right).
+  // ReadRuntime keeps its admission gate private: the VAT change rights read decides the reader's rights on Tax's own
+  // Actions with the owner's gate (as Market administration answers `canAdminister`).
   Layer.provide(accessEnforcementLive),
   Layer.provide(
     Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, nodeCryptoLayer, databaseIdentitiesLive),

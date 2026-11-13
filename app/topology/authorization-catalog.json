@@ -14418,6 +14418,32 @@
               "demo.storefront-client"
             ]
           }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.tax.vat-change-rights.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "seller-vat-regime",
+              "level": "extended"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.tax.api.vat-change-rights",
+            "moduleKey": "commerce.tax",
+            "role": "api",
+            "scope": "tenant"
+          }
         }
       ],
       "moduleId": "commerce.tax"

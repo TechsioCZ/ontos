@@ -13,6 +13,7 @@ import {
   declareRegime,
   endRateRevision,
   readApplicableRule,
+  readChangeRights,
   readRegimeAt,
   readRegimeHistory,
   readRuleHistory,
@@ -31,7 +32,7 @@ export interface VatRegimeView {
   readonly timeline: readonly RegimePeriod[] | undefined;
 }
 
-/** Nothing offered: a person Tax shows no history to is offered no change either. */
+/** Nothing offered: a person Tax does not answer the change rights to is offered no change. */
 const NO_CHANGES: VatChangeRights = {
   createRevision: false,
   createRule: false,
@@ -66,9 +67,10 @@ const loadClassification = Effect.fn('VatSettings.classification')(function* loa
 });
 
 const loadRegime = Effect.fn('VatSettings.regime')(function* loadRegime(now: DateTime.Utc) {
-  const [atNow, history] = yield* Effect.all([readRegimeAt(now), readRegimeHistory().pipe(Effect.result)], {
-    concurrency: 2,
-  });
+  const [atNow, history, rights] = yield* Effect.all(
+    [readRegimeAt(now), readRegimeHistory().pipe(Effect.result), readChangeRights().pipe(Effect.result)],
+    { concurrency: 3 },
+  );
   const current = Match.value(atNow.selection).pipe(
     Match.tag('DECLARED', ({ regime }) => regime),
     Match.orElse(() => 'NOT_DECLARED' as const),
@@ -79,7 +81,7 @@ const loadRegime = Effect.fn('VatSettings.regime')(function* loadRegime(now: Dat
       headRevision: atNow.headRevision,
       timeline: Result.isSuccess(history) ? regimeTimeline(history.success.revisions, now) : undefined,
     } satisfies VatRegimeView,
-    rights: Result.isSuccess(history) ? history.success.changeRights : NO_CHANGES,
+    rights: Result.isSuccess(rights) ? rights.success : NO_CHANGES,
   };
 });
 

@@ -128,6 +128,7 @@ describe('Tax module contract', () => {
       'tax-materiality-comparison',
       'tax-privacy-owner-coverage',
       'tax-rule-history',
+      'vat-change-rights',
     ]);
     expect(taxManifest.publicSurface.api['owner-action-approvals']).toBe(OwnerActionApprovalApi);
     expect(taxManifest.publicSurface.actions.map(({ descriptor }) => descriptor.actionKey).toSorted()).toEqual(

@@ -37,6 +37,7 @@ import {
   executeSellerVatRegimeHistoryWithAuthorization,
   executeTaxRuleHistoryWithAuthorization,
 } from '@app/tax/api/client';
+import { executeVatChangeRightsWithAuthorization } from '@app/tax/apis/vat-change-rights/client';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -400,16 +401,18 @@ const setUp = Effect.fn('FinanceVatSettings.setUp')(function* setUp() {
           'commerce.tax.seller-vat-regime.read-at-instant',
           'commerce.tax.seller-vat-regime-declaration.declare',
           'commerce.tax.seller-vat-regime-declaration.read-history',
+          'commerce.tax.vat-change-rights.read',
         ],
         principalId: realm.author.principalId,
       },
       {
-        // The accountant preset: the DPH page's four Tax reads and no Tax change.
+        // The accountant preset: the DPH page's five Tax reads and no Tax change.
         capabilityKeys: [
           'commerce.tax.seller-vat-regime-declaration.read-history',
           'commerce.tax.seller-vat-regime.read-at-instant',
           'commerce.tax.tax-rule-set.read',
           'commerce.tax.tax-rule.read-history',
+          'commerce.tax.vat-change-rights.read',
         ],
         principalId: realm.reader.principalId,
       },
@@ -496,10 +499,14 @@ const setUp = Effect.fn('FinanceVatSettings.setUp')(function* setUp() {
   const regimeHistory = Effect.fn('FinanceVatSettings.regimeHistory')(function* regimeHistory(credential: string) {
     return yield* throughTax(executeSellerVatRegimeHistoryWithAuthorization({}, credential, yield* correlation, read));
   });
+  const changeRights = Effect.fn('FinanceVatSettings.changeRights')(function* changeRights(credential: string) {
+    return yield* throughTax(executeVatChangeRightsWithAuthorization({}, credential, yield* correlation, read));
+  });
   return {
     asAccountant,
     asClerk,
     asReader,
+    changeRights,
     correlation,
     financeForClerk,
     now,
@@ -665,8 +672,18 @@ it.live(
     Effect.scoped(
       Effect.gen(function* readOnlyAccountant() {
         const scenario = yield* setUp();
-        const { asAccountant, asReader, correlation, now, regimeHistory, ruleHistory, ruleSet, standard, write } =
-          scenario;
+        const {
+          asAccountant,
+          asReader,
+          changeRights,
+          correlation,
+          now,
+          regimeHistory,
+          ruleHistory,
+          ruleSet,
+          standard,
+          write,
+        } = scenario;
         // What the DPH page reads as her: the rate, its history and the regime with its history.
         const applicable = yield* ruleSet(CZ_VAT_STANDARD, yield* asReader);
         expect(applicable.applicable.length).toBe(1);
@@ -675,13 +692,13 @@ it.live(
         const history = yield* regimeHistory(yield* asReader);
         expect(history.revisions.map(({ regime }) => regime)).toEqual(['VAT_PAYER']);
         // Tax tells the page she may make no change, and the author, who holds the rights, every one.
-        expect(history.changeRights).toEqual({
+        expect(yield* changeRights(yield* asReader)).toEqual({
           createRevision: false,
           createRule: false,
           declareRegime: false,
           endRevision: false,
         });
-        expect((yield* regimeHistory(yield* asAccountant)).changeRights).toEqual({
+        expect(yield* changeRights(yield* asAccountant)).toEqual({
           createRevision: true,
           createRule: true,
           declareRegime: true,

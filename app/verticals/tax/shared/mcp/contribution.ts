@@ -107,5 +107,7 @@ export const taxMcpContribution = defineOntosMcpContribution({
       },
       title: { cs: 'Historie sazby DPH', en: 'VAT rate history' },
     },
+    // A screen helper: an agent learns what it may change from its own capabilities, not from this.
+    'vat-change-rights': 'hidden',
   },
 });

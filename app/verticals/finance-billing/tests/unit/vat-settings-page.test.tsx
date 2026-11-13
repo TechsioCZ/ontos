@@ -46,6 +46,7 @@ rstest.mock('../../src/routes/[lang]/finance/dph/tax-access.ts', () => ({
       applicable: code === 'cz.vat.standard' ? [{ taxRuleRef: ruleRef }] : [],
       outcome: 'SELECTED',
     }),
+  readChangeRights: () => Effect.sync(() => rights.current),
   readRegimeAt: () =>
     Effect.succeed({
       headRevision: 1,
@@ -53,7 +54,6 @@ rstest.mock('../../src/routes/[lang]/finance/dph/tax-access.ts', () => ({
     }),
   readRegimeHistory: () =>
     Effect.sync(() => ({
-      changeRights: rights.current,
       completeness: { rowCount: 1, setFingerprint: '0'.repeat(64) },
       revisions: [{ effectiveFrom: at('2023-12-31T23:00:00Z'), regime: 'VAT_PAYER', revision: 1 }],
     })),
