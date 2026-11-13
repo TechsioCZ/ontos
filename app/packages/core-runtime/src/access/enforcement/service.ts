@@ -530,9 +530,13 @@ const prepareDelegatedEntry = (params: {
 };
 
 /**
- * The seam half of one batched entry. Every rule is the rule `decide` applies to a single request,
- * in the same order: the carrier, the workload classification, the entrypoint's own scope, then the
- * scope read of that scope.
+ * The seam half of one batched entry. Every rule here is a rule `decide` applies to a single request: the carrier,
+ * the workload classification, the entrypoint's own scope, then the scope read of that scope. The ORDER is not the
+ * single path's. A batch reads the workload registry and the company's ownership once for the whole group, before any
+ * entry is judged, so an entry refused by more than one rule can name a different one than `decide` would: a request
+ * naming another tenant's company while the registry is unreadable answers `unavailable.identity` here, where a
+ * single `decide` answers `deny.scope_mismatch` (it refuses on the scope before it reads the registry). Both refuse,
+ * and every path fails closed; only which rule is reported differs.
  */
 const prepareEntry = (params: {
   readonly actor: GateActor;

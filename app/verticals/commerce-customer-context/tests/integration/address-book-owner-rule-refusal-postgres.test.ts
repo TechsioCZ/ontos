@@ -90,7 +90,7 @@ const ProfileSchema = Schema.Struct({
 const ownerRuleReasons = ['deny.owner.counterparty_grant_missing', 'requires.counterparty.address_book.manage'];
 
 it.live(
-  'refuses a Counterparty address for the full-access owner by the owner grant rule, and says why',
+  'refuses a Counterparty address for the full-access owner by the owner grant rule and says why; another company, tenant or person is refused at the operation context before that rule',
   () =>
     Effect.scoped(
       Effect.gen(function* ownerRuleRefusal() {
@@ -233,9 +233,11 @@ it.live(
         }
         expect(admitted.success.outcome).toBe('ADDED');
 
-        // The grant admits this person in THIS company only. The same person acting in another company of the
-        // tenant, and a person of another tenant, reach the same profile payload and are still refused: the
-        // company and tenant fences hold whatever the v2 gate answers (it answers ALLOWED for all of them).
+        // The grant admits exactly this person, in this company, on this request. A different company, a different
+        // tenant and a different person id each carry the same admitted payload and the same ALLOWED v2 gate, and
+        // each is refused at the operation context: the scope the owner's routines bind to is established from the
+        // request's own principal, so none of them is ever resolved and the owner rule is never consulted. Each
+        // refusal is named, so a later change that turned one of them into a different answer would fail here.
         const elsewhere = yield* addAs({ ...principal, legalEntityId: randomUUID() });
         if (Result.isSuccess(elsewhere)) {
           return yield* Effect.die('Another company of the tenant reached this Counterparty profile');
@@ -244,13 +246,15 @@ it.live(
         if (Result.isSuccess(otherTenant)) {
           return yield* Effect.die('Another tenant reached this Counterparty profile');
         }
-        // Another person id cannot borrow this admitted request: it is refused at the operation context, before the
-        // owner rule is ever consulted, so the grant written above is reachable by nobody else.
         const otherPerson = yield* addAs({ ...principal, principalId: randomUUID() });
         if (Result.isSuccess(otherPerson)) {
           return yield* Effect.die('A person without a Counterparty grant added an address');
         }
-        expect(otherPerson.failure).toMatchObject({ code: 'operation_context_denied' });
+        expect([elsewhere.failure.code, otherTenant.failure.code, otherPerson.failure.code]).toEqual([
+          'operation_context_denied',
+          'operation_context_denied',
+          'operation_context_denied',
+        ]);
         return true;
       }),
     ).pipe(Effect.provide(services)),
