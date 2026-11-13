@@ -4,7 +4,7 @@ import { Context, Effect, Layer, Option, Redacted, Scope } from 'effect';
 import { guardedPgClientLayer } from '../db/client.ts';
 import { loadDatabaseConfig } from '../db/config.ts';
 import { SHARED_RUNTIME_IDENTITY } from '../db/database-identity-manifest.ts';
-import { configureDatabasePool } from '../db/pool-configuration.ts';
+import { DRIVER_DEFAULT_MAX_CONNECTIONS, configureDatabasePool } from '../db/pool-configuration.ts';
 import { ActiveApplicationCompositionService } from '../modules/active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
 import { loadSpiceDbConfig } from '../permissions/config.ts';
@@ -20,14 +20,14 @@ import {
 } from './boot-warm-up.ts';
 import type { BootWarmUpBudget, BootWarmUpStep } from './boot-warm-up.ts';
 
-/** The native pool opens at most ten sessions when no budget caps it. */
-const DRIVER_DEFAULT_MAX_CONNECTIONS = 10;
 const SPICEDB_WARM_UP_DEADLINE_MS = 4000;
 
 /**
  * The shared runtime role's pool from the process registry, through the guarded client every Core database uses, held
  * by the process scope: the registry closes a pool when its last holder leaves, and the requests that come later must
  * find these sessions open. Same URL and settings as the requests' clients, so the same registry key and native pool.
+ * With `ONTOS_DATABASE_POOL_MIN_CONNECTIONS` the pool opens its minimum itself when created here and keeps it past the
+ * idle timeout; the `select 1` statements then only confirm those sessions.
  */
 const sharedRuntimePool = Effect.fn('BootWarmUp.sharedRuntimePool')(function* openSharedRuntimePool(
   processScope: Scope.Scope,

@@ -195,8 +195,11 @@ zerops:
         # keep the old and new containers inside db18's 150 slots during deployment. A minute of idle
         # keeps connections warm between a demo user's searches; a 10 s idle reopened TLS connections
         # for every owner on the first search after a short pause (about +1 s on stage).
+        # The runtime-role pool keeps 2 connections open past the idle timeout: 4 processes x 2 = 8 per
+        # container, 16 during a deploy overlap. The minimum never raises the cap of 6 per pool.
         ONTOS_DATABASE_POOL_IDLE_TIMEOUT_MILLIS: '60000'
         ONTOS_DATABASE_POOL_MAX_CONNECTIONS: '6'
+        ONTOS_DATABASE_POOL_MIN_CONNECTIONS: '2'
         ONTOS_DATABASE_POOL_SHARED: 'true'
         ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
         # The demo company's pseudonymous e-shop (ŠroubShop): its staff links, e-mail links and portal sign-in.
