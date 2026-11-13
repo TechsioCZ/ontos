@@ -333,7 +333,14 @@ const gateOf = (script: Script) => {
       asked.push(askedOf(input));
       return Effect.succeed(decisionOf(answerFor(input)));
     },
-    decideMany: () => Effect.die(new FixtureInvalid({ reason: 'this suite asks one declaration at a time' })),
+    // A Role read asks its tenant and company questions in one batch; each is answered as `decide` would.
+    decideMany: (inputs) =>
+      Effect.sync(() =>
+        inputs.map((input) => {
+          asked.push(askedOf(input));
+          return decisionOf(answerFor(input));
+        }),
+      ),
     list: () => Effect.die(new FixtureInvalid({ reason: 'the Role editor reads no list predicate' })),
     listMany: () => Effect.die(new FixtureInvalid({ reason: 'the Role editor reads no list predicate' })),
     selectableLegalEntities: () => Effect.succeed([]),

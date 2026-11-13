@@ -875,11 +875,11 @@ it.effect('answers an owner options with one gate batch for every write and one 
     const writes = Object.values(offered.writeAvailability).length;
     expect([scopes, companies, writes, offered.admissionCandidates.length]).toEqual([3, 2, 8, 3]);
     expect(Object.values(offered.writeAvailability)).toEqual(Array.from({ length: writes }, () => true));
-    // The read's own admission asks once per scope, as every Lidé read does. Every write control is
-    // then one batch of one question per write and scope, never a single decision per write and scope,
-    // which held an owner's options for tens of seconds on a tenant with five companies.
-    expect(owner.asks.singles).toHaveLength(scopes);
-    expect(owner.asks.batches.map((batch) => batch.length)).toEqual([writes * scopes]);
+    // The read's own admission asks one question per scope in one batch, as every Lidé read does. Every
+    // write control is then one batch of one question per write and scope, never a single decision per
+    // write and scope, which held an owner's options for tens of seconds on a tenant with five companies.
+    expect(owner.asks.singles).toHaveLength(0);
+    expect(owner.asks.batches.map((batch) => batch.length)).toEqual([scopes, writes * scopes]);
     // Candidates come from one directory read per administered company, never one per candidate.
     expect(owner.recorded.directoryReads).toBe(companies);
   }),
