@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -9,6 +9,7 @@ import {
 } from '../support/access-admin-real-gate-fixture.ts';
 import type { AccessAdminCase, Persona } from '../support/access-admin-real-gate-fixture.ts';
 import { installedReleaseComposition } from '../support/installed-release-composition.ts';
+import { EntrypointKeySchema, ModuleIdSchema } from '../../shared/api.ts';
 
 /*
  * Loading the product, end to end on a tenant shaped like stage: the shipped schema, no legacy relationship, and a
@@ -23,22 +24,51 @@ import { installedReleaseComposition } from '../support/installed-release-compos
  */
 
 const MEMBER: Persona = 'manager';
-// The Shell's own home page (any signed-in person); a module's page also needs that module's release composed.
-const HOME_PAGE = { entrypointKey: 'shell-super-app.page.home', moduleId: 'shell-super-app' } as const;
 const FRAME_KEYS = ['core.shell.composition.read', 'core.shell.module-target.resolve'] as const;
 const CASE_TIMEOUT = 300_000;
 
 type ShellHttp = Effect.Success<ReturnType<typeof shellHttpFor>>;
 
+const NavigationItemSchema = Schema.Struct({ entrypointKey: EntrypointKeySchema, moduleId: ModuleIdSchema });
+type PageTarget = typeof NavigationItemSchema.Type;
+const CompositionAnswerSchema = Schema.fromJsonString(
+  Schema.Struct({ navigation: Schema.Array(NavigationItemSchema), state: Schema.String }),
+);
+
+/** The composition one person gets in one company: its state and its navigation, sorted by entrypoint key. */
+const compositionOf = Effect.fn('ShellBaseline.compositionOf')(function* compositionOf(
+  shell: ShellHttp,
+  legalEntityId: string,
+  persona: Persona,
+) {
+  const answer = yield* shell.get({ legalEntityId, path: '/shell/composition', persona });
+  if (answer.status !== 200) {
+    return { navigation: [], state: `HTTP ${answer.status}` };
+  }
+  const { navigation, state } = yield* Schema.decodeUnknownEffect(CompositionAnswerSchema)(answer.text).pipe(
+    Effect.orDie,
+  );
+  return {
+    navigation: navigation
+      .map(({ entrypointKey, moduleId }) => ({ entrypointKey, moduleId }))
+      .toSorted((left, right) => left.entrypointKey.localeCompare(right.entrypointKey)),
+    state,
+  };
+});
+
+/** The entrypoint keys of one composition's navigation, in order. */
+const keysOf = ({ navigation }: { readonly navigation: readonly PageTarget[] }) =>
+  navigation.map(({ entrypointKey }) => entrypointKey);
+
 /** What loading the Shell in one company answers this person, endpoint by endpoint. */
-const frameOf = (shell: ShellHttp, legalEntityId: string, persona: Persona) =>
+const frameOf = (shell: ShellHttp, legalEntityId: string, persona: Persona, page: PageTarget) =>
   Effect.all(
     {
       // The document context and the tenant list are not served by this fixture's session stub; the document context
       // reads the same composition, so its answer follows `composition`.
       composition: shell.get({ legalEntityId, path: '/shell/composition', persona }),
       legalEntities: shell.get({ legalEntityId, path: '/auth/legal-entities', persona }),
-      moduleTarget: shell.post({ legalEntityId, path: '/shell/module-target', payload: HOME_PAGE, persona }),
+      moduleTarget: shell.post({ legalEntityId, path: '/shell/module-target', payload: page, persona }),
       session: shell.get({ legalEntityId, path: '/auth/session', persona }),
     },
     { concurrency: 1 },
@@ -83,12 +113,14 @@ const membershipCasesOf = Effect.fn('ShellBaseline.membershipCases')(function* m
     ['companyAdmin', other],
     ['expiredAssignment', ours],
   ];
-  const decisions = yield* Effect.forEach(
+  return yield* Effect.forEach(
     cases,
-    ([persona, company]) => frameDecision(accessCase, persona, FRAME_KEYS[0], company),
+    ([persona, company]) =>
+      Effect.forEach(FRAME_KEYS, (key) => frameDecision(accessCase, persona, key, company), { concurrency: 1 }).pipe(
+        Effect.map((decisions) => ({ allowed: decisions.map(({ outcome }) => outcome === 'ALLOWED'), persona })),
+      ),
     { concurrency: 1 },
   );
-  return decisions.map(({ outcome }, index) => ({ allowed: outcome === 'ALLOWED', persona: cases[index]?.[0] }));
 });
 
 it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 seconds' })(
@@ -101,7 +133,20 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
           Effect.scoped(
             Effect.gen(function* memberLoadsShell() {
               const [ours = ''] = accessCase.companies;
-              const shell = yield* shellHttpFor(accessCase, yield* installedReleaseComposition);
+              const installed = yield* installedReleaseComposition;
+              // The release publisher's active authority row for the installed composition, so the frame's own
+              // reads are admitted end to end and answer 200.
+              yield* accessCase.admin
+                .unsafe(
+                  `insert into core.application_composition_authority
+                     (authority_key, revision, phase, valid_until, subscriptions_json)
+                   values ('active', $1, 'active', now() + interval '1 day', '[]'::jsonb)
+                   on conflict (authority_key) do update set revision = excluded.revision, phase = 'active',
+                     valid_until = excluded.valid_until`,
+                  [installed.composition.revision],
+                )
+                .pipe(Effect.orDie);
+              const shell = yield* shellHttpFor(accessCase, installed, 'frame');
 
               // The Role grants neither frame capability: the gate refuses the cell and admits the member structurally.
               const frameDecisions = yield* Effect.all(
@@ -111,11 +156,25 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
               expect(frameDecisions).toEqual(
                 FRAME_KEYS.map((key) => ({ codes: ['structural.member_baseline'], key, outcome: 'ALLOWED' })),
               );
-              // End to end the member's frame answers exactly as the owner's (this fixture composes no Shell release,
-              // so the frame's own reads answer 503 for both after the gate); never a refusal.
-              const frame = yield* frameOf(shell, ours, MEMBER);
-              expect(frame).toEqual(yield* frameOf(shell, ours, 'owner'));
-              expect(Object.values(frame).some((status) => status === 401 || status === 403)).toBe(false);
+              // End to end the member gets a 200 composition filtered by each contribution's own right: of the
+              // owner's 30-odd module pages only the one any signed-in person may open (the tasks Role's key names
+              // the tasks home, which is no navigation item). The Shell's administration is no composition item.
+              const memberComposition = yield* compositionOf(shell, ours, MEMBER);
+              const ownerComposition = yield* compositionOf(shell, ours, 'owner');
+              expect({ member: memberComposition.state, owner: ownerComposition.state }).toEqual({
+                member: 'available',
+                owner: 'available',
+              });
+              expect(keysOf(memberComposition)).toEqual(['projects.core.page.create-project']);
+              expect(keysOf(ownerComposition)).toContain('projects.core.page.create-project');
+              expect(keysOf(ownerComposition).length).toBeGreaterThan(20);
+              // The rest of the frame, opening that page: the member's answers are the owner's, never a refusal.
+              const page =
+                memberComposition.navigation[0] ??
+                (yield* Effect.die(new Error('the member composition names no page')));
+              const frame = yield* frameOf(shell, ours, MEMBER, page);
+              expect(frame).toEqual({ composition: 200, legalEntities: 200, moduleTarget: 200, session: 200 });
+              expect(yield* frameOf(shell, ours, 'owner', page)).toEqual(frame);
               // Evidence: every fallback admission leaves its decision row, routine read or not.
               const evidence = yield* accessCase.admin
                 .unsafe<{ readonly rows: number }>(
@@ -133,12 +192,12 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
               const membershipCases = yield* membershipCasesOf(accessCase);
               yield* Effect.log(`membership cases: ${JSON.stringify(membershipCases)}`);
               expect(membershipCases).toEqual([
-                { allowed: false, persona: 'suspended' },
-                { allowed: false, persona: 'lapsed' },
-                { allowed: false, persona: 'directoryMember' },
-                { allowed: false, persona: 'departed' },
-                { allowed: false, persona: 'companyAdmin' },
-                { allowed: true, persona: 'expiredAssignment' },
+                { allowed: [false, false], persona: 'suspended' },
+                { allowed: [false, false], persona: 'lapsed' },
+                { allowed: [false, false], persona: 'directoryMember' },
+                { allowed: [false, false], persona: 'departed' },
+                { allowed: [false, false], persona: 'companyAdmin' },
+                { allowed: [true, true], persona: 'expiredAssignment' },
               ]);
 
               // The baseline admits the frame and nothing else: an administration page and a Shell read that is not
@@ -158,6 +217,14 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
                 const composition = yield* shell.get({ legalEntityId: ours, path: '/shell/composition', persona });
                 expect({ persona, refused: composition.status !== 200 }).toEqual({ persona, refused: true });
               }
+              // An agent never borrows its operator's membership: the frame keys themselves are refused it.
+              const agentFrame = yield* Effect.all(
+                FRAME_KEYS.map((key) => frameDecision(accessCase, 'agent', key)),
+                { concurrency: 1 },
+              );
+              expect(agentFrame.map(({ key, outcome }) => ({ allowed: outcome === 'ALLOWED', key }))).toEqual(
+                FRAME_KEYS.map((key) => ({ allowed: false, key })),
+              );
               // An agent holds no administration through the baseline.
               const [admin] = accessCase.shellAdminDeclarations;
               if (admin !== undefined) {

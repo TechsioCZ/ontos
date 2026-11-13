@@ -1570,6 +1570,11 @@ export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* 
   accessCase: AccessAdminCase,
   /** The installed release a surface reads its module catalog from (a deployed Shell loads it from the composition). */
   installed?: ActiveApplicationCompositionSnapshot,
+  /**
+   * `frame`: also pin the Shell's own read authority to that release, so the Shell's governed reads (composition, module
+   * target) are admitted end to end; the suite then writes the release's active authority row itself.
+   */
+  serves?: 'frame',
 ) {
   const [shell, authentication, api, bff, catalog] = yield* Effect.promise(
     async () =>
@@ -1603,7 +1608,7 @@ export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* 
     undefined,
     undefined,
     undefined,
-    undefined,
+    serves === 'frame' && installed !== undefined ? { load: Effect.succeed(installed) } : undefined,
     accessCase.databases,
   );
   const { apiPrefix } = api.shellAuthenticationApiContract;
