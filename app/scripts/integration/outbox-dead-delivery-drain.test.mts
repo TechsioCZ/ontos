@@ -270,13 +270,16 @@ it.layer(services, { excludeTestServices: true })('composition drain with a dead
         expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
         const reason = Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '';
         // The pre-flight now refuses before durable admission closes, so the old release never stops serving.
-        expect(reason).toContain('drain was not started, so this release keeps serving');
+        expect(reason).toContain('drain was not started: durable admission is unchanged');
         expect(reason).toContain('Dead Outbox deliveries block the drain');
         expect(reason).toContain(
           `--tenant-id ${f.tenantId} --message-id ${f.messageId} --worker-key ${f.workerKey} (attempts 1)`,
         );
         // The refused drain changed nothing at all; the debt still waits for the operator.
-        expect((yield* f.runtime.select().from(applicationCompositionAuthority))[0]?.phase).toBe('active');
+        expect((yield* f.runtime.select().from(applicationCompositionAuthority))[0]).toMatchObject({
+          durableWorkAdmission: 'open',
+          phase: 'active',
+        });
         expect(yield* f.runtime.select().from(applicationCompositionDurableWork)).toHaveLength(1);
 
         yield* f.admin.executor

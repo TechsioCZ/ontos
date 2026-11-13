@@ -15,6 +15,8 @@ import type { OperationalScope } from '../operations/context.ts';
 import { isCoreSystemOutboxSubscription, validateOutboxWorkerSubscriptions } from '../outbox/definition.ts';
 import type { OutboxWorkerSubscription } from '../outbox/definition.ts';
 import { CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS } from '../outbox/core-system-subscriptions.ts';
+import { carriesOverToNextRelease } from '../outbox/carry-over.ts';
+import type { OutboxConsumerKey } from '../outbox/repository.ts';
 import type { ActiveApplicationCompositionSnapshot } from './active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from './application-composition-catalog.ts';
 import { OutboxSubscriptionAuthoritySchema } from './manifest.ts';
@@ -201,7 +203,13 @@ export const carriedOverCoreSystemWorkerKeys = Effect.fn('ApplicationComposition
       .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
     if (authority === undefined) {
       const none: readonly string[] = [];
-      return { approvedCoreSystemWorkerKeys: none, carriedOverWorkerKeys: none };
+      return {
+        approvedCoreSystemWorkerKeys: none,
+        approvedWorkerKeys: none,
+        carriedOverWorkerKeys: none,
+        // SAFETY: an empty literal has no element to widen; the annotation only names the element contract.
+        coreSystemConsumers: [] as readonly OutboxConsumerKey[],
+      };
     }
     const [approved, shipped] = yield* Effect.all(
       [
@@ -218,10 +226,19 @@ export const carriedOverCoreSystemWorkerKeys = Effect.fn('ApplicationComposition
     });
     // Every core-system key the retiring authority approved, identical or not: these are the keys a live host of
     // that release claims as Core's own work, which is what decides whether its outstanding work can drain at all.
-    const approvedCoreSystemWorkerKeys = approved.flatMap((subscription) =>
-      isCoreSystemOutboxSubscription(subscription) ? [subscription.workerKey] : [],
+    const coreSystemConsumers: readonly OutboxConsumerKey[] = approved.flatMap((subscription) =>
+      isCoreSystemOutboxSubscription(subscription)
+        ? [{ consumerModuleKey: subscription.consumerModuleKey, workerKey: subscription.workerKey }]
+        : [],
     );
-    return { approvedCoreSystemWorkerKeys, carriedOverWorkerKeys };
+    const approvedCoreSystemWorkerKeys = coreSystemConsumers.map(({ workerKey }) => workerKey);
+    return {
+      approvedCoreSystemWorkerKeys,
+      /** Every worker key the retiring authority approved: a delivery under any other key has no consumer at all. */
+      approvedWorkerKeys: approved.map(({ workerKey }) => workerKey),
+      carriedOverWorkerKeys,
+      coreSystemConsumers,
+    };
   },
 );
 
@@ -231,24 +248,8 @@ export const carriedOverCoreSystemWorkerKeys = Effect.fn('ApplicationComposition
  */
 const blockingOutboxWork = (carriedOverWorkerKeys: readonly string[]) => {
   const unfinished = sql`exists (select 1 from ${outboxDeliveries} where ${outboxDeliveries.status} not in ('done', 'released')`;
-  if (carriedOverWorkerKeys.length === 0) {
-    return sql`${unfinished})`;
-  }
-  return sql`${unfinished} and not (
-    ${outboxDeliveries.status} = 'pending'
-    and ${outboxDeliveries.attemptsCount} = 0
-    and ${outboxDeliveries.claimedBy} is null
-    and ${outboxDeliveries.workerKey} in (${sql.join(
-      carriedOverWorkerKeys.map((workerKey) => sql`${workerKey}`),
-      sql`, `,
-    )})
-    and exists (
-      select 1 from ${outboxMessages}
-      where ${outboxMessages.outboxMessageId} = ${outboxDeliveries.outboxMessageId}
-        and ${outboxMessages.matchedAt} is not null
-        and ${outboxMessages.completionOriginalRevision} is null
-    )
-  ))`;
+  const carriesOver = carriesOverToNextRelease(carriedOverWorkerKeys);
+  return carriesOver === undefined ? sql`${unfinished})` : sql`${unfinished} and not ${carriesOver})`;
 };
 
 const requireNoPendingDurableWork = Effect.fn('ApplicationCompositionAuthority.requireNoPendingDurableWork')(

@@ -434,12 +434,8 @@ const refuseUndrainableWork = Effect.fn('ApplicationCompositionAuthority.refuseU
     const undrainable = yield* database.executor
       .transaction((transaction) =>
         carriedOverCoreSystemWorkerKeys(transaction).pipe(
-          Effect.flatMap(({ approvedCoreSystemWorkerKeys, carriedOverWorkerKeys }) =>
-            listUndrainableOutboxWork(database.executor, {
-              budgetMs,
-              carriedOverWorkerKeys,
-              coreSystemWorkerKeys: approvedCoreSystemWorkerKeys,
-            }),
+          Effect.flatMap(({ carriedOverWorkerKeys, coreSystemConsumers }) =>
+            listUndrainableOutboxWork(transaction, { budgetMs, carriedOverWorkerKeys, coreSystemConsumers }),
           ),
         ),
       )
@@ -456,7 +452,7 @@ const refuseUndrainableWork = Effect.fn('ApplicationCompositionAuthority.refuseU
     const others = describeUndrainableOutboxWork(undrainable.filter((delivery) => delivery.reason !== 'dead'));
     return yield* unavailable(
       [
-        'The Application Composition drain was not started, so this release keeps serving and nothing was written.',
+        'The Application Composition drain was not started: durable admission is unchanged and the authority stays active, so the running release keeps serving.',
         ...(dead === '' ? [] : [dead]),
         ...(others === '' ? [] : [others]),
       ].join(' '),
@@ -548,8 +544,11 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
       }
       yield* Effect.gen(function* finishOldCompositionWork() {
         if (current.phase === 'active') {
-          // Before anything is written: a drain that waits for work nothing can finish would refuse every read on
-          // the running release until its budget expired. Refusing to start leaves the old release serving.
+          // Before the authority fence moves: a drain that waits for work nothing can finish would refuse every
+          // read on the running release until its budget expired. Refusing here leaves durable admission open and
+          // the authority active, so the old release keeps serving. (Earlier boot steps — the migrator, workload
+          // registration, credential provisioning and the expand-only completion-schema expansion — have already
+          // run and stay applied; they are safe under the old release.)
           yield* refuseUndrainableWork(budgetMs);
           progressState.phase = 'close-admission';
           yield* withApplicationCompositionPublicationProgress(
@@ -603,6 +602,54 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
       );
       return yield* Effect.void;
     }).pipe(Effect.timeoutOrElse({ duration: Duration.millis(budgetMs), orElse: budgetExpired }));
+  },
+);
+
+/** How long the promote may keep re-draining before it gives up; one slice per claimed carried-over row. */
+const PROMOTE_RETRY_BUDGET_MS = 60_000;
+const PROMOTE_RETRY_ATTEMPTS = 5;
+
+/**
+ * Promotes a drained composition, tolerating work that arrives between the drain poll and the promote.
+ *
+ * The poll ignores a carried-over row, but the promote's own `requireDrainedWork` counts it as blocking if a live
+ * host of the retiring release claimed it in between — a real interleaving now that a host with the claim fix can
+ * take exactly those rows. Failing there would leave the authority in `draining`, so instead the publisher waits
+ * for the Outbox again and retries the promote inside a bounded budget. Each wait is the same committed drain
+ * observation, and the promote stays a single fenced transaction.
+ */
+/** What the promote's own drain check says when work arrived after the poll observed the Outbox drained. */
+const FRESH_OUTBOX_WORK = 'Outstanding Outbox work';
+
+const promoteDrainedComposition = Effect.fn('ApplicationCompositionAuthority.promoteDrained')(
+  function* promoteDrainedComposition<Value, Failure, Requirements>(
+    current: CurrentApplicationCompositionAuthority,
+    promote: (transaction: CoreTransaction) => Effect.Effect<Value, Failure, Requirements>,
+  ) {
+    const reported = yield* Ref.make('');
+    return yield* withVerifiedLegacyTransition(current.revision, promote).pipe(
+      // Between a failed promote and its retry, wait for the Outbox again: the same committed drain observation
+      // the poll makes, so the retry promotes only once the fresh work has finished too.
+      Effect.tapError((error) =>
+        Schema.is(ApplicationCompositionAuthorityError)(error) && error.reason.includes(FRESH_OUTBOX_WORK)
+          ? Effect.logInfo('Application Composition promotion found fresh Outbox work; draining again').pipe(
+              Effect.andThen(waitForOutboxPublicationWork(current.revision, reported)),
+            )
+          : Effect.void,
+      ),
+      Effect.retry({
+        schedule: Schedule.recurs(PROMOTE_RETRY_ATTEMPTS),
+        while: (error) =>
+          Schema.is(ApplicationCompositionAuthorityError)(error) && error.reason.includes(FRESH_OUTBOX_WORK),
+      }),
+      Effect.timeoutOrElse({
+        duration: Duration.millis(PROMOTE_RETRY_BUDGET_MS * PROMOTE_RETRY_ATTEMPTS),
+        orElse: () =>
+          unavailable(
+            'Outbox work kept arriving while the drained Application Composition was being promoted; the authority was not replaced',
+          ),
+      }),
+    );
   },
 );
 
@@ -880,7 +927,9 @@ export const publishApplicationCompositionAuthoritySnapshot = Effect.fn(
     // Absence of a Core authority row does not imply absence of retained owner history.
     return yield* withApplicationCompositionPublicationProgress(
       'promote native authority and publish provider pointer',
-      withVerifiedLegacyTransition(current?.revision ?? null, promoteAndPublish),
+      current === undefined
+        ? withVerifiedLegacyTransition(null, promoteAndPublish)
+        : promoteDrainedComposition(current, promoteAndPublish),
     );
   });
   return yield* withApplicationCompositionPublicationLock(publication);

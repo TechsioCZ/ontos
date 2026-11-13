@@ -156,15 +156,33 @@ const loadClaimInvocationEvidence = Effect.fnUntraced(function* loadClaimInvocat
  * and a concurrent deactivation are serialized by their commits either way — a claim that commits just before a
  * deactivation is the same as one that commits just after it.
  */
-export const backgroundEligibleConsumer = (coreSystemWorkerKeys: readonly string[]) =>
+export const backgroundEligibleConsumer = (coreSystemConsumers: readonly OutboxConsumerKey[]) =>
   or(
-    coreSystemWorkerKeys.length === 0 ? undefined : inArray(outboxDeliveries.workerKey, [...coreSystemWorkerKeys]),
+    // Each core-system key is paired with the consumer module it belongs to, so a delivery is never admitted on a
+    // worker key alone: the row must name both, exactly as the approved subscription does.
+    coreSystemConsumers.length === 0
+      ? undefined
+      : or(
+          ...coreSystemConsumers.map(({ consumerModuleKey, workerKey }) =>
+            and(eq(outboxDeliveries.workerKey, workerKey), eq(outboxDeliveries.consumerModuleKey, consumerModuleKey)),
+          ),
+        ),
     sql`exists (select 1 from ${tenantModuleStates} where ${tenantModuleStates.tenantId} = ${outboxMessages.tenantId} and ${tenantModuleStates.moduleKey} = ${outboxDeliveries.consumerModuleKey} and ${tenantModuleStates.state} in (${BACKGROUND_ELIGIBLE_STATE_LIST}))`,
   );
 
-/** The worker keys of these registrations that carry Core's own system subscriptions. */
-const coreSystemWorkerKeysOf = (registrations: readonly AnyOutboxWorkerRegistration[]): readonly string[] =>
-  registrations.flatMap(({ descriptor }) => (isCoreSystemOutboxSubscription(descriptor) ? [descriptor.workerKey] : []));
+/** One approved core-system subscription's identity in the claim: its worker key and the module that consumes it. */
+export interface OutboxConsumerKey {
+  readonly consumerModuleKey: string;
+  readonly workerKey: string;
+}
+
+/** The core-system subscriptions of these registrations, each as its worker key and consumer module. */
+const coreSystemConsumersOf = (registrations: readonly AnyOutboxWorkerRegistration[]): readonly OutboxConsumerKey[] =>
+  registrations.flatMap(({ descriptor }) =>
+    isCoreSystemOutboxSubscription(descriptor)
+      ? [{ consumerModuleKey: descriptor.consumerModuleKey, workerKey: descriptor.workerKey }]
+      : [],
+  );
 // A tenant that is no longer active must not have background work claimed at all. This is a predicate rather than a
 // join on purpose: `.for('update')` in the claim locks every row named in the FROM list, and `core.tenants` is the
 // per-tenant serialization anchor held FOR UPDATE by every event-emitting action, so joining it would make claim
@@ -217,7 +235,7 @@ const hasDueDelivery = Effect.fnUntraced(
     executor: CoreDbExecutor,
     claimable: SQL | undefined,
     workerKeys: readonly string[],
-    coreSystemWorkerKeys: readonly string[],
+    coreSystemConsumers: readonly OutboxConsumerKey[],
     now: Date,
   ) {
     const rows = yield* executor
@@ -227,7 +245,7 @@ const hasDueDelivery = Effect.fnUntraced(
       .where(
         and(
           inArray(outboxDeliveries.workerKey, [...workerKeys]),
-          backgroundEligibleConsumer(coreSystemWorkerKeys),
+          backgroundEligibleConsumer(coreSystemConsumers),
           claimable,
           activeMessageTenant,
           dueDelivery(now),
@@ -319,7 +337,7 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
       const byWorkerKey = new Map(
         registrations.map((registration) => [registration.descriptor.workerKey, registration]),
       );
-      const coreSystemWorkerKeys = coreSystemWorkerKeysOf(registrations);
+      const coreSystemConsumers = coreSystemConsumersOf(registrations);
       return Effect.gen(function* nativeClaimAdmission() {
         // Admission precedes every statement, the idle probe included: an unadmitted worker issues no SQL at all.
         const admission = yield* prepareNativeOutboxClaimAdmission(registrations, compositionRevision).pipe(
@@ -333,7 +351,7 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
           ),
         );
         const claimable = intrinsicProvidersActive(registrations, admission.intrinsic);
-        if (!(yield* hasDueDelivery(executor, claimable, [...byWorkerKey.keys()], coreSystemWorkerKeys, now))) {
+        if (!(yield* hasDueDelivery(executor, claimable, [...byWorkerKey.keys()], coreSystemConsumers, now))) {
           return Option.none<OutboxClaim>();
         }
         return yield* executor
@@ -363,7 +381,7 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
                 .where(
                   and(
                     inArray(outboxDeliveries.workerKey, [...byWorkerKey.keys()]),
-                    backgroundEligibleConsumer(coreSystemWorkerKeys),
+                    backgroundEligibleConsumer(coreSystemConsumers),
                     claimable,
                     activeMessageTenant,
                     dueDelivery(now),
