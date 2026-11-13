@@ -659,7 +659,12 @@ const unavailableDecision = (): AccessDecision =>
 
 const SENSITIVE_READ_KINDS: ReadonlySet<AccessKind> = new Set(['export', 'field_read', 'read'] as const);
 
-const agentTier = (
+/**
+ * What an agent may do with one capability in one requested mode: never administration, never approval, never a
+ * sensitive read, and a non-routine run only as a proposal a person decides. Exported so a surface that SHOWS an
+ * agent's usable rights applies this very rule instead of restating it; the decision itself is still `decideAccess`.
+ */
+export const agentTier = (
   policy: DecisionCapabilityPolicy,
   requestedMode: AccessMode,
 ): { readonly approvalRequired: boolean } | { readonly reason: DecisionReason } => {

@@ -19,9 +19,10 @@ import type { ListAccessResolution } from '../decision/engine.ts';
 import type { ListAccessPredicate } from '../decision/list-access.ts';
 import { accessDecisionUnavailable } from '../decision/errors.ts';
 import { withOptional } from '../decision/optional.ts';
-import { holderIdOf } from '../decision/selector.ts';
+import { holderIdOf, holderSubjectOf } from '../decision/selector.ts';
 import {
   AccessScopeIdSchema,
+  AgentIdSchema,
   CapabilityKeySchema,
   LegalEntityIdSchema,
   PrincipalIdSchema,
@@ -53,7 +54,6 @@ import type { AccessWorkloadBindings, WorkloadCompanyDeclaration } from './workl
 
 export type { AccessDecisionPorts } from './contract.ts';
 
-const HUMAN_SUBJECT = 'principal';
 const SELECT_PERMISSION = 'select';
 const IDENTITY_UNAVAILABLE = 'unavailable.intent';
 const EVIDENCE_UNAVAILABLE = 'unavailable.evidence';
@@ -128,16 +128,26 @@ const FAIL_CLOSED_WORKLOADS: AccessWorkloadBindings = {
 };
 const ALLOW_WORKLOAD = 'allow.workload';
 
-/** The subject an evidence row names: a refused subject may have no kind, so only its principal is carried. */
-type EvidenceSubject = Pick<GateActor, 'principalId'>;
+/**
+ * The subject an evidence row names: a refused subject may have no kind, so only its principal is carried, and the
+ * agent connection when the subject is an agent acting through one.
+ */
+type EvidenceSubject = Pick<GateActor, 'agentConnection' | 'principalId'>;
 
-/** The human actor of a request; v2 has exactly one actor kind in this wave (O46, O67-Q5). */
-const actorContextOf = (actor: EvidenceSubject): ActorContext => ({
-  _tag: 'Principal',
-  principalId: actor.principalId,
-});
-
-const holderOf = (actor: EvidenceSubject): Holder => ({ _tag: 'Principal', principalId: actor.principalId });
+/**
+ * The engine's actor of a request: a person, or an agent together with the operator, connection and consent revision
+ * its credential carries. The engine decides the agent on both sides and refuses a connection that is not live (D13).
+ */
+const actorContextOf = (actor: EvidenceSubject): ActorContext =>
+  actor.agentConnection === undefined
+    ? { _tag: 'Principal', principalId: actor.principalId }
+    : {
+        _tag: 'Agent',
+        agentId: AgentIdSchema.make(actor.principalId),
+        connectionId: actor.agentConnection.connectionId,
+        consentRevision: actor.agentConnection.consentRevision,
+        principalId: actor.agentConnection.operatorPrincipalId,
+      };
 
 /** No registered workloads: the set a person or an agent always has, and a denied workload gets. */
 const NO_WORKLOADS: ReadonlySet<string> = new Set();
@@ -233,8 +243,17 @@ const scopeQueryOf = (
   return legalEntityId === undefined ? base : { ...base, legalEntityId };
 };
 
-/** A person's scope read proves the person's own membership. */
-const memberHoldersOf = (actor: EvidenceSubject): readonly Holder[] => [holderOf(actor)];
+/**
+ * A person's scope read proves the person's own membership. An agent's proves the operator's and the agent's own: the
+ * engine decides an agent on both sides, so both stand in the scope (D6, guarantee 4).
+ */
+const memberHoldersOf = (actor: EvidenceSubject): readonly Holder[] =>
+  actor.agentConnection === undefined
+    ? [{ _tag: 'Principal', principalId: actor.principalId }]
+    : [
+        { _tag: 'Principal', principalId: actor.agentConnection.operatorPrincipalId },
+        { _tag: 'Agent', agentId: AgentIdSchema.make(actor.principalId) },
+      ];
 
 /** The engine's actor input: a verified human in the scope this request resolved. */
 const actorInputOf = (
@@ -1159,28 +1178,33 @@ export const makeAccessDecisionService = (
       if (candidates.value.length === 0 || actorResolution.workload === true) {
         return candidates.value;
       }
+      // A person selects a company they may act in. An agent selects one only where the agent itself AND the operator
+      // its connection names may act: the engine decides an agent on both sides, so neither stands in for the other.
+      const subjects = memberHoldersOf(actor).map(holderSubjectOf);
       const answers = yield* Effect.option(
         ports.check.checkBulk(
-          candidates.value.map((legalEntityId) => ({
-            permission: SELECT_PERMISSION,
-            resource: {
-              id: legalEntityObjectId(input.scope.tenantId, legalEntityId),
-              type: objectTypeOf('legal_entity'),
-            },
-            subject: { id: actor.principalId, type: HUMAN_SUBJECT },
-          })),
+          candidates.value.flatMap((legalEntityId) =>
+            subjects.map((subject) => ({
+              permission: SELECT_PERMISSION,
+              resource: {
+                id: legalEntityObjectId(input.scope.tenantId, legalEntityId),
+                type: objectTypeOf('legal_entity'),
+              },
+              subject,
+            })),
+          ),
         ),
       );
-      if (Option.isNone(answers) || answers.value.length !== candidates.value.length) {
+      if (Option.isNone(answers) || answers.value.length !== candidates.value.length * subjects.length) {
         return yield* accessDecisionUnavailable('The authorization engine did not answer for every company');
       }
       const selectable: LegalEntityId[] = [];
       for (const [index, candidate] of candidates.value.entries()) {
-        const answer = answers.value[index];
-        if (answer === undefined || answer.permissionship === 'error') {
+        const companyAnswers = answers.value.slice(index * subjects.length, (index + 1) * subjects.length);
+        if (companyAnswers.some((answer) => answer.permissionship === 'error')) {
           return yield* accessDecisionUnavailable('The authorization engine could not answer for a company');
         }
-        if (answer.permissionship === 'has') {
+        if (companyAnswers.every((answer) => answer.permissionship === 'has')) {
           selectable.push(candidate);
         }
       }
