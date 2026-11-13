@@ -10,7 +10,7 @@
  * It sells every product and variant at the price the new release sold it at, written after Tax priced the company
  * included (N1's jacket at 10 623,80 per variant); only a variant priced at 12 % beside one stored at 10 % sells lower.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 import {
   ActiveApplicationCompositionService,
@@ -104,11 +104,15 @@ it.live(
         }),
       );
       const lower = new Set<string>(report.sellingLowerAfterRollback);
+      const higher = new Set<string>(report.sellingHigherAfterRollback);
       for (const [id, prices] of Object.entries<readonly (number | null)[]>(report.selling)) {
-        if (lower.has(id)) {
+        if (higher.has(id)) {
+          // Exclusion 1: a standard product this release can only price at net + 21 %.
+          const written = report.products.find((entry) => entry.id === id);
+          expect([id, sellingNow[id]]).toEqual([id, [written.net + Math.floor((written.net * 21 + 50) / 100)]]);
+        } else if (lower.has(id)) {
           expect(sellingNow[id]?.length).toBe(prices.length);
           expect(sellingNow[id]?.every((price, index) => price !== null && price <= (prices[index] ?? 0))).toBe(true);
-          expect(sellingNow[id]?.[0]).toBe(prices[0]);
         } else {
           expect([id, sellingNow[id]]).toEqual([id, prices]);
         }
@@ -172,7 +176,56 @@ it.live(
          from demo_merchandise.products where tenant_id = $1 and legal_entity_id = $2 order by id`,
         [tenantId, companyId],
       );
-      expect(products).toEqual(report.products);
+      // Products whose prices it sells lower after a rollback (see above) store that lower gross; nothing else moves.
+      for (const written of report.products) {
+        const product = products.find((entry) => entry.id === written.id);
+        if (lower.has(written.id) || higher.has(written.id)) {
+          expect([written.id, product?.net, product?.rate]).toEqual([written.id, written.net, written.rate]);
+          expect([written.id, higher.has(written.id) || (product?.gross ?? 0) <= (written.gross ?? 0)]).toEqual([
+            written.id,
+            true,
+          ]);
+        } else {
+          expect(product).toEqual(written);
+        }
+      }
+      expect(products.length).toBe(report.products.length);
+      // For the next deploy of the new release: what this release charges now, and how the window trigger classified
+      // and held each product it rewrote.
+      const afterRewrite = yield* runtimeDb.transaction((tx) =>
+        installOperationalScope(tx, scopeOf('vat-reverse-after'), defineDatabaseIdentityEnrollment([])).pipe(
+          Effect.flatMap((scoped) => readSnapshot(scoped, store)),
+        ),
+      );
+      const chargedAfter = Object.fromEntries(
+        computeProductRecords(afterRewrite?.state ?? { categories: [], movements: [], orders: [], products: [] }).map(
+          (record) => [
+            String(record.id),
+            [
+              record.grossPriceMinor ?? null,
+              ...(record.variantRecords ?? []).map((entry) => entry.grossPriceMinor ?? null),
+            ],
+          ],
+        ),
+      );
+      const classified = yield* adminPg.unsafe<{
+        readonly classification: string;
+        readonly id: string;
+        readonly rate: number;
+      }>(
+        `select id, tax_classification_code as classification, (document ->> 'vatRate')::integer as rate
+           from demo_merchandise.products where tenant_id = $1 and legal_entity_id = $2 order by id`,
+        [tenantId, companyId],
+      );
+      const [head] = yield* adminPg.unsafe<{ readonly held: unknown; readonly source: string }>(
+        `select tax_rates ->> 'source' as source, tax_rates -> 'heldProductRates' as held
+           from demo_merchandise.catalog_heads where tenant_id = $1 and legal_entity_id = $2`,
+        [tenantId, companyId],
+      );
+      writeFileSync(
+        `${String(yield* Config.String('ONTOS_VAT_REVERSE_REPORT'))}.rollback.json`,
+        JSON.stringify({ chargedAfter, classified, held: head?.held ?? null, source: head?.source ?? null }),
+      );
       const orders = yield* adminPg.unsafe<{ readonly id: string; readonly total: number }>(
         `select id, total_minor::integer as total from demo_merchandise.orders
         where tenant_id = $1 and legal_entity_id = $2 and id <> $3 order by id`,

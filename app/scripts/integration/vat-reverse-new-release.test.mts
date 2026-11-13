@@ -40,7 +40,10 @@ import {
 import { financeStates } from '../../verticals/finance-billing/src/database/schema.ts';
 import { FinanceTaxRates } from '../../verticals/finance-billing/src/integrations/tax-rates.ts';
 import { MerchandiseCommandPayloadSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
-import { TaxRuleRevisionIdSchema } from '../../verticals/merchandise/shared/domain/merchandise-model.ts';
+import {
+  TaxRuleRevisionIdSchema,
+  grossUnitPriceMinor,
+} from '../../verticals/merchandise/shared/domain/merchandise-model.ts';
 import { recordsRead } from '../../verticals/merchandise/src/api/records.read.ts';
 import { merchandiseRelations } from '../../verticals/merchandise/src/database/schema.ts';
 import { TaxRateSource } from '../../verticals/merchandise/src/services/tax-rates.ts';
@@ -163,6 +166,17 @@ it.live('this release writes products, orders and invoices in its own shape for 
         ],
       );
     }
+    // A second product the old release stored at 10 % (held like BOOK-IT), for a person to reclassify to standard.
+    yield* adminPg.unsafe(
+      `insert into demo_merchandise.products
+         select (jsonb_populate_record(p, jsonb_build_object(
+           'id', 'held-2', 'sku', 'HELD-2', 'sku_key', 'held-2', 'slug', 'held-2', 'ordinal', p.ordinal + 1000,
+           'document', (p.document - 'taxClassificationCode')
+             || jsonb_build_object('id', 'held-2', 'sku', 'HELD-2', 'slug', 'held-2', 'vatRate', 10)))).*
+           from demo_merchandise.products p
+          where p.tenant_id = $1 and p.legal_entity_id = $2 and p.id = 'book-it'`,
+      [tenantId, companyId],
+    );
     yield* adminPg.unsafe(
       'update demo_merchandise.catalog_heads set tax_rates = demo_merchandise.migration_tax_rates(tenant_id, legal_entity_id) where tenant_id = $1 and legal_entity_id = $2',
       [tenantId, companyId],
@@ -246,6 +260,16 @@ it.live('this release writes products, orders and invoices in its own shape for 
       priceMinor: 12_345,
       variantId: variant?.id ?? '',
     });
+    // While the company is still on the migrated rates a person reclassifies: the held HELD-2 to standard (its hold goes
+    // with it), and the standard p2 to reduced.
+    yield* apply({ _tag: 'UpdateProduct', id: 'held-2', patch: { taxClassificationCode: 'cz.vat.standard' } });
+    yield* apply({ _tag: 'UpdateProduct', id: 'p2', patch: { taxClassificationCode: 'cz.vat.reduced' } });
+    const [holds] = yield* adminPg.unsafe<{ readonly held: unknown }>(
+      `select tax_rates -> 'heldProductRates' as held from demo_merchandise.catalog_heads
+        where tenant_id = $1 and legal_entity_id = $2`,
+      [tenantId, companyId],
+    );
+    expect(holds?.held).toEqual({ 'book-it': 10 });
     // BOOK-IT gains two variants while it is still held at 10 %.
     yield* apply({
       _tag: 'UpdateProduct',
@@ -322,6 +346,8 @@ it.live('this release writes products, orders and invoices in its own shape for 
     );
     expect(selling[JACKET_ID]).toEqual([1_062_380, 1_062_380, 1_062_380, 1_062_380, 1_062_380, 1_062_380]);
     expect(selling['book-it']).toEqual([33_000, 33_000, 45_920]);
+    // HELD-2 reclassified to standard: its hold went with it, its stored price stays.
+    expect(selling['held-2']).toEqual([53_900]);
 
     // Finance: a ledger in this release's shape.
     const reactivity = yield* Reactivity.make;
@@ -459,6 +485,13 @@ it.live('this release writes products, orders and invoices in its own shape for 
         where tenant_id = $1 and legal_entity_id = $2 order by id`,
       [tenantId, companyId],
     );
+    const tiered = new Set(
+      (yield* adminPg.unsafe<{ readonly id: string }>(
+        `select distinct product_id as id from demo_merchandise.price_tiers
+          where tenant_id = $1 and legal_entity_id = $2 and variant_position = -1`,
+        [tenantId, companyId],
+      )).map(({ id }) => id),
+    );
     writeFileSync(
       report.value,
       JSON.stringify({
@@ -470,7 +503,19 @@ it.live('this release writes products, orders and invoices in its own shape for 
         principal: native.principal,
         products,
         selling,
-        sellingLowerAfterRollback: ['book-it'],
+        sellingLowerAfterRollback: ['book-it', 'p2'],
+        // Exclusion 1 of the rollback rule, inherent to the old release: a standard product it can only price at net +
+        // 21 %, whose stored gross is lower (HELD-2, reclassified from held 10 % to standard keeping its price).
+        sellingHigherAfterRollback: products
+          .filter(
+            (product) =>
+              product.rate === 21 &&
+              selling[product.id]?.length === 1 &&
+              !tiered.has(product.id) &&
+              product.gross !== null &&
+              product.gross < grossUnitPriceMinor(product.net, 21),
+          )
+          .map((product) => product.id),
         tenantId,
         variant,
       }),
