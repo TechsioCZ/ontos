@@ -295,9 +295,11 @@ export interface InternalWorkloadBinding {
 
 /**
  * The principal the platform registers for a module's own internal workload in one company of one tenant. Its id is
- * derived from those three, so it is the platform's mark: principal ids are never chosen by a tenant user (Core assigns
- * them), and a principal with this id exists only because the release step created it. Key provisioning keys a
- * binding only when its principal carries exactly the id derived from that binding's tenant, workload and company.
+ * derived from those three and is computable by anyone, so it is not proof on its own: the platform's mark is the
+ * `internal_workload` marker only Core's platform writer sets. No product Action takes a principal id (Core gives every
+ * principal an Action creates its id in its own namespace), so no tenant can place a principal at this id; a principal
+ * created here before that rule holds no marker and is never keyed. Key provisioning keys a binding only when its
+ * principal carries the marker and exactly the id derived from that binding's tenant, workload and company.
  */
 export const internalWorkloadPrincipalId = (input: {
   readonly legalEntityId: string;

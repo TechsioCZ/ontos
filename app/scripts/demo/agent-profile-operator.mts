@@ -51,6 +51,9 @@ import { AuthenticationService, AuthenticationServiceLive } from '../../apps/she
 import { StaffAuthenticationNamespaceRegistryLive } from '../../apps/shell-super-app/api/auth/authentication-namespace-registry.ts';
 import { ShellInstalledModuleCatalogLive } from '../../apps/shell-super-app/api/modules/installed-module-catalog.ts';
 import { AgentProfileReadDatabase } from './agent-profile-setup.mts';
+import { AgentSeedIdentityWriter } from './agent-seed-identity.mts';
+import type { SeededAgentIdentity } from './agent-seed-identity.mts';
+import { principalCompanyMemberships, principals } from '../../packages/core-runtime/src/db/schema.ts';
 import { AgentProfileSetupError, retainAgentOperatorSessionCookies } from './agent-operator-session.mts';
 
 const persistence = CorePersistenceLive.pipe(Layer.provide(DatabaseConfigLive));
@@ -125,6 +128,48 @@ const reads = Layer.effect(
     return { executor: database.executor };
   }),
 ).pipe(Layer.provide(CoreAdminDatabaseLive));
+// The operator's own connection seeds a reviewed agent's fixed id; nothing a tenant user calls reaches it.
+const seedWriter = Layer.effect(
+  AgentSeedIdentityWriter,
+  Effect.gen(function* operatorSeedWriter() {
+    const database = yield* CoreDatabase;
+    return {
+      seed: (identity: SeededAgentIdentity) =>
+        database.executor
+          .transaction((transaction) =>
+            transaction
+              .insert(principals)
+              .values({
+                displayName: identity.displayName,
+                kind: 'agent',
+                principalId: identity.principalId,
+                status: 'active',
+                tenantId: identity.tenantId,
+              })
+              .pipe(
+                Effect.andThen(
+                  transaction.insert(principalCompanyMemberships).values({
+                    affiliation: null,
+                    legalEntityId: identity.legalEntityId,
+                    principalId: identity.principalId,
+                    status: 'active',
+                    tenantId: identity.tenantId,
+                  }),
+                ),
+              ),
+          )
+          .pipe(
+            Effect.asVoid,
+            Effect.mapError(
+              () =>
+                new AgentProfileSetupError({
+                  reason: `The reviewed agent ${identity.principalId} could not be seeded`,
+                }),
+            ),
+          ),
+    };
+  }),
+).pipe(Layer.provide(CoreAdminDatabaseLive));
 const readRuntime = ReadRuntimeLive.pipe(Layer.provide(operations));
 const authority = ActionAuthorityLive.pipe(Layer.provide(Layer.merge(enforcement, composition)));
 const operatorIdentities = AccessPeopleDirectoryLive.pipe(
@@ -133,6 +178,7 @@ const operatorIdentities = AccessPeopleDirectoryLive.pipe(
 const apiKeys = ApiKeyServiceLive.pipe(Layer.provide(authDatabase), Layer.provide(NodeCrypto.layer));
 const identityLifecycle = IdentityLifecycleLive.pipe(Layer.provide(Layer.mergeAll(actionRuntime, apiKeys, resolver)));
 export const AgentProfileOperatorLive = Layer.mergeAll(
+  seedWriter,
   // Core revalidates the staff namespace when Actions run, not only while the authentication service is built.
   StaffAuthenticationNamespaceRegistryLive,
   identityLifecycle,

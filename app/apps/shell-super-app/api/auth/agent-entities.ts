@@ -25,6 +25,7 @@ import type {
   TrustedPrincipalContext,
 } from '@app/core-runtime';
 import { AccessProjectionWriter } from '@app/core-runtime/access/intent/projection-writer';
+import { actionCreatedPrincipalId } from '@app/core-runtime/auth/action-principal-ids';
 import type {
   AgentEntity,
   ManageAgentEntityRequest,
@@ -55,13 +56,7 @@ import { ConnectionsUnavailable } from '../oauth-connections-admin/connections-u
 import type { ConnectionsAdminDeps } from '../oauth-connections-admin/ports.ts';
 import { agentDraftProblem, agentModuleOptions, agentRolePreset } from './agent-entities-model.ts';
 import { legalEntityWriteRelationsOf } from './agent-write-relations.ts';
-import {
-  auditForbiddenAttempt,
-  auditTrail,
-  companyRoleTemplates,
-  derivedUuid,
-  requireAdministrator,
-} from './demo-accounts.ts';
+import { auditForbiddenAttempt, auditTrail, companyRoleTemplates, requireAdministrator } from './demo-accounts.ts';
 import { AgentActionRequestIdentity } from './agent-action-request-identity.ts';
 import { AgentReadRequestIdentity } from './agent-request-identity.ts';
 import { AuthConfig } from './config.ts';
@@ -306,8 +301,9 @@ const changeAgent = Effect.fn('AgentEntities.changeAgent')(function* applyAgentC
     const snapshot = yield* deps.directory.snapshot;
     const agents = snapshot.agents.filter((agent) => agent.status !== 'archived');
     const memberIds = snapshot.people.map((person) => person.principalId);
-    // Same idempotency key = same principal id: a retry replays the Core Action instead of failing the name check.
-    const principalId = derivedUuid(`${tenantId}:${legalEntityId}:${transport.idempotencyKey}:agent`);
+    // Core derives the agent's id from this request's idempotency key: a retry names the same agent and replays the
+    // Core Action instead of failing the name check.
+    const principalId = actionCreatedPrincipalId({ kind: 'agent', reference: transport.idempotencyKey, tenantId });
     const catalog = yield* companyCatalog(legalEntityId, yield* roleTemplates(caller, transport), grants);
     const problem = agentDraftProblem({
       displayName: request.displayName,
@@ -326,12 +322,12 @@ const changeAgent = Effect.fn('AgentEntities.changeAgent')(function* applyAgentC
     const result = yield* runtime
       .runAction({
         payload: {
+          creationReference: transport.idempotencyKey,
           description: cleanDescription(request.description),
           displayName: request.displayName.trim(),
           modules: request.modules,
           operation: 'create-agent',
           ownerPrincipalId: request.ownerPrincipalId,
-          principalId,
           writePolicy: request.writePolicy,
         },
         principal: caller.principal,

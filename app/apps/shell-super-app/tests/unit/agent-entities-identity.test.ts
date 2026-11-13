@@ -26,6 +26,7 @@ import { AuthDatabase } from '../../api/auth/db/client.ts';
 import { AuthConfig } from '../../api/auth/config.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from '../../api/auth/authentication-namespace-registry.ts';
 import { derivedUuid } from '../../api/auth/demo-accounts.ts' with { rstest: 'importActual' };
+import { actionCreatedPrincipalId } from '@app/core-runtime/auth/action-principal-ids';
 import { agentModuleOptions, agentRolePreset } from '../../api/auth/agent-entities-model.ts' with {
   rstest: 'importActual',
 };
@@ -98,7 +99,12 @@ const create = Schema.decodeUnknownSync(ManageAgentEntityRequestSchema)({
   writePolicy: 'approval',
 });
 const transport = { correlationId: 'original-action-correlation', idempotencyKey: 'original-client-key' };
-const expectedId = derivedUuid(`${principal.tenantId}:${principal.legalEntityId}:${transport.idempotencyKey}:agent`);
+// Core derives the new agent's id from the tenant and the request's idempotency key; the BFF never chooses it.
+const expectedId = actionCreatedPrincipalId({
+  kind: 'agent',
+  reference: transport.idempotencyKey,
+  tenantId: principal.tenantId,
+});
 
 const fixture = (selected: DemoAccountCaller, principalId: string) =>
   Effect.gen(function* identityFixture() {
@@ -273,9 +279,11 @@ it.effect(
         principal: { ...principal, legalEntityId: '00000000-0000-4000-8000-000000000006' },
       };
       const otherTransport = { correlationId: 'second-correlation', idempotencyKey: 'second-key' };
-      const otherId = derivedUuid(
-        `${other.principal.tenantId}:${other.principal.legalEntityId}:${otherTransport.idempotencyKey}:agent`,
-      );
+      const otherId = actionCreatedPrincipalId({
+        kind: 'agent',
+        reference: otherTransport.idempotencyKey,
+        tenantId: other.principal.tenantId,
+      });
       const first = yield* fixture(caller, expectedId);
       const second = yield* fixture(other, otherId);
       const retry = yield* fixture(caller, expectedId);
