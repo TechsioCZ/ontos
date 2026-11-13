@@ -20,7 +20,6 @@ import type {
 } from '../../shared/actions/ensure-retail-customer-profile.ts';
 import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
 import {
-  makePartyRegistryRetailPartyResolver,
   missingPartyTransport,
   PartyRegistryRetailPartyResolverFactory,
 } from '../integrations/party-registry-retail-party-resolver.ts';
@@ -136,7 +135,8 @@ export const bindPreparedRetailParty = (
 export const prepareRetailProfileServices: ActionServicePreflight<
   EnsureRetailCustomerProfilePayload,
   EnsureRetailCustomerProfileServices,
-  EnsureRetailCustomerProfileRejected
+  EnsureRetailCustomerProfileRejected,
+  PartyRegistryRetailPartyResolverFactory
 > = Effect.fn('EnsureRetailCustomerProfileAction.prepareServices')(function* prepareServices(
   payload: EnsureRetailCustomerProfilePayload,
   context: ActionServicePreparationContext,
@@ -172,13 +172,13 @@ export const prepareRetailProfileServices: ActionServicePreflight<
     requestCorrelation: scope.correlationId,
     tenantId: scope.tenantId,
   };
-  const prepared = yield* Effect.serviceOption(PartyRegistryRetailPartyResolverFactory);
+  const resolvers = yield* PartyRegistryRetailPartyResolverFactory;
   const transport = yield* Effect.serviceOption(RetailPartyDetailExecutor);
   // Built only when used, so a prepared invocation never calls the transport at all.
   const readOnce = Effect.suspend(() =>
     Option.isNone(transport)
       ? missingPartyTransport()
-      : makePartyRegistryRetailPartyResolver(scopeInput, (detailRequest, correlation) =>
+      : resolvers.make(scopeInput, (detailRequest, correlation) =>
           transport.value.execute(detailRequest, correlation, {
             actionInvocationId: context.actionInvocationId,
             compositionRevision: context.compositionRevision,
@@ -186,25 +186,22 @@ export const prepareRetailProfileServices: ActionServicePreflight<
           }),
         )(request),
   );
-  const outcome = yield* (
-    Option.isNone(prepared)
-      ? readOnce
-      : prepared.value
-          .make(scopeInput)(request)
-          .pipe(Effect.catchTag('ProfilePersistenceDependencyFailure', () => readOnce))
-  ).pipe(
-    Effect.mapError((cause) =>
-      Object.defineProperty(
-        new EnsureRetailCustomerProfileRejected({
-          code: 'DEPENDENCY_UNAVAILABLE',
-          reason: 'Current Party Registry owner identity is unavailable',
-          retryable: true,
-        }),
-        'cause',
-        { value: cause },
+  const outcome = yield* resolvers
+    .make(scopeInput)(request)
+    .pipe(
+      Effect.catchTag('ProfilePersistenceDependencyFailure', () => readOnce),
+      Effect.mapError((cause) =>
+        Object.defineProperty(
+          new EnsureRetailCustomerProfileRejected({
+            code: 'DEPENDENCY_UNAVAILABLE',
+            reason: 'Current Party Registry owner identity is unavailable',
+            retryable: true,
+          }),
+          'cause',
+          { value: cause },
+        ),
       ),
-    ),
-  );
+    );
   const resolveRetailParty = bindPreparedRetailParty(request, outcome);
   const factory: ActionServiceFactory<EnsureRetailCustomerProfileServices> = (transaction, current, revision) => {
     if (

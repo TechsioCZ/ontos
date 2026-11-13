@@ -17,8 +17,8 @@ import {
   makePartyRegistryRetailPartyResolver,
   PartyRegistryRetailPartyResolverFactory,
   partyRegistryRetailPartyResolverFactoryLive,
-  preparedRetailPartyResolution,
 } from '../../src/integrations/party-registry-retail-party-resolver.ts';
+import { preparedRetailPartyResolution } from '../../src/integrations/prepared-retail-party-resolution.ts';
 import { ProfilePersistenceDependencyFailure } from '../../src/persistence/profile-persistence.ts';
 import { getActionServicePreflight } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
@@ -221,6 +221,7 @@ const prepareResolution = (
   preparedRetailPartyResolution.pipe(
     Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
     Effect.provideService(RetailPartyDetailExecutor, executor),
+    Effect.provide(partyRegistryRetailPartyResolverFactoryLive),
   );
 
 const nativePreflight = {
@@ -357,6 +358,7 @@ it.effect('fails closed without an actor-bound Party transport instead of readin
     const snapshot = yield* makeApplicationCompositionSnapshotFixture();
     const execution = yield* preparedRetailPartyResolution.pipe(
       Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      Effect.provide(partyRegistryRetailPartyResolverFactoryLive),
     );
     const failure = yield* Effect.flip(execution.preflight.prepare(nativePreflight));
     expect(Schema.is(ActionPermissionCheckError)(failure)).toBe(true);
@@ -455,6 +457,7 @@ it.effect('prepares the exact Retail Party before SQL and rejects a changed sele
     };
     yield* prepareRetailProfileServices(payload, context).pipe(
       Effect.provideService(RetailPartyDetailExecutor, executor),
+      Effect.provide(partyRegistryRetailPartyResolverFactoryLive),
     );
     expect(reads).toBe(1);
     // With prepared evidence and a transport it still reads nothing more.
@@ -464,7 +467,9 @@ it.effect('prepares the exact Retail Party before SQL and rejects a changed sele
     );
     expect(reads).toBe(1);
     // Neither prepared evidence nor a transport: it fails closed.
-    const unprepared = yield* Effect.flip(prepareRetailProfileServices(payload, context));
+    const unprepared = yield* Effect.flip(
+      prepareRetailProfileServices(payload, context).pipe(Effect.provide(partyRegistryRetailPartyResolverFactoryLive)),
+    );
     expect(unprepared.code).toBe('DEPENDENCY_UNAVAILABLE');
     expect(calls).toBe(2);
     expect(transactions).toBe(0);

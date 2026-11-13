@@ -99,10 +99,8 @@ import {
   Schema,
   Tracer,
 } from 'effect';
-import {
-  PartyRegistryRetailPartyResolverFactory,
-  preparedRetailPartyResolution,
-} from '../src/integrations/party-registry-retail-party-resolver.ts';
+import { PartyRegistryRetailPartyResolverFactory } from '../src/integrations/party-registry-retail-party-resolver.ts';
+import { preparedRetailPartyResolution } from '../src/integrations/prepared-retail-party-resolution.ts';
 import { retailEnrollmentTargetIdentityLive } from '../src/integrations/retail-enrollment-binding-live.ts';
 import { CommercePortalAuthDatabaseLive } from '../src/portal-auth/persistence/portal-auth-database.ts';
 import { CommercePortalAuthAuditLive } from '../src/portal-auth/audit/audit.ts';
@@ -726,11 +724,13 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
   | ActionAuthorizationPreflight
   | CommerceEnrollmentOwnerTransitionPreparation
   | ActiveApplicationCompositionService
+  | PartyRegistryRetailPartyResolverFactory
   | Layer.Services<ReturnType<typeof makeActionRuntimeLive>>
 > = Layer.effect(
   ActionRuntime,
   Effect.gen(function* commerceEnrollmentActionRuntime() {
     const existingRuntime = yield* ActionRuntime;
+    const retailPartyResolvers = yield* PartyRegistryRetailPartyResolverFactory;
     const existingPreflight = yield* ActionAuthorizationPreflight;
     const preparation = yield* CommerceEnrollmentOwnerTransitionPreparation;
     const compositions = yield* ActiveApplicationCompositionService;
@@ -749,6 +749,7 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
           const execution = Context.get(executionContext, CommerceEnrollmentPreparedOwnerExecutionService);
           const retailParty = yield* preparedRetailPartyResolution.pipe(
             Effect.provideService(ActiveApplicationCompositionService, compositions),
+            Effect.provideService(PartyRegistryRetailPartyResolverFactory, retailPartyResolvers),
           );
           const preflight = composeActionAuthorizationPreflights([
             execution.preflight,
