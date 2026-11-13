@@ -1,4 +1,3 @@
-import type { DemoAccountGrants } from '@app/core-runtime';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -40,14 +39,13 @@ const companyScopeOf = Effect.fn('CallSites.companyScope')(function* companyScop
 
 const withGate = (accessCase: AccessAdminCase) => Effect.provideService(AccessDecisionGate, accessCase.gate);
 
-/** `requireAdministrator`: the agent-management handlers' gate question, then the company's members. */
+/** `requireAdministrator`: the agent-management handlers' gate question. */
 const administers = Effect.fn('CallSites.requireAdministrator')(function* administers(
   accessCase: AccessAdminCase,
   persona: Persona,
 ) {
-  const grants: DemoAccountGrants = untyped({ companyMembers: () => Effect.succeed([]) });
   const exit = yield* Effect.exit(
-    requireAdministrator({ legalName: 'Case company', principal: yield* companyScopeOf(accessCase, persona) }, grants),
+    requireAdministrator({ legalName: 'Case company', principal: yield* companyScopeOf(accessCase, persona) }),
   );
   return Exit.isSuccess(exit);
 });
