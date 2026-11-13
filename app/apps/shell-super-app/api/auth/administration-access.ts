@@ -12,12 +12,13 @@ import { SupportImpersonationCorrelationId } from './support-impersonation-corre
  *
  * - "Lidé a role" (`/sprava/lide-a-role`) loads the selected company's people directory through
  *   `core.identity.people-directory.list`. Its navigation entry, the connected-apps entry and the
- *   activity identity links are shown exactly to the people that same read admits, asked the same way.
+ *   activity identity links are shown exactly to the people that same read admits, asked in the same
+ *   scope mode the read declares.
  * - The company's agents are administered through the declared Agents administration surface
  *   (`shell-super-app.access-admin.agents`): an owner, the company's own access administrator, a live
  *   delegation for it, or a role cell granted in that company.
  *
- * Both are asked in the caller's own selected company, never in another company or the tenant context.
+ * Neither is ever asked in another tenant's company: a named company must be the asked tenant's own.
  * No legacy SpiceDB relation (`read_people`, `manage_people`, `manage_identity`) is asked: authorization
  * v2 writes none, so asking them refused every v2 tenant.
  */
@@ -48,10 +49,11 @@ export const peopleAdministrationDecision = Effect.fn('AdministrationAccess.peop
   principal: CompanyPrincipal,
 ) {
   const gate = yield* AccessDecisionGate;
-  // The page loads the selected company's list, so the question is asked in that company's exact scope.
+  // Asked exactly as the page's read asks it (its declared scope mode), so the link never promises a page
+  // the read refuses; the selected company is still checked to be the tenant's own.
   return yield* gate.decide({
     carrier: peopleDirectoryCarrier,
-    legalEntityScope: 'required',
+    legalEntityScope: peopleDirectoryCarrier.legalEntityScope,
     now: yield* DateTime.nowAsDate,
     scope: yield* companyScopeOf(principal),
   });

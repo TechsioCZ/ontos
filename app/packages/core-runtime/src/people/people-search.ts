@@ -23,16 +23,17 @@ type Input = typeof PeopleSearchRequestSchema.Type;
 type Result = typeof PeopleSearchResponseSchema.Type;
 /**
  * Who may find a person: exactly who may list the company's people (`core.identity.people-directory.list`,
- * asked as that read asks it, O62). Search and the People list agree; a person without it gets no hit,
- * no count and no sign that anyone matched. The legacy per-person `resource#read` relation is not asked:
- * authorization v2 writes none, so it refused every v2 tenant.
+ * asked in the scope mode that read declares, O62). Search, the People list and its navigation entry
+ * agree; a person without it gets no hit, no count and no sign that anyone matched. The hits stay the
+ * selected company's own people (see `prepare`). The legacy per-person `resource#read` relation is not
+ * asked: authorization v2 writes none, so it refused every v2 tenant.
  */
 export const mayFindPeople = Effect.fn('PeopleSearch.mayFindPeople')(function* mayFindPeople(scope: OperationalScope) {
   const gate = yield* AccessDecisionGate;
   const decision = yield* gate.decide({
     carrier: peopleDirectoryRead.descriptor,
-    // People search is company-scoped: the list right is asked in the selected company's exact scope.
-    legalEntityScope: 'required',
+    // The same mode as the People list read itself: one meaning for the page, its link and search.
+    legalEntityScope: peopleDirectoryRead.descriptor.legalEntityScope,
     now: DateTime.toDateUtc(yield* DateTime.now),
     scope,
   });

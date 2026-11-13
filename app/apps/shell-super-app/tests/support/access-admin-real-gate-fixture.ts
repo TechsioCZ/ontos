@@ -226,6 +226,14 @@ export interface GateAnswer {
   readonly reasonCodes: readonly string[];
 }
 
+/** One role a scenario grants a persona: its capability cells and where it lives. */
+export interface RoleGrant {
+  readonly capabilityKeys: readonly string[];
+  /** The company the role and its assignment live in; without it, the tenant context. */
+  readonly legalEntityId?: string | undefined;
+  readonly persona: Persona;
+}
+
 /** The Shell BFF a test drives: one real handler, one fixture-owned session source, one real gate. */
 
 export interface AccessAdminCase {
@@ -249,6 +257,11 @@ export interface AccessAdminCase {
   readonly foreignTenantId: string;
   /** The real gate itself, for code under test that asks the gate through its own service (O62). */
   readonly gate: AccessDecisionService;
+  /**
+   * Grants one persona a role whose `run` cells are exactly the named capabilities, in one company or (without
+   * one) in the tenant context, and reconciles the tenant through the Core writer as a command would.
+   */
+  readonly grantRole: (input: RoleGrant) => Effect.Effect<void>;
   readonly ids: ReadonlyMap<Persona, AccessAdminIdentifiers>;
   /** The trusted request scope of one persona (O66), for intent a scenario writes itself. */
   readonly scopeFor: (persona: Persona, legalEntityId?: string) => Effect.Effect<OperationalScope>;
@@ -705,7 +718,7 @@ const insertRole = (
     readonly catalogSnapshotId: string;
     readonly createdBy: string;
     /** The company the role lives in (O7); without it the role is the tenant context's. */
-    readonly legalEntityId?: string;
+    readonly legalEntityId?: string | undefined;
     readonly mode: 'propose' | 'run';
     readonly name: string;
     readonly roleId: string;
@@ -1401,6 +1414,35 @@ export const withAccessAdminCase = <Value, Failure>(
       );
 
       const questionContext: QuestionContext = { companyA, declarations, scopeFor };
+      const grantRole = (grant: RoleGrant) =>
+        Effect.gen(function* grantScenarioRole() {
+          const role: SeededRole = {
+            roleId: yield* crypto.randomUUIDv4(),
+            roleRevisionId: yield* crypto.randomUUIDv4(),
+          };
+          const scopeId = yield* companyScopeIdFor(grant.legalEntityId);
+          yield* insertRole(admin, {
+            capabilityKeys: grant.capabilityKeys,
+            catalogSnapshotId: ownerBootstrap.catalogSnapshotId,
+            createdBy: ownerPrincipal,
+            legalEntityId: grant.legalEntityId,
+            mode: 'run',
+            name: `Scenario role ${role.roleId}`,
+            ...role,
+            scopeId,
+            tenantId,
+          });
+          yield* insertAssignment(admin, {
+            assignedBy: ownerPrincipal,
+            holderColumn: holderColumnOf(grant.persona),
+            incarnationId: yield* crypto.randomUUIDv4(),
+            principalId: holderOf(grant.persona),
+            ...role,
+            scopeId,
+            tenantId,
+          });
+          yield* graph.writer.reconcileTenant({ scope: yield* scopeFor('owner') });
+        }).pipe(Effect.orDie);
 
       return yield* run({
         admin,
@@ -1414,6 +1456,7 @@ export const withAccessAdminCase = <Value, Failure>(
         foreignIds: identifiersOf(foreignPersonas),
         foreignTenantId,
         gate: live,
+        grantRole,
         ids: identifiersOf(personas),
         scopeFor,
         scopeIdOf: companyScopeIdFor,
