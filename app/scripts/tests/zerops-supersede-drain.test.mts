@@ -13,6 +13,7 @@ import {
   Effect,
   Exit,
   Fiber,
+  FileSystem,
   Layer,
   Option,
   Ref,
@@ -32,6 +33,7 @@ import { workspaceRoot } from '../zerops/hosted-units.mts';
 import { makeHostRefusalLog } from '../zerops/host-refusal-log.mts';
 import {
   APP_SERVICE_HOSTNAME,
+  containerBoot,
   DRAIN_FORWARDED_HEADER,
   DRAIN_REFUSED_HEADER,
   drainSupersededHost,
@@ -39,6 +41,7 @@ import {
   platformDrainPeers,
   publicationAllowed,
   renewWhileHolding,
+  restartMayPublish,
 } from '../zerops/supersede-drain.mts';
 import type { DrainPeer, SupersedeDrain } from '../zerops/supersede-drain.mts';
 
@@ -695,6 +698,39 @@ it.effect('a superseded host never writes the authority again, however long it l
       '[app-host] superseded: this host never renews or publishes the authority again',
     ]);
   }),
+);
+
+it.effect('a process restarted in a container a newer release superseded never publishes; its own release does', () =>
+  Effect.gen(function* restartGuard() {
+    const fs = yield* FileSystem.FileSystem;
+    const marker = path.join(yield* fs.makeTempDirectoryScoped(), 'first-boot');
+    yield* TestClock.adjust('1 hour');
+    const first = yield* containerBoot(marker);
+    expect(first.restart).toBe(false);
+    const bootedAt = first.firstBootMillis;
+    // The old release published a minute after the container booted; a newer one took over 20 minutes later.
+    const ownActivated = { activatedAtMillis: bootedAt + 60_000, revision: 'old' };
+    const newerActivated = { activatedAtMillis: bootedAt + 21 * 60_000, revision: 'newer' };
+    yield* TestClock.adjust('30 minutes');
+    // The process crashes and the platform restarts it inside the same container.
+    const restart = yield* containerBoot(marker);
+    expect(restart).toEqual({ firstBootMillis: bootedAt, restart: true });
+    const mayPublish = (holder: Option.Option<{ activatedAtMillis: number; revision: string }>) =>
+      restartMayPublish({ boot: Option.some(restart), holder, ownRevision: 'old' });
+    expect(mayPublish(Option.some(newerActivated))).toBe(false);
+    // The release that holds the row restarts and renews as before.
+    expect(mayPublish(Option.some(ownActivated))).toBe(true);
+    // Crashed before it ever published: the release that held the row then is older than this container.
+    expect(mayPublish(Option.some({ activatedAtMillis: bootedAt - 3_600_000, revision: 'older' }))).toBe(true);
+    expect(mayPublish(Option.none())).toBe(true);
+    // A first boot, and a host without a marker (local runs), publish as before.
+    for (const boot of [Option.some(first), Option.none()]) {
+      expect(restartMayPublish({ boot, holder: Option.some(newerActivated), ownRevision: 'old' })).toBe(true);
+    }
+    // A later restart still reads the first boot, not the restart.
+    yield* TestClock.adjust('2 hours');
+    expect((yield* containerBoot(marker)).firstBootMillis).toBe(bootedAt);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect('a host publishes first freely, then only while the authority still names its own revision', () =>

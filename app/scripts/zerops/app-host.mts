@@ -33,11 +33,13 @@ import {
   DRAIN_REFUSED_HEADER,
   DRAIN_FORWARD_HEADERS_TIMEOUT,
   SUPERSEDED_DRAIN,
+  containerBoot,
   drainSupersededHost,
   makeSupersedeDrain,
   platformDrainPeers,
   publicationAllowed,
   renewWhileHolding,
+  restartMayPublish,
 } from './supersede-drain.mts';
 import type { DrainPeer, SupersedeDrain } from './supersede-drain.mts';
 import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
@@ -1698,6 +1700,11 @@ const recordReleaseAccessStatus = (status: Omit<Parameters<typeof recordReleaseA
 
 export const runAppHost = Effect.gen(function* runAppHost() {
   yield* startProcessObservability('supervisor');
+  // First thing: a restart inside this container must know when the container first booted (restartMayPublish).
+  const boot = yield* Config.String('ONTOS_APP_HOST_BOOT_MARKER').pipe(
+    Config.option,
+    Effect.flatMap((marker) => Effect.transposeOption(marker.pipe(Option.map(containerBoot)))),
+  );
   const publicPort = yield* Config.Int('PORT').pipe(Config.withDefault(3000));
   const publicOrigin = (yield* Config.schema(PublicOriginSchema, 'ONTOS_PUBLIC_ORIGIN')).origin;
   const storefrontOrigin = (yield* Config.schema(PublicOriginSchema, 'ONTOS_STOREFRONT_ORIGIN')).origin;
@@ -1724,11 +1731,12 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   const published = yield* Ref.make(false);
   const database = yield* CoreDatabase;
   const readAuthority = database.executor.execute<{
+    readonly activatedAtMillis: number;
     readonly phase: string;
     readonly revision: string;
     readonly validUntilMillis: number;
   }>(
-    sql`select phase, revision, (extract(epoch from valid_until) * 1000)::double precision as "validUntilMillis" from core.application_composition_authority where authority_key = 'active'`,
+    sql`select phase, revision, (extract(epoch from valid_until) * 1000)::double precision as "validUntilMillis", (extract(epoch from revision_activated_at) * 1000)::double precision as "activatedAtMillis" from core.application_composition_authority where authority_key = 'active'`,
     'objects',
   );
   const pointer = yield* makeCompositionPointer(readAuthority);
@@ -1987,6 +1995,17 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       { concurrency: 'unbounded' },
     );
     const releaseSnapshot = yield* observeOwners(units, publicOrigin);
+    // A process restarted inside a container that a newer release superseded never publishes its old release again.
+    const holder = Option.map(EffectArray.head(yield* readAuthority), ({ activatedAtMillis, revision }) => ({
+      activatedAtMillis,
+      revision,
+    }));
+    if (!restartMayPublish({ boot, holder, ownRevision: releaseSnapshot.composition.revision })) {
+      yield* Console.error(
+        `[app-host] WARN restarted in a superseded container: composition ${Option.match(holder, { onNone: () => 'none', onSome: ({ revision }) => revision })} took the authority after this container first booted; composition ${releaseSnapshot.composition.revision} is not published and the public port stays closed`,
+      );
+      return yield* Effect.never;
+    }
     // After migrations, the role bootstrap and schema verification (all inside the migrator) and before this host
     // serves anything: the observed release's keys are issued and handed to the owners.
     const release = hostReleaseOf(releaseSnapshot);

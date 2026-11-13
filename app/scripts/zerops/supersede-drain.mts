@@ -19,7 +19,7 @@
 import { promises as dns } from 'node:dns';
 import { networkInterfaces } from 'node:os';
 
-import { Clock, Console, Deferred, Duration, Effect, Option, Ref, Schedule } from 'effect';
+import { Clock, Console, Deferred, Duration, Effect, FileSystem, Option, Ref, Schedule, Schema } from 'effect';
 
 /**
  * How long a superseded host relays: the readiness probe period (`zerops.yaml` app `retryPeriod: 10s`) plus the
@@ -258,6 +258,63 @@ export const drainSupersededHost = (input: {
     yield* end('deadline');
     // The deadline is not a stop: event streams end (`finish`), the listener closes, relays in flight finish.
     return yield* input.stopAccepting;
+  });
+
+/** When this container first started an app host, and whether this start is a restart inside the same container. */
+export interface ContainerBoot {
+  readonly firstBootMillis: number;
+  readonly restart: boolean;
+}
+
+const decodeFirstBoot = Schema.decodeUnknownOption(Schema.NumberFromString);
+
+/**
+ * Reads the container's first-boot marker, writing it (this host's clock, in milliseconds) on the first start. The
+ * marker lives in container-local storage (`ONTOS_APP_HOST_BOOT_MARKER`, `/tmp` on Zerops): the platform restarts a
+ * process inside its container, while every deploy starts new containers without it. An unreadable marker is written
+ * again and counts as a first boot, which is how a host behaved before the marker existed.
+ */
+export const containerBoot = (marker: string) =>
+  Effect.gen(function* readContainerBoot() {
+    const fs = yield* FileSystem.FileSystem;
+    const recorded = (yield* fs.exists(marker))
+      ? decodeFirstBoot((yield* fs.readFileString(marker)).trim())
+      : Option.none<number>();
+    if (Option.isSome(recorded)) {
+      return { firstBootMillis: recorded.value, restart: true } satisfies ContainerBoot;
+    }
+    const now = yield* Clock.currentTimeMillis;
+    yield* fs.writeFileString(marker, `${String(now)}\n`);
+    return { firstBootMillis: now, restart: false } satisfies ContainerBoot;
+  });
+
+/** The release that holds the authority row, and when (database clock, milliseconds) its revision took it. */
+export interface AuthorityHolder {
+  readonly activatedAtMillis: number;
+  readonly revision: string;
+}
+
+/**
+ * Whether a host that starts may publish its release. A process that crashed and was restarted inside an old
+ * container would otherwise publish its old release over the newer one that took the authority meanwhile (the old
+ * container is not stopped while its process restarts). So a restart refuses when the row names another revision
+ * that took the authority after this container first booted: that release is newer than this container. A first
+ * boot, a restart of the release that holds the row, and a restart before any newer release took over publish as
+ * before. The two clocks (container and database) only meet across a deploy, minutes apart.
+ */
+export const restartMayPublish = (input: {
+  readonly boot: Option.Option<ContainerBoot>;
+  readonly holder: Option.Option<AuthorityHolder>;
+  readonly ownRevision: string;
+}) =>
+  Option.match(input.boot.pipe(Option.filter(({ restart }) => restart)), {
+    onNone: () => true,
+    onSome: ({ firstBootMillis }) =>
+      Option.match(input.holder, {
+        onNone: () => true,
+        onSome: ({ activatedAtMillis, revision }) =>
+          revision === input.ownRevision || activatedAtMillis <= firstBootMillis,
+      }),
   });
 
 /**

@@ -191,6 +191,9 @@ zerops:
         ONTOS_SHELL_RUNTIME_DEFAULT: node
         # Private, container-local directory where composition publication retains its legacy completion evidence.
         ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY: /tmp/ontos-legacy-completion-evidence
+        # Container-local: written at the container's first app-host start. A process restarted inside a container
+        # that a newer release superseded never publishes its old release again (scripts/zerops/supersede-drain.mts).
+        ONTOS_APP_HOST_BOOT_MARKER: /tmp/ontos-app-host-first-boot
         # Every owner in a process shares one pool per database configuration and role. Small pools
         # keep the old and new containers inside db18's 150 slots during deployment. A minute of idle
         # keeps connections warm between a demo user's searches; a 10 s idle reopened TLS connections
