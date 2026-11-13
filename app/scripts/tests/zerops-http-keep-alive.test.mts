@@ -24,11 +24,14 @@ it('keeps idle connections longer than the proxies in front of the container', (
 });
 
 it('the host builds its public and control servers through the helper', () => {
-  const servers = zeropsSource('app-host.mts').match(/NodeHttpServer\.(?:make|layer)\([^,]+,/gu) ?? [];
+  const host = zeropsSource('app-host.mts');
+  const servers = host.match(/NodeHttpServer\.(?:make|layer)\([^,]+,/gu) ?? [];
+  // The public server is built once, so the drain and the stop can close the very server the port listens on.
   expect(servers).toEqual([
-    'NodeHttpServer.make(withKeepAlive(createServer),',
+    'NodeHttpServer.make(() => publicServer,',
     'NodeHttpServer.layer(withKeepAlive(createServer),',
   ]);
+  expect(host.match(/const publicServer = [^;]+;/gu)).toEqual(['const publicServer = withKeepAlive(createServer)();']);
 });
 
 it('every unit server, the Shell and the owners, receives the helper before it listens', () => {

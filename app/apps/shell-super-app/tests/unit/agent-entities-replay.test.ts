@@ -100,21 +100,6 @@ const step = (name: string) =>
     }
     return Effect.void;
   });
-rs.mock('../../../../packages/core-runtime/src/install/demo-account-administration.ts', () => ({
-  get openDemoAccountGrants() {
-    return Effect.succeed({
-      replaceAgentGrants: () =>
-        step('grants').pipe(
-          Effect.map(() => {
-            const revoked = external.grants;
-            external.grants = 0;
-            return { granted: 0, revoked };
-          }),
-        ),
-      rolePolicyOf: () => Effect.succeed([]),
-    });
-  },
-}));
 rs.mock('../../../../packages/core-runtime/src/db/session-advisory-lock.ts', () => ({
   withPostgresSessionAdvisoryLock: <A, E, R>(
     _connection: Parameters<typeof withPostgresSessionAdvisoryLock>[0],
@@ -575,7 +560,7 @@ it.effect('resumes a committed status change after projection interruption despi
 it.effect('resumes archive cleanup after the target disappears without reading hidden archived profiles', () =>
   Effect.gen(function* committedArchiveRetry() {
     const test = yield* fixture();
-    external.failStep = 'grants';
+    external.failStep = 'confirm-archived';
     expect(yield* test.run(archive).pipe(Effect.flip)).toBeInstanceOf(ConnectionsUnavailable);
     expect(test.state.status).toBe('archived');
     expect(external.events).toEqual([
@@ -590,26 +575,25 @@ it.effect('resumes archive cleanup after the target disappears without reading h
       'connection-2',
       'proposals',
       'withdraw-action',
-      'grants',
+      'confirm-archived',
     ]);
     external.events = [];
     const result = yield* test.run(archive);
     expect(result.status).toBe('archived');
     expect(result.revokedConnections).toBe(0);
-    expect(result.grantsRevoked).toBe(2);
+    // No per-agent role policy exists on v2: deleting an agent removes no grants.
+    expect(result.grantsRevoked).toBe(0);
     expect(external.events).toEqual([
       'administrator',
       'action',
       'projection',
       'connections',
       'proposals',
-      'grants',
       'confirm-archived',
     ]);
     expect(test.actions[0]?.payload).toEqual(test.actions[1]?.payload);
     expect(test.harness.snapshot().committed).toHaveLength(2);
     expect(test.proposalActions).toHaveLength(1);
-    expect(external.grants).toBe(0);
   }),
 );
 
@@ -711,7 +695,6 @@ it.effect('finishes interrupted revocations before withdrawing proposals or remo
       'connection-2',
       'proposals',
       'withdraw-action',
-      'grants',
       'confirm-archived',
     ]);
     expect(test.harness.snapshot().committed).toHaveLength(2);

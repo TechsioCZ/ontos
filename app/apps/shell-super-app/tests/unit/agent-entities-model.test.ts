@@ -1,7 +1,7 @@
 import { AgentModuleKeySchema } from '@app/shared-contracts/agent-proposals';
 import { expect, test } from 'effect-rstest';
 
-import { agentDraftProblem, agentModuleOptions } from '../../api/auth/agent-entities-model.ts';
+import { agentCatalogOf, agentModuleOptions } from '../../api/auth/agent-entities-model.ts';
 
 /** Labels the composed modules declare in their contributions. */
 const LABELS = new Map([
@@ -9,80 +9,73 @@ const LABELS = new Map([
   ['work.tasks', 'Úkoly a projekty'],
 ]);
 const labelOf = (moduleId: string): string => LABELS.get(moduleId) ?? moduleId;
-
-const options = agentModuleOptions(
-  [
-    { access: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') },
-    { access: 'read', moduleId: AgentModuleKeySchema.make('facility.operations') },
-  ],
-  labelOf,
-);
-
-const valid = {
-  displayName: 'Asistent provozu',
-  existingNames: [],
-  labelOf,
-  memberIds: ['p1', 'p2'],
-  modules: [{ access: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') }],
-  operatorPrincipalIds: ['p1'],
-  options,
-  ownerPrincipalId: 'p2',
-} as const;
+const key = (moduleId: string) => AgentModuleKeySchema.make(moduleId);
 
 test('module options carry the highest access and are sorted by Czech label', () => {
-  expect(options).toEqual([
-    { label: 'Provoz', maxAccess: 'read', moduleId: AgentModuleKeySchema.make('facility.operations') },
-    { label: 'Úkoly a projekty', maxAccess: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') },
+  expect(
+    agentModuleOptions(
+      [
+        { access: 'write', moduleId: key('work.tasks') },
+        { access: 'read', moduleId: key('facility.operations') },
+      ],
+      labelOf,
+    ),
+  ).toEqual([
+    { label: 'Provoz', maxAccess: 'read', moduleId: key('facility.operations') },
+    { label: 'Úkoly a projekty', maxAccess: 'write', moduleId: key('work.tasks') },
   ]);
 });
 
-test('a valid draft has no problem', () => {
-  expect(agentDraftProblem(valid)).toBeNull();
+const capabilities = [
+  { key: 'work.tasks.read', kind: 'read', moduleKey: 'work.tasks' },
+  { key: 'work.tasks.update', kind: 'action', moduleKey: 'work.tasks' },
+  { key: 'facility.operations.read', kind: 'read', moduleKey: 'facility.operations' },
+  { key: 'facility.operations.admin', kind: 'admin', moduleKey: 'facility.operations' },
+  { key: 'crm.read', kind: 'read', moduleKey: 'crm' },
+  { key: 'billing.export', kind: 'export', moduleKey: 'billing' },
+] as const;
+
+const catalog = agentCatalogOf({
+  activeModuleKeys: ['work.tasks', 'facility.operations', 'crm'],
+  capabilities,
+  composedModuleKeys: ['work.tasks', 'facility.operations', 'billing'],
+  labelOf,
+  legalEntityId: 'company-a',
+  roles: [
+    {
+      capabilityKeys: ['work.tasks.read', 'facility.operations.admin'],
+      id: 'r-viewer',
+      legalEntityId: null,
+      name: 'Čtenář',
+    },
+    {
+      capabilityKeys: ['work.tasks.update', 'facility.operations.read', 'crm.read', 'billing.export'],
+      id: 'r-ops',
+      legalEntityId: 'company-a',
+      name: 'Provozní',
+    },
+    { capabilityKeys: ['work.tasks.update'], id: 'r-other', legalEntityId: 'company-b', name: 'Cizí firma' },
+  ],
 });
 
-test('an empty name is rejected first', () => {
-  expect(agentDraftProblem({ ...valid, displayName: '   ' })).toBe('Vyplňte název agenta.');
+test('offers only modules active in the tenant and composed in the release, with the access their capabilities give', () => {
+  // crm is not composed, billing is not active; administration is never an agent's, so it adds nothing.
+  expect(catalog.options).toEqual([
+    { label: 'Provoz', maxAccess: 'read', moduleId: key('facility.operations') },
+    { label: 'Úkoly a projekty', maxAccess: 'write', moduleId: key('work.tasks') },
+  ]);
 });
 
-test('a name that matches an existing one ignores case', () => {
-  expect(agentDraftProblem({ ...valid, existingNames: ['asistent PROVOZU'] })).toBe(
-    'Agent s tímto názvem už ve firmě je.',
-  );
-});
-
-test('a draft without modules is rejected', () => {
-  expect(agentDraftProblem({ ...valid, modules: [] })).toBe('Vyberte aspoň jeden modul.');
-});
-
-test('a module listed twice is rejected', () => {
-  expect(
-    agentDraftProblem({
-      ...valid,
+test("presets are the tenant's and this company's v2 roles, in name order, with the modules an agent could use", () => {
+  expect(catalog.presets).toEqual([
+    { key: 'r-viewer', label: 'Čtenář', modules: [{ access: 'read', moduleId: key('work.tasks') }] },
+    {
+      key: 'r-ops',
+      label: 'Provozní',
       modules: [
-        { access: 'read', moduleId: AgentModuleKeySchema.make('work.tasks') },
-        { access: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') },
+        { access: 'read', moduleId: key('facility.operations') },
+        { access: 'write', moduleId: key('work.tasks') },
       ],
-    }),
-  ).toBe('Každý modul vyberte jen jednou.');
-});
-
-test('write on a module the company offers only read for is rejected', () => {
-  expect(
-    agentDraftProblem({
-      ...valid,
-      modules: [{ access: 'write', moduleId: AgentModuleKeySchema.make('facility.operations') }],
-    }),
-  ).toBe('Provoz: zápis tu nemá žádná role, agent ho dostat nemůže.');
-});
-
-test('an owner who is not an active person of the company is rejected', () => {
-  expect(agentDraftProblem({ ...valid, ownerPrincipalId: 'p3' })).toBe(
-    'Za agenta může odpovídat jen aktivní člověk z firmy.',
-  );
-});
-
-test('an operator who is not an active person of the company is rejected', () => {
-  expect(agentDraftProblem({ ...valid, operatorPrincipalIds: ['p3'] })).toBe(
-    'Agenta mohou připojit jen aktivní lidé z firmy.',
-  );
+    },
+  ]);
 });

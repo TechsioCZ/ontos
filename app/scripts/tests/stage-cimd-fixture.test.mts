@@ -3,6 +3,8 @@ import { HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
 import { hostApplication } from '../zerops/app-host.mts';
+import { makeHostRefusalLog } from '../zerops/host-refusal-log.mts';
+import { makeSupersedeDrain } from '../zerops/supersede-drain.mts';
 import {
   STAGE_CIMD_FIXTURE_PATH,
   STAGE_CIMD_FIXTURE_URL,
@@ -131,7 +133,13 @@ describe('task-owned stage CIMD fixture', () => {
     Effect.gen(function* publicHostRoute() {
       const published = yield* Ref.make(false);
       for (const environment of ['stage', 'production']) {
-        const response = yield* hostApplication(new Map(), published, Effect.succeed(Option.none())).pipe(
+        const response = yield* hostApplication(
+          new Map(),
+          published,
+          Effect.succeed(Option.none()),
+          makeHostRefusalLog(),
+          makeSupersedeDrain(),
+        ).pipe(
           Effect.provideService(
             HttpServerRequest.HttpServerRequest,
             HttpServerRequest.fromWeb(new Request(STAGE_CIMD_FIXTURE_URL)),

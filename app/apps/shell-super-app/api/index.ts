@@ -4440,6 +4440,8 @@ export const makeShellAuthenticationApiRuntime = (
     runtimeLegalEntityContextLive,
     accessAdminBffsLive,
     accessAdminProjectionWriterLive,
+    // The Agents page offers the tenant's v2 roles from the People page's own source.
+    accessAdminPeopleCommandsLive,
     issuerLayer,
     selectedModuleStateLayer,
     moduleCatalogLayer,

@@ -9,15 +9,19 @@ services:
     type: alpine/nodejs@26
     enableSubdomainAccess: true
     # The Shell, the owners, the Outbox worker and the host share one container. At a 2.5 GiB floor it throttled
-    # at memory.high and swapped with no users (2026-11-11), so RAM is fixed at 4 GiB; the host derives each child's
-    # heap limit from it (scripts/zerops/heap-limits.mts).
-    # Reserve one CPU for the Shell, owners and Outbox while every menu destination is prefetched.
+    # at memory.high and swapped with no users (2026-11-11), so RAM never goes below 4 GiB; the host derives each
+    # child's heap limit from the container's memory once, at start (scripts/zerops/heap-limits.mts). Zerops may grow
+    # it to 8 GiB; that headroom is for memory outside the heaps.
+    # At least four dedicated CPUs: the host, the Shell, the owners and the Outbox worker are four Node processes, and
+    # on one CPU they blocked one another (2026-11-13: the Outbox loop stalled 610 ms while using 75 ms of CPU itself).
+    # Zerops scales up to eight under load. One container only: the host holds the single serving authority.
+    # This file only creates a service; the running one was resized in Zerops on 2026-11-13 (swap stays off there).
     verticalAutoscaling:
       cpuMode: DEDICATED
-      minCpu: 1
-      maxCpu: 1
+      minCpu: 4
+      maxCpu: 8
       minRam: 4
-      maxRam: 4
+      maxRam: 8
       minFreeRamGB: 0.5
       minDisk: 10
       maxDisk: 20

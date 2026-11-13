@@ -15,6 +15,8 @@ import {
   routeRequest,
 } from '../zerops/app-host.mts';
 import { hostedUnits } from '../zerops/hosted-units.mts';
+import { makeHostRefusalLog } from '../zerops/host-refusal-log.mts';
+import { makeSupersedeDrain } from '../zerops/supersede-drain.mts';
 import type { ReleaseIntent, Topology } from '../zerops/hosted-units.mts';
 import { ownerEntrySource } from '../zerops/owner-entry.mts';
 
@@ -34,7 +36,13 @@ it.effect('rejects credential URLs and native login POSTs at the public host bef
       ['GET', '/_m/crm/private?api_key=y'],
       ['POST', '/en/login'],
     ] as const) {
-      const response = yield* hostApplication(new Map(), published, Effect.succeed(Option.none())).pipe(
+      const response = yield* hostApplication(
+        new Map(),
+        published,
+        Effect.succeed(Option.none()),
+        makeHostRefusalLog(),
+        makeSupersedeDrain(),
+      ).pipe(
         Effect.provideService(
           HttpServerRequest.HttpServerRequest,
           HttpServerRequest.fromWeb(new Request(`https://stage.test${path}`, { method })),
@@ -56,7 +64,7 @@ const requestAt = (path: string) =>
 it.effect('the control port answers probes from the start and never serves application traffic', () =>
   Effect.gen(function* controlPort() {
     const published = yield* Ref.make(false);
-    const control = hostControlApplication(published, Effect.succeed(Option.none()));
+    const control = hostControlApplication(published, Effect.succeed(Option.none()), makeHostRefusalLog());
     expect((yield* control.pipe(requestAt('/_host/live'))).status).toBe(200);
     expect((yield* control.pipe(requestAt('/_host/ready'))).status).toBe(503);
     for (const path of ['/shell-super-app-api/auth/api-key/gateway-read', '/cs', '/_m/crm/mf-manifest.json']) {
@@ -92,6 +100,12 @@ describe('relayResponseHeaders', () => {
       connection: 'close',
       'content-type': 'application/json',
     });
+  });
+
+  it('never passes on the drain headers only a host sets', () => {
+    expect(
+      relayResponseHeaders(200, { etag: '"a"', 'x-ontos-drain-forwarded': '1', 'x-ontos-drain-refused': 'draining' }),
+    ).toStrictEqual({ etag: '"a"' });
   });
 
   it('keeps the caller connection reusable for every other answer and drops hop-by-hop headers', () => {

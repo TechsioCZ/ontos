@@ -26,6 +26,7 @@ import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
+import { deleteTestCoreOutbox } from '@app/core-runtime/testing/owner-evidence';
 import { environmentTestAccessTarget, grantTestTenantRoleAccess } from '@app/core-runtime/testing/tenant-access';
 import {
   DELEGATED_GATEWAY_ASSERTION_VERSION,
@@ -227,7 +228,7 @@ const person = (kind: Person['kind']) =>
 /**
  * One tenant with one company: an author, a staff member and the registered Storefront client (an API-key workload),
  * Merchandise installed and Tax installed only when `withTax`. Core retains access scopes, the identities its access
- * intent names and the bindings its evidence names; only module states are removed on close.
+ * intent names and the bindings its evidence names; its module states and its Outbox queue are removed on close.
  */
 const seedCompany = Effect.fn('MerchandiseTaxRoots.seedCompany')(function* seedCompany(
   admin: PgClient.PgClient,
@@ -247,6 +248,9 @@ const seedCompany = Effect.fn('MerchandiseTaxRoots.seedCompany')(function* seedC
   yield* Effect.addFinalizer(() =>
     admin.unsafe('delete from core.tenant_module_states where tenant_id = $1', [tenantId]).pipe(Effect.orDie),
   );
+  // The Actions this suite runs queue Merchandise's search refreshes; no Outbox host delivers them here. Release them
+  // on close, so a later suite promoting a composition in this database finds the Outbox drained.
+  yield* Effect.addFinalizer(() => deleteTestCoreOutbox(admin, tenantId).pipe(Effect.orDie));
   yield* admin.unsafe(
     "insert into core.tenants (tenant_id, name, slug, status, default_locale) values ($1, 'Merchandise and Tax', $2, 'active', 'cs')",
     [tenantId, `merchandise-tax-${tenantId}`],
