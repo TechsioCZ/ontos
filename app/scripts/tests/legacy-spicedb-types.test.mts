@@ -83,13 +83,6 @@ const ALLOWED: ReadonlyMap<string, AllowedSite> = new Map([
     'packages/core-runtime/src/permissions/permission-relationship-mutation.ts',
     { owner: LEGACY_GATE_SEEDING, types: ['principal'] },
   ],
-  [
-    'packages/core-runtime/src/install/agent-action-policy-migration.ts',
-    {
-      owner: 'retired agent Action policy migration: deleted on its own branch',
-      types: ['action_grant', 'scoped_role'],
-    },
-  ],
 ]);
 
 const v2DefinitionsOf = (schemaSource: string): ReadonlySet<string> => {
