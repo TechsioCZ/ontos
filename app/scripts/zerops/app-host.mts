@@ -82,7 +82,8 @@ import path from 'node:path';
 
 import { NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { fromReadable, toReadable } from '@effect/platform-node/NodeStream';
-import { Agent, request as requestLoopback } from '@effect/platform-node/Undici';
+import { Agent, getGlobalDispatcher } from '@effect/platform-node/Undici';
+import type { Dispatcher } from '@effect/platform-node/Undici';
 import { sql } from 'drizzle-orm';
 import {
   Array as EffectArray,
@@ -1079,14 +1080,17 @@ const relay = Effect.fn('AppHost.relay')(function* relay(
     : null;
   const response = yield* Effect.tryPromise({
     catch: (cause) => new RelayFailure({ code: relayFailureCode(decodeRelayCause(cause)), stage: 'request' }),
-    try: (signal): PromiseLike<Awaited<ReturnType<typeof requestLoopback>>> =>
-      requestLoopback(`${target.origin}${target.path}`, {
+    // The dispatcher takes the path as it is: no URL parsing, so `//`, `\\`, dot segments and encodings reach the
+    // target exactly as the client sent them.
+    try: (signal): PromiseLike<Dispatcher.ResponseData> =>
+      (target.dispatcher ?? getGlobalDispatcher()).request({
         body,
         bodyTimeout: 0,
-        dispatcher: target.dispatcher,
         headers,
         headersTimeout: Duration.toMillis(target.headersTimeout),
         method: request.method,
+        origin: target.origin,
+        path: target.path,
         signal,
       }),
   });
@@ -1230,10 +1234,27 @@ const retryableUnavailable = () =>
     status: 503,
   });
 
-/** A request's origin-form target: the path and query only; a host in an absolute-form URL never chooses anything. */
-const originForm = (url: string) => {
-  const parsed = new URL(url, 'https://drain.invalid');
-  return `${parsed.pathname}${parsed.search}`;
+const ABSOLUTE_FORM = /^[A-Za-z][\w+.-]*:\/\/[^/?#]*/u;
+const SINGLE_SLASH_PATH = /^\/(?!\/)/u;
+
+/**
+ * The request target relayed, byte for byte: an origin-form target starting with exactly one `/` as received; of an
+ * absolute-form target only its path and query, as received (its scheme, host and any user:pass@ choose nothing).
+ * Anything else (`*`, `//x`, an authority-form target) is not relayed.
+ */
+export const relayedTarget = (url: string): Option.Option<string> => {
+  if (SINGLE_SLASH_PATH.test(url)) {
+    return Option.some(url);
+  }
+  const authority = ABSOLUTE_FORM.exec(url);
+  if (authority === null) {
+    return Option.none();
+  }
+  const rest = url.slice(authority[0].length);
+  if (rest === '' || rest.startsWith('?')) {
+    return Option.some(`/${rest}`);
+  }
+  return SINGLE_SLASH_PATH.test(rest) ? Option.some(rest) : Option.none();
 };
 
 const hostLiteral = (address: string) => (address.includes(':') ? `[${address}]` : address);
@@ -1259,6 +1280,7 @@ const CONNECT_FAILURES: ReadonlySet<string> = new Set([
  */
 const forwardDuringDrain = Effect.fn('AppHost.forwardDuringDrain')(function* forwardDuringDrain(
   request: HttpServerRequest.HttpServerRequest,
+  relayed: string,
   drain: SupersedeDrain,
   refusals: HostRefusalLog,
   dispatcher: Agent,
@@ -1303,7 +1325,7 @@ const forwardDuringDrain = Effect.fn('AppHost.forwardDuringDrain')(function* for
           extraHeaders: { [DRAIN_FORWARDED_HEADER]: '1' },
           headersTimeout: DRAIN_FORWARD_HEADERS_TIMEOUT,
           origin: target,
-          path: originForm(request.url),
+          path: relayed,
         },
         (problem) => refuse(problem.code, target).pipe(Effect.asVoid),
         (eventStream) => {
@@ -1345,8 +1367,12 @@ export const hostApplication = <Failure, Requirements>(
   });
   return Effect.gen(function* routeHostRequest() {
     const request = yield* HttpServerRequest.HttpServerRequest;
+    const relayed = relayedTarget(request.url);
+    if (Option.isNone(relayed)) {
+      return HttpServerResponse.empty({ status: 400 });
+    }
     if (yield* drain.active) {
-      return yield* forwardDuringDrain(request, drain, refusals, forwardDispatcher);
+      return yield* forwardDuringDrain(request, relayed.value, drain, refusals, forwardDispatcher);
     }
     const location = credentialSubmissionRedirect(new URL(request.url, 'https://host.invalid'), request.method);
     if (location !== undefined) {
@@ -1371,8 +1397,8 @@ export const hostApplication = <Failure, Requirements>(
     if (Option.isSome(control)) {
       return control.value;
     }
-    const route = routeRequest(request.url, ports);
-    const unit = routedUnit(request.url);
+    const route = routeRequest(relayed.value, ports);
+    const unit = routedUnit(relayed.value);
     if (Option.isNone(route)) {
       yield* refusals.record({
         fields: { ...refusedRequest(request, 404), unit },

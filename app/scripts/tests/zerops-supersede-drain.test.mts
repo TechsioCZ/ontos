@@ -439,3 +439,57 @@ it.live('when every known peer failed the peers are resolved again, at most once
     expect(releaseOf(yield* send(a.port, ECHO))).toBe('c');
   }),
 );
+
+/** One raw HTTP/1.1 exchange, so the request line reaches the host exactly as written. */
+const rawExchange = (port: number, requestLine: string) =>
+  Effect.callback<{ readonly path: Option.Option<string>; readonly status: number }>((resume) => {
+    const socket = connect(port, '127.0.0.1', () => {
+      socket.write(`${requestLine}\r\nHost: stage.test\r\nConnection: close\r\n\r\n`);
+    });
+    const chunks: Buffer[] = [];
+    socket.on('data', (chunk: Buffer) => {
+      chunks.push(chunk);
+    });
+    socket.on('end', () => {
+      const text = Buffer.concat(chunks).toString('utf-8');
+      const status = Number(/^HTTP\/1\.1 (?<status>\d{3})/u.exec(text)?.groups?.status ?? 0);
+      const body = text.slice(text.indexOf('\r\n\r\n') + 4);
+      resume(Effect.succeed({ path: Option.map(decodeEcho(body), (echo) => echo.path), status }));
+    });
+  });
+
+it.live('a request target reaches the unit as received, directly and through a drain; other forms answer 400', () =>
+  Effect.gen(function* targetForms() {
+    const [old, current] = yield* Effect.all([standingHost('old'), standingHost('new')]);
+    const asReceived = [
+      ['GET /_m/crm/echo//double HTTP/1.1', '/echo//double'],
+      ['GET /_m/crm/echo/%2e%2e/a%2fb/./x?q=a%20b&r=%2F HTTP/1.1', '/echo/%2e%2e/a%2fb/./x?q=a%20b&r=%2F'],
+      [String.raw`GET /_m/crm/echo/a\b HTTP/1.1`, String.raw`/echo/a\b`],
+      ['GET http://user:secret@evil.example:9/_m/crm/echo//x?y=1 HTTP/1.1', '/echo//x?y=1'],
+    ] as const;
+    for (const [line, expected] of asReceived) {
+      const direct = yield* rawExchange(current.port, line);
+      expect({ line, path: direct.path, status: direct.status }).toEqual({
+        line,
+        path: Option.some(expected),
+        status: 200,
+      });
+    }
+    for (const line of [
+      'GET //evil.example/_m/crm/echo HTTP/1.1',
+      'OPTIONS * HTTP/1.1',
+      'GET http://evil.example//x HTTP/1.1',
+    ]) {
+      expect({ line, status: (yield* rawExchange(current.port, line)).status }).toEqual({ line, status: 400 });
+    }
+    yield* startDrain(old.supersede(Effect.succeed([peerAt(current.port)])), old.drain);
+    for (const [line, expected] of asReceived) {
+      const relayed = yield* rawExchange(old.port, line);
+      expect({ line, path: relayed.path, status: relayed.status }).toEqual({
+        line,
+        path: Option.some(expected),
+        status: 200,
+      });
+    }
+  }),
+);
