@@ -24,7 +24,7 @@ import type { ProductUnit } from '../../../../../shared/domain/merchandise-model
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { useProductDetailDraft } from './product-detail-save.ts';
-import { detailDraftInvalid, draftOf, measurementInvalid, detailGrossOf } from './product-detail-draft.ts';
+import { detailDraftInvalid, draftOf, measurementInvalid, detailGrossOf, detailVatOf } from './product-detail-draft.ts';
 import type { DetailDraft } from './product-detail-draft.ts';
 import {
   PRODUCT_LIMITS,
@@ -182,11 +182,12 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: De
   const lowStockError = lowStockKey === undefined ? undefined : k(lowStockKey);
   const priceMinor = Math.round(priceCzk * 100);
   const draftInvalid = detailDraftInvalid(draft);
-  const gross = detailGrossOf(
+  const detailVat = detailVatOf(
     product,
-    priceMinor,
+    taxClassificationCode,
     rateAt(vat, taxClassificationCode, DateTime.nowUnsafe())?.ratePercent,
   );
+  const gross = detailGrossOf(product, priceMinor, detailVat.appliedRate);
   const grossText = gross.minor === null ? taxLabels.notSet : formatMoney(gross.minor);
   // Only a stored gross stays the same on a classification change; with none ("not set") there is no share to keep.
   const grossNote =
@@ -252,6 +253,11 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: De
           vat={vat}
         />
       </div>
+      {detailVat.held && detailVat.appliedRate !== undefined && (
+        <p className="text-fg-secondary text-sm">
+          {k('detail.heldRate', { rate: detailVat.appliedRate })} {k('detail.heldRateExplanation')}
+        </p>
+      )}
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
         <FormNumericInput
           disabled={disabled}

@@ -122,12 +122,8 @@ import type { RecordsRequestEncoded } from '../../verticals/merchandise/shared/a
 import { ultramodernApiMarker as merchandiseMarker } from '../../verticals/merchandise/shared/ultramodern-build.ts';
 import { recordsRead } from '../../verticals/merchandise/src/api/records.read.ts';
 import { merchandiseRelations } from '../../verticals/merchandise/src/database/schema.ts';
-import {
-  persistenceService,
-  prepareCommandTax,
-  prepareStaffTaxRates,
-} from '../../verticals/merchandise/src/services/persistence.service.ts';
-import { TAX_RATE_FRESHNESS, currentTaxRateBook } from '../../verticals/merchandise/src/services/tax-rates.ts';
+import { persistenceService, prepareCommandTax } from '../../verticals/merchandise/src/services/persistence.service.ts';
+import { TAX_RATE_FRESHNESS } from '../../verticals/merchandise/src/services/tax-rates.ts';
 import { merchandiseRegistration } from '../../verticals/merchandise/vertical.registration.ts';
 import {
   INFORMATIONAL_GROSS,
@@ -965,19 +961,15 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
   expect(seeded.outcomes.length).toBe(3);
   expect((yield* seed('verify')).plan.writes).toEqual([]);
 
-  // 5. Staff reads sync Merchandise with Tax by themselves: the first starts the refresh, the next stores it. This
-  //    process was refused (Tax not installed) before the release step and asks Tax again only after the whole
-  //    twelve-minute window: the reads run that much later.
+  // 5. One staff read syncs Merchandise with Tax by itself: with no fresh answer it asks Tax (waiting a few seconds at
+  //    most) and stores the answer in the same read; nothing else asks Tax in between. This process was refused (Tax
+  //    not installed) before the release step and asks Tax again only after that refusal's twelve-minute wait: the
+  //    read runs that much later.
   const real = yield* Clock.Clock;
   const later = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(Clock.Clock, shiftedClock(real, Duration.sum(TAX_RATE_FRESHNESS, Duration.seconds(1)))),
     );
-  const staffScope = yield* scopeIn(merchandiseModule, 'vat-deploy-staff');
-  yield* later(asModule(prepareStaffTaxRates(staffScope)));
-  yield* later(asModule(currentTaxRateBook(staffScope)));
-  const staffTax = yield* later(asModule(prepareStaffTaxRates(staffScope)));
-  expect(staffTax.fetched?.book.regime).toBe('VAT_PAYER');
   const synced = yield* later(
     asModule(
       native.runtime

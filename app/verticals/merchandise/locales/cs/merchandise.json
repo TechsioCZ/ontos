@@ -311,6 +311,8 @@
           "tab": "Detail",
           "back": "Zpět na produkty",
           "priceExplanation": "Upravujete cenu bez DPH. Uložená cena s DPH se změnou sazby DPH nemění; nová cena bez DPH uloží novou cenu s DPH podle sazby platné při uložení.",
+          "heldRate": "Cenu teď určuje sazba {{rate}} % (ponechaná z doby před změnou sazby DPH).",
+          "heldRateExplanation": "Tak produkt prodává i e-shop. Nová cena bez DPH se uloží s cenou s DPH podle této sazby. Jakmile firma potvrdí sazby v modulu Daně, nebo když produktu vyberete jinou sazbu, platí sazba podle výběru výše; uložená cena s DPH se tím nemění.",
           "vatShareOnly": "Cena s DPH zůstává stejná, změní se jen podíl DPH v ní.",
           "variantsExplanation": "Evidenční varianty sdílejí SKU, cenu a sklad produktu.",
           "addVariant": "Přidat variantu",
