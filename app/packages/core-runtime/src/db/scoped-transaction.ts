@@ -7,6 +7,9 @@ import { Context, DateTime, Effect, Option, Predicate, Redacted } from 'effect';
 import { readVerifiedGatewayScopeAssertion } from '../auth/system-principal-context-provenance.ts';
 import type { GatewayScopeAssertion } from '../auth/system-principal-context-provenance.ts';
 import type { OperationalScope } from '../operations/context.ts';
+import type { PreparedAccessDecision } from '../operations/access-gate.ts';
+import type { AccessDecision } from '../access/decision/contract.ts';
+import type { AccessDecisionUnavailable } from '../access/decision/errors.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
 import { gatewayScopeGrantRoleForAudience } from './database-identities.ts';
 import type { DatabaseIdentityEnrollment, DatabaseScopeAuthority } from './database-identities.ts';
@@ -22,6 +25,17 @@ type OperationalScopeRawTransaction = Pick<CoreTransaction, 'delete' | 'execute'
 export interface ScopedTransactionExecutor extends ScopedRoutineInvoker {
   readonly delete: CoreTransaction['delete'];
   readonly insert: CoreTransaction['insert'];
+  /**
+   * Present only on the owner transaction of a genuine Core Action (`isGenuineCoreAction`): re-decides a gate
+   * question prepared before the transaction (by the bound Action gate) from this transaction's snapshot, under the
+   * authority fence the Action's carrier is re-checked under (O75, R5a-2). It grants nothing, but it runs the prepared
+   * question's own re-check with this transaction, so only Core's own Actions get it. Absent on every other owner's
+   * executor, where a re-check fails closed.
+   */
+  readonly recheckPreparedAccess?: (
+    prepared: PreparedAccessDecision,
+    now: Date,
+  ) => Effect.Effect<AccessDecision, AccessDecisionUnavailable>;
   /** Core-installed scope snapshot; owner readers bind their predicates to this transaction. */
   readonly scope: Readonly<Pick<OperationalScope, 'tenantId' | 'legalEntityId'>>;
   readonly [scopedTransaction]: true;

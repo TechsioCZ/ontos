@@ -52,6 +52,8 @@ const gateFor = (kind: 'service' | 'human', bound = true) =>
         }),
     },
     authorityFor: () => ({
+      readCompanyOwnership: (query) =>
+        Effect.succeed(query.tenantId === tenantId && query.legalEntityId === legalEntityId),
       readScope: (query) =>
         Effect.succeed(
           query.tenantId !== tenantId || (query.legalEntityId !== undefined && query.legalEntityId !== legalEntityId)

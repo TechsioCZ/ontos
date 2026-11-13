@@ -7,6 +7,7 @@ import { AccessIntent } from '../access/decision/authority.ts';
 import type {
   AuthorityCell,
   AuthorityCellQuery,
+  CompanyOwnershipQuery,
   DecisionAuthorityPort,
   ResolvedAccessScope,
   ScopeQuery,
@@ -207,6 +208,9 @@ export const makeTestActionAccessPorts = (
       readCells,
       // The batched read every live intent port offers: each answer exactly the single read's.
       readCellsMany: (queries: readonly AuthorityCellQuery[]) => Effect.forEach(queries, readCells, { concurrency: 1 }),
+      // One fixture tenant: a company it names is the tenant's exactly when its scope exists.
+      readCompanyOwnership: (query: CompanyOwnershipQuery) =>
+        Effect.succeed(scopeOf({ ...query, holders: [] }) !== undefined),
       readConfigureBases: () => Effect.succeed([]),
       readConnection: () => Effect.succeed(Option.none()),
       readScope: (query: ScopeQuery) => Effect.succeed(Option.fromUndefinedOr(scopeOf(query))),

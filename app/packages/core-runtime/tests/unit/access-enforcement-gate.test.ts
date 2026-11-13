@@ -12,7 +12,7 @@ import type { AccessPrincipalKinds, AccessPrincipalKind } from '../../src/access
 import { accessDecisionUnavailable } from '../../src/access/decision/errors.ts';
 import type { AccessDecision } from '../../src/access/decision/contract.ts';
 import type { DecisionCheckPort } from '../../src/access/decision/engine.ts';
-import type { DecisionAuthorityPort, ScopeQuery } from '../../src/access/decision/authority.ts';
+import type { CompanyOwnershipQuery, DecisionAuthorityPort, ScopeQuery } from '../../src/access/decision/authority.ts';
 import type { GateInput, ListGateInput } from '../../src/access/enforcement/contract.ts';
 import { makeAccessDecisionService } from '../../src/access/enforcement/service.ts';
 import type { AccessDecisionLogEntry, AccessDecisionLogWriter } from '../../src/access/enforcement/decision-log.ts';
@@ -155,6 +155,8 @@ interface RunOptions {
   readonly foreignCompanies?: readonly LegalEntityId[];
   readonly kinds?: AccessPrincipalKinds;
   readonly logFails?: boolean;
+  /** Company ownership cannot be read: every company-naming request is UNAVAILABLE, never decided. */
+  readonly ownershipFails?: boolean;
   readonly scopeMissing?: boolean;
   readonly selectableLegalEntities?: readonly LegalEntityId[];
   /** The active workload keys the registry answers for this actor; default none (O73). */
@@ -173,8 +175,15 @@ const harness = (options: RunOptions = {}) => {
     options.engineFailure === true ? { authority: authoritySpec, failure: true } : { authority: authoritySpec };
   const check = makeCheck(checkSpec);
   const scopes: ScopeQuery[] = [];
+  const ownership: CompanyOwnershipQuery[] = [];
   const port: DecisionAuthorityPort = {
     ...authority.port,
+    readCompanyOwnership: (query) => {
+      ownership.push(query);
+      return options.ownershipFails === true
+        ? Effect.fail(accessDecisionUnavailable('company ownership is unreadable'))
+        : Effect.succeed(options.foreignCompanies?.includes(query.legalEntityId) !== true);
+    },
     readScope: (query) => {
       scopes.push(query);
       // As the loader answers: a company the tenant does not own resolves no scope, whether the request selects it or
@@ -220,7 +229,7 @@ const harness = (options: RunOptions = {}) => {
           },
         },
   );
-  return { authority, batches, check, gate, scopes, state };
+  return { authority, batches, check, gate, ownership, scopes, state };
 };
 
 const gateOf = (overrides: Partial<GateInput> = {}): GateInput => ({
@@ -651,7 +660,7 @@ it.effect('refuses a request whose scope does not exist rather than inventing on
 it.effect('decides an admin capability in its declared scope: tenant context when company-independent', () =>
   Effect.gen(function* adminInTenantContext() {
     const legalEntityId = LegalEntityIdSchema.make(uid(20));
-    const { gate, scopes } = harness({
+    const { gate, ownership, scopes } = harness({
       authority: { cells: [cell({ capability: 'core.identity.support.impersonate' })] },
     });
     // O81: structural admission follows the declaration's own scope. A company-independent admin key
@@ -664,8 +673,8 @@ it.effect('decides an admin capability in its declared scope: tenant context whe
       }),
     );
     expect(decision.outcome).toBe('ALLOWED');
-    // The named company is first checked to be the tenant's (no holder), then the decision reads the tenant context.
-    // The named company is checked by the tenant scope read itself: no read of its own, no holder-less read.
+    // The named company is checked by the tenant scope read itself: no ownership read, no holder-less read.
+    expect(ownership).toEqual([]);
     expect(scopes.every((query) => query.legalEntityId === undefined && query.holders.length > 0)).toBe(true);
     expect(scopes[0]).toMatchObject({ checkedCompany: legalEntityId });
   }),
@@ -685,6 +694,57 @@ for (const legalEntityScope of ['optional', 'forbidden', 'required'] as const) {
     }),
   );
 }
+
+it.effect('refuses a workload in a company its tenant does not own, even one its registration names', () =>
+  Effect.gen(function* refusesForeignWorkloadCompany() {
+    const ours = LegalEntityIdSchema.make(uid(23));
+    const foreignCompany = LegalEntityIdSchema.make(uid(24));
+    // The registration names both companies: only the company-of-tenant rule can refuse the foreign one.
+    const { gate } = harness({
+      declaredCompanies: [ours, foreignCompany],
+      engineFailure: true,
+      foreignCompanies: [foreignCompany],
+      kinds: kindSource('service'),
+      workloadKeys: [BOUND_WORKLOAD],
+    });
+    const carrier = workloadCarrier('the storefront client runs the Action');
+    const ask = (company: LegalEntityId) =>
+      gateOf({ carrier, legalEntityScope: 'required', scope: scopeFor(person, company) });
+    const single = yield* gate.decide(ask(foreignCompany));
+    expect(single.outcome).toBe('DENIED');
+    expect(single.reasons.map(({ code }) => code)).toEqual(['deny.scope_mismatch']);
+    // In one batch, the foreign row is refused, and the rows of the owned company around it are not affected.
+    const batched = yield* gate.decideMany([ask(ours), ask(foreignCompany), ask(ours)]);
+    expect(batched.map(({ outcome }) => outcome)).toEqual(['ALLOWED', 'DENIED', 'ALLOWED']);
+    expect(batched[1]?.reasons.map(({ code }) => code)).toEqual(['deny.scope_mismatch']);
+    const listed = yield* gate.listMany([
+      { ...workloadList, legalEntityScope: 'required', scope: scopeFor(person, foreignCompany) },
+      { ...workloadList, legalEntityScope: 'required', scope: scopeFor(person, ours) },
+    ]);
+    expect(listed.map(({ decision }) => decision.outcome)).toEqual(['DENIED', 'ALLOWED']);
+    expect(listed[0]?.predicate).toBeUndefined();
+  }),
+);
+
+it.effect("answers UNAVAILABLE, never a decision, when a named company cannot be checked to be the tenant's", () =>
+  Effect.gen(function* unreadableOwnership() {
+    const company = LegalEntityIdSchema.make(uid(25));
+    const machine = yield* harness({
+      declaredCompanies: [company],
+      engineFailure: true,
+      kinds: kindSource('service'),
+      ownershipFails: true,
+      workloadKeys: [BOUND_WORKLOAD],
+    }).gate.decide(
+      gateOf({
+        carrier: workloadCarrier('machine provisioning'),
+        legalEntityScope: 'required',
+        scope: scopeFor(person, company),
+      }),
+    );
+    expect(machine.outcome).toBe('UNAVAILABLE');
+  }),
+);
 
 it.effect('decides a company-owned capability in the selected legal-entity scope', () =>
   Effect.gen(function* legalEntityScope() {
@@ -1135,6 +1195,25 @@ it.effect("reads one subject's kind and scope once for a page of LISTs, never on
     expect(yield* together.gate.listMany(page)).toEqual(one);
     expect({ kinds: aloneKinds, scopes: alone.scopes.length }).toEqual({ kinds: 5, scopes: 10 });
     expect({ kinds: kindReads.count, scopes: together.scopes.length }).toEqual({ kinds: 1, scopes: 1 });
+  }),
+);
+
+it.effect('a page of LISTs with a company selected reads its scope once: the engine takes the checked read', () =>
+  Effect.gen(function* checkedScopeShared() {
+    const company = LegalEntityIdSchema.make(uid(26));
+    // Tenant-context declarations asked with a company selected: the gate checks the company in its scope read.
+    const page = listPage.map((input) => ({ ...input, scope: scopeFor(person, company) }));
+    const shared = { authority: { cells: [cell({ capability: 'finance.invoice.void' })] } };
+    const alone = harness(shared);
+    const one = yield* Effect.forEach(page, (input) => alone.gate.list(input), { concurrency: 1 });
+    const together = harness(shared);
+    expect(yield* together.gate.listMany(page)).toEqual(one);
+    // The tenant-context LISTs: one checked read, the engine's company-less read of the same holders answered by it.
+    // The one `required` LIST reads its company. Two reads, as on trunk; before this, the engine's read was a third.
+    expect(together.scopes.map((query) => [query.legalEntityId, query.checkedCompany])).toEqual([
+      [undefined, company],
+      [company, undefined],
+    ]);
   }),
 );
 

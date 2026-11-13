@@ -58,6 +58,8 @@ const gateFor = (options: { readonly boundWorkloadKeys?: readonly string[]; read
       readCells: () => Effect.die('Only a human decision reads authority cells'),
       readConnection: () => Effect.die('Only an agent decision reads a connection'),
       // A person who resolves no live membership scope is refused by the scope read itself.
+      // The company the workload names is the tenant's: its binding, not ownership, decides these cases.
+      readCompanyOwnership: () => Effect.succeed(true),
       readScope: () => Effect.succeed(Option.none()),
       readTeamIds: () => Effect.die('Only a human decision reads team ids'),
     }),

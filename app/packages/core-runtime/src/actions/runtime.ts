@@ -1,4 +1,5 @@
 import {
+  isGenuineCoreAction,
   loadModuleOperationAdmission,
   operationCatalogLoader,
   prepareOperationIntrinsicState,
@@ -92,6 +93,7 @@ import type { OperationalScope, OperationalScopeResolverService } from '../opera
 import { OperationalScopeResolver } from '../operations/context.ts';
 import { ContextAccess, isOwnerPermissionAccessTargetValid } from '../permissions/context-access.ts';
 import { ActionAuthorizationPreflight } from './owner-proof-preflight.ts';
+import { withPreparedAccessRecheck } from './owner-transaction-access.ts';
 import { ActionProposalAcceptedSchema } from './proposal-accepted.ts';
 import type { ActionProposalAccepted, ActionProposalSuccess, ActionSuccessContract } from './proposal-accepted.ts';
 import type { ActionAuthorizationPreflightService } from './owner-proof-preflight.ts';
@@ -2894,7 +2896,13 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             ActionCoreError | DomainErrorSchema['Type'],
             HandlerRequirements
           > = Effect.fn('ActionRuntime.transaction')(function* executeTransaction(drizzleTransaction: CoreTransaction) {
-            const scopedTransaction = yield* installScope(drizzleTransaction, scope, options.databaseIdentities);
+            // A genuine Core Action re-checks questions it prepared before this transaction from its own snapshot.
+            // The re-check runs the prepared question's own code with this transaction, so no other owner's executor
+            // carries it: theirs fails a re-check closed.
+            const installed = yield* installScope(drizzleTransaction, scope, options.databaseIdentities);
+            const scopedTransaction = isGenuineCoreAction(input.registration)
+              ? withPreparedAccessRecheck(installed, drizzleTransaction)
+              : installed;
             notifyStage('database_scope_installed');
             yield* lockCompositionAuthority(drizzleTransaction, admittedCompositionRevision, 'write').pipe(
               Effect.mapError((cause) =>

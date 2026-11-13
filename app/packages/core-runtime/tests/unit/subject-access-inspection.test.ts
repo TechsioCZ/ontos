@@ -5,7 +5,11 @@ import { TrustedPrincipalContextSchema } from '../../src/actions/principal-conte
 import { decodeAccessActor, decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
 import type { AccessDeclarationInput } from '../../src/authorization/access-declaration.ts';
 import { accessDecisionUnavailable } from '../../src/access/decision/errors.ts';
-import type { ConnectionQuery, DecisionAuthorityPort } from '../../src/access/decision/authority.ts';
+import type {
+  CompanyOwnershipQuery,
+  ConnectionQuery,
+  DecisionAuthorityPort,
+} from '../../src/access/decision/authority.ts';
 import type { AccessCheckPermissionship } from '../../src/access/decision/engine.ts';
 import type { AccessPrincipalKind } from '../../src/access/enforcement/actor.ts';
 import type { AccessDecisionLogEntry } from '../../src/access/enforcement/decision-log.ts';
@@ -105,6 +109,8 @@ interface FixtureOptions {
   readonly facts?: SubjectIdentityFacts | null;
   readonly factsFailure?: boolean;
   readonly factsInterrupted?: boolean;
+  /** The requester's company is not the asked tenant's (the real loader finds no scope of it either). */
+  readonly foreignCompany?: boolean;
   readonly kind?: AccessPrincipalKind;
   readonly kindFailure?: boolean;
   readonly ownerKind?: AccessPrincipalKind;
@@ -141,10 +147,28 @@ const fixture = (options: FixtureOptions = {}) => {
         );
     },
   };
-  const originalAuthority: DecisionAuthorityPort =
-    options.scopeAbsent === true
-      ? { ...keyedAuthority, readScope: () => Effect.succeed(Option.none()) }
-      : keyedAuthority;
+  const ownership: CompanyOwnershipQuery[] = [];
+  const ownedAuthority: DecisionAuthorityPort = {
+    ...keyedAuthority,
+    readCompanyOwnership: (query) => {
+      ownership.push(query);
+      return Effect.succeed(options.foreignCompany !== true);
+    },
+  };
+  // As the loader answers: a scope read naming another tenant's company resolves nothing; the tenant itself resolves.
+  const foreignAuthority: DecisionAuthorityPort = {
+    ...ownedAuthority,
+    readScope: (query) =>
+      query.legalEntityId === undefined && query.checkedCompany === undefined
+        ? ownedAuthority.readScope(query)
+        : Effect.succeed(Option.none()),
+  };
+  const absentAuthority: DecisionAuthorityPort = { ...ownedAuthority, readScope: () => Effect.succeed(Option.none()) };
+  const authorities: readonly (readonly [boolean | undefined, DecisionAuthorityPort])[] = [
+    [options.scopeAbsent, absentAuthority],
+    [options.foreignCompany, foreignAuthority],
+  ];
+  const originalAuthority = authorities.find(([chosen]) => chosen === true)?.[1] ?? ownedAuthority;
   const service = makeSubjectAccessInspection({
     authorityFor: (scope) => {
       calls.push({ port: 'authority', scope });
@@ -203,7 +227,7 @@ const fixture = (options: FixtureOptions = {}) => {
       },
     },
   });
-  return { actions, authority, calls, check, connectionQueries, entries, evidenceBatches, service };
+  return { actions, authority, calls, check, connectionQueries, entries, evidenceBatches, ownership, service };
 };
 
 it.effect(
@@ -222,6 +246,37 @@ it.effect(
       expect(f.calls.every(({ scope }) => scope === requesterScope)).toBe(true);
       expect(Object.keys(result).toSorted()).toEqual(['decision', 'inspectionOnly']);
       expect(Object.hasOwn(result, 'scope')).toBe(false);
+    }),
+);
+
+it.effect(
+  'refuses every question about a company its tenant does not own, in every scope mode, single or batched',
+  () =>
+    Effect.gen(function* foreignCompany() {
+      for (const legalEntityScope of ['optional', 'forbidden', 'required'] as const) {
+        const f = fixture({ foreignCompany: true });
+        const single = yield* f.service.inspect({ ...question, legalEntityScope });
+        expect(single.decision.outcome).toBe('DENIED');
+        expect(single.decision.reasons.map(({ code }) => code)).toEqual(['deny.scope_mismatch']);
+        expect(f.entries).toHaveLength(0);
+      }
+      // In one batch, a tenant-context question naming the company is refused by its scope read, with no read of its own.
+      const f = fixture({ foreignCompany: true });
+      const answers = yield* f.service.capabilities({
+        ...base,
+        actionKeys: [],
+        questions: (['optional', 'forbidden', 'required'] as const).map((legalEntityScope) => ({
+          carrier: question.carrier,
+          legalEntityScope,
+          listing: false,
+        })),
+      });
+      expect(answers.answers.map(({ decision }) => decision.reasons.map(({ code }) => code))).toEqual([
+        ['deny.scope_mismatch'],
+        ['deny.scope_mismatch'],
+        ['deny.scope_mismatch'],
+      ]);
+      expect(f.ownership).toEqual([]);
     }),
 );
 

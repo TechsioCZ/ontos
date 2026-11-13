@@ -168,6 +168,7 @@ export const administrationProjectionLayer = (
   const loader: IntentLoader = {
     loadAuthorityCells: () => Effect.die('Unexpected authority read'),
     loadAuthorityCellsMany: () => Effect.die('Unexpected authority read'),
+    loadCompanyOwnership: () => Effect.die('Unexpected company ownership read'),
     loadConfigureBases: () => Effect.die('Unexpected configuration read'),
     loadConnection: () => Effect.die('Unexpected connection read'),
     loadProjection: (scope) =>

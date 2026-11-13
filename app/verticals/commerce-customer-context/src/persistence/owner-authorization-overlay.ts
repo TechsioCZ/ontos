@@ -5,7 +5,7 @@ import type {
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
 import { OwnerAuthorizationOverlay, ownerAuthorizationDenial } from '@app/core-runtime';
-import { Effect, Layer, Result, Schema } from 'effect';
+import { Effect, Layer, Option, Result, Schema } from 'effect';
 
 import {
   CounterpartyRefSchema,
@@ -16,6 +16,11 @@ import type { CounterpartyPermissionCode } from '../../shared/domain/permission-
 import { RetailAccessDecisionRequestSchema } from '../../shared/apis/retail-access-decision.ts';
 import { RetailCustomerProfileRefSchema } from '../../shared/resources/retail-customer-profile.ts';
 import { RetailPortalPermissionCodeSchema } from '../../shared/domain/profile-contracts.ts';
+import type { RetailPortalPermissionCode } from '../../shared/domain/profile-contracts.ts';
+import { PORTAL_SESSION_FACT, portalOwnPermissionByOperation } from '../../shared/portal-auth/own-session.ts';
+import { readRetailEnrollmentAccountAuthority } from '../enrollment/attempts/registration-persistence.ts';
+import { CommercePortalSessionLiveness } from '../portal-auth/persistence/portal-auth-session-liveness.ts';
+import type { CommercePortalSessionLivenessService } from '../portal-auth/persistence/portal-auth-session-liveness.ts';
 import { lockingCurrentOwnerAccessForTransaction } from './access-persistence.ts';
 import { profilePersistenceServicesForTransaction } from './profile-persistence.ts';
 
@@ -31,6 +36,10 @@ export const OWNER_DENIAL_REASON = {
   factsMissing: 'deny.owner.facts_missing',
   factsUnrecognized: 'deny.owner.facts_unrecognized',
   operationUnmapped: 'deny.owner.operation_unmapped',
+  portalPartyMismatch: 'deny.owner.portal_party_mismatch',
+  portalSessionFactMissing: 'deny.owner.portal_session_fact_missing',
+  portalSessionNotLive: 'deny.owner.portal_session_not_live',
+  portalSessionUnbound: 'deny.owner.portal_session_unbound',
   retailFactMissing: 'deny.owner.retail_fact_missing',
 } as const;
 
@@ -189,6 +198,85 @@ const checkRetailFacts = (
 };
 
 /**
+ * The storefront customer's own portal operations: "the session itself is the owner rule". The facts name the admitted
+ * session's account (its binding, its customer principal, its provider subject) and the Party the request addresses;
+ * none of them is authority. Inside the operation's own transaction the overlay reads which Party that account is
+ * bound to here, refuses any other Party, and asks that account's own retail right for this operation (the right the
+ * operation needs is chosen by the operation, never by the request). A second customer's session can only ever name
+ * its own account, so it can only ever reach its own Party.
+ */
+const checkPortalSessionFacts = (
+  transaction: ScopedTransactionExecutor,
+  input: OwnerAuthorizationInput,
+  permission: RetailPortalPermissionCode,
+  sessions: Option.Option<CommercePortalSessionLivenessService>,
+): Effect.Effect<OwnerAuthorizationOutcome> => {
+  const facts = input.ownerFacts ?? {};
+  const authBindingId = facts[PORTAL_SESSION_FACT.authBindingId];
+  const customerPrincipalId = facts[PORTAL_SESSION_FACT.customerPrincipalId];
+  const partyId = facts[PORTAL_SESSION_FACT.partyId];
+  const providerSubjectId = facts[PORTAL_SESSION_FACT.providerSubjectId];
+  const sessionRefDigest = facts[PORTAL_SESSION_FACT.sessionRefDigest];
+  const { legalEntityId } = input.scope;
+  if (
+    authBindingId === undefined ||
+    customerPrincipalId === undefined ||
+    partyId === undefined ||
+    providerSubjectId === undefined ||
+    sessionRefDigest === undefined ||
+    legalEntityId === undefined
+  ) {
+    return Effect.succeed(ownerAuthorizationDenial(OWNER_DENIAL_REASON.portalSessionFactMissing, requires(permission)));
+  }
+  if (Option.isNone(sessions)) {
+    // A runtime that cannot read the portal realm's sessions cannot prove one is live: never allowed.
+    return Effect.succeed('unavailable' as const);
+  }
+  return Effect.gen(function* portalSession() {
+    // The session the route admitted must still be live for this provider subject when the operation is decided. Its
+    // sessions live in the portal realm's own database, read through the realm's own role while this transaction is
+    // open (never a grant of the token table to the owner role); a signed-out or expired session is refused.
+    const live = yield* sessions.value.isLive({ providerSubjectId, sessionRefDigest });
+    if (!live) {
+      return ownerAuthorizationDenial(OWNER_DENIAL_REASON.portalSessionNotLive, requires(permission));
+    }
+    const bound = yield* readRetailEnrollmentAccountAuthority(transaction, {
+      authBindingId,
+      principalId: customerPrincipalId,
+      providerSubjectId,
+    });
+    if (Option.isNone(bound)) {
+      return ownerAuthorizationDenial(OWNER_DENIAL_REASON.portalSessionUnbound, requires(permission));
+    }
+    if (bound.value.party_id !== partyId) {
+      return ownerAuthorizationDenial(OWNER_DENIAL_REASON.portalPartyMismatch);
+    }
+    const profileRef = yield* Schema.decodeEffect(RetailCustomerProfileRefSchema)({
+      moduleId: 'commerce.customer-context',
+      resourceId: bound.value.profile_id,
+      resourceType: 'commerce.customer-context.retail-customer-profile',
+      tenantId: input.scope.tenantId,
+    });
+    const services = profilePersistenceServicesForTransaction(transaction, {
+      legalEntityId,
+      principalId: customerPrincipalId,
+      tenantId: input.scope.tenantId,
+    });
+    const { decision } = yield* services.retailAccessDecision.decideAccess(
+      { profileRef, requiredPermission: permission },
+      customerPrincipalId,
+      input.scope.tenantId,
+    );
+    if (decision.allowed) {
+      return 'allowed' as const;
+    }
+    return decision.outcome === 'AUTHORIZATION_UNAVAILABLE'
+      ? ('unavailable' as const)
+      : ownerAuthorizationDenial(retailDenialReason(decision.outcome), requires(permission));
+  }).pipe(Effect.orElseSucceed(() => 'unavailable' as const));
+};
+
+/**
  * Facts are the v2 carrier (O70). The decision reads ccc's own Postgres state only — the v2 gate has
  * already decided the capability itself, and there is no second permission store (O62).
  */
@@ -215,8 +303,15 @@ const decideOwnerFacts = (
   return Effect.succeed(ownerAuthorizationDenial(OWNER_DENIAL_REASON.factsUnrecognized));
 };
 
-export const makeCommerceCustomerContextOwnerAuthorizationOverlay = (): OwnerAuthorizationOverlayService => ({
+export const makeCommerceCustomerContextOwnerAuthorizationOverlay = (
+  sessions: Option.Option<CommercePortalSessionLivenessService> = Option.none(),
+): OwnerAuthorizationOverlayService => ({
   authorize: (transaction, input) => {
+    // A portal self-service operation is decided by its session rule alone, whatever facts it carries.
+    const portalPermission = portalOwnPermissionByOperation.get(input.operationKey);
+    if (portalPermission !== undefined) {
+      return checkPortalSessionFacts(transaction, input, portalPermission, sessions);
+    }
     // O70: Core computes the owner's fact bag from the descriptor and passes it unchanged; the
     // caller never supplies it (O64) and it never reaches the decision engine.
     const facts = input.ownerFacts;
@@ -241,7 +336,8 @@ export const makeCommerceCustomerContextOwnerAuthorizationOverlay = (): OwnerAut
   },
 });
 
+/** The portal session rule needs the realm's session liveness; without it, a portal operation is unavailable. */
 export const commerceCustomerContextOwnerAuthorizationOverlayLive = Layer.effect(
   OwnerAuthorizationOverlay,
-  Effect.sync(makeCommerceCustomerContextOwnerAuthorizationOverlay),
+  Effect.map(Effect.serviceOption(CommercePortalSessionLiveness), makeCommerceCustomerContextOwnerAuthorizationOverlay),
 );

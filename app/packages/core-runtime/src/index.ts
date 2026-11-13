@@ -219,6 +219,8 @@ export type {
   AgentProposalCommandResult,
 } from './auth/agent-proposal-command-contract.ts';
 export { AgentProposalCommandError } from './auth/agent-proposal-command-error.ts';
+export { AgentLifecycleAuthority, AgentLifecycleAuthorityLive } from './auth/agent-lifecycle-authority.ts';
+export type { AgentLifecycleAuthorityService } from './auth/agent-lifecycle-authority.ts';
 export {
   AgentProposalCommandPreparation,
   AgentProposalCommandPreparationLive,
@@ -265,6 +267,7 @@ export {
 export {
   OAuthConnectionAdministrationInputSchema,
   OAuthConnectionAdministrationResultSchema,
+  administersOAuthConnections,
   oauthConnectionAdministrationRead,
 } from './auth/oauth-connection-administration-read.ts';
 // @ontos-codesmith-core-read-exports:start

@@ -69,6 +69,9 @@ import { revokeRetailPortalProfileBindingAction } from './src/actions/revoke-ret
 import { setDefaultBillingAddressAction } from './src/actions/set-default-billing-address.action.ts';
 import { setDefaultDeliveryDestinationAction } from './src/actions/set-default-delivery-destination.action.ts';
 import { startPortalEnrollmentAction } from './src/actions/start-portal-enrollment.action.ts';
+import { changeOwnCustomerPasswordAction } from './src/actions/change-own-customer-password.action.ts';
+import { updateOwnCustomerConsentAction } from './src/actions/update-own-customer-consent.action.ts';
+import { updateOwnCustomerProfileAction } from './src/actions/update-own-customer-profile.action.ts';
 import { submitPurchaseApprovalRequestAction } from './src/actions/submit-purchase-approval-request.action.ts';
 import { suspendCustomerProfileAction } from './src/actions/suspend-customer-profile.action.ts';
 import { terminatePortalEnrollmentAction } from './src/actions/terminate-portal-enrollment.action.ts';
@@ -110,6 +113,8 @@ import { purchaseLimitEvaluationRead } from './src/api/purchase-limit-evaluation
 import { purchaseLimitPolicyReadRead } from './src/api/purchase-limit-policy-read.read.ts';
 import { repeatOrderPreparationRead } from './src/api/repeat-order-preparation.read.ts';
 import { retailAccessDecisionRead } from './src/api/retail-access-decision.read.ts';
+import { customerOwnConsentRead } from './src/api/customer-own-consent.read.ts';
+import { customerOwnProfileRead } from './src/api/customer-own-profile.read.ts';
 import { retailOrderHistoryDetailRead } from './src/api/retail-order-history-detail.read.ts';
 import { retailOrderHistoryRead } from './src/api/retail-order-history.read.ts';
 import { retailPortalProfileBindingReadRead } from './src/api/retail-portal-profile-binding-read.read.ts';
@@ -124,6 +129,10 @@ import { verifyRetailPurchasingSubjectCurrentV1Read } from './src/api/verify-ret
 
 export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistration({
   actions: [
+    // The storefront customer's own portal writes (workload-only carriers; served by the portal routes).
+    changeOwnCustomerPasswordAction,
+    updateOwnCustomerConsentAction,
+    updateOwnCustomerProfileAction,
     /* jscpd:ignore-start -- generated runtime actions intentionally mirror the manifest's public action list. */
     // <generated-module-registration-actions>
     addSavedAddressAction,
@@ -296,6 +305,9 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     // </generated-module-registration-workers>
   ],
   reads: [
+    // The storefront customer's own portal reads (workload-only carriers; served by the portal routes).
+    customerOwnConsentRead,
+    customerOwnProfileRead,
     commerceQuantityResolutionRead,
     counterpartyAccessInvitationReadRead,
     counterpartyAllCustomerArchiveRead,

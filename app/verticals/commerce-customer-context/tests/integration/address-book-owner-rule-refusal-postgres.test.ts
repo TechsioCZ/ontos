@@ -165,10 +165,10 @@ it.live(
           reason: 'Stage owner address refusal',
         } as const;
         const principal = { ...fixture.manager, legalEntityId: fixture.legalEntityId };
-        const add = (idempotencyKey: string = randomUUID()) =>
+        const addAs = (actor: typeof principal, idempotencyKey: string = randomUUID()) =>
           runAction({
             payload,
-            principal,
+            principal: actor,
             registration: addSavedAddressAction,
             transport: {
               correlationId: randomUUID(),
@@ -176,6 +176,7 @@ it.live(
               targetModuleKey: 'commerce.customer-context',
             },
           }).pipe(Effect.provideContext(context), Effect.result);
+        const add = (idempotencyKey: string = randomUUID()) => addAs(principal, idempotencyKey);
         const grantsOfOwner = () =>
           fixture
             .prepareOwner(
@@ -231,6 +232,25 @@ it.live(
           return yield* Effect.die(admitted.failure);
         }
         expect(admitted.success.outcome).toBe('ADDED');
+
+        // The grant admits this person in THIS company only. The same person acting in another company of the
+        // tenant, and a person of another tenant, reach the same profile payload and are still refused: the
+        // company and tenant fences hold whatever the v2 gate answers (it answers ALLOWED for all of them).
+        const elsewhere = yield* addAs({ ...principal, legalEntityId: randomUUID() });
+        if (Result.isSuccess(elsewhere)) {
+          return yield* Effect.die('Another company of the tenant reached this Counterparty profile');
+        }
+        const otherTenant = yield* addAs({ ...principal, tenantId: randomUUID() });
+        if (Result.isSuccess(otherTenant)) {
+          return yield* Effect.die('Another tenant reached this Counterparty profile');
+        }
+        // Another person id cannot borrow this admitted request: it is refused at the operation context, before the
+        // owner rule is ever consulted, so the grant written above is reachable by nobody else.
+        const otherPerson = yield* addAs({ ...principal, principalId: randomUUID() });
+        if (Result.isSuccess(otherPerson)) {
+          return yield* Effect.die('A person without a Counterparty grant added an address');
+        }
+        expect(otherPerson.failure).toMatchObject({ code: 'operation_context_denied' });
         return true;
       }),
     ).pipe(Effect.provide(services)),

@@ -537,7 +537,7 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
   });
 
 /** The contract plus the exact text of the MCP tool catalog artifact it pins (when the module offers tools). */
-const deriveOntosModuleRelease = (input: DeriveOntosModuleContractInput) =>
+export const deriveOntosModuleRelease = (input: DeriveOntosModuleContractInput) =>
   Effect.gen(function* deriveModuleReleaseProgram() {
     const platformPath = yield* Path.Path;
     const workspaceRoot = platformPath.resolve(input.workspaceRoot ?? platformPath.join(import.meta.dirname, '..'));

@@ -112,6 +112,9 @@ const effectNativeRules = {
         'apps/shell-super-app/api/auth/db/client.ts',
         // The MCP route middleware binds each request's own correlation and Action identity for the route it wraps.
         'apps/shell-super-app/api/mcp/request-identity.ts',
+        // The customer portal routes bind each request's own exchange (session reference, result cell, redacted
+        // passwords) to the one Action that request invokes.
+        'verticals/commerce-customer-context/api/portal-auth/own/own-portal-exchange.ts',
         'verticals/party-registry/src/db/client.ts',
         'packages/core-runtime/src/testing/actions.ts',
         // This CLI composes administrative Auth/Core database Layers for local initialization.

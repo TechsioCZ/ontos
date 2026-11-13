@@ -182,7 +182,7 @@ export const listAgentEntities = Effect.fn('AgentEntities.listAgentEntities')(fu
   const people = yield* AccessPeopleBff;
   const [audit, roles, modules] = yield* Effect.all(
     [
-      auditTrail(caller, transport, 'agents').pipe(Effect.mapError(fromDemoAccountError)),
+      auditTrail(caller, transport).pipe(Effect.mapError(fromDemoAccountError)),
       people
         .agentRoles(headers, { agentPrincipalIds: agents.map((agent) => agent.principalId), legalEntityId })
         .pipe(Effect.mapError(fromPeopleProblem)),

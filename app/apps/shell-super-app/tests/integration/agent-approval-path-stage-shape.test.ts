@@ -3,6 +3,7 @@ import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionSnapshotSchema,
+  AgentLifecycleAuthorityLive,
   AgentProposalCommandAuthorizationPreflightLive,
   AgentProposalCommandPreparationLive,
   AgentProposalQueueModuleReview,
@@ -616,6 +617,9 @@ const shellLayer = (input: {
       const shared = Layer.mergeAll(contextAccess, moduleStates, moduleStateGate, entrypointGateway, scopeResolver);
       const readRuntime = ReadRuntimeLive.pipe(Layer.provide(Layer.mergeAll(shared, authority)));
       const preparation = AgentProposalCommandPreparationLive.pipe(
+        // As the Shell wires it: the lifecycle question of a withdrawal is prepared by the bound Action gate and
+        // re-checked inside the Action's own transaction.
+        Layer.provide(AgentLifecycleAuthorityLive),
         Layer.provide(Layer.mergeAll(contextAccess, authority)),
       );
       const actionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(

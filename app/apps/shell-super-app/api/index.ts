@@ -46,10 +46,10 @@ import type {
 
 import {
   makeActionRuntimeLive,
+  AgentLifecycleAuthorityLive,
   AgentProposalCommandPreparationLive,
   AgentProposalCommandAuthorizationPreflightLive,
   IdentityAdministrationDeniedAuditLive,
-  oauthConnectionAdministrationRead,
   ActiveApplicationCompositionUnavailableError,
   makeReadRuntimeLive,
   ContextAccessLive,
@@ -304,6 +304,7 @@ import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
 import { GatewayTimings, observeGatewayPhase } from './auth/gateway-timing.ts';
 import { NoServerTimingLive } from './no-server-timing.ts';
 import { preserveSystemPrincipalContextTrust } from '@app/core-runtime/auth/system-principal-context-provenance';
+import { connectedAppsAdministration, tenantReleaseHintAdmitted } from './auth/administration-access.ts';
 import { peopleAdministrationCapability } from './auth/demo-accounts.ts';
 import { peopleAdministrationDecision } from './auth/administration-access.ts';
 import { rebrandRentalDemoAccounts } from './auth/rental-demo-brand-runtime-infrastructure.ts';
@@ -351,7 +352,6 @@ import { CapturedShellCompositionCatalog, capturedShellCatalog } from './modules
 import { ShellGovernedReadDefinitions } from './modules/shell-governed-read-definitions.ts';
 import {
   ShellGovernedReads,
-  TENANT_MODULE_TARGET_ACCESS_DECLARATION,
   createShellGovernedReadsLayer,
   createShellGovernedReadDefinitionsLayer,
 } from './modules/shell-governed-reads.ts';
@@ -1834,19 +1834,14 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
     let tenantRelease = Option.none<string>();
     let tenantTarget = Option.none<ShellDocumentTarget>();
     if (context.state === 'tenant_authenticated') {
-      // The release hint serves only tenant-context page dispatch, so it goes to exactly the people that
-      // dispatch admits: `core.shell.tenant-module-target.resolve`, asked in the tenant context (O28).
-      const gate = yield* AccessDecisionGate;
-      const decision = yield* gate.decide({
-        carrier: { accessDeclaration: TENANT_MODULE_TARGET_ACCESS_DECLARATION },
-        legalEntityScope: 'optional',
-        now: yield* DateTime.nowAsDate,
-        scope: preserveSystemPrincipalContextTrust(context.principal, {
+      // The release hint goes to exactly the people tenant-context page dispatch admits.
+      const admitted = yield* tenantReleaseHintAdmitted(
+        preserveSystemPrincipalContextTrust(context.principal, {
           ...context.principal,
           correlationId: correlationFromRequest(request),
         }),
-      });
-      if (decision.outcome === 'ALLOWED') {
+      );
+      if (admitted) {
         const tenantCatalog = yield* captureShellRelease(payload.compositionRevision).pipe(Effect.option);
         tenantRelease = tenantCatalog.pipe(Option.map((catalog) => catalog.composition.revision));
         // A page target counts only beside the release hint; without it the page shows "select a company".
@@ -3306,20 +3301,15 @@ const connectionsCaller = Effect.fn('shell.connectionsAdmin.caller')(function* c
   withAdminRight: boolean,
 ) {
   const caller = yield* agentPlatformSessionCaller(request);
-  // The company's connected applications are administered through Core's own capability carrier,
-  // `core.identity.oauth-connection.administer`: admitting the read is the answer.
+  // The company's connected applications are administered through Core's own capability,
+  // `core.identity.oauth-connection.administer`, asked in the caller's selected company.
   const isCompanyAdmin = withAdminRight
-    ? yield* (yield* ReadRuntime)
-        .runRead({
-          input: {},
-          principal: caller.principal,
-          registration: oauthConnectionAdministrationRead,
-          transport: { correlationId: correlationFromRequest(request) },
-        })
-        .pipe(
-          Effect.as(true),
-          Effect.orElseSucceed(() => false),
-        )
+    ? yield* connectedAppsAdministration(
+        preserveSystemPrincipalContextTrust(caller.principal, {
+          ...caller.principal,
+          correlationId: correlationFromRequest(request),
+        }),
+      )
     : false;
   const result: ConnectionsCaller = {
     isCompanyAdmin,
@@ -3857,6 +3847,8 @@ export const makeShellAuthenticationApiRuntime = (
   );
   // Agent-platform proposal preparation runs through the same canonical gate as every other protected surface.
   const proposalPreparationLayer = AgentProposalCommandPreparationLive.pipe(
+    // The lifecycle question of a withdrawal is prepared by the bound Action gate and re-checked in its transaction.
+    Layer.provide(AgentLifecycleAuthorityLive),
     Layer.provide(
       Layer.mergeAll(
         runtimeCorePersistenceLive,

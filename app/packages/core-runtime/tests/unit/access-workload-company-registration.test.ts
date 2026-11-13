@@ -127,6 +127,8 @@ const harness = (options: RunOptions = {}) => {
   const gate = makeAccessDecisionService({
     authorityFor: () => ({
       readCells: () => Effect.succeed([]),
+      // Every company these cases name is the tenant's: the registration, not ownership, decides them.
+      readCompanyOwnership: () => Effect.succeed(true),
       readConnection: () => Effect.succeed(Option.none()),
       readScope: () => Effect.succeed(Option.none()),
       readTeamIds: () => Effect.succeed([]),

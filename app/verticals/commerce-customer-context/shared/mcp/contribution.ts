@@ -116,6 +116,8 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
         en: 'Accept a partner access invitation',
       },
     },
+    // The storefront customer's own portal writes belong to the storefront client alone, never an MCP caller.
+    'change-own-customer-password': 'hidden',
     'claim-portal-enrollment-transition': 'hidden',
     'clear-default-billing-address': {
       title: {
@@ -369,6 +371,8 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
         en: 'Update a customer group',
       },
     },
+    'update-own-customer-consent': 'hidden',
+    'update-own-customer-profile': 'hidden',
     'update-saved-address': {
       title: {
         cs: 'Upravit uloženou adresu',

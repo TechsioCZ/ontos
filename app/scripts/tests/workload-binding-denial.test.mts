@@ -138,6 +138,8 @@ const ports: AccessDecisionPorts = {
   authorityFor: () => ({
     readCells: () => Effect.succeed([]),
     readConnection: () => Effect.succeed(Option.none()),
+    // The company the workload names is the tenant's: its binding, not ownership, decides these cases.
+    readCompanyOwnership: () => Effect.succeed(true),
     readScope: () => Effect.succeed(Option.none()),
     readTeamIds: () => Effect.succeed([]),
   }),

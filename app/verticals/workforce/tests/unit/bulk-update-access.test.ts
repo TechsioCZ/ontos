@@ -169,6 +169,7 @@ const bulkAuthority = (refuseMiddle: boolean): Authority => {
         cells.filter((cell) => cell.capabilityKey === query.capabilityKey && cell.mode === query.mode),
       );
     },
+    readCompanyOwnership: (query) => Effect.succeed(query.tenantId === tenantId && query.legalEntityId === companyId),
     readConnection: () => Effect.succeed(Option.none()),
     readScope: (query) => {
       expect(query.tenantId).toBe(tenantId);
