@@ -3,12 +3,20 @@
  * an event stream and an upload that only answers once its body ended, the real `publicPortClosing` and the real
  * `stopSignal` race, wired as `app-host.mts` wires them. Prints `PORT <n>` once it serves.
  */
+import { createServer } from 'node:http';
+
 import { NodeHttpServer } from '@effect/platform-node';
 import { Console, Context, Effect, Exit, Layer, Option, Ref, Scope, Stream } from 'effect';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { NetAddress } from 'effect/net';
 
-import { hostApplication, publicPortClosing, stopSignal } from '../../zerops/app-host.mts';
+import {
+  PUBLIC_PORT_GRACEFUL_CLOSE_CAP,
+  hostApplication,
+  publicPortClosing,
+  stopSignal,
+} from '../../zerops/app-host.mts';
+import { withKeepAlive } from '../../zerops/http-keep-alive.mts';
 import { makeHostRefusalLog } from '../../zerops/host-refusal-log.mts';
 import { makeSupersedeDrain } from '../../zerops/supersede-drain.mts';
 
@@ -44,8 +52,16 @@ const program = Effect.gen(function* stopSignalHost() {
     makeHostRefusalLog(),
     drain,
   );
-  const port = yield* serveOn(app, publicScope);
-  const closePublicPort = yield* publicPortClosing(publicScope, drain);
+  // The public server exactly as the host makes it: kept-alive connections and its stop bounds included.
+  const publicServer = withKeepAlive(createServer)();
+  const server = yield* NodeHttpServer.make(() => publicServer, {
+    gracefulShutdownTimeout: PUBLIC_PORT_GRACEFUL_CLOSE_CAP,
+    host: '127.0.0.1',
+    port: 0,
+  }).pipe(Scope.provide(publicScope));
+  yield* server.serve(app).pipe(Scope.provide(publicScope));
+  const port = NetAddress.isUnixPathAddress(server.address) ? 0 : server.address.port;
+  const closePublicPort = yield* publicPortClosing(publicScope, drain, publicServer);
   yield* Effect.addFinalizer(() =>
     Console.log('[fixture] closing the public port').pipe(
       Effect.andThen(closePublicPort),

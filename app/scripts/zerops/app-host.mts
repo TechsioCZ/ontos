@@ -100,6 +100,7 @@ import {
   Duration,
   Effect,
   Exit,
+  Fiber,
   FileSystem,
   Layer,
   Option,
@@ -1274,8 +1275,35 @@ export const stopAccepting = (server: Server) =>
     }
   });
 
-export const publicPortClosing = (publicScope: Scope.Closeable, drain: SupersedeDrain) =>
-  Effect.cached(Deferred.succeed(drain.stopping, true).pipe(Effect.andThen(Scope.close(publicScope, Exit.void))));
+/**
+ * Bounds of the public port's stop. The platform's stop timeout is not documented in this repository; it is assumed
+ * to be 30 s, so the port closes well inside it and leaves the units their time. After `stopping`, connections that are
+ * kept alive or hold a half-sent request get a 2 s grace, then are closed; the server's graceful close is capped at
+ * 10 s whatever happens.
+ */
+export const PUBLIC_PORT_FORCE_CLOSE_AFTER = Duration.seconds(2);
+export const PUBLIC_PORT_GRACEFUL_CLOSE_CAP = Duration.seconds(10);
+
+export const publicPortClosing = (publicScope: Scope.Closeable, drain: SupersedeDrain, server: Server) =>
+  Effect.cached(
+    Effect.gen(function* closePublicPort() {
+      yield* Deferred.succeed(drain.stopping, true);
+      yield* Effect.sync(() => {
+        server.closeIdleConnections();
+      });
+      const force = yield* Effect.forkChild(
+        Effect.sleep(PUBLIC_PORT_FORCE_CLOSE_AFTER).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              server.closeAllConnections();
+            }),
+          ),
+        ),
+      );
+      yield* Scope.close(publicScope, Exit.void);
+      yield* Fiber.interrupt(force);
+    }),
+  );
 
 /**
  * The answer when a request may already have reached its target (its peer or unit could have acted on it): 502, or
@@ -1710,9 +1738,13 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   // Closing waits for in-flight requests (the server's graceful shutdown) and happens once, whoever asks first.
   // The public server is made here so the host can stop its listener alone (the drain's end) or close it whole (stop).
   const publicServer = withKeepAlive(createServer)();
-  const closePublicPort = yield* publicPortClosing(publicScope, drain);
+  const closePublicPort = yield* publicPortClosing(publicScope, drain, publicServer);
   yield* Effect.addFinalizer(() => closePublicPort);
-  const openPublicPort = NodeHttpServer.make(() => publicServer, { host: '0.0.0.0', port: publicPort }).pipe(
+  const openPublicPort = NodeHttpServer.make(() => publicServer, {
+    gracefulShutdownTimeout: PUBLIC_PORT_GRACEFUL_CLOSE_CAP,
+    host: '0.0.0.0',
+    port: publicPort,
+  }).pipe(
     Effect.mapError(() => failure(`public port ${String(publicPort)} could not be opened`)),
     Effect.flatMap((server) => server.serve(hostApplication(ports, published, pointer.load, refusals, drain))),
     Scope.provide(publicScope),

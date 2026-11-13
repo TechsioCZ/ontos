@@ -522,6 +522,21 @@ it.live('a request target reaches the unit as received, directly and through a d
   }),
 );
 
+/** A connection that writes `bytes` and then only waits; resolves with what it read once the server closed it. */
+const heldConnection = (port: number, bytes: string) =>
+  Effect.callback<string>((resume) => {
+    const socket = connect(port, '127.0.0.1', () => {
+      socket.write(bytes);
+    });
+    const chunks: Buffer[] = [];
+    socket.on('data', (chunk: Buffer) => {
+      chunks.push(chunk);
+    });
+    socket.on('close', () => {
+      resume(Effect.succeed(Buffer.concat(chunks).toString('utf-8')));
+    });
+  });
+
 /** An upload whose body never ends: its headers and a first chunk, then nothing; resolves with the response head. */
 const unfinishedUpload = (port: number) =>
   Effect.callback<string>((resume) => {
@@ -562,6 +577,14 @@ it.live(
       const port = Number(portLine?.slice('PORT '.length));
       const events = yield* Effect.forkChild(send(port, '/_m/crm/events'));
       const upload = yield* Effect.forkChild(unfinishedUpload(port));
+      // A kept-alive connection idle after its answer, and one whose request head never ends (the server's own
+      // header timeout is 66 s).
+      const keptAlive = yield* Effect.forkChild(
+        heldConnection(port, 'GET /_m/crm/echo HTTP/1.1\r\nHost: stage.test\r\nConnection: keep-alive\r\n\r\n'),
+      );
+      const halfSent = yield* Effect.forkChild(
+        heldConnection(port, 'GET /_m/crm/echo HTTP/1.1\r\nHost: stage.test\r\n'),
+      );
       yield* Effect.sleep('300 millis');
       const started = yield* Clock.currentTimeMillis;
       yield* child.kill({ forceKillAfter: '25 seconds', killSignal: 'SIGTERM' });
@@ -570,6 +593,8 @@ it.live(
       // The public port's own cap is the server's 20 s graceful timeout; ending streams and uploads first leaves it
       // nothing to wait for.
       expect(stoppedAfter).toBeLessThan(5000);
+      expect(yield* Fiber.join(keptAlive)).toMatch(/^HTTP\/1\.1 200 /u);
+      expect(yield* Fiber.join(halfSent)).toBe('');
       const stream = yield* Fiber.join(events);
       expect(stream.status).toBe(200);
       expect(stream.error).toBeUndefined();
