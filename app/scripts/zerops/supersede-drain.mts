@@ -19,7 +19,7 @@
 import { promises as dns } from 'node:dns';
 import { networkInterfaces } from 'node:os';
 
-import { Console, Deferred, Duration, Effect, Option, Ref } from 'effect';
+import { Clock, Console, Deferred, Duration, Effect, Ref } from 'effect';
 
 /**
  * How long a superseded host relays: the readiness probe period (`zerops.yaml` app `retryPeriod: 10s`) plus the
@@ -30,6 +30,15 @@ export const SUPERSEDED_DRAIN = Duration.seconds(45);
 
 /** Marks a request relayed by a draining host; a draining host never relays it again. Never reaches a unit. */
 export const DRAIN_FORWARDED_HEADER = 'x-ontos-drain-forwarded';
+
+/**
+ * Marks a draining host's refusal of a relayed request, so the host that relayed it drops that peer for the rest of
+ * its drain and tries the next one (two deploys in a row: the middle container drains too).
+ */
+export const DRAIN_REFUSED_HEADER = 'x-ontos-drain-refused';
+
+/** Peers are resolved again only when every known one failed, and then at most once per second. */
+export const DRAIN_PEER_RESOLVE_INTERVAL = Duration.seconds(1);
 
 /** The app service's hostname on the project's internal network (`zerops-import.yaml`). */
 export const APP_SERVICE_HOSTNAME = 'app';
@@ -44,43 +53,87 @@ export interface DrainPeer {
 }
 
 interface DrainCounts {
+  readonly dropped: number;
   readonly failed: number;
   readonly forwarded: number;
   readonly looped: number;
 }
 
+const peerKey = ({ address, port }: DrainPeer) => `${address}:${String(port)}`;
+
 /**
  * Whether this host relays, and to whom. `superseded` completes when the drain starts (relayed event streams of the
  * old release end then, so a browser reconnects to the new one); `ended` completes when it ends (in-flight relays
- * are cut then, before the port closes).
+ * are cut then, before the port closes). A peer that refused as draining itself, or refused the connection, is
+ * dropped for the rest of the drain; `refresh` asks the resolver again, at most once per second.
  */
 export interface SupersedeDrain {
-  readonly begin: (peers: readonly DrainPeer[]) => Effect.Effect<void>;
+  readonly active: Effect.Effect<boolean>;
+  readonly begin: (peers: readonly DrainPeer[], resolve: Effect.Effect<readonly DrainPeer[]>) => Effect.Effect<void>;
   readonly count: (outcome: keyof DrainCounts) => Effect.Effect<void>;
+  readonly drop: (peer: DrainPeer) => Effect.Effect<void>;
   readonly ended: Deferred.Deferred<true>;
   readonly finish: Effect.Effect<DrainCounts>;
-  readonly peers: Effect.Effect<Option.Option<readonly DrainPeer[]>>;
+  readonly livePeers: Effect.Effect<readonly DrainPeer[]>;
+  readonly refresh: Effect.Effect<readonly DrainPeer[]>;
   readonly superseded: Deferred.Deferred<true>;
 }
 
+interface DrainState {
+  readonly active: boolean;
+  readonly dropped: ReadonlySet<string>;
+  readonly peers: readonly DrainPeer[];
+  readonly resolve: Effect.Effect<readonly DrainPeer[]>;
+  readonly resolvedAt: number;
+}
+
 export const makeSupersedeDrain = (): SupersedeDrain => {
-  const peers = Ref.makeUnsafe(Option.none<readonly DrainPeer[]>());
-  const counts = Ref.makeUnsafe<DrainCounts>({ failed: 0, forwarded: 0, looped: 0 });
+  const state = Ref.makeUnsafe<DrainState>({
+    active: false,
+    dropped: new Set(),
+    peers: [],
+    resolve: Effect.succeed([]),
+    resolvedAt: 0,
+  });
+  const counts = Ref.makeUnsafe<DrainCounts>({ dropped: 0, failed: 0, forwarded: 0, looped: 0 });
   const superseded = Deferred.makeUnsafe<true>();
   const ended = Deferred.makeUnsafe<true>();
+  const live = ({ dropped, peers }: DrainState) => peers.filter((peer) => !dropped.has(peerKey(peer)));
+  const count = (outcome: keyof DrainCounts) =>
+    Ref.update(counts, (current) => ({ ...current, [outcome]: current[outcome] + 1 }));
   return {
-    begin: (resolved) =>
-      Ref.set(peers, resolved.length === 0 ? Option.none() : Option.some(resolved)).pipe(
+    active: Ref.get(state).pipe(Effect.map(({ active }) => active)),
+    begin: (peers, resolve) =>
+      Clock.currentTimeMillis.pipe(
+        Effect.flatMap((now) =>
+          Ref.update(state, (current) => ({ ...current, active: peers.length > 0, peers, resolve, resolvedAt: now })),
+        ),
         Effect.andThen(Deferred.succeed(superseded, true)),
         Effect.asVoid,
       ),
-    count: (outcome) => Ref.update(counts, (current) => ({ ...current, [outcome]: current[outcome] + 1 })),
+    count,
+    drop: (peer) =>
+      Ref.modify(state, (current) =>
+        current.dropped.has(peerKey(peer))
+          ? [false, current]
+          : [true, { ...current, dropped: new Set([...current.dropped, peerKey(peer)]) }],
+      ).pipe(Effect.flatMap((added) => (added ? count('dropped') : Effect.void))),
     ended,
     finish: Deferred.succeed(ended, true).pipe(
-      Effect.andThen(Ref.set(peers, Option.none())),
+      Effect.andThen(Ref.update(state, (current) => ({ ...current, active: false }))),
       Effect.andThen(Ref.get(counts)),
     ),
-    peers: Ref.get(peers),
+    livePeers: Ref.get(state).pipe(Effect.map(live)),
+    refresh: Effect.gen(function* refreshPeers() {
+      const now = yield* Clock.currentTimeMillis;
+      const current = yield* Ref.get(state);
+      if (now - current.resolvedAt < Duration.toMillis(DRAIN_PEER_RESOLVE_INTERVAL)) {
+        return live(current);
+      }
+      const peers = yield* current.resolve;
+      const next = yield* Ref.updateAndGet(state, (latest) => ({ ...latest, peers, resolvedAt: now }));
+      return live(next);
+    }),
     superseded,
   };
 };
@@ -141,7 +194,7 @@ export const drainSupersededHost = (input: {
     const peers = yield* input.peers;
     const port = String(input.publicPort);
     if (peers.length === 0) {
-      yield* input.drain.begin([]);
+      yield* input.drain.begin([], input.peers);
       yield* Console.log(
         `[app-host] superseded by composition ${input.revision}; no other app container resolves; closing public port ${port} now`,
       );
@@ -149,15 +202,15 @@ export const drainSupersededHost = (input: {
       return yield* input.closePublicPort;
     }
     const seconds = String(Duration.toSeconds(input.duration));
-    yield* input.drain.begin(peers);
+    yield* input.drain.begin(peers, input.peers);
     yield* Console.log(
       `[app-host] superseded by composition ${input.revision}; drain started: public port ${port} relays to ${String(peers.length)} peer(s) ${describePeers(peers)} for up to ${seconds}s`,
     );
     const end = (reason: string) =>
       input.drain.finish.pipe(
-        Effect.flatMap(({ failed, forwarded, looped }) =>
+        Effect.flatMap(({ dropped, failed, forwarded, looped }) =>
           Console.log(
-            `[app-host] drain ended (${reason}): forwarded=${String(forwarded)} failed=${String(failed)} looped=${String(looped)}; closing public port ${port}`,
+            `[app-host] drain ended (${reason}): forwarded=${String(forwarded)} failed=${String(failed)} looped=${String(looped)} dropped=${String(dropped)}; closing public port ${port}`,
           ),
         ),
         Effect.andThen(input.closePublicPort),

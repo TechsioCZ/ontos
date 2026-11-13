@@ -30,6 +30,7 @@ import {
   APP_SERVICE_HOSTNAME,
   DRAIN_FORWARDED_HEADER,
   DRAIN_FORWARD_CONNECT_TIMEOUT,
+  DRAIN_REFUSED_HEADER,
   DRAIN_FORWARD_HEADERS_TIMEOUT,
   SUPERSEDED_DRAIN,
   drainSupersededHost,
@@ -1031,6 +1032,8 @@ export const relayResponseHeaders = (
 /** Where one relayed request goes: a loopback unit, or (while this host drains) a peer app container. */
 interface RelayTarget {
   readonly dispatcher?: Agent;
+  /** A peer app container: its refusal as a draining host is a failure, so the relaying host tries the next one. */
+  readonly drainPeer?: boolean;
   /** Headers the target receives in addition to the request's own end-to-end headers. */
   readonly extraHeaders?: Readonly<Record<string, string>>;
   readonly headersTimeout: Duration.Duration;
@@ -1087,6 +1090,10 @@ const relay = Effect.fn('AppHost.relay')(function* relay(
         signal,
       }),
   });
+  if (target.drainPeer === true && response.headers[DRAIN_REFUSED_HEADER] !== undefined) {
+    response.body.resume();
+    return yield* new RelayFailure({ code: 'PEER_DRAINING', stage: 'request' });
+  }
   const responseHeaders = relayResponseHeaders(response.statusCode, response.headers);
   const noBody = request.method === 'HEAD' || [204, 205, 304].includes(response.statusCode);
   if (noBody) {
@@ -1232,16 +1239,26 @@ const originForm = (url: string) => {
 const hostLiteral = (address: string) => (address.includes(':') ? `[${address}]` : address);
 const peerOrigin = ({ address, port }: DrainPeer) => `http://${hostLiteral(address)}:${String(port)}`;
 
+/** Failures before a single request byte left: the next peer may take the request, its body included. */
+const CONNECT_FAILURES: ReadonlySet<string> = new Set([
+  'EADDRNOTAVAIL',
+  'ECONNREFUSED',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+
 /**
  * While this host drains, it serves nothing itself: every public request goes to a peer app container of the same
  * service, unchanged but for the drain marker, so every cookie, token and gateway check runs there exactly as for a
- * direct request. A request that already carries the marker came from another draining host (two deploys in a row)
- * and is not relayed again. A request without a body may try the next peer when one cannot be reached; a body
- * streams to one peer only. Every failure answers the retryable 503 and is logged.
+ * direct request. A request that already carries the marker came from another draining host (two deploys in a row):
+ * it is refused, marked so that host drops this one. Peers are tried in turn; a peer that refuses as draining or
+ * refuses the connection is dropped for the rest of the drain. A request with a body moves to the next peer only
+ * when the connection was refused (nothing sent yet), never after its bytes may have been sent. When every known
+ * peer failed, the peers are resolved again (at most once per second). Every failure answers the retryable 503.
  */
 const forwardDuringDrain = Effect.fn('AppHost.forwardDuringDrain')(function* forwardDuringDrain(
   request: HttpServerRequest.HttpServerRequest,
-  peers: readonly DrainPeer[],
   drain: SupersedeDrain,
   refusals: HostRefusalLog,
   dispatcher: Agent,
@@ -1267,35 +1284,48 @@ const forwardDuringDrain = Effect.fn('AppHost.forwardDuringDrain')(function* for
     );
   if (request.headers[DRAIN_FORWARDED_HEADER] !== undefined) {
     yield* drain.count('looped');
-    return yield* refuse('ALREADY_RELAYED', 'none');
+    return yield* refuse('ALREADY_RELAYED', 'none').pipe(
+      Effect.map(HttpServerResponse.setHeader(DRAIN_REFUSED_HEADER, 'draining')),
+    );
   }
   const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
-  const candidates = hasBody ? peers.slice(0, 1) : peers;
   let last = new RelayFailure({ code: 'NO_PEER', stage: 'request' });
   let lastPeer = 'none';
-  for (const peer of candidates) {
-    const target = peerOrigin(peer);
-    const answer = yield* relay(
-      request,
-      {
-        dispatcher,
-        extraHeaders: { [DRAIN_FORWARDED_HEADER]: '1' },
-        headersTimeout: DRAIN_FORWARD_HEADERS_TIMEOUT,
-        origin: target,
-        path: originForm(request.url),
-      },
-      (problem) => refuse(problem.code, target).pipe(Effect.asVoid),
-      (eventStream) => {
-        const ended = Deferred.await(drain.ended);
-        return eventStream ? { end: ended } : { cut: ended };
-      },
-    ).pipe(Effect.result);
-    if (Result.isSuccess(answer)) {
-      yield* drain.count('forwarded');
-      return answer.success;
+  for (const round of [1, 2]) {
+    const peers = round === 1 ? yield* drain.livePeers : yield* drain.refresh;
+    for (const peer of peers) {
+      const target = peerOrigin(peer);
+      const answer = yield* relay(
+        request,
+        {
+          dispatcher,
+          drainPeer: true,
+          extraHeaders: { [DRAIN_FORWARDED_HEADER]: '1' },
+          headersTimeout: DRAIN_FORWARD_HEADERS_TIMEOUT,
+          origin: target,
+          path: originForm(request.url),
+        },
+        (problem) => refuse(problem.code, target).pipe(Effect.asVoid),
+        (eventStream) => {
+          const ended = Deferred.await(drain.ended);
+          return eventStream ? { end: ended } : { cut: ended };
+        },
+      ).pipe(Effect.result);
+      if (Result.isSuccess(answer)) {
+        yield* drain.count('forwarded');
+        return answer.success;
+      }
+      last = answer.failure;
+      lastPeer = target;
+      const refusedConnection = CONNECT_FAILURES.has(last.code);
+      if (refusedConnection || last.code === 'PEER_DRAINING') {
+        yield* drain.drop(peer);
+      }
+      if (hasBody && !refusedConnection) {
+        yield* drain.count('failed');
+        return yield* refuse(last.code, lastPeer);
+      }
     }
-    last = answer.failure;
-    lastPeer = target;
   }
   yield* drain.count('failed');
   return yield* refuse(last.code, lastPeer);
@@ -1315,9 +1345,8 @@ export const hostApplication = <Failure, Requirements>(
   });
   return Effect.gen(function* routeHostRequest() {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const draining = yield* drain.peers;
-    if (Option.isSome(draining)) {
-      return yield* forwardDuringDrain(request, draining.value, drain, refusals, forwardDispatcher);
+    if (yield* drain.active) {
+      return yield* forwardDuringDrain(request, drain, refusals, forwardDispatcher);
     }
     const location = credentialSubmissionRedirect(new URL(request.url, 'https://host.invalid'), request.method);
     if (location !== undefined) {

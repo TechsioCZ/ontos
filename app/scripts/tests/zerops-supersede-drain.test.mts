@@ -51,6 +51,7 @@ const EchoSchema = Schema.Struct({
 });
 const decodeEcho = Schema.decodeUnknownOption(Schema.fromJsonString(EchoSchema));
 const ECHO = '/_m/crm/echo';
+const UPLOAD = '/_m/crm/upload';
 
 /** A unit that names its release: `/echo` and `/upload` answer JSON, `/events` streams until the client goes. */
 const unitApplication = (release: string, seen: Ref.Ref<number>) =>
@@ -173,10 +174,41 @@ const twoHosts = (console?: TestConsole.TestConsole) =>
     return { drain, newPort, newUnitSeen, oldPort, oldUnitSeen, supersede };
   });
 
+/** One host with its own `crm` unit (answering `release`), serving until it is superseded. */
+const standingHost = (release: string) =>
+  Effect.gen(function* startStandingHost() {
+    const scope = yield* Effect.scope;
+    const publicScope = yield* Scope.fork(scope, 'sequential');
+    const seen = yield* Ref.make(0);
+    const unit = yield* serveOn(unitApplication(release, seen), scope);
+    const published = yield* Ref.make(true);
+    const drain = makeSupersedeDrain();
+    const app = hostApplication(
+      new Map([['crm', unit]]),
+      published,
+      Effect.succeed(Option.none<string>()),
+      makeHostRefusalLog(),
+      drain,
+    );
+    const port = yield* serveOn(app, publicScope);
+    const supersede = (peers: Effect.Effect<readonly DrainPeer[]>, duration = Duration.seconds(10)) =>
+      drainSupersededHost({
+        closePublicPort: Scope.close(publicScope, Exit.void),
+        drain,
+        duration,
+        peers,
+        publicPort: port,
+        revision: 'newer',
+      });
+    return { drain, port, seen, supersede };
+  });
+
+const peerAt = (port: number): DrainPeer => ({ address: '127.0.0.1', port });
+
 const startDrain = <A, E, R>(drain: Effect.Effect<A, E, R>, until: SupersedeDrain) =>
   Effect.gen(function* started() {
     const fiber = yield* Effect.forkChild(drain);
-    yield* Effect.repeat(until.peers, { until: Option.isSome });
+    yield* Effect.repeat(until.active, { until: (active) => active });
     return fiber;
   });
 
@@ -211,7 +243,7 @@ it.live(
         /drain started: public port \d+ relays to 1 peer\(s\) 127\.0\.0\.1:\d+ for up to 0\.8s/u,
       );
       expect(lines[1]).toMatch(
-        /^\[app-host\] drain ended \(deadline\): forwarded=\d+ failed=0 looped=0; closing public port/u,
+        /^\[app-host\] drain ended \(deadline\): forwarded=\d+ failed=0 looped=0 dropped=0; closing public port/u,
       );
     }),
 );
@@ -284,7 +316,7 @@ it.live('a request body streams through the relay to the new host; the old unit 
     yield* startDrain(hosts.supersede(), hosts.drain);
     const oldBefore = yield* Ref.get(hosts.oldUnitSeen);
     const body = new Uint8Array(2 * 1024 * 1024).fill(7);
-    const answer = yield* send(hosts.oldPort, '/_m/crm/upload', { body, method: 'POST' });
+    const answer = yield* send(hosts.oldPort, UPLOAD, { body, method: 'POST' });
     expect(Option.map(decodeEcho(answer.body), ({ bytes, release }) => ({ bytes, release }))).toEqual(
       Option.some({ bytes: body.byteLength, release: 'new' }),
     );
@@ -344,3 +376,66 @@ it('the relay resolves the app service name the project declares, and the new ho
   expect(ready).toBeGreaterThan(open);
   expect(drain).toBeGreaterThan(ready);
 });
+
+it.live('back-to-back deploys: a host drops a peer that is draining itself and reaches the current one', () =>
+  Effect.gen(function* threeHosts() {
+    const [a, b, c] = yield* Effect.all([standingHost('a'), standingHost('b'), standingHost('c')]);
+    yield* startDrain(b.supersede(Effect.succeed([peerAt(c.port)])), b.drain);
+    yield* startDrain(a.supersede(Effect.succeed([peerAt(b.port), peerAt(c.port)])), a.drain);
+    expect(releaseOf(yield* send(a.port, ECHO))).toBe('c');
+    expect(releaseOf(yield* send(a.port, ECHO))).toBe('c');
+    const counts = yield* a.drain.finish;
+    expect(counts).toEqual({ dropped: 1, failed: 0, forwarded: 2, looped: 0 });
+  }),
+);
+
+it.live(
+  'a body is never sent twice: after a draining peer saw it the request fails; the next one reaches the current host',
+  () =>
+    Effect.gen(function* bodyAfterDrainingPeer() {
+      const [a, b, c] = yield* Effect.all([standingHost('a'), standingHost('b'), standingHost('c')]);
+      yield* startDrain(b.supersede(Effect.succeed([peerAt(c.port)])), b.drain);
+      yield* startDrain(a.supersede(Effect.succeed([peerAt(b.port), peerAt(c.port)])), a.drain);
+      const body = new Uint8Array(64 * 1024).fill(1);
+      const first = yield* send(a.port, UPLOAD, { body, method: 'POST' });
+      expect(first.status).toBe(503);
+      expect(first.headers['retry-after']).toBe('1');
+      const second = yield* send(a.port, UPLOAD, { body, method: 'POST' });
+      expect(Option.map(decodeEcho(second.body), ({ bytes, release }) => ({ bytes, release }))).toEqual(
+        Option.some({ bytes: body.byteLength, release: 'c' }),
+      );
+      expect(yield* Ref.get(c.seen)).toBe(1);
+    }),
+);
+
+it.live('a body moves to the next peer when the connection was refused, before anything was sent', () =>
+  Effect.gen(function* bodyAfterRefusedConnection() {
+    const [a, c] = yield* Effect.all([standingHost('a'), standingHost('c')]);
+    yield* startDrain(a.supersede(Effect.succeed([peerAt(9), peerAt(c.port)])), a.drain);
+    const body = new Uint8Array(64 * 1024).fill(2);
+    const answer = yield* send(a.port, UPLOAD, { body, method: 'POST' });
+    expect(Option.map(decodeEcho(answer.body), ({ bytes, release }) => ({ bytes, release }))).toEqual(
+      Option.some({ bytes: body.byteLength, release: 'c' }),
+    );
+  }),
+);
+
+it.live('when every known peer failed the peers are resolved again, at most once per second', () =>
+  Effect.gen(function* reResolve() {
+    const [a, b, c] = yield* Effect.all([standingHost('a'), standingHost('b'), standingHost('c')]);
+    yield* startDrain(b.supersede(Effect.succeed([peerAt(c.port)])), b.drain);
+    const answers = yield* Ref.make<readonly (readonly DrainPeer[])[]>([[peerAt(b.port)], [peerAt(c.port)]]);
+    const resolver = Ref.modify(
+      answers,
+      (remaining): readonly [readonly DrainPeer[], readonly (readonly DrainPeer[])[]] => [
+        remaining[0] ?? [],
+        remaining.length > 1 ? remaining.slice(1) : remaining,
+      ],
+    );
+    yield* startDrain(a.supersede(resolver), a.drain);
+    // B refuses as draining; within the second no new answer is asked for.
+    expect((yield* send(a.port, ECHO)).status).toBe(503);
+    yield* Effect.sleep('1100 millis');
+    expect(releaseOf(yield* send(a.port, ECHO))).toBe('c');
+  }),
+);
