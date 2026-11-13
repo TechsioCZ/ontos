@@ -58,7 +58,8 @@ export const gopayRefundHistoryBody = (rows: readonly GopayRefundHistoryRow[]): 
     .join(',')}]`;
 
 /**
- * The history before a payment's first refund. Not captured: the sandbox run read no history before its refunds,
- * so the empty JSON array the endpoint's array shape implies is an assumption the next sandbox run must confirm.
+ * The history before a payment's first refund. Captured from the real GoPay sandbox on 2026-11-13: HTTP 200 with body
+ * `[]` for PAID payments 3311081865 (card) and 3311081930 (bank transfer) that had no refunds, read by the adapter
+ * before the refund was dispatched.
  */
 export const gopayEmptyRefundHistoryBody = '[]';
