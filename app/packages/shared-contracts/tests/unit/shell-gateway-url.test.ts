@@ -33,3 +33,19 @@ it('admits HTTPS anywhere and plain HTTP only to a loopback host, never credenti
   }
   expect(admitted).toBeDefined();
 });
+
+it('refuses plain HTTP to hosts that only look like loopback', () => {
+  const decode = Schema.decodeUnknownOption(ShellGatewayBaseUrlSchema);
+  for (const address of [
+    // A trailing dot names a DNS name, not the loopback alias the rule admits.
+    plainHttp('https://localhost.:3020/shell-super-app-api'),
+    plainHttp('https://localhost.evil.example:3020/shell-super-app-api'),
+    plainHttp('https://localhost.evil:3020/shell-super-app-api'),
+    // IPv4-mapped IPv6 loopback and other 127/8 addresses are not admitted spellings.
+    plainHttp('https://[::ffff:127.0.0.1]:3020/shell-super-app-api'),
+    plainHttp('https://127.0.0.2:3020/shell-super-app-api'),
+    plainHttp('https://0.0.0.0:3020/shell-super-app-api'),
+  ]) {
+    expect(decode(address)._tag).toBe('None');
+  }
+});

@@ -1581,9 +1581,12 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     // the authority now, the credentials its release superseded. The provisioning program checks the authority row
     // itself: only while this release holds it, and only credentials bound before its revision took it.
     yield* retireReplaced(release, { replaced: [], superseded: true }).pipe(Effect.forkChild);
-    // After publishing, in one sequence: the release-time module install (which, where it runs, goes first in this
-    // fiber), then the internal workload registration again, so a module that release installed has its workloads
-    // registered at once; when registrations now differ from the keys held, the next healing step renews them.
+    // After publishing, registration runs again, so the registrations follow the release just published; when they now
+    // differ from the keys held, the next healing step renews those keys in the same boot. Once a release-time module
+    // install runs here too (the VAT branch's `release-tenant-modules`), the order in this one fiber must be: module
+    // install, then this registration, then key provisioning, so a module that release installed has its workloads
+    // registered and keyed in the same boot. A module installed later at runtime gets its registrations at the next
+    // deploy (ADR-0028).
     yield* registerInternalWorkloads(release).pipe(Effect.andThen(renewWhenRegistrationsChanged), Effect.forkChild);
     // The release step writes no authorization relationship. Authorization v2 (ADR-0030) projects every tuple from
     // PostgreSQL intent through the one Core writer, so the retired `scoped_role`/`action`/`context_permission`
