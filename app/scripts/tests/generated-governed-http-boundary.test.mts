@@ -512,7 +512,7 @@ it.effect('preserves the scope-wide Finance gate, owner currentness, and genuine
     expect(provider).toContain('selectors: []');
     expect(provider).toContain(protectedAuthorization);
     expect(provider).toContain("legalEntityScope: 'required'");
-    expect(provider).toContain('decodeFinanceState(context.loaded)');
+    expect(provider).toContain('decodeFinanceState(context.loaded, context.scope)');
     expect(provider).toContain('projectFinanceRecords(state, revision, {}).state');
     expect(provider).toMatch(
       /loadCurrentSearchHits\(\s*context\.scope,\s*'finance\.billing\.document',\s*\{[^}]+\},\s*visible,/u,
