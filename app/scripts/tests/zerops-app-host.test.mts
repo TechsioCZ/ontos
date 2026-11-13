@@ -86,6 +86,18 @@ it.live('a host notices the release that replaced it, ignoring failed reads and 
 );
 
 describe('relayResponseHeaders', () => {
+  it('keeps a Shell document private: no-store stays no-store, and an HTML answer is never kept for good', () => {
+    const html = 'text/html; charset=utf-8';
+    const document = { 'cache-control': 'no-store', 'content-type': html };
+    for (const url of ['/cs/prodej/objednavky', '/static/js/main.0123abcd.js', '/static/main.0123abcd.html']) {
+      expect(relayResponseHeaders(200, document, url)).toStrictEqual(document);
+    }
+    // Even an HTML answer that names no caching of its own at a hashed path is not made cacheable by the host.
+    expect(relayResponseHeaders(200, { 'content-type': html }, '/static/main.0123abcd.html')).toStrictEqual({
+      'content-type': html,
+    });
+  });
+
   it('closes the caller connection on an unavailable owner answer so its retry can reach another container', () => {
     const upstream = { connection: 'keep-alive', 'content-type': 'application/json', 'keep-alive': 'timeout=5' };
     expect(relayResponseHeaders(503, upstream)).toStrictEqual({
@@ -431,6 +443,8 @@ describe('derivedEnvironment', () => {
       'http://127.0.0.1:4103/commerce-customer-context-api',
     );
     expect(derivedValues.ONTOS_SHELL_GATEWAY_BASE_URL).toBe('http://127.0.0.1:3020/shell-super-app-api');
+    // Server rendering reads its own API over this host's loopback port only.
+    expect(derivedValues.ONTOS_SHELL_RENDER_API_URL).toBe('http://127.0.0.1:3020/shell-super-app-api');
     // An owner this environment does not serve gets no base, so a stored owner secret cannot point elsewhere.
     expect(new Map(Object.entries(derivedValues)).has('ONTOS_COMMERCE_ORDER_API_BASE_URL')).toBe(true);
     expect(derivedValue(derivedValues, 'ONTOS_COMMERCE_ORDER_API_BASE_URL')).toBeUndefined();

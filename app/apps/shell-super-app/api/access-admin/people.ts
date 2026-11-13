@@ -617,6 +617,12 @@ const scopeLabelOf = (labels: AccessDirectoryScopeLabels, view: View, scopeId: s
   );
 };
 
+/**
+ * How many of the options' independent reads run at once. The process shares a small database pool among
+ * every owner it serves (six connections per identity on stage), so one request never holds more than two.
+ */
+const OPTIONS_READ_CONCURRENCY = 2;
+
 /** The writes the options report on, each decided by its own declaration. */
 const OPTION_WRITES = [
   'assign',
@@ -631,19 +637,19 @@ const OPTION_WRITES = [
 type OptionWrite = (typeof OPTION_WRITES)[number];
 
 /**
- * What each write's own declaration reaches right now, or nothing while the Lidé gate is closed (which
- * asks nothing at all). Every write is asked exactly as `reachFor` asks it, but all of them in one gate
- * batch: asked one decision at a time, a tenant owner's options were 8 writes x every scope single
- * decisions, each its own run of pooled transactions, which held the request for tens of seconds.
+ * The options read's admission, then what each write's own declaration reaches right now. The read's own
+ * declaration is asked first, in the tenant context and every company's own scope like every Lidé read, and a
+ * read that covers no scope is refused before any write is asked: a refused reader leaves only the read's own
+ * evidence. Then, while the Lidé gate is open, all eight writes travel in ONE gate batch, each asked exactly as
+ * `reachFor` asks it (asked one decision at a time, a tenant owner's options were 8 writes x every scope single
+ * decisions, each its own run of pooled transactions, which held the request for tens of seconds). A closed gate
+ * asks no write and offers none; one unreadable answer refuses the whole request (503).
  */
-const writeReaches = Effect.fn('AccessAdminPeople.writeReaches')(function* writeReachesNow(
-  scope: OperationalScope,
-  view: View,
-  now: Date,
-) {
+const admitOptions = Effect.fn('AccessAdminPeople.admitOptions')(function* admitOptionsRead(headers: Headers) {
+  const { now, reach, scope, view } = yield* admitRead(headers, accessPeopleDeclarations.options);
   const gate = yield* AccessPeopleWriteAvailability;
   if (!gate.available) {
-    return Option.none<ReadonlyMap<OptionWrite, PeopleReach>>();
+    return { reach, reaches: Option.none<ReadonlyMap<OptionWrite, PeopleReach>>(), scope, view };
   }
   const readable = yield* roleReadScopes({
     companies: companiesOf(view),
@@ -657,7 +663,7 @@ const writeReaches = Effect.fn('AccessAdminPeople.writeReaches')(function* write
       return one === undefined ? [] : [[write, reachOf(view, one)] as const];
     }),
   );
-  return Option.some(reaches);
+  return { reach, reaches: Option.some(reaches), scope, view };
 });
 
 /** Whether this person may run one write anywhere its reach shows; a closed gate offers none. */
@@ -773,8 +779,9 @@ const admissionOf = Effect.fn('AccessAdminPeople.admission')(function* admission
       ? [{ legalEntityId, scopeId: String(scopeId) }]
       : [],
   );
+  // One directory read per company, two at a time; each company's candidates keep their own order.
   const candidates = yield* Effect.forEach(companies, (company) => companyCandidates(scope, view, company), {
-    concurrency: 1,
+    concurrency: OPTIONS_READ_CONCURRENCY,
   });
   return { allowed: companies.length > 0, candidates: candidates.flat() };
 });
@@ -833,20 +840,20 @@ const options = Effect.fn('AccessAdminPeople.options')(function* listPeopleOptio
   headers: Headers,
   payload: ListAccessPeoplePayload,
 ) {
-  const { now, reach, scope, view } = yield* admitRead(headers, accessPeopleDeclarations.options);
+  const { reach, reaches, scope, view } = yield* admitOptions(headers);
   const directory = yield* AccessPeopleDirectory;
   const commands = yield* AccessPeopleCommands;
+  // Three independent reads, each one short transaction: two at a time, never more of the shared pool.
   const [people, labels, catalog] = yield* Effect.all(
     [
       visiblePeople(scope, view, reach),
       directory.scopeLabels(scope).pipe(Effect.mapError(directoryUnavailable)),
       commands.readCatalog(scope).pipe(Effect.mapError(accessPeopleFailureProblem)),
     ],
-    { concurrency: 1 },
+    { concurrency: OPTIONS_READ_CONCURRENCY },
   );
-  // One gate answer per write and scope, so a control shows exactly what the server would admit right
-  // now; all of them travel in one gate batch.
-  const reaches = yield* writeReaches(scope, view, now);
+  // One gate answer per write and scope (asked with the read's own admission), so a control shows exactly
+  // what the server would admit right now.
   const admission = yield* admissionOf(scope, view, reach, reaches);
   const roles = view.roles.filter(({ role }) => roleIsReachable(reach, role.legalEntityId));
   const entryOf = new Map(catalog.map((entry) => [String(entry.key), entry] as const));

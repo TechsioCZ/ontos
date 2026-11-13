@@ -20,7 +20,8 @@ import {
 } from '../../api/modules/installed-module-catalog.ts';
 import { ShellGovernedReads } from '../../api/modules/shell-governed-reads.ts';
 import type { ShellGovernedReadsService } from '../../api/modules/shell-governed-reads.ts';
-import { ShellCompositionSchema, ShellDocumentContextSchema } from '../../shared/api.ts';
+import { ResolvedModuleTargetSchema, ShellCompositionSchema, ShellDocumentContextSchema } from '../../shared/api.ts';
+import type { ShellDocumentContextRequest } from '../../shared/api.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import { makeShellTestAccessGate } from '../support/access-decision-double.ts';
 import { makeAuthenticationServiceDouble } from '../support/impersonation-service-doubles.ts';
@@ -79,13 +80,20 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
   context: ShellContextResult,
   hint: TenantDecisions,
   composition: ShellGovernedReadsService['composition'],
-  issueDocument: Effect.Effect<readonly []> = Effect.succeed([] as const),
   peopleStarted: Effect.Effect<unknown> = Effect.void,
   tenantAccess: TenantDecisions = Effect.succeed(denied),
+  page: {
+    readonly moduleTarget?: ShellGovernedReadsService['moduleTarget'];
+    readonly payload?: ShellDocumentContextRequest;
+    /** The people-administration check's answer; denied unless a case says otherwise. */
+    readonly people?: TenantDecisions;
+    readonly tenantModuleTarget?: ShellGovernedReadsService['tenantModuleTarget'];
+  } = {},
 ) {
   const { catalog } = yield* fixture;
   const readComposition = rs.fn(composition);
-  const issue = rs.fn(() => issueDocument);
+  // The document context never signs gateway assertions: the browser asks the batch issuer for them.
+  const issue = rs.fn(() => Effect.die('The document context must not issue gateway assertions'));
   /** One scripted v2 answer for a question, from the first of the given decisions. */
   const answer = (decisions: TenantDecisions, input: GateInput) =>
     decisions.pipe(
@@ -97,7 +105,7 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
   const tenantSelection = rs.fn((input: GateInput) => answer(hint, input));
   const releaseHint = rs.fn((input: GateInput) => answer(tenantAccess, input));
   const peopleCheck = rs.fn((input: GateInput) =>
-    peopleStarted.pipe(Effect.andThen(answer(Effect.succeed(denied), input))),
+    peopleStarted.pipe(Effect.andThen(answer(page.people ?? Effect.succeed(denied), input))),
   );
   const decide = (input: GateInput) => {
     const key = input.carrier.accessDeclaration?.key;
@@ -109,16 +117,19 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
     }
     return tenantSelection(input);
   };
-  const response = yield* documentContextHandler(request, {}).pipe(
+  const readModuleTarget = rs.fn(page.moduleTarget ?? (() => Effect.die('No page target was asked for')));
+  const readTenantTarget = rs.fn(page.tenantModuleTarget ?? (() => Effect.die('No tenant page target was asked for')));
+  const resolveDocumentContext = rs.fn((headers: Headers) => {
+    expect(headers.get('cookie')).toBe('session=document-context');
+    return Effect.succeed({ context, tenants: Result.succeed({ setCookieHeaders: [], tenants: [] }) });
+  });
+  const response = yield* documentContextHandler(request, page.payload ?? {}).pipe(
     Effect.provide(
       Layer.mergeAll(
         Layer.succeed(
           AuthenticationService,
           makeAuthenticationServiceDouble({
-            resolveDocumentContext: (headers) => {
-              expect(headers.get('cookie')).toBe('session=document-context');
-              return Effect.succeed({ context, tenants: Result.succeed({ setCookieHeaders: [], tenants: [] }) });
-            },
+            resolveDocumentContext,
           }),
         ),
         Layer.succeed(AccessDecisionGate, { ...makeTestAccessDecision(), decide }),
@@ -129,29 +140,41 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
         Layer.mock(LegalEntityContext, {}),
         Layer.mock(ReadRuntime, {}),
         Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
-        Layer.mock(ShellGovernedReads, { composition: readComposition }),
+        Layer.mock(ShellGovernedReads, {
+          composition: readComposition,
+          moduleTarget: readModuleTarget,
+          tenantModuleTarget: readTenantTarget,
+        }),
         Layer.mock(GatewayIssuer, { issueDocument: issue }),
       ),
     ),
     Effect.flatMap(Schema.decodeUnknownEffect(ShellDocumentContextSchema)),
   );
-  return { issue, peopleCheck, readComposition, releaseHint, response, tenantSelection };
+  return {
+    issue,
+    peopleCheck,
+    readComposition,
+    readModuleTarget,
+    readTenantTarget,
+    releaseHint,
+    resolveDocumentContext,
+    response,
+    tenantSelection,
+  };
 });
 
-it.live('overlaps the switcher hint with composition and people reads, joining only after document assertions', () =>
+it.live('overlaps the switcher hint with composition and people reads, and issues no gateway assertions', () =>
   Effect.gen(function* overlappingDocumentReads() {
     const { composition } = yield* fixture;
     const hintStarted = yield* Deferred.make<boolean>();
     const compositionStarted = yield* Deferred.make<boolean>();
     const peopleStarted = yield* Deferred.make<boolean>();
-    const assertionsFinished = yield* Deferred.make<boolean>();
     const hint = Deferred.succeed(hintStarted, true).pipe(
       Effect.andThen(Deferred.await(compositionStarted)),
       Effect.andThen(Deferred.await(peopleStarted)),
-      Effect.andThen(Deferred.await(assertionsFinished)),
       Effect.as(denied),
     );
-    const { readComposition, response } = yield* documentTest(
+    const { issue, readComposition, response } = yield* documentTest(
       authenticated,
       hint,
       (input) => {
@@ -161,17 +184,17 @@ it.live('overlaps the switcher hint with composition and people reads, joining o
           Effect.as(composition),
         );
       },
-      Deferred.succeed(assertionsFinished, true).pipe(Effect.as([] as const)),
       Deferred.await(hintStarted).pipe(Effect.andThen(Deferred.succeed(peopleStarted, true))),
     );
     expect(readComposition).toHaveBeenCalledTimes(1);
     expect(response).toMatchObject({
       canManagePeople: false,
       composition: { state: 'available' },
-      gatewayAssertions: [],
       legalEntities: { selectedLegalEntityId: legalEntity.legalEntityId, tenantContextAvailable: false },
       session: { state: 'authenticated' },
     });
+    expect(response).not.toHaveProperty('gatewayAssertions');
+    expect(issue).not.toHaveBeenCalled();
   }).pipe(Effect.timeout('2 seconds')),
 );
 
@@ -202,9 +225,30 @@ it.effect(
         Effect.succeed(composition),
       );
       expect(response.legalEntities?.tenantContextAvailable).toBe(false);
+      // An unanswered check is told apart from a refusal, so nothing downstream keeps it as an answer.
+      expect(response.tenantContextUnavailable).toBe(true);
       expect(response.canManagePeople).toBe(false);
       expect(response.composition).toEqual(composition);
     }),
+);
+
+it.effect('omits the people hint when its check could not answer, and shows a refusal as false', () =>
+  Effect.gen(function* unansweredPeopleHint() {
+    const { composition } = yield* fixture;
+    const unanswered = yield* documentTest(
+      authenticated,
+      Effect.succeed(denied),
+      () => Effect.succeed(composition),
+      Effect.void,
+      Effect.succeed(denied),
+      { people: Effect.succeed(unavailable) },
+    );
+    expect(unanswered.response).not.toHaveProperty('canManagePeople');
+    expect(unanswered.response.composition).toEqual(composition);
+    expect(unanswered.response).not.toHaveProperty('tenantContextUnavailable');
+    const refused = yield* documentTest(authenticated, Effect.succeed(denied), () => Effect.succeed(composition));
+    expect(refused.response.canManagePeople).toBe(false);
+  }),
 );
 
 it.effect('does not start permission, composition or assertion reads for an anonymous document', () =>
@@ -244,7 +288,6 @@ it.live('interrupts pending composition and people reads when the parallel hint 
             }),
           ),
         ),
-      Effect.succeed([] as const),
       Deferred.succeed(peopleStarted, true).pipe(
         Effect.andThen(Effect.never),
         Effect.onInterrupt(() =>
@@ -331,7 +374,6 @@ it.effect(
         context,
         Effect.succeed(denied),
         () => Effect.die('Tenant search must not request a company composition'),
-        Effect.die('Tenant search must not issue gateway assertions'),
         Effect.void,
         Effect.succeed([{ decision: 'allowed', key: principal.tenantId }]),
       );
@@ -370,7 +412,6 @@ for (const decisions of [denied, unavailable]) {
         context,
         Effect.succeed([{ decision: 'allowed', key: principal.tenantId }]),
         () => Effect.die('No company composition'),
-        Effect.succeed([] as const),
         Effect.void,
         Effect.succeed(decisions),
       );
@@ -405,3 +446,126 @@ it.effect('rereads switcher permission on the next document instead of retaining
     }
   }),
 );
+
+const pageTarget = (compositionRevision: string) =>
+  Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
+    appId: 'party-registry',
+    componentKey: 'party.registry.page-contacts',
+    compositionRevision,
+    entrypointKey: 'party.registry.page.contacts',
+    federation: {
+      expose: './PageContacts',
+      manifest: { sha256: 'a'.repeat(64), url: 'https://assets.example.test/party/release-a/mf-manifest.json' },
+      remoteName: 'partyRegistryReleaseA',
+    },
+    moduleId: 'party.registry',
+    routeParameters: {},
+    writable: false,
+  });
+
+it.effect('resolves a module page target in the same document read, for the same principal and release', () =>
+  Effect.gen(function* foldedTarget() {
+    const { catalog, composition } = yield* fixture;
+    const { readComposition, readModuleTarget, resolveDocumentContext, response } = yield* documentTest(
+      authenticated,
+      Effect.succeed(denied),
+      () => Effect.succeed(composition),
+      Effect.void,
+      Effect.succeed(denied),
+      {
+        moduleTarget: (input) => Effect.succeed(pageTarget(input.compositionRevision ?? '')),
+        payload: { target: { canonicalPath: '/contacts' } },
+      },
+    );
+    // One session resolution answers the Shell context and the page target together.
+    expect(resolveDocumentContext).toHaveBeenCalledTimes(1);
+    expect(readModuleTarget).toHaveBeenCalledTimes(1);
+    expect(readModuleTarget.mock.calls[0]?.[0]).toEqual({
+      canonicalPath: '/contacts',
+      compositionRevision: catalog.composition.revision,
+      correlationId: 'document-correlation',
+      principal,
+    });
+    expect(readComposition.mock.calls[0]?.[0]).toEqual({ correlationId: 'document-correlation', principal });
+    expect(response.target).toEqual({ state: 'resolved', target: pageTarget(catalog.composition.revision) });
+    expect(response.composition).toMatchObject({ state: 'available' });
+  }),
+);
+
+it.effect('answers a refused page target as its own outcome, never as the document failing', () =>
+  Effect.gen(function* refusedTarget() {
+    const { composition } = yield* fixture;
+    const { response } = yield* documentTest(
+      authenticated,
+      Effect.succeed(denied),
+      () => Effect.succeed(composition),
+      Effect.void,
+      Effect.succeed(denied),
+      {
+        moduleTarget: () => Effect.fail(new ReadPermissionDenied({ code: 'read_permission_denied', reason: 'denied' })),
+        payload: { target: { canonicalPath: '/contacts' } },
+      },
+    );
+    expect(response.composition).toMatchObject({ state: 'available' });
+    expect(response.target).toMatchObject({ problem: { _tag: 'ShellTargetForbiddenProblem' }, state: 'failed' });
+  }),
+);
+
+it.effect('answers no page target when the document has no composition to admit it', () =>
+  Effect.gen(function* noCompositionNoTarget() {
+    const { response } = yield* documentTest(
+      authenticated,
+      Effect.succeed(denied),
+      () => Effect.fail(new ReadPermissionDenied({ code: 'read_permission_denied', reason: 'denied' })),
+      Effect.void,
+      Effect.succeed(denied),
+      {
+        moduleTarget: (input) => Effect.succeed(pageTarget(input.compositionRevision ?? '')),
+        payload: { target: { canonicalPath: '/contacts' } },
+      },
+    );
+    expect(response.composition).toEqual({ state: 'unavailable' });
+    expect(response).not.toHaveProperty('target');
+  }),
+);
+
+for (const decision of ['allowed', 'denied'] as const) {
+  it.effect(`reads a tenant session's page target only beside an admitted release hint: ${decision}`, () =>
+    Effect.gen(function* tenantTarget() {
+      const { legalEntityId, ...tenantPrincipal } = principal;
+      void legalEntityId;
+      const { catalog } = yield* fixture;
+      const { readModuleTarget, readTenantTarget, response } = yield* documentTest(
+        {
+          availableLegalEntities: [legalEntity],
+          identity,
+          principal: tenantPrincipal,
+          setCookieHeaders: [],
+          state: 'tenant_authenticated',
+        },
+        Effect.succeed(denied),
+        () => Effect.die('Tenant documents read no company composition'),
+        Effect.void,
+        Effect.succeed([{ decision, key: principal.tenantId }]),
+        {
+          payload: { target: { canonicalPath: '/contacts' } },
+          tenantModuleTarget: (input) =>
+            Effect.succeed({ state: 'resolved' as const, target: pageTarget(input.compositionRevision ?? '') }),
+        },
+      );
+      expect(readModuleTarget).not.toHaveBeenCalled();
+      if (decision === 'allowed') {
+        expect(readTenantTarget.mock.calls[0]?.[0]).toMatchObject({
+          canonicalPath: '/contacts',
+          compositionRevision: catalog.composition.revision,
+          principal: tenantPrincipal,
+        });
+        expect(response.target).toEqual({ state: 'resolved', target: pageTarget(catalog.composition.revision) });
+      } else {
+        expect(readTenantTarget).not.toHaveBeenCalled();
+        expect(response).not.toHaveProperty('target');
+        expect(response).not.toHaveProperty('compositionRevision');
+      }
+    }),
+  );
+}

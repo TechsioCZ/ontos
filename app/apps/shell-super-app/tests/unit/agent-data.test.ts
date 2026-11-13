@@ -4,7 +4,11 @@ import { HttpClient, HttpClientResponse } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
-import { loadAgentEntitiesWithRetry } from '../../src/routes/people/agent-data.ts';
+import {
+  agentEntitiesData,
+  loadAgentEntitiesWithRetry,
+  warmAgentEntities,
+} from '../../src/routes/people/agent-data.ts';
 
 const overview = {
   agents: [],
@@ -15,7 +19,7 @@ const overview = {
   rolesRevision: 'r0',
 };
 
-it.effect('automatically recovers an unavailable agent list with exponential backoff and no user refresh', () =>
+it.effect('recovers a quickly refused agent list soon, then a second later, with no user refresh', () =>
   Effect.gen(function* retryAgentList() {
     const attempts: number[] = [];
     const client = HttpClient.make((request) =>
@@ -31,13 +35,13 @@ it.effect('automatically recovers an unavailable agent list with exponential bac
     );
     const read = loadAgentEntitiesWithRetry.pipe(Effect.provideService(HttpClient.HttpClient, client));
     const result = yield* read.pipe(Effect.forkChild);
-    yield* TestClock.adjust('3 seconds');
+    yield* TestClock.adjust('2 seconds');
     expect(yield* Fiber.join(result)).toEqual(overview);
-    expect(attempts.map((time) => time - (attempts[0] ?? 0))).toEqual([0, 1000, 3000]);
+    expect(attempts.map((time) => time - (attempts[0] ?? 0))).toEqual([0, 250, 1250]);
   }),
 );
 
-it.effect('stops after three automatic retries so persistent failures can offer the accessible error fallback', () =>
+it.effect('stops after two automatic retries so persistent failures offer the accessible error fallback soon', () =>
   Effect.gen(function* exhaustedAgentRetries() {
     let attempts = 0;
     const client = HttpClient.make((request) =>
@@ -51,11 +55,38 @@ it.effect('stops after three automatic retries so persistent failures can offer 
       Effect.flip,
       Effect.forkChild,
     );
-    yield* TestClock.adjust('7 seconds');
+    yield* TestClock.adjust('2 seconds');
     expect((yield* Fiber.join(read)).reason).toBe('error');
-    expect(attempts).toBe(4);
+    expect(attempts).toBe(3);
   }),
 );
+
+const slowFailures: readonly (readonly [string, Effect.Effect<Response>])[] = [
+  ['a timed-out', Effect.never],
+  ['a slowly refused', Effect.sleep('6 seconds').pipe(Effect.as(Response.json({}, { status: 503 })))],
+];
+
+for (const [failure, answer] of slowFailures) {
+  it.effect(`does not ask again after ${failure} agent-list read`, () =>
+    Effect.gen(function* slowAgentFailure() {
+      let attempts = 0;
+      const client = HttpClient.make((request) =>
+        Effect.suspend(() => {
+          attempts += 1;
+          return answer.pipe(Effect.map((response) => HttpClientResponse.fromWeb(request, response)));
+        }),
+      );
+      const read = yield* loadAgentEntitiesWithRetry.pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.flip,
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust('40 seconds');
+      expect((yield* Fiber.join(read)).reason).toBe('error');
+      expect(attempts).toBe(1);
+    }),
+  );
+}
 
 for (const [status, reason] of [
   [401, 'signedOut'],
@@ -81,3 +112,26 @@ for (const [status, reason] of [
     }),
   );
 }
+
+it.live('starts the selected company agent list when the People page loads, not when the tab is clicked', () =>
+  Effect.gen(function* warmOnPageLoad() {
+    const requested: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      requested.push(new Request(input).url);
+      return Response.json(overview);
+    };
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        globalThis.fetch = originalFetch;
+      }),
+    );
+    yield* warmAgentEntities();
+    expect(requested).toEqual([]);
+    yield* warmAgentEntities('71000000-0000-4000-8000-000000000022');
+    yield* Effect.sleep('50 millis');
+    expect(requested).toHaveLength(1);
+    expect(requested[0]?.endsWith(AGENT_ACCESS_PATHS.list)).toBe(true);
+    yield* Effect.sync(() => agentEntitiesData.invalidate());
+  }).pipe(Effect.scoped),
+);

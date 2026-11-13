@@ -52,7 +52,7 @@ import {
   ManageAgentEntityRequestSchema,
   ManageAgentEntityResponseSchema,
 } from '@app/shared-contracts/agent-access';
-import { DocumentGatewayApiGroup, DocumentGatewayAssertionSchema } from './document-gateway-api.ts';
+import { DocumentGatewayApiGroup } from './document-gateway-api.ts';
 import { OAuthConnectApiGroup } from './oauth-connect-api.ts';
 import {
   PEOPLE_PATHS,
@@ -575,13 +575,6 @@ export const ShellCompositionRequestSchema = Schema.Struct({
   compositionRevision: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u))),
 });
 
-export const ShellDocumentContextRequestSchema = Schema.Struct({
-  ...ShellCompositionRequestSchema.fields,
-  /** Only Home documents need their first authorized component resolved. */
-  home: Schema.optionalKey(Schema.Literal(true)),
-});
-export type ShellDocumentContextRequest = typeof ShellDocumentContextRequestSchema.Type;
-
 /** A Shell document's tenant choices; when they cannot be read, only the current tenant is shown. */
 export const ShellDocumentTenantsSchema = Schema.Union([
   Schema.Struct({ state: Schema.Literal('available'), tenants: Schema.Array(AvailableTenantSchema) }),
@@ -618,6 +611,15 @@ const moduleRevisionSchema = Schema.String.check(Schema.isPattern(/^[\da-f]{64}$
 export const ModuleTargetSelectorSchema = Schema.Struct(moduleTargetSelectorFields).check(
   Schema.makeFilter(selectsOneModuleTarget),
 );
+
+export const ShellDocumentContextRequestSchema = Schema.Struct({
+  ...ShellCompositionRequestSchema.fields,
+  /** Only Home documents need their first authorized component resolved. */
+  home: Schema.optionalKey(Schema.Literal(true)),
+  /** A module page's document resolves its page target in the same read, against the same captured release. */
+  target: Schema.optionalKey(ModuleTargetSelectorSchema),
+});
+export type ShellDocumentContextRequest = typeof ShellDocumentContextRequestSchema.Type;
 
 export const ResolveModuleTargetPayloadSchema = Schema.Struct({
   ...moduleTargetSelectorFields,
@@ -659,24 +661,6 @@ export const ShellDocumentHomeSchema = Schema.Struct({
   welcome: Schema.optionalKey(Schema.String),
 });
 export type ShellDocumentHome = typeof ShellDocumentHomeSchema.Type;
-
-/**
- * One session resolution supplies a document's context and assertions. Home additionally receives its governed
- * component target (or welcome), so hydration can load the remote without another authenticated BFF request.
- * Each part keeps its own outcome. Signed-out or unselected sessions get no Home target or assertions.
- */
-export const ShellDocumentContextSchema = Schema.Struct({
-  canManagePeople: Schema.optionalKey(Schema.Boolean),
-  composition: Schema.optionalKey(ShellDocumentCompositionSchema),
-  /** Captured release identity only; tenant authentication gains no company or navigation capability. */
-  compositionRevision: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u))),
-  gatewayAssertions: Schema.optionalKey(Schema.Array(DocumentGatewayAssertionSchema)),
-  home: Schema.optionalKey(ShellDocumentHomeSchema),
-  legalEntities: Schema.optionalKey(AvailableLegalEntitiesResponseSchema),
-  session: CurrentSessionSchema,
-  tenants: Schema.optionalKey(ShellDocumentTenantsSchema),
-});
-export type ShellDocumentContext = typeof ShellDocumentContextSchema.Type;
 
 export const ResourceRefSchema = Schema.Struct({
   moduleId: ModuleIdSchema,
@@ -1027,6 +1011,49 @@ export const ResolvedModuleTargetsSchema = Schema.Struct({
   ),
 });
 
+/**
+ * A document's page target, read against the document's captured release: resolved, a tenant page that still needs a
+ * selected company, or the problem the separate target read would answer.
+ */
+export const ShellDocumentTargetSchema = Schema.Union([
+  Schema.Struct({ state: Schema.Literal('resolved'), target: ResolvedModuleTargetSchema }),
+  Schema.Struct({ state: Schema.Literal('selection_required') }),
+  Schema.Struct({
+    problem: Schema.Union([
+      ShellAuthenticationRequiredProblemSchema,
+      ShellTargetForbiddenProblemSchema,
+      ShellTargetNotFoundProblemSchema,
+      ShellPolicyConflictProblemSchema,
+      ShellPolicyUnprocessableProblemSchema,
+      ShellCapabilityUnavailableProblemSchema,
+      ShellInternalProblemSchema,
+    ]),
+    state: Schema.Literal('failed'),
+  }),
+]);
+export type ShellDocumentTarget = typeof ShellDocumentTargetSchema.Type;
+
+/**
+ * One session resolution supplies a document's context. Home additionally receives its governed component target (or
+ * welcome), so hydration can load the remote without another authenticated BFF request; a module page receives its
+ * page target. Each part keeps its own outcome. Signed-out or unselected sessions get no Home or page target.
+ */
+export const ShellDocumentContextSchema = Schema.Struct({
+  /** The people-administration hint; absent when its check could not answer (or for a document without company). */
+  canManagePeople: Schema.optionalKey(Schema.Boolean),
+  composition: Schema.optionalKey(ShellDocumentCompositionSchema),
+  /** Captured release identity only; tenant authentication gains no company or navigation capability. */
+  compositionRevision: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u))),
+  home: Schema.optionalKey(ShellDocumentHomeSchema),
+  legalEntities: Schema.optionalKey(AvailableLegalEntitiesResponseSchema),
+  session: CurrentSessionSchema,
+  target: Schema.optionalKey(ShellDocumentTargetSchema),
+  /** Present when the tenant-context switcher check could not answer; `legalEntities` then says "not available". */
+  tenantContextUnavailable: Schema.optionalKey(Schema.Literal(true)),
+  tenants: Schema.optionalKey(ShellDocumentTenantsSchema),
+});
+export type ShellDocumentContext = typeof ShellDocumentContextSchema.Type;
+
 const identityErrors = [
   ShellAuthenticationRequiredProblemSchema,
   ShellTargetForbiddenProblemSchema,
@@ -1054,9 +1081,8 @@ export const AgentProposalRequestHeadersSchema = Schema.Struct({
 export const AgentOwnProposalsRequestSchema = Schema.Struct({ legalEntityId: LegalEntityIdSchema });
 
 /**
- * Server rendering's one read per Shell document. It signs the document's gateway assertions too, so it is a classified
- * session capability issuer (`shell.document-context.issue.session` in `gatewayContextAuthorizationEntrypoints`) and,
- * like every issuer, a no-store POST.
+ * Server rendering's one read per Shell document, a no-store POST. It issues no gateway assertions: the browser obtains
+ * them in one batch from `auth/gateway-contexts`.
  */
 export const ShellDocumentContextApiGroup = HttpApiGroup.make('documentContext').add(
   HttpApiEndpoint.post('documentContext', '/shell/document-context', {

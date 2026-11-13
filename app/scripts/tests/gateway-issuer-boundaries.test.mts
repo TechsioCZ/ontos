@@ -34,11 +34,11 @@ const rejects = <Success, Failure>(effect: Effect.Effect<Success, Failure>, mess
     },
   });
 
-it.effect('accepts all six canonical issuer classifications in reverse order', () =>
+it.effect('accepts all five canonical issuer classifications in reverse order', () =>
   validateGatewayIssuerEntrypoints(gatewayContextAuthorizationEntrypoints.toReversed()),
 );
 
-it.effect('accepts the real three gateway groups and six handlers mounted by the production Shell runtime', () =>
+it.effect('accepts the real two gateway groups and five handlers mounted by the production Shell runtime', () =>
   validateGatewayIssuerSources(actualSources),
 );
 
@@ -94,7 +94,6 @@ const routes = [
   { file: GATEWAY_FILE, handler: 'issueDelegatedGatewayContext', path: '/auth/delegated/gateway-context' },
   { file: GATEWAY_FILE, handler: 'readWithApiKeyGatewayContext', path: '/auth/api-key/gateway-read' },
   { file: DOCUMENT_FILE, handler: 'issueDocumentGatewayContexts', path: '/auth/gateway-contexts' },
-  { file: API_FILE, handler: 'documentContext', path: '/shell/document-context' },
 ] as const;
 
 for (const route of routes) {
@@ -123,7 +122,7 @@ for (const route of routes) {
           `\nconst decoy = handlers.handle('${route.handler}', () => Effect.void);\n// .handle('${route.handler}', unused)\n`,
         ),
       ),
-      /all six classified capability issuers/u,
+      /all five classified capability issuers/u,
     ),
   );
 }
@@ -131,7 +130,6 @@ for (const route of routes) {
 const groups = [
   { file: GATEWAY_FILE, id: 'gatewayContext', layer: 'gatewayContextGroupLive', name: 'GatewayContextApiGroup' },
   { file: DOCUMENT_FILE, id: 'documentGateway', layer: 'documentGatewayGroupLive', name: 'DocumentGatewayApiGroup' },
-  { file: API_FILE, id: 'documentContext', layer: 'documentContextGroupLive', name: 'ShellDocumentContextApiGroup' },
 ] as const;
 
 for (const group of groups) {
@@ -167,7 +165,7 @@ for (const group of groups) {
           "HttpApiBuilder.group(ShellAuthenticationApi, 'unrelated',",
         ),
       ),
-      /all six classified capability issuers/u,
+      /all five classified capability issuers/u,
     ),
   );
 
@@ -180,7 +178,7 @@ for (const group of groups) {
           `HttpApiBuilder.group(UnrelatedApi, '${group.id}',`,
         ),
       ),
-      /all six classified capability issuers/u,
+      /all five classified capability issuers/u,
     ),
   );
 
@@ -194,7 +192,7 @@ for (const group of groups) {
           `\nconst decoyMerge = Layer.mergeAll(${group.layer});\n`,
         ),
       ),
-      /all six classified capability issuers/u,
+      /all five classified capability issuers/u,
     ),
   );
 }
@@ -222,7 +220,7 @@ for (const [file, before, after] of [
   it.effect(`rejects disconnected issuer contract or runtime wiring: ${before}`, () =>
     rejects(
       validateGatewayIssuerSources(changedSources(file, before, after)),
-      /mounted gateway contract|all six classified capability issuers/u,
+      /mounted gateway contract|all five classified capability issuers/u,
     ),
   );
 }

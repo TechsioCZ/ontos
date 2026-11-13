@@ -1190,6 +1190,8 @@ const seedPeopleIntent = (
  */
 export const withAccessAdminCase = <Value, Failure>(
   run: (accessCase: AccessAdminCase) => Effect.Effect<Value, Failure>,
+  /** Companies of the case tenant beyond A and B, which only the bootstrapped owner administers (stage shape). */
+  options: { readonly extraCompanies?: number } = {},
 ) =>
   Effect.scoped(
     Effect.gen(function* accessAdminCase() {
@@ -1199,7 +1201,11 @@ export const withAccessAdminCase = <Value, Failure>(
       const seedSuffix = (yield* crypto.randomUUIDv4()).replaceAll('-', '');
       const tenantId = yield* crypto.randomUUIDv4();
       const foreignTenantId = yield* crypto.randomUUIDv4();
-      const companies = [yield* crypto.randomUUIDv4(), yield* crypto.randomUUIDv4()];
+      const companies = yield* Effect.forEach(
+        Array.from({ length: 2 + (options.extraCompanies ?? 0) }),
+        () => crypto.randomUUIDv4(),
+        { concurrency: 1 },
+      );
       const foreignCompanies = [yield* crypto.randomUUIDv4()];
       const personas = yield* seedsOf;
       const foreignPersonas = yield* seedsOf;

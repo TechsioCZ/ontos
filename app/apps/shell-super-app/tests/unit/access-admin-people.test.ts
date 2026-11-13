@@ -251,12 +251,35 @@ const COMPANY_DIRECTORY = new Map<string, readonly AccessDirectoryCompanyMember[
 ]);
 
 /** The people directory, counting every company directory read into `reads`. */
-const directoryFor = (reads: { directoryReads: number }): AccessPeopleDirectoryService => {
-  const companyMembers: AccessPeopleDirectoryService['companyMembers'] = (_scope, legalEntityId) =>
+/** Reads the options run beside each other: how many are in flight now and at most. */
+interface Flight {
+  current: number;
+  most: number;
+}
+
+/** One scripted read, counted while it is in flight; it yields once so concurrent reads can overlap. */
+const inFlight = <Value, Failure>(flight: Flight, read: Effect.Effect<Value, Failure>) =>
+  Effect.acquireUseRelease(
     Effect.sync(() => {
-      reads.directoryReads += 1;
-      return COMPANY_DIRECTORY.get(legalEntityId) ?? [];
-    });
+      flight.current += 1;
+      flight.most = Math.max(flight.most, flight.current);
+    }),
+    () => Effect.yieldNow.pipe(Effect.andThen(read)),
+    () =>
+      Effect.sync(() => {
+        flight.current -= 1;
+      }),
+  );
+
+const directoryFor = (reads: { directoryReads: number; readonly flight: Flight }): AccessPeopleDirectoryService => {
+  const companyMembers: AccessPeopleDirectoryService['companyMembers'] = (_scope, legalEntityId) =>
+    inFlight(
+      reads.flight,
+      Effect.sync(() => {
+        reads.directoryReads += 1;
+        return COMPANY_DIRECTORY.get(legalEntityId) ?? [];
+      }),
+    );
   return {
     companyMember: (scope, legalEntityId, principalId) =>
       companyMembers(scope, legalEntityId).pipe(
@@ -264,21 +287,27 @@ const directoryFor = (reads: { directoryReads: number }): AccessPeopleDirectoryS
       ),
     companyMembers,
     people: (_scope, ids) =>
-      Effect.succeed(
-        ids.flatMap((principalId) => {
-          const displayName = NAMES.get(principalId);
-          const kind = principalId === AGENT ? 'agent' : 'human';
-          return displayName === undefined ? [] : [{ displayName, kind, principalId, status: 'active' }];
-        }),
+      inFlight(
+        reads.flight,
+        Effect.succeed(
+          ids.flatMap((principalId) => {
+            const displayName = NAMES.get(principalId);
+            const kind = principalId === AGENT ? 'agent' : 'human';
+            return displayName === undefined ? [] : [{ displayName, kind, principalId, status: 'active' }];
+          }),
+        ),
       ),
     scopeLabels: () =>
-      Effect.succeed({
-        companies: [
-          { legalEntityId: LegalEntityIdSchema.make(COMPANY_A), legalName: 'Firma A s.r.o.' },
-          { legalEntityId: LegalEntityIdSchema.make(COMPANY_B), legalName: 'Firma B s.r.o.' },
-        ],
-        tenantName: 'Skupina',
-      }),
+      inFlight(
+        reads.flight,
+        Effect.succeed({
+          companies: [
+            { legalEntityId: LegalEntityIdSchema.make(COMPANY_A), legalName: 'Firma A s.r.o.' },
+            { legalEntityId: LegalEntityIdSchema.make(COMPANY_B), legalName: 'Firma B s.r.o.' },
+          ],
+          tenantName: 'Skupina',
+        }),
+      ),
   };
 };
 
@@ -332,6 +361,8 @@ interface Recorded {
   readonly calls: { readonly command: PeopleCommand; readonly operation: string }[];
   /** How many times a company directory was read. */
   directoryReads: number;
+  /** The directory and catalogue reads in flight together. */
+  readonly flight: Flight;
   /** How many times the projection was reconciled outside a write. */
   reconciles: number;
 }
@@ -353,17 +384,20 @@ const commandsFor = (
     grantDelegation: (_scope, command) => answer('grantDelegation', command),
     read: () => Effect.succeed(view),
     readCatalog: () =>
-      Effect.succeed([
-        decode(CatalogSnapshotEntrySchema, {
-          key: CAPABILITY,
-          kind: 'action',
-          modes: ['run'],
-          moduleKey: 'test',
-          placement: { group: 'parties', level: 'basic' },
-          risk: 'sensitive',
-          selectors: ['all'],
-        }),
-      ]),
+      inFlight(
+        recorded.flight,
+        Effect.succeed([
+          decode(CatalogSnapshotEntrySchema, {
+            key: CAPABILITY,
+            kind: 'action',
+            modes: ['run'],
+            moduleKey: 'test',
+            placement: { group: 'parties', level: 'basic' },
+            risk: 'sensitive',
+            selectors: ['all'],
+          }),
+        ]),
+      ),
     reconcile: () =>
       Effect.suspend(() => {
         recorded.reconciles += 1;
@@ -382,7 +416,7 @@ const harness = (input: {
   readonly reconcileFailure?: PeopleCommandFailure;
   readonly writes?: boolean;
 }) => {
-  const recorded: Recorded = { calls: [], directoryReads: 0, reconciles: 0 };
+  const recorded: Recorded = { calls: [], directoryReads: 0, flight: { current: 0, most: 0 }, reconciles: 0 };
   const asks: GateAsks = { batches: [], singles: [] };
   const actor = { companyAdmin: COMPANY_ADMIN, delegate: BOB, nobody: OWNER, owner: OWNER }[input.persona];
   const gate = gateFor(input.persona, asks);
@@ -879,13 +913,51 @@ it.effect('answers an owner options with one gate batch for every write and one 
     const writes = Object.values(offered.writeAvailability).length;
     expect([scopes, companies, writes, offered.admissionCandidates.length]).toEqual([3, 2, 8, 3]);
     expect(Object.values(offered.writeAvailability)).toEqual(Array.from({ length: writes }, () => true));
-    // The read's own admission asks once per scope, as every Lidé read does. Every write control is
-    // then one batch of one question per write and scope, never a single decision per write and scope,
-    // which held an owner's options for tens of seconds on a tenant with five companies.
-    expect(owner.asks.singles).toHaveLength(scopes);
-    expect(owner.asks.batches.map((batch) => batch.length)).toEqual([writes * scopes]);
+    // The read's own admission is one batch of one question per scope, asked first so a refused reader is
+    // asked nothing else; every write control is then one batch of one question per write and scope, never a
+    // single decision per write and scope, which held an owner's options for tens of seconds.
+    expect(owner.asks.singles).toHaveLength(0);
+    expect(owner.asks.batches.map((batch) => batch.length)).toEqual([scopes, writes * scopes]);
     // Candidates come from one directory read per administered company, never one per candidate.
     expect(owner.recorded.directoryReads).toBe(companies);
+  }),
+);
+
+it.effect('asks the options read before its writes, so a refused or a closed reader is asked the read only', () =>
+  Effect.gen(function* optionsAdmission() {
+    const nobody = harness({ persona: 'nobody' });
+    const refused = yield* failureOf(nobody.run((bff) => bff.options(headers, { limit: 100 })));
+    // Refused like every Lidé read that covers no scope, before any directory or catalogue read.
+    expect(refused.status).toBe(403);
+    expect(nobody.recorded.directoryReads).toBe(0);
+    // Only the read's own question was asked, once per scope: no write question, so no write refusal is recorded.
+    expect(nobody.asks.batches.map((batch) => batch.length)).toEqual([view.scopes.length]);
+    expect(
+      nobody.asks.batches
+        .flat()
+        .every((question) => question.carrier.accessDeclaration === accessPeopleDeclarations.options),
+    ).toBe(true);
+    const closed = harness({ persona: 'owner', writes: false });
+    yield* closed.run((bff) => bff.options(headers, { limit: 100 }));
+    // A closed Lidé gate asks the read's own declaration only: no write is asked or offered.
+    expect(closed.asks.singles).toHaveLength(0);
+    expect(closed.asks.batches.map((batch) => batch.length)).toEqual([view.scopes.length]);
+    expect(
+      closed.asks.batches
+        .flat()
+        .every((question) => question.carrier.accessDeclaration === accessPeopleDeclarations.options),
+    ).toBe(true);
+  }),
+);
+
+it.effect('runs the independent options reads two at a time, never more of the shared pool', () =>
+  Effect.gen(function* boundedReads() {
+    const owner = harness({ persona: 'owner' });
+    yield* owner.run((bff) => bff.options(headers, { limit: 100 }));
+    // The people, labels and catalogue reads, then one directory read per administered company.
+    expect(owner.recorded.directoryReads).toBe(2);
+    expect(owner.recorded.flight.most).toBe(2);
+    expect(owner.recorded.flight.current).toBe(0);
   }),
 );
 

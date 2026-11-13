@@ -4,7 +4,7 @@ import { expect, it as test } from 'effect-rstest';
 
 import {
   isOAuthPagePath,
-  oauthPageSecurityHeaders,
+  documentSecurityHeaders,
   preloadModule,
   serveRootMetadataAlias,
   serveRootRoute,
@@ -91,20 +91,32 @@ test.effect('root metadata preserves canonical failure cache policy and removes 
   }),
 );
 
-test.effect('oauthPageSecurityHeaders sets no-store and frame-ancestors on OAuth pages only', () =>
+test.effect('documentSecurityHeaders sets no-store and frame-ancestors on OAuth pages', () =>
   Effect.gen(function* pageHeaders() {
     const page = { req: { method: 'GET', path: '/cs/login' }, res: new Response('<html>') };
-    yield* oauthPageSecurityHeaders(page, Effect.void);
+    yield* documentSecurityHeaders(page, Effect.void);
     expect(page.res.headers.get('cache-control')).toBe('no-store');
     expect(page.res.headers.get('content-security-policy')).toBe("frame-ancestors 'none'");
     expect(page.res.headers.get('x-frame-options')).toBe('DENY');
     expect(yield* Effect.promise(async () => await page.res.text())).toBe('<html>');
+  }),
+);
 
-    const original = new Response('ok');
-    const other = { req: { method: 'GET', path: '/cs/' }, res: original };
-    yield* oauthPageSecurityHeaders(other, Effect.void);
-    expect(other.res).toBe(original);
-    expect(other.res.headers.get('content-security-policy')).toBeNull();
+test.effect('documentSecurityHeaders keeps every person-rendered document out of shared caches', () =>
+  Effect.gen(function* documentHeaders() {
+    const rendered = new Response('<html>model</html>', {
+      headers: { 'cache-control': 'public, max-age=60', 'content-type': 'text/html; charset=utf-8' },
+    });
+    const document = { req: { method: 'GET', path: '/cs/prodej/objednavky' }, res: rendered };
+    yield* documentSecurityHeaders(document, Effect.void);
+    expect(document.res.headers.get('cache-control')).toBe('no-store');
+    expect(document.res.headers.get('content-security-policy')).toBeNull();
+    expect(yield* Effect.promise(async () => await document.res.text())).toBe('<html>model</html>');
+
+    const original = new Response('ok', { headers: { 'cache-control': 'public, max-age=31536000, immutable' } });
+    const asset = { req: { method: 'GET', path: '/static/js/main.js' }, res: original };
+    yield* documentSecurityHeaders(asset, Effect.void);
+    expect(asset.res).toBe(original);
   }),
 );
 
