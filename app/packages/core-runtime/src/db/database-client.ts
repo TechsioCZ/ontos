@@ -48,6 +48,7 @@ class DatabasePoolKey extends Data.Class<{
   readonly connectTimeout: number | undefined;
   readonly idleTimeout: number | undefined;
   readonly maxConnections: number | undefined;
+  readonly minConnections: number;
   readonly startupParameters: HashMap.HashMap<string, string>;
   readonly url: Redacted.Redacted | undefined;
 }> {}
@@ -57,6 +58,7 @@ const sharedPoolKey = (configuration: DatabasePoolConfiguration) =>
     connectTimeout: durationMillis(configuration.connectTimeout),
     idleTimeout: durationMillis(configuration.idleTimeout),
     maxConnections: configuration.maxConnections,
+    minConnections: configuration.minConnections,
     startupParameters: HashMap.fromIterable(Object.entries(configuration.startupParameters ?? {})),
     url: configuration.url,
   });
@@ -71,6 +73,7 @@ export const DatabasePoolRegistryLive = Layer.effect(
           connectTimeout: key.connectTimeout,
           idleTimeout: key.idleTimeout,
           maxConnections: key.maxConnections,
+          minConnections: key.minConnections,
           startupParameters: Object.fromEntries(key.startupParameters),
           url: key.url,
         }),
