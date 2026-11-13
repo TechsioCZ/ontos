@@ -6,7 +6,7 @@
 import { createServer } from 'node:http';
 
 import { NodeHttpServer } from '@effect/platform-node';
-import { Console, Context, Effect, Exit, Layer, Option, Ref, Scope, Stream } from 'effect';
+import { Config, Console, Context, Effect, Exit, Layer, Option, Ref, Scope, Stream } from 'effect';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { NetAddress } from 'effect/net';
 
@@ -14,6 +14,7 @@ import {
   PUBLIC_PORT_GRACEFUL_CLOSE_CAP,
   hostApplication,
   publicPortClosing,
+  stopAccepting,
   stopSignal,
 } from '../../zerops/app-host.mts';
 import { withKeepAlive } from '../../zerops/http-keep-alive.mts';
@@ -69,6 +70,13 @@ const program = Effect.gen(function* stopSignalHost() {
     ),
   );
   yield* Console.log(`PORT ${String(port)}`);
+  // FIXTURE_DRAIN_DEADLINE_AFTER_MS: the drain's deadline passes then, and closes the listener only, as the host's does.
+  const deadlineAfter = yield* Config.Int('FIXTURE_DRAIN_DEADLINE_AFTER_MS').pipe(Config.option);
+  if (Option.isSome(deadlineAfter)) {
+    yield* Effect.sleep(deadlineAfter.value);
+    yield* stopAccepting(publicServer);
+    yield* Console.log('[fixture] drain deadline: listener closed');
+  }
   return yield* Effect.never;
 });
 

@@ -662,6 +662,45 @@ it.live(
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.live('on SIGTERM after the drain deadline closed the listener, a half-sent request still cannot hold the host', () =>
+  Effect.gen(function* stopAfterDeadline() {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const fixture = path.join(import.meta.dirname, '../integration/fixtures/stop-signal-host.mts');
+    const child = yield* spawner.spawn(
+      ChildProcess.make(process.execPath, [fixture], {
+        env: { FIXTURE_DRAIN_DEADLINE_AFTER_MS: '800' },
+        extendEnv: true,
+        stderr: 'inherit',
+      }),
+    );
+    const lines = yield* Ref.make<readonly string[]>([]);
+    yield* Effect.forkChild(
+      child.stdout.pipe(
+        Stream.decodeText(),
+        Stream.splitLines,
+        Stream.runForEach((line) => Ref.update(lines, (all) => [...all, line])),
+      ),
+    );
+    const seen = (prefix: string) =>
+      Ref.get(lines).pipe(
+        Effect.map((all) => all.find((line) => line.startsWith(prefix))),
+        Effect.repeat({ schedule: Schedule.spaced('50 millis'), until: (line) => line !== undefined }),
+        Effect.timeout('30 seconds'),
+      );
+    const port = Number((yield* seen('PORT '))?.slice('PORT '.length));
+    // A request head that never ends, opened before the deadline; the listener then closes under it.
+    const halfSent = yield* Effect.forkChild(heldConnection(port, 'GET /_m/crm/echo HTTP/1.1\r\nHost: stage.test\r\n'));
+    yield* seen('[fixture] drain deadline: listener closed');
+    const started = yield* Clock.currentTimeMillis;
+    yield* child.kill({ forceKillAfter: '25 seconds', killSignal: 'SIGTERM' });
+    const stoppedAfter = (yield* Clock.currentTimeMillis) - started;
+    expect(yield* child.exitCode).toBe(0);
+    // The 2 s grace, then every connection is closed: the server's shutdown returned at once (no listener left).
+    expect(stoppedAfter).toBeLessThan(5000);
+    expect(yield* Fiber.join(halfSent)).toBe('');
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.live('an Expect: 100-continue upload of 2 MiB reaches its unit, directly and through a drain', () =>
   Effect.gen(function* expectContinue() {
     const [old, current] = yield* Effect.all([standingHost('old'), standingHost('new')]);

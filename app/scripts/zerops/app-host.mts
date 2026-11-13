@@ -1310,7 +1310,9 @@ export const publicPortClosing = (publicScope: Scope.Closeable, drain: Supersede
         ),
       );
       yield* Scope.close(publicScope, Exit.void);
-      yield* Fiber.interrupt(force);
+      // Never cancelled: once the drain's deadline closed the listener, the server's shutdown returns at once, and a
+      // connection holding a half-sent request would otherwise keep the process alive until the platform kills it.
+      yield* Fiber.join(force);
     }),
   );
 
