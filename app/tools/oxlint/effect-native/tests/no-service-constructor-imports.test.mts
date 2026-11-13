@@ -2127,9 +2127,13 @@ describe('closes strict scalar observations and rejects computed evaluator capab
 describe('proves the actual Shell API composition factory from current owner source without executing it', () => {
   const { accept, directory, register, write } = recordScenario(serviceRuleTitle);
   const owner = nodePath.join(directory, 'app/apps/shell-super-app');
+  // The API root and every module its transport Layer imports: the Shell-owned routes, live changes and the MCP endpoint.
   for (const file of [
     'api/index.ts',
+    'api/live-changes/transport.ts',
+    'api/mcp/transport.ts',
     'api/payment-gateway/transport.ts',
+    'api/shell-transport.ts',
     'api/symmy/transport.ts',
     'shared/api.ts',
     'src/module-api/transport.ts',
