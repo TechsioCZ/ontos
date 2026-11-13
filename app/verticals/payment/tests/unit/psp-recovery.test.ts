@@ -670,6 +670,52 @@ describe('#1158 gateway operation recovery', () => {
     }),
   );
 
+  it.effect(
+    '#1158 A lost GoPay or Comgate refund proven to exist is correlated; an unproven one stays OUTCOME_UNKNOWN',
+    () =>
+      Effect.gen(function* lostRefundCorrelation() {
+        yield* at(25 * HOUR_MS);
+        const gopayPayment = { _tag: 'GOPAY_PAYMENT', id: '3000006529' } as const;
+        const gopayRefund = { _tag: 'GOPAY_REFUND', id: '3050123456', paymentId: '3000006529' } as const;
+        const comgateTransaction = { _tag: 'COMGATE_TRANSACTION', transId: 'AB12-CD34-EF56' } as const;
+        const recovered = (
+          family: 'COMGATE' | 'GOPAY',
+          finding: ProviderFindingResult['finding'],
+          refs: readonly unknown[],
+        ) =>
+          recoverWith(
+            {
+              lookup: () =>
+                Effect.succeed([findingOf({ factKind: 'REFUND_CONFIRMED', finding, kind: 'REFUND', refs })]),
+              operations: [operationRow({ family, kind: 'REFUND' })],
+              record: Option.some(
+                dispatchRecord({
+                  family,
+                  kind: 'REFUND',
+                  paymentRef: Option.some(family === 'GOPAY' ? gopayPayment : comgateTransaction),
+                }),
+              ),
+            },
+            { ...recoveryMessage('AUTHORITATIVE_LOOKUP', { family }), operationKind: 'REFUND' },
+          ).pipe(Effect.map(({ calls }) => calls.ledger));
+        // GoPay refund list: the found refund's own id is recorded, so later lookups read that refund.
+        expect(yield* recovered('GOPAY', 'EFFECT_CONFIRMED', [gopayPayment, gopayRefund])).toEqual([
+          'correlateUnknown:GOPAY_REFUND',
+        ]);
+        expect(yield* recovered('GOPAY', 'ACCEPTED_PENDING', [gopayPayment, gopayRefund])).toEqual([
+          'correlateUnknown:GOPAY_REFUND',
+        ]);
+        // Comgate statement: the refund has no object of its own; its payment's transaction is the recorded ref.
+        expect(yield* recovered('COMGATE', 'EFFECT_CONFIRMED', [comgateTransaction])).toEqual([
+          'correlateUnknown:COMGATE_TRANSACTION',
+        ]);
+        // No proof that the refund exists: the dispatch stays OUTCOME_UNKNOWN and keeps later refunds serialized.
+        expect(yield* recovered('COMGATE', 'INDETERMINATE', [comgateTransaction])).toEqual([]);
+        expect(yield* recovered('COMGATE', 'VERIFICATION_CONFLICT', [comgateTransaction])).toEqual([]);
+        expect(yield* recovered('GOPAY', 'NOT_EFFECTED', [gopayPayment])).toEqual([]);
+      }),
+  );
+
   it.effect('#1157 #1158 A Stripe refund without its refund ref is not looked up through the PaymentIntent', () =>
     Effect.gen(function* stripeRefundWithoutRefundRef() {
       yield* at(25 * HOUR_MS);

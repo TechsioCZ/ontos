@@ -203,10 +203,11 @@ export interface ProviderDispatchLedgerContract {
     input: CorrelateUnknownInput,
   ) => Effect.Effect<Option.Option<ProviderDispatchRecord>, GatewayCorrelationConflictError | LedgerFailure>;
   /**
-   * True while another REFUND of this provider payment is unresolved: PREPARED, OUTCOME_UNKNOWN, or
-   * ACKNOWLEDGED without REFUND_CONFIRMED or REFUND_NOT_EFFECTED evidence (GoPay and Comgate
-   * serialization; `prepare` re-checks it under the target's lock and answers DEFERRED). A Comgate refund
-   * stays unresolved until such evidence exists (completion is unprovable, plan N10).
+   * True while another REFUND of this provider payment is unresolved (GoPay and Comgate serialization;
+   * `prepare` re-checks it under the target's lock and answers DEFERRED): PREPARED or OUTCOME_UNKNOWN, and
+   * for GoPay also ACKNOWLEDGED without REFUND_CONFIRMED or REFUND_NOT_EFFECTED evidence. An ACKNOWLEDGED
+   * Comgate refund no longer blocks (own refId and effect key, Comgate caps the total, D-P2); a lost one is
+   * released once recovery's statement lookup proves it exists and correlates it.
    */
   readonly hasUnresolvedRefund: (input: HasUnresolvedRefundInput) => Effect.Effect<boolean, LedgerFailure>;
   readonly prepare: (input: PrepareDispatchInput) => Effect.Effect<ProviderPrepareResult, LedgerFailure>;

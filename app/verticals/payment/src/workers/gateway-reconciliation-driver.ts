@@ -183,6 +183,8 @@ const tally = (outcomes: readonly GatewayReconciliationOutcome[]): Tally => {
 
 interface Listing {
   readonly failure: Option.Option<string>;
+  /** Where the next tick's listing starts; none once a short page ended the scan, so it wraps around. */
+  readonly next: Option.Option<GatewayReconciliationDueRow>;
   readonly rows: readonly GatewayReconciliationDueRow[];
 }
 
@@ -205,6 +207,11 @@ export const makeGatewayReconciliationSweep = Effect.fn('GatewayReconciliationDr
     const tenantCooldowns = yield* Ref.make<Cooldowns>(new Map());
     /** `operationId:r<round>` refused by A10 for a reason a person owns, until the given instant. */
     const rowCooldowns = yield* Ref.make<Cooldowns>(new Map());
+    /**
+     * Keyset position the next tick lists from, so rows that fill the bounded scan without being requested (a
+     * keyless or cooled Tenant) cannot keep later Tenants from ever being listed. Each driver keeps its own.
+     */
+    const listingCursor = yield* Ref.make(Option.none<GatewayReconciliationDueRow>());
 
     /** This compiled Payment artifact must be the approved `payment.core`, with the ABI it first saw. */
     const admitRelease = authority.load.pipe(
@@ -241,13 +248,16 @@ export const makeGatewayReconciliationSweep = Effect.fn('GatewayReconciliationDr
     ): Effect.Effect<Listing> =>
       source.listDue({ after, maxRounds: LIMITS.maxRounds, pageLimit: LIMITS.pageLimit }).pipe(
         Effect.matchEffect({
-          // A page that cannot be read ends the listing with what was read so far.
-          onFailure: ({ reason }) => Effect.succeed<Listing>({ failure: Option.some(reason), rows: read }),
+          // A page that cannot be read ends the listing with what was read so far; the next tick retries it.
+          onFailure: ({ reason }) => Effect.succeed<Listing>({ failure: Option.some(reason), next: after, rows: read }),
           onSuccess: (rows) => {
             const next = [...read, ...rows];
             const last = rows.at(-1);
-            return last === undefined || rows.length < LIMITS.pageLimit || page + 1 >= LIMITS.pages
-              ? Effect.succeed<Listing>({ failure: Option.none(), rows: next })
+            if (last === undefined || rows.length < LIMITS.pageLimit) {
+              return Effect.succeed<Listing>({ failure: Option.none(), next: Option.none(), rows: next });
+            }
+            return page + 1 >= LIMITS.pages
+              ? Effect.succeed<Listing>({ failure: Option.none(), next: Option.some(last), rows: next })
               : listFrom(Option.some(last), page + 1, next);
           },
         }),
@@ -261,9 +271,14 @@ export const makeGatewayReconciliationSweep = Effect.fn('GatewayReconciliationDr
     );
 
     const runTick = Effect.fn('GatewayReconciliationDriver.tick')(function* runTick() {
-      const [{ failure: purgeFailure, purged }, listing] = yield* Effect.all([purge, listFrom(Option.none(), 0, [])], {
-        concurrency: 2,
-      });
+      const listing = Ref.get(listingCursor).pipe(
+        Effect.flatMap((after) => listFrom(after, 0, [])),
+        Effect.tap(({ next }) => Ref.set(listingCursor, next)),
+      );
+      const [{ failure: purgeFailure, purged }, { failure: listingFailure, rows: listed }] = yield* Effect.all(
+        [purge, listing],
+        { concurrency: 2 },
+      );
       const now = yield* Clock.currentTimeMillis;
       const [cooledTenants, cooledRows, tick] = yield* Effect.all(
         [
@@ -273,7 +288,7 @@ export const makeGatewayReconciliationSweep = Effect.fn('GatewayReconciliationDr
         ],
         { concurrency: 1 },
       );
-      const tenants = EffectArray.dedupe(listing.rows.map(({ tenantId }) => tenantId)).filter(
+      const tenants = EffectArray.dedupe(listed.map(({ tenantId }) => tenantId)).filter(
         (tenantId) => !cooledTenants.has(tenantId),
       );
       const keys = new Map(
@@ -283,7 +298,7 @@ export const makeGatewayReconciliationSweep = Effect.fn('GatewayReconciliationDr
           { concurrency: 1 },
         ),
       );
-      const { deferred, selected } = selectGatewayReconciliationRows(listing.rows, keys, cooledRows);
+      const { deferred, selected } = selectGatewayReconciliationRows(listed, keys, cooledRows);
 
       // Stops within this tick: a drained or refusing Tenant, and an unavailable provider family of a Tenant.
       const stopped = yield* Ref.make<ReadonlySet<string>>(new Set());
@@ -317,8 +332,8 @@ export const makeGatewayReconciliationSweep = Effect.fn('GatewayReconciliationDr
       return {
         ...tally(answered),
         deferred: deferred + outcomes.length - answered.length,
-        failures: [...Option.toArray(purgeFailure), ...Option.toArray(listing.failure)],
-        listed: listing.rows.length,
+        failures: [...Option.toArray(purgeFailure), ...Option.toArray(listingFailure)],
+        listed: listed.length,
         purged,
       } satisfies GatewayReconciliationSweepResult;
     });
