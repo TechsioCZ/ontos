@@ -3,7 +3,8 @@
 // leaves its delivery `done`, and the app host's startup gate (`scripts/zerops/outbox-dead-startup-gate.mts`, over
 // `listDeadOutboxDeliveries`) still lets the next boot start. A system failure (no company keeps a ledger at all) stays
 // pending for its retry, never dead on its first attempt.
-import { NodeCrypto } from '@effect/platform-node';
+import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
+import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import type { OutboxWorkerLegalEntityScope } from '@app/core-runtime';
 import { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
 import {
@@ -11,26 +12,21 @@ import {
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/sales-pipeline/outbox/opportunity-stage-changed';
-import { eq, inArray } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { eq } from 'drizzle-orm';
+import { Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeCoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
-import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import {
   actionInvocations,
-  applicationCompositionAuthority,
   domainEvents,
   legalEntities,
-  outboxAttempts,
   outboxDeliveries,
   outboxMessages,
   principals,
   tenantModuleStates,
   tenants,
-  workerCheckpoints,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
-import { extractOutboxWorkerSubscriptions } from '../../../../packages/core-runtime/src/outbox/definition.ts';
 import { listDeadOutboxDeliveries } from '../../../../packages/core-runtime/src/outbox/dead-delivery-resolution.ts';
 import { makeOutboxRepository } from '../../../../packages/core-runtime/src/outbox/repository.ts';
 import { makeOutboxRuntime } from '../../../../packages/core-runtime/src/outbox/runtime.ts';
@@ -46,6 +42,10 @@ import {
 } from '../../src/workers/opportunity-invoice-ledger.ts';
 import { baselineVatChoices } from '../support/finance-tax-rates.ts';
 
+const nativeServices = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(NodeCrypto.layer),
+);
 const registration = draftInvoiceFromWonOpportunityWorker;
 /** A stage change: from, to, and the Sales Pipeline revision it happened at. */
 interface Stage {
@@ -104,7 +104,7 @@ const answering = (choices: () => VatChoices) =>
 const down = () =>
   Effect.fail(new FinanceReferenceUnavailable({ code: 'finance_reference_unavailable', reason: 'down' }));
 
-it.layer(NodeCrypto.layer, { excludeTestServices: true })('won opportunity Outbox settlement', (suite) => {
+it.layer(nativeServices, { excludeTestServices: true })('won opportunity Outbox settlement', (suite) => {
   suite.effect('no business outcome leaves a dead delivery behind; the next boot starts', () =>
     Effect.gen(function* settlement() {
       const crypto = yield* Crypto.Crypto;
@@ -113,39 +113,16 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('won opportunity Outbo
       const company = yield* uuid;
       const otherCompany = yield* uuid;
       const principalId = yield* uuid;
-      const configuration = yield* loadDatabaseConnectionPair();
-      const { executor } = yield* makeCoreDatabase(configuration.runtime);
-      const { executor: admin } = yield* makeCoreDatabase(configuration.admin);
-      const cleanup = Effect.gen(function* cleanupSettlement() {
-        yield* admin
-          .delete(applicationCompositionAuthority)
-          .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
-        const messages = yield* admin
-          .select({ id: outboxMessages.outboxMessageId })
-          .from(outboxMessages)
-          .where(eq(outboxMessages.tenantId, tenantId));
-        const messageIds = messages.map(({ id }) => id);
-        const deliveries = yield* admin
-          .select({ id: outboxDeliveries.outboxDeliveryId })
-          .from(outboxDeliveries)
-          .where(inArray(outboxDeliveries.outboxMessageId, messageIds));
-        yield* admin.delete(outboxAttempts).where(
-          inArray(
-            outboxAttempts.outboxDeliveryId,
-            deliveries.map(({ id }) => id),
-          ),
-        );
-        yield* admin.delete(outboxDeliveries).where(inArray(outboxDeliveries.outboxMessageId, messageIds));
-        yield* admin.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId));
-        yield* admin.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId));
-        yield* admin.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId));
-        yield* admin.delete(workerCheckpoints).where(eq(workerCheckpoints.tenantId, tenantId));
-        yield* admin.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId));
-        yield* admin.delete(principals).where(eq(principals.tenantId, tenantId));
-        yield* admin.delete(legalEntities).where(eq(legalEntities.tenantId, tenantId));
-        yield* admin.delete(tenants).where(eq(tenants.tenantId, tenantId));
+      // A database of its own: the composition authority is global, and other suites publish theirs meanwhile.
+      const isolated = yield* makeIsolatedNativeDatabaseFixture({
+        mode: 'empty',
+        purpose: 'finance-won-opportunity-settlement',
       });
-      yield* Effect.acquireRelease(cleanup, () => cleanup.pipe(Effect.orDie));
+      yield* isolated.migrateCoreSchema();
+      const claimFixture = makeNativeOutboxWorkerFixture([registration]);
+      yield* isolated.publishInitialComposition(yield* claimFixture.authority.load);
+      const { executor } = yield* makeCoreDatabase(isolated.connections.runtime);
+      const { executor: admin } = yield* makeCoreDatabase(isolated.connections.admin);
       yield* executor.insert(tenants).values({
         defaultLocale: 'cs',
         name: 'Won opportunity settlement',
@@ -170,19 +147,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('won opportunity Outbo
         .insert(tenantModuleStates)
         .values({ moduleKey: registration.descriptor.consumerModuleKey, state: 'active', tenantId });
       const repository = makeOutboxRepository(executor, crypto);
-      const claimFixture = makeNativeOutboxWorkerFixture([registration]);
       const compositionRevision = claimFixture.revision;
-      const authority = {
-        authorityKey: 'active',
-        phase: 'active' as const,
-        revision: compositionRevision,
-        subscriptionsJson: extractOutboxWorkerSubscriptions([registration]),
-        validUntil: DateTime.makeUnsafe(yield* DateTime.nowAsDate).pipe(DateTime.add({ hours: 1 }), DateTime.toDateUtc),
-      };
-      yield* admin.insert(applicationCompositionAuthority).values(authority).onConflictDoUpdate({
-        set: authority,
-        target: applicationCompositionAuthority.authorityKey,
-      });
 
       /** A stage change Sales Pipeline published from the person's action in `eventCompany` (none when null). */
       const publish = Effect.fn('WonSettlement.publish')(function* publish(

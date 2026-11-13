@@ -183,6 +183,7 @@ type IsolatedNativeDatabaseInput = (
         | 'stabilization-1281-party-legacy'
         | 'party-verification-removal'
         | 'merchandise-tax-classification'
+        | 'finance-won-opportunity-settlement'
         | typeof exactDeadlinePurpose;
     }
 ) & {
@@ -254,6 +255,7 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
         'stabilization-1281-party-legacy',
         'party-verification-removal',
         'merchandise-tax-classification',
+        'finance-won-opportunity-settlement',
         exactDeadlinePurpose,
       ].includes(input.purpose);
 
