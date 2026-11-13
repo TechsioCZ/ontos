@@ -258,6 +258,15 @@ const visibleEverywhere = Layer.succeed(AgentProposalQueueModuleReview, {
     }).pipe(Effect.withSpan(OWNER_REVIEW_SPAN)),
 });
 
+/** The owner's review hiding `proposalId` (a private record this person may not see) and showing the rest. */
+const hidingReview = (proposalId: string): (typeof AgentProposalQueueModuleReview)['Service'] => ({
+  review: (input) =>
+    Effect.succeed({
+      items: input.subjects.map((subject) => ({ key: subject.key, visible: subject.key !== proposalId })),
+      state: 'ok' as const,
+    }),
+});
+
 const shellLayer = (input: {
   readonly authorityCalls: Ref.Ref<readonly AuthorityCall[]>;
   readonly runtime: DatabaseConnectionPair['runtime'];
@@ -344,6 +353,9 @@ interface StageCase {
   readonly admin: PgClient.PgClient;
   readonly agent: string;
   readonly agentBinding: string;
+  /** A person of the company with no role at all. */
+  readonly bystander: string;
+  readonly bystanderBinding: string;
   readonly companyId: string;
   readonly owner: string;
   readonly ownerBinding: string;
@@ -393,6 +405,8 @@ const seedTenant = Effect.fn('test.seedTenant')(function* seedTenant(
   ids: {
     readonly agent: string;
     readonly agentBinding: string;
+    readonly bystander: string;
+    readonly bystanderBinding: string;
     readonly companyId: string;
     readonly owner: string;
     readonly ownerBinding: string;
@@ -400,7 +414,7 @@ const seedTenant = Effect.fn('test.seedTenant')(function* seedTenant(
   },
 ) {
   const crypto = yield* Crypto.Crypto;
-  const { agent, agentBinding, companyId, owner, ownerBinding, tenantId } = ids;
+  const { agent, agentBinding, bystander, bystanderBinding, companyId, owner, ownerBinding, tenantId } = ids;
   const configuration = yield* loadSpiceDbConfig();
   yield* Effect.acquireUseRelease(
     Effect.sync(() => newSpiceDbGrpcClient(configuration)),
@@ -423,6 +437,7 @@ const seedTenant = Effect.fn('test.seedTenant')(function* seedTenant(
   for (const [principalId, kind, name] of [
     [owner, 'human', 'N1 owner'],
     [agent, 'agent', 'N1 agent'],
+    [bystander, 'human', 'N1 bystander'],
   ] as const) {
     yield* admin.unsafe(
       `insert into core.principals (principal_id, tenant_id, kind, display_name, status)
@@ -436,6 +451,7 @@ const seedTenant = Effect.fn('test.seedTenant')(function* seedTenant(
   for (const [principalId, bindingId] of [
     [owner, ownerBinding],
     [agent, agentBinding],
+    [bystander, bystanderBinding],
   ] as const) {
     yield* admin.unsafe(
       `insert into core.principal_auth_bindings
@@ -470,6 +486,12 @@ const seedTenant = Effect.fn('test.seedTenant')(function* seedTenant(
       `insert into core.access_memberships
          (membership_id, tenant_id, scope_id, agent_id, kind, status, valid_from, recorded_by)
        values (gen_random_uuid(), '${tenantId}', '${scopeId}', '${agent}', 'member', 'active',
+               now() - interval '1 day', '${owner}')`,
+    );
+    yield* admin.unsafe(
+      `insert into core.access_memberships
+         (membership_id, tenant_id, scope_id, principal_id, kind, status, valid_from, recorded_by)
+       values (gen_random_uuid(), '${tenantId}', '${scopeId}', '${bystander}', 'member', 'active',
                now() - interval '1 day', '${owner}')`,
     );
   }
@@ -538,6 +560,8 @@ const withStageCase = <A, E, R>(run: (stageCase: StageCase) => Effect.Effect<A, 
       const ids = {
         agent: yield* crypto.randomUUIDv4(),
         agentBinding: yield* crypto.randomUUIDv4(),
+        bystander: yield* crypto.randomUUIDv4(),
+        bystanderBinding: yield* crypto.randomUUIDv4(),
         companyId: yield* crypto.randomUUIDv4(),
         owner: yield* crypto.randomUUIDv4(),
         ownerBinding: yield* crypto.randomUUIDv4(),
@@ -844,6 +868,31 @@ const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* meas
   expect(q1.value.write.has(TASKS_MODULE)).toBe(true);
   expect(q2.value.get(agent)).toBe('N1 agent');
   expect(q3.value.proposals.some((row) => row.batchId === rejected.batchId)).toBe(true);
+
+  // A person of the company without any right reads no proposal: the read is refused before a row is loaded.
+  const bystanderPrincipal = yield* sessionPrincipal({
+    bindingId: stageCase.bystanderBinding,
+    legalEntityId: companyId,
+    principalId: stageCase.bystander,
+    tenantId,
+  });
+  const refused = yield* inShell(
+    listCompanyProposalPage(bystanderPrincipal, {}).pipe(
+      Effect.provideService(AgentReadRequestIdentity, readTransport('no-rights')),
+      Effect.flip,
+    ),
+  );
+  expect(refused._tag).toBe('ReadPermissionDenied');
+
+  // A proposal the module owner's review hides stays hidden, even from the owner who may run its Action.
+  const hidden = yield* inShell(
+    listCompanyProposalPage(ownerPrincipal, {}).pipe(
+      Effect.provideService(AgentProposalQueueModuleReview, hidingReview(rejected.proposalId)),
+      Effect.provideService(AgentReadRequestIdentity, readTransport('hidden-by-review')),
+    ),
+  );
+  expect(hidden.proposals.some((row) => row.proposalId === rejected.proposalId)).toBe(false);
+  expect(hidden.proposals.some((row) => row.batchId === approved.batchId)).toBe(true);
 
   // Decide (reject): D1 the exact batch read, D2 the reject Core Action.
   const decideCaller = yield* callerFor('d1-batch');

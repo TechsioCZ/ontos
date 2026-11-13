@@ -22,7 +22,7 @@ import {
   tenantModuleStates,
 } from '../../db/schema.ts';
 import type { CoreTransaction } from '../../db/types.ts';
-import { tenantStatesAllowingAccess } from '../../modules/module-state-gate.ts';
+import { INSTALLED_TENANT_MODULE_STATES } from '../../modules/module-state-gate.ts';
 import { configureBasesOf } from '../changes/authority.ts';
 import type { AccessConfigureBasis } from '../changes/authority.ts';
 import type { OperationalScope } from '../../operations/context.ts';
@@ -218,9 +218,6 @@ const decodeDelegatedEnvelope = Schema.decodeUnknownResult(
   }),
   ACCESS_MODEL_PARSE_OPTIONS,
 );
-
-/** Module states that still offer the module's data; anything narrower stops the installation (O7). */
-const INSTALLED_MODULE_STATES = tenantStatesAllowingAccess('read');
 
 /** The transaction's instant: the clock the caller runs under, so a test can pin it. */
 const now = Effect.fn('TenantIntentLoader.now')(function* nowEffect() {
@@ -1306,7 +1303,10 @@ const makeIntentLoaderOver = (
       .select({ moduleKey: tenantModuleStates.moduleKey })
       .from(tenantModuleStates)
       .where(
-        and(eq(tenantModuleStates.tenantId, tenantId), inArray(tenantModuleStates.state, [...INSTALLED_MODULE_STATES])),
+        and(
+          eq(tenantModuleStates.tenantId, tenantId),
+          inArray(tenantModuleStates.state, [...INSTALLED_TENANT_MODULE_STATES]),
+        ),
       );
     return yield* Effect.forEach(
       rows,

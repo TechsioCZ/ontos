@@ -26,8 +26,14 @@ import { agentProposalQueueUnavailable } from '../../src/auth/agent-proposal-que
 import { agentProposals } from '../../src/db/schema.ts';
 import { canonicalizeApplicationComposition } from '../../src/modules/application-composition.ts';
 import { OntosModuleDeploymentContractSchema } from '../../src/modules/manifest.ts';
-import { ActiveTenantModuleSchema, TenantModuleStateService } from '../../src/modules/tenant-module-state-service.ts';
-import type { TenantModuleStateServiceContract } from '../../src/modules/tenant-module-state-service.ts';
+import {
+  TenantModuleStateRecordSchema,
+  TenantModuleStateService,
+} from '../../src/modules/tenant-module-state-service.ts';
+import type {
+  TenantModuleState,
+  TenantModuleStateServiceContract,
+} from '../../src/modules/tenant-module-state-service.ts';
 import { TenantModuleStateReadUnavailableError } from '../../src/modules/tenant-module-state-read-unavailable-error.ts';
 import { ActionAuthority } from '../../src/permissions/action-authority.ts';
 import type { ActionAuthorityService } from '../../src/permissions/action-authority.ts';
@@ -388,12 +394,14 @@ const NAMED_ACTIONS_GROUPING =
 /** Second tenant: one that runs the party registry the first tenant does not. */
 const otherTenantId = '10000000-0000-4000-8000-000000000002';
 
-/** The modules each tenant runs, or a module state nobody can read. */
-const runningModules = (
-  byTenant: Readonly<Record<string, readonly string[]>> | 'unavailable',
+/** Each tenant's module states, by module; or a module state nobody can read. */
+const moduleStates = (
+  byTenant: Readonly<Record<string, Readonly<Record<string, TenantModuleState>>>> | 'unavailable',
 ): TenantModuleStateServiceContract => ({
   getTenantModuleStates: () => Effect.die('Unexpected module state lookup'),
-  listActiveTenantModules: (tenant) =>
+  // The queue counts installed exactly as the gate does, over every state, never by `active` alone.
+  listActiveTenantModules: () => Effect.die('Unexpected active-only module listing'),
+  listTenantModuleStates: (tenant) =>
     byTenant === 'unavailable'
       ? Effect.fail(
           new TenantModuleStateReadUnavailableError({
@@ -402,11 +410,10 @@ const runningModules = (
           }),
         )
       : Effect.succeed(
-          (byTenant[tenant] ?? []).map((moduleKey) =>
-            Schema.decodeSync(ActiveTenantModuleSchema)({ moduleKey, state: 'active' }),
+          Object.entries(byTenant[tenant] ?? {}).map(([moduleKey, state]) =>
+            Schema.decodeSync(TenantModuleStateRecordSchema)({ moduleKey, state }),
           ),
         ),
-  listTenantModuleStates: () => Effect.die('Unexpected module state listing'),
 });
 
 /**
@@ -426,9 +433,10 @@ const partyQueueRead = Effect.fn('AgentProposalQueueReadTest.partyQueueRead')(fu
   running: TenantModuleStateServiceContract,
   actionAuthority: ActionAuthorityService,
   named: readonly object[],
+  rows: readonly ReturnType<typeof driverRow>[] = [tableRow('update', 0)],
 ) {
   const harness = yield* makeReadTestHarness({
-    executeOwnerQuery: queueQueries([tableRow('update', 0)], named),
+    executeOwnerQuery: queueQueries(rows, named),
     operationTime,
     ownerAuthorizationDecision: 'allowed',
     permissionDecision: 'allowed',
@@ -458,6 +466,12 @@ const partyQueueRead = Effect.fn('AgentProposalQueueReadTest.partyQueueRead')(fu
   return { groupedQueries, outcome };
 });
 
+/** A pending party registry proposal beside the work task one, in the same batch page. */
+const PARTY_PAGE = [
+  tableRow('update', 0),
+  { ...tableRow('update', 1), appId: 'party-service', moduleKey: 'party.registry' },
+];
+
 /** The party registry Action an existing proposal names, as the grouped statement answers it. */
 const PARTY_ROW_ACTION = { actionSlug: 'update', appId: 'party-service', moduleKey: 'party.registry' };
 
@@ -474,7 +488,10 @@ it.layer(
     outboxWorkerCompositionLayer(),
     Layer.succeed(ActionAuthority, authority()),
     // Every fixture module runs for the tenant unless a test says otherwise.
-    Layer.succeed(TenantModuleStateService, runningModules({ [tenantId]: ['work.tasks', 'party.registry'] })),
+    Layer.succeed(
+      TenantModuleStateService,
+      moduleStates({ [tenantId]: { 'party.registry': 'active', 'work.tasks': 'active' } }),
+    ),
     Layer.succeed(AgentProposalQueueModuleReview, { review: () => Effect.die('Unexpected module review') }),
     Layer.succeed(ContextAccess, {
       legalEntities: () => Effect.die('Unexpected context access'),
@@ -1140,7 +1157,7 @@ it.layer(
       Effect.gen(function* uninstalledWithProposal() {
         const calls: string[][] = [];
         const read = yield* partyQueueRead(
-          runningModules({ [tenantId]: ['work.tasks'] }),
+          moduleStates({ [tenantId]: { 'work.tasks': 'active' } }),
           recordingAuthority(new Set(['work.tasks.update']), calls),
           [PARTY_ROW_ACTION],
         );
@@ -1149,13 +1166,47 @@ it.layer(
       }),
   );
 
+  for (const state of ['read_only', 'deprecated'] as const) {
+    suite.effect(
+      `shows a ${state} module's proposal to a person who may run its Action, as the gate counts it installed`,
+      () =>
+        Effect.gen(function* stillInstalledModule() {
+          const calls: string[][] = [];
+          const read = yield* partyQueueRead(
+            moduleStates({ [tenantId]: { 'party.registry': state, 'work.tasks': 'active' } }),
+            recordingAuthority(new Set(['work.tasks.update', 'party.registry.update']), calls),
+            [],
+            PARTY_PAGE,
+          );
+          expect(read.outcome).toBe('rows 2');
+          // One question, both Actions: the module counts as installed, so its Action is asked up front.
+          expect(calls).toHaveLength(1);
+          expect(new Set(calls[0])).toEqual(new Set(['work.tasks.update', 'party.registry.update']));
+        }),
+    );
+  }
+
+  suite.effect("never shows a suspended module's proposal, and still decides and records its refusal", () =>
+    Effect.gen(function* suspendedModule() {
+      const calls: string[][] = [];
+      const read = yield* partyQueueRead(
+        moduleStates({ [tenantId]: { 'party.registry': 'suspended', 'work.tasks': 'active' } }),
+        recordingAuthority(new Set(['work.tasks.update', 'party.registry.update']), calls),
+        [PARTY_ROW_ACTION],
+        PARTY_PAGE,
+      );
+      expect(read.outcome).toBe('rows 1');
+      expect(calls).toEqual([['work.tasks.update'], ['party.registry.update']]);
+    }),
+  );
+
   suite.effect(
     'never asks the Action of an uninstalled module nobody proposed, at the cost of one grouped statement',
     () =>
       Effect.gen(function* uninstalledWithoutProposal() {
         const calls: string[][] = [];
         const read = yield* partyQueueRead(
-          runningModules({ [tenantId]: ['work.tasks'] }),
+          moduleStates({ [tenantId]: { 'work.tasks': 'active' } }),
           recordingAuthority(new Set(['work.tasks.update']), calls),
           [],
         );
@@ -1171,7 +1222,10 @@ it.layer(
       Effect.gen(function* otherTenantModule() {
         const calls: string[][] = [];
         const read = yield* partyQueueRead(
-          runningModules({ [otherTenantId]: ['work.tasks', 'party.registry'], [tenantId]: ['work.tasks'] }),
+          moduleStates({
+            [otherTenantId]: { 'party.registry': 'active', 'work.tasks': 'active' },
+            [tenantId]: { 'work.tasks': 'active' },
+          }),
           recordingAuthority(new Set(['work.tasks.update', 'party.registry.update']), calls),
           [PARTY_ROW_ACTION],
         );
@@ -1185,7 +1239,7 @@ it.layer(
     Effect.gen(function* moduleStateUnavailable() {
       const calls: string[][] = [];
       const read = yield* partyQueueRead(
-        runningModules('unavailable'),
+        moduleStates('unavailable'),
         recordingAuthority(new Set(['work.tasks.update']), calls),
         [PARTY_ROW_ACTION],
       );
@@ -1198,7 +1252,7 @@ it.layer(
     Effect.gen(function* uninstalledUndecided() {
       const calls: string[][] = [];
       const read = yield* partyQueueRead(
-        runningModules({ [tenantId]: ['work.tasks'] }),
+        moduleStates({ [tenantId]: { 'work.tasks': 'active' } }),
         failingAuthority(new Set(['work.tasks.update']), calls, 2),
         [PARTY_ROW_ACTION],
       );
