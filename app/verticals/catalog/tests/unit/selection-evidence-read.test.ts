@@ -168,6 +168,8 @@ const selectionGate = (input: {
                 },
               ],
         ),
+      // Every company these fixtures name is the fixture Tenant's own.
+      readCompanyOwnership: () => Effect.succeed(true),
       readConnection: () => Effect.succeed(Option.none()),
       readScope: (query) =>
         Effect.succeed(

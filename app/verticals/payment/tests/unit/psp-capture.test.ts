@@ -287,6 +287,8 @@ const failureTagsOf = (outcome: CaptureOutcome) =>
 /** An intent source that resolves every request to its Tenant scope and holds no grant cells. */
 const authorityFor: AccessEnforcementPorts['intent']['authorityFor'] = () => ({
   readCells: () => Effect.succeed([]),
+  // Every company these fixtures name is the fixture Tenant's own.
+  readCompanyOwnership: () => Effect.succeed(true),
   readConnection: () => Effect.succeed(Option.none()),
   readScope: (query) =>
     Effect.succeed(
