@@ -651,14 +651,19 @@ interface CsvNumber {
 
 type CsvCell = string | number | CsvNumber | undefined;
 
+const CSV_CR = String.fromCodePoint(13);
+const CSV_LF = String.fromCodePoint(10);
+const formulaPrefixes = new Set(['=', '+', '-', '@', String.fromCodePoint(9), CSV_CR]);
+const csvQuoteCharacters = ['"', ';', CSV_CR, CSV_LF];
+
 const csvCell = (value: CsvCell) => {
   let text = '';
   if (Schema.is(Schema.String)(value)) {
-    text = /^[=+\-@\u{0009}\u{000d}]/u.test(value) ? `'${value}` : value;
+    text = formulaPrefixes.has(value.charAt(0)) ? `'${value}` : value;
   } else if (value !== undefined) {
     text = Schema.is(Schema.Number)(value) ? String(value) : value.decimal;
   }
-  return /[";\u{000d}\u{000a}]/u.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+  return csvQuoteCharacters.some((character) => text.includes(character)) ? `"${text.replaceAll('"', '""')}"` : text;
 };
 
 /** Semicolon-separated CSV with CRLF line ends (opens directly in Czech Excel; prepend a BOM when saving). */
