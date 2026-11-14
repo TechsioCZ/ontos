@@ -1,4 +1,4 @@
-import { v1 } from '@authzed/authzed-node';
+import type { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { Context, Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
@@ -16,6 +16,9 @@ import {
   makeAccessProjectionCompiler,
   makeAccessProjectionTransport,
 } from '../../src/access/compiler/spice-db-compiler.ts';
+import type { AccessProjectionTransport } from '../../src/access/compiler/spice-db-compiler.ts';
+import { DecisionCheck } from '../../src/access/decision/engine.ts';
+import type { AccessCheckItem } from '../../src/access/decision/engine.ts';
 import type { AccessDecision } from '../../src/access/decision/contract.ts';
 import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
 import { AccessDecisionLive } from '../../src/access/enforcement/service.ts';
@@ -58,7 +61,6 @@ import type { OperationalScope } from '../../src/operations/context.ts';
 import { outboxProducerModuleKey, outboxTopic } from '../../src/outbox/core-identity-principal-lifecycle-changed-v1.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
-import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import {
   createTemplateDatabase,
   insertTenantStatement,
@@ -68,16 +70,79 @@ import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/databas
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 /*
- * An agent on authorization v2, end to end on the real stores, the real projection and the real gate over a
- * SpiceDB carrying only the v2 definitions of `ONTOS_SPICEDB_SCHEMA` (stricter than stage, which keeps the pruned
- * legacy definitions but never a legacy tuple, so nothing in an agent's path can lean on one):
+ * An agent on authorization v2, end to end on the real stores, the real projection and the real gate over the shared
+ * SpiceDB, which carries the whole of `ONTOS_SPICEDB_SCHEMA`. Every question the gate puts to the engine and every
+ * relationship the projection reads or writes is recorded, and none may name an object type outside the v2 half of
+ * that schema, so nothing in an agent's path can lean on a legacy definition (stage keeps the pruned legacy
+ * definitions but never a legacy tuple). The schema itself is never rewritten here: on a shared engine other suites'
+ * legacy relationships exist, and deleting their definitions is refused:
  * the owner admits the agent to the company and assigns it a role through the People commands, the operator opens
  * the agent's credential-bound connection, and the gate decides each request AS the agent on that connection. Every
  * revocation path that Core owns is asked again on the next decision.
  */
-/** The v2 part of the schema alone: a graph without the legacy definitions cannot answer a legacy question at all. */
 const V2_MARKER = '// Authorization v2 engine';
-const V2_ONLY_SCHEMA = `use expiration\n\n${ONTOS_SPICEDB_SCHEMA.slice(ONTOS_SPICEDB_SCHEMA.indexOf(V2_MARKER))}`;
+/** The definitions of the v2 half of the one schema: the only object types an agent's path may name. */
+const V2_DEFINITIONS: ReadonlySet<string> = new Set(
+  [
+    ...ONTOS_SPICEDB_SCHEMA.slice(ONTOS_SPICEDB_SCHEMA.indexOf(V2_MARKER)).matchAll(/^definition (?<name>[a-z_]+)/gmu),
+  ].flatMap((match) => match.groups?.name ?? []),
+);
+
+/** Every SpiceDB object type a scenario's gate and projection named, and how many SpiceDB calls they made. */
+interface NamedTypes {
+  /** One entry per SpiceDB call: which port made it. */
+  readonly calls: ('check' | 'read' | 'write')[];
+  readonly types: Set<string>;
+}
+
+const noteTypes = (named: NamedTypes, call: NamedTypes['calls'][number], types: readonly (string | undefined)[]) =>
+  Effect.sync(() => {
+    named.calls.push(call);
+    for (const type of types) {
+      if (type !== undefined && type !== '') {
+        named.types.add(type);
+      }
+    }
+  });
+
+/** The real engine port, recording the resource and subject type of every item the gate asks it. */
+const recordingDecisionCheck = (named: NamedTypes) =>
+  Layer.effect(
+    DecisionCheck,
+    Effect.gen(function* recordingDecisionCheckEffect() {
+      const engine = yield* DecisionCheck;
+      return {
+        checkBulk: (items: readonly AccessCheckItem[]) =>
+          noteTypes(
+            named,
+            'check',
+            items.flatMap((item) => [item.resource.type, item.subject.type]),
+          ).pipe(Effect.andThen(engine.checkBulk(items))),
+      };
+    }),
+  );
+
+/** The real projection transport, recording the object types of every relationship it reads or writes. */
+const recordingProjectionTransport = (
+  named: NamedTypes,
+  transport: AccessProjectionTransport,
+): AccessProjectionTransport => ({
+  close: transport.close,
+  readRelationships: (request: v1.ReadRelationshipsRequest) =>
+    noteTypes(named, 'read', [
+      request.relationshipFilter?.resourceType,
+      request.relationshipFilter?.optionalSubjectFilter?.subjectType,
+    ]).pipe(Effect.andThen(transport.readRelationships(request))),
+  writeRelationships: (request: v1.WriteRelationshipsRequest) =>
+    noteTypes(
+      named,
+      'write',
+      request.updates.flatMap((update) => [
+        update.relationship?.resource?.objectType,
+        update.relationship?.subject?.object?.objectType,
+      ]),
+    ).pipe(Effect.andThen(transport.writeRelationships(request))),
+});
 
 const uid = (value: number) => `00000000-0000-4000-8000-${value.toString().padStart(12, '0')}`;
 
@@ -307,17 +372,19 @@ const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value
       maxConnections: 3,
     });
     const executor = yield* makeTestDatabaseFromClient(runtime, coreRelations);
-    // Only the v2 definitions: nothing in an agent's path may lean on a legacy definition that denies by absence.
+    // The v2 half exists and carries the access types and the agent, and no legacy one: the set the recordings below
+    // are held to.
     expect(ONTOS_SPICEDB_SCHEMA.indexOf(V2_MARKER)).toBeGreaterThan(0);
-    yield* Effect.acquireUseRelease(
-      Effect.sync(() => newSpiceDbGrpcClient(configuration)),
-      (client) =>
-        Effect.tryPromise(() =>
-          client.promises.writeSchema(v1.WriteSchemaRequest.create({ schema: V2_ONLY_SCHEMA })),
-        ).pipe(Effect.orDie),
-      (client) => Effect.sync(() => client.close()),
+    expect(['access_scope', 'agent', 'legal_entity', 'principal'].map((type) => V2_DEFINITIONS.has(type))).toEqual([
+      true,
+      true,
+      false,
+      false,
+    ]);
+    const named: NamedTypes = { calls: [], types: new Set() };
+    const compiler = makeAccessProjectionCompiler(
+      recordingProjectionTransport(named, makeAccessProjectionTransport(configuration)),
     );
-    const compiler = makeAccessProjectionCompiler(makeAccessProjectionTransport(configuration));
     const platforms = Layer.mergeAll(
       Layer.succeed(CoreDatabase, { executor }),
       Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
@@ -347,7 +414,11 @@ const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value
       Layer.mergeAll(
         base,
         TenantAccessBootstrapLive.pipe(Layer.provide(base)),
-        AccessDecisionLive.pipe(Layer.provide(AccessEnforcementPortsLive), Layer.provide(base)),
+        AccessDecisionLive.pipe(
+          Layer.provide(recordingDecisionCheck(named)),
+          Layer.provide(AccessEnforcementPortsLive),
+          Layer.provide(base),
+        ),
         AccessPeopleCommandsLive.pipe(Layer.provide(base)),
       ),
     );
@@ -402,7 +473,7 @@ const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value
         Effect.catchTag('AccessChangesStoreConflictError', ({ code, reason }) => Effect.succeedSome({ code, reason })),
         Effect.orDie,
       );
-    return yield* run({
+    const result = yield* run({
       admin,
       cellsOf,
       connections: Context.get(context, AgentConnectionStore),
@@ -415,6 +486,12 @@ const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value
       release,
       tenantId,
     });
+    // SpiceDB was really reached (every tenant's bootstrap writes its projection), and no call this scenario made —
+    // the gate's questions, the projection's reads and writes — named a type outside the v2 half: nothing in this
+    // agent's path leaned on a legacy definition.
+    expect(named.calls).toContain('write');
+    expect([...named.types].filter((type) => !V2_DEFINITIONS.has(type)).toSorted()).toEqual([]);
+    return result;
   }).pipe(Effect.scoped);
 
 const decisionAt = DateTime.toDateUtc(DateTime.makeUnsafe('2030-01-01T00:00:00Z'));
