@@ -79,6 +79,8 @@ const ABSENT_WORKER_KEY = 'commerce.merchandise.project-offer';
 const ABSENT_CONSUMER = 'commerce.merchandise';
 /** How every refusal before admission closes reads. */
 const REFUSED_BEFORE_ADMISSION = 'drain was not started: durable admission is unchanged';
+/** How a failed publication reports that it returned the authority itself. */
+const RETURNED_TO_ACTIVE = 'returned to active with durable admission open';
 
 const snapshotFor = (buildMarker: string, validitySeconds: number) =>
   Effect.gen(function* buildSnapshot() {
@@ -256,6 +258,57 @@ const writeUnclaimableDelivery = (f: DrainFixture) =>
     });
     return yield* Effect.void;
   });
+
+/** A live worker of the retiring release holds the lifecycle delivery, so a drain waits for it. */
+const holdLifecycleDelivery = (f: DrainFixture) =>
+  f.runtime
+    .update(outboxDeliveries)
+    .set({
+      claimedAt: sql`clock_timestamp()`,
+      claimedBy: 'retiring-release-worker',
+      claimExpiresAt: sql`clock_timestamp() + interval '10 minutes'`,
+      status: 'processing',
+    })
+    .where(eq(outboxDeliveries.workerKey, corePrincipalLifecycleSubscription.workerKey));
+
+/** Waits, bounded, until the authority reaches `phase`. */
+const untilPhase = (f: DrainFixture, phase: string) =>
+  Effect.gen(function* untilPhaseEffect() {
+    for (;;) {
+      const row = yield* authorityRow(f.runtime);
+      if (row?.phase === phase) {
+        return yield* Effect.void;
+      }
+      yield* Effect.sleep('100 millis');
+    }
+  }).pipe(Effect.timeout('60 seconds'), Effect.orDie);
+
+/** One more committed, unmatched principal-lifecycle message in the fixture tenant, as an Action writes it. */
+const writeLifecycleMessage = (f: DrainFixture) =>
+  f.runtime.transaction(
+    Effect.fn(function* writeLifecycleMessageEffect(transaction) {
+      const [event] = yield* transaction
+        .insert(domainEvents)
+        .values({
+          eventType: corePrincipalLifecycleSubscription.topic,
+          payloadJson: {},
+          producerModuleKey: corePrincipalLifecycleSubscription.producerModuleKey,
+          subjectModuleKey: corePrincipalLifecycleSubscription.producerModuleKey,
+          subjectResourceId: f.tenantId,
+          subjectResourceType: 'principal',
+          tenantId: f.tenantId,
+        })
+        .returning({ id: domainEvents.domainEventId });
+      yield* transaction.insert(outboxMessages).values({
+        domainEventId: Option.getOrThrow(Option.fromNullishOr(event)).id,
+        payloadJson: { data: { principalId: f.tenantId, state: 'disabled', tenantId: f.tenantId }, schemaVersion: 1 },
+        producerModuleKey: corePrincipalLifecycleSubscription.producerModuleKey,
+        tenantId: f.tenantId,
+        topic: corePrincipalLifecycleSubscription.topic,
+      });
+      return yield* Effect.void;
+    }),
+  );
 
 /** The operator and reason every abandonment in this suite records. */
 const OPERATOR = 'operator@example.test';
@@ -726,7 +779,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       expect(reason).not.toContain('drain was not started');
       expect(reason).toContain('did not finish within its freshness lease');
       // The failing publisher returned the same revision to active before it exited, and said so.
-      expect(reason).toContain('returned to active with durable admission open');
+      expect(reason).toContain(RETURNED_TO_ACTIVE);
       expect(yield* authorityRow(f.runtime)).toMatchObject({
         durableWorkAdmission: 'open',
         phase: 'active',
@@ -898,7 +951,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       const reason = Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '';
       expect(reason).toContain('re-drains, so the Application Composition transition was abandoned');
       // The exhausted promotion no longer leaves the authority draining: the publisher returned it to active.
-      expect(reason).toContain('returned to active with durable admission open');
+      expect(reason).toContain(RETURNED_TO_ACTIVE);
       expect(yield* authorityRow(f.runtime)).toMatchObject({
         durableWorkAdmission: 'open',
         phase: 'active',
@@ -1038,6 +1091,101 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       // Once no publisher is alive, the same command goes through.
       yield* abandonDrainAsOperator(operatorFlags(f.old.composition.revision)).pipe(Effect.provide(f.layer));
       expect(yield* authorityRow(f.runtime)).toMatchObject({ phase: 'active' });
+      return yield* Effect.void;
+    }),
+  );
+
+  suite.effect('an interrupted publication returns the authority to active and records the interruption', () =>
+    Effect.gen(function* interruptedPublication() {
+      const f = yield* fixture();
+      // A delivery held by a live worker of the retiring release keeps the drain waiting.
+      yield* holdLifecycleDelivery(f);
+      const next = yield* snapshotFor(`${FIXTURE_NAME}-new`, 7200);
+      const publication = yield* publishApplicationCompositionAuthoritySnapshot(next, Effect.void, Effect.void).pipe(
+        Effect.provide(f.layer),
+        Effect.forkChild,
+      );
+      yield* untilPhase(f, 'draining');
+      // The platform stops the hung host (SIGTERM after its readiness timeout): the publication is interrupted.
+      yield* Fiber.interrupt(publication);
+      expect(yield* authorityRow(f.runtime)).toMatchObject({
+        durableWorkAdmission: 'open',
+        phase: 'active',
+        revision: f.old.composition.revision,
+      });
+      const [recorded] = yield* f.admin.executor.select().from(applicationCompositionDrainAbandonments);
+      expect(recorded).toMatchObject({ initiatedBy: 'publisher', revision: f.old.composition.revision });
+      expect(recorded?.reason).toContain('interrupted');
+      return yield* Effect.void;
+    }),
+  );
+
+  suite.effect('a quiescence check that fails after draining still returns the authority to active', () =>
+    Effect.gen(function* failingCheckAfterDraining() {
+      const f = yield* fixture();
+      const calls = yield* Ref.make(0);
+      // The first check runs before the enter-draining fence; the second, after it and before the promote.
+      const refuseAfterDraining = Ref.updateAndGet(calls, (seen) => seen + 1).pipe(
+        Effect.flatMap((seen) =>
+          seen === 2
+            ? Effect.fail(
+                new ApplicationCompositionAuthorityError({
+                  code: 'application_composition_authority_unavailable',
+                  reason: 'a retired executable is still running',
+                }),
+              )
+            : Effect.void,
+        ),
+      );
+      const next = yield* snapshotFor(`${FIXTURE_NAME}-new`, 7200);
+      const failure = yield* publishApplicationCompositionAuthoritySnapshot(
+        next,
+        Effect.void,
+        refuseAfterDraining,
+      ).pipe(Effect.provide(f.layer), Effect.flip);
+      expect(reasonOf(failure)).toContain('a retired executable is still running');
+      expect(reasonOf(failure)).toContain(RETURNED_TO_ACTIVE);
+      expect(yield* authorityRow(f.runtime)).toMatchObject({
+        durableWorkAdmission: 'open',
+        phase: 'active',
+        revision: f.old.composition.revision,
+      });
+      expect(yield* f.admin.executor.select().from(applicationCompositionDrainAbandonments)).toHaveLength(1);
+      return yield* Effect.void;
+    }),
+  );
+
+  suite.effect('a message committed while the fence waited does not fail the publication', () =>
+    Effect.gen(function* messageDuringFenceWait() {
+      const f = yield* fixture();
+      const calls = yield* Ref.make(0);
+      // Right before the first fence attempt, ordinary traffic commits a message; the running matcher takes it a
+      // moment later. Only a retried fence sees it matched.
+      const trafficBeforeFence = Ref.updateAndGet(calls, (seen) => seen + 1).pipe(
+        Effect.flatMap((seen) =>
+          seen === 1
+            ? writeLifecycleMessage(f).pipe(
+                Effect.andThen(
+                  Effect.gen(function* matchShortlyAfter() {
+                    yield* Effect.sleep('1500 millis');
+                    yield* f.repository.matchUnmatched(f.old.composition.revision, yield* DateTime.nowAsDate);
+                  }).pipe(Effect.ignore, Effect.forkChild),
+                ),
+                Effect.asVoid,
+              )
+            : Effect.void,
+        ),
+      );
+      const next = yield* snapshotFor(`${FIXTURE_NAME}-new`, 7200);
+      yield* publishApplicationCompositionAuthoritySnapshot(next, Effect.void, trafficBeforeFence).pipe(
+        Effect.provide(f.layer),
+      );
+      expect(yield* Ref.get(calls)).toBeGreaterThanOrEqual(3);
+      expect(yield* authorityRow(f.runtime)).toMatchObject({
+        durableWorkAdmission: 'open',
+        phase: 'active',
+        revision: next.composition.revision,
+      });
       return yield* Effect.void;
     }),
   );

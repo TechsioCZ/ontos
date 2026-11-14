@@ -1,5 +1,6 @@
 import { eq, sql } from 'drizzle-orm';
 import {
+  Cause,
   Clock,
   Config,
   Context,
@@ -473,15 +474,9 @@ const assessDrainStart = Effect.fn('ApplicationCompositionAuthority.assessDrainS
 
 type DrainStartAssessment = Effect.Success<ReturnType<typeof assessDrainStart>>;
 
-/**
- * The reasons a drain must not start, or `[]` when it may. Before admission closes, a freshly written unmatched
- * message is in-flight work the running matcher takes. Under the enter-draining fence it is not: the matcher is
- * blocked by the exclusive authority lock, so an unmatched message there is work whose deliveries nobody has been
- * able to classify, and it blocks too (`unmatchedBlocks`).
- */
+/** The reasons a drain must not start, or `[]` when it may; fresh unmatched messages are judged by the caller. */
 const drainStartRefusals = Effect.fn('ApplicationCompositionAuthority.drainStartRefusals')(function* drainStartRefusals(
   assessment: DrainStartAssessment,
-  unmatchedBlocks: boolean,
 ) {
   // A dead delivery keeps the description the operator commands already use; the other reasons have no command.
   // If that description cannot be read, the dead rows are still named from the assessment itself: a refusal must
@@ -503,11 +498,6 @@ const drainStartRefusals = Effect.fn('ApplicationCompositionAuthority.drainStart
       : [
           `${String(assessment.stalledMessages)} Outbox message(s) have waited longer than the whole drain budget without being matched: no matcher is running, so the drain could never finish.`,
         ]),
-    ...(unmatchedBlocks && assessment.stalledMessages === 0 && assessment.unmatched > 0
-      ? [
-          `${String(assessment.unmatched)} Outbox message(s) were still unmatched when the drain was about to start, so their deliveries could not be checked.`,
-        ]
-      : []),
   ];
 });
 
@@ -529,7 +519,7 @@ const refuseUndrainableWork = Effect.fn('ApplicationCompositionAuthority.refuseU
         Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(unreadable) : Effect.die(defect))),
         Effect.mapError(() => unreadable),
       );
-    const refusals = yield* drainStartRefusals(assessment, false);
+    const refusals = yield* drainStartRefusals(assessment);
     if (refusals.length === 0) {
       return yield* Effect.void;
     }
@@ -543,7 +533,7 @@ const refuseUndrainableWork = Effect.fn('ApplicationCompositionAuthority.refuseU
 );
 
 /** How long the publisher lets the running matcher take freshly written messages before it enters `draining`. */
-const MATCHED_BEFORE_DRAINING = Duration.seconds(30);
+const MATCHED_BEFORE_DRAINING = Duration.seconds(10);
 
 /**
  * Waits, bounded, until no message is unmatched. The pre-flight is a point in time; the enter-draining fence
@@ -586,23 +576,40 @@ const reopenAfterRefusedDrain = Effect.fn('ApplicationCompositionAuthority.reope
   },
 );
 
+/** How a fence attempt that found only freshly written, still unmatched messages says so. */
+const UNMATCHED_AT_FENCE = 'Outbox message(s) were still unmatched at the enter-draining fence';
+/** How many times the fence is tried while ordinary traffic keeps writing messages the matcher has yet to take. */
+const FENCE_ATTEMPTS = 5;
+
 /**
- * The enter-draining fence: under the exclusive authority lock, the same assessment as the pre-flight runs again,
- * and the phase moves to `draining` only when nothing in it could stall the drain. Unmatched messages block here.
+ * The enter-draining fence: under the exclusive authority lock, the same assessment as the pre-flight runs again, and
+ * the phase moves to `draining` only when nothing in it could stall the drain. A message still unmatched here also
+ * stops it — under this lock no matcher runs, so its deliveries cannot be checked — but that alone is ordinary
+ * traffic committed while the lock waited, so it fails with `UNMATCHED_AT_FENCE` and the caller tries again.
  */
 const enterDrainingIfDrainable = Effect.fn('ApplicationCompositionAuthority.enterDrainingIfDrainable')(
   function* enterDrainingIfDrainable(transaction: CoreTransaction, revision: string, budgetMs: number) {
-    const refusals = yield* drainStartRefusals(yield* assessDrainStart(transaction, budgetMs), true);
+    const assessment = yield* assessDrainStart(transaction, budgetMs);
+    const refusals = yield* drainStartRefusals(assessment);
     if (refusals.length > 0) {
       return yield* unavailable([`${DRAIN_NOT_STARTED}:`, ...refusals].join(' '));
+    }
+    if (assessment.unmatched > 0) {
+      return yield* unavailable(
+        `${DRAIN_NOT_STARTED}: ${String(assessment.unmatched)} ${UNMATCHED_AT_FENCE}, so their deliveries could not be checked.`,
+      );
     }
     return yield* drainApplicationCompositionAuthority(transaction, revision);
   },
 );
 
 /** Only a refusal the enter-draining fence itself raised reopens admission; any other failure passes through. */
-const reopenWhenRefused = (revision: string) => (error: ApplicationCompositionAuthorityError) =>
-  error.reason.startsWith(DRAIN_NOT_STARTED) ? reopenAfterRefusedDrain(revision, error.reason) : Effect.fail(error);
+const reopenWhenRefused =
+  (revision: string) =>
+  <Failure,>(error: Failure) =>
+    Schema.is(ApplicationCompositionAuthorityError)(error) && error.reason.startsWith(DRAIN_NOT_STARTED)
+      ? reopenAfterRefusedDrain(revision, error.reason)
+      : Effect.fail(error);
 
 /** Who the publisher's own drain abandonments are recorded as. */
 const DRAIN_PUBLISHER = 'application-composition-publisher';
@@ -621,6 +628,11 @@ const failureReason = <Failure,>(failure: Failure): string => {
   return Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : 'The publication failed';
 };
 
+const restoreFailed = (why: string): DrainRestoreOutcome => ({
+  authorityPhase: 'unknown',
+  description: `The authority could not be returned to active (${why}): run \`pnpm composition:abandon-drain\` as described in docs/architecture/DEPLOYMENT.md.`,
+});
+
 /**
  * After a publication failed in or after its drain, while nothing was sealed and its own migration never started,
  * return the SAME revision to `active` with durable admission open, so the running release serves again:
@@ -636,6 +648,10 @@ const restoreAfterFailedDrain = Effect.fn('ApplicationCompositionAuthority.resto
     return yield* database.executor
       .transaction((transaction) =>
         Effect.gen(function* restoreHeldAuthority() {
+          // Bounded by the database, not by an Effect timeout: this also runs as an exit finalizer of an interrupted
+          // publication, where nothing can interrupt it. The transaction commits whole or rolls back.
+          yield* transaction.execute(sql`set local lock_timeout = '5s'`, 'objects');
+          yield* transaction.execute(sql`set local statement_timeout = '10s'`, 'objects');
           yield* lockApplicationCompositionPublication(transaction);
           const [row] = yield* transaction
             .select({
@@ -671,11 +687,10 @@ const restoreAfterFailedDrain = Effect.fn('ApplicationCompositionAuthority.resto
         }),
       )
       .pipe(
-        Effect.catch((error) =>
-          Effect.succeed({
-            authorityPhase: 'unknown',
-            description: `The authority could not be returned to active (${failureReason(error)}): run \`pnpm composition:abandon-drain\` as described in docs/architecture/DEPLOYMENT.md.`,
-          } satisfies DrainRestoreOutcome),
+        Effect.catch((error) => Effect.succeed(restoreFailed(failureReason(error)))),
+        // A SQL error can arrive as a defect; the restore must still report instead of dying.
+        Effect.catchDefect((defect) =>
+          isSqlError(defect) ? Effect.succeed(restoreFailed('the database refused the restore')) : Effect.die(defect),
         ),
       );
   },
@@ -701,7 +716,19 @@ const withRestoreOutcome = <Failure,>(failure: Failure, outcome: DrainRestoreOut
     : failure;
 };
 
-/** On any failure of `effect`, restore the authority (`restoreAfterFailedDrain`) and fail with both stories. */
+/** What the ledger records when a publication ended without a failure of its own. */
+const INTERRUPTED_REASON =
+  'The publication was interrupted (stopped by the platform or by its own deadline) before it finished; its drain was abandoned.';
+const DEFECT_REASON = 'The publication stopped on an unexpected defect before it finished; its drain was abandoned.';
+
+/**
+ * From closing admission to the promote's or seal's commit, return the authority however `effect` ends early:
+ * - an ordinary failure restores (`restoreAfterFailedDrain`) and fails with both stories;
+ * - an interruption — the platform's SIGTERM after its readiness timeout, an outer deadline — or a defect skips that
+ *   handler, and is exactly how a hung publication ends. The exit hook restores then too, still inside the
+ *   publication session lock this effect runs under. It runs uninterruptibly, bounded by the restore's own database
+ *   timeouts, and its own failure never replaces the exit.
+ */
 const restoringAuthorityOnFailure =
   (revision: string) =>
   <Value, Failure, Requirements>(effect: Effect.Effect<Value, Failure, Requirements>) =>
@@ -713,6 +740,21 @@ const restoringAuthorityOnFailure =
           ),
         onSuccess: Effect.succeed,
       }),
+      Effect.onExit((exit) =>
+        Exit.isFailure(exit) && !Cause.hasFails(exit.cause)
+          ? restoreAfterFailedDrain(
+              revision,
+              Cause.hasInterrupts(exit.cause) ? INTERRUPTED_REASON : DEFECT_REASON,
+            ).pipe(
+              Effect.flatMap((outcome) =>
+                outcome.description === ''
+                  ? Effect.void
+                  : Effect.logWarning(`Application Composition publication ended early. ${outcome.description}`),
+              ),
+              Effect.ignore,
+            )
+          : Effect.void,
+      ),
     );
 
 interface CurrentApplicationCompositionAuthority {
@@ -819,20 +861,30 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
             logApplicationCompositionDrainBlockers,
           );
           progressState.phase = 'enter-draining';
-          // The pre-flight was a point in time: work matched since then has never been checked. Let the running
-          // matcher take what is in flight first; the fence below re-checks under the exclusive authority lock,
-          // where the matcher is blocked and the answer cannot move before the phase does. This wait comes before
-          // the legacy observation, which must stay immediately before the fence it justifies.
-          yield* waitForMatchedMessages;
-          // A provider receipt alone is insufficient: re-observe the actual retired executables.
-          yield* verifyLegacyQuiescence;
-          yield* requireNoLegacyRuntimeTransactions();
-          // Owner locks remain held until the nested Core transaction actually COMMITs.
+          // The pre-flight was a point in time: work matched since then has never been checked. Each attempt lets the
+          // running matcher take what is in flight first; the fence then re-checks under the exclusive authority lock,
+          // where the matcher is blocked and the answer cannot move before the phase does. The legacy observation
+          // stays immediately before the fence it justifies. Writes admitted while the lock waited can leave fresh
+          // unmatched messages behind; only those are tried again, a bounded number of times, inside the budget.
+          const enterDraining = waitForMatchedMessages.pipe(
+            // A provider receipt alone is insufficient: re-observe the actual retired executables.
+            Effect.andThen(verifyLegacyQuiescence),
+            Effect.andThen(requireNoLegacyRuntimeTransactions()),
+            // Owner locks remain held until the nested Core transaction actually COMMITs.
+            Effect.andThen(
+              withVerifiedLegacyTransition(current.revision, (transaction) =>
+                enterDrainingIfDrainable(transaction, current.revision, budgetMs),
+              ),
+            ),
+            Effect.retry({
+              schedule: Schedule.recurs(FENCE_ATTEMPTS - 1),
+              while: (error) =>
+                Schema.is(ApplicationCompositionAuthorityError)(error) && error.reason.includes(UNMATCHED_AT_FENCE),
+            }),
+          );
           yield* withApplicationCompositionPublicationProgress(
             'enter draining (authority fence)',
-            withVerifiedLegacyTransition(current.revision, (transaction) =>
-              enterDrainingIfDrainable(transaction, current.revision, budgetMs),
-            ).pipe(Effect.catchTag('ApplicationCompositionAuthorityError', reopenWhenRefused(current.revision))),
+            enterDraining.pipe(Effect.catch(reopenWhenRefused(current.revision))),
           );
         }
         yield* Ref.set(drainScope, null);
@@ -861,10 +913,7 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
         }),
       );
       return yield* Effect.void;
-    }).pipe(
-      Effect.timeoutOrElse({ duration: Duration.millis(budgetMs), orElse: budgetExpired }),
-      restoringAuthorityOnFailure(current.revision),
-    );
+    }).pipe(Effect.timeoutOrElse({ duration: Duration.millis(budgetMs), orElse: budgetExpired }));
   },
 );
 
@@ -1047,14 +1096,17 @@ export const runApplicationCompositionMigration = Effect.fn('ApplicationComposit
           );
         } else if (current.phase !== 'sealed') {
           const remainingDrainMs = Math.max(1, Math.min(drainMs, deadline - (yield* Clock.currentTimeMillis)));
-          state.phase = DURABLE_DRAIN;
-          yield* prepareApplicationCompositionDrain(current, verifyInitialCutover, remainingDrainMs, state);
-          state.phase = 'seal';
-          yield* verifyInitialCutover;
-          yield* requireNoLegacyRuntimeTransactions();
-          yield* withDrainedCompositionTransition(current, (transaction) =>
-            sealApplicationCompositionAuthority(transaction, current.revision),
-          ).pipe(restoringAuthorityOnFailure(current.revision));
+          // From closing admission to the seal's commit, any early end returns this revision to active.
+          yield* Effect.gen(function* drainAndSeal() {
+            state.phase = DURABLE_DRAIN;
+            yield* prepareApplicationCompositionDrain(current, verifyInitialCutover, remainingDrainMs, state);
+            state.phase = 'seal';
+            yield* verifyInitialCutover;
+            yield* requireNoLegacyRuntimeTransactions();
+            yield* withDrainedCompositionTransition(current, (transaction) =>
+              sealApplicationCompositionAuthority(transaction, current.revision),
+            );
+          }).pipe(restoringAuthorityOnFailure(current.revision));
           state.authorityPhase = 'sealed';
         }
         if (current?.phase === 'sealed') {
@@ -1200,40 +1252,41 @@ export const publishApplicationCompositionAuthoritySnapshot = Effect.fn(
       );
       return value;
     }
+    const promoteAndPublish = (transaction: CoreTransaction) =>
+      publishApplicationCompositionAuthority(transaction, approved).pipe(Effect.andThen(publishProviderPointer));
     if (current === undefined) {
       // Old binaries cannot participate in the new fences. Provider quiescence is required only
       // for the first row, before any new authority or public pointer can be published.
       yield* verifyInitialCutover;
       yield* requireNoLegacyRuntimeTransactions();
       yield* installApplicationCompositionCompletionSchema();
-    } else {
-      if (DateTime.toEpochMillis(approved.validUntil) <= current.validUntil.getTime()) {
-        return yield* unavailable('A replacement Application Composition needs newer freshness evidence');
-      }
-      if (current.phase === 'sealed') {
-        return yield* unavailable('A sealed Application Composition requires a successfully completed migration');
-      }
+      // Absence of a Core authority row does not imply absence of retained owner history.
+      return yield* withApplicationCompositionPublicationProgress(
+        'promote native authority and publish provider pointer',
+        withVerifiedLegacyTransition(null, promoteAndPublish),
+      );
+    }
+    if (DateTime.toEpochMillis(approved.validUntil) <= current.validUntil.getTime()) {
+      return yield* unavailable('A replacement Application Composition needs newer freshness evidence');
+    }
+    if (current.phase === 'sealed') {
+      return yield* unavailable('A sealed Application Composition requires a successfully completed migration');
+    }
+    // From closing admission to the promote's commit — the drain, the quiescence checks after it and the promote
+    // itself — any early end returns this revision to active.
+    return yield* Effect.gen(function* drainAndPromote() {
       if (current.phase !== 'migrated') {
         yield* installApplicationCompositionCompletionSchema();
         yield* prepareApplicationCompositionDrain(current, verifyInitialCutover);
       }
-    }
-    const promoteAndPublish = (transaction: CoreTransaction) =>
-      publishApplicationCompositionAuthority(transaction, approved).pipe(Effect.andThen(publishProviderPointer));
-    if (current !== undefined) {
       // A recovered row is not proof that this deployment observed legacy absence.
       yield* verifyInitialCutover;
       yield* requireNoLegacyRuntimeTransactions();
-    }
-    // Absence of a Core authority row does not imply absence of retained owner history.
-    return yield* withApplicationCompositionPublicationProgress(
-      'promote native authority and publish provider pointer',
-      current === undefined
-        ? withVerifiedLegacyTransition(null, promoteAndPublish)
-        : withDrainedCompositionTransition(current, promoteAndPublish).pipe(
-            restoringAuthorityOnFailure(current.revision),
-          ),
-    );
+      return yield* withApplicationCompositionPublicationProgress(
+        'promote native authority and publish provider pointer',
+        withDrainedCompositionTransition(current, promoteAndPublish),
+      );
+    }).pipe(restoringAuthorityOnFailure(current.revision));
   });
   return yield* withApplicationCompositionPublicationLock(publication);
 });
