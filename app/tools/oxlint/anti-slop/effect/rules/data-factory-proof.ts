@@ -3552,10 +3552,10 @@ class DataFactoryProof {
             ? values[0].element
             : BAD,
       };
-    // A Json value is an acyclic tree of null, strings, booleans, finite numbers, arrays and plain (Object.prototype or
-    // null-prototype) objects: effect's `SchemaAST.isJson` rejects functions, class instances, symbols, undefined and
-    // bigints. `isClosedData` means "no function, class instance, unknown or open record reachable", which every such
-    // tree satisfies, so the opaque data leaf models it soundly in every mode.
+    // `Schema.Json` (resolved by its import from effect, never by name) decodes to the type
+    // `Json = null | number | boolean | string | JsonArray | JsonObject`, whose arrays and objects hold only `Json`.
+    // That type admits no function, class instance, symbol, bigint, undefined or unknown member, which is exactly what
+    // `isClosedData` excludes, so it is the same opaque closed data leaf public-codec mode already accepts.
     if (name === 'effect:Schema.Json') return schema({ kind: 'data', native: 'json' });
     if (name === 'effect:Schema.Unknown') return schema(BAD);
     if (this.strictSchemaExports && ['effect:Schema.Finite', 'effect:Schema.Int'].includes(name)) return { ...schema(DATA), astTag: 'Number', astChecks: [this.nativeSchemaFilter(name.endsWith('.Int') ? 'isInt' : 'isFinite', [])] };
