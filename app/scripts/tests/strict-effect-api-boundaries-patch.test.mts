@@ -10,7 +10,7 @@ import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 /**
- * Executable regression for patches/@bleedingdev__modern-js-code-tools@3.9.3-ultramodern.19.patch: the
+ * Executable regression for patches/@bleedingdev__modern-js-code-tools@3.11.3-ultramodern.1.patch: the
  * strict-effect-api-boundaries Schema check must run on runtime member expressions only. The type-only
  * `typeof Schema.Unknown.Type` reference in shell-system-search stays accepted, while runtime
  * Schema.Unknown / Schema.Any / Schema.UnknownFromJsonString access keeps failing both the Oxlint rule
