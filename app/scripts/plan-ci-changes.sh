@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # This preflight uses only Git and jq. Documentation must not install the app to discover it needs no app checks.
+# A manual dispatch is a complete run, except a candidate/* dispatch whose workflow resolved a comparison point
+# (CANDIDATE_DISPATCH=true with BASE_SHA set): it is classified like a pull request against that point.
 set -euo pipefail
 
 paths_file="${1:?Pass the changed-paths output file}"
@@ -11,7 +13,9 @@ reason='This event requires the complete suite.'
 if [[ "${QUEUE_PROVEN:-false}" == true && "${FORCE_FULL:-false}" != true ]]; then
   mode=proven
   reason='The merge queue already proved this exact commit.'
-elif [[ "${FORCE_FULL:-false}" != true && "${GITHUB_EVENT_NAME:-}" =~ ^(pull_request|merge_group|push)$ ]]; then
+elif [[ "${FORCE_FULL:-false}" != true &&
+  ("${GITHUB_EVENT_NAME:-}" =~ ^(pull_request|merge_group|push)$ ||
+  ("${GITHUB_EVENT_NAME:-}" == workflow_dispatch && "${CANDIDATE_DISPATCH:-false}" == true)) ]]; then
   if [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ && "${HEAD_SHA:-}" =~ ^[0-9a-f]{40}$ ]] &&
     git cat-file -e "$BASE_SHA^{commit}" &&
     git cat-file -e "$HEAD_SHA^{commit}" &&
@@ -45,10 +49,11 @@ printf 'mode=%s\n' "$mode" >>"$GITHUB_OUTPUT"
 printf 'reason=%s\n' "$reason" >>"$GITHUB_OUTPUT"
 if [[ "$mode" == docs || "$mode" == proven ]]; then
   jq -cn '{
-    "workspace-gate":"skipped", "workspace-unit":"skipped", "static-contracts":"skipped",
-    "format-and-lint":"skipped", "service-integration":"skipped",
-    "node-artifact-build":"skipped"
+    "workspace-gate":"skipped", "workspace-unit":"skipped", "workspace-unit-artifacts":"skipped",
+    "static-contracts":"skipped", "format-and-lint":"skipped", "service-integration":"skipped",
+    "seeded-integration":"skipped", "integration-seed-proof":"skipped", "browser-integration":"skipped",
+    "node-artifact-build":"skipped", "node-artifact-proof":"skipped"
   }' | sed 's/^/expected=/' >>"$GITHUB_OUTPUT"
-  printf 'source=[]\nunit=[]\nintegration=[]\n' >>"$GITHUB_OUTPUT"
+  printf 'source=[]\nunit=[]\nunit-artifacts=[]\nintegration=[]\nseeded-integration=[]\nbrowser=[]\n' >>"$GITHUB_OUTPUT"
 fi
 printf '%s\n' "$reason"

@@ -26,6 +26,16 @@ on:
         description: Run every CI gate even if the merge queue already proved this commit.
         type: boolean
         default: false
+      keep:
+        description: On a candidate/* ref, do not let a newer candidate dispatch cancel this run, and cancel none.
+        type: boolean
+        default: false
+      base-ref:
+        description: >-
+          On a candidate/* ref, the branch to compare with: only owners changed since its merge base, and their
+          consumers, are tested; shared, configuration, auth and database changes still run everything.
+        type: string
+        default: demo/sales-crm
 
 permissions:
   contents: read
@@ -37,8 +47,14 @@ defaults:
   run:
     shell: bash
 
+# One candidate at a time: every candidate/* run shares one group, so a newer candidate dispatch cancels the older
+# candidate run instead of competing with it for the 20 runners. A run dispatched with `keep` gets a group of its own.
+# Every other ref keeps its own group; main is never cancelled.
 concurrency:
-  group: ultramodern-workspace-${{ github.workflow }}-${{ github.ref }}
+  group: >-
+    ${{ startsWith(github.ref, 'refs/heads/candidate/')
+    && (inputs.keep && format('ultramodern-workspace-kept-{0}', github.run_id) || 'ultramodern-workspace-candidates')
+    || format('ultramodern-workspace-{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
@@ -82,7 +98,10 @@ jobs:
       expected: ${{ steps.selection.outputs.expected || steps.changes.outputs.expected }}
       source: ${{ steps.selection.outputs.source || steps.changes.outputs.source }}
       unit: ${{ steps.selection.outputs.unit || steps.changes.outputs.unit }}
+      unit-artifacts: ${{ steps.selection.outputs.unit-artifacts || steps.changes.outputs.unit-artifacts }}
       integration: ${{ steps.selection.outputs.integration || steps.changes.outputs.integration }}
+      seeded-integration: ${{ steps.selection.outputs.seeded-integration || steps.changes.outputs.seeded-integration }}
+      browser: ${{ steps.selection.outputs.browser || steps.changes.outputs.browser }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -93,10 +112,27 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # A narrow fix round on a candidate ref compares with the merge base of its base branch. A name that is no plain
+      # branch, or a branch the checkout does not have, leaves the comparison empty, and the complete suite runs.
+      - name: Find the comparison point of a candidate dispatch
+        id: candidate
+        if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/candidate/') && inputs.force-ci-full != true
+        env:
+          BASE_REF: ${{ inputs.base-ref }}
+        run: |
+          if [[ ! "$BASE_REF" =~ ^[A-Za-z0-9._/-]+$ || "$BASE_REF" == *..* ]]; then
+            echo "::warning title=Complete suite::The base ref is no plain branch name; every gate runs."
+          elif base="$(git merge-base "refs/remotes/origin/$BASE_REF" HEAD)"; then
+            echo "base=$base" >>"$GITHUB_OUTPUT"
+            echo "Comparing with $BASE_REF at its merge base $base."
+          else
+            echo "::warning title=Complete suite::origin/$BASE_REF has no merge base with this commit; every gate runs."
+          fi
       - name: Classify the complete diff without app dependencies
         id: changes
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          BASE_SHA: ${{ steps.candidate.outputs.base || github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          CANDIDATE_DISPATCH: ${{ steps.candidate.outputs.base != '' }}
           HEAD_SHA: ${{ github.sha }}
           QUEUE_PROVEN: ${{ needs.queue-proof.outputs.proven }}
           FORCE_FULL: ${{ inputs.force-ci-full }}
@@ -115,7 +151,8 @@ jobs:
         working-directory: app
         env:
           BOOTSTRAP_MODE: ${{ steps.changes.outputs.mode }}
-          APPLY_AFFECTED: ${{ vars.CI_AFFECTED_ENABLED }}
+          # Candidate dispatches apply affected selection without the repository setting; others follow it.
+          APPLY_AFFECTED: ${{ (vars.CI_AFFECTED_ENABLED == 'true' || steps.candidate.outputs.base != '') && 'true' || 'false' }}
         run: |
           args=(--paths-file "$RUNNER_TEMP/ci-changed-paths")
           [[ "$BOOTSTRAP_MODE" != full ]] || args+=(--full)
@@ -211,6 +248,195 @@ jobs:
           path: ~/.cache/playwright-apt-debs
           key: ${{ steps.chromium-debs.outputs.key }}
 
+  # Each delivery unit builds from source exports only (scripts/tests/vertical-build-order.test.mts), so
+  # the units build in shards on parallel runners. A build shard only builds, packs and uploads: test jobs that read
+  # built outputs wait for the build shards, never for the proof, and node-artifact-proof proves the whole topology
+  # on its own runner. A new unit joins one shard (a test checks).
+  #
+  # The build mode is the stage deploy's (scripts/zerops/build-app.sh): two unit builds per runner, no build-time
+  # TS checker and no server typecheck or server declaration pass, because the typecheck gate proves the types of the
+  # whole workspace with TS-Go. The `.output` contract is unchanged: the same `build` script of every unit runs and
+  # owner-entry writes dist/zerops-entry.mjs. Unlike the deploy, no public origin is baked in.
+  # The Shell builds alone in shard 1; the verticals are balanced by their measured build seconds (about 580 s of
+  # one-at-a-time work per shard) and listed heaviest first, so two build lanes finish together.
+  # Listed first among the jobs that start after planning, so on a full run the build shards take free runners
+  # before the short source checks.
+  node-artifact-build:
+    name: Build node artifacts (${{ matrix.shard }}/6)
+    needs: [ci-plan]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
+    runs-on: ubuntu-latest
+    # The Shell builds for about 5 minutes since its packaged-dependency completion was rewritten (13 before); it
+    # stays alone in its shard until a run confirms that. A vertical shard holds about 300 s of build work per lane.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+        include:
+          - { shard: 1, units: apps/shell-super-app }
+          - {
+              shard: 2,
+              units: verticals/commerce-customer-context verticals/facility-operations verticals/tagging verticals/projects verticals/promotion verticals/availability,
+            }
+          - {
+              shard: 3,
+              units: verticals/party-registry verticals/crm verticals/sales-insights verticals/assortment verticals/legal-agreements verticals/price-group-catalog,
+            }
+          - {
+              shard: 4,
+              units: verticals/inventory verticals/catalog verticals/commerce-order verticals/pricing verticals/storefront-registry verticals/payment-term-catalog,
+            }
+          - {
+              shard: 5,
+              units: verticals/merchandise verticals/workforce verticals/crm-activities verticals/commerce-market-catalog verticals/payment verticals/property-leasing verticals/commerce-cart,
+            }
+          - {
+              shard: 6,
+              units: verticals/symmy-integration verticals/finance-billing verticals/sales-pipeline verticals/privacy verticals/work-tasks verticals/property-portfolio verticals/tax,
+            }
+    env:
+      BUILD_JOBS: '2'
+      MODERN_PUBLIC_SITE_URL: http://localhost:8080
+      ULTRAMODERN_DISABLE_BUILD_TS_CHECKER: '1'
+      ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
+      ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      # Per-unit output cache (scripts/ci/unit-output-cache.mts). The Actions key only locates a candidate archive:
+      # `plan` keeps a restored unit only when its recorded input digest matches this checkout, and `verify` checks
+      # the complete shard before anything is saved or packed.
+      # Cache scope: a run reads caches of its own ref and of the default branch (main), plus the base branch of a
+      # pull request. The demo trunk is not the default branch, so its caches are invisible to candidate/* refs (and
+      # this workflow does not run on trunk pushes at all). A fix round therefore reuses its own earlier runs only
+      # when it keeps dispatching on the same candidate/<name> ref. The key names the shard, so rebalancing the
+      # shards makes the next run cold.
+      - name: Name the shard's cached output paths
+        id: unit-cache-paths
+        env:
+          SHARD_UNITS: ${{ matrix.units }}
+        run: |
+          {
+            echo 'paths<<UNIT_CACHE_PATHS'
+            for unit in $SHARD_UNITS; do
+              printf 'app/%s/dist\napp/%s/.output\n' "$unit" "$unit"
+            done
+            echo 'UNIT_CACHE_PATHS'
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Restore the shard's unit outputs from earlier runs
+        id: unit-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.unit-cache-paths.outputs.paths }}
+          key: gates-units-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: gates-units-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-
+
+      - name: Keep the restored units whose inputs are unchanged
+        id: cached-plan
+        working-directory: app
+        env:
+          SHARD_UNITS: ${{ matrix.units }}
+        run: mise exec -- node scripts/ci/unit-output-cache.mts plan --units "$SHARD_UNITS" >>"$GITHUB_OUTPUT"
+
+      - name: Build the shard's changed units two at a time
+        working-directory: app
+        env:
+          BUILD_UNITS: ${{ steps.cached-plan.outputs.build }}
+        run: |
+          read -ra ids <<<"$BUILD_UNITS"
+          if [ "${#ids[@]}" -eq 0 ]; then
+            echo 'Every unit of this shard was kept from the unit output cache.'
+            exit 0
+          fi
+          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
+          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
+          logs="$RUNNER_TEMP/unit-build-logs"
+          mkdir -p "$logs"
+          export logs
+          # The app host serves the Shell and every released module from the unit's dist/zerops-entry.mjs, which
+          # scripts/zerops/build-app.sh writes after the build; the native hosted-owner fixtures start them so too.
+          served="$(mise exec -- node -e '
+            const intent = require("./topology/application-release-intent.json");
+            for (const { appId } of intent.modules) console.log(appId);
+            console.log("shell-super-app");
+          ')"
+          export served
+          # xargs bounds the parallel builds; each unit runs its own package `build` script, as pnpm -r run build does,
+          # from clean outputs, then gets its app host entry when served and its cache receipt.
+          status=0
+          printf '%s\n' "${ids[@]}" | mise exec -- xargs -P "$BUILD_JOBS" -n 1 bash -c '
+            id="$1"
+            unit="verticals/$id"
+            [ "$id" != shell-super-app ] || unit=apps/shell-super-app
+            log="$logs/$id.log"
+            started="$SECONDS"
+            if {
+              rm -rf -- "$unit/dist" "$unit/.output" &&
+                pnpm --filter "./$unit" run build &&
+                { ! grep -qxF "$id" <<<"$served" || node scripts/zerops/owner-entry.mts "$unit"; } &&
+                node scripts/ci/unit-output-cache.mts stamp --unit "$id"
+            } >"$log" 2>&1; then
+              echo "built $unit in $((SECONDS - started))s"
+            else
+              tail -80 "$log"
+              echo "::error title=Unit build failed::$unit"
+              exit 1
+            fi
+          ' _ || status=$?
+          for log in "$logs"/*.log; do
+            echo "::group::$(basename "$log" .log)"
+            cat "$log"
+            echo '::endgroup::'
+          done
+          [ "$status" -eq 0 ]
+
+      - name: Verify every unit output of the shard
+        working-directory: app
+        env:
+          SHARD_UNITS: ${{ matrix.units }}
+        run: mise exec -- node scripts/ci/unit-output-cache.mts verify --units "$SHARD_UNITS"
+
+      # Saved only after verify, under this run's own ref scope; a failed shard saves nothing.
+      - name: Save the shard's unit outputs for later runs
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.unit-cache-paths.outputs.paths }}
+          key: ${{ steps.unit-cache.outputs.cache-primary-key }}
+
+      # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
+      - name: Pack the shard's build outputs
+        working-directory: app
+        env:
+          SHARD_UNITS: ${{ matrix.units }}
+        run: |
+          read -ra units <<<"$SHARD_UNITS"
+          git ls-files --others --ignored --exclude-standard --directory -z -- "${units[@]}" \
+            | grep -zv '/node_modules/$' \
+            | tar --null --files-from=- --create --zstd --file "$RUNNER_TEMP/units.tar.zst"
+
+      - name: Upload the shard's build outputs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-units-${{ matrix.shard }}
+          path: ${{ runner.temp }}/units.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+
   # Source checks start immediately after planning; they do not wait for Node artifacts.
   workspace-gate:
     name: ${{ matrix.name }}
@@ -263,10 +489,11 @@ jobs:
           done
           [[ ${#failed[@]} -eq 0 ]]
 
+  # Unit rows whose suites read no build output start right after planning, beside the build shards.
   workspace-unit:
     name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' }}
+    needs: [ci-plan]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -290,18 +517,6 @@ jobs:
         with:
           restore-typescript-build: ${{ matrix.typescript-build == true }}
 
-      - name: Download the same-run Node artifacts for unit contract fixtures
-        if: matrix.node-artifacts == true
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: node-units-*
-          path: ${{ runner.temp }}/native-composition-units
-
-      - name: Unpack the Node artifacts for unit contract fixtures
-        if: matrix.node-artifacts == true
-        working-directory: app
-        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
-
       # The finance-billing POHODA export tests validate their generated documents against the
       # official STORMWARE dataPack 2.0 schemas, which the repository does not redistribute. Only the
       # shard that runs finance-billing needs them, so it provisions the pinned set named by
@@ -312,6 +527,73 @@ jobs:
         run: |
           command -v xmllint >/dev/null 2>&1 || sudo apt-get install --yes --no-install-recommends libxml2-utils
           mise exec -- pnpm provision:pohoda-xsd
+
+      - name: Run ${{ matrix.name }}
+        working-directory: app
+        env:
+          COMMANDS: ${{ matrix.commands }}
+          # Leave room for the runner and Effect diagnostics while checking the complete workspace.
+          GOMEMLIMIT: ${{ matrix.typescript-build && '4GiB' || '' }}
+          ULTRAMODERN_TSGO_BUILDERS: ${{ matrix.typescript-build && '1' || '' }}
+          MODERN_PUBLIC_SITE_URL: http://localhost:8080
+          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          failed=()
+          while IFS= read -r command; do
+            [[ -n "$command" ]] || continue
+            echo "::group::$command"
+            if ! mise exec -- bash -c "$command"; then
+              failed+=("$command")
+            fi
+            echo '::endgroup::'
+          done <<<"$COMMANDS"
+          for command in "${failed[@]}"; do
+            echo "::error title=Gate command failed::$command"
+          done
+          [[ ${#failed[@]} -eq 0 ]]
+
+  # Unit rows that execute public contract fixtures over this run's built outputs wait for the build shards only,
+  # never for the Node proof.
+  workspace-unit-artifacts:
+    name: ${{ matrix.name }}
+    needs: [ci-plan, node-artifact-build]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit-artifacts'] == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.ci-plan.outputs.unit-artifacts) }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: ${{ matrix.fetch_depth || 1 }}
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+        with:
+          restore-typescript-build: ${{ matrix.typescript-build == true }}
+
+      - name: Download the same-run Node artifacts for unit contract fixtures
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: node-units-*
+          path: ${{ runner.temp }}/native-composition-units
+
+      # A row names the units whose outputs its fixtures read in `artifact-units`; without it every unit is required.
+      - name: Unpack the Node artifacts for unit contract fixtures
+        working-directory: app
+        env:
+          REQUIRED_UNITS: ${{ matrix.artifact-units }}
+        # shellcheck disable=SC2086 # REQUIRED_UNITS is a list of separate unit paths.
+        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output $REQUIRED_UNITS
 
       - name: Run ${{ matrix.name }}
         working-directory: app
@@ -486,18 +768,18 @@ jobs:
           git diff --exit-code HEAD
 
   # Suites on fresh services, run side by side: the stage-shaped migrator and Outbox Worker host artifacts
-  # followed by the integration tests, and the authenticated browser tests on their own freshly migrated
-  # database. The integration tests are split into package shards that each fit the job timeout. Every
-  # shard repeats the full service preparation; the root suite and every package that no other shard names
-  # run in the first shard, so a new package can never fall out of the gate. A shard that carried several
+  # followed by the integration tests. The authenticated browser tests run in browser-integration on their own
+  # freshly migrated database; they read no build output, so they start right after planning.
+  # The integration tests are split into package shards that each fit the job timeout. Every
+  # shard repeats the full service preparation; every package that no other shard names runs in the
+  # Database catch-all shard, so a new package can never fall out of the gate. A shard that carried several
   # packages' suites always finished last, so the heaviest packages get a job each: a PR waits for the
   # slowest job, not for the sum of the packages a single job used to run one after another.
   #
-  # Sharding is set by what a package's own files cost, not by package size. Rstest splits shards by file,
-  # so a package with one dominant file cannot be balanced below that file - but more shards still shorten
-  # it, because fewer other files ride along in the shard that carries it. Commerce Customer Context has a
-  # single 10.3-minute file among 48, so its shards stay under a small share of the rest. Privacy's files
-  # are even (its heaviest is 3.7 minutes of a 14.6-minute job), so two shards halve it outright.
+  # Sharding is set by what a package's own files cost, not by package size, aiming at about 6 minutes of tests
+  # per row. Weighted shards deal files by the measured seconds in ci-matrices.json "test-weights", so the parts of
+  # a split giant file spread over the shards; an unsplit file cannot be balanced below its own length. The rows
+  # are listed heaviest first, so on a full run the longest jobs take the first free runners.
   service-integration:
     name: ${{ matrix.name }}
     needs: [ci-plan, node-artifact-build]
@@ -554,10 +836,15 @@ jobs:
           pattern: node-units-*
           path: ${{ runner.temp }}/native-composition-units
 
+      # The stage migrator, the Outbox Worker host and the derived Composition read every unit, so a row names a
+      # smaller `artifact-units` set only when none of those run on it; without it every unit is required.
       - name: Unpack the Node artifacts for native owner fixtures
         if: matrix.suite == 'integration'
         working-directory: app
-        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
+        env:
+          REQUIRED_UNITS: ${{ matrix.artifact-units }}
+        # shellcheck disable=SC2086 # REQUIRED_UNITS is a list of separate unit paths.
+        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output $REQUIRED_UNITS
 
       # The native owner fixtures (Inventory's confirmation-protection suite) read the Composition these exact built
       # artifacts form; the path is exported only after the derivation decoded it as consumers decode it.
@@ -576,52 +863,6 @@ jobs:
         env:
           APP_ENV_PATH: /dev/null
         run: mise exec -- pnpm zerops:materialize --app outbox-worker-host --package app --package-dir . --worker
-
-      # The Chromium build is pinned by the Playwright version in the lockfile; its system libraries are not cached.
-      # Only warm-caches on main saves it, so parallel jobs never race to save.
-      - name: Restore the Playwright Chromium build
-        id: playwright-cache
-        if: matrix.suite == 'browser'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('app/pnpm-lock.yaml') }}
-
-      # Chromium's system libraries come from apt, whose mirror can serve them at 100 kB/s; their downloaded
-      # packages are cached per runner image. apt reuses a cached package only when it matches the index.
-      - name: Name the Chromium system-library package cache
-        id: chromium-debs
-        if: matrix.suite == 'browser'
-        run: echo "key=playwright-apt-debs-$ImageOS-$ImageVersion-${{ hashFiles('app/pnpm-lock.yaml') }}" >> "$GITHUB_OUTPUT"
-
-      - name: Restore the Chromium system-library packages
-        if: matrix.suite == 'browser'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/playwright-apt-debs
-          key: ${{ steps.chromium-debs.outputs.key }}
-          restore-keys: playwright-apt-debs-
-
-      # The system-library install goes through apt and can take minutes on a slow mirror, so it runs in the
-      # background while the services start and the migrations run; the browser tests wait for it below.
-      - name: Install Chromium and its runtime dependencies
-        id: chromium-install
-        background: true
-        if: matrix.suite == 'browser'
-        timeout-minutes: 10
-        working-directory: app
-        env:
-          CHROMIUM_CACHED: ${{ steps.playwright-cache.outputs.cache-hit }}
-        run: |
-          if [ -d ~/.cache/playwright-apt-debs ]; then
-            sudo find ~/.cache/playwright-apt-debs -maxdepth 1 -name '*.deb' -exec cp {} /var/cache/apt/archives/ \;
-          fi
-          if [ "$CHROMIUM_CACHED" = true ]; then
-            set -- install-deps chromium
-          else
-            set -- install --with-deps chromium
-          fi
-          mise exec -- pnpm --filter @app/shell-super-app exec playwright "$@"
 
       - name: Create the local SpiceDB TLS certificate
         working-directory: app
@@ -716,17 +957,26 @@ jobs:
           ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
           ROOT_SUITE: ${{ matrix.root-suite }}
           RSTEST_SHARD: ${{ matrix.rstest-shard }}
-        # Same commands as `pnpm test:integration`, with separate Rstest shards for the root and large packages.
+          # Two Rstest file workers only on rows whose suites were reviewed safe in parallel; every other row runs one.
+          RSTEST_WORKERS: ${{ matrix.rstest-workers || 1 }}
+        # Same commands as `pnpm test:integration`. The root suite and a large package (one package per row, whose
+        # test:integration script is exactly `rstest --project integration`) run as duration-weighted shards that deal
+        # the files of a split giant test family across the shards (scripts/ci/rstest-weighted-shard.sh).
         # Every suite runs even when an earlier one fails (--no-bail; the root suite's failure is kept, not fatal), so
         # one package's failure never hides another's; the step fails at the end if any of them failed.
         run: |
           status=0
-          if [[ "$ROOT_SUITE" == true ]]; then
-            mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 ${ROOT_RSTEST_SHARD:+--shard "$ROOT_RSTEST_SHARD"} || status=$?
+          if [[ "$ROOT_SUITE" == true && -n "$ROOT_RSTEST_SHARD" ]]; then
+            mise exec -- bash scripts/ci/rstest-weighted-shard.sh "$ROOT_RSTEST_SHARD" integration --pool.maxWorkers 1 || status=$?
+          elif [[ "$ROOT_SUITE" == true ]]; then
+            mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 || status=$?
           fi
-          if [[ -n "$PACKAGE_FILTERS" ]]; then
+          if [[ -n "$PACKAGE_FILTERS" && -n "$RSTEST_SHARD" ]]; then
             # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
-            mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 ${RSTEST_SHARD:+--shard "$RSTEST_SHARD"} || status=$?
+            mise exec -- pnpm $PACKAGE_FILTERS exec bash "$PWD/scripts/ci/rstest-weighted-shard.sh" "$RSTEST_SHARD" integration --pool.maxWorkers "$RSTEST_WORKERS" || status=$?
+          elif [[ -n "$PACKAGE_FILTERS" ]]; then
+            # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
+            mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 || status=$?
           fi
           exit "$status"
 
@@ -739,7 +989,464 @@ jobs:
         # Reuse this shard's services; each case migrates its own disposable source database.
         run: mise exec -- pnpm --filter @app/commerce-customer-context run test:integration:native-preproposal
 
-      # `wait` always runs, including on non-browser shards where the install was skipped.
+      - name: Show bounded service diagnostics after failure
+        if: failure()
+        working-directory: app
+        run: |
+          docker compose ps
+          docker compose logs --no-color --tail 200
+
+      - name: Remove isolated service containers and volumes
+        if: always()
+        working-directory: app
+        run: docker compose down --volumes --remove-orphans
+
+  # Runs today's complete fresh-database preparation once, with every proof it carries (login initialization, the
+  # removed runtime role, the assembled stage migrator, migrations and verification, the grant audit and the Outbox
+  # Worker host build-and-run proof), then publishes the migrated databases and the built worker host to this run's
+  # seeded rows (scripts/ci/integration-seed.mts, scripts/ci/worker-host-artifact.mts). Only full runs plan it.
+  integration-seed-proof:
+    name: Prove and publish the integration seed database
+    needs: [ci-plan, node-artifact-build]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['integration-seed-proof'] == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BETTER_AUTH_SECRET: ontos-ci-better-auth-secret-at-least-32-characters
+      BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3020,http://127.0.0.1:3020
+      BETTER_AUTH_URL: http://localhost:3020
+      DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
+      DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_ci
+      ONTOS_GATEWAY_ISSUER: http://localhost:3020
+      ONTOS_GATEWAY_PRIVATE_JWK: '{"crv":"Ed25519","d":"UoaeSCRqtNBHKhIQ-gzuhaTWwch5wyr5JUp0NOV_zR0","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}'
+      ONTOS_GATEWAY_PUBLIC_JWKS: '{"keys":[{"crv":"Ed25519","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}]}'
+      ONTOS_RUNTIME_DB_PASSWORD: ontos_runtime
+      # One login per runtime database identity, each with its own development-only password.
+      PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:party_registry_runtime@localhost:5433/ontos_ci
+      PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:party_registry_worker@localhost:5433/ontos_ci
+      POSTGRES_DB: ontos_ci
+      POSTGRES_PASSWORD: ontos_ci_admin
+      POSTGRES_PORT: '5433'
+      POSTGRES_USER: ontos_ci_admin
+      SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:shell_gateway_issuer@localhost:5433/ontos_ci
+      SPICEDB_ENDPOINT: localhost:50051
+      SPICEDB_GRPC_PORT: '50051'
+      SPICEDB_HTTP_PORT: '8443'
+      APP_ENV_PATH: /dev/null
+      SPICEDB_DATABASE_PASSWORD: spicedb
+      SPICEDB_PRESHARED_KEY: ontos-ci-spicedb-key
+      # The seed producer and its consumers connect the Commerce portal realm's runtime role with this local
+      # development-only password; the seed itself carries no credentials.
+      INTEGRATION_SEED_COMMERCE_AUTH_DATABASE_URL: postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      # Native receiving fixtures and Inventory workers use genuine published owner metadata.
+      # Restore this run's outputs instead of rebuilding or substituting synthetic build identities.
+      - name: Download the same-run Node artifacts for native owner fixtures
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: node-units-*
+          path: ${{ runner.temp }}/native-composition-units
+
+      - name: Unpack the Node artifacts of every delivery unit
+        working-directory: app
+        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
+
+      - name: Create the local SpiceDB TLS certificate
+        working-directory: app
+        # SpiceDB serves TLS only; every client pins this certificate as SPICEDB_CA_CERT.
+        run: |
+          mise exec -- pnpm spicedb:tls:local
+          {
+            echo 'SPICEDB_CA_CERT<<SPICEDB_CA_CERT_EOF'
+            cat .spicedb-tls/cert.pem
+            echo 'SPICEDB_CA_CERT_EOF'
+          } >> "$GITHUB_ENV"
+
+      - name: Start fresh PostgreSQL and SpiceDB services
+        working-directory: app
+        run: |
+          docker compose down --volumes --remove-orphans
+          docker compose up --detach --wait --wait-timeout 120
+
+      - name: Prove the fresh-database preparation and dump the seed
+        working-directory: app
+        run: mise exec -- node scripts/ci/integration-seed.mts produce --directory "$RUNNER_TEMP/integration-seed" --disposable
+
+      - name: Package the proven Outbox Worker host
+        working-directory: app
+        run: >-
+          mise exec -- node scripts/ci/worker-host-artifact.mts build --directory "$RUNNER_TEMP/worker-host"
+          --from-proof "$RUNNER_TEMP/integration-seed-proof/outbox-worker-host-artifact"
+
+      # The proof directory holds logs and is never uploaded.
+      - name: Upload the integration seed
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-seed-${{ github.run_id }}
+          path: ${{ runner.temp }}/integration-seed
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload the Outbox Worker host
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-worker-host-${{ github.run_id }}
+          path: ${{ runner.temp }}/worker-host
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Show bounded service diagnostics after failure
+        if: failure()
+        working-directory: app
+        run: |
+          docker compose ps
+          docker compose logs --no-color --tail 200
+
+      - name: Remove isolated service containers and volumes
+        if: always()
+        working-directory: app
+        run: docker compose down --volumes --remove-orphans
+
+
+  # Rows whose suites need only an ordinary migrated database restore the seed this run's producer proved, instead
+  # of repeating its preparation; the producer keeps every proof. The seed model refuses migration and recovery
+  # coverage: the Database aggregate, Root, Core Runtime, Party Registry and Customer Context rows never seed.
+  seeded-integration:
+    name: ${{ matrix.name }}
+    needs: [ci-plan, node-artifact-build, integration-seed-proof]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.integration-seed-proof.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['seeded-integration'] == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.ci-plan.outputs.seeded-integration) }}
+    env:
+      BETTER_AUTH_SECRET: ontos-ci-better-auth-secret-at-least-32-characters
+      BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3020,http://127.0.0.1:3020
+      BETTER_AUTH_URL: http://localhost:3020
+      DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
+      DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_ci
+      ONTOS_GATEWAY_ISSUER: http://localhost:3020
+      ONTOS_GATEWAY_PRIVATE_JWK: '{"crv":"Ed25519","d":"UoaeSCRqtNBHKhIQ-gzuhaTWwch5wyr5JUp0NOV_zR0","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}'
+      ONTOS_GATEWAY_PUBLIC_JWKS: '{"keys":[{"crv":"Ed25519","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}]}'
+      ONTOS_RUNTIME_DB_PASSWORD: ontos_runtime
+      # One login per runtime database identity, each with its own development-only password.
+      PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:party_registry_runtime@localhost:5433/ontos_ci
+      PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:party_registry_worker@localhost:5433/ontos_ci
+      POSTGRES_DB: ontos_ci
+      POSTGRES_PASSWORD: ontos_ci_admin
+      POSTGRES_PORT: '5433'
+      POSTGRES_USER: ontos_ci_admin
+      SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:shell_gateway_issuer@localhost:5433/ontos_ci
+      SPICEDB_ENDPOINT: localhost:50051
+      SPICEDB_GRPC_PORT: '50051'
+      SPICEDB_HTTP_PORT: '8443'
+      SPICEDB_PRESHARED_KEY: ontos-ci-spicedb-key
+      # The seed producer and its consumers connect the Commerce portal realm's runtime role with this local
+      # development-only password; the seed itself carries no credentials.
+      INTEGRATION_SEED_COMMERCE_AUTH_DATABASE_URL: postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      # Native receiving fixtures and Inventory workers use genuine published owner metadata.
+      # Restore this run's outputs instead of rebuilding or substituting synthetic build identities.
+      - name: Download the same-run Node artifacts for native owner fixtures
+        if: matrix.suite == 'integration'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: node-units-*
+          path: ${{ runner.temp }}/native-composition-units
+
+      # The stage migrator, the Outbox Worker host and the derived Composition read every unit, so a row names a
+      # smaller `artifact-units` set only when none of those run on it; without it every unit is required.
+      - name: Unpack the Node artifacts for native owner fixtures
+        if: matrix.suite == 'integration'
+        working-directory: app
+        env:
+          REQUIRED_UNITS: ${{ matrix.artifact-units }}
+        # shellcheck disable=SC2086 # REQUIRED_UNITS is a list of separate unit paths.
+        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output $REQUIRED_UNITS
+
+      # The native owner fixtures (Inventory's confirmation-protection suite) read the Composition these exact built
+      # artifacts form; the path is exported only after the derivation decoded it as consumers decode it.
+      - name: Derive the fresh built Composition for native owner fixtures
+        if: matrix.native-composition == true
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+        run: |
+          mise exec -- node scripts/derive-built-application-composition.mts --snapshot-output "$RUNNER_TEMP/native-composition-snapshot.json"
+          echo "NATIVE_1290_COMPOSITION_SNAPSHOT_PATH=$RUNNER_TEMP/native-composition-snapshot.json" >> "$GITHUB_ENV"
+
+      - name: Create the local SpiceDB TLS certificate
+        working-directory: app
+        # SpiceDB serves TLS only; every client pins this certificate as SPICEDB_CA_CERT.
+        run: |
+          mise exec -- pnpm spicedb:tls:local
+          {
+            echo 'SPICEDB_CA_CERT<<SPICEDB_CA_CERT_EOF'
+            cat .spicedb-tls/cert.pem
+            echo 'SPICEDB_CA_CERT_EOF'
+          } >> "$GITHUB_ENV"
+
+      - name: Start fresh PostgreSQL and SpiceDB services
+        working-directory: app
+        run: |
+          docker compose down --volumes --remove-orphans
+          docker compose up --detach --wait --wait-timeout 120
+
+      - name: Download the integration seed
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: integration-seed-${{ github.run_id }}
+          path: ${{ runner.temp }}/integration-seed
+
+      - name: Download the Outbox Worker host
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: integration-worker-host-${{ github.run_id }}
+          path: ${{ runner.temp }}/worker-host
+
+      # The seed model checks the row's name and every integration test file it may run before it restores.
+      - name: Restore the proven seed databases
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+          CI_MATRIX_NAME: ${{ matrix.name }}
+          PACKAGE_FILTERS: ${{ matrix.package-filters }}
+          ROOT_SUITE: ${{ matrix.root-suite || false }}
+          SPICEDB_DATABASE_PASSWORD: spicedb
+        run: |
+          files=()
+          for directory in $(sed -E 's/--filter +//g; s#\./##g' <<<"$PACKAGE_FILTERS"); do
+            while IFS= read -r file; do
+              files+=("$file")
+            done < <(git ls-files -- "$directory/tests/integration" | grep -E '\.test\.[cm]?[jt]sx?$')
+          done
+          CI_TEST_FILES="$(IFS=,; echo "${files[*]}")"
+          echo "Seed check over ${#files[@]} integration test files."
+          mise exec -- node scripts/ci/integration-seed.mts restore --directory "$RUNNER_TEMP/integration-seed" \
+            --disposable --purpose ordinary-tests --job-name "$CI_MATRIX_NAME" --root-suite "$ROOT_SUITE" \
+            --test-files "$CI_TEST_FILES" --jobs 4
+
+      - name: Install the proven Outbox Worker host
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+        run: mise exec -- node scripts/ci/worker-host-artifact.mts use --directory "$RUNNER_TEMP/worker-host"
+
+      - name: Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests, including Party Registry
+        if: matrix.suite == 'integration'
+        working-directory: app
+        # The job environment above is the whole configuration. Native fixtures refuse to start unless
+        # dotenv discovery is closed, so no workspace .env file can leak into an owned test database.
+        env:
+          APP_ENV_PATH: /dev/null
+          MIGRATION_EQUIVALENCE_TEST_DATABASE_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/postgres
+          MIGRATION_EQUIVALENCE_TEST_SANDBOX: owned-postgres18
+          SPICEDB_DATABASE_PASSWORD: spicedb
+          PACKAGE_FILTERS: ${{ matrix.package-filters }}
+          ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
+          ROOT_SUITE: ${{ matrix.root-suite }}
+          RSTEST_SHARD: ${{ matrix.rstest-shard }}
+          # Two Rstest file workers only on rows whose suites were reviewed safe in parallel; every other row runs one.
+          RSTEST_WORKERS: ${{ matrix.rstest-workers || 1 }}
+        # Same commands as `pnpm test:integration`. The root suite and a large package (one package per row, whose
+        # test:integration script is exactly `rstest --project integration`) run as duration-weighted shards that deal
+        # the files of a split giant test family across the shards (scripts/ci/rstest-weighted-shard.sh).
+        # Every suite runs even when an earlier one fails (--no-bail; the root suite's failure is kept, not fatal), so
+        # one package's failure never hides another's; the step fails at the end if any of them failed.
+        run: |
+          status=0
+          if [[ "$ROOT_SUITE" == true && -n "$ROOT_RSTEST_SHARD" ]]; then
+            mise exec -- bash scripts/ci/rstest-weighted-shard.sh "$ROOT_RSTEST_SHARD" integration --pool.maxWorkers 1 || status=$?
+          elif [[ "$ROOT_SUITE" == true ]]; then
+            mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 || status=$?
+          fi
+          if [[ -n "$PACKAGE_FILTERS" && -n "$RSTEST_SHARD" ]]; then
+            # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
+            mise exec -- pnpm $PACKAGE_FILTERS exec bash "$PWD/scripts/ci/rstest-weighted-shard.sh" "$RSTEST_SHARD" integration --pool.maxWorkers "$RSTEST_WORKERS" || status=$?
+          elif [[ -n "$PACKAGE_FILTERS" ]]; then
+            # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
+            mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 || status=$?
+          fi
+          exit "$status"
+
+      - name: Show bounded service diagnostics after failure
+        if: failure()
+        working-directory: app
+        run: |
+          docker compose ps
+          docker compose logs --no-color --tail 200
+
+      - name: Remove isolated service containers and volumes
+        if: always()
+        working-directory: app
+        run: docker compose down --volumes --remove-orphans
+
+
+  # The authenticated browser tests and the recovery into a newly published release, on fresh services. They read no
+  # build output, so they need only the plan.
+  browser-integration:
+    name: ${{ matrix.name }}
+    needs: [ci-plan]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['browser-integration'] == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.ci-plan.outputs.browser) }}
+    env:
+      BETTER_AUTH_SECRET: ontos-ci-better-auth-secret-at-least-32-characters
+      BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3020,http://127.0.0.1:3020
+      BETTER_AUTH_URL: http://localhost:3020
+      DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
+      DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_ci
+      ONTOS_GATEWAY_ISSUER: http://localhost:3020
+      ONTOS_GATEWAY_PRIVATE_JWK: '{"crv":"Ed25519","d":"UoaeSCRqtNBHKhIQ-gzuhaTWwch5wyr5JUp0NOV_zR0","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}'
+      ONTOS_GATEWAY_PUBLIC_JWKS: '{"keys":[{"crv":"Ed25519","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}]}'
+      ONTOS_RUNTIME_DB_PASSWORD: ontos_runtime
+      # One login per runtime database identity, each with its own development-only password.
+      PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:party_registry_runtime@localhost:5433/ontos_ci
+      PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:party_registry_worker@localhost:5433/ontos_ci
+      POSTGRES_DB: ontos_ci
+      POSTGRES_PASSWORD: ontos_ci_admin
+      POSTGRES_PORT: '5433'
+      POSTGRES_USER: ontos_ci_admin
+      SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:shell_gateway_issuer@localhost:5433/ontos_ci
+      SPICEDB_ENDPOINT: localhost:50051
+      SPICEDB_GRPC_PORT: '50051'
+      SPICEDB_HTTP_PORT: '8443'
+      SPICEDB_PRESHARED_KEY: ontos-ci-spicedb-key
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      # The Chromium build is pinned by the Playwright version in the lockfile; its system libraries are not cached.
+      # Only warm-caches on main saves it, so parallel jobs never race to save.
+      - name: Restore the Playwright Chromium build
+        id: playwright-cache
+        if: matrix.suite == 'browser'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('app/pnpm-lock.yaml') }}
+
+      # Chromium's system libraries come from apt, whose mirror can serve them at 100 kB/s; their downloaded
+      # packages are cached per runner image. apt reuses a cached package only when it matches the index.
+      - name: Name the Chromium system-library package cache
+        id: chromium-debs
+        if: matrix.suite == 'browser'
+        run: echo "key=playwright-apt-debs-$ImageOS-$ImageVersion-${{ hashFiles('app/pnpm-lock.yaml') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the Chromium system-library packages
+        if: matrix.suite == 'browser'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/playwright-apt-debs
+          key: ${{ steps.chromium-debs.outputs.key }}
+          restore-keys: playwright-apt-debs-
+
+      # The system-library install goes through apt and can take minutes on a slow mirror, so it runs in the
+      # background while the services start and the migrations run; the browser tests wait for it below.
+      - name: Install Chromium and its runtime dependencies
+        id: chromium-install
+        background: true
+        if: matrix.suite == 'browser'
+        timeout-minutes: 10
+        working-directory: app
+        env:
+          CHROMIUM_CACHED: ${{ steps.playwright-cache.outputs.cache-hit }}
+        run: |
+          if [ -d ~/.cache/playwright-apt-debs ]; then
+            sudo find ~/.cache/playwright-apt-debs -maxdepth 1 -name '*.deb' -exec cp {} /var/cache/apt/archives/ \;
+          fi
+          if [ "$CHROMIUM_CACHED" = true ]; then
+            set -- install-deps chromium
+          else
+            set -- install --with-deps chromium
+          fi
+          mise exec -- pnpm --filter @app/shell-super-app exec playwright "$@"
+
+      - name: Create the local SpiceDB TLS certificate
+        working-directory: app
+        # SpiceDB serves TLS only; every client pins this certificate as SPICEDB_CA_CERT.
+        run: |
+          mise exec -- pnpm spicedb:tls:local
+          {
+            echo 'SPICEDB_CA_CERT<<SPICEDB_CA_CERT_EOF'
+            cat .spicedb-tls/cert.pem
+            echo 'SPICEDB_CA_CERT_EOF'
+          } >> "$GITHUB_ENV"
+
+      - name: Start fresh PostgreSQL and SpiceDB services
+        working-directory: app
+        run: |
+          docker compose down --volumes --remove-orphans
+          docker compose up --detach --wait --wait-timeout 120
+
+      - name: Initialize fresh local database login identities
+        working-directory: app
+        env:
+          DATABASE_LOGIN_ROLE_POLICY: initialize-local
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: development
+        run: mise exec -- pnpm db:bootstrap-runtime-role
+
+      - name: Apply and verify Core, Auth, and Contacts migrations, plus Party Registry
+        working-directory: app
+        # The Commerce portal authentication realm is optional and owns its own Drizzle
+        # configuration, migration journal and runtime role. Naming its database pair here is what
+        # opts this workspace in, so `db:migrate` applies the `commerce_auth` migrations, grants the
+        # provider runtime role and verifies the realm — the schema the portal-auth provider
+        # integration tests read. Development-only values, exactly as the primary database above.
+        # The pair stays scoped to this step: a realm is opted into completely or not at all, and no
+        # later step should see a half-named one.
+        env:
+          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
+          COMMERCE_PORTAL_AUTH_DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_ci
+        run: |
+          mise exec -- pnpm db:migrate
+          mise exec -- pnpm db:verify
+
       - name: Wait for the Chromium install
         wait: chromium-install
 
@@ -781,60 +1488,18 @@ jobs:
         working-directory: app
         run: docker compose down --volumes --remove-orphans
 
-  # Each delivery unit builds from source exports only (scripts/tests/vertical-build-order.test.mts), so
-  # the units build in shards on parallel runners, one unit at a time per shard: parallel builds on one
-  # runner fight over its cores, and every unit's TS-Go declaration pass then runs several times slower.
-  # Each target balances its shards by its own measured build times; a new unit joins one shard of each
-  # target (a test checks). A target's lightest shards also prove it, on the runner they already set up:
-  # each waits for every other shard of its target, downloads every shard and proves the whole topology,
-  # exactly as one build did. The Node shard runs the Node proof; two Cloudflare shards run the two
-  # independent Worker proofs side by side (the outputs and their SSR, and the topology on real services).
-  node-artifact-build:
-    name: Build node artifacts (${{ matrix.shard }}/5)
-    needs: [ci-plan]
-    # The proving shard reads its siblings' job results.
-    permissions:
-      actions: read
-      contents: read
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
+  # The global Node proof: every shard's outputs together, federated types, performance readiness and the
+  # backend-federation proof on a migrated PostgreSQL. No test waits for it; Workspace gates requires it.
+  node-artifact-proof:
+    name: Prove Node backend-federation artifacts
+    needs: [ci-plan, node-artifact-build]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-proof'] == 'success' }}
     runs-on: ubuntu-latest
-    # The Shell alone builds for about 11 minutes (24 on a busy runner), and the proving shard also waits for its
-    # siblings before it proves the artifacts.
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4, 5]
-        include:
-          - {
-              shard: 1,
-              proof: none,
-              units: verticals/catalog verticals/tax verticals/commerce-cart verticals/property-portfolio verticals/property-leasing verticals/legal-agreements verticals/work-tasks,
-            }
-          - {
-              shard: 2,
-              proof: none,
-              units: verticals/commerce-customer-context verticals/storefront-registry verticals/commerce-order verticals/workforce verticals/tagging verticals/crm verticals/sales-pipeline,
-            }
-          - {
-              shard: 3,
-              proof: none,
-              units: verticals/assortment apps/shell-super-app verticals/promotion verticals/payment,
-            }
-          - {
-              shard: 4,
-              proof: none,
-              units: verticals/party-registry verticals/inventory verticals/availability verticals/finance-billing verticals/crm-activities verticals/symmy-integration verticals/merchandise verticals/facility-operations verticals/sales-insights,
-            }
-          - {
-              shard: 5,
-              proof: node,
-              units: verticals/commerce-market-catalog verticals/price-group-catalog verticals/pricing verticals/payment-term-catalog verticals/privacy verticals/projects,
-            }
-    # Only the proving shard starts PostgreSQL; its complete handler layers acquire real pools.
+    timeout-minutes: 30
+    # Its complete handler layers acquire real pools.
     services:
       proof-postgres:
-        image: ${{ matrix.proof == 'node' && 'postgres:18.6-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5' || '' }}
+        image: postgres:18.6-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
         env:
           POSTGRES_DB: ontos_proof
           POSTGRES_PASSWORD: ontos_proof_admin
@@ -867,78 +1532,18 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
-      - name: Build the shard's Node artifacts one unit at a time
-        working-directory: app
-        env:
-          SHARD_UNITS: ${{ matrix.units }}
-        run: |
-          read -ra units <<<"$SHARD_UNITS"
-          filters=()
-          for unit in "${units[@]}"; do
-            filters+=(--filter "./$unit")
-          done
-          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
-          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
-          mise exec -- pnpm -r --no-sort --workspace-concurrency=1 "${filters[@]}" run build
-          # The app host serves the Shell and every released module from the unit's dist/zerops-entry.mjs, which
-          # scripts/zerops/build-app.sh writes after the build; the native hosted-owner fixtures start them so too.
-          served="$(mise exec -- node -e '
-            const intent = require("./topology/application-release-intent.json");
-            for (const { appId } of intent.modules) console.log(`verticals/${appId}`);
-            console.log("apps/shell-super-app");
-          ')"
-          entries=()
-          for unit in "${units[@]}"; do
-            if grep -qxF "$unit" <<<"$served"; then
-              entries+=("$unit")
-            fi
-          done
-          if [ "${#entries[@]}" -gt 0 ]; then
-            mise exec -- node scripts/zerops/owner-entry.mts "${entries[@]}"
-          fi
-
-      # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
-      - name: Pack the shard's build outputs
-        working-directory: app
-        env:
-          SHARD_UNITS: ${{ matrix.units }}
-        run: |
-          read -ra units <<<"$SHARD_UNITS"
-          git ls-files --others --ignored --exclude-standard --directory -z -- "${units[@]}" \
-            | grep -zv '/node_modules/$' \
-            | tar --null --files-from=- --create --zstd --file "$RUNNER_TEMP/units.tar.zst"
-
-      - name: Upload the shard's build outputs
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: node-units-${{ matrix.shard }}
-          path: ${{ runner.temp }}/units.tar.zst
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Wait for every other Node build shard to upload its outputs
-        if: matrix.proof != 'none'
-        working-directory: app
-        timeout-minutes: 25
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 5 'Build node artifacts (${{ matrix.shard }}/5)'
-
       - name: Download every shard's Node build outputs
-        if: matrix.proof == 'node'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: node-units-*
           path: ${{ runner.temp }}/units
 
+      # The proof is the one consumer that requires every delivery unit of the topology to be built.
       - name: Unpack the Node build outputs of every delivery unit
-        if: matrix.proof == 'node'
         working-directory: app
         run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/units" .output
 
       - name: Generate federated types and check performance readiness over every unit
-        if: matrix.proof == 'node'
         working-directory: app
         run: |
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
@@ -947,7 +1552,6 @@ jobs:
           mise exec -- pnpm performance:readiness
 
       - name: Initialize the fresh Node proof database login identities
-        if: matrix.proof == 'node'
         working-directory: app
         env:
           DATABASE_LOGIN_ROLE_POLICY: initialize-local
@@ -955,12 +1559,10 @@ jobs:
         run: mise exec -- pnpm db:bootstrap-runtime-role
 
       - name: Migrate the Node proof database and provision its runtime identities
-        if: matrix.proof == 'node'
         working-directory: app
         run: mise exec -- pnpm db:migrate
 
       - name: Prove Node backend-federation artifacts
-        if: matrix.proof == 'node'
         working-directory: app
         run: mise exec -- pnpm node:proof
 
@@ -974,10 +1576,15 @@ jobs:
         ci-plan,
         workspace-gate,
         workspace-unit,
+        workspace-unit-artifacts,
         static-contracts,
         format-and-lint,
         service-integration,
+        integration-seed-proof,
+        seeded-integration,
+        browser-integration,
         node-artifact-build,
+        node-artifact-proof,
       ]
     runs-on: ubuntu-latest
     timeout-minutes: 5

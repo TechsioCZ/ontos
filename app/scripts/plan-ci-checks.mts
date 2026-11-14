@@ -5,6 +5,7 @@ import { runQualityCli } from './quality-cli-lifecycle.mts';
 import { workspaceConsumerClosure } from './workspace-consumer-closure.mts';
 
 const CommandEntrySchema = Schema.Struct({
+  'artifact-units': Schema.optionalKey(Schema.String),
   commands: Schema.String,
   fetch_depth: Schema.optionalKey(Schema.Number),
   name: Schema.String,
@@ -12,6 +13,7 @@ const CommandEntrySchema = Schema.Struct({
   'typescript-build': Schema.optionalKey(Schema.Boolean),
 });
 const IntegrationEntrySchema = Schema.Struct({
+  'artifact-units': Schema.optionalKey(Schema.String),
   name: Schema.String,
   'native-composition': Schema.optionalKey(Schema.Boolean),
   'native-preproposal': Schema.optionalKey(Schema.Boolean),
@@ -20,13 +22,18 @@ const IntegrationEntrySchema = Schema.Struct({
   'root-rstest-shard': Schema.optionalKey(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
   'root-suite': Schema.optionalKey(Schema.Boolean),
   'rstest-shard': Schema.optionalKey(Schema.String),
+  /** Rstest file workers; 2 only for suites reviewed safe in parallel (unique template databases, UUID tenants). */
+  'rstest-workers': Schema.optionalKey(Schema.Literals([1, 2])),
+  /** The row may restore the same-run seed database (scripts/ci/integration-seed.mts) instead of migrating its own. */
+  seed: Schema.optionalKey(Schema.Boolean),
   suite: Schema.Literals(['integration', 'browser']),
 }).check(
   Schema.makeFilter((entry) =>
     entry.suite === 'integration' &&
     entry['root-suite'] !== true &&
+    entry['native-preproposal'] !== true &&
     (entry['package-filters'] === undefined || entry['package-filters'].length === 0)
-      ? 'Integration templates must name package filters or run the root suite'
+      ? 'Integration templates must name package filters, run the root suite or run the native preproposal proof'
       : undefined,
   ),
   Schema.makeFilter((entry) =>
@@ -38,6 +45,8 @@ const IntegrationEntrySchema = Schema.Struct({
 export const CiTemplatesSchema = Schema.Struct({
   integration: Schema.Array(IntegrationEntrySchema),
   source: Schema.Array(CommandEntrySchema),
+  /** Measured seconds of a test-file family by file-name prefix; scripts/ci/rstest-weighted-shard.sh deals by it. */
+  'test-weights': Schema.optionalKey(Schema.Record(Schema.String, Schema.Number)),
   unit: Schema.Array(CommandEntrySchema),
 });
 type Templates = typeof CiTemplatesSchema.Type;
@@ -104,10 +113,15 @@ export const withCiTopologyDependencies = (
 const gateIds = [
   'workspace-gate',
   'workspace-unit',
+  'workspace-unit-artifacts',
   'static-contracts',
   'format-and-lint',
   'service-integration',
+  'seeded-integration',
+  'integration-seed-proof',
+  'browser-integration',
   'node-artifact-build',
+  'node-artifact-proof',
 ] as const;
 
 const rootDocumentation = (changedPath: string) =>
@@ -209,16 +223,21 @@ export const planCiChecks = (input: {
     return [{ ...entry, 'package-filters': filters, 'root-suite': rootSuite }];
   });
   const selectedUnit = templates.unit.flatMap((entry) => {
-    const selected = matchingPackages(entry.commands.split('\n')[0] ?? '', affected);
+    const filters = entry.commands.split('\n')[0] ?? '';
+    const selected = matchingPackages(filters, affected);
     if (selected.length === 0) {
       return [];
     }
-    const filters = selected.map(({ directory }) => `--filter ./${directory}`).join(' ');
+    // A row whose every package is affected runs exactly as planned, including a weighted shard of one package.
+    if (selected.length === matchingPackages(filters, packages).length) {
+      return [entry];
+    }
+    const selectedFilters = selected.map(({ directory }) => `--filter ./${directory}`).join(' ');
     return [
       {
         ...entry,
         commands: ['test:unit', 'test:component']
-          .map((script) => `pnpm -r --no-sort --if-present ${filters} run ${script}`)
+          .map((script) => `pnpm -r --no-sort --if-present ${selectedFilters} run ${script}`)
           .join('\n'),
       },
     ];
@@ -226,9 +245,43 @@ export const planCiChecks = (input: {
   // A malformed/empty unit mapping never becomes a green no-op.
   const effectiveMode = mode === 'affected' && selectedUnit.length > 0 ? mode : 'full';
   const integration = effectiveMode === 'full' ? templates.integration : selectedIntegration;
-  const expected = Object.fromEntries(
-    gateIds.map((gate) => [gate, gate === 'service-integration' && integration.length === 0 ? 'skipped' : 'success']),
-  );
+  const unit = effectiveMode === 'full' ? templates.unit : selectedUnit;
+  // Each matrix job gets only its own rows: artifact consumers wait for the build shards, every other row starts
+  // right after planning. A matrix job with no row is planned as skipped instead of failing on an empty matrix.
+  // Seed restoring saves runner minutes but waits for the seed producer, so it pays off only on a full run that
+  // fills every runner; an affected round lets each row prepare its own database right after the builds.
+  const seeded = (entry: IntegrationEntry) => effectiveMode === 'full' && entry.seed === true;
+  const jobs = {
+    browser: integration.filter(({ suite }) => suite === 'browser'),
+    seeded: integration.filter((entry) => entry.suite === 'integration' && seeded(entry)),
+    services: integration.filter((entry) => entry.suite === 'integration' && !seeded(entry)),
+    unitArtifacts: unit.filter((entry) => entry['node-artifacts'] === true),
+    unitPlain: unit.filter((entry) => entry['node-artifacts'] !== true),
+  };
+  const rows = (gate: (typeof gateIds)[number]) => {
+    switch (gate) {
+      case 'browser-integration': {
+        return jobs.browser.length;
+      }
+      case 'service-integration': {
+        return jobs.services.length;
+      }
+      case 'integration-seed-proof':
+      case 'seeded-integration': {
+        return jobs.seeded.length;
+      }
+      case 'workspace-unit': {
+        return jobs.unitPlain.length;
+      }
+      case 'workspace-unit-artifacts': {
+        return jobs.unitArtifacts.length;
+      }
+      default: {
+        return 1;
+      }
+    }
+  };
+  const expected = Object.fromEntries(gateIds.map((gate) => [gate, rows(gate) === 0 ? 'skipped' : 'success']));
   let reason = 'Shared, sensitive, unknown or explicitly full impact requires the complete suite.';
   if (!broad && (effectiveMode === 'affected' || !input.applyAffected)) {
     reason = input.applyAffected
@@ -240,10 +293,11 @@ export const planCiChecks = (input: {
     candidateIntegration: broad ? templates.integration : selectedIntegration,
     expected,
     integration,
+    jobs,
     mode: effectiveMode,
     reason,
     source: templates.source,
-    unit: effectiveMode === 'full' ? templates.unit : selectedUnit,
+    unit,
   };
 };
 
@@ -355,10 +409,13 @@ const cli = Command.make(
       });
       const encode = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
       const encoded = yield* Effect.all({
+        browser: encode(plan.jobs.browser),
         expected: encode(plan.expected),
-        integration: encode(plan.integration),
+        integration: encode(plan.jobs.services),
+        'seeded-integration': encode(plan.jobs.seeded),
         source: encode(plan.source),
-        unit: encode(plan.unit),
+        unit: encode(plan.jobs.unitPlain),
+        'unit-artifacts': encode(plan.jobs.unitArtifacts),
       });
       const output = yield* Config.String('GITHUB_OUTPUT');
       const outputLines = Object.entries(encoded).map(([key, value]) => `${key}=${value}`);
