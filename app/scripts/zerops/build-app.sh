@@ -126,6 +126,20 @@ echo "built$pending ($(echo "$units" | wc -w | tr -d ' ') units ready) in $(($(d
 # The Outbox Worker host bundles every hosted owner's worker under the release identity that owner's dist was built
 # with, so the composition admits each owner's outbox subscriptions (scripts/materialize-outbox-worker.mjs).
 if [ "$units" = "$all_units" ]; then
+  worker_cache="$unit_cache/outbox-worker-host"
+  worker_runtime='.zerops/runtime/outbox-worker-host'
+  worker_digest=''
+  if worker_clean="$(git status --porcelain --untracked-files=all)" && [ -z "$worker_clean" ] &&
+     [ "${ZEROPS_FORCE_BUILD:-false}" != true ] &&
+     [ -f "$worker_cache/worker.mjs" ] && [ -f "$worker_cache/package.json" ] &&
+     [ -d "$worker_cache/node_modules" ] &&
+     worker_digest="$(node scripts/zerops/outbox-build-digest.mjs "$worker_cache" "$ZEROPS_UNIT_DIGESTS")" &&
+     [ "$worker_digest" = "$(cat "$worker_cache/.zerops-build-digest" 2>/dev/null || true)" ]; then
+    mkdir -p .zerops/runtime
+    rm -rf "$worker_runtime" && cp -a "$worker_cache" "$worker_runtime"
+    echo 'kept outbox-worker-host (inputs unchanged)'
+    exit 0
+  fi
   # The host runs only the workers of the units this deployment serves: the Application Composition it publishes admits
   # no other owner. Each served owner's build identity names the revision its dist was built with.
   # shellcheck disable=SC2086 # all_units is a list of unit ids.
@@ -146,5 +160,12 @@ if [ "$units" = "$all_units" ]; then
     ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" \
     pnpm run zerops:materialize --app outbox-worker-host --package app --package-dir . --worker >"$log_dir/outbox-worker-host.log" 2>&1 ||
     { tail -60 "$log_dir/outbox-worker-host.log" >&2; echo 'outbox worker host build failed' >&2; exit 1; }
+  # Cache only when the complete materialized input/identity proof can be reproduced.
+  if worker_digest="$(node scripts/zerops/outbox-build-digest.mjs "$worker_runtime" "$ZEROPS_UNIT_DIGESTS")"; then
+    printf '%s\n' "$worker_digest" >"$worker_runtime/.zerops-build-digest"
+    rm -rf "${unit_cache:?}/outbox-worker-host" && cp -a "$worker_runtime" "$worker_cache"
+  else
+    echo 'outbox worker cache disabled: incomplete input proof' >&2
+  fi
   echo "built outbox-worker-host in $(($(date +%s) - started))s"
 fi
