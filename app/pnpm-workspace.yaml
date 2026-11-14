@@ -182,8 +182,6 @@ patchedDependencies:
   # upstream: https://github.com/drizzle-team/drizzle-orm/pull/6429 (Effect 4.0.0 SqlError path and Schema.isBetweenLength; merged on rc5, unreleased)
   # TS 7.1: https://github.com/microsoft/TypeScript/pull/64307; share the unchanged distributive returning conditional across base/derived declarations.
   drizzle-orm@1.0.0-rc.5-ab785fc: patches/drizzle-orm-rc5-declarations.patch
-  # upstream: https://github.com/oxc-project/oxc (handle omitted optional AST children in the CFG traverser)
-  oxlint@1.81.0: patches/oxlint@1.81.0.patch
   # upstream: https://github.com/millionco/react-doctor (require array evidence before suggesting Set membership)
   oxlint-plugin-react-doctor@0.9.12: patches/oxlint-plugin-react-doctor@0.9.12.patch
   # upstream: https://github.com/Effect-TS/effect/tree/main/packages/sql-pg (read-only native pool counters)
