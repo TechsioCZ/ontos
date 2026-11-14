@@ -67,7 +67,7 @@ const services = NodeChildProcessSpawner.layer.pipe(
 );
 const receiptSchema = Schema.Struct({
   jobId: SymmyJobStatusResponseSchema.members[0].fields.jobId,
-  status: Schema.Literal('admitted'),
+  status: Schema.Literal('queued'),
 });
 const nativeInvocationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('NativeActionInvocationId'),

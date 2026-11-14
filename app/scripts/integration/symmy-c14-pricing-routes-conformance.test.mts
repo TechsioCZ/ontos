@@ -64,7 +64,7 @@ const services = NodeChildProcessSpawner.layer.pipe(
 );
 const admitted = Schema.Struct({
   jobId: SymmyJobStatusResponseSchema.members[0].fields.jobId,
-  status: Schema.Literal('admitted'),
+  status: Schema.Literal('queued'),
 });
 const statusSchema = Schema.Struct({
   items: Schema.optionalKey(Schema.Array(SymmyItemOutcomeSchema)),

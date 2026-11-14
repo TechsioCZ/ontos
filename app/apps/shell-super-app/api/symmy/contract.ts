@@ -153,13 +153,13 @@ export const SymmyFixtureReadSchema = Schema.Struct({ references: Schema.Array(S
 export const SymmyFixtureItemResultsSchema = Schema.Struct({ items: fixtureItems });
 export const SymmyFixtureAdmissionSchema = Schema.Struct({
   jobId: SymmyFixtureJobIdSchema,
-  status: Schema.Literal('admitted'),
+  status: Schema.Literal('queued'),
 });
 export const SymmyFixtureJobStatusSchema = Schema.Union([
   Schema.Struct({
     items: Schema.optionalKey(Schema.Array(fixtureItemResult)),
     jobId: SymmyFixtureJobIdSchema,
-    status: Schema.Literals(['admitted', 'running', 'blocked']),
+    status: Schema.Literals(['queued', 'running', 'blocked']),
   }),
   Schema.Struct({
     items: fixtureItems,

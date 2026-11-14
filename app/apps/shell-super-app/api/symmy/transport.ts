@@ -358,16 +358,15 @@ const handleApply = handle(SymmyFixtureItemResultsSchema, (ingress, input: Fixtu
   ).pipe(Effect.map((items) => ({ items: projectItems(items) }))),
 );
 const handleSubmit = handle(SymmyFixtureAdmissionSchema, (ingress, input: FixtureInput<FixtureSubmit>) =>
-  ingress.dispatch.submit(input).pipe(Effect.map((jobId) => ({ jobId, status: 'admitted' as const }))),
+  ingress.dispatch.submit(input).pipe(Effect.map((jobId) => ({ jobId, status: 'queued' as const }))),
 );
 const handlePoll = handle(SymmyFixtureJobStatusSchema, (ingress, input: FixtureInput<FixturePoll>) =>
   ingress.dispatch.poll(input).pipe(
     Effect.map((state) => {
       const jobId = input.request.id;
       if (state.phase === 'admitted' || state.phase === 'running' || state.phase === 'blocked') {
-        return state.items === undefined
-          ? { jobId, status: state.phase }
-          : { items: projectItems(state.items), jobId, status: state.phase };
+        const status = state.phase === 'admitted' ? ('queued' as const) : state.phase;
+        return state.items === undefined ? { jobId, status } : { items: projectItems(state.items), jobId, status };
       }
       const items = projectItems(state.items);
       if (

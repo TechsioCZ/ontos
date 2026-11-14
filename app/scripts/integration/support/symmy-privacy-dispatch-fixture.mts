@@ -49,7 +49,7 @@ const relayRules = [
 ];
 const receiptSchema = Schema.Struct({
   jobId: SymmyJobStatusResponseSchema.members[0].fields.jobId,
-  status: Schema.Literal('admitted'),
+  status: Schema.Literal('queued'),
 });
 const json = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Json));
 
