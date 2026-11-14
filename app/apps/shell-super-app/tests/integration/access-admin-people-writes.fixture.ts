@@ -1,7 +1,6 @@
 import { stableUuid } from '@app/core-runtime/access/catalog';
 import { Effect, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
-
+import { expect } from 'effect-rstest';
 import {
   AccessPeopleMutationResponseSchema,
   ListAccessPeopleOptionsResponseSchema,
@@ -17,12 +16,7 @@ import type {
   SetAccessTeamMembershipPayloadSchema,
   TransferAccessOwnershipPayloadSchema,
 } from '../../shared/access-admin-api.ts';
-import {
-  TASKS_CAPABILITY_KEY,
-  accessAdminTemplateLayer,
-  shellHttpFor,
-  withAccessAdminCase,
-} from '../support/access-admin-real-gate-fixture.ts';
+import { TASKS_CAPABILITY_KEY, shellHttpFor } from '../support/access-admin-real-gate-fixture.ts';
 import type {
   AccessAdminCase,
   Persona,
@@ -43,7 +37,7 @@ import type {
  */
 
 const PEOPLE = '/shell/access/people';
-const CASE_TIMEOUT = 300_000;
+export const CASE_TIMEOUT = 300_000;
 const LEAVER_REASON = 'P14: the person left company A';
 /** Inside the seeded delegation (it ends 2031-01-01), so a delegated assignment ends with it. */
 const DELEGATED_UNTIL = '2030-06-01T00:00:00.000Z';
@@ -194,7 +188,7 @@ const scenarioOf = (accessCase: AccessAdminCase, shell: ShellHttp) => {
   };
 };
 
-const admission = (accessCase: AccessAdminCase) =>
+export const admission = (accessCase: AccessAdminCase) =>
   Effect.scoped(
     Effect.gen(function* admissionCase() {
       const shell = yield* shellHttpFor(accessCase);
@@ -438,7 +432,7 @@ const admission = (accessCase: AccessAdminCase) =>
     }),
   );
 
-const coreRefusals = (accessCase: AccessAdminCase) =>
+export const coreRefusals = (accessCase: AccessAdminCase) =>
   Effect.scoped(
     Effect.gen(function* coreRefusalsCase() {
       const shell = yield* shellHttpFor(accessCase);
@@ -541,7 +535,7 @@ const coreRefusals = (accessCase: AccessAdminCase) =>
     }),
   );
 
-const endMembership = (accessCase: AccessAdminCase) =>
+export const endMembership = (accessCase: AccessAdminCase) =>
   Effect.scoped(
     Effect.gen(function* endMembershipCase() {
       const shell = yield* shellHttpFor(accessCase);
@@ -662,7 +656,7 @@ const endMembership = (accessCase: AccessAdminCase) =>
     }),
   );
 
-const roleAssignment = (accessCase: AccessAdminCase) =>
+export const roleAssignment = (accessCase: AccessAdminCase) =>
   Effect.scoped(
     Effect.gen(function* roleAssignmentCase() {
       const shell = yield* shellHttpFor(accessCase);
@@ -768,7 +762,7 @@ const roleAssignment = (accessCase: AccessAdminCase) =>
     }),
   );
 
-const delegation = (accessCase: AccessAdminCase) =>
+export const delegation = (accessCase: AccessAdminCase) =>
   Effect.scoped(
     Effect.gen(function* delegationCase() {
       const shell = yield* shellHttpFor(accessCase);
@@ -894,7 +888,7 @@ const delegation = (accessCase: AccessAdminCase) =>
     }),
   );
 
-const ownership = (accessCase: AccessAdminCase) =>
+export const ownership = (accessCase: AccessAdminCase) =>
   Effect.scoped(
     Effect.gen(function* ownershipCase() {
       const shell = yield* shellHttpFor(accessCase);
@@ -952,44 +946,3 @@ const ownership = (accessCase: AccessAdminCase) =>
       expect(yield* ownerRowsOf(accessCase, member)).toEqual(['active']);
     }),
   );
-
-it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 seconds' })(
-  'Lidé people writes through the production Shell API',
-  (suite) => {
-    suite.effect(
-      'the owner admits a directory member into one company, and only then can assign there',
-      () => withAccessAdminCase(admission),
-      CASE_TIMEOUT,
-    );
-
-    suite.effect(
-      'Core refuses an admission that would revive lapsed authority, a delegate who may not admit or end, and a company administrator ending a co-administrator',
-      () => withAccessAdminCase(coreRefusals),
-      CASE_TIMEOUT,
-    );
-
-    suite.effect(
-      'ending a company membership closes what it carried at once, and re-admission starts clean',
-      () => withAccessAdminCase(endMembership),
-      CASE_TIMEOUT,
-    );
-
-    suite.effect(
-      'role assignment needs a member, a reachable role and the current revisions, and revocation ends it',
-      () => withAccessAdminCase(roleAssignment),
-      CASE_TIMEOUT,
-    );
-
-    suite.effect(
-      'a delegation is bounded by its grantor, works inside its envelope until revoked, and blocks ending its grantor',
-      () => withAccessAdminCase(delegation),
-      CASE_TIMEOUT,
-    );
-
-    suite.effect(
-      'only the owner hands ownership on, and the successor then administers the tenant',
-      () => withAccessAdminCase(ownership),
-      CASE_TIMEOUT,
-    );
-  },
-);

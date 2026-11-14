@@ -63,7 +63,8 @@ import { makeCompositionSnapshot } from '../fixtures/application-composition.ts'
 import {
   buildAccessGraph,
   replacedDatabase,
-  templateDatabaseLayer,
+  ACCESS_ADMIN_TEMPLATE_DATABASE as TEMPLATE_DATABASE,
+  accessAdminTemplateLayer,
 } from '../support/access-admin-real-gate-fixture.ts';
 
 /*
@@ -230,7 +231,6 @@ const inspectionLayer = (input: {
 
 const jsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const catalogArtifactPath = new URL('../../../../topology/authorization-catalog.json', import.meta.url);
-const TEMPLATE_DATABASE = 'p14_access_admin_template';
 
 const publishedCatalog = Effect.gen(function* publishedCatalog() {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -963,7 +963,7 @@ const reportPath = Config.option(Config.String('ACTING_AUTHORITY_REPORT'));
 const ownerReportPath = Config.option(Config.String('OWNER_AUTHORITY_REPORT'));
 const roundTripReportPath = Config.option(Config.String('ROUND_TRIP_REPORT'));
 
-it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 seconds' })(
+it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '600 seconds' })(
   'acting authority over the installed release',
   (suite) => {
     suite.effect(
