@@ -110,7 +110,27 @@ it('runs the whole application in the app container through native Node, from th
   const app = serviceNode(readZeropsDeploymentYaml(), 'app');
 
   expect(app.getIn(['run', 'start'])).toBe(`sh -c 'cd app && exec node scripts/zerops/app-host.mts'`);
-  expect(serviceStrings(app, ['build', 'deployFiles'])).toStrictEqual(['app/']);
+  expect(serviceStrings(app, ['build', 'deployFiles'])).toStrictEqual([
+    'app/node_modules',
+    'app/apps',
+    'app/verticals',
+    'app/packages',
+    'app/scripts',
+    'app/database',
+    'app/topology',
+    'app/tools',
+    'app/patches',
+    'app/package.json',
+    'app/pnpm-lock.yaml',
+    'app/pnpm-workspace.yaml',
+    'app/tsconfig.json',
+    'app/tsconfig.base.json',
+    'app/tsconfig.node-tooling.json',
+    'app/module-federation.shared.ts',
+    'app/akros-storefront/src/catalog-import',
+    'app/.zerops/runtime/outbox-worker-host',
+    'app/.zerops/bun',
+  ]);
   for (const branch of [
     ['deploy', 'readinessCheck'],
     ['run', 'healthCheck'],

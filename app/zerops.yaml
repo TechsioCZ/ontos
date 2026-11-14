@@ -151,8 +151,29 @@ zerops:
         - cd app && node scripts/verify-zerops-workspace-install.mts
         - cd app && sh scripts/zerops/build-app.sh
         - mkdir -p 'app/.zerops/bun' && cp -a "$HOME/.local/bun-1.4.4/bin" 'app/.zerops/bun/'
+      # Keep native TS imports, migrations and owner-local drizzle-kit executables, including dev dependencies.
+      # Do NOT ship the unit cache, build logs, storefront source/builds, docs or agent workspaces.
       deployFiles:
-        - app/
+        - app/node_modules
+        - app/apps
+        - app/verticals
+        - app/packages
+        - app/scripts
+        - app/database
+        - app/topology
+        - app/tools
+        - app/patches
+        - app/package.json
+        - app/pnpm-lock.yaml
+        - app/pnpm-workspace.yaml
+        - app/tsconfig.json
+        - app/tsconfig.base.json
+        - app/tsconfig.node-tooling.json
+        - app/module-federation.shared.ts
+        # Merchandise operator scripts read these generated catalog files directly.
+        - app/akros-storefront/src/catalog-import
+        - app/.zerops/runtime/outbox-worker-host
+        - app/.zerops/bun
       # Unchanged units reuse their last build (scripts/zerops/build-app.sh); Rspack and TS-Go keep their caches.
       cache:
         - app/.zerops/unit-cache
