@@ -29,13 +29,20 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
-import { Console, Effect, FileSystem, Layer, Option, Predicate, Schema, Stream } from 'effect';
+import { Console, Effect, FileSystem, Layer, Option, Predicate, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 import { Argument, Command } from 'effect/cli';
-import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { parseSync, Visitor } from 'oxc-parser';
 
 import { PACKAGED_DIRECTORY, WORKSPACE_PACKAGE_SCOPE } from './materialize-packaged-workspace-packages.mts';
+import {
+  makePackagedDependencyResolver,
+  memoizeDependencyRead,
+  PackagedNodeDependencyError,
+} from './packaged-node-dependency-resolver.mts';
+import type { ResolverResult } from './packaged-node-dependency-resolver.mts';
+
+export { PackagedNodeDependencyError } from './packaged-node-dependency-resolver.mts';
 
 const PACKAGE_MANIFEST = 'package.json';
 const NODE_MODULES = 'node_modules';
@@ -48,36 +55,8 @@ const SCANNED_EXTENSIONS = new Set(['.js', '.mjs']);
 const COPYABLE_EXTENSIONS = new Set(['.cjs', '.js', '.json', '.mjs']);
 const TYPESCRIPT_EXTENSIONS = new Set(['.cts', '.mts', '.ts', '.tsx']);
 
-/** Node's flag that makes `import.meta.resolve` honour its parent argument. */
-const PARENT_AWARE_RESOLUTION_FLAG = '--experimental-import-meta-resolve';
-/** The probe parent the host must honour; its specifier is resolved against it and checked before any result is used. */
-const SELF_CHECK_PARENT = '.node-dependency-self-check.mjs';
-const SELF_CHECK_SPECIFIER = './node-dependency-self-check-missing.mjs';
-
-/**
- * Runs in one native Node process: each request is resolved against its parent, and a failure is reported as data
- * with Node's own error code, so a missing target is never confused with an unresolvable one.
- */
-const RESOLVER_HOST = [
-  'const chunks = [];',
-  'for await (const chunk of process.stdin) chunks.push(chunk);',
-  "const { requests } = JSON.parse(Buffer.concat(chunks).toString('utf8'));",
-  'const results = requests.map(({ parent, specifier }) => {',
-  '  try {',
-  '    return { url: import.meta.resolve(specifier, parent) };',
-  '  } catch (error) {',
-  "    return { code: String(error?.code ?? 'ERR_UNKNOWN'), message: String(error?.message ?? error) };",
-  '  }',
-  '});',
-  'process.stdout.write(JSON.stringify({ results }));',
-].join('\n');
-
-export class PackagedNodeDependencyError extends Schema.TaggedError<PackagedNodeDependencyError>()(
-  'PackagedNodeDependencyError',
-  { message: Schema.String },
-) {}
-
 const failed = (message: string) => new PackagedNodeDependencyError({ message });
+const FILE_CONCURRENCY = 16;
 
 const PackageManifestSchema = Schema.StructWithRest(
   Schema.Struct({
@@ -91,36 +70,16 @@ const PackageManifestSchema = Schema.StructWithRest(
   }),
   [Schema.Record(Schema.String, Schema.Unknown)],
 );
-type PackageManifest = typeof PackageManifestSchema.Type;
+interface PackageManifest {
+  readonly dependencies?: Readonly<Record<string, unknown>>;
+  readonly exports?: Schema.Json;
+  readonly name: string;
+  readonly optionalDependencies?: Readonly<Record<string, unknown>>;
+  readonly peerDependencies?: Readonly<Record<string, unknown>>;
+  readonly type?: string;
+  readonly version: string;
+}
 const packageManifestCodec = Schema.fromJsonString(PackageManifestSchema);
-
-const ResolverRequestCodec = Schema.fromJsonString(
-  Schema.Struct({
-    requests: Schema.Array(Schema.Struct({ parent: Schema.String, specifier: Schema.String })),
-  }),
-);
-const ResolverResponseCodec = Schema.fromJsonString(
-  Schema.Struct({
-    results: Schema.Array(
-      Schema.Struct({
-        code: Schema.optionalKey(Schema.String),
-        message: Schema.optionalKey(Schema.String),
-        url: Schema.optionalKey(Schema.String),
-      }),
-    ),
-  }),
-);
-
-interface ResolverRequest {
-  readonly parent: string;
-  readonly specifier: string;
-}
-
-interface ResolverResult {
-  readonly code?: string | undefined;
-  readonly message?: string | undefined;
-  readonly url?: string | undefined;
-}
 
 export interface NodeDependencyCompletionOptions {
   /**
@@ -132,8 +91,44 @@ export interface NodeDependencyCompletionOptions {
 }
 
 export interface NodeDependencyCompletion {
-  /** Unit-relative paths of the files copied from declared installs, in discovery order. */
+  /** Unit-relative paths of the files copied from declared installs, sorted as before. */
   readonly copied: readonly string[];
+  readonly metrics: CompletionMetrics;
+}
+
+interface CompletionMetrics {
+  rootsMs: number;
+  scanMs: number;
+  resolveMs: number;
+  followMs: number;
+  verifyMs: number;
+  totalMs: number;
+  waves: number;
+  scannedFiles: number;
+  edges: number;
+  manifestReads: number;
+  canonicalReads: number;
+  sourceResolutions: number;
+  verifiedPackages: number;
+  verifiedFiles: number;
+  resolverBatches: number;
+  resolverRequests: number;
+  resolverCacheHits: number;
+}
+
+interface DependencyReads {
+  readonly canonical: (file: string) => Effect.Effect<string, PlatformError, FileSystem.FileSystem>;
+  readonly manifest: (
+    file: string,
+  ) => Effect.Effect<PackageManifest, PackagedNodeDependencyError, FileSystem.FileSystem>;
+  readonly sources: Map<string, ResolvedSource>;
+  readonly metrics: CompletionMetrics;
+}
+
+interface ResolvedSource {
+  readonly declared: ReadonlySet<string>;
+  readonly directory: string;
+  readonly manifest: PackageManifest;
 }
 
 /** The package whose manifest declares the dependencies a module imports. */
@@ -160,8 +155,10 @@ interface CompletionContext {
   readonly copied: string[];
   readonly output: string;
   readonly sources: Map<string, VerifiedSource>;
+  readonly targets: Map<string, string | null>;
   readonly unit: string;
   readonly unitOwner: DeclaringOwner;
+  readonly reads: DependencyReads;
 }
 
 const isInside = (directory: string, candidate: string): boolean => {
@@ -172,7 +169,10 @@ const isInside = (directory: string, candidate: string): boolean => {
 const isNodeModulesName = (name: string): boolean => name === NODE_MODULES;
 
 const sameBytes = (left: Uint8Array, right: Uint8Array): boolean =>
-  left.length === right.length && left.every((byte, index) => byte === right[index]);
+  left.length === right.length &&
+  Buffer.from(left.buffer, left.byteOffset, left.byteLength).equals(
+    Buffer.from(right.buffer, right.byteOffset, right.byteLength),
+  );
 
 const moduleTypeOf = (manifest: PackageManifest): string => manifest.type ?? DEFAULT_MODULE_TYPE;
 
@@ -193,13 +193,47 @@ const canonicalPath = Effect.fn('CompletePackagedNodeDependencies.canonicalPath'
   while (!(yield* fs.exists(existing))) {
     const parent = path.dirname(existing);
     if (parent === existing) {
-      return file;
+      return yield* Effect.succeed(file);
     }
     missing.unshift(path.basename(existing));
     existing = parent;
   }
-  return path.join(yield* fs.realPath(existing), ...missing);
+  return yield* Effect.succeed(path.join(yield* fs.realPath(existing), ...missing));
 });
+
+const makeDependencyReads = (): DependencyReads => {
+  const metrics: CompletionMetrics = {
+    rootsMs: 0,
+    scanMs: 0,
+    resolveMs: 0,
+    followMs: 0,
+    verifyMs: 0,
+    totalMs: 0,
+    waves: 0,
+    scannedFiles: 0,
+    edges: 0,
+    manifestReads: 0,
+    canonicalReads: 0,
+    sourceResolutions: 0,
+    verifiedPackages: 0,
+    verifiedFiles: 0,
+    resolverBatches: 0,
+    resolverRequests: 0,
+    resolverCacheHits: 0,
+  };
+  return {
+    canonical: memoizeDependencyRead((file) => {
+      metrics.canonicalReads += 1;
+      return canonicalPath(file);
+    }),
+    manifest: memoizeDependencyRead((file) => {
+      metrics.manifestReads += 1;
+      return readManifest(file);
+    }),
+    metrics,
+    sources: new Map(),
+  };
+};
 
 const readManifest = Effect.fn('CompletePackagedNodeDependencies.readManifest')(function* readManifest(
   manifestPath: string,
@@ -213,28 +247,38 @@ const readManifest = Effect.fn('CompletePackagedNodeDependencies.readManifest')(
   );
 });
 
-/** Every regular file below `directory`, skipping symlinks and any directory `skip` names. */
+const directoryEntries = Effect.fn('CompletePackagedNodeDependencies.directoryEntries')(function* directoryEntries(
+  directory: string,
+  skip: (name: string) => boolean,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* Effect.forEach(
+    (yield* fs.readDirectory(directory)).toSorted().filter((name) => !skip(name)),
+    (name) => {
+      const file = path.join(directory, name);
+      return fs.lstat(file).pipe(Effect.map((info) => ({ file, type: info.type })));
+    },
+    { concurrency: FILE_CONCURRENCY },
+  );
+});
+
+/** Sorted depth-first order is unchanged; only the independent metadata reads overlap. */
 const walkFiles = (directory: string, skip: (name: string) => boolean) =>
   Effect.gen(function* collectFiles() {
-    const fs = yield* FileSystem.FileSystem;
     const files: string[] = [];
     const visit = (current: string): Effect.Effect<void, PlatformError> =>
       Effect.gen(function* visitDirectory() {
-        for (const name of (yield* fs.readDirectory(current)).toSorted()) {
-          if (skip(name)) {
-            continue;
-          }
-          const absolute = path.join(current, name);
-          const info = yield* fs.lstat(absolute);
-          if (info.type === 'Directory') {
-            yield* visit(absolute);
-          } else if (info.type === 'File') {
-            files.push(absolute);
+        for (const entry of yield* directoryEntries(current, skip)) {
+          if (entry.type === 'Directory') {
+            yield* visit(entry.file);
+          } else if (entry.type === 'File') {
+            files.push(entry.file);
           }
         }
+        return yield* Effect.void;
       });
     yield* visit(directory);
-    return files;
+    return yield* Effect.succeed(files);
   });
 
 /**
@@ -267,7 +311,7 @@ const staticSpecifiers = Effect.fn('CompletePackagedNodeDependencies.staticSpeci
     if (path.extname(file) === ES_MODULE_EXTENSION) {
       return yield* Effect.fail(failed(`${file}: the ES module does not parse`));
     }
-    return [];
+    return yield* Effect.succeed([]);
   }
   const specifiers: string[] = [];
   const record = (literal: { readonly value?: unknown } | null | undefined) => {
@@ -280,7 +324,7 @@ const staticSpecifiers = Effect.fn('CompletePackagedNodeDependencies.staticSpeci
     ExportNamedDeclaration: (node) => record(node.source),
     ImportDeclaration: (node) => record(node.source),
   }).visit(parsed.program);
-  return specifiers;
+  return yield* Effect.succeed(specifiers);
 });
 
 /** Conditions whose `exports` targets no ES module importer of the packaged tree selects. */
@@ -310,90 +354,39 @@ const exportTargets = (value: Schema.Json | undefined): readonly string[] => {
  * verified only when a declaring package imports them.
  */
 const workspaceExportRoots = Effect.fn('CompletePackagedNodeDependencies.workspaceExportRoots')(
-  function* workspaceExportRoots(output: string, declared: ReadonlySet<string>) {
+  function* workspaceExportRoots(output: string, declared: ReadonlySet<string>, reads: DependencyReads) {
     const fs = yield* FileSystem.FileSystem;
     const scope = path.join(output, NODE_MODULES, WORKSPACE_PACKAGE_SCOPE);
     if (!(yield* fs.exists(scope))) {
-      return [];
+      return yield* Effect.succeed([]);
     }
     const roots: string[] = [];
     for (const name of (yield* fs.readDirectory(scope)).toSorted()) {
       const packageRoot = path.join(scope, name);
-      const manifest = yield* readManifest(path.join(packageRoot, PACKAGE_MANIFEST));
+      const manifest = yield* reads.manifest(path.join(packageRoot, PACKAGE_MANIFEST));
       if (!declared.has(manifest.name)) {
         continue;
       }
       for (const target of exportTargets(manifest.exports)) {
-        const file = yield* canonicalPath(path.join(packageRoot, target));
+        const file = yield* reads.canonical(path.join(packageRoot, target));
         if (isInside(packageRoot, file) && SCANNED_EXTENSIONS.has(path.extname(file)) && (yield* fs.exists(file))) {
           roots.push(file);
         }
       }
     }
-    return roots;
+    return yield* Effect.succeed(roots);
   },
 );
 
-/**
- * Resolves every request in one native Node process. The process first resolves a probe whose answer is known, so a
- * Node that ignores the parent argument fails here instead of resolving the graph against the host script.
- */
-const resolveSpecifiers = Effect.fn('CompletePackagedNodeDependencies.resolveSpecifiers')(function* resolveSpecifiers(
-  output: string,
-  requests: readonly ResolverRequest[],
-) {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const selfCheckParent = pathToFileURL(path.join(output, SELF_CHECK_PARENT)).href;
-  const payload = yield* Schema.encodeEffect(ResolverRequestCodec)({
-    requests: [{ parent: selfCheckParent, specifier: SELF_CHECK_SPECIFIER }, ...requests],
-  }).pipe(Effect.mapError((cause) => failed(`the resolver request cannot be encoded: ${String(cause)}`)));
-  const [stdout, stderr, exitCode] = yield* Effect.scoped(
-    Effect.gen(function* runResolverHost() {
-      const handle = yield* spawner.spawn(
-        ChildProcess.make(
-          process.execPath,
-          [PARENT_AWARE_RESOLUTION_FLAG, '--input-type=module', '--eval', RESOLVER_HOST],
-          {
-            cwd: output,
-            env: {},
-            stderr: 'pipe',
-            stdin: Stream.make(new TextEncoder().encode(payload)),
-            stdout: 'pipe',
-          },
-        ),
-      );
-      // Output is read to EOF before the exit code, so a large answer cannot fill the pipe and block the host.
-      return [
-        yield* Stream.mkString(Stream.decodeText(handle.stdout)),
-        yield* Stream.mkString(Stream.decodeText(handle.stderr)),
-        yield* handle.exitCode,
-      ] as const;
-    }),
-  );
-  if (Number(exitCode) !== 0) {
-    return yield* Effect.fail(failed(`the Node resolver exited ${Number(exitCode)}: ${stderr.trim()}`));
-  }
-  const response = yield* Schema.decodeUnknownEffect(ResolverResponseCodec)(stdout).pipe(
-    Effect.mapError((cause) => failed(`the Node resolver answered an unexpected shape: ${String(cause)}`)),
-  );
-  const [selfCheck, ...results] = response.results;
-  if (selfCheck?.url !== new URL(SELF_CHECK_SPECIFIER, selfCheckParent).href) {
-    return yield* Effect.fail(
-      failed(
-        'this Node does not resolve import.meta.resolve(specifier, parent) against its parent; the packaged dependency closure needs a Node that supports --experimental-import-meta-resolve',
-      ),
-    );
-  }
-  if (results.length !== requests.length) {
-    return yield* Effect.fail(failed('the Node resolver answered a different number of requests than it received'));
-  }
-  return results;
-});
-
 /** The declared install of `name` that `owner` resolves, from the owner's own real location. */
 const resolveDeclaredSource = Effect.fn('CompletePackagedNodeDependencies.resolveDeclaredSource')(
-  function* resolveDeclaredSource(owner: DeclaringOwner, name: string) {
-    const fs = yield* FileSystem.FileSystem;
+  function* resolveDeclaredSource(reads: DependencyReads, owner: DeclaringOwner, name: string) {
+    const key = `${owner.manifest}\0${name}`;
+    const cached = reads.sources.get(key);
+    if (cached !== undefined) {
+      return yield* Effect.succeed(cached);
+    }
+    reads.metrics.sourceResolutions += 1;
     // A catalog alias is declared under its alias, so the owner's own installs decide which declared name is `name`.
     const specifiers = owner.declared.has(name) ? [name] : [...owner.declared];
     for (const specifier of specifiers) {
@@ -405,12 +398,14 @@ const resolveDeclaredSource = Effect.fn('CompletePackagedNodeDependencies.resolv
       if (sourceManifest === undefined) {
         continue;
       }
-      const directory = yield* fs
-        .realPath(path.dirname(sourceManifest))
+      const directory = yield* reads
+        .canonical(path.dirname(sourceManifest))
         .pipe(Effect.mapError(() => failed(`${name}: its declared install cannot be resolved to a real directory`)));
-      const manifest = yield* readManifest(path.join(directory, PACKAGE_MANIFEST));
+      const manifest = yield* reads.manifest(path.join(directory, PACKAGE_MANIFEST));
       if (manifest.name === name) {
-        return { declared: declaredNames(manifest), directory, manifest };
+        const resolved = { declared: declaredNames(manifest), directory, manifest };
+        reads.sources.set(key, resolved);
+        return yield* Effect.succeed(resolved);
       }
     }
     return yield* Effect.fail(failed(`${name}: ${owner.name} declares no install of it, so its install is not copied`));
@@ -418,27 +413,46 @@ const resolveDeclaredSource = Effect.fn('CompletePackagedNodeDependencies.resolv
 );
 
 /** Every file of a traced third-party package matches its declared install byte for byte. */
+const verifyCarriedFile = Effect.fn('CompletePackagedNodeDependencies.verifyCarriedFile')(function* verifyCarriedFile(
+  reads: DependencyReads,
+  packageRoot: string,
+  sourceDirectory: string,
+  file: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const relative = path.relative(packageRoot, file);
+  if (relative === PACKAGE_MANIFEST) {
+    // The traced manifest is rewritten by the packaging step (`exports`, `publishConfig`); its identity is checked.
+    return yield* Effect.void;
+  }
+  const declaredFile = path.join(sourceDirectory, relative);
+  if (!(yield* fs.exists(declaredFile))) {
+    return yield* Effect.fail(
+      failed(`${file}: the traced package carries a file its declared install does not contain`),
+    );
+  }
+  const real = yield* reads.canonical(declaredFile);
+  if (!isInside(sourceDirectory, real)) {
+    return yield* Effect.fail(failed(`${declaredFile}: the declared install's file resolves outside its package`));
+  }
+  const [carried, declared] = yield* Effect.all([fs.readFile(file), fs.readFile(real)], { concurrency: 2 });
+  if (!sameBytes(carried, declared)) {
+    return yield* Effect.fail(failed(`${file}: differs from the declared install's ${relative}`));
+  }
+  reads.metrics.verifiedFiles += 1;
+  return yield* Effect.void;
+});
+
 const verifyCarriedFiles = Effect.fn('CompletePackagedNodeDependencies.verifyCarriedFiles')(
-  function* verifyCarriedFiles(packageRoot: string, sourceDirectory: string) {
-    const fs = yield* FileSystem.FileSystem;
-    for (const file of yield* walkFiles(packageRoot, isNodeModulesName)) {
-      const relative = path.relative(packageRoot, file);
-      if (relative === PACKAGE_MANIFEST) {
-        // The traced manifest is rewritten by the packaging step (`exports`, `publishConfig`); its identity is checked.
-        continue;
-      }
-      const declaredFile = path.join(sourceDirectory, relative);
-      if (!(yield* fs.exists(declaredFile))) {
-        yield* Effect.fail(failed(`${file}: the traced package carries a file its declared install does not contain`));
-      }
-      const real = yield* fs.realPath(declaredFile);
-      if (!isInside(sourceDirectory, real)) {
-        yield* Effect.fail(failed(`${declaredFile}: the declared install's file resolves outside its package`));
-      }
-      if (!sameBytes(yield* fs.readFile(file), yield* fs.readFile(real))) {
-        yield* Effect.fail(failed(`${file}: differs from the declared install's ${relative}`));
-      }
-    }
+  function* verifyCarriedFiles(reads: DependencyReads, packageRoot: string, sourceDirectory: string) {
+    const started = performance.now();
+    yield* Effect.forEach(
+      yield* walkFiles(packageRoot, isNodeModulesName),
+      (file) => verifyCarriedFile(reads, packageRoot, sourceDirectory, file),
+      { concurrency: FILE_CONCURRENCY, discard: true },
+    );
+    reads.metrics.verifyMs += performance.now() - started;
+    return yield* Effect.void;
   },
 );
 
@@ -447,17 +461,17 @@ const verifyCarriedFiles = Effect.fn('CompletePackagedNodeDependencies.verifyCar
  * same install, so two declaring packages never see two copies of one package.
  */
 const ensureVerifiedSource = Effect.fn('CompletePackagedNodeDependencies.ensureVerifiedSource')(
-  function* ensureVerifiedSource(sources: Map<string, VerifiedSource>, packageRoot: string, owner: DeclaringOwner) {
-    const packaged = yield* readManifest(path.join(packageRoot, PACKAGE_MANIFEST));
-    const resolved = yield* resolveDeclaredSource(owner, packaged.name);
-    const existing = sources.get(packageRoot);
+  function* ensureVerifiedSource(context: CompletionContext, packageRoot: string, owner: DeclaringOwner) {
+    const packaged = yield* context.reads.manifest(path.join(packageRoot, PACKAGE_MANIFEST));
+    const resolved = yield* resolveDeclaredSource(context.reads, owner, packaged.name);
+    const existing = context.sources.get(packageRoot);
     if (existing !== undefined) {
       if (existing.directory !== resolved.directory) {
         return yield* Effect.fail(
           failed(`${packaged.name}: two declaring packages resolve different installs; the packaged tree keeps one`),
         );
       }
-      return existing;
+      return yield* Effect.succeed(existing);
     }
     if (resolved.manifest.version !== packaged.version) {
       return yield* Effect.fail(
@@ -473,11 +487,12 @@ const ensureVerifiedSource = Effect.fn('CompletePackagedNodeDependencies.ensureV
     }
     // Workspace packages are compiled by the TypeScript step, which verifies their sources itself.
     if (!packaged.name.startsWith(`${WORKSPACE_PACKAGE_SCOPE}/`)) {
-      yield* verifyCarriedFiles(packageRoot, resolved.directory);
+      yield* verifyCarriedFiles(context.reads, packageRoot, resolved.directory);
     }
     const source: VerifiedSource = { declared: resolved.declared, directory: resolved.directory, name: packaged.name };
-    sources.set(packageRoot, source);
-    return source;
+    context.sources.set(packageRoot, source);
+    context.reads.metrics.verifiedPackages += 1;
+    return yield* Effect.succeed(source);
   },
 );
 
@@ -499,6 +514,7 @@ const ensurePackagedParents = Effect.fn('CompletePackagedNodeDependencies.ensure
         yield* fs.makeDirectory(directory);
       }
     }
+    return yield* Effect.void;
   },
 );
 
@@ -526,6 +542,7 @@ const completeMissingFile = Effect.fn('CompletePackagedNodeDependencies.complete
     }
     yield* ensurePackagedParents(packageRoot, target);
     yield* fs.writeFile(target, yield* fs.readFile(real));
+    return yield* Effect.void;
   },
 );
 
@@ -536,12 +553,16 @@ const ownerOf = Effect.fn('CompletePackagedNodeDependencies.ownerOf')(function* 
 ) {
   const packageRoot = packageRootOf(context.output, file);
   if (packageRoot === undefined) {
-    return context.unitOwner;
+    return yield* Effect.succeed(context.unitOwner);
   }
   // A package reached without an import edge is a workspace export root, which only the unit's declaration can verify.
   const source =
-    context.sources.get(packageRoot) ?? (yield* ensureVerifiedSource(context.sources, packageRoot, context.unitOwner));
-  return { declared: source.declared, manifest: path.join(source.directory, PACKAGE_MANIFEST), name: source.name };
+    context.sources.get(packageRoot) ?? (yield* ensureVerifiedSource(context, packageRoot, context.unitOwner));
+  return yield* Effect.succeed({
+    declared: source.declared,
+    manifest: path.join(source.directory, PACKAGE_MANIFEST),
+    name: source.name,
+  });
 });
 
 /** Follows one resolved edge. Returns the module to scan next, if this edge reached one. */
@@ -557,9 +578,9 @@ const followEdge = Effect.fn('CompletePackagedNodeDependencies.followEdge')(func
   }
   // `node:` builtins and other non-file schemes are not part of the packaged tree.
   if (!result.url.startsWith('file:')) {
-    return null;
+    return yield* Effect.succeed(null);
   }
-  const target = yield* canonicalPath(fileURLToPath(result.url));
+  const target = yield* context.reads.canonical(fileURLToPath(result.url));
   if (!isInside(context.output, target)) {
     return yield* Effect.fail(
       failed(
@@ -573,14 +594,21 @@ const followEdge = Effect.fn('CompletePackagedNodeDependencies.followEdge')(func
     if (targetRoot === undefined) {
       return yield* Effect.fail(failed(`${reference}: leaves its package for the unit-level module ${target}`));
     }
-    yield* ensureVerifiedSource(context.sources, targetRoot, edge.owner);
+    yield* ensureVerifiedSource(context, targetRoot, edge.owner);
+  }
+  // Only skip target I/O AFTER checking this edge's declaring owner, including a second, conflicting owner.
+  const completed = context.targets.get(target);
+  if (completed !== undefined) {
+    return yield* Effect.succeed(completed);
   }
   const extension = path.extname(target);
+  const scan = SCANNED_EXTENSIONS.has(extension) ? target : null;
   if (yield* fs.exists(target)) {
     if ((yield* fs.lstat(target)).type !== 'File') {
       return yield* Effect.fail(failed(`${reference}: ${target} is not a file`));
     }
-    return SCANNED_EXTENSIONS.has(extension) ? target : null;
+    context.targets.set(target, scan);
+    return yield* Effect.succeed(scan);
   }
   if (targetRoot === undefined) {
     return yield* Effect.fail(failed(`${reference}: the unit-level module ${target} is missing from the unit`));
@@ -591,28 +619,33 @@ const followEdge = Effect.fn('CompletePackagedNodeDependencies.followEdge')(func
   }
   yield* completeMissingFile(source, targetRoot, target, reference);
   context.copied.push(path.relative(context.unit, target));
-  return SCANNED_EXTENSIONS.has(extension) ? target : null;
+  context.targets.set(target, scan);
+  return yield* Effect.succeed(scan);
 });
 
 /**
  * Completes the static ESM closure of one packaged unit. Idempotent: a closure that already loads reports nothing to
- * copy. Each wave resolves all its edges in one native Node process, so the walk costs one process per wave.
+ * copy. Waves share one native Node process and immutable reads, but every distinct declaring owner is still checked.
  */
 export const completePackagedNodeDependencies = Effect.fn('CompletePackagedNodeDependencies.complete')(
   function* completePackagedNodeDependencies(unitDirectory: string, options: NodeDependencyCompletionOptions = {}) {
+    const started = performance.now();
+    const reads = makeDependencyReads();
     const fs = yield* FileSystem.FileSystem;
     // Canonical from the start: every path this step compares, reports, or writes is a real path, as Node sees it.
-    const unit = yield* canonicalPath(path.resolve(unitDirectory));
+    const unit = yield* reads.canonical(path.resolve(unitDirectory));
     const outputPath = path.join(unit, PACKAGED_DIRECTORY);
     if (!(yield* fs.exists(outputPath))) {
       return yield* Effect.fail(failed(`${outputPath}: there is no packaged output to complete`));
     }
     const output = yield* fs.realPath(outputPath);
-    const unitManifest = yield* readManifest(path.join(unit, PACKAGE_MANIFEST));
+    const unitManifest = yield* reads.manifest(path.join(unit, PACKAGE_MANIFEST));
     const context: CompletionContext = {
       copied: [],
+      reads,
       output,
       sources: new Map(),
+      targets: new Map(),
       unit,
       unitOwner: {
         declared: declaredNames(unitManifest),
@@ -628,10 +661,10 @@ export const completePackagedNodeDependencies = Effect.fn('CompletePackagedNodeD
           roots.push(file);
         }
       }
-      roots.push(...(yield* workspaceExportRoots(output, context.unitOwner.declared)));
+      roots.push(...(yield* workspaceExportRoots(output, context.unitOwner.declared, reads)));
     } else {
       for (const root of options.roots) {
-        const file = yield* canonicalPath(path.resolve(unit, root));
+        const file = yield* reads.canonical(path.resolve(unit, root));
         if (!(yield* fs.exists(file))) {
           return yield* Effect.fail(failed(`${root}: the root module does not exist`));
         }
@@ -644,10 +677,17 @@ export const completePackagedNodeDependencies = Effect.fn('CompletePackagedNodeD
       }
     }
 
+    reads.metrics.rootsMs = performance.now() - started;
+    const resolverStarted = performance.now();
+    const resolver = yield* makePackagedDependencyResolver(output);
+    reads.metrics.resolveMs += performance.now() - resolverStarted;
     const visited = new Set<string>();
     let wave = [...new Set(roots)];
     while (wave.length > 0) {
-      const files = wave.filter((file) => !visited.has(file));
+      const files = [...new Set(wave)].filter((file) => !visited.has(file));
+      reads.metrics.waves += 1;
+      reads.metrics.scannedFiles += files.length;
+      const scanStarted = performance.now();
       for (const file of files) {
         visited.add(file);
       }
@@ -658,13 +698,17 @@ export const completePackagedNodeDependencies = Effect.fn('CompletePackagedNodeD
           edges.push({ importer: file, owner, specifier });
         }
       }
+      reads.metrics.scanMs += performance.now() - scanStarted;
+      reads.metrics.edges += edges.length;
       if (edges.length === 0) {
         break;
       }
-      const results = yield* resolveSpecifiers(
-        output,
+      const resolveStarted = performance.now();
+      const results = yield* resolver.resolve(
         edges.map((edge) => ({ parent: pathToFileURL(edge.importer).href, specifier: edge.specifier })),
       );
+      reads.metrics.resolveMs += performance.now() - resolveStarted;
+      const followStarted = performance.now();
       const next: string[] = [];
       for (const [index, edge] of edges.entries()) {
         const result = results[index];
@@ -678,10 +722,20 @@ export const completePackagedNodeDependencies = Effect.fn('CompletePackagedNodeD
           next.push(scan);
         }
       }
+      reads.metrics.followMs += performance.now() - followStarted;
       wave = next;
     }
-    return { copied: context.copied.toSorted() } satisfies NodeDependencyCompletion;
+    yield* resolver.close;
+    reads.metrics.resolverBatches = resolver.stats.batches;
+    reads.metrics.resolverRequests = resolver.stats.requests;
+    reads.metrics.resolverCacheHits = resolver.stats.cacheHits;
+    reads.metrics.totalMs = performance.now() - started;
+    return yield* Effect.succeed({
+      copied: context.copied.toSorted(),
+      metrics: reads.metrics,
+    } satisfies NodeDependencyCompletion);
   },
+  Effect.scoped,
 );
 
 const reportUnit = Effect.fn('CompletePackagedNodeDependencies.reportUnit')(function* reportUnit(
@@ -689,6 +743,14 @@ const reportUnit = Effect.fn('CompletePackagedNodeDependencies.reportUnit')(func
 ) {
   const completion = yield* completePackagedNodeDependencies(unitDirectory);
   yield* Console.log(`${unitDirectory}: completed ${completion.copied.length} packaged Node dependency files`);
+  const m = completion.metrics;
+  yield* Console.log(
+    `${unitDirectory}: packaged Node timings ms: roots=${m.rootsMs.toFixed(0)} scan=${m.scanMs.toFixed(0)} resolve=${m.resolveMs.toFixed(0)} follow=${m.followMs.toFixed(0)} verify=${m.verifyMs.toFixed(0)} total=${m.totalMs.toFixed(0)} (verify is included in scan/follow)`,
+  );
+  yield* Console.log(
+    `${unitDirectory}: packaged Node work: waves=${m.waves} modules=${m.scannedFiles} edges=${m.edges} resolverProcesses=1 batches=${m.resolverBatches} requests=${m.resolverRequests} resolutionHits=${m.resolverCacheHits} manifests=${m.manifestReads} canonicalPaths=${m.canonicalReads} sourceResolutions=${m.sourceResolutions} verifiedPackages=${m.verifiedPackages} verifiedFiles=${m.verifiedFiles}`,
+  );
+  return yield* Effect.void;
 });
 
 const command = Command.make(
