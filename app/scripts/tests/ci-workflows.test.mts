@@ -9,6 +9,7 @@ import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
 import { DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';
+import { MUST_MIGRATE_TESTS } from '../ci/integration-seed-model.mts';
 import { loadDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 
 const TriggerSchema = Schema.Struct({ 'paths-ignore': Schema.optional(Schema.Array(Schema.String)) });
@@ -31,11 +32,15 @@ const CI_PLAN_JOB = 'ci-plan';
 const WORKSPACE_UNIT_JOB = 'workspace-unit';
 const WORKSPACE_UNIT_ARTIFACTS_JOB = 'workspace-unit-artifacts';
 const SERVICE_INTEGRATION_JOB = 'service-integration';
-const SEEDED_INTEGRATION_JOB = 'seeded-integration';
+const BUILD_LEASE_JOB = 'build-lease';
 const INTEGRATION_SEED_PROOF_JOB = 'integration-seed-proof';
 const BROWSER_INTEGRATION_JOB = 'browser-integration';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
 const WEIGHTED_SHARD_SCRIPT = 'scripts/ci/rstest-weighted-shard.sh';
+/** The test files that must migrate their own job database, as the matrices name them for the weighted runner. */
+const FRESH_DATABASE_TESTS = Schema.decodeUnknownSync(
+  Schema.Struct({ 'fresh-database-tests': Schema.Array(Schema.String) }),
+)(JSON.parse(readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8')))['fresh-database-tests'];
 
 const MatrixRowsSchema = Schema.Array(Schema.Record(Schema.String, Schema.Unknown));
 const MatricesFileSchema = Schema.Struct({
@@ -57,16 +62,7 @@ const readGateWorkflow = () => {
     [WORKSPACE_GATE_JOB, 'source', matrices.source],
     [WORKSPACE_UNIT_JOB, 'unit', matrices.unit.filter((row) => row['node-artifacts'] !== true)],
     [WORKSPACE_UNIT_ARTIFACTS_JOB, 'unit-artifacts', matrices.unit.filter((row) => row['node-artifacts'] === true)],
-    [
-      SERVICE_INTEGRATION_JOB,
-      'integration',
-      matrices.integration.filter((row) => row.suite === 'integration' && row.seed !== true),
-    ],
-    [
-      SEEDED_INTEGRATION_JOB,
-      'seeded-integration',
-      matrices.integration.filter((row) => row.suite === 'integration' && row.seed === true),
-    ],
+    [SERVICE_INTEGRATION_JOB, 'integration', matrices.integration.filter((row) => row.suite === 'integration')],
     [BROWSER_INTEGRATION_JOB, 'browser', matrices.integration.filter((row) => row.suite === 'browser')],
   ] as const) {
     const entry = record(jobs[job]);
@@ -163,7 +159,6 @@ const ROOT_GATE_JOBS = [
   'static-contracts',
   FORMAT_AND_LINT_JOB,
   SERVICE_INTEGRATION_JOB,
-  SEEDED_INTEGRATION_JOB,
   INTEGRATION_SEED_PROOF_JOB,
   BROWSER_INTEGRATION_JOB,
   NODE_ARTIFACT_BUILD_JOB,
@@ -174,7 +169,6 @@ const GATE_JOBS = ROOT_GATE_JOBS;
 /** Gate jobs that read this run's built outputs: they wait for the build shards and nothing else. */
 const ARTIFACT_CONSUMER_JOBS: readonly string[] = [
   WORKSPACE_UNIT_ARTIFACTS_JOB,
-  SERVICE_INTEGRATION_JOB,
   INTEGRATION_SEED_PROOF_JOB,
   NODE_ARTIFACT_PROOF_JOB,
 ];
@@ -207,18 +201,24 @@ it('selects work before gates and starts source checks without waiting for artif
   expect(lookup).toContain('runs?head_sha=$GITHUB_SHA&event=merge_group&status=success');
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow());
   expect(jobs[CI_PLAN_JOB]?.needs).toEqual([QUEUE_PROOF_JOB]);
-  // Seeded rows also wait for the seed producer, and only for it.
-  expect(jobs[SEEDED_INTEGRATION_JOB]?.needs).toEqual([
-    CI_PLAN_JOB,
-    NODE_ARTIFACT_BUILD_JOB,
-    INTEGRATION_SEED_PROOF_JOB,
-  ]);
-  expect(jobs[SEEDED_INTEGRATION_JOB]?.if).toBe(
+  // Integration rows start once every build shard has a runner and wait for the builds inside, after their set-up.
+  expect(jobs[SERVICE_INTEGRATION_JOB]?.needs).toEqual([CI_PLAN_JOB, BUILD_LEASE_JOB]);
+  expect(jobs[SERVICE_INTEGRATION_JOB]?.if).toBe(
     expression(
-      `!cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.integration-seed-proof.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['${SEEDED_INTEGRATION_JOB}'] == 'success'`,
+      `!cancelled() && needs.ci-plan.result == 'success' && needs.build-lease.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['${SERVICE_INTEGRATION_JOB}'] == 'success'`,
     ),
   );
-  for (const gate of ROOT_GATE_JOBS.filter((job) => job !== SEEDED_INTEGRATION_JOB)) {
+  expect(jobs[BUILD_LEASE_JOB]?.needs).toEqual([CI_PLAN_JOB]);
+  expect(jobs[BUILD_LEASE_JOB]?.if).toBe(
+    expression(
+      "!cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success'",
+    ),
+  );
+  // Only the required check waits for the seed producer.
+  expect(Object.keys(jobs).filter((job) => jobs[job]?.needs?.includes(INTEGRATION_SEED_PROOF_JOB) === true)).toEqual([
+    'workspace-gates',
+  ]);
+  for (const gate of ROOT_GATE_JOBS.filter((job) => job !== SERVICE_INTEGRATION_JOB)) {
     const needsNodeArtifacts = ARTIFACT_CONSUMER_JOBS.includes(gate);
     expect(jobs[gate]?.needs).toEqual(needsNodeArtifacts ? [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB] : [CI_PLAN_JOB]);
     expect(jobs[gate]?.if).toBe(
@@ -229,6 +229,35 @@ it('selects work before gates and starts source checks without waiting for artif
       ),
     );
   }
+});
+
+it('starts no more jobs right after planning than the 20 runners the account holds', () => {
+  const FirstWaveSchema = Schema.Struct({
+    jobs: Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        if: Schema.optional(Schema.String),
+        needs: Schema.optional(Schema.Array(Schema.String)),
+        strategy: Schema.optional(
+          Schema.Struct({
+            matrix: Schema.Struct({
+              include: Schema.optional(Schema.Array(Schema.Unknown)),
+              shard: Schema.optional(Schema.Array(Schema.Number)),
+            }),
+          }),
+        ),
+      }),
+    ),
+  });
+  const { jobs } = Schema.decodeUnknownSync(FirstWaveSchema)(readGateWorkflow());
+  // warm-caches runs only on main pushes, where queue-proof skips the gates.
+  const firstWave = Object.entries(jobs).filter(([, job]) => job.needs?.length === 1 && job.needs[0] === CI_PLAN_JOB);
+  const runners = firstWave.reduce(
+    (total, [, job]) => total + (job.strategy?.matrix.shard?.length ?? job.strategy?.matrix.include?.length ?? 1),
+    0,
+  );
+  expect(runners).toBeLessThanOrEqual(20);
+  expect(firstWave.map(([name]) => name)).toContain(NODE_ARTIFACT_BUILD_JOB);
 });
 
 it('classifies documentation before installation and schedules full regression without enabling deployment', () => {
@@ -348,7 +377,6 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     WORKSPACE_UNIT_JOB,
     WORKSPACE_UNIT_ARTIFACTS_JOB,
     SERVICE_INTEGRATION_JOB,
-    SEEDED_INTEGRATION_JOB,
     INTEGRATION_SEED_PROOF_JOB,
     BROWSER_INTEGRATION_JOB,
   ];
@@ -363,7 +391,7 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     };
   };
   expect(passes(planned([WORKSPACE_UNIT_JOB, BROWSER_INTEGRATION_JOB]))).toBe(true);
-  expect(passes(planned([SEEDED_INTEGRATION_JOB, INTEGRATION_SEED_PROOF_JOB]))).toBe(true);
+  expect(passes(planned([SERVICE_INTEGRATION_JOB, INTEGRATION_SEED_PROOF_JOB]))).toBe(true);
   expect(passes(planned(testMatrices))).toBe(false);
   expect(passes(planned([NODE_ARTIFACT_PROOF_JOB]))).toBe(false);
   expect(passes(planned([NODE_ARTIFACT_BUILD_JOB]))).toBe(false);
@@ -826,6 +854,8 @@ const IntegrationJobSchema = Schema.Struct({
           'root-rstest-shard': Schema.optional(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
           'root-suite': Schema.optional(Schema.Boolean),
           'rstest-shard': Schema.optional(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
+          'fresh-database-tests': Schema.optional(Schema.Literals(['skip', 'only'])),
+          'rstest-projects': Schema.optional(Schema.String),
           seed: Schema.optional(Schema.Boolean),
           suite: Schema.Literals(['integration', 'browser']),
         }),
@@ -835,7 +865,6 @@ const IntegrationJobSchema = Schema.Struct({
 });
 const IntegrationShardsWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
-    [SEEDED_INTEGRATION_JOB]: IntegrationJobSchema,
     [SERVICE_INTEGRATION_JOB]: IntegrationJobSchema,
   }),
 });
@@ -861,7 +890,7 @@ it('runs the root integration suite once and every package integration suite in 
     `mise exec -- bash ${WEIGHTED_SHARD_SCRIPT} "$ROOT_RSTEST_SHARD" integration --pool.maxWorkers 1 || status=$?`,
   );
   expect(run?.run).toContain(
-    `mise exec -- pnpm $PACKAGE_FILTERS exec bash "$PWD/${WEIGHTED_SHARD_SCRIPT}" "$RSTEST_SHARD" integration --pool.maxWorkers "$RSTEST_WORKERS" || status=$?`,
+    `mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 $PACKAGE_FILTERS exec bash "$PWD/${WEIGHTED_SHARD_SCRIPT}" "$RSTEST_SHARD" "$project" --pool.maxWorkers "$RSTEST_WORKERS" || status=$?`,
   );
   expect(run?.run).toContain(
     'mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 || status=$?',
@@ -897,14 +926,32 @@ it('runs the root integration suite once and every package integration suite in 
   expect(commerceScripts['test:integration:native-preproposal']).toBe(
     'ONTOS_PREPROPOSAL_STANDALONE=true ONTOS_PREPROPOSAL_NATIVE=true ONTOS_APPROVAL_NATIVE=true rstest --project integration --pool.maxWorkers 1 tests/integration/preproposal-basis-postgres.test.ts --testTimeout 1200000',
   );
-  const seededJob = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
-    SEEDED_INTEGRATION_JOB
-  ];
-  // Seeded rows run the very same test step; together both jobs cover every package once.
-  expect(seededJob.steps.find(({ env }) => env?.PACKAGE_FILTERS !== undefined)).toEqual(run);
-  const shards = [...job.strategy.matrix.include, ...seededJob.strategy.matrix.include].filter(
-    ({ suite }) => suite === 'integration',
+  const all = job.strategy.matrix.include.filter(({ suite }) => suite === 'integration');
+  // The Fresh Database rows run exactly the files every seeded weighted row leaves out, over the same suites.
+  const fresh = all.filter((shard) => shard['fresh-database-tests'] === 'only');
+  const shards = all.filter((shard) => shard['fresh-database-tests'] !== 'only');
+  const skipping = shards.filter((shard) => shard['fresh-database-tests'] === 'skip');
+  expect(fresh.length).toBeGreaterThan(0);
+  for (const shard of fresh) {
+    expect(shard.seed, shard.name).toBeUndefined();
+    expect(shard['root-suite']).toBe(true);
+    expect(shard['root-rstest-shard']).toBe(shard['rstest-shard']);
+    expect(sorted(shardFilters(shard))).toEqual(
+      sorted([...new Set(skipping.filter((row) => row['root-suite'] !== true).flatMap(shardFilters))]),
+    );
+  }
+  expect(sorted(fresh.map((shard) => shard['rstest-shard'] ?? ''))).toEqual(
+    sorted(Array.from({ length: fresh.length }, (_, index) => `${index + 1}/${fresh.length}`)),
   );
+  expect(shards.filter((shard) => shard['root-suite'] === true).every((shard) => skipping.includes(shard))).toBe(true);
+  // A seeded weighted row that does not leave those files out may own none of them.
+  for (const shard of shards.filter((row) => row.seed === true && row['fresh-database-tests'] !== 'skip')) {
+    const owners = shardFilters(shard).map((filter) => filter.replace(/^\.\//u, ''));
+    expect(
+      FRESH_DATABASE_TESTS.some((file) => owners.some((owner) => file.startsWith(`${owner}/`))),
+      shard.name,
+    ).toBe(false);
+  }
   const roots = shards.filter((shard) => shard['root-suite'] === true);
   expect(roots.map((shard) => shard['root-rstest-shard'])).toEqual(['1/4', '2/4', '3/4', '4/4']);
   expect(roots.every((shard) => shardFilters(shard).length === 0)).toBe(true);
@@ -917,11 +964,16 @@ it('runs the root integration suite once and every package integration suite in 
   const split = named.filter((shard) => shard['rstest-shard'] !== undefined);
   for (const shard of split) {
     expect(shardFilters(shard)).toHaveLength(1);
-    // The weighted runner runs `rstest --project integration` itself, so the package's script must be exactly that.
-    const manifest = Schema.decodeUnknownSync(RootScriptsSchema)(
+    // The weighted runner runs `rstest --project <project>` itself for each of the row's projects, one after the
+    // other, so the package's script must be exactly those projects in that order.
+    const { scripts: packageScripts } = Schema.decodeUnknownSync(RootScriptsSchema)(
       JSON.parse(readFileSync(new URL(`../../${shardFilters(shard)[0] ?? ''}/package.json`, import.meta.url), 'utf-8')),
     );
-    expect(manifest.scripts['test:integration'], shard.name).toBe('rstest --project integration');
+    const projects = (shard['rstest-projects'] ?? 'integration').split(' ');
+    const resolved = (packageScripts['test:integration'] ?? '')
+      .split(' && ')
+      .map((part) => packageScripts[part.replace(/^pnpm run /u, '')] ?? part);
+    expect(resolved, shard.name).toEqual(projects.map((project) => `rstest --project ${project}`));
   }
   for (const filter of new Set(split.flatMap(shardFilters))) {
     const parts = split
@@ -1141,16 +1193,17 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   const source: unknown = readGateWorkflow();
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(source);
   const integration = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source).jobs[SERVICE_INTEGRATION_JOB];
-  expect(integration.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]);
+  expect(integration.needs).toEqual([CI_PLAN_JOB, BUILD_LEASE_JOB]);
   // The producer depends only on queue proof, so waiting for its complete matrix cannot create a cycle.
   expect(jobs[NODE_ARTIFACT_BUILD_JOB]?.needs).toEqual([CI_PLAN_JOB]);
-  const roots = integration.strategy.matrix.include.filter((shard) => shard['root-suite'] === true);
+  const ordinary = integration.strategy.matrix.include.filter((shard) => shard['fresh-database-tests'] !== 'only');
+  const roots = ordinary.filter((shard) => shard['root-suite'] === true);
   expect(roots).toHaveLength(4);
   expect(roots.every(({ suite }) => suite === 'integration')).toBe(true);
-  const customerContext = integration.strategy.matrix.include.filter((shard) =>
+  const customerContext = ordinary.filter((shard) =>
     shardFilters(shard).includes('./verticals/commerce-customer-context'),
   );
-  expect(customerContext).toHaveLength(4);
+  expect(customerContext).toHaveLength(5);
   expect(customerContext.every(({ suite }) => suite === 'integration')).toBe(true);
   // The browser suite reads no built output: its own job needs only the plan.
   expect(integration.strategy.matrix.include.some(({ suite }) => suite === 'browser')).toBe(false);
@@ -1204,61 +1257,189 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   expect(preproposal[0]?.suite).toBe('integration');
 });
 
-it('proves the fresh-database preparation once and restores it only in rows that cover no migration behaviour', () => {
+/** The seed cache digest's inputs: every input of the migrated integration database. */
+const SEED_KEY_INPUTS = [
+  "'app/**/drizzle*/**'",
+  "'app/database/**'",
+  "'app/scripts/postgres/**'",
+  "'app/scripts/run-zerops-migrator.mjs'",
+  "'app/scripts/ci/integration-seed*.mts'",
+  "'app/packages/core-runtime/spicedb/**'",
+  "'app/topology/**'",
+  "'app/docker-compose.yml'",
+  "'app/pnpm-lock.yaml'",
+  "'!app/**/node_modules/**'",
+];
+
+it('restores the integration seed from its input-keyed cache and never makes a row wait for its producer', () => {
   const source = readGateWorkflow();
-  const { jobs } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source);
-  const seeded = jobs[SEEDED_INTEGRATION_JOB];
-  // The seed model refuses these rows; they keep today's complete fresh preparation in service-integration.
-  for (const row of seeded.strategy.matrix.include) {
-    expect(row.name).not.toMatch(
-      /Database, Migration|Root Integration|Core Runtime Integration|Party Registry Integration|Commerce Customer Context/u,
-    );
-    expect(row['root-suite']).toBeUndefined();
-    expect(row['native-preproposal']).toBeUndefined();
+  const StepsJobSchema = Schema.Struct({
+    env: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number]))),
+    needs: Schema.optional(Schema.Array(Schema.String)),
+    steps: Schema.Array(GateCommandStepSchema),
+  });
+  const { jobs } = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Struct({
+        [BROWSER_INTEGRATION_JOB]: StepsJobSchema,
+        [CI_PLAN_JOB]: Schema.Struct({
+          outputs: Schema.Record(Schema.String, Schema.String),
+          steps: Schema.Array(GateCommandStepSchema),
+        }),
+        [INTEGRATION_SEED_PROOF_JOB]: StepsJobSchema,
+        [SERVICE_INTEGRATION_JOB]: StepsJobSchema,
+      }),
+    }),
+  )(source);
+  // ci-plan names the seed by its inputs, before the install creates node_modules.
+  const plan = jobs[CI_PLAN_JOB];
+  const keyStep = plan.steps.findIndex(({ id }) => id === 'seed-key');
+  const install = plan.steps.findIndex(({ name }) => name === 'Install the app workspace for code impact analysis');
+  expect(keyStep > -1 && keyStep < install).toBe(true);
+  for (const input of SEED_KEY_INPUTS) {
+    expect(plan.steps[keyStep]?.run).toContain(input);
   }
-  expect(seeded.strategy.matrix.include.map(({ name }) => name)).toEqual([
-    'Shell Integration (1/4)',
-    'Shell Integration (2/4)',
-    'Shell Integration (3/4)',
-    'Shell Integration (4/4)',
-    'Privacy Integration (1/3)',
-    'Privacy Integration (2/3)',
-    'Privacy Integration (3/3)',
-    'Pricing and Inventory Integration',
-    'Catalog Integration',
-    'Market, Order, Payment Term, Price Group, and Storefront Integration',
-  ]);
-  const names = seeded.steps.map(({ name }) => name);
-  for (const replaced of [
-    'Initialize fresh local database login identities',
+  expect(plan.outputs['seed-key']).toBe(expression('steps.seed-key.outputs.key'));
+  const restoreOf = (steps: readonly (typeof GateCommandStepSchema.Type)[]) =>
+    steps.find(({ id }) => id === 'seed-cache');
+  // Every consumer restores exactly that key, with no prefix fallback, and prepares a fresh database on a miss.
+  for (const job of [SERVICE_INTEGRATION_JOB, BROWSER_INTEGRATION_JOB] as const) {
+    const { needs, steps } = jobs[job];
+    expect(needs).not.toContain(INTEGRATION_SEED_PROOF_JOB);
+    const restore = restoreOf(steps);
+    expect(restore?.if, job).toBe('matrix.seed == true');
+    expect(restore?.uses).toMatch(/^actions\/cache\/restore@[a-f0-9]{40}$/u);
+    expect(restore?.with).toEqual({
+      key: expression('needs.ci-plan.outputs.seed-key'),
+      path: `${RUNNER_TEMP_EXPRESSION}/integration-seed`,
+    });
+    const seeded = steps.find(({ run }) => run?.includes('integration-seed.mts restore') === true);
+    expect(seeded?.if).toBe("steps.seed-cache.outputs.cache-hit == 'true'");
+    expect(seeded?.run).toContain('--purpose ordinary-tests --job-name "$CI_MATRIX_NAME"');
+    expect(seeded?.run).toContain('mise exec -- pnpm db:verify');
+    for (const name of [
+      'Initialize fresh local database login identities',
+      'Apply and verify Core, Auth, and Contacts migrations, plus Party Registry',
+    ]) {
+      expect(steps.find((step) => step.name === name)?.if, `${job}: ${name}`).toContain(
+        "steps.seed-cache.outputs.cache-hit != 'true'",
+      );
+    }
+  }
+  const integration = jobs[SERVICE_INTEGRATION_JOB].steps;
+  expect(integration.find(({ run }) => run?.includes('integration-seed.mts restore') === true)?.run).toContain(
+    '--test-files "$CI_TEST_FILES"',
+  );
+  for (const name of [
+    'Remove the pre-seeded runtime role to prove deployment bootstrap ordering',
     'Run the assembled stage migrator artifact against the fresh database',
-    'Apply and verify Core, Auth, and Contacts migrations, plus Party Registry',
     AUDIT_STEP,
     'Build and run the Outbox Worker host artifact against the fresh database',
   ]) {
-    expect(names).not.toContain(replaced);
+    expect(integration.find((step) => step.name === name)?.if, name).toBe(
+      "matrix.suite == 'integration' && steps.seed-cache.outputs.cache-hit != 'true'",
+    );
   }
-  const restore = seeded.steps.findIndex(({ run }) => run?.includes('integration-seed.mts restore') === true);
-  const worker = seeded.steps.findIndex(({ run }) => run?.includes('worker-host-artifact.mts use') === true);
-  const tests = seeded.steps.findIndex(
-    ({ env }) => env?.PACKAGE_FILTERS !== undefined && env.ROOT_RSTEST_SHARD !== undefined,
-  );
-  expect(restore > -1 && restore < worker && worker < tests).toBe(true);
-  expect(seeded.steps[restore]?.run).toContain('--purpose ordinary-tests --job-name "$CI_MATRIX_NAME"');
-  expect(seeded.steps[restore]?.run).toContain('--test-files "$CI_TEST_FILES"');
-  const producer = Schema.decodeUnknownSync(
-    Schema.Struct({ jobs: Schema.Struct({ [INTEGRATION_SEED_PROOF_JOB]: IdentityGateJobSchema }) }),
-  )(source).jobs[INTEGRATION_SEED_PROOF_JOB];
-  const produce = producer.steps.findIndex(
-    ({ run }) =>
-      run ===
-      'mise exec -- node scripts/ci/integration-seed.mts produce --directory "$RUNNER_TEMP/integration-seed" --disposable',
-  );
-  const build = producer.steps.findIndex(({ run }) => run?.includes('worker-host-artifact.mts build') === true);
-  expect(produce > -1 && produce < build).toBe(true);
+  // INVARIANT: every full run runs the complete fresh proof in the producer; a narrow round skips its migration part
+  // only on a hit, which a change to any migration input turns into a miss; a miss saves the new seed.
+  const producer = jobs[INTEGRATION_SEED_PROOF_JOB];
+  expect(restoreOf(producer.steps)?.with).toEqual({
+    key: expression('needs.ci-plan.outputs.seed-key'),
+    path: `${RUNNER_TEMP_EXPRESSION}/integration-seed`,
+  });
+  const produce = producer.steps.find(({ run }) => run?.includes('integration-seed.mts produce') === true);
+  expect(produce?.if).toBe("needs.ci-plan.outputs.mode == 'full' || steps.seed-cache.outputs.cache-hit != 'true'");
+  const onHit = producer.steps.find(({ run }) => run?.includes('prove-outbox-worker-host-artifact.sh') === true);
+  expect(onHit?.if).toBe("needs.ci-plan.outputs.mode != 'full' && steps.seed-cache.outputs.cache-hit == 'true'");
+  const save = producer.steps.find(({ uses }) => uses?.startsWith('actions/cache/save@') === true);
+  expect(save?.if).toBe("steps.seed-cache.outputs.cache-hit != 'true'");
+  expect(save?.with).toEqual({
+    key: expression('needs.ci-plan.outputs.seed-key'),
+    path: `${RUNNER_TEMP_EXPRESSION}/integration-seed`,
+  });
   expect(producer.env?.INTEGRATION_SEED_COMMERCE_AUTH_DATABASE_URL).toBe(
     'postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci',
   );
+  // The matrices name exactly the seed model's inventory of files that must migrate their own database.
+  expect(sorted(FRESH_DATABASE_TESTS)).toEqual(sorted(MUST_MIGRATE_TESTS));
+});
+
+it('prepares every integration row before it waits, with a deadline, for the build shards', () => {
+  const { steps } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
+    SERVICE_INTEGRATION_JOB
+  ];
+  const at = (name: string) => steps.findIndex((step) => step.name === name);
+  const wait = steps.findIndex(({ run }) => run?.startsWith('bash scripts/wait-for-build-shards.sh finished') === true);
+  expect(steps[wait]?.run).toBe("bash scripts/wait-for-build-shards.sh finished 'Build node artifacts (' 6");
+  expect(steps[wait]?.['timeout-minutes']).toBe(25);
+  for (const name of [
+    'Start fresh PostgreSQL and SpiceDB services',
+    'Restore the proven seed databases',
+    'Run the assembled stage migrator artifact against the fresh database',
+    AUDIT_STEP,
+  ]) {
+    expect(at(name), name).toBeGreaterThan(-1);
+    expect(at(name), name).toBeLessThan(wait);
+  }
+  for (const name of [
+    'Download the same-run Node artifacts for native owner fixtures',
+    'Build and run the Outbox Worker host artifact against the fresh database',
+  ]) {
+    expect(at(name), name).toBeGreaterThan(wait);
+  }
+  const build = Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(readGateWorkflow()).jobs[NODE_ARTIFACT_BUILD_JOB];
+  expect(build.name).toBe(
+    `Build node artifacts (${expression('matrix.shard')}/${String(build.strategy.matrix.shard.length)})`,
+  );
+});
+
+/** Runs the shard wait with a `gh` that answers the jobs API with these jobs, as `gh api --jq` would. */
+const waitForBuildShards = (
+  mode: string,
+  jobs: readonly { conclusion: string | null; name: string; status: string }[],
+) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-wait-shards-'));
+  try {
+    const gh = path.join(directory, 'gh');
+    writeFileSync(gh, '#!/bin/sh\n[ "$1" = api ] && [ "$4" = --jq ] || exit 2\nprintf %s "$FAKE_JOBS" | jq -r "$5"\n');
+    chmodSync(gh, 0o755);
+    execFileSync(
+      '/bin/bash',
+      [fileURLToPath(new URL('../wait-for-build-shards.sh', import.meta.url)), mode, 'Build x (', '2'],
+      {
+        env: {
+          FAKE_JOBS: JSON.stringify({ jobs }),
+          GITHUB_REPOSITORY: 'owner/repository',
+          GITHUB_RUN_ID: '1',
+          PATH: `${directory}:${STEP_PATH}`,
+          WAIT_FOR_BUILD_SHARDS_INTERVAL: '0',
+          WAIT_FOR_BUILD_SHARDS_TIMEOUT: '1',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 10_000,
+      },
+    );
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+};
+
+it('waits for the build shards with a deadline and fails at once when one does not succeed', () => {
+  const queued = { conclusion: null, name: 'Build x (2/2)', status: 'queued' };
+  const running = { conclusion: null, name: 'Build x (1/2)', status: 'in_progress' };
+  const done = { conclusion: 'success', name: 'Build x (2/2)', status: 'completed' };
+  const unrelated = { conclusion: 'failure', name: 'Static Contracts', status: 'completed' };
+  expect(waitForBuildShards('started', [running, queued, unrelated])).toBe(false);
+  expect(waitForBuildShards('started', [running, done, unrelated])).toBe(true);
+  expect(waitForBuildShards('finished', [running, done])).toBe(false);
+  expect(waitForBuildShards('finished', [{ ...running, conclusion: 'success', status: 'completed' }, done])).toBe(true);
+  for (const conclusion of ['failure', 'cancelled', 'timed_out', 'skipped']) {
+    expect(waitForBuildShards('started', [{ ...running, conclusion, status: 'completed' }, done])).toBe(false);
+  }
+  expect(waitForBuildShards('sometime', [done])).toBe(false);
 });
 
 it('exports the built Composition path to native tests only after its derivation succeeds', () => {
@@ -1378,7 +1559,7 @@ it('keeps deployment out of the workspace gates and guards Action transaction I/
   expect(env.ONTOS_ACTION_TRANSACTION_IO_GUARD).toBe('true');
   // The retired deploy chain stays out of the gates: the workflow only plans and runs checks.
   expect(sorted(Object.keys(jobs))).toEqual(
-    sorted([QUEUE_PROOF_JOB, CI_PLAN_JOB, 'warm-caches', ...GATE_JOBS, 'workspace-gates']),
+    sorted([QUEUE_PROOF_JOB, CI_PLAN_JOB, 'warm-caches', BUILD_LEASE_JOB, ...GATE_JOBS, 'workspace-gates']),
   );
 });
 
