@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs';
+import csImports from '../../locales/cs/crm-imports.json';
+import enImports from '../../locales/en/crm-imports.json';
 import { describe, expect, it } from 'effect-rstest';
 import { DateTime, Effect, Exit, Schema } from 'effect';
 import { CrmCommandSchema, dispatchCrmCommand } from '../../shared/commands/index.ts';
@@ -11,6 +13,7 @@ import { needsReview, openReviewEvents, orderDateText } from '../../shared/domai
 import type { CrmState } from '../../shared/domain/state.ts';
 import { CrmStateSchema, initialCrmState, projectCrmState } from '../../shared/domain/state.ts';
 import { parseCsvTime, parseOrdersCsv } from '../../shared/imports/csv.ts';
+import { czechCsvProblemCopy, czechCsvProblemMessage } from '../../shared/imports/csv-problem.ts';
 import { seedImports } from '../../shared/imports/demo-seed.ts';
 import { ordersCsvSamples } from '../../shared/imports/samples.ts';
 import { buildSalesReport } from '../../shared/domain/reports.ts';
@@ -161,21 +164,26 @@ describe('CRM order CSV parser', () => {
       const cells = header.map((key) => (key === column ? 'x'.repeat(4001) : 'valid'));
       const parsed = parseOrdersCsv(`${header.join(';')}\n${cells.join(';')}\n`);
       const [rejected] = parsed.rows;
-      expect(rejected).toMatchObject({ kind: 'error', row: 2 });
+      expect(rejected).toMatchObject({
+        kind: 'error',
+        problem: { _tag: 'InvalidText', column, maxLength: 200, row: 2 },
+        row: 2,
+      });
       if (rejected?.kind === 'error') {
-        expect(rejected.message).toContain(column);
-        expect(rejected.message.length).toBeLessThan(300);
         expect(rejected.externalId).not.toBe('x'.repeat(4001));
+        expect(czechCsvProblemMessage(rejected.problem)).not.toContain('xxx');
       }
     }
   });
   it('rejects overlong line names and SKUs without echoing their contents', () => {
     for (const line of [`SKU:${'x'.repeat(4001)}:1`, `${'x'.repeat(4001)}:Name:1`]) {
       const parsed = parseOrdersCsv(`source;order_id;status;lines\nE-shop;1;nova;${line}\n`);
-      expect(parsed.rows[0]).toMatchObject({ kind: 'error', row: 2 });
-      const [rejected] = parsed.rows;
-      expect(rejected?.kind === 'error' ? rejected.message : '').toContain('polozky');
-      expect(rejected?.kind === 'error' ? rejected.message.length : 0).toBeLessThan(300);
+      expect(parsed.rows[0]).toEqual({
+        externalId: '1',
+        kind: 'error',
+        problem: { _tag: 'InvalidLine', item: 1, maxLength: 200, row: 2 },
+        row: 2,
+      });
     }
   });
   it.effect('persists valid boundary-length rows beside rejected rows without corrupting CRM state', () =>
@@ -198,8 +206,11 @@ describe('CRM order CSV parser', () => {
   );
   it('refuses an unterminated quote instead of absorbing later orders', () => {
     const parsed = parseOrdersCsv('zdroj;id_objednavky;stav\nE-shop;1;"nova\nE-shop;2;paid\n');
-    expect(parsed.fileError).toContain('Řádek 2, sloupec 3');
-    expect(parsed.rows).toEqual([]);
+    expect(parsed).toEqual({
+      fileError: { _tag: 'UnterminatedQuote', position: 3, row: 2 },
+      rows: [],
+      unknownColumns: [],
+    });
     expect(parseOrdersCsv('zdroj;id_objednavky;stav\nE-shop;1;"nova"').rows[0]).toMatchObject({
       kind: 'ok',
       value: { rawStatus: 'nova' },
@@ -215,23 +226,61 @@ describe('CRM order CSV parser', () => {
   });
   it('rejects surplus cells per row without discarding the next valid order', () => {
     const parsed = parseOrdersCsv('zdroj;id_objednavky;stav\nE-shop;1;nova;unexpected\nE-shop;2;nova\n');
-    expect(parsed.rows[0]).toMatchObject({ kind: 'error', row: 2 });
-    expect(parsed.rows[0]?.kind === 'error' ? parsed.rows[0].message : '').toContain('sloupcem 3');
+    expect(parsed.rows[0]).toMatchObject({
+      kind: 'error',
+      problem: { _tag: 'SurplusCells', position: 3, row: 2 },
+      row: 2,
+    });
     expect(parsed.rows[1]).toMatchObject({ kind: 'ok', value: { externalId: '2' } });
   });
   it('refuses duplicate canonical columns, including aliases and accented headers', () => {
     for (const extra of ['stav', 'status', 'Stáv']) {
       const parsed = parseOrdersCsv(`zdroj;id_objednavky;stav;${extra}\nE-shop;1;nova;paid\n`);
-      expect(parsed.fileError).toContain('sloupec stav');
-      expect(parsed.rows).toEqual([]);
+      expect(parsed).toEqual({ fileError: { _tag: 'DuplicateHeader', column: 'stav' }, rows: [], unknownColumns: [] });
     }
     const parsed = parseOrdersCsv('source;order_id;status\nE-shop;1;nova\n');
     expect(parsed.fileError).toBeUndefined();
     expect(parsed.rows[0]).toMatchObject({ kind: 'ok' });
   });
-  it('provides the new CSV refusal messages in English too', () => {
-    expect(parseOrdersCsv('source;order_id;status\nE-shop;1;"nova', 'en').fileError).toContain('Row 2, column 3');
-    expect(parseOrdersCsv('source;order_id;status;stav\nE-shop;1;nova;paid', 'en').fileError).toContain('column stav');
+  it('reports row problems as codes with their parameters, echoing only bounded values', () => {
+    const parsed = parseOrdersCsv(
+      [
+        'zdroj;id_objednavky;stav;castka;mena;datum_objednavky',
+        ';1;nova;;;',
+        'E-shop;2;nova;12,5x;CZK;',
+        'E-shop;3;nova;10;CZKK;',
+        'E-shop;4;nova;10;;',
+        'E-shop;5;nova;;;31. 2. 2026',
+      ].join('\n'),
+    );
+    expect(parsed.rows.map((row) => (row.kind === 'error' ? row.problem : undefined))).toEqual([
+      { _tag: 'MissingValue', column: 'zdroj', row: 2 },
+      { _tag: 'InvalidAmount', row: 3, value: '12,5x' },
+      { _tag: 'InvalidCurrency', row: 4, value: 'CZKK' },
+      { _tag: 'AmountWithoutCurrency', row: 5 },
+      { _tag: 'InvalidTime', column: 'datum_objednavky', row: 6 },
+    ]);
+    expect(parseOrdersCsv('')).toEqual({ fileError: { _tag: 'EmptyFile' }, rows: [], unknownColumns: [] });
+    expect(parseOrdersCsv(`zdroj;${'x'.repeat(201)};stav\n`)).toEqual({
+      fileError: { _tag: 'InvalidHeaderCell', maxLength: 200, position: 2 },
+      rows: [],
+      unknownColumns: [],
+    });
+  });
+  it('stores the Czech sentence beside the code, worded exactly like the Czech screen copy', () => {
+    expect(czechCsvProblemCopy).toEqual(csImports.imports.csv);
+    expect(new Set(Object.keys(enImports.imports.csv.problem))).toEqual(
+      new Set(Object.keys(czechCsvProblemCopy.problem)),
+    );
+    expect(new Set(Object.keys(enImports.imports.csv.column))).toEqual(
+      new Set(Object.keys(czechCsvProblemCopy.column)),
+    );
+    expect(czechCsvProblemMessage({ _tag: 'InvalidText', column: 'nazev_zakaznika', maxLength: 200, row: 4 })).toBe(
+      'Řádek 4, sloupec „Název zákazníka“: text musí mít 1 až 200 znaků.',
+    );
+    expect(czechCsvProblemMessage({ _tag: 'MissingColumns', columns: ['zdroj', 'stav'] })).toBe(
+      'Řádek 1: v hlavičce chybí povinné sloupce Zdroj, Stav.',
+    );
   });
   it('samples in TS are identical to demo-data files', () => {
     for (const entry of ordersCsvSamples) {
@@ -261,10 +310,14 @@ describe('CRM order CSV parser', () => {
   });
   it('requires currency for supplied line amounts even when the order total is absent', () => {
     const parsed = parseOrdersCsv('zdroj;id_objednavky;stav;polozky\nE-shop;1;nova;SKU:Mouka:2:450.00\n');
-    expect(parsed.rows[0]).toMatchObject({ kind: 'error', message: 'Částka položky bez měny: doplňte sloupec mena' });
+    expect(parsed.rows[0]).toMatchObject({ kind: 'error', problem: { _tag: 'LineAmountWithoutCurrency', row: 2 } });
   });
   it('rejects a file without required columns', () => {
-    expect(parseOrdersCsv('a;b\n1;2').fileError).toContain('zdroj');
+    expect(parseOrdersCsv('a;b\n1;2')).toEqual({
+      fileError: { _tag: 'MissingColumns', columns: ['zdroj', 'id_objednavky', 'stav'] },
+      rows: [],
+      unknownColumns: ['a', 'b'],
+    });
   });
 });
 
@@ -713,6 +766,19 @@ describe('CRM order import (C03)', () => {
       const [batch] = next.imports.batches;
       expect(batch).toMatchObject({ rejected: 5, status: 'completed_with_errors' });
       expect(batch?.errors.map((error) => error.row)).toEqual([2, 3, 4, 5, 6]);
+      expect(batch?.errors.map((error) => error.problem)).toEqual([
+        { _tag: 'MissingValue', column: 'id_objednavky', row: 2 },
+        { _tag: 'InvalidAmount', row: 3, value: '12,3,4' },
+        { _tag: 'AmountWithoutCurrency', row: 4 },
+        { _tag: 'InvalidTime', column: 'datum_objednavky', row: 5 },
+        { _tag: 'InvalidCurrency', row: 6, value: 'Kč' },
+      ]);
+      expect(batch?.errors[0]?.message).toBe('Řádek 2, sloupec „ID objednávky“: chybí hodnota.');
+      expect(batch?.results?.find((result) => result.row === 3)).toMatchObject({
+        message: 'Řádek 3, sloupec „Částka“: „12,3,4“ není platné desetinné číslo.',
+        outcome: 'error',
+        problem: { _tag: 'InvalidAmount', row: 3, value: '12,3,4' },
+      });
       expect(order(next, '100301').pairing).toBe('paired');
       const emailOnly = order(next, '100295');
       expect(emailOnly.clientId).toBeUndefined();
