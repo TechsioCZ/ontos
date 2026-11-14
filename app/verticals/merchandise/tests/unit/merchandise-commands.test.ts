@@ -892,3 +892,52 @@ it.effect('scales gross and net discount tiers by the same base price ratio', ()
     ]);
   }),
 );
+
+it.effect('records fractional manual receipts and issues without rounding the quantity', () =>
+  Effect.gen(function* fractionalManualMovements() {
+    const created = yield* addProduct(empty, 'fraction-product', 'FRACTION', 1000);
+    const received = yield* receive(created.state, 'fraction-product', 0.3, 'fraction-receipt');
+    const first = yield* apply(
+      received.state,
+      {
+        _tag: 'RecordStockMovement',
+        productId: 'fraction-product',
+        reason: 'ISSUE',
+        delta: -0.1,
+      },
+      'fraction-issue-1',
+    );
+    const second = yield* apply(
+      first.state,
+      {
+        _tag: 'RecordStockMovement',
+        productId: 'fraction-product',
+        reason: 'ISSUE',
+        delta: -0.2,
+      },
+      'fraction-issue-2',
+    );
+    expect(second.state.movements.map((movement) => movement.delta)).toEqual([0.3, -0.1, -0.2]);
+    expect(onHand(second.state, 'fraction-product')).toBe(0);
+    const refused = yield* apply(
+      second.state,
+      {
+        _tag: 'RecordStockMovement',
+        productId: 'fraction-product',
+        reason: 'ISSUE',
+        delta: -0.001,
+      },
+      'fraction-overdraw',
+    ).pipe(Effect.flip);
+    expect(isConflict(refused)).toBe(true);
+  }),
+);
+
+it('rejects manual movements that are non-finite, unbounded or more precise than stock', () => {
+  const encodedCommand = Schema.is(Schema.toEncoded(MerchandiseCommandSchema));
+  const command = { _tag: 'RecordStockMovement', productId: 'fraction-product', reason: 'RECEIPT' } as const;
+  expect(encodedCommand({ ...command, delta: 0.125 })).toBe(true);
+  for (const delta of [Number.NaN, Number.POSITIVE_INFINITY, 1_000_001, -1_000_001, 0.0000001]) {
+    expect(encodedCommand({ ...command, delta })).toBe(false);
+  }
+});

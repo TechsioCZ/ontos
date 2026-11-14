@@ -2,11 +2,14 @@
 export const QUANTITY_DECIMAL_PLACES = 6;
 export const MAX_QUANTITY = 1_000_000;
 const quantityScale = 10 ** QUANTITY_DECIMAL_PLACES;
+export const MIN_STOCK_QUANTITY = 1 / quantityScale;
 
 export const normalizeQuantity = (quantity: number): number => Math.round(quantity * quantityScale) / quantityScale;
 export const hasQuantityPrecision = (quantity: number): boolean =>
   Number.isFinite(quantity) &&
   Math.abs(quantity - normalizeQuantity(quantity)) <= Number.EPSILON * Math.max(1, Math.abs(quantity));
+export const isStockQuantity = (quantity: number): boolean =>
+  hasQuantityPrecision(quantity) && Math.abs(quantity) >= MIN_STOCK_QUANTITY && Math.abs(quantity) <= MAX_QUANTITY;
 export const isQuantityMultipleOf = (quantity: number, step: number): boolean =>
   normalizeQuantity(quantity - Math.round(quantity / step) * step) === 0;
 

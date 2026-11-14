@@ -314,7 +314,10 @@ const ApplyBulkUpdateProductsCommandSchema = Schema.TaggedStruct('BulkUpdateProd
 });
 
 const ApplyRecordStockMovementCommandSchema = Schema.TaggedStruct('RecordStockMovement', {
-  delta: Schema.Int,
+  delta: Schema.Finite.check(
+    Schema.isBetween({ maximum: MAX_QUANTITY, minimum: -MAX_QUANTITY }),
+    Schema.makeFilter(hasQuantityPrecision),
+  ),
   note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
   productId: ProductIdSchema,
   reason: Schema.Literals(['RECEIPT', 'ISSUE', 'ADJUSTMENT']),

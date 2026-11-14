@@ -504,11 +504,11 @@
         },
         "title": "Produkty a sklad",
         "validation": {
-          "delta": "Zadejte celé číslo různé od nuly.",
+          "delta": "Zadejte nenulové množství od −1 000 000 do 1 000 000, nejvýše se 6 desetinnými místy.",
           "lowStock": "Zadejte celé číslo 0 nebo větší.",
           "percent": "Zadejte nenulové celé číslo od −90 do 1000.",
           "positive": "Zadejte částku větší než 0 Kč.",
-          "quantity": "Zadejte celé číslo větší než 0.",
+          "quantity": "Zadejte množství větší než 0 a nejvýše 1 000 000, nejvýše se 6 desetinnými místy.",
           "required": "Vyplňte toto pole.",
           "skuTaken": "Produkt s tímto SKU už existuje.",
           "stock": "Množství převyšuje zásobu na skladě.",

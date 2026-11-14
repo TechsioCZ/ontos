@@ -1,3 +1,4 @@
+import { isStockQuantity, MAX_QUANTITY, MIN_STOCK_QUANTITY } from '../../../../../shared/domain/order-quantity.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { DateTime, Effect } from 'effect';
@@ -21,7 +22,7 @@ import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit } from '../../../../../shared/domain/merchandise-model.ts';
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import { sameSku } from '../../../../../shared/domain/merchandise-model.ts';
-import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
+import { MONEY_FORMAT, QUANTITY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { productCommandOutcome, runCommand } from './products-api.ts';
 import type { CommandOutcome, ProductCommand } from './products-api.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -451,7 +452,7 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
   const dirty = productId !== null || quantityText !== '1' || note !== '';
 
   const productError = productId === null ? k(REQUIRED_KEY) : undefined;
-  const quantityError = Number.isInteger(quantity) && quantity >= 1 ? undefined : k('validation.quantity');
+  const quantityError = isStockQuantity(quantity) && quantity > 0 ? undefined : k('validation.quantity');
   const noteError = tooLongMessage(k, note, PRODUCT_LIMITS.note);
   const valid = productError === undefined && quantityError === undefined && noteError === undefined;
 
@@ -484,7 +485,7 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
     const trimmed = note.trim();
     const receipt = {
       _tag: 'RecordStockMovement' as const,
-      delta: Math.round(quantity),
+      delta: quantity,
       productId,
       reason: 'RECEIPT' as const,
     };
@@ -546,17 +547,18 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
           />
           <FormNumericInput
             clampValueOnBlur={false}
-            formatOptions={WHOLE_NUMBER_FORMAT}
+            formatOptions={QUANTITY_FORMAT}
             id="receipt-quantity"
             label={k('fields.quantity')}
             locale="cs-CZ"
-            min={1}
+            max={MAX_QUANTITY}
+            min={MIN_STOCK_QUANTITY}
             name="quantity"
             onValueChange={(details) => {
               setQuantity(details.valueAsNumber);
               setQuantityText(details.value);
             }}
-            step={1}
+            step={MIN_STOCK_QUANTITY}
             value={quantityText}
             {...fieldError(submitted, quantityError)}
           >

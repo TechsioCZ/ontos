@@ -1,3 +1,4 @@
+import { QUANTITY_DECIMAL_PLACES } from '../shared/domain/order-quantity.ts';
 import type { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 
 type Translate = ReturnType<typeof useModernI18n>['t'];
@@ -9,6 +10,8 @@ type Translate = ReturnType<typeof useModernI18n>['t'];
  * and keep the number from `valueAsNumber`: a numeric value is re-formatted on every keystroke, which eats a
  * trailing comma and prints "NaN" for an emptied field.
  */
+export const QUANTITY_FORMAT: Intl.NumberFormatOptions = { maximumFractionDigits: QUANTITY_DECIMAL_PLACES };
+
 export const WHOLE_NUMBER_FORMAT: Intl.NumberFormatOptions = { maximumFractionDigits: 2 };
 
 /**
