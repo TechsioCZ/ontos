@@ -2,6 +2,7 @@
 // record shows it, the storefront projects it and every checkout and staff line charges it, so a shopper is never
 // shown one price and charged another.
 import { grossUnitPriceMinor } from './merchandise-model.ts';
+import { firstOrderableQuantity } from './order-quantity.ts';
 import type { Product } from './merchandise-model.ts';
 
 type PriceTiers = Product['priceTiers'];
@@ -11,6 +12,8 @@ export interface BasePriced {
   readonly grossPriceMinor?: number | undefined;
   /** The smallest quantity the unit sells in (1 when not stated). */
   readonly minimumQuantity?: number | undefined;
+  /** The package the unit sells in, when it must be bought in whole packages. */
+  readonly packageQuantity?: number | undefined;
   readonly priceTiers?: PriceTiers;
 }
 
@@ -53,9 +56,19 @@ export const grossForQuantity = (
 ): number | undefined => tierPriceForQuantity(priced.priceTiers, quantity) ?? baseGrossOf(priced, net, rate);
 
 /**
- * The gross the unit's record shows: what its smallest sellable quantity costs ({@link grossForQuantity}), so a
- * listing never shows a price below its minimum that nobody can pay, and below the first break it is the price checkout
- * charges.
+ * The gross the unit's record shows: what its smallest orderable quantity costs ({@link grossForQuantity} at
+ * {@link firstOrderableQuantity}), so a listing never shows a price nobody can pay, and below the first break it is the
+ * price checkout charges.
  */
 export const shownGrossOf = (priced: BasePriced, net: number, rate: number | undefined): number | undefined =>
-  grossForQuantity(priced, net, rate, priced.minimumQuantity ?? 1);
+  grossForQuantity(priced, net, rate, firstOrderableQuantity(priced));
+
+/**
+ * {@link grossForQuantity} from a unit's record (whose gross is {@link shownGrossOf}): the break `quantity` reaches,
+ * else the gross the record shows. For every quantity from the unit's minimum it is the same price, rate and refusal
+ * (undefined) the server takes, because below the first break the shown gross is the base gross.
+ */
+export const recordGrossForQuantity = (
+  record: { readonly grossPriceMinor?: number | undefined; readonly priceTiers?: PriceTiers },
+  quantity: number,
+): number | undefined => tierPriceForQuantity(record.priceTiers, quantity) ?? record.grossPriceMinor;

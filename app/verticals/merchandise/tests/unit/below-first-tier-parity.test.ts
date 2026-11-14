@@ -7,7 +7,9 @@ import { expect, it } from 'effect-rstest';
 import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import type { Product, ProductVariant } from '../../shared/domain/merchandise-model.ts';
+import { firstOrderableQuantity } from '../../shared/domain/order-quantity.ts';
 import { baseGrossOf, grossForQuantity, shownGrossOf } from '../../shared/domain/unit-price.ts';
+import { productRowsOf } from '../../src/services/merchandise-store.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
 import type { CommandTax } from '../../src/services/persistence.service.ts';
 import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
@@ -36,6 +38,8 @@ interface Pricing {
   readonly gross?: number;
   readonly minimum: number;
   readonly name: string;
+  /** The package it must be bought in, when it has one. */
+  readonly package?: number;
   readonly tiers: Tiers;
 }
 
@@ -51,16 +55,24 @@ const PRICINGS: readonly Pricing[] = [
     tiers: [SURCHARGE, { ...BASE, minimumQuantity: 10 }],
   },
   { minimum: 0.5, name: 'tiers stored out of order', tiers: [DISCOUNT, BASE] },
+  // The smallest order already reaches a break: the price shown is that break, never a stored base nobody can pay.
+  { gross: 1210, minimum: 10, name: 'stored base with a minimum at the discount', tiers: [DISCOUNT] },
+  { minimum: 5, name: 'base tier and a discount, minimum between them', tiers: [BASE, DISCOUNT] },
+  // Sold in packages of 4 from 1: the smallest order is 4 (base); in packages of 10 it is 10 (the discount).
+  { minimum: 1, name: 'packages of 4 below the discount', package: 4, tiers: [BASE, DISCOUNT] },
+  { minimum: 1, name: 'packages of 10 reaching the discount', package: 10, tiers: [BASE, DISCOUNT] },
 ];
 
 /** The unit priced as `pricing` says: its own gross (if any), minimum and tiers on top of the stored unit. */
 const priced = <Unit extends { readonly grossPriceMinor?: number }>(
   { grossPriceMinor: _entered, ...unit }: Unit,
   pricing: Pricing,
-): Omit<Unit, 'grossPriceMinor'> & Pick<Product, 'minimumQuantity' | 'priceTiers'> & { grossPriceMinor?: number } => {
+): Omit<Unit, 'grossPriceMinor'> &
+  Pick<Product, 'minimumQuantity' | 'packageQuantity' | 'priceTiers'> & { grossPriceMinor?: number } => {
   void _entered;
   const tiered = { ...unit, minimumQuantity: pricing.minimum, priceTiers: pricing.tiers };
-  return pricing.gross === undefined ? tiered : { ...tiered, grossPriceMinor: pricing.gross };
+  const packaged = pricing.package === undefined ? tiered : { ...tiered, packageQuantity: pricing.package };
+  return pricing.gross === undefined ? packaged : { ...packaged, grossPriceMinor: pricing.gross };
 };
 
 /** One unit (net 1000, standard rate) with 100 in stock, priced by `pricing`, as a product or as its only variant. */
@@ -148,13 +160,14 @@ const checkout = (
     })),
   );
 
-it.effect('the record shows exactly what checkout charges at the minimum, or neither has a price', () =>
+it.effect('the record shows exactly what checkout charges for the smallest order, or neither has a price', () =>
   Effect.gen(function* parity() {
     for (const pricing of PRICINGS) {
       for (const variant of [false, true]) {
         const state = yield* unitState(pricing, variant);
         const shown = shownOf(state, variant);
-        const placed = yield* checkout(state, variant, pricing.minimum, shown ?? 1);
+        const smallest = firstOrderableQuantity({ minimumQuantity: pricing.minimum, packageQuantity: pricing.package });
+        const placed = yield* checkout(state, variant, smallest, shown ?? 1);
         const label = `${pricing.name} (${variant ? 'variant' : 'product'})`;
         expect([label, placed]).toEqual([
           label,
@@ -250,5 +263,35 @@ it.effect('a price change keeps a base-tier unit sellable at 0,5 at the new base
       const placed = yield* checkout(repriced.state, variant, 0.5, 2420);
       expect(placed).toEqual({ charged: 2420, issue: null, outcome: 'PLACED' });
     }
+  }),
+);
+
+it.effect('the stored gross columns cards, summaries, sorting and price filters read equal what the record shows', () =>
+  Effect.gen(function* storedColumns() {
+    const scope = { legalEntityId: '30000000-0000-4000-8000-000000000001', tenantId: actor.tenantId };
+    for (const pricing of PRICINGS) {
+      for (const variant of [false, true]) {
+        const state = yield* unitState(pricing, variant);
+        const [product] = state.products;
+        if (product === undefined) {
+          return yield* Effect.die('The unit is missing');
+        }
+        const rows = yield* productRowsOf(
+          scope,
+          product,
+          stockLevelsOf(state.movements, product.id),
+          TEST_TAX.rates,
+          TEST_TAX.held,
+        );
+        const shown = shownOf(state, variant);
+        const label = `${pricing.name} (${variant ? 'variant' : 'product'})`;
+        // The product's column: its own price, or with variants their lowest (here the only one).
+        expect([label, rows.row.grossPriceMinor]).toEqual([label, shown]);
+        if (variant) {
+          expect([label, rows.variants[0]?.grossPriceMinor]).toEqual([label, shown]);
+        }
+      }
+    }
+    return yield* Effect.void;
   }),
 );

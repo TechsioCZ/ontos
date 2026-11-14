@@ -39,6 +39,18 @@ export const orderQuantityRules = (
   packageRequired: unit.packageQuantity !== undefined && unit.packageQuantity > 0,
   step: unit.packageQuantity !== undefined && unit.packageQuantity > 0 ? unit.packageQuantity : 1,
 });
+/**
+ * The smallest quantity of a unit that can be ordered: its minimum (1 when not stated), rounded up to whole packages
+ * when it sells in packages. The storefront's variant summary rounds the same way.
+ */
+export const firstOrderableQuantity = (unit: {
+  readonly minimumQuantity?: number | undefined;
+  readonly packageQuantity?: number | undefined;
+}): number => {
+  const minimum = unit.minimumQuantity ?? 1;
+  const step = unit.packageQuantity;
+  return step === undefined || step <= 0 ? minimum : normalizeQuantity(Math.ceil(minimum / step - 1e-6) * step);
+};
 export const isOrderQuantityValid = (quantity: number, rules: OrderQuantityRules): boolean =>
   hasQuantityPrecision(quantity) &&
   normalizeQuantity(quantity) >= normalizeQuantity(rules.minimum) &&
