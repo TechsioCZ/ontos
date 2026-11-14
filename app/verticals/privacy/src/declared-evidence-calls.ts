@@ -1,6 +1,6 @@
 import { declaredEvidenceCallInsideTransaction } from '@app/core-runtime';
 import type { DeclaredEvidenceCall } from '@app/core-runtime';
-import { Record as EffectRecord } from 'effect';
+import { pipe, Record as EffectRecord } from 'effect';
 
 const OWNER = 'privacy.core';
 
@@ -22,4 +22,7 @@ export const privacyDeclaredEvidenceCalls = {
 } as const satisfies Record<string, DeclaredEvidenceCall>;
 
 /** One combinator per declaration; call sites use `privacyEvidenceCall.<name>`. */
-export const privacyEvidenceCall = EffectRecord.map(privacyDeclaredEvidenceCalls, declaredEvidenceCallInsideTransaction);
+export const privacyEvidenceCall = pipe(
+  privacyDeclaredEvidenceCalls,
+  EffectRecord.map(declaredEvidenceCallInsideTransaction),
+);

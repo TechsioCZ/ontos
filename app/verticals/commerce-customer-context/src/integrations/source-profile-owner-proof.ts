@@ -94,19 +94,13 @@ export const commerceSourceProfileOwnerProofLive = Layer.effect(
               ),
             },
             crypto,
-          ).pipe(
-            commerceCustomerContextEvidenceCall.sourceCounterpartyAdmission,
-            Effect.mapError(ownerProofFailure),
-          );
+          ).pipe(commerceCustomerContextEvidenceCall.sourceCounterpartyAdmission, Effect.mapError(ownerProofFailure));
           const response = yield* executeSourceCounterpartyAdmissionWithAuthorization(
             request,
             issued.authorization,
             scope.correlationId,
             { baseUrl: new URL(issued.apiBaseUrl), compositionRevision: issued.compositionRevision },
-          ).pipe(
-            commerceCustomerContextEvidenceCall.sourceCounterpartyAdmission,
-            Effect.mapError(ownerProofFailure),
-          );
+          ).pipe(commerceCustomerContextEvidenceCall.sourceCounterpartyAdmission, Effect.mapError(ownerProofFailure));
           const result = yield* Schema.decodeUnknownEffect(SourceCounterpartyAdmissionResponseSchema)(response).pipe(
             Effect.mapError(ownerProofFailure),
           );

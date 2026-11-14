@@ -1,6 +1,6 @@
 import { declaredEvidenceCallInsideTransaction } from '@app/core-runtime';
 import type { DeclaredEvidenceCall } from '@app/core-runtime';
-import { Record as EffectRecord } from 'effect';
+import { pipe, Record as EffectRecord } from 'effect';
 
 const OWNER = 'commerce.customer-context';
 
@@ -36,4 +36,7 @@ export const commerceCustomerContextDeclaredEvidenceCalls = {
 } as const satisfies Record<string, DeclaredEvidenceCall>;
 
 /** One combinator per declaration; call sites use `commerceCustomerContextEvidenceCall.<name>`. */
-export const commerceCustomerContextEvidenceCall = EffectRecord.map(commerceCustomerContextDeclaredEvidenceCalls, declaredEvidenceCallInsideTransaction);
+export const commerceCustomerContextEvidenceCall = pipe(
+  commerceCustomerContextDeclaredEvidenceCalls,
+  EffectRecord.map(declaredEvidenceCallInsideTransaction),
+);

@@ -112,6 +112,21 @@ const refusingFetch = (open: OpenTransaction) =>
     Promise.reject.bind(Promise)<Response>,
   );
 
+/** Runs `effect` under `open`'s mark and dies with the first fetch the mark refused, whatever the effect did with it. */
+const runMarked = <Value, Failure, Requirements>(
+  open: OpenTransaction,
+  effect: Effect.Effect<Value, Failure, Requirements>,
+): Effect.Effect<Value, Failure, Requirements> =>
+  effect.pipe(
+    Effect.updateService(FetchHttpClient.Fetch, () => refusingFetch(open)),
+    Effect.updateService(OpenDatabaseTransaction, () => Option.some(open)),
+    Effect.exit,
+    Effect.flatMap((exit) => {
+      const [refusal] = open.refusedFetches;
+      return refusal === undefined ? exit : Effect.die(refusal);
+    }),
+  );
+
 /**
  * Marks `effect` as the body of the named operation's database transaction: SpiceDB, module transport,
  * outbound fetch, and a second pool acquisition all die inside it. Apply it inside the transaction, after
@@ -122,23 +137,19 @@ export const insideDatabaseTransaction =
   <Value, Failure, Requirements>(
     effect: Effect.Effect<Value, Failure, Requirements>,
   ): Effect.Effect<Value, Failure, Requirements> =>
-    Effect.gen(function* markDatabaseTransaction() {
-      const outer = yield* OpenDatabaseTransaction;
-      const currentFetch = yield* FetchHttpClient.Fetch;
-      const open: OpenTransaction = {
-        operationKey,
-        // A nested mark keeps the outermost original, never an outer mark's refusing fetch.
-        originalFetch: Option.isSome(outer) ? outer.value.originalFetch : currentFetch,
-        refusedFetches: [],
-      };
-      const exit = yield* effect.pipe(
-        Effect.updateService(FetchHttpClient.Fetch, () => refusingFetch(open)),
-        Effect.updateService(OpenDatabaseTransaction, () => Option.some(open)),
-        Effect.exit,
-      );
-      const [refusal] = open.refusedFetches;
-      return yield* refusal === undefined ? exit : Effect.die(refusal);
-    });
+    Effect.flatMap(Effect.service(OpenDatabaseTransaction), (outer) =>
+      Effect.flatMap(Effect.service(FetchHttpClient.Fetch), (currentFetch) =>
+        runMarked(
+          {
+            operationKey,
+            // A nested mark keeps the outermost original, never an outer mark's refusing fetch.
+            originalFetch: Option.isSome(outer) ? outer.value.originalFetch : currentFetch,
+            refusedFetches: [],
+          },
+          effect,
+        ),
+      ),
+    );
 
 /**
  * Runs one declared owner evidence call inside a marked transaction: within `effect` only, the mark reads as

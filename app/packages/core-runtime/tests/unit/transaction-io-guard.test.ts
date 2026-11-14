@@ -2,7 +2,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import nodePath from 'node:path';
 
-import { Cause, Data, Effect, Exit, Option, Redacted, Schema } from 'effect';
+import { Cause, Data, Effect, Exit, Option, Predicate, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
@@ -127,7 +127,7 @@ const callFetch = (url: string) =>
   );
 const isRequest = Schema.is(Schema.instanceOf(Request));
 const requestedUrl = (input: Request | URL | string): string => {
-  if (typeof input === 'string') {
+  if (Predicate.isString(input)) {
     return input;
   }
   return isRequest(input) ? input.url : input.href;
@@ -148,10 +148,7 @@ const defectOf = <Value, Failure>(exit: Exit.Exit<Value, Failure>) =>
 it.effect('still refuses an undeclared fetch inside a marked transaction', () =>
   withStubFetch((calls) =>
     Effect.gen(function* undeclaredFetch() {
-      const exit = yield* callFetch(PROOF_URL).pipe(
-        insideDatabaseTransaction('test.undeclared'),
-        Effect.exit,
-      );
+      const exit = yield* callFetch(PROOF_URL).pipe(insideDatabaseTransaction('test.undeclared'), Effect.exit);
       expect(defectOf(exit)).toBeInstanceOf(IoInsideDatabaseTransaction);
       expect(defectOf(exit)).toMatchObject({ io: 'outbound-fetch', operationKey: 'test.undeclared' });
       expect(calls).toEqual([]);

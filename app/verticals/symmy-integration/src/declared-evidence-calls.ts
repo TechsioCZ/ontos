@@ -1,6 +1,6 @@
 import { declaredEvidenceCallInsideTransaction } from '@app/core-runtime';
 import type { DeclaredEvidenceCall } from '@app/core-runtime';
-import { Record as EffectRecord } from 'effect';
+import { pipe, Record as EffectRecord } from 'effect';
 
 const OWNER = 'integration.symmy';
 
@@ -15,4 +15,7 @@ export const symmyIntegrationDeclaredEvidenceCalls = {
 } as const satisfies Record<string, DeclaredEvidenceCall>;
 
 /** One combinator per declaration; call sites use `symmyIntegrationEvidenceCall.<name>`. */
-export const symmyIntegrationEvidenceCall = EffectRecord.map(symmyIntegrationDeclaredEvidenceCalls, declaredEvidenceCallInsideTransaction);
+export const symmyIntegrationEvidenceCall = pipe(
+  symmyIntegrationDeclaredEvidenceCalls,
+  EffectRecord.map(declaredEvidenceCallInsideTransaction),
+);
