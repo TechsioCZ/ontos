@@ -118,9 +118,9 @@ const migrateConvergentOwner = (owner) =>
   run(process.execPath, [path.join(appDirectory, 'scripts/migration-convergence-cli.mts'), owner]);
 
 /**
- * One owner's native migration. `drizzle-kit migrate` starts only when its journal does not provably hold every local
- * migration by name and SQL hash (`application-migration-pending.mts`, Drizzle's own name rule); any doubt starts it
- * exactly as before. Either way the owner gets one line: what it found, and what it applied.
+ * One owner's native migration. `drizzle-kit migrate` is left out only when its journal provably holds every local
+ * migration by name and SQL hash (Drizzle's own name rule) AND drizzle-kit's own folder checks pass in process
+ * (`application-migration-pending.mts`); any doubt starts it exactly as before. Either way the owner gets one line.
  * @param {string} relativeDirectory - Application-relative package directory.
  * @param {string} config - Drizzle configuration filename.
  */

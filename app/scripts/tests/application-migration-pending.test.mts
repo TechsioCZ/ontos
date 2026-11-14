@@ -1,12 +1,15 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
 import { Effect, FileSystem, Option } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
+  checkOwnerMigrationFolder,
   decideOwnerMigration,
+  folderCheckRefusal,
   ownerMigrationSourceOf,
   readLocalMigrations,
 } from '../application-migration-pending.mts';
@@ -135,6 +138,48 @@ describe('readLocalMigrations', () => {
       yield* fs.makeDirectory(path.join(unnamed, 'hand-written'));
       yield* fs.writeFileString(path.join(unnamed, 'hand-written', 'migration.sql'), 'select 1;');
       expect(Option.isNone(yield* readLocalMigrations(fs, unnamed))).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe('the folder checks a skipped drizzle-kit migrate would have run', () => {
+  const taxOwner = fileURLToPath(new URL('../../verticals/tax/', import.meta.url));
+
+  it('passes only an explicit ok from drizzle-kit check', () => {
+    expect(Option.isNone(folderCheckRefusal({ dialect: 'postgresql', status: 'ok' }))).toBe(true);
+    expect(folderCheckRefusal({ error: { code: 'non_latest' }, status: 'error' })).toEqual(
+      Option.some('drizzle-kit check refused the folder (non_latest)'),
+    );
+    expect(Option.isSome(folderCheckRefusal({ error: { code: 'conflicts' }, status: 'error' }))).toBe(true);
+    expect(Option.isSome(folderCheckRefusal(undefined))).toBe(true);
+    expect(Option.isSome(folderCheckRefusal({ status: 'unknown' }))).toBe(true);
+  });
+
+  it.effect("accepts an owner's real migration folder through the owner's own drizzle-kit", () =>
+    Effect.gen(function* acceptsRealFolder() {
+      expect(yield* checkOwnerMigrationFolder(taxOwner, path.join(taxOwner, 'drizzle'))).toEqual(Option.none());
+    }),
+  );
+
+  it.effect('refuses a malformed snapshot, as drizzle-kit migrate would before touching the database', () =>
+    Effect.gen(function* refusesMalformedSnapshot() {
+      const fs = yield* FileSystem.FileSystem;
+      const folder = yield* fs.makeTempDirectoryScoped();
+      yield* fs.makeDirectory(path.join(folder, FIRST));
+      yield* fs.writeFileString(path.join(folder, FIRST, 'migration.sql'), 'select 1;');
+      yield* fs.writeFileString(path.join(folder, FIRST, 'snapshot.json'), '{ not json');
+      const refusal = yield* checkOwnerMigrationFolder(taxOwner, folder);
+      expect(Option.getOrElse(refusal, () => '')).toContain('malformed');
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect('runs the child when the owner has no drizzle-kit to check with', () =>
+    Effect.gen(function* missingDrizzleKit() {
+      const fs = yield* FileSystem.FileSystem;
+      const owner = yield* fs.makeTempDirectoryScoped();
+      yield* fs.writeFileString(path.join(owner, 'package.json'), '{"name":"no-drizzle-kit"}');
+      const refusal = yield* checkOwnerMigrationFolder(owner, owner);
+      expect(refusal).toEqual(Option.some("the owner's drizzle-kit could not be loaded"));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

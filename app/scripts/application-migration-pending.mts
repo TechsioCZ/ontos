@@ -1,27 +1,36 @@
 /// <reference types="node" />
 /**
- * Whether one owner's `drizzle-kit migrate` has anything to run, decided the way Drizzle 1.0.0-rc.5 itself decides it,
- * so the migrator can leave out the child process of an owner that is already at its folder's last migration.
+ * Whether the migrator may leave out one owner's `drizzle-kit migrate` child. It decides two things, and on any doubt
+ * the child runs exactly as before.
  *
- * Drizzle (`drizzle-orm/migrator.js` `readMigrationFiles`, `pg-core/async/session.js` `migrate`,
- * `migrator.utils.js` `getMigrationsToRun`) runs every local folder entry that holds a `migration.sql` and whose
- * NAME no journal row carries; it never compares timestamps, so an older-named migration added late still runs. It
- * also creates the journal when it is absent, upgrades a journal without a `name` column, and refuses a folder with
- * an old `meta/_journal.json`.
+ * 1. The database: would Drizzle 1.0.0-rc.5 apply anything? Drizzle (`drizzle-orm/migrator.js` `readMigrationFiles`,
+ *    `pg-core/async/session.js` `migrate`, `migrator.utils.js` `getMigrationsToRun`) runs every local folder entry
+ *    holding a `migration.sql` whose NAME no journal row carries, never comparing timestamps. The planner says
+ *    "nothing to apply" only when the journal exists with `name` and `hash` columns and holds exactly the local
+ *    migrations, each with its name AND the SHA-256 of its SQL, and nothing else. A pending name (also an older one
+ *    added late), an absent or unreadable journal, an unnamed or duplicated row, a hash that differs, a row no local
+ *    folder carries, a folder entry that is not a reviewed migration name, an old `meta/_journal.json`, a
+ *    configuration that is not the workspace's own shape, or no admin URL in the process environment (the value the
+ *    child's `defineWorkspaceDrizzleConfig` uses) all run the child.
+ * 2. The folder: would `drizzle-kit migrate` refuse it before touching the database? Before it migrates, the CLI runs
+ *    `assertOrmCoreVersion`, `assertPackages("drizzle-orm")`, `assertV3OutFolder` and `checkHandler` (every
+ *    `snapshot.json` parses and is of the current version; no two snapshot branches conflict). For an owner it would
+ *    skip, the planner runs the same checks in process through the owner's own drizzle-kit and its public
+ *    `drizzle-kit/cli` `check` (`assertOrmCoreVersion`, `assertV3OutFolder`, `checkHandler`; the version assertion
+ *    imports `drizzle-orm`, so a missing package fails it too). Anything but `ok`, or a drizzle-kit that cannot be
+ *    loaded, runs the child, which then refuses the boot with its own message.
  *
- * The migrator skips the child only when it can prove that run is empty: the journal exists with a `name` column and
- * holds exactly the local migrations, each with its name AND the hash of its SQL, and nothing else. Every other case
- * spawns `drizzle-kit migrate` exactly as before: a pending name, an absent or unreadable journal, an unnamed row, a
- * row whose hash differs from its file, a row no local folder carries, a folder entry Drizzle would read that is not
- * a reviewed migration name, a configuration that is not the workspace's own shape, or no database evidence at all.
- * The evidence is read on the administrative URL from the process environment, which is the value the child's
- * `defineWorkspaceDrizzleConfig` uses (its environment wins over the dotenv file); without it, every owner spawns.
+ * It relies on CI for nothing it decides: CI (`service-integration`, through the required `Workspace gates` check)
+ * migrates a fresh database with every owner's drizzle-kit on the path to `main`, but the `demo/sales-crm` stage path
+ * has no such gate, so these boot checks stand on their own.
  */
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { PgClient } from '@effect/sql-pg';
-import { Config, Context, Duration, Effect, FileSystem, Layer, Option, Redacted, Ref } from 'effect';
+import { Config, Context, Duration, Effect, FileSystem, Layer, Option, Predicate, Redacted, Ref, Schema } from 'effect';
 
 /** A local migration as Drizzle reads it: its folder name and the SHA-256 of its `migration.sql` bytes. */
 export interface LocalMigration {
@@ -172,6 +181,74 @@ const readJournal = Effect.fn('OwnerMigrationPending.readJournal')(function* rea
   return { columns: names, rows: rows.map(({ hash, name }) => ({ hash, name })) } satisfies JournalEvidence;
 });
 
+interface FolderCheckOptions {
+  readonly dialect: 'postgresql';
+  readonly out: string;
+}
+type FolderCheck = (options: FolderCheckOptions) => Promise<unknown>;
+
+/** drizzle-kit's public SDK (`drizzle-kit/cli`): only its `check`, the CLI's own folder refusals without a process. */
+const DrizzleKitSdkSchema = Schema.Struct({
+  check: Schema.declare((input: unknown): input is FolderCheck => Predicate.isFunction(input)),
+});
+const FolderCheckOutcomeSchema = Schema.Union([
+  Schema.Struct({ status: Schema.Literal('ok') }),
+  Schema.Struct({ error: Schema.Struct({ code: Schema.String }), status: Schema.Literal('error') }),
+]);
+
+/** `None` when drizzle-kit found the folder fine; otherwise why the child must run (and refuse it itself). */
+export const folderCheckRefusal = (outcome: unknown): Option.Option<string> => {
+  if (!Schema.is(FolderCheckOutcomeSchema)(outcome)) {
+    return Option.some('drizzle-kit check answered in an unknown shape');
+  }
+  return outcome.status === 'ok'
+    ? Option.none()
+    : Option.some(`drizzle-kit check refused the folder (${outcome.error.code})`);
+};
+
+class OwnerFolderCheckError extends Schema.TaggedError<OwnerFolderCheckError>()('OwnerFolderCheckError', {
+  reason: Schema.String,
+}) {}
+const folderCheckUnavailable = (reason: string) => () => new OwnerFolderCheckError({ reason });
+
+const FOLDER_CHECK_TIMEOUT = Duration.seconds(60);
+
+/** The owner's own drizzle-kit SDK, resolved from the owner's directory through the package's public exports. */
+const loadOwnerDrizzleKit = (ownerDirectory: string) =>
+  Effect.tryPromise({
+    catch: folderCheckUnavailable("the owner's drizzle-kit could not be loaded"),
+    try: async (): Promise<unknown> => {
+      const entry = createRequire(path.join(ownerDirectory, 'package.json')).resolve('drizzle-kit/cli');
+      return await import(pathToFileURL(entry).href);
+    },
+  }).pipe(
+    Effect.flatMap((loaded) =>
+      Schema.decodeUnknownEffect(DrizzleKitSdkSchema)(loaded).pipe(
+        Effect.mapError(folderCheckUnavailable("the owner's drizzle-kit has no check")),
+      ),
+    ),
+  );
+
+/**
+ * The folder checks `drizzle-kit migrate` runs before it touches the database, in process. `None`: the folder passed;
+ * `Some`: why the child must run instead (it then refuses the boot with drizzle-kit's own message).
+ */
+export const checkOwnerMigrationFolder = (ownerDirectory: string, folder: string) =>
+  loadOwnerDrizzleKit(ownerDirectory).pipe(
+    Effect.flatMap((sdk) =>
+      Effect.tryPromise({
+        catch: folderCheckUnavailable('drizzle-kit check failed to run'),
+        try: async () => await sdk.check({ dialect: 'postgresql', out: folder }),
+      }),
+    ),
+    Effect.timeoutOrElse({
+      duration: FOLDER_CHECK_TIMEOUT,
+      orElse: () => Effect.fail(new OwnerFolderCheckError({ reason: 'drizzle-kit check overran its time budget' })),
+    }),
+    Effect.map(folderCheckRefusal),
+    Effect.catchTag('OwnerFolderCheckError', ({ reason }) => Effect.succeed(Option.some(reason))),
+  );
+
 interface OwnerMigrationPlannerService {
   /** Never fails: missing evidence is a decision to run the child. */
   readonly decide: (relativeDirectory: string, config: string) => Effect.Effect<OwnerMigrationDecision>;
@@ -209,7 +286,13 @@ const decideWith = (
     if (Option.isNone(journal)) {
       yield* Ref.set(evidence, Option.none());
     }
-    return decideOwnerMigration({ journal, local });
+    const decision = decideOwnerMigration({ journal, local });
+    if (!decision.nothingToApply) {
+      return decision;
+    }
+    // Nothing to apply, so the child would only have checked the folder: the same checks run here instead.
+    const refusal = yield* checkOwnerMigrationFolder(ownerDirectory, path.join(ownerDirectory, source.value.folder));
+    return Option.match(refusal, { onNone: () => decision, onSome: spawnBecause });
   }).pipe(
     Effect.catch(() =>
       Effect.succeed(spawnBecause('the Drizzle configuration or the local migration folder could not be read')),
