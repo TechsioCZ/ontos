@@ -547,16 +547,15 @@ jobs:
   # followed by the integration tests. The authenticated browser tests run in browser-integration on their own
   # freshly migrated database; they read no build output, so they start right after planning.
   # The integration tests are split into package shards that each fit the job timeout. Every
-  # shard repeats the full service preparation; the root suite and every package that no other shard names
-  # run in the first shard, so a new package can never fall out of the gate. A shard that carried several
+  # shard repeats the full service preparation; every package that no other shard names runs in the
+  # Database catch-all shard, so a new package can never fall out of the gate. A shard that carried several
   # packages' suites always finished last, so the heaviest packages get a job each: a PR waits for the
   # slowest job, not for the sum of the packages a single job used to run one after another.
   #
-  # Sharding is set by what a package's own files cost, not by package size. Rstest splits shards by file,
-  # so a package with one dominant file cannot be balanced below that file - but more shards still shorten
-  # it, because fewer other files ride along in the shard that carries it. Commerce Customer Context has a
-  # single 10.3-minute file among 48, so its shards stay under a small share of the rest. Privacy's files
-  # are even (its heaviest is 3.7 minutes of a 14.6-minute job), so two shards halve it outright.
+  # Sharding is set by what a package's own files cost, not by package size, aiming at about 6 minutes of tests
+  # per row. Weighted shards deal files by the measured seconds in ci-matrices.json "test-weights", so the parts of
+  # a split giant file spread over the shards; an unsplit file cannot be balanced below its own length. The rows
+  # are listed heaviest first, so on a full run the longest jobs take the first free runners.
   service-integration:
     name: ${{ matrix.name }}
     needs: [ci-plan, node-artifact-build]
@@ -734,17 +733,24 @@ jobs:
           ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
           ROOT_SUITE: ${{ matrix.root-suite }}
           RSTEST_SHARD: ${{ matrix.rstest-shard }}
-        # Same commands as `pnpm test:integration`, with separate Rstest shards for the root and large packages.
+        # Same commands as `pnpm test:integration`. The root suite and a large package (one package per row, whose
+        # test:integration script is exactly `rstest --project integration`) run as duration-weighted shards that deal
+        # the files of a split giant test family across the shards (scripts/ci/rstest-weighted-shard.sh).
         # Every suite runs even when an earlier one fails (--no-bail; the root suite's failure is kept, not fatal), so
         # one package's failure never hides another's; the step fails at the end if any of them failed.
         run: |
           status=0
-          if [[ "$ROOT_SUITE" == true ]]; then
-            mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 ${ROOT_RSTEST_SHARD:+--shard "$ROOT_RSTEST_SHARD"} || status=$?
+          if [[ "$ROOT_SUITE" == true && -n "$ROOT_RSTEST_SHARD" ]]; then
+            mise exec -- bash scripts/ci/rstest-weighted-shard.sh "$ROOT_RSTEST_SHARD" integration --pool.maxWorkers 1 || status=$?
+          elif [[ "$ROOT_SUITE" == true ]]; then
+            mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 || status=$?
           fi
-          if [[ -n "$PACKAGE_FILTERS" ]]; then
+          if [[ -n "$PACKAGE_FILTERS" && -n "$RSTEST_SHARD" ]]; then
             # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
-            mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 ${RSTEST_SHARD:+--shard "$RSTEST_SHARD"} || status=$?
+            mise exec -- pnpm $PACKAGE_FILTERS exec bash "$PWD/scripts/ci/rstest-weighted-shard.sh" "$RSTEST_SHARD" integration --pool.maxWorkers 1 || status=$?
+          elif [[ -n "$PACKAGE_FILTERS" ]]; then
+            # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
+            mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 || status=$?
           fi
           exit "$status"
 

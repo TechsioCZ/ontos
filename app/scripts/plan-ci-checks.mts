@@ -5,6 +5,7 @@ import { runQualityCli } from './quality-cli-lifecycle.mts';
 import { workspaceConsumerClosure } from './workspace-consumer-closure.mts';
 
 const CommandEntrySchema = Schema.Struct({
+  'artifact-units': Schema.optionalKey(Schema.String),
   commands: Schema.String,
   fetch_depth: Schema.optionalKey(Schema.Number),
   name: Schema.String,
@@ -12,6 +13,7 @@ const CommandEntrySchema = Schema.Struct({
   'typescript-build': Schema.optionalKey(Schema.Boolean),
 });
 const IntegrationEntrySchema = Schema.Struct({
+  'artifact-units': Schema.optionalKey(Schema.String),
   name: Schema.String,
   'native-composition': Schema.optionalKey(Schema.Boolean),
   'native-preproposal': Schema.optionalKey(Schema.Boolean),
@@ -25,8 +27,9 @@ const IntegrationEntrySchema = Schema.Struct({
   Schema.makeFilter((entry) =>
     entry.suite === 'integration' &&
     entry['root-suite'] !== true &&
+    entry['native-preproposal'] !== true &&
     (entry['package-filters'] === undefined || entry['package-filters'].length === 0)
-      ? 'Integration templates must name package filters or run the root suite'
+      ? 'Integration templates must name package filters, run the root suite or run the native preproposal proof'
       : undefined,
   ),
   Schema.makeFilter((entry) =>
@@ -38,6 +41,8 @@ const IntegrationEntrySchema = Schema.Struct({
 export const CiTemplatesSchema = Schema.Struct({
   integration: Schema.Array(IntegrationEntrySchema),
   source: Schema.Array(CommandEntrySchema),
+  /** Measured seconds of a test-file family by file-name prefix; scripts/ci/rstest-weighted-shard.sh deals by it. */
+  'test-weights': Schema.optionalKey(Schema.Record(Schema.String, Schema.Number)),
   unit: Schema.Array(CommandEntrySchema),
 });
 type Templates = typeof CiTemplatesSchema.Type;
@@ -212,16 +217,21 @@ export const planCiChecks = (input: {
     return [{ ...entry, 'package-filters': filters, 'root-suite': rootSuite }];
   });
   const selectedUnit = templates.unit.flatMap((entry) => {
-    const selected = matchingPackages(entry.commands.split('\n')[0] ?? '', affected);
+    const filters = entry.commands.split('\n')[0] ?? '';
+    const selected = matchingPackages(filters, affected);
     if (selected.length === 0) {
       return [];
     }
-    const filters = selected.map(({ directory }) => `--filter ./${directory}`).join(' ');
+    // A row whose every package is affected runs exactly as planned, including a weighted shard of one package.
+    if (selected.length === matchingPackages(filters, packages).length) {
+      return [entry];
+    }
+    const selectedFilters = selected.map(({ directory }) => `--filter ./${directory}`).join(' ');
     return [
       {
         ...entry,
         commands: ['test:unit', 'test:component']
-          .map((script) => `pnpm -r --no-sort --if-present ${filters} run ${script}`)
+          .map((script) => `pnpm -r --no-sort --if-present ${selectedFilters} run ${script}`)
           .join('\n'),
       },
     ];
