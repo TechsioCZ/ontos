@@ -244,8 +244,12 @@ jobs:
 
       # The build-time environment of the setup, as zerops.yaml declared it while Zerops built: AKROS reads
       # STOREFRONT_IMAGE_HOSTS (empty) in next.config.ts; N1 reads nothing at build. No secret is present.
+      # Next's type check holds the owner API types the storefronts import: a cold N1 build peaks near 3.3 GiB, past
+      # Node's default heap (about 2 GiB), so the build gets 4 GiB of the runner's 16 GB. AKROS gets the same.
       - name: Build the standalone server
         working-directory: app
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: |
           if [ "$PKG" = akros-storefront ]; then export STOREFRONT_IMAGE_HOSTS=''; fi
           mise exec -- pnpm --filter "$PKG" run build

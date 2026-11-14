@@ -133,6 +133,7 @@ const WorkflowSchema = Schema.Struct({
       needs: Schema.optionalKey(Schema.Array(Schema.String)),
       steps: Schema.Array(
         Schema.Struct({
+          env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
           if: Schema.optionalKey(Schema.String),
           name: Schema.optionalKey(Schema.String),
           run: Schema.optionalKey(Schema.String),
@@ -185,6 +186,9 @@ const expectStorefrontRunnerBuild = (workflow: StageWorkflow, source: string) =>
     'Pack the standalone server with its manifest',
     'Upload the storefront archive',
   ]);
+  // Next's type check of the owner API types outgrows Node's default heap; the build never relies on that default.
+  const build = storefrontBuild.find((step) => step.name === 'Build the standalone server');
+  expect(build?.env?.NODE_OPTIONS).toBe('--max-old-space-size=4096');
   const pack = storefrontBuild.find((step) => step.name === 'Pack the standalone server with its manifest');
   expect(pack?.run).toContain("-name '*.node' -print");
   expect(pack?.run).toContain("-type l -lname '/*' -print");
