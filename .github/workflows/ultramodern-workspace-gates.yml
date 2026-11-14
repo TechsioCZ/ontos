@@ -1273,6 +1273,23 @@ jobs:
           mise exec -- sh scripts/prove-outbox-worker-host-artifact.sh "$RUNNER_TEMP/outbox-worker-host-artifact"
 
       # The proof directory holds logs and is never cached.
+      # The rows restore the seed into fresh services; prove that here, once, on the seed just dumped, so a seed that
+      # cannot be restored fails its producer instead of every seeded row of the next run. Same command, same checks.
+      - name: Restore the new seed into fresh services as a seeded row does
+        if: needs.ci-plan.outputs.mode == 'full' || steps.seed-cache.outputs.cache-hit != 'true'
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+          SPICEDB_DATABASE_PASSWORD: spicedb
+        run: |
+          docker compose down --volumes --remove-orphans
+          docker compose up --detach --wait --wait-timeout 120
+          mise exec -- node scripts/ci/integration-seed.mts restore --directory "$RUNNER_TEMP/integration-seed-fresh" \
+            --disposable --purpose ordinary-tests --job-name 'Prove and cache the integration seed database' \
+            --root-suite false --test-files '' --jobs 4
+          mise exec -- pnpm db:verify
+          mise exec -- pnpm database-trust:audit
+
       - name: Move the new seed to the cached path
         if: steps.seed-cache.outputs.cache-hit != 'true'
         run: mv "$RUNNER_TEMP/integration-seed-fresh" "$RUNNER_TEMP/integration-seed"

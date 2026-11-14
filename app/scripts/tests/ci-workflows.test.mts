@@ -1397,7 +1397,19 @@ it('restores the integration seed from its input-keyed cache and never makes a r
   expect(produce?.if).toBe("needs.ci-plan.outputs.mode == 'full' || steps.seed-cache.outputs.cache-hit != 'true'");
   const onHit = producer.steps.find(({ run }) => run?.includes('prove-outbox-worker-host-artifact.sh') === true);
   expect(onHit?.if).toBe("needs.ci-plan.outputs.mode != 'full' && steps.seed-cache.outputs.cache-hit == 'true'");
+  // The producer restores the seed it dumped into fresh services, exactly as a row does, before it is cached.
+  const selfRestore = producer.steps.findIndex(
+    ({ name }) => name === 'Restore the new seed into fresh services as a seeded row does',
+  );
+  const producing = producer.steps.findIndex(({ run }) => run?.includes('integration-seed.mts produce') === true);
+  expect(selfRestore).toBeGreaterThan(producing);
+  expect(producer.steps[selfRestore]?.if).toBe(produce?.if);
+  for (const check of ['--purpose ordinary-tests', 'pnpm db:verify', 'pnpm database-trust:audit']) {
+    expect(producer.steps[selfRestore]?.run).toContain(check);
+  }
   const save = producer.steps.find(({ uses }) => uses?.startsWith('actions/cache/save@') === true);
+  expect(save).toBeDefined();
+  expect(selfRestore).toBeLessThan(save === undefined ? -1 : producer.steps.indexOf(save));
   expect(save?.if).toBe("steps.seed-cache.outputs.cache-hit != 'true'");
   expect(save?.with).toEqual({
     key: expression(SEED_KEY_OUTPUT),
