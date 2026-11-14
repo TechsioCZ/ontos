@@ -1,4 +1,3 @@
-import { moduleTargetSourceHeader, moduleTargetSourcePathHeader } from '../shared/module-target-diagnostics.ts';
 import { PeopleSearchReadLive } from '@app/core-runtime/people/search';
 import { ShellPeopleSystemSearchLive } from './modules/shell-system-search.ts';
 import { requestPeopleSearchRebuild } from './people-search-rebuild.ts';
@@ -279,7 +278,11 @@ import {
   SwitchTenantResponseSchema,
   SwitchToTenantContextResponseSchema,
 } from '../shared/browser-api.ts';
-import { moduleTargetSourceHints } from '../shared/module-target-diagnostics.ts';
+import {
+  moduleTargetSourceHeader,
+  moduleTargetSourcePathHeader,
+  moduleTargetSourceHints,
+} from '../shared/module-target-diagnostics.ts';
 import { moduleTargetLogAnnotations } from './modules/module-target-log.ts';
 import type {
   AuthenticationInternalProblem,

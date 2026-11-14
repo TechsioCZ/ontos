@@ -4,7 +4,7 @@ import { Effect, FileSystem, Path, Schema } from 'effect';
 import { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '../../../../packages/core-runtime/src/modules/module-dependency-contracts.ts';
 import { deriveOntosModuleDeploymentContract } from '../../../../scripts/generate-ontos-module-contract.mts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
-import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { makePublishedApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 
 const releaseIntentPath = new URL('../../../../topology/application-release-intent.json', import.meta.url);
 const ReleaseIntentSchema = Schema.fromJsonString(
@@ -33,5 +33,9 @@ export const installedReleaseComposition = Effect.gen(function* installedRelease
     deployment: receiverDeployment,
     schemaVersion: '2',
   });
-  return yield* makeCompositionSnapshot(contracts, 600_000, { document, receiverDeployment });
+  return yield* makePublishedApplicationCompositionSnapshotFixture({
+    contractInputs: contracts,
+    publishedShellRuntime: { document, receiverDeployment },
+    validityMs: 600_000,
+  });
 }).pipe(Effect.provide(NodeServices.layer), Effect.orDie);

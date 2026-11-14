@@ -118,7 +118,7 @@ for (const unreadable of ['tenant', uuid(11), uuid(13)] as const) {
       expect(
         Match.value(failure).pipe(
           Match.tag('AccessAdminUnavailable', ({ status }) => status),
-          Match.orElse(() => undefined),
+          Match.orElse(() => null),
         ),
       ).toBe(503);
     }),
