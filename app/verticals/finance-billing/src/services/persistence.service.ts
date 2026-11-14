@@ -1421,7 +1421,14 @@ const handleSetPriorSettlement = Effect.fn('Finance.handleSetPriorSettlement')(f
     return yield* conflict('prior_settlement_requires_draft');
   }
   yield* priorSettlementTotal(context.state, previous, command.entries);
-  const { priorSettlement: _previous, ...rest } = previous;
+  // What the earlier documents settle changes the amount to pay, so a prepared draft has to be prepared again.
+  const {
+    preparedAt: _preparedAt,
+    preparedByLabel: _preparedBy,
+    priorSettlement: _previous,
+    reviewState: _reviewState,
+    ...rest
+  } = previous;
   if (command.entries.length === 0) {
     return replace(context.state, { ...rest, updatedAt: context.input.now });
   }

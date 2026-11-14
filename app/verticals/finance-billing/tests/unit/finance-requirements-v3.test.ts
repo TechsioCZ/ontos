@@ -427,6 +427,16 @@ describe('S07.R2 final invoice takes earlier advances into account by hand', () 
         entries: [{ amountMinor: 30_000, invoiceResourceId: 'adv-1', number: 'adv-1' }],
       });
       const ready = yield* run(set.state, { _tag: 'MarkInvoicesPrepared', invoiceRefs: [final.ref] });
+      // Changing what earlier documents settle after preparation sends the draft back: it must be prepared again.
+      const changed = yield* run(ready.state, {
+        _tag: 'SetPriorSettlement',
+        entries: [{ amountMinor: 20_000, invoiceResourceId: 'adv-1' }],
+        invoiceRef: final.ref,
+      });
+      expect(changed.invoice?.reviewState).toBeUndefined();
+      expect(changed.invoice?.preparedAt).toBeUndefined();
+      const unprepared = yield* Effect.exit(run(changed.state, { _tag: 'ConfirmInvoice', invoiceRef: final.ref }));
+      expect(failsWith(unprepared, 'confirm_requires_prepared')).toBe(true);
       const approved = yield* run(ready.state, { _tag: 'ConfirmInvoice', invoiceRef: final.ref });
       expect(approved.invoice).toMatchObject({ paidMinor: 30_000, paymentState: 'PARTIALLY_PAID' });
       const events = paymentEvents(approved.state).filter((event) => event.invoiceResourceId === 'fin-1');
