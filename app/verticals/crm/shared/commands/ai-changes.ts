@@ -954,7 +954,7 @@ export const applyAiChangesCommand: Reducer<AiChangesCommand> = (state, command,
               status: 'applied',
             };
             if (Predicate.isTagged(change.operation, 'CreateClient')) {
-              const createdId = applied.success.entityIds[0];
+              const [createdId] = applied.success.entityIds;
               if (createdId === undefined) {
                 return yield* conflict(missingProposalReason);
               }
