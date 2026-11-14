@@ -534,10 +534,21 @@ export const workloadKeysDiffer = (
  */
 export const BOOT_COMPILE_CACHE = path.join(tmpdir(), 'ontos-boot-compile-cache');
 
-/** Finite operator commands own private pools; only long-running hosts install a shared-pool registry. */
-export const finiteProcessEnvironment = (environment: ChildEnvironment): ChildEnvironment => ({
+/** A compile cache the container itself sets (`NODE_COMPILE_CACHE`) wins over the boot's own directory. */
+export const containerCompileCache = Effect.gen(function* readContainerCompileCache() {
+  return yield* Config.option(Config.String('NODE_COMPILE_CACHE'));
+}).pipe(Effect.orElseSucceed(() => Option.none<string>()));
+
+/**
+ * Finite operator commands own private pools; only long-running hosts install a shared-pool registry. The compile
+ * cache is the child's own setting, else the container's, else the boot's directory.
+ */
+export const finiteProcessEnvironment = (
+  environment: ChildEnvironment,
+  container: Option.Option<string> = Option.none(),
+): ChildEnvironment => ({
   ...environment,
-  NODE_COMPILE_CACHE: environment.NODE_COMPILE_CACHE ?? BOOT_COMPILE_CACHE,
+  NODE_COMPILE_CACHE: environment.NODE_COMPILE_CACHE ?? Option.getOrElse(container, () => BOOT_COMPILE_CACHE),
   ONTOS_DATABASE_POOL_SHARED: 'false',
 });
 
@@ -561,7 +572,7 @@ const runChild = (
     Effect.gen(function* runFiniteChild() {
       const handle = yield* ChildProcess.make(command, [...args], {
         cwd,
-        env: finiteProcessEnvironment(env),
+        env: finiteProcessEnvironment(env, yield* containerCompileCache),
         extendEnv,
         forceKillAfter: FINITE_CHILD_FORCE_KILL_AFTER,
         stderr: 'inherit',
@@ -628,7 +639,7 @@ export const captureChannel = (name: string, args: readonly string[], env: Child
       const handle = yield* ChildProcess.make(process.execPath, [...args], {
         additionalFds: { fd3: { type: 'output' } },
         cwd: workspaceRoot,
-        env: finiteProcessEnvironment(env),
+        env: finiteProcessEnvironment(env, yield* containerCompileCache),
         extendEnv: true,
         stderr: 'inherit',
         stdin: 'ignore',
