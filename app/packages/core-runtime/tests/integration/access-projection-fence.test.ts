@@ -1,7 +1,6 @@
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Clock, Deferred, Duration, Effect, Fiber, FileSystem, Layer, Option, Ref, Schema } from 'effect';
-import type { Context } from 'effect';
+import { Clock, Context, Deferred, Duration, Effect, Fiber, FileSystem, Layer, Option, Ref, Schema } from 'effect';
 import { LockTimeoutError } from 'effect/sql/SqlError';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
@@ -19,6 +18,11 @@ import type { AccessFenceSweepBackoffs, AccessFenceSweepReport } from '../../src
 import type { TenantIntentLoaderService } from '../../src/access/intent/tenant-intent-loader.ts';
 import type { AccessCatalogModule } from '../../src/authorization/access-declaration.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { CoreWorkerFenceWait, reconcileLifecycleTenant } from '../../src/outbox/core-system-worker-entry.ts';
+import {
+  ActionAuthorizationLifecycle,
+  ActionAuthorizationLifecycleLive,
+} from '../../src/permissions/action-authorization-lifecycle.ts';
 import {
   ownerScope,
   SCENARIO_COMPANY,
@@ -403,6 +407,44 @@ const holdingEngine =
       }),
   });
 
+/**
+ * Another writer holds the tenant's fence under a live lease; it read the tenant before a change and will give the
+ * fence back without reading it again. The change commits while it holds the fence, the way an intent write that
+ * does not take the fence's lock (person invitation acceptance) can. A lifecycle wake-up must not settle on that
+ * holder's word: it waits, and its own reconcile projects the change.
+ */
+const changeBehindAHolder = (tenantId: TenantId, admin: PgClient.PgClient) =>
+  Effect.gen(function* changeBehindAHolderEffect() {
+    const scope = yield* bootstrapTenant(tenantId);
+    yield* plantDeadHolder(admin, tenantId, { journalAge: '0 seconds', lease: '2 minutes' });
+    yield* admin
+      .unsafe(
+        `update core.tenant_module_states set state = 'suspended'
+          where tenant_id = '${tenantId}' and module_key = '${MODULE}'`,
+      )
+      .pipe(Effect.orDie);
+    const lifecycle = Context.get(yield* Layer.build(ActionAuthorizationLifecycleLive), ActionAuthorizationLifecycle);
+    const settled = yield* Ref.make(false);
+    const wakeUp = yield* reconcileLifecycleTenant(scope).pipe(
+      Effect.andThen((written) => Ref.set(settled, true).pipe(Effect.as(written))),
+      Effect.provideService(ActionAuthorizationLifecycle, lifecycle),
+      Effect.provideService(CoreWorkerFenceWait, { budget: Duration.seconds(20), spacing: Duration.millis(200) }),
+      Effect.forkChild,
+    );
+    // Still waiting while the fence is held.
+    yield* Effect.sleep(Duration.seconds(1));
+    expect(yield* Ref.get(settled)).toBe(false);
+    yield* holderReleases(admin, tenantId);
+    const written = yield* Fiber.join(wakeUp).pipe(Effect.orDie);
+    // Its own reconcile removed the suspended module's tuples, which the holder left in place.
+    expect(written.deletions).toBeGreaterThan(0);
+    const writer = yield* AccessProjectionWriter;
+    const again = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+    expect({ deletions: again.deletions, touches: again.touches }).toEqual({ deletions: 0, touches: 0 });
+    expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+    return yield* Effect.void;
+  });
+
 it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fence', (suite) => {
   suite.effect('a reconcile interrupted inside its engine write still finishes, commits and releases the fence', () =>
     Effect.gen(function* interruptedReconcile() {
@@ -550,6 +592,10 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
           }),
       );
     }),
+  );
+
+  suite.effect('a lifecycle wake-up that finds the fence busy waits and projects a change its holder never saw', () =>
+    withProjectionTenant({ activeModules: [MODULE] }, changeBehindAHolder),
   );
 
   suite.effect('an intent that moved between the read and the fence is read again, never projected stale', () =>

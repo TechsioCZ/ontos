@@ -25,9 +25,10 @@ import { and, asc, eq, gt, lt, notInArray, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { DateTime, Duration, Effect, Schema } from 'effect';
 
-import { outboxDeliveries, outboxMessages } from '../db/schema.ts';
+import { outboxAttempts, outboxDeliveries, outboxMessages } from '../db/schema.ts';
 import type { CoreDbExecutor, CoreTransaction } from '../db/types.ts';
 import { carriesOverToNextRelease } from './carry-over.ts';
+import { OUTBOX_DEFERRED_ATTEMPT_MESSAGE } from './outbox-worker-deferred.ts';
 import { activeMessageTenant, backgroundEligibleConsumer } from './repository.ts';
 import type { OutboxConsumerKey } from './repository.ts';
 
@@ -51,6 +52,8 @@ export interface UndrainableOutboxDelivery {
   readonly attemptsCount: number;
   readonly availableAt: Date;
   readonly consumerModuleKey: string;
+  /** Its owner deferred it to `availableAt` (a wake it asked for), rather than a failure backing off. */
+  readonly deferred: boolean;
   readonly outboxMessageId: string;
   readonly reason: UndrainableOutboxReason;
   readonly status: string;
@@ -82,6 +85,28 @@ export const stalledLongerThanBudget = (budgetAgo: SQL) =>
     and(eq(outboxDeliveries.status, 'processing'), lt(outboxDeliveries.claimExpiresAt, budgetAgo)),
   );
 
+/**
+ * Messages nothing has matched for longer than a whole drain budget. The matcher keeps running while a release
+ * drains, so a freshly written unmatched message is in-flight work and drains; one that has waited a whole budget
+ * means no matcher is running, and the drain would wait for it in vain. Asked by the publisher's pre-flight and by
+ * the operator command alike.
+ */
+export const countStalledUnmatchedMessages = Effect.fn('Outbox.countStalledUnmatchedMessages')(
+  function* countStalledUnmatchedMessages(executor: CoreDbExecutor | CoreTransaction, budgetMs: number) {
+    const budgetSeconds = Duration.toSeconds(Duration.millis(budgetMs));
+    const [row] = yield* executor
+      .select({ count: sql<number>`count(*)::int` })
+      .from(outboxMessages)
+      .where(
+        and(
+          sql`${outboxMessages.matchedAt} is null`,
+          lt(outboxMessages.createdAt, sql`clock_timestamp() - make_interval(secs => ${budgetSeconds})`),
+        ),
+      );
+    return row?.count ?? 0;
+  },
+);
+
 export interface UndrainableOutboxWorkInput {
   readonly budgetMs: number;
   /** Proven-identical core-system keys: the rows these carry over are exempt, by the shared predicate. */
@@ -92,6 +117,11 @@ export interface UndrainableOutboxWorkInput {
    */
   readonly coreSystemConsumers: readonly OutboxConsumerKey[];
   readonly limit?: number;
+  /**
+   * How long the drain has left, on the publisher's own budget clock; a delivery due after that never drains.
+   * Defaults to `budgetMs`: a drain starting now has its whole budget.
+   */
+  readonly remainingMs?: number;
 }
 
 /**
@@ -103,7 +133,8 @@ export const listUndrainableOutboxWork = Effect.fn('Outbox.listUndrainableWork')
   input: UndrainableOutboxWorkInput,
 ) {
   const budgetSeconds = Duration.toSeconds(Duration.millis(input.budgetMs));
-  const deadline = sql`clock_timestamp() + make_interval(secs => ${budgetSeconds})`;
+  const remainingSeconds = Duration.toSeconds(Duration.millis(input.remainingMs ?? input.budgetMs));
+  const deadline = sql`clock_timestamp() + make_interval(secs => ${remainingSeconds})`;
   const budgetAgo = sql`clock_timestamp() - make_interval(secs => ${budgetSeconds})`;
   const carriesOver = carriesOverToNextRelease(input.carriedOverWorkerKeys);
   const noLiveConsumer = or(
@@ -117,12 +148,17 @@ export const listUndrainableOutboxWork = Effect.fn('Outbox.listUndrainableWork')
       attemptsCount: outboxDeliveries.attemptsCount,
       availableAt: outboxDeliveries.availableAt,
       consumerModuleKey: outboxDeliveries.consumerModuleKey,
+      // The deferral settles the delivery's latest attempt with this exact message; a failure records its own.
+      deferred: sql<boolean>`coalesce((
+          select ${outboxAttempts.errorMessage} from ${outboxAttempts}
+          where ${outboxAttempts.outboxDeliveryId} = ${outboxDeliveries.outboxDeliveryId}
+          order by ${outboxAttempts.startedAt} desc limit 1
+        ) = ${OUTBOX_DEFERRED_ATTEMPT_MESSAGE}, false)`,
       outboxMessageId: outboxDeliveries.outboxMessageId,
       reason: sql<UndrainableOutboxReason>`case
           when ${outboxDeliveries.status} = 'dead' then 'dead'
           when ${outboxDeliveries.availableAt} > ${deadline} then 'scheduled-beyond-budget'
-          when ${stalled} then 'unclaimed-longer-than-budget'
-          when ${noLiveConsumer} then 'no-eligible-consumer'
+          when ${ineligible} then 'no-eligible-consumer'
           else 'unclaimed-longer-than-budget' end`,
       status: outboxDeliveries.status,
       tenantId: outboxMessages.tenantId,
@@ -142,8 +178,15 @@ export const listUndrainableOutboxWork = Effect.fn('Outbox.listUndrainableWork')
     .limit(input.limit ?? UNDRAINABLE_REPORT_LIMIT);
 });
 
-const describeOne = (delivery: UndrainableOutboxDelivery) =>
-  `${delivery.reason}: --tenant-id ${delivery.tenantId} --message-id ${delivery.outboxMessageId} --worker-key ${delivery.workerKey} (consumer ${delivery.consumerModuleKey}, ${delivery.status}, attempts ${String(delivery.attemptsCount)}, available at ${DateTime.formatIso(DateTime.makeUnsafe(delivery.availableAt))})`;
+/** The reason, with why a delivery is due too late when its own owner asked for that wake. */
+const describeReason = (delivery: UndrainableOutboxDelivery) =>
+  delivery.reason === 'scheduled-beyond-budget' && delivery.deferred
+    ? `${delivery.reason} (deferred by its owner until ${DateTime.formatIso(DateTime.makeUnsafe(delivery.availableAt))})`
+    : delivery.reason;
+
+/** One reported delivery, for an operator. */
+const describeUndrainableDelivery = (delivery: UndrainableOutboxDelivery) =>
+  `${describeReason(delivery)}: --tenant-id ${delivery.tenantId} --message-id ${delivery.outboxMessageId} --worker-key ${delivery.workerKey} (consumer ${delivery.consumerModuleKey}, ${delivery.status}, attempts ${String(delivery.attemptsCount)}, available at ${DateTime.formatIso(DateTime.makeUnsafe(delivery.availableAt))})`;
 
 /** One operator-readable line naming every reported row, or `''` when the drain can finish. */
 export const describeUndrainableOutboxWork = (deliveries: readonly UndrainableOutboxDelivery[]): string => {
@@ -154,5 +197,5 @@ export const describeUndrainableOutboxWork = (deliveries: readonly UndrainableOu
     deliveries.length === UNDRAINABLE_REPORT_LIMIT
       ? ` (first ${String(UNDRAINABLE_REPORT_LIMIT)}; \`pnpm composition:drain-preflight\` shows the current state)`
       : '';
-  return `Outbox work that this drain could never finish${more}: ${deliveries.map(describeOne).join('; ')}`;
+  return `Outbox work that this drain could never finish${more}: ${deliveries.map(describeUndrainableDelivery).join('; ')}`;
 };

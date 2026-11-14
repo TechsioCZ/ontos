@@ -180,3 +180,71 @@ export const countTrackedDebt = Effect.fn('Outbox.countTrackedDebt')(function* c
     );
   return row?.count ?? 0;
 });
+
+/** What a publication of this release would do with the authority as it stands, from the facts each path checks. */
+export interface PublicationVerdictInput {
+  /** Deliveries the publisher's own pre-flight would refuse (the `active` path). */
+  readonly deliveriesRefused: number;
+  /**
+   * What a promote of a `migrated` authority blocks on, counted with `requireDrainedWork`'s own predicates
+   * (`countDrainBlockers`): durable owner workflows, unmatched messages, and deliveries that do not carry over.
+   */
+  readonly drainBlockers: { readonly deliveries: number; readonly durable: number; readonly unmatched: number };
+  readonly phase: 'active' | 'draining' | 'sealed' | 'migrated';
+  /** Messages no matcher has taken for a whole drain budget (what the `active` pre-flight refuses on). */
+  readonly stalledMessages: number;
+  /** Messages not matched yet; on the `active` path the publisher waits for the running matcher to take them. */
+  readonly unmatched: number;
+}
+
+export interface PublicationVerdict {
+  readonly line: string;
+  readonly proceeds: boolean;
+}
+
+/**
+ * The verdict per phase, applying each publication path's own rule:
+ * - `active` runs the pre-flight: it refuses on a delivery that could never drain or a message unmatched for a
+ *   whole budget. A fresh unmatched message is waited for (the running matcher takes it) before the fence
+ *   re-checks under the exclusive lock.
+ * - `migrated` promotes without a drain; its `requireDrainedWork` blocks on any durable workflow, any unmatched
+ *   message, and any delivery that does not carry over.
+ * - `draining` resumes a drain the running release already refuses reads for; `sealed` is refused outright.
+ */
+export const publicationVerdict = (input: PublicationVerdictInput): PublicationVerdict => {
+  if (input.phase === 'draining') {
+    return {
+      line: 'this authority is draining: the running release already refuses reads, and a publication would resume its Outbox drain rather than run this pre-flight. Follow "Returning a stuck authority to active" in docs/architecture/DEPLOYMENT.md.',
+      proceeds: false,
+    };
+  }
+  if (input.phase === 'sealed') {
+    return {
+      line: 'this authority is sealed: a replacement publication is refused outright until a migration completes.',
+      proceeds: false,
+    };
+  }
+  if (input.phase === 'migrated') {
+    const { deliveries, durable, unmatched } = input.drainBlockers;
+    const proceeds = deliveries === 0 && durable === 0 && unmatched === 0;
+    const blockers = `${String(deliveries)} delivery(ies) that do not carry over; ${String(durable)} durable workflow(s); ${String(unmatched)} unmatched message(s)`;
+    const answer = proceeds ? 'yes' : `no (${blockers})`;
+    return {
+      line: `a publication of this release would promote without a drain (the authority is migrated); its promotion check would pass: ${answer}`,
+      proceeds,
+    };
+  }
+  const blockers = [
+    ...(input.deliveriesRefused === 0 ? [] : [`${String(input.deliveriesRefused)} delivery(ies) would be refused`]),
+    ...(input.stalledMessages === 0
+      ? []
+      : [`${String(input.stalledMessages)} message(s) unmatched for longer than the drain budget`]),
+  ];
+  const proceeds = blockers.length === 0;
+  const answer = proceeds ? 'yes' : `no (${blockers.join('; ')})`;
+  const waits =
+    proceeds && input.unmatched > 0
+      ? ` (it first waits for the running matcher to take ${String(input.unmatched)} unmatched message(s))`
+      : '';
+  return { line: `a publication of this release would start its drain: ${answer}${waits}`, proceeds };
+};
