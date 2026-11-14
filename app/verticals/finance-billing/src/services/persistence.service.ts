@@ -93,6 +93,7 @@ export const MANUAL_COUNTERPARTY_ID = '00000000-0000-4000-8000-000000000000';
 const FINANCE_MODULE_ID = 'finance.billing';
 const INVOICE_RESOURCE_TYPE = 'finance.billing.invoice';
 const EXPORT_NOT_FOUND = 'Export not found';
+const INVOICE_ALREADY_EXISTS = 'invoice_already_exists';
 const rejected = (reason: string) => new FinanceRejected({ code: 'finance_rejected', reason });
 const sameInvoiceLine = Schema.toEquivalence(InvoiceLineSchema);
 const conflict = (reason: string) => new FinanceConflict({ code: 'finance_conflict', reason });
@@ -284,7 +285,7 @@ const findInvoice = (
       )
     : Effect.succeed(invoice);
 };
-/** Who issued a received invoice, as far as Finance knows: the IČO on the document, the registry counterparty, the name. */
+/** Who issued a received invoice as Finance knows it: the IČO on the document, the registry counterparty, the name. */
 interface SupplierIdentity {
   readonly companyId: string | undefined;
   readonly name: string | undefined;
@@ -337,7 +338,7 @@ const handleCreateInvoiceDraft = Effect.fn('Finance.handleCreateInvoiceDraft')(f
   const { input, scope, state, validators } = context;
 
   if (state.invoices.some((record) => record.ref.resourceId === input.resourceId)) {
-    return yield* conflict('invoice_already_exists');
+    return yield* conflict(INVOICE_ALREADY_EXISTS);
   }
   // Our own invoice takes the next number of the company's series, from the complete ledger here, never a number a
   // (possibly filtered) browser view guessed; a received invoice needs its supplier's number.
@@ -369,7 +370,7 @@ const handleCreateInvoiceDraft = Effect.fn('Finance.handleCreateInvoiceDraft')(f
     updatedAt: input.now,
   };
   if (documentNumberTaken(state.invoices, invoice)) {
-    return yield* conflict('invoice_already_exists');
+    return yield* conflict(INVOICE_ALREADY_EXISTS);
   }
   yield* validate(invoice, scope, validators);
   return { changed: true, invoice, state: { ...state, invoices: [...state.invoices, invoice] } };
@@ -426,7 +427,7 @@ const handleCreateInvoiceFromOpportunity = Effect.fn('Finance.handleCreateInvoic
     }
     const number = nextInvoiceNumber(state.invoices);
     if (state.invoices.some((record) => record.ref.resourceId === input.resourceId)) {
-      return yield* conflict('invoice_already_exists');
+      return yield* conflict(INVOICE_ALREADY_EXISTS);
     }
     const issueDate = command.issueDate ?? calendarDateOf(input.now);
     const totals = yield* draftTotals({ lines: yield* opportunityLines(command.lines, issueDate, validators) });
@@ -461,7 +462,7 @@ const handleCreateInvoiceFromOpportunity = Effect.fn('Finance.handleCreateInvoic
       updatedAt: input.now,
     };
     if (documentNumberTaken(state.invoices, invoice)) {
-      return yield* conflict('invoice_already_exists');
+      return yield* conflict(INVOICE_ALREADY_EXISTS);
     }
     yield* validate(invoice, scope, validators);
     return { changed: true, invoice, state: { ...state, invoices: [...state.invoices, invoice] } };
