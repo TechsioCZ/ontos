@@ -36,6 +36,10 @@ export {
   defineReadResourcePermission,
 } from '../reads/definition.ts';
 export { OperationContextUnavailable } from '../operations/operation-context-unavailable.ts';
+// Owner Actions run in the worker host's own marked transactions, so their declared evidence calls (DEPLOYMENT.md,
+// demo divergence) need the same guard module the worker's ActionRuntime marks with.
+export { declaredEvidenceCallInsideTransaction } from '../db/transaction-io-guard.ts';
+export type { DeclaredEvidenceCall } from '../db/transaction-io-guard.ts';
 export { defineVerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
 export {
   ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY,

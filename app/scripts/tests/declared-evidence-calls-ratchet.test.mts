@@ -43,6 +43,7 @@ const REGISTRIES = [
 const COMBINATOR_HOMES = [
   'packages/core-runtime/src/db/transaction-io-guard.ts',
   'packages/core-runtime/src/index.ts',
+  'packages/core-runtime/src/outbox/worker-entrypoint.ts',
   ...REGISTRIES,
 ];
 
