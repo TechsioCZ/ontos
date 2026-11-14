@@ -41,11 +41,8 @@ for service in $services; do
     *) echo "unknown delivery service: $service" >&2; exit 1 ;;
   esac
   # Each push's timestamped lines reach the job log as they happen (and its own log file, which gates the next upload).
-  if [ "$service" = app ]; then
-    PUSH_SERVICE_NAME="$service" bash "$script_dir/push-service.sh" "$id" "$setup" "$GITHUB_SHA" > >(tee "$RUNNER_TEMP/push-$service.log") 2>&1 &
-  else
-    PUSH_SERVICE_NAME="$service" PUSH_EXCLUDE=app/.zerops-prebuilt.tar.zst bash "$script_dir/push-service.sh" "$id" "$setup" "$GITHUB_SHA" > >(tee "$RUNNER_TEMP/push-$service.log") 2>&1 &
-  fi
+  # A storefront push carries only zerops.yaml and its runner-built archive (push-service.sh), so nothing to exclude.
+  PUSH_SERVICE_NAME="$service" bash "$script_dir/push-service.sh" "$id" "$setup" "$GITHUB_SHA" > >(tee "$RUNNER_TEMP/push-$service.log") 2>&1 &
   pid=$!
   pids+=("$pid")
   until grep -q 'build and deploy process' "$RUNNER_TEMP/push-$service.log" 2>/dev/null || ! kill -0 "$pid" 2>/dev/null; do sleep 1; done

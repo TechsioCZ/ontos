@@ -150,6 +150,33 @@ it('starts the storefront from its standalone bundle and keeps the Shell URL in-
   expect(storefront).toContain('ONTOS_SHELL_URL: http://app:3000');
 });
 
+it('deploys each storefront from the runner-built archive, checked against its setup, never building on Zerops', () => {
+  const zeropsYaml = readZeropsDeploymentYaml();
+  for (const [setup, pkg] of [
+    ['storefront', 'akros-storefront'],
+    ['n1', 'n1-storefront'],
+  ] as const) {
+    const service = serviceNode(zeropsYaml, setup);
+    const commands = serviceStrings(service, ['build', 'buildCommands']);
+    expect(commands.join('\n')).not.toMatch(/pnpm|next build|npm install/u);
+    expect(commands[0]).toContain('test -f app/.zerops-storefront.tar.gz && test -f app/.zerops-storefront.json');
+    expect(commands[1]).toContain(`m.setup !== "${setup}" || m.package !== "${pkg}" || m.archiveSha256 !== digest`);
+    expect(commands[1]).toContain('m.arch !== process.arch || m.nativeAddons !== 0');
+    expect(commands[2]).toBe(
+      'mkdir -p app/.zerops/runtime && tar -xzf app/.zerops-storefront.tar.gz -C app/.zerops/runtime',
+    );
+    expect(commands[3]).toBe(`test -f 'app/.zerops/runtime/${pkg}/${pkg}/server.js'`);
+    expect(serviceStrings(service, ['build', 'deployFiles'])).toStrictEqual([`app/.zerops/runtime/${pkg}`]);
+    expect(service.getIn(['build', 'cache'])).toBeUndefined();
+    expect(service.getIn(['run', 'start'])).toContain(
+      `cd app/.zerops/runtime/${pkg} && HOSTNAME=0.0.0.0 exec node ${pkg}/server.js`,
+    );
+    // The old release keeps serving until the new one answers its readiness probe.
+    expect(service.getIn(['deploy', 'temporaryShutdown'])).toBe(false);
+    expect(service.getIn(['deploy', 'readinessCheck', 'retryPeriod'])).toBe('2s');
+  }
+});
+
 it('ships checksum-pinned Bun with the native Node Shell default and no runtime download', () => {
   const app = serviceNode(readZeropsDeploymentYaml(), 'app');
   expect(serviceStrings(app, ['build', 'prepareCommands'])).toContain(
@@ -207,7 +234,11 @@ it('uses native Alpine Node 26 for every Node build and runtime without a custom
     const block = serviceBlock(zeropsYaml, setup);
     expect(service.getIn(['build', 'base'])).toBe('alpine/nodejs@26');
     expect(service.getIn(['run', 'base'])).toBe('alpine/nodejs@26');
-    expect(serviceStrings(service, ['build', 'prepareCommands'])).toContain(`sudo npm install --global pnpm@${pnpm}`);
+    // Only the app installs on Zerops; the storefronts arrive built from the runner (build_storefronts).
+    const installsPnpm = serviceStrings(service, ['build', 'prepareCommands']).includes(
+      `sudo npm install --global pnpm@${pnpm}`,
+    );
+    expect(installsPnpm).toBe(setup === 'app');
     expect(serviceStrings(service, ['run', 'prepareCommands'])).toEqual([]);
     expect(serviceStrings(service, ['run', 'initCommands'])).toEqual([]);
     expect(block).not.toMatch(/install-zerops-node|\.local\/node-|\.zerops\/node|\/node\/bin|libatomic/u);

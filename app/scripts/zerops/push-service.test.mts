@@ -16,7 +16,8 @@ const SERVICE_ID = 'service-under-test';
 /**
  * The real `curl` against a local stand-in for the Zerops API: the shim only points the script's fixed API origin at
  * the local server, so curl's own retry and back-off decide every transient answer. `find -printf` and
- * `tar --anchored` are GNU-only and the package is not under test, so their shims list the directory and write a stub.
+ * `tar --anchored` are GNU-only, so their shims list the directory and write a stub package; the stub records the
+ * files staged for the package (the directory after `-C`), so a test can assert what a service ships.
  */
 const shims = {
   curl: `#!/usr/bin/env bash
@@ -31,8 +32,13 @@ ls -A1 | sort
 `,
   tar: `#!/usr/bin/env bash
 previous=''
+directory=''
 for arg in "$@"; do
-  [ "$previous" = -czf ] && printf 'package' >"$arg"
+  [ "$previous" = -C ] && directory="$arg"
+  if [ "$previous" = -czf ]; then
+    printf 'package' >"$arg"
+    [ -z "$directory" ] || (cd "$directory" && command -p find . -type f) >"$RUNNER_TEMP/package-files"
+  fi
   previous="$arg"
 done
 `,
@@ -62,10 +68,17 @@ const localOrigin = Effect.gen(function* localServerOrigin() {
 /** What follows the fake API's origin in the upload URL it hands out. */
 const PLAIN_UPLOAD = '/upload';
 
+/** The setup to push (default `app`) and extra checkout files, keyed by their repository path. */
+interface PushCheckout {
+  readonly files?: Readonly<Record<string, string>>;
+  readonly setup?: string;
+}
+
 const runPush = (
   answer: ProcessAnswer,
   environment: Readonly<Record<string, string>> = {},
   upload: { readonly origin?: (origin: string) => string; readonly target?: string } = {},
+  pushCheckout: PushCheckout = {},
 ) =>
   Effect.gen(function* pushAgainstFakeApi() {
     const fs = yield* FileSystem.FileSystem;
@@ -107,6 +120,10 @@ const runPush = (
       yield* fs.makeDirectory(bin);
       yield* fs.makeDirectory(path.join(checkout, 'app'), { recursive: true });
       yield* fs.writeFileString(path.join(checkout, 'app/zerops.yaml'), 'zerops: []\n');
+      for (const [file, body] of Object.entries(pushCheckout.files ?? {})) {
+        yield* fs.makeDirectory(path.dirname(path.join(checkout, file)), { recursive: true });
+        yield* fs.writeFileString(path.join(checkout, file), body);
+      }
       for (const [name, body] of Object.entries(shims)) {
         yield* fs.writeFileString(path.join(bin, name), body);
         yield* fs.chmod(path.join(bin, name), 0o700);
@@ -115,22 +132,34 @@ const runPush = (
         ChildProcess.make('bash', ['-c', 'command -v curl']),
       )).stdout.trim();
       const result = yield* collectToolingProcess(
-        ChildProcess.make('bash', [path.join(import.meta.dirname, 'push-service.sh'), SERVICE_ID, 'app', 'version'], {
-          cwd: checkout,
-          env: {
-            ...environment,
-            FAKE_ZEROPS_ORIGIN: origin,
-            PATH: `${bin}:${searchPath}`,
-            REAL_CURL: realCurl,
-            RUNNER_TEMP: directory,
-            ZEROPS_TOKEN: 'test-token',
+        ChildProcess.make(
+          'bash',
+          [path.join(import.meta.dirname, 'push-service.sh'), SERVICE_ID, pushCheckout.setup ?? 'app', 'version'],
+          {
+            cwd: checkout,
+            env: {
+              ...environment,
+              FAKE_ZEROPS_ORIGIN: origin,
+              PATH: `${bin}:${searchPath}`,
+              REAL_CURL: realCurl,
+              RUNNER_TEMP: directory,
+              ZEROPS_TOKEN: 'test-token',
+            },
+            extendEnv: true,
           },
-          extendEnv: true,
-        }),
+        ),
       );
       const curlCalls = path.join(directory, 'curl-calls');
       const curlArguments = (yield* fs.exists(curlCalls)) ? yield* fs.readFileString(curlCalls) : '';
-      return { ...result, calls, curlArguments, polls };
+      const packageList = path.join(directory, 'package-files');
+      const packageFiles = (yield* fs.exists(packageList))
+        ? (yield* fs.readFileString(packageList))
+            .split('\n')
+            .filter((file) => file.length > 0)
+            .map((file) => file.replace(/^\.\//u, ''))
+            .toSorted()
+        : [];
+      return { ...result, calls, curlArguments, packageFiles, polls };
     }).pipe(Effect.provide(api));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
@@ -264,4 +293,63 @@ it('omits non-build inputs per service without mutating the runner index or weak
   expect(source).toContain('git -C "$work/source" update-index --skip-worktree -z --stdin');
   expect(source).toContain('upload_limit_seconds="${UPLOAD_LIMIT_SECONDS:-25}"');
   expect(source).toContain('((took <= upload_limit_seconds)) && break');
+});
+
+/** The runner's storefront build, as build_storefronts uploads it and the deploy job downloads it into app/. */
+const STOREFRONT_ARCHIVE = {
+  'app/.zerops-storefront.json': '{"setup":"storefront"}\n',
+  'app/.zerops-storefront.tar.gz': 'archive',
+};
+
+it.live('a storefront push ships only zerops.yaml and the runner-built archive with its manifest', () =>
+  Effect.gen(function* storefrontPackage() {
+    for (const setup of ['storefront', 'n1']) {
+      const result = yield* runPush(
+        () => processState('FINISHED'),
+        {},
+        {},
+        {
+          files: {
+            ...STOREFRONT_ARCHIVE,
+            'app/.zerops-prebuilt.tar.zst': 'app units',
+            'app/akros-storefront/src/app/page.tsx': 'source',
+            'app/n1-storefront/src/app/page.tsx': 'source',
+            'app/package.json': '{}',
+          },
+          setup,
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.packageFiles).toEqual([
+        'app/.zerops-storefront.json',
+        'app/.zerops-storefront.tar.gz',
+        'app/zerops.yaml',
+      ]);
+      expect(result.stdout).toContain(`${setup} deployed in`);
+    }
+  }),
+);
+
+it.live('a storefront push without the runner-built archive fails before any Zerops call', () =>
+  Effect.gen(function* missingArchive() {
+    const result = yield* runPush(() => processState('FINISHED'), {}, {}, { setup: 'n1' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('the n1 push needs app/.zerops-storefront.tar.gz (the build_storefronts artifact)');
+    expect(result.calls).toEqual([]);
+  }),
+);
+
+it.live('an unknown setup fails before any Zerops call', () =>
+  Effect.gen(function* unknownSetup() {
+    const result = yield* runPush(() => processState('FINISHED'), {}, {}, { setup: 'shop' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('unknown zerops.yaml setup: shop');
+    expect(result.calls).toEqual([]);
+  }),
+);
+
+it('never ships a storefront archive in the app package', () => {
+  const source = readFileSync(new URL('./push-service.sh', import.meta.url), 'utf8');
+  expect(source).toContain("--exclude='app/.zerops-storefront.*'");
+  expect(source).toContain('cp app/zerops.yaml app/.zerops-storefront.tar.gz app/.zerops-storefront.json');
 });

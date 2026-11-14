@@ -72,7 +72,7 @@ for (const services of [
       expect(calls).toEqual(
         ['n1', 'app', 'storefront', 'shop'].filter((service) => services.some((selected) => selected === service)).map(
           (service) =>
-            `${service}-id|${service === 'n1' ? 'n1' : service === 'app' ? 'app' : 'storefront'}|${HEAD}|${service === 'app' ? 'none' : 'app/.zerops-prebuilt.tar.zst'}`,
+            `${service}-id|${service === 'n1' ? 'n1' : service === 'app' ? 'app' : 'storefront'}|${HEAD}|none`,
         ),
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -162,13 +162,50 @@ it.effect('keeps verification mandatory for changed services and records sources
     expect(workflow.jobs.verify?.steps.some((step) => step.run?.includes('verify-service.mjs app') === true)).toBe(true);
     expect(workflow.jobs.verify?.steps.some((step) => step.run?.includes('prove-mcp-oauth.mts') === true)).toBe(true);
     for (const service of ['storefront', 'shop', 'n1']) {
-      expect(workflow.jobs[`deploy_${service}`]?.needs).toEqual(['plan', 'deploy']);
+      const job = workflow.jobs[`deploy_${service}`];
+      expect(job?.needs).toEqual(['plan', 'deploy', 'build_storefronts']);
+      // A kept storefront only re-verifies; a selected one deploys only after the runner build ran.
+      expect(job?.if).toContain(`needs.plan.outputs.${service} != 'true'`);
+      expect(job?.if).toContain("needs.build_storefronts.result == 'success'");
       expect(workflow.jobs.record?.if).toContain(`needs.deploy_${service}.result == 'success'`);
+      // Its own archive, checked against this commit and setup, before the push mutates anything.
+      const steps = job?.steps ?? [];
+      const index = (name: string) => steps.findIndex((step) => step.name === name);
+      const setup = service === 'n1' ? 'n1' : 'storefront';
+      const refuse = steps[index('Refuse an archive from another revision or setup')];
+      expect(refuse?.if).toBe(`needs.plan.outputs.${service} == 'true'`);
+      expect(refuse?.run).toContain(`--arg setup '${setup}'`);
+      expect(refuse?.run).toContain('.sourceRevision == $sha and .setup == $setup');
+      expect(refuse?.run).toContain('sha256sum -c -');
+      expect(index(`Take the ${setup} archive built on the runner`)).toBeGreaterThan(-1);
+      expect(index(`Take the ${setup} archive built on the runner`)).toBeLessThan(index(refuse?.name ?? ''));
+      expect(index(refuse?.name ?? '')).toBeLessThan(index('Push only services whose inputs changed'));
     }
+    // The runner build depends only on the plan, never on the app shards, and builds only selected storefronts.
+    expect(workflow.jobs.build_storefronts?.needs).toEqual(['plan']);
+    expect(workflow.jobs.build_storefronts?.if).toContain("needs.plan.outputs.n1 == 'true'");
+    expect(workflow.jobs.build_storefronts?.if).toContain("needs.plan.outputs.shop == 'true'");
+    expect(workflow.jobs.deploy_app?.needs).not.toContain('build_storefronts');
+    expect(workflow.jobs.verify?.needs).not.toContain('build_storefronts');
+    const storefrontBuild = workflow.jobs.build_storefronts?.steps ?? [];
+    expect(storefrontBuild.map((step) => step.name)).toEqual([
+      'Checkout',
+      'Install the app workspace',
+      "Restore Next's compiler cache",
+      'Typecheck with tsrs',
+      'Build the standalone server',
+      "Save Next's compiler cache",
+      'Pack the standalone server with its manifest',
+      'Upload the storefront archive',
+    ]);
+    const pack = storefrontBuild.find((step) => step.name === 'Pack the standalone server with its manifest');
+    expect(pack?.run).toContain("-name '*.node' -print");
+    expect(pack?.run).toContain("-type l -lname '/*' -print");
+    expect(pack?.run).toContain('sourceRevision: $sourceRevision');
+    expect(source).toContain(`name: zerops-storefront-\${{ matrix.setup }}`);
     expect(source).toContain('zerops-verified-delivery');
     expect(source).toContain('fetch-depth: 0');
-    expect(source).toContain('STOREFRONT RUNNER PREBUILD INTEGRATION POINT');
-    expect(source).toContain('deploy_storefront/deploy_shop/deploy_n1 consume only their named artifact');
+    expect(source).toContain('STOREFRONT RUNNER PREBUILD (lane STOREFRONT)');
     expect(source).toContain(`ZEROPS_FORCE_BUILD: \${{ needs.plan.outputs.full }}`);
     const buildScript = yield* fs.readFileString(path.join(import.meta.dirname, 'build-app.sh'));
     expect(buildScript).toContain('node "$root/scripts/zerops/delivery-plan-cli.mts" digests >"$ZEROPS_UNIT_DIGESTS"');

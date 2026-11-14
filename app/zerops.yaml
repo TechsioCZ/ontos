@@ -36,27 +36,21 @@ zerops:
   - setup: storefront
     build:
       base: alpine/nodejs@26
-      envVariables:
-        NEXT_TELEMETRY_DISABLED: '1'
-        STOREFRONT_IMAGE_HOSTS: ''
-      prepareCommands:
-        - sudo npm install --global pnpm@12.16.1
+      # Built once on the GitHub runner (zerops-stage.yml, job `build_storefronts`): tsrs typecheck, then `next build`
+      # with NEXT_TELEMETRY_DISABLED=1 and STOREFRONT_IMAGE_HOSTS empty. `storefront` and `shop` deploy the same
+      # archive: brand, key and app id are runtime service variables read per request (src/brand/index.ts; the root
+      # layout renders dynamically).
+      # The push carries the finished standalone server with its static assets and public files as
+      # app/.zerops-storefront.tar.gz, and its manifest app/.zerops-storefront.json. Zerops only checks and unpacks it:
+      # this setup, the archive digest, the Node major and CPU architecture, and no native addons (the runner is glibc,
+      # this image musl). No archive, or one that does not fit, fails the build; nothing falls back to a stale bundle.
       buildCommands:
-        # Zerops restores the build cache below as root; the build user must own it before pnpm and Next write to it.
-        - sudo chown -R "$(id -u):$(id -g)" app
-        - cd app && pnpm install --frozen-lockfile --filter 'akros-storefront...'
-        - cd app && pnpm --filter akros-storefront run build
-        - mkdir -p 'app/.zerops/runtime' && mv 'app/akros-storefront/.next/standalone' 'app/.zerops/runtime/akros-storefront'
-        - cp -a 'app/akros-storefront/.next/static' 'app/.zerops/runtime/akros-storefront/akros-storefront/.next/static'
-        - cp -a 'app/akros-storefront/public' 'app/.zerops/runtime/akros-storefront/akros-storefront/public'
+        - test -f app/.zerops-storefront.tar.gz && test -f app/.zerops-storefront.json || { echo 'this push carries no prebuilt akros-storefront' >&2; exit 1; }
+        - node -e 'const m = require("./app/.zerops-storefront.json"); const digest = require("node:crypto").createHash("sha256").update(require("node:fs").readFileSync("app/.zerops-storefront.tar.gz")).digest("hex"); const major = (v) => v.split(".")[0]; if (m.setup !== "storefront" || m.package !== "akros-storefront" || m.archiveSha256 !== digest || major(m.node) !== major(process.versions.node) || m.arch !== process.arch || m.nativeAddons !== 0) { console.error("prebuilt archive does not fit this setup:", JSON.stringify(m)); process.exit(1); } console.log("prebuilt", m.package, "from", m.sourceRevision, "inputs", m.inputDigest);'
+        - mkdir -p app/.zerops/runtime && tar -xzf app/.zerops-storefront.tar.gz -C app/.zerops/runtime
+        - test -f 'app/.zerops/runtime/akros-storefront/akros-storefront/server.js'
       deployFiles:
         - app/.zerops/runtime/akros-storefront
-      # A repeated build relinks the restored dependencies instead of installing them again, and Next's webpack cache
-      # recompiles only what changed. The pnpm store lives outside the build tree, so the installed tree is what we keep.
-      cache:
-        - app/node_modules
-        - app/akros-storefront/node_modules
-        - app/akros-storefront/.next/cache
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -91,29 +85,19 @@ zerops:
   - setup: n1
     build:
       base: alpine/nodejs@26
-      envVariables:
-        NEXT_TELEMETRY_DISABLED: '1'
-      prepareCommands:
-        - sudo npm install --global pnpm@12.16.1
+      # Built once on the GitHub runner (zerops-stage.yml, job `build_storefronts`): tsrs typecheck, then `next build`
+      # with NEXT_TELEMETRY_DISABLED=1; every other N1 setting is a runtime variable read per request.
+      # The push carries the finished standalone server with its static assets and public files as
+      # app/.zerops-storefront.tar.gz, and its manifest app/.zerops-storefront.json. Zerops only checks and unpacks it:
+      # this setup, the archive digest, the Node major and CPU architecture, and no native addons (the runner is glibc,
+      # this image musl). No archive, or one that does not fit, fails the build; nothing falls back to a stale bundle.
       buildCommands:
-        # Zerops restores the build cache below as root; the build user must own it before pnpm and Next write to it.
-        - sudo chown -R "$(id -u):$(id -g)" app
-        - cd app && pnpm install --frozen-lockfile --filter 'n1-storefront...'
-        - cd app && pnpm --filter n1-storefront run build
-        - mkdir -p 'app/.zerops/runtime' && mv 'app/n1-storefront/.next/standalone' 'app/.zerops/runtime/n1-storefront'
-        - cp -a 'app/n1-storefront/.next/static' 'app/.zerops/runtime/n1-storefront/n1-storefront/.next/static'
-        - cp -a 'app/n1-storefront/public' 'app/.zerops/runtime/n1-storefront/n1-storefront/public'
+        - test -f app/.zerops-storefront.tar.gz && test -f app/.zerops-storefront.json || { echo 'this push carries no prebuilt n1-storefront' >&2; exit 1; }
+        - node -e 'const m = require("./app/.zerops-storefront.json"); const digest = require("node:crypto").createHash("sha256").update(require("node:fs").readFileSync("app/.zerops-storefront.tar.gz")).digest("hex"); const major = (v) => v.split(".")[0]; if (m.setup !== "n1" || m.package !== "n1-storefront" || m.archiveSha256 !== digest || major(m.node) !== major(process.versions.node) || m.arch !== process.arch || m.nativeAddons !== 0) { console.error("prebuilt archive does not fit this setup:", JSON.stringify(m)); process.exit(1); } console.log("prebuilt", m.package, "from", m.sourceRevision, "inputs", m.inputDigest);'
+        - mkdir -p app/.zerops/runtime && tar -xzf app/.zerops-storefront.tar.gz -C app/.zerops/runtime
+        - test -f 'app/.zerops/runtime/n1-storefront/n1-storefront/server.js'
       deployFiles:
         - app/.zerops/runtime/n1-storefront
-      # A repeated build relinks the restored dependencies of N1's 40 workspace projects instead of installing them
-      # again, and Next's webpack cache recompiles only what changed.
-      cache:
-        - app/node_modules
-        - app/n1-storefront/node_modules
-        - app/apps/*/node_modules
-        - app/packages/*/node_modules
-        - app/verticals/*/node_modules
-        - app/n1-storefront/.next/cache
     deploy:
       temporaryShutdown: false
       readinessCheck:
