@@ -13,12 +13,15 @@ import { describeUndrainableOutboxWork } from '../../packages/core-runtime/src/o
 import type { UndrainableOutboxDelivery } from '../../packages/core-runtime/src/outbox/undrainable-work.ts';
 import {
   abandonedTransitionMessage,
+  boundedRedrain,
   drainWindow,
   remainingInDrainWindow,
   retryWhileLockNotAvailable,
+  stopsRunningDrain,
+  undrainableCheckInput,
   waitUntilOutboxDrained,
 } from '../application-composition-authority-publication.mts';
-import type { DrainPoll } from '../application-composition-authority-publication.mts';
+import type { DrainConsumerSets, DrainPoll } from '../application-composition-authority-publication.mts';
 
 const noBlockers = { deliveries: 0, durable: 0, unmatched: 0 } as const;
 const quiet = {
@@ -142,6 +145,9 @@ describe('restore of a draining authority while a lock is busy', () => {
   );
 });
 
+/** How a drain that met work it could never finish reports it. */
+const STOPPED_DRAIN = 'The Application Composition drain was stopped';
+
 const IN_FLIGHT: DrainPoll = { drained: false, refusals: [] };
 const DRAINED: DrainPoll = { drained: true, refusals: [] };
 const DIED: DrainPoll = { drained: false, refusals: ['Outbox work that this drain could never finish: dead: …'] };
@@ -158,7 +164,7 @@ describe('Outbox drain wait', () => {
       const polls = yield* Ref.make(0);
       const failure = yield* waitUntilOutboxDrained(scriptedPoll(polls, [DIED])).pipe(Effect.flip);
       expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
-      expect(failure.reason).toContain('The Application Composition drain was stopped');
+      expect(failure.reason).toContain(STOPPED_DRAIN);
       expect(failure.reason).toContain('dead: …');
       expect(yield* Ref.get(polls)).toBe(1);
     }),
@@ -172,7 +178,7 @@ describe('Outbox drain wait', () => {
         Effect.forkChild,
       );
       yield* TestClock.adjust('10 minutes');
-      expect((yield* Fiber.join(wait)).reason).toContain('The Application Composition drain was stopped');
+      expect((yield* Fiber.join(wait)).reason).toContain(STOPPED_DRAIN);
       expect(yield* Ref.get(polls)).toBe(3);
     }),
   );
@@ -197,14 +203,20 @@ describe('drain window', () => {
 
   it('ends when the budget runs out, measured from when the budget clock started', () => {
     const window = drainWindow({ budgetMs: 300_000, leaseRemainingMs: 3_600_000, startedAtMs });
-    expect(window).toEqual({ budgetMs: 300_000, deadlineMs: startedAtMs + 300_000 });
+    expect(window).toEqual({ deadlineMs: startedAtMs + 300_000, stalledAfterMs: 300_000 });
     // Time spent before the pre-flight, the durable wait or the fence retries counts against the same budget.
     expect(remainingInDrainWindow(window, startedAtMs + 120_000)).toBe(180_000);
   });
 
-  it('never runs past the retiring lease less its margin', () => {
-    const window = drainWindow({ budgetMs: 300_000, leaseRemainingMs: 90_000, startedAtMs });
+  it('never runs past the retiring lease less a margin longer than the restore can take', () => {
+    // The restore can take about 55 s; it must finish while the lease is still valid.
+    const window = drainWindow({ budgetMs: 300_000, leaseRemainingMs: 135_000, startedAtMs });
     expect(window.deadlineMs).toBe(startedAtMs + 60_000);
+  });
+
+  it('keeps the stalled age at a whole budget when a migration shrinks the drain to what is left', () => {
+    const window = drainWindow({ budgetMs: 1, leaseRemainingMs: 3_600_000, startedAtMs });
+    expect(window).toEqual({ deadlineMs: startedAtMs + 1, stalledAfterMs: 300_000 });
   });
 
   it('never reports less than nothing left', () => {
@@ -237,4 +249,88 @@ describe('undrainable work description', () => {
     expect(described).toContain('scheduled-beyond-budget: --tenant-id tenant');
     expect(described).not.toContain('deferred');
   });
+});
+
+/** One reported delivery with `reason`, for the running drain's filter. */
+const reportedRow = (reason: UndrainableOutboxDelivery['reason']): UndrainableOutboxDelivery => ({
+  attemptsCount: 0,
+  availableAt: new Date('2026-11-14T12:00:00.000Z'),
+  consumerModuleKey: 'core',
+  deferred: false,
+  outboxMessageId: 'message',
+  reason,
+  status: 'pending',
+  tenantId: 'tenant',
+  workerKey: 'core.authorization.changed',
+});
+
+describe('what each check of a drain asks', () => {
+  const live = { consumerModuleKey: 'core', workerKey: 'core.identity.unchanged' };
+  const changed = { consumerModuleKey: 'core', workerKey: 'core.authorization.changed' };
+  const sets: DrainConsumerSets = {
+    carriedOverWorkerKeys: [live.workerKey],
+    coreSystemConsumers: [live, changed],
+    liveCoreSystemConsumers: [live],
+  };
+  const window = drainWindow({ budgetMs: 300_000, leaseRemainingMs: 3_600_000, startedAtMs: 1_000_000 });
+
+  it('asks the pre-flight and the fence about what is left of the drain, counting only carried-over core keys', () => {
+    // The fence runs after the durable wait: it must ask about the deadline, not a fresh whole budget.
+    expect(undrainableCheckInput(window, { nowMs: 1_100_000, running: false, sets })).toEqual({
+      budgetMs: 300_000,
+      carriedOverWorkerKeys: [live.workerKey],
+      coreSystemConsumers: [live],
+      remainingMs: 200_000,
+    });
+  });
+
+  it('counts every approved core key as consumed once the drain runs', () => {
+    // A row of a changed descriptor that the retiring host claimed and then failed is retried by that host.
+    expect(undrainableCheckInput(window, { nowMs: 1_250_000, running: true, sets })).toMatchObject({
+      coreSystemConsumers: [live, changed],
+      remainingMs: 50_000,
+    });
+  });
+
+  it('stops a running drain on proofs that a row can never finish, never on its age', () => {
+    expect(stopsRunningDrain(reportedRow('dead'))).toBe(true);
+    expect(stopsRunningDrain(reportedRow('scheduled-beyond-budget'))).toBe(true);
+    expect(stopsRunningDrain(reportedRow('no-eligible-consumer'))).toBe(true);
+    expect(stopsRunningDrain(reportedRow('unclaimed-longer-than-budget'))).toBe(false);
+  });
+});
+
+describe('re-drain before a retried promote or seal', () => {
+  it.effect('ends the transition on a stopped drain', () =>
+    Effect.gen(function* passesStoppedDrain() {
+      const polls = yield* Ref.make(0);
+      const failure = yield* boundedRedrain(waitUntilOutboxDrained(scriptedPoll(polls, [DIED])), 60_000).pipe(
+        Effect.flip,
+      );
+      expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
+      expect(Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '').toContain(STOPPED_DRAIN);
+    }),
+  );
+
+  it.effect('leaves any other failure to the transition’s own refusal', () =>
+    Effect.gen(function* swallowsOtherFailures() {
+      const other = new ApplicationCompositionAuthorityError({
+        code: 'application_composition_authority_unavailable',
+        reason: 'Only the exact draining or sealed Application Composition can report drain progress',
+      });
+      yield* boundedRedrain(Effect.fail(other), 60_000);
+    }),
+  );
+
+  it.effect('gives up quietly when its deadline passes', () =>
+    Effect.gen(function* endsAtDeadline() {
+      const polls = yield* Ref.make(0);
+      const wait = yield* boundedRedrain(waitUntilOutboxDrained(scriptedPoll(polls, [IN_FLIGHT])), 10_000).pipe(
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust('11 seconds');
+      yield* Fiber.join(wait);
+      expect(yield* Ref.get(polls)).toBe(4);
+    }),
+  );
 });

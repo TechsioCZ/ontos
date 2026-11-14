@@ -47,6 +47,11 @@ import {
   describeUndrainableOutboxWork,
   listUndrainableOutboxWork,
 } from '../packages/core-runtime/src/outbox/undrainable-work.ts';
+import type {
+  UndrainableOutboxDelivery,
+  UndrainableOutboxWorkInput,
+} from '../packages/core-runtime/src/outbox/undrainable-work.ts';
+import type { OutboxConsumerKey } from '../packages/core-runtime/src/outbox/repository.ts';
 import {
   abandonApplicationCompositionDrain,
   ApplicationCompositionAuthorityError,
@@ -452,17 +457,29 @@ const DRAIN_NOT_STARTED = 'The Application Composition drain was not started';
 const DRAIN_STOPPED =
   'The Application Composition drain was stopped: Outbox work arrived during it that it could never finish';
 
-/** How far before the retiring release's lease expires every drain must end. */
-const DRAIN_LEASE_MARGIN_MS = 30_000;
+/**
+ * How far before the retiring release's lease expires every drain, and every re-drain, must end: the restore's worst
+ * case (about 55 s, see `RESTORE_LOCK_RETRIES`) plus slack. A restore that outlived the lease would find it expired,
+ * and an expired authority is never returned to `active` (`abandonApplicationCompositionDrain`), so it would stay
+ * `draining` until an operator renewed it.
+ */
+const DRAIN_LEASE_MARGIN_MS = 75_000;
 
 /**
- * The one clock a drain is judged on: its budget (`budgetMs`, also the age after which unclaimed work counts as
- * stalled) and the epoch instant by which it must be over (`deadlineMs`). Every check of the drain — the
- * pre-flight, the fence and each poll of the wait — asks what is due after that same instant.
+ * How long work must have sat unclaimed, or a message unmatched, before a drain counts it as stalled: one whole
+ * standard drain budget, the same age the operator check uses. Never the drain's own budget, which a migration
+ * shrinks to what is left of its deadline: a shorter age would call ordinary backlog stalled.
+ */
+const STALLED_AFTER_MS = APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.drainMs;
+
+/**
+ * The one clock a drain is judged on: the epoch instant by which it must be over (`deadlineMs`), and the age after
+ * which unclaimed work counts as stalled (`stalledAfterMs`). Every check of the drain — the pre-flight, the fence
+ * and each poll of the wait — asks what is due after that same instant.
  */
 export interface DrainWindow {
-  readonly budgetMs: number;
   readonly deadlineMs: number;
+  readonly stalledAfterMs: number;
 }
 
 /**
@@ -474,15 +491,48 @@ export const drainWindow = (input: {
   readonly leaseRemainingMs: number;
   readonly startedAtMs: number;
 }): DrainWindow => ({
-  budgetMs: input.budgetMs,
   deadlineMs: input.startedAtMs + Math.min(input.budgetMs, input.leaseRemainingMs - DRAIN_LEASE_MARGIN_MS),
+  stalledAfterMs: STALLED_AFTER_MS,
 });
 
 /** What is left of `window` at `nowMs`, never below zero. */
 export const remainingInDrainWindow = (window: DrainWindow, nowMs: number) => Math.max(0, window.deadlineMs - nowMs);
 
-const drainRemainingMs = (window: DrainWindow) =>
-  Clock.currentTimeMillis.pipe(Effect.map((nowMs) => remainingInDrainWindow(window, nowMs)));
+/** Which core-system worker keys a drain may count on a consumer for, from `carriedOverCoreSystemWorkerKeys`. */
+export interface DrainConsumerSets {
+  readonly carriedOverWorkerKeys: readonly string[];
+  readonly coreSystemConsumers: readonly OutboxConsumerKey[];
+  readonly liveCoreSystemConsumers: readonly OutboxConsumerKey[];
+}
+
+/**
+ * What the undrainable-work query is asked at `nowMs`, before the drain starts (`running: false`: the pre-flight and
+ * the fence) or while it runs (`running: true`: each poll of the wait). Both ask what falls due after the same
+ * deadline, and both age stalled work by the same whole budget.
+ *
+ * - Before it starts, only a carried-over core-system key counts as having a live consumer: nothing in the authority
+ *   row says whether the retiring release can claim core-system work, so the drain refuses rather than waits.
+ * - Once it runs, every core-system key the retiring authority approved does. A row of a key whose descriptor changed
+ *   passed that check while it was claimed; when its handler fails and it returns to `pending`, or a fresh message of
+ *   that key is matched, the retiring host retries it as usual. If it cannot, the deadline decides, as it always did.
+ */
+export const undrainableCheckInput = (
+  window: DrainWindow,
+  check: { readonly nowMs: number; readonly running: boolean; readonly sets: DrainConsumerSets },
+): UndrainableOutboxWorkInput => ({
+  budgetMs: window.stalledAfterMs,
+  carriedOverWorkerKeys: check.sets.carriedOverWorkerKeys,
+  coreSystemConsumers: check.running ? check.sets.coreSystemConsumers : check.sets.liveCoreSystemConsumers,
+  remainingMs: remainingInDrainWindow(window, check.nowMs),
+});
+
+/**
+ * What a running drain stops on: only a proof that a row can never finish before the deadline — it is dead, due
+ * after the deadline, or has no consumer at all. Never its age alone: a row that has waited long may still be
+ * claimed before the deadline, and if it is not, the deadline ends the drain exactly as it did before this check.
+ */
+export const stopsRunningDrain = (delivery: UndrainableOutboxDelivery) =>
+  delivery.reason !== 'unclaimed-longer-than-budget';
 
 /**
  * Everything that decides whether a drain may start, read in one transaction with the drain's own predicates:
@@ -494,14 +544,13 @@ const assessDrainStart = Effect.fn('ApplicationCompositionAuthority.assessDrainS
   transaction: CoreTransaction,
   window: DrainWindow,
 ) {
-  const { carriedOverWorkerKeys, liveCoreSystemConsumers } = yield* carriedOverCoreSystemWorkerKeys(transaction);
-  const undrainable = yield* listUndrainableOutboxWork(transaction, {
-    budgetMs: window.budgetMs,
-    carriedOverWorkerKeys,
-    coreSystemConsumers: liveCoreSystemConsumers,
-    remainingMs: yield* drainRemainingMs(window),
-  });
-  const stalledMessages = yield* countStalledUnmatchedMessages(transaction, window.budgetMs);
+  const sets = yield* carriedOverCoreSystemWorkerKeys(transaction);
+  const nowMs = yield* Clock.currentTimeMillis;
+  const undrainable = yield* listUndrainableOutboxWork(
+    transaction,
+    undrainableCheckInput(window, { nowMs, running: false, sets }),
+  );
+  const stalledMessages = yield* countStalledUnmatchedMessages(transaction, window.stalledAfterMs);
   const [unmatched] = yield* transaction.execute<{ readonly count: number }>(
     sql`select count(*)::int as count from ${outboxMessages} where ${outboxMessages.matchedAt} is null`,
     'objects',
@@ -510,6 +559,24 @@ const assessDrainStart = Effect.fn('ApplicationCompositionAuthority.assessDrainS
 });
 
 type DrainStartAssessment = Effect.Success<ReturnType<typeof assessDrainStart>>;
+
+/** What a poll of a running drain stops on (`stopsRunningDrain`); it asks no age question and counts no messages. */
+const assessRunningDrain = Effect.fn('ApplicationCompositionAuthority.assessRunningDrain')(function* assessRunningDrain(
+  transaction: CoreTransaction,
+  window: DrainWindow,
+) {
+  const sets = yield* carriedOverCoreSystemWorkerKeys(transaction);
+  const nowMs = yield* Clock.currentTimeMillis;
+  const undrainable = yield* listUndrainableOutboxWork(
+    transaction,
+    undrainableCheckInput(window, { nowMs, running: true, sets }),
+  );
+  return {
+    stalledMessages: 0,
+    undrainable: undrainable.filter(stopsRunningDrain),
+    unmatched: 0,
+  } satisfies DrainStartAssessment;
+});
 
 /** The reasons a drain must not start, or `[]` when it may; fresh unmatched messages are judged by the caller. */
 const drainStartRefusals = Effect.fn('ApplicationCompositionAuthority.drainStartRefusals')(function* drainStartRefusals(
@@ -670,8 +737,8 @@ const LOCK_NOT_AVAILABLE = '55P03';
 
 /**
  * Four more attempts after the first, from 250 ms apart and doubling. One attempt can wait on two locks in turn (the
- * publication lock, then the authority row's `FOR UPDATE`), each for just under the 5 s lock timeout, so all five take
- * about 55 s at most.
+ * exclusive authority advisory lock, `ontos.application-composition-authority`, then the authority row's
+ * `FOR UPDATE`), each for just under the 5 s lock timeout, so all five take about 55 s at most.
  */
 const RESTORE_LOCK_RETRIES = 4;
 
@@ -880,22 +947,68 @@ const isStoppedDrain = <Failure,>(failure: Failure) =>
   Schema.is(ApplicationCompositionAuthorityError)(failure) && failure.reason.startsWith(DRAIN_STOPPED);
 
 /**
- * Waits for the Outbox of the draining `revision`. Each poll that finds work outstanding asks, in the same
- * transaction, the very questions of the pre-flight and the fence against what is left of `window`.
+ * A re-drain's wait before a promote or seal is retried, bounded by what is left of its deadline. Only a stopped
+ * drain ends the transition; running out of time, or any other failure, leaves the transition's own refusal as the
+ * operator's evidence.
+ */
+export const boundedRedrain = <Failure, Requirements>(
+  wait: Effect.Effect<void, Failure, Requirements>,
+  remainingMs: number,
+) =>
+  wait.pipe(
+    Effect.timeout(Duration.millis(Math.max(1, remainingMs))),
+    Effect.catchIf(
+      (error) => !isStoppedDrain(error),
+      () => Effect.void,
+    ),
+  );
+
+/** Which kind of failure made a poll's extra check unreadable, for logging each kind once. */
+const unreadableCheckKind = <Failure,>(failure: Failure) =>
+  Option.match(findPostgresFailure(failure), {
+    onNone: () => 'no SQLSTATE',
+    onSome: ({ code }) => `SQLSTATE ${code}`,
+  });
+
+/**
+ * Waits for the Outbox of the draining `revision`. Each poll that finds work outstanding then asks, in its own read
+ * transaction, what of it can never finish before the deadline (`assessRunningDrain`). That extra check only ever
+ * ends a drain early: if it cannot be read, the poll keeps waiting, bounded by the deadline as before, and says so
+ * once for each kind of failure. A failure of the drained check itself still fails the drain, as it always did.
  */
 const waitForOutboxPublicationWork = Effect.fn('ApplicationCompositionAuthority.waitForOutboxWork')(
   function* waitForOutboxPublicationWork(revision: string, window: DrainWindow) {
     const database = yield* CoreDatabase;
+    const logged = yield* Ref.make<ReadonlySet<string>>(new Set());
+    const keepWaiting = <Failure,>(failure: Failure) =>
+      Effect.gen(function* logUnreadableCheck() {
+        const kind = unreadableCheckKind(failure);
+        const seen = yield* Ref.getAndUpdate(logged, (kinds) => new Set([...kinds, kind]));
+        if (!seen.has(kind)) {
+          yield* Effect.logWarning(
+            `The drain's check for Outbox work it could never finish could not be read (${kind}); the drain keeps waiting, bounded by its deadline.`,
+          );
+        }
+        return yield* Effect.succeed<readonly string[]>([]);
+      });
+    const refusals = database.executor
+      .transaction((transaction) => assessRunningDrain(transaction, window))
+      .pipe(
+        Effect.flatMap(drainStartRefusals),
+        Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
+        Effect.matchEffect({ onFailure: keepWaiting, onSuccess: Effect.succeed }),
+      );
     return yield* waitUntilOutboxDrained(
-      database.executor.transaction((transaction) =>
-        Effect.gen(function* pollOutboxDrain() {
-          if (yield* isApplicationCompositionWorkDrained(transaction, revision)) {
-            return { drained: true, refusals: [] } satisfies DrainPoll;
-          }
-          const refusals = yield* drainStartRefusals(yield* assessDrainStart(transaction, window));
-          return { drained: false, refusals } satisfies DrainPoll;
-        }),
-      ),
+      Effect.gen(function* pollOutboxDrain() {
+        if (
+          yield* database.executor.transaction((transaction) =>
+            isApplicationCompositionWorkDrained(transaction, revision),
+          )
+        ) {
+          return { drained: true, refusals: [] } satisfies DrainPoll;
+        }
+        return { drained: false, refusals: yield* refusals } satisfies DrainPoll;
+      }),
     );
   },
 );
@@ -1028,8 +1141,6 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
 
 /** How many times a transition may re-drain before it gives up. */
 const DRAINED_TRANSITION_RETRIES = 5;
-/** Nothing of this release's own work is left to wait for, so a re-drain that cannot finish must not run long. */
-const DRAINED_TRANSITION_LEASE_MARGIN = Duration.seconds(30);
 
 /** What the transition's own drain check says when work arrived after the poll observed the Outbox drained. */
 const FRESH_OUTBOX_WORK = 'Outstanding Outbox work';
@@ -1070,21 +1181,15 @@ const withDrainedCompositionTransition = Effect.fn('ApplicationCompositionAuthor
     // than one drain budget in total, however many retries there are.
     const leaseMillis = DateTime.toEpochMillis(DateTime.makeUnsafe(current.validUntil));
     const redrainDeadline = Math.min(
-      leaseMillis - Duration.toMillis(DRAINED_TRANSITION_LEASE_MARGIN),
+      leaseMillis - DRAIN_LEASE_MARGIN_MS,
       (yield* Clock.currentTimeMillis) + APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.drainMs,
     );
-    const redrainWindow: DrainWindow = {
-      budgetMs: APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.drainMs,
-      deadlineMs: redrainDeadline,
-    };
+    const redrainWindow: DrainWindow = { deadlineMs: redrainDeadline, stalledAfterMs: STALLED_AFTER_MS };
     const redrain = Effect.gen(function* waitForFreshWork() {
       const remaining = remainingInDrainWindow(redrainWindow, yield* Clock.currentTimeMillis);
-      yield* waitForOutboxPublicationWork(current.revision, redrainWindow).pipe(
-        Effect.timeout(Duration.millis(Math.max(1, remaining))),
-        // The original refusal is the operator's evidence: a wait that cannot finish must never replace it. Work
-        // that can never finish is better evidence still, and ends the transition at once.
-        Effect.catch((error) => (isStoppedDrain(error) ? Effect.fail(error) : Effect.void)),
-      );
+      // The original refusal is the operator's evidence: a wait that cannot finish must never replace it. Work that
+      // can never finish is better evidence still, and ends the transition at once.
+      yield* boundedRedrain(waitForOutboxPublicationWork(current.revision, redrainWindow), remaining);
     });
     return yield* withVerifiedLegacyTransition(current.revision, transition).pipe(
       Effect.tapError((error) =>
