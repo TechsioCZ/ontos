@@ -568,75 +568,6 @@ describe('rejects typed effectful schema helpers and shadowed native assignments
   register();
 });
 
-/** A factory that decodes `{ entries }` through the given entries schema and builds its input from `value`. */
-const decodedEntriesFactory = (entries: string, parameter: string, input: string): string =>
-  `import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ entries: ${entries} })); export const makeData = (${parameter}) => decode({ entries: ${input} });`;
-
-it('proves a Record only when its key is a closed string schema and its value is closed data', () => {
-  const stringEntry = ['value: string', '{ key: value }'] as const;
-  expectDataFactoryProofs(
-    [
-      decodedEntriesFactory('Schema.Record(Schema.String, Schema.String)', ...stringEntry),
-      decodedEntriesFactory('Schema.Record(Schema.String.check(Schema.isMinLength(1)), Schema.Number)', 'value: number', '{ key: value }'),
-      decodedEntriesFactory('Schema.Record(Schema.Literal("key"), Schema.Struct({ id: Schema.String }))', 'value: string', '{ key: { id: value } }'),
-      decodedEntriesFactory('Schema.Record(Schema.NonEmptyString, Schema.Array(Schema.String))', 'value: string', '{ key: [value] }'),
-      decodedEntriesFactory('Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.Boolean))', 'value: boolean', '{ key: { nested: value } }'),
-      decodedEntriesFactory('Schema.Record(Schema.String, Schema.Json)', ...stringEntry),
-      decodedEntriesFactory('Schema.Record(Schema.TemplateLiteral(["key-", Schema.String]), Schema.String)', ...stringEntry),
-    ],
-    [
-      // An open value: unknown, any, a function or a class instance must never prove.
-      decodedEntriesFactory('Schema.Record(Schema.String, Schema.Unknown)', ...stringEntry),
-      decodedEntriesFactory('Schema.Record(Schema.String, Schema.Any)', ...stringEntry),
-      decodedEntriesFactory('Schema.Record(Schema.String, Schema.declare((input): input is () => void => typeof input === "function"))', ...stringEntry),
-      'import { Schema } from "effect"; class Payload { readonly id = "fixed"; } const decode = Schema.decodeUnknownSync(Schema.Struct({ entries: Schema.Record(Schema.String, Schema.instanceOf(Payload)) })); export const makeData = (value: string) => decode({ entries: { key: value } });',
-      decodedEntriesFactory('Schema.Record(Schema.String, Schema.Struct({ id: Schema.String, extra: Schema.Unknown }))', ...stringEntry),
-      decodedEntriesFactory('Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.Unknown))', ...stringEntry),
-      // A key that is not closed string data must never prove.
-      decodedEntriesFactory('Schema.Record(Schema.Number, Schema.String)', ...stringEntry),
-      decodedEntriesFactory('Schema.Record(Schema.Literal(1), Schema.String)', ...stringEntry),
-      decodedEntriesFactory('Schema.Record(Schema.Symbol, Schema.String)', ...stringEntry),
-      decodedEntriesFactory('Schema.Record(Schema.Unknown, Schema.String)', ...stringEntry),
-      decodedEntriesFactory('Schema.Record(Schema.Json, Schema.String)', ...stringEntry),
-    ],
-  );
-});
-
-it('proves Json as a closed value without admitting the unknown it is often confused with', () => {
-  expectDataFactoryProofs(
-    [
-      'import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ query: Schema.Json })); export const makeData = (value: string) => decode({ query: { value } });',
-      'import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ queries: Schema.Array(Schema.Json) })); export const makeData = (value: string) => decode({ queries: [value] });',
-    ],
-    [
-      'import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ query: Schema.Unknown })); export const makeData = (value: string) => decode({ query: { value } });',
-      'import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ queries: Schema.Array(Schema.Unknown) })); export const makeData = (value: string) => decode({ queries: [value] });',
-    ],
-  );
-});
-
-it('proves a TemplateLiteral only when every part is a string literal or a closed string schema', () => {
-  const iconFactory = (parts: string): string =>
-    `import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ icon: Schema.TemplateLiteral(${parts}) })); export const makeData = (value: string) => decode({ icon: \`icon-[\${value}]\` });`;
-  expectDataFactoryProofs(
-    [
-      iconFactory('["icon-[", Schema.String, "]"]'),
-      iconFactory('["icon-[", Schema.NonEmptyString, "]"]'),
-      iconFactory('["icon-[", Schema.Literal("lucide"), "--", Schema.String, "]"]'),
-      iconFactory('["icon-[", Schema.TemplateLiteral([Schema.String, "--", Schema.String]), "]"]'),
-      iconFactory('["icon"]'),
-    ],
-    [
-      iconFactory('["icon-[", Schema.Unknown, "]"]'),
-      iconFactory('["icon-[", Schema.Any, "]"]'),
-      iconFactory('["icon-[", Schema.Number, "]"]'),
-      iconFactory('["icon-[", Schema.Struct({ id: Schema.String }), "]"]'),
-      iconFactory('["icon-[", Schema.Json, "]"]'),
-      'import { Schema } from "effect"; const parts = ["icon-[", Schema.String, "]"] as const; const decode = Schema.decodeUnknownSync(Schema.Struct({ icon: Schema.TemplateLiteral([...parts, Schema.Unknown]) })); export const makeData = (value: string) => decode({ icon: value });',
-    ],
-  );
-});
-
 it('proves the concrete Outbox fixture imports without an ownership or name exemption', () => {
   const support = nodePath.join(appRoot, 'packages/core-runtime/tests/support/outbox-worker-composition.ts');
   const nativeComposition = nodePath.join(
@@ -714,6 +645,107 @@ it('proves Set membership, spreads and owned collection reads without admitting 
       'const pick = (first: string) => first; export const makeData = (values: readonly string[]) => ({ value: pick(...values) });',
       'export const makeData = (values: readonly string[]) => values.map(({ constructor }) => constructor);',
       'export const makeData = (values: readonly string[]) => ({ all: values.every((value) => () => value) });',
+    ],
+  );
+});
+
+/** A factory that decodes `{ entries }` through the given entries schema and builds its input from `value`. */
+const decodedEntriesFactory = (entries: string, parameter: string, input: string): string =>
+  `import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ entries: ${entries} })); export const makeData = (${parameter}) => decode({ entries: ${input} });`;
+
+const stringParameter = 'value: string';
+const stringEntry = [stringParameter, '{ key: value }'] as const;
+
+it('proves a Record only when its key is a closed string schema and its value is closed data', () => {
+  expectDataFactoryProofs(
+    [
+      decodedEntriesFactory('Schema.Record(Schema.String, Schema.String)', ...stringEntry),
+      decodedEntriesFactory(
+        'Schema.Record(Schema.String.check(Schema.isMinLength(1)), Schema.Number)',
+        'value: number',
+        '{ key: value }',
+      ),
+      decodedEntriesFactory(
+        'Schema.Record(Schema.Literal("key"), Schema.Struct({ id: Schema.String }))',
+        stringParameter,
+        '{ key: { id: value } }',
+      ),
+      decodedEntriesFactory(
+        'Schema.Record(Schema.NonEmptyString, Schema.Array(Schema.String))',
+        stringParameter,
+        '{ key: [value] }',
+      ),
+      decodedEntriesFactory(
+        'Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.Boolean))',
+        'value: boolean',
+        '{ key: { nested: value } }',
+      ),
+      decodedEntriesFactory('Schema.Record(Schema.String, Schema.Json)', ...stringEntry),
+      decodedEntriesFactory(
+        'Schema.Record(Schema.TemplateLiteral(["key-", Schema.String]), Schema.String)',
+        ...stringEntry,
+      ),
+    ],
+    [
+      // An open value: unknown, any, a function or a class instance must never prove.
+      decodedEntriesFactory('Schema.Record(Schema.String, Schema.Unknown)', ...stringEntry),
+      decodedEntriesFactory('Schema.Record(Schema.String, Schema.Any)', ...stringEntry),
+      decodedEntriesFactory(
+        'Schema.Record(Schema.String, Schema.declare((input): input is () => void => typeof input === "function"))',
+        ...stringEntry,
+      ),
+      'import { Schema } from "effect"; class Payload { readonly id = "fixed"; } const decode = Schema.decodeUnknownSync(Schema.Struct({ entries: Schema.Record(Schema.String, Schema.instanceOf(Payload)) })); export const makeData = (value: string) => decode({ entries: { key: value } });',
+      decodedEntriesFactory(
+        'Schema.Record(Schema.String, Schema.Struct({ id: Schema.String, extra: Schema.Unknown }))',
+        ...stringEntry,
+      ),
+      decodedEntriesFactory(
+        'Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.Unknown))',
+        ...stringEntry,
+      ),
+      // A key that is not closed string data must never prove.
+      decodedEntriesFactory('Schema.Record(Schema.Number, Schema.String)', ...stringEntry),
+      decodedEntriesFactory('Schema.Record(Schema.Literal(1), Schema.String)', ...stringEntry),
+      decodedEntriesFactory('Schema.Record(Schema.Symbol, Schema.String)', ...stringEntry),
+      decodedEntriesFactory('Schema.Record(Schema.Unknown, Schema.String)', ...stringEntry),
+      decodedEntriesFactory('Schema.Record(Schema.Json, Schema.String)', ...stringEntry),
+    ],
+  );
+});
+
+it('proves Json as a closed value without admitting the unknown it is often confused with', () => {
+  expectDataFactoryProofs(
+    [
+      'import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ query: Schema.Json })); export const makeData = (value: string) => decode({ query: { value } });',
+      'import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ queries: Schema.Array(Schema.Json) })); export const makeData = (value: string) => decode({ queries: [value] });',
+    ],
+    [
+      'import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ query: Schema.Unknown })); export const makeData = (value: string) => decode({ query: { value } });',
+      'import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ queries: Schema.Array(Schema.Unknown) })); export const makeData = (value: string) => decode({ queries: [value] });',
+    ],
+  );
+});
+
+/** A factory that decodes `{ icon }` through a template literal of the given parts. */
+const iconFactory = (parts: string): string =>
+  `import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ icon: Schema.TemplateLiteral(${parts}) })); export const makeData = (value: string) => decode({ icon: \`icon-[\${value}]\` });`;
+
+it('proves a TemplateLiteral only when every part is a string literal or a closed string schema', () => {
+  expectDataFactoryProofs(
+    [
+      iconFactory('["icon-[", Schema.String, "]"]'),
+      iconFactory('["icon-[", Schema.NonEmptyString, "]"]'),
+      iconFactory('["icon-[", Schema.Literal("lucide"), "--", Schema.String, "]"]'),
+      iconFactory('["icon-[", Schema.TemplateLiteral([Schema.String, "--", Schema.String]), "]"]'),
+      iconFactory('["icon"]'),
+    ],
+    [
+      iconFactory('["icon-[", Schema.Unknown, "]"]'),
+      iconFactory('["icon-[", Schema.Any, "]"]'),
+      iconFactory('["icon-[", Schema.Number, "]"]'),
+      iconFactory('["icon-[", Schema.Struct({ id: Schema.String }), "]"]'),
+      iconFactory('["icon-[", Schema.Json, "]"]'),
+      'import { Schema } from "effect"; const parts = ["icon-[", Schema.String, "]"] as const; const decode = Schema.decodeUnknownSync(Schema.Struct({ icon: Schema.TemplateLiteral([...parts, Schema.Unknown]) })); export const makeData = (value: string) => decode({ icon: value });',
     ],
   );
 });
