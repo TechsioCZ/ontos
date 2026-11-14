@@ -23,6 +23,9 @@ export const useCommandFailure = () => {
       onReload();
       return label('messages.conflict');
     }
+    if (reason === 'tier-base-price-required') {
+      return label('messages.tierBasePriceRequired');
+    }
     if (reason === 'category-slug-taken') {
       return label('messages.categorySlugTaken');
     }

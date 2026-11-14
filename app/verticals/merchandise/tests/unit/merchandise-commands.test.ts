@@ -984,3 +984,21 @@ it.effect('requires an explicit bounded SKU when a generated variant SKU would e
     expect(ordered.state.orders[0]?.lines[0]?.sku).toHaveLength(64);
   }),
 );
+
+it.effect('refuses tier repricing without a usable old base price instead of inventing tier prices', () =>
+  Effect.gen(function* noBaseForTierRatio() {
+    const created = yield* addProduct(empty, 'zero-tier-base', 'ZERO-TIER', 0);
+    const tier = { minimumQuantity: 10, priceExcludingVatMinor: 0, priceMinor: 0 };
+    const tiered: MerchandiseState = {
+      ...created.state,
+      products: created.state.products.map((product) => ({ ...product, priceTiers: [tier] })),
+    };
+    const refused = yield* apply(
+      tiered,
+      { _tag: 'ChangePrice', id: 'zero-tier-base', priceMinor: 1000 },
+      'zero-ratio',
+    ).pipe(Effect.flip);
+    expect(isConflict(refused)).toBe(true);
+    expect(tiered.products[0]?.priceTiers).toEqual([tier]);
+  }),
+);

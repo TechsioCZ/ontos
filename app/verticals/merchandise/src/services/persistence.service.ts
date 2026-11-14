@@ -439,15 +439,25 @@ const repriceTiers = (
   newNet: number | undefined,
 ) => {
   if (tiers.length === 0 || oldNet === newNet || newNet === undefined) {
-    return tiers;
+    return Effect.succeed(tiers);
   }
-  const scale = (amount: number) =>
-    oldNet === undefined || oldNet === 0 ? newNet : Math.round((amount * newNet) / oldNet);
-  return tiers.map((tier) => ({
-    ...tier,
-    priceExcludingVatMinor: scale(tier.priceExcludingVatMinor),
-    priceMinor: scale(tier.priceMinor),
-  }));
+  if (oldNet === undefined || oldNet === 0) {
+    return Effect.fail(
+      new MerchandiseLifecycleConflict({
+        code: 'merchandise_tier_base_price_required',
+        reason:
+          'Množstevní ceny nelze přepočítat z nulové nebo chybějící základní ceny. Zadejte nové množstevní ceny nebo je nejprve odeberte.',
+      }),
+    );
+  }
+  const scale = (amount: number) => Math.round((amount * newNet) / oldNet);
+  return Effect.succeed(
+    tiers.map((tier) => ({
+      ...tier,
+      priceExcludingVatMinor: scale(tier.priceExcludingVatMinor),
+      priceMinor: scale(tier.priceMinor),
+    })),
+  );
 };
 
 /**
@@ -487,10 +497,18 @@ const enteredRateOf = (
 ): number | undefined => heldRateOf(tax.held, product) ?? tax.rates[product.taxClassificationCode];
 
 /** Appends an effective-dated price entry. A price equal to the current one is not a change and adds no entry. */
-const repriced = (product: Product, priceMinor: number, input: MerchandiseCommandInput): Product => {
+const repriced = Effect.fn('Merchandise.repriced')(function* repricedProduct(
+  product: Product,
+  priceMinor: number,
+  input: MerchandiseCommandInput,
+) {
   if (product.currentPriceMinor === priceMinor) {
-    return product;
+    return yield* Effect.succeed(product);
   }
+  const priceTiers =
+    product.priceTiers === undefined
+      ? undefined
+      : yield* repriceTiers(product.priceTiers, product.currentPriceMinor, priceMinor);
   const updated = {
     ...withEnteredGross(product, priceMinor, enteredRateOf(input.tax, product)),
     currentPriceMinor: priceMinor,
@@ -505,13 +523,8 @@ const repriced = (product: Product, priceMinor: number, input: MerchandiseComman
     ],
     updatedAt: input.now,
   } satisfies Product;
-  return product.priceTiers === undefined
-    ? updated
-    : {
-        ...updated,
-        priceTiers: repriceTiers(product.priceTiers, product.currentPriceMinor, priceMinor),
-      };
-};
+  return yield* Effect.succeed(priceTiers === undefined ? updated : { ...updated, priceTiers });
+});
 
 /** The storefront finds a product by slug, so two products with one slug would hide one of them. */
 const slugTaken = (products: readonly Product[], slug: string, exceptId: string) => {
@@ -632,7 +645,7 @@ const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* n
         variant.priceTiers === undefined && previous?.priceTiers !== undefined
           ? {
               ...withGross,
-              priceTiers: repriceTiers(previous.priceTiers, previous.priceMinor, variant.priceMinor),
+              priceTiers: yield* repriceTiers(previous.priceTiers, previous.priceMinor, variant.priceMinor),
             }
           : withGross;
       const withId = id === undefined ? withTiers : { ...withTiers, id };
@@ -785,12 +798,16 @@ const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
   const product = yield* findProduct(state.products, value.id);
   const entity = yield* entityIdOf(product.id);
   if (value.variantId === undefined) {
-    return { entityIds: [entity], state: withProduct(state, repriced(product, value.priceMinor, input)) };
+    return { entityIds: [entity], state: withProduct(state, yield* repriced(product, value.priceMinor, input)) };
   }
   const variant = yield* findVariant(product, value.variantId);
   if (variant.priceMinor === value.priceMinor) {
     return { entityIds: [entity], state };
   }
+  const priceTiers =
+    variant.priceTiers === undefined
+      ? undefined
+      : yield* repriceTiers(variant.priceTiers, variant.priceMinor, value.priceMinor);
   const variants = (product.variants ?? []).map((entry) => {
     if (entry.id !== variant.id) {
       return entry;
@@ -808,12 +825,7 @@ const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
       ],
       priceMinor: value.priceMinor,
     } satisfies ProductVariant;
-    return entry.priceTiers === undefined
-      ? repricedVariant
-      : {
-          ...repricedVariant,
-          priceTiers: repriceTiers(entry.priceTiers, entry.priceMinor, value.priceMinor),
-        };
+    return priceTiers === undefined ? repricedVariant : { ...repricedVariant, priceTiers };
   });
   return { entityIds: [entity], state: withProduct(state, { ...product, updatedAt: input.now, variants }) };
 });
@@ -851,7 +863,7 @@ const editBulkProduct = Effect.fn('Merchandise.editBulkProduct')(function* editB
   const priced =
     priceChangePercent === undefined
       ? categorized
-      : repriced(categorized, percentChangedPriceMinor(product.currentPriceMinor, priceChangePercent), input);
+      : yield* repriced(categorized, percentChangedPriceMinor(product.currentPriceMinor, priceChangePercent), input);
   return withProduct(state, nativeCategories ? withContentHistory(product, priced, input) : priced);
 });
 

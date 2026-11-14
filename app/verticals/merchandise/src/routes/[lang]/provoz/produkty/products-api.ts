@@ -56,6 +56,7 @@ const FailureReasonSchema = Schema.Literals([
   'variant-bulk-price-unsupported',
   'variant-sku-required',
   'category-slug-taken',
+  'tier-base-price-required',
   RELOAD_REQUIRED,
   'unavailable',
 ]);
@@ -117,6 +118,9 @@ const commandReason = (error: CommandFailure): FailureReason =>
       'ChangeProductImagesActionConflictProblem',
       'RecordStockMovementActionConflictProblem',
       (problem): FailureReason => {
+        if (problem.code === 'merchandise_tier_base_price_required') {
+          return 'tier-base-price-required';
+        }
         if (problem.code === 'merchandise_category_slug_taken') {
           return 'category-slug-taken';
         }
