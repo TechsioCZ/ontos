@@ -820,3 +820,35 @@ it.effect('refuses to remove a stocked variant even while another variant remain
     expect(accepted.state.movements).toBe(stocked.state.movements);
   }),
 );
+
+it.effect('refuses a bulk price selection containing sellable variants instead of changing unused parent prices', () =>
+  Effect.gen(function* bulkVariantPriceRefusal() {
+    const parent = yield* addProduct(empty, 'bulk-plain', 'PLAIN', 1000);
+    const created = yield* addProduct(parent.state, 'bulk-variant', 'VARIANT', 2000);
+    const variants = yield* apply(
+      created.state,
+      {
+        _tag: 'UpdateProduct',
+        id: 'bulk-variant',
+        patch: {
+          variants: [{ attributes: '', id: 'bulk-v1', name: 'Sellable', priceMinor: 3000 }],
+        },
+      },
+      'bulk-variants',
+    );
+    const refused = yield* apply(
+      variants.state,
+      { _tag: 'BulkUpdateProducts', ids: ['bulk-plain', 'bulk-variant'], patch: { priceChangePercent: 10 } },
+      'bulk-price-change',
+    ).pipe(Effect.flip);
+    expect(isConflict(refused)).toBe(true);
+    expect(variants.state.products.map((product) => product.currentPriceMinor)).toEqual([1000, 2000]);
+    const accepted = yield* apply(
+      variants.state,
+      { _tag: 'BulkUpdateProducts', ids: ['bulk-plain'], patch: { priceChangePercent: 10 } },
+      'plain-price-change',
+    );
+    expect(accepted.state.products[0]?.currentPriceMinor).toBe(1100);
+    expect(accepted.state.products[1]).toBe(variants.state.products[1]);
+  }),
+);

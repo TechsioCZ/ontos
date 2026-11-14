@@ -415,6 +415,7 @@
           "movementRecorded": "Pohyb zaznamenán",
           "priceChanged": "Cena změněna",
           "receiptRecorded": "Příjem zaznamenán",
+          "variantBulkPriceUnsupported": "Hromadnou cenu nelze změnit u produktů s prodejními variantami. Vyberte pouze produkty bez variant, nebo změňte cenu každé varianty v detailu produktu.",
           "stockReconciliationRequired": "Před přidáním první prodejní varianty vyrovnejte zásobu produktu. Před odebráním varianty vyrovnejte její zásobu skladovým pohybem.",
           "rejected": "Akci nelze provést v aktuálním stavu, například kvůli nedostatečné zásobě. Zkontrolujte zadané hodnoty.",
           "saving": "Ukládám změny…",

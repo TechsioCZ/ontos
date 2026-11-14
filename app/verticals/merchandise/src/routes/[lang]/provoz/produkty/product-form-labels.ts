@@ -23,6 +23,9 @@ export const useCommandFailure = () => {
       onReload();
       return label('messages.conflict');
     }
+    if (reason === 'variant-bulk-price-unsupported') {
+      return label('messages.variantBulkPriceUnsupported');
+    }
     if (reason === 'stock-reconciliation-required') {
       return label('messages.stockReconciliationRequired');
     }

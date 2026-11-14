@@ -53,6 +53,7 @@ const FailureReasonSchema = Schema.Literals([
   'not-found',
   'rejected',
   'stock-reconciliation-required',
+  'variant-bulk-price-unsupported',
   RELOAD_REQUIRED,
   'unavailable',
 ]);
@@ -114,6 +115,9 @@ const commandReason = (error: CommandFailure): FailureReason =>
       'ChangeProductImagesActionConflictProblem',
       'RecordStockMovementActionConflictProblem',
       (problem): FailureReason => {
+        if (problem.code === 'merchandise_variant_bulk_price_unsupported') {
+          return 'variant-bulk-price-unsupported';
+        }
         if (problem.code === 'merchandise_stock_reconciliation_required') {
           return 'stock-reconciliation-required';
         }

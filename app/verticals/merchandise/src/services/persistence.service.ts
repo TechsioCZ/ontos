@@ -828,6 +828,13 @@ const editBulkProduct = Effect.fn('Merchandise.editBulkProduct')(function* editB
 ) {
   const product = yield* findProduct(state.products, id);
   const { additionalCategoryIds, categoryId, priceChangePercent, ...fields } = patch;
+  if (priceChangePercent !== undefined && realVariantsOf(product).length > 0) {
+    return yield* new MerchandiseLifecycleConflict({
+      code: 'merchandise_variant_bulk_price_unsupported',
+      reason:
+        'Hromadná změna ceny není dostupná pro produkty s prodejními variantami. Změňte ceny jednotlivých variant.',
+    });
+  }
   const nativeCategories = categoryId !== undefined || additionalCategoryIds !== undefined;
   const edited: Product = { ...product, ...fields, updatedAt: input.now };
   let categorized = edited;
