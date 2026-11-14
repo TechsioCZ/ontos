@@ -321,9 +321,30 @@ const OPERATOR_REASON = 'The deploy failed and no publisher is alive';
 /** The operator's evidence for one abandonment of `revision`. */
 const operatorFlags = (revision: string) => ({ operator: OPERATOR, reason: OPERATOR_REASON, revision });
 
-/** A refusal's own words, whichever of the two refusal types carried it. */
+/** What a test reports when an operation it expected to be refused succeeded instead. */
+class UnexpectedSuccess extends Schema.TaggedError<UnexpectedSuccess>()('UnexpectedSuccess', {
+  reason: Schema.String,
+}) {}
+
+/**
+ * The refusal of an operation the test expects to be refused. Where `Effect.flip` would turn an unexpected success
+ * into a failure carrying the success value — `undefined` for a publication, which no reporter can print — this
+ * fails with a typed error that says what happened.
+ */
+const expectRefused = <Value, Failure, Requirements>(effect: Effect.Effect<Value, Failure, Requirements>) =>
+  effect.pipe(
+    Effect.matchEffect({
+      onFailure: (failure) => Effect.succeed(failure),
+      onSuccess: () =>
+        Effect.fail(new UnexpectedSuccess({ reason: 'The operation was expected to be refused, but it succeeded' })),
+    }),
+  );
+
+/** A refusal's own words, whichever refusal type carried it, or why there was none. */
 const reasonOf = <Failure,>(failure: Failure) =>
-  Schema.is(ApplicationCompositionAuthorityError)(failure) || Schema.is(CompositionAbandonDrainCommandError)(failure)
+  Schema.is(ApplicationCompositionAuthorityError)(failure) ||
+  Schema.is(CompositionAbandonDrainCommandError)(failure) ||
+  Schema.is(UnexpectedSuccess)(failure)
     ? failure.reason
     : '';
 
@@ -345,7 +366,7 @@ const publishChangingWorkMidDrain = <MidFailure, MidRequirements>(
     const next = yield* snapshotFor(`${FIXTURE_NAME}-new`, 7200);
     const publication = yield* publishApplicationCompositionAuthoritySnapshot(next, Effect.void, Effect.void).pipe(
       Effect.provide(f.layer),
-      Effect.flip,
+      expectRefused,
       Effect.forkChild,
     );
     yield* untilPhase(f, 'draining');
@@ -485,7 +506,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
 
       const failure = yield* publishApplicationCompositionAuthoritySnapshot(next, Effect.void, Effect.void).pipe(
         Effect.provide(f.layer),
-        Effect.flip,
+        expectRefused,
       );
       expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
       const reason = Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '';
@@ -525,7 +546,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
 
       const failure = yield* publishApplicationCompositionAuthoritySnapshot(next, Effect.void, Effect.void).pipe(
         Effect.provide(f.layer),
-        Effect.flip,
+        expectRefused,
       );
       expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
       const reason = Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '';
@@ -669,7 +690,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       const next = yield* snapshotFor(`${FIXTURE_NAME}-new`, 7200);
       const failure = yield* publishApplicationCompositionAuthoritySnapshot(next, Effect.void, Effect.void).pipe(
         Effect.provide(f.layer),
-        Effect.flip,
+        expectRefused,
       );
       const reason = Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '';
       expect(reason).toContain(REFUSED_BEFORE_ADMISSION);
@@ -823,7 +844,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
 
       const failure = yield* publishApplicationCompositionAuthoritySnapshot(next, Effect.void, Effect.void).pipe(
         Effect.provide(f.layer),
-        Effect.flip,
+        expectRefused,
       );
       const failedAt = yield* Clock.currentTimeMillis;
       yield* Fiber.interrupt(sampler);
@@ -883,8 +904,11 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       yield* holdLifecycleDelivery(f);
       yield* f.admin.executor.update(applicationCompositionAuthority).set({ validUntil: MINUTE_BOUND_LEASE });
       const deliveryId = yield* lifecycleDeliveryId(f);
-      // Exactly what the Outbox runtime writes when a handler defers: the attempt settled with the deferral message,
-      // the delivery pending again and due at the owner's wake time, two hours away.
+      // Exactly what the Outbox runtime writes when a handler defers on the delivery's second attempt (its first one
+      // failed): the attempt settled with the deferral message, the delivery pending again with the one charged
+      // attempt, and due at the owner's wake time, two hours away. An untouched first-attempt deferral of this
+      // core-system row would carry over to the next release instead (pending, no attempts, no claim) — and no core
+      // worker defers; a payment or Symmy delivery, which do, never carries over.
       const defer = f.admin.executor.transaction((transaction) =>
         Effect.gen(function* settleAsDeferred() {
           yield* transaction.insert(outboxAttempts).values({
@@ -895,6 +919,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
           yield* transaction
             .update(outboxDeliveries)
             .set({
+              attemptsCount: 1,
               availableAt: sql`clock_timestamp() + interval '2 hours'`,
               claimedAt: null,
               claimedBy: null,
@@ -1042,7 +1067,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       const next = yield* snapshotFor(`${FIXTURE_NAME}-new`, 7200);
       const failure = yield* publishApplicationCompositionAuthoritySnapshot(next, Effect.void, Effect.void).pipe(
         Effect.provide(f.layer),
-        Effect.flip,
+        expectRefused,
       );
       // An unreadable pre-flight is no evidence the drain is safe: nothing moved, and the old release serves.
       expect(Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '').toContain(
@@ -1079,7 +1104,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
           next,
           Effect.void,
           arriveAfterPreflight,
-        ).pipe(Effect.provide(f.layer), Effect.flip);
+        ).pipe(Effect.provide(f.layer), expectRefused);
         const reason = Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '';
         expect(reason).toContain('drain was not started');
         expect(reason).toContain(`--worker-key ${ABSENT_WORKER_KEY}`);
@@ -1111,7 +1136,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       const next = yield* snapshotFor(`${FIXTURE_NAME}-new`, 7200);
       const failure = yield* publishApplicationCompositionAuthoritySnapshot(next, Effect.void, claimAndHold).pipe(
         Effect.provide(f.layer),
-        Effect.flip,
+        expectRefused,
       );
       const reason = Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '';
       expect(reason).toContain('re-drains, so the Application Composition transition was abandoned');
@@ -1139,14 +1164,14 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
           }),
         ),
         Effect.void,
-      ).pipe(Effect.provide(f.layer), Effect.flip);
+      ).pipe(Effect.provide(f.layer), expectRefused);
       expect(reasonOf(failure)).toContain('the schema migration failed');
       // Sealed stays sealed: no abandonment was recorded and none can be.
       expect(yield* authorityRow(f.runtime)).toMatchObject({ phase: 'sealed', revision: f.old.composition.revision });
       expect(yield* f.admin.executor.select().from(applicationCompositionDrainAbandonments)).toEqual([]);
       const refused = yield* abandonDrainAsOperator(operatorFlags(f.old.composition.revision)).pipe(
         Effect.provide(f.layer),
-        Effect.flip,
+        expectRefused,
       );
       expect(reasonOf(refused)).toContain('never returned to active');
       // The ledger's own trigger refuses a hand-written abandonment of a sealed revision too.
@@ -1179,13 +1204,13 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       // A different revision and malformed input are refused before anything changes.
       const otherRevision = yield* abandonDrainAsOperator(operatorFlags('f'.repeat(64))).pipe(
         Effect.provide(f.layer),
-        Effect.flip,
+        expectRefused,
       );
       expect(reasonOf(otherRevision)).toContain('Only the revision that holds');
       const malformed = yield* abandonDrainAsOperator({
         ...operatorFlags(f.old.composition.revision),
         revision: 'x',
-      }).pipe(Effect.provide(f.layer), Effect.flip);
+      }).pipe(Effect.provide(f.layer), expectRefused);
       expect(Schema.is(CompositionAbandonDrainCommandError)(malformed)).toBe(true);
       expect(yield* authorityRow(f.runtime)).toMatchObject({ phase: 'draining' });
 
@@ -1213,7 +1238,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       // Nothing left to abandon: a second run is refused.
       const again = yield* abandonDrainAsOperator(operatorFlags(f.old.composition.revision)).pipe(
         Effect.provide(f.layer),
-        Effect.flip,
+        expectRefused,
       );
       expect(reasonOf(again)).toContain('not draining');
       return yield* Effect.void;
@@ -1230,7 +1255,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       });
       const expired = yield* abandonDrainAsOperator(operatorFlags(f.old.composition.revision)).pipe(
         Effect.provide(f.layer),
-        Effect.flip,
+        expectRefused,
       );
       expect(reasonOf(expired)).toContain('lease has expired');
       expect(yield* authorityRow(f.runtime)).toMatchObject({ phase: 'draining' });
@@ -1247,7 +1272,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       yield* Deferred.await(holding);
       const whilePublishing = yield* abandonDrainAsOperator(operatorFlags(f.old.composition.revision)).pipe(
         Effect.provide(f.layer),
-        Effect.flip,
+        expectRefused,
       );
       expect(reasonOf(whilePublishing)).toContain('A publisher is alive');
       expect(yield* authorityRow(f.runtime)).toMatchObject({ phase: 'draining' });
@@ -1307,7 +1332,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
         next,
         Effect.void,
         refuseAfterDraining,
-      ).pipe(Effect.provide(f.layer), Effect.flip);
+      ).pipe(Effect.provide(f.layer), expectRefused);
       expect(reasonOf(failure)).toContain('a retired executable is still running');
       expect(reasonOf(failure)).toContain(RETURNED_TO_ACTIVE);
       expect(yield* authorityRow(f.runtime)).toMatchObject({
