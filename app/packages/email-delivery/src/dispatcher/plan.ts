@@ -175,7 +175,7 @@ export const planAgendaEmails = (
     batches.set(notification.createdAt, batch);
   }
   return [...batches.entries()].map(([createdAt, notifications]): PlannedEmail => {
-    const subjectId = `${input.tenantId}:${input.legalEntityId}:${input.principalId}:${createdAt}`;
+    const subjectId = `${input.principalId}:${createdAt}`;
     return {
       dedupeKey: `facility-agenda:${subjectId}`,
       event: 'AGENDA_NOTIFICATION',

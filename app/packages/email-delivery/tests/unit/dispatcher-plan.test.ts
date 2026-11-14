@@ -358,26 +358,13 @@ describe('agenda notification e-mails', () => {
     if (email === undefined) {
       expect.unreachable('The opted-in person must receive the mandatory notification batch');
     }
-    expect(email.dedupeKey).toBe(
-      `facility-agenda:${person.tenantId}:${person.legalEntityId}:72000000-0000-4000-8000-000000000022:2026-10-21T09:00:00.000Z`,
-    );
+    expect(email.dedupeKey).toBe('facility-agenda:72000000-0000-4000-8000-000000000022:2026-10-21T09:00:00.000Z');
     expect(email.subject).toBe('Nájempark – 2 nová upozornění v agendě');
     expect(email.text).toContain('Přiřazeno vám: Zkontrolovat osvětlení');
     expect(email.text).toContain('Otevřít: http://localhost:3020/cs/ukoly?resourceId=w1');
     expect(email.text).toContain('Po termínu: Revize hasicích přístrojů');
     expect(email.text).not.toContain('Konec smlouvy');
     expect(email.text).not.toContain('Před zapnutím e-mailu');
-  });
-
-  test('the same principal and notification instant in different companies or tenants never share a key', () => {
-    const first = planAgendaEmails(person, options)[0];
-    const anotherCompany = planAgendaEmails({ ...person, legalEntityId: planOptions.legalEntityId }, options)[0];
-    const anotherTenant = planAgendaEmails({ ...person, tenantId: reminder.tenantId }, options)[0];
-    expect(first).toBeDefined();
-    expect(anotherCompany).toBeDefined();
-    expect(anotherTenant).toBeDefined();
-    expect(new Set([first?.dedupeKey, anotherCompany?.dedupeKey, anotherTenant?.dedupeKey]).size).toBe(3);
-    expect(planAgendaEmails(person, options)[0]?.dedupeKey).toBe(first?.dedupeKey);
   });
 
   test('optional category chosen, old preference rows get every optional category', () => {

@@ -73,11 +73,7 @@ export const scheduleScopes = (pending: readonly PendingDelivery[], limit: numbe
   const lanes = new Map<EmailDeliverySource, { readonly item: PendingDelivery; readonly subjectId: string }[]>();
   for (const item of pending) {
     const parsed = parseDeliveryId(item.deliveryId);
-    if (
-      parsed === null ||
-      ('scope' in parsed &&
-        (parsed.scope.tenantId !== item.tenantId || parsed.scope.legalEntityId !== item.legalEntityId))
-    ) {
+    if (parsed === null) {
       continue;
     }
     lanes.set(parsed.source, [...(lanes.get(parsed.source) ?? []), { item, subjectId: parsed.subjectId }]);
