@@ -1,0 +1,522 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
+import { Effect, Fiber, Option } from 'effect';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import type { RefObject } from 'react';
+import { Button } from '@techsio/ui-kit/atoms/button';
+import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { FormInput } from '@app/admin-ui/form-controls';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
+import {
+  SaveBar,
+  SidePanel,
+  saveLabelsFor,
+  UnsavedChangesDialog,
+  useDraftSave,
+  useUnsavedChangesGuard,
+} from '@app/admin-ui';
+
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import type { CreatedCustomer, CustomerListItem } from '../../../../api/customers-client.ts';
+import { existingCustomerWithCompanyId } from '../../../../api/customer-create-decision.ts';
+import {
+  aresFailureKey,
+  createCustomerFromDraft,
+  createFailureKey,
+  isCustomerWriteForbidden,
+  lookupAres,
+} from './customers-data.ts';
+import {
+  customerNameMaxLength,
+  normalizedCustomerName,
+  prefillFromAres,
+  validateCreateDraft,
+} from './customers-model.ts';
+import type { AresPrefill, CreateDraft } from './customers-model.ts';
+
+const KEY = 'party-registry.pages.customers.create';
+
+/** Pause after the last IČO keystroke before ARES is asked, so pasting or fixing a digit sends one lookup. */
+const ARES_LOOKUP_DELAY = '600 millis';
+
+/** Fields ARES may fill in. */
+const prefillFields = [
+  'city',
+  'name',
+  'postalCode',
+  'street',
+  'vatId',
+] as const satisfies readonly (keyof AresPrefill)[];
+
+/** Validated fields in visual order, with the DOM ids of their inputs. */
+const fieldIdsInOrder = [
+  ['ico', 'customer-ico'],
+  ['name', 'customer-name'],
+  ['vatId', 'customer-vat-id'],
+  ['email', 'customer-email'],
+  ['street', 'customer-street'],
+  ['city', 'customer-city'],
+  ['postalCode', 'customer-postal-code'],
+] as const satisfies readonly (readonly [keyof CreateDraft, string])[];
+
+/**
+ * Focuses the first failing field and scrolls it to the middle of the panel body, clear of the footer. Runs on
+ * the next frame, after React has rendered the field's message, so the message lands in view too.
+ */
+const revealFirstInvalid = (failing: readonly string[]) => {
+  const [, id] = fieldIdsInOrder.find(([field]) => failing.includes(field)) ?? [];
+  if (id !== undefined) {
+    globalThis.requestAnimationFrame(() => {
+      const element = globalThis.document.querySelector<HTMLElement>(`#${id}`);
+      element?.focus();
+      element?.scrollIntoView({ block: 'center' });
+    });
+  }
+};
+
+const EMPTY_DRAFT: CreateDraft = {
+  city: '',
+  email: '',
+  ico: '',
+  name: '',
+  phone: '',
+  postalCode: '',
+  street: '',
+  vatId: '',
+};
+
+const draftFields = [
+  'city',
+  'email',
+  'ico',
+  'name',
+  'phone',
+  'postalCode',
+  'street',
+  'vatId',
+] as const satisfies readonly (keyof CreateDraft)[];
+
+interface Notice {
+  readonly status: 'error' | 'success' | 'warning';
+  readonly text: string;
+}
+
+/** A message about one field's value (ARES lookup, duplicate IČO or name), shown under that field. */
+interface FieldNotice {
+  readonly status: 'error' | 'warning';
+  readonly text: string;
+}
+
+interface FieldNotices {
+  readonly ico: FieldNotice | null;
+  readonly name: FieldNotice | null;
+}
+
+const NO_FIELD_NOTICES: FieldNotices = { ico: null, name: null };
+
+/** Fields carrying a notice, for focusing the first of them. */
+const noticedFields = (notices: FieldNotices) => (['ico', 'name'] as const).filter((field) => notices[field] !== null);
+
+/** Message props one field takes from the dialog: help text, or an error or warning about its value. */
+interface FieldMessage {
+  readonly helpText?: string;
+  readonly validateStatus?: FieldNotice['status'];
+}
+
+interface CreateFormFieldsProps {
+  readonly draft: CreateDraft;
+  readonly fieldProps: (key: keyof CreateDraft, help?: string) => FieldMessage;
+  readonly notice: Notice | null;
+  readonly noticeRef: RefObject<HTMLDivElement | null>;
+  readonly set: (patch: Partial<CreateDraft>) => void;
+}
+
+/** The notice and every input of the create form, in visual order. The dialog owns the state behind them. */
+const CreateFormFields = ({ draft, fieldProps, notice, noticeRef, set }: CreateFormFieldsProps) => {
+  const { t } = useModernI18n();
+  return (
+    <>
+      {notice !== null && (
+        <div ref={noticeRef}>
+          <StatusText showIcon status={notice.status}>
+            {notice.text}
+          </StatusText>
+        </div>
+      )}
+      <FormInput
+        autoComplete="off"
+        id="customer-ico"
+        inputMode="numeric"
+        label={t(`${KEY}.ico`)}
+        maxLength={8}
+        name="ico"
+        onChange={(event) => set({ ico: event.target.value })}
+        value={draft.ico}
+        {...fieldProps('ico', t(`${KEY}.icoHelp`))}
+      />
+      <FormInput
+        autoComplete="off"
+        id="customer-name"
+        label={t(`${KEY}.name`)}
+        maxLength={customerNameMaxLength}
+        name="name"
+        onChange={(event) => set({ name: event.target.value })}
+        required
+        value={draft.name}
+        {...fieldProps('name')}
+      />
+      <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
+        <FormInput
+          autoComplete="off"
+          id="customer-vat-id"
+          label={t(`${KEY}.vatId`)}
+          name="vatId"
+          onChange={(event) => set({ vatId: event.target.value })}
+          value={draft.vatId}
+          {...fieldProps('vatId')}
+        />
+        <FormInput
+          autoComplete="off"
+          id="customer-email"
+          label={t(`${KEY}.email`)}
+          name="email"
+          onChange={(event) => set({ email: event.target.value })}
+          type="email"
+          value={draft.email}
+          {...fieldProps('email')}
+        />
+        <FormInput
+          autoComplete="off"
+          id="customer-phone"
+          label={t(`${KEY}.phone`)}
+          name="phone"
+          onChange={(event) => set({ phone: event.target.value })}
+          type="tel"
+          value={draft.phone}
+        />
+      </div>
+      <FormInput
+        autoComplete="off"
+        id="customer-street"
+        label={t(`${KEY}.street`)}
+        name="street"
+        onChange={(event) => set({ street: event.target.value })}
+        value={draft.street}
+        {...fieldProps('street')}
+      />
+      <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
+        <FormInput
+          autoComplete="off"
+          id="customer-city"
+          label={t(`${KEY}.city`)}
+          name="city"
+          onChange={(event) => set({ city: event.target.value })}
+          value={draft.city}
+          {...fieldProps('city')}
+        />
+        <FormInput
+          autoComplete="off"
+          id="customer-postal-code"
+          label={t(`${KEY}.postalCode`)}
+          name="postalCode"
+          onChange={(event) => set({ postalCode: event.target.value })}
+          value={draft.postalCode}
+          {...fieldProps('postalCode')}
+        />
+      </div>
+    </>
+  );
+};
+
+export interface CustomerCreateDialogProps {
+  /** Customers already listed on the page; the duplicate checks read them before the owner is asked. */
+  readonly existing: readonly CustomerListItem[];
+  readonly onCreated: () => void;
+  readonly onOpenChange: (open: boolean) => void;
+  /** The owner refused the create with 403: this role may not write customers. */
+  readonly onWriteRefused: () => void;
+  readonly open: boolean;
+}
+
+export const CustomerCreateDialog = ({
+  existing,
+  onCreated,
+  onOpenChange,
+  onWriteRefused,
+  open,
+}: CustomerCreateDialogProps) => {
+  const { language, t } = useModernI18n();
+  const labels = saveLabelsFor(language);
+  const toaster = useToast();
+  // The draft is only on screen until Uložit sends it; typing never writes.
+  const [draft, setDraft] = useState<CreateDraft>(EMPTY_DRAFT);
+  const [aresBusy, setAresBusy] = useState(false);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  /** Messages about the IČO or name value, shown under that field. Each clears as soon as its field changes. */
+  const [fieldNotices, setFieldNotices] = useState<FieldNotices>(NO_FIELD_NOTICES);
+  const noticeRef = useRef<HTMLDivElement>(null);
+  /** Fields the user typed into. ARES never overwrites them; it may replace what an earlier lookup filled in. */
+  const typedFields = useRef(new Set<keyof CreateDraft>());
+  /** IČO already sent to ARES in this form, so each IČO is looked up once. */
+  const lookedUpIco = useRef<string | null>(null);
+  const errors = validateCreateDraft(draft);
+  const ico = draft.ico.trim();
+  /** A complete IČO with a valid checksum; only such an IČO reaches ARES. */
+  const lookupIco = ico.length === 8 && errors.ico === undefined ? ico : null;
+
+  // The notice sits above the fields, so a message raised from the footer button is scrolled into view.
+  useEffect(() => {
+    if (notice !== null) {
+      noticeRef.current?.scrollIntoView({ block: 'nearest' });
+    }
+  }, [notice]);
+
+  // Editing a field retires an error or warning, because it describes the values it was raised for.
+  const set = (patch: Partial<CreateDraft>) => {
+    for (const field of draftFields) {
+      if (patch[field] !== undefined) {
+        typedFields.current.add(field);
+      }
+    }
+    setDraft((current) => ({ ...current, ...patch }));
+    setNotice((current) => (current?.status === 'success' ? current : null));
+    setFieldNotices((current) => ({
+      ico: patch.ico === undefined ? current.ico : null,
+      name: patch.name === undefined ? current.name : null,
+    }));
+  };
+
+  const showError = (failureKey: string) => setNotice({ status: 'error', text: t(`${KEY}.${failureKey}`) });
+
+  /** A current customer already carries this IČO, so the owner would reuse it and write nothing. */
+  const duplicateText = (displayName: string | null) =>
+    displayName === null ? t(`${KEY}.duplicate`) : t(`${KEY}.duplicateNamed`, { name: displayName });
+
+  const applyPrefill = (prefill: AresPrefill, lookedUp: string) => {
+    setDraft((current) => {
+      const next = { ...current };
+      for (const field of prefillFields) {
+        const value = prefill[field];
+        // A field the user typed into keeps its text unless it is empty again.
+        if (value !== undefined && (!typedFields.current.has(field) || current[field].trim() === '')) {
+          next[field] = value;
+          typedFields.current.delete(field);
+        }
+      }
+      return next;
+    });
+    setNotice({ status: 'success', text: t(`${KEY}.aresDone`) });
+    // The lookup succeeded, but the IČO is already on record: warn under the IČO before the user fills the rest.
+    const listed = Option.getOrUndefined(existingCustomerWithCompanyId(existing, lookedUp));
+    if (listed !== undefined) {
+      setFieldNotices({
+        ico: {
+          status: 'warning',
+          text:
+            listed.displayName === null
+              ? t(`${KEY}.aresDuplicate`)
+              : t(`${KEY}.aresDuplicateNamed`, { name: listed.displayName }),
+        },
+        name: null,
+      });
+    }
+  };
+
+  /** Returns the save outcome: the owner created or linked the customer, or nothing was written. */
+  const applyCreated = (created: CreatedCustomer): 'saved' | 'failed' => {
+    if (created.outcome === 'EXISTING_CUSTOMER') {
+      // A current customer already carries this IČO and nothing was written, so the panel stays open with the reason.
+      setFieldNotices({ ico: { status: 'error', text: duplicateText(created.displayName) }, name: null });
+      revealFirstInvalid(['ico']);
+      return 'failed';
+    }
+    toaster.create(
+      created.outcome === 'LINKED_EXISTING_PARTY'
+        ? { description: t(`${KEY}.toastMatched`), title: t(`${KEY}.toastCreated`), type: 'success' }
+        : { title: t(`${KEY}.toastCreated`), type: 'success' },
+    );
+    onCreated();
+    return 'saved';
+  };
+
+  // A complete, valid IČO is looked up in ARES once, after a short pause; a newer IČO or closing the form cancels it.
+  const startLookup = useEffectEvent((target: string) =>
+    browserRuntime.runFork(
+      Effect.sleep(ARES_LOOKUP_DELAY).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            lookedUpIco.current = target;
+            setAresBusy(true);
+            setNotice(null);
+            setFieldNotices(NO_FIELD_NOTICES);
+          }),
+        ),
+        Effect.andThen(lookupAres(target)),
+        Effect.matchEffect({
+          onFailure: (error) =>
+            Effect.sync(() =>
+              setFieldNotices({ ico: { status: 'error', text: t(`${KEY}.${aresFailureKey(error)}`) }, name: null }),
+            ),
+          onSuccess: (evidence) => Effect.sync(() => applyPrefill(prefillFromAres(evidence), target)),
+        }),
+        // An interrupted lookup did not answer, so the same IČO may be looked up again later.
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            if (lookedUpIco.current === target) {
+              lookedUpIco.current = null;
+            }
+          }),
+        ),
+        Effect.ensuring(Effect.sync(() => setAresBusy(false))),
+      ),
+    ),
+  );
+  useEffect(() => {
+    const lookup =
+      open && lookupIco !== null && lookedUpIco.current !== lookupIco
+        ? Option.some(startLookup(lookupIco))
+        : Option.none();
+    return () => {
+      if (Option.isSome(lookup)) {
+        browserRuntime.runFork(Fiber.interrupt(lookup.value));
+      }
+    };
+  }, [open, lookupIco]);
+
+  /**
+   * Duplicates the page already knows about: a current customer with this IČO, or any listed customer with the
+   * same name. The owner would refuse both (a same-name Party keeps its duplicate case open for review), so the
+   * save answers at once, under the field concerned, without a slow round trip.
+   */
+  const knownDuplicates = (value: CreateDraft): FieldNotices => {
+    const sameIco = Option.getOrUndefined(existingCustomerWithCompanyId(existing, value.ico));
+    const name = normalizedCustomerName(value.name);
+    const sameName = existing.find(
+      (customer) => customer.displayName !== null && normalizedCustomerName(customer.displayName) === name,
+    );
+    return {
+      ico: sameIco === undefined ? null : { status: 'error', text: duplicateText(sameIco.displayName) },
+      name: sameName === undefined ? null : { status: 'error', text: t(`${KEY}.duplicateName`) },
+    };
+  };
+
+  const createFailed = (error: Effect.Error<ReturnType<typeof createCustomerFromDraft>>) =>
+    Effect.sync((): 'failed' => {
+      showError(createFailureKey(error));
+      if (isCustomerWriteForbidden(error)) {
+        onWriteRefused();
+      }
+      return 'failed';
+    });
+  const createdCustomer = (created: CreatedCustomer) => Effect.sync(() => applyCreated(created));
+
+  /** The one save: runs only for a changed, valid draft, once per click (`useDraftSave`). */
+  const saveCustomer = (value: CreateDraft): Effect.Effect<'saved' | 'failed'> =>
+    Effect.suspend(() => {
+      setNotice(null);
+      const duplicates = knownDuplicates(value);
+      if (noticedFields(duplicates).length > 0) {
+        setFieldNotices(duplicates);
+        revealFirstInvalid(noticedFields(duplicates));
+        return Effect.succeed('failed' as const);
+      }
+      return createCustomerFromDraft(value).pipe(
+        Effect.matchEffect({ onFailure: createFailed, onSuccess: createdCustomer }),
+      );
+    });
+
+  const record = useDraftSave({
+    isValid: (value) => Object.keys(validateCreateDraft(value)).length === 0,
+    // The panel stays mounted while closed: only the open panel asks before leaving.
+    open,
+    runtime: browserRuntime,
+    save: saveCustomer,
+    value: draft,
+  });
+
+  /** Drops the draft and continues from an empty form: after a close, a discard or a successful create. */
+  const resetForm = () => {
+    typedFields.current.clear();
+    lookedUpIco.current = null;
+    setDraft(EMPTY_DRAFT);
+    record.adopt(EMPTY_DRAFT);
+    setNotice(null);
+    setFieldNotices(NO_FIELD_NOTICES);
+  };
+
+  // Router navigation, browser Back and the panel's dismissal ask the same question as the Cancel button.
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: resetForm });
+  // Every way out (Cancel, the panel's dismissal, a created customer) starts the next open from an empty form.
+  const leave = () => {
+    resetForm();
+    onOpenChange(false);
+  };
+  // A created customer closes the panel.
+  const handleSave = () => {
+    record.save();
+    record.afterSave((status) => {
+      if (status === 'saved') {
+        leave();
+      }
+    });
+  };
+  const handleReloadLatest = resetForm;
+
+  const fieldProps = (key: keyof CreateDraft, help?: string): FieldMessage => {
+    // Invalid draft fields show their message once the draft is changed; a complete IČO is checked at once,
+    // because a valid one starts the ARES lookup.
+    const error = record.status === 'invalid' || (key === 'ico' && ico.length === 8) ? errors[key] : undefined;
+    if (error !== undefined) {
+      return { helpText: t(`${KEY}.validation.${error}`), validateStatus: 'error' };
+    }
+    if (key === 'ico' && aresBusy) {
+      return { helpText: t(`${KEY}.aresLoading`) };
+    }
+    const fieldNotice = key === 'ico' || key === 'name' ? fieldNotices[key] : null;
+    if (fieldNotice !== null) {
+      return { helpText: fieldNotice.text, validateStatus: fieldNotice.status };
+    }
+    return help === undefined ? {} : { helpText: help };
+  };
+
+  return (
+    <>
+      <SidePanel
+        actions={
+          <>
+            <Button onClick={() => guard.request(leave)} theme="outlined" type="button" variant="secondary">
+              {t(`${KEY}.cancel`)}
+            </Button>
+            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+          </>
+        }
+        description={t(`${KEY}.description`)}
+        guard={guard}
+        // The IČO is the first field, so typing starts there at once.
+        initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#customer-ico')}
+        onOpenChange={(next) => {
+          if (!next) {
+            leave();
+          }
+        }}
+        open={open}
+        resizeLabel={t('party-registry.sidePanel.resize')}
+        size="md"
+        title={t(`${KEY}.title`)}
+      >
+        {/* Enter does not save: only the Uložit button sends the draft. */}
+        <form
+          className="flex flex-col gap-200 py-200"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+          }}
+        >
+          <CreateFormFields draft={draft} fieldProps={fieldProps} notice={notice} noticeRef={noticeRef} set={set} />
+        </form>
+      </SidePanel>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
+  );
+};

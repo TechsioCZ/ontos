@@ -1,4 +1,19 @@
-import { selfApiKeyBindingsRead, managedPrincipalsRead } from '../auth/principal-administration-reads.ts';
+import {
+  companyManagedPrincipalsRead,
+  selfApiKeyBindingsRead,
+  managedPrincipalsRead,
+} from '../auth/principal-administration-reads.ts';
+import { agentProposalQueueRead } from '../auth/agent-proposal-queue-read.ts';
+import { agentActivityRead } from '../auth/agent-activity-read.ts';
+import { agentActivityActorsRead } from '../auth/agent-activity-actors-read.ts';
+import { agentProfilesRead } from '../auth/agent-profiles-read.ts';
+import { peopleDirectoryRead } from '../auth/people-directory-read.ts';
+import { companyAgentDirectoryRead } from '../auth/company-agent-directory-read.ts';
+import { identityAdministrationAuditRead } from '../auth/identity-administration-audit-read.ts';
+import { staffRoleTemplateBindingsRead } from '../auth/staff-role-template-bindings-read.ts';
+import { oauthConnectionRevocationNotesRead } from '../auth/oauth-connection-revocation-notes-read.ts';
+import { oauthConnectionAdministrationRead } from '../auth/oauth-connection-administration-read.ts';
+import { peopleSearchRead } from '../people/people-search.ts';
 import {
   bindingSubjectRead,
   readPrincipalBinding,
@@ -29,7 +44,7 @@ import {
   tenantModuleIntrinsicDependencyClosure,
   providesRequiredOperationContracts,
 } from './module-dependency-contracts.ts';
-import { Context, Effect, Option, Schema } from 'effect';
+import { Context, Effect, Function as Fn, Option, Schema } from 'effect';
 
 import { isActionRegistration } from '../actions/definition.ts';
 import type { AnyActionRegistration } from '../actions/definition.ts';
@@ -236,6 +251,25 @@ export type ModuleOperationRegistration = AnyActionRegistration | AnyReadRegistr
 export const isGenuineCoreAction = (registration: ModuleOperationRegistration): boolean =>
   isActionRegistration(registration) && coreActionCatalog.some((descriptor) => descriptor === registration.descriptor);
 
+/** Load the original workers lazily: their public entry also exports the native runtime. */
+export const isGenuineCoreOutboxWorker = (registration: ModuleOperationRegistration) =>
+  isOutboxWorkerRegistration(registration)
+    ? Effect.suspend(() => {
+        const workers = import('../outbox/core-system-worker-entry.ts');
+        return Effect.tryPromise({ catch: unavailable, try: Fn.constant(workers) }).pipe(
+          Effect.timeoutOrElse({
+            duration: '30 seconds',
+            orElse: () => Effect.fail(unavailable()),
+          }),
+          Effect.map(
+            ({ corePeopleSearchOutboxWorkers, coreSystemOutboxWorkers }) =>
+              coreSystemOutboxWorkers.some((worker) => worker === registration) ||
+              corePeopleSearchOutboxWorkers.some((worker) => worker === registration),
+          ),
+        );
+      })
+    : Effect.succeed(false);
+
 export const readBoundOperationOwner = Effect.fn('ModuleOperation.readBoundOwner')(function* readBoundOwner(
   registration: ModuleOperationRegistration,
   ownerRegistration?: VerticalRuntimeRegistration,
@@ -256,6 +290,18 @@ export const readBoundOperationOwner = Effect.fn('ModuleOperation.readBoundOwner
 const coreReads = Object.freeze([
   selfApiKeyBindingsRead,
   managedPrincipalsRead,
+  companyManagedPrincipalsRead,
+  agentProposalQueueRead,
+  agentActivityRead,
+  agentActivityActorsRead,
+  agentProfilesRead,
+  peopleDirectoryRead,
+  companyAgentDirectoryRead,
+  identityAdministrationAuditRead,
+  staffRoleTemplateBindingsRead,
+  oauthConnectionRevocationNotesRead,
+  oauthConnectionAdministrationRead,
+  peopleSearchRead,
   legalEntityDetailRead,
   readPrincipalBinding,
   bindingSubjectRead,
@@ -500,26 +546,28 @@ export const readWorkerModuleOperationRequirement = Effect.fn('ModuleOperation.r
   },
 );
 
-/** Only the four actual Shell definitions may be bound by its trusted runtime constructor. */
+/** Only the five actual Shell definitions may be bound by its trusted runtime constructor. */
 export interface ShellSystemReadRegistrations {
   readonly composition: AnyReadRegistration;
   readonly moduleTarget: AnyReadRegistration;
   readonly resourceDetail: AnyReadRegistration;
   readonly search: AnyReadRegistration;
+  readonly tenantModuleTarget: AnyReadRegistration;
 }
 
 export const captureShellSystemReadRegistrations = (
   registrations: ShellSystemReadRegistrations | undefined,
 ): Readonly<ShellSystemReadRegistrations> | undefined => {
-  if (registrations === undefined || Object.keys(registrations).length !== 4) {
+  if (registrations === undefined || Object.keys(registrations).length !== 5) {
     return undefined;
   }
-  const { composition, moduleTarget, resourceDetail, search } = registrations;
+  const { composition, moduleTarget, resourceDetail, search, tenantModuleTarget } = registrations;
   const definitions = [
     [composition, 'core.shell.composition', 'api'],
     [moduleTarget, 'core.shell.module-target', 'api'],
     [resourceDetail, 'core.shell.resource-detail-timeline', 'api'],
     [search, 'core.shell.search', 'search'],
+    [tenantModuleTarget, 'core.shell.tenant-module-target', 'api'],
   ] as const;
   if (
     definitions.some(
@@ -537,7 +585,7 @@ export const captureShellSystemReadRegistrations = (
   ) {
     return undefined;
   }
-  return Object.freeze({ composition, moduleTarget, resourceDetail, search });
+  return Object.freeze({ composition, moduleTarget, resourceDetail, search, tenantModuleTarget });
 };
 
 export const isBoundShellSystemRead = (
@@ -549,7 +597,8 @@ export const isBoundShellSystemRead = (
   (registration === definitions.composition ||
     registration === definitions.moduleTarget ||
     registration === definitions.resourceDetail ||
-    registration === definitions.search);
+    registration === definitions.search ||
+    registration === definitions.tenantModuleTarget);
 
 interface ModuleOperationAdmission {
   readonly catalog?: InstalledModuleCatalog;
@@ -617,6 +666,9 @@ export const validateBoundOperationOwner = Effect.fn('ModuleOperation.validateBo
   catalog: InstalledModuleCatalog,
   ownerRegistration?: VerticalRuntimeRegistration,
 ) {
+  if (yield* isGenuineCoreOutboxWorker(registration)) {
+    return ownerRegistration === undefined ? yield* Effect.void : yield* unavailable();
+  }
   const owner = yield* readBoundOperationOwner(registration, ownerRegistration);
   return owner === undefined ? yield* Effect.void : yield* validateOwnerContractProjection(owner, catalog);
 });
@@ -624,6 +676,9 @@ export const validateBoundOperationOwner = Effect.fn('ModuleOperation.validateBo
 export const operationIntrinsicDependencies = Effect.fn('ModuleOperation.intrinsicDependencies')(
   function* intrinsicDependencies(registration: ModuleOperationRegistration, catalog: InstalledModuleCatalog) {
     const { moduleKey } = registration.descriptor.entrypoint;
+    if (yield* isGenuineCoreOutboxWorker(registration)) {
+      return new Map([[moduleKey, []]]);
+    }
     const keys = yield* tenantModuleIntrinsicDependencyClosure(catalog, moduleKey).pipe(Effect.mapError(unavailable));
     return new Map([[moduleKey, keys]]);
   },

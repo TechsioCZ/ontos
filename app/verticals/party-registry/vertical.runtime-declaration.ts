@@ -2,6 +2,7 @@
 // @ontos-deployment-app-id party-registry
 // @ontos-module-id party.registry
 // Party's one owner-authored backend declaration is shared by UI and worker runtime views.
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import {
   defineVerticalRuntimeRegistration,
   ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY,
@@ -17,10 +18,12 @@ import {
   partySourcePrivacyRequirementKey,
 } from './src/services/party-client-source-privacy.service.ts';
 import { duplicateCandidateDetailRead } from './src/api/duplicate-candidate-detail.read.ts';
+import { partyCommandResultRead } from './src/api/party-command-result.read.ts';
 import { partyCorrectionRead } from './src/api/party-correction.read.ts';
 import { partyMatchDecisionRead } from './src/api/party-match-decision.read.ts';
 import { partyMatchRead } from './src/api/party-match.read.ts';
 // <generated-module-manifest-imports>
+import { acceptRetailEnrollmentEvidenceAction } from './src/actions/accept-retail-enrollment-evidence.action.ts';
 import { addContactPointAction } from './src/actions/add-contact-point.action.ts';
 import { addPartyOfficialIdentifierAction } from './src/actions/add-party-official-identifier.action.ts';
 import { archiveOrganizationEngagementAction } from './src/actions/archive-organization-engagement.action.ts';
@@ -41,10 +44,15 @@ import { CounterpartyReadApi } from './shared/apis/counterparty-read.ts';
 import { counterpartyRoleAddAction } from './src/actions/counterparty-role-add.action.ts';
 import { counterpartyRoleEndAction } from './src/actions/counterparty-role-end.action.ts';
 import { CounterpartyRoleHistoryApi } from './shared/apis/counterparty-role-history.ts';
+import { createCrmClientPartyAction } from './src/actions/create-crm-client-party.action.ts';
 import { createPartyAction } from './src/actions/create-party.action.ts';
 import { createPartyRelationshipAction } from './src/actions/create-party-relationship.action.ts';
+import { CrmClientIntakeReviewApi } from './shared/apis/crm-client-intake-review.ts';
+import { crmClientIntakeReviewRead } from './src/api/crm-client-intake-review.read.ts';
+import { CustomerListApi } from './shared/apis/customer-list.ts';
 import { dismissDuplicateCandidateAction } from './src/actions/dismiss-duplicate-candidate.action.ts';
 import { DuplicateCandidateDetailApi } from './shared/apis/duplicate-candidate-detail.ts';
+import { DuplicateCandidateListApi } from './shared/apis/duplicate-candidate-list.ts';
 import { endContactPointAction } from './src/actions/end-contact-point.action.ts';
 import { endPartyOfficialIdentifierAction } from './src/actions/end-party-official-identifier.action.ts';
 import { endPartyRelationshipAction } from './src/actions/end-party-relationship.action.ts';
@@ -56,13 +64,7 @@ import { LegacyIcoInventoryApi } from './shared/apis/legacy-ico-inventory.ts';
 import { legacyIcoInventoryRead } from './src/api/legacy-ico-inventory.read.ts';
 import { markDuplicateCandidateNeedsEvidenceAction } from './src/actions/mark-duplicate-candidate-needs-evidence.action.ts';
 import { matchPartyAction } from './src/actions/match-party.action.ts';
-import { OrganizationBusinessNameExportApi } from './shared/apis/organization-business-name-export.ts';
-import { organizationBusinessNameExportRead } from './src/api/organization-business-name-export.read.ts';
 import { OrganizationEngagementProfileApi } from './shared/apis/organization-engagement-profile.ts';
-import { OrganizationIcoFactsApi } from './shared/apis/organization-ico-facts.ts';
-import { organizationIcoFactsRead } from './src/api/organization-ico-facts.read.ts';
-import { OrganizationRecordFactsApi } from './shared/apis/organization-record-facts.ts';
-import { organizationRecordFactsRead } from './src/api/organization-record-facts.read.ts';
 import { PartyContactPointDetailApi } from './shared/apis/party-contact-point-detail.ts';
 import { partyContactPointDetailRead } from './src/api/party-contact-point-detail.read.ts';
 import { PartyContactPointsApi } from './shared/apis/party-contact-points.ts';
@@ -75,6 +77,12 @@ import { PartyMergeReadinessApi } from './shared/apis/party-merge-readiness.ts';
 import { PartyOfficialIdentifierDetailApi } from './shared/apis/party-official-identifier-detail.ts';
 import { PartyOfficialIdentifierHistoryApi } from './shared/apis/party-official-identifier-history.ts';
 import { PartyRelationshipDetailApi } from './shared/apis/party-relationship-detail.ts';
+import { OrganizationBusinessNameExportApi } from './shared/apis/organization-business-name-export.ts';
+import { organizationBusinessNameExportRead } from './src/api/organization-business-name-export.read.ts';
+import { OrganizationIcoFactsApi } from './shared/apis/organization-ico-facts.ts';
+import { organizationIcoFactsRead } from './src/api/organization-ico-facts.read.ts';
+import { OrganizationRecordFactsApi } from './shared/apis/organization-record-facts.ts';
+import { organizationRecordFactsRead } from './src/api/organization-record-facts.read.ts';
 import { PartySourceEffectReceiptApi } from './shared/apis/party-source-effect-receipt.ts';
 import { partySourceEffectReceiptRead } from './src/api/party-source-effect-receipt.read.ts';
 import { PersonEngagementProfileApi } from './shared/apis/person-engagement-profile.ts';
@@ -82,6 +90,7 @@ import { PrivacyMeasureExecutionApi } from './shared/apis/privacy-measure-execut
 import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 import { resolveDuplicateCandidateCreateAction } from './src/actions/resolve-duplicate-candidate-create.action.ts';
 import { resolveDuplicateCandidateMatchAction } from './src/actions/resolve-duplicate-candidate-match.action.ts';
+import { SearchLabelsApi } from './shared/apis/search-labels.ts';
 import { SourceCounterpartyAdmissionApi } from './shared/apis/source-counterparty-admission.ts';
 import { sourceCounterpartyAdmissionRead } from './src/api/source-counterparty-admission.read.ts';
 import { SourcePersonAdmissionApi } from './shared/apis/source-person-admission.ts';
@@ -126,6 +135,38 @@ const pageContribution = (value: PageContributionInput) =>
 const searchContribution = (value: SearchContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
 
+const CUSTOMERS_PAGE_KEY = 'party.registry.page.customers' as const;
+const customerDetailPageKey = 'party.registry.page.customer-detail';
+const partyIdentityPageKey = 'party.registry.page.party-identity';
+
+const companiesFamily = {
+  icon: 'icon-[mdi--handshake-outline]',
+  key: 'companies',
+  label: { cs: 'Zákazníci a dodavatelé', en: 'Customers and suppliers' },
+  order: 20,
+} as const;
+const peopleFamily = {
+  icon: 'icon-[mdi--account-group-outline]',
+  key: 'people',
+  label: { cs: 'Lidé', en: 'People' },
+  order: 10,
+} as const;
+const counterpartyGroup = {
+  icon: 'icon-[mdi--handshake-outline]',
+  key: 'counterparty',
+  label: { cs: 'Zákazníci a dodavatelé', en: 'Customers and suppliers' },
+  order: 10,
+} as const;
+const partyGroup = {
+  icon: 'icon-[mdi--card-account-details-outline]',
+  key: 'party',
+  label: { cs: 'Kontakty', en: 'Contacts' },
+  order: 20,
+} as const;
+
+// The worker acts for the invocation that dispatched a privacy measure, never for a UI route.
+export const partyRegistryOriginatorActions = ['privacy.core.dispatch-privacy-measure'] as const;
+
 export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'] = {
   module: {
     description: 'Party Registry business capability.',
@@ -137,6 +178,7 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
+      acceptRetailEnrollmentEvidenceAction,
       addContactPointAction,
       addPartyOfficialIdentifierAction,
       archiveOrganizationEngagementAction,
@@ -150,6 +192,7 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
       counterpartyCustomerOnboardAction,
       counterpartyRoleAddAction,
       counterpartyRoleEndAction,
+      createCrmClientPartyAction,
       createPartyAction,
       createPartyRelationshipAction,
       dismissDuplicateCandidateAction,
@@ -180,11 +223,15 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
       'counterparty-organization-ico-facts': CounterpartyOrganizationIcoFactsApi,
       'counterparty-read': CounterpartyReadApi,
       'counterparty-role-history': CounterpartyRoleHistoryApi,
+      'crm-client-intake-review': CrmClientIntakeReviewApi,
+      'customer-list': CustomerListApi,
       'duplicate-candidate-detail': DuplicateCandidateDetailApi,
+      'duplicate-candidate-list': DuplicateCandidateListApi,
       'guest-party-resolution': GuestPartyResolutionApi,
       'legacy-ico-inventory': LegacyIcoInventoryApi,
       'organization-business-name-export': OrganizationBusinessNameExportApi,
       'organization-engagement-profile': OrganizationEngagementProfileApi,
+      'owner-action-approvals': OwnerActionApprovalApi,
       'organization-ico-facts': OrganizationIcoFactsApi,
       'organization-record-facts': OrganizationRecordFactsApi,
       'party-contact-point-detail': PartyContactPointDetailApi,
@@ -200,6 +247,7 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
       'party-source-effect-receipt': PartySourceEffectReceiptApi,
       'person-engagement-profile': PersonEngagementProfileApi,
       'privacy-measure-execution': PrivacyMeasureExecutionApi,
+      'search-labels': SearchLabelsApi,
       'source-counterparty-admission': SourceCounterpartyAdmissionApi,
       'source-person-admission': SourcePersonAdmissionApi,
       'source-profile-export': SourceProfileExportApi,
@@ -241,6 +289,11 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
       },
       { apiKey: 'party-commands', operationKey: 'partyCommands.endContactPoint', registration: endContactPointAction },
       // <generated-module-manifest-operation-contracts>
+      {
+        apiKey: 'crm-client-intake-review',
+        operationKey: 'crmClientIntakeReview.execute',
+        registration: crmClientIntakeReviewRead,
+      },
       {
         apiKey: 'counterparty-migration-correlation',
         operationKey: 'counterpartyMigrationCorrelation.execute',
@@ -327,8 +380,34 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
             scope: 'tenant',
           },
           groupKey: 'shell.navigation.modules',
+          icon: 'icon-[mdi--card-account-details-outline]',
+          label: { cs: 'Kontakty', en: 'Contacts' },
           order: 100,
           pageKey: 'party.registry.page.contacts',
+        }),
+        navigationContribution({
+          accessDeclaration: {
+            key: 'party.registry.customers-page.open',
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'counterparties', level: 'basic' },
+            risk: 'sensitive',
+            selectors: [],
+          },
+          contributionKey: 'party.registry.navigation.customers',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'protected' },
+            entrypointKey: CUSTOMERS_PAGE_KEY,
+            moduleKey: 'party.registry',
+            role: 'page',
+            scope: 'tenant',
+          },
+          groupKey: 'shell.navigation.sales',
+          icon: 'icon-[mdi--domain]',
+          label: { cs: 'Zákazníci', en: 'Customers' },
+          order: 470,
+          pageKey: CUSTOMERS_PAGE_KEY,
         }),
         // </generated-module-shell-navigation>
       ],
@@ -355,6 +434,73 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
           },
           expose: './PageContacts',
           routePath: '/contacts',
+        }),
+        pageContribution({
+          accessDeclaration: {
+            key: 'party.registry.customer-detail-page.open',
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'counterparties', level: 'basic' },
+            risk: 'sensitive',
+            selectors: [],
+          },
+          componentKey: 'party.registry.page-customer-detail',
+          contributionKey: customerDetailPageKey,
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'protected' },
+            entrypointKey: customerDetailPageKey,
+            moduleKey: 'party.registry',
+            role: 'page',
+            scope: 'tenant',
+          },
+          expose: './PageCustomerDetail',
+          routePath: '/prodej/zakaznici/:id',
+        }),
+        pageContribution({
+          accessDeclaration: {
+            key: 'party.registry.customers-page.open',
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'counterparties', level: 'basic' },
+            risk: 'sensitive',
+            selectors: [],
+          },
+          componentKey: 'party.registry.page-customers',
+          contributionKey: CUSTOMERS_PAGE_KEY,
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'protected' },
+            entrypointKey: CUSTOMERS_PAGE_KEY,
+            moduleKey: 'party.registry',
+            role: 'page',
+            scope: 'tenant',
+          },
+          expose: './PageCustomers',
+          routePath: '/prodej/zakaznici',
+        }),
+        pageContribution({
+          accessDeclaration: {
+            key: 'party.registry.party-identity-page.open',
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'party-identity', level: 'basic' },
+            risk: 'sensitive',
+            selectors: [],
+          },
+          componentKey: 'party.registry.page-party-identity',
+          contributionKey: partyIdentityPageKey,
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'protected' },
+            entrypointKey: partyIdentityPageKey,
+            moduleKey: 'party.registry',
+            role: 'page',
+            scope: 'tenant',
+          },
+          expose: './PagePartyIdentity',
+          recordTarget: { idParameter: 'partyId', resourceType: 'party.registry.party' },
+          routePath: '/prodej/strany/:partyId',
         }),
         // </generated-module-shell-pages>
       ],
@@ -387,6 +533,20 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
             role: 'search',
             scope: 'tenant',
           },
+          presentation: {
+            family: companiesFamily,
+            group: counterpartyGroup,
+            record: {
+              pageKey: customerDetailPageKey,
+              selector: {
+                idEncoding: 'native',
+                idFormat: 'uuid',
+                kind: 'path',
+                parameterName: 'id',
+              },
+            },
+            scope: 'company',
+          },
           searchKey: 'party.registry.counterparties',
         }),
         searchContribution({
@@ -405,6 +565,20 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
             entrypointKey: 'party.registry.search.parties',
             moduleKey: 'party.registry',
             role: 'search',
+            scope: 'tenant',
+          },
+          presentation: {
+            family: peopleFamily,
+            group: partyGroup,
+            record: {
+              pageKey: partyIdentityPageKey,
+              selector: {
+                idEncoding: 'native',
+                idFormat: 'uuid',
+                kind: 'path',
+                parameterName: 'partyId',
+              },
+            },
             scope: 'tenant',
           },
           searchKey: 'party.registry.parties',
@@ -501,6 +675,8 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
         sourceCounterpartyAdmissionRead,
         duplicateCandidateDetailRead,
         partyMatchDecisionRead,
+        // Create recovery returns a source-created result only through its exact receipt and current Privacy.
+        partyCommandResultRead,
         partyMatchRead,
         partyCorrectionRead,
       ].map(({ descriptor }) => ({
@@ -618,10 +794,12 @@ export const partyRegistryRuntimeDeclaration: VerticalRuntimeRegistrationInput =
   ],
   reads: [
     duplicateCandidateDetailRead,
+    partyCommandResultRead,
     partyCorrectionRead,
     partyMatchDecisionRead,
     partyMatchRead,
     // <generated-module-registration-reads>
+    crmClientIntakeReviewRead,
     counterpartyMigrationCorrelationRead,
     counterpartyOrganizationIcoFactsRead,
     guestPartyResolutionRead,

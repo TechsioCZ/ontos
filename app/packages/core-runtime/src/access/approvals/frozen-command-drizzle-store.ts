@@ -7,6 +7,7 @@ import { CommandDigestSchema } from '../ids.ts';
 import { isDatabaseIntegrityRefusal, isDatabaseUnavailableFailure } from '../../database/driver-failure.ts';
 import { isPostgresUniqueViolation } from '../../database/postgres-failure.ts';
 import { CoreDatabase } from '../../db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../db/database-identities.ts';
 import { accessFrozenCommands } from '../../db/schema.ts';
 import { installOperationalScope } from '../../db/scoped-transaction.ts';
 import type { CoreTransaction } from '../../db/types.ts';
@@ -92,11 +93,13 @@ const decodeRow = (row: {
 };
 
 /** The live PostgreSQL repository, scoped afresh on every call (O66). */
-const appendInTransaction: FrozenCommandStore['appendInTransaction'] = Effect.fn('frozenCommands.appendInTransaction')(
-  function* appendFrozenInTransaction(scope, record, transaction) {
+export const makeDrizzleFrozenCommandStore = (database: FrozenCommandDatabase): FrozenCommandStore => {
+  const appendInTransaction: FrozenCommandStore['appendInTransaction'] = Effect.fn(
+    'frozenCommands.appendInTransaction',
+  )(function* appendFrozenInTransaction(scope, record, transaction) {
     yield* checkScope(scope, record);
     yield* checked(record);
-    yield* installOperationalScope(transaction, scope).pipe(
+    yield* installOperationalScope(transaction, scope, database.enrollment).pipe(
       Effect.catchTag('OperationContextUnavailable', () =>
         Effect.fail(unavailable('The tenant scope could not be installed')),
       ),
@@ -116,43 +119,39 @@ const appendInTransaction: FrozenCommandStore['appendInTransaction'] = Effect.fn
         Effect.asVoid,
         Effect.catchTag('EffectDrizzleQueryError', (failure) => Effect.fail(sqlFailure(failure))),
       );
-  },
-);
+  });
 
-const loadInTransaction = Effect.fn('frozenCommands.loadInTransaction')(function* loadInTransaction(
-  transaction: CoreTransaction,
-  scope: OperationalScope,
-  input: Parameters<FrozenCommandStore['load']>[1],
-) {
-  yield* installOperationalScope(transaction, scope).pipe(
-    Effect.catchTag('OperationContextUnavailable', () =>
-      Effect.fail(unavailable('The tenant scope could not be installed')),
-    ),
-  );
-  const [row] = yield* transaction
-    .select({
-      actionKey: accessFrozenCommands.actionKey,
-      capabilityKey: accessFrozenCommands.capabilityKey,
-      commandDigest: accessFrozenCommands.commandDigest,
-      commandJson: accessFrozenCommands.commandJson,
-      createdAt: accessFrozenCommands.createdAt,
-      proposalId: accessFrozenCommands.proposalId,
-      scopeId: accessFrozenCommands.scopeId,
-      tenantId: accessFrozenCommands.tenantId,
-    })
-    .from(accessFrozenCommands)
-    .where(
-      and(
-        eq(accessFrozenCommands.tenantId, scope.tenantId),
-        eq(accessFrozenCommands.scopeId, input.scopeId),
-        eq(accessFrozenCommands.proposalId, input.proposalId),
+  const loadInTransaction = Effect.fn('frozenCommands.loadInTransaction')(function* loadInTransaction(
+    transaction: CoreTransaction,
+    scope: OperationalScope,
+    input: Parameters<FrozenCommandStore['load']>[1],
+  ) {
+    yield* installOperationalScope(transaction, scope, database.enrollment).pipe(
+      Effect.catchTag('OperationContextUnavailable', () =>
+        Effect.fail(unavailable('The tenant scope could not be installed')),
       ),
     );
-  return row === undefined ? Option.none<FrozenCommandRecord>() : Option.some(yield* decodeRow(row));
-});
-
-/** The live PostgreSQL repository, scoped afresh on every call (O66). */
-export const makeDrizzleFrozenCommandStore = (database: FrozenCommandDatabase): FrozenCommandStore => {
+    const [row] = yield* transaction
+      .select({
+        actionKey: accessFrozenCommands.actionKey,
+        capabilityKey: accessFrozenCommands.capabilityKey,
+        commandDigest: accessFrozenCommands.commandDigest,
+        commandJson: accessFrozenCommands.commandJson,
+        createdAt: accessFrozenCommands.createdAt,
+        proposalId: accessFrozenCommands.proposalId,
+        scopeId: accessFrozenCommands.scopeId,
+        tenantId: accessFrozenCommands.tenantId,
+      })
+      .from(accessFrozenCommands)
+      .where(
+        and(
+          eq(accessFrozenCommands.tenantId, scope.tenantId),
+          eq(accessFrozenCommands.scopeId, input.scopeId),
+          eq(accessFrozenCommands.proposalId, input.proposalId),
+        ),
+      );
+    return row === undefined ? Option.none<FrozenCommandRecord>() : Option.some(yield* decodeRow(row));
+  });
   const append: FrozenCommandStore['append'] = (scope, record) =>
     database.executor
       .transaction((transaction) => appendInTransaction(scope, record, transaction))
@@ -171,10 +170,12 @@ export const makeDrizzleFrozenCommandStore = (database: FrozenCommandDatabase): 
 };
 
 /** The frozen-command repository over the process's Core pool; every call names its request scope. */
-export const FrozenCommandsLive: Layer.Layer<FrozenCommands, never, CoreDatabase> = Layer.effect(
-  FrozenCommands,
-  Effect.gen(function* frozenCommandsLayer() {
-    const database = yield* CoreDatabase;
-    return makeDrizzleFrozenCommandStore(database);
-  }),
-);
+export const FrozenCommandsLive: Layer.Layer<FrozenCommands, never, CoreDatabase | DatabaseIdentityEnrollmentContext> =
+  Layer.effect(
+    FrozenCommands,
+    Effect.gen(function* frozenCommandsLayer() {
+      const database = yield* CoreDatabase;
+      const enrollment = yield* DatabaseIdentityEnrollmentContext;
+      return makeDrizzleFrozenCommandStore({ enrollment, executor: database.executor });
+    }),
+  );

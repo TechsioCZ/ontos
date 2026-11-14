@@ -9,6 +9,7 @@ import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-co
 import { Context, Crypto, Effect, Layer, Schema } from 'effect';
 import { commerceSourceDelegationSubject } from './source-delegation-subject.ts';
 import { CommerceSourceProcessingRejected } from './source-processing-rejected.ts';
+import { commerceCustomerContextEvidenceCall } from '../declared-evidence-calls.ts';
 
 export { CommerceSourceProcessingRejected } from './source-processing-rejected.ts';
 
@@ -52,9 +53,11 @@ export const commerceSourceProcessingEligibilityLive = Layer.effect(
               ),
             ),
           );
+          // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
           const response = yield* acquireDelegatedGatewayContext(
             {
               audience: 'privacy',
+              callingAppId: 'commerce-customer-context',
               legalEntityScope: 'subject',
               requestCorrelation: scope.correlationId,
               subject: commerceSourceDelegationSubject(
@@ -72,6 +75,7 @@ export const commerceSourceProcessingEligibilityLive = Layer.effect(
                 compositionRevision: issued.compositionRevision,
               }),
             ),
+            commerceCustomerContextEvidenceCall.sourceProcessingEligibility,
             Effect.mapError((cause) =>
               Object.defineProperty(
                 new CommerceSourceProcessingRejected({

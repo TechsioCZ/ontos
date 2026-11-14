@@ -42,9 +42,12 @@ import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
-import { partyRegistryManifest } from '../../vertical.manifest.ts';
-import { partyRegistryBackendRegistration, partyRegistryRuntimeManifest } from '../../vertical.runtime-declaration.ts';
-import { outboxWorkerHandlerLayers } from '../../src/worker-host/layer.ts';
+import {
+  partyRegistryBackendRegistration,
+  partyRegistryOriginatorActions,
+  partyRegistryRuntimeManifest,
+} from '../../vertical.runtime-declaration.ts';
+import { outboxWorkerDatabaseIdentityEnrollmentLive, outboxWorkerHandlerLayers } from '../../src/worker-host/layer.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
 import {
   ExecutePrivacyMeasureWorkerRejected,
@@ -272,9 +275,10 @@ const run = Effect.scoped(
       Layer.provide(outboxWorkerHandlerLayers.searchIngestion),
       Layer.provide(outboxWorkerHandlerLayers.searchProjectionStore),
       Layer.provide(outboxWorkerHandlerLayers.searchWorkerSnapshot),
+      Layer.provide(outboxWorkerHandlerLayers.searchIngestionRegistry),
       Layer.provide(OutboxRepositoryLive),
       Layer.provide(CorePersistenceLive),
-      Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+      Layer.provide(Layer.mergeAll(DatabaseConfigLive, outboxWorkerDatabaseIdentityEnrollmentLive, NodeCrypto.layer)),
     );
     const context = yield* Layer.build(runtime);
     const actualRuntime = Context.get(context, OutboxRuntime);
@@ -427,7 +431,7 @@ const run = Effect.scoped(
 const program = process.argv.includes('--describe')
   ? Schema.decodeUnknownEffect(workerMessageSchema)({
       marker: ultramodernApiMarker,
-      originatorActions: partyRegistryManifest.originatorActions,
+      originatorActions: partyRegistryOriginatorActions,
       subscriptions,
       runtime: runtimeDescription,
     }).pipe(Effect.flatMap(writeWorkerMessage))

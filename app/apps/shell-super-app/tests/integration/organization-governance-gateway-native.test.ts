@@ -27,6 +27,7 @@ import {
   ActionRuntime,
   makeReadRuntimeLive,
   makeActionRuntimeLive,
+  makeDatabaseIdentityEnrollmentLive,
 } from '@app/core-runtime';
 import type { GatewayAssertionRedemptionInput } from '@app/core-runtime';
 import { CoreDatabase, makeCoreDatabase } from '@app/core-runtime/db/client';
@@ -84,7 +85,7 @@ import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.t
 import { makeAuthDatabase, AuthDatabase } from '../../api/auth/db/client.ts';
 import { issueDelegatedGatewayContextAssertion } from '../../api/auth/gateway-delegation-issuer.ts';
 import { GatewayModuleBindingSchema } from '../../api/auth/gateway-delegation-policy.ts';
-import { GatewayDelegationVerificationLive } from '../../api/auth/gateway-delegation-verification.ts';
+import { makeGatewayDelegationVerificationLayer } from '../../api/auth/gateway-delegation-verification.ts';
 import { admitOrganizationGovernanceRead } from '../../api/auth/gateway-organization-governance-evidence.ts';
 import { GatewayOriginatorEvidenceLive } from '../../api/auth/gateway-originator-evidence.service.ts';
 import {
@@ -96,7 +97,10 @@ import {
   ShellInstalledModuleCatalog,
 } from '../../api/modules/installed-module-catalog.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { enrolledModuleCredentials } from '../support/module-credential-enrolment.ts';
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
 
 const namespaceId = 'native.organization.staff';
 const privacyKey = 'native-organization-privacy-module';
@@ -310,7 +314,10 @@ it.live(
         });
         const admin = yield* makeCoreDatabase(isolated.connections.admin);
         const runtime = yield* makeCoreDatabase(isolated.connections.runtime);
-        const auth = yield* makeAuthDatabase({ connectionString: isolated.connections.runtime.connectionString });
+        const auth = yield* makeAuthDatabase({
+          connectionString: isolated.connections.runtime.connectionString,
+          expectedRole: isolated.connections.runtime.expectedRole,
+        });
         const tenantId = yield* crypto.randomUUIDv4();
         const legalEntityId = yield* crypto.randomUUIDv4();
         const humans = yield* Effect.forEach(['granted', 'ungranted'], (name) =>
@@ -370,12 +377,12 @@ it.live(
         const spiceDb = yield* loadSpiceDbConfig();
         for (const human of humans) {
           yield* grantTestTenantRoleAccess({
-            adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
             assignmentScope: 'companies',
             holders: [{ capabilityKeys: human.name === 'granted' ? [capability] : [], principalId: human.principalId }],
             legalEntityIds: [legalEntityId],
             spiceDb,
             tenantId,
+            writerConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
           });
         }
         yield* admin.executor.execute(
@@ -419,7 +426,12 @@ it.live(
             }),
             loadConfig: Effect.succeed(signing),
           }).pipe(
-            Layer.provide(Layer.succeed(GatewayScopeGrantRegistrar, makeGatewayScopeGrantRegistrar(issuerClient))),
+            Layer.provide(
+              Layer.succeed(
+                GatewayScopeGrantRegistrar,
+                makeGatewayScopeGrantRegistrar(issuerClient, SHELL_DATABASE_IDENTITY_ENROLLMENT),
+              ),
+            ),
           );
         const signer = signerForRevision(snapshot.composition.revision);
         const issuerService = Context.get(yield* Layer.build(signer), GatewayIssuer);
@@ -430,7 +442,10 @@ it.live(
         );
         const gateServices = yield* Layer.build(enforcement);
         const gate = Context.get(gateServices, AccessDecisionGate);
-        const scopes = yield* makeOperationalScopeResolver(makeOperationalScopeRepository(runtime), gate);
+        const scopes = yield* makeOperationalScopeResolver(
+          makeOperationalScopeRepository(runtime, SHELL_DATABASE_IDENTITY_ENROLLMENT),
+          gate,
+        );
         const namespace = yield* Schema.decodeUnknownEffect(AuthenticationNamespaceRegistrationSchema)({
           allowedAudiences: ['privacy', 'symmy-integration'],
           authenticationNamespaceId: namespaceId,
@@ -444,20 +459,6 @@ it.live(
         const installed = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
         const config = ConfigProvider.fromUnknown({
           ONTOS_GATEWAY_ISSUER: issuer,
-          ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-            {
-              compositionRevision: snapshot.composition.revision,
-              providerKeyId: privacyKey,
-              sourceAppId: 'privacy',
-              sourceBuildMarker: 'privacy-build',
-            },
-            {
-              compositionRevision: snapshot.composition.revision,
-              providerKeyId: symmyKey,
-              sourceAppId: 'symmy-integration',
-              sourceBuildMarker: 'symmy-integration-build',
-            },
-          ]),
           ONTOS_GATEWAY_PUBLIC_JWKS: publicKeys,
         });
         const services = Layer.mergeAll(
@@ -470,6 +471,19 @@ it.live(
           Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
           Layer.succeed(OperationalScopeResolver, scopes),
           Layer.succeed(AccessDecisionGate, gate),
+          // Both module keys were issued by a host of exactly this release; the Shell derives their bindings from that.
+          enrolledModuleCredentials([
+            {
+              appId: 'privacy',
+              providerKeyId: privacyKey,
+              release: { buildMarker: 'privacy-build', compositionRevision: snapshot.composition.revision },
+            },
+            {
+              appId: 'symmy-integration',
+              providerKeyId: symmyKey,
+              release: { buildMarker: 'symmy-integration-build', compositionRevision: snapshot.composition.revision },
+            },
+          ]),
         );
         const receive = (token: string, audience: 'privacy' | 'symmy-integration') =>
           bindGatewayPrincipalVerifier(audience, { appId: audience, buildMarker: `${audience}-build` })
@@ -498,7 +512,7 @@ it.live(
             });
           }).pipe(
             Effect.provide(signer),
-            Effect.provide(GatewayDelegationVerificationLive),
+            Effect.provide(makeGatewayDelegationVerificationLayer(Effect.succeed(signing))),
             Effect.provide(GatewayOriginatorEvidenceLive),
             Effect.provide(services),
             Effect.provideService(ConfigProvider.ConfigProvider, config),
@@ -604,7 +618,7 @@ it.live(
               installed: unpinnedInstalled,
               subject: { ...subject, sourceAssertion: Redacted.make(unpinnedSource.token) },
             }).pipe(
-              Effect.provide(GatewayDelegationVerificationLive),
+              Effect.provide(makeGatewayDelegationVerificationLayer(Effect.succeed(signing))),
               Effect.provide(services),
               Effect.provideService(ConfigProvider.ConfigProvider, config),
               Effect.provideService(AuthenticationNamespaceRegistry, registry),
@@ -647,13 +661,15 @@ it.live(
             );
           };
           const wireConfiguration = ConfigProvider.fromUnknown({
-            ONTOS_GATEWAY_MODULE_API_KEY: privacyKey,
             ONTOS_SHELL_GATEWAY_BASE_URL: 'https://native-organization-shell.example/shell-super-app-api',
           });
+          // Privacy's own module key, handed over the way the host does.
+          yield* holdTestModuleCredentials({ privacy: privacyKey });
           const acquireRead = (scope: typeof sourceScope) =>
             acquireDelegatedGatewayContext(
               {
                 audience: 'symmy-integration',
+                callingAppId: 'privacy',
                 legalEntityScope: 'subject',
                 requestCorrelation: 'native-v6-shared',
                 subject: { _tag: 'OrganizationGovernanceRead', requestHash, scope },
@@ -880,5 +896,8 @@ it.live(
           expect(Exit.isFailure(yield* Effect.exit(issue(subject)))).toBe(true);
         }
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(
+      Effect.provide(makeDatabaseIdentityEnrollmentLive(SHELL_DATABASE_IDENTITY_ENROLLMENT)),
+      Effect.provide(NodeServices.layer),
+    ),
 );

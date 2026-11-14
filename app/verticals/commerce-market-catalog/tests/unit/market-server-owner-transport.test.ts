@@ -6,10 +6,11 @@ import {
   CurrentStorefrontApplicationRequestSchema,
   CurrentStorefrontApplicationResponseSchema,
 } from '@app/storefront-registry-contracts';
-import { ConfigProvider, Crypto, DateTime, Effect, Predicate, Redacted, Schema } from 'effect';
+import { ConfigProvider, Crypto, DateTime, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { makeServerCurrentStorefrontApplicationAuthority } from '../../src/integrations/current-storefront-application.ts';
 import { makeServerMarketSubjectRestrictionsReader } from '../../src/integrations/market-subject-restrictions.ts';
 
@@ -18,9 +19,13 @@ const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
 const requestCorrelation = 'market-server-owner-transport';
 const configuration = ConfigProvider.fromUnknown({
-  ONTOS_GATEWAY_MODULE_API_KEY: 'market-module-api-key',
   ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
 });
+/** The gateway settings plus this module's key, handed over the way the host does. */
+const ownerConfiguration = Layer.merge(
+  ConfigProvider.layer(configuration),
+  Layer.effectDiscard(holdTestModuleCredentials({ 'commerce-market-catalog': 'market-module-api-key' })),
+);
 const sourceAssertion = 'verified-original-administrator-source-proof';
 const sourceScope = {
   ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
@@ -147,10 +152,7 @@ describe('Commerce Market server owner transport', () => {
       });
       const evidence = yield* authority
         .validateCurrent(storefrontRequest, requestCorrelation)
-        .pipe(
-          Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-          Effect.provide(ConfigProvider.layer(configuration)),
-        );
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(ownerConfiguration));
 
       expect(evidence).toEqual({
         nextApplicabilityBoundary: '2026-11-01T00:00:00.000Z',
@@ -290,11 +292,7 @@ describe('Commerce Market server owner transport', () => {
       };
       const failure = yield* makeServerCurrentStorefrontApplicationAuthority({ compositionRevision, crypto, scope })
         .validateCurrent(storefrontRequest, requestCorrelation)
-        .pipe(
-          Effect.flip,
-          Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-          Effect.provide(ConfigProvider.layer(configuration)),
-        );
+        .pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(ownerConfiguration));
       expect(Predicate.isTagged(failure, 'StorefrontApplicationValidationUnavailable')).toBe(true);
       expect(requests).toHaveLength(2);
       expect(requests[1]?.headers.get('authorization')).toBe('Bearer original-actor-destination-assertion');
@@ -348,10 +346,7 @@ describe('Commerce Market server owner transport', () => {
         });
         const attempt = authority
           .validateCurrent(storefrontRequest, requestCorrelation)
-          .pipe(
-            Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-            Effect.provide(ConfigProvider.layer(configuration)),
-          );
+          .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(ownerConfiguration));
         yield* attempt;
         yield* attempt;
         expect(exchanges).toHaveLength(2);
@@ -391,11 +386,7 @@ describe('Commerce Market server owner transport', () => {
       };
       const failure = yield* makeServerCurrentStorefrontApplicationAuthority({ compositionRevision, crypto, scope })
         .validateCurrent(storefrontRequest, requestCorrelation)
-        .pipe(
-          Effect.flip,
-          Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-          Effect.provide(ConfigProvider.layer(configuration)),
-        );
+        .pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(ownerConfiguration));
       expect(Predicate.isTagged(failure, 'StorefrontApplicationValidationUnavailable')).toBe(true);
       expect(requests).toHaveLength(1);
       expect(requests[0]?.url).toBe('https://shell.example.test/shell-super-app-api/auth/delegated/gateway-context');
@@ -431,10 +422,7 @@ describe('Commerce Market server owner transport', () => {
         });
         const result = yield* reader
           .current(subject, requestCorrelation)
-          .pipe(
-            Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-            Effect.provide(ConfigProvider.layer(configuration)),
-          );
+          .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(ownerConfiguration));
 
         expect(result).toMatchObject({
           allowedChannels: ['B2B'],
@@ -520,11 +508,7 @@ describe('Commerce Market server owner transport', () => {
       };
       const failure = yield* makeServerMarketSubjectRestrictionsReader({ compositionRevision, crypto, scope })
         .current(subject, requestCorrelation)
-        .pipe(
-          Effect.flip,
-          Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-          Effect.provide(ConfigProvider.layer(configuration)),
-        );
+        .pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(ownerConfiguration));
       expect(Predicate.isTagged(failure, 'MarketSubjectRestrictionsUnavailable')).toBe(true);
       expect(requests).toHaveLength(1);
       expect(requests[0]?.url).toBe('https://shell.example.test/shell-super-app-api/auth/delegated/gateway-context');
@@ -551,22 +535,14 @@ describe('Commerce Market server owner transport', () => {
         scope,
       })
         .validateCurrent(storefrontRequest, requestCorrelation)
-        .pipe(
-          Effect.flip,
-          Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-          Effect.provide(ConfigProvider.layer(configuration)),
-        );
+        .pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(ownerConfiguration));
       const restrictionsFailure = yield* makeServerMarketSubjectRestrictionsReader({
         compositionRevision,
         crypto,
         scope,
       })
         .current(subject, requestCorrelation)
-        .pipe(
-          Effect.flip,
-          Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-          Effect.provide(ConfigProvider.layer(configuration)),
-        );
+        .pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(ownerConfiguration));
 
       expect(Predicate.isTagged(storefrontFailure, 'StorefrontApplicationValidationUnavailable')).toBe(true);
       expect(Predicate.isTagged(restrictionsFailure, 'MarketSubjectRestrictionsUnavailable')).toBe(true);

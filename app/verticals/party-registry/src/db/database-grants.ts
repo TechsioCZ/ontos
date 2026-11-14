@@ -1,4 +1,5 @@
-import { ACCESS_DECISION_REQUEST_GRANTS, PARTY_REGISTRY_REQUEST_IDENTITY, TRUST_ROUTINES } from '@app/core-runtime';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
+import { ACCESS_DECISION_REQUEST_GRANTS, trustRoutinesForIdentities } from '@app/core-runtime';
 import type { DatabaseRoleGrants, DatabaseTableGrant } from '@app/core-runtime';
 
 /**
@@ -120,6 +121,20 @@ export const PARTY_REGISTRY_REQUEST_DATABASE_GRANTS: DatabaseRoleGrants = {
         privileges: ['select', 'insert', 'update', 'delete'] as const,
         reason: 'Party Registry engagement profile persistence service owns this table under gateway-scoped RLS',
       })),
+      // Least privilege for the assertion history path: the identity registry is append-only beside the
+      // current store, and the archive is owner-written history the runtime may only read.
+      {
+        table: 'party.party_fact_assertion_identities',
+        privileges: ['select', 'insert'] as const,
+        reason:
+          'Party fact assertion inserts register their stable identity through the owner invoker trigger, which appends the registry row as the request role under gateway-scoped RLS',
+      },
+      {
+        table: 'party.party_historical_name_assertions',
+        privileges: ['select'] as const,
+        reason:
+          'Party Registry reads archived historical name assertions under gateway-scoped RLS; only the migration owner writes the archive',
+      },
       {
         table: 'contacts.gateway_assertion_redemptions',
         privileges: ['select', 'insert'],
@@ -214,7 +229,7 @@ export const PARTY_REGISTRY_REQUEST_DATABASE_GRANTS: DatabaseRoleGrants = {
     },
   ],
   routines: [
-    ...TRUST_ROUTINES.flatMap(({ executableBy, signature }) =>
+    ...trustRoutinesForIdentities([PARTY_REGISTRY_REQUEST_IDENTITY]).flatMap(({ executableBy, signature }) =>
       executableBy.includes(PARTY_REGISTRY_REQUEST_IDENTITY.role) ? [signature] : [],
     ),
     PRUNE_EXPIRED_GATEWAY_ASSERTION_REDEMPTIONS_SIGNATURE,

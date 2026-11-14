@@ -1,25 +1,31 @@
 import { isOwnerPermissionContract } from '../permissions/owner-permission-contract.ts';
 import { Array as EffectArray, Effect, Schema, Predicate } from 'effect';
+import type { Option } from 'effect';
 import { declaredAccessCarrier } from '../authorization/access-declaration.ts';
 import { fieldWriteGroupSchemaIssue } from '../authorization/field-group-paths.ts';
 import type {
+  AccessActor,
+  AccessActorInput,
   AccessAmount,
   AccessDeclaration,
   AccessDeclarationInput,
   AccessFieldGroup,
   AccessFieldGroupInput,
   AccessTarget,
-  AccessActor,
-  AccessActorInput,
   AccessWorkload,
   AccessWorkloadInput,
 } from '../authorization/access-declaration.ts';
-import type { ActionHandlerContext, CommittedActionDomainRejection } from './context.ts';
-import { ActionPayloadValidationError, ActionResultValidationError } from './errors.ts';
-import type { ActionCollectorError, ActionCoreError } from './errors.ts';
+import type { OwnerAccessFacts } from '../access/enforcement/owner-overlay.ts';
+import type {
+  ActionHandlerContext,
+  ActionServicePreparationContext,
+  CommittedActionDomainRejection,
+} from './context.ts';
+import { ActionPermissionCheckError, ActionResultValidationError } from './errors.ts';
+import type { ActionCollectorError, ActionCoreError, ActionPayloadValidationError } from './errors.ts';
 import type { ActionAccessEvidencePolicy, DomainEventContractMap } from './events.ts';
 import { isActionPolicy } from './policy.ts';
-import type { ActionPolicy } from './policy.ts';
+import type { ActionPolicy, ActionPreparationPolicyEvaluator } from './policy.ts';
 import type { ModuleEntrypointDescriptor } from '../modules/module-entrypoint.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { OperationalScope } from '../operations/context.ts';
@@ -29,22 +35,36 @@ import type { OperationContextUnavailable } from '../operations/errors.ts';
 import type { ResourceAccessTarget } from '../permissions/context-access.ts';
 import type { OwnerPermissionAccessTarget, OwnerPermissionContract } from '../permissions/owner-permission-contract.ts';
 import type { TenantPermissionKey } from '../permissions/context-permissions.ts';
-import type { OwnerAccessFacts } from '../access/enforcement/owner-overlay.ts';
+import type { ActionAccessTargetsResolver, ActionTargetSetAdmission } from './target-set.ts';
+import { actionGoverningReadIssue } from './governing-read.ts';
+import type { ActionGoverningReadDeclaration } from './governing-read.ts';
+import { resolveGovernedAmount } from '../access/approvals/governed-amount.ts';
+import { writtenFieldPaths } from './field-write-authorization.ts';
+import { decodeActionPayload, preserveFailureCause } from './payload-codec.ts';
+import type { originalActionPreparationFactory } from './preparation-observation.ts';
+
+export { decodeActionPayload } from './payload-codec.ts';
+
+export type { ActionAccessTargetsResolver, ActionTargetSetAdmission } from './target-set.ts';
 
 const actionRegistration: unique symbol = Symbol('@app/core-runtime/actions/registration');
 const actionResourcePermissionDeclaration: unique symbol = Symbol('@app/core-runtime/actions/resource-permission');
 const actionOwnerPermissionDeclaration: unique symbol = Symbol('@app/core-runtime/actions/owner-permissions');
+const actionAccessTargetsDeclaration: unique symbol = Symbol('@app/core-runtime/actions/access-targets');
 
 class ActionPrivateStorage<Value> {
   declare readonly [actionRegistration]?: true;
   declare readonly [actionResourcePermissionDeclaration]?: true;
   declare readonly [actionOwnerPermissionDeclaration]?: true;
+  declare readonly [actionAccessTargetsDeclaration]?: true;
   declare readonly descriptor?: unknown;
-  declare readonly kind?: 'owner_permission' | 'resource';
+  declare readonly kind?: 'owner_permission' | 'record_set' | 'resource';
   readonly #value: Value;
+  readonly #commandReader: RegisteredActionCommandReader | undefined;
 
-  constructor(value: Value) {
+  constructor(value: Value, commandReader?: RegisteredActionCommandReader) {
     this.#value = value;
+    this.#commandReader = commandReader;
   }
 
   static create<Value, PublicFields extends object>(
@@ -58,6 +78,20 @@ class ActionPrivateStorage<Value> {
 
   static getValue<Value>(storage: ActionPrivateStorage<Value>): Value {
     return storage.#value;
+  }
+
+  static createRegistration<Value, PublicFields extends object>(input: {
+    readonly commandReader: RegisteredActionCommandReader;
+    readonly publicFields: PublicFields;
+    readonly value: Value;
+  }): ActionPrivateStorage<Value> & Readonly<PublicFields> {
+    const storage = Object.assign(new ActionPrivateStorage(input.value, input.commandReader), input.publicFields);
+    Object.freeze(storage);
+    return storage;
+  }
+
+  static commandReaderOf(storage: AnyActionRegistration): RegisteredActionCommandReader | undefined {
+    return Schema.is(Schema.instanceOf(ActionPrivateStorage))(storage) ? storage.#commandReader : undefined;
   }
 }
 
@@ -94,6 +128,28 @@ export type ActionDeniedAuditEvidenceResolver<Payload> = (
  * scope (O9, O27). The module is the record's own owner, never the capability key's prefix.
  */
 export type ActionAccessTargetResolver<Payload> = (payload: Payload, scope: OperationalScope) => AccessTarget;
+export type ActionAccessTargetsDeclaration<Payload> = ActionPrivateStorage<ActionAccessTargetsResolver<Payload>> & {
+  readonly [actionAccessTargetsDeclaration]: true;
+  readonly kind: 'record_set';
+};
+
+/** Internal Core lookup; the authored callback is not exposed on the descriptor. */
+export const getActionAccessTargetsResolver = <Payload>(
+  declaration: ActionAccessTargetsDeclaration<Payload> | undefined,
+): ActionAccessTargetsResolver<Payload> | undefined =>
+  declaration === undefined ? undefined : ActionPrivateStorage.getValue(declaration);
+
+const isActionAccessTargetsDeclaration = Schema.is(
+  Schema.instanceOf(ActionPrivateStorage).check(
+    Schema.makeFilter((declaration) =>
+      declaration[actionAccessTargetsDeclaration] === true &&
+      declaration.kind === 'record_set' &&
+      Object.isFrozen(declaration)
+        ? undefined
+        : 'Expected an immutable Action target-set declaration',
+    ),
+  ),
+);
 /**
  * The money value an amount ceiling applies to when `amountInput` names a server-derived total
  * (O18). A composite total is computed server-side and never taken from the client.
@@ -141,6 +197,19 @@ const ActionDefinitionInvariantError = Schema.TaggedError<Error>()('ActionDefini
 
 const failActionDefinition = (message: string): never => {
   throw new ActionDefinitionInvariantError({ message });
+};
+
+/** Declares complete owned-record target resolution, not a grant or an execution alias. */
+export const defineActionAccessTargets = <Payload>(
+  resolver: (payload: Payload, scope: OperationalScope) => readonly AccessTarget[],
+): ActionAccessTargetsDeclaration<Payload> => {
+  if (!Predicate.isFunction(resolver)) {
+    return failActionDefinition('Action accessTargets resolver must be a function');
+  }
+  return ActionPrivateStorage.create(resolver, {
+    [actionAccessTargetsDeclaration]: true as const,
+    kind: 'record_set' as const,
+  });
 };
 
 /** Declares a private resolver for an additional Resource permission check. */
@@ -235,6 +304,8 @@ export interface ActionDescriptor<
   readonly accessEvidencePolicy: ActionAccessEvidencePolicy;
   /** Sensitive payload field groups written by this Action, each a `field_write` declaration (O58). */
   readonly accessFieldGroups?: Carriers['accessFieldGroups'];
+  /** The independent published record Read retained by forward-version approval commands. */
+  readonly accessGoverningRead?: ActionGoverningReadDeclaration;
   /**
    * The owner-local facts this Action hands to the owner overlay (O70), e.g. the counterparty whose
    * own grant the owner rule checks. They grant nothing and never reach the decision engine.
@@ -253,6 +324,13 @@ export interface ActionDescriptor<
    * scope-wide Action has no target and the gate never asks for one.
    */
   readonly accessTarget?: ActionAccessTargetResolver<PayloadSchema['Type']>;
+  /**
+   * Every owned record changed by this one invocation, derived from decoded input and trusted company
+   * scope. Mutually exclusive with accessTarget. Core requires every record and applicable field
+   * group to pass. Durable proposals/mandates for more than one target are not yet supported and
+   * fail closed; an exact singleton retains the existing scalar approval contract.
+   */
+  readonly accessTargets?: ActionAccessTargetsDeclaration<PayloadSchema['Type']>;
   /**
    * Marks an Action only trusted machine workloads may run (O29, O59). Beside `accessDeclaration`
    * it means both paths exist and stay disjoint: the workload path never admits humans and the
@@ -310,11 +388,33 @@ export type ActionHandler<
   Requirements
 >;
 
-export type ActionServiceFactory<Services, Requirements = never> = (
+export type ActionServiceFactory<Services, Requirements = never> = ((
   transaction: ScopedTransactionExecutor,
   scope: OperationalScope,
   compositionRevision: string,
-) => Effect.Effect<Services, OperationContextUnavailable, Requirements>;
+) => Effect.Effect<Services, OperationContextUnavailable, Requirements>) & {
+  /** Private test substitution provenance; never used for execution or authorization. */
+  readonly [originalActionPreparationFactory]?: ActionServiceFactory<Services, Requirements>;
+};
+
+/**
+ * Resolve remote facts outside SQL, then return an invocation-local service factory that reloads and
+ * compares its owner snapshot before any write. It cannot change the payload or Core authorization.
+ */
+export type ActionServicePreflight<Payload, Services, DomainError, Requirements = never> = (
+  payload: Payload,
+  context: ActionServicePreparationContext & {
+    readonly evaluatePolicy: ActionPreparationPolicyEvaluator<Payload, DomainError>;
+    readonly targetSetAdmission?: ActionTargetSetAdmission;
+  },
+) => Effect.Effect<ActionServiceFactory<Services, Requirements>, ActionCoreError | DomainError, Requirements>;
+
+export interface ActionServicePreparation<Payload, Result, Services, DomainError, Requirements = never> {
+  readonly onDecodedSuccess?: ActionDecodedSuccessHook<Result, Services, DomainError, Requirements>;
+  /** Exact descriptor Policy references evaluated through context.evaluatePolicy, never twice statically. */
+  readonly preparationPolicies?: readonly ActionPolicy<Payload, string>[];
+  readonly prepareServices: ActionServicePreflight<Payload, Services, DomainError, Requirements>;
+}
 
 /** Runs only for a decoded successful result inside the owning Action transaction. */
 export type ActionDecodedSuccessHook<Result, Services, DomainError, Requirements = never> = (
@@ -383,12 +483,13 @@ type ActionRegistrationPrivateValue<
   onDecodedSuccess?:
     | ActionDecodedSuccessHook<ResultSchema['Type'], Services, DomainErrorSchema['Type'], HandlerRequirements>
     | undefined,
-  onPostAttempt?: ActionPostAttemptHook<
-    PayloadSchema['Type'],
-    ResultSchema['Type'],
-    DomainErrorSchema['Type'],
-    HandlerRequirements
-  >,
+  onPostAttempt?:
+    | ActionPostAttemptHook<PayloadSchema['Type'], ResultSchema['Type'], DomainErrorSchema['Type'], HandlerRequirements>
+    | undefined,
+  prepareServices?:
+    | ActionServicePreflight<PayloadSchema['Type'], Services, DomainErrorSchema['Type'], HandlerRequirements>
+    | undefined,
+  preparationPolicies?: readonly ActionPolicy<PayloadSchema['Type'], string>[] | undefined,
 ];
 
 export type ActionRegistration<
@@ -466,6 +567,96 @@ export interface AnyActionRegistration {
   >;
 }
 
+/** Core-private command projection. It exposes no owner handler, service factory or requirements. */
+export interface RegisteredActionCommandReader {
+  readonly descriptor: AnyActionRegistration['descriptor'] & {
+    readonly accessGoverningRead?: ActionGoverningReadDeclaration;
+  };
+  readonly resolve: (
+    encodedPayload: Schema.Json,
+    scope: OperationalScope,
+  ) => Effect.Effect<
+    {
+      readonly amount: Option.Option<AccessAmount>;
+      readonly applicableFieldGroups: readonly AccessFieldGroup[];
+      readonly encodedPayload: Schema.Json;
+      readonly target: AccessTarget | undefined;
+      readonly targets: readonly AccessTarget[] | undefined;
+    },
+    ActionPayloadValidationError | ActionPermissionCheckError
+  >;
+}
+export const RegisteredActionCommandPayloadSchema = Schema.Struct({ payload: Schema.Json });
+
+/** Original registration identity is mandatory. A copied descriptor has no command reader. */
+export const getRegisteredActionCommandReader = (
+  registration: AnyActionRegistration,
+): RegisteredActionCommandReader | undefined => ActionPrivateStorage.commandReaderOf(registration);
+
+const makeRegisteredActionCommandReader = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Owner extends string,
+>(
+  descriptor: DeclaredActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
+): RegisteredActionCommandReader =>
+  Object.freeze({
+    descriptor,
+    resolve: Effect.fn('ActionDefinition.resolveRegisteredCommand')(function* resolveRegisteredCommand(
+      encodedPayload: Schema.Json,
+      scope: OperationalScope,
+    ) {
+      const payload = yield* decodeActionPayload(descriptor.payloadSchema, encodedPayload);
+      const amount = yield* resolveGovernedAmount(
+        payload,
+        scope,
+        descriptor.accessAmount,
+        descriptor.accessDeclaration,
+      );
+      const fields = (descriptor.accessFieldGroups ?? []).filter(
+        (group) => writtenFieldPaths(group, payload).length > 0,
+      );
+      const resolved = yield* Effect.try({
+        catch: (cause) =>
+          preserveFailureCause(
+            new ActionPermissionCheckError({
+              code: 'action_permission_check_failed',
+              reason: 'The original Action target facts could not be resolved',
+            }),
+            cause,
+          ),
+        try: () => ({
+          target: descriptor.accessTarget?.(payload, scope),
+          targets: getActionAccessTargetsResolver(descriptor.accessTargets)?.(payload, scope),
+        }),
+      });
+      const encoded = yield* Schema.encodeUnknownEffect(
+        Schema.make<Schema.ConstraintEncoder<unknown>>(descriptor.payloadSchema.ast),
+      )(payload).pipe(
+        Effect.flatMap((encodedValue) =>
+          Schema.decodeUnknownEffect(RegisteredActionCommandPayloadSchema)({ payload: encodedValue }),
+        ),
+        Effect.mapError((cause) =>
+          preserveFailureCause(
+            new ActionPermissionCheckError({
+              code: 'action_permission_check_failed',
+              reason: 'The original Action payload cannot be frozen as canonical JSON',
+            }),
+            cause,
+          ),
+        ),
+      );
+      return Object.freeze({
+        amount,
+        applicableFieldGroups: Object.freeze(fields),
+        encodedPayload: encoded.payload,
+        ...resolved,
+      });
+    }),
+  });
+
 export type ActionRequirements<Registration> =
   Registration extends ActionRegistration<
     Schema.ConstraintDecoder<unknown>,
@@ -484,9 +675,11 @@ export interface ActionDescriptorValidationInput<Policy> {
   readonly accessAmount?: unknown;
   readonly accessDeclaration?: AccessDeclarationInput;
   readonly accessFieldGroups?: readonly AccessFieldGroupInput[];
+  readonly accessGoverningRead?: ActionGoverningReadDeclaration;
   readonly accessOwnerFacts?: unknown;
   readonly accessReducesAuthority?: unknown;
   readonly accessTarget?: unknown;
+  readonly accessTargets?: unknown;
   readonly accessWorkload?: AccessWorkloadInput;
   readonly entrypoint: ModuleEntrypointDescriptor;
   readonly legalEntityPermission?: unknown;
@@ -555,6 +748,31 @@ const validateActionPolicies = <Policy>(
 };
 const derivedAmountInputPrefix = 'derived.';
 
+const validateActionTargetSetBinding = <Policy>(
+  descriptor: ActionDescriptorValidationInput<Policy>,
+  declaration: AccessDeclaration | undefined,
+): void => {
+  if (descriptor.accessTargets === undefined) {
+    return;
+  }
+  if (!isActionAccessTargetsDeclaration(descriptor.accessTargets) || descriptor.accessTarget !== undefined) {
+    return failActionDefinition(
+      'Action accessTargets must be a target-set declaration and cannot coexist with accessTarget',
+    );
+  }
+  if (
+    declaration?.kind !== 'action' ||
+    declaration.selectors.length === 0 ||
+    declaration.selectors.some((selector) => selector !== 'all') ||
+    descriptor.legalEntityScope !== 'required' ||
+    descriptor.accessReducesAuthority !== undefined
+  ) {
+    return failActionDefinition(
+      'Action accessTargets requires a record-scoped action declaration with supported selectors, required company scope and no authority-reduction exemption',
+    );
+  }
+};
+
 /**
  * The record target and the amount resolver are bound to the declaration they serve: a target exists
  * only for a record-scoped capability (Q2), and a derived amount only where the declaration names a
@@ -572,6 +790,7 @@ const validateActionAccessBinding = <Policy>(
   declaration: AccessDeclaration | undefined,
 ): void => {
   const { accessAmount, accessOwnerFacts, accessReducesAuthority, accessTarget } = descriptor;
+  validateActionTargetSetBinding(descriptor, declaration);
   if (accessTarget !== undefined && !Predicate.isFunction(accessTarget)) {
     return failActionDefinition('Action access target must be a resolver function');
   }
@@ -592,9 +811,11 @@ const validateActionAccessBinding = <Policy>(
     if (!Predicate.isFunction(accessOwnerFacts)) {
       return failActionDefinition('Action access owner facts must be a resolver function');
     }
-    if (declaration === undefined) {
+    // Facts serve a carrier the gate decides: the descriptor's own declaration, or its own workload. The overlay they
+    // feed can only refuse, so a workload's owner rule (an end customer's session, say) narrows and never widens.
+    if (declaration === undefined && descriptor.accessWorkload === undefined) {
       return failActionDefinition(
-        'Action accessOwnerFacts requires the descriptor to declare its own accessDeclaration',
+        'Action accessOwnerFacts requires the descriptor to declare its own accessDeclaration or accessWorkload',
       );
     }
   }
@@ -635,10 +856,84 @@ export const validateActionDescriptorInput = <Policy>(descriptor: ActionDescript
   // Decodes the declaration, its field groups and the workload marker against the entrypoint (O5).
   const carriers = declaredAccessCarrier(descriptor);
   validateActionAccessBinding(descriptor, carriers.accessDeclaration);
+  const readIssue = actionGoverningReadIssue(
+    descriptor.accessGoverningRead,
+    descriptor.owningModuleKey,
+    descriptor.legalEntityScope,
+    (carriers.accessDeclaration?.selectors.length ?? 0) > 0,
+  );
+  if (readIssue !== undefined) {
+    return failActionDefinition(readIssue);
+  }
   validateActionLegalEntityScope(descriptor);
   validateActionPolicies(descriptor, descriptor.policies);
 };
 
+const validatePreparationPolicies = <Payload>(
+  policies: readonly ActionPolicy<Payload, string>[] | undefined,
+  declared: readonly ActionPolicy<Payload, string>[],
+  hasPreparation: boolean,
+): readonly ActionPolicy<Payload, string>[] | undefined => {
+  const declaredPolicies = new Set(declared);
+  const required = declared.filter((policy) => policy.requiresPreparation === true);
+  if (!hasPreparation && required.length > 0) {
+    return failActionDefinition('An effectful preparation Policy requires registered prepareServices');
+  }
+  const selected = policies ?? required;
+  if (!EffectArray.isArray(selected)) {
+    return failActionDefinition('Preparation Policies must be an array of exact declared references');
+  }
+  const selectedPolicies = new Set(selected);
+  if (
+    selectedPolicies.size !== selected.length ||
+    selected.some((policy) => !declaredPolicies.has(policy)) ||
+    required.some((policy) => !selectedPolicies.has(policy))
+  ) {
+    return failActionDefinition(
+      'Preparation Policies must cover every required Policy using unique exact declared references',
+    );
+  }
+  return selected.length === 0 ? undefined : selected;
+};
+
+export function defineAction<
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  const Owner extends string,
+  Services,
+  HandlerRequirements,
+  PreparationRequirements,
+  PostAttemptRequirements,
+>(
+  descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
+  ...definition: readonly [
+    handler: ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
+    serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
+    preparation: ActionServicePreparation<
+      PayloadSchema['Type'],
+      ResultSchema['Type'],
+      Services,
+      DomainErrorSchema['Type'],
+      PreparationRequirements
+    >,
+    onPostAttempt: ActionPostAttemptHook<
+      PayloadSchema['Type'],
+      ResultSchema['Type'],
+      DomainErrorSchema['Type'],
+      PostAttemptRequirements
+    >,
+  ]
+): ActionRegistration<
+  PayloadSchema,
+  ResultSchema,
+  DomainErrorSchema,
+  DomainEvents,
+  Owner,
+  Services,
+  HandlerRequirements | PreparationRequirements | PostAttemptRequirements
+>;
 export function defineAction<
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
@@ -671,6 +966,37 @@ export function defineAction<
   Owner,
   Services,
   HandlerRequirements | PostAttemptRequirements
+>;
+export function defineAction<
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  const Owner extends string,
+  Services,
+  HandlerRequirements,
+  PreparationRequirements,
+>(
+  descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
+  ...definition: readonly [
+    handler: ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
+    serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
+    preparation: ActionServicePreparation<
+      PayloadSchema['Type'],
+      ResultSchema['Type'],
+      Services,
+      DomainErrorSchema['Type'],
+      PreparationRequirements
+    >,
+  ]
+): ActionRegistration<
+  PayloadSchema,
+  ResultSchema,
+  DomainErrorSchema,
+  DomainEvents,
+  Owner,
+  Services,
+  HandlerRequirements | PreparationRequirements
 >;
 export function defineAction<
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
@@ -779,13 +1105,29 @@ export function defineAction<
     | readonly [
         ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
         ActionServiceFactory<Services, HandlerRequirements>,
-        ActionDecodedSuccessHook<ResultSchema['Type'], Services, DomainErrorSchema['Type'], PostAttemptRequirements>,
+        (
+          | ActionDecodedSuccessHook<ResultSchema['Type'], Services, DomainErrorSchema['Type'], HandlerRequirements>
+          | ActionServicePreparation<
+              PayloadSchema['Type'],
+              ResultSchema['Type'],
+              Services,
+              DomainErrorSchema['Type'],
+              HandlerRequirements
+            >
+        ),
       ]
     | readonly [
         ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
         ActionServiceFactory<Services, HandlerRequirements>,
         (
           | ActionDecodedSuccessHook<ResultSchema['Type'], Services, DomainErrorSchema['Type'], HandlerRequirements>
+          | ActionServicePreparation<
+              PayloadSchema['Type'],
+              ResultSchema['Type'],
+              Services,
+              DomainErrorSchema['Type'],
+              HandlerRequirements
+            >
           | undefined
         ),
         ActionPostAttemptHook<
@@ -844,37 +1186,54 @@ export function defineAction<
     policies: Object.freeze([...descriptor.policies]),
   });
   if (definition.length === 1) {
+    validatePreparationPolicies(undefined, frozenDescriptor.policies, false);
     const [handler] = definition;
-    return ActionPrivateStorage.create([handler, emptyActionServiceFactory] as const, {
-      [actionRegistration]: true as const,
-      descriptor: frozenDescriptor,
+    return ActionPrivateStorage.createRegistration({
+      commandReader: makeRegisteredActionCommandReader(frozenDescriptor),
+      publicFields: { [actionRegistration]: true as const, descriptor: frozenDescriptor },
+      value: [handler, emptyActionServiceFactory] as const,
     });
   }
-  const [handler, serviceFactory, onDecodedSuccess, onPostAttempt] = definition;
-  if (definition.length === 3 && !Predicate.isFunction(onDecodedSuccess)) {
+  const [handler, serviceFactory, onDecodedSuccessOrPreparation, onPostAttempt] = definition;
+  // Two authored shapes reach the third slot: the decoded-success hook, or the owner's staged service
+  // preparation object (`{ prepareServices, onDecodedSuccess }`), which keeps remote grants and other
+  // owner reads in their own pre-transaction step (D14). The registered value is one normalized tuple.
+  const isPreparation =
+    onDecodedSuccessOrPreparation !== undefined && !Predicate.isFunction(onDecodedSuccessOrPreparation);
+  if (
+    isPreparation &&
+    (!Predicate.isFunction(onDecodedSuccessOrPreparation.prepareServices) ||
+      (onDecodedSuccessOrPreparation.onDecodedSuccess !== undefined &&
+        !Predicate.isFunction(onDecodedSuccessOrPreparation.onDecodedSuccess)))
+  ) {
+    return failActionDefinition('Action service preparation must contain a prepareServices function');
+  }
+  const onDecodedSuccess = isPreparation
+    ? onDecodedSuccessOrPreparation.onDecodedSuccess
+    : onDecodedSuccessOrPreparation;
+  const prepareServices = isPreparation ? onDecodedSuccessOrPreparation.prepareServices : undefined;
+  const preparationPolicies = validatePreparationPolicies(
+    isPreparation ? onDecodedSuccessOrPreparation.preparationPolicies : undefined,
+    frozenDescriptor.policies,
+    isPreparation,
+  );
+  if (definition.length >= 3 && onDecodedSuccess !== undefined && !Predicate.isFunction(onDecodedSuccess)) {
     return failActionDefinition('Action decoded-success hook must be a function');
   }
-  if (definition.length === 4) {
-    if (
-      !Predicate.isFunction(onPostAttempt) ||
-      (onDecodedSuccess !== undefined && !Predicate.isFunction(onDecodedSuccess))
-    ) {
-      return failActionDefinition('Action post-attempt hook must be a function');
-    }
-    return ActionPrivateStorage.create([handler, serviceFactory, onDecodedSuccess, onPostAttempt] as const, {
-      [actionRegistration]: true as const,
-      descriptor: frozenDescriptor,
-    });
+  if (definition.length === 4 && onPostAttempt !== undefined && !Predicate.isFunction(onPostAttempt)) {
+    return failActionDefinition('Action post-attempt hook must be a function');
   }
-  if (onDecodedSuccess === undefined) {
-    return ActionPrivateStorage.create([handler, serviceFactory] as const, {
-      [actionRegistration]: true as const,
-      descriptor: frozenDescriptor,
-    });
-  }
-  return ActionPrivateStorage.create([handler, serviceFactory, onDecodedSuccess] as const, {
-    [actionRegistration]: true as const,
-    descriptor: frozenDescriptor,
+  return ActionPrivateStorage.createRegistration({
+    commandReader: makeRegisteredActionCommandReader(frozenDescriptor),
+    publicFields: { [actionRegistration]: true as const, descriptor: frozenDescriptor },
+    value: [
+      handler,
+      serviceFactory,
+      onDecodedSuccess,
+      onPostAttempt,
+      prepareServices,
+      preparationPolicies === undefined ? undefined : Object.freeze([...preparationPolicies]),
+    ] as const,
   });
 }
 
@@ -972,6 +1331,53 @@ export const getActionPostAttemptHook = <
     HandlerRequirements
   >,
 ) => ActionPrivateStorage.getValue(registration)[3];
+
+/**
+ * Internal runtime lookup of the owner's staged service preparation, when the Action declares one.
+ * Prepared facts live in the runAction fiber, never on the registration.
+ */
+export const getActionServicePreflight = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Owner extends string,
+  Services,
+  HandlerRequirements,
+>(
+  registration: ActionRegistration<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Owner,
+    Services,
+    HandlerRequirements
+  >,
+):
+  | ActionServicePreflight<PayloadSchema['Type'], Services, DomainErrorSchema['Type'], HandlerRequirements>
+  | undefined => ActionPrivateStorage.getValue(registration)[4];
+
+/** Internal Core lookup; owners cannot submit or copy an admitted Policy proof. */
+export const getActionPreparationPolicies = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Owner extends string,
+  Services,
+  Requirements,
+>(
+  registration: ActionRegistration<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Owner,
+    Services,
+    Requirements
+  >,
+): readonly ActionPolicy<PayloadSchema['Type'], string>[] => ActionPrivateStorage.getValue(registration)[5] ?? [];
 
 export const getActionResourcePermissionTargetResolver = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
@@ -1112,42 +1518,6 @@ export const getActionReducesAuthorityResolver = <
     HandlerRequirements
   >,
 ): ActionReducesAuthorityResolver<PayloadSchema['Type']> | undefined => registration.descriptor.accessReducesAuthority;
-
-const preserveFailureCause = <Failure extends object>(failure: Failure, cause: unknown): Failure => {
-  Object.defineProperty(failure, 'cause', {
-    configurable: false,
-    enumerable: false,
-    value: cause,
-    writable: false,
-  });
-  return failure;
-};
-
-export const decodeActionPayload = <PayloadSchema extends Schema.ConstraintDecoder<unknown>, Payload>(
-  schema: PayloadSchema,
-  payload: Payload,
-): Effect.Effect<PayloadSchema['Type'], ActionPayloadValidationError> => {
-  if (Object.is(schema, Schema.Void) && payload !== undefined) {
-    return Effect.fail(
-      new ActionPayloadValidationError({
-        code: 'action_payload_invalid',
-        reason: 'This Action does not accept a business payload',
-      }),
-    );
-  }
-
-  return Schema.decodeUnknownEffect(schema, { onExcessProperty: 'error' })(payload).pipe(
-    Effect.mapError((cause) =>
-      preserveFailureCause(
-        new ActionPayloadValidationError({
-          code: 'action_payload_invalid',
-          reason: 'The Action payload does not match its declared schema',
-        }),
-        cause,
-      ),
-    ),
-  );
-};
 
 export const decodeActionResult = <ResultSchema extends Schema.ConstraintDecoder<unknown>, Result>(
   schema: ResultSchema,

@@ -75,16 +75,34 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
   const tenantEndpoints = Object.keys(ShellAuthenticationApi.groups.tenants.endpoints).toSorted();
   const resourceEndpoints = Object.keys(ShellAuthenticationApi.groups.resources.endpoints).toSorted();
   const externalIdentityEndpoints = Object.keys(ShellAuthenticationApi.groups.externalIdentity.endpoints).toSorted();
+  const agentPlatformEndpoints = Object.keys(ShellAuthenticationApi.groups.agentPlatform.endpoints).toSorted();
 
+  expect(agentPlatformEndpoints).toEqual([
+    'agentActivity',
+    'agentDecide',
+    'agentQueue',
+    'agentRevert',
+    'listOwnAgentProposals',
+    'submitAgentProposals',
+  ]);
   expect(authenticationEndpoints).toEqual(['currentSession', 'signIn', 'signOut']);
   expect(gatewayEndpoints).toEqual([
     'issueGatewayContext',
     'issueApiKeyGatewayContext',
     'issueDelegatedGatewayContext',
   ]);
+  expect(Object.keys(ShellAuthenticationApi.groups.apiKeyGatewayRead.endpoints)).toEqual([
+    'readWithApiKeyGatewayContext',
+  ]);
+  expect(Object.keys(ShellAuthenticationApi.groups.documentGateway.endpoints)).toEqual([
+    'issueDocumentGatewayContexts',
+  ]);
+  expect(Object.keys(ShellAuthenticationApi.groups.emailReceipts.endpoints)).toEqual(['list', 'provider']);
   expect(identityEndpoints).toEqual([
     'changePrincipalStatus',
+    'configureDemoCompanies',
     'createNonHumanPrincipal',
+    'demoAccountCapability',
     'issueManagedApiKey',
     'issueSelfApiKey',
     'listManagedApiKeys',
@@ -96,7 +114,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     'startSupportImpersonation',
     'stopSupportImpersonation',
   ]);
-  expect(legalEntityEndpoints).toEqual(['availableLegalEntities', 'switchLegalEntity']);
+  expect(legalEntityEndpoints).toEqual(['availableLegalEntities', 'switchLegalEntity', 'switchToTenantContext']);
   expect(tenantEndpoints).toEqual(['availableTenants', 'switchTenant']);
   expect(resourceEndpoints).toEqual(['attachMedia', 'resourceDetail', 'search']);
   expect(externalIdentityEndpoints).toEqual([
@@ -115,28 +133,45 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     ),
   ).toEqual({
     activatePrincipalBinding: '/auth/identity/external/bindings/activate',
+    admitAccessMember: '/shell/access/people/admit-member',
+    agentActivity: '/agent-platform/activity',
+    agentDecide: '/agent-platform/decide',
+    agentQueue: '/agent-platform/queue',
+    agentRevert: '/agent-platform/revert',
     assignAccessRole: '/shell/access/people/assign',
     attachMedia: '/shell/resource/media-attachment',
     availableLegalEntities: '/auth/legal-entities',
     availableTenants: '/auth/tenants',
     changePrincipalBindingStatus: '/auth/identity/external/binding/status',
     changePrincipalStatus: '/auth/identity/principal-status',
+    configureDemoCompanies: '/auth/identity/demo-companies',
+    connectApprove: '/auth/oauth-connections/approve',
+    connectDeny: '/auth/oauth-connections/deny',
+    connectDraft: '/auth/oauth-connections/draft',
+    connectDraftSummary: '/auth/oauth-connections/draft-summary',
+    connectOptions: '/auth/oauth-connections/options',
     createAccessDelegation: '/shell/access/people/delegate',
     createAccessRole: '/shell/access/roles/create',
     createNonHumanPrincipal: '/auth/identity/principals',
     currentSession: '/auth/session',
     decideAccessApproval: '/shell/access/approvals/decide',
     decideAccessChanges: '/shell/access/changes/decide',
+    demoAccountCapability: '/auth/identity/demo-accounts/capability',
+    documentContext: '/shell/document-context',
+    endAccessMembership: '/shell/access/people/end-membership',
     executeAccessApproval: '/shell/access/approvals/execute',
     executeLegalEntityDetail: '/core/reads/legal-entity-detail',
     explainAccess: '/shell/access/explain',
     getAccessRole: '/shell/access/roles/detail',
+    invitePerson: '/auth/identity/people/invite',
     issueApiKeyGatewayContext: '/auth/api-key/gateway-context',
     issueDelegatedGatewayContext: '/auth/delegated/gateway-context',
+    issueDocumentGatewayContexts: '/auth/gateway-contexts',
     issueExternalGatewayContext: '/auth/identity/external/gateway-context',
     issueGatewayContext: '/auth/gateway-context',
     issueManagedApiKey: '/auth/identity/api-keys/managed',
     issueSelfApiKey: '/auth/identity/api-keys/self',
+    list: '/email/deliveries',
     listAccessApprovals: '/shell/access/approvals/list',
     listAccessAssignments: '/shell/access/people/assignments',
     listAccessChanges: '/shell/access/changes/list',
@@ -144,37 +179,55 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     listAccessPeopleOptions: '/shell/access/people/options',
     listAccessRoles: '/shell/access/roles/list',
     listAccessRoleTemplates: '/shell/access/roles/templates',
+    listAgentEntities: '/auth/identity/agent-entities/list',
+    listCompanyConnections: '/auth/oauth-connections/admin-list',
+    listCompanyPeople: '/auth/identity/people/list',
     listManagedApiKeys: '/auth/identity/api-keys/managed/list',
+    listMyConnections: '/auth/oauth-connections/mine',
+    listOwnAgentProposals: '/agent-platform/proposals/list',
     listSelfApiKeys: '/auth/identity/api-keys/self/list',
+    listTenantPeople: '/auth/identity/people/tenant-list',
+    manageAgentEntity: '/auth/identity/agent-entities',
     previewAccessChanges: '/shell/access/changes/preview',
     previewAccessRoleEdit: '/shell/access/roles/preview',
+    provider: '/email/provider',
     readPrincipalBinding: '/auth/identity/external/bindings/read',
+    readWithApiKeyGatewayContext: '/auth/api-key/gateway-read',
+    replaceAgentOperators: '/auth/identity/agent-entities/operators',
+    requestPeopleSearchRebuild: '/core.identity/actions/request-people-search-rebuild',
     reservePrincipalBinding: '/auth/identity/external/bindings/reserve',
     resolveExternalSubject: '/auth/identity/external/resolve',
     resolveModuleTarget: '/shell/module-target',
+    resolveModuleTargets: '/shell/module-targets',
     resourceDetail: '/shell/resource',
     revokeAccessAssignment: '/shell/access/people/revoke-assignment',
     revokeAccessDelegation: '/shell/access/people/revoke-delegation',
+    revokeConnection: '/auth/oauth-connections/revoke',
     rotateManagedApiKey: '/auth/identity/api-keys/managed/rotate',
     rotateSelfApiKey: '/auth/identity/api-keys/self/rotate',
     saveAccessRoleEdit: '/shell/access/roles/save',
     search: '/shell/search',
     setAccessTeamMembership: '/shell/access/people/team-membership',
     setManagedApiKeyStatus: '/auth/identity/api-keys/managed/status',
+    setPeopleCompanyMembership: '/auth/identity/people/company-membership',
     setSelfApiKeyStatus: '/auth/identity/api-keys/self/status',
     shellComposition: '/shell/composition',
     signIn: '/auth/sign-in',
     signOut: '/auth/sign-out',
     startSupportImpersonation: '/auth/identity/impersonation/start',
     stopSupportImpersonation: '/auth/identity/impersonation/stop',
+    submitAgentProposals: '/agent-platform/proposals',
     switchLegalEntity: '/auth/legal-entity/switch',
     switchTenant: '/auth/tenant/switch',
+    switchToTenantContext: '/auth/context/tenant',
     transferAccessOwnership: '/shell/access/people/transfer-ownership',
+    updateConnectionAccess: '/auth/oauth-connections/update',
   });
   expect(shellAuthenticationApiContract).toEqual({
     apiPrefix: '/shell-super-app-api',
     signInPath: '/shell-super-app-api/auth/sign-in',
     switchTenantPath: '/shell-super-app-api/auth/tenant/switch',
+    switchToTenantContextPath: '/shell-super-app-api/auth/context/tenant',
   });
   expect([...authenticationEndpoints, ...gatewayEndpoints].join(':')).not.toMatch(/testing|actionKey/u);
 });
@@ -289,7 +342,12 @@ it.effect('decodes a missing identity idempotency header so handlers can return 
 
 it.effect('publishes exact legal-entity endpoints with an ID-only switch payload', () =>
   Effect.gen(function* testProgram2() {
-    const { availableLegalEntities, switchLegalEntity } = ShellAuthenticationApi.groups.legalEntities.endpoints;
+    const { availableLegalEntities, switchLegalEntity, switchToTenantContext } =
+      ShellAuthenticationApi.groups.legalEntities.endpoints;
+    expect({ method: switchToTenantContext.method, path: switchToTenantContext.path }).toEqual({
+      method: 'POST',
+      path: '/auth/context/tenant',
+    });
     expect({
       method: availableLegalEntities.method,
       path: availableLegalEntities.path,
@@ -317,11 +375,13 @@ it.effect('publishes exact legal-entity endpoints with an ID-only switch payload
         legalEntities: [{ legalEntityId, legalName: 'Alpha', token: 'must-not-pass' }],
         selectedLegalEntityId: legalEntityId,
         state: 'authenticated',
+        tenantContextAvailable: false,
       }),
     ).toEqual({
       legalEntities: [{ legalEntityId, legalName: 'Alpha' }],
       selectedLegalEntityId: legalEntityId,
       state: 'authenticated',
+      tenantContextAvailable: false,
     });
   }),
 );

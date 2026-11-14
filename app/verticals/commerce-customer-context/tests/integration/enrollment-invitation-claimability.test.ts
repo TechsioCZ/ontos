@@ -6,7 +6,7 @@ import {
   CorePersistenceLive,
   DatabaseConfigLive,
 } from '@app/core-runtime';
-import { ResendEmailDeliveryConfig } from '@app/email-delivery/resend';
+import { ResendEmailDeliveryConfig, ResendEmailDeliveryLive } from '@app/email-delivery/resend';
 import { eq, sql } from 'drizzle-orm';
 import { Config, Effect, Layer, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
@@ -27,6 +27,7 @@ import { CommercePortalAuthAccountCreationProviderLive } from '../../api/portal-
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { CommerceCoreIdentityClientConfig } from '../../api/portal-auth/provider/core-identity-client-config.ts';
+import { everyTenantTestCredentials } from '../support/tenant-workload-credentials.ts';
 import { CommerceCoreIdentityClientLive } from '../../api/portal-auth/provider/core-identity-client.ts';
 import { CommercePortalAuthAccountLookupLive } from '../../src/portal-auth/persistence/portal-auth-account-lookup.ts';
 import { CommercePortalAuthAccountCreationReconciliationLive } from '../../src/portal-auth/persistence/portal-auth-account-creation-reconciliation.ts';
@@ -108,7 +109,13 @@ const portalAuthConfiguration = Effect.fnUntraced(function* portalAuthConfigurat
 const configuredRealmLive = Effect.fnUntraced(function* configuredRealmLive() {
   const configuration = yield* portalAuthConfiguration();
   return commercePortalAuthRealmLive.pipe(
-    Layer.provide(emailDeliveryConfiguration),
+    Layer.provide(
+      ResendEmailDeliveryLive.pipe(
+        Layer.provide(FetchHttpClient.layer),
+        // The provider callback captures the transport used at send time as well as the mail port.
+        Layer.provideMerge(emailDeliveryConfiguration),
+      ),
+    ),
     Layer.provideMerge(Layer.succeed(CommercePortalAuthConfig, configuration)),
   );
 });
@@ -116,8 +123,8 @@ const configuredRealmLive = Effect.fnUntraced(function* configuredRealmLive() {
 const preparationAuthorityLive = Effect.fnUntraced(function* preparationAuthorityLive() {
   const configuration = yield* portalAuthConfiguration();
   const coreIdentityConfigurationLive = Layer.succeed(CommerceCoreIdentityClientConfig, {
-    apiKey: Redacted.make('enrollment-invitation-claimability-core-identity'),
     baseUrl: 'https://core-identity.invalid',
+    credentials: everyTenantTestCredentials('enrollment-invitation-claimability-core-identity'),
   });
   const transactionRunnerLive = CommerceEnrollmentOwnerTransactionRunnerLive.pipe(
     Layer.provide(

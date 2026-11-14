@@ -1,10 +1,6 @@
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 // @effect-diagnostics globalConsole:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
-import {
-  DatabaseConfig,
-  loadDatabaseConfig,
-  loadDatabaseConnectionPair,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
-} from '@app/core-runtime';
+import { DatabaseConfig, loadDatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Effect, Layer, Schema } from 'effect';
@@ -56,7 +52,8 @@ const ownerPrivilegesMismatch = (owner: OwnerInfrastructureRow): boolean => owne
 
 const ownerConstraintsMismatch = (owner: OwnerInfrastructureRow): boolean =>
   owner.journal_count !== 1 ||
-  owner.foreign_key_count !== 41 ||
+  // 39 owner-local references, the assertion-identity registry and its archive, and the two source receipt references.
+  owner.foreign_key_count !== 43 ||
   owner.external_foreign_key_count !== 0 ||
   owner.relationship_exclusion_count !== 1 ||
   owner.counterparty_role_exclusion_count !== 1 ||

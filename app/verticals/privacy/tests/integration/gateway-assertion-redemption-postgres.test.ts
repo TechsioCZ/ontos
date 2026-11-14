@@ -1,70 +1,136 @@
-import { configureDatabasePool, GatewayAssertionReplayError, loadDatabaseConnectionPair } from '@app/core-runtime';
-import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
+import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
+import {
+  ActiveApplicationCompositionService,
+  DatabaseConfig,
+  GatewayAssertionRedemptionService,
+  GatewayAssertionReplayError,
+  loadDatabaseConnectionPair,
+} from '@app/core-runtime';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import { GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
+import { ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
+import { GatewayPrincipalVerifierLive } from '@app/gateway-principal-verifier/server';
 import { PgClient } from '@effect/sql-pg';
-import { NodeCrypto } from '@effect/platform-node';
-import { defineRelations, eq } from 'drizzle-orm';
-import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Clock, Crypto, Effect, Redacted, Result, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
-import { makeGatewayAssertionRedemption } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
-import { gatewayAssertionRedemptions } from '../../src/database/schema.ts';
 
-it.live('atomically redeems real native Privacy ingress assertions and preserves durable replay evidence', () =>
+import { testDatabaseClients } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { ActionPrincipalScopeErrorSchema, verifyActionPrincipal } from '../../api/auth/action-principal.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import {
+  GatewayAssertionRedemptionDatabaseLive,
+  GatewayAssertionRedemptionLive,
+  gatewayAssertionRedemptionPgClient,
+} from '../../src/auth/gateway-assertion-redemption-runtime.ts';
+
+const withRedemption = Effect.gen(function* acquirePrivacyRedemption() {
+  const { admin } = yield* testDatabaseClients;
+  const connections = yield* loadDatabaseConnectionPair();
+  const services = yield* Layer.build(
+    GatewayAssertionRedemptionLive.pipe(
+      Layer.provide(
+        GatewayAssertionRedemptionDatabaseLive.pipe(
+          Layer.provide(PgClient.layerFrom(gatewayAssertionRedemptionPgClient)),
+          Layer.provide(Reactivity.layer),
+          Layer.provide(Layer.succeed(DatabaseConfig, connections.runtime)),
+        ),
+      ),
+    ),
+  );
+  const redemption = Context.get(services, GatewayAssertionRedemptionService);
+  const issuer = `https://privacy-redemption.ontos.test/${randomUUID()}`;
+  const [epoch] = yield* admin.unsafe('select floor(extract(epoch from clock_timestamp()))::text as now');
+  const { now } = yield* Schema.decodeUnknownEffect(Schema.Struct({ now: Schema.FiniteFromString }))(epoch);
+  const assertion = { audience: 'privacy', expiresAtEpochSeconds: now + 300, issuer, jti: randomUUID() };
+  yield* Effect.addFinalizer(() =>
+    admin.unsafe('delete from privacy.gateway_assertion_redemptions where issuer = $1', [issuer]).pipe(Effect.orDie),
+  );
+  return { admin, assertion, now, redemption };
+});
+
+it.live('accepts a first assertion before business scope is installed', () =>
   Effect.scoped(
-    Effect.gen(function* nativeRedemption() {
-      const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
-      const pool = yield* configureDatabasePool(Redacted.make(connections.runtime.connectionString));
-      const client = yield* PgClient.make(pool);
-      const relations = defineRelations({ gatewayAssertionRedemptions });
-      const executor = yield* makeWithDefaults({ relations }).pipe(Effect.provideService(PgClient.PgClient, client));
-      const redeem = makeGatewayAssertionRedemption(executor);
-      const crypto = yield* Crypto.Crypto;
-      const now = Math.floor((yield* Clock.currentTimeMillis) / 1000);
-      const input = {
-        audience: 'privacy',
-        expiresAtEpochSeconds: now + 120,
-        issuer: 'https://internal-privacy-native.test',
-        jti: yield* crypto.randomUUIDv4(),
-      };
-      const attempts = yield* Effect.all(
-        [redeem.consume(input).pipe(Effect.result), redeem.consume(input).pipe(Effect.result)],
-        { concurrency: 2 },
+    Effect.gen(function* acceptFirstAssertion() {
+      const { admin, assertion, redemption } = yield* withRedemption;
+      yield* redemption.consume(assertion);
+      const rows = yield* admin.unsafe(
+        'select issuer, audience, jti from privacy.gateway_assertion_redemptions where issuer = $1',
+        [assertion.issuer],
       );
-      expect(attempts.filter(Result.isSuccess)).toHaveLength(1);
-      const rejected = attempts.filter(Result.isFailure);
-      expect(rejected).toHaveLength(1);
-      for (const result of rejected) {
-        expect(Schema.is(GatewayAssertionReplayError)(result.failure)).toBe(true);
-      }
-      const freshClient = yield* PgClient.make(pool);
-      const freshExecutor = yield* makeWithDefaults({ relations }).pipe(
-        Effect.provideService(PgClient.PgClient, freshClient),
-      );
-      expect(
-        Schema.is(GatewayAssertionReplayError)(
-          yield* Effect.flip(makeGatewayAssertionRedemption(freshExecutor).consume(input)),
-        ),
-      ).toBe(true);
-      expect(
-        Schema.is(GatewayAssertionReplayError)(
-          yield* Effect.flip(
-            redeem.consume({ ...input, expiresAtEpochSeconds: now - GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS - 1 }),
-          ),
-        ),
-      ).toBe(true);
-      const rows = yield* executor
-        .select()
-        .from(gatewayAssertionRedemptions)
-        .where(eq(gatewayAssertionRedemptions.jti, input.jti));
-      expect(rows).toHaveLength(1);
-      expect(rows[0]?.expiresAt.getTime()).toBe(input.expiresAtEpochSeconds * 1000);
-      expect(
-        Schema.is(GatewayAssertionReplayError)(
-          yield* Effect.flip(redeem.consume({ ...input, audience: 'party-registry' })),
-        ),
-      ).toBe(true);
-      yield* redeem.consume({ ...input, issuer: 'https://internal-second-privacy-native.test' });
+      expect(rows).toEqual([{ audience: assertion.audience, issuer: assertion.issuer, jti: assertion.jti }]);
     }),
-  ).pipe(Effect.provide(NodeCrypto.layer), Effect.provide(Reactivity.layer)),
+  ),
+);
+
+it.live('durably rejects replay across independently acquired redemption services', () =>
+  Effect.scoped(
+    Effect.gen(function* rejectDurableReplay() {
+      const { assertion, redemption } = yield* withRedemption;
+      const independent = yield* withRedemption;
+      yield* redemption.consume(assertion);
+      const failure = yield* independent.redemption.consume(assertion).pipe(Effect.flip);
+      expect(Schema.is(GatewayAssertionReplayError)(failure)).toBe(true);
+    }),
+  ),
+);
+
+it.live('rejects a correctly signed wrong-audience assertion without redeeming it', () =>
+  Effect.scoped(
+    Effect.gen(function* rejectWrongAudience() {
+      const { admin, assertion, now, redemption } = yield* withRedemption;
+      const snapshot = yield* makeApplicationCompositionSnapshotFixture(['privacy'], ultramodernApiMarker.buildMarker);
+      const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+      const principalId = randomUUID();
+      const header = Buffer.from(JSON.stringify({ alg: 'EdDSA', kid: 'privacy-test', typ: 'JWT' })).toString(
+        'base64url',
+      );
+      const payload = Buffer.from(
+        JSON.stringify({
+          aud: 'crm',
+          compositionRevision: snapshot.composition.revision,
+          exp: assertion.expiresAtEpochSeconds,
+          iat: now,
+          iss: assertion.issuer,
+          jti: assertion.jti,
+          principal: {
+            authBindingId: randomUUID(),
+            authContextRef: 'privacy-redemption-test',
+            authMethod: 'session',
+            principalId,
+            tenantId: randomUUID(),
+          },
+          sub: principalId,
+          targetBuildMarker: ultramodernApiMarker.buildMarker,
+          ver: GATEWAY_ASSERTION_VERSION,
+        }),
+      ).toString('base64url');
+      const signed = `${header}.${payload}`;
+      const token = `${signed}.${sign(null, Buffer.from(signed), privateKey).toString('base64url')}`;
+      const environment = {
+        ONTOS_GATEWAY_ISSUER: assertion.issuer,
+        ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
+          keys: [{ ...publicKey.export({ format: 'jwk' }), alg: 'EdDSA', kid: 'privacy-test', use: 'sig' }],
+        }),
+      };
+      const verification = (bearer: string) =>
+        verifyActionPrincipal(Redacted.make(`Bearer ${bearer}`), { environment, redemption }).pipe(
+          Effect.provide(GatewayPrincipalVerifierLive),
+          Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(environment)),
+          Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+        );
+      const failure = yield* verification(token).pipe(Effect.flip);
+      expect(Schema.is(ActionPrincipalScopeErrorSchema)(failure)).toBe(true);
+      expect(
+        yield* admin.unsafe('select jti from privacy.gateway_assertion_redemptions where issuer = $1', [
+          assertion.issuer,
+        ]),
+      ).toEqual([]);
+      // A valid audience using the same identity still succeeds through Privacy's actual verifier and store.
+      const validPayload = Buffer.from(
+        JSON.stringify({ ...JSON.parse(Buffer.from(payload, 'base64url').toString()), aud: 'privacy' }),
+      ).toString('base64url');
+      const validSigned = `${header}.${validPayload}`;
+      yield* verification(`${validSigned}.${sign(null, Buffer.from(validSigned), privateKey).toString('base64url')}`);
+    }),
+  ),
 );

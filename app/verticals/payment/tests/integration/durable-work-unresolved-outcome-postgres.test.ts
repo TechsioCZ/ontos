@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import { randomUUID } from 'node:crypto';
 
 import { NodeCrypto } from '@effect/platform-node';
@@ -76,6 +77,7 @@ const makeRuntimes = Effect.fn('DurableWorkUnresolvedOutcome.makeRuntimes')(func
     evidenceContextAccess,
     {
       accessDecision,
+      databaseIdentities: defineDatabaseIdentityEnrollment([]),
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
     },

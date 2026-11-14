@@ -23,6 +23,9 @@ export interface EffectBffRequestContext {
 export interface EffectBffClientOptions {
   readonly baseUrl?: string | URL;
   readonly compositionRevision?: string;
+  readonly referenceCredentials?: Redacted.Redacted;
+  /** Explicit read freshness; this transport directive grants no operation or data authority. */
+  readonly requestCache?: 'no-store';
   readonly requestContext?: EffectBffRequestContext;
   /** Owner-resolved transport headers; undefined values stay absent on the wire. */
   readonly transportHeaders?: HttpHeaders.Input;
@@ -127,7 +130,7 @@ export const makeGovernedEffectBffClient = <ApiId extends string, Groups extends
     requestCorrelation,
     requestTrace,
   }: GovernedEffectBffClientConfig<ApiId, Groups>,
-  options: Pick<EffectBffClientOptions, 'baseUrl' | 'compositionRevision'>,
+  options: Pick<EffectBffClientOptions, 'baseUrl' | 'compositionRevision' | 'referenceCredentials' | 'requestCache'>,
 ) => {
   const baseUrl = String(options.baseUrl ?? defaultApiPrefix);
   // The intent is decoded before the client exists, so a caller outside the closed literal fails with the
@@ -145,10 +148,13 @@ export const makeGovernedEffectBffClient = <ApiId extends string, Groups extends
         // produces no `x-action-intent` at all.
         transportHeaders: {
           authorization: Redacted.value(credential),
+          'cache-control': options.requestCache,
           'idempotency-key': idempotencyKey,
           'x-action-intent': Option.getOrUndefined(decodedIntent),
           'x-correlation-id': requestCorrelation,
           'x-ontos-composition-revision': options.compositionRevision,
+          'x-ontos-reference-credentials':
+            options.referenceCredentials === undefined ? undefined : Redacted.value(options.referenceCredentials),
           'x-trace-id': requestTrace,
         },
       }),

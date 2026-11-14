@@ -35,6 +35,7 @@ export const ApplyCustomerGroupMembershipSourceActionForbiddenProblemSchema = ma
       'SOURCE_AUTHORITY_DENIED',
       'SOURCE_SCOPE_MISMATCH',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ApplyCustomerGroupMembershipSourceActionNotFoundProblemSchema = makeProblemDetailsSchema(

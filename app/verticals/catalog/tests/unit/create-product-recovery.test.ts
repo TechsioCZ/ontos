@@ -64,6 +64,7 @@ const scope = {
 };
 const runtime: ActionRuntimeService = {
   resolveActionCommit: () => Effect.die('recovery service owns the Core check'),
+  resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
   runAction: () => Effect.die('unused'),
 };
 const services = (recover: CatalogPersistence['recoverCreateProduct']): CatalogPersistence => ({
@@ -166,6 +167,7 @@ const committedRuntime: ActionRuntimeService = {
         reason: 'The original create committed',
       }),
     ),
+  resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
   runAction: () => Effect.die('Recovery must never replay the create Action'),
 };
 

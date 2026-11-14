@@ -218,6 +218,8 @@ import {
   ContextAccessLive as GovernedContextAccessLive,
   CorePersistenceLive as GovernedCorePersistenceLive,
   DatabaseConfigLive as GovernedDatabaseConfigLive,
+  defineDatabaseIdentityEnrollment as governedDefineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive as GovernedMakeDatabaseIdentityEnrollmentLive,
   makeReadRuntimeLive as GovernedMakeReadRuntimeLive,
   TenantModuleStateServiceLive as GovernedTenantModuleStateServiceLive,
 } from '@app/core-runtime';
@@ -240,6 +242,10 @@ ${GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END}
 ${GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START}
 ${GOVERNED_HTTP_HANDLER_IMPORT_SLOT_END}
 
+// Core's database-backed access stores read the owner's database identity enrolment, as in the real owner roots.
+const governedDatabaseIdentitiesLive = GovernedMakeDatabaseIdentityEnrollmentLive(
+  governedDefineDatabaseIdentityEnrollment([]),
+);
 const governedTenantModuleStateServiceLive = GovernedTenantModuleStateServiceLive.pipe(
   GovernedReadLayer.provide(GovernedCorePersistenceLive),
 );
@@ -261,6 +267,7 @@ const governedAccessEnforcementLive = GovernedAccessDecisionLive.pipe(
   GovernedReadLayer.provide(GovernedTenantIntentLoaderLive),
   GovernedReadLayer.provide(GovernedCorePersistenceLive),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),
+  GovernedReadLayer.provide(governedDatabaseIdentitiesLive),
   GovernedReadLayer.provide(NodeCrypto.layer),
 );
 const governedApplicationCompositionSourceLive = GovernedApplicationCompositionSourceLive.pipe(
@@ -279,6 +286,7 @@ const governedActiveApplicationCompositionLive = GovernedApplicationCompositionC
 const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(governedActionDeliveryUnit, governedOwnerRegistration).pipe(
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
   GovernedReadLayer.provide(governedActiveApplicationCompositionLive),
+  GovernedReadLayer.provide(governedDatabaseIdentitiesLive),
 );
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
@@ -555,19 +563,16 @@ ${VERTICAL_REPORT_SLOT_END}
 const addArtifactCommand = (
   current: JsonValue | undefined,
   vertical: VerticalMetadata,
-  target: 'cloudflare-dist' | 'dist',
-  label: string,
 ): Effect.Effect<string, ModuleContractScaffoldError> =>
   Effect.gen(function* addArtifactCommandEffect() {
-    const script = yield* trySync(() => requiredString(current, `vertical ${vertical.slug} ${label} script`));
-    const command = `node ../../scripts/generate-ontos-module-contract.mts --vertical ${vertical.slug} --target ${target}`;
+    const script = yield* trySync(() => requiredString(current, `vertical ${vertical.slug} build script`));
+    const command = `node ../../scripts/generate-ontos-module-contract.mts --vertical ${vertical.slug} --target dist`;
     if (script.includes('generate-ontos-module-contract.mts')) {
-      return yield* scaffoldError(`vertical ${vertical.slug} ${label} script already contains module emission`);
+      return yield* scaffoldError(`vertical ${vertical.slug} build script already contains module emission`);
     }
-    const buildToken =
-      target === 'dist' ? 'modern build --deploy-target node' : 'modern build --deploy-target cloudflare';
+    const buildToken = 'modern build --deploy-target node';
     if (!script.includes(buildToken)) {
-      return yield* scaffoldError(`vertical ${vertical.slug} ${label} script is not a generated Modern build`);
+      return yield* scaffoldError(`vertical ${vertical.slug} build script is not a generated Modern build`);
     }
     return script.replace(buildToken, `${buildToken} && ${command}`);
   });
@@ -594,13 +599,7 @@ const patchPackage = (
     const scripts = yield* trySync(() => ({
       ...asJsonObject(vertical.packageJson['scripts'], `vertical ${vertical.slug} scripts`),
     }));
-    scripts['build'] = yield* addArtifactCommand(scripts['build'], vertical, 'dist', 'build');
-    scripts['cloudflare:build'] = yield* addArtifactCommand(
-      scripts['cloudflare:build'],
-      vertical,
-      'cloudflare-dist',
-      'cloudflare:build',
-    );
+    scripts['build'] = yield* addArtifactCommand(scripts['build'], vertical);
     return yield* trySync(() => {
       let content = patchJsonObjectProperty(vertical.packageContent, [], 'dependencies', sortedDependencies);
       content = patchJsonObjectProperty(content, [], 'scripts', scripts);

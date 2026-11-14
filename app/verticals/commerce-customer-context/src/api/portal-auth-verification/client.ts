@@ -101,10 +101,3 @@ export const verifyCommercePortalAuthentication = (
   );
 
 export { CommercePortalAuthVerificationClientUnavailable } from './client-errors.ts';
-export { CommercePortalAuthVerificationClientConfigurationService } from './client-configuration.ts';
-export type { CommercePortalAuthVerificationClientConfiguration } from './client-configuration.ts';
-export { CommercePortalAuthVerificationWorkloadAssertion } from './workload-assertion.ts';
-export type {
-  CommercePortalAuthVerificationWorkloadAssertionInput,
-  CommercePortalAuthVerificationWorkloadAssertionService,
-} from './workload-assertion.ts';

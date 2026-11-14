@@ -8,7 +8,9 @@ import {
   PrincipalResolver,
   PrincipalResolverLive,
   TenantModuleStateServiceLive,
+  defineDatabaseIdentityEnrollment,
   makeActionRuntimeLive,
+  makeDatabaseIdentityEnrollmentLive,
   parseDatabaseConfig,
 } from '@app/core-runtime';
 import type { LegalEntityContextService, OperationalScope } from '@app/core-runtime';
@@ -44,6 +46,7 @@ import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import type { ModuleCredentialEnrolment } from '@app/core-runtime/auth/module-credentials';
 
 const protocol = 'ontos.shell.preproposal-basis.identity.v1' as const;
 
@@ -92,11 +95,37 @@ const ResponseSchema = Schema.Union([
   Schema.Struct({ operation: Schema.Literal('STOPPED'), protocol: Schema.Literal(protocol) }),
 ]);
 
+/** The calling modules of the preproposal journey, each holding its own platform module credential. */
+const MODULE_APP_IDS = ['catalog', 'commerce-customer-context', 'commerce-market-catalog', 'pricing'] as const;
+
 class PreproposalIdentityUnavailable extends Schema.TaggedError<PreproposalIdentityUnavailable>()(
   'PreproposalIdentityUnavailable',
   { stage: Schema.String },
 ) {}
 const unavailable = (stage: string) => new PreproposalIdentityUnavailable({ stage });
+
+/** One module's provisioned credential with the binding the platform enrolled for it. */
+const moduleIdentityOf = (
+  provisioned: {
+    readonly credentials: ReadonlyMap<string, Redacted.Redacted>;
+    readonly providerKeyIds: ReadonlySet<string>;
+  },
+  enrolment: readonly ModuleCredentialEnrolment[],
+  appId: string,
+) => {
+  const secret = provisioned.credentials.get(appId);
+  const enrolled = enrolment.find(
+    (credential) => credential.appId === appId && provisioned.providerKeyIds.has(credential.providerKeyId),
+  );
+  return secret === undefined || enrolled === undefined
+    ? Effect.fail(unavailable(`module-credential:${appId}`))
+    : Effect.succeed({
+        authBindingId: enrolled.authBindingId,
+        principalId: enrolled.principalId,
+        providerKeyId: enrolled.providerKeyId,
+        secret,
+      });
+};
 
 /** The companies the select check answers with: the Tenant's own active ones (O28). */
 const tenantCompaniesOf =
@@ -206,9 +235,33 @@ export const serve = Effect.scoped(
       catch: () => unavailable('authentication-import'),
       try: async () => await import('../../api/auth/service.ts'),
     });
-    const { makeApiKeyService } = yield* Effect.tryPromise({
+    const { shellAuthenticationFrameworkLive } = yield* Effect.tryPromise({
+      catch: () => unavailable('authentication-framework-import'),
+      try: async () => await import('./shell-authentication.ts'),
+    });
+    const { ApiKeyService, makeApiKeyService } = yield* Effect.tryPromise({
       catch: () => unavailable('key-provider-import'),
       try: async () => await import('../../api/auth/api-key-service.ts'),
+    });
+    const { provisionModuleCredentials } = yield* Effect.tryPromise({
+      catch: () => unavailable('module-credential-provisioning-import'),
+      try: async () => await import('../../api/auth/module-credential-provisioning.service.ts'),
+    });
+    const { installedModuleCatalog, ShellInstalledModuleCatalogLive } = yield* Effect.tryPromise({
+      catch: () => unavailable('installed-module-catalog-import'),
+      try: async () => await import('../../api/modules/installed-module-catalog.ts'),
+    });
+    const { moduleCredentialReleaseOf } = yield* Effect.tryPromise({
+      catch: () => unavailable('module-credential-attestation-import'),
+      try: async () => await import('../../api/auth/module-credential-attestation.ts'),
+    });
+    const { loadModuleCredentialEnrolment } = yield* Effect.tryPromise({
+      catch: () => unavailable('module-credential-enrolment-import'),
+      try: async () => await import('@app/core-runtime/auth/module-credentials'),
+    });
+    const { CoreDatabase } = yield* Effect.tryPromise({
+      catch: () => unavailable('core-database-import'),
+      try: async () => await import('@app/core-runtime/db/client'),
     });
     const { makeIdentityLifecycleService } = yield* Effect.tryPromise({
       catch: () => unavailable('identity-lifecycle-import'),
@@ -220,7 +273,10 @@ export const serve = Effect.scoped(
       DATABASE_URL: Redacted.value(configuration.databaseUrl),
       NODE_ENV: 'test',
     });
-    const authDatabase = yield* makeAuthDatabase(authConfiguration);
+    const authDatabase = yield* makeAuthDatabase({
+      connectionString: authConfiguration.connectionString,
+      expectedRole: databaseConfig.expectedRole,
+    });
     const persistence = CorePersistenceLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, databaseConfig)));
     const states = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
     const gate = ModuleStateGateLive.pipe(Layer.provide(states));
@@ -241,6 +297,8 @@ export const serve = Effect.scoped(
     );
     const common = Layer.mergeAll(
       ContextAccessLive,
+      // This Shell fixture installs no dedicated database identities.
+      makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([])),
       accessEnforcement,
       LegalEntityContextLive.pipe(Layer.provide(persistence)),
       composition,
@@ -262,11 +320,16 @@ export const serve = Effect.scoped(
       ),
     );
     const runtime = yield* Layer.build(Layer.mergeAll(actions.pipe(Layer.provide(common)), resolver, common));
-    const authentication = yield* makeAuthenticationService({ allowFixtureSignUp: true }).pipe(
-      Effect.provideService(AuthConfig, authConfiguration),
-      Effect.provideService(AuthDatabase, authDatabase),
-      Effect.provideContext(runtime),
+    const authenticationContext = yield* Layer.build(
+      shellAuthenticationFrameworkLive({ allowFixtureSignUp: true }).pipe(
+        Layer.provideMerge(Layer.succeedContext(runtime)),
+        Layer.provideMerge(persistence),
+        Layer.provideMerge(
+          Layer.mergeAll(Layer.succeed(AuthConfig, authConfiguration), Layer.succeed(AuthDatabase, authDatabase)),
+        ),
+      ),
     );
+    const authentication = yield* makeAuthenticationService().pipe(Effect.provideContext(authenticationContext));
     const keys = yield* makeApiKeyService().pipe(
       Effect.provideService(AuthConfig, authConfiguration),
       Effect.provideService(AuthDatabase, authDatabase),
@@ -282,7 +345,7 @@ export const serve = Effect.scoped(
     const password = Redacted.make(`${yield* crypto.randomUUIDv4()}${yield* crypto.randomUUIDv4()}`);
     const providerUserId = yield* authentication.createFixtureUser(email, 'Preproposal native human buyer', password);
     const output = yield* Effect.acquireRelease(
-      Effect.sync(() => createWriteStream('', { autoClose: false, fd: 3 })),
+      Effect.sync(() => createWriteStream('', { autoClose: false, fd: 5 })),
       (stream) =>
         Effect.tryPromise(async () => {
           const completion = finished(stream, { cleanup: true });
@@ -373,38 +436,36 @@ export const serve = Effect.scoped(
           ) {
             return yield* unavailable('original-buyer-provider-binding');
           }
-          const produceService = Effect.fn('PreproposalIdentity.produceService')(function* produceService(
-            name: string,
-          ) {
-            const createdService = yield* lifecycle.createNonHumanPrincipal({
-              correlationId: `${suffix}:${name}:create`,
-              idempotencyKey: `${suffix}:${name}:create`,
-              payload: { displayName: `Preproposal ${name}`, kind: 'service' },
-              principal,
-            });
-            const key = yield* lifecycle.issue({
-              correlationId: `${suffix}:${name}:key`,
-              idempotencyKey: `${suffix}:${name}:key`,
-              managedPrincipalId: createdService.principalId,
-              name,
-              principal,
-              requestHeaders: headers,
-            });
-            if (createdService.principalId === principal.principalId || key.cleanupPending) {
-              return yield* unavailable('managed-service-binding');
-            }
-            const verified = yield* keys.verify(Redacted.value(key.secret));
-            return {
-              authBindingId: key.authBindingId,
-              principalId: createdService.principalId,
-              providerKeyId: verified.providerKeyId,
-              secret: key.secret,
-            };
-          });
-          const cccReader = yield* produceService('ccc-reader');
-          const pricingIssuer = yield* produceService('pricing-issuer');
-          const catalog = yield* produceService('catalog');
-          const marketRelay = yield* produceService('market-relay');
+          // Each calling module's credential is provisioned by the platform, exactly as on every environment.
+          const { enrolment, provisioned } = yield* Effect.scoped(
+            Effect.gen(function* provisionModuleCredentialsOnce() {
+              const coreDatabase = Context.get(yield* Layer.build(persistence), CoreDatabase);
+              // Attested for the release this composition serves, read exactly as the Shell reads it.
+              const installed = yield* installedModuleCatalog.pipe(
+                Effect.provide(ShellInstalledModuleCatalogLive.pipe(Layer.provide(composition))),
+              );
+              const issued = yield* provisionModuleCredentials({
+                appIds: [...MODULE_APP_IDS],
+                bootId: yield* crypto.randomUUIDv4(),
+                hostId: 'preproposal-basis-identity',
+                operationId: yield* crypto.randomUUIDv4(),
+                release: moduleCredentialReleaseOf(installed),
+              }).pipe(
+                Effect.provideService(ApiKeyService, keys),
+                Effect.provideService(AuthDatabase, authDatabase),
+                Effect.provideService(CoreDatabase, coreDatabase),
+              );
+              return {
+                enrolment: yield* loadModuleCredentialEnrolment(coreDatabase.executor),
+                provisioned: issued,
+              };
+            }),
+          );
+          const moduleIdentity = (appId: string) => moduleIdentityOf(provisioned, enrolment, appId);
+          const cccReader = yield* moduleIdentity('commerce-customer-context');
+          const pricingIssuer = yield* moduleIdentity('pricing');
+          const catalog = yield* moduleIdentity('catalog');
+          const marketRelay = yield* moduleIdentity('commerce-market-catalog');
           // A second sign-in stays in the Tenant: no Legal Entity is selected on that session.
           const tenantSession = yield* authentication.signIn(
             email,

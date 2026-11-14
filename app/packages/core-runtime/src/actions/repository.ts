@@ -18,6 +18,7 @@ import {
   tenants,
 } from '../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
+import { notifyLiveChange } from '../live/change-notification.ts';
 import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
 import type { ActionAuditProfile } from './definition.ts';
 import {
@@ -28,6 +29,7 @@ import {
   getActionInvocationPersistenceErrorCause,
 } from './errors.ts';
 import type { ActionEvidenceSnapshot } from './events.ts';
+import { ReportableReasonCodesSchema, reportableReasonCodes } from '../access/enforcement/reason-codes.ts';
 import { OperationContextUnavailable } from '../operations/operation-context-unavailable.ts';
 import { ReadEvidencePersistenceError } from '../reads/read-evidence-persistence-error.ts';
 import {
@@ -217,10 +219,10 @@ export interface PrepareActionInvocationInput {
   readonly transport: ActionTransportMetadata;
 }
 
-interface ResolveActionInvocationInput {
-  readonly invocationId: string;
-  readonly principal: TrustedPrincipalContext;
-}
+type ResolveActionInvocationInput = { readonly principal: TrustedPrincipalContext } & (
+  | { readonly actionKey?: never; readonly idempotencyKey?: never; readonly invocationId: string }
+  | { readonly actionKey: string; readonly idempotencyKey: string; readonly invocationId?: never }
+);
 
 export interface ActionInvocationRecord {
   readonly actionInvocationId: string;
@@ -231,8 +233,22 @@ export interface ActionInvocationRecord {
 
 /** The recorded reason a terminal `rejected` invocation was refused. */
 export type ActionRecordedRejection =
-  | { readonly stage: 'authz' }
+  /** `reasons`: the refusal's reportable codes, so a same-key retry answers exactly as the first request did. */
+  | { readonly reasons?: readonly string[]; readonly stage: 'authz' }
   | { readonly policyReasonCode: string; readonly stage: 'policy' };
+
+/** Evidence carrying the codes a recorded refusal kept; a row that predates them, or holds anything else, has none. */
+// A guard, not a decoder: published hash routines import this module, so it may only allocate native schemas.
+const hasRecordedReasonCodes = Schema.is(Schema.Struct({ reasonCodes: ReportableReasonCodesSchema }));
+
+/** A refusal's evidence: the denied-audit fields, the Action key and, when it has any, its reportable codes. */
+const rejectionEvidence = (input: RejectPermissionDeniedInput) => {
+  // A module's own evidence never supplies the codes: Core's own reportable codes are the only ones kept.
+  const { reasonCodes: _moduleCodes, ...moduleEvidence } = input.deniedAuditEvidence ?? {};
+  const base = { ...moduleEvidence, actionKey: input.actionKey };
+  const reasonCodes = Option.getOrElse(reportableReasonCodes(input.reasonCodes ?? []), () => []);
+  return reasonCodes.length === 0 ? base : { ...base, reasonCodes: [...reasonCodes] };
+};
 
 export interface ActionPolicyEvidence {
   readonly owningModuleKey?: string;
@@ -257,6 +273,8 @@ export interface FlushActionSuccessInput {
   readonly allowedPolicies: readonly ActionPolicyEvidence[];
   readonly auditProfile: ActionAuditProfile;
   readonly evidence: ActionEvidenceSnapshot;
+  /** The module whose data the Action wrote; live change notifications name it even when the Action has no target. */
+  readonly owningModuleKey: string;
   readonly principal: TrustedPrincipalContext;
   readonly resultHash: string;
   readonly transport: ActionTransportMetadata;
@@ -268,6 +286,8 @@ export interface RejectPermissionDeniedInput {
   readonly auditProfile: ActionAuditProfile;
   readonly deniedAuditEvidence?: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>;
   readonly principal: TrustedPrincipalContext;
+  /** The refusal's reason codes; only codes Core may report are recorded (never request data). */
+  readonly reasonCodes?: readonly string[] | undefined;
   readonly transport: ActionTransportMetadata;
 }
 
@@ -315,7 +335,10 @@ export interface ActionRepositoryService {
   readonly resolveInvocation: (
     executor: ActionInvocationScopeExecutor,
     input: ResolveActionInvocationInput,
-  ) => Effect.Effect<ActionInvocationRecord, ActionInvocationNotFound | ActionInvocationPersistenceError>;
+  ) => Effect.Effect<
+    ActionInvocationRecord & { readonly actionKey: string },
+    ActionInvocationNotFound | ActionInvocationPersistenceError
+  >;
   readonly transitionInvocationToRunning: (
     executor: ActionInvocationStateExecutor,
     invocationId: string,
@@ -434,6 +457,44 @@ const isPromotedSqlFailure = Schema.is(
  * persistence failure from a transaction body (including installation of its operational scope).
  * An unrelated defect or interruption keeps the complete cause in its original channel.
  */
+/** Recover driver-promoted SQL settlement failures without swallowing body failures or interruption. */
+export const trackTransactionSettlement = () => {
+  const bodyFailures = new Set<unknown>();
+  return {
+    capture: <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+      body.pipe(
+        Effect.tapCause((cause) =>
+          Effect.sync(() => {
+            for (const reason of cause.reasons) {
+              if (Cause.isFailReason(reason)) {
+                bodyFailures.add(reason.error);
+              }
+            }
+          }),
+        ),
+      ),
+    recover: <A, E, R>(transaction: Effect.Effect<A, E, R>): Effect.Effect<A, E | SqlError, R> =>
+      transaction.pipe(
+        Effect.catchCause((cause): Effect.Effect<never, E | SqlError> => {
+          let settlement: SqlError | undefined;
+          for (const reason of cause.reasons) {
+            if (Cause.isInterruptReason(reason)) {
+              return Effect.failCause(cause);
+            }
+            if (Cause.isDieReason(reason)) {
+              if (isSqlError(reason.defect)) {
+                settlement = reason.defect;
+              } else if (!bodyFailures.has(reason.defect)) {
+                return Effect.failCause(cause);
+              }
+            }
+          }
+          return settlement === undefined ? Effect.failCause(cause) : Effect.fail(settlement);
+        }),
+      ),
+  };
+};
+
 export const recoverSqlTransactionError = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E | SqlError, R> =>
@@ -458,6 +519,7 @@ export const recoverSqlTransactionError = <A, E, R>(
 
 const resolveInvocation: ActionRepositoryService['resolveInvocation'] = (executor, input) => {
   const failureReason = 'Unable to resolve the Action invocation commit state';
+  const hasInvocationId = input.invocationId !== undefined;
   const recovery = readVerifiedGatewayRecovery(input.principal);
   if (recovery !== undefined && input.invocationId !== recovery.originalActionInvocationId) {
     return Effect.fail(
@@ -470,11 +532,19 @@ const resolveInvocation: ActionRepositoryService['resolveInvocation'] = (executo
   return executor
     .transaction((transaction) => {
       const query = transaction
-        .select(invocationSelection)
+        .select({ ...invocationSelection, actionKey: actionInvocations.actionKey })
         .from(actionInvocations)
         .where(
           and(
-            eq(actionInvocations.actionInvocationId, input.invocationId),
+            hasInvocationId
+              ? eq(actionInvocations.actionInvocationId, input.invocationId)
+              : and(
+                  eq(actionInvocations.actionKey, input.actionKey),
+                  eq(actionInvocations.idempotencyKey, input.idempotencyKey),
+                ),
+            input.principal.legalEntityId === undefined
+              ? isNull(actionInvocations.legalEntityId)
+              : eq(actionInvocations.legalEntityId, input.principal.legalEntityId),
             eq(actionInvocations.tenantId, input.principal.tenantId),
             eq(actionInvocations.principalId, recovery?.originalPrincipalId ?? input.principal.principalId),
             ...(recovery === undefined
@@ -595,7 +665,7 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
     function* lockInvocationEffect(transaction: CoreTransaction, invocationId: string) {
       const failureReason = 'Unable to lock the Action invocation';
       const rows = yield* transaction
-        .select(invocationSelection)
+        .select({ ...invocationSelection, actionKey: actionInvocations.actionKey })
         .from(actionInvocations)
         .where(eq(actionInvocations.actionInvocationId, invocationId))
         .for('update')
@@ -620,14 +690,21 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
     'makeActionRepository.loadRecordedRejection',
   )(function* loadRecordedRejectionEffect(executor: Pick<CoreDatabaseExecutor, 'select'>, invocationId: string) {
     const rows = yield* executor
-      .select({ outcomeCode: auditEvents.outcomeCode, outcomeStage: auditEvents.outcomeStage })
+      .select({
+        evidence: auditEvents.evidenceJson,
+        outcomeCode: auditEvents.outcomeCode,
+        outcomeStage: auditEvents.outcomeStage,
+      })
       .from(auditEvents)
       .where(and(eq(auditEvents.actionInvocationId, invocationId), eq(auditEvents.eventType, 'action.rejected')))
       .limit(1)
       .pipe(Effect.mapError((cause) => persistenceFailure('Unable to load the recorded Action rejection', cause)));
     const [rejection] = rows;
     if (rejection?.outcomeStage === 'authz') {
-      return Option.some<ActionRecordedRejection>({ stage: 'authz' });
+      const reasons: readonly string[] = hasRecordedReasonCodes(rejection.evidence)
+        ? rejection.evidence.reasonCodes
+        : [];
+      return Option.some<ActionRecordedRejection>({ reasons, stage: 'authz' });
     }
     if (rejection?.outcomeStage === 'policy') {
       return Option.some<ActionRecordedRejection>({ policyReasonCode: rejection.outcomeCode, stage: 'policy' });
@@ -730,7 +807,7 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
             authContextRef: input.principal.authContextRef,
             authMethod: input.principal.authMethod,
             eventType: 'action.rejected',
-            evidenceJson: { ...input.deniedAuditEvidence, actionKey: input.actionKey },
+            evidenceJson: rejectionEvidence(input),
             impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
             legalEntityId: input.principal.legalEntityId,
             outcome: 'denied',
@@ -771,7 +848,7 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
       transaction: CoreTransaction,
     ) {
       const rows = yield* transaction
-        .select(invocationSelection)
+        .select({ ...invocationSelection, actionKey: actionInvocations.actionKey })
         .from(actionInvocations)
         .where(eq(actionInvocations.actionInvocationId, input.actionInvocationId))
         .for('update')
@@ -1055,6 +1132,16 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
           }),
         );
       }
+      // Delivered by PostgreSQL only if this transaction commits; open browser sessions then revalidate.
+      yield* notifyLiveChange(transaction, {
+        legalEntityId: input.principal.legalEntityId ?? null,
+        moduleKeys: [
+          input.owningModuleKey,
+          ...(input.transport.targetModuleKey === undefined ? [] : [input.transport.targetModuleKey]),
+          ...input.evidence.domainEvents.flatMap((event) => [event.producerModuleKey, event.subjectModuleKey]),
+        ],
+        tenantId: input.principal.tenantId,
+      }).pipe(Effect.mapError((cause) => transactionFailure(failureReason, cause)));
       return yield* Effect.void;
     },
   );

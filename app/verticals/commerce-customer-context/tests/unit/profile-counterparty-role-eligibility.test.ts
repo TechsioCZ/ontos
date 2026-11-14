@@ -18,6 +18,8 @@ import type { DelegatedAcquire } from '../support/delegated-gateway-acquisition.
 import { failingDelegatedAcquire, issuedDelegatedContext } from '../support/delegated-gateway-acquisition.fixture.ts';
 import {
   ProfileCounterpartyRoleEligibilityResolverFactory,
+  assertPreparedCounterpartyRoleCurrent,
+  withPreparedCounterpartyRoleCurrent,
   classifyProfileCounterpartyRoleEligibility,
   makeProfileCounterpartyRoleEligibilityResolver,
   profileCounterpartyRoleEligibilityResolverFactoryLive,
@@ -149,9 +151,11 @@ it.effect('accepts one exact Current CUSTOMER role and preserves immutable Party
     });
     expect(result).toEqual({
       managedLegalEntityId: legalEntityId,
+      observedAt: now,
       outcome: 'ELIGIBLE',
       roleResourceId,
       roleResourceRevision: recordedAt,
+      validUntil: '2026-09-09T10:00:30.000Z',
     });
   }),
 );
@@ -329,13 +333,16 @@ it.effect('resolves through a delegated Assertion subject and the authorized Par
       ),
     ).toEqual({
       managedLegalEntityId: legalEntityId,
+      observedAt: now,
       outcome: 'ELIGIBLE',
       roleResourceId,
       roleResourceRevision: recordedAt,
+      validUntil: '2026-09-09T10:00:30.000Z',
     });
     expect(admissions).toEqual([
       {
         audience: 'party-registry',
+        callingAppId: 'commerce-customer-context',
         legalEntityScope: 'subject',
         requestCorrelation: serverScope.requestCorrelation,
         subject: { _tag: 'Assertion', scope: verifiedOperationalScope },
@@ -480,5 +487,87 @@ it.effect('preserves a denied public Party read as a dependency failure after ad
     expect(failure).toBeInstanceOf(ProfilePersistenceDependencyFailure);
     expect(failure).toHaveProperty('cause.status', 403);
     expect(reads).toBe(1);
+  }),
+);
+
+it.effect(
+  'bounds prepared role evidence by its real exclusive role end and rejects missing or future observations',
+  () =>
+    Effect.gen(function* preparedRoleBoundaries() {
+      yield* TestClock.setTime(Date.parse(now));
+      const role = classifyProfileCounterpartyRoleEligibility(
+        {
+          ...response,
+          currentRoles: response.currentRoles.map((current) => ({ ...current, validTo: '2026-09-09T10:00:01.000Z' })),
+        },
+        { legalEntityId, tenantId },
+        counterpartyResourceId,
+        now,
+      );
+      expect(role).toEqual({
+        managedLegalEntityId: legalEntityId,
+        observedAt: now,
+        outcome: 'ELIGIBLE',
+        roleResourceId,
+        roleResourceRevision: recordedAt,
+        validUntil: '2026-09-09T10:00:01.000Z',
+      });
+      yield* assertPreparedCounterpartyRoleCurrent(role);
+      yield* TestClock.setTime(Date.parse(now) + 1000);
+      expect(yield* assertPreparedCounterpartyRoleCurrent(role).pipe(Effect.flip)).toBeInstanceOf(
+        ProfilePersistenceDependencyFailure,
+      );
+      yield* TestClock.setTime(Date.parse(now) - 1);
+      expect(yield* assertPreparedCounterpartyRoleCurrent(role).pipe(Effect.flip)).toBeInstanceOf(
+        ProfilePersistenceDependencyFailure,
+      );
+      expect(
+        yield* assertPreparedCounterpartyRoleCurrent({
+          managedLegalEntityId: legalEntityId,
+          outcome: 'ELIGIBLE',
+          roleResourceId,
+          roleResourceRevision: recordedAt,
+        }).pipe(Effect.flip),
+      ).toBeInstanceOf(ProfilePersistenceDependencyFailure);
+    }),
+);
+
+it.effect('rechecks prepared role expiry after mutation before its owner transaction can commit', () =>
+  Effect.gen(function* expirationDuringMutation() {
+    yield* TestClock.setTime(Date.parse(now));
+    const role = classifyProfileCounterpartyRoleEligibility(
+      response,
+      { legalEntityId, tenantId },
+      counterpartyResourceId,
+      now,
+    );
+    const failure = yield* withPreparedCounterpartyRoleCurrent(role, TestClock.setTime(Date.parse(now) + 30_000)).pipe(
+      Effect.flip,
+    );
+    expect(failure).toBeInstanceOf(ProfilePersistenceDependencyFailure);
+  }),
+);
+
+it.effect('does not delegate a Party read for an unbound tenant or company scope', () =>
+  Effect.gen(function* unboundRoleScope() {
+    let ownerCalls = 0;
+    const execute: CounterpartyReadExecutor = () => {
+      ownerCalls += 1;
+      return Effect.succeed(response);
+    };
+    for (const operationalScope of [
+      { ...verifiedOperationalScope, tenantId: 'foreign-tenant' },
+      { ...verifiedOperationalScope, legalEntityId: 'foreign-company' },
+    ]) {
+      const resolve = makeProfileCounterpartyRoleEligibilityResolver(
+        { legalEntityId, operationalScope, requestCorrelation: 'unbound-role', tenantId },
+        {
+          ...unusedSeams,
+          execute,
+        },
+      );
+      expect(yield* resolve({ counterpartyResourceId, tenantId })).toEqual({ outcome: 'INDETERMINATE' });
+    }
+    expect(ownerCalls).toBe(0);
   }),
 );

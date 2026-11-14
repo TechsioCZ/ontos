@@ -46,6 +46,10 @@ const prepareDevModuleContractCommand = Command.make(
       const contractDirectory = pathService.join(publicDirectory, '.well-known');
       yield* fileSystem.makeDirectory(contractDirectory, { recursive: true });
       yield* fileSystem.copyFile(generated.path, pathService.join(contractDirectory, 'ontos-module-manifest.json'));
+      const toolCatalog = pathService.join(pathService.dirname(generated.path), 'ontos-module-mcp-tools.json');
+      if (yield* fileSystem.exists(toolCatalog)) {
+        yield* fileSystem.copyFile(toolCatalog, pathService.join(contractDirectory, 'ontos-module-mcp-tools.json'));
+      }
       const headers = yield* fileSystem.readFileString(
         pathService.join(pathService.dirname(pathService.dirname(generated.path)), '_headers'),
       );

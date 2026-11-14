@@ -2,6 +2,12 @@ import { Data, Effect, Schema, SchemaIssue } from 'effect';
 import type { Redacted } from 'effect';
 
 import { decodedStringBrand } from '../actions/string-schemas.ts';
+import {
+  DeclarationKeySchema,
+  EntrypointKeySchema,
+  JobKeySchema,
+  WorkloadKeySchema,
+} from './registered-gateway-workload-keys.ts';
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
 import {
   readPrincipalContextProvenanceSeal,
@@ -42,18 +48,15 @@ export interface VerifiedGatewayActor {
 const uuid = Schema.String.check(Schema.isUUID());
 const AdmissionInvocationIdSchema = decodedStringBrand(uuid, 'AdmissionInvocationId');
 const ClaimIdSchema = decodedStringBrand(Schema.NonEmptyString, 'OutboxClaimId');
-const DeclarationKeySchema = decodedStringBrand(Schema.NonEmptyString, 'GatewayWorkloadDeclarationKey');
-const EntrypointKeySchema = decodedStringBrand(Schema.NonEmptyString, 'GatewayWorkloadEntrypointKey');
-const JobKeySchema = decodedStringBrand(Schema.NonEmptyString, 'GatewayWorkloadJobKey');
 const LegalEntityIdSchema = decodedStringBrand(uuid, 'LegalEntityId');
 const PrincipalIdSchema = decodedStringBrand(uuid, 'PrincipalId');
 const SourceAppIdSchema = decodedStringBrand(Schema.NonEmptyString, 'GatewayWorkloadSourceAppId');
 const TenantIdSchema = decodedStringBrand(uuid, 'TenantId');
 const WorkerKeySchema = decodedStringBrand(Schema.NonEmptyString, 'OutboxWorkerKey');
 const WorkerModuleKeySchema = decodedStringBrand(Schema.NonEmptyString, 'OutboxWorkerModuleKey');
-const WorkloadKeySchema = decodedStringBrand(Schema.NonEmptyString, 'GatewayWorkloadKey');
+// The carrier admits exactly the authentication methods the trusted-principal contract admits.
 const PrincipalContextProvenanceCarrierSchema = Schema.Struct({
-  authMethod: Schema.Literals(['session', 'api_key', 'system', 'support_impersonation']),
+  authMethod: TrustedPrincipalContextSchema.fields.authMethod,
   principalId: PrincipalIdSchema,
   tenantId: TenantIdSchema,
 });
@@ -282,7 +285,7 @@ const attachPrincipalContextProvenance = <Context extends TrustedPrincipalContex
 ): Context => {
   const carrier = { ...context };
   sealPrincipalContextProvenance(carrier, provenance);
-  return Object.isFrozen(context) ? Object.freeze(carrier) : carrier;
+  return Object.freeze(carrier);
 };
 
 const readPrincipalContextProvenance = <Context>(

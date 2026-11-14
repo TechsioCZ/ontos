@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext, OutboxWorkerLegalEntityScope } from '@app/core-runtime/outbox/worker';
 import { GatewayContextResponseSchema } from '@app/shared-contracts';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
@@ -119,7 +120,7 @@ const inWorker = <Value, Failure, Requirements>(
   Effect.gen(function* workerCall() {
     const workerContext = yield* deliveryOf(scope);
     return yield* database.transaction((transaction: PaymentTestTransaction) =>
-      installOperationalScope(transaction, operationalScopeOf(scope)).pipe(
+      installOperationalScope(transaction, operationalScopeOf(scope), defineDatabaseIdentityEnrollment([])).pipe(
         Effect.flatMap((invoker) =>
           call({
             scope: {
@@ -382,7 +383,11 @@ const recordAcceptedObservation = (
 ) =>
   runtime.transaction((transaction: PaymentTestTransaction) =>
     Effect.gen(function* acceptObservation() {
-      const scoped = yield* installOperationalScope(transaction, operationalScopeOf(scope));
+      const scoped = yield* installOperationalScope(
+        transaction,
+        operationalScopeOf(scope),
+        defineDatabaseIdentityEnrollment([]),
+      );
       const sources = paymentSourcePersistenceForTransaction(
         scoped,
         scope,

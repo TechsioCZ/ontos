@@ -1,6 +1,11 @@
 import type { BoundAccessGate, OperationalScope } from '@app/core-runtime';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
-import type { GateInput, SelectableLegalEntitiesInput, TestAccessDecision } from '@app/core-runtime/access/enforcement';
+import type {
+  GateInput,
+  ListGateInput,
+  SelectableLegalEntitiesInput,
+  TestAccessDecision,
+} from '@app/core-runtime/access/enforcement';
 import { makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { Effect, Schema } from 'effect';
 
@@ -96,6 +101,11 @@ export const makeShellTestAccessGate = (options: ShellTestAccessGateOptions = {}
     }
     return decisionOf(options.answers?.[key] ?? options.defaultAnswer ?? 'denied');
   };
+  const listOf = (input: ListGateInput) => {
+    const decision = answerOf(input);
+    const visible = decision.outcome === 'ALLOWED' || decision.outcome === 'NEEDS_APPROVAL';
+    return visible ? { decision, predicate: { groups: [] } } : { decision };
+  };
   const gate: Omit<ShellTestAccessGate, 'bound'> = {
     askedDecisions: decisions,
     askedLists: [],
@@ -112,11 +122,8 @@ export const makeShellTestAccessGate = (options: ShellTestAccessGateOptions = {}
       return Effect.succeed(input.map(answerOf));
     },
     decisions,
-    list: (input) => {
-      const decision = answerOf(input);
-      const visible = decision.outcome === 'ALLOWED' || decision.outcome === 'NEEDS_APPROVAL';
-      return Effect.succeed(visible ? { decision, predicate: { groups: [] } } : { decision });
-    },
+    list: (input) => Effect.succeed(listOf(input)),
+    listMany: (input) => Effect.succeed(input.map(listOf)),
     selectableAsks,
     selectableLegalEntities: (input) => {
       selectableAsks.push(input);
@@ -125,8 +132,10 @@ export const makeShellTestAccessGate = (options: ShellTestAccessGateOptions = {}
     singleDecisions,
   };
   // The same gate a runtime asks: it already answers `decide`, `list` and `selectableLegalEntities`,
-  // so binding it to a composition's ports changes nothing (the double reads no authority).
-  return { ...gate, bound: gate };
+  // so binding it to a composition's ports changes nothing (the double reads no authority). A prepared
+  // Action authority requires `rebind`, so the double states that identity instead of leaving it out.
+  const shellGate: ShellTestAccessGate = { ...gate, bound: gate, rebind: () => shellGate };
+  return shellGate;
 };
 
 /** A per-key answer map a suite may change between calls, e.g. to prove a revocation is rechecked. */

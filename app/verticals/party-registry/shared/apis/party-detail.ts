@@ -13,6 +13,8 @@ export const PartyDetailRequestSchema = Schema.Struct({
   partyRef: PartyRefSchema,
 });
 export type PartyDetailRequest = typeof PartyDetailRequestSchema.Type;
+/** The assertion lifecycle vocabulary the current and archived carriers both answer with. */
+const PartyFactStateSchema = Schema.Literals(['ACTIVE', 'ENDED', 'SUPERSEDED', 'RETRACTED', 'DISPUTED']);
 /** Owner-local assertion identity, qualified by its Party; not a separately addressable Resource. */
 export const PartyFactAssertionSchema = Schema.Struct({
   assertionId: AssertionIdSchema,
@@ -24,7 +26,7 @@ export const PartyFactAssertionSchema = Schema.Struct({
   partyRef: PartyRefSchema,
   recordedAt: IsoTimestampSchema,
   retractsAssertionId: Schema.OptionFromNullOr(AssertionIdSchema),
-  state: Schema.Literals(['ACTIVE', 'ENDED', 'SUPERSEDED', 'RETRACTED', 'DISPUTED']),
+  state: PartyFactStateSchema,
   supersedesAssertionId: Schema.OptionFromNullOr(AssertionIdSchema),
   validFrom: IsoTimestampSchema,
   validTo: Schema.OptionFromNullOr(IsoTimestampSchema),
@@ -32,6 +34,33 @@ export const PartyFactAssertionSchema = Schema.Struct({
   value: Schema.optionalKey(Schema.String),
 });
 export type PartyFactAssertion = typeof PartyFactAssertionSchema.Type;
+/**
+ * One archived Party display name, kept as the lossless historical evidence the registry recorded
+ * before the structured-name migration. It is deliberately not a `PartyFactAssertion`: `DISPLAY_NAME`
+ * is none of that carrier's four current fact kinds, and this evidence never feeds the current-name
+ * projection, `currentFactAssertions`, or any current authority. The original label survives as the
+ * evidence discriminator, and the assertion identity, value, period and supersede/retract links stay
+ * exactly as recorded. `state` and `isCurrent` are the original row's own flags, retained as
+ * historical metadata only.
+ */
+export const PartyHistoricalNameAssertionSchema = Schema.Struct({
+  assertionId: AssertionIdSchema,
+  externalEvidence: Schema.OptionFromOptionalNullOr(AresAppliedEvidenceSchema, {
+    onNoneEncoding: 'omit',
+  }),
+  factKind: Schema.Literals(['DISPLAY_NAME']),
+  isCurrent: Schema.Boolean,
+  partyRef: PartyRefSchema,
+  recordedAt: IsoTimestampSchema,
+  retractsAssertionId: Schema.OptionFromNullOr(AssertionIdSchema),
+  state: PartyFactStateSchema,
+  supersedesAssertionId: Schema.OptionFromNullOr(AssertionIdSchema),
+  validFrom: IsoTimestampSchema,
+  validTo: Schema.OptionFromNullOr(IsoTimestampSchema),
+  // Absent when the caller lacks `party.registry.party-identity.read`; the assertion identity stays.
+  value: Schema.optionalKey(Schema.String),
+});
+export type PartyHistoricalNameAssertion = typeof PartyHistoricalNameAssertionSchema.Type;
 export const PartyDetailResolutionSchema = Schema.Struct({
   aliasChain: Schema.Array(PartyRefSchema),
   canonicalPartyRef: PartyRefSchema,
@@ -51,6 +80,8 @@ export const PartyDetailResponseSchema = Schema.Struct({
   currentFactAssertions: Schema.Array(PartyFactAssertionSchema),
   // Absent unless history was requested; a plain array (not an Option) so redaction projects its rows in place.
   factHistory: Schema.optionalKey(Schema.Array(PartyFactAssertionSchema)),
+  // Absent unless history was requested; archived names never join the current-name projections.
+  historicalNameEvidence: Schema.optionalKey(Schema.Array(PartyHistoricalNameAssertionSchema)),
   party: PartyDetailPartySchema,
   resolution: PartyDetailResolutionSchema,
 });

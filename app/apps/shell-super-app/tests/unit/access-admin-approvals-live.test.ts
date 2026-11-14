@@ -21,6 +21,7 @@ import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { AccessApprovalsCommands } from '../../api/access-admin/approvals-commands.ts';
+import { ApprovalOwnerTransport } from '../../api/access-admin/approval-owner-transport.ts';
 import type { AccessApprovalsCommandsService } from '../../api/access-admin/approvals-commands.ts';
 import {
   AccessApprovalsLive,
@@ -153,10 +154,16 @@ const commandsFor = (frozen: FrozenCommandRecord) =>
     AccessApprovalsLive.pipe(
       Layer.provide(
         Layer.mergeAll(
+          Layer.succeed(ApprovalOwnerTransport, {
+            approve: () => unused('owner approve'),
+            inspect: () => unused('owner inspect'),
+          }),
           accessApprovalActionsLayer([approvalActionOf(payInvoice)]),
           Layer.succeed(AccessApprovalsInbox, inboxOver(frozen)),
           Layer.succeed(AccessChangesCommands, changes),
           Layer.succeed(AccessPeopleDirectory, {
+            companyMember: () => Effect.succeed(Option.none()),
+            companyMembers: () => Effect.succeed([]),
             people: () => Effect.succeed([]),
             scopeLabels: () => Effect.succeed({ companies: [] }),
           }),

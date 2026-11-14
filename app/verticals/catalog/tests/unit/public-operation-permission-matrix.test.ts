@@ -11,6 +11,7 @@ import {
   defineRead,
 } from '@app/core-runtime';
 import type { ReadRuntimeService, TrustedPrincipalContext } from '@app/core-runtime';
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -268,18 +269,20 @@ const reads = [
 it('maps every published Action and governed read to one explicit atomic permission and bundle', () => {
   const actionKeys = catalogManifest.publicSurface.actions.map((action) => action.descriptor.actionKey);
   const readKeys = reads.map((read) => read.descriptor.readKey);
-  expect(new Set(readKeys)).toEqual(
-    new Set(
-      Object.keys(catalogManifest.publicSurface.api)
-        .filter(
-          (name) =>
-            !extractVerticalRuntimeSafeDescriptors(catalogRegistration).operationContracts.some(
-              (operation) => operation.apiKey === `commerce.catalog.${name}` && operation.entrypoint.role === 'action',
-            ),
-        )
-        .map((name) => `commerce.catalog.api.${name}`),
-    ),
+  // The shared Core approval API evaluates the original Action's authority; it is not a Catalog capability.
+  const apiEntries = Object.entries(catalogManifest.publicSurface.api);
+  expect(apiEntries.filter(([, api]) => api === OwnerActionApprovalApi)).toEqual([
+    ['owner-action-approvals', OwnerActionApprovalApi],
+  ]);
+  const actionApiKeys = new Set(
+    extractVerticalRuntimeSafeDescriptors(catalogRegistration)
+      .operationContracts.filter((operation) => operation.entrypoint.role === 'action')
+      .map((operation) => operation.apiKey),
   );
+  const ownerReads = apiEntries.filter(
+    ([name, api]) => api !== OwnerActionApprovalApi && !actionApiKeys.has(`commerce.catalog.${name}`),
+  );
+  expect(new Set(readKeys)).toEqual(new Set(ownerReads.map(([name]) => `commerce.catalog.api.${name}`)));
   const published = [...actionKeys, ...readKeys];
   expect(new Set(published).size).toBe(published.length);
   expect(new Set(Object.keys(catalogPublicOperationContracts))).toEqual(new Set(published));

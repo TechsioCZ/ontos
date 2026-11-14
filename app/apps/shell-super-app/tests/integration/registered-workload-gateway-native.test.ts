@@ -35,15 +35,24 @@ import {
   OntosModuleRequirementsSchema,
   ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY,
   ONTOS_SHELL_CONTRIBUTION_ABI,
+  makeDatabaseIdentityEnrollmentLive,
+  OntosRegisteredWorkloadCallSchema,
+  OntosRegisteredWorkloadCallsSchema,
 } from '@app/core-runtime';
 import {
   AccessDecisionGate,
+  AccessWorkloadBindingIdSchema,
+  AccessWorkloadCompanyBindingIdSchema,
   computeActionRequestHash,
   computeCanonicalValueHash,
   makeAccessDecisionService,
+  makeAccessWorkloadCompanyBindingDrizzleStore,
   makeDrizzleAccessPrincipalKinds,
   makeDrizzleAccessWorkloadBindings,
 } from '@app/core-runtime/access/enforcement';
+import { bootstrapScopesOf, writeBootstrapScopes } from '@app/core-runtime/access/bootstrap';
+import { LegalEntityIdSchema, TenantIdSchema } from '@app/core-runtime/access/ids';
+import { stageScopeOf } from '@app/core-runtime/install/stage-context-bootstrap';
 import type { GatewayAssertionRedemptionInput } from '@app/core-runtime';
 import { CoreDatabase, makeCoreDatabase } from '@app/core-runtime/db/client';
 import {
@@ -93,12 +102,23 @@ import { importJobResourceDescriptor } from '@app/symmy-integration/resources/im
 import { NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
-import { ConfigProvider, Context, Crypto, DateTime, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
+import {
+  Cause,
+  ConfigProvider,
+  Context,
+  Crypto,
+  DateTime,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Redacted,
+  Schema,
+} from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { decodeJwt, exportJWK, generateKeyPair } from 'jose';
 import { Base64Url } from 'effect/encoding';
-import type { GatewayRegisteredWorkloadRule } from '../../api/auth/gateway-delegation-policy.ts';
 import { loadGatewayModuleBindings } from '../../api/auth/gateway-delegation-policy.ts';
 import { admitAssertionSubject, readVerifiedGatewayAssertion } from '../../api/auth/gateway-assertion-evidence.ts';
 import {
@@ -114,8 +134,9 @@ import {
   makeGatewayIssuerLayer,
 } from '../../api/auth/gateway-issuer.ts';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
+import { GatewayDelegationError } from '../../api/auth/gateway-delegation-errors.ts';
 import { issueDelegatedGatewayContextAssertion } from '../../api/auth/gateway-delegation-issuer.ts';
-import { GatewayDelegationVerificationLive } from '../../api/auth/gateway-delegation-verification.ts';
+import { makeGatewayDelegationVerificationLayer } from '../../api/auth/gateway-delegation-verification.ts';
 import { GatewayOriginatorEvidenceLive } from '../../api/auth/gateway-originator-evidence.service.ts';
 import {
   GatewayDelegationExchangeLedger,
@@ -126,7 +147,9 @@ import {
   ShellInstalledModuleCatalog,
 } from '../../api/modules/installed-module-catalog.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { enrolledModuleCredentials } from '../support/module-credential-enrolment.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
 
 const sourceApp = 'symmy-integration';
 const sourceModule = outboxProducerModuleKey;
@@ -453,6 +476,98 @@ const processingRuntimeFixture = (
   };
 };
 
+// The registered-workload calls of the three calling modules, verbatim from origin/main 5608aae1d
+// apps/shell-super-app/tests/integration/registered-workload-gateway-native.test.ts (then its ONTOS_GATEWAY_MODULE_BINDINGS);
+// each calling module now declares them in its own contract (demo divergence exception 8).
+const rule = {
+  audience: 'party-registry',
+  declarationKey: targetCapability,
+  entrypointKey: targetKey,
+  jobKey: workerKey,
+  legalEntityScope: 'required',
+  schemaVersion: '1',
+  workloadKey: targetWorkload,
+} as const;
+const recoveryRule = {
+  audience: 'party-registry',
+  declarationKey: recoveryCapability,
+  entrypointKey: recoveryKey,
+  jobKey: 'integration.fixture.recovery',
+  legalEntityScope: 'required',
+  recoveryOf: { actionKey: originalWriteKey, jobKey: workerKey },
+  schemaVersion: '1',
+  workloadKey: recoveryWorkload,
+} as const;
+const recoveryTenantRule = {
+  ...recoveryRule,
+  declarationKey: recoveryTenantCapability,
+  entrypointKey: recoveryTenantKey,
+  legalEntityScope: 'forbidden',
+  recoveryOf: { actionKey: originalTenantWriteKey, jobKey: workerKey },
+} as const;
+const privacyNormalRule = {
+  audience: 'privacy',
+  declarationKey: privacyCapability,
+  entrypointKey: privacyKey,
+  jobKey: 'party-privacy-check',
+  legalEntityScope: 'required',
+  schemaVersion: '1',
+  sourceWorkloadKey: targetWorkload,
+  workloadKey: privacyWorkload,
+} as const;
+const privacyRecoveryRule = {
+  ...privacyNormalRule,
+  allowRecoverySource: true,
+  jobKey: 'party-privacy-recovery-check',
+  sourceWorkloadKey: recoveryWorkload,
+} as const;
+const sourceCalls = [
+  { ...rule, sourceActionKey: sourceAction },
+  { ...rule, workerKey },
+  { ...rule, declarationKey: originalWriteCapability, entrypointKey: originalWriteKey, sourceActionKey: sourceAction },
+  { ...rule, declarationKey: originalWriteCapability, entrypointKey: originalWriteKey, workerKey },
+  { ...recoveryRule, sourceActionKey: sourceAction },
+  { ...recoveryRule, allowHistoricalDeliveryRecovery: true, workerKey },
+  { ...recoveryTenantRule, sourceActionKey: sourceAction },
+  { ...recoveryTenantRule, workerKey },
+];
+const partyCalls = [
+  {
+    ...privacyNormalRule,
+    declarationKey: organizationBusinessCapability,
+    entrypointKey: organizationBusinessKey,
+    workloadKey: organizationBusinessWorkload,
+  },
+  privacyNormalRule,
+  { ...privacyNormalRule, allowRecoverySource: true },
+  {
+    audience: 'privacy',
+    declarationKey: privacyTenantCapability,
+    entrypointKey: privacyTenantKey,
+    jobKey: 'party-privacy-tenant-check',
+    legalEntityScope: 'forbidden',
+    schemaVersion: '1',
+    sourceWorkloadKey: targetWorkload,
+    workloadKey: privacyWorkload,
+  },
+  { ...privacyRecoveryRule, allowRecoverySource: false },
+  privacyRecoveryRule,
+];
+const privacyCalls = [
+  {
+    audience: sourceApp,
+    declarationKey: sourceFactsCapability,
+    entrypointKey: sourceFactsKey,
+    jobKey: 'privacy.core.organization-business-source-facts',
+    legalEntityScope: 'required',
+    schemaVersion: sourceFactsVersion,
+    sourceWorkloadKey: organizationBusinessWorkload,
+    workloadKey: sourceFactsWorkload,
+  },
+];
+/** What a receiving operation publishes about the registered workloads it admits. */
+const carrier = (declarationKey: string, workload: string) => ({ declarationKey, workloads: [workload] });
+
 const contractInputs = () => {
   const source = makeModuleContractFixture({
     appId: sourceApp,
@@ -522,10 +637,12 @@ const contractInputs = () => {
               entrypoint: sourceFactsEntrypoint,
               operationKey: 'symmySourceOrganizationFacts.execute',
               schemaVersion: sourceFactsVersion,
+              workloadCarrier: carrier(sourceFactsCapability, sourceFactsWorkload),
             },
           ],
           resourceTypes: [importJobResourceDescriptor],
         },
+        registeredWorkloadCalls: sourceCalls,
         requirements: {
           coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
           intrinsic: [
@@ -613,33 +730,39 @@ const contractInputs = () => {
               entrypoint: targetEntrypoint,
               operationKey: 'sourceResult.execute',
               schemaVersion: '1',
+              workloadCarrier: carrier(targetCapability, targetWorkload),
             },
             {
               apiKey: 'party.registry.source-result',
               entrypoint: originalWriteEntrypoint,
               operationKey: 'sourceWrite.execute',
               schemaVersion: '1',
+              workloadCarrier: carrier(originalWriteCapability, targetWorkload),
             },
             {
               apiKey: 'party.registry.source-result',
               entrypoint: originalTenantWriteEntrypoint,
               operationKey: 'sourceCreate.execute',
               schemaVersion: '1',
+              workloadCarrier: carrier(originalWriteCapability, targetWorkload),
             },
             {
               apiKey: 'party.registry.source-result',
               entrypoint: recoveryEntrypoint,
               operationKey: 'sourceRecovery.execute',
               schemaVersion: '1',
+              workloadCarrier: carrier(recoveryCapability, recoveryWorkload),
             },
             {
               apiKey: 'party.registry.source-result',
               entrypoint: recoveryTenantEntrypoint,
               operationKey: 'sourceRecoveryTenant.execute',
               schemaVersion: '1',
+              workloadCarrier: carrier(recoveryTenantCapability, recoveryWorkload),
             },
           ],
         },
+        registeredWorkloadCalls: partyCalls,
         requirements: {
           coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
           intrinsic: [],
@@ -699,21 +822,25 @@ const contractInputs = () => {
               entrypoint: organizationBusinessEntrypoint,
               operationKey: 'organizationBusinessApplicability.execute',
               schemaVersion: '1',
+              workloadCarrier: carrier(organizationBusinessCapability, organizationBusinessWorkload),
             },
             {
               apiKey: 'privacy.core.source-processing-eligibility',
               entrypoint: privacyEntrypoint,
               operationKey: 'sourceProcessingEligibility.execute',
               schemaVersion: '1',
+              workloadCarrier: carrier(privacyCapability, privacyWorkload),
             },
             {
               apiKey: 'privacy.core.source-processing-eligibility',
               entrypoint: privacyTenantEntrypoint,
               operationKey: 'tenantCheck.execute',
               schemaVersion: '1',
+              workloadCarrier: carrier(privacyTenantCapability, privacyWorkload),
             },
           ],
         },
+        registeredWorkloadCalls: privacyCalls,
         requirements: {
           coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
           intrinsic: [],
@@ -741,10 +868,17 @@ const replaceIdentity = (connectionString: string, role: string) => {
 };
 const unavailableHumanPort = () => Effect.die('A workload decision must not ask human intent or the tuple engine');
 
-const nativeMachineGate = (database: Effect.Success<ReturnType<typeof makeCoreDatabase>>) =>
+const nativeMachineGate = (
+  database: Effect.Success<ReturnType<typeof makeCoreDatabase>>,
+  companyTenants: ReadonlyMap<string, string>,
+) =>
   makeAccessDecisionService({
     authorityFor: () => ({
       readCells: unavailableHumanPort,
+      // A company is owned exactly by the Tenant this fixture inserted it for (core.legal_entities), so the foreign
+      // company stays foreign to the gate as it is to the database.
+      readCompanyOwnership: ({ legalEntityId, tenantId }) =>
+        Effect.succeed(companyTenants.get(legalEntityId) === tenantId),
       readConnection: unavailableHumanPort,
       readScope: unavailableHumanPort,
       readTeamIds: unavailableHumanPort,
@@ -752,8 +886,11 @@ const nativeMachineGate = (database: Effect.Success<ReturnType<typeof makeCoreDa
     check: { checkBulk: unavailableHumanPort },
     decisionLog: { record: unavailableHumanPort },
     legalEntities: { listCandidateIds: unavailableHumanPort },
-    principalKinds: makeDrizzleAccessPrincipalKinds(database),
-    workloadBindings: makeDrizzleAccessWorkloadBindings(database),
+    principalKinds: makeDrizzleAccessPrincipalKinds({ ...database, enrollment: SHELL_DATABASE_IDENTITY_ENROLLMENT }),
+    workloadBindings: makeDrizzleAccessWorkloadBindings({
+      ...database,
+      enrollment: SHELL_DATABASE_IDENTITY_ENROLLMENT,
+    }),
   });
 
 const nativeRedemption = (database: Effect.Success<ReturnType<typeof makeCoreDatabase>>) => ({
@@ -775,6 +912,18 @@ const nativeRedemption = (database: Effect.Success<ReturnType<typeof makeCoreDat
   }),
 });
 
+/** The reason a delegated issuance was refused with, or `issued`. */
+const refusalOf = <A, R>(issuance: Effect.Effect<A, unknown, R>) =>
+  Effect.exit(issuance).pipe(
+    Effect.map((exit) => {
+      if (Exit.isSuccess(exit)) {
+        return 'issued';
+      }
+      const failure = Cause.squash(exit.cause);
+      return Schema.is(GatewayDelegationError)(failure) ? failure.reason : 'other';
+    }),
+  );
+
 it.live(
   'issues native workload, nested, and exact receipt-recovery capabilities with tenant, actor, binding, and claim restrictions',
   () =>
@@ -793,6 +942,8 @@ it.live(
         });
         const fixture = yield* makeIsolatedNativeDatabaseFixture({
           compositionSnapshot: snapshot,
+          // The Shell's enrollment: the clone's trust catalog admits the Shell's gateway audiences for scope grants.
+          databaseIdentities: SHELL_DATABASE_IDENTITY_ENROLLMENT,
           mode: 'schema-only',
           purpose: 'implementation-1096-registered-workload-gateway',
         });
@@ -810,6 +961,10 @@ it.live(
         const legalEntityId = yield* crypto.randomUUIDv4();
         const otherTenantId = yield* crypto.randomUUIDv4();
         const foreignLegalEntityId = yield* crypto.randomUUIDv4();
+        const companyTenants: ReadonlyMap<string, string> = new Map([
+          [legalEntityId, tenantId],
+          [foreignLegalEntityId, otherTenantId],
+        ]);
         const originalPrincipal = yield* crypto.randomUUIDv4();
         const machinePrincipal = yield* crypto.randomUUIDv4();
         const modulePrincipal = yield* crypto.randomUUIDv4();
@@ -822,6 +977,8 @@ it.live(
         const privacyMachine = yield* crypto.randomUUIDv4();
         const partyModulePrincipal = yield* crypto.randomUUIDv4();
         const privacyOriginalBinding = yield* crypto.randomUUIDv4();
+        const privacyMachineBinding = yield* crypto.randomUUIDv4();
+        const tenantOperator = yield* crypto.randomUUIDv4();
         const insert = (statement: Parameters<typeof admin.executor.execute>[0]) =>
           admin.executor.execute(statement, 'objects');
         yield* insert(
@@ -831,7 +988,7 @@ it.live(
           sql`insert into core.legal_entities(legal_entity_id,tenant_id,legal_name,registration_country,registration_number,status) values(${legalEntityId}::uuid,${tenantId}::uuid,'Native company','CZ','1','active'),(${foreignLegalEntityId}::uuid,${otherTenantId}::uuid,'Foreign company','CZ','2','active')`,
         );
         yield* insert(
-          sql`insert into core.principals(principal_id,tenant_id,kind,display_name,status) values(${originalPrincipal}::uuid,${tenantId}::uuid,'integration','Original integration','active'),(${machinePrincipal}::uuid,${tenantId}::uuid,'system','Receiver system','active'),(${modulePrincipal}::uuid,${tenantId}::uuid,'service','Source deployment','active')`,
+          sql`insert into core.principals(principal_id,tenant_id,kind,display_name,status) values(${originalPrincipal}::uuid,${tenantId}::uuid,'integration','Original integration','active'),(${machinePrincipal}::uuid,${tenantId}::uuid,'system','Receiver system','active'),(${modulePrincipal}::uuid,${tenantId}::uuid,'service','Source deployment','active'),(${tenantOperator}::uuid,${tenantId}::uuid,'human','Tenant operator','active')`,
         );
         yield* insert(
           sql`insert into core.principal_auth_bindings(principal_auth_binding_id,tenant_id,principal_id,authentication_namespace_id,provider,subject_type,provider_subject_id,status) values(${originalAuthBinding}::uuid,${tenantId}::uuid,${originalPrincipal}::uuid,${authenticationNamespaceId},'better_auth','api_key','retired-ingress-key','active'),(${moduleAuthBinding}::uuid,${tenantId}::uuid,${modulePrincipal}::uuid,${authenticationNamespaceId},'better_auth','api_key',${providerKey},'active')`,
@@ -861,7 +1018,7 @@ it.live(
           sql`insert into core.principal_auth_bindings(principal_auth_binding_id,tenant_id,principal_id,authentication_namespace_id,provider,subject_type,provider_subject_id,status) values(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${partyModulePrincipal}::uuid,${authenticationNamespaceId},'better_auth','api_key',${partyProviderKey},'active')`,
         );
         yield* insert(
-          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${privacyOriginalBinding}::uuid,${tenantId}::uuid,${originalPrincipal}::uuid,${privacyWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active'),(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${privacyMachine}::uuid,${privacyWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
+          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${privacyOriginalBinding}::uuid,${tenantId}::uuid,${originalPrincipal}::uuid,${privacyWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active'),(${privacyMachineBinding}::uuid,${tenantId}::uuid,${privacyMachine}::uuid,${privacyWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
         );
         yield* insert(
           sql`insert into core.tenant_module_states(tenant_id,module_key,state) values(${tenantId}::uuid,'privacy.core','active')`,
@@ -874,25 +1031,66 @@ it.live(
         yield* insert(
           sql`insert into core.principal_auth_bindings(tenant_id,principal_id,authentication_namespace_id,provider,subject_type,provider_subject_id,status) values(${tenantId}::uuid,${privacyModulePrincipal}::uuid,${authenticationNamespaceId},'better_auth','api_key',${privacyProviderKey},'active')`,
         );
+        const sourceFactsMachineBinding = yield* crypto.randomUUIDv4();
         yield* Effect.forEach(
           [
-            [originalPrincipal, organizationBusinessWorkload],
-            [privacyMachine, organizationBusinessWorkload],
-            [originalPrincipal, sourceFactsWorkload],
-            [sourceFactsMachine, sourceFactsWorkload],
+            [originalPrincipal, organizationBusinessWorkload, yield* crypto.randomUUIDv4()],
+            [privacyMachine, organizationBusinessWorkload, yield* crypto.randomUUIDv4()],
+            [originalPrincipal, sourceFactsWorkload, yield* crypto.randomUUIDv4()],
+            [sourceFactsMachine, sourceFactsWorkload, sourceFactsMachineBinding],
           ],
-          ([principalId, workload]) =>
+          ([principalId, workload, bindingId]) =>
             Effect.gen(function* enrollProcessingBinding() {
               yield* insert(
-                sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${principalId}::uuid,${workload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
+                sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${bindingId}::uuid,${tenantId}::uuid,${principalId}::uuid,${workload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
               );
             }),
           { concurrency: 1, discard: true },
         );
+        // One active workload binding acts for one company (D6), so the tenant registers each standalone workload's
+        // company through Core's own writers, as the stage and local installers do: the tenant bootstrap creates the
+        // tenant's access scopes with their ready fence, and the company registration store ties a workload binding
+        // to the company under that fence. The Privacy machine's company is registered where its refusal is proven.
+        const workloadAuthority = { enrollment: SHELL_DATABASE_IDENTITY_ENROLLMENT, executor: runtime.executor };
+        const operatorScope = yield* stageScopeOf({ principalId: tenantOperator, tenantId });
+        yield* writeBootstrapScopes(workloadAuthority, operatorScope, {
+          scopes: bootstrapScopesOf(TenantIdSchema.make(tenantId), [LegalEntityIdSchema.make(legalEntityId)]),
+          tenantId: TenantIdSchema.make(tenantId),
+        });
+        const companyRegistrations = makeAccessWorkloadCompanyBindingDrizzleStore(workloadAuthority);
+        const registerCompany = (workloadBindingId: string) =>
+          Effect.gen(function* registerWorkloadCompany() {
+            const companyBindingId = AccessWorkloadCompanyBindingIdSchema.make(yield* crypto.randomUUIDv4());
+            yield* companyRegistrations.registerCompanyBindings(operatorScope, {
+              bindings: [
+                {
+                  companyBindingId,
+                  createdAt: DateTime.toDateUtc(yield* DateTime.now),
+                  incarnation: AccessWorkloadCompanyBindingIdSchema.make(yield* crypto.randomUUIDv4()),
+                  legalEntityId: LegalEntityIdSchema.make(legalEntityId),
+                  tenantId: TenantIdSchema.make(tenantId),
+                  workloadBindingId: AccessWorkloadBindingIdSchema.make(workloadBindingId),
+                },
+              ],
+            });
+            return companyBindingId;
+          });
+        yield* registerCompany(machineBinding);
+        yield* registerCompany(originalOwnerBinding);
+        yield* registerCompany(sourceFactsMachineBinding);
+        // A system principal is the platform's own identity: Core refuses to disable it while its tenant is active, so a
+        // machine stops acting only when its workload binding ends (the cases below revoke bindings instead).
+        const systemPrincipalDisableRefused = (principalId: string) =>
+          Effect.exit(
+            insert(sql`update core.principals set status='disabled' where principal_id=${principalId}::uuid`),
+          ).pipe(Effect.map(Exit.isFailure));
         const installed = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
-        const auth = yield* makeAuthDatabase({ connectionString: fixture.connections.runtime.connectionString });
+        const auth = yield* makeAuthDatabase({
+          connectionString: fixture.connections.runtime.connectionString,
+          expectedRole: fixture.connections.runtime.expectedRole,
+        });
         const scopeResolver = yield* makeOperationalScopeResolver(
-          makeOperationalScopeRepository(runtime),
+          makeOperationalScopeRepository(runtime, SHELL_DATABASE_IDENTITY_ENROLLMENT),
           makeTestOperationalScopeAccess({ decision: 'denied' }),
         );
         const { privateKey, publicKey } = yield* Effect.promise(() =>
@@ -905,139 +1103,16 @@ it.live(
           ONTOS_GATEWAY_ISSUER: issuer,
           ONTOS_GATEWAY_PRIVATE_JWK: JSON.stringify({ ...privateJwk, alg: 'EdDSA', kid: 'native-v4', use: 'sig' }),
         });
-        const rule = {
-          audience: 'party-registry',
-          declarationKey: targetCapability,
-          entrypointKey: targetKey,
-          jobKey: workerKey,
-          legalEntityScope: 'required',
-          schemaVersion: '1',
-          workloadKey: targetWorkload,
-        };
-        const recoveryRule = {
-          audience: 'party-registry',
-          declarationKey: recoveryCapability,
-          entrypointKey: recoveryKey,
-          jobKey: 'integration.fixture.recovery',
-          legalEntityScope: 'required',
-          recoveryOf: { actionKey: originalWriteKey, jobKey: workerKey },
-          schemaVersion: '1',
-          workloadKey: recoveryWorkload,
-        };
-        const recoveryTenantRule = {
-          ...recoveryRule,
-          declarationKey: recoveryTenantCapability,
-          entrypointKey: recoveryTenantKey,
-          legalEntityScope: 'forbidden',
-          recoveryOf: { actionKey: originalTenantWriteKey, jobKey: workerKey },
-        };
-        const privacyNormalRule: GatewayRegisteredWorkloadRule = {
-          audience: 'privacy',
-          declarationKey: privacyCapability,
-          entrypointKey: privacyKey,
-          jobKey: 'party-privacy-check',
-          legalEntityScope: 'required',
-          schemaVersion: '1',
-          sourceWorkloadKey: targetWorkload,
-          workloadKey: privacyWorkload,
-        };
-        const privacyRecoveryRule: GatewayRegisteredWorkloadRule = {
-          ...privacyNormalRule,
-          allowRecoverySource: true,
-          jobKey: 'party-privacy-recovery-check',
-          sourceWorkloadKey: recoveryWorkload,
-        };
-        const partyModeConfiguration = (rules: readonly GatewayRegisteredWorkloadRule[]) =>
-          ConfigProvider.fromUnknown({
-            ONTOS_GATEWAY_ISSUER: issuer,
-            ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-              {
-                compositionRevision: snapshot.composition.revision,
-                providerKeyId: partyProviderKey,
-                registeredWorkloads: rules,
-                sourceAppId: 'party-registry',
-                sourceBuildMarker: 'party-registry-build',
-              },
-            ]),
-            ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
-              keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'native-v4', use: 'sig' }],
-            }),
-          });
+        // The workload rules are no longer configured: the Shell derives them from each calling module's declared
+        // workloads and the tenant's actual workload registrations (the access_workload_bindings rows above).
         const configuration = ConfigProvider.fromUnknown({
           ONTOS_GATEWAY_ISSUER: issuer,
-          ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-            {
-              compositionRevision: snapshot.composition.revision,
-              providerKeyId: providerKey,
-              registeredWorkloads: [
-                { ...rule, sourceActionKey: sourceAction },
-                { ...rule, workerKey },
-                {
-                  ...rule,
-                  declarationKey: originalWriteCapability,
-                  entrypointKey: originalWriteKey,
-                  sourceActionKey: sourceAction,
-                },
-                { ...rule, declarationKey: originalWriteCapability, entrypointKey: originalWriteKey, workerKey },
-                { ...recoveryRule, sourceActionKey: sourceAction },
-                { ...recoveryRule, allowHistoricalDeliveryRecovery: true, workerKey },
-                { ...recoveryTenantRule, sourceActionKey: sourceAction },
-                { ...recoveryTenantRule, workerKey },
-              ],
-              sourceAppId: sourceApp,
-              sourceBuildMarker: `${sourceApp}-build`,
-            },
-            {
-              compositionRevision: snapshot.composition.revision,
-              providerKeyId: partyProviderKey,
-              registeredWorkloads: [
-                {
-                  ...privacyNormalRule,
-                  declarationKey: organizationBusinessCapability,
-                  entrypointKey: organizationBusinessKey,
-                  workloadKey: organizationBusinessWorkload,
-                },
-                privacyNormalRule,
-                { ...privacyNormalRule, allowRecoverySource: true },
-                {
-                  audience: 'privacy',
-                  declarationKey: privacyTenantCapability,
-                  entrypointKey: privacyTenantKey,
-                  jobKey: 'party-privacy-tenant-check',
-                  legalEntityScope: 'forbidden',
-                  schemaVersion: '1',
-                  sourceWorkloadKey: targetWorkload,
-                  workloadKey: privacyWorkload,
-                },
-                { ...privacyRecoveryRule, allowRecoverySource: false },
-                privacyRecoveryRule,
-              ],
-              sourceAppId: 'party-registry',
-              sourceBuildMarker: 'party-registry-build',
-            },
-            {
-              compositionRevision: snapshot.composition.revision,
-              providerKeyId: privacyProviderKey,
-              registeredWorkloads: [
-                {
-                  audience: sourceApp,
-                  declarationKey: sourceFactsCapability,
-                  entrypointKey: sourceFactsKey,
-                  jobKey: 'privacy.core.organization-business-source-facts',
-                  legalEntityScope: 'required',
-                  schemaVersion: sourceFactsVersion,
-                  sourceWorkloadKey: organizationBusinessWorkload,
-                  workloadKey: sourceFactsWorkload,
-                },
-              ],
-              sourceAppId: 'privacy',
-              sourceBuildMarker: 'privacy-build',
-            },
-          ]),
           ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
             keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'native-v4', use: 'sig' }],
           }),
         });
+        // The Shell verifies a delegated source assertion with its own signing configuration (trunk A2).
+        const ownKeyVerification = makeGatewayDelegationVerificationLayer(Effect.succeed(signing));
         const signer = makeGatewayIssuerLayer({
           currentTimeSeconds: Effect.succeed(Math.floor(DateTime.toEpochMillis(snapshot.observedAt) / 1000)),
           generateJti: crypto.randomUUIDv4().pipe(Effect.orDie),
@@ -1050,23 +1125,44 @@ it.live(
             revision: snapshot.composition.revision,
           }),
           loadConfig: Effect.succeed(signing),
-        }).pipe(Layer.provide(Layer.succeed(GatewayScopeGrantRegistrar, makeGatewayScopeGrantRegistrar(issuerClient))));
+        }).pipe(
+          Layer.provide(
+            Layer.succeed(
+              GatewayScopeGrantRegistrar,
+              makeGatewayScopeGrantRegistrar(issuerClient, SHELL_DATABASE_IDENTITY_ENROLLMENT),
+            ),
+          ),
+        );
         const services = Layer.mergeAll(
           Layer.succeed(CoreDatabase, runtime),
-          Layer.succeed(AccessDecisionGate, nativeMachineGate(runtime)),
+          Layer.succeed(AccessDecisionGate, nativeMachineGate(runtime, companyTenants)),
           Layer.succeed(AuthDatabase, auth),
           Layer.succeed(PrincipalResolver, makePrincipalResolver(runtime, { authenticationNamespaceId })),
           Layer.succeed(TenantModuleStateService, makeTenantModuleStateService(runtime)),
           Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
           Layer.succeed(GatewayDelegationExchangeLedger, makeGatewayDelegationExchangeLedger(auth.executor)),
           Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+          // The three calling modules' keys were issued by hosts of exactly this release.
+          enrolledModuleCredentials(
+            (
+              [
+                [sourceApp, providerKey],
+                ['party-registry', partyProviderKey],
+                ['privacy', privacyProviderKey],
+              ] as const
+            ).map(([appId, providerKeyId]) => ({
+              appId,
+              providerKeyId,
+              release: { buildMarker: `${appId}-build`, compositionRevision: snapshot.composition.revision },
+            })),
+          ),
         );
         const issue = (
           subject: (typeof GatewayDelegatedContextRequestSchema.Encoded)['subject'],
           audience = 'party-registry',
           verifiedProviderKeyId = providerKey,
           legalEntityScope: 'subject' | 'tenant' = 'subject',
-          issuerConfiguration = configuration,
+          catalog = installed,
         ) =>
           Effect.gen(function* issueNative() {
             const payload = yield* Schema.decodeUnknownEffect(GatewayDelegatedContextRequestSchema)({
@@ -1082,13 +1178,45 @@ it.live(
               verifiedProviderKeyId,
             });
           }).pipe(
+            Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
             Effect.provide(signer),
-            Effect.provide(GatewayDelegationVerificationLive),
+            Effect.provide(ownKeyVerification),
             Effect.provide(GatewayOriginatorEvidenceLive),
             Effect.provideService(OperationalScopeResolver, scopeResolver),
             Effect.provide(services),
-            Effect.provideService(ConfigProvider.ConfigProvider, issuerConfiguration),
+            Effect.provideService(ConfigProvider.ConfigProvider, configuration),
           );
+        // The same installed release in which one module's contract declares other registered-workload calls (the
+        // checked manifest schema refuses repeated or ambiguous calls; `unchecked` models a contract that bypassed it).
+        const decodeCheckedCalls = Schema.decodeUnknownSync(OntosRegisteredWorkloadCallsSchema);
+        const decodeUncheckedCalls = Schema.decodeUnknownSync(Schema.Array(OntosRegisteredWorkloadCallSchema));
+        const replacing = (appId: string, change: (contract: (typeof installed.contracts)[number]) => object) => ({
+          ...installed,
+          contracts: installed.contracts.map((contract) =>
+            contract.deployment.appId === appId ? { ...contract, ...change(contract) } : contract,
+          ),
+        });
+        const declaring = (appId: string, calls: readonly unknown[], decode = decodeCheckedCalls) =>
+          replacing(appId, (contract) => ({
+            manifest: { ...contract.manifest, registeredWorkloadCalls: decode(calls) },
+          }));
+        /** The receiver's published operation without the registered workload it admitted. */
+        const undeclaredBy = (appId: string, entrypointKey: string) =>
+          replacing(appId, (contract) => ({
+            manifest: {
+              ...contract.manifest,
+              publicSurface: {
+                ...contract.manifest.publicSurface,
+                operationContracts: (contract.manifest.publicSurface.operationContracts ?? []).map((operation) => {
+                  if (operation.entrypoint.entrypointKey !== entrypointKey) {
+                    return operation;
+                  }
+                  const { workloadCarrier: _undeclared, ...withoutWorkload } = operation;
+                  return withoutWorkload;
+                }),
+              },
+            },
+          }));
         const admission = {
           _tag: 'RegisteredAdmission' as const,
           actionInvocationId: admissionId,
@@ -1141,7 +1269,7 @@ it.live(
         expect(verified.legalEntityId).toBeUndefined();
         expect(Exit.isFailure(yield* Effect.exit(receive(issued.token)))).toBe(true);
         const receiverScopes = yield* makeOperationalScopeResolver(
-          makeOperationalScopeRepository(party),
+          makeOperationalScopeRepository(party, SHELL_DATABASE_IDENTITY_ENROLLMENT),
           makeTestOperationalScopeAccess({ decision: 'denied' }),
         );
         const scope = yield* receiverScopes.resolve({
@@ -1159,35 +1287,57 @@ it.live(
           sourceAssertion: issued.token,
         };
         const nested = yield* issue(nestedSubject, 'privacy', partyProviderKey);
-        // Explicit paired modes do not count as duplicate authority; duplicates within one mode do.
-        yield* issue(
-          nestedSubject,
-          'privacy',
-          partyProviderKey,
-          'subject',
-          partyModeConfiguration([privacyNormalRule]),
-        );
+        // The calling module's own contract is the only source of its calls (demo divergence exception 8). One exact
+        // call issues, and explicit paired modes are two calls; a repeated mode never passes the contract schema and,
+        // carried anyway, is as refused as a wrong mode, workload, declaration or provider version, a receiver that does
+        // not declare the workload, or a key whose attested build is not the installed one.
+        const nestedWith = (catalog: typeof installed) =>
+          refusalOf(issue(nestedSubject, 'privacy', partyProviderKey, 'subject', catalog));
+        expect(yield* nestedWith(declaring('party-registry', [privacyNormalRule]))).toBe('issued');
+        expect(
+          yield* nestedWith(
+            declaring('party-registry', [privacyNormalRule, { ...privacyNormalRule, allowRecoverySource: true }]),
+          ),
+        ).toBe('issued');
+        expect(() =>
+          decodeCheckedCalls([privacyNormalRule, { ...privacyNormalRule, allowRecoverySource: false }]),
+        ).toThrow();
         yield* Effect.forEach(
           [
-            [privacyNormalRule, { ...privacyNormalRule, allowRecoverySource: false }],
-            [{ ...privacyNormalRule, allowRecoverySource: true }],
-          ],
-          (sameOrWrongMode) =>
-            Effect.gen(function* rejectAmbiguousOrWrongMode() {
-              expect(
-                Exit.isFailure(
-                  yield* Effect.exit(
-                    issue(
-                      nestedSubject,
-                      'privacy',
-                      partyProviderKey,
-                      'subject',
-                      partyModeConfiguration(sameOrWrongMode),
-                    ),
-                  ),
-                ),
-              ).toBe(true);
-            }),
+            [
+              declaring(
+                'party-registry',
+                [privacyNormalRule, { ...privacyNormalRule, allowRecoverySource: false }],
+                decodeUncheckedCalls,
+              ),
+              'registered_workload_unmatched',
+            ],
+            [
+              declaring('party-registry', [{ ...privacyNormalRule, allowRecoverySource: true }]),
+              'registered_workload_unmatched',
+            ],
+            [
+              declaring('party-registry', [{ ...privacyNormalRule, workloadKey: 'privacy.core.other-check' }]),
+              'registered_workload_unmatched',
+            ],
+            [
+              declaring('party-registry', [{ ...privacyNormalRule, declarationKey: privacyTenantCapability }]),
+              'registered_workload_unmatched',
+            ],
+            [
+              declaring('party-registry', [{ ...privacyNormalRule, schemaVersion: '2' }]),
+              'registered_workload_unmatched',
+            ],
+            [undeclaredBy('privacy', privacyKey), 'registered_workload_unmatched'],
+            [
+              replacing('party-registry', () => ({
+                deployment: { appId: 'party-registry', buildMarker: 'party-registry-build-next' },
+              })),
+              'module_credential_unbound',
+            ],
+          ] as const,
+          ([catalog, reason]) => nestedWith(catalog).pipe(Effect.map((refusal) => expect(refusal).toBe(reason))),
+          { discard: true },
         );
         expect(
           Exit.isFailure(
@@ -1224,34 +1374,6 @@ it.live(
             ),
           ),
         ).toBe(true);
-        const wrongProviderVersion = ConfigProvider.fromUnknown({
-          ONTOS_GATEWAY_ISSUER: issuer,
-          ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-            {
-              compositionRevision: snapshot.composition.revision,
-              providerKeyId: partyProviderKey,
-              registeredWorkloads: [
-                {
-                  audience: 'privacy',
-                  declarationKey: privacyCapability,
-                  entrypointKey: privacyKey,
-                  jobKey: 'party-privacy-check',
-                  legalEntityScope: 'required',
-                  schemaVersion: '2',
-                  sourceWorkloadKey: targetWorkload,
-                  workloadKey: privacyWorkload,
-                },
-              ],
-              sourceAppId: 'party-registry',
-              sourceBuildMarker: 'party-registry-build',
-            },
-          ]),
-        });
-        expect(
-          Exit.isFailure(
-            yield* Effect.exit(issue(nestedSubject, 'privacy', partyProviderKey, 'subject', wrongProviderVersion)),
-          ),
-        ).toBe(true);
         expect(Exit.isFailure(yield* Effect.exit(issue(nestedSubject, 'privacy', partyProviderKey, 'tenant')))).toBe(
           true,
         );
@@ -1280,8 +1402,8 @@ it.live(
         expect(nestedScope.legalEntityId).toBe(legalEntityId);
         expect(readVerifiedGatewayWorkload(nestedScope)?.originalPrincipalId).toBe(originalPrincipal);
         expect(readVerifiedGatewayWorkload(nestedScope)?.workloadKey).toBe(privacyWorkload);
-        expect(
-          (yield* nativeMachineGate(runtime).decide({
+        const decideNested = () =>
+          nativeMachineGate(runtime, companyTenants).decide({
             carrier: {
               accessDeclaration: privacyDeclaration,
               accessWorkload: privacyAccessWorkload,
@@ -1291,8 +1413,25 @@ it.live(
             legalEntityScope: 'required',
             now: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
             scope: nestedScope,
-          })).outcome,
-        ).toBe('ALLOWED');
+          });
+        // A verified registered-workload claim is no exemption from the company fence (D6): one active workload
+        // binding acts for one company, so until the tenant registers the Privacy machine's company it is refused.
+        const unregistered = yield* decideNested();
+        expect(unregistered.outcome).toBe('DENIED');
+        expect(unregistered.reasons.map((reason) => reason.code)).toEqual(['deny.workload_unbound']);
+        const privacyCompany = yield* registerCompany(privacyMachineBinding);
+        const registered = yield* decideNested();
+        expect(registered.outcome, JSON.stringify(registered.reasons)).toBe('ALLOWED');
+        // Ending the registration ends the company of the same verified claim; a re-registration is a fresh row.
+        yield* companyRegistrations.revokeCompanyBinding(operatorScope, {
+          companyBindingId: privacyCompany,
+          revokedAt: DateTime.toDateUtc(yield* DateTime.now),
+        });
+        const revoked = yield* decideNested();
+        expect(revoked.outcome).toBe('DENIED');
+        expect(revoked.reasons.map((reason) => reason.code)).toEqual(['deny.workload_unbound']);
+        yield* registerCompany(privacyMachineBinding);
+        expect((yield* decideNested()).outcome).toBe('ALLOWED');
         const projectedTenant = yield* issue(
           {
             _tag: 'RegisteredAssertion',
@@ -1326,7 +1465,7 @@ it.live(
         });
         expect(projectedTenantScope.legalEntityId).toBeUndefined();
         expect(
-          (yield* nativeMachineGate(runtime).decide({
+          (yield* nativeMachineGate(runtime, companyTenants).decide({
             carrier: {
               accessDeclaration: privacyTenantDeclaration,
               accessWorkload: privacyAccessWorkload,
@@ -1347,7 +1486,7 @@ it.live(
             ),
           ),
         ).toBe(true);
-        const gate = nativeMachineGate(party);
+        const gate = nativeMachineGate(party, companyTenants);
         const decide = (requestScope: typeof scope, operation = targetOperation) =>
           gate.decide({
             carrier: {
@@ -1501,18 +1640,18 @@ it.live(
         expect(Exit.isFailure(yield* Effect.exit(issue({ ...admission, legalEntityId: foreignLegalEntityId })))).toBe(
           true,
         );
-        yield* insert(sql`update core.principals set status='disabled' where principal_id=${machinePrincipal}::uuid`);
-        expect(Exit.isFailure(yield* Effect.exit(issue(nestedSubject, 'privacy', partyProviderKey)))).toBe(true);
-        yield* insert(sql`update core.principals set status='active' where principal_id=${machinePrincipal}::uuid`);
+        expect(yield* systemPrincipalDisableRefused(machinePrincipal)).toBe(true);
         yield* insert(
           sql`update core.access_workload_bindings set status='revoked',revoked_at=now() where binding_id=${originalOwnerBinding}::uuid`,
         );
         expect((yield* decide(scope)).outcome).toBe('DENIED');
         expect(Exit.isFailure(yield* Effect.exit(issue(nestedSubject, 'privacy', partyProviderKey)))).toBe(true);
         expect(Exit.isFailure(yield* Effect.exit(issue(admission)))).toBe(true);
+        const renewedOwnerBinding = yield* crypto.randomUUIDv4();
         yield* insert(
-          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${originalPrincipal}::uuid,${targetWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
+          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${renewedOwnerBinding}::uuid,${tenantId}::uuid,${originalPrincipal}::uuid,${targetWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
         );
+        yield* registerCompany(renewedOwnerBinding);
         const renewedSource = yield* issue(admission);
         const renewedNestedSubject = { ...nestedSubject, sourceAssertion: renewedSource.token };
         yield* issue(renewedNestedSubject, 'privacy', partyProviderKey);
@@ -1546,6 +1685,17 @@ it.live(
         };
         const worker = yield* issue(conditionalWorker);
         expect(
+          yield* refusalOf(
+            issue(
+              conditionalWorker,
+              'party-registry',
+              providerKey,
+              'subject',
+              declaring(sourceApp, [{ ...rule, schemaVersion: '2', workerKey }]),
+            ),
+          ),
+        ).toBe('registered_workload_unmatched');
+        expect(
           Exit.isFailure(
             yield* Effect.exit(issue({ ...conditionalWorker, operationRequirementKey: admissionPartyRequirement })),
           ),
@@ -1559,25 +1709,6 @@ it.live(
         ).toBe(true);
         expect(
           Exit.isFailure(yield* Effect.exit(issue({ ...conditionalWorker, workerKey: `${workerKey}.sibling` }))),
-        ).toBe(true);
-        const wrongWorkerProviderVersion = ConfigProvider.fromUnknown({
-          ONTOS_GATEWAY_ISSUER: issuer,
-          ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-            {
-              compositionRevision: snapshot.composition.revision,
-              providerKeyId: providerKey,
-              registeredWorkloads: [{ ...rule, schemaVersion: '2', workerKey }],
-              sourceAppId: sourceApp,
-              sourceBuildMarker: `${sourceApp}-build`,
-            },
-          ]),
-        });
-        expect(
-          Exit.isFailure(
-            yield* Effect.exit(
-              issue(conditionalWorker, 'party-registry', providerKey, 'subject', wrongWorkerProviderVersion),
-            ),
-          ),
         ).toBe(true);
         const workerPrincipal = yield* receive(worker.token);
         const workerScope = yield* receiverScopes.resolve({
@@ -1632,39 +1763,6 @@ it.live(
           expect(Exit.isFailure(yield* Effect.exit(issue(missingProcessingHash, sourceApp, privacyProviderKey)))).toBe(
             true,
           );
-          const wrongProcessingVersion = ConfigProvider.fromUnknown({
-            ONTOS_GATEWAY_ISSUER: issuer,
-            ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-              {
-                compositionRevision: snapshot.composition.revision,
-                providerKeyId: privacyProviderKey,
-                registeredWorkloads: [
-                  {
-                    audience: sourceApp,
-                    declarationKey: sourceFactsCapability,
-                    entrypointKey: sourceFactsKey,
-                    jobKey: 'privacy.core.organization-business-source-facts',
-                    legalEntityScope: 'required',
-                    schemaVersion: '1',
-                    sourceWorkloadKey: organizationBusinessWorkload,
-                    workloadKey: sourceFactsWorkload,
-                  },
-                ],
-                sourceAppId: 'privacy',
-                sourceBuildMarker: 'privacy-build',
-              },
-            ]),
-            ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
-              keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'native-v4', use: 'sig' }],
-            }),
-          });
-          expect(
-            Exit.isFailure(
-              yield* Effect.exit(
-                issue(processingSubject, sourceApp, privacyProviderKey, 'subject', wrongProcessingVersion),
-              ),
-            ),
-          ).toBe(true);
           yield* Effect.gen(function* proveOpaqueProcessingEvidence() {
             const bindings = yield* loadGatewayModuleBindings;
             const binding = Option.getOrThrow(
@@ -1762,12 +1860,23 @@ it.live(
             ).toBe(true);
           }).pipe(
             Effect.provide(signer),
-            Effect.provide(GatewayDelegationVerificationLive),
+            Effect.provide(ownKeyVerification),
             Effect.provideService(OperationalScopeResolver, scopeResolver),
             Effect.provide(services),
             Effect.provideService(ConfigProvider.ConfigProvider, configuration),
           );
           const processing = yield* issue(processingSubject, sourceApp, privacyProviderKey);
+          expect(
+            yield* refusalOf(
+              issue(
+                processingSubject,
+                sourceApp,
+                privacyProviderKey,
+                'subject',
+                declaring('privacy', [{ ...privacyCalls[0], schemaVersion: '1' }]),
+              ),
+            ),
+          ).toBe('registered_workload_unmatched');
           expect(decodeJwt(processing.token).iat).toBe(decodeJwt(organizationBusiness.token).iat);
           expect(decodeJwt(processing.token).exp).toBe(decodeJwt(organizationBusiness.token).exp);
           const processingVerifier = bindGatewayPrincipalVerifier(sourceApp, {
@@ -1802,7 +1911,7 @@ it.live(
           });
           const exactProcessingOperation = { entrypointKey: sourceFactsKey, schemaVersion: sourceFactsVersion };
           const decideProcessing = (operation = exactProcessingOperation) =>
-            nativeMachineGate(runtime).decide({
+            nativeMachineGate(runtime, companyTenants).decide({
               carrier: {
                 accessDeclaration: processingDeclaration,
                 accessWorkload: processingAccessWorkload,
@@ -2013,11 +2122,12 @@ it.live(
           })).principalId,
         ).toBe(otherMachine);
         const ambiguousMachine = yield* crypto.randomUUIDv4();
+        const ambiguousBinding = yield* crypto.randomUUIDv4();
         yield* insert(
           sql`insert into core.principals(principal_id,tenant_id,kind,display_name,status) values(${ambiguousMachine}::uuid,${tenantId}::uuid,'system','Ambiguous machine','active')`,
         );
         yield* insert(
-          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${ambiguousMachine}::uuid,${targetWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
+          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${ambiguousBinding}::uuid,${tenantId}::uuid,${ambiguousMachine}::uuid,${targetWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
         );
         expect(
           Exit.isFailure(
@@ -2031,7 +2141,10 @@ it.live(
           ),
         ).toBe(true);
         expect(Exit.isFailure(yield* Effect.exit(issue(admission)))).toBe(true);
-        yield* insert(sql`update core.principals set status='disabled' where principal_id=${ambiguousMachine}::uuid`);
+        expect(yield* systemPrincipalDisableRefused(ambiguousMachine)).toBe(true);
+        yield* insert(
+          sql`update core.access_workload_bindings set status='revoked',revoked_at=now() where binding_id=${ambiguousBinding}::uuid`,
+        );
         const beforeRevoke = yield* issue(admission);
         const beforePrincipal = yield* receive(beforeRevoke.token);
         const beforeScope = yield* receiverScopes.resolve({
@@ -2044,7 +2157,14 @@ it.live(
           sql`update core.access_workload_bindings set status='revoked',revoked_at=now() where binding_id=${machineBinding}::uuid`,
         );
         expect((yield* decide(beforeScope)).outcome).toBe('DENIED');
-        yield* insert(sql`update core.principals set status='active' where principal_id=${ambiguousMachine}::uuid`);
+        // The tenant now holds no active registration of the receiving workload: the declared call admits nothing.
+        expect(yield* refusalOf(issue(admission))).toBe('workload_binding_not_active');
+        // The ambiguous machine is registered again: a fresh binding, with its company.
+        const renewedAmbiguousBinding = yield* crypto.randomUUIDv4();
+        yield* insert(
+          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${renewedAmbiguousBinding}::uuid,${tenantId}::uuid,${ambiguousMachine}::uuid,${targetWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
+        );
+        yield* registerCompany(renewedAmbiguousBinding);
         expect(Exit.isFailure(yield* Effect.exit(issue(admission)))).toBe(true);
 
         const currentWriteAdmission = {
@@ -2083,6 +2203,7 @@ it.live(
         yield* insert(
           sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${recoveryBindingId}::uuid,${tenantId}::uuid,${recoveryPrincipalId}::uuid,${recoveryWorkload},${recoveryIncarnation}::uuid,'active')`,
         );
+        yield* registerCompany(recoveryBindingId);
         const originalOwnerInvocation = yield* crypto.randomUUIDv4();
         const originalWorkerInvocation = yield* crypto.randomUUIDv4();
         const originalTenantInvocation = yield* crypto.randomUUIDv4();
@@ -2121,62 +2242,41 @@ it.live(
           },
         };
         const recovered = yield* issue(admissionRecovery);
-        expect(recovered.machineContext?.principalId).toBe(recoveryPrincipalId);
-        const forbiddenWriteRecoveryConfiguration = ConfigProvider.fromUnknown({
-          ONTOS_GATEWAY_ISSUER: issuer,
-          ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-            {
-              compositionRevision: snapshot.composition.revision,
-              providerKeyId: providerKey,
-              registeredWorkloads: [
+        // A recovery call may not name the original write, nor a provider version the receiver does not publish.
+        expect(
+          yield* refusalOf(
+            issue(
+              {
+                ...admissionRecovery,
+                declarationKey: originalWriteCapability,
+                operationRequirementKey: forbiddenRecoveryWriteRequirement,
+              },
+              'party-registry',
+              providerKey,
+              'subject',
+              declaring(sourceApp, [
                 {
                   ...recoveryRule,
                   declarationKey: originalWriteCapability,
                   entrypointKey: originalWriteKey,
                   sourceActionKey: sourceAction,
                 },
-              ],
-              sourceAppId: sourceApp,
-              sourceBuildMarker: `${sourceApp}-build`,
-            },
-          ]),
-        });
-        expect(
-          Exit.isFailure(
-            yield* Effect.exit(
-              issue(
-                {
-                  ...admissionRecovery,
-                  declarationKey: originalWriteCapability,
-                  operationRequirementKey: forbiddenRecoveryWriteRequirement,
-                },
-                'party-registry',
-                providerKey,
-                'subject',
-                forbiddenWriteRecoveryConfiguration,
-              ),
+              ]),
             ),
           ),
-        ).toBe(true);
-        const wrongRecoveryProviderConfiguration = ConfigProvider.fromUnknown({
-          ONTOS_GATEWAY_ISSUER: issuer,
-          ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-            {
-              compositionRevision: snapshot.composition.revision,
-              providerKeyId: providerKey,
-              registeredWorkloads: [{ ...recoveryRule, schemaVersion: '2', sourceActionKey: sourceAction }],
-              sourceAppId: sourceApp,
-              sourceBuildMarker: `${sourceApp}-build`,
-            },
-          ]),
-        });
+        ).toBe('registered_workload_unmatched');
         expect(
-          Exit.isFailure(
-            yield* Effect.exit(
-              issue(admissionRecovery, 'party-registry', providerKey, 'subject', wrongRecoveryProviderConfiguration),
+          yield* refusalOf(
+            issue(
+              admissionRecovery,
+              'party-registry',
+              providerKey,
+              'subject',
+              declaring(sourceApp, [{ ...recoveryRule, schemaVersion: '2', sourceActionKey: sourceAction }]),
             ),
           ),
-        ).toBe(true);
+        ).toBe('registered_workload_unmatched');
+        expect(recovered.machineContext?.principalId).toBe(recoveryPrincipalId);
         const recoveredPrincipal = yield* receive(recovered.token);
         const recoveredScope = yield* receiverScopes.resolve({
           audience: 'party-registry',
@@ -2207,31 +2307,17 @@ it.live(
           sourceAssertion: recovered.token,
         };
         const recoveryPrivacy = yield* issue(recoveryPrivacySubject, 'privacy', partyProviderKey);
-        yield* issue(
-          recoveryPrivacySubject,
-          'privacy',
-          partyProviderKey,
-          'subject',
-          partyModeConfiguration([privacyRecoveryRule]),
-        );
+        const recoveryPrivacyWith = (catalog: typeof installed) =>
+          refusalOf(issue(recoveryPrivacySubject, 'privacy', partyProviderKey, 'subject', catalog));
+        expect(yield* recoveryPrivacyWith(declaring('party-registry', [privacyRecoveryRule]))).toBe('issued');
+        expect(() => decodeCheckedCalls([privacyRecoveryRule, { ...privacyRecoveryRule }])).toThrow();
         yield* Effect.forEach(
           [[privacyRecoveryRule, { ...privacyRecoveryRule }], [{ ...privacyRecoveryRule, allowRecoverySource: false }]],
-          (sameOrWrongMode) =>
-            Effect.gen(function* rejectAmbiguousOrWrongMode() {
-              expect(
-                Exit.isFailure(
-                  yield* Effect.exit(
-                    issue(
-                      recoveryPrivacySubject,
-                      'privacy',
-                      partyProviderKey,
-                      'subject',
-                      partyModeConfiguration(sameOrWrongMode),
-                    ),
-                  ),
-                ),
-              ).toBe(true);
-            }),
+          (calls) =>
+            recoveryPrivacyWith(declaring('party-registry', calls, decodeUncheckedCalls)).pipe(
+              Effect.map((refusal) => expect(refusal).toBe('registered_workload_unmatched')),
+            ),
+          { discard: true },
         );
         // A caller cannot choose provenance mode by copying metadata into an otherwise real token.
         expect(
@@ -2282,7 +2368,7 @@ it.live(
           principal: recoveryPrivacyPrincipal,
         });
         expect(
-          (yield* nativeMachineGate(runtime).decide({
+          (yield* nativeMachineGate(runtime, companyTenants).decide({
             carrier: {
               accessDeclaration: privacyDeclaration,
               accessWorkload: privacyAccessWorkload,
@@ -2428,6 +2514,23 @@ it.live(
           source: { _tag: 'HistoricalDelivery' as const, deliveryId, legalEntityId, tenantId, workerKey },
         };
         const recoveredHistorical = yield* issue(historicalRecovery);
+        // Historical delivery recovery needs its own explicit call whose original job is the worker's.
+        yield* Effect.forEach(
+          [
+            { ...recoveryRule, workerKey },
+            {
+              ...recoveryRule,
+              allowHistoricalDeliveryRecovery: true,
+              recoveryOf: { actionKey: originalWriteKey, jobKey: `${workerKey}.other` },
+              workerKey,
+            },
+          ],
+          (invalidCall) =>
+            refusalOf(
+              issue(historicalRecovery, 'party-registry', providerKey, 'subject', declaring(sourceApp, [invalidCall])),
+            ).pipe(Effect.map((refusal) => expect(refusal).toBe('registered_workload_unmatched'))),
+          { discard: true },
+        );
         expect(recoveredHistorical.machineContext?.principalId).toBe(recoveryPrincipalId);
         const historicalPrincipal = yield* receive(recoveredHistorical.token);
         const historicalScope = yield* receiverScopes.resolve({
@@ -2494,35 +2597,6 @@ it.live(
         for (const invalid of invalidHistoricalRecoveries) {
           expect(Exit.isFailure(yield* Effect.exit(issue(invalid)))).toBe(true);
         }
-        for (const invalidRule of [
-          { ...recoveryRule, workerKey },
-          {
-            ...recoveryRule,
-            allowHistoricalDeliveryRecovery: true,
-            recoveryOf: { actionKey: originalWriteKey, jobKey: `${workerKey}.other` },
-            workerKey,
-          },
-        ]) {
-          const invalidConfiguration = ConfigProvider.fromUnknown({
-            ONTOS_GATEWAY_ISSUER: issuer,
-            ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-              {
-                compositionRevision: snapshot.composition.revision,
-                providerKeyId: providerKey,
-                registeredWorkloads: [invalidRule],
-                sourceAppId: sourceApp,
-                sourceBuildMarker: `${sourceApp}-build`,
-              },
-            ]),
-          });
-          expect(
-            Exit.isFailure(
-              yield* Effect.exit(
-                issue(historicalRecovery, 'party-registry', providerKey, 'subject', invalidConfiguration),
-              ),
-            ),
-          ).toBe(true);
-        }
         const wrongWorkerContextRef = `job:${workerKey}.other:run:${deliveryId}`;
         yield* insert(
           sql`update core.action_invocations set auth_context_ref=${wrongWorkerContextRef} where action_invocation_id=${originalWorkerInvocation}::uuid`,
@@ -2553,18 +2627,14 @@ it.live(
           sql`update core.action_invocations set action_key=${sourceAction} where action_invocation_id=${admissionId}::uuid`,
         );
         yield* issue(historicalRecovery);
-        yield* insert(
-          sql`update core.principals set status='disabled' where principal_id=${recoveryPrincipalId}::uuid`,
-        );
-        expect(Exit.isFailure(yield* Effect.exit(issue(admissionRecovery)))).toBe(true);
-        expect((yield* decideRecovery(historicalScope)).outcome).toBe('DENIED');
-        expect(Exit.isFailure(yield* Effect.exit(issue(historicalRecovery)))).toBe(true);
-        yield* insert(sql`update core.principals set status='active' where principal_id=${recoveryPrincipalId}::uuid`);
+        expect(yield* systemPrincipalDisableRefused(recoveryPrincipalId)).toBe(true);
         yield* insert(
           sql`update core.access_workload_bindings set status='revoked',revoked_at=now() where binding_id=${recoveryBindingId}::uuid`,
         );
         expect((yield* decideRecovery(recoveredScope)).outcome).toBe('DENIED');
+        expect((yield* decideRecovery(historicalScope)).outcome).toBe('DENIED');
         expect(Exit.isFailure(yield* Effect.exit(issue(admissionRecovery)))).toBe(true);
+        expect(Exit.isFailure(yield* Effect.exit(issue(historicalRecovery)))).toBe(true);
         yield* insert(
           sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${recoveryPrincipalId}::uuid,${recoveryWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
         );
@@ -2574,5 +2644,8 @@ it.live(
         );
         expect(Exit.isFailure(yield* Effect.exit(issue(admissionRecovery)))).toBe(true);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(
+      Effect.provide(makeDatabaseIdentityEnrollmentLive(SHELL_DATABASE_IDENTITY_ENROLLMENT)),
+      Effect.provide(NodeServices.layer),
+    ),
 );

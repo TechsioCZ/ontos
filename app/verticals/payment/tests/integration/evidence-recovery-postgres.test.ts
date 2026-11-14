@@ -1,6 +1,6 @@
+import { defineDatabaseIdentityEnrollment, GatewayAssertionRedemptionService } from '@app/core-runtime';
 import { randomUUID } from 'node:crypto';
 
-import { GatewayAssertionRedemptionService } from '@app/core-runtime';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
@@ -122,6 +122,7 @@ const makeEvidenceRuntimes = Effect.fn('EvidenceNative.makeRuntimes')(function* 
     evidenceContextAccess,
     {
       accessDecision,
+      databaseIdentities: defineDatabaseIdentityEnrollment([]),
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
     },

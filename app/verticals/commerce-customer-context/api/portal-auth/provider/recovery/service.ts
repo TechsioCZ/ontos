@@ -2,6 +2,7 @@ import { Context, DateTime, Effect, Option, Redacted, Result, Schema } from 'eff
 
 import { auditedLayer } from '../../../../src/portal-auth/audit/audit.ts';
 import { withCause } from '../../problems-support.ts';
+import { storefrontVerificationCallback } from '../storefront-verification-link.ts';
 import { normalizeCommercePortalAuthEmail } from '../../../../src/portal-auth/email-normalization.ts';
 import type { CommercePortalAuthAuditRecorder } from '../../../../src/portal-auth/audit/audit.ts';
 import type { CommercePortalAuthAuditEvent } from '../../../../src/portal-auth/audit/audit-contracts.ts';
@@ -126,8 +127,10 @@ export class CommercePortalAuthRecoveryService extends Context.Service<
     readonly registerEmailVerificationToken: (
       input: CommercePortalAuthEmailVerificationTokenRegistration,
     ) => Effect.Effect<void, CommercePortalAuthRecoveryFailure>;
+    /** `storefrontOrigin` is the trusted origin of the requesting storefront; the mailed link returns there. */
     readonly requestEmailVerification: (
       input: CommercePortalAuthEmailVerificationRequestBoundary,
+      storefrontOrigin: URL,
     ) => Effect.Effect<CommercePortalAuthEmailVerificationStarted, CommercePortalAuthRecoveryFailure>;
     readonly requestPasswordReset: (
       input: CommercePortalAuthPasswordResetRequestBoundary,
@@ -358,23 +361,21 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
     const requestEmailVerification = Effect.fn('CommercePortalAuthRecovery.requestEmailVerification')(
       function* requestEmailVerificationEffect(
         input: CommercePortalAuthEmailVerificationRequestBoundary,
+        storefrontOrigin: URL,
       ): Effect.fn.Return<CommercePortalAuthEmailVerificationStarted, CommercePortalAuthRecoveryFailure> {
         const request = yield* Schema.decodeEffect(CommercePortalAuthEmailVerificationRequestSchema, {
           onExcessProperty: 'error',
         })(input).pipe(Effect.mapError(invalidRequest));
-        const reserved = yield* store.reserveEmailVerificationSubject({
-          email: normalizeCommercePortalAuthEmail(request.email),
-          providerSubjectId: request.providerSubjectId,
-        });
-        if (!reserved) {
-          return yield* rejected(
-            SEND_VERIFICATION_EMAIL_OPERATION,
-            'INVALID_SUBJECT',
-            'The Commerce portal authentication subject does not own this identifier',
-          );
-        }
+        // No browser subject or session cookie reaches Better Auth. Its anonymous native operation
+        // gives the same result for unknown/verified addresses; the delivery callback alone registers
+        // the real provider subject with a digest-backed token before sending any actual mail.
         const response = yield* provider
-          .sendVerificationEmail({ body: { email: normalizeCommercePortalAuthEmail(request.email) } })
+          .sendVerificationEmail({
+            body: {
+              callbackURL: storefrontVerificationCallback(storefrontOrigin),
+              email: normalizeCommercePortalAuthEmail(request.email),
+            },
+          })
           .pipe(Effect.mapError((failure) => mapProviderFailure(failure, REQUEST_REJECTION_CODES)));
         const decoded = yield* Schema.decodeEffect(RecoveryResponseSchema)(response).pipe(
           Effect.mapError((cause) => unavailable(SEND_VERIFICATION_EMAIL_OPERATION, cause)),

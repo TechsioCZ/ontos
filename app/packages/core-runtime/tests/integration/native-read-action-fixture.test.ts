@@ -11,6 +11,7 @@ import { ActionPermissionCheckError } from '../../src/actions/errors.ts';
 import { ActionRuntime, runAction } from '../../src/actions/runtime.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
+import { defineDatabaseIdentityEnrollment } from '../../src/db/database-identities.ts';
 import { accessScopeFences } from '../../src/db/schema.ts';
 import { ActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -119,7 +120,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer), { excludeTestServ
           expect(fences).toHaveLength(2);
           expect(fences.every((fence) => fence.state === 'Ready')).toBe(true);
           const database = yield* makeCoreDatabase(connections.runtime);
-          const store = makeAccessWriteJournalStore({ executor: database.executor });
+          const store = makeAccessWriteJournalStore({
+            enrollment: defineDatabaseIdentityEnrollment([]),
+            executor: database.executor,
+          });
           const scope = yield* fixture
             .prepareOwner((_transaction, trustedScope) => Effect.succeed(trustedScope))
             .pipe(Effect.provide(fixtureContext));

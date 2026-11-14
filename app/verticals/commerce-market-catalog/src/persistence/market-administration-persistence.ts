@@ -2,8 +2,8 @@
 import type {
   ActionServiceFactory,
   OperationalScope,
-  ReadServiceFactory,
   ScopedRoutineInvocationError,
+  ScopedRoutineInvoker,
 } from '@app/core-runtime';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
@@ -16,6 +16,7 @@ import type {
 } from '../../shared/action-contracts.ts';
 import type { MarketRetirementImpactAssessment } from '../../shared/domain/market-retirement-impact.ts';
 import type { MarketLifecycle } from '../../shared/market-contracts.ts';
+import { MarketAdministrationPersistenceUnavailable } from './market-administration-persistence-unavailable.ts';
 import {
   associateStorefrontRoutine,
   createMarketRoutine,
@@ -107,14 +108,6 @@ const AssociationOutcomeSchema = Schema.Union([
 ]);
 type StorefrontAssociationPersistenceOutcome = typeof AssociationOutcomeSchema.Type;
 
-export class MarketAdministrationPersistenceUnavailable extends Schema.TaggedError<MarketAdministrationPersistenceUnavailable>()(
-  'MarketAdministrationPersistenceUnavailable',
-  {
-    code: Schema.Literal('market_administration_persistence_unavailable'),
-    reason: Schema.String,
-  },
-) {}
-
 interface MarketAdministrationCommandContext {
   readonly actionInvocationId: string;
   readonly principalId: string;
@@ -170,7 +163,7 @@ export interface MarketAdministrationPersistence {
   ) => Effect.Effect<MarketLifecyclePersistenceOutcome, MarketAdministrationPersistenceUnavailable>;
 }
 
-type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
+export { MarketAdministrationPersistenceUnavailable } from './market-administration-persistence-unavailable.ts';
 
 const unavailable = (cause: unknown): MarketAdministrationPersistenceUnavailable => {
   const failure = new MarketAdministrationPersistenceUnavailable({
@@ -182,7 +175,7 @@ const unavailable = (cause: unknown): MarketAdministrationPersistenceUnavailable
 };
 
 const invoke = <A, I extends object>(
-  transaction: ScopedTransaction,
+  transaction: ScopedRoutineInvoker,
   routine: typeof associateStorefrontRoutine,
   input: I,
   schema: Schema.Decoder<A>,
@@ -197,15 +190,12 @@ const invoke = <A, I extends object>(
     }),
   );
 
-const scopeMatches = (
-  scope: OperationalScope & { readonly legalEntityId: string },
-  tenantId: string,
-  legalEntityId: string,
-): boolean => scope.tenantId === tenantId && scope.legalEntityId === legalEntityId;
+const scopeMatches = (scope: OperationalScope, tenantId: string, legalEntityId: string): boolean =>
+  scope.tenantId === tenantId && scope.legalEntityId === legalEntityId;
 
 const marketAdministrationPersistenceForTransaction = (
-  transaction: ScopedTransaction,
-  scope: OperationalScope & { readonly legalEntityId: string },
+  transaction: ScopedRoutineInvoker,
+  scope: OperationalScope,
 ): MarketAdministrationPersistence => ({
   associateStorefront: (input) =>
     scopeMatches(scope, input.marketRef.tenantId, input.sellingLegalEntityRef.resourceId)
@@ -245,5 +235,5 @@ export const marketAdministrationPersistenceForScope: ActionServiceFactory<Marke
           reason: 'Market administration requires a trusted Legal Entity scope',
         }),
       )
-    : Effect.succeed(marketAdministrationPersistenceForTransaction(transaction, { ...scope, legalEntityId }));
+    : Effect.succeed(marketAdministrationPersistenceForTransaction(transaction, scope));
 };

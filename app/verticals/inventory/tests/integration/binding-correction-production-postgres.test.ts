@@ -84,6 +84,9 @@ import {
   buildInventoryOwnerAcceptanceBindingCorrectionLineage,
   inventoryOwnerAcceptanceBindingCorrectionFixture,
 } from '../support/inventory-owner-acceptance-binding-correction.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const compositionRevision = 'a'.repeat(64);
 
@@ -432,6 +435,8 @@ it.live(
             ...openActionRuntimeOptions,
             accessDecision: makeScriptedBoundAccessGate('allowed').bound,
             contextAccess,
+            databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+
             ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
             ownerRegistration: inventoryRegistration,
           },
@@ -710,7 +715,7 @@ it.live(
               principalId,
               tenantId,
             } as const;
-            const scoped = yield* installOperationalScope(transaction, scope);
+            const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
             const services = yield* makeCorrectCatalogToStockBindingServices(scoped, scope);
             return yield* handleCorrectCatalogToStockBinding(payload, {
               actionInvocationId: randomUUID(),
@@ -788,7 +793,7 @@ it.live(
                   principalId,
                   tenantId,
                 } as const;
-                const scoped = yield* installOperationalScope(transaction, scope);
+                const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
                 yield* scoped
                   .select()
                   .from(inventoryCatalogToStockBindings)
@@ -884,7 +889,7 @@ it.live(
               principalId,
               tenantId,
             } as const;
-            const scoped = yield* installOperationalScope(transaction, scope);
+            const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
             return yield* makeDrizzleCatalogToStockBindingPersistence(scoped).findCurrentByExactSelectionMeaning(
               tenantId,
               fixture.originalBinding.exactSelectionMeaning,

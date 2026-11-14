@@ -2,11 +2,14 @@
 // @ontos-action-http-owner commerce.market-catalog
 // @ontos-action-http-slug suspend-market
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { SuspendMarketPayloadSchema, SuspendMarketResultSchema } from '../actions/suspend-market.ts';
 
 export { SuspendMarketPayloadSchema } from '../actions/suspend-market.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const SuspendMarketActionInvalidProblemSchema = makeProblemDetailsSchema(
   'SuspendMarketActionInvalidProblem',
@@ -27,6 +30,7 @@ export const SuspendMarketActionForbiddenProblemSchema = makeProblemDetailsSchem
       'operation_context_denied',
       'operation_context_invalid',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const SuspendMarketActionNotFoundProblemSchema = makeProblemDetailsSchema(
@@ -57,6 +61,7 @@ export const SuspendMarketActionIneligibleProblemSchema = makeProblemDetailsSche
       'cross_tenant_reference',
       'inconsistent_seller_or_channel',
       'replacement_impact_unresolved',
+      'retirement_in_progress',
       'seller_identity_immutable',
     ]),
   },
@@ -154,7 +159,7 @@ export const suspendMarketActionGroupDefinition = HttpApiGroup.make('suspendMark
     HttpApiEndpoint.post('execute', '/commerce-market-catalog/actions/suspend-market', {
       error: actionErrors,
       payload: Schema.toEncoded(SuspendMarketPayloadSchema),
-      success: SuspendMarketResultSchema,
+      success: [ActionProposalAcceptedSchema, SuspendMarketResultSchema],
     }),
   )
   .middleware(SuspendMarketActionSchemaErrorMiddleware);

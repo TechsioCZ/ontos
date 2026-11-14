@@ -1,6 +1,16 @@
+import { PgClient } from '@effect/sql-pg';
+import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
+import {
+  OwnerActionApprovalSchemaErrorLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
+} from '@app/core-runtime/access/approvals/owner-http';
 import { assortmentRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ActionAuthorizationPreflightDatabaseLive,
   makeActionRuntimeLive,
   ContextAccessLive,
@@ -28,7 +38,6 @@ import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Crypto, Layer as GovernedReadLayer, Logger, References, Result, Schema, Tracer } from 'effect';
 import { FetchHttpClient, HttpClient } from 'effect/http';
-import { Reactivity } from 'effect/reactivity';
 
 import { assortmentApi, assortmentMarkerSchema, assortmentOperationContexts } from '../shared/api.ts';
 import type { OperationContext } from '../shared/api.ts';
@@ -38,10 +47,16 @@ import {
   AssortmentFixtureOwnerCurrentness,
   assortmentOwnerAuthorizationOverlayLive,
 } from '../src/services/assortment-currentness.ts';
-import { AssortmentDatabaseLive, AssortmentPgClientLive } from '../src/database/client.ts';
 // <generated-governed-http-handler-support-imports>
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
-import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
+import {
+  ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive,
+  authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
+} from './auth/action-principal.ts';
+import {
+  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
+  GatewayAssertionRedemptionDatabaseLive,
+  gatewayAssertionRedemptionPgClient,
+} from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
@@ -61,6 +76,8 @@ import { replaceClosedAssortmentBoundaryActionApiLive } from './replace-closed-a
 import { retireRuleActionApiLive } from './retire-rule-action-server.ts';
 import { visibilityReadApiLive } from './visibility-read-server.ts';
 // </generated-governed-http-handler-imports>
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const operationAttributes = (operationContext: OperationContext) => {
   const attributes = {
@@ -113,6 +130,7 @@ const accessEnforcementLive = AccessDecisionLive.pipe(
   Layer.provide(CorePersistenceLive),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(nodeCryptoLayer),
+  Layer.provide(databaseIdentitiesLive),
 );
 const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
   Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessEnforcementLive)),
@@ -153,6 +171,7 @@ const productionReadRuntimeLive = withAssortmentOwnerAuthorizationOverlay(
   Layer.provide(readRuntimeDependenciesLive),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
   Layer.provide(activeApplicationCompositionLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 
 const actionAuthorizationPreflightDatabaseLive = ActionAuthorizationPreflightDatabaseLive.pipe(
@@ -167,9 +186,23 @@ const actionRuntimeDependenciesLive = Layer.mergeAll(
   moduleEntrypointGatewayLive,
   operationalScopeResolverLive,
 );
+const ownerActionApprovalsLive = withAssortmentOwnerAuthorizationOverlay(
+  makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, assortmentRegistration),
+).pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      actionAuthorizationPreflightDatabaseLive,
+      actionRuntimeDependenciesLive,
+      activeApplicationCompositionLive,
+      accessEnforcementLive,
+    ),
+  ),
+);
+
 const actionRuntimeCoreLive = withAssortmentOwnerAuthorizationOverlay(
   makeActionRuntimeLive(ultramodernDeliveryUnit, assortmentRegistration),
 ).pipe(
+  Layer.provideMerge(ownerActionApprovalsLive),
   Layer.provide(
     Layer.mergeAll(
       actionAuthorizationPreflightDatabaseLive,
@@ -181,11 +214,7 @@ const actionRuntimeCoreLive = withAssortmentOwnerAuthorizationOverlay(
 );
 const productionActionRuntimeLive = actionRuntimeCoreLive.pipe(
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
-);
-const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
-  Layer.provide(AssortmentDatabaseLive),
-  Layer.provide(AssortmentPgClientLive),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, Reactivity.layer)),
+  Layer.provide(databaseIdentitiesLive),
 );
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
@@ -193,9 +222,16 @@ const runtimeObservabilityLive = Layer.mergeAll(
   Layer.succeed(References.MinimumLogLevel, 'Info'),
 );
 
+const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
+  Layer.provide(
+    GatewayAssertionRedemptionDatabaseLive.pipe(Layer.provide(PgClient.layerFrom(gatewayAssertionRedemptionPgClient))),
+  ),
+  Layer.provide(DatabaseConfigLive),
+);
+
 type AssortmentApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,
-  actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof productionActionRuntimeLive>>,
+  actionRuntime: Layer.Layer<ActionRuntime | OwnerActionApprovals, Layer.Error<typeof productionActionRuntimeLive>>,
   gatewayAssertionRedemption: Layer.Layer<
     GatewayAssertionRedemptionService,
     Layer.Error<typeof productionGatewayAssertionRedemptionLive>
@@ -211,6 +247,14 @@ export const makeAssortmentApiRuntime = (...args: AssortmentApiRuntimeArguments)
   );
   const apiHandlersLive = Layer.mergeAll(
     assortmentReadinessLayer,
+    HttpApiBuilder.group(assortmentApi, 'ownerActionApprovals', (handlers) =>
+      handlers
+        .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+        .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+    ).pipe(
+      GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+    ),
     // <generated-governed-http-handler-layers>
     configurationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     createApplicabilityBindingActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -230,7 +274,16 @@ export const makeAssortmentApiRuntime = (...args: AssortmentApiRuntimeArguments)
     // </generated-governed-http-handler-layers>
   ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
   const resolvedApiHandlersLive = apiHandlersLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, compositionSourceLive)),
+    Layer.provide(
+      Layer.mergeAll(
+        runtimeObservabilityLive,
+        RequestSchemaProblemLive,
+        compositionSourceLive,
+        databaseIdentitiesLive,
+        // Commitment confirmation issuance signs its confirmation with Crypto inside the handler's Action execution.
+        nodeCryptoLayer,
+      ),
+    ),
     Layer.orDie,
   );
 

@@ -20,6 +20,16 @@ const workerPolicyTables = [...PARTY_TABLES, ...CONTACTS_TABLES]
   .map(qualifiedName)
   .toSorted();
 
+/**
+ * Party tables the request role reaches through a narrower declared grant instead of blanket DML: the
+ * assertion identity registry is append-only beside the current store, and the historical-name archive
+ * is owner-written history the runtime may only read.
+ */
+const LEAST_PRIVILEGE_PARTY_TABLES: readonly string[] = [
+  'party.party_fact_assertion_identities',
+  'party.party_historical_name_assertions',
+];
+
 it('prefixes every Party Action key with party.registry. so Core action RLS admits it', () => {
   const actionKeys = partyRegistryManifest.publicSurface.actions.map((action) => action.descriptor.actionKey);
   expect(actionKeys.length).toBeGreaterThan(0);
@@ -64,6 +74,9 @@ it('covers RLS-protected Party and Contacts tables while keeping source receipts
   );
   expect(ownedGrants.map((grant) => grant.table).toSorted()).toEqual(rlsTables);
   for (const grant of ownedGrants) {
+    if (LEAST_PRIVILEGE_PARTY_TABLES.includes(grant.table)) {
+      continue;
+    }
     expect(grant.privileges).toEqual(
       [
         'party.party_create_source_receipts',
@@ -74,6 +87,20 @@ it('covers RLS-protected Party and Contacts tables while keeping source receipts
         : ['select', 'insert', 'update', 'delete'],
     );
     expect(grant.columns).toBeUndefined();
+  }
+});
+
+it('reaches the assertion identity registry and its archive with the narrowest declared privileges', () => {
+  const byTable = new Map(PARTY_REGISTRY_REQUEST_DATABASE_GRANTS.tables.map((grant) => [grant.table, grant]));
+  // The registry is appended by the assertion trigger as the request role; the archive is owner-written.
+  expect(byTable.get('party.party_fact_assertion_identities')?.privileges).toEqual(['select', 'insert']);
+  expect(byTable.get('party.party_historical_name_assertions')?.privileges).toEqual(['select']);
+  for (const table of LEAST_PRIVILEGE_PARTY_TABLES) {
+    expect(byTable.get(table)?.columns, table).toBeUndefined();
+    expect(
+      PARTY_REGISTRY_WORKER_DATABASE_GRANTS.tables.some((grant) => grant.table === table),
+      table,
+    ).toBe(false);
   }
 });
 

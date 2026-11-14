@@ -62,6 +62,7 @@ export const paymentRegistration = defineVerticalRuntimeRegistration({
       'gateway-customer-action': () => import('./src/api/gateway-customer-action-client.ts'),
       'gateway-reconciliation-debt': () => import('./src/api/gateway-reconciliation-debt-client.ts'),
       'gateway-return-status': () => import('./src/api/gateway-return-status-client.ts'),
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'payment-authorization-validation': () => import('./src/api/payment-authorization-validation-client.ts'),
       'payment-history': () => import('./src/api/payment-history-client.ts'),
       'payment-method-applicability': () => import('./src/api/payment-method-applicability-client.ts'),

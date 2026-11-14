@@ -91,6 +91,7 @@ const recover = (row?: typeof catalogResultSnapshots.$inferSelect) => {
 };
 const runtime = (resolution: ActionRuntimeService['resolveActionCommit']): ActionRuntimeService => ({
   resolveActionCommit: resolution,
+  resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
   runAction: () => Effect.die('Recovery must never replay the Action'),
 });
 const committed = new ActionAlreadyCommitted({

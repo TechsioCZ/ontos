@@ -1,0 +1,2 @@
+Vendored unchanged from TechsioCZ/new-engine libs/ui/agent-plugin/skills at commit d02c18118374dece5f753408638c3841c3313a1b (@techsio/ui-kit agent plugin v0.2.0).
+Do not edit here; re-sync from new-engine instead.

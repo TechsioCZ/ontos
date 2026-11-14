@@ -1,3 +1,4 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { identity } from 'effect';
 import {
   MicroVerticalBuildMarkerSchema,
@@ -14,10 +15,13 @@ import { AssortmentFixtureMarketAssociationApi } from './apis/assortment-fixture
 import { CreateMarketActionApi } from './apis/create-market-action.ts';
 import { CurrentMarketCatalogApi } from './apis/current-market-catalog.ts';
 import { EligibleMarketTuplesApi } from './apis/eligible-market-tuples.ts';
+import { MarketAdministrationApi } from './apis/market-administration.ts';
 import { MarketHistoryApi } from './apis/market-history.ts';
-import { MarketRetirementEffectRecoveryApi } from './apis/market-retirement-effect-recovery.ts';
+import { MarketsSearchApi } from './apis/markets-search.ts';
 import { PricingCurrentMarketEvidenceApi } from './apis/pricing-current-market-evidence.ts';
 import { RemoveStorefrontAssociationActionApi } from './apis/remove-storefront-association-action.ts';
+import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
+import { MarketRetirementEffectRecoveryApi } from './apis/market-retirement-effect-recovery.ts';
 import { ResolveCommerceMarketApi } from './apis/resolve-commerce-market.ts';
 import { RetireMarketActionApi } from './apis/retire-market-action.ts';
 import { ReviseMarketDefinitionActionApi } from './apis/revise-market-definition-action.ts';
@@ -51,6 +55,7 @@ export const commerceMarketCatalogFoundationApi = HttpApi.make('CommerceMarketCa
 
 export const commerceMarketCatalogApi = HttpApi.make('CommerceMarketCatalogApi')
   .addHttpApi(commerceMarketCatalogFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(ActivateMarketActionApi)
   .addHttpApi(AssociateStorefrontActionApi)
@@ -58,10 +63,13 @@ export const commerceMarketCatalogApi = HttpApi.make('CommerceMarketCatalogApi')
   .addHttpApi(CreateMarketActionApi)
   .addHttpApi(CurrentMarketCatalogApi)
   .addHttpApi(EligibleMarketTuplesApi)
+  .addHttpApi(MarketAdministrationApi)
   .addHttpApi(MarketHistoryApi)
-  .addHttpApi(MarketRetirementEffectRecoveryApi)
+  .addHttpApi(MarketsSearchApi)
   .addHttpApi(PricingCurrentMarketEvidenceApi)
   .addHttpApi(RemoveStorefrontAssociationActionApi)
+  .addHttpApi(RequestSearchRebuildActionApi)
+  .addHttpApi(MarketRetirementEffectRecoveryApi)
   .addHttpApi(ResolveCommerceMarketApi)
   .addHttpApi(RetireMarketActionApi)
   .addHttpApi(ReviseMarketDefinitionActionApi)

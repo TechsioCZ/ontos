@@ -9,6 +9,7 @@
     "./api/source-processing-eligibility/client": "./src/api/source-processing-eligibility-client.ts",
     "./api/measure-execution-eligibility": "./shared/apis/measure-execution-eligibility.ts",
     "./api/record-owner-execution-outcome-action": "./shared/apis/record-owner-execution-outcome-action.ts",
+    "./api/record-owner-execution-outcome-action/client": "./src/api/record-owner-execution-outcome-action-client.ts",
     "./api/organization-business-applicability": "./shared/apis/organization-business-applicability.ts",
     "./api/organization-business-applicability/client": "./src/api/organization-business-applicability-client.ts",
     "./api/organization-profile-ico-applicability": "./shared/apis/organization-profile-ico-applicability.ts",
@@ -65,10 +66,6 @@
   },
   "scripts": {
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical privacy --target dist && ultramodern-create ultramodern public-surface --app privacy --target dist && modern deploy --skip-build --deploy-target node",
-    "cloudflare:build": "modern build --deploy-target cloudflare && node ../../scripts/generate-ontos-module-contract.mts --vertical privacy --target cloudflare-dist && ultramodern-create ultramodern public-surface --app privacy --target cloudflare-dist && modern deploy --skip-build --deploy-target cloudflare",
-    "cloudflare:deploy": "node ../../scripts/immutable-application-release.mts deploy --app-directory .",
-    "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
-    "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app privacy",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
@@ -113,9 +110,12 @@
     "i18next": "26.4.2",
     "pg": "8.22.0",
     "react": "19.3.1",
-    "react-dom": "19.3.1"
+    "react-dom": "19.3.1",
+    "@app/consent-authority-contracts": "workspace:*",
+    "@noble/hashes": "2.2.0"
   },
   "devDependencies": {
+    "@app/party-registry-identity-contracts": "workspace:*",
     "@effect/tsgo": "0.67.0",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",
@@ -132,7 +132,6 @@
     "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
     "tailwindcss": "^4.3.3",
     "typescript": "7.0.2",
-    "wrangler": "4.137.0",
     "@app/shell-super-app": "workspace:*",
     "tsrs": "0.21.0-ts7.1.0-beta"
   },

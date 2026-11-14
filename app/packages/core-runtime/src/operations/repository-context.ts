@@ -6,6 +6,7 @@ import type { OperationContextUnavailable } from './errors.ts';
 
 export interface PersistedScopeRecord {
   readonly bindingAuthenticationNamespaceId?: null | string;
+  readonly bindingIssuingLegalEntityId?: null | string;
   readonly bindingPrincipalId: null | string;
   readonly bindingRevision?: null | number;
   readonly bindingRevokedAt: Date | null;

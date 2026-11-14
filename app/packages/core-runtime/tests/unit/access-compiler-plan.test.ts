@@ -44,7 +44,6 @@ import {
   accessScopeId,
   agentHolder,
   assignment,
-  catalogEntry,
   cell,
   ceiling,
   connection,
@@ -162,32 +161,58 @@ it('refuses a service, integration or system principal in any projected relation
   }
 });
 
-it('refuses an agent run cell of a sensitive capability and allows the propose cell (O48a)', () => {
-  expect(
-    failureCodes({
-      assignments: [assignment({ holder: agentHolder(AGENT) })],
-      roleRevisions: [revision({ cells: [cell({ capabilityKey: CAP_MARGINS, mode: 'run' })] })],
-    }),
-  ).toContain('access_projection_agent_sensitive_run');
-  expect(
-    failureCodes({
-      assignments: [assignment({ holder: agentHolder(AGENT) })],
-      roleRevisions: [
-        revision({
-          cells: [cell({ capabilityKey: CAP_MARGINS, mode: 'propose' }), cell({ capabilityKey: CAP_PAY, mode: 'run' })],
-        }),
-      ],
-    }),
-  ).toEqual([]);
+it('withholds an agent role that runs a sensitive capability, never the tenant, and keeps the propose cell (O48a)', () => {
+  const sensitive = {
+    assignments: [assignment({ holder: agentHolder(AGENT) })],
+    roleRevisions: [revision({ cells: [cell({ capabilityKey: CAP_MARGINS, mode: 'run' })] })],
+  };
+  // The tenant still projects: nothing is refused.
+  expect(failureCodes(sensitive)).toEqual([]);
+  const planned = compile(sensitive);
+  // The agent's assignment is not in the graph, so the agent lacks that role, and the plan says so once.
+  expect(planned.withheldAgentAssignments).toEqual([
+    expect.objectContaining({ agentId: AGENT, roleId: ROLE, tenantId: TENANT }),
+  ]);
+  const unit = planned.units.find((candidate) => candidate.kind === 'scope');
+  expect(unit?.relationships.some((relationship) => relationship.relation === 'agent_holder')).toBe(false);
+  expect(unit?.relationships.some((relationship) => relationship.relation === 'agent_member')).toBe(false);
+  // A role whose sensitive capability the agent only proposes is projected for it as usual.
+  const proposing = compile({
+    assignments: [assignment({ holder: agentHolder(AGENT) })],
+    roleRevisions: [
+      revision({
+        cells: [cell({ capabilityKey: CAP_MARGINS, mode: 'propose' }), cell({ capabilityKey: CAP_PAY, mode: 'run' })],
+      }),
+    ],
+  });
+  expect(proposing.withheldAgentAssignments).toEqual([]);
+  const projected = proposing.units.find((candidate) => candidate.kind === 'scope');
+  expect(projected?.relationships.some((relationship) => relationship.relation === 'agent_member')).toBe(true);
 });
 
-it('refuses an agent run cell whose risk intent does not declare', () => {
+it('withholds an agent role over any non-routine risk, and names that risk once', () => {
+  // 'critical' is not 'sensitive': the rule is "not routine", so a critical run cell is withheld the same way.
+  const critical = compile(
+    {
+      assignments: [assignment({ holder: agentHolder(AGENT) })],
+      roleRevisions: [revision({ cells: [cell({ capabilityKey: CAP_PAY, mode: 'run' })] })],
+    },
+    { catalogEntries: [{ ...partyEntry(CAP_PAY, 'critical'), amountInput: 'payload.amountMinor' }] },
+  );
+  expect(critical.withheldAgentAssignments).toEqual([
+    expect.objectContaining({ agentId: AGENT, reason: expect.stringContaining('critical'), roleId: ROLE }),
+  ]);
+  // A capability the release declares nothing for never reaches the withhold path: the cell itself is refused first,
+  // so no agent can hold it and the "undeclared" wording of the reason is unreachable by this route.
   expect(
     failureCodes(
-      { assignments: [assignment({ holder: agentHolder(AGENT) })] },
-      { catalogEntries: [catalogEntry({ key: CAP_NOTE })] },
+      {
+        assignments: [assignment({ holder: agentHolder(AGENT) })],
+        roleRevisions: [revision({ cells: [cell({ capabilityKey: CAP_PAY, mode: 'run' })] })],
+      },
+      { catalogEntries: [partyEntry(CAP_NOTE)] },
     ),
-  ).toContain('access_projection_agent_sensitive_run');
+  ).toEqual(['access_projection_unknown_capability']);
 });
 
 it('shares one binding and one grant cell across every holder of a role (M1)', () => {

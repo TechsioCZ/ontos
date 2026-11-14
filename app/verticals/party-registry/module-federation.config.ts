@@ -30,6 +30,9 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
   },
   exposes: {
     './PageContacts': './src/routes/[lang]/contacts/page.tsx',
+    './PageCustomers': './src/routes/[lang]/prodej/zakaznici/page.tsx',
+    './PageCustomerDetail': './src/routes/[lang]/prodej/zakaznici/[id]/page.tsx',
+    './PagePartyIdentity': './src/routes/[lang]/prodej/strany/[partyId]/page.tsx',
   },
   filename: 'remoteEntry.js',
   manifest: {

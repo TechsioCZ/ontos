@@ -1,0 +1,243 @@
+import { documentNavigationModules } from '@app/shared-contracts';
+import { vatRateAt } from '@app/shared-contracts/cz-vat-classifications';
+import { executeRecords } from '@app/merchandise/apis/records/client';
+import { executeCustomerList } from '@app/party-registry/apis/customer-list/client';
+import { SubjectIdSchema } from '@app/tagging/contracts/records';
+import type { SubjectId, SubjectKind, TagId } from '@app/tagging/contracts/records';
+import { executeRecords as executeEmployeeRecords } from '@app/workforce/clients/records';
+import type { Employee } from '@app/workforce/contracts/records';
+import { DateTime, Effect, Option, Random, Schema } from 'effect';
+import { useEffect, useState } from 'react';
+import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
+import { VatRateSchema } from '../../../../../shared/model/opportunity.ts';
+import type { OpportunityLine } from '../../../../../shared/model/opportunity.ts';
+import {
+  EmployeeIdSchema,
+  PartyIdSchema,
+  ProductIdSchema,
+} from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { subjectsWithTag } from './opportunity-tags.ts';
+import { loadPipeline } from './pipeline-api.ts';
+
+/** One Merchandise product as the records read returns it. */
+type ProductRecord = Effect.Success<ReturnType<typeof executeRecords>>['products'][number];
+/** One current CUSTOMER Counterparty as Party Registry's customer-list read returns it. */
+type CustomerListItem = Effect.Success<ReturnType<typeof executeCustomerList>>['items'][number];
+
+/** Current CUSTOMER Counterparties of the selected Legal Entity through Party Registry's customer-list read. */
+const listCustomers = (request: Parameters<typeof executeCustomerList>[0] = {}) =>
+  Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
+    Effect.flatMap(([first, second]) =>
+      executeCustomerList(request, `party-registry:customer-list:${first}:${second}`),
+    ),
+    Effect.map(({ items }) => items),
+  );
+
+/** Workforce employees for this view, read under its own correlation. */
+const listEmployees = () =>
+  Random.nextInt.pipe(
+    Effect.flatMap((nonce) => executeEmployeeRecords({}, `workforce:list:${nonce}`)),
+    Effect.map((response) => response.items),
+  );
+
+type PartyId = typeof PartyIdSchema.Type;
+type EmployeeId = typeof EmployeeIdSchema.Type;
+type ProductId = typeof ProductIdSchema.Type;
+
+/** One reference list: loading until the first answer, then ready, or error when the read failed. */
+export type LoadState<T> =
+  | { readonly status: 'loading' }
+  | { readonly items: T; readonly status: 'ready' }
+  | { readonly cause: unknown; readonly status: 'error' };
+
+export interface CustomerOption {
+  readonly archived: boolean;
+  readonly companyId: string | null;
+  /** The customer's counterparty in this company; contracts and invoices reference it. */
+  readonly counterpartyId: string;
+  readonly id: PartyId;
+  readonly name: string | null;
+}
+
+export interface EmployeeOption {
+  readonly active: boolean;
+  readonly fullName: string;
+  readonly id: EmployeeId;
+}
+
+export interface ProductOption {
+  readonly active: boolean;
+  readonly currentPriceMinor: number;
+  readonly id: ProductId;
+  readonly name: string;
+  readonly sku: string;
+  readonly vatRate: OpportunityLine['vatRate'];
+}
+
+export interface PipelineReferences {
+  readonly customers: LoadState<readonly CustomerOption[]>;
+  readonly employees: LoadState<readonly EmployeeOption[]>;
+  readonly products: LoadState<readonly ProductOption[]>;
+}
+
+const correlated = (name: string) => Random.nextInt.pipe(Effect.map((nonce) => `sales-pipeline:${name}:${nonce}`));
+
+const toCustomerOption = (item: CustomerListItem): Option.Option<CustomerOption> =>
+  Option.map(Schema.decodeOption(PartyIdSchema)(item.partyId), (id) => ({
+    archived: item.status === 'ARCHIVED',
+    companyId: item.companyId,
+    counterpartyId: item.counterpartyId,
+    id,
+    name: item.displayName,
+  }));
+
+const toEmployeeOption = (item: Employee): Option.Option<EmployeeOption> =>
+  Option.map(Schema.decodeOption(EmployeeIdSchema)(item.id), (id) => ({
+    active: item.active,
+    fullName: item.fullName,
+    id,
+  }));
+
+/** A product is offered only with the VAT rate Merchandise sells it at now (from Tax); otherwise it is left out. */
+const toProductOption = ({
+  product: item,
+  vatRate,
+}: {
+  readonly product: ProductRecord;
+  readonly vatRate: number | undefined;
+}): Option.Option<ProductOption> =>
+  Option.all({
+    id: Schema.decodeOption(ProductIdSchema)(item.id),
+    vatRate: Schema.decodeUnknownOption(VatRateSchema)(vatRate),
+  }).pipe(
+    Option.map(({ id, vatRate: rate }) => ({
+      active: item.active,
+      currentPriceMinor: item.currentPriceMinor,
+      id,
+      name: item.name,
+      sku: item.sku,
+      vatRate: rate,
+    })),
+  );
+
+const loadCustomers = listCustomers({}).pipe(
+  Effect.map((items) => items.flatMap((item) => Option.toArray(toCustomerOption(item)))),
+);
+
+const loadEmployees = listEmployees().pipe(
+  Effect.map((items) => items.flatMap((item) => Option.toArray(toEmployeeOption(item)))),
+);
+
+// The shell publishes only modules permitted for the selected legal entity and pins their ids on the document. A
+// missing catalog is an intentional composition choice; without the hint the provider's own answer decides.
+const catalogReadable = Effect.sync(() => documentNavigationModules()?.has('demo.merchandise') ?? true);
+const loadProducts = catalogReadable.pipe(
+  Effect.flatMap((readable) =>
+    readable
+      ? correlated('products').pipe(
+          Effect.flatMap((id) => executeRecords({ view: { limit: 250, ordersLimit: 0, summary: true } }, id)),
+          Effect.flatMap((response) =>
+            DateTime.now.pipe(
+              Effect.map((now) =>
+                response.products.flatMap((product) =>
+                  Option.toArray(
+                    toProductOption({ product, vatRate: vatRateAt(response, product.taxClassificationCode, now) }),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        )
+      : Effect.succeed<readonly ProductOption[]>([]),
+  ),
+);
+
+/** Full opportunity population, unfiltered, with its revision. Bulk actions use it so table filters never narrow them. */
+const loadAllOpportunities = correlated('bulk-tags').pipe(Effect.flatMap((id) => loadPipeline({}, id)));
+
+/** Runs one read in the browser runtime. The state stays `loading` until the read settles. */
+const useLoad = <A, E>(load: Effect.Effect<A, E>): LoadState<A> => {
+  const [state, setState] = useState<LoadState<A>>({ status: 'loading' });
+  useEffect(() => {
+    let active = true;
+    void browserRuntime.runPromise(
+      load.pipe(
+        Effect.match({
+          onFailure: (error) => {
+            if (active) {
+              setState({ cause: error, status: 'error' });
+            }
+          },
+          onSuccess: (items) => {
+            if (active) {
+              setState({ items, status: 'ready' });
+            }
+          },
+        }),
+      ),
+    );
+    return () => {
+      active = false;
+    };
+  }, [load]);
+  return state;
+};
+
+/** Customers, employees and products for the pipeline screen. Each list fails on its own. */
+export const usePipelineReferences = (): PipelineReferences => ({
+  customers: useLoad(loadCustomers),
+  employees: useLoad(loadEmployees),
+  products: useLoad(loadProducts),
+});
+
+export const useAllOpportunities = (): LoadState<RecordsResponse> => useLoad(loadAllOpportunities);
+
+/** Subject id accepted by tagging, or `undefined` for anything tagging would refuse. */
+export const subjectIdOf = (id: string): SubjectId | undefined =>
+  Option.getOrUndefined(Schema.decodeOption(SubjectIdSchema)(id));
+
+export const toSubjectIds = (ids: readonly string[]): SubjectId[] =>
+  ids.flatMap((id) => {
+    const subject = subjectIdOf(id);
+    return subject === undefined ? [] : [subject];
+  });
+
+/**
+ * Subject ids that carry `tagId` for one kind. `undefined` when no tag is chosen; `loading` until the read
+ * answers for the current tag and version. `version` changes after tag writes so the set refreshes.
+ */
+export const useSubjectIdsWithTag = (
+  kind: SubjectKind,
+  tagId: TagId | null,
+  version: number,
+): LoadState<ReadonlySet<string>> | undefined => {
+  const key = `${kind}:${tagId ?? ''}:${version}`;
+  const [result, setResult] = useState<{ readonly key: string; readonly state: LoadState<ReadonlySet<string>> }>();
+  useEffect(() => {
+    let active = true;
+    if (tagId !== null) {
+      void browserRuntime.runPromise(
+        subjectsWithTag(kind, tagId).pipe(
+          Effect.match({
+            onFailure: (error) => {
+              if (active) {
+                setResult({ key, state: { cause: error, status: 'error' } });
+              }
+            },
+            onSuccess: (ids) => {
+              if (active) {
+                setResult({ key, state: { items: new Set<string>(ids), status: 'ready' } });
+              }
+            },
+          }),
+        ),
+      );
+    }
+    return () => {
+      active = false;
+    };
+  }, [key, kind, tagId]);
+  const current = result?.key === key ? result.state : { status: 'loading' as const };
+  return tagId === null ? undefined : current;
+};

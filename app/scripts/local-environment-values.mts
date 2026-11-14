@@ -1,6 +1,7 @@
+import { DATABASE_IDENTITIES } from '../database/identity-enrollment.ts';
 import { Config, ConfigProvider, Effect, Option, Redacted } from 'effect';
 
-import { DATABASE_IDENTITIES, SHARED_RUNTIME_IDENTITY } from '../packages/core-runtime/src/db/database-identities.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../packages/core-runtime/src/db/database-identities.ts';
 
 const assignmentPattern = /^(?<key>[A-Z][A-Z0-9_]*)=(?<value>.*)$/u;
 
@@ -46,13 +47,6 @@ export const localPublicClientValues = (lines: readonly string[], topology: Loca
       existing.ONTOS_SHELL_GATEWAY_BASE_URL ?? `http://localhost:${topology.shellPort}/${topology.shellId}-api`,
   };
 };
-
-/**
- * The Shell's module bindings. Local module-to-module calls stay unprovisioned, so a missing value defaults to
- * an empty list, which the Shell accepts and admits no module credential against. An existing value is kept.
- */
-export const localModuleValues = (lines: readonly string[]): Readonly<Record<string, string>> =>
-  existingValues(lines).ONTOS_GATEWAY_MODULE_BINDINGS === undefined ? { ONTOS_GATEWAY_MODULE_BINDINGS: '[]' } : {};
 
 export const localSpiceDbValues = (
   lines: readonly string[],

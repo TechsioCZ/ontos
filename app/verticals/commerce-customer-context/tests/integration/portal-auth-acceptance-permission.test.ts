@@ -1,9 +1,11 @@
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT, DATABASE_IDENTITIES } from '../support/database-identities.ts';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { v1 } from '@authzed/authzed-node';
 import {
+  DatabaseIdentityEnrollmentContext,
   ActiveApplicationCompositionService,
   ContextAccess,
   makeActionRuntimeLive,
@@ -18,6 +20,7 @@ import {
   ReadRuntime,
 } from '@app/core-runtime';
 import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { NodeServices } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
 import { Context, Crypto, Effect, Layer, Schema } from 'effect';
@@ -41,10 +44,7 @@ import {
   parseDatabaseConnectionPair,
 } from '../../../../packages/core-runtime/src/db/config.ts';
 import type { DatabaseConfigValue, DatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
-import {
-  DATABASE_IDENTITIES,
-  SHARED_RUNTIME_IDENTITY,
-} from '../../../../packages/core-runtime/src/db/database-identities.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../../../packages/core-runtime/src/db/database-identities.ts';
 import {
   dataAccessEvents,
   legalEntities,
@@ -123,7 +123,10 @@ const bootstrapPermissionRuntimeRole = Effect.fn('PermissionAcceptance.bootstrap
   function* bootstrapPermissionRuntimeRole(connections: DatabaseConnectionPair) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     // The bootstrap provisions every database identity, so each dedicated login targets this database too.
-    const identities = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
+    const identities = yield* loadDatabaseIdentityConnections({
+      enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      envPath: '/dev/null',
+    });
     const database = new URL(connections.admin.connectionString).pathname.slice(1);
     const dedicatedIdentityUrls = Object.fromEntries(
       DATABASE_IDENTITIES.filter(({ id }) => id !== SHARED_RUNTIME_IDENTITY.id).map(({ id, urlKey }) => [
@@ -167,25 +170,22 @@ const acquirePermissionDatabase = Effect.fn('PermissionAcceptance.acquireDatabas
       DATABASE_URL: connectionStringForDatabase(connections.runtime.connectionString, database),
     });
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    // Core's owner command converges equivalent histories before native migration; direct Drizzle replays both.
     for (const owner of ['packages/core-runtime', 'verticals/commerce-customer-context']) {
       const workingDirectory = path.join(workspaceRoot, owner);
       const migration = yield* spawner.spawn(
-        ChildProcess.make(
-          path.join(workingDirectory, 'node_modules', '.bin', 'drizzle-kit'),
-          ['migrate', '--config', 'drizzle.config.ts'],
-          {
-            cwd: workingDirectory,
-            env: {
-              APP_ENV_PATH: '/dev/null',
-              DATABASE_ADMIN_URL: isolated.admin.connectionString,
-              DATABASE_URL: isolated.runtime.connectionString,
-            },
-            extendEnv: true,
-            stderr: 'ignore',
-            stdin: 'ignore',
-            stdout: 'ignore',
+        ChildProcess.make('pnpm', ['run', 'db:migrate'], {
+          cwd: workingDirectory,
+          env: {
+            APP_ENV_PATH: '/dev/null',
+            DATABASE_ADMIN_URL: isolated.admin.connectionString,
+            DATABASE_URL: isolated.runtime.connectionString,
           },
-        ),
+          extendEnv: true,
+          stderr: 'inherit',
+          stdin: 'ignore',
+          stdout: 'ignore',
+        }),
       );
       const status = yield* migration.exitCode;
       if (Number(status) !== 0) {
@@ -383,42 +383,57 @@ const configuredRuntime = Effect.fn('PermissionAcceptance.configuredRuntime')(fu
   const moduleGateway = makeModuleEntrypointGateway(moduleStateGate);
   const crypto = yield* Crypto.Crypto;
   const scopeAccess = makeTestOperationalScopeAccess();
-  const scopeResolver = yield* makeOperationalScopeResolver(makeOperationalScopeRepository(database), scopeAccess);
-  const ownerServices = yield* Layer.build(commerceCustomerContextOwnerAuthorizationOverlayLive);
-  const ownerAuthorizationOverlay = Context.get(ownerServices, OwnerAuthorizationOverlay);
+  const scopeResolver = yield* makeOperationalScopeResolver(
+    makeOperationalScopeRepository(database, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+    scopeAccess,
+  );
+  const ownerOverlayContext = yield* Layer.build(commerceCustomerContextOwnerAuthorizationOverlayLive);
+  const ownerAuthorizationOverlay = Context.get(ownerOverlayContext, OwnerAuthorizationOverlay);
   // The one v2 gate every protected entrypoint asks (CUTOVER-PLAN §3.1). This scenario's subject is
   // the legacy `authenticated_principal` saved-address read, so the gate answers allowed and the
   // legacy business-permission path below is the decider the assertions describe.
   const accessEnforcementLive = AccessDecisionLive.pipe(
     Layer.provideMerge(AccessEnforcementPortsLive),
     Layer.provide(TenantIntentLoaderLive),
-    Layer.provide(Layer.mergeAll(Layer.succeed(CoreDatabase, database), Layer.succeed(Crypto.Crypto, crypto))),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(CoreDatabase, database),
+        Layer.succeed(Crypto.Crypto, crypto),
+        Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+      ),
+    ),
   );
   const readRuntime = makeReadRuntime(database, moduleGateway, scopeResolver, contextAccess, {
     accessDecision: makeScriptedBoundAccessGate(readAccess).bound,
     applicationComposition: { load: Effect.succeed(snapshot) },
+    databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
     expectedDeployment: ultramodernApiMarker,
     ownerAuthorizationOverlay,
     ownerRegistration: commerceCustomerContextRegistration,
   });
-  const actionRuntime = makeActionRuntimeLive(ultramodernApiMarker, commerceCustomerContextRegistration).pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        Layer.succeed(ActionRepository, makeActionRepository(crypto)),
-        Layer.effect(
-          ActionPermission,
-          makeActionPermissionLive(undefined, () => loadSpiceDbConfig({ envPath: '/dev/null' })),
-        ),
-        Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
-        Layer.succeed(ContextAccess, contextAccess),
-        Layer.succeed(CoreDatabase, database),
-        Layer.succeed(ModuleEntrypointGateway, moduleGateway),
-        Layer.succeed(ModuleStateGate, moduleStateGate),
-        Layer.succeed(OperationalScopeResolver, scopeResolver),
-        Layer.succeed(OwnerAuthorizationOverlay, ownerAuthorizationOverlay),
-        accessEnforcementLive,
-      ),
+  const ownerServices = Layer.mergeAll(
+    Layer.succeed(ActionRepository, makeActionRepository(crypto)),
+    Layer.effect(
+      ActionPermission,
+      makeActionPermissionLive(undefined, () => loadSpiceDbConfig({ envPath: '/dev/null' })),
     ),
+    Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+    Layer.succeed(ContextAccess, contextAccess),
+    Layer.succeed(CoreDatabase, database),
+    Layer.succeed(Crypto.Crypto, crypto),
+    Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+    Layer.succeed(ModuleEntrypointGateway, moduleGateway),
+    Layer.succeed(ModuleStateGate, moduleStateGate),
+    Layer.succeed(OperationalScopeResolver, scopeResolver),
+    Layer.succeed(OwnerAuthorizationOverlay, ownerAuthorizationOverlay),
+    accessEnforcementLive,
+  );
+  const ownerApprovals = makeOwnerActionApprovalsLive(ultramodernApiMarker, commerceCustomerContextRegistration).pipe(
+    Layer.provide(ownerServices),
+  );
+  const actionRuntime = makeActionRuntimeLive(ultramodernApiMarker, commerceCustomerContextRegistration).pipe(
+    Layer.provideMerge(ownerApprovals),
+    Layer.provide(ownerServices),
   );
   return yield* Effect.acquireRelease(
     Effect.sync(() =>

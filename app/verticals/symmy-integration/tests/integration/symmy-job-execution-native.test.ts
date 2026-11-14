@@ -11,6 +11,8 @@ import {
   ReadRuntime,
   SystemPrincipalContextResolverLive,
   TrustedPrincipalContextSchema,
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   matchOutboxMessages,
 } from '@app/core-runtime';
 import type { OutboxCycleError, OutboxCycleResult } from '@app/core-runtime';
@@ -115,6 +117,7 @@ const privacyDispatchGatewayLive = Layer.effect(
   }),
 );
 const services = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]))),
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
   Layer.provideMerge(Reactivity.layer),

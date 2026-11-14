@@ -2,6 +2,7 @@ import { DateTime, Effect } from 'effect';
 import type { Crypto } from 'effect';
 
 import type { CoreDatabaseExecutor, CoreTransaction } from '../../db/types.ts';
+import type { DatabaseIdentityEnrollment } from '../../db/database-identities.ts';
 import type { OperationalScope } from '../../operations/context.ts';
 import type { AccessChangesStoreService } from '../changes/persistence/store.ts';
 import { withOptional } from '../decision/optional.ts';
@@ -19,6 +20,7 @@ import { liveApprovalAuthorityInspector } from './live-authority.ts';
 import type { LiveAuthoritySources } from './live-authority.ts';
 import { livePublishedCatalog } from './live-catalog.ts';
 import type { ApprovalClock, ApprovalIdentifiers, ApprovalsPorts } from './service.ts';
+import type { ActionApprovalLifecycleV2 } from './action-lifecycle-v2.ts';
 
 /*
  * The real ports of the approvals service and of the mandate adapter: every one of them is a Core
@@ -108,6 +110,7 @@ export interface LiveApprovalRecords {
  * rather than proved by a second connection.
  */
 export interface LiveApprovalServices {
+  readonly actionCommands?: ActionApprovalLifecycleV2;
   readonly crypto: Crypto.Crypto;
   readonly intent: LiveApprovalIntentReads;
   /** The same services over the transaction a caller already owns; absent refuses every claim (O75). */
@@ -157,6 +160,9 @@ const portsOver = (
     identifiers: liveIdentifiers(services.crypto),
     store: active.records.recordsFor(scope),
   };
+  if (services.actionCommands !== undefined) {
+    Object.assign(ports, { actionCommands: { lifecycle: services.actionCommands, scope } });
+  }
   /*
    * `inTransaction` exists only when the composition can really join a transaction: a composition that
    * cannot is one whose ports say so by omission, which the service refuses instead of proving the
@@ -179,14 +185,23 @@ export const liveApprovalsPorts = (services: LiveApprovalServices, scope: Operat
  * runner supplies `approvalsFor` and decides whether to bind the adapter at all.
  */
 export const liveMandateDispatchPorts = (input: {
+  readonly actionCommands?: ActionApprovalLifecycleV2;
   readonly approvalsFor: MandateDispatchDependencies['approvalsFor'];
   /** The adapter's own reads (`prepare`, a stored 202) are request reads, never a claim's read. */
   readonly database: { readonly executor: CoreDatabaseExecutor };
+  /** The enrolled database identities the adapter's scope installation is verified against. */
+  readonly enrollment: DatabaseIdentityEnrollment;
   readonly frozenCommands: FrozenCommandStore;
   readonly principalKinds: AccessPrincipalKinds;
-}): MandateDispatchDependencies => ({
-  approvalsFor: input.approvalsFor,
-  database: input.database,
-  frozenCommands: input.frozenCommands,
-  principalKinds: input.principalKinds,
-});
+}): MandateDispatchDependencies =>
+  withOptional(
+    {
+      approvalsFor: input.approvalsFor,
+      database: input.database,
+      enrollment: input.enrollment,
+      frozenCommands: input.frozenCommands,
+      principalKinds: input.principalKinds,
+    },
+    'actionCommands',
+    input.actionCommands,
+  );

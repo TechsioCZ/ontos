@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { TestClock } from 'effect/testing';
 
+import { commerceEnrollmentProofServiceForPersistence } from '../../src/enrollment/attempts/enrollment-proof-service.ts';
+import { CommerceEnrollmentProofRejected } from '../../api/portal-auth/enrollment-proof-port.ts';
 import { commerceEnrollmentAttemptServiceForPersistence } from '../../src/enrollment/attempts/attempt-service.ts';
 import type { CommerceEnrollmentAttemptCompletionAuthority } from '../../src/enrollment/attempts/attempt-service.ts';
 import type {
@@ -12,6 +15,7 @@ import type {
   CommerceEnrollmentAttemptPersistence,
 } from '../../src/enrollment/attempts/attempt-persistence.ts';
 import {
+  CommerceEnrollmentAttemptNotFound,
   CommerceEnrollmentAttemptConflict,
   CommerceEnrollmentAttemptIndeterminate,
 } from '../../src/enrollment/attempts/errors.ts';
@@ -35,6 +39,7 @@ import {
   EnrollmentEvidenceReferenceSchema,
   EnrollmentAttemptIdSchema,
   EnrollmentAttemptSnapshotSchema,
+  EnrollmentLegalEntityIdSchema,
   EnrollmentKeySchema,
   EnrollmentLeaseTokenSchema,
   EnrollmentModuleKeySchema,
@@ -632,3 +637,73 @@ it('checks in the durable Attempt fences and secret-free owner routines', () => 
     expect(migration).toContain(`REVOKE ALL ON FUNCTION "commerce_customer_context"."${routine}"`);
   }
 });
+
+it.effect('binding proof requires the exact active scoped Attempt and original succeeded provider journal', () =>
+  Effect.gen(function* bindingProof() {
+    yield* TestClock.setTime(0);
+    const now = yield* DateTime.now;
+    const legalEntityId = Schema.decodeSync(Schema.String.check(Schema.isUUID()))(
+      '70000000-0000-4000-8000-000000000001',
+    );
+    const validAttempt = attempt({
+      accountSubject: subject,
+      createdAt: now,
+      targetLegalEntityId: Schema.decodeSync(EnrollmentLegalEntityIdSchema)(legalEntityId),
+    });
+    const validOperation = { ...operation, status: 'SUCCEEDED' as const };
+    const input = {
+      ...subject,
+      enrollmentAttemptId: attemptId,
+      providerOwnerOperationId: operationId,
+      sellingLegalEntityId: legalEntityId,
+      tenantId,
+    };
+    const serviceFor = (
+      row: EnrollmentAttemptSnapshot = validAttempt,
+      journal: EnrollmentOwnerOperationSnapshot = validOperation,
+    ) =>
+      commerceEnrollmentProofServiceForPersistence(
+        makePersistence({
+          read: (identity) =>
+            identity.portalEnrollmentAttemptId === row.portalEnrollmentAttemptId && identity.tenantId === row.tenantId
+              ? Effect.succeed(row)
+              : Effect.fail(
+                  new CommerceEnrollmentAttemptNotFound({
+                    attemptId,
+                    code: 'attempt_not_found',
+                    reason: 'Absent scoped Attempt',
+                    retryable: false,
+                  }),
+                ),
+          readOperation: () => Effect.succeed(journal),
+        }),
+        { tenantId },
+      );
+    expect((yield* serviceFor().verifyBinding(input)).evidenceRef).toBe(invocationId);
+    for (const changed of [
+      { ...input, tenantId: '10000000-0000-4000-8000-000000000099' },
+      { ...input, enrollmentAttemptId: '20000000-0000-4000-8000-000000000099' },
+      { ...input, sellingLegalEntityId: '70000000-0000-4000-8000-000000000099' },
+      { ...input, providerSubjectId: Schema.decodeSync(EnrollmentProviderSubjectIdSchema)('foreign-provider-subject') },
+      { ...input, providerOwnerOperationId: '50000000-0000-4000-8000-000000000099' },
+    ]) {
+      expect(yield* Effect.flip(serviceFor().verifyBinding(changed))).toBeInstanceOf(CommerceEnrollmentProofRejected);
+    }
+    for (const state of ['COMPLETE', 'TERMINATED', 'RECONCILIATION_REQUIRED', 'VERIFICATION_REQUIRED'] as const) {
+      expect(yield* Effect.flip(serviceFor({ ...validAttempt, state }).verifyBinding(input))).toBeInstanceOf(
+        CommerceEnrollmentProofRejected,
+      );
+    }
+    for (const createdAt of [DateTime.add(now, { hours: -24 }), DateTime.add(now, { seconds: 1 })]) {
+      expect(yield* Effect.flip(serviceFor({ ...validAttempt, createdAt }).verifyBinding(input))).toBeInstanceOf(
+        CommerceEnrollmentProofRejected,
+      );
+    }
+    expect(
+      yield* Effect.flip(serviceFor(validAttempt, { ...validOperation, required: false }).verifyBinding(input)),
+    ).toBeInstanceOf(CommerceEnrollmentProofRejected);
+    expect(
+      yield* Effect.flip(serviceFor(validAttempt, { ...validOperation, status: 'FAILED' }).verifyBinding(input)),
+    ).toBeInstanceOf(CommerceEnrollmentProofRejected);
+  }),
+);

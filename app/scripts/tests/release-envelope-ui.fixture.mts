@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-
-import type { MicroVerticalReleaseUi } from '@modern-js/app-tools-extensions/release-envelope';
 import { Schema } from 'effect';
 
 const RendererAppId = Schema.String.pipe(Schema.brand('AppId'));
@@ -51,26 +48,3 @@ export const ReleaseUiSchema = Schema.Struct({
   }),
   routerBindings: Schema.Record(Schema.String, RendererRouterBinding),
 });
-const decodeRendererEvidence = Schema.decodeUnknownSync(ReleaseUiSchema);
-const referenceTopology = Schema.decodeUnknownSync(
-  Schema.fromJsonString(Schema.Struct({ shell: Schema.Unknown, verticals: Schema.Array(Schema.Unknown) })),
-)(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8'));
-
-/**
- * Release fixtures reuse the renderer evidence recorded in the reference topology for the same
- * application and restamp only the build identity, which must equal the fixture build marker.
- */
-export const releaseUiFor = (appId: string, buildMarker: string): MicroVerticalReleaseUi => {
-  const application = [referenceTopology.shell, ...referenceTopology.verticals].find(
-    Schema.is(Schema.Struct({ id: Schema.Literal(appId) })),
-  );
-  if (application === undefined) {
-    throw new Error(`reference topology has no application ${appId}`);
-  }
-  const evidence = decodeRendererEvidence(application);
-  return {
-    rendererIdentity: { ...evidence.rendererIdentity, buildId: buildMarker },
-    rendererProfile: evidence.rendererProfile,
-    routerBindings: evidence.routerBindings,
-  };
-};

@@ -5,7 +5,8 @@ import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { runQualityCli } from './quality-cli-lifecycle.mts';
 
-// `pnpm check` runs these package scripts. A lane runs its scripts in order and stops at the first
+// `pnpm check` runs correctness checks. Optional repository-wide analysis belongs to `pnpm quality:check`.
+// A lane runs its scripts in order and stops at the first
 // failure; lanes run side by side under one concurrency limit, and every lane runs to completion.
 //
 // check:module-contracts creates and deletes bundles under verticals/, so it runs alone before every
@@ -16,9 +17,9 @@ const firstLane = ['check:module-contracts'];
 const parallelLanes = [
   ['lint'],
   ['typecheck'],
-  ['quality:audit', 'quality:audit:gate', 'lint:suppressions'],
   ['api:check'],
   ['api:check:ontos'],
+  ['handler-services:check'],
   ['module-entrypoints:check'],
   ['contract:check'],
   ['database-access:check'],

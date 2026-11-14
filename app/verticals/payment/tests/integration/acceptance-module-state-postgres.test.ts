@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import { randomUUID } from 'node:crypto';
 
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
@@ -152,6 +153,7 @@ const makeGatedRuntimes = Effect.fn('AcceptanceModuleState.makeGatedRuntimes')(f
     evidenceContextAccess,
     {
       accessDecision,
+      databaseIdentities: defineDatabaseIdentityEnrollment([]),
       onStage: (stage) => {
         stages.push(stage);
       },

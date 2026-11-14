@@ -2,11 +2,13 @@ import { organizationProcessingReadPrincipal } from '../support/organization-pro
 import { organizationGovernanceReadPrincipal } from '../support/organization-governance-read-principal.ts';
 import { privacyDispatchPrincipal } from '../support/privacy-dispatch-principal.ts';
 import { registeredGatewayRecoveryPrincipal } from '../support/registered-gateway-recovery.ts';
-import { Redacted, Schema } from 'effect';
+import { Effect, Exit, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import {
+  decodeTrustedPrincipalContext,
+  isTrustedSupportRecoveryPrincipalContext,
   isTrustedSystemPrincipalContext,
   isVerifiedGatewayPrincipalContext,
   preserveSystemPrincipalContextTrust,
@@ -21,9 +23,11 @@ import {
   RegisteredGatewayPrivacyDispatchSchema,
   readVerifiedGatewayScopeAssertion,
   trustResolvedSystemPrincipalContext,
+  trustSupportRecoveryPrincipalContext,
   trustVerifiedGatewayPrincipalContext,
   VerifiedGatewayPrincipalContextSchema,
 } from '../../src/auth/system-principal-context-provenance.ts';
+import type { TrustedPrincipalContext } from '../../src/actions/principal-context.ts';
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const assertionValue = 'header.payload.signature-value';
@@ -35,6 +39,13 @@ const context = Schema.decodeSync(TrustedPrincipalContextSchema)({
   principalId: '10000000-0000-4000-8000-000000000001',
   tenantId: '20000000-0000-4000-8000-000000000001',
 });
+
+const transplantProvenance = (source: TrustedPrincipalContext, target: TrustedPrincipalContext) => {
+  const property = '__ontosCorePrincipalContextProvenance';
+  const descriptor = Object.getOwnPropertyDescriptor(source, property);
+  expect(descriptor).toBeDefined();
+  return Object.defineProperty({ ...target }, property, descriptor ?? {});
+};
 
 it('carries the redeemed assertion only inside the module-private provenance store', () => {
   const trusted = trustVerifiedGatewayPrincipalContext(context, compositionRevision, {
@@ -62,6 +73,32 @@ it('a gateway context verified without an assertion carries no scope assertion',
   expect(readVerifiedGatewayCompositionRevision(trusted)).toBe(compositionRevision);
   expect(readVerifiedGatewayScopeAssertion(trusted)).toBeUndefined();
   expect(readVerifiedGatewayScopeAssertion({ ...trusted })).toBeUndefined();
+});
+
+it('production mint paths reject post-seal principal and tenant mutation', () => {
+  const gateway = trustVerifiedGatewayPrincipalContext(context, compositionRevision, {
+    assertion: Redacted.make(assertionValue),
+    audience: 'party-registry',
+  });
+  const system = trustResolvedSystemPrincipalContext(
+    Schema.decodeSync(TrustedPrincipalContextSchema)({
+      authContextRef: 'job:mutation-probe:run:run-1',
+      authMethod: 'system',
+      principalId: context.principalId,
+      tenantId: context.tenantId,
+    }),
+  );
+  const recovery = trustSupportRecoveryPrincipalContext(context, {});
+  for (const carrier of [gateway, system, recovery]) {
+    expect(Object.isFrozen(carrier)).toBe(true);
+    expect(Reflect.set(carrier, 'principalId', '10000000-0000-4000-8000-000000000099')).toBe(false);
+    expect(Reflect.set(carrier, 'tenantId', '20000000-0000-4000-8000-000000000099')).toBe(false);
+    expect(carrier.principalId).toBe(context.principalId);
+    expect(carrier.tenantId).toBe(context.tenantId);
+  }
+  expect(isVerifiedGatewayPrincipalContext(gateway)).toBe(true);
+  expect(isTrustedSystemPrincipalContext(system)).toBe(true);
+  expect(isTrustedSupportRecoveryPrincipalContext(recovery)).toBe(true);
 });
 
 it('trusts only the exact carrier: copies and forged provenance properties carry nothing', () => {
@@ -101,6 +138,143 @@ it('trusts only the exact carrier: copies and forged provenance properties carry
   expect(isVerifiedGatewayPrincipalContext(system)).toBe(false);
 });
 
+it('carries the redeemed assertion of an OAuth connection context only on its exact carrier', () => {
+  const grantId = '30000000-0000-4000-8000-000000000001';
+  const oauthContext = Schema.decodeSync(TrustedPrincipalContextSchema)({
+    authBindingId: '40000000-0000-4000-8000-000000000002',
+    authContextRef: `oauth-grant:${grantId}`,
+    authMethod: 'oauth_connection',
+    connection: {
+      clientId: 'https://claude.ai/oauth/claude-code-client-metadata',
+      clientName: 'Claude Code',
+      grantId,
+      modules: [{ access: 'read', moduleId: 'party.registry' }],
+      writePolicy: 'approval',
+    },
+    delegatedByPrincipalId: '10000000-0000-4000-8000-000000000003',
+    legalEntityId: '71000000-0000-4000-8000-000000000021',
+    principalId: '10000000-0000-4000-8000-000000000004',
+    tenantId: '20000000-0000-4000-8000-000000000001',
+  });
+  const trusted = trustVerifiedGatewayPrincipalContext(oauthContext, compositionRevision, {
+    assertion: Redacted.make(assertionValue),
+    audience: 'party-registry',
+  });
+
+  expect(isVerifiedGatewayPrincipalContext(trusted)).toBe(true);
+  expect(Schema.is(VerifiedGatewayPrincipalContextSchema)(trusted)).toBe(true);
+  const scopeAssertion = readVerifiedGatewayScopeAssertion(trusted);
+  expect(scopeAssertion?.audience).toBe('party-registry');
+  expect(scopeAssertion === undefined ? undefined : Redacted.value(scopeAssertion.assertion)).toBe(assertionValue);
+  expect(readVerifiedGatewayCompositionRevision(trusted)).toBe(compositionRevision);
+  expect(encodeJson(trusted)).not.toContain(assertionValue);
+
+  for (const forgery of [{ ...trusted }, structuredClone({ ...trusted })]) {
+    expect(isVerifiedGatewayPrincipalContext(forgery)).toBe(false);
+    expect(readVerifiedGatewayScopeAssertion(forgery)).toBeUndefined();
+  }
+});
+
+it.effect('rejects transplanted gateway seals before and after decoding or explicit preservation', () =>
+  Effect.gen(function* gatewayDescriptorTransplant() {
+    const trusted = trustVerifiedGatewayPrincipalContext(context, compositionRevision, {
+      assertion: Redacted.make(assertionValue),
+      audience: 'party-registry',
+    });
+    for (const changes of [
+      {},
+      { principalId: '10000000-0000-4000-8000-000000000002' },
+      { authBindingId: '40000000-0000-4000-8000-000000000002' },
+      { tenantId: '20000000-0000-4000-8000-000000000002' },
+    ]) {
+      const target = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({ ...context, ...changes });
+      const transplanted = transplantProvenance(trusted, target);
+      const decoded = yield* decodeTrustedPrincipalContext(transplanted);
+      const preserved = preserveSystemPrincipalContextTrust(transplanted, target);
+      for (const carrier of [transplanted, decoded, preserved]) {
+        expect(isVerifiedGatewayPrincipalContext(carrier)).toBe(false);
+        expect(readVerifiedGatewayCompositionRevision(carrier)).toBeUndefined();
+        expect(readVerifiedGatewayScopeAssertion(carrier)).toBeUndefined();
+      }
+    }
+    const decoded = yield* decodeTrustedPrincipalContext(trusted);
+    expect(isVerifiedGatewayPrincipalContext(decoded)).toBe(true);
+    expect(readVerifiedGatewayCompositionRevision(decoded)).toBe(compositionRevision);
+    expect(readVerifiedGatewayScopeAssertion(decoded)).toEqual(readVerifiedGatewayScopeAssertion(trusted));
+  }),
+);
+
+it.effect('rejects a transplanted gateway seal on a Storefront context during decoding', () =>
+  Effect.gen(function* storefrontDescriptorTransplant() {
+    const trusted = trustVerifiedGatewayPrincipalContext(
+      yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
+        ...context,
+        legalEntityId: '30000000-0000-4000-8000-000000000001',
+        trustedStorefrontId: 'storefront-a',
+      }),
+      compositionRevision,
+    );
+    const transplanted = transplantProvenance(trusted, trusted);
+    expect(Exit.isFailure(yield* Effect.exit(decodeTrustedPrincipalContext(transplanted)))).toBe(true);
+    expect(isVerifiedGatewayPrincipalContext(yield* decodeTrustedPrincipalContext(trusted))).toBe(true);
+  }),
+);
+
+it.effect('rejects a system seal transplanted to another tenant while preserving explicit copies', () =>
+  Effect.gen(function* systemDescriptorTransplant() {
+    const trusted = trustResolvedSystemPrincipalContext(
+      yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
+        authContextRef: 'job:provenance:run:run-1',
+        authMethod: 'system',
+        principalId: context.principalId,
+        tenantId: context.tenantId,
+      }),
+    );
+    const target = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
+      ...trusted,
+      tenantId: '20000000-0000-4000-8000-000000000002',
+    });
+    const transplanted = transplantProvenance(trusted, target);
+    expect(isTrustedSystemPrincipalContext(transplanted)).toBe(false);
+    expect(isTrustedSystemPrincipalContext(preserveSystemPrincipalContextTrust(transplanted, target))).toBe(false);
+    expect(Exit.isFailure(yield* Effect.exit(decodeTrustedPrincipalContext(transplanted)))).toBe(true);
+    const preserved = preserveSystemPrincipalContextTrust(trusted, Object.freeze({ ...trusted, correlationId: 'c-2' }));
+    expect(isTrustedSystemPrincipalContext(preserved)).toBe(true);
+    expect(isTrustedSystemPrincipalContext(yield* decodeTrustedPrincipalContext(preserved))).toBe(true);
+    expect(isTrustedSystemPrincipalContext(trusted)).toBe(true);
+  }),
+);
+
+it.effect(
+  'rejects a transplanted support recovery seal while preserving its registered Action on explicit copies',
+  () =>
+    Effect.gen(function* recoveryDescriptorTransplant() {
+      const registration = {};
+      const trusted = trustSupportRecoveryPrincipalContext(context, registration);
+      const target = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
+        ...context,
+        authBindingId: '40000000-0000-4000-8000-000000000002',
+        principalId: '10000000-0000-4000-8000-000000000002',
+        tenantId: '20000000-0000-4000-8000-000000000002',
+      });
+      const transplanted = transplantProvenance(trusted, target);
+      const decoded = yield* decodeTrustedPrincipalContext(transplanted);
+      const copiedForgery = preserveSystemPrincipalContextTrust(transplanted, target);
+      for (const carrier of [transplanted, decoded, copiedForgery]) {
+        expect(isTrustedSupportRecoveryPrincipalContext(carrier)).toBe(false);
+        expect(isTrustedSupportRecoveryPrincipalContext(carrier, registration)).toBe(false);
+      }
+      const preserved = preserveSystemPrincipalContextTrust(
+        trusted,
+        Object.freeze({ ...trusted, correlationId: 'c-3' }),
+      );
+      const decodedCopy = yield* decodeTrustedPrincipalContext(preserved);
+      for (const carrier of [trusted, preserved, decodedCopy]) {
+        expect(isTrustedSupportRecoveryPrincipalContext(carrier, registration)).toBe(true);
+        expect(isTrustedSupportRecoveryPrincipalContext(carrier, {})).toBe(false);
+      }
+    }),
+);
 it('carries the calling module of a delegated assertion beside the subject, only inside provenance', () => {
   const actor = {
     appId: 'commerce-order',

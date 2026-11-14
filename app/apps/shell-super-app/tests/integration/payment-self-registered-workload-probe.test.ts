@@ -49,6 +49,8 @@ import {
 } from '../../api/auth/gateway-delegation-exchanges.service.ts';
 import { issueDelegatedGatewayContextAssertion } from '../../api/auth/gateway-delegation-issuer.ts';
 import type { GatewayRegisteredWorkloadRule } from '../../api/auth/gateway-delegation-policy.ts';
+import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
+import { enrolledModuleCredentials } from '../support/module-credential-enrolment.ts';
 import { GatewayDelegationVerificationLive } from '../../api/auth/gateway-delegation-verification.ts';
 import { makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
@@ -142,6 +144,20 @@ const actionContract = (actionKey: string, carriers: PaymentActionCarriers) => (
   schemaVersion: '1',
 });
 
+/** The exact registered-workload calls the Payment credential needs; production declares them in its manifest. */
+const paymentRegisteredWorkloads: readonly GatewayRegisteredWorkloadRule[] = [notifyWorker, recoverWorker].map(
+  (workerKey) => ({
+    audience: paymentApp,
+    declarationKey: a8Declaration,
+    entrypointKey: a8Key,
+    jobKey: workerKey,
+    legalEntityScope: 'required',
+    schemaVersion: '1',
+    workerKey,
+    workloadKey: sourceIngress,
+  }),
+);
+
 const paymentContract = (options: { readonly a8Operation: boolean; readonly selfIntrinsic?: boolean }) => {
   const base = makeModuleContractFixture({
     appId: paymentApp,
@@ -190,10 +206,15 @@ const paymentContract = (options: { readonly a8Operation: boolean; readonly self
                 entrypoint: actionEntrypoint(a8Key),
                 operationKey: a8OperationKey,
                 schemaVersion: '1',
+                workloadCarrier: {
+                  declarationKey: a8AccessDeclaration.key,
+                  workloads: a8AccessWorkload.workloads,
+                },
               },
             ]
           : [],
       },
+      registeredWorkloadCalls: paymentRegisteredWorkloads,
       requirements: {
         coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
         intrinsic:
@@ -219,20 +240,6 @@ const paymentContract = (options: { readonly a8Operation: boolean; readonly self
     },
   };
 };
-
-/** The exact issuer rules (ONTOS_GATEWAY_MODULE_BINDINGS `registeredWorkloads`) the Payment credential needs. */
-const paymentRegisteredWorkloads: readonly GatewayRegisteredWorkloadRule[] = [notifyWorker, recoverWorker].map(
-  (workerKey) => ({
-    audience: paymentApp,
-    declarationKey: a8Declaration,
-    entrypointKey: a8Key,
-    jobKey: workerKey,
-    legalEntityScope: 'required',
-    schemaVersion: '1',
-    workerKey,
-    workloadKey: sourceIngress,
-  }),
-);
 
 const replaceIdentity = (connectionString: string, role: string) => {
   const url = new URL(connectionString);
@@ -328,6 +335,10 @@ it.live(
             yield* insert(
               sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${bindingId}::uuid,${tenantId}::uuid,${principalId}::uuid,${workloadKey},${incarnation ?? (yield* crypto.randomUUIDv4())}::uuid,'active')`,
             );
+            // Register only the fixture's own company; sibling and foreign scopes gain no workload authority.
+            yield* insert(
+              sql`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status) values(${yield* crypto.randomUUIDv4()}::uuid,${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${bindingId}::uuid,${legalEntityId}::uuid,'active')`,
+            );
             return bindingId;
           });
         const revoke = (bindingId: string) =>
@@ -399,9 +410,12 @@ it.live(
             return { claimId, deliveryId };
           });
 
-        const auth = yield* makeAuthDatabase({ connectionString: fixture.connections.runtime.connectionString });
+        const auth = yield* makeAuthDatabase({
+          connectionString: fixture.connections.runtime.connectionString,
+          expectedRole: fixture.connections.runtime.expectedRole,
+        });
         const scopeResolver = yield* makeOperationalScopeResolver(
-          makeOperationalScopeRepository(runtime),
+          makeOperationalScopeRepository(runtime, SHELL_DATABASE_IDENTITY_ENROLLMENT),
           makeTestOperationalScopeAccess({ decision: 'denied' }),
         );
         const { privateKey, publicKey } = yield* Effect.promise(() =>
@@ -415,16 +429,10 @@ it.live(
           ONTOS_GATEWAY_ISSUER: issuer,
           ONTOS_GATEWAY_PRIVATE_JWK: JSON.stringify({ ...privateJwk, alg: 'EdDSA', kid: 'payment-shell', use: 'sig' }),
         });
-        const paymentBinding = {
-          compositionRevision: snapshot.composition.revision,
-          providerKeyId: shellProviderKey,
-          registeredWorkloads: paymentRegisteredWorkloads,
-          sourceAppId: paymentApp,
-          sourceBuildMarker: paymentBuild,
-        };
+        // The workload rules are not configured: the Shell derives them from Payment's declared registered-workload
+        // calls (demo divergence exception 8) for the module credential its host attested for this release.
         const configuration = ConfigProvider.fromUnknown({
           ONTOS_GATEWAY_ISSUER: issuer,
-          ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([paymentBinding]),
           ONTOS_GATEWAY_PUBLIC_JWKS: jwks,
         });
         const signer = makeGatewayIssuerLayer({
@@ -435,10 +443,22 @@ it.live(
             revision: snapshot.composition.revision,
           }),
           loadConfig: Effect.succeed(signing),
-        }).pipe(Layer.provide(Layer.succeed(GatewayScopeGrantRegistrar, makeGatewayScopeGrantRegistrar(issuerClient))));
+        }).pipe(
+          Layer.provide(
+            Layer.succeed(
+              GatewayScopeGrantRegistrar,
+              makeGatewayScopeGrantRegistrar(issuerClient, SHELL_DATABASE_IDENTITY_ENROLLMENT),
+            ),
+          ),
+        );
         const gate = makeAccessDecisionService({
           authorityFor: () => ({
             readCells: unavailableHumanPort,
+            // The three companies this fixture inserts are its Tenant's own; any other Tenant owns none of them.
+            readCompanyOwnership: ({ legalEntityId: company, tenantId: owner }) =>
+              Effect.succeed(
+                owner === tenantId && [legalEntityId, siblingLegalEntityId, suspendedLegalEntityId].includes(company),
+              ),
             readConnection: unavailableHumanPort,
             readScope: unavailableHumanPort,
             readTeamIds: unavailableHumanPort,
@@ -446,8 +466,14 @@ it.live(
           check: { checkBulk: unavailableHumanPort },
           decisionLog: { record: unavailableHumanPort },
           legalEntities: { listCandidateIds: unavailableHumanPort },
-          principalKinds: makeDrizzleAccessPrincipalKinds(runtime),
-          workloadBindings: makeDrizzleAccessWorkloadBindings(runtime),
+          principalKinds: makeDrizzleAccessPrincipalKinds({
+            ...runtime,
+            enrollment: SHELL_DATABASE_IDENTITY_ENROLLMENT,
+          }),
+          workloadBindings: makeDrizzleAccessWorkloadBindings({
+            ...runtime,
+            enrollment: SHELL_DATABASE_IDENTITY_ENROLLMENT,
+          }),
         });
         const services = Layer.mergeAll(
           Layer.succeed(CoreDatabase, runtime),
@@ -458,6 +484,13 @@ it.live(
           Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
           Layer.succeed(GatewayDelegationExchangeLedger, makeGatewayDelegationExchangeLedger(auth.executor)),
           Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+          enrolledModuleCredentials([
+            {
+              appId: paymentApp,
+              providerKeyId: shellProviderKey,
+              release: { buildMarker: paymentBuild, compositionRevision: snapshot.composition.revision },
+            },
+          ]),
         );
         const issue = (
           subject: (typeof GatewayDelegatedContextRequestSchema.Encoded)['subject'],

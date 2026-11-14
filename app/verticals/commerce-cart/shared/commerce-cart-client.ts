@@ -1,7 +1,7 @@
 import { makeEffectBffClientOptions } from '@app/shared-contracts/client-runtime';
 import { Effect, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { Context, Layer } from 'effect';
-import { commerceCartApiContract, commerceCartApi, commerceCartOperationContexts } from './api';
+import { commerceCartApiContract, commerceCartApi, commerceCartOperationContexts } from './api.ts';
 
 export { Effect, runEffectRequest } from '@modern-js/bff-effect/effect-client';
 // <generated-action-http-client-exports>

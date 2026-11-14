@@ -41,10 +41,8 @@ import type {
 import { providerObservationFor } from '../../src/enrollment/orchestration/owner-transition-composition.ts';
 import { commerceEnrollmentPortalAuthOwnerReconciliationForLookup } from '../../src/enrollment/orchestration/provider-owner-effect.ts';
 import { CommercePortalAuthAccountLookupLive } from '../../src/portal-auth/persistence/portal-auth-account-lookup.ts';
-import {
-  CommercePortalAuthDatabase,
-  makeCommercePortalAuthDatabase,
-} from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database-service.ts';
 import { user } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import {
   expireEnrollmentAcceptanceLeases,
@@ -143,6 +141,7 @@ const createAccountFor = (fixture: CorrelationFixture) =>
     ownerInvocationId: fixture.ownerInvocationId,
     password: Redacted.make(PASSWORD),
     tenantId: fixture.tenantId,
+    verificationOrigin: new URL(ORIGIN),
   });
 
 /** The Attempt as a lost provider answer leaves it: claimed, revision fenced, and no subject. */
@@ -341,6 +340,7 @@ it.live('reports unavailable when the first send fails, then converges and reiss
           ownerInvocationId,
           password: Redacted.make(PASSWORD),
           tenantId,
+          verificationOrigin: new URL(ORIGIN),
         });
 
       // The user row commits inside Better Auth's sign-up, but the awaited send fails right after,
@@ -459,6 +459,7 @@ it.live('re-dispatches the account-creation transition after a claim-only crash 
               ownerInvocationId: input.ownerInvocationId,
               password: Redacted.make(PASSWORD),
               tenantId: input.tenantId,
+              verificationOrigin: new URL(ORIGIN),
             })
             .pipe(
               Effect.map((result) => ({

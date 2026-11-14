@@ -29,6 +29,9 @@ import {
   DefineCommercialFeePersistenceOutcomeSchema,
   commercialFeePersistenceForScope,
 } from '../../src/services/commercial-fee-persistence.service.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = 'e7730000-0000-4000-8000-000000000001';
 const legalEntityId = 'e7730000-0000-4000-8000-000000000002';
@@ -111,7 +114,7 @@ const withPersistence = <Value, Failure>(
         'objects',
       );
       const scope = scopeFor(selectedLegalEntityId);
-      const ownerTransaction = yield* installOperationalScope(transaction, scope);
+      const ownerTransaction = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
       const persistence = yield* commercialFeePersistenceForScope(ownerTransaction, scope);
       return yield* operation(persistence);
     }),
@@ -131,7 +134,7 @@ const withTenantPersistence = <Value, Failure>(
         'objects',
       );
       const scope = scopeFor(selectedLegalEntityId, selectedTenantId);
-      const ownerTransaction = yield* installOperationalScope(transaction, scope);
+      const ownerTransaction = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
       const persistence = yield* commercialFeePersistenceForScope(ownerTransaction, scope);
       return yield* operation(persistence);
     }),

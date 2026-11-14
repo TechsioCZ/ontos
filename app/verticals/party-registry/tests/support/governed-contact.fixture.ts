@@ -1,4 +1,8 @@
-import type { DatabaseConnectionPair } from '@app/core-runtime';
+import type { RuntimeDatabaseConfigValue } from '@app/core-runtime';
+import {
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '@app/party-registry-identity-contracts';
 import { PgClient } from '@effect/sql-pg';
 import { DatabaseConfig, makeContextPermissionRelationshipMutationLive } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
@@ -53,11 +57,15 @@ const declared = {
 export const makeGovernedContactFixture = Effect.fn('GovernedContactFixture.make')(
   function* makeFixture(configuration: {
     readonly adminConnectionString: string;
+    /** Session-setting credential on the same disposable target as `partyConfiguration`; see the fixture. */
+    readonly bootstrapConnectionString: string;
     readonly composition: ActiveApplicationCompositionSnapshot;
     readonly gateway: PartyReconciliationGateway;
-    readonly partyConfiguration: DatabaseConnectionPair['runtime'];
+    readonly partyConfiguration: RuntimeDatabaseConfigValue;
   }) {
-    const { adminConnectionString, composition, gateway, partyConfiguration } = configuration;
+    const { adminConnectionString, bootstrapConnectionString, composition, gateway, partyConfiguration } =
+      configuration;
+    assert.strictEqual(partyConfiguration.expectedRole, PARTY_REGISTRY_REQUEST_IDENTITY.role);
     const adminContext = yield* Layer.build(
       PgClient.layer({ maxConnections: 1, url: Redacted.make(adminConnectionString) }).pipe(
         Layer.provideMerge(Reactivity.layer),
@@ -72,7 +80,11 @@ export const makeGovernedContactFixture = Effect.fn('GovernedContactFixture.make
         ),
         adminConnectionString: Redacted.make(adminConnectionString),
         authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+        // The dedicated request role serves every Action and Read but cannot install scope, so the scoped
+        // native writers take the same target's shared runtime credential.
+        bootstrapConnectionString: Redacted.make(bootstrapConnectionString),
         compositionRevision: composition.composition.revision,
+        databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
         ownerRegistration: partyRegistryBackendRegistration,
         runtimeConnectionString: Redacted.make(partyConfiguration.connectionString),
       }),

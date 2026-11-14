@@ -1,6 +1,17 @@
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ActiveApplicationCompositionSnapshotSchema,
+  ActionAuthorizationPreflightDatabaseLive,
+  ActionRuntime,
+  bindAccessGate,
+  ContextAccess,
   ContextAccessLive,
+  DatabaseIdentityEnrollmentContext,
+  ModuleEntrypointGateway,
+  ModuleStateGate,
+  OperationalScopeResolver,
+  OwnerAuthorizationOverlay,
   CorePersistenceLive,
   DatabaseConfig,
   InstalledModuleCatalogService,
@@ -16,12 +27,17 @@ import {
   OntosModuleDeploymentContractSchema,
 } from '@app/core-runtime';
 import {
+  ActionPermission,
+  ActionPermissionLive,
+  ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { CoreDatabase } from '@app/core-runtime/db/client';
+import { ActionRepository, makeActionRuntime, makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { createPrivacyDeniedAccess } from '../support/live-access-authority.ts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import {
@@ -52,16 +68,12 @@ import {
 } from '@app/core-runtime/access/enforcement';
 import type { AccessLegalEntityCandidates } from '@app/core-runtime/access/enforcement';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
-import { inertAccessEnforcementPorts, makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
+import { inertAccessEnforcementPorts } from '@app/core-runtime/testing/access-gate';
 import { DecisionCheck } from '../../../../packages/core-runtime/src/access/decision/engine.ts';
 import type { DecisionCheckPort } from '../../../../packages/core-runtime/src/access/decision/engine.ts';
 import { accessDecisionUnavailable } from '../../../../packages/core-runtime/src/access/decision/errors.ts';
 import { makePrivacyApiRuntime } from '../../api/index.ts';
-import {
-  makeDsrObligationNative,
-  makePrivacyDsrCompositionSnapshot,
-  privacyDsrOwnerRuntimeLive,
-} from '../support/dsr-obligation-native.ts';
+import { makeDsrObligationNative, makePrivacyDsrCompositionSnapshot } from '../support/dsr-obligation-native.ts';
 import { privacyRegistration } from '../../vertical.registration.ts';
 import { executeDsrCasesWithAuthorization } from '../../src/api/dsr-cases-client.ts';
 import { executeCreateDsrCaseWithAuthorization } from '../../src/api/create-dsr-case-action-client.ts';
@@ -241,17 +253,61 @@ const makeDsrNative = Effect.fn('DsrExactDeadline.makeNative')(function* makeDsr
       }),
     ),
   );
-  // The owner-bound runtimes ask the same allowing gate and the same per-principal refusal as the fixture.
+  const owners = snapshot.composition.modules.filter(
+    ({ deployment, moduleId }) =>
+      moduleId === privacyRegistration.moduleId && deployment.appId === ultramodernDeliveryUnit.appId,
+  );
+  const [owner] = owners;
+  if (owners.length !== 1 || owner === undefined) {
+    return yield* Effect.fail(authorityFailure());
+  }
+  // Reuse the fixture's captured resolver and gate, not another allowing gate or another pool.
+  const fixtureServices = Layer.succeedContext(fixtureContext);
+  const moduleState = TenantModuleStateServiceLive.pipe(Layer.provide(fixtureServices));
+  const moduleGate = ModuleStateGateLive.pipe(Layer.provide(moduleState));
+  const entrypoint = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleGate));
+  const ownerDependencies = Layer.mergeAll(
+    fixtureServices,
+    deniedAccess.layer,
+    ActionAuthorizationPreflightDatabaseLive.pipe(Layer.provide(fixtureServices)),
+    ActionPermissionLive,
+    ActionRepositoryLive,
+    moduleGate,
+    entrypoint,
+    Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+  ).pipe(Layer.provide(fixtureServices));
+  const ownerApprovals = makeOwnerActionApprovalsLive(owner.deployment, privacyRegistration).pipe(
+    Layer.provide(ownerDependencies),
+  );
+  // The fixture's scripted gate cannot prepare persisted authority. Bind its declared answers once;
+  // the native runner still owns composition locking, module admission, transactions and access fences.
+  const ownerActions = Layer.effect(
+    ActionRuntime,
+    Effect.gen(function* exactDeadlineActionRuntime() {
+      return makeActionRuntime(
+        yield* CoreDatabase,
+        yield* ActionRepository,
+        yield* ActionPermission,
+        yield* OperationalScopeResolver,
+        {
+          accessDecision: bindAccessGate(yield* AccessDecisionGate, inertAccessEnforcementPorts()),
+          applicationComposition: yield* ActiveApplicationCompositionService,
+          contextAccess: yield* ContextAccess,
+          databaseIdentities: yield* DatabaseIdentityEnrollmentContext,
+          expectedDeployment: owner.deployment,
+          moduleEntrypointGateway: yield* ModuleEntrypointGateway,
+          moduleStateGate: yield* ModuleStateGate,
+          ownerAuthorizationOverlay: yield* OwnerAuthorizationOverlay,
+          ownerRegistration: privacyRegistration,
+        },
+      );
+    }),
+  );
   const ownerRuntimeContext = yield* Layer.build(
-    privacyDsrOwnerRuntimeLive(snapshot).pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          Layer.succeedContext(fixtureContext),
-          makeTestAccessGateLayers({ spec: { defaultAnswer: { outcome: 'ALLOWED' } } }),
-          deniedAccess.layer,
-        ),
-      ),
-    ),
+    Layer.merge(
+      ownerActions.pipe(Layer.provideMerge(ownerApprovals)),
+      makeReadRuntimeLive(owner.deployment, privacyRegistration),
+    ).pipe(Layer.provide(ownerDependencies)),
   );
   const context = Context.merge(fixtureContext, ownerRuntimeContext);
   // HTTP runs later under this exported context, independently of setup's ambient services.
@@ -395,6 +451,7 @@ const makeDsrHttp = Effect.fn('DsrExactDeadline.makeHttp')(function* makeDsrHttp
     readRuntime = makeReadRuntimeLive(ultramodernDeliveryUnit, privacyRegistration).pipe(
       Layer.provide(Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(native.snapshot) })),
       Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, gateway, resolver, accessLayer)),
+      Layer.provide(makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]))),
       Layer.provide(NodeCrypto.layer),
     );
   }

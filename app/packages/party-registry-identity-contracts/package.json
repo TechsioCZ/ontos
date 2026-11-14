@@ -1,0 +1,16 @@
+{
+  "name": "@app/party-registry-identity-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/database-identities.ts",
+    "./data": "./src/database-identity-data.ts"
+  },
+  "scripts": {
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
+  },
+  "dependencies": {
+    "@app/core-runtime": "workspace:*"
+  }
+}

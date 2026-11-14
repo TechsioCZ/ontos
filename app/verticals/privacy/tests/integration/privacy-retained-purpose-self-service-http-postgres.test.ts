@@ -1,8 +1,10 @@
 import { Reactivity } from 'effect/reactivity';
 import { PgClient } from '@effect/sql-pg';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 import {
   ActionRuntime,
   ReadRuntime,
+  ActiveApplicationCompositionService,
   ActiveApplicationCompositionSnapshotSchema,
   OntosModuleDeploymentContractSchema,
   OntosShellRuntimeContractSchema,
@@ -13,11 +15,10 @@ import {
   makeContextPermissionRelationshipMutationLive,
   canonicalizeApplicationComposition,
   validateActiveApplicationCompositionSnapshot,
-  loadDatabaseConfig,
   loadDatabaseConnectionPair,
   SHELL_GATEWAY_ISSUER_IDENTITY,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
 } from '@app/core-runtime';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import type { DatabaseConnectionPair } from '@app/core-runtime';
 import { moduleReleaseApiBaseUrl } from '@app/core-runtime/unit-service-fetch';
 import {
@@ -29,11 +30,7 @@ import { makeLiveOperationFixture, makeLiveOperationFixtureRuntime } from '@app/
 import { privacyRegistration } from '../../vertical.registration.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
-import {
-  grantTestTenantOwnerAccess,
-  liveFixtureSpiceDb,
-  markServicePrincipal,
-} from '@app/core-runtime/testing/tenant-access';
+import { grantTestTenantOwnerAccess, liveFixtureSpiceDb } from '@app/core-runtime/testing/tenant-access';
 import { CreatePartyPayloadSchema, partyRegistryApiContract } from '@app/party-registry/api';
 import {
   createPartyWithAuthorization,
@@ -48,8 +45,7 @@ import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-
 import { shellGatewayContextContract } from '@app/shared-contracts';
 import type { GatewayContextRequestSchema } from '@app/shared-contracts';
 import {
-  ShellNativeRelaySourceBoundCommandSchema,
-  ShellNativeRelaySourceIssueCommandSchema,
+  ShellNativeRelaySourceProvisionCommandSchema,
   ShellNativeSessionGatewayCommandSchema,
   ShellNativeSessionGatewayResponseSchema,
 } from '@app/shell-super-app/testing/api-key-gateway-native';
@@ -103,6 +99,10 @@ import { Socket } from 'effect/socket';
 import { expect, it } from 'effect-rstest';
 import { base64url, exportJWK, generateKeyPair } from 'jose';
 
+import {
+  encodeModuleCredentialHandover,
+  MODULE_CREDENTIAL_HANDOVER_VARIABLE,
+} from '../../../../scripts/zerops/module-credentials.mts';
 import { requireExecutedAction, requireExecutionResult } from '../support/action-execution-result.ts';
 import {
   RetainedConsentAccountTransportSchema,
@@ -149,6 +149,7 @@ import {
   RecordConsentDecisionResultSchema,
 } from '../../shared/actions/record-consent-decision.ts';
 import { RecordNoticeProvisionResultSchema } from '../../shared/actions/record-notice-provision.ts';
+import { privacySubjectRefForParty } from '@app/consent-authority-contracts';
 import {
   AcknowledgePrivacyNoticeActionAlreadyCommittedProblemSchema,
   AcknowledgePrivacyNoticeActionAuthenticationProblemSchema,
@@ -174,7 +175,7 @@ import { makePrivacyApiRuntime } from '../../api/index.ts';
 import {
   ConsentSelfServiceAuthority,
   consentSelfServiceAuthorityUnavailable,
-} from '../../src/actions/consent-self-service.action.ts';
+} from '../../src/actions/consent-self-service-authority.ts';
 import {
   CommerceCustomerContextConsentWithdrawalService,
   CommerceCustomerContextConsentWithdrawalServiceLive,
@@ -191,7 +192,10 @@ import {
   PrivacyNoticePresentationUnavailableLive,
 } from '../../src/services/privacy-notice-presentation.service.ts';
 import type { PrivacyNoticePresentationConfiguration } from '../../src/services/privacy-notice-presentation.service.ts';
-import { NoticeChannelDeliveryAuthorityForAcknowledgementsLive } from '../../src/services/privacy-notice-acknowledgement-authority.service.ts';
+import {
+  NoticeChannelDeliveryAuthorityForAcknowledgementsLive,
+  privacyNoticeInformationStepLive,
+} from '../../src/services/privacy-notice-acknowledgement-authority.service.ts';
 import { createEffectBffTestHandler, defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import type { RetainedConsentAccountTransport } from '../support/privacy-retained-purpose-self-service-http.ts';
 
@@ -227,7 +231,7 @@ const accountReadySchema = Schema.Struct({
 const shellReadySchema = Schema.Struct({
   baseUrl: Schema.String,
   providerUserId: ProviderSubjectIdSchema,
-  relaySourceProviderUserId: ProviderSubjectIdSchema,
+  readerProviderUserId: ProviderSubjectIdSchema,
 });
 const enrolledReplySchema = Schema.TaggedStruct('enrolled', {
   attemptId: uuid.pipe(Schema.brand('EnrollmentAttemptId')),
@@ -396,8 +400,15 @@ const issuedReplySchema = Schema.TaggedStruct('issued', {
   secret: Schema.RedactedFromValue(Schema.String),
 });
 const ackReplySchema = Schema.TaggedStruct('ack', {});
+/** Commerce's module credential as the platform provisioned it: its service principal, key id and key. */
+const provisionedReplySchema = Schema.TaggedStruct('provisioned', {
+  principalId: uuid.pipe(Schema.brand('PrincipalId')),
+  providerKeyId: ProviderSubjectIdSchema,
+  secret: Schema.RedactedFromValue(Schema.String),
+});
 const shellReplySchema = Schema.Union([
   issuedReplySchema,
+  provisionedReplySchema,
   ackReplySchema,
   ShellNativeSessionGatewayResponseSchema,
   Schema.TaggedStruct('unavailable', {}),
@@ -416,8 +427,7 @@ const ownerControlCommandSchema = Schema.Union([
     tenantId: uuid.pipe(Schema.brand('TenantId')),
   }),
   Schema.TaggedStruct('bound', {}),
-  ShellNativeRelaySourceIssueCommandSchema,
-  ShellNativeRelaySourceBoundCommandSchema,
+  ShellNativeRelaySourceProvisionCommandSchema,
   Schema.TaggedStruct('enroll', {
     authorization: Schema.RedactedFromValue(Schema.String),
     partyRef: nonempty.pipe(Schema.brand('EnrollmentResourceId')),
@@ -466,9 +476,9 @@ const prepareRetainedNativeIdentities = Effect.fn('RetainedAccount.prepareRetain
     }
     const urls: Record<string, string> = {};
     for (const identity of [SHELL_GATEWAY_ISSUER_IDENTITY, PARTY_REGISTRY_REQUEST_IDENTITY]) {
-      const canonical = yield* loadDatabaseConfig({ envPath: '/dev/null', identity }).pipe(
-        Effect.mapError(() => failed('Canonical fixture identity configuration was unavailable')),
-      );
+      const canonical = yield* loadDatabaseConnectionPair({ envPath: '/dev/null', identity })
+        .pipe(Effect.map(({ runtime }) => runtime))
+        .pipe(Effect.mapError(() => failed('Canonical fixture identity configuration was unavailable')));
       const address = new URL(canonical.connectionString);
       if (
         canonical.database !== source.runtime.database ||
@@ -778,6 +788,12 @@ const resolvePublishedOwnerEntry = Effect.fn('RetainedAccount.resolvePublishedEn
     return { entry, ownerRoot };
   },
 );
+/**
+ * The credential store stays an external file in every owner bundle: owner code reads it through the external
+ * `@app/core-runtime`, so an inlined second copy would hold a handed-over key where nobody reads it.
+ */
+const credentialStoreOf = (fs: FileSystem.FileSystem) =>
+  fs.realPath(`${appRoot}packages/core-runtime/src/auth/hosted-module-credential-store.ts`);
 const bundleOwner = Effect.fn('RetainedAccount.bundleOwner')(function* bundleOwner(
   specifier: string,
   identity: OwnerBuildIdentity,
@@ -802,6 +818,7 @@ const bundleOwner = Effect.fn('RetainedAccount.bundleOwner')(function* bundleOwn
     '--platform=node',
     '--format=esm',
     '--packages=external',
+    `--external:${yield* credentialStoreOf(fs)}`,
     ...(yield* ownerBuildDefines(identity)),
     `--define:import.meta.url=${originalUrl}`,
     `--outfile=${artifact}`,
@@ -822,10 +839,25 @@ const bundlePublishedWorker = Effect.fn('RetainedAccount.bundlePublishedWorker')
   yield* fs.symlink(path.join(ownerRoot, 'node_modules'), path.join(directory, 'node_modules'));
   const source = path.join(directory, 'worker.ts');
   const artifact = path.join(directory, 'worker.mjs');
+  const moduleCredentials = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(
+    path.join(appRoot, 'scripts/zerops/module-credentials.mts'),
+  );
+  // As the Outbox Worker host does: claim the store copy the workers read and take Commerce's key from the private
+  // channel before any worker runs.
   yield* fs.writeFileString(
     source,
-    `import { startOutboxWorkerHost } from '@app/core-runtime/outbox/worker';
+    `import { Effect, Scope } from 'effect';
+import { startOutboxWorkerHost } from '@app/core-runtime/outbox/worker';
 import { outboxWorkerEntry } from '@app/commerce-customer-context/outbox-worker-host';
+import { holdOwnStoreCopy, receiveModuleCredentialHandover } from ${moduleCredentials};
+const owners = ['commerce-customer-context'];
+// The scope stays open for the process's life, so the channel is read until the launcher closes it.
+Effect.runFork(
+  receiveModuleCredentialHandover(owners).pipe(
+    Effect.flatMap((holders) => holdOwnStoreCopy(holders, owners)),
+    Scope.provide(Scope.makeUnsafe()),
+  ),
+);
 startOutboxWorkerHost({ entries: [outboxWorkerEntry], health: true });
 `,
   );
@@ -838,6 +870,7 @@ startOutboxWorkerHost({ entries: [outboxWorkerEntry], health: true });
     '--platform=node',
     '--format=esm',
     '--packages=external',
+    `--external:${yield* credentialStoreOf(fs)}`,
     ...(yield* ownerBuildDefines(identity)),
     `--alias:${specifier}=${entry}`,
     `--outfile=${artifact}`,
@@ -896,6 +929,8 @@ const openRetainedPrivateChannel = Effect.fn('RetainedAccount.privateChannel')(f
 const startOwner = Effect.fn('RetainedAccount.startOwner')(function* startOwner(
   artifact: string,
   environment: Readonly<Record<string, string>>,
+  /** One module credential handover line, delivered on the child's private channel (fd 3) as a host delivers it. */
+  credentialHandover?: Uint8Array,
 ) {
   const channel = yield* openRetainedPrivateChannel();
   const transport = yield* Config.all({
@@ -904,7 +939,14 @@ const startOwner = Effect.fn('RetainedAccount.startOwner')(function* startOwner(
     SPICEDB_ENDPOINT: Config.String('SPICEDB_ENDPOINT'),
     SPICEDB_PRESHARED_KEY: Config.Redacted('SPICEDB_PRESHARED_KEY'),
   });
+  let handoverEnvironment = {};
+  const additionalFds: Record<`fd${number}`, ChildProcess.AdditionalFdConfig> = {};
+  if (credentialHandover !== undefined) {
+    handoverEnvironment = { [MODULE_CREDENTIAL_HANDOVER_VARIABLE]: 'fd3' };
+    additionalFds.fd3 = { stream: Stream.make(credentialHandover), type: 'input' };
+  }
   const child = yield* ChildProcess.make(process.execPath, [artifact], {
+    additionalFds,
     cwd: appRoot,
     env: {
       PATH: transport.PATH,
@@ -912,6 +954,7 @@ const startOwner = Effect.fn('RetainedAccount.startOwner')(function* startOwner(
       SPICEDB_ENDPOINT: transport.SPICEDB_ENDPOINT,
       SPICEDB_PRESHARED_KEY: Redacted.value(transport.SPICEDB_PRESHARED_KEY),
       ...environment,
+      ...handoverEnvironment,
       APP_ENV_PATH: '/dev/null',
       ONTOS_RETAINED_CONSENT_SOCKET: channel.socketPath,
       ONTOS_SHELL_NATIVE_SOCKET: channel.socketPath,
@@ -925,19 +968,43 @@ const startOwner = Effect.fn('RetainedAccount.startOwner')(function* startOwner(
     stdout: 'pipe',
   });
   yield* Effect.addFinalizer(() => channel.beginClose);
-  yield* Stream.runDrain(child.stderr).pipe(Effect.forkScoped);
+  // Keep the child's error tail so an owner that dies before its readiness line says why.
+  const stderrTail = yield* Ref.make('');
+  yield* child.stderr.pipe(
+    Stream.decodeText(),
+    Stream.runForEach((text) => Ref.update(stderrTail, (tail) => `${tail}${text}`.slice(-8192))),
+    Effect.forkScoped,
+  );
+  // A non-zero owner exit logs the child's stderr tail, so a readiness failure says why.
+  yield* child.exitCode.pipe(
+    Effect.flatMap((code) =>
+      Number(code) === 0
+        ? Effect.void
+        : Ref.get(stderrTail).pipe(
+            Effect.flatMap((tail) => Effect.logError(`owner exited with code ${code}; stderr tail:\n${tail}`)),
+          ),
+    ),
+    Effect.forkScoped,
+  );
   const stopped = child.exitCode.pipe(Effect.andThen(Effect.fail(failed('private-owner-exited'))));
   const next = Effect.raceFirst(Queue.take(channel.responses), Effect.raceFirst(channel.lost, stopped));
   const send = Effect.fn('RetainedAccount.sendPrivate')(function* send(text: string) {
     const output = yield* Effect.raceFirst(channel.writer, Effect.raceFirst(channel.lost, stopped));
     return yield* output.write(text).pipe(Effect.mapError(() => failed('private-owner-write')));
   });
-  return { child, next, send };
+  return { child, next, send, stderrTail };
 });
 const firstLine = Effect.fn('RetainedAccount.firstLine')(function* firstLine(
   stream: Stream.Stream<Uint8Array, unknown>,
 ) {
-  const line = yield* Stream.runHead(stream.pipe(Stream.decodeText(), Stream.splitLines)).pipe(
+  // A process that receives module credentials reports each handover on stdout; it is not a readiness line.
+  const line = yield* Stream.runHead(
+    stream.pipe(
+      Stream.decodeText(),
+      Stream.splitLines,
+      Stream.filter((text) => !text.startsWith('[module-credentials]')),
+    ),
+  ).pipe(
     Effect.timeoutOrElse({ duration: '20 seconds', orElse: () => Effect.fail(failed('deadline')) }),
     Effect.mapError(() => failed('owner-readiness')),
   );
@@ -974,8 +1041,7 @@ const privateExchange = <A, I>(
         Match.tag('observe-binding', () => knownFailure.success.command === 'observe-binding'),
         Match.tag('issue', () => false),
         Match.tag('bound', () => false),
-        Match.tag('relay-source-issue', () => false),
-        Match.tag('relay-source-bound', () => false),
+        Match.tag('relay-source-provision', () => false),
         Match.tag('session-gateway', () => false),
         Match.exhaustive,
       );
@@ -1041,7 +1107,8 @@ const startRetainedPrivacyHttp = Effect.fn('RetainedConsent.startActualPrivacyHt
       Effect.map((actual) => ({ forScope: actual.forScope, ports: consentSelfServiceAuthorityUnavailable.ports })),
     ),
   ).pipe(Layer.provide(withdrawal));
-  const owners = Layer.mergeAll(party, notice, presentation, channel, authority).pipe(
+  const informationStep = privacyNoticeInformationStepLive.pipe(Layer.provide(Layer.merge(notice, presentation)));
+  const owners = Layer.mergeAll(party, notice, presentation, channel, authority, informationStep).pipe(
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(NodeCrypto.layer),
     Layer.orDie,
@@ -1371,7 +1438,8 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   const environment = {
     APP_ENV_PATH: '/dev/null',
     BETTER_AUTH_SECRET: `${suffix}${yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4())}`,
-    BETTER_AUTH_URL: 'http://retained-shell.localhost',
+    // The Shell's MCP resource accepts only HTTPS or a loopback development origin.
+    BETTER_AUTH_URL: 'http://localhost',
     DATABASE_URL: isolated.connections.runtime.connectionString,
     ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: `${coreOrigin}/composition`,
     ONTOS_GATEWAY_ISSUER: 'https://retained-account.fixture.invalid',
@@ -1433,15 +1501,15 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       managerProvisioningNamespaces: [COMMERCE_AUTHENTICATION_NAMESPACE_ID],
       moduleAccess: 'configured-modules',
       moduleKeys: ['core.identity', 'commerce.customer-context', 'party.registry', 'privacy.core'],
-      readerProviderSubjectId: bootstrapReady.relaySourceProviderUserId,
+      readerProviderSubjectId: bootstrapReady.readerProviderUserId,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (value) => value.close().pipe(Effect.orDie),
   );
   // Commerce decides with the production gate, so the manager owns the Tenant's v2 access.
   const accessTarget = {
-    adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
     spiceDb: yield* liveFixtureSpiceDb(fixture.permissionEnvironment),
+    writerConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
   };
   yield* grantTestTenantOwnerAccess({
     ...accessTarget,
@@ -1531,39 +1599,16 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     }),
     (value) => value.close().pipe(Effect.orDie),
   );
-  // The fixture reader becomes Commerce's service principal: it binds the module key, then is marked service.
-  const commerceModule = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(fixture.reader);
+  // Commerce's module credential, provisioned by the platform as on every environment.
   const moduleIssued = yield* privateExchange(
     shellReplySchema,
     nativeClock,
     bootstrap,
-    yield* Schema.decodeUnknownEffect(Schema.toType(ownerControlCommandSchema))({
-      _tag: 'relay-source-issue',
-      principalId: commerceModule.principalId,
-      tenantId: commerceModule.tenantId,
-    }),
+    yield* Schema.decodeUnknownEffect(Schema.toType(ownerControlCommandSchema))({ _tag: 'relay-source-provision' }),
   );
-  if (!Schema.is(issuedReplySchema)(moduleIssued)) {
+  if (!Schema.is(provisionedReplySchema)(moduleIssued)) {
     return yield* failed('commerce-module-key');
   }
-  yield* action
-    .runAction({
-      payload: { providerSubjectId: moduleIssued.providerKeyId },
-      principal: commerceModule,
-      registration: bindSelfApiKeyAction,
-      transport: { correlationId: `retained-module-bind:${suffix}`, idempotencyKey: `retained-module-bind:${suffix}` },
-    })
-    .pipe(Effect.provideContext(context));
-  yield* coreEvidenceExecutor.execute(
-    markServicePrincipal({ principalId: commerceModule.principalId, tenantId: commerceModule.tenantId }),
-  );
-  const moduleBound = yield* privateExchange(shellReplySchema, nativeClock, bootstrap, { _tag: 'relay-source-bound' });
-  if (!Schema.is(ackReplySchema)(moduleBound)) {
-    return yield* failed('commerce-module-key-binding');
-  }
-  const gatewayModuleBindings = JSON.stringify([
-    { ...commerceModuleSource, providerKeyId: moduleIssued.providerKeyId },
-  ]);
   const party = yield* startOwner(partyArtifact, {
     ...environment,
     PARTY_REGISTRY_DATABASE_URL: nativeIdentityUrls.PARTY_REGISTRY_DATABASE_URL,
@@ -1586,7 +1631,12 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS: '',
     COMMERCE_PORTAL_AUTH_TRUSTED_PROXIES: '',
     COMMERCE_PORTAL_AUTH_URL: 'https://retained-portal.example.test',
-    ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(moduleIssued.secret),
+    COMMERCE_TENANT_CREDENTIALS: JSON.stringify({
+      [fixture.tenantId]: {
+        coreIdentityApiKey: Redacted.value(issued.secret),
+        gatewayApiKey: Redacted.value(issued.secret),
+      },
+    }),
     ONTOS_RETAINED_CONSENT_SERVER_SCOPE: JSON.stringify({
       compositionRevision: initialSnapshot.composition.revision,
       legalEntityId: fixture.legalEntityId,
@@ -1616,7 +1666,13 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   }
   expect(accountDescription.marker).toEqual(accountContract.deployment);
   expect(accountDescription.subscriptions).toEqual(accountContract.runtime.outboxSubscriptions);
-  const account = yield* startOwner(accountArtifact, commerceEnvironment);
+  // Commerce's own module credential, which the Shell attests to Commerce's release: the Ensure Action reads the
+  // Party through delegated gateway context before its transaction. It reaches Commerce only over its private channel.
+  const commerceCredentialHandover = yield* encodeModuleCredentialHandover(
+    { 'commerce-customer-context': moduleIssued.secret },
+    ['commerce-customer-context'],
+  );
+  const account = yield* startOwner(accountArtifact, commerceEnvironment, commerceCredentialHandover);
   const accountReady = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(accountReadySchema))(
     yield* firstLine(account.child.stdout),
   );
@@ -1643,9 +1699,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
       grants,
       providerEndpointAudience: 'commerce-customer-context',
-      providerOrigin: accountReady.baseUrl,
     }),
-    ONTOS_GATEWAY_MODULE_BINDINGS: gatewayModuleBindings,
     SHELL_GATEWAY_ISSUER_DATABASE_URL: nativeIdentityUrls.SHELL_GATEWAY_ISSUER_DATABASE_URL,
   });
   const shellReady = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(readySchema))(
@@ -1656,7 +1710,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   yield* Ref.set(coreRoute.target, Option.some(`http://127.0.0.1:${shellReady.port}`));
   yield* Ref.set(commerceRoute.target, Option.some(accountReady.baseUrl));
   yield* Ref.set(partyRoute.target, Option.some(`http://127.0.0.1:${partyReady.port}`));
-  const worker = yield* startOwner(workerArtifact, commerceEnvironment);
+  const worker = yield* startOwner(workerArtifact, commerceEnvironment, commerceCredentialHandover);
   yield* Effect.forkScoped(Stream.runDrain(worker.child.stdout));
   const issueManagerSessionGateway = Effect.fn('RetainedAccount.managerSessionGateway')(function* managerSessionGateway(
     request: typeof GatewayContextRequestSchema.Encoded,
@@ -1770,6 +1824,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     {
       audience: 'commerce-customer-context',
       compositionRevision: admitted.composition.revision,
+      legalEntityId: fixture.legalEntityId,
     },
     {
       apiKey: issued.secret,
@@ -1860,16 +1915,6 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
           ['Unable to persist the rejected Action invocation', 'ACTION_REJECTION_PERSISTENCE_UNAVAILABLE'],
         ]);
         const published = Schema.decodeUnknownResult(Schema.Union(externalIdentityProblems))(failure);
-        if (Result.isSuccess(published)) {
-          const localDiagnostics = yield* FileSystem.FileSystem;
-          yield* localDiagnostics.writeFileString(
-            `${appRoot}../.codex/1261-completion-20261022/core-reserve-local-problem.json`,
-            yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Union(externalIdentityProblems)))(
-              published.success,
-            ),
-            { mode: 0o600 },
-          );
-        }
         yield* Effect.logInfo(
           'Retained reserve failure category',
           Result.isSuccess(published)
@@ -2331,14 +2376,21 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   );
   yield* Effect.logInfo('Retained account real Party read passed');
   yield* Effect.gen(function* actualRetainedPurposeLifecycle() {
-    const readLayer = Layer.effect(ReadRuntime, ReadRuntime).pipe(
-      Layer.provide(privacyFixture.layer),
-      Layer.provide(NodeCrypto.layer),
-      Layer.orDie,
+    const fixtureServices = privacyFixture.layer.pipe(
+      Layer.provideMerge(Layer.succeed(Crypto.Crypto, yield* Crypto.Crypto)),
     );
+    const ownerApprovals = makeOwnerActionApprovalsLive(privacyOwner.deployment, privacyRegistration).pipe(
+      Layer.provide(
+        Layer.merge(
+          fixtureServices,
+          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(initialSnapshot) }),
+        ),
+      ),
+    );
+    const readLayer = Layer.effect(ReadRuntime, ReadRuntime).pipe(Layer.provide(fixtureServices), Layer.orDie);
     const actionLayer = Layer.effect(ActionRuntime, ActionRuntime).pipe(
-      Layer.provide(privacyFixture.layer),
-      Layer.provide(NodeCrypto.layer),
+      Layer.provide(fixtureServices),
+      Layer.merge(ownerApprovals),
       Layer.orDie,
     );
     const privacyRuntime: Parameters<typeof makePrivacyApiRuntime> = [readLayer, actionLayer, yield* makeRedemption()];
@@ -2403,16 +2455,13 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       executeCreatePrivacySubjectWithAuthorization(
         yield* Schema.decodeUnknownEffect(CreatePrivacySubjectPayloadSchema)({
           subject: { kind: 'DATA_SUBJECT', partyRef: actualPartyRef },
-          subjectRef: {
-            moduleId: 'privacy.core',
-            resourceId: yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()),
-            resourceType: 'privacy.core.privacy-subject',
-            tenantId: fixture.tenantId,
-          },
+          // The demo derives the Subject ref from the exact Party so the identity stays addressable.
+          subjectRef: privacySubjectRefForParty(actualPartyRef),
         }),
         ...(yield* privacyTransport('manager', `retained-subject:${suffix}`)),
       ),
     );
+    expect(publicSubject.subjectRef).toEqual(privacySubjectRefForParty(actualPartyRef));
     expect(publicSubject.subject).toEqual({ kind: 'DATA_SUBJECT', partyRef: actualPartyRef });
     expect(publicSubject.ownerAdmission?.partyRef).toEqual(actualPartyRef);
     const scopeRef = `retained-consent:${suffix}`;
@@ -2580,8 +2629,8 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
         actionKey: `privacy.core.${noticeAction}`,
         resultHash: expect.any(String),
       });
-      // Counting retains duplicate observations, so losing either Subject read (or either
-      // Provision by-id read) fails even when the other has the same query identity.
+      // Count each real SQL observation, including the preparation snapshot and final
+      // revalidation. Equal query identities must not collapse distinct observations.
       const observedReads = facts.accesses.map((row) => {
         expect(row).toMatchObject({
           authBindingId: binding.authBindingId,
@@ -2945,6 +2994,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       'record-notice-provision',
       [
         ['privacy.notice-acknowledgement.by-id.v1', 'read', 1],
+        ['privacy.notice-acknowledgement.by-id.v1', 'read', 1],
         subjectRead,
         subjectRead,
         ['privacy.notice-provision.by-id.v1', 'read', 0],
@@ -2968,6 +3018,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       `retained-provision-retained:${suffix}`,
       'record-notice-provision',
       [
+        ['privacy.notice-acknowledgement.by-id.v1', 'read', 1],
         ['privacy.notice-acknowledgement.by-id.v1', 'read', 1],
         subjectRead,
         subjectRead,
@@ -3113,6 +3164,31 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       outcome: 'ALLOWED_PROFILE',
     });
     expect(withdrawal.decision.decision).toBe('WITHDRAWN');
+    const withdrawalEvidence = yield* evidenceFor(`retained-withdraw:${suffix}`);
+    expect(withdrawalEvidence.invocation.status).toBe('succeeded');
+    // Counts come from each real SQL result, not from the resolved current Consent.
+    // The history has one grant before withdrawal; Purpose retains both V1 and V2.
+    expect(
+      countReads(
+        withdrawalEvidence.accesses.map((read) => JSON.stringify([read.queryHash, read.accessKind, read.resultCount])),
+      ),
+    ).toEqual(
+      countReads(
+        [
+          ['privacy.subject.for-scope.v1', 'list', 1],
+          ['privacy.subject.for-scope.v1', 'list', 1],
+          ['privacy.consent-history.for-scope.v1', 'list', 1],
+          ['privacy.consent-history.for-scope.v1', 'list', 1],
+          ['privacy.consent-history.for-scope.v1', 'list', 1],
+          ['privacy.processing-purpose.for-scope.v1', 'read', 1],
+          ['privacy.processing-purpose.for-scope.v1', 'read', 1],
+          ['privacy.processing-purpose.for-scope.v1', 'read', 1],
+          ['privacy.purpose-versions.for-scope.v1', 'list', 2],
+          ['privacy.purpose-versions.for-scope.v1', 'list', 2],
+          ['privacy.purpose-versions.for-scope.v1', 'list', 2],
+        ].map((read) => JSON.stringify(read)),
+      ),
+    );
     expect(withdrawal.decision.scope).toEqual(grant.scope);
     expect(withdrawal.decision.actorEvidence).toMatchObject({
       actor: { principalId: binding.principalId, tenantId: fixture.tenantId },

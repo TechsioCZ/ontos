@@ -1,0 +1,1527 @@
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  Data,
+  DateTime,
+  Effect,
+  Exit,
+  Match,
+  MutableRef,
+  Option,
+  Predicate,
+  Random,
+  Ref,
+  Result,
+  Schema,
+} from 'effect';
+import { constVoid } from 'effect/Function';
+
+import {
+  changeConcerns,
+  definePageData,
+  moduleChangeEvent,
+  modulePagePreload,
+  moduleWriteEvent,
+  pageDataPending,
+  pageDataScopeKey,
+} from '@app/shared-contracts/page-data';
+import type { ModulePageContext } from '@app/shared-contracts/page-data';
+import {
+  draftSavable,
+  LIST_WARM_ROWS,
+  makeIntentLimiter,
+  makePointerDwell,
+  rowIntentProps,
+  useHeldSnapshot,
+  useRecordDraft,
+  useUnsavedChangesGuard,
+  whenBrowserIdle,
+} from '@app/admin-ui';
+import type { BlockedNavigation, DraftSaveResult, RowIntentProps, SavableDraft, SaveState } from '@app/admin-ui';
+
+import { executeAresLookup } from '../../../../api/ares-lookup-client.ts';
+import { executeDuplicateCandidateList } from '../../../../api/duplicate-candidate-list-client.ts';
+import { executeDuplicateCandidateDetail } from '../../../../api/duplicate-candidate-detail-client.ts';
+import type { DuplicateCandidateListResponse } from '../../../../../shared/apis/duplicate-candidate-list.ts';
+import type { DuplicateCandidateCaseRefSchema } from '../../../../../shared/resources/duplicate-candidate-case.ts';
+import type { DuplicateCaseResolutionResult } from '../../../../../shared/domain/matching-contracts.ts';
+import { DuplicateCaseResolutionPayloadSchema } from '../../../../../shared/domain/matching-contracts.ts';
+import { ResolveDuplicateCandidateMatchPayloadSchema } from '../../../../../shared/actions/resolve-duplicate-candidate-match.ts';
+
+import type { CustomerSegment } from '../../../../api/customer-segments-client.ts';
+import { customerSegmentsFor } from '../../../../api/customer-segments-client.ts';
+import type { CustomerListItem } from '../../../../api/customers-client.ts';
+import { createCustomer, listCustomers, archiveCustomer } from '../../../../api/customers-client.ts';
+import { AresLookupRequestSchema } from '../../../../../shared/apis/ares-lookup.ts';
+import { PartyCommandForbiddenProblemSchema } from '../../../../../shared/command-api.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { executeCounterpartyRead } from '../../../../api/counterparty-read-client.ts';
+import { executePartyDetail } from '../../../../api/party-detail-client.ts';
+import { executePartyContactPoints } from '../../../../api/party-contact-points-client.ts';
+import { executePartyOfficialIdentifierHistory } from '../../../../api/party-official-identifier-history-client.ts';
+import {
+  addContactPoint,
+  addPartyOfficialIdentifier,
+  correctPartyFact,
+  dismissDuplicateCandidate,
+  markDuplicateCandidateNeedsEvidence,
+  resolveDuplicateCandidateCreate,
+  resolveDuplicateCandidateMatch,
+  resolvePartyCommandCommit,
+  endContactPoint,
+  endPartyOfficialIdentifier,
+  unarchiveParty,
+  updateContactPoint,
+  updateParty,
+} from '../../../../api/party-command-client.ts';
+import { CorrectPartyFactPayloadSchema } from '../../../../../shared/actions/correct-party-fact.ts';
+import { ContactPointInputSchema } from '../../../../../shared/domain/contact-point.ts';
+import type { ContactPointInput, PartyContactPoint } from '../../../../../shared/domain/contact-point.ts';
+import { OfficialIdentifierInputSchema } from '../../../../../shared/domain/identifier-contracts.ts';
+import type { OfficialIdentifierAssertion } from '../../../../../shared/domain/identifier-contracts.ts';
+import type { PartyRef } from '../../../../../shared/resources/party.ts';
+import type { CounterpartyRef } from '../../../../../shared/resources/counterparty.ts';
+import {
+  changedCustomerFields,
+  customerDraftChanges,
+  customerDraftOf,
+  sameCustomerDraft,
+  validCustomerDraft,
+  withWritten,
+} from './customer-detail-draft.ts';
+import type { CustomerDraft, CustomerDraftChange, CustomerDraftSource } from './customer-detail-draft.ts';
+import {
+  customerContactEditable,
+  customerContactRows,
+  customerIdentifierRows,
+  customerHistoryRows,
+} from './customers-model.ts';
+import type { CreateDraft, CustomerParty } from './customers-model.ts';
+
+type DuplicateCandidateCaseRef = typeof DuplicateCandidateCaseRefSchema.Type;
+
+export interface CustomersSnapshot {
+  readonly items: readonly CustomerListItem[];
+  readonly nowMillis: number;
+  /** Current segment per party id. None when the best-effort segment lookup failed, so the column is left out. */
+  readonly segments: Option.Option<ReadonlyMap<string, CustomerSegment>>;
+}
+
+const correlation = (operation: string) =>
+  Effect.map(
+    Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }),
+    ([first, second]) => `party-registry:${operation}:${first}:${second}`,
+  );
+
+/** Segments are best effort: any failure, defects included, yields none instead of failing the customer list. */
+const segmentsOf = Effect.fn('CustomersData.segmentsOf')(function* segmentsOf(items: readonly CustomerListItem[]) {
+  // A refusal is not a document-wide authorization cache. A scope change or later grant must retry the owner.
+  const exit = yield* Effect.exit(customerSegmentsFor(items));
+  return Exit.getSuccess(exit);
+});
+
+/** Every current customer, archived included so the Archivovaní stat is real, with their segments. */
+export const loadCustomers = Effect.all(
+  {
+    items: listCustomers({ includeArchived: true, limit: 500 }),
+    now: DateTime.now,
+  },
+  { concurrency: 1 },
+).pipe(
+  Effect.flatMap(({ items, now }) =>
+    Effect.map(segmentsOf(items), (segments): CustomersSnapshot => ({
+      items,
+      nowMillis: DateTime.toEpochMillis(now),
+      segments,
+    })),
+  ),
+);
+
+/** The page reads the whole register and filters it locally, so there is one dataset. */
+export const allCustomers = 'all';
+/** The list and its visible-row prefetch must use the same complete Shell identity. */
+export const customersQuery = (context?: ModulePageContext): string =>
+  pageDataScopeKey(context, 'party.registry') ?? allCustomers;
+
+/**
+ * The customer list of the signed-in principal. The Shell fills it through `preloadPage` before it reveals the
+ * page, so rows, stats and segment labels render in the first commit.
+ */
+export const customersData = definePageData({
+  changesFrom: ['commerce-customer-context', 'party-registry'],
+  key: (query: string) => query,
+  load: (_query: string) => loadCustomers,
+  maxEntries: 8,
+  retainStale: false,
+  runtime: browserRuntime,
+});
+
+/** Last ready reads of the customer list per scope, kept for a list reopened after a full customer page. */
+const customersListMemory = MutableRef.make(new Map<string, ReturnType<typeof customersData.snapshot>>());
+
+/**
+ * The customer list as the page reads it. The strict store reads as pending while it reloads the same register
+ * (freshness window, live change, settled write); the rows and the stat tiles stay on the last ready read of the
+ * same scope until the reload settles. Another scope never reuses that read, and a failed or refused reload replaces
+ * it at once.
+ */
+export const useCustomersSnapshot = (query: string) =>
+  useHeldSnapshot(
+    query,
+    useSyncExternalStore(
+      (listener) => customersData.subscribe(listener, query),
+      () => customersData.snapshot(query),
+      (): ReturnType<typeof customersData.snapshot> => pageDataPending,
+    ),
+    // A list reopened after a full customer page starts from its last ready read.
+    { memory: MutableRef.get(customersListMemory) },
+  );
+
+/** `preloadPage` of the customers page. */
+export const preloadCustomers = modulePagePreload((props) => customersData.preload(customersQuery(props.context)));
+
+export const lookupAres = Effect.fn('CustomersData.lookupAres')(function* lookupAresEffect(ico: string) {
+  const payload = yield* Schema.decodeEffect(AresLookupRequestSchema)({ ico });
+  const requestCorrelation = yield* correlation('ares-lookup');
+  return yield* executeAresLookup(payload, requestCorrelation);
+});
+
+/** The client trims every field, drops empty ones and sends an address only when two of its parts are present. */
+export const createCustomerFromDraft = (draft: CreateDraft) =>
+  createCustomer({
+    address: { city: draft.city, countryCode: 'CZ', postalCode: draft.postalCode, street: draft.street },
+    companyId: draft.ico,
+    displayName: draft.name.trim(),
+    email: draft.email,
+    phone: draft.phone,
+    vatId: draft.vatId,
+  });
+
+/** True for the owner's 403 on a customer write (create, archive). */
+export const isCustomerWriteForbidden = Schema.is(PartyCommandForbiddenProblemSchema);
+
+/**
+ * Set once the owner refuses a customer write with 403 in this document. A role only changes with a sign-out, which
+ * reloads the document, so from then on the page hides its write actions instead of letting each one wait for the
+ * owner's refusal again.
+ */
+const customerWriteRefusal = browserRuntime.runSync(Ref.make(false));
+export const customerWritesRefused = (): boolean => browserRuntime.runSync(Ref.get(customerWriteRefusal));
+export const rememberCustomerWriteRefusal = (): void => browserRuntime.runSync(Ref.set(customerWriteRefusal, true));
+
+/** Translation key (under `create`) for a failed ARES lookup. */
+export const aresFailureKey = (error: Effect.Error<ReturnType<typeof lookupAres>>) =>
+  Predicate.isTagged(error, 'AresLookupNotFoundProblem') ? 'aresNotFound' : 'aresUnavailable';
+
+/** Translation key (under `create`) for a failed create. A 403 says so instead of suggesting a retry. */
+export const createFailureKey = (error: Effect.Error<ReturnType<typeof createCustomerFromDraft>>) => {
+  if (Predicate.isTagged(error, 'CustomerCreateAmbiguous')) {
+    return 'errorAmbiguous';
+  }
+  return isCustomerWriteForbidden(error) ? 'errorForbidden' : 'errorGeneric';
+};
+
+/** Detail reads retain their individual authorization outcomes. A Counterparty grant never grants Party Read. */
+export type CustomerSection<Value> =
+  | { readonly status: 'ready'; readonly value: Value }
+  | { readonly status: 'forbidden' | 'unavailable' };
+
+const section = <Value, Failure>(operation: Effect.Effect<Value, Failure>) =>
+  operation.pipe(
+    Effect.match({
+      onFailure: (error): CustomerSection<Value> => ({
+        status: Schema.is(Schema.Struct({ status: Schema.Literal(403) }))(error) ? 'forbidden' : 'unavailable',
+      }),
+      onSuccess: (value): CustomerSection<Value> => ({ status: 'ready', value }),
+    }),
+  );
+
+/** Direct links use the exact governed commercial-context ref, never membership in a bounded list. */
+export const loadCustomerDetailByRef = Effect.fn('CustomersData.loadDetailByRef')(function* loadDetailByRef(
+  counterpartyRef: CounterpartyRef,
+) {
+  const id = yield* correlation('customer-detail');
+  // First prove access to this exact commercial context, independently of broader identity permissions.
+  const counterparty = yield* executeCounterpartyRead({ counterpartyRef }, id);
+  // The panel shows the current identity only. Fact history needs `review_party_identity`, which read-only roles
+  // (accounting) do not hold, so asking for it would refuse the whole identity section for them.
+  const identity = yield* section(executePartyDetail({ partyRef: counterparty.party.canonicalPartyRef }, id));
+  const partyRef =
+    identity.status === 'ready' ? identity.value.resolution.canonicalPartyRef : counterparty.party.canonicalPartyRef;
+  const { contacts, identifiers } = yield* Effect.all(
+    {
+      contacts: section(executePartyContactPoints({ includeHistorical: true, partyRef }, id)),
+      identifiers: section(executePartyOfficialIdentifierHistory({ partyRef }, id)),
+    },
+    { concurrency: 1 },
+  );
+  return { contacts, counterparty, identifiers, identity, now: yield* DateTime.now };
+});
+export const loadCustomerDetail = (customer: Pick<CustomerListItem, 'counterpartyRef'>) =>
+  loadCustomerDetailByRef(customer.counterpartyRef);
+export type CustomerDetailSnapshot = Effect.Success<ReturnType<typeof loadCustomerDetail>>;
+
+class CustomerDetailSectionsIncomplete extends Data.TaggedError('CustomerDetailSectionsIncomplete')<{
+  readonly value: CustomerDetailSnapshot;
+}> {}
+
+interface CustomerDetailInput {
+  readonly customer: CustomerListItem;
+  readonly scope: string;
+}
+const DetailKeySchema = Schema.fromJsonString(Schema.Array(Schema.String));
+const customerDetailKey = ({ customer, scope }: CustomerDetailInput): string =>
+  Result.getOrThrow(
+    Schema.encodeResult(DetailKeySchema)([
+      scope,
+      customer.counterpartyRef.tenantId,
+      customer.counterpartyRef.resourceId,
+      customer.partyRef.tenantId,
+      customer.partyRef.resourceId,
+      String(customer.partyRevision),
+    ]),
+  );
+
+/** A partial section is renderable for this opening, but is not a reusable authorization decision. */
+export const customerDetailData = definePageData({
+  cancelWhenUnused: true,
+  changesFrom: ['party-registry'],
+  key: customerDetailKey,
+  load: ({ customer }: CustomerDetailInput) =>
+    loadCustomerDetail(customer).pipe(
+      Effect.flatMap((value) =>
+        value.identity.status === 'ready' && value.contacts.status === 'ready' && value.identifiers.status === 'ready'
+          ? Effect.succeed(value)
+          : Effect.fail(new CustomerDetailSectionsIncomplete({ value })),
+      ),
+    ),
+  maxEntries: 256,
+  retainStale: false,
+  runtime: browserRuntime,
+});
+
+/** A list row locates the real revision-qualified key; only its complete, still-fresh detail proves reuse. */
+export const cachedCustomerDetailByRef = (
+  context: ModulePageContext | undefined,
+  counterpartyRef: CounterpartyRef,
+): CustomerDetailSnapshot | undefined => {
+  const scope = pageDataScopeKey(context, 'party.registry');
+  if (scope === undefined || counterpartyRef.tenantId !== context?.tenantId) {
+    return undefined;
+  }
+  const list = customersData.snapshot(customersQuery(context));
+  if (list.state !== 'ready' || list.refreshing) {
+    return undefined;
+  }
+  const customer = list.value.items.find(
+    (item) =>
+      item.counterpartyRef.moduleId === counterpartyRef.moduleId &&
+      item.counterpartyRef.resourceType === counterpartyRef.resourceType &&
+      item.counterpartyRef.tenantId === counterpartyRef.tenantId &&
+      item.counterpartyRef.resourceId === counterpartyRef.resourceId,
+  );
+  if (customer === undefined) {
+    return undefined;
+  }
+  const detail = customerDetailData.snapshot({ customer, scope });
+  return detail.state === 'ready' && !detail.refreshing ? detail.value : undefined;
+};
+
+/**
+ * The first `LIST_WARM_ROWS` visible current-page rows only: each detail is four owner reads, so warming a whole page
+ * sent about a hundred reads on opening the list. The UI owner supplies its actual paginated row model.
+ */
+export const preloadCustomerDetails = (
+  context: ModulePageContext | undefined,
+  rows: readonly CustomerListItem[],
+): Effect.Effect<void> => {
+  const scope = pageDataScopeKey(context, 'party.registry');
+  return scope === undefined
+    ? Effect.void
+    : Effect.forEach(
+        rows.slice(0, LIST_WARM_ROWS),
+        (customer) => customerDetailData.read({ customer, scope }).pipe(Effect.ignore),
+        {
+          concurrency: 2,
+          discard: true,
+        },
+      );
+};
+
+/**
+ * Warms the first visible rows' details once per batch. The batch key is the scope plus each warmed row's detail key,
+ * which carries
+ * the Counterparty and the party revision: a list reload, a freshness expiry or a live change does not warm them again,
+ * while a new page or a changed row does. A row opened later is warmed by its pointer or focus intent instead.
+ */
+export const usePrefetchCustomerDetails = (
+  context: ModulePageContext | undefined,
+  rows: readonly CustomerListItem[],
+): void => {
+  const scope = pageDataScopeKey(context, 'party.registry');
+  const selection = Result.getOrThrow(
+    Schema.encodeResult(DetailKeySchema)(
+      rows.slice(0, LIST_WARM_ROWS).map((customer) => customerDetailKey({ customer, scope: scope ?? '' })),
+    ),
+  );
+  const warmed = useRef<string | undefined>(undefined);
+  const preload = useEffectEvent(() => preloadCustomerDetails(context, rows));
+  useEffect(() => {
+    if (scope === undefined || selection === '[]' || warmed.current === selection) {
+      return;
+    }
+    // The warm-up waits for an idle browser so it does not compete with the list's first paint and the next click.
+    // Row intent does not wait: it reads through `prefetchCustomerDetail`.
+    const fiber = browserRuntime.runFork(
+      whenBrowserIdle.pipe(
+        Effect.andThen(preload()),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            warmed.current = selection;
+          }),
+        ),
+      ),
+    );
+    return () => {
+      fiber.interruptUnsafe();
+    };
+  }, [scope, selection]);
+};
+
+const customerIntentReads = makeIntentLimiter();
+const customerPointerDwell = makePointerDwell((effect) => browserRuntime.runFork(effect));
+
+/**
+ * Warms one row's detail on pointer or keyboard intent. A fresh entry answers without a request. At most two intent
+ * reads run at once; a sweep over many rows keeps only the newest waiting.
+ */
+export const prefetchCustomerDetail = (context: ModulePageContext | undefined, customer: CustomerListItem): void => {
+  const scope = pageDataScopeKey(context, 'party.registry');
+  if (scope === undefined || customerDetailData.snapshot({ customer, scope }).state === 'ready') {
+    return;
+  }
+  customerIntentReads((done) => {
+    if (customerDetailData.snapshot({ customer, scope }).state === 'ready') {
+      done();
+      return;
+    }
+    browserRuntime.runFork(
+      customerDetailData.read({ customer, scope }).pipe(Effect.ignore, Effect.ensuring(Effect.sync(done))),
+    );
+  });
+};
+
+/**
+ * Row intent over the table's row model (`data-index`), passed as the DataTable's `slotProps.row`. The rows are read
+ * when the event fires, so a sort or page change made since this render maps the index to the row actually shown.
+ */
+export const customerDetailIntent = (
+  context: ModulePageContext | undefined,
+  rows: () => readonly CustomerListItem[],
+): RowIntentProps =>
+  rowIntentProps((index) => {
+    const customer = rows()[index];
+    if (customer !== undefined) {
+      prefetchCustomerDetail(context, customer);
+    }
+  }, customerPointerDwell);
+
+export type CustomerFactChange =
+  | { readonly kind: 'name'; readonly value: string; readonly party: CustomerParty }
+  | { readonly kind: 'lifecycle'; readonly party: CustomerParty }
+  | { readonly kind: 'endContact'; readonly existing: PartyContactPoint }
+  | { readonly kind: 'endIdentifier'; readonly existing: OfficialIdentifierAssertion }
+  | { readonly kind: 'contact'; readonly existing: PartyContactPoint | undefined; readonly value: ContactPointInput }
+  | {
+      readonly kind: 'identifier';
+      readonly existing: OfficialIdentifierAssertion | undefined;
+      readonly identifierType: 'ICO' | 'CZ_DIC';
+      readonly value: string;
+    };
+
+/** One button submits one existing Action. Confirmed sections remain saved if another section fails. */
+export const saveCustomerFact = Effect.fn('CustomersData.saveFact')(function* saveFact(
+  partyRef: PartyRef,
+  change: CustomerFactChange,
+  reason: string,
+  evidenceReference: string,
+) {
+  const id = yield* correlation('customer-fact');
+  const now = yield* DateTime.now;
+  const options = { correlationId: id, idempotencyKey: id };
+  const provenance = {
+    authoritative: false,
+    evidenceReference,
+    method: 'MANUAL_CONFIRMATION' as const,
+    source: 'USER_ASSERTION' as const,
+  };
+  return yield* Match.value(change).pipe(
+    Match.discriminatorsExhaustive('kind')({
+      name: (item) =>
+        updateParty(
+          {
+            // The demo form collects one name; an organization carries it as its business name and a
+            // person as their given name, so the owner derives the same display name either way.
+            ...(item.party.partyType === 'PERSON'
+              ? { firstName: item.value.trim() }
+              : { businessName: item.value.trim() }),
+            expectedRevision: item.party.revision,
+            partyRef,
+            provenanceMethod: 'MANUAL_ENTRY',
+            provenanceSource: evidenceReference,
+            validFrom: now,
+          },
+          options,
+        ),
+      lifecycle: Effect.fn('CustomersData.lifecycle')(function* lifecycle(
+        item: Extract<CustomerFactChange, { readonly kind: 'lifecycle' }>,
+      ) {
+        if (Option.isSome(item.party.archivedAt)) {
+          return yield* unarchiveParty({ expectedRevision: item.party.revision, partyRef, reason }, options);
+        }
+        return yield* archiveCustomer({ partyRef, partyRevision: item.party.revision }, reason);
+      }),
+      endContact: (item) =>
+        endContactPoint(
+          {
+            contactPointRef: item.existing.contactPointRef,
+            effectiveEnd: now,
+            provenance,
+            reason,
+            target: { type: 'WHOLE_CONTACT_POINT' },
+          },
+          options,
+        ),
+      endIdentifier: (item) =>
+        endPartyOfficialIdentifier(
+          { officialIdentifierRef: item.existing.officialIdentifierRef, reason, validTo: now },
+          options,
+        ),
+      contact: Effect.fn('CustomersData.contact')(function* contact(
+        item: Extract<CustomerFactChange, { readonly kind: 'contact' }>,
+      ) {
+        const contactPoint = yield* Schema.decodeEffect(ContactPointInputSchema)(item.value);
+        if (item.existing === undefined) {
+          return yield* addContactPoint(
+            {
+              contactPoint,
+              partyRef,
+              privacyClassification: 'BUSINESS_SENSITIVE',
+              provenance,
+              validFrom: now,
+            },
+            options,
+          );
+        }
+        return yield* updateContactPoint(
+          {
+            change: {
+              evidenceReferences: [evidenceReference],
+              reason,
+              replacement: {
+                contactPoint,
+                privacyClassification: item.existing.privacyClassification,
+                provenance,
+                validFrom: now,
+              },
+              type: 'CORRECT_CONTACT_POINT',
+            },
+            contactPointRef: item.existing.contactPointRef,
+            expectedRevision: item.existing.revision,
+            provenance,
+          },
+          options,
+        );
+      }),
+      identifier: Effect.fn('CustomersData.identifier')(function* saveIdentifier(
+        item: Extract<CustomerFactChange, { readonly kind: 'identifier' }>,
+      ) {
+        const identifier = yield* Schema.decodeEffect(OfficialIdentifierInputSchema)({
+          identifierType: item.identifierType,
+          value: item.value,
+        });
+        if (item.existing === undefined) {
+          return yield* addPartyOfficialIdentifier(
+            {
+              identifier,
+              partyRef,
+              provenanceMethod: 'MANUAL_ENTRY',
+              provenanceSource: evidenceReference,
+              validFrom: now,
+            },
+            options,
+          );
+        }
+        // Decode branded identities at the owner contract; never coerce an assertion or Party ID.
+        const payload = yield* Schema.decodeEffect(CorrectPartyFactPayloadSchema)({
+          evidenceRefs: [evidenceReference],
+          evidenceSource: 'MANUAL_REVIEW',
+          factKind: 'OFFICIAL_IDENTIFIER',
+          partyId: partyRef.resourceId,
+          policyVersion: 'party-correction.v1',
+          provenance: { method: 'MANUAL_REVIEW', source: 'party-registry.customers' },
+          reasonCode: 'WRONG_IDENTITY_VALUE',
+          reasonDetail: reason,
+          replacementValue: identifier.value,
+          targetAssertionId: item.existing.officialIdentifierRef.resourceId,
+        });
+        return yield* correctPartyFact(payload, options);
+      }),
+    }),
+    Effect.ensuring(Effect.sync(() => customerDetailData.invalidate())),
+  );
+});
+
+export const customerDetailFailureKey = (
+  error: Effect.Error<ReturnType<typeof saveCustomerFact> | ReturnType<typeof loadCustomerDetail>>,
+): string => {
+  if (Schema.is(Schema.Struct({ status: Schema.Literal(403) }))(error)) {
+    return 'forbidden';
+  }
+  if (Schema.is(Schema.Struct({ status: Schema.Literal(409) }))(error)) {
+    return 'conflict';
+  }
+  if (
+    Schema.is(Schema.Struct({ status: Schema.Literals([400, 422]) }))(error) ||
+    Predicate.isTagged(error, 'SchemaError')
+  ) {
+    return 'validation';
+  }
+  return 'unavailable';
+};
+
+export interface CustomerDetailLoadState {
+  readonly failure?: 'forbidden' | 'unavailable';
+  readonly id: string;
+  readonly value?: CustomerDetailSnapshot;
+}
+
+export const loadCustomerDetailInto = (
+  customer: CustomerListItem,
+  onLoaded: (next: CustomerDetailLoadState) => void,
+  context?: ModulePageContext,
+) => {
+  const scope = pageDataScopeKey(context, 'party.registry');
+  const cached = scope === undefined ? pageDataPending : customerDetailData.snapshot({ customer, scope });
+  if (cached.state === 'ready') {
+    onLoaded({ id: customer.counterpartyId, value: cached.value });
+    return constVoid;
+  }
+  const fiber = browserRuntime.runFork(
+    (scope === undefined ? loadCustomerDetail(customer) : customerDetailData.read({ customer, scope })).pipe(
+      Effect.match({
+        onFailure: (error) =>
+          onLoaded(
+            Predicate.isTagged(error, 'CustomerDetailSectionsIncomplete')
+              ? { id: customer.counterpartyId, value: error.value }
+              : {
+                  failure: Predicate.isTagged(error, 'CounterpartyReadForbiddenProblem') ? 'forbidden' : 'unavailable',
+                  id: customer.counterpartyId,
+                },
+          ),
+        onSuccess: (value) => onLoaded({ id: customer.counterpartyId, value }),
+      }),
+    ),
+  );
+  return () => fiber.interruptUnsafe();
+};
+
+const navigateCustomerDocument = (href: string): void => globalThis.location.assign(href);
+
+/** Runs `run` after the open detail's leave check. The open detail exposes it through a ref; the list page calls it. */
+export type CustomerLeaveRun = (run: () => void) => void;
+
+const isBlocked = Schema.is(Schema.Struct({ outcome: Schema.Literal('BLOCKED') }));
+
+/** The rows of the detail as the owner snapshot has them, and the source of its draft. */
+const customerDetailRowsOf = (snapshot: CustomerDetailSnapshot | undefined) => {
+  const identity = snapshot?.identity;
+  const party = identity?.status === 'ready' ? identity.value.party : undefined;
+  const contacts = snapshot?.contacts.status === 'ready' ? snapshot.contacts.value.items : [];
+  const identifiers = snapshot?.identifiers.status === 'ready' ? snapshot.identifiers.value.items : [];
+  const contactRows = customerContactRows(contacts);
+  const identifierRows =
+    snapshot?.identifiers.status === 'ready'
+      ? customerIdentifierRows(identifiers, DateTime.formatIso(snapshot.now))
+      : [];
+  const source: CustomerDraftSource = {
+    contactRows: snapshot?.contacts.status === 'ready' ? contactRows : [],
+    editableContact: (row) => customerContactEditable(row.existing, party !== undefined),
+    identifierRows,
+    party,
+  };
+  return { contactRows, history: customerHistoryRows(contacts, identifiers), identifierRows, identity, party, source };
+};
+
+/**
+ * Application state stays with the owning feature. The editable facts form one draft with one Save button; the
+ * one-click commands (end a fact, archive or restore) run on their own.
+ */
+export const useCustomerDetail = (
+  customer: Pick<CustomerListItem, 'counterpartyRef'>,
+  initialSnapshot: CustomerDetailSnapshot | undefined,
+  onOpenChange: (open: boolean) => void,
+  onRenamed: () => void,
+  onSaved: () => void,
+  t: (key: string, values?: Record<string, string>) => string,
+  navigate: (href: string) => void = navigateCustomerDocument,
+  navigation?: BlockedNavigation,
+) => {
+  const KEY = 'party-registry.pages.customers.detail';
+  // A local reload/save may override only the owner snapshot that started it. New page/cache props win
+  // synchronously, including a pending or refused revalidation, without discarding the draft.
+  const [localSnapshot, setLocalSnapshot] = useState<{
+    readonly source: CustomerDetailSnapshot | undefined;
+    readonly value: CustomerDetailSnapshot | undefined;
+  }>();
+  const snapshot =
+    localSnapshot !== undefined && localSnapshot.source === initialSnapshot ? localSnapshot.value : initialSnapshot;
+  const setSnapshot = (value: CustomerDetailSnapshot | undefined) =>
+    setLocalSnapshot({ source: initialSnapshot, value });
+  const [reason, setReason] = useState('');
+  const [evidence, setEvidence] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  /** A related link left through the guard, followed once the draft is saved or discarded. */
+  const leavingTo = useRef<string | undefined>(undefined);
+  const [localStale, setLocalStale] = useState<{
+    readonly source: CustomerDetailSnapshot | undefined;
+    readonly value: boolean;
+  }>();
+  const stale = localStale !== undefined && localStale.source === initialSnapshot && localStale.value;
+  const setStale = (value: boolean) => setLocalStale({ source: initialSnapshot, value });
+  const { contactRows, history, identifierRows, identity, party, source } = customerDetailRowsOf(snapshot);
+  /** Evidence and a reason are the change basis of a governed identity change: nothing is sent without them. */
+  const basisFilled = reason.trim() !== '' && evidence.trim() !== '';
+
+  // A local revalidation can revoke access to any section. Discard dependent cached decisions too,
+  // including full-page records, even when the owner returns a partial snapshot or refuses the read.
+  const reloadSnapshot = loadCustomerDetail(customer).pipe(
+    Effect.ensuring(Effect.sync(() => globalThis.dispatchEvent(new Event(moduleChangeEvent)))),
+  );
+
+  const refresh = () => {
+    setBusy(true);
+    void browserRuntime.runPromise(
+      reloadSnapshot.pipe(
+        Effect.match({
+          onFailure: (error) => {
+            setSnapshot(undefined);
+            setStale(true);
+            setNotice(t(`${KEY}.${customerDetailFailureKey(error)}`));
+          },
+          onSuccess: (next) => {
+            setSnapshot(next);
+            setStale(false);
+            setNotice(null);
+          },
+        }),
+        Effect.ensuring(Effect.sync(() => setBusy(false))),
+      ),
+    );
+  };
+
+  /** Set when a save wrote something; the snapshot is re-read once that save has ended. */
+  const wrote = useRef(false);
+  /** Sends the changed facts one by one; what went through stays saved when a later one fails. */
+  const sendDraft = (value: CustomerDraft, confirmed: CustomerDraft): Effect.Effect<DraftSaveResult<CustomerDraft>> => {
+    if (party === undefined || !basisFilled) {
+      return Effect.succeed('failed');
+    }
+    const basis = { evidence: evidence.trim(), reason: reason.trim() };
+    const send = (
+      pending: readonly CustomerDraftChange[],
+      written: CustomerDraft,
+    ): Effect.Effect<DraftSaveResult<CustomerDraft>> => {
+      const [first, ...rest] = pending;
+      if (first === undefined) {
+        return Effect.succeed('saved');
+      }
+      return saveCustomerFact(party.partyRef, first.change, basis.reason, basis.evidence).pipe(
+        Effect.matchEffect({
+          onFailure: (error) =>
+            Effect.sync((): DraftSaveResult<CustomerDraft> => {
+              const key = customerDetailFailureKey(error);
+              setSaveError(t(`${KEY}.${key}`));
+              const outcome = key === 'conflict' ? 'conflict' : 'failed';
+              return written === confirmed ? outcome : { confirmed: written, outcome, revision: 0 };
+            }),
+          onSuccess: (result) => {
+            if (isBlocked(result)) {
+              setSaveError(t(`${KEY}.restoreBlocked`));
+              return Effect.succeed<DraftSaveResult<CustomerDraft>>(
+                written === confirmed ? 'failed' : { confirmed: written, outcome: 'failed', revision: 0 },
+              );
+            }
+            wrote.current = true;
+            return send(rest, withWritten(written, value, first.keys));
+          },
+        }),
+      );
+    };
+    return Effect.sync(() => setSaveError(null)).pipe(
+      Effect.andThen(send(customerDraftChanges(value, confirmed, source), confirmed)),
+    );
+  };
+  const record = useRecordDraft<CustomerDraft, never>({
+    equals: sameCustomerDraft,
+    isValid: validCustomerDraft(source),
+    refresh: Effect.sync(refresh),
+    runtime: browserRuntime,
+    save: (value, _expectedRevision, confirmed) => sendDraft(value, confirmed),
+    server: customerDraftOf(source),
+  });
+  const saving = record.status === 'saving';
+  // Without evidence and a reason the draft cannot be sent: the save bar reads it like any invalid draft.
+  const status: SaveState =
+    !basisFilled && (record.status === 'dirty' || record.status === 'error') ? 'invalid' : record.status;
+  /** The detail after a save that wrote something: the owner's current version. */
+  const showWritten = () => {
+    onRenamed();
+    onSaved();
+    void browserRuntime.runPromise(
+      reloadSnapshot.pipe(
+        Effect.match({
+          onFailure: (error) => {
+            setSnapshot(undefined);
+            setStale(true);
+            setNotice(t(`${KEY}.savedReloadFailed`, { reason: t(`${KEY}.${customerDetailFailureKey(error)}`) }));
+          },
+          onSuccess: (next) => setSnapshot(next),
+        }),
+      ),
+    );
+  };
+  const save = () => {
+    if (basisFilled && !busy) {
+      record.save();
+      // Once a save that wrote something has ended, the detail shows what the owner now has.
+      record.afterSave(() => {
+        if (wrote.current) {
+          wrote.current = false;
+          showWritten();
+        }
+      });
+    }
+  };
+  const draftForGuard: SavableDraft = {
+    afterSave: record.afterSave,
+    canSave: draftSavable(status) && !busy,
+    dirty: record.dirty,
+    save,
+    status,
+  };
+  const guard = useUnsavedChangesGuard({ draft: draftForGuard, navigation, onDiscard: record.discard });
+
+  // A one-click command in flight: leaving the document now would lose its answer.
+  useEffect(() => {
+    const guardDocumentLeave = (event: BeforeUnloadEvent) => {
+      if (busy) {
+        event.preventDefault();
+      }
+    };
+    globalThis.addEventListener('beforeunload', guardDocumentLeave);
+    return () => globalThis.removeEventListener('beforeunload', guardDocumentLeave);
+  }, [busy]);
+
+  // A related link left through the guard: followed once the draft is saved or discarded, so the document does not
+  // ask a second time.
+  useEffect(() => {
+    const href = leavingTo.current;
+    if (href !== undefined && !guard.dirty) {
+      leavingTo.current = undefined;
+      navigate(href);
+    }
+  }, [guard.dirty, navigate]);
+
+  const { confirmed } = record;
+  const draft = changedCustomerFields(record.draft, confirmed);
+  const { dirty } = record;
+  const value = (key: string, original = '') => record.draft.fields[key] ?? original;
+  const changeDraft = (key: string, next: string) =>
+    record.setDraft((current) => ({ ...current, fields: { ...current.fields, [key]: next } }));
+
+  /** Runs `leave` after the leave check: a command in flight ignores it, unsaved edits ask first. */
+  const requestLeaveThen = (leave: () => void) => {
+    if (!busy) {
+      guard.request(leave);
+    }
+  };
+  const requestClose = (open: boolean) => {
+    if (open) {
+      onOpenChange(true);
+    } else {
+      requestLeaveThen(() => onOpenChange(false));
+    }
+  };
+  const requestNavigation = (href: string) =>
+    requestLeaveThen(() => {
+      if (guard.dirty) {
+        leavingTo.current = href;
+        return;
+      }
+      navigate(href);
+    });
+
+  /** A one-click command (end a fact, archive or restore): sent at once, with the change basis. */
+  const runCommand = (change: CustomerFactChange) => {
+    if (party === undefined || busy || saving || stale) {
+      return;
+    }
+    if (!basisFilled) {
+      setNotice(t(`${KEY}.validation`));
+      return;
+    }
+    setBusy(true);
+    setNotice(null);
+    void browserRuntime.runPromise(
+      saveCustomerFact(party.partyRef, change, reason.trim(), evidence.trim()).pipe(
+        Effect.matchEffect({
+          onFailure: (error) =>
+            Effect.sync(() => {
+              setNotice(t(`${KEY}.${customerDetailFailureKey(error)}`));
+              if (customerDetailFailureKey(error) === 'conflict') {
+                setStale(true);
+              }
+            }),
+          onSuccess: (result) => {
+            if (isBlocked(result)) {
+              return Effect.sync(() => setNotice(t(`${KEY}.restoreBlocked`)));
+            }
+            return Effect.sync(() => {
+              onRenamed();
+              onSaved();
+            }).pipe(
+              Effect.andThen(reloadSnapshot),
+              Effect.match({
+                onFailure: (error) => {
+                  setSnapshot(undefined);
+                  setStale(true);
+                  setNotice(t(`${KEY}.savedReloadFailed`, { reason: t(`${KEY}.${customerDetailFailureKey(error)}`) }));
+                },
+                onSuccess: (next) => setSnapshot(next),
+              }),
+            );
+          },
+        }),
+        Effect.ensuring(Effect.sync(() => setBusy(false))),
+      ),
+    );
+  };
+
+  return {
+    basisFilled,
+    busy: busy || saving,
+    changeDraft,
+    /** A one-click command is in flight (not the draft's save): leaving is ignored until it answers. */
+    commandBusy: busy,
+    contactRows,
+    draft,
+    evidence,
+    guard,
+    history,
+    identifierRows,
+    dirty,
+    identity,
+    notice,
+    party,
+    reason,
+    record,
+    refresh,
+    requestClose,
+    requestLeaveThen,
+    requestNavigation,
+    runCommand,
+    save,
+    saveError,
+    setEvidence,
+    setReason,
+    snapshot,
+    stale,
+    status,
+    value,
+  };
+};
+
+/** The latest opening owns its response, including rapidly reopening the same customer. */
+export const useCustomerDetailSelection = (context?: ModulePageContext) => {
+  const scope = pageDataScopeKey(context, 'party.registry');
+  const [detail, setDetail] = useState<CustomerListItem | null>(null);
+  const [detailSnapshot, setDetailSnapshot] = useState<CustomerDetailLoadState>();
+  const [openingScope, setOpeningScope] = useState(scope);
+  const request = useRef(0);
+  const cancel = useRef<() => void>(constVoid);
+  const subscribe = (listener: () => void) =>
+    customerDetailData.subscribe(
+      listener,
+      detail === null || scope === undefined || openingScope !== scope ? undefined : { customer: detail, scope },
+    );
+  // A background reload of the open customer (freshness window, live change, settled write) keeps its last ready
+  // read on screen instead of dropping the panel to its loading state.
+  const cached = useHeldSnapshot(
+    detail === null || scope === undefined || openingScope !== scope
+      ? ''
+      : customerDetailKey({ customer: detail, scope }),
+    useSyncExternalStore(
+      subscribe,
+      () =>
+        detail === null || scope === undefined || openingScope !== scope
+          ? pageDataPending
+          : customerDetailData.snapshot({ customer: detail, scope }),
+      () => pageDataPending,
+    ),
+  );
+  const activeScope = useRef(scope);
+  useEffect(() => {
+    activeScope.current = scope;
+    return () => {
+      request.current += 1;
+      cancel.current();
+    };
+  }, [scope]);
+  const openDetail = (customer: CustomerListItem) => {
+    cancel.current();
+    request.current += 1;
+    const opening = request.current;
+    setOpeningScope(scope);
+    setDetail(customer);
+    setDetailSnapshot({ id: customer.counterpartyId });
+    cancel.current = loadCustomerDetailInto(
+      customer,
+      (next) => {
+        if (request.current === opening && activeScope.current === scope) {
+          setDetailSnapshot(next);
+        }
+      },
+      context,
+    );
+  };
+  /** Exposed by the open detail view (null while no detail is mounted): its leave check guards a retarget or a navigation. */
+  const leaveRunRef = useRef<CustomerLeaveRun | null>(null);
+  /** Runs `run` after the open detail's leave check. Unsaved edits ask first, a save in flight ignores it, a clean detail runs it at once. */
+  const runAfterLeave = (run: () => void) => {
+    const guard = leaveRunRef.current;
+    if (guard === null) {
+      run();
+      return;
+    }
+    guard(run);
+  };
+  const retryDetail = () => {
+    if (detail !== null) {
+      openDetail(detail);
+    }
+  };
+  const closeDetail = (open: boolean) => {
+    if (!open) {
+      request.current += 1;
+      cancel.current();
+      setDetail(null);
+      setDetailSnapshot(undefined);
+    }
+  };
+  const shown = (): Pick<CustomerDetailLoadState, 'value' | 'failure'> | undefined => {
+    if (scope === undefined) {
+      return detailSnapshot;
+    }
+    if (cached.state === 'ready') {
+      return { value: cached.value };
+    }
+    if (cached.state === 'failed') {
+      return Predicate.isTagged(cached.error, 'CustomerDetailSectionsIncomplete')
+        ? { value: cached.error.value }
+        : {
+            failure: Predicate.isTagged(cached.error, 'CounterpartyReadForbiddenProblem') ? 'forbidden' : 'unavailable',
+          };
+    }
+    return undefined;
+  };
+  const shownSnapshot = shown();
+  return {
+    closeDetail,
+    detail: openingScope === scope ? detail : null,
+    detailFailure: shownSnapshot?.failure,
+    detailValue: shownSnapshot?.value,
+    leaveRunRef,
+    openDetail,
+    retryDetail,
+    runAfterLeave,
+  };
+};
+
+export const loadCustomerDuplicateQueue = (afterCaseRef?: DuplicateCandidateCaseRef) =>
+  correlation('duplicate-list').pipe(
+    Effect.flatMap((id) => executeDuplicateCandidateList(afterCaseRef === undefined ? {} : { afterCaseRef }, id)),
+  );
+
+export const loadCustomerDuplicateDetail = Effect.fn('CustomersData.loadDuplicate')(function* loadDuplicate(
+  caseRef: DuplicateCandidateCaseRef,
+) {
+  const id = yield* correlation('duplicate-detail');
+  const candidateCase = yield* executeDuplicateCandidateDetail({ caseRef }, id);
+  const parties = yield* Effect.forEach(
+    candidateCase.candidateParties,
+    (partyRef) =>
+      Effect.all(
+        {
+          identity: section(executePartyDetail({ partyRef }, id)),
+          contacts: section(executePartyContactPoints({ includeHistorical: false, partyRef }, id)),
+        },
+        { concurrency: 1 },
+      ).pipe(Effect.map((value) => ({ ...value, partyRef }))),
+    { concurrency: 2 },
+  );
+  return { candidateCase, parties };
+});
+type CustomerDuplicateDetail = Effect.Success<ReturnType<typeof loadCustomerDuplicateDetail>>;
+export type CustomerDuplicateResolution = Exclude<
+  DuplicateCaseResolutionResult['outcome'],
+  'CONFIRMED_DUPLICATE_PARTIES'
+>;
+interface CustomerDuplicateAttempt {
+  readonly caseRef: DuplicateCandidateCaseRef;
+  readonly expectedRevision: number;
+  readonly reason: string;
+  readonly id: string;
+  readonly resolution: CustomerDuplicateResolution;
+  readonly selectedPartyRef: PartyRef | undefined;
+}
+
+const duplicateActionKeys = {
+  MATCH_EXISTING: 'party.registry.resolve-duplicate-candidate-match',
+  CREATE_NEW: 'party.registry.resolve-duplicate-candidate-create',
+  NEEDS_EVIDENCE: 'party.registry.mark-duplicate-candidate-needs-evidence',
+  DISMISSED_AS_NON_SUBJECT: 'party.registry.dismiss-duplicate-candidate',
+} as const;
+
+/** Resolution never creates a Counterparty, merges Parties, or bypasses the owner's canonical recheck. */
+export const resolveCustomerDuplicate = Effect.fn('CustomersData.resolveDuplicate')(function* resolveDuplicate(
+  attempt: CustomerDuplicateAttempt,
+) {
+  const payload = yield* Schema.decodeEffect(DuplicateCaseResolutionPayloadSchema)(attempt);
+  const options = { correlationId: attempt.id, idempotencyKey: attempt.id };
+  return yield* Match.value(attempt.resolution).pipe(
+    Match.when('MATCH_EXISTING', () =>
+      Schema.decodeUnknownEffect(ResolveDuplicateCandidateMatchPayloadSchema)({
+        ...payload,
+        selectedPartyRef: attempt.selectedPartyRef,
+      }).pipe(Effect.flatMap((matchPayload) => resolveDuplicateCandidateMatch(matchPayload, options))),
+    ),
+    Match.when('CREATE_NEW', () => resolveDuplicateCandidateCreate(payload, options)),
+    Match.when('NEEDS_EVIDENCE', () => markDuplicateCandidateNeedsEvidence(payload, options)),
+    Match.when('DISMISSED_AS_NON_SUBJECT', () => dismissDuplicateCandidate(payload, options)),
+    Match.exhaustive,
+  );
+});
+
+type DuplicateFailure = Effect.Error<
+  | ReturnType<typeof loadCustomerDuplicateQueue>
+  | ReturnType<typeof loadCustomerDuplicateDetail>
+  | ReturnType<typeof resolveCustomerDuplicate>
+  | ReturnType<typeof resolvePartyCommandCommit>
+>;
+export const customerDuplicateFailureKey = (failure: DuplicateFailure) => {
+  if (Schema.is(Schema.Struct({ status: Schema.Literal(401) }))(failure)) {
+    return 'authentication';
+  }
+  if (Schema.is(Schema.Struct({ status: Schema.Literal(404) }))(failure)) {
+    return 'notFound';
+  }
+  if (Schema.is(Schema.Struct({ status: Schema.Literal(403) }))(failure)) {
+    return 'forbidden';
+  }
+  if (Schema.is(Schema.Struct({ status: Schema.Literal(409) }))(failure)) {
+    return 'conflict';
+  }
+  if (
+    Schema.is(Schema.Struct({ status: Schema.Literals([400, 422]) }))(failure) ||
+    Predicate.isTagged(failure, 'SchemaError')
+  ) {
+    return 'validation';
+  }
+  return 'unavailable';
+};
+type DuplicateFailureKey = ReturnType<typeof customerDuplicateFailureKey>;
+type DuplicateRead<Value> =
+  | { readonly status: 'idle' | 'loading' }
+  | { readonly status: 'failed'; readonly failure: DuplicateFailureKey }
+  | { readonly status: 'ready'; readonly value: Value };
+
+const duplicateReadState = <Value, Failure extends DuplicateFailure>(operation: Effect.Effect<Value, Failure>) =>
+  operation.pipe(
+    Effect.match({
+      onFailure: (failure): DuplicateRead<Value> => ({
+        failure: customerDuplicateFailureKey(failure),
+        status: 'failed',
+      }),
+      onSuccess: (value): DuplicateRead<Value> => ({ status: 'ready', value }),
+    }),
+  );
+
+/**
+ * User-opened review state. Request generations prevent an old selection from replacing the current case. While the
+ * panel is open, the shown queue page and case follow every module write and live change, so nobody reloads them by
+ * hand; a rejected resolution reloads them by itself.
+ */
+export const useCustomerIdentityReview = (onResolved: () => void) => {
+  const [open, setOpen] = useState(false);
+  const [queue, setQueue] = useState<DuplicateRead<DuplicateCandidateListResponse>>({ status: 'idle' });
+  const [detail, setDetail] = useState<DuplicateRead<CustomerDuplicateDetail>>({ status: 'idle' });
+  const [selectedPartyId, setSelectedPartyId] = useState('');
+  const [reason, setReason] = useState('');
+  const [notice, setNotice] = useState<{ readonly key: string; readonly success: boolean }>();
+  const [busy, setBusy] = useState(false);
+  const [stale, setStale] = useState(false);
+  const [committed, setCommitted] = useState(false);
+  const [uncertain, setUncertain] = useState(false);
+  const queueRequest = useRef(0);
+  const detailRequest = useRef(0);
+  const caseSelection = useRef<DuplicateCandidateCaseRef | null>(null);
+  /** Page of the queue on screen; the first page is null. */
+  const queueCursor = useRef<DuplicateCandidateCaseRef | null>(null);
+  const writing = useRef(false);
+  const pending = useRef<CustomerDuplicateAttempt | null>(null);
+
+  useEffect(() => {
+    const guard = (event: BeforeUnloadEvent) => {
+      if (busy || uncertain) {
+        event.preventDefault();
+        event.returnValue = '';
+      }
+    };
+    globalThis.addEventListener('beforeunload', guard);
+    return () => globalThis.removeEventListener('beforeunload', guard);
+  }, [busy, uncertain]);
+  useEffect(
+    () => () => {
+      queueRequest.current += 1;
+      detailRequest.current += 1;
+    },
+    [],
+  );
+
+  /** A background read keeps the current page on screen until the new one arrives. */
+  const readQueue = (afterCaseRef: DuplicateCandidateCaseRef | null, background: boolean) => {
+    if (writing.current || pending.current !== null) {
+      return;
+    }
+    queueRequest.current += 1;
+    const request = queueRequest.current;
+    queueCursor.current = afterCaseRef;
+    if (!background) {
+      setQueue({ status: 'loading' });
+    }
+    void browserRuntime.runPromise(
+      (afterCaseRef === null ? loadCustomerDuplicateQueue() : loadCustomerDuplicateQueue(afterCaseRef)).pipe(
+        Effect.match({
+          onFailure: (failure) => {
+            if (queueRequest.current === request) {
+              setQueue({ status: 'failed', failure: customerDuplicateFailureKey(failure) });
+            }
+          },
+          onSuccess: (value) => {
+            if (queueRequest.current === request) {
+              setQueue({ status: 'ready', value });
+            }
+          },
+        }),
+      ),
+    );
+  };
+  const loadQueue = (afterCaseRef?: DuplicateCandidateCaseRef) => readQueue(afterCaseRef ?? null, false);
+  /** Re-reads the shown case in place: the reason stays, a subject that is no longer a candidate is unselected. */
+  const revalidateDetail = (caseRef: DuplicateCandidateCaseRef) => {
+    detailRequest.current += 1;
+    const request = detailRequest.current;
+    void browserRuntime.runPromise(
+      duplicateReadState(loadCustomerDuplicateDetail(caseRef)).pipe(
+        Effect.flatMap((next) =>
+          Effect.sync(() => {
+            if (detailRequest.current !== request || writing.current || pending.current !== null) {
+              return;
+            }
+            setDetail(next);
+            if (next.status === 'ready') {
+              // Current evidence is on screen again, so a reviewer blocked by a failed reload may decide.
+              setStale(false);
+              setSelectedPartyId((selected) =>
+                next.value.parties.some((item) => item.partyRef.resourceId === selected) ? selected : '',
+              );
+            }
+          }),
+        ),
+      ),
+    );
+  };
+  const revalidate = () => {
+    if (writing.current || pending.current !== null) {
+      return;
+    }
+    readQueue(queueCursor.current, true);
+    if (caseSelection.current !== null) {
+      revalidateDetail(caseSelection.current);
+    }
+  };
+  const follow = useEffectEvent((event: Event) => {
+    if (changeConcerns(event, ['party-registry'])) {
+      revalidate();
+    }
+  });
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    globalThis.addEventListener(moduleWriteEvent, follow);
+    globalThis.addEventListener(moduleChangeEvent, follow);
+    return () => {
+      globalThis.removeEventListener(moduleWriteEvent, follow);
+      globalThis.removeEventListener(moduleChangeEvent, follow);
+    };
+  }, [open]);
+
+  const selectCase = (caseRef: DuplicateCandidateCaseRef) => {
+    if (writing.current || pending.current !== null) {
+      return;
+    }
+    detailRequest.current += 1;
+    const request = detailRequest.current;
+    caseSelection.current = caseRef;
+    setDetail({ status: 'loading' });
+    setSelectedPartyId('');
+    setReason('');
+    setNotice(undefined);
+    setStale(false);
+    setCommitted(false);
+    void browserRuntime.runPromise(
+      loadCustomerDuplicateDetail(caseRef).pipe(
+        Effect.match({
+          onFailure: (failure) => {
+            if (detailRequest.current === request) {
+              setDetail({ status: 'failed', failure: customerDuplicateFailureKey(failure) });
+            }
+          },
+          onSuccess: (value) => {
+            if (detailRequest.current === request) {
+              setDetail({ status: 'ready', value });
+            }
+          },
+        }),
+      ),
+    );
+  };
+
+  /**
+   * Reloads the first queue page and the selected case after a write settled. Each governed read keeps its own
+   * outcome: a denied queue must not leave old rows visible, and a failed detail read must not discard a
+   * successfully refreshed queue. Returns whether either read failed.
+   */
+  const reloadAfterWrite = () =>
+    Effect.sync(() => {
+      queueRequest.current += 1;
+      detailRequest.current += 1;
+      queueCursor.current = null;
+    }).pipe(
+      Effect.andThen(
+        Effect.all(
+          {
+            queue: duplicateReadState(loadCustomerDuplicateQueue()),
+            detail:
+              caseSelection.current === null
+                ? Effect.succeed<DuplicateRead<CustomerDuplicateDetail>>({ status: 'idle' })
+                : duplicateReadState(loadCustomerDuplicateDetail(caseSelection.current)),
+          },
+          { concurrency: 2 },
+        ),
+      ),
+      Effect.map((next) => {
+        setQueue(next.queue);
+        setDetail(next.detail);
+        return next.queue.status === 'failed' || next.detail.status === 'failed';
+      }),
+    );
+  const refreshAfterSaved = () =>
+    Effect.sync(() => {
+      pending.current = null;
+      setUncertain(false);
+      setCommitted(true);
+      setQueue({ status: 'loading' });
+      setDetail({ status: 'loading' });
+      onResolved();
+    }).pipe(
+      Effect.andThen(reloadAfterWrite()),
+      Effect.flatMap((failed) =>
+        Effect.sync(() => {
+          setStale(failed);
+          setNotice({ key: failed ? 'savedReloadFailed' : 'saved', success: true });
+        }),
+      ),
+    );
+  /** A changed or vanished case reloads at once; the reviewer then decides again on the current evidence. */
+  const reloadAfterRejection = (key: 'conflict' | 'notFound') =>
+    Effect.sync(() => {
+      setStale(true);
+      setSelectedPartyId('');
+      setNotice({ key, success: false });
+    }).pipe(
+      Effect.andThen(reloadAfterWrite()),
+      Effect.flatMap((failed) => Effect.sync(() => setStale(failed))),
+    );
+  const executeAttempt = (attempt: CustomerDuplicateAttempt) =>
+    resolveCustomerDuplicate(attempt).pipe(
+      Effect.matchEffect({
+        onSuccess: refreshAfterSaved,
+        onFailure: (failure) => {
+          if (Predicate.isTagged(failure, 'PartyCommandAlreadyCommittedProblem')) {
+            return refreshAfterSaved();
+          }
+          const key = customerDuplicateFailureKey(failure);
+          if (key === 'unavailable') {
+            // A lost acknowledgement is not permission to issue a fresh command.
+            return Effect.sync(() => {
+              setUncertain(true);
+              setNotice({ key: 'uncertain', success: false });
+            });
+          }
+          return Effect.sync(() => {
+            pending.current = null;
+            setUncertain(false);
+          }).pipe(
+            Effect.andThen(
+              key === 'conflict' || key === 'notFound'
+                ? reloadAfterRejection(key)
+                : Effect.sync(() => setNotice({ key, success: false })),
+            ),
+          );
+        },
+      }),
+    );
+  const finishWrite = () => {
+    writing.current = false;
+    setBusy(false);
+  };
+  const canResolve =
+    detail.status === 'ready' &&
+    ['OPEN', 'NEEDS_EVIDENCE'].includes(detail.value.candidateCase.lifecycleState) &&
+    !busy &&
+    !stale &&
+    !committed &&
+    !uncertain;
+  const resolve = (resolution: CustomerDuplicateResolution) => {
+    if (writing.current || !canResolve || detail.status !== 'ready') {
+      return;
+    }
+    const selected = detail.value.parties.find((item) => item.partyRef.resourceId === selectedPartyId);
+    if (
+      reason.trim() === '' ||
+      (resolution === 'MATCH_EXISTING' &&
+        (selected?.identity.status !== 'ready' ||
+          selected.identity.value.resolution.kind !== 'DIRECT' ||
+          Option.isSome(selected.identity.value.party.archivedAt)))
+    ) {
+      setNotice({ key: 'validation', success: false });
+      return;
+    }
+    writing.current = true;
+    queueRequest.current += 1;
+    detailRequest.current += 1;
+    setBusy(true);
+    setNotice(undefined);
+    const { candidateCase } = detail.value;
+    void browserRuntime.runPromise(
+      correlation('duplicate-resolve').pipe(
+        Effect.flatMap((id) => {
+          const attempt: CustomerDuplicateAttempt = {
+            caseRef: candidateCase.caseRef,
+            expectedRevision: candidateCase.revision,
+            id,
+            reason: reason.trim(),
+            resolution,
+            selectedPartyRef: selected?.partyRef,
+          };
+          pending.current = attempt;
+          return executeAttempt(attempt);
+        }),
+        Effect.ensuring(Effect.sync(finishWrite)),
+      ),
+    );
+  };
+  const checkStatus = () => {
+    const attempt = pending.current;
+    if (writing.current || attempt === null) {
+      return;
+    }
+    writing.current = true;
+    setBusy(true);
+    void browserRuntime.runPromise(
+      resolvePartyCommandCommit(
+        {
+          actionKey: duplicateActionKeys[attempt.resolution],
+          idempotencyKey: attempt.id,
+        },
+        { correlationId: attempt.id },
+      ).pipe(
+        Effect.matchEffect({
+          onFailure: (failure) =>
+            Effect.sync(() => setNotice({ key: customerDuplicateFailureKey(failure), success: false })),
+          onSuccess: (resolution) => {
+            if (resolution.state === 'COMMITTED') {
+              return refreshAfterSaved();
+            }
+            if (resolution.retryCommand) {
+              return executeAttempt(attempt);
+            }
+            return Effect.sync(() => {
+              if (resolution.state === 'REJECTED') {
+                pending.current = null;
+                setUncertain(false);
+                setNotice({ key: 'forbidden', success: false });
+              } else {
+                setNotice({ key: 'uncertain', success: false });
+              }
+            });
+          },
+        }),
+        Effect.ensuring(Effect.sync(finishWrite)),
+      ),
+    );
+  };
+  return {
+    busy,
+    canResolve,
+    checkStatus,
+    committed,
+    detail,
+    loading: queue.status === 'loading' || detail.status === 'loading',
+    loadQueue,
+    notice,
+    open,
+    queue,
+    reason,
+    resolve,
+    selectedPartyId,
+    setReason,
+    setSelectedPartyId,
+    stale,
+    uncertain,
+    openReview: () => {
+      setOpen(true);
+      if (queue.status === 'idle') {
+        loadQueue();
+      }
+    },
+    closeReview: (next: boolean) => {
+      if (!writing.current) {
+        setOpen(next);
+      }
+    },
+    selectCase,
+    /** Error-state retry of the shown queue page. */
+    retryQueue: () => readQueue(queueCursor.current, false),
+    /** Error-state retry of the selected case. */
+    retryDetail: () => {
+      if (caseSelection.current !== null) {
+        selectCase(caseSelection.current);
+      }
+    },
+  };
+};

@@ -480,6 +480,7 @@ it.live(
                 newStatus: 'revoked',
                 principalId: submitter.principalId,
                 reason: 'Rotate the native Symmy fixture binding',
+                scope: 'tenant-managed',
               }),
               principal: fixture.manager,
               registration: setManagedApiKeyBindingStatusAction,
@@ -491,6 +492,7 @@ it.live(
               payload: yield* Schema.decodeEffect(bindManagedApiKeyAction.descriptor.payloadSchema)({
                 principalId: submitter.principalId,
                 providerSubjectId,
+                scope: 'tenant-managed',
               }),
               principal: fixture.manager,
               registration: bindManagedApiKeyAction,

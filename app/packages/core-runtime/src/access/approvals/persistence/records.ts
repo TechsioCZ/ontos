@@ -13,6 +13,7 @@ import type {
 } from '../../model.ts';
 import { ACCESS_MODEL_PARSE_OPTIONS, ApprovalSchema, ExecutionReceiptSchema, ProposalSchema } from '../../model.ts';
 import type { ApprovalDecisionEvidence } from '../service.ts';
+import type { ActionAuthorityProofV2 } from '../action-authority-v2-schema.ts';
 
 /*
  * The rows of one proposal, its approval record and the witnesses that record binds. The model owns
@@ -48,6 +49,7 @@ export const proposalColumns = {
   expiresAt: accessProposals.expiresAt,
   proposalId: accessProposals.proposalId,
   rejectedBy: accessProposals.rejectedBy,
+  requesterActionAuthorityJson: accessProposals.requesterActionAuthorityJson,
   requesterAuthorityJson: accessProposals.requesterAuthorityJson,
   requesterJson: accessProposals.requesterJson,
   scopeId: accessProposals.scopeId,
@@ -57,6 +59,7 @@ export const proposalColumns = {
 } as const;
 
 export const mandateColumns = {
+  actionAuthorityJson: accessMandates.actionAuthorityJson,
   approvalExpiresAt: accessMandates.approvalExpiresAt,
   approvedAt: accessMandates.approvedAt,
   approverAssignmentIncarnationId: accessMandates.approverAssignmentIncarnationId,
@@ -94,6 +97,7 @@ export interface ProposalRow {
   readonly expiresAt: StoredInstant;
   readonly proposalId: string;
   readonly rejectedBy: string | null;
+  readonly requesterActionAuthorityJson: ActionAuthorityProofV2 | null;
   readonly requesterAuthorityJson: readonly AuthorityWitness[];
   readonly requesterJson: ActorContext;
   readonly scopeId: string;
@@ -108,11 +112,12 @@ export interface ProposalRow {
  * nothing that could diverge from it (O52).
  */
 export interface MandateRow {
+  readonly actionAuthorityJson: ActionAuthorityProofV2 | null;
   readonly approvalExpiresAt: StoredInstant;
   readonly approvedAt: StoredInstant;
-  readonly approverAssignmentIncarnationId: string;
+  readonly approverAssignmentIncarnationId: string | null;
   readonly approverId: string;
-  readonly executionAssignmentIncarnationId: string;
+  readonly executionAssignmentIncarnationId: string | null;
   readonly mandateId: string;
   readonly proposalId: string;
   readonly tenantId: string;
@@ -154,6 +159,7 @@ export const proposalInsertValues = (proposal: Proposal) => ({
   expiresAt: proposal.expiresAt,
   proposalId: proposal.id,
   rejectedBy: proposal.rejectedBy ?? null,
+  requesterActionAuthorityJson: proposal.actionAuthority ?? null,
   requesterAuthorityJson: requesterWitnesses(proposal),
   requesterJson: proposal.requester,
   requesterPrincipalId: proposal.requester.principalId,
@@ -184,13 +190,14 @@ export const proposalTransitionValues = (proposal: Proposal) => ({
  * repeated from the proposal only because SQL requires them to prove they are the proposal's own.
  */
 export const mandateInsertValues = (proposal: Proposal, approval: Approval, mandateId: string) => ({
+  actionAuthorityJson: 'actionAuthority' in approval ? approval.actionAuthority : null,
   approvalExpiresAt: approval.expiresAt,
   approvedAt: approval.approvedAt,
-  approverAssignmentIncarnationId: approval.approvalAssignmentIncarnationId,
+  approverAssignmentIncarnationId: 'actionAuthority' in approval ? null : approval.approvalAssignmentIncarnationId,
   approverId: approval.approverId,
   capabilityKey: proposal.capabilityKey,
   commandDigest: proposal.commandDigest,
-  executionAssignmentIncarnationId: approval.executionAssignmentIncarnationId,
+  executionAssignmentIncarnationId: 'actionAuthority' in approval ? null : approval.executionAssignmentIncarnationId,
   mandateId,
   proposalId: proposal.id,
   scopeId: proposal.scopeId,
@@ -234,6 +241,7 @@ const decodeExecution = Schema.decodeUnknownResult(ExecutionReceiptSchema, ACCES
 
 /** One proposal as the model reads it back, before the schema brands and validates it. */
 interface StoredProposalCandidate {
+  actionAuthority?: ActionAuthorityProofV2;
   approval?: Approval;
   capabilityKey: string;
   commandDigest: string;
@@ -251,6 +259,22 @@ interface StoredProposalCandidate {
   witnesses: readonly EncodedWitness[];
 }
 
+const approvalOfRow = (mandate: MandateRow) => {
+  const base = {
+    approvedAt: asDate(mandate.approvedAt),
+    approverId: mandate.approverId,
+    expiresAt: asDate(mandate.approvalExpiresAt),
+  };
+  if (mandate.actionAuthorityJson === null) {
+    return {
+      ...base,
+      approvalAssignmentIncarnationId: mandate.approverAssignmentIncarnationId,
+      executionAssignmentIncarnationId: mandate.executionAssignmentIncarnationId,
+    };
+  }
+  return { ...base, actionAuthority: mandate.actionAuthorityJson };
+};
+
 /**
  * One stored proposal, decoded through the model. The requester's authority is always the frozen
  * column of the proposal row, and an approval adds only the approver witnesses SQL proved against its
@@ -263,16 +287,14 @@ export const proposalFrom = (
   mandate: MandateRow | undefined,
   mandateWitnesses: readonly EncodedWitness[] | undefined,
 ): Result.Result<Proposal, string> => {
-  const approval =
-    mandate === undefined
-      ? undefined
-      : {
-          approvalAssignmentIncarnationId: mandate.approverAssignmentIncarnationId,
-          approvedAt: asDate(mandate.approvedAt),
-          approverId: mandate.approverId,
-          executionAssignmentIncarnationId: mandate.executionAssignmentIncarnationId,
-          expiresAt: asDate(mandate.approvalExpiresAt),
-        };
+  const approval = mandate === undefined ? undefined : approvalOfRow(mandate);
+  if (
+    mandate !== undefined &&
+    mandate.actionAuthorityJson !== null &&
+    (mandate.approverAssignmentIncarnationId !== null || mandate.executionAssignmentIncarnationId !== null)
+  ) {
+    return Result.fail('A forward Action approval cannot carry historical execution assignments');
+  }
   const execution =
     row.executedAt === null || row.executionOperationId === null
       ? undefined
@@ -289,6 +311,9 @@ export const proposalFrom = (
     tenantId: row.tenantId,
     witnesses: orderedWitnesses([...row.requesterAuthorityJson, ...(mandateWitnesses ?? [])]),
   };
+  if (row.requesterActionAuthorityJson !== null) {
+    candidate.actionAuthority = row.requesterActionAuthorityJson;
+  }
   // The model omits an absent value; the columns store null. Only a present value joins the record,
   // and each part is decoded on its own so a malformed approval names itself in the refusal.
   if (approval !== undefined) {

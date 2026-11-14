@@ -1,3 +1,4 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import {
   MicroVerticalBuildMarkerSchema,
@@ -261,6 +262,7 @@ export const privacyFoundationApi = HttpApi.make('PrivacyApiFoundation').add(
 
 export const privacyApi = HttpApi.make('PrivacyApi')
   .addHttpApi(privacyFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(AcknowledgePrivacyNoticeActionApi)
   .addHttpApi(AddProcessingPurposeVersionActionApi)
@@ -337,6 +339,15 @@ export const privacyApiContract = {
   readinessPath: '/privacy-api/privacy/readiness',
 } as const;
 
+export {
+  CreateProcessingPurposePayloadSchema,
+  CreateProcessingPurposeResultSchema,
+} from './actions/create-processing-purpose.ts';
+export { CreateNoticeVersionPayloadSchema, CreateNoticeVersionResultSchema } from './actions/create-notice-version.ts';
+export {
+  CreatePrivacySubjectPayloadSchema,
+  CreatePrivacySubjectResultSchema,
+} from './actions/create-privacy-subject.ts';
 export {
   SourceProcessingContextSchema,
   SourceProcessingIdentitySchema,

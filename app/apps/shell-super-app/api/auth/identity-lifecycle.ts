@@ -12,6 +12,7 @@ import {
   bindSelfApiKeyAction,
   changePrincipalStatusAction,
   createNonHumanPrincipalAction,
+  configureDemoCompaniesAction,
   IdentityLifecycleConflictError,
   PrincipalResolver,
   setManagedApiKeyBindingStatusAction,
@@ -27,6 +28,7 @@ import type {
   IssuedApiKey,
   SafeApiKeyMetadata,
 } from './api-key-service.ts';
+import { ManagedApiKeyTargetEligibility } from '@app/core-runtime/auth/managed-api-key-eligibility';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -60,6 +62,8 @@ export interface ApiKeyLifecycleResult extends SafeApiKeyMetadata {
 }
 export type ApiKeyIssueResult = ApiKeyLifecycleResult & Readonly<Record<'secret', Redacted.Redacted>>;
 
+type ManagedKeyScope = Schema.Schema.Type<typeof bindManagedApiKeyAction.descriptor.payloadSchema>['scope'] | undefined;
+
 type RequestIdentity = Readonly<Record<'correlationId' | 'idempotencyKey', string>>;
 
 const lifecycleFailure = (cause: unknown = 'identity lifecycle reconciliation remained pending') =>
@@ -81,9 +85,31 @@ const publicMetadata = ({
 > => metadata;
 
 export const makeIdentityLifecycleService = (
-  ...dependencies: readonly [ActionRuntimeService, ApiKeyServiceContract, PrincipalResolverService]
+  ...dependencies: readonly [
+    ActionRuntimeService,
+    ApiKeyServiceContract,
+    PrincipalResolverService,
+    (typeof ManagedApiKeyTargetEligibility)['Service']?,
+  ]
 ) => {
-  const [actionRuntime, keys, resolver] = dependencies;
+  const [actionRuntime, keys, resolver, eligibility] = dependencies;
+  /**
+   * A managed key's target is checked before the provider issues anything, so a refused target (a platform principal,
+   * one bound to a platform-registered workload, the wrong kind) never gets a key. The bind Action checks again.
+   */
+  const eligibleTarget = (input: {
+    readonly managedPrincipalId?: string;
+    readonly managedScope?: ManagedKeyScope;
+    readonly principal: TrustedPrincipalContext;
+  }): Effect.Effect<void, IdentityLifecycleError> =>
+    input.managedPrincipalId === undefined || input.managedScope === undefined || eligibility === undefined
+      ? Effect.void
+      : eligibility.check({
+          legalEntityId: input.principal.legalEntityId,
+          principalId: input.managedPrincipalId,
+          scope: input.managedScope,
+          tenantId: input.principal.tenantId,
+        });
   const reconcileProviderKey = (providerKeyId: string): Effect.Effect<void, IdentityLifecycleError> =>
     resolver.resolveBetterAuthApiKey(providerKeyId).pipe(
       Effect.match({
@@ -136,6 +162,7 @@ export const makeIdentityLifecycleService = (
     input: RequestIdentity & {
       readonly issued: IssuedApiKey;
       readonly managedPrincipalId?: string;
+      readonly managedScope?: ManagedKeyScope;
       readonly principal: TrustedPrincipalContext;
     },
   ): Effect.Effect<ApiKeyIssueResult, IdentityLifecycleError> => {
@@ -151,6 +178,7 @@ export const makeIdentityLifecycleService = (
             payload: {
               principalId: input.managedPrincipalId,
               providerSubjectId: input.issued.providerKeyId,
+              scope: input.managedScope,
             },
             principal: input.principal,
             registration: bindManagedApiKeyAction,
@@ -183,15 +211,19 @@ export const makeIdentityLifecycleService = (
   const issue = (
     input: RequestIdentity & {
       readonly managedPrincipalId?: string;
+      readonly managedScope?: ManagedKeyScope;
       readonly name?: string;
       readonly principal: TrustedPrincipalContext;
       readonly requestHeaders: Headers;
     },
   ) =>
-    reconcilePendingCleanup({
-      lifecycleOperationId: input.idempotencyKey,
-      principal: input.principal,
-    }).pipe(
+    eligibleTarget(input).pipe(
+      Effect.andThen(
+        reconcilePendingCleanup({
+          lifecycleOperationId: input.idempotencyKey,
+          principal: input.principal,
+        }),
+      ),
       Effect.flatMap(() =>
         keys.issue(
           input.requestHeaders,
@@ -220,6 +252,7 @@ export const makeIdentityLifecycleService = (
             'managedPrincipalId',
             input.managedPrincipalId,
             {
+              managedScope: input.managedScope,
               principal: input.principal,
             },
           ),
@@ -231,6 +264,7 @@ export const makeIdentityLifecycleService = (
       readonly authBindingId: string;
       readonly expectedStatus: 'active' | 'disabled';
       readonly managedPrincipalId?: string;
+      readonly managedScope?: ManagedKeyScope;
       readonly newStatus: 'active' | 'disabled' | 'revoked';
       readonly principal: TrustedPrincipalContext;
       readonly reason?: string;
@@ -270,6 +304,7 @@ export const makeIdentityLifecycleService = (
                       expectedStatus: input.expectedStatus,
                       newStatus: input.newStatus,
                       principalId: input.managedPrincipalId,
+                      scope: input.managedScope,
                     },
                     input.reason !== undefined,
                     'reason',
@@ -293,10 +328,14 @@ export const makeIdentityLifecycleService = (
               }),
             );
           }
-          const transition = currentStatus === input.newStatus ? Effect.void : core().pipe(Effect.asVoid);
+          // Even provider reconciliation must cross native authorization; an already-matching binding is not permission.
+          const transition = core().pipe(
+            Effect.asVoid,
+            Effect.catchTag('ActionAlreadyCommitted', () => Effect.void),
+          );
           if (input.newStatus === 'active') {
-            return keys.setEnabled(keyId, true).pipe(
-              Effect.flatMap(() => transition),
+            return transition.pipe(
+              Effect.flatMap(() => keys.setEnabled(keyId, true)),
               Effect.flatMap(() => keys.metadata(keyId)),
               Effect.map(result),
             );
@@ -329,6 +368,15 @@ export const makeIdentityLifecycleService = (
         payload: input.payload,
         principal: input.principal,
         registration: changePrincipalStatusAction,
+        transport: transport(input),
+      }),
+    configureDemoCompanies: (
+      input: RequestIdentity & { readonly payload: unknown; readonly principal: TrustedPrincipalContext },
+    ) =>
+      actionRuntime.runAction({
+        payload: input.payload,
+        principal: input.principal,
+        registration: configureDemoCompaniesAction,
         transport: transport(input),
       }),
     createNonHumanPrincipal: (
@@ -365,6 +413,7 @@ export const makeIdentityLifecycleService = (
               'managedPrincipalId',
               input.oldManagedPrincipalId,
               {
+                managedScope: input.managedScope,
                 newStatus: 'revoked' as const,
                 principal: input.principal,
                 reason: input.reason,
@@ -404,6 +453,7 @@ export const makeIdentityLifecycleService = (
                                   'managedPrincipalId',
                                   input.managedPrincipalId,
                                   {
+                                    managedScope: input.managedScope,
                                     newStatus: 'revoked' as const,
                                     principal: input.principal,
                                     reason: 'Replacement rollback after old binding closure failed',
@@ -478,6 +528,7 @@ export const IdentityLifecycleLive = Layer.effect(
     const actionRuntime = yield* ActionRuntime;
     const apiKeys = yield* ApiKeyService;
     const principalResolver = yield* PrincipalResolver;
-    return makeIdentityLifecycleService(actionRuntime, apiKeys, principalResolver);
+    const eligibility = yield* ManagedApiKeyTargetEligibility;
+    return makeIdentityLifecycleService(actionRuntime, apiKeys, principalResolver, eligibility);
   }),
 );

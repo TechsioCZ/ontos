@@ -54,8 +54,7 @@ const createAction = (owner = 'property.registry') =>
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
         authorization: {
-          kind: 'action_execution',
-          provisioning: 'tenant_membership_default',
+          kind: 'protected',
         },
         entrypointKey: `${owner}.create-unit`,
         moduleKey: owner,
@@ -114,7 +113,7 @@ const createRead = (owner = 'property.registry', schemaVersion = 'read.v2') =>
       accessKind: 'detail',
       entrypoint: defineTenantModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: { kind: 'protected' },
         entrypointKey: `${owner}.api.lookup`,
         moduleKey: owner,
         role: 'api',
@@ -123,7 +122,6 @@ const createRead = (owner = 'property.registry', schemaVersion = 'read.v2') =>
       inputSchema: Schema.Struct({}),
       legalEntityScope: 'required',
       owningModuleKey: owner,
-      permissionTarget: 'module',
       policies: [],
       readKey: `${owner}.api.lookup`,
       resultSchema: Schema.String,
@@ -131,7 +129,6 @@ const createRead = (owner = 'property.registry', schemaVersion = 'read.v2') =>
     },
     () => Effect.succeed({ evidence: { resultCount: 1 }, result: 'current' }),
     () => Effect.succeed({}),
-    () => ({ kind: 'module', moduleId: owner }),
   );
 
 const operationApi = () =>
@@ -289,7 +286,7 @@ it.effect('preserves business refs and grant targets across two validated deploy
           installed,
           module,
           targets: {
-            action: toSpiceDbActionObjectId(installedAction.actionKey),
+            action: toSpiceDbActionObjectId({ actionKey: installedAction.actionKey, tenantId }),
             module: toModuleAccessObjectId(tenantId, legalEntityId, installed.manifest.module.id),
             resource: toResourceAccessObjectId(tenantId, legalEntityId, {
               moduleId: installed.manifest.module.id,
@@ -768,6 +765,44 @@ it('declares the Action keys the module may act for as an originator, exactly an
   ).toThrow();
 });
 
+it('declares the modules activation installs with it, carried into the deployment contract and validated there', () => {
+  const declared = defineOntosModuleManifest({
+    ...emptyManifestInput(),
+    activation: { ...emptyManifestInput().activation, installsWith: ['commerce.tax'] },
+  });
+  expect(declared.activation.installsWith).toEqual(['commerce.tax']);
+  expect(Object.isFrozen(declared.activation.installsWith)).toBe(true);
+  expect(defineOntosModuleManifest(emptyManifestInput()).activation).not.toHaveProperty('installsWith');
+  for (const installsWith of [['property.registry'], ['commerce.tax', 'commerce.tax'], ['not a module']]) {
+    expect(() =>
+      defineOntosModuleManifest({
+        ...emptyManifestInput(),
+        activation: { ...emptyManifestInput().activation, installsWith },
+      }),
+    ).toThrow();
+  }
+  const contract = {
+    deployment: { appId: 'property-registry', buildMarker: 'build' },
+    manifest: {
+      activation: declared.activation,
+      module: declared.module,
+      publicSurface: { ...emptyManifestInput().publicSurface, actions: [], api: [], components: [] },
+    },
+    runtime: { outboxSubscriptions: [] },
+    schemaVersion: ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
+  };
+  expect(decodeOntosModuleDeploymentContract(contract).manifest.activation.installsWith).toEqual(['commerce.tax']);
+  expect(() =>
+    decodeOntosModuleDeploymentContract({
+      ...contract,
+      manifest: {
+        ...contract.manifest,
+        activation: { ...contract.manifest.activation, installsWith: ['property.registry'] },
+      },
+    }),
+  ).toThrow(/installsWith/u);
+});
+
 it('rejects invalid identities, private fields, duplicates, cross-owner values, and undeclared references', () => {
   expect(() =>
     defineOntosModuleManifest({
@@ -972,7 +1007,7 @@ const createDeclaredAction = () =>
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write' as const,
-        authorization: { kind: 'action_execution' as const, provisioning: 'tenant_membership_default' as const },
+        authorization: { kind: 'protected' as const },
         entrypointKey: 'property.registry.add-note',
         moduleKey: 'property.registry',
         role: 'action' as const,
@@ -1032,7 +1067,7 @@ it('refuses a protected Action contract that carries no access at all (O62)', ()
     auditProfile: 'standard',
     entrypoint: {
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'property.registry.bare',
       moduleKey: 'property.registry',
       role: 'action',
@@ -1053,4 +1088,116 @@ it('refuses a protected Action contract that carries no access at all (O62)', ()
       accessWorkload: { reason: 'machine provisioning only', workloads: ['property.machine-provisioner'] },
     }),
   ).toBe(true);
+});
+
+const isolatedCookieTransport = () =>
+  Object.freeze([
+    Object.freeze({
+      cookieNames: Object.freeze(['portal.session', '__Host-portal.proof']),
+      realmPrefix: 'portal',
+      routes: Object.freeze([Object.freeze({ method: 'POST' as const, path: '/api/portal-sign-in' })]),
+    }),
+  ]);
+
+it('defines immutable cookie metadata before freezing the derived public surface and reuses frozen owner input', () => {
+  const action = createAction();
+  const read = createRead();
+  const api = operationApi();
+  const cookiePolicy = isolatedCookieTransport();
+  const input = Object.freeze({
+    ...emptyManifestInput(),
+    publicSurface: Object.freeze({
+      ...emptyManifestInput().publicSurface,
+      actions: Object.freeze([action]),
+      api: Object.freeze({ records: api }),
+      apiCookieTransport: cookiePolicy,
+      operationContracts: Object.freeze([
+        Object.freeze({ apiKey: 'records', operationKey: 'property.lookup', registration: read }),
+      ]),
+    }),
+  });
+  const first = defineOntosModuleManifest(input);
+  const again = defineOntosModuleManifest(input);
+  expect(input.publicSurface.apiCookieTransport).toBe(cookiePolicy);
+  expect(first).not.toBe(input);
+  expect(first.publicSurface).not.toBe(input.publicSurface);
+  expect(first.publicSurface.apiCookieTransport).not.toBe(cookiePolicy);
+  expect(first.publicSurface.apiCookieTransport).toEqual(cookiePolicy);
+  expect(again.publicSurface.apiCookieTransport).toEqual(cookiePolicy);
+  expect(Object.isFrozen(first.publicSurface)).toBe(true);
+  expect(Object.isFrozen(first.publicSurface.apiCookieTransport)).toBe(true);
+  expect(Object.isFrozen(first.publicSurface.apiCookieTransport?.[0]?.routes[0])).toBe(true);
+  expect(first.publicSurface.actions[0]).toBe(action);
+  expect(again.publicSurface.actions[0]).toBe(action);
+  expect(first.publicSurface.operationContracts?.[0]?.registration).toBe(read);
+  expect(again.publicSurface.operationContracts?.[0]?.registration).toBe(read);
+  expect(first.publicSurface.api.records).toBe(api);
+  expect(isReadRegistration(first.publicSurface.operationContracts?.[0]?.registration)).toBe(true);
+  expect(projectOntosModuleOperationContracts(first)).toEqual(projectOntosModuleOperationContracts(again));
+});
+
+for (const [name, policy] of [
+  [
+    'reserved staff realm',
+    { cookieNames: ['staff.session'], realmPrefix: 'staff', routes: [{ method: 'POST', path: '/api/sign-in' }] },
+  ],
+  [
+    'foreign cookie realm',
+    { cookieNames: ['better-auth.session'], realmPrefix: 'portal', routes: [{ method: 'POST', path: '/api/sign-in' }] },
+  ],
+  [
+    'wildcard route',
+    { cookieNames: ['portal.session'], realmPrefix: 'portal', routes: [{ method: 'POST', path: '/api/*' }] },
+  ],
+  [
+    'duplicate cookie',
+    {
+      cookieNames: ['portal.session', 'portal.session'],
+      realmPrefix: 'portal',
+      routes: [{ method: 'POST', path: '/api/sign-in' }],
+    },
+  ],
+  [
+    'duplicate route',
+    {
+      cookieNames: ['portal.session'],
+      realmPrefix: 'portal',
+      routes: [
+        { method: 'POST', path: '/api/sign-in' },
+        { method: 'POST', path: '/api/sign-in' },
+      ],
+    },
+  ],
+] as const) {
+  it(`still refuses frozen cookie transport with ${name}`, () => {
+    const input = Object.freeze({
+      ...emptyManifestInput(),
+      publicSurface: Object.freeze({
+        ...emptyManifestInput().publicSurface,
+        apiCookieTransport: Object.freeze([Object.freeze(policy)]),
+      }),
+    });
+    expect(() => defineOntosModuleManifest(input)).toThrow();
+  });
+}
+
+it('does not freeze caller-owned mutable cookie arrays or route metadata', () => {
+  const route = { method: 'POST' as const, path: '/api/sign-in' };
+  const policy = {
+    cookieNames: ['portal.session'],
+    realmPrefix: 'portal',
+    routes: [route],
+  };
+  const input = {
+    ...emptyManifestInput(),
+    publicSurface: { ...emptyManifestInput().publicSurface, apiCookieTransport: [policy] },
+  };
+  const manifest = defineOntosModuleManifest(input);
+  expect(Object.isFrozen(policy)).toBe(false);
+  expect(Object.isFrozen(policy.cookieNames)).toBe(false);
+  expect(Object.isFrozen(policy.routes[0])).toBe(false);
+  policy.cookieNames.push('portal.second');
+  route.path = '/api/other';
+  expect(manifest.publicSurface.apiCookieTransport?.[0]?.cookieNames).toEqual(['portal.session']);
+  expect(manifest.publicSurface.apiCookieTransport?.[0]?.routes).toEqual([{ method: 'POST', path: '/api/sign-in' }]);
 });

@@ -22,6 +22,7 @@ import { TestClock } from 'effect/testing';
 import { PrincipalManagementRepository } from '../../../../packages/core-runtime/src/auth/principal-management.ts';
 import type { PrincipalManagementRepositoryService } from '../../../../packages/core-runtime/src/auth/principal-management.ts';
 import { AuthConfig } from '../../api/auth/config.ts';
+import { PLATFORM_KEY_OWNER } from '../../api/auth/platform-key-owner.ts';
 import type {
   SupportAuthProvider,
   SupportImpersonationStore,
@@ -29,6 +30,7 @@ import type {
 } from '../../api/auth/impersonation-service.ts';
 import {
   makeSupportImpersonationService,
+  SupportImpersonationUnavailableErrorSchema,
   SupportAuthProviderService,
   SupportImpersonationCorrelationId,
   SupportImpersonationStoreService,
@@ -70,8 +72,11 @@ const unconfiguredPrincipalManagement = (operation: string) =>
   Effect.die(`${operation} is not configured in this test`);
 const principalManagementRepository: PrincipalManagementRepositoryService = {
   bindApiKey: () => unconfiguredPrincipalManagement('bindApiKey'),
+  changePlatformPrincipalStatus: () => unconfiguredPrincipalManagement('changePlatformPrincipalStatus'),
   changePrincipalStatus: () => unconfiguredPrincipalManagement('changePrincipalStatus'),
   createNonHumanPrincipal: () => unconfiguredPrincipalManagement('createNonHumanPrincipal'),
+  createPlatformServicePrincipal: () => unconfiguredPrincipalManagement('createPlatformServicePrincipal'),
+  renamePlatformServicePrincipal: () => unconfiguredPrincipalManagement('renamePlatformServicePrincipal'),
   setApiKeyBindingStatus: () => unconfiguredPrincipalManagement('setApiKeyBindingStatus'),
   validateSupportImpersonation: () => unconfiguredPrincipalManagement('validateSupportImpersonation'),
 };
@@ -128,10 +133,18 @@ const supportRecoveryPrincipal: SupportRecoveryPrincipalContextResolverService =
     ),
 };
 
+const providerUnavailable = (reason: string) =>
+  Effect.fail(
+    SupportImpersonationUnavailableErrorSchema.make({
+      code: 'support_impersonation_unavailable',
+      reason,
+    }),
+  );
+
 const provider = (impersonated: boolean): SupportAuthProvider => ({
   api: {
     getSession: () =>
-      Promise.resolve({
+      Effect.succeed({
         headers: new Headers(),
         response: {
           session: impersonated
@@ -150,11 +163,11 @@ const provider = (impersonated: boolean): SupportAuthProvider => ({
           user: { id: 'original-provider-user' },
         },
       }),
-    impersonateUser: () => Promise.reject(new Error('not used')),
+    impersonateUser: () => providerUnavailable('not used'),
     stopImpersonating: () => {
       const headers = new Headers();
       headers.append('set-cookie', 'session=restored; Path=/; HttpOnly');
-      return Promise.resolve({
+      return Effect.succeed({
         headers,
         response: { session: { id: restoredSessionId } },
       });
@@ -215,7 +228,7 @@ it.effect('preserves definite requested-checkpoint errors for their declared HTT
             provider: makeSupportAuthProviderDouble({
               impersonateUser: () => {
                 providerCalls += 1;
-                return Promise.reject(new Error('must not create a session'));
+                return providerUnavailable('must not create a session');
               },
             }),
             resolver: makePrincipalResolverDouble({
@@ -281,7 +294,7 @@ it.effect('removes the provider session and recovery when started evidence canno
       configuration,
       provider: makeSupportAuthProviderDouble({
         impersonateUser: () =>
-          Promise.resolve({
+          Effect.succeed({
             headers: new Headers(),
             response: { session: { id: impersonationSessionId } },
           }),
@@ -318,6 +331,64 @@ it.effect('removes the provider session and recovery when started evidence canno
     expect(failure).toBe(startedFailure);
     expect(actionRuntime.invocationCount()).toBe(2);
     expect(deletedTables).toHaveLength(2);
+  }),
+);
+
+it.effect('refuses to impersonate the platform module-credential owner before any checkpoint or provider call', () =>
+  Effect.gen(function* refusesPlatformKeyOwner() {
+    let impersonations = 0;
+    const actionRuntime = makeActionRuntimeDouble([actionSuccess({ checkpoint: 'requested', recorded: true })]);
+    const service = makeService({
+      actionRuntime: actionRuntime.runtime,
+      authentication: makeAuthenticationServiceDouble({
+        resolveTenantContext: () =>
+          Effect.succeed({
+            identity: {
+              displayName: 'Original administrator',
+              email: 'original@example.test',
+              principalId: originalPrincipalId,
+              tenantId,
+            },
+            principal: Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+              authBindingId: originalAuthBindingId,
+              authContextRef: `better-auth-session:${restoredSessionId}`,
+              authenticationNamespaceId: staffAuthenticationNamespaceId,
+              authMethod: 'session',
+              principalId: originalPrincipalId,
+              tenantId,
+            }),
+            setCookieHeaders: [],
+            state: 'authenticated',
+          }),
+      }),
+      configuration,
+      provider: makeSupportAuthProviderDouble({
+        impersonateUser: () =>
+          Effect.sync(() => {
+            impersonations += 1;
+            return { headers: new Headers(), response: { session: { id: impersonationSessionId } } };
+          }),
+      }),
+      // A principal that (wrongly) resolves to the platform key owner's provider user.
+      resolver: makePrincipalResolverDouble({
+        resolveBetterAuthUserForPrincipal: () => Effect.succeed(PLATFORM_KEY_OWNER.id),
+      }),
+      store: makeSupportImpersonationStoreDouble({}),
+      supportRecoveryPrincipal,
+    });
+    const failure = yield* Effect.flip(
+      service
+        .start({
+          idempotencyKey: 'platform-key-owner',
+          reason: 'Investigate a support incident',
+          requestHeaders: new Headers(),
+          targetPrincipalId,
+        })
+        .pipe(Effect.provideService(SupportImpersonationCorrelationId, 'correlation-platform-key-owner')),
+    );
+    expect(failure).toMatchObject({ code: 'support_impersonation_denied' });
+    expect(impersonations).toBe(0);
+    expect(actionRuntime.invocationCount()).toBe(0);
   }),
 );
 
@@ -514,7 +585,7 @@ it.effect('persists and completes stopped evidence on the first stop after imper
       authentication: makeAuthenticationServiceDouble(),
       configuration,
       provider: makeSupportAuthProviderDouble({
-        getSession: () => Promise.resolve({ headers: new Headers(), response: null }),
+        getSession: () => Effect.succeed({ headers: new Headers(), response: null }),
       }),
       resolver: makePrincipalResolverDouble(),
       store: makeSupportImpersonationStoreDouble({
@@ -584,7 +655,7 @@ const makeLostResponseRecoveryService = (recovery: SupportRecoveryRecord, expire
     authentication: makeAuthenticationServiceDouble(),
     configuration,
     provider: makeSupportAuthProviderDouble({
-      getSession: () => Promise.resolve({ headers: new Headers(), response: null }),
+      getSession: () => Effect.succeed({ headers: new Headers(), response: null }),
     }),
     resolver: makePrincipalResolverDouble(),
     store: makeSupportImpersonationStoreDouble({
@@ -716,7 +787,7 @@ it.effect('clears a mismatched restored session and completes recovery from the 
         stopImpersonating: () => {
           const headers = new Headers();
           headers.append('set-cookie', 'better-auth.session_token=unexpected; Path=/; HttpOnly');
-          return Promise.resolve({
+          return Effect.succeed({
             headers,
             response: { session: { id: 'unexpected-restored-session' } },
           });
@@ -761,7 +832,7 @@ it.effect('deletes the impersonation session and clears cookies when original re
       configuration,
       provider: makeSupportAuthProviderDouble({
         ...provider(true).api,
-        stopImpersonating: () => Promise.reject(new Error('admin session expired')),
+        stopImpersonating: () => providerUnavailable('admin session expired'),
       }),
       resolver: makePrincipalResolverDouble(),
       store: makeSupportImpersonationStoreDouble({

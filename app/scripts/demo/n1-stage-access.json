@@ -1,0 +1,28 @@
+{
+  "accounts": [
+    {
+      "displayName": "Správce N1 demo",
+      "email": "admin@n1.ontos.demo",
+      "principalId": "6f78d366-1c9d-4d37-82ff-2fe2c6fe7e15"
+    },
+    {
+      "displayName": "Správce katalogu N1 demo",
+      "email": "catalog@n1.ontos.demo",
+      "principalId": "775f7d30-54d7-400c-9357-4c665f3f261c"
+    }
+  ],
+  "legalEntityId": "d7ad363a-ddb0-46c6-bb11-8d9362281297",
+  "modules": {
+    "commerce.market-catalog": "3dc43b7d-e837-4b63-ac7c-c3602e8c4199",
+    "commerce.storefront-registry": "9f948d05-e586-4fd2-8006-2c844029cdf0",
+    "demo.merchandise": "2ae5131f-f74b-4e72-a981-4d75c5731930"
+  },
+  "schemaVersion": 1,
+  "services": {
+    "market-authority": "790a1121-e220-4716-acf1-551b6faa0411",
+    "storefront": "4e89699a-abaa-4a96-b769-b936028b9b0d"
+  },
+  "shellUrl": "https://ontos-stage.web-revolution.cz",
+  "slug": "n1-demo-20261103",
+  "tenantId": "cfcd7ae8-90b9-4c49-927c-b5d66224a618"
+}

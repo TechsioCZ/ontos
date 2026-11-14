@@ -1,6 +1,6 @@
 import { v1 } from '@authzed/authzed-node';
-import { spiceDbTransport } from '#spicedb-transport';
-import { Data, Effect } from 'effect';
+import { openSpiceDbRpc } from './spicedb-transaction-guard.ts';
+import { Data, Effect, Option } from 'effect';
 import type { Scope } from 'effect';
 
 import type { SpiceDbConfigValue } from './config.ts';
@@ -21,12 +21,14 @@ export interface CloseableSpiceDbClient {
 export class SpiceDbPermissionClientError extends Data.TaggedError('SpiceDbPermissionClientError')<{
   readonly cause?: unknown;
   readonly reason: string;
+  readonly rpcCode: number | undefined;
 }> {}
 
-export const spiceDbPermissionClientError = (cause?: unknown): SpiceDbPermissionClientError =>
+export const spiceDbPermissionClientError = (cause?: unknown, rpcCode?: number): SpiceDbPermissionClientError =>
   new SpiceDbPermissionClientError({
     cause,
     reason: 'The SpiceDB client operation did not complete safely',
+    rpcCode,
   });
 
 export interface SpiceDbPermissionClient extends CloseableSpiceDbClient {
@@ -42,18 +44,22 @@ export const createSpiceDbPermissionClient = (
   configuration: SpiceDbConfigValue,
   timeoutMilliseconds: number,
 ): SpiceDbPermissionClient => {
-  const rpc = spiceDbTransport.open(configuration, timeoutMilliseconds);
+  const rpc = openSpiceDbRpc(configuration, timeoutMilliseconds);
   return {
     checkBulkPermissions: (request) =>
-      rpc.checkBulkPermissions(request).pipe(Effect.mapError(({ cause }) => spiceDbPermissionClientError(cause))),
+      rpc
+        .checkBulkPermissions(request)
+        .pipe(Effect.mapError(({ cause, code }) => spiceDbPermissionClientError(cause, Option.getOrUndefined(code)))),
     checkPermission: (request) =>
-      rpc.checkPermission(request).pipe(Effect.mapError(({ cause }) => spiceDbPermissionClientError(cause))),
+      rpc
+        .checkPermission(request)
+        .pipe(Effect.mapError(({ cause, code }) => spiceDbPermissionClientError(cause, Option.getOrUndefined(code)))),
     close: rpc.close,
   };
 };
 
-export const acquireSpiceDbClientResource = <Client extends CloseableSpiceDbClient, Error>(
+export const acquireSpiceDbClientResource = <Client extends CloseableSpiceDbClient, Failure>(
   acquire: () => Client,
-  onFailure: (cause: unknown) => Error,
-): Effect.Effect<Client, Error, Scope.Scope> =>
+  onFailure: (cause: unknown) => Failure,
+): Effect.Effect<Client, Failure, Scope.Scope> =>
   Effect.acquireRelease(Effect.try({ catch: onFailure, try: acquire }), (client) => Effect.sync(() => client.close()));

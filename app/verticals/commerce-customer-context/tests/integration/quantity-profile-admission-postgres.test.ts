@@ -62,6 +62,8 @@ import {
 import type { CustomerProfileIcoRequest } from '../../shared/apis/customer-profile-ico.ts';
 import { executeCustomerProfileIcoWithAuthorization } from '../../src/api/customer-profile-ico-client.ts';
 import { PartyRegistryRetailPartyResolverFactory } from '../../src/integrations/party-registry-retail-party-resolver.ts';
+import { RetailPartyDetailExecutor } from '../../src/integrations/retail-party-detail-executor.ts';
+import { PartyDetailResponseSchema } from '@app/party-registry/api/client';
 import { ProfileCounterpartyRoleEligibilityResolverFactory } from '../../src/profile-counterparty-role-eligibility.ts';
 import { partyRegistryGuestResolverFactoryLive } from '../../src/integrations/party-registry-guest-resolver.ts';
 import {
@@ -74,6 +76,7 @@ import {
   describePriceGroupTemporalOwner,
   makePriceGroupTemporalComposition,
 } from '../support/price-group-temporal-protocol.ts';
+import { observedEligibleCounterpartyRole } from '../support/observed-counterparty-role.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -150,37 +153,55 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
   // Unknown input fails closed. CCC identities are produced by the registered Actions below;
   // this fixture makes no claim about Party producer correctness or transport availability.
   const owners = Layer.mergeAll(
-    Layer.succeed(PartyRegistryRetailPartyResolverFactory, {
-      make:
-        ({ scope }) =>
-        (request) =>
-          Effect.succeed(
-            scope.tenantId === fixture.tenantId &&
-              request.tenantId === fixture.tenantId &&
-              partyIds.has(request.partyResourceId)
-              ? {
-                  outcome: 'CURRENT_PARTY_RESOLVED' as const,
-                  partyResourceId: request.partyResourceId,
-                  partyResourceRevision: '1',
-                }
-              : { outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' as const },
-          ),
+    Layer.succeed(RetailPartyDetailExecutor, {
+      execute: ({ partyRef }) =>
+        Effect.succeed(
+          Schema.decodeUnknownSync(PartyDetailResponseSchema)({
+            currentFactAssertions: [],
+            factHistory: [],
+            party: {
+              archivedAt:
+                partyRef.tenantId === fixture.tenantId && partyIds.has(partyRef.resourceId)
+                  ? null
+                  : '2020-01-01T00:00:00.000Z',
+              createdAt: '2020-01-01T00:00:00.000Z',
+              displayName: 'Retail fixture',
+              partyRef,
+              partyType: 'PERSON',
+              revision: 1,
+              updatedAt: '2020-01-01T00:00:00.000Z',
+            },
+            resolution: { aliasChain: [], canonicalPartyRef: partyRef, kind: 'DIRECT', requestedPartyRef: partyRef },
+          }),
+        ),
     }),
-    Layer.succeed(ProfileCounterpartyRoleEligibilityResolverFactory, {
+    Layer.succeed(PartyRegistryRetailPartyResolverFactory, {
       make: (scope) => (request) =>
         Effect.succeed(
-          request.tenantId === fixture.tenantId &&
-            scope.tenantId === fixture.tenantId &&
-            request.counterpartyResourceId === counterpartyId &&
-            [fixture.legalEntityId, secondary.legalEntityId].includes(scope.legalEntityId)
+          scope.tenantId === fixture.tenantId &&
+            request.tenantId === fixture.tenantId &&
+            partyIds.has(request.partyResourceId)
             ? {
-                managedLegalEntityId: scope.legalEntityId,
-                outcome: 'ELIGIBLE' as const,
-                roleResourceId: roleId,
-                roleResourceRevision: '2026-01-01T00:00:00.000Z',
+                outcome: 'CURRENT_PARTY_RESOLVED' as const,
+                partyResourceId: request.partyResourceId,
+                partyResourceRevision: '1',
               }
-            : { outcome: 'INDETERMINATE' as const },
+            : { outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' as const },
         ),
+    }),
+    Layer.succeed(ProfileCounterpartyRoleEligibilityResolverFactory, {
+      // Observed like the production resolver: a role without an End is usable for at most 30 seconds.
+      make: (scope) => (request) =>
+        request.tenantId === fixture.tenantId &&
+        scope.tenantId === fixture.tenantId &&
+        request.counterpartyResourceId === counterpartyId &&
+        [fixture.legalEntityId, secondary.legalEntityId].includes(scope.legalEntityId)
+          ? observedEligibleCounterpartyRole({
+              managedLegalEntityId: scope.legalEntityId,
+              roleResourceId: roleId,
+              roleResourceRevision: '2026-01-01T00:00:00.000Z',
+            })
+          : Effect.succeed({ outcome: 'INDETERMINATE' as const }),
     }),
     partyRegistryGuestResolverFactoryLive,
     profileReactivationEligibilityEvaluatorFactoryLive.pipe(Layer.provide(profileReconfirmationPolicyUnavailableLive)),
@@ -837,13 +858,13 @@ const startQuantityPublicReceiver = Effect.fn('QuantityProfileAdmissionTests.pub
 ) {
   // The receiver decides with the production gate, so the Tenant holds the v2 access it reads.
   yield* grantTestTenantOwnerAccess({
-    adminConnectionString: Redacted.make(owner.isolated.connections.admin.connectionString),
     legalEntityIds: [
       owner.fixture.legalEntityId,
       ...(owner.fixture.secondaryLegalEntity === undefined ? [] : [owner.fixture.secondaryLegalEntity.legalEntityId]),
     ],
     owner: owner.fixture.manager,
     spiceDb: yield* liveFixtureSpiceDb(owner.fixture.permissionEnvironment),
+    writerConnectionString: Redacted.make(owner.isolated.connections.runtime.connectionString),
   });
   const pair = yield* Effect.promise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
   const publicJwk = yield* Effect.promise(() => exportJWK(pair.publicKey));

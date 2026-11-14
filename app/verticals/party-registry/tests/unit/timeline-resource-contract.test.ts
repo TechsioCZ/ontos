@@ -1,35 +1,50 @@
 import { Schema } from 'effect';
 import { assert, it } from 'effect-rstest';
 
-import * as duplicateCase from '../../shared/resources/duplicate-candidate-case.ts';
-import * as correction from '../../shared/resources/party-correction.ts';
-import * as matchDecision from '../../shared/resources/party-match-decision.ts';
-import * as identifier from '../../shared/resources/party-official-identifier.ts';
+import {
+  duplicateCandidateCaseResourceDescriptor,
+  makeDuplicateCandidateCaseRef,
+  DuplicateCandidateCaseRefSchema,
+} from '../../shared/resources/duplicate-candidate-case.ts';
+import {
+  partyCorrectionResourceDescriptor,
+  makePartyCorrectionRef,
+  PartyCorrectionRefSchema,
+} from '../../shared/resources/party-correction.ts';
+import {
+  partyMatchDecisionResourceDescriptor,
+  makePartyMatchDecisionRef,
+  PartyMatchDecisionRefSchema,
+} from '../../shared/resources/party-match-decision.ts';
+import {
+  partyOfficialIdentifierResourceDescriptor,
+  PartyOfficialIdentifierRefSchema,
+} from '../../shared/resources/party-official-identifier.ts';
 import { makePartyOfficialIdentifierRef } from '../../src/services/party-official-identifier-reference.ts';
 
 const resources = [
   {
-    descriptor: duplicateCase.duplicateCandidateCaseResourceDescriptor,
-    makeRef: duplicateCase.makeDuplicateCandidateCaseRef,
-    schema: duplicateCase.DuplicateCandidateCaseRefSchema,
+    descriptor: duplicateCandidateCaseResourceDescriptor,
+    makeRef: makeDuplicateCandidateCaseRef,
+    schema: DuplicateCandidateCaseRefSchema,
     slug: 'duplicate-candidate-case',
   },
   {
-    descriptor: correction.partyCorrectionResourceDescriptor,
-    makeRef: correction.makePartyCorrectionRef,
-    schema: correction.PartyCorrectionRefSchema,
+    descriptor: partyCorrectionResourceDescriptor,
+    makeRef: makePartyCorrectionRef,
+    schema: PartyCorrectionRefSchema,
     slug: 'party-correction',
   },
   {
-    descriptor: matchDecision.partyMatchDecisionResourceDescriptor,
-    makeRef: matchDecision.makePartyMatchDecisionRef,
-    schema: matchDecision.PartyMatchDecisionRefSchema,
+    descriptor: partyMatchDecisionResourceDescriptor,
+    makeRef: makePartyMatchDecisionRef,
+    schema: PartyMatchDecisionRefSchema,
     slug: 'party-match-decision',
   },
   {
-    descriptor: identifier.partyOfficialIdentifierResourceDescriptor,
+    descriptor: partyOfficialIdentifierResourceDescriptor,
     makeRef: makePartyOfficialIdentifierRef,
-    schema: identifier.PartyOfficialIdentifierRefSchema,
+    schema: PartyOfficialIdentifierRefSchema,
     slug: 'party-official-identifier',
   },
 ];

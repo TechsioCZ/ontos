@@ -1,9 +1,13 @@
 import { Result, Schema } from 'effect';
 
 import { withOptional } from '../access/decision/optional.ts';
+import { AccessKeySyntaxSchema, WorkloadKeySchema } from './access-key-syntax.ts';
+
 import type { ModuleEntrypointDescriptor } from '../modules/module-entrypoint.ts';
 import { AccessCatalogError } from './access-catalog-error.ts';
 import { AccessDeclarationError } from './access-declaration-error.ts';
+
+export { AccessKeySyntaxSchema, WorkloadKeySchema } from './access-key-syntax.ts';
 
 /** One scalar money value of the governed command in minor units (O18); decoded from the payload. */
 export type { AccessAmount } from '../access/decision/contract.ts';
@@ -115,14 +119,7 @@ const accessKeyVerbSegments = (key: string, moduleKey: string): string | undefin
 };
 
 /** Lowercase kebab segments `<module>.<resource>.<verb>[.<qualifier>]`; module IDs may be dotted. */
-/** Lowercase kebab segments `<module>.<resource>.<verb>[.<qualifier>]`; module IDs may be dotted. */
-const accessKeySyntax = Schema.String.check(
-  Schema.isMaxLength(200),
-  Schema.isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*){2,}$/u),
-);
-/** The key grammar alone, for authored descriptors that still carry the key as a plain string. */
-export const AccessKeySyntaxSchema = accessKeySyntax;
-export const AccessKeySchema = accessKeySyntax.pipe(Schema.brand('AccessKey'));
+export const AccessKeySchema = AccessKeySyntaxSchema.pipe(Schema.brand('AccessKey'));
 export type AccessKey = typeof AccessKeySchema.Type;
 
 const accessFieldClassSchema = Schema.String.check(
@@ -153,6 +150,13 @@ const accessDeclarationFields = Schema.Struct({
   admitsAdminSurface: Schema.optionalKey(Schema.Literal(true)),
   /** One scalar money value of the Action payload, or a server-derived total for composites (O18). */
   amountInput: Schema.optionalKey(accessPathSchema),
+  /**
+   * The Shell's frame, so a signed-in member can load the product at all, never a business record. No Role cell holds
+   * it: when a person's Roles do not grant it, the engine admits them as a member of the scope they ask in, proven by
+   * one `access_scope#access` check (`structural.member_baseline`). Only a routine, basic, unselected read of the Shell
+   * may be baseline, and the engine checks that again at decision time; exactly `true` or absent.
+   */
+  baseline: Schema.optionalKey(Schema.Literal(true)),
   /** A short-lived proof that cannot wait for an approval (O22). */
   ephemeral: Schema.optionalKey(Schema.Boolean),
   fieldClass: Schema.optionalKey(accessFieldClassSchema),
@@ -236,6 +240,15 @@ const declarationIssue = (declaration: AccessDeclarationFields): string | undefi
   }
   if (kind !== 'action' && (declaration.amountInput !== undefined || declaration.ephemeral !== undefined)) {
     return 'amountInput and ephemeral are supported only by action declarations';
+  }
+  if (
+    declaration.baseline === true &&
+    (kind !== 'read' ||
+      risk !== 'routine' ||
+      declaration.placement.level !== 'basic' ||
+      declaration.selectors.length > 0)
+  ) {
+    return 'only a routine, basic read without record selectors may be baseline';
   }
   return modesIssue(declaration) ?? lineageIssue(declaration);
 };
@@ -375,6 +388,9 @@ export const accessDeclarationEntrypointIssue = (
   const surfaceIssue = adminSurfaceIssue(declaration, owner);
   if (surfaceIssue !== undefined) {
     return surfaceIssue;
+  }
+  if (declaration.baseline === true && moduleKey !== 'core.shell') {
+    return 'only the Shell frame (core.shell) declares baseline access';
   }
   return isActionCarrier(owner) ? actionEntrypointIssue(declaration) : directEntrypointIssue(declaration, owner);
 };
@@ -557,13 +573,9 @@ export const decodeAccessFieldGroups = <Input>(
 
 /**
  * One registered workload identity (O73): `<module-namespace>.<kebab-name>` (for example
- * `core.identity-provider`). The module prefix is the carrier module's root namespace, so a key
- * never crosses from one module family to another.
+ * `core.identity-provider`). A direct `accessWorkload` stays in its carrier module's root namespace.
+ * An `accessActor` subject workload keeps the calling flow's namespace, not the receiving owner's.
  */
-export const WorkloadKeySchema = Schema.String.check(
-  Schema.isMaxLength(200),
-  Schema.isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+$/u),
-).pipe(Schema.brand('WorkloadKey'));
 export type WorkloadKey = typeof WorkloadKeySchema.Type;
 
 /**
@@ -588,7 +600,7 @@ export type AccessWorkloadInput = typeof AccessWorkloadSchema.Encoded;
 
 /**
  * The module namespace a workload key belongs to (O73): the root segment of the carrier's module key.
- * `core.identity` owns `core.*`, `commerce.customer-context` owns `commerce.*`.
+ * A module with key `example.operations` owns workload keys in `example.*`.
  */
 const workloadModuleRoot = (moduleKey: string): string => moduleKey.split('.')[0] ?? moduleKey;
 
@@ -649,15 +661,15 @@ const TopologyAppIdSchema = Schema.String.check(
  * call is done for is decided: `rights` runs the subject's own `accessDeclaration` decision (the carrier
  * already checked the user's rights, a relay), `identity` admits the verified subject without a capability
  * check (module plumbing that never checked the user's rights before). A registered workload named in
- * `subjectWorkloads` is admitted by its binding on either mode, exactly as a direct workload call is. Only
- * governs calls that carry `act`.
+ * `subjectWorkloads` is admitted by its binding on either mode. `workload` admits only those registered
+ * workload subjects, never a person, and carries no human capability. Only governs calls that carry `act`.
  */
 export const AccessActorSchema = Schema.Struct({
   /** The calling topology apps; at least one, never repeated. */
   callers: Schema.NonEmptyArray(TopologyAppIdSchema).check(Schema.isUnique()),
   /** Why modules call this carrier; the only human-readable field. */
   reason: Schema.String.check(Schema.isMaxLength(400), Schema.isMinLength(1), Schema.isTrimmed()),
-  subject: Schema.Literals(['identity', 'rights']),
+  subject: Schema.Literals(['identity', 'rights', 'workload']),
   /**
    * The registered workloads that may stand as the subject of a module call (workload subject): a workload
    * subject is admitted only when Core holds an active binding for one of these keys, whatever `subject` says
@@ -665,7 +677,29 @@ export const AccessActorSchema = Schema.Struct({
    * carrier.
    */
   subjectWorkloads: Schema.optionalKey(Schema.NonEmptyArray(WorkloadKeySchema).check(Schema.isUnique())),
-});
+  /**
+   * The callers that may bring one of `subjectWorkloads` as the subject; absent, every caller may. A caller outside
+   * it is refused a workload subject exactly as a carrier that names no workload refuses one.
+   */
+  subjectWorkloadCallers: Schema.optionalKey(Schema.NonEmptyArray(TopologyAppIdSchema).check(Schema.isUnique())),
+}).check(
+  Schema.makeFilter((actor) =>
+    actor.subject === 'workload' && actor.subjectWorkloads === undefined
+      ? 'a workload-only module actor requires subjectWorkloads'
+      : undefined,
+  ),
+  // A narrowing of the workload-subject callers needs workload keys and may name only callers.
+  Schema.makeFilter((actor) =>
+    actor.subjectWorkloadCallers !== undefined && actor.subjectWorkloads === undefined
+      ? 'subjectWorkloadCallers needs subjectWorkloads'
+      : undefined,
+  ),
+  Schema.makeFilter((actor) =>
+    actor.subjectWorkloadCallers?.some((caller) => !actor.callers.includes(caller)) === true
+      ? 'subjectWorkloadCallers must be callers'
+      : undefined,
+  ),
+);
 /** A decoded actor declaration; `decodeAccessActor` returns it frozen. */
 export type AccessActor = typeof AccessActorSchema.Type;
 export type AccessActorInput = typeof AccessActorSchema.Encoded;
@@ -693,9 +727,13 @@ export const decodeAccessActor = <Input>(
     Result.map((actor): AccessActor =>
       Object.freeze(
         withOptional(
-          { callers: Object.freeze(actor.callers), reason: actor.reason, subject: actor.subject },
-          'subjectWorkloads',
-          actor.subjectWorkloads === undefined ? undefined : Object.freeze(actor.subjectWorkloads),
+          withOptional(
+            { callers: Object.freeze(actor.callers), reason: actor.reason, subject: actor.subject },
+            'subjectWorkloads',
+            actor.subjectWorkloads === undefined ? undefined : Object.freeze(actor.subjectWorkloads),
+          ),
+          'subjectWorkloadCallers',
+          actor.subjectWorkloadCallers === undefined ? undefined : Object.freeze(actor.subjectWorkloadCallers),
         ),
       ),
     ),
@@ -752,21 +790,39 @@ export interface DeclaredAccessCarrier {
 /** Nothing declared: one shared empty list, never a fresh mutable array. */
 const NO_FIELD_GROUPS: readonly AccessFieldGroup[] = Object.freeze([]);
 
+/** An exclusive module workload has neither human capabilities nor a direct-call admission. */
+const workloadActorCarrierIssue = (descriptor: AccessCarrierInput): string | undefined => {
+  if (descriptor.accessActor?.subject !== 'workload') {
+    return undefined;
+  }
+  if (
+    descriptor.accessDeclaration !== undefined ||
+    descriptor.accessWorkload !== undefined ||
+    (descriptor.accessFieldGroups?.length ?? 0) > 0
+  ) {
+    return 'a workload-only module actor cannot carry accessDeclaration, accessWorkload or accessFieldGroups';
+  }
+  return undefined;
+};
+
 /**
  * The decoded `accessActor` of one descriptor (D5). A `rights` actor reads the subject's own declaration,
  * so it needs one on the same carrier.
  */
 const decodeActorCarrier = (
-  actor: AccessActorInput | undefined,
-  accessDeclaration: AccessDeclarationInput | undefined,
-  entrypoint: AccessDeclarationOwner,
+  descriptor: AccessCarrierInput,
 ): Result.Result<{ readonly accessActor?: AccessActor }, AccessDeclarationError> => {
+  const { accessActor: actor, accessDeclaration, entrypoint } = descriptor;
   if (actor === undefined) {
     return Result.succeed({});
   }
   const decoded = decodeAccessActor(actor, entrypoint);
   if (Result.isFailure(decoded)) {
     return Result.fail(decoded.failure);
+  }
+  const exclusivityIssue = workloadActorCarrierIssue(descriptor);
+  if (exclusivityIssue !== undefined) {
+    return Result.fail(invalidDeclaration(exclusivityIssue));
   }
   if (decoded.success.subject === 'rights' && accessDeclaration === undefined) {
     return Result.fail(
@@ -783,10 +839,13 @@ const decodeAccessCarriers = (
   const { accessDeclaration, entrypoint } = descriptor;
   const groups = descriptor.accessFieldGroups ?? [];
   const workload = descriptor.accessWorkload;
-  const actor = descriptor.accessActor;
   const missing = missingAccessCarrierIssue(descriptor);
   if (missing !== undefined) {
     return Result.fail(invalidDeclaration(missing));
+  }
+  const actorCarrier = decodeActorCarrier(descriptor);
+  if (Result.isFailure(actorCarrier)) {
+    return Result.fail(actorCarrier.failure);
   }
   if (workload !== undefined && groups.length > 0) {
     return Result.fail(
@@ -820,10 +879,6 @@ const decodeAccessCarriers = (
   }
   const workloadCarrier: { readonly accessWorkload?: AccessWorkload } =
     decodedWorkload === undefined ? {} : { accessWorkload: decodedWorkload };
-  const actorCarrier = decodeActorCarrier(actor, accessDeclaration, entrypoint);
-  if (Result.isFailure(actorCarrier)) {
-    return Result.fail(actorCarrier.failure);
-  }
   if (accessDeclaration === undefined) {
     return Result.succeed({ ...workloadCarrier, ...actorCarrier.success });
   }
@@ -886,8 +941,10 @@ export const deriveCarrierAgentPolicy = (carrier: {
 }): AgentPolicy => (carrier.accessDeclaration === undefined ? 'never' : deriveAgentPolicy(carrier.accessDeclaration));
 
 export interface AccessCatalogDescriptor {
+  readonly accessActor?: AccessActorInput;
   readonly accessDeclaration?: AccessDeclarationInput;
   readonly accessFieldGroups?: readonly AccessFieldGroupInput[];
+  readonly accessWorkload?: AccessWorkloadInput;
   readonly entrypoint: ModuleEntrypointDescriptor;
 }
 
@@ -1069,6 +1126,18 @@ const collectDescriptorEntries = (
   module: AccessCatalogModule,
   descriptor: AccessCatalogDescriptor,
 ): Result.Result<readonly AccessCatalogEntry[], AccessCatalogError> => {
+  if (descriptor.accessActor?.subject === 'workload') {
+    const issue = accessCarrierIssue(descriptor);
+    return issue === undefined
+      ? Result.succeed([])
+      : Result.fail(
+          catalogError(
+            'access_catalog_declaration_invalid',
+            module.moduleId,
+            `${descriptor.entrypoint.entrypointKey}: ${issue}`,
+          ),
+        );
+  }
   const { accessDeclaration, entrypoint } = descriptor;
   const groups = descriptor.accessFieldGroups ?? [];
   if (groups.length > 0 && accessDeclaration === undefined) {

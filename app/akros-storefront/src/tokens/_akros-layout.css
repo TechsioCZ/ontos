@@ -1,0 +1,22 @@
+/* Accepted storefront geometry; responsive boundaries match globals.css. */
+:root {
+  --sf-content-max: 1663px;
+  --sf-page-gutter: var(--dimension-12);
+  --sf-section-gap: var(--dimension-48);
+  --sf-sidebar-width: 280px;
+  --sf-radius-lg: var(--dimension-16);
+  --sf-radius-md: var(--dimension-8);
+}
+
+@media (max-width: 1100px) {
+  :root {
+    --sf-page-gutter: var(--dimension-16);
+    --sf-sidebar-width: 240px;
+  }
+}
+
+@media (max-width: 760px) {
+  :root {
+    --sf-section-gap: var(--dimension-32);
+  }
+}

@@ -134,6 +134,9 @@ import type { SymmyEffectAdapter, SymmyEffectAdapterInput } from './symmy-effect
 import { symmyJobWorkerUnavailable } from './symmy-job-worker-error.ts';
 import { readOriginalOwnerAttempt } from './symmy-owner-request-recovery.ts';
 
+/** Delegated calls present this module's own credential. */
+const OWN_APP_ID = 'symmy-integration';
+
 const DiagnosticFailureSchema = Schema.Struct({
   _tag: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[A-Za-z][A-Za-z0-9_]{0,99}$/u))),
   status: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ maximum: 599, minimum: 400 }))),
@@ -534,7 +537,7 @@ export const symmyPartyCommerceIntentMatchesEffect = (input: IntentScope, intent
   );
 
 const invocationErrorSchema = Schema.Struct({
-  invocationId: ResolvePartyCommandCommitPayloadSchema.fields.invocationId,
+  invocationId: ResolvePartyCommandCommitPayloadSchema.members[0].fields.invocationId,
 });
 const ownerFailureSchema = Schema.Struct({
   code: Schema.optionalKey(Schema.String),
@@ -689,6 +692,7 @@ const freshOwnerContext = Effect.fn('SymmyPartyCommerceAdapters.freshContext')(f
   const granted = yield* acquireDelegatedGatewayContext(
     {
       audience: moduleId === party ? 'party-registry' : 'commerce-customer-context',
+      callingAppId: OWN_APP_ID,
       legalEntityScope: input.legalEntityId === undefined ? 'tenant' : 'subject',
       requestCorrelation,
       subject,
@@ -789,6 +793,7 @@ const freshRecoveryContext = Effect.fn('SymmyPartyCommerceAdapters.recoveryConte
   const context = yield* acquireDelegatedGatewayContext(
     {
       audience: moduleId === party ? 'party-registry' : 'commerce-customer-context',
+      callingAppId: OWN_APP_ID,
       legalEntityScope: input.legalEntityId === undefined ? 'tenant' : 'subject',
       requestCorrelation,
       subject: {
@@ -874,7 +879,13 @@ const assignmentPrivacy = Effect.fn('SymmyPartyCommerceAdapters.assignmentPrivac
       ? { ...input.admission, ...common, _tag: 'RegisteredAdmission' as const }
       : { ...common, _tag: 'RegisteredWorkload' as const, context: input.context };
   const context = yield* acquireDelegatedGatewayContext(
-    { audience: 'privacy', legalEntityScope: 'subject', requestCorrelation, subject },
+    {
+      audience: 'privacy',
+      callingAppId: OWN_APP_ID,
+      legalEntityScope: 'subject',
+      requestCorrelation,
+      subject,
+    },
     crypto,
   ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
   const decision = yield* executeSourceProcessingEligibilityWithAuthorization(

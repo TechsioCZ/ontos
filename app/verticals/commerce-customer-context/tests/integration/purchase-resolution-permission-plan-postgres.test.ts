@@ -171,11 +171,11 @@ const nativePurchasePermissionPlans = Effect.gen(function* nativePurchasePermiss
     (resource) => resource.close().pipe(Effect.orDie),
   );
   yield* grantTestTenantOwnerAccess({
-    adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
     legalEntityIds: [fixture.legalEntityId],
     memberPrincipalIds: [fixture.legalEntityOnly.principalId],
     owner: fixture.manager,
     spiceDb: yield* liveFixtureSpiceDb(fixture.permissionEnvironment),
+    writerConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
   });
   const adminContext = yield* Layer.build(
     PgClient.layerFrom(PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) })).pipe(

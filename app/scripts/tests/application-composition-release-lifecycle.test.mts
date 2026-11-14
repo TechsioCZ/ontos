@@ -1,9 +1,9 @@
-import { createHash } from 'node:crypto';
-
-import { Array as EffectArray, ConfigProvider, DateTime, Effect, Fiber, Layer, Option, Order, Schema } from 'effect';
+import { NodeServices } from '@effect/platform-node';
+import { ConfigProvider, DateTime, Effect, Fiber, FileSystem, Layer, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
-import { HttpClient, HttpClientResponse } from 'effect/http';
+import { HttpClient, HttpClientResponse, HttpEffect } from 'effect/http';
+import type { HttpServerRequest } from 'effect/http';
 
 import { governedSharedSingletonPackages } from '../../module-federation.shared.ts';
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
@@ -12,14 +12,12 @@ import {
   moduleReleaseWorkerName,
 } from '../../packages/core-runtime/src/http/module-release-identity.ts';
 import type { ActiveApplicationCompositionSnapshot } from '../../packages/core-runtime/src/index.ts';
-import { ActiveApplicationCompositionUnavailableError } from '../../packages/core-runtime/src/index.ts';
 import { ApplicationCompositionAuthorityError } from '../../packages/core-runtime/src/modules/application-composition-authority.ts';
 import { ApplicationCompositionCloudflareWorkerBackendSchema } from '../../packages/core-runtime/src/modules/application-composition-backend.ts';
 import { LegacyCompletionPublicationError } from '../../packages/core-runtime/src/modules/legacy-completion-publication.ts';
 import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
 import {
   ACTIVE_APPLICATION_COMPOSITION_POLICY,
-  ActiveApplicationCompositionPublicationError,
   deriveActiveApplicationCompositionSnapshot,
   encodeActiveApplicationCompositionSnapshot,
 } from '../active-application-composition.mts';
@@ -27,14 +25,16 @@ import { createShellRuntimeContract } from '../generate-ontos-shell-runtime-cont
 import {
   resumeApplicationCompositionDurableWork,
   runApplicationCompositionMigration,
+  ApplicationCompositionPublicationTimeout,
 } from '../application-composition-authority-publication.mts';
-import { verifyInitialCutoverProviderInventory } from '../initial-composition-cutover-provider.mts';
-import { assertPublishedShellIngressSnapshot } from '../publish-active-application-composition.mts';
 import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
+import {
+  developmentCompositionApplication,
+  makeDevelopmentCompositionPointer,
+} from '../siampark/development-composition.mts';
 import { legacyCompletionPublicationFixture } from './support/legacy-completion-publication.mts';
 import type { LegacyPublicationControl } from './support/legacy-completion-publication.mts';
 
-const KV_URL = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/storage/kv/namespaces/${'b'.repeat(32)}/values/active`;
 const OBSERVED_AT = '2026-10-02T16:00:00.000Z';
 const SHELL_BUILD_MARKER = 'shell-lifecycle-build';
 const MODULE_APP_ID = 'catalog';
@@ -44,39 +44,17 @@ const INITIAL_NODE_ID = 'A'.repeat(22);
 const INITIAL_ACCOUNT_ID = 'a'.repeat(32);
 const INITIAL_NAMESPACE_ID = 'b'.repeat(32);
 const INITIAL_NAMESPACE_PATH = `/client/v4/accounts/${INITIAL_ACCOUNT_ID}/storage/kv/namespaces/${INITIAL_NAMESPACE_ID}`;
-const INITIAL_WORKER_NAME = 'old-shell-worker';
-const SESSION_LOCK = 'SESSION LOCK';
 const SESSION_UNLOCK = 'SESSION UNLOCK';
 const MIGRATION_EVENT = 'MIGRATION';
 const COMMITTED_DRAINING = 'COMMITTED draining';
-const COMMITTED_SEALED = 'COMMITTED sealed';
-const COMMITTED_MIGRATED = 'COMMITTED migrated';
-const DRAIN_BLOCKED = 'DRAIN BLOCKED';
-const DRAIN_COMPLETE = 'DRAIN COMPLETE';
-const DURABLE_BLOCKED = 'DURABLE BLOCKED';
-const VERIFY_ONLY = 'verify-only';
-const SCHEMA_VERIFIED = 'OWNER SCHEMA VERIFIED';
-const PROVIDER_VERIFIED = 'VERIFIED PROVIDER';
-const REPLACEMENT_ALLOWED = 'REPLACEMENT WORKERS ALLOWED';
 const DURABLE_COMPLETE = 'DURABLE COMPLETE';
+const DURABLE_BLOCKED = 'DURABLE BLOCKED';
 const ROLLBACK_EVENT = 'TRANSACTION ROLLBACK';
 const LEGACY_TRANSACTION_CHECK = 'LEGACY TRANSACTION CHECK';
 const OWNER_RELEASE = 'OWNER RELEASE';
 const OWNER_ACQUIRE = 'OWNER ACQUIRE';
 const AUTHORITY_FROM = 'from "core"."application_composition_authority"';
-const initialProviderProof = verifyInitialCutoverProviderInventory({
-  cloudflare: {
-    accountId: INITIAL_ACCOUNT_ID,
-    compositionPointer: {
-      namespaceId: INITIAL_NAMESPACE_ID,
-      sha256: createHash('sha256').update('obsolete lifecycle fixture pointer').digest('hex'),
-    },
-    workerNames: [INITIAL_WORKER_NAME],
-  },
-  zeropsServiceIds: [INITIAL_NODE_ID],
-});
 const JsonText = Schema.fromJsonString(Schema.Unknown);
-const JsonRecord = Schema.Record(Schema.String, Schema.Unknown);
 const artifact = (url: string, document: typeof JsonText.Type) => ({
   bytes: new TextEncoder().encode(Schema.encodeSync(JsonText)(document)),
   url,
@@ -157,188 +135,9 @@ const completeSnapshot = Effect.gen(function* deriveLifecycleSnapshot() {
   });
 });
 
-const authorityRow = (snapshot: ActiveApplicationCompositionSnapshot) => ({
-  phase: 'active',
-  revision: snapshot.composition.revision,
-  unexpired: true,
-});
-
-const shellReceipt = (snapshot: ActiveApplicationCompositionSnapshot) => ({
-  deployment: snapshot.composition.shell.deployment,
-  federationManifest: snapshot.composition.shell.federationManifest,
-  runtimeContract: snapshot.composition.shell.runtimeContract,
-});
-
-const gateFixture = (value: string, authorityRows: readonly object[], status = 200) => {
-  const requests: { readonly authorization: string | undefined; readonly method: string; readonly url: string }[] = [];
-  const statements: string[] = [];
-  const client = HttpClient.make((request, destination) => {
-    requests.push({ authorization: request.headers.authorization, method: request.method, url: destination.href });
-    return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(value, { status })));
-  });
-  return {
-    layer: Layer.mergeAll(
-      Layer.succeed(HttpClient.HttpClient, client),
-      Layer.effect(
-        CoreDatabase,
-        makeTestDatabase((sql) =>
-          Effect.sync(() => {
-            statements.push(sql);
-            if (sql.includes('as isolation')) {
-              return [{ isolation: 'read committed' }];
-            }
-            return sql.includes(AUTHORITY_FROM) ? authorityRows : [];
-          }),
-        ).pipe(Effect.map((executor) => ({ executor }))),
-      ),
-      ConfigProvider.layer(
-        ConfigProvider.fromUnknown({
-          [ACTIVE_APPLICATION_COMPOSITION_POLICY.sourceUrlVariable]: KV_URL,
-          CLOUDFLARE_API_TOKEN: 'shell-lifecycle-publication-token',
-        }),
-      ),
-    ),
-    requests,
-    statements,
-  };
-};
-
-it.effect('admits only the exact Shell receipt in the fresh published release and active database authority', () =>
-  Effect.gen(function* admitsPublishedShellIngress() {
-    const snapshot = yield* completeSnapshot;
-    const encoded = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
-    const { layer, requests, statements } = gateFixture(encoded, [authorityRow(snapshot)]);
-
-    yield* assertPublishedShellIngressSnapshot(shellReceipt(snapshot)).pipe(Effect.provide(layer));
-
-    expect(requests).toEqual([
-      { authorization: 'Bearer shell-lifecycle-publication-token', method: 'GET', url: KV_URL },
-    ]);
-    expect(statements.some((statement) => statement.includes('application_composition_authority'))).toBe(true);
-    expect(statements.some((statement) => statement.includes('ontos.application-composition-publication'))).toBe(false);
-    expect(statements.some((statement) => /^(?:insert|update|delete) /u.test(statement))).toBe(false);
-  }),
-);
-
-it.effect('refuses Shell mutation when database authority is missing, different, expired, draining, or sealed', () =>
-  Effect.gen(function* rejectsUnapprovedShellAuthority() {
-    const snapshot = yield* completeSnapshot;
-    const encoded = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
-    const active = authorityRow(snapshot);
-    const states = [
-      { name: 'missing', rows: [] },
-      { name: 'different revision', rows: [{ ...active, revision: `sha256:${'0'.repeat(64)}` }] },
-      { name: 'expired', rows: [{ ...active, unexpired: false }] },
-      { name: 'draining', rows: [{ ...active, phase: 'draining' }] },
-      { name: 'sealed', rows: [{ ...active, phase: 'sealed' }] },
-      { name: 'migrated', rows: [{ ...active, phase: 'migrated' }] },
-    ];
-    for (const state of states) {
-      const { layer, requests, statements } = gateFixture(encoded, state.rows);
-      let ingressMutated = false;
-      const failure = yield* assertPublishedShellIngressSnapshot(shellReceipt(snapshot)).pipe(
-        Effect.andThen(
-          Effect.sync(() => {
-            ingressMutated = true;
-          }),
-        ),
-        Effect.provide(layer),
-        Effect.flip,
-      );
-
-      expect({ refused: Schema.is(ActiveApplicationCompositionPublicationError)(failure), state: state.name }).toEqual({
-        refused: true,
-        state: state.name,
-      });
-      expect(ingressMutated).toBe(false);
-      expect(requests.map(({ method }) => method)).toEqual(['GET']);
-      expect(statements.some((statement) => /^(?:insert|update|delete) /u.test(statement))).toBe(false);
-    }
-  }),
-);
-
-it.effect('refuses a changed Shell build marker, artifact URL, or digest before ingress mutation', () =>
-  Effect.gen(function* rejectsDifferentShellReceipt() {
-    const snapshot = yield* completeSnapshot;
-    const encoded = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
-    const approved = shellReceipt(snapshot);
-    const digest = '0'.repeat(64);
-    const receipts = [
-      { ...approved, deployment: { ...approved.deployment, buildMarker: 'different-shell-build' } },
-      {
-        ...approved,
-        runtimeContract: {
-          ...approved.runtimeContract,
-          url: 'https://shell.example/.well-known/ontos-shell-runtime.json',
-        },
-      },
-      { ...approved, runtimeContract: { ...approved.runtimeContract, sha256: digest } },
-      {
-        ...approved,
-        federationManifest: { ...approved.federationManifest, url: 'https://shell.example/mf-manifest.json' },
-      },
-      { ...approved, federationManifest: { ...approved.federationManifest, sha256: digest } },
-    ];
-    for (const receipt of receipts) {
-      const { layer, requests, statements } = gateFixture(encoded, [authorityRow(snapshot)]);
-      let ingressMutated = false;
-      const failure = yield* assertPublishedShellIngressSnapshot(receipt).pipe(
-        Effect.andThen(
-          Effect.sync(() => {
-            ingressMutated = true;
-          }),
-        ),
-        Effect.provide(layer),
-        Effect.flip,
-      );
-
-      expect(Schema.is(ActiveApplicationCompositionPublicationError)(failure)).toBe(true);
-      expect(ingressMutated).toBe(false);
-      expect(requests.map(({ method }) => method)).toEqual(['GET']);
-      expect(statements.some((statement) => /^(?:insert|update|delete) /u.test(statement))).toBe(false);
-    }
-  }),
-);
-
-it.effect('never admits a Shell from missing, malformed, unavailable, or expired publication evidence', () =>
-  Effect.gen(function* rejectsUnavailableShellPublication() {
-    const snapshot = yield* completeSnapshot;
-    const encoded = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
-    const document = yield* Schema.decodeEffect(Schema.fromJsonString(JsonRecord))(encoded);
-    const composition = yield* Schema.decodeUnknownEffect(JsonRecord)(document.composition);
-    const modules = yield* Schema.decodeUnknownEffect(Schema.Array(JsonRecord))(composition.modules);
-    const missingBackend = yield* Schema.encodeEffect(JsonText)({
-      ...document,
-      composition: { ...composition, modules: modules.map((module) => ({ ...module, backend: null })) },
-    });
-    const sources = [
-      { status: 404, value: '' },
-      { status: 200, value: '{}' },
-      { status: 200, value: missingBackend },
-      { status: 503, value: encoded },
-    ];
-    for (const source of sources) {
-      const { layer, requests } = gateFixture(source.value, [authorityRow(snapshot)], source.status);
-      const failure = yield* assertPublishedShellIngressSnapshot(shellReceipt(snapshot)).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
-      expect(Schema.is(ActiveApplicationCompositionPublicationError)(failure)).toBe(true);
-      expect(requests.map(({ method }) => method)).toEqual(['GET']);
-    }
-    yield* TestClock.setTime(DateTime.toEpochMillis(snapshot.validUntil));
-    const expired = gateFixture(encoded, [authorityRow(snapshot)]);
-    const failure = yield* assertPublishedShellIngressSnapshot(shellReceipt(snapshot)).pipe(
-      Effect.provide(expired.layer),
-      Effect.flip,
-    );
-    expect(Schema.is(ActiveApplicationCompositionUnavailableError)(failure)).toBe(true);
-    expect(expired.requests.map(({ method }) => method)).toEqual(['GET']);
-  }),
-);
-
 interface MigrationFixtureOptions {
-  readonly currentRevision?: string;
+  readonly currentSnapshot?: ActiveApplicationCompositionSnapshot;
+  readonly durableBlocked?: () => boolean;
   readonly durableBlocks?: readonly boolean[];
   readonly initialPhase?: 'active' | 'draining' | 'sealed' | 'migrated';
   readonly leaseRemainingMillis?: number;
@@ -354,8 +153,12 @@ interface MigrationFixtureOptions {
 }
 
 const migrationFixture = (options: MigrationFixtureOptions = {}) => {
+  const oldRevision = options.currentSnapshot?.composition.revision ?? OLD_REVISION;
+  const validUntil =
+    options.currentSnapshot === undefined
+      ? new Date('2026-10-03T16:00:00.000Z')
+      : DateTime.toDateUtc(options.currentSnapshot.validUntil);
   let phase = options.initialPhase ?? 'active';
-  const revision = options.currentRevision ?? OLD_REVISION;
   let admission = 'open';
   let progressRead = 0;
   let durableRead = 0;
@@ -366,7 +169,6 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
   const events: string[] = [];
   const authorityLockPositions: number[] = [];
   const proofRequests: string[] = [];
-  const proofCredentials: { readonly authorization: string | undefined; readonly url: string }[] = [];
   const legacy = legacyCompletionPublicationFixture(events, options.legacyControl);
   const recordTransaction = (sql: string) => {
     if (sql === 'BEGIN') {
@@ -399,12 +201,13 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
     if (durableWork && outboxWork) {
       const blocked = options.progressBlocks?.[progressRead] ?? false;
       progressRead += 1;
-      events.push(blocked ? DRAIN_BLOCKED : DRAIN_COMPLETE);
+      events.push(blocked ? 'DRAIN BLOCKED' : 'DRAIN COMPLETE');
       return [{ blocked }];
     }
     if (durablePoll) {
       durablePoll = false;
-      const blocked = options.durableBlocks?.[durableRead] ?? options.ownerWorkPending ?? false;
+      const blocked =
+        options.durableBlocked?.() ?? options.durableBlocks?.[durableRead] ?? options.ownerWorkPending ?? false;
       durableRead += 1;
       events.push(blocked ? DURABLE_BLOCKED : DURABLE_COMPLETE);
       return [{ blocked }];
@@ -413,7 +216,7 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
   };
   const stageAuthorityChange = (params: readonly unknown[]) => {
     const [next, , expectedRevision] = params;
-    if (expectedRevision !== revision || (next === 'sealed' && options.sealRevisionChanged === true)) {
+    if (expectedRevision !== oldRevision || (next === 'sealed' && options.sealRevisionChanged === true)) {
       return [];
     }
     if (next === 'closed' || next === 'open') {
@@ -421,17 +224,16 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
         return [];
       }
       pendingAdmissions[pendingAdmissions.length - 1] = next;
-      return [{ revision }];
+      return [{ revision: oldRevision }];
     }
     if (next === 'active' || next === 'draining' || next === 'sealed' || next === 'migrated') {
       pendingPhases[pendingPhases.length - 1] = next;
-      return [{ revision }];
+      return [{ revision: oldRevision }];
     }
     return [];
   };
   const client = HttpClient.make((request, destination) => {
     proofRequests.push(`${request.method} ${destination.href}`);
-    proofCredentials.push({ authorization: request.headers.authorization, url: destination.href });
     events.push(`PROOF ${destination.href}`);
     if (destination.pathname.startsWith(INITIAL_NAMESPACE_PATH)) {
       const pointerResponse =
@@ -474,7 +276,7 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
             return [{ unlocked: true }];
           }
           if (sql.includes('pg_advisory_lock(')) {
-            events.push(SESSION_LOCK);
+            events.push('SESSION LOCK');
             return [];
           }
           if (sql.includes('as initialized')) {
@@ -483,21 +285,23 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
             return [{ isolation: 'read committed' }];
           } else if (sql.includes('as remaining')) {
             return [{ remaining: options.leaseRemainingMillis ?? 1_230_000 }];
+          } else if (sql.includes('as "validUntilMillis"')) {
+            return [{ phase, revision: oldRevision, validUntilMillis: validUntil.getTime() }];
           } else if (sql.startsWith('select') && sql.includes(AUTHORITY_FROM)) {
             if (options.missingAuthority === true) {
               return [];
             }
             // executeValues maps Object.values in projection order; revision-only reads cannot return phase first.
             if (sql.startsWith('select "revision" from')) {
-              return [{ revision }];
+              return [{ revision: oldRevision }];
             }
             if (sql.includes('"durable_work_admission"')) {
               durablePoll = true;
-              return [{ durableWorkAdmission: admission, phase, revision }];
+              return [{ durableWorkAdmission: admission, phase, revision: oldRevision }];
             }
             return sql.includes('"valid_until"')
-              ? [{ phase, revision, validUntil: new Date('2026-10-03T16:00:00.000Z') }]
-              : [{ phase, revision }];
+              ? [{ phase, revision: oldRevision, validUntil }]
+              : [{ phase, revision: oldRevision }];
           } else if (sql.includes('as blocked')) {
             return blockedWork(sql);
           } else if (sql.startsWith('update "core"."application_composition_authority"')) {
@@ -515,201 +319,10 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
     layer,
     legacy,
     phase: () => phase,
-    proofCredentials,
     proofRequests,
     statements,
   };
 };
-
-const releasePrecondition = { baselineRevision: '1'.repeat(64), targetRevision: '2'.repeat(64) };
-
-it.effect('verify-only verifies committed SQL before completing a sealed retry', () =>
-  Effect.gen(function* verifiesCommittedReleaseRetry() {
-    const fixture = migrationFixture({ currentRevision: releasePrecondition.baselineRevision, initialPhase: 'sealed' });
-    const result = yield* runApplicationCompositionMigration(
-      Effect.sync(() => {
-        expect(fixture.phase()).toBe('sealed');
-        expect(fixture.legacy.observations).toHaveLength(1);
-        fixture.events.push(SCHEMA_VERIFIED);
-        return 'verified-committed-sql';
-      }),
-      initialProviderProof,
-      releasePrecondition,
-      VERIFY_ONLY,
-    ).pipe(Effect.provide(fixture.layer));
-    expect(result).toBe('verified-committed-sql');
-    expect(fixture.phase()).toBe('migrated');
-    expect(fixture.events.indexOf(SCHEMA_VERIFIED)).toBeLessThan(fixture.events.indexOf(COMMITTED_MIGRATED));
-    expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
-    expect(fixture.events).not.toContain(COMMITTED_DRAINING);
-    expect(fixture.statements.some((statement) => /^(?:alter|create) /iu.test(statement))).toBe(false);
-
-    const failed = migrationFixture({ currentRevision: releasePrecondition.baselineRevision, initialPhase: 'sealed' });
-    const failure = yield* runApplicationCompositionMigration(
-      Effect.fail('owner verification failed'),
-      initialProviderProof,
-      releasePrecondition,
-      VERIFY_ONLY,
-    ).pipe(Effect.provide(failed.layer), Effect.flip);
-    expect(failure).toBe('owner verification failed');
-    expect(failed.phase()).toBe('sealed');
-    expect(failed.events).not.toContain(COMMITTED_MIGRATED);
-    expect(failed.events.at(-1)).toBe(SESSION_UNLOCK);
-  }),
-);
-
-it.effect('a no-SQL release drains durable and Outbox work before permitting replacement workers', () =>
-  Effect.gen(function* drainsBeforeReplacementWorkers() {
-    const fixture = migrationFixture({
-      currentRevision: releasePrecondition.baselineRevision,
-      durableBlocks: [true, false],
-      progressBlocks: [true, false],
-    });
-    let replacementAllowed = false;
-    const fiber = yield* runApplicationCompositionMigration(
-      Effect.sync(() => {
-        expect(fixture.phase()).toBe('sealed');
-        fixture.events.push(PROVIDER_VERIFIED);
-      }),
-      initialProviderProof,
-      releasePrecondition,
-      VERIFY_ONLY,
-    ).pipe(
-      Effect.andThen(
-        Effect.sync(() => {
-          replacementAllowed = true;
-          fixture.events.push(REPLACEMENT_ALLOWED);
-        }),
-      ),
-      Effect.provide(fixture.layer),
-      Effect.forkChild,
-    );
-    yield* TestClock.adjust('0 seconds');
-    expect(fixture.phase()).toBe('active');
-    expect(fixture.admission()).toBe('closed');
-    expect(fixture.events).toContain(DURABLE_BLOCKED);
-    expect(replacementAllowed).toBe(false);
-    yield* TestClock.adjust('3 seconds');
-    yield* TestClock.adjust('0 seconds');
-    expect(fixture.phase()).toBe('draining');
-    expect(fixture.events).toContain(DRAIN_BLOCKED);
-    expect(fixture.events).not.toContain(PROVIDER_VERIFIED);
-    expect(replacementAllowed).toBe(false);
-    yield* TestClock.adjust('3 seconds');
-    yield* Fiber.join(fiber);
-    expect(fixture.phase()).toBe('migrated');
-    expect(replacementAllowed).toBe(true);
-    const ordered = [
-      DURABLE_COMPLETE,
-      COMMITTED_DRAINING,
-      DRAIN_COMPLETE,
-      COMMITTED_SEALED,
-      PROVIDER_VERIFIED,
-      COMMITTED_MIGRATED,
-      SESSION_UNLOCK,
-      REPLACEMENT_ALLOWED,
-    ].map((event) => fixture.events.indexOf(event));
-    expect(ordered.every((position) => position >= 0)).toBe(true);
-    expect(ordered).toEqual(EffectArray.sort(ordered, Order.Number));
-  }),
-);
-
-it.effect('both migration modes initialize without an authority table or row and retain cutover gates', () =>
-  Effect.gen(function* initializesFirstRelease() {
-    for (const mode of ['migrate', VERIFY_ONLY] as const) {
-      for (const options of [{ schemaInitialized: false }, { missingAuthority: true }]) {
-        const fixture = migrationFixture(options);
-        yield* runApplicationCompositionMigration(
-          Effect.sync(() => {
-            fixture.events.push(MIGRATION_EVENT);
-          }),
-          initialProviderProof,
-          { baselineRevision: null, targetRevision: releasePrecondition.targetRevision },
-          mode,
-        ).pipe(Effect.provide(fixture.layer));
-        expect(fixture.proofRequests).toHaveLength(4);
-        expect(fixture.events.indexOf(LEGACY_TRANSACTION_CHECK)).toBeLessThan(fixture.events.indexOf(MIGRATION_EVENT));
-        expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
-        expect(fixture.statements.some((statement) => /^(?:insert|update|delete) /iu.test(statement))).toBe(false);
-        if (options.schemaInitialized === false) {
-          expect(fixture.statements.some((statement) => statement.includes(AUTHORITY_FROM))).toBe(false);
-        }
-      }
-    }
-    const refused = migrationFixture({ schemaInitialized: false });
-    const failure = yield* runApplicationCompositionMigration(
-      Effect.die('Initial deployment must not run without cutover proof'),
-      Effect.fail('legacy executable still present'),
-      { baselineRevision: null, targetRevision: releasePrecondition.targetRevision },
-      'migrate',
-    ).pipe(Effect.provide(refused.layer), Effect.flip);
-    expect(failure).toBe('legacy executable still present');
-    expect(refused.events.at(-1)).toBe(SESSION_UNLOCK);
-  }),
-);
-
-it.effect('verify-only repeats completed or active-target verification without another lifecycle transition', () =>
-  Effect.gen(function* verifiesSettledReleaseRetry() {
-    for (const options of [
-      { initialPhase: 'migrated' as const },
-      { currentRevision: releasePrecondition.targetRevision },
-      {},
-    ]) {
-      const fixture = migrationFixture({ currentRevision: releasePrecondition.baselineRevision, ...options });
-      let verified = false;
-      yield* runApplicationCompositionMigration(
-        Effect.sync(() => {
-          verified = true;
-        }),
-        Effect.die('A settled or unchanged release must not repeat cutover'),
-        options.currentRevision === undefined && options.initialPhase === undefined
-          ? {
-              baselineRevision: releasePrecondition.baselineRevision,
-              targetRevision: releasePrecondition.baselineRevision,
-            }
-          : releasePrecondition,
-        VERIFY_ONLY,
-      ).pipe(Effect.provide(fixture.layer));
-      expect(verified).toBe(true);
-      expect(fixture.events).toEqual([SESSION_LOCK, SESSION_UNLOCK]);
-      expect(fixture.statements.some((statement) => /^(?:insert|update|delete|alter|create) /iu.test(statement))).toBe(
-        false,
-      );
-    }
-  }),
-);
-
-it.effect('both modes reject changed baselines and SQL migration cannot use the active-target verification path', () =>
-  Effect.gen(function* rejectsUnsafeReleaseRetry() {
-    for (const scenario of [
-      {
-        mode: VERIFY_ONLY,
-        options: {},
-        precondition: { baselineRevision: null, targetRevision: '2'.repeat(64) },
-      },
-      {
-        mode: 'migrate' as const,
-        options: {},
-        precondition: { baselineRevision: null, targetRevision: '2'.repeat(64) },
-      },
-      {
-        mode: 'migrate' as const,
-        options: { currentRevision: releasePrecondition.targetRevision },
-        precondition: releasePrecondition,
-      },
-    ] as const) {
-      const fixture = migrationFixture({ currentRevision: releasePrecondition.baselineRevision, ...scenario.options });
-      const failure = yield* runApplicationCompositionMigration(
-        Effect.die('Rejected releases must not reach the provider'),
-        Effect.die('Rejected releases must not reach cutover'),
-        scenario.precondition,
-        scenario.mode,
-      ).pipe(Effect.provide(fixture.layer), Effect.flip);
-      expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
-      expect(fixture.events).toEqual([SESSION_LOCK, SESSION_UNLOCK]);
-    }
-  }),
-);
 
 it.effect('fences concurrent public writers before acquiring owner leases for both drain and seal', () =>
   Effect.gen(function* authorityBeforeOwnerEvidence() {
@@ -731,12 +344,6 @@ it.effect('fences concurrent public writers before acquiring owner leases for bo
   }),
 );
 
-const expectedRetirementRequests = [
-  `GET https://api.app-prg1.zerops.io/api/rest/public/service-stack/${INITIAL_NODE_ID}`,
-  `GET https://api.cloudflare.com/client/v4/accounts/${INITIAL_ACCOUNT_ID}/workers/scripts/${INITIAL_WORKER_NAME}`,
-  `GET https://api.cloudflare.com${INITIAL_NAMESPACE_PATH}`,
-  `GET ${KV_URL}`,
-];
 const ownerObservationEvents = [OWNER_ACQUIRE, 'OWNER EMPTY TOPIC', 'OWNER VERIFY', 'OWNER RETAIN'];
 
 it.effect('commits draining and sealing before migration, then records completion under the same session lock', () =>
@@ -747,7 +354,7 @@ it.effect('commits draining and sealing before migration, then records completio
       fixture.events.push(MIGRATION_EVENT);
       return 'native-migration-complete';
     });
-    const fiber = yield* runApplicationCompositionMigration(migration, initialProviderProof).pipe(
+    const fiber = yield* runApplicationCompositionMigration(migration, Effect.void).pipe(
       Effect.provide(fixture.layer),
       Effect.forkChild,
     );
@@ -755,44 +362,26 @@ it.effect('commits draining and sealing before migration, then records completio
     yield* TestClock.adjust('3 seconds');
     expect(yield* Fiber.join(fiber)).toBe('native-migration-complete');
 
-    const retirementEvents = fixture.proofRequests.map((request) => `PROOF ${request.slice(4)}`);
     expect(fixture.events).toEqual([
-      SESSION_LOCK,
+      'SESSION LOCK',
       'COMMITTED admission closed',
       DURABLE_COMPLETE,
-      ...retirementEvents.slice(0, 4),
       LEGACY_TRANSACTION_CHECK,
       ...ownerObservationEvents,
       COMMITTED_DRAINING,
       OWNER_RELEASE,
-      DRAIN_BLOCKED,
-      DRAIN_COMPLETE,
-      ...retirementEvents.slice(4, 8),
+      'DRAIN BLOCKED',
+      'DRAIN COMPLETE',
       LEGACY_TRANSACTION_CHECK,
       ...ownerObservationEvents,
-      COMMITTED_SEALED,
+      'COMMITTED sealed',
       OWNER_RELEASE,
       MIGRATION_EVENT,
-      COMMITTED_MIGRATED,
+      'COMMITTED migrated',
       SESSION_UNLOCK,
     ]);
     expect(fixture.phase()).toBe('migrated');
-    // Node and Worker absence probes run concurrently; each round must still be exactly the four native requests.
-    expect(fixture.proofRequests).toHaveLength(8);
-    expect(EffectArray.sort(fixture.proofRequests.slice(0, 4), Order.String)).toEqual(
-      EffectArray.sort(expectedRetirementRequests, Order.String),
-    );
-    expect(EffectArray.sort(fixture.proofRequests.slice(4), Order.String)).toEqual(
-      EffectArray.sort(expectedRetirementRequests, Order.String),
-    );
-    expect(fixture.proofCredentials).toEqual(
-      fixture.proofRequests.map((request) => ({
-        authorization: request.includes('api.app-prg1.zerops.io')
-          ? 'Bearer cutover-node-token'
-          : 'Bearer cutover-provider-token',
-        url: request.slice(4),
-      })),
-    );
+    expect(fixture.proofRequests).toEqual([]);
     expect(fixture.legacy.observations).toHaveLength(2);
     expect(fixture.legacy.retained).toHaveLength(2);
     expect(fixture.legacy.freshnessChecks()).toBe(2);
@@ -818,7 +407,7 @@ it.effect('keeps the drain committed and never migrates when the final seal find
         Effect.sync(() => {
           fixture.events.push(MIGRATION_EVENT);
         }),
-        initialProviderProof,
+        Effect.void,
       ).pipe(Effect.provide(fixture.layer), Effect.flip);
 
       expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
@@ -838,7 +427,7 @@ it.effect('closes new durable admission and leaves existing jobs active until th
       Effect.sync(() => {
         fixture.events.push(MIGRATION_EVENT);
       }),
-      initialProviderProof,
+      Effect.void,
     ).pipe(Effect.provide(fixture.layer), Effect.forkChild);
 
     yield* TestClock.adjust('0 seconds');
@@ -859,13 +448,13 @@ it.effect('closes new durable admission and leaves existing jobs active until th
 it.effect('preserves the sealed fence after native migration failure and refuses a repeated completed migration', () =>
   Effect.gen(function* preservesMigrationFailureFence() {
     const failed = migrationFixture();
-    const failure = yield* runApplicationCompositionMigration(
-      Effect.fail('native migration failed'),
-      initialProviderProof,
-    ).pipe(Effect.provide(failed.layer), Effect.flip);
+    const failure = yield* runApplicationCompositionMigration(Effect.fail('native migration failed'), Effect.void).pipe(
+      Effect.provide(failed.layer),
+      Effect.flip,
+    );
     expect(failure).toBe('native migration failed');
     expect(failed.phase()).toBe('sealed');
-    expect(failed.events).not.toContain(COMMITTED_MIGRATED);
+    expect(failed.events).not.toContain('COMMITTED migrated');
     expect(failed.events.at(-1)).toBe(SESSION_UNLOCK);
 
     const completed = migrationFixture({ initialPhase: 'migrated' });
@@ -873,7 +462,7 @@ it.effect('preserves the sealed fence after native migration failure and refuses
       Effect.sync(() => {
         completed.events.push(MIGRATION_EVENT);
       }),
-      initialProviderProof,
+      Effect.void,
     ).pipe(Effect.provide(completed.layer), Effect.flip);
     expect(Schema.is(ApplicationCompositionAuthorityError)(repeated)).toBe(true);
     expect(completed.events).not.toContain(MIGRATION_EVENT);
@@ -881,17 +470,16 @@ it.effect('preserves the sealed fence after native migration failure and refuses
   }),
 );
 
-it.effect('requires native provider absence and quiescent database transactions before the first migration', () =>
-  Effect.gen(function* verifiesInitialMigrationRetirement() {
+it.effect('requires quiescent database transactions before the first migration', () =>
+  Effect.gen(function* verifiesInitialMigrationQuiescence() {
     for (const options of [{ missingAuthority: true }, { schemaInitialized: false }]) {
       const fixture = migrationFixture(options);
       yield* runApplicationCompositionMigration(
         Effect.sync(() => {
           fixture.events.push(MIGRATION_EVENT);
         }),
-        initialProviderProof,
+        Effect.void,
       ).pipe(Effect.provide(fixture.layer));
-      expect(fixture.proofRequests).toHaveLength(4);
       expect(fixture.events.indexOf(LEGACY_TRANSACTION_CHECK)).toBeLessThan(fixture.events.indexOf(MIGRATION_EVENT));
       expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
       expect(fixture.statements).not.toContain('BEGIN');
@@ -905,14 +493,13 @@ it.effect('requires native provider absence and quiescent database transactions 
       Effect.sync(() => {
         blocked.events.push(MIGRATION_EVENT);
       }),
-      initialProviderProof,
+      Effect.void,
     ).pipe(Effect.provide(blocked.layer), Effect.flip, Effect.forkChild);
     // A runtime that never goes quiet is re-observed for its bounded window, then refused.
     yield* TestClock.adjust('10 seconds');
     const failure = yield* Fiber.join(blockedFiber);
     expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
     expect(blocked.events.filter((event) => event === LEGACY_TRANSACTION_CHECK).length).toBeGreaterThan(1);
-    expect(blocked.proofRequests).toHaveLength(4);
     expect(blocked.events).not.toContain(MIGRATION_EVENT);
     expect(blocked.events.at(-1)).toBe(SESSION_UNLOCK);
   }),
@@ -925,7 +512,7 @@ it.effect('bounds durable draining by the lease and leaves the current release a
       Effect.sync(() => {
         fixture.events.push(MIGRATION_EVENT);
       }),
-      initialProviderProof,
+      Effect.void,
     ).pipe(Effect.provide(fixture.layer), Effect.flip, Effect.forkChild);
     yield* TestClock.adjust('5 seconds');
     const failure = yield* Fiber.join(fiber);
@@ -941,6 +528,28 @@ it.effect('bounds durable draining by the lease and leaves the current release a
     expect(fixture.phase()).toBe('active');
     expect(fixture.admission()).toBe('open');
     expect(fixture.events).toContain('COMMITTED admission open');
+  }),
+);
+
+it.effect('bounds durable draining by its phase budget inside a fresh lease and reports the drain phase', () =>
+  Effect.gen(function* reportsDrainBudgetTimeout() {
+    const fixture = migrationFixture({ ownerWorkPending: true });
+    const fiber = yield* runApplicationCompositionMigration(
+      Effect.sync(() => {
+        fixture.events.push(MIGRATION_EVENT);
+      }),
+      Effect.void,
+      { drainMs: 5000 },
+    ).pipe(Effect.provide(fixture.layer), Effect.flip, Effect.forkChild);
+    yield* TestClock.adjust('5 seconds');
+    const failure = yield* Fiber.join(fiber);
+
+    expect(Schema.is(ApplicationCompositionPublicationTimeout)(failure)).toBe(true);
+    expect(failure).toMatchObject({ budgetMs: 5000, migrationStarted: false, phase: 'durable-drain' });
+    expect(fixture.phase()).toBe('active');
+    expect(fixture.admission()).toBe('closed');
+    expect(fixture.events).not.toContain(MIGRATION_EVENT);
+    expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
   }),
 );
 
@@ -963,6 +572,76 @@ it.effect('refuses operator resumption for an expired, different, or already ret
       expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
     }
   }),
+);
+
+it.effect('serves the restored /active authority to the durable job that a native drain is waiting on', () =>
+  Effect.gen(function* resumesDurableJobAfterPublisherRestart() {
+    const snapshot = yield* completeSnapshot;
+    const fs = yield* FileSystem.FileSystem;
+    const statePath = `${yield* fs.makeTempDirectoryScoped()}/pointer.json`;
+    let durablePending = true;
+    const fixture = migrationFixture({ currentSnapshot: snapshot, durableBlocked: () => durablePending });
+    const original = yield* makeDevelopmentCompositionPointer(statePath).pipe(Effect.provide(fixture.layer));
+    yield* original.publish(snapshot);
+    // A new publisher has no in-memory pointer. Its exact approved bytes survive the restart.
+    const restarted = yield* makeDevelopmentCompositionPointer(statePath).pipe(Effect.provide(fixture.layer));
+    const migration = yield* runApplicationCompositionMigration(Effect.void, Effect.void).pipe(
+      Effect.provide(fixture.layer),
+      Effect.forkChild,
+    );
+    yield* TestClock.adjust('0 seconds');
+    expect(fixture.admission()).toBe('closed');
+    expect(fixture.phase()).toBe('active');
+    expect(fixture.events).toContain(DURABLE_BLOCKED);
+    const handler = HttpEffect.toWebHandlerWith<never, HttpServerRequest.HttpServerRequest>(yield* Effect.context())(
+      developmentCompositionApplication(restarted.load),
+    );
+    const response = yield* Effect.promise(() => handler(new Request('http://127.0.0.1/active')));
+    expect(response.status).toBe(200);
+    expect(yield* Effect.promise(() => response.text())).toBe(
+      yield* encodeActiveApplicationCompositionSnapshot(snapshot),
+    );
+    durablePending = false;
+    yield* TestClock.adjust('3 seconds');
+    yield* Fiber.join(migration);
+    expect(fixture.phase()).toBe('migrated');
+    expect(Option.isNone(yield* restarted.load)).toBe(true);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('keeps the committed bytes across a crash before renewal commits and rejects stale or forged authority', () =>
+  Effect.gen(function* restoresOnlyExactDatabaseApproval() {
+    const snapshot = yield* completeSnapshot;
+    const fs = yield* FileSystem.FileSystem;
+    const statePath = `${yield* fs.makeTempDirectoryScoped()}/pointer.json`;
+    const { revision: approvedRevision } = snapshot.composition;
+    let revision = approvedRevision;
+    let phase = 'active';
+    let validUntilMillis = DateTime.toEpochMillis(snapshot.validUntil);
+    const database = Layer.effect(
+      CoreDatabase,
+      makeTestDatabase(() => Effect.sync(() => [{ phase, revision, validUntilMillis }])).pipe(
+        Effect.map((executor) => ({ executor })),
+      ),
+    );
+    const pointer = yield* makeDevelopmentCompositionPointer(statePath).pipe(Effect.provide(database));
+    yield* pointer.publish(snapshot);
+    const renewed = { ...snapshot, validUntil: DateTime.add(snapshot.validUntil, { minutes: 1 }) };
+    yield* pointer.publish(renewed);
+    const restarted = yield* makeDevelopmentCompositionPointer(statePath).pipe(Effect.provide(database));
+    expect(yield* restarted.load).toEqual(Option.some(yield* encodeActiveApplicationCompositionSnapshot(snapshot)));
+    validUntilMillis = DateTime.toEpochMillis(renewed.validUntil);
+    expect(yield* restarted.load).toEqual(Option.some(yield* encodeActiveApplicationCompositionSnapshot(renewed)));
+    revision = '0'.repeat(64);
+    expect(Option.isNone(yield* restarted.load)).toBe(true);
+    revision = approvedRevision;
+    phase = 'sealed';
+    expect(Option.isNone(yield* restarted.load)).toBe(true);
+    phase = 'draining';
+    expect(Option.isSome(yield* restarted.load)).toBe(true);
+    yield* TestClock.adjust('25 hours');
+    expect(Option.isNone(yield* restarted.load)).toBe(true);
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect(
@@ -988,7 +667,7 @@ it.effect(
           Effect.sync(() => {
             fixture.events.push(MIGRATION_EVENT);
           }),
-          initialProviderProof,
+          Effect.void,
         ).pipe(Effect.provide(fixture.layer), Effect.flip);
         expect({ control: legacyControl, refused: Schema.is(LegacyCompletionPublicationError)(failure) }).toEqual({
           control: legacyControl,
@@ -999,9 +678,6 @@ it.effect(
         expect(fixture.events).not.toContain(COMMITTED_DRAINING);
         expect(fixture.events).not.toContain(MIGRATION_EVENT);
         expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
-        expect(EffectArray.sort(fixture.proofRequests, Order.String)).toEqual(
-          EffectArray.sort(expectedRetirementRequests, Order.String),
-        );
         if (legacyControl === 'missing' || legacyControl === 'empty') {
           expect(fixture.legacy.observations).toEqual([]);
           expect(fixture.events).not.toContain(OWNER_ACQUIRE);
@@ -1018,49 +694,6 @@ it.effect(
           expect(fixture.legacy.retained).toEqual([]);
         }
         expect(fixture.statements.some((statement) => statement.startsWith('SAVEPOINT'))).toBe(false);
-      }
-    }),
-);
-
-it.effect(
-  'reconciles stale absence same-target and already-active-target migration plans before DDL or fence mutation',
-  () =>
-    Effect.gen(function* rejectsStaleMigrationPreconditions() {
-      const currentRevision = 'a'.repeat(64);
-      const otherRevision = 'b'.repeat(64);
-      const targetRevision = 'c'.repeat(64);
-      const cases = [
-        { baselineRevision: otherRevision, missingAuthority: false, targetRevision },
-        { baselineRevision: null, missingAuthority: false, targetRevision },
-        { baselineRevision: otherRevision, missingAuthority: true, targetRevision },
-        { baselineRevision: currentRevision, missingAuthority: false, targetRevision: currentRevision },
-        { baselineRevision: otherRevision, missingAuthority: false, targetRevision: currentRevision },
-      ];
-      for (const scenario of cases) {
-        const fixture = migrationFixture({ currentRevision, missingAuthority: scenario.missingAuthority });
-        let ddlCalls = 0;
-        let initialProofCalls = 0;
-        const failure = yield* runApplicationCompositionMigration(
-          Effect.sync(() => {
-            ddlCalls += 1;
-          }).pipe(Effect.andThen(Effect.die('A rejected precondition cannot execute DDL'))),
-          Effect.sync(() => {
-            initialProofCalls += 1;
-          }).pipe(Effect.andThen(Effect.die('A rejected precondition cannot initialize cutover proof'))),
-          { baselineRevision: scenario.baselineRevision, targetRevision: scenario.targetRevision },
-        ).pipe(Effect.provide(fixture.layer), Effect.flip);
-        expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
-        expect(ddlCalls).toBe(0);
-        expect(initialProofCalls).toBe(0);
-        expect(fixture.phase()).toBe('active');
-        expect(fixture.admission()).toBe('open');
-        expect(fixture.proofRequests).toEqual([]);
-        expect(fixture.legacy.observations).toEqual([]);
-        expect(
-          fixture.statements.some((statement) => /^(?:insert|update|delete|alter|create) /iu.test(statement)),
-        ).toBe(false);
-        expect(fixture.events.filter((event) => event === SESSION_LOCK)).toHaveLength(1);
-        expect(fixture.events.filter((event) => event === SESSION_UNLOCK)).toHaveLength(1);
       }
     }),
 );

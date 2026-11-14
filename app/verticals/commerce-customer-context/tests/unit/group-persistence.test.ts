@@ -10,8 +10,7 @@ import {
   customerGroupPersistenceForTransaction,
   customerGroupRoutineAllowlist,
 } from '../../src/persistence/group-persistence.ts';
-import type { CustomerGroupScopedRoutineInvoker } from '../../src/persistence/group-persistence.ts';
-import type { ScopedRoutineDefinition } from '@app/core-runtime';
+import type { ScopedRoutineDefinition, ScopedRoutineInvoker } from '@app/core-runtime';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -107,6 +106,7 @@ it('declares immutable exact group routine allowlist entries with Core-injected 
     'assign_customer_group_membership',
     'create_customer_group',
     'reactivate_customer_group',
+    'read_counterparty_customer_group_memberships',
     'read_customer_group',
     'read_customer_group_definition_source',
     'read_customer_group_history',
@@ -138,7 +138,7 @@ it.effect('forwards exact actor and Action invocation attribution to create', ()
           },
         ]);
       },
-    } as CustomerGroupScopedRoutineInvoker;
+    } as ScopedRoutineInvoker;
     const persistence = customerGroupPersistenceForTransaction(transaction, scope);
     const outcome = yield* persistence.create({
       actionInvocationId,
@@ -196,7 +196,7 @@ it.effect('maps assignment, removal, and deterministic history documents without
         index += 1;
         return Effect.succeed([row]);
       },
-    } as CustomerGroupScopedRoutineInvoker;
+    } as ScopedRoutineInvoker;
     const persistence = customerGroupPersistenceForTransaction(transaction, scope);
     const assigned = yield* persistence.assign({
       actionInvocationId,
@@ -262,7 +262,7 @@ it.effect('refuses to treat a cursor-bearing effective membership read as a comp
             outcome: 'PRESENT',
           },
         ]),
-    } as CustomerGroupScopedRoutineInvoker;
+    } as ScopedRoutineInvoker;
     const persistence = customerGroupPersistenceForTransaction(transaction, scope);
     const failure = yield* Effect.flip(
       persistence.effectiveMemberships({
@@ -276,6 +276,32 @@ it.effect('refuses to treat a cursor-bearing effective membership read as a comp
   }),
 );
 
+it.effect('reads counterparty memberships by business code and counterparty id', () =>
+  Effect.gen(function* counterpartyMemberships() {
+    let capturedValues: readonly unknown[] = [];
+    // SAFETY: This test double exercises only the counterparty membership routine and returns its decoded row.
+    const transaction = {
+      invoke: (_routine: ScopedRoutineDefinition, values: readonly unknown[]) => {
+        capturedValues = values;
+        return Effect.succeed([
+          { groups_json: [group], items_json: [{ counterpartyResourceId: 'counterparty-1', membership }] },
+        ]);
+      },
+    } as ScopedRoutineInvoker;
+    const persistence = customerGroupPersistenceForTransaction(transaction, scope);
+    const result = yield* persistence.counterpartyMemberships({
+      businessCodes: ['DEALERS'],
+      counterpartyResourceIds: ['counterparty-1', 'counterparty-2'],
+      effectiveAt: recordedAt,
+      legalEntityId,
+      tenantId,
+    });
+    expect(capturedValues).toEqual([['DEALERS'], ['counterparty-1', 'counterparty-2'], recordedAt]);
+    expect(result.groups.map(({ businessCode }) => businessCode)).toEqual(['DEALERS']);
+    expect(result.items).toEqual([{ counterpartyResourceId: 'counterparty-1', membership }]);
+  }),
+);
+
 it.effect('fails closed before invocation when command scope disagrees with Core scope', () =>
   Effect.gen(function* mismatchedScope() {
     let invoked = false;
@@ -285,7 +311,7 @@ it.effect('fails closed before invocation when command scope disagrees with Core
         invoked = true;
         return Effect.succeed([]);
       },
-    } as CustomerGroupScopedRoutineInvoker;
+    } as ScopedRoutineInvoker;
     const persistence = customerGroupPersistenceForTransaction(transaction, scope);
     const error = yield* Effect.flip(
       persistence.detail({
@@ -308,7 +334,7 @@ it.effect('rejects forged command actor attribution before routine invocation', 
         invoked = true;
         return Effect.succeed([]);
       },
-    } as CustomerGroupScopedRoutineInvoker;
+    } as ScopedRoutineInvoker;
     const persistence = customerGroupPersistenceForTransaction(transaction, scope);
     const error = yield* Effect.flip(
       persistence.create({
@@ -346,7 +372,7 @@ it.effect('sanitizes Core routine failures as the owner persistence error', () =
             routineKey: 'customer-group.read-detail',
           }),
         ),
-    } as CustomerGroupScopedRoutineInvoker;
+    } as ScopedRoutineInvoker;
     const error = yield* Effect.flip(
       customerGroupPersistenceForTransaction(transaction, scope).detail({
         groupRef,
@@ -397,7 +423,7 @@ it.effect('strictly decodes raw owner documents instead of accepting foreign fie
       { ...group, revision: 0 },
     ];
     for (const document of malformed) {
-      const transaction: CustomerGroupScopedRoutineInvoker = {
+      const transaction: ScopedRoutineInvoker = {
         invoke: (routine) =>
           Schema.decodeUnknownEffect(Schema.Array(Schema.toType(routine.resultSchema)))([
             { actual_revision: 1, changed: false, group_json: document, outcome: 'FOUND' },
@@ -413,7 +439,7 @@ it.effect('strictly decodes raw owner documents instead of accepting foreign fie
 
 it.effect('round-trips native raw detail and membership page rows through Core wire validation', () =>
   Effect.gen(function* rawWireRoundTrip() {
-    const transaction: CustomerGroupScopedRoutineInvoker = {
+    const transaction: ScopedRoutineInvoker = {
       invoke: (routine) =>
         Schema.decodeUnknownEffect(Schema.Array(Schema.toType(routine.resultSchema)))([
           routine.name === 'read_customer_group'
@@ -435,7 +461,7 @@ it.effect('round-trips native raw detail and membership page rows through Core w
 
 it.effect('rejects malformed native membership documents after raw row validation', () =>
   Effect.gen(function* rejectsMalformedMembership() {
-    const transaction: CustomerGroupScopedRoutineInvoker = {
+    const transaction: ScopedRoutineInvoker = {
       invoke: (routine) =>
         Schema.decodeUnknownEffect(Schema.Array(Schema.toType(routine.resultSchema)))([
           {

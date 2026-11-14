@@ -1,10 +1,25 @@
-import { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
+import { NodeCrypto } from '@effect/platform-node';
+
+import {
+  ActionRuntime,
+  ActionTransportMetadataSchema,
+  GatewayAssertionRedemptionService,
+  ReadRuntime,
+} from '@app/core-runtime';
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
+import {
+  OwnerActionApprovalApi,
+  OwnerActionApprovalAuthenticationSchema,
+  OwnerActionApprovalRequestSchema,
+} from '@app/core-runtime/access/approvals/owner-api';
+import {
+  decodeTrustedPrincipalContext,
+  preserveSystemPrincipalContextTrust,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
-import { NodeCrypto } from '@effect/platform-node';
+import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { Arbitrary, Clock, ConfigProvider, Context, Crypto, Effect, Layer, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
@@ -21,6 +36,8 @@ import type { PartySearchProjectionGatewayService } from '../../shared/domain/se
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { AresSubjectService } from '../../src/integrations/ares/ares-subject.service.ts';
 import type { AresSubjectServiceContract } from '../../src/integrations/ares/ares-subject.service.ts';
+import { makeRootOwnerApprovals } from '../support/root-owner-approvals.ts';
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 
 const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 
@@ -46,10 +63,11 @@ const commaSeparatedHeader = (value: string | null): readonly string[] =>
 const makeAssertion = () =>
   Effect.gen(function* signRuntimeAssemblyAssertion() {
     const issuer = 'https://shell.runtime-assembly.test';
-    const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
-      [ultramodernApiMarker.appId],
-      ultramodernApiMarker.buildMarker,
-    );
+    const { snapshot: compositionSnapshot } = yield* makeOwnerApplicationCompositionFixture({
+      appId: ultramodernApiMarker.appId,
+      buildMarker: ultramodernApiMarker.buildMarker,
+      ownerRegistration: partyRegistryBackendRegistration,
+    });
     const compositionDocument = yield* Schema.encodeEffect(
       Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
     )(compositionSnapshot);
@@ -138,9 +156,13 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     () =>
       Effect.gen(function* verifyRuntimeAssemblyAndCors() {
         const assertion = yield* makeAssertion();
+        const ownerApprovals = yield* makeRootOwnerApprovals(assertion.compositionSnapshot, {
+          ...principal,
+          correlationId: 'party-runtime-assembly-test',
+        });
         let redemptionCalls = 0;
         let actionCalls = 0;
-        let actionCommitCalls = 0;
+        let actionExecutionCalls = 0;
         let aresCalls = 0;
         let aresLayerLoads = 0;
         let counterpartySearchCalls = 0;
@@ -149,11 +171,12 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         let searchLayerLoads = 0;
         let compositionLoads = 0;
         const actionRuntime: ActionRuntimeService = {
-          resolveActionCommit: () =>
+          resolveActionExecution: () =>
             Effect.suspend(() => {
-              actionCommitCalls += 1;
-              return Effect.die('Action commit substitute reached through the assembled runtime');
+              actionExecutionCalls += 1;
+              return Effect.die('Action execution recovery substitute reached through the assembled runtime');
             }),
+          resolveActionCommit: () => Effect.die('Action commit lookup is outside this fixture'),
           runAction: () =>
             Effect.suspend(() => {
               actionCalls += 1;
@@ -180,9 +203,15 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             }),
         } satisfies PartySearchProjectionGatewayService;
         const readRuntime: ReadRuntimeService = {
-          runRead: ({ registration }) =>
-            Effect.context<never>().pipe(
-              Effect.flatMap((context) => {
+          runRead: ({ registration, principal: invocationPrincipal, transport: invocationTransport }) =>
+            Effect.all({
+              context: Effect.context<never>(),
+              principal: decodeTrustedPrincipalContext(invocationPrincipal),
+              transport: Schema.decodeUnknownEffect(ActionTransportMetadataSchema)(invocationTransport),
+            }).pipe(
+              Effect.orDie,
+              Effect.flatMap(({ context, principal: readPrincipal, transport }) => {
+                const scope = preserveSystemPrincipalContextTrust(readPrincipal, { ...readPrincipal, ...transport });
                 readCalls += 1;
                 if (registration.descriptor.readKey === 'party.registry.api.ares-lookup') {
                   const service = Context.getOrUndefined(context, AresSubjectService);
@@ -202,9 +231,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                       {
                         includeArchived: false,
                         query: 'runtime assembly proof',
-                        tenantId: principal.tenantId,
+                        tenantId: readPrincipal.tenantId,
                       },
-                      { ...principal, correlationId: 'runtime-assembly-proof' },
+                      scope,
                       { hiddenTextFields: [], listAccess: { groups: [] } },
                     )
                     .pipe(Effect.orDie, Effect.andThen(Effect.die('Party search substitute completed unexpectedly')));
@@ -219,13 +248,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                         includeArchived: false,
                         legalEntityId: 'a5000000-0000-4000-8000-000000000001',
                         query: 'runtime assembly proof',
-                        tenantId: principal.tenantId,
+                        tenantId: readPrincipal.tenantId,
                       },
-                      {
-                        ...principal,
-                        correlationId: 'runtime-assembly-proof',
-                        legalEntityId: 'a5000000-0000-4000-8000-000000000001',
-                      },
+                      scope,
                       { hiddenTextFields: [], listAccess: { groups: [] } },
                     )
                     .pipe(
@@ -265,6 +290,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           ),
         );
         const actionRuntimeLayer = Layer.mergeAll(
+          Layer.succeedContext(ownerApprovals),
           Layer.succeed(ActionRuntime, actionRuntime),
           assertionConfigurationLive,
           Layer.succeed(
@@ -325,7 +351,14 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         yield* Schema.decodeUnknownEffect(PartyDetailAuthenticationProblemSchema)(
           yield* Effect.promise(() => unauthenticatedRead.json()),
         );
-        const endpoints = Object.values(partyRegistryApi.groups).flatMap((group) => Object.values(group.endpoints));
+        // Native addHttpApi merges annotations on the group, preserving its endpoint identities.
+        expect(partyRegistryApi.groups.ownerActionApprovals.endpoints).toBe(
+          OwnerActionApprovalApi.groups.ownerActionApprovals.endpoints,
+        );
+        const endpoints = Object.values(partyRegistryApi.groups).flatMap((group) =>
+          Object.values(group.endpoints).map((endpoint) => ({ endpoint, group })),
+        );
+        let platformAuthenticationDenials = 0;
         const headers = {
           authorization: `Bearer ${assertion.token}`,
           'content-type': 'application/json',
@@ -453,6 +486,11 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             validTo: '2026-09-07T00:00:00.000Z',
           },
           '/party-registry/actions/create-party': { candidate },
+          '/party-registry/actions/create-crm-client-party': {
+            candidate,
+            clientId: 'runtime-client',
+            sourceScope: { tenantId: principal.tenantId, legalEntityId: 'a5000000-0000-4000-8000-000000000001' },
+          },
           // Sampled DateTimeUtc values include extended years that the canonical ISO wire format rejects.
           '/party-registry/actions/create-party-relationship': {
             fromPartyRef: partyRef,
@@ -521,10 +559,32 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             },
           },
           '/reads/party-match': { candidate },
+          '/reads/crm-client-intake-review': {
+            clientId: 'runtime-client',
+            sourceScope: { tenantId: principal.tenantId, legalEntityId: 'a5000000-0000-4000-8000-000000000001' },
+            caseRef: {
+              moduleId: 'party.registry',
+              resourceType: 'party.registry.duplicate-candidate-case',
+              resourceId: 'a8000000-0000-4000-8000-000000000001',
+              tenantId: principal.tenantId,
+            },
+            decisionRef: {
+              moduleId: 'party.registry',
+              resourceType: 'party.registry.party-match-decision',
+              resourceId: 'a8000000-0000-4000-8000-000000000002',
+              tenantId: principal.tenantId,
+            },
+          },
           '/reads/party-source-effect-receipt': { operation: 'CREATE', payload: { candidate } },
         } as const;
-        for (const [index, endpoint] of endpoints.entries()) {
-          const callsBefore: number = actionCalls + actionCommitCalls + readCalls;
+        for (const [index, { endpoint, group }] of endpoints.entries()) {
+          const callsBefore: number = actionCalls + actionExecutionCalls + readCalls;
+          const redemptionsBefore = redemptionCalls;
+          const isOwnerApproval = group.endpoints === OwnerActionApprovalApi.groups.ownerActionApprovals.endpoints;
+          const requestHeaders = new Headers({
+            ...headers,
+            'idempotency-key': `runtime-assembly-${index + 1}`,
+          });
           const rawPayloadSchema = endpoint.payload.get('application/json')?.schemas[0];
           // Runtime HTTP descriptors erase codec types. These wire codecs require no services.
           const payloadSchema =
@@ -532,7 +592,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               ? undefined
               : Schema.make<Schema.Codec<unknown, unknown>>(rawPayloadSchema.ast);
           const manualPayload = Object.entries(manualPayloads).find(([path]) => path === endpoint.path)?.[1];
-          const payload =
+          const sampledPayload =
             payloadSchema === undefined
               ? undefined
               : (manualPayload ??
@@ -542,42 +602,62 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                     seed: index + 1,
                   }))[0],
                 )));
+          // An audience-valid assertion cannot authenticate a different request composition.
+          const payload = isOwnerApproval
+            ? {
+                ...(yield* Schema.decodeUnknownEffect(OwnerActionApprovalRequestSchema)(sampledPayload)),
+                compositionRevision: '0'.repeat(64),
+              }
+            : sampledPayload;
           const request =
             payload === undefined
               ? new Request(`http://localhost${endpoint.path}`, {
-                  headers: {
-                    ...headers,
-                    'idempotency-key': `runtime-assembly-${index + 1}`,
-                  },
+                  headers: requestHeaders,
                   method: endpoint.method,
                 })
               : new Request(`http://localhost${endpoint.path}`, {
                   body: yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(payload),
-                  headers: {
-                    ...headers,
-                    'idempotency-key': `runtime-assembly-${index + 1}`,
-                  },
+                  headers: requestHeaders,
                   method: endpoint.method,
                 });
+          const unauthenticatedApprovalRequest = isOwnerApproval ? request.clone() : undefined;
           const response = yield* Effect.promise(() => runtime.handler(request));
-          if (endpoint.path === '/party-registry/readiness') {
+          if (isOwnerApproval) {
+            expect(response.status).toBe(401);
+            yield* Schema.decodeUnknownEffect(OwnerActionApprovalAuthenticationSchema)(
+              yield* Effect.promise(() => response.json()),
+            );
+            expect(actionCalls + actionExecutionCalls + readCalls).toBe(callsBefore);
+            expect(redemptionCalls).toBe(redemptionsBefore + 1);
+            assert.isOk(unauthenticatedApprovalRequest !== undefined);
+            unauthenticatedApprovalRequest.headers.delete('authorization');
+            const missingAuthentication = yield* Effect.promise(() => runtime.handler(unauthenticatedApprovalRequest));
+            expect(missingAuthentication.status).toBe(401);
+            yield* Schema.decodeUnknownEffect(OwnerActionApprovalAuthenticationSchema)(
+              yield* Effect.promise(() => missingAuthentication.json()),
+            );
+            expect(actionCalls + actionExecutionCalls + readCalls).toBe(callsBefore);
+            expect(redemptionCalls).toBe(redemptionsBefore + 1);
+            platformAuthenticationDenials += 1;
+          } else if (endpoint.path === '/party-registry/readiness') {
             expect(response.status).toBe(200);
-            expect(actionCalls + actionCommitCalls + readCalls).toBe(callsBefore);
+            expect(actionCalls + actionExecutionCalls + readCalls).toBe(callsBefore);
           } else {
             expect(
               response.status,
               `${endpoint.method} ${endpoint.path} must execute a supplied runtime substitute`,
             ).toBe(500);
             expect(
-              actionCalls + actionCommitCalls + readCalls,
+              actionCalls + actionExecutionCalls + readCalls,
               `${endpoint.method} ${endpoint.path} must reach exactly one supplied core runtime`,
             ).toBe(callsBefore + 1);
           }
         }
+        expect(platformAuthenticationDenials).toBe(2);
         expect(compositionLoads).toBe(1);
         assert.isOk(redemptionCalls > 0);
         assert.isOk(actionCalls > 0);
-        expect(actionCommitCalls).toBe(1);
+        expect(actionExecutionCalls).toBe(1);
         assert.isOk(readCalls > 0);
         expect(aresCalls).toBe(1);
         expect(aresLayerLoads).toBe(1);
@@ -586,7 +666,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         expect(searchLayerLoads).toBe(1);
         const callsBeforePreflight = {
           actionCalls,
-          actionCommitCalls,
+          actionExecutionCalls,
           aresCalls,
           counterpartySearchCalls,
           partySearchCalls,
@@ -622,7 +702,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         );
         expect({
           actionCalls,
-          actionCommitCalls,
+          actionExecutionCalls,
           aresCalls,
           counterpartySearchCalls,
           partySearchCalls,

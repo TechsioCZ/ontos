@@ -26,6 +26,9 @@ import {
 import { stockLocationPersistenceForScope } from '../../src/persistence/stock-location-repository.ts';
 import { stockPositionPersistenceForScope } from '../../src/persistence/stock-position-repository.ts';
 import { externalStockCorrelationPersistenceForScope } from '../../src/persistence/external-stock-correlation-repository.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 interface ExactReference {
   readonly moduleId: string;
@@ -174,7 +177,9 @@ export const prepareC14InventorySourceImportNative = Effect.fn('C14InventorySour
           ) {
             return yield* unavailable();
           }
-          const scoped = yield* installOperationalScope(transaction, scope).pipe(Effect.mapError(unavailable));
+          const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
+            Effect.mapError(unavailable),
+          );
           const identity = yield* makePrincipalResolver(
             { executor: database },
             { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
@@ -188,7 +193,10 @@ export const prepareC14InventorySourceImportNative = Effect.fn('C14InventorySour
           ) {
             return yield* unavailable();
           }
-          const persisted = yield* makeOperationalScopeRepository({ executor: transaction })
+          const persisted = yield* makeOperationalScopeRepository(
+            { executor: transaction },
+            FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          )
             .load(scope)
             .pipe(Effect.mapError(unavailable));
           if (

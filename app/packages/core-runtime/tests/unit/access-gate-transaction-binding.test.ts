@@ -1,5 +1,5 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Option, Schema } from 'effect';
+import { Context, Crypto, Effect, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { AccessDecisionLogEntry } from '../../src/access/enforcement/decision-log.ts';
@@ -7,11 +7,16 @@ import { makeDrizzleAccessDecisionLog } from '../../src/access/enforcement/decis
 import { makeDrizzleAccessPrincipalKinds } from '../../src/access/enforcement/actor.ts';
 import { capabilityPolicyOf } from '../../src/access/enforcement/capability.ts';
 import type { AccessDecisionPorts, GateInput } from '../../src/access/enforcement/contract.ts';
-import { decisionAuthorityOf } from '../../src/access/enforcement/intent-reader.ts';
+import { AccessIntentLive, decisionAuthorityOf } from '../../src/access/enforcement/intent-reader.ts';
+import { AccessIntent } from '../../src/access/decision/authority.ts';
 import type { AccessIntentSource } from '../../src/access/decision/authority.ts';
 import { makeDrizzleLegalEntityCandidates } from '../../src/access/enforcement/legal-entities.ts';
 import { makeAccessDecisionService } from '../../src/access/enforcement/service.ts';
-import { makeJoinedTenantIntentLoader, makeTenantIntentLoader } from '../../src/access/intent/tenant-intent-loader.ts';
+import {
+  TenantIntentLoader,
+  makeJoinedTenantIntentLoader,
+  makeTenantIntentLoader,
+} from '../../src/access/intent/tenant-intent-loader.ts';
 import { makeDrizzleAccessWorkloadBindings } from '../../src/access/workloads/bindings.ts';
 import { AccessScopeIdSchema } from '../../src/access/ids.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -20,6 +25,7 @@ import { bindAccessGate, joinAccessEnforcementPorts } from '../../src/operations
 import type { AccessEnforcementPorts } from '../../src/operations/access-gate.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { makeTestDatabase } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import { at, cell, makeAuthority, makeCheck, person, principalHolder, tenant } from './access-decision-support.ts';
 
 /**
@@ -142,9 +148,8 @@ it.effect('a bound decision reads the request authority until a transaction is n
     expect(joined.calls.readScope).toBeGreaterThan(0);
     expect(joined.calls.readCells).toBeGreaterThan(0);
     const joinedReads = joined.calls.readScope;
-    const ownerBatch = yield* executor.transaction((transaction) =>
-      bound.decideMany([gateInput, gateInput], transaction),
-    );
+    const decideMany = bound.decideMany ?? (() => Effect.die('The bound gate must answer joined batches'));
+    const ownerBatch = yield* executor.transaction((transaction) => decideMany([gateInput, gateInput], transaction));
     expect(ownerBatch.map(({ outcome }) => outcome)).toEqual(['ALLOWED', 'ALLOWED']);
     expect(joined.calls.readScope).toBeGreaterThan(joinedReads);
     expect(request.calls.readScope).toBe(requestReads);
@@ -159,7 +164,10 @@ it.effect('a joined intent read opens no transaction of its own, while the reque
     const query = { holders: [principalHolder()], tenantId: tenant };
 
     const requestBefore = statements.length;
-    yield* decisionAuthorityOf(makeTenantIntentLoader({ executor }), scope).readScope(query);
+    yield* decisionAuthorityOf(
+      makeTenantIntentLoader({ enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT, executor }),
+      scope,
+    ).readScope(query);
     const requestReads = statements.slice(requestBefore);
     expect(
       requestReads.some((statement) => statement.includes('set transaction isolation level repeatable read')),
@@ -168,7 +176,10 @@ it.effect('a joined intent read opens no transaction of its own, while the reque
     const ownerReads = yield* executor.transaction((transaction) =>
       Effect.gen(function* readInsideOwner() {
         const before = statements.length;
-        yield* decisionAuthorityOf(makeJoinedTenantIntentLoader(transaction), scope).readScope(query);
+        yield* decisionAuthorityOf(
+          makeJoinedTenantIntentLoader(transaction, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+          scope,
+        ).readScope(query);
         return statements.slice(before);
       }),
     );
@@ -176,6 +187,23 @@ it.effect('a joined intent read opens no transaction of its own, while the reque
     // isolation level, which is exactly the statement PostgreSQL refused after the owner fence query.
     expect(ownerReads.some((statement) => statement.includes('set transaction isolation level'))).toBe(false);
     expect(ownerReads.some(opensOwnTransaction)).toBe(false);
+  }),
+);
+
+it.effect("marks only a joined intent source as reading through a caller's transaction", () =>
+  Effect.gen(function* joinedMarker() {
+    const executor = yield* makeTestDatabase(scripted([]));
+    const loader = makeTenantIntentLoader({ enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT, executor });
+    const intent = yield* Layer.build(
+      AccessIntentLive.pipe(Layer.provide(Layer.succeed(TenantIntentLoader, loader))),
+    ).pipe(Effect.map(Context.get(AccessIntent)), Effect.scoped);
+    // The request source reads on the shared pool and may overlap; the engine serialises the joined one.
+    expect(intent.authorityFor(scope).readsThroughCallerTransaction).toBeUndefined();
+    yield* executor.transaction((transaction) =>
+      Effect.sync(() => {
+        expect(intent.joined?.(transaction).authorityFor(scope).readsThroughCallerTransaction).toBe(true);
+      }),
+    );
   }),
 );
 
@@ -187,10 +215,22 @@ it.layer(NodeCrypto.layer)(
         const crypto = yield* Crypto.Crypto;
         const statements: string[] = [];
         const executor = yield* makeTestDatabase(scripted(statements));
-        const principalKinds = makeDrizzleAccessPrincipalKinds({ executor });
-        const decisionLog = makeDrizzleAccessDecisionLog({ executor }, crypto);
-        const candidates = makeDrizzleLegalEntityCandidates({ executor });
-        const workloadBindings = makeDrizzleAccessWorkloadBindings({ executor });
+        const principalKinds = makeDrizzleAccessPrincipalKinds({
+          enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          executor,
+        });
+        const decisionLog = makeDrizzleAccessDecisionLog(
+          { enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT, executor },
+          crypto,
+        );
+        const candidates = makeDrizzleLegalEntityCandidates({
+          enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          executor,
+        });
+        const workloadBindings = makeDrizzleAccessWorkloadBindings({
+          enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          executor,
+        });
         const ports: AccessEnforcementPorts = {
           candidates,
           check: { checkBulk: () => Effect.succeed([]) },
@@ -198,6 +238,7 @@ it.layer(NodeCrypto.layer)(
           intent: {
             authorityFor: () => ({
               readCells: () => Effect.succeed([]),
+              readCompanyOwnership: () => Effect.succeed(false),
               readConfigureBases: () => Effect.succeed([]),
               readConnection: () => Effect.succeed(Option.none()),
               readScope: () => Effect.succeed(Option.none()),
@@ -218,7 +259,9 @@ it.layer(NodeCrypto.layer)(
             const joinedWorkloads = joined.workloadBindings;
             expect(joinedWorkloads).toBeDefined();
             if (joinedWorkloads !== undefined) {
-              yield* joinedWorkloads.readActiveWorkloadKeys({ principalId: person, scope, tenantId: tenant });
+              // The keys and registered companies join the same transaction, so a prepared Action's recheck reads
+              // them from the snapshot its receipt belongs to, never from a second connection (D6, O75).
+              yield* joinedWorkloads.readWorkloadAuthority({ principalId: person, scope, tenantId: tenant });
             }
             return statements.slice(before);
           }),
@@ -228,6 +271,7 @@ it.layer(NodeCrypto.layer)(
         expect(joinedReads.some((statement) => statement.includes('access_decision_logs'))).toBe(true);
         expect(joinedReads.some((statement) => statement.includes('legal_entities'))).toBe(true);
         expect(joinedReads.some((statement) => statement.includes('access_workload_bindings'))).toBe(true);
+        expect(joinedReads.some((statement) => statement.includes('access_workload_company_bindings'))).toBe(true);
         expect(joinedReads.some(opensOwnTransaction)).toBe(false);
 
         // Negative control: the same actor adapter with no transaction named opens one of its own.

@@ -2,10 +2,12 @@ import { getDocumentCompositionRevision } from '@app/shared-contracts';
 import { CatchBoundary } from '@tanstack/react-router' with { rstest: 'importActual' };
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
-import type { ReactNode } from 'react';
+import type { HTMLAttributes, ReactNode } from 'react';
 import { renderToString } from 'react-dom/server';
+
+import type { ModulePageProps } from '@app/shared-contracts/page-data';
 
 import { ResolvedModuleTargetSchema, SafeTenantIdentitySchema } from '../../../../shared/browser-api.ts';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts';
@@ -16,6 +18,7 @@ import {
 import { ModuleRenderFailure } from '../../../../src/routes/module-render-failure.tsx';
 import type { ModuleTargetPageModel } from '../../../../src/routes/[lang]/modules/[moduleId]/module-page-model.ts';
 import ModuleTargetPage, { ModuleTargetView } from '../../../../src/routes/[lang]/modules/[moduleId]/page.tsx';
+import { prepareModulePage } from '../../../../src/routes/remote-page-loader.ts';
 import { authenticatedShellFixture } from '../authenticated-shell-fixture.ts';
 
 type ResolvedPageModel = Extract<ModuleTargetPageModel, { readonly state: 'resolved' }>;
@@ -39,13 +42,17 @@ const {
 }));
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ t: (key: string) => key }),
+  useModernI18n: () => ({ language: 'en', t: (key: string) => key }),
 }));
 
 rstest.mock('@tanstack/react-router', () => ({
   CatchBoundary,
   useLoaderData: useLoaderDataMock,
   useNavigate: () => navigateMock,
+}));
+
+rstest.mock('@techsio/ui-kit/atoms/status-text', () => ({
+  StatusText: ({ children, role }: HTMLAttributes<HTMLSpanElement>) => <span role={role}>{children}</span>,
 }));
 
 rstest.mock('@module-federation/modern-js-v3/runtime', () => ({ getInstance: getInstanceMock }));
@@ -74,6 +81,13 @@ rstest.mock('../../../../src/routes/use-shell-controls.ts', () => ({
 
 const shell: ResolvedPageModel['shell'] = { ...authenticatedShellFixture(), compositionRevision: 'c'.repeat(64) };
 
+/**
+ * Loaded page modules stay loaded for the document (a revisit renders at once), so every test opens its own remote:
+ * a remote loaded by one test must not make the next test's first load a revisit.
+ */
+let remoteSequence = 0;
+let remoteName = 'previouslyUnknownContacts0';
+
 const targetFixture = (componentKey: string, entrypointKey: string, writable = true) =>
   Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
     appId: 'contacts',
@@ -86,19 +100,21 @@ const targetFixture = (componentKey: string, entrypointKey: string, writable = t
         sha256: 'a'.repeat(64),
         url: 'https://assets.example.test/contacts/release-a/mf-manifest.json',
       },
-      remoteName: 'previouslyUnknownContacts',
+      remoteName,
     },
     moduleId: 'contacts.core',
     routeParameters: {},
     writable,
   });
 
-const resolvedModel: ResolvedPageModel = {
+const makeResolvedModel = (): ResolvedPageModel => ({
   routeParams: { id: 'customer-1' },
+  search: '?tab=open',
   shell,
   state: 'resolved',
   target: targetFixture('contacts.core.page-customers', 'contacts.core.page.customers'),
-};
+});
+let resolvedModel = makeResolvedModel();
 
 interface ExactPageCase {
   readonly componentKey: string;
@@ -184,7 +200,7 @@ const FailingRemoteFixture = (): never => {
 const blockedPageFixture = (index: number) => {
   const appId = `load-blocker-${index}`;
   const componentKey = `${appId}.core.page`;
-  const remoteName = `loadBlocker${index}`;
+  const blockerRemoteName = `loadBlocker${index}`;
   const target = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
     ...targetFixture(componentKey, `${appId}.core.page.show`),
     appId,
@@ -194,18 +210,22 @@ const blockedPageFixture = (index: number) => {
         sha256: 'a'.repeat(64),
         url: `https://assets.example.test/${appId}/release-a/mf-manifest.json`,
       },
-      remoteName,
+      remoteName: blockerRemoteName,
     },
     moduleId: `${appId}.core`,
   });
   return {
     model: { ...resolvedModel, target },
     pending: Promise.withResolvers<{ readonly default: typeof fixtureRemotePage }>(),
-    request: `${remoteName}/${componentKey}`,
+    request: `${blockerRemoteName}/${componentKey}`,
   };
 };
 
 beforeEach(() => {
+  rstest.resetAllMocks();
+  remoteSequence += 1;
+  remoteName = `previouslyUnknownContacts${remoteSequence}`;
+  resolvedModel = makeResolvedModel();
   navigateMock.mockImplementation(() => Promise.resolve());
   reloadRequiredMock.mockReturnValue(false);
   loadRemotePageMock.mockResolvedValue({ default: fixtureRemotePage });
@@ -219,6 +239,22 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   rstest.clearAllMocks();
+});
+
+it('sends an anonymous visitor of a protected module to sign-in and back', () => {
+  window.history.replaceState(null, '', '/en/prehledy/statistiky?group=month');
+  useLoaderDataMock.mockReturnValue({
+    shell: { state: 'anonymous' },
+    state: 'selection_required',
+  } satisfies ModuleTargetPageModel);
+  render(<ModuleTargetPage />);
+  expect(navigateMock).toHaveBeenCalledWith({
+    href: '/en/login?returnTo=%2Fen%2Fprehledy%2Fstatistiky%3Fgroup%3Dmonth',
+    replace: true,
+  });
+  expect(screen.getByText('shell.moduleTarget.sign_in_required')).toBeTruthy();
+  expect(screen.queryByText('shell.moduleTarget.selection_required')).toBeNull();
+  window.history.replaceState(null, '', '/');
 });
 
 it.each(['selection_required', 'forbidden', 'not_found', 'reload_required', 'unavailable'] as const)(
@@ -272,14 +308,14 @@ it.live('registers and loads a previously unknown approved remote only after aut
         name: resolvedModel.target.federation.remoteName,
       },
     ]);
-    expect(loadRemotePageMock).toHaveBeenCalledWith('previouslyUnknownContacts/contacts.core.page-customers');
+    expect(loadRemotePageMock).toHaveBeenCalledWith(`${remoteName}/contacts.core.page-customers`);
     expect(yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:customer-1'))).toBeTruthy();
   }),
 );
 
 it.live('maps an unreachable approved remote to its safe local diagnostic', () =>
   Effect.gen(function* mapsAnUnreachableApprovedRemoteTo() {
-    loadRemotePageMock.mockRejectedValueOnce(new Error('private remote error'));
+    loadRemotePageMock.mockRejectedValue(new Error('private remote error'));
     useLoaderDataMock.mockReturnValue(resolvedModel);
 
     render(<ModuleTargetPage />);
@@ -338,7 +374,7 @@ it.live('keeps a failed equivalent target contained and resets only for the newl
     ).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
     expect(loadRemotePageMock).toHaveBeenCalledTimes(2);
-    expect(loadRemotePageMock).toHaveBeenLastCalledWith('previouslyUnknownContacts/contacts.core.page-customer-detail');
+    expect(loadRemotePageMock).toHaveBeenLastCalledWith(`${remoteName}/contacts.core.page-customer-detail`);
   }),
 );
 
@@ -485,7 +521,8 @@ it.live('shares equivalent cloned targets while an unmounted caller cannot cance
     try {
       const first = render(<ModuleTargetView initialModel={resolvedModel} />);
       render(<ModuleTargetView initialModel={secondModel} />);
-      yield* Effect.promise(() => waitFor(() => expect(getInstanceMock).toHaveBeenCalledTimes(2)));
+      yield* Effect.promise(() => waitFor(() => expect(getInstanceMock).toHaveBeenCalledTimes(1)));
+      expect(document.querySelectorAll('[data-module-page-skeleton]')).toHaveLength(2);
       expect(loadRemotePageMock).toHaveBeenCalledTimes(1);
       expect(registerRemotesMock).toHaveBeenCalledTimes(1);
 
@@ -532,7 +569,8 @@ it.live('does not let the first queued page caller abort the shared SDK thunk ne
       yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(8)));
       const first = render(<ModuleTargetView initialModel={resolvedModel} />);
       render(<ModuleTargetView initialModel={secondModel} />);
-      yield* Effect.promise(() => waitFor(() => expect(getInstanceMock).toHaveBeenCalledTimes(10)));
+      yield* Effect.promise(() => waitFor(() => expect(getInstanceMock).toHaveBeenCalledTimes(9)));
+      expect(document.querySelectorAll('[data-module-page-skeleton]')).toHaveLength(10);
       expect(loadRemotePageMock).toHaveBeenCalledTimes(8);
 
       act(() => first.unmount());
@@ -547,7 +585,7 @@ it.live('does not let the first queued page caller abort the shared SDK thunk ne
         yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:remaining-queued-caller')),
       ).toBeTruthy();
       expect(loadRemotePageMock).toHaveBeenCalledTimes(9);
-      expect(loadRemotePageMock).toHaveBeenCalledWith('previouslyUnknownContacts/contacts.core.page-customers');
+      expect(loadRemotePageMock).toHaveBeenCalledWith(`${remoteName}/contacts.core.page-customers`);
       expect(remotePropsMock).toHaveBeenCalledWith({
         routeParams: secondModel.routeParams,
         target: secondModel.target,
@@ -574,7 +612,7 @@ it.live('keeps concurrent exposes of one approved remote distinct through stagge
       target: targetFixture('contacts.core.page-customer-detail', 'contacts.core.page.customer-detail'),
     };
     loadRemotePageMock.mockImplementation((entrypoint: string) => {
-      if (entrypoint === 'previouslyUnknownContacts/contacts.core.page-customers') {
+      if (entrypoint === `${remoteName}/contacts.core.page-customers`) {
         return first.promise;
       }
       return second.promise;
@@ -590,8 +628,8 @@ it.live('keeps concurrent exposes of one approved remote distinct through stagge
         }),
       );
       yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(2)));
-      expect(loadRemotePageMock).toHaveBeenCalledWith('previouslyUnknownContacts/contacts.core.page-customers');
-      expect(loadRemotePageMock).toHaveBeenCalledWith('previouslyUnknownContacts/contacts.core.page-customer-detail');
+      expect(loadRemotePageMock).toHaveBeenCalledWith(`${remoteName}/contacts.core.page-customers`);
+      expect(loadRemotePageMock).toHaveBeenCalledWith(`${remoteName}/contacts.core.page-customer-detail`);
       expect(screen.getAllByText('exact exposed list component')).toHaveLength(1);
       expect(screen.queryByText('exact exposed detail component')).toBeNull();
       yield* Effect.promise(() =>
@@ -675,7 +713,7 @@ it.live.each(exactPageCases)(
       render(<ModuleTargetPage />);
 
       yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
-      expect(loadRemotePageMock).toHaveBeenCalledWith(`previouslyUnknownContacts/${componentKey}`);
+      expect(loadRemotePageMock).toHaveBeenCalledWith(`${remoteName}/${componentKey}`);
       expect(remotePropsMock).toHaveBeenCalledWith({
         routeParams,
         target: exactModel.target,
@@ -744,7 +782,7 @@ it.live('requires reload before admitting a different composition into the same 
 
 it.live('does not load a remote when native registration fails', () =>
   Effect.gen(function* rejectsFailedNativeRegistration() {
-    registerRemotesMock.mockImplementationOnce(() => {
+    registerRemotesMock.mockImplementation(() => {
       throw new Error('native registration unavailable');
     });
     useLoaderDataMock.mockReturnValue(resolvedModel);
@@ -852,3 +890,82 @@ it.live('rejects an approved remote name that collides with the native Shell hos
     expect(remotePropsMock).not.toHaveBeenCalled();
   }),
 );
+
+const expectedPageProps = (model: ResolvedPageModel): ModulePageProps => ({
+  context: {
+    displayName: 'Ada Lovelace',
+    legalEntityId: '20000000-0000-4000-8000-000000000001',
+    principalId: 'principal-1',
+    tenantId: 'tenant-1',
+  },
+  routeParams: model.routeParams,
+  search: model.search,
+});
+
+it.live('a cold page shows one neutral skeleton, then its content once code and primary data are ready', () =>
+  Effect.gen(function* revealsAfterPreparation() {
+    const data = Promise.withResolvers<true>();
+    const preloadPage = rstest.fn(async (_props: ModulePageProps) => {
+      await data.promise;
+    });
+    loadRemotePageMock.mockResolvedValueOnce({
+      default: (props: ModulePageProps) => {
+        remotePropsMock(props);
+        return <div>prepared page</div>;
+      },
+      preloadPage,
+    });
+    useLoaderDataMock.mockReturnValue(resolvedModel);
+    const view = render(<ModuleTargetPage />);
+    expect(view.container.querySelector('[data-module-page-skeleton]')).not.toBeNull();
+    yield* Effect.promise(() => waitFor(() => expect(preloadPage).toHaveBeenCalledTimes(1)));
+    // The code is loaded, but the page waits for its data instead of showing its own loading state.
+    expect(screen.queryByText('prepared page')).toBeNull();
+    expect(view.container.querySelector('[data-module-page-skeleton]')).not.toBeNull();
+    yield* Effect.promise(() =>
+      act(async () => {
+        data.resolve(true);
+        await data.promise;
+      }),
+    );
+    expect(yield* Effect.promise(() => screen.findByText('prepared page'))).toBeTruthy();
+    expect(view.container.querySelector('[data-module-page-skeleton]')).toBeNull();
+    // The page receives exactly the props its preload received, plus its target.
+    expect(preloadPage).toHaveBeenCalledWith(expectedPageProps(resolvedModel));
+    expect(remotePropsMock).toHaveBeenCalledWith({ ...expectedPageProps(resolvedModel), target: resolvedModel.target });
+  }),
+);
+
+it.live('a prepared page renders its content in the first commit, without any placeholder', () =>
+  Effect.gen(function* rendersPreparedPageAtOnce() {
+    const preloadPage = rstest.fn((_props: ModulePageProps) => Promise.resolve());
+    loadRemotePageMock.mockResolvedValueOnce({
+      default: () => <div>ready at once</div>,
+      preloadPage,
+    });
+    const prepared = yield* prepareModulePage(
+      resolvedModel.target,
+      expectedPageProps(resolvedModel),
+      '/en/contacts',
+      '5 seconds',
+    );
+    expect(Option.isSome(prepared)).toBe(true);
+    expect(preloadPage).toHaveBeenCalledWith(expectedPageProps(resolvedModel));
+    useLoaderDataMock.mockReturnValue(resolvedModel);
+
+    const view = render(<ModuleTargetPage />);
+
+    expect(screen.getByText('ready at once')).toBeTruthy();
+    expect(view.container.querySelector('[data-module-page-skeleton]')).toBeNull();
+    expect(screen.queryByText('shell.moduleTarget.loading')).toBeNull();
+  }),
+);
+
+it('server rendering emits the neutral skeleton, without visible loading text', () => {
+  useLoaderDataMock.mockReturnValue(resolvedModel);
+
+  const html = renderToString(<ModuleTargetPage />);
+
+  expect(html).toContain('data-module-page-skeleton');
+  expect(html).toContain('aria-busy="true"');
+});

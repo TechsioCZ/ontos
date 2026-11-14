@@ -82,7 +82,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, PartyRegistryAuthenticationNamespaceRe
             provider: 'better-auth',
             requiresOperationAdmission: false,
             reservationPrincipalKind: 'human',
-            subjectTypes: ['user', 'api_key'],
+            subjectTypes: ['user', 'api_key', 'oauth_grant'],
             trustedAttesterPrincipalIds: [],
           });
         }

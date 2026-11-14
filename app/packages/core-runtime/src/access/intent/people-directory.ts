@@ -1,8 +1,9 @@
-import { eq, inArray } from 'drizzle-orm';
-import { Context, Effect, Layer } from 'effect';
+import { and, eq, inArray } from 'drizzle-orm';
+import { Context, Effect, Layer, Option } from 'effect';
 
 import { CoreDatabase } from '../../db/client.ts';
-import { legalEntities, principals, tenants } from '../../db/schema.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../db/database-identities.ts';
+import { legalEntities, principalCompanyMemberships, principals, tenants } from '../../db/schema.ts';
 import type { OperationalScope } from '../../operations/context.ts';
 import type { LegalEntityId, PrincipalId } from '../ids.ts';
 import { LegalEntityIdSchema, PrincipalIdSchema } from '../ids.ts';
@@ -42,7 +43,33 @@ export interface AccessDirectoryScopeLabels {
   readonly tenantName?: string;
 }
 
+/**
+ * One person's company directory membership (`core.principal_company_memberships`) with the principal it
+ * names. It lists admission candidates only: the admission itself re-checks the directory inside its own
+ * write transaction, so a row read here is never the reason a person is admitted.
+ */
+export interface AccessDirectoryCompanyMember {
+  readonly affiliation: string | null;
+  readonly displayName: string;
+  readonly principalId: PrincipalId;
+  readonly principalKind: string;
+  readonly principalStatus: string;
+  /** 'invited', 'active', 'disabled' or 'departed'; only an active human is admitted. */
+  readonly status: string;
+}
+
 export interface AccessPeopleDirectoryService {
+  /** One person's directory membership of one company of this tenant, or none. */
+  readonly companyMember: (
+    scope: OperationalScope,
+    legalEntityId: LegalEntityId,
+    principalId: PrincipalId,
+  ) => Effect.Effect<Option.Option<AccessDirectoryCompanyMember>, AccessIntentError>;
+  /** Every directory membership of one company of this tenant, whatever its status. */
+  readonly companyMembers: (
+    scope: OperationalScope,
+    legalEntityId: LegalEntityId,
+  ) => Effect.Effect<readonly AccessDirectoryCompanyMember[], AccessIntentError>;
   /** The named principals of this tenant; an id of another tenant is absent from the answer. */
   readonly people: (
     scope: OperationalScope,
@@ -107,13 +134,68 @@ const makeAccessPeopleDirectory = (database: AccessIntentDatabase): AccessPeople
     },
   );
 
-  return Object.freeze({ people, scopeLabels });
+  /**
+   * The directory rows are company-scoped by row security, so they are read in that company's scope,
+   * minted from the request's own (O66): from a tenant-context request they would otherwise be hidden,
+   * and an unreadable directory fails as unavailable instead of answering empty.
+   */
+  const readCompanyMembers = (scope: OperationalScope, legalEntityId: LegalEntityId, principalId?: PrincipalId) =>
+    runScopedRead(database, { ...scope, legalEntityId }, NO_CONSTRAINTS, (transaction) =>
+      transaction
+        .select({
+          affiliation: principalCompanyMemberships.affiliation,
+          displayName: principals.displayName,
+          principalId: principalCompanyMemberships.principalId,
+          principalKind: principals.kind,
+          principalStatus: principals.status,
+          status: principalCompanyMemberships.status,
+        })
+        .from(principalCompanyMemberships)
+        .innerJoin(
+          principals,
+          and(
+            eq(principals.tenantId, principalCompanyMemberships.tenantId),
+            eq(principals.principalId, principalCompanyMemberships.principalId),
+          ),
+        )
+        .where(
+          and(
+            eq(principalCompanyMemberships.tenantId, scope.tenantId),
+            eq(principalCompanyMemberships.legalEntityId, legalEntityId),
+            principalId === undefined ? undefined : eq(principalCompanyMemberships.principalId, principalId),
+          ),
+        ),
+    ).pipe(
+      Effect.map((rows) =>
+        rows.map((row): AccessDirectoryCompanyMember => ({
+          affiliation: row.affiliation,
+          displayName: row.displayName,
+          principalId: PrincipalIdSchema.make(row.principalId),
+          principalKind: row.principalKind,
+          principalStatus: row.principalStatus,
+          status: row.status,
+        })),
+      ),
+    );
+
+  const companyMember: AccessPeopleDirectoryService['companyMember'] = (scope, legalEntityId, principalId) =>
+    readCompanyMembers(scope, legalEntityId, principalId).pipe(Effect.map((rows) => Option.fromUndefinedOr(rows[0])));
+
+  const companyMembers: AccessPeopleDirectoryService['companyMembers'] = (scope, legalEntityId) =>
+    readCompanyMembers(scope, legalEntityId);
+
+  return Object.freeze({ companyMember, companyMembers, people, scopeLabels });
 };
 
-export const AccessPeopleDirectoryLive: Layer.Layer<AccessPeopleDirectory, never, CoreDatabase> = Layer.effect(
+export const AccessPeopleDirectoryLive: Layer.Layer<
+  AccessPeopleDirectory,
+  never,
+  CoreDatabase | DatabaseIdentityEnrollmentContext
+> = Layer.effect(
   AccessPeopleDirectory,
   Effect.gen(function* accessPeopleDirectoryLayer() {
     const database = yield* CoreDatabase;
-    return makeAccessPeopleDirectory(database);
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
+    return makeAccessPeopleDirectory({ enrollment, executor: database.executor });
   }),
 );

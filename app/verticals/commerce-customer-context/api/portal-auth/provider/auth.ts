@@ -14,7 +14,7 @@ import { Context, DateTime, Duration, Effect, Layer, Option, Redacted, Schema, f
 
 import type { CommercePortalAuthConfigValue } from './config.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY, CommercePortalAuthConfig } from './config.ts';
-import { CommercePortalAuthDatabase } from '../../../src/portal-auth/persistence/portal-auth-database.ts';
+import { CommercePortalAuthDatabase } from '../../../src/portal-auth/persistence/portal-auth-database-service.ts';
 import { COMMERCE_PORTAL_AUTH_MFA_POLICY, createCommercePortalAuthTwoFactorPlugin } from './mfa/plugin.ts';
 import type { CommercePortalAuthTwoFactorPlugin } from './mfa/plugin.ts';
 import type { CommercePortalAuthDatabaseAdapter } from '../../../src/portal-auth/persistence/portal-auth-database-types.ts';
@@ -27,18 +27,10 @@ import { COMMERCE_PORTAL_AUTH_PUBLIC_BASE_PATH } from '../../../shared/deploymen
  */
 export interface CommercePortalAuthEmailDelivery {
   readonly sendOTP: NonNullable<OTPOptions['sendOTP']>;
-  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- Better Auth owns this callback boundary.
-  readonly sendResetPassword: (data: {
-    readonly token: string;
-    readonly url: string;
-    readonly user: User;
-  }) => Promise<void>;
-  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- Better Auth owns this callback boundary.
-  readonly sendVerificationEmail: (data: {
-    readonly token: string;
-    readonly url: string;
-    readonly user: User;
-  }) => Promise<void>;
+  readonly sendResetPassword: NonNullable<NonNullable<BetterAuthOptions['emailAndPassword']>['sendResetPassword']>;
+  readonly sendVerificationEmail: NonNullable<
+    NonNullable<BetterAuthOptions['emailVerification']>['sendVerificationEmail']
+  >;
 }
 
 export interface CommercePortalAuthOptionsInput {

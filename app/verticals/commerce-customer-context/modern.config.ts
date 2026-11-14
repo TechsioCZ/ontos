@@ -1,10 +1,6 @@
 import { defineConfig, presetUltramodernWorkspace } from '@modern-js/ultramodern-app-tools';
 import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
-import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
-import {
-  CLOUDFLARE_WORKER_CPU_MS,
-  createWorkspaceModernConfig,
-} from '../../packages/shared-contracts/tooling/modern-config.ts';
+import { createWorkspaceModernConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
 
 const appId = 'commerce-customer-context';
 
@@ -13,8 +9,7 @@ export default defineConfig(
     {
       ...createWorkspaceModernConfig({
         appId,
-        cloudflareCpuMs: CLOUDFLARE_WORKER_CPU_MS.largeApiVertical,
-        cloudflareHyperdrives: [SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive],
+        // Portal verification, recovery and step-up mail.
         headless: true,
         moduleUrl: import.meta.url,
       }),

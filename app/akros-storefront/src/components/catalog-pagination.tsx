@@ -1,0 +1,48 @@
+"use client";
+
+import StoreLink from "@/components/store-link";
+import { createPaginationGetPageUrl, Pagination } from "@techsio/ui-kit/molecules/pagination";
+
+import { useDictionary } from "@/ontos/market-context";
+
+export function CatalogPagination({
+  currentPage,
+  itemCount,
+  pageSize,
+  pathname,
+  searchParams,
+}: {
+  currentPage: number;
+  itemCount: number;
+  pageSize: number;
+  pathname: string;
+  searchParams?: Record<string, string>;
+}) {
+  const cs = useDictionary();
+  const totalPages = Math.ceil(itemCount / pageSize);
+  if (totalPages <= 1) return null;
+
+  const getPageUrl = createPaginationGetPageUrl({
+    pathname,
+    searchParams: searchParams && new URLSearchParams(searchParams),
+  });
+
+  return (
+    <Pagination
+      className="sf-pagination sf-catalog-pagination"
+      count={itemCount}
+      getPageUrl={getPageUrl}
+      linkAs={StoreLink}
+      page={currentPage}
+      pageSize={pageSize}
+      size="sm"
+      translations={{
+        itemLabel: ({ page, totalPages: pages }) => cs.pagination.page(page, pages),
+        nextTriggerLabel: cs.pagination.next,
+        prevTriggerLabel: cs.pagination.previous,
+        rootLabel: cs.pagination.label,
+      }}
+      variant="filled"
+    />
+  );
+}

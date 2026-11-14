@@ -12,6 +12,7 @@ import {
   tenants,
 } from '../../src/db/schema.ts';
 import { makeIsolatedNativeDatabaseFixture } from '../../src/testing/isolated-native-database.ts';
+import { writeTestTenantScopes } from '../../src/testing/tenant-access.ts';
 import {
   makeOwnedIntegrationPriceGroupReaderWorkloadControlNative,
   makeOwnedSystemWriterWorkloadControlNative,
@@ -151,6 +152,18 @@ it.layer(nativeServices, { excludeTestServices: true })('Owned native writer enr
               purpose: 'implementation-1096-registered-workload-gateway',
               tenantId,
             };
+            const unbootstrapped = yield* makeOwnedSystemWriterWorkloadControlNative(input);
+            const missingFence = yield* unbootstrapped.revoke().pipe(Effect.flip);
+            expect(missingFence.stage).toBe('binding-revoke');
+            expect(
+              yield* database
+                .select({ status: accessWorkloadBindings.status })
+                .from(accessWorkloadBindings)
+                .where(eq(accessWorkloadBindings.bindingId, unbootstrapped.originalBinding.bindingId)),
+            ).toEqual([{ status: 'active' }]);
+            const runtimeClient = yield* makeTestPgClient(ownedDatabase.connections.runtime.connectionString);
+            const runtimeDatabase = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
+            yield* writeTestTenantScopes(runtimeDatabase, { principalId: operatorPrincipalId, tenantId });
             const untouchedByReader = database
               .select()
               .from(accessWorkloadBindings)

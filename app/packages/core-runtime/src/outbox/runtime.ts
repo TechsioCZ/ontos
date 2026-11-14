@@ -25,6 +25,10 @@ import {
 import type { PersistenceFailure } from '../database/persistence-failure.ts';
 import type { OutboxClaimLostError } from './errors.ts';
 import { OutboxRepository } from './repository.ts';
+import {
+  OutboxDeclaredFailureIdentitySchema,
+  outboxDeclaredFailureDiagnostics,
+} from './declared-failure-diagnostics.ts';
 import type { ApplicationCompositionAuthorityError } from '../modules/application-composition-authority.ts';
 import type { OutboxClaim, OutboxRepositoryService as OutboxRepositoryPort } from './repository.ts';
 
@@ -160,11 +164,11 @@ const logUnexpectedPersistence = (claim?: OutboxClaim) =>
     claim === undefined ? { outcome: 'persistence_failure' } : claimAnnotations(claim, 'persistence_failure'),
   );
 
-const withOutcomeSpan = <Value, Error, Requirements>(
-  effect: Effect.Effect<Value, Error, Requirements>,
+const withOutcomeSpan = <Value, Failure, Requirements>(
+  effect: Effect.Effect<Value, Failure, Requirements>,
   claim: OutboxClaim,
   outcome: string,
-): Effect.Effect<Value, Error, Requirements> =>
+): Effect.Effect<Value, Failure, Requirements> =>
   effect.pipe(
     Effect.withSpan('OutboxWorker.finalize', {
       attributes: claimAnnotations(claim, outcome),
@@ -180,14 +184,20 @@ const handlerContext = (
     withOptionalProperty(
       withOptionalProperty(
         withOptionalProperty(
-          {
-            attemptNumber: claim.attemptNumber,
-            claimId: claim.claimId,
-            compositionRevision,
-          },
-          claim.originatorInvocationId !== undefined,
-          'originatorInvocationId',
-          claim.originatorInvocationId,
+          withOptionalProperty(
+            {
+              attemptNumber: claim.attemptNumber,
+              claimId: claim.claimId,
+              compositionRevision,
+            },
+            claim.originatorInvocationId !== undefined,
+            'originatorInvocationId',
+            claim.originatorInvocationId,
+            {},
+          ),
+          claim.originatorLegalEntityId !== undefined,
+          'originatorLegalEntityId',
+          claim.originatorLegalEntityId,
           {},
         ),
         claim.actorPrincipalId !== undefined,
@@ -366,9 +376,17 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
         context,
         Effect.suspend(() => handler(decoded.value, context)),
       ).pipe(
-        Effect.match({
-          onFailure: (error) => (Schema.is(OutboxWorkerDeferred)(error) ? error : ('declared_failure' as const)),
-          onSuccess: () => 'success' as const,
+        Effect.matchEffect({
+          onFailure: (error): Effect.Effect<'declared_failure' | OutboxWorkerDeferred> =>
+            Schema.is(OutboxWorkerDeferred)(error)
+              ? Effect.succeed(error)
+              : Effect.annotateLogs(Effect.logWarning('Outbox Worker handler returned a declared failure'), {
+                  ...claimAnnotations(claim, 'declared_failure'),
+                  ...outboxDeclaredFailureDiagnostics(
+                    Schema.decodeUnknownResult(OutboxDeclaredFailureIdentitySchema)(error),
+                  ),
+                }).pipe(Effect.as('declared_failure' as const)),
+          onSuccess: (): Effect.Effect<'success'> => Effect.succeed('success' as const),
         }),
         Effect.withSpan('OutboxWorker.handle', {
           attributes: claimAnnotations(claim),

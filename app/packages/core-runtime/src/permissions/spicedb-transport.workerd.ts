@@ -42,7 +42,9 @@ export const spiceDbTransport: SpiceDbTransport = Object.freeze<SpiceDbTransport
       close: () => {
         // Each call is a standalone request on the binding; there is no connection to release.
       },
+      diffSchema: (request) => overVpc(rpc.diffSchema(request)),
       readRelationships: (request) => overVpc(rpc.readRelationships(request)),
+      readSchema: (request) => overVpc(rpc.readSchema(request)),
       writeRelationships: (request) => overVpc(rpc.writeRelationships(request)),
       writeSchema: (request) => overVpc(rpc.writeSchema(request)),
     };

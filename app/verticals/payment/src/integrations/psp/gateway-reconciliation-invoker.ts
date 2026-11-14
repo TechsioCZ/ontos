@@ -1,5 +1,6 @@
-import { Config, Context, Duration, Effect, Layer, Match, Redacted, Schema } from 'effect';
+import { Context, Duration, Effect, Layer, Match, Redacted, Schema } from 'effect';
 import { HttpClient } from 'effect/http';
+import { shellGatewayBaseUrlConfig } from '@app/shared-contracts/shell-gateway-url';
 import { HttpApi, HttpApiClient } from 'effect/http-api';
 
 import {
@@ -82,14 +83,6 @@ const PaymentReconciliationDriverApi = HttpApi.make('paymentReconciliationDriver
 /** One exchange, including the body read; a slower answer is UNAVAILABLE for this tick. */
 const REQUEST_TIMEOUT = Duration.seconds(30);
 
-const ShellOriginSchema = Schema.URLFromString.check(
-  Schema.makeFilter((url) =>
-    (url.protocol === 'http:' || url.protocol === 'https:') && url.username === '' && url.password === ''
-      ? undefined
-      : 'The Shell gateway base URL must be an HTTP URL without credentials',
-  ),
-);
-
 const skipped = (reason: GatewayReconciliationSkipReason) => Effect.succeed(gatewayReconciliationSkipped(reason));
 const unavailable = Effect.succeed(GATEWAY_RECONCILIATION_UNAVAILABLE);
 
@@ -116,7 +109,8 @@ export const GatewayReconciliationInvokerLive = Layer.effect(
       row: GatewayReconciliationDueRow,
       apiKey: ReconciliationApiKey,
     ) {
-      const base = yield* Config.schema(ShellOriginSchema, 'ONTOS_SHELL_GATEWAY_BASE_URL');
+      // The one Shell address rule of every client that presents a key: HTTPS, or plain HTTP to loopback only.
+      const base = yield* shellGatewayBaseUrlConfig;
       const idempotencyKey = yield* Schema.decodeEffect(PaymentReconciliationIdempotencyKeySchema)(
         gatewayReconciliationIdempotencyKey(row),
       );

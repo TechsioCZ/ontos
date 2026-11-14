@@ -1,0 +1,691 @@
+diff --git a/dist/cjs/microvertical-api-baseline.cjs b/dist/cjs/microvertical-api-baseline.cjs
+index 4598cfd..c87af88 100644
+--- a/dist/cjs/microvertical-api-baseline.cjs
++++ b/dist/cjs/microvertical-api-baseline.cjs
+@@ -61,6 +61,21 @@ const stringLiteral = (expression)=>{
+     const unwrapped = (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(expression);
+     return types_namespaceObject.isStringLiteral(unwrapped) ? unwrapped.value : void 0;
+ };
++/** Bounded lexical route-path resolution: only a top-level `const` string declared in the endpoint's own module; never external authority, mutable bindings, calls, member lookup or dynamic expressions. */
++const localConstString = (sourceFile, expression)=>{
++    if (null == sourceFile || null == expression) return;
++    const seen = new Set();
++    let node = (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(expression);
++    for(let hop = 0; hop < 16; hop += 1){
++        if (!types_namespaceObject.isIdentifier(node) || seen.has(node.name)) return;
++        seen.add(node.name);
++        const declaration = (0, external_module_graph_cjs_namespaceObject.localConst)(sourceFile, node.name);
++        if (void 0 === declaration || null == declaration.init) return;
++        const value = stringLiteral(declaration.init);
++        if (void 0 !== value) return value;
++        node = (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(declaration.init);
++    }
++};
+ const numericLiteral = (expression)=>{
+     if (null == expression) return;
+     const unwrapped = (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(expression);
+@@ -260,7 +275,7 @@ const reachableEndpoints = (graph, declaration)=>{
+                 const callee = accessPath(node.callee);
+                 const method = callee?.length === 2 && 'HttpApiEndpoint' === callee[0] ? verbs[callee[1]] : void 0;
+                 const name = stringLiteral(node.arguments[0]);
+-                const routePath = stringLiteral(node.arguments[1]);
++                const routePath = stringLiteral(node.arguments[1]) ?? localConstString(module.file, node.arguments[1]);
+                 if (!method || !name || !routePath) return false;
+                 const identity = `${group}:${name}`;
+                 if (identities.has(identity)) return false;
+diff --git a/dist/cjs/microvertical-api-boundary.cjs b/dist/cjs/microvertical-api-boundary.cjs
+index 77ec9f8..96b1f9d 100644
+--- a/dist/cjs/microvertical-api-boundary.cjs
++++ b/dist/cjs/microvertical-api-boundary.cjs
+@@ -74,6 +74,23 @@ const identitySources = [
+ ];
+ const normalize = (file)=>file.split(external_node_path_default().sep).join('/').replace(/^\.\//u, '');
+ const errorMessage = (error)=>error instanceof Error ? error.message : String(error);
++const forbiddenSchemaMembers = new Set([
++    'Any',
++    'Unknown',
++    'UnknownFromJsonString'
++]);
++const staticMemberName = (property, computed)=>{
++    if (!computed) return types_namespaceObject.isIdentifier(property) ? property.name : undefined;
++    if (types_namespaceObject.isStringLiteral(property)) return property.value;
++    if (types_namespaceObject.isTemplateLiteral(property) && 0 === property.expressions.length && 1 === property.quasis.length) return property.quasis[0].value.cooked ?? property.quasis[0].value.raw;
++};
++/** Runtime `Schema.Unknown`-family access; type-only `typeof Schema.Unknown.Type` positions parse as TSQualifiedName, never as member expressions. */
++const runtimeSchemaMemberName = (node)=>{
++    if (!node || 'MemberExpression' !== node.type && 'OptionalMemberExpression' !== node.type) return;
++    if (!node.object || 'Identifier' !== node.object.type || 'Schema' !== node.object.name) return;
++    const name = staticMemberName(node.property, node.computed);
++    return 'string' == typeof name && forbiddenSchemaMembers.has(name) ? name : undefined;
++};
+ const apiApp = (app)=>'vertical' === app.kind && 'ui-only' !== app.surfaceProfile && 'horizontal-remote' !== app.deliveryUnitKind;
+ function configuredApps(root, supplied) {
+     const topology = supplied ? void 0 : JSON.parse(external_node_fs_default().readFileSync(external_node_path_default().join(root, 'topology/reference-topology.json'), 'utf8'));
+@@ -549,11 +566,18 @@ function check(options, topology) {
+             ], [
+                 /\bcreateHandler\s*[:=]\s*(?!defineEffectBff\b)/u,
+                 'must use defineEffectBff instead of unbranded handler factories'
+-            ], [
+-                /\bSchema\.(?:UnknownFromJsonString|Unknown|Any)\b/u,
+-                'must use concrete request, response and error schemas'
+             ]);
+             for (const [pattern, reason] of patterns)assert(!pattern.test(source), `${file}: ${reason}`);
++            if (/\/api\//u.test(file) && /\.[cm]?[jt]sx?$/u.test(file)) {
++                const ast = parseFile(file);
++                if (ast) {
++                    let forbidden = false;
++                    types_namespaceObject.traverseFast(ast, (node)=>{
++                        if (runtimeSchemaMemberName(node)) forbidden = true;
++                    });
++                    if (forbidden) diagnostics.push(`${file}: must use concrete request, response and error schemas`);
++                }
++            }
+             if (topology && /\/api\/index\.ts$/u.test(file)) {
+                 topologyFilesAnalyzed += 1;
+                 const violation = (0, external_strict_effect_runtime_cjs_namespaceObject.strictEffectRuntimeTopologyViolation)(source, (0, external_strict_effect_runtime_cjs_namespaceObject.createEffectApiImportResolver)(absolute(file)));
+diff --git a/dist/cjs/oxlint-plugin/rules/strict-effect-api-boundaries.cjs b/dist/cjs/oxlint-plugin/rules/strict-effect-api-boundaries.cjs
+index e9ad901..60f8a38 100644
+--- a/dist/cjs/oxlint-plugin/rules/strict-effect-api-boundaries.cjs
++++ b/dist/cjs/oxlint-plugin/rules/strict-effect-api-boundaries.cjs
+@@ -32,6 +32,20 @@ __webpack_require__.d(__webpack_exports__, {
+ });
+ const external_strict_effect_runtime_cjs_namespaceObject = require("../../strict-effect-runtime.cjs");
+ const external_ast_cjs_namespaceObject = require("../ast.cjs");
++const forbiddenSchemaMembers = new Set([
++    'Any',
++    'Unknown',
++    'UnknownFromJsonString'
++]);
++/** Runtime `Schema.Unknown`-family access; type-only `typeof Schema.Unknown.Type` positions parse as TSQualifiedName, never as member expressions. */
++const runtimeSchemaMemberName = (node)=>{
++    if (!node || 'MemberExpression' !== node.type && 'OptionalMemberExpression' !== node.type) return;
++    if (!node.object || 'Identifier' !== node.object.type || 'Schema' !== node.object.name) return;
++    const property = node.property;
++    if (!property) return;
++    const name = node.computed ? (0, external_ast_cjs_namespaceObject.getStringLiteralValue)(property) : 'Identifier' === property.type ? property.name : undefined;
++    return 'string' == typeof name && forbiddenSchemaMembers.has(name) ? name : undefined;
++};
+ const createStrictEffectApiBoundariesRule = ()=>({
+         meta: {
+             type: 'problem',
+@@ -41,11 +55,11 @@ const createStrictEffectApiBoundariesRule = ()=>({
+             schema: []
+         },
+         create (context) {
++            const filename = (0, external_ast_cjs_namespaceObject.normalizeFilename)(context.filename);
++            const apiFile = (0, external_ast_cjs_namespaceObject.isApiSourceFile)(filename);
+             return {
+                 Program (node) {
+                     const source = (0, external_ast_cjs_namespaceObject.getSourceText)(context, node);
+-                    const filename = (0, external_ast_cjs_namespaceObject.normalizeFilename)(context.filename);
+-                    const apiFile = (0, external_ast_cjs_namespaceObject.isApiSourceFile)(filename);
+                     if ((0, external_ast_cjs_namespaceObject.isForbiddenGeneratedEffectPath)(filename)) context.report({
+                         node,
+                         message: 'Generated UltraModern workspaces use direct api/index.ts, shared/api.ts and src/api/* paths; api/effect, api/lambda, shared/effect and src/effect are forbidden.'
+@@ -72,7 +86,13 @@ const createStrictEffectApiBoundariesRule = ()=>({
+                     (0, external_ast_cjs_namespaceObject.reportProgramPattern)(context, node, source, /\b(?:request|req)\.(?:json|text|formData|arrayBuffer)\s*\(/u, 'API modules must not manually parse request bodies; use HttpApiEndpoint payload/query/params schemas.');
+                     (0, external_ast_cjs_namespaceObject.reportProgramPattern)(context, node, source, /\bexport\s+const\s+handler\b|\bexport\s+default\s+async\b/u, 'API modules must not export raw request handlers; export defineEffectBff(...) from api/index.ts.');
+                     (0, external_ast_cjs_namespaceObject.reportProgramPattern)(context, node, source, /\bcreateHandler\s*[:=]\s*(?!defineEffectBff\b)/u, 'API modules must not define unbranded handler factories; use defineEffectBff(...).');
+-                    (0, external_ast_cjs_namespaceObject.reportProgramPattern)(context, node, source, /\bSchema\.(?:UnknownFromJsonString|Unknown|Any)\b/u, 'API modules must use concrete request, response and error schemas; Schema.UnknownFromJsonString, Schema.Unknown and Schema.Any are forbidden in UltraModern API code.');
++                },
++                MemberExpression (node) {
++                    if (!apiFile) return;
++                    if (runtimeSchemaMemberName(node)) context.report({
++                        node,
++                        message: 'API modules must use concrete request, response and error schemas; Schema.UnknownFromJsonString, Schema.Unknown and Schema.Any are forbidden in UltraModern API code.'
++                    });
+                 }
+             };
+         }
+diff --git a/dist/cjs/strict-effect-runtime.cjs b/dist/cjs/strict-effect-runtime.cjs
+index f22192f..b5e30f4 100644
+--- a/dist/cjs/strict-effect-runtime.cjs
++++ b/dist/cjs/strict-effect-runtime.cjs
+@@ -110,12 +110,13 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+                     operator: 'delete'
+                 })) {
+                     let target = nodePath.isAssignmentExpression() ? nodePath.node.left : nodePath.node.argument;
+-                    while(types_namespaceObject.isMemberExpression(target))target = target.object;
++                    target = (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(target, true);
++                    while(types_namespaceObject.isMemberExpression(target))target = (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(target.object, true);
+                     let binding = types_namespaceObject.isIdentifier(target) ? nodePath.scope.getBinding(target.name) : void 0;
+                     while(binding && !mutated.has(binding)){
+                         mutated.add(binding);
+                         const declarator = binding.path.node;
+-                        const alias = 'const' === binding.kind && types_namespaceObject.isVariableDeclarator(declarator) && declarator.init ? (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(declarator.init, true) : void 0;
++                        const alias = ('const' === binding.kind || binding.constant) && types_namespaceObject.isVariableDeclarator(declarator) && declarator.init ? (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(declarator.init, true) : void 0;
+                         binding = types_namespaceObject.isIdentifier(alias) ? binding.path.scope.getBinding(alias.name) : void 0;
+                     }
+                 }
+@@ -296,11 +297,56 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+             'effect',
+             'effect/Effect'
+         ];
+-        const routeHandler = (node)=>{
+-            node = unwrap(node);
+-            if (!types_namespaceObject.isCallExpression(node) || !method(node.callee, 'HttpRouter', 'add') || 3 !== node.arguments.length) return;
+-            const [verb, route, handler] = node.arguments;
+-            return types_namespaceObject.isStringLiteral(verb) && httpRouteMethods.has(verb.value) && types_namespaceObject.isStringLiteral(route) && (route.value.startsWith('/') || '*' === route.value) && (types_namespaceObject.isArrowFunctionExpression(handler) || types_namespaceObject.isFunctionExpression(handler)) ? handler : void 0;
++        /** Resolve immutable owner-local aliases without evaluating application code. */
++        const routeValue = (node, seen = new Set()) => {
++          node = unwrap(node);
++          if (seen.has(node) || seen.size >= 128) return undefined;
++          seen.add(node);
++          const init = initialized(node) ?? externalValue(node);
++          return init ? routeValue(init, seen) : node;
++        };
++        /** Native catchTag preserves the route function while handling a declared failure. */
++        const routeTransform = (node) => {
++          const value = routeValue(node);
++          if (!types_namespaceObject.isCallExpression(value) ||
++            !method(value.callee, 'Effect', 'catchTag', effectSources) ||
++            value.arguments.length !== 2 ||
++            !types_namespaceObject.isStringLiteral(routeValue(value.arguments[0]))) return undefined;
++          const handler = routeValue(value.arguments[1]);
++          return types_namespaceObject.isArrowFunctionExpression(handler) || types_namespaceObject.isFunctionExpression(handler) ? handler : undefined;
++        };
++        /** Retain primary and recovery function nodes for lexical capture checks. */
++        const routeFunction = (node) => {
++          let value = routeValue(node);
++          const functions = [];
++          if (types_namespaceObject.isCallExpression(value)) {
++            const factory = unwrap(value.callee);
++            const direct = method(factory, 'Effect', 'fn', effectSources);
++            const named = types_namespaceObject.isCallExpression(factory) &&
++              method(factory.callee, 'Effect', 'fn', effectSources) &&
++              factory.arguments.length === 1 &&
++              types_namespaceObject.isStringLiteral(routeValue(factory.arguments[0]));
++            if ((!direct && !named) || value.arguments.length === 0) return undefined;
++            for (const argument of value.arguments.slice(1)) {
++              const recovery = routeTransform(argument);
++              if (!recovery) return undefined;
++              functions.push(recovery);
++            }
++            value = routeValue(value.arguments[0]);
++          }
++          return types_namespaceObject.isArrowFunctionExpression(value) || types_namespaceObject.isFunctionExpression(value) ? [value, ...functions] : undefined;
++        };
++        /** The proven native functions of a static HttpRouter.add declaration. */
++        const routeHandler = (node) => {
++          node = unwrap(node);
++          if (!types_namespaceObject.isCallExpression(node) || !method(node.callee, 'HttpRouter', 'add') ||
++            node.arguments.length !== 3) return undefined;
++          const [verbInput, routeInput, handlerInput] = node.arguments;
++          const verb = routeValue(verbInput);
++          const route = routeValue(routeInput);
++          const handler = routeFunction(handlerInput);
++          return types_namespaceObject.isStringLiteral(verb) && httpRouteMethods.has(verb.value) &&
++            types_namespaceObject.isStringLiteral(route) && (route.value.startsWith('/') || route.value === '*') ? handler : undefined;
+         };
+         const effectReference = (node)=>guarded(node, (node)=>{
+                 const init = initialized(node);
+@@ -314,7 +360,7 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+                 if (!types_namespaceObject.isArrowFunctionExpression(node) || node.async || 1 !== node.params.length || !types_namespaceObject.isIdentifier(node.params[0]) || types_namespaceObject.isBlockStatement(node.body)) return false;
+                 const handler = routeHandler(node.body);
+                 const parameter = binding(node.params[0]);
+-                return !!handler && !!parameter && parameter.referencePaths.some((reference)=>!!reference.findParent((path)=>path.node === handler));
++                return !!handler && !!parameter && parameter.referencePaths.some((reference)=>!!reference.findParent((path)=>handler.some((fn)=>path.node === fn)));
+             });
+         const capturedTransport = (node)=>guarded(node, (node)=>{
+                 const init = initialized(node);
+diff --git a/dist/esm-node/microvertical-api-baseline.js b/dist/esm-node/microvertical-api-baseline.js
+index 1f7f15a..6afa22b 100644
+--- a/dist/esm-node/microvertical-api-baseline.js
++++ b/dist/esm-node/microvertical-api-baseline.js
+@@ -27,6 +27,21 @@ const stringLiteral = (expression)=>{
+     const unwrapped = unwrapExpression(expression);
+     return __rspack_external__babel_types_6e8337dd.isStringLiteral(unwrapped) ? unwrapped.value : void 0;
+ };
++/** Bounded lexical route-path resolution: only a top-level `const` string declared in the endpoint's own module; never external authority, mutable bindings, calls, member lookup or dynamic expressions. */
++const localConstString = (sourceFile, expression)=>{
++    if (null == sourceFile || null == expression) return;
++    const seen = new Set();
++    let node = unwrapExpression(expression);
++    for(let hop = 0; hop < 16; hop += 1){
++        if (!__rspack_external__babel_types_6e8337dd.isIdentifier(node) || seen.has(node.name)) return;
++        seen.add(node.name);
++        const declaration = localConst(sourceFile, node.name);
++        if (void 0 === declaration || null == declaration.init) return;
++        const value = stringLiteral(declaration.init);
++        if (void 0 !== value) return value;
++        node = unwrapExpression(declaration.init);
++    }
++};
+ const numericLiteral = (expression)=>{
+     if (null == expression) return;
+     const unwrapped = unwrapExpression(expression);
+@@ -226,7 +241,7 @@ const reachableEndpoints = (graph, declaration)=>{
+                 const callee = accessPath(node.callee);
+                 const method = callee?.length === 2 && 'HttpApiEndpoint' === callee[0] ? verbs[callee[1]] : void 0;
+                 const name = stringLiteral(node.arguments[0]);
+-                const routePath = stringLiteral(node.arguments[1]);
++                const routePath = stringLiteral(node.arguments[1]) ?? localConstString(module.file, node.arguments[1]);
+                 if (!method || !name || !routePath) return false;
+                 const identity = `${group}:${name}`;
+                 if (identities.has(identity)) return false;
+diff --git a/dist/esm-node/microvertical-api-boundary.js b/dist/esm-node/microvertical-api-boundary.js
+index 6a61b71..a6ca515 100644
+--- a/dist/esm-node/microvertical-api-boundary.js
++++ b/dist/esm-node/microvertical-api-boundary.js
+@@ -28,6 +28,23 @@ const identitySources = [
+ ];
+ const normalize = (file)=>file.split(node_path.sep).join('/').replace(/^\.\//u, '');
+ const errorMessage = (error)=>error instanceof Error ? error.message : String(error);
++const forbiddenSchemaMembers = new Set([
++    'Any',
++    'Unknown',
++    'UnknownFromJsonString'
++]);
++const staticMemberName = (property, computed)=>{
++    if (!computed) return __rspack_external__babel_types_6e8337dd.isIdentifier(property) ? property.name : undefined;
++    if (__rspack_external__babel_types_6e8337dd.isStringLiteral(property)) return property.value;
++    if (__rspack_external__babel_types_6e8337dd.isTemplateLiteral(property) && 0 === property.expressions.length && 1 === property.quasis.length) return property.quasis[0].value.cooked ?? property.quasis[0].value.raw;
++};
++/** Runtime `Schema.Unknown`-family access; type-only `typeof Schema.Unknown.Type` positions parse as TSQualifiedName, never as member expressions. */
++const runtimeSchemaMemberName = (node)=>{
++    if (!node || 'MemberExpression' !== node.type && 'OptionalMemberExpression' !== node.type) return;
++    if (!node.object || 'Identifier' !== node.object.type || 'Schema' !== node.object.name) return;
++    const name = staticMemberName(node.property, node.computed);
++    return 'string' == typeof name && forbiddenSchemaMembers.has(name) ? name : undefined;
++};
+ const apiApp = (app)=>'vertical' === app.kind && 'ui-only' !== app.surfaceProfile && 'horizontal-remote' !== app.deliveryUnitKind;
+ function configuredApps(root, supplied) {
+     const topology = supplied ? void 0 : JSON.parse(node_fs.readFileSync(node_path.join(root, 'topology/reference-topology.json'), 'utf8'));
+@@ -503,11 +520,18 @@ function check(options, topology) {
+             ], [
+                 /\bcreateHandler\s*[:=]\s*(?!defineEffectBff\b)/u,
+                 'must use defineEffectBff instead of unbranded handler factories'
+-            ], [
+-                /\bSchema\.(?:UnknownFromJsonString|Unknown|Any)\b/u,
+-                'must use concrete request, response and error schemas'
+             ]);
+             for (const [pattern, reason] of patterns)assert(!pattern.test(source), `${file}: ${reason}`);
++            if (/\/api\//u.test(file) && /\.[cm]?[jt]sx?$/u.test(file)) {
++                const ast = parseFile(file);
++                if (ast) {
++                    let forbidden = false;
++                    __rspack_external__babel_types_6e8337dd.traverseFast(ast, (node)=>{
++                        if (runtimeSchemaMemberName(node)) forbidden = true;
++                    });
++                    if (forbidden) diagnostics.push(`${file}: must use concrete request, response and error schemas`);
++                }
++            }
+             if (topology && /\/api\/index\.ts$/u.test(file)) {
+                 topologyFilesAnalyzed += 1;
+                 const violation = strictEffectRuntimeTopologyViolation(source, createEffectApiImportResolver(absolute(file)));
+diff --git a/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js b/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js
+index 5ac54b2..5a5c1b9 100644
+--- a/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js
++++ b/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js
+@@ -1,6 +1,20 @@
+ import "node:module";
+ import { createEffectApiImportResolver, strictEffectRuntimeTopologyViolation } from "../../strict-effect-runtime.js";
+-import { getSourceText, isApiEntryFile, isApiSourceFile, isForbiddenGeneratedEffectPath, isSharedApiContractFile, normalizeFilename, reportMissingProgramPattern, reportProgramPattern } from "../ast.js";
++import { getSourceText, getStringLiteralValue, isApiEntryFile, isApiSourceFile, isForbiddenGeneratedEffectPath, isSharedApiContractFile, normalizeFilename, reportMissingProgramPattern, reportProgramPattern } from "../ast.js";
++const forbiddenSchemaMembers = new Set([
++    'Any',
++    'Unknown',
++    'UnknownFromJsonString'
++]);
++/** Runtime `Schema.Unknown`-family access; type-only `typeof Schema.Unknown.Type` positions parse as TSQualifiedName, never as member expressions. */
++const runtimeSchemaMemberName = (node)=>{
++    if (!node || 'MemberExpression' !== node.type && 'OptionalMemberExpression' !== node.type) return;
++    if (!node.object || 'Identifier' !== node.object.type || 'Schema' !== node.object.name) return;
++    const property = node.property;
++    if (!property) return;
++    const name = node.computed ? getStringLiteralValue(property) : 'Identifier' === property.type ? property.name : undefined;
++    return 'string' == typeof name && forbiddenSchemaMembers.has(name) ? name : undefined;
++};
+ const createStrictEffectApiBoundariesRule = ()=>({
+         meta: {
+             type: 'problem',
+@@ -10,11 +24,11 @@ const createStrictEffectApiBoundariesRule = ()=>({
+             schema: []
+         },
+         create (context) {
++            const filename = normalizeFilename(context.filename);
++            const apiFile = isApiSourceFile(filename);
+             return {
+                 Program (node) {
+                     const source = getSourceText(context, node);
+-                    const filename = normalizeFilename(context.filename);
+-                    const apiFile = isApiSourceFile(filename);
+                     if (isForbiddenGeneratedEffectPath(filename)) context.report({
+                         node,
+                         message: 'Generated UltraModern workspaces use direct api/index.ts, shared/api.ts and src/api/* paths; api/effect, api/lambda, shared/effect and src/effect are forbidden.'
+@@ -41,7 +55,13 @@ const createStrictEffectApiBoundariesRule = ()=>({
+                     reportProgramPattern(context, node, source, /\b(?:request|req)\.(?:json|text|formData|arrayBuffer)\s*\(/u, 'API modules must not manually parse request bodies; use HttpApiEndpoint payload/query/params schemas.');
+                     reportProgramPattern(context, node, source, /\bexport\s+const\s+handler\b|\bexport\s+default\s+async\b/u, 'API modules must not export raw request handlers; export defineEffectBff(...) from api/index.ts.');
+                     reportProgramPattern(context, node, source, /\bcreateHandler\s*[:=]\s*(?!defineEffectBff\b)/u, 'API modules must not define unbranded handler factories; use defineEffectBff(...).');
+-                    reportProgramPattern(context, node, source, /\bSchema\.(?:UnknownFromJsonString|Unknown|Any)\b/u, 'API modules must use concrete request, response and error schemas; Schema.UnknownFromJsonString, Schema.Unknown and Schema.Any are forbidden in UltraModern API code.');
++                },
++                MemberExpression (node) {
++                    if (!apiFile) return;
++                    if (runtimeSchemaMemberName(node)) context.report({
++                        node,
++                        message: 'API modules must use concrete request, response and error schemas; Schema.UnknownFromJsonString, Schema.Unknown and Schema.Any are forbidden in UltraModern API code.'
++                    });
+                 }
+             };
+         }
+diff --git a/dist/esm-node/strict-effect-runtime.js b/dist/esm-node/strict-effect-runtime.js
+index 7a3703d..b0911a7 100644
+--- a/dist/esm-node/strict-effect-runtime.js
++++ b/dist/esm-node/strict-effect-runtime.js
+@@ -67,12 +67,13 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+                     operator: 'delete'
+                 })) {
+                     let target = nodePath.isAssignmentExpression() ? nodePath.node.left : nodePath.node.argument;
+-                    while(__rspack_external__babel_types_6e8337dd.isMemberExpression(target))target = target.object;
++                    target = unwrapExpression(target, true);
++                    while(__rspack_external__babel_types_6e8337dd.isMemberExpression(target))target = unwrapExpression(target.object, true);
+                     let binding = __rspack_external__babel_types_6e8337dd.isIdentifier(target) ? nodePath.scope.getBinding(target.name) : void 0;
+                     while(binding && !mutated.has(binding)){
+                         mutated.add(binding);
+                         const declarator = binding.path.node;
+-                        const alias = 'const' === binding.kind && __rspack_external__babel_types_6e8337dd.isVariableDeclarator(declarator) && declarator.init ? unwrapExpression(declarator.init, true) : void 0;
++                        const alias = ('const' === binding.kind || binding.constant) && __rspack_external__babel_types_6e8337dd.isVariableDeclarator(declarator) && declarator.init ? unwrapExpression(declarator.init, true) : void 0;
+                         binding = __rspack_external__babel_types_6e8337dd.isIdentifier(alias) ? binding.path.scope.getBinding(alias.name) : void 0;
+                     }
+                 }
+@@ -253,11 +254,56 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+             'effect',
+             'effect/Effect'
+         ];
+-        const routeHandler = (node)=>{
+-            node = unwrap(node);
+-            if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node) || !method(node.callee, 'HttpRouter', 'add') || 3 !== node.arguments.length) return;
+-            const [verb, route, handler] = node.arguments;
+-            return __rspack_external__babel_types_6e8337dd.isStringLiteral(verb) && httpRouteMethods.has(verb.value) && __rspack_external__babel_types_6e8337dd.isStringLiteral(route) && (route.value.startsWith('/') || '*' === route.value) && (__rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(handler) || __rspack_external__babel_types_6e8337dd.isFunctionExpression(handler)) ? handler : void 0;
++        /** Resolve immutable owner-local aliases without evaluating application code. */
++        const routeValue = (node, seen = new Set()) => {
++          node = unwrap(node);
++          if (seen.has(node) || seen.size >= 128) return undefined;
++          seen.add(node);
++          const init = initialized(node) ?? externalValue(node);
++          return init ? routeValue(init, seen) : node;
++        };
++        /** Native catchTag preserves the route function while handling a declared failure. */
++        const routeTransform = (node) => {
++          const value = routeValue(node);
++          if (!__rspack_external__babel_types_6e8337dd.isCallExpression(value) ||
++            !method(value.callee, 'Effect', 'catchTag', effectSources) ||
++            value.arguments.length !== 2 ||
++            !__rspack_external__babel_types_6e8337dd.isStringLiteral(routeValue(value.arguments[0]))) return undefined;
++          const handler = routeValue(value.arguments[1]);
++          return __rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(handler) || __rspack_external__babel_types_6e8337dd.isFunctionExpression(handler) ? handler : undefined;
++        };
++        /** Retain primary and recovery function nodes for lexical capture checks. */
++        const routeFunction = (node) => {
++          let value = routeValue(node);
++          const functions = [];
++          if (__rspack_external__babel_types_6e8337dd.isCallExpression(value)) {
++            const factory = unwrap(value.callee);
++            const direct = method(factory, 'Effect', 'fn', effectSources);
++            const named = __rspack_external__babel_types_6e8337dd.isCallExpression(factory) &&
++              method(factory.callee, 'Effect', 'fn', effectSources) &&
++              factory.arguments.length === 1 &&
++              __rspack_external__babel_types_6e8337dd.isStringLiteral(routeValue(factory.arguments[0]));
++            if ((!direct && !named) || value.arguments.length === 0) return undefined;
++            for (const argument of value.arguments.slice(1)) {
++              const recovery = routeTransform(argument);
++              if (!recovery) return undefined;
++              functions.push(recovery);
++            }
++            value = routeValue(value.arguments[0]);
++          }
++          return __rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(value) || __rspack_external__babel_types_6e8337dd.isFunctionExpression(value) ? [value, ...functions] : undefined;
++        };
++        /** The proven native functions of a static HttpRouter.add declaration. */
++        const routeHandler = (node) => {
++          node = unwrap(node);
++          if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node) || !method(node.callee, 'HttpRouter', 'add') ||
++            node.arguments.length !== 3) return undefined;
++          const [verbInput, routeInput, handlerInput] = node.arguments;
++          const verb = routeValue(verbInput);
++          const route = routeValue(routeInput);
++          const handler = routeFunction(handlerInput);
++          return __rspack_external__babel_types_6e8337dd.isStringLiteral(verb) && httpRouteMethods.has(verb.value) &&
++            __rspack_external__babel_types_6e8337dd.isStringLiteral(route) && (route.value.startsWith('/') || route.value === '*') ? handler : undefined;
+         };
+         const effectReference = (node)=>guarded(node, (node)=>{
+                 const init = initialized(node);
+@@ -271,7 +317,7 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+                 if (!__rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(node) || node.async || 1 !== node.params.length || !__rspack_external__babel_types_6e8337dd.isIdentifier(node.params[0]) || __rspack_external__babel_types_6e8337dd.isBlockStatement(node.body)) return false;
+                 const handler = routeHandler(node.body);
+                 const parameter = binding(node.params[0]);
+-                return !!handler && !!parameter && parameter.referencePaths.some((reference)=>!!reference.findParent((path)=>path.node === handler));
++                return !!handler && !!parameter && parameter.referencePaths.some((reference)=>!!reference.findParent((path)=>handler.some((fn)=>path.node === fn)));
+             });
+         const capturedTransport = (node)=>guarded(node, (node)=>{
+                 const init = initialized(node);
+diff --git a/dist/esm/microvertical-api-baseline.js b/dist/esm/microvertical-api-baseline.js
+index 3f3eb33..d1c194f 100644
+--- a/dist/esm/microvertical-api-baseline.js
++++ b/dist/esm/microvertical-api-baseline.js
+@@ -26,6 +26,21 @@ const stringLiteral = (expression)=>{
+     const unwrapped = unwrapExpression(expression);
+     return __rspack_external__babel_types_6e8337dd.isStringLiteral(unwrapped) ? unwrapped.value : void 0;
+ };
++/** Bounded lexical route-path resolution: only a top-level `const` string declared in the endpoint's own module; never external authority, mutable bindings, calls, member lookup or dynamic expressions. */
++const localConstString = (sourceFile, expression)=>{
++    if (null == sourceFile || null == expression) return;
++    const seen = new Set();
++    let node = unwrapExpression(expression);
++    for(let hop = 0; hop < 16; hop += 1){
++        if (!__rspack_external__babel_types_6e8337dd.isIdentifier(node) || seen.has(node.name)) return;
++        seen.add(node.name);
++        const declaration = localConst(sourceFile, node.name);
++        if (void 0 === declaration || null == declaration.init) return;
++        const value = stringLiteral(declaration.init);
++        if (void 0 !== value) return value;
++        node = unwrapExpression(declaration.init);
++    }
++};
+ const numericLiteral = (expression)=>{
+     if (null == expression) return;
+     const unwrapped = unwrapExpression(expression);
+@@ -225,7 +240,7 @@ const reachableEndpoints = (graph, declaration)=>{
+                 const callee = accessPath(node.callee);
+                 const method = callee?.length === 2 && 'HttpApiEndpoint' === callee[0] ? verbs[callee[1]] : void 0;
+                 const name = stringLiteral(node.arguments[0]);
+-                const routePath = stringLiteral(node.arguments[1]);
++                const routePath = stringLiteral(node.arguments[1]) ?? localConstString(module.file, node.arguments[1]);
+                 if (!method || !name || !routePath) return false;
+                 const identity = `${group}:${name}`;
+                 if (identities.has(identity)) return false;
+diff --git a/dist/esm/microvertical-api-boundary.js b/dist/esm/microvertical-api-boundary.js
+index 0663082..6bd594c 100644
+--- a/dist/esm/microvertical-api-boundary.js
++++ b/dist/esm/microvertical-api-boundary.js
+@@ -27,6 +27,23 @@ const identitySources = [
+ ];
+ const normalize = (file)=>file.split(node_path.sep).join('/').replace(/^\.\//u, '');
+ const errorMessage = (error)=>error instanceof Error ? error.message : String(error);
++const forbiddenSchemaMembers = new Set([
++    'Any',
++    'Unknown',
++    'UnknownFromJsonString'
++]);
++const staticMemberName = (property, computed)=>{
++    if (!computed) return __rspack_external__babel_types_6e8337dd.isIdentifier(property) ? property.name : undefined;
++    if (__rspack_external__babel_types_6e8337dd.isStringLiteral(property)) return property.value;
++    if (__rspack_external__babel_types_6e8337dd.isTemplateLiteral(property) && 0 === property.expressions.length && 1 === property.quasis.length) return property.quasis[0].value.cooked ?? property.quasis[0].value.raw;
++};
++/** Runtime `Schema.Unknown`-family access; type-only `typeof Schema.Unknown.Type` positions parse as TSQualifiedName, never as member expressions. */
++const runtimeSchemaMemberName = (node)=>{
++    if (!node || 'MemberExpression' !== node.type && 'OptionalMemberExpression' !== node.type) return;
++    if (!node.object || 'Identifier' !== node.object.type || 'Schema' !== node.object.name) return;
++    const name = staticMemberName(node.property, node.computed);
++    return 'string' == typeof name && forbiddenSchemaMembers.has(name) ? name : undefined;
++};
+ const apiApp = (app)=>'vertical' === app.kind && 'ui-only' !== app.surfaceProfile && 'horizontal-remote' !== app.deliveryUnitKind;
+ function configuredApps(root, supplied) {
+     const topology = supplied ? void 0 : JSON.parse(node_fs.readFileSync(node_path.join(root, 'topology/reference-topology.json'), 'utf8'));
+@@ -502,11 +519,18 @@ function check(options, topology) {
+             ], [
+                 /\bcreateHandler\s*[:=]\s*(?!defineEffectBff\b)/u,
+                 'must use defineEffectBff instead of unbranded handler factories'
+-            ], [
+-                /\bSchema\.(?:UnknownFromJsonString|Unknown|Any)\b/u,
+-                'must use concrete request, response and error schemas'
+             ]);
+             for (const [pattern, reason] of patterns)assert(!pattern.test(source), `${file}: ${reason}`);
++            if (/\/api\//u.test(file) && /\.[cm]?[jt]sx?$/u.test(file)) {
++                const ast = parseFile(file);
++                if (ast) {
++                    let forbidden = false;
++                    __rspack_external__babel_types_6e8337dd.traverseFast(ast, (node)=>{
++                        if (runtimeSchemaMemberName(node)) forbidden = true;
++                    });
++                    if (forbidden) diagnostics.push(`${file}: must use concrete request, response and error schemas`);
++                }
++            }
+             if (topology && /\/api\/index\.ts$/u.test(file)) {
+                 topologyFilesAnalyzed += 1;
+                 const violation = strictEffectRuntimeTopologyViolation(source, createEffectApiImportResolver(absolute(file)));
+diff --git a/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js b/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js
+index abb496e..529bb66 100644
+--- a/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js
++++ b/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js
+@@ -1,5 +1,19 @@
+ import { createEffectApiImportResolver, strictEffectRuntimeTopologyViolation } from "../../strict-effect-runtime.js";
+-import { getSourceText, isApiEntryFile, isApiSourceFile, isForbiddenGeneratedEffectPath, isSharedApiContractFile, normalizeFilename, reportMissingProgramPattern, reportProgramPattern } from "../ast.js";
++import { getSourceText, getStringLiteralValue, isApiEntryFile, isApiSourceFile, isForbiddenGeneratedEffectPath, isSharedApiContractFile, normalizeFilename, reportMissingProgramPattern, reportProgramPattern } from "../ast.js";
++const forbiddenSchemaMembers = new Set([
++    'Any',
++    'Unknown',
++    'UnknownFromJsonString'
++]);
++/** Runtime `Schema.Unknown`-family access; type-only `typeof Schema.Unknown.Type` positions parse as TSQualifiedName, never as member expressions. */
++const runtimeSchemaMemberName = (node)=>{
++    if (!node || 'MemberExpression' !== node.type && 'OptionalMemberExpression' !== node.type) return;
++    if (!node.object || 'Identifier' !== node.object.type || 'Schema' !== node.object.name) return;
++    const property = node.property;
++    if (!property) return;
++    const name = node.computed ? getStringLiteralValue(property) : 'Identifier' === property.type ? property.name : undefined;
++    return 'string' == typeof name && forbiddenSchemaMembers.has(name) ? name : undefined;
++};
+ const createStrictEffectApiBoundariesRule = ()=>({
+         meta: {
+             type: 'problem',
+@@ -9,11 +23,11 @@ const createStrictEffectApiBoundariesRule = ()=>({
+             schema: []
+         },
+         create (context) {
++            const filename = normalizeFilename(context.filename);
++            const apiFile = isApiSourceFile(filename);
+             return {
+                 Program (node) {
+                     const source = getSourceText(context, node);
+-                    const filename = normalizeFilename(context.filename);
+-                    const apiFile = isApiSourceFile(filename);
+                     if (isForbiddenGeneratedEffectPath(filename)) context.report({
+                         node,
+                         message: 'Generated UltraModern workspaces use direct api/index.ts, shared/api.ts and src/api/* paths; api/effect, api/lambda, shared/effect and src/effect are forbidden.'
+@@ -40,7 +54,13 @@ const createStrictEffectApiBoundariesRule = ()=>({
+                     reportProgramPattern(context, node, source, /\b(?:request|req)\.(?:json|text|formData|arrayBuffer)\s*\(/u, 'API modules must not manually parse request bodies; use HttpApiEndpoint payload/query/params schemas.');
+                     reportProgramPattern(context, node, source, /\bexport\s+const\s+handler\b|\bexport\s+default\s+async\b/u, 'API modules must not export raw request handlers; export defineEffectBff(...) from api/index.ts.');
+                     reportProgramPattern(context, node, source, /\bcreateHandler\s*[:=]\s*(?!defineEffectBff\b)/u, 'API modules must not define unbranded handler factories; use defineEffectBff(...).');
+-                    reportProgramPattern(context, node, source, /\bSchema\.(?:UnknownFromJsonString|Unknown|Any)\b/u, 'API modules must use concrete request, response and error schemas; Schema.UnknownFromJsonString, Schema.Unknown and Schema.Any are forbidden in UltraModern API code.');
++                },
++                MemberExpression (node) {
++                    if (!apiFile) return;
++                    if (runtimeSchemaMemberName(node)) context.report({
++                        node,
++                        message: 'API modules must use concrete request, response and error schemas; Schema.UnknownFromJsonString, Schema.Unknown and Schema.Any are forbidden in UltraModern API code.'
++                    });
+                 }
+             };
+         }
+diff --git a/dist/esm/strict-effect-runtime.js b/dist/esm/strict-effect-runtime.js
+index 4cb91c5..794de91 100644
+--- a/dist/esm/strict-effect-runtime.js
++++ b/dist/esm/strict-effect-runtime.js
+@@ -66,12 +66,13 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+                     operator: 'delete'
+                 })) {
+                     let target = nodePath.isAssignmentExpression() ? nodePath.node.left : nodePath.node.argument;
+-                    while(__rspack_external__babel_types_6e8337dd.isMemberExpression(target))target = target.object;
++                    target = unwrapExpression(target, true);
++                    while(__rspack_external__babel_types_6e8337dd.isMemberExpression(target))target = unwrapExpression(target.object, true);
+                     let binding = __rspack_external__babel_types_6e8337dd.isIdentifier(target) ? nodePath.scope.getBinding(target.name) : void 0;
+                     while(binding && !mutated.has(binding)){
+                         mutated.add(binding);
+                         const declarator = binding.path.node;
+-                        const alias = 'const' === binding.kind && __rspack_external__babel_types_6e8337dd.isVariableDeclarator(declarator) && declarator.init ? unwrapExpression(declarator.init, true) : void 0;
++                        const alias = ('const' === binding.kind || binding.constant) && __rspack_external__babel_types_6e8337dd.isVariableDeclarator(declarator) && declarator.init ? unwrapExpression(declarator.init, true) : void 0;
+                         binding = __rspack_external__babel_types_6e8337dd.isIdentifier(alias) ? binding.path.scope.getBinding(alias.name) : void 0;
+                     }
+                 }
+@@ -252,11 +253,56 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+             'effect',
+             'effect/Effect'
+         ];
+-        const routeHandler = (node)=>{
+-            node = unwrap(node);
+-            if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node) || !method(node.callee, 'HttpRouter', 'add') || 3 !== node.arguments.length) return;
+-            const [verb, route, handler] = node.arguments;
+-            return __rspack_external__babel_types_6e8337dd.isStringLiteral(verb) && httpRouteMethods.has(verb.value) && __rspack_external__babel_types_6e8337dd.isStringLiteral(route) && (route.value.startsWith('/') || '*' === route.value) && (__rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(handler) || __rspack_external__babel_types_6e8337dd.isFunctionExpression(handler)) ? handler : void 0;
++        /** Resolve immutable owner-local aliases without evaluating application code. */
++        const routeValue = (node, seen = new Set()) => {
++          node = unwrap(node);
++          if (seen.has(node) || seen.size >= 128) return undefined;
++          seen.add(node);
++          const init = initialized(node) ?? externalValue(node);
++          return init ? routeValue(init, seen) : node;
++        };
++        /** Native catchTag preserves the route function while handling a declared failure. */
++        const routeTransform = (node) => {
++          const value = routeValue(node);
++          if (!__rspack_external__babel_types_6e8337dd.isCallExpression(value) ||
++            !method(value.callee, 'Effect', 'catchTag', effectSources) ||
++            value.arguments.length !== 2 ||
++            !__rspack_external__babel_types_6e8337dd.isStringLiteral(routeValue(value.arguments[0]))) return undefined;
++          const handler = routeValue(value.arguments[1]);
++          return __rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(handler) || __rspack_external__babel_types_6e8337dd.isFunctionExpression(handler) ? handler : undefined;
++        };
++        /** Retain primary and recovery function nodes for lexical capture checks. */
++        const routeFunction = (node) => {
++          let value = routeValue(node);
++          const functions = [];
++          if (__rspack_external__babel_types_6e8337dd.isCallExpression(value)) {
++            const factory = unwrap(value.callee);
++            const direct = method(factory, 'Effect', 'fn', effectSources);
++            const named = __rspack_external__babel_types_6e8337dd.isCallExpression(factory) &&
++              method(factory.callee, 'Effect', 'fn', effectSources) &&
++              factory.arguments.length === 1 &&
++              __rspack_external__babel_types_6e8337dd.isStringLiteral(routeValue(factory.arguments[0]));
++            if ((!direct && !named) || value.arguments.length === 0) return undefined;
++            for (const argument of value.arguments.slice(1)) {
++              const recovery = routeTransform(argument);
++              if (!recovery) return undefined;
++              functions.push(recovery);
++            }
++            value = routeValue(value.arguments[0]);
++          }
++          return __rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(value) || __rspack_external__babel_types_6e8337dd.isFunctionExpression(value) ? [value, ...functions] : undefined;
++        };
++        /** The proven native functions of a static HttpRouter.add declaration. */
++        const routeHandler = (node) => {
++          node = unwrap(node);
++          if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node) || !method(node.callee, 'HttpRouter', 'add') ||
++            node.arguments.length !== 3) return undefined;
++          const [verbInput, routeInput, handlerInput] = node.arguments;
++          const verb = routeValue(verbInput);
++          const route = routeValue(routeInput);
++          const handler = routeFunction(handlerInput);
++          return __rspack_external__babel_types_6e8337dd.isStringLiteral(verb) && httpRouteMethods.has(verb.value) &&
++            __rspack_external__babel_types_6e8337dd.isStringLiteral(route) && (route.value.startsWith('/') || route.value === '*') ? handler : undefined;
+         };
+         const effectReference = (node)=>guarded(node, (node)=>{
+                 const init = initialized(node);
+@@ -270,7 +316,7 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+                 if (!__rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(node) || node.async || 1 !== node.params.length || !__rspack_external__babel_types_6e8337dd.isIdentifier(node.params[0]) || __rspack_external__babel_types_6e8337dd.isBlockStatement(node.body)) return false;
+                 const handler = routeHandler(node.body);
+                 const parameter = binding(node.params[0]);
+-                return !!handler && !!parameter && parameter.referencePaths.some((reference)=>!!reference.findParent((path)=>path.node === handler));
++                return !!handler && !!parameter && parameter.referencePaths.some((reference)=>!!reference.findParent((path)=>handler.some((fn)=>path.node === fn)));
+             });
+         const capturedTransport = (node)=>guarded(node, (node)=>{
+                 const init = initialized(node);

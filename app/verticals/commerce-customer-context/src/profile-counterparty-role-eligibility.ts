@@ -59,6 +59,7 @@ const executeServerCounterpartyRead = Effect.fn('ProfileCounterpartyRoleEligibil
       .acquire(
         {
           audience: 'party-registry',
+          callingAppId: 'commerce-customer-context',
           legalEntityScope: 'subject',
           requestCorrelation: scope.requestCorrelation,
           subject: { _tag: 'Assertion', scope: scope.operationalScope },
@@ -125,11 +126,20 @@ const classifyEligibleRoles = (
 
   return {
     managedLegalEntityId,
+    observedAt: now,
     outcome: 'ELIGIBLE',
     roleResourceId: eligibleRole.rolePeriodRef.resourceId,
     // Role periods are immutable owner facts. Party Registry currently publishes their canonical
     // recordedAt instant, rather than a synthetic numeric revision, as the evidence version.
     roleResourceRevision: eligibleRole.recordedAt,
+    validUntil: DateTime.formatIso(
+      DateTime.makeUnsafe(
+        Math.min(
+          DateTime.toEpochMillis(DateTime.makeUnsafe(now)) + 30_000,
+          eligibleRole.validTo === null ? Infinity : DateTime.toEpochMillis(DateTime.makeUnsafe(eligibleRole.validTo)),
+        ),
+      ),
+    ),
   };
 };
 
@@ -167,7 +177,11 @@ export const makeProfileCounterpartyRoleEligibilityResolver =
     seams: ProfileCounterpartyRoleEligibilitySeams,
   ): CounterpartyRoleEligibilityResolver =>
   ({ counterpartyResourceId, tenantId }) => {
-    if (tenantId !== scope.tenantId) {
+    if (
+      tenantId !== scope.tenantId ||
+      scope.operationalScope.tenantId !== scope.tenantId ||
+      scope.operationalScope.legalEntityId !== scope.legalEntityId
+    ) {
       return Effect.succeed({ outcome: 'INDETERMINATE' as const });
     }
 
@@ -201,6 +215,40 @@ export const makeProfileCounterpartyRoleEligibilityResolver =
       ),
     );
   };
+
+/** A prepared observation is usable only inside its exclusive owner-evidence window. */
+export const assertPreparedCounterpartyRoleCurrent = Effect.fn(
+  'ProfileCounterpartyRoleEligibility.assertPreparedCurrent',
+)(function* assertPreparedCurrent(role: CounterpartyRoleEligibility) {
+  if (role.outcome !== 'ELIGIBLE') {
+    return yield* Effect.void;
+  }
+  const now = DateTime.toEpochMillis(yield* DateTime.now);
+  if (
+    role.observedAt === undefined ||
+    !isCanonicalInstant(role.observedAt) ||
+    role.validUntil === undefined ||
+    role.validUntil === null ||
+    !isCanonicalInstant(role.validUntil) ||
+    now < DateTime.toEpochMillis(DateTime.makeUnsafe(role.observedAt)) ||
+    now >= DateTime.toEpochMillis(DateTime.makeUnsafe(role.validUntil)) ||
+    DateTime.toEpochMillis(DateTime.makeUnsafe(role.validUntil)) >
+      DateTime.toEpochMillis(DateTime.makeUnsafe(role.observedAt)) + 30_000
+  ) {
+    return yield* dependencyFailure('The prepared Counterparty customer-role observation is absent or expired');
+  }
+  return yield* Effect.void;
+});
+
+/** Check before and after mutation so expiration cannot commit a partially authorized write. */
+export const withPreparedCounterpartyRoleCurrent = <Value, Failure, Requirements>(
+  role: CounterpartyRoleEligibility,
+  operation: Effect.Effect<Value, Failure, Requirements>,
+): Effect.Effect<Value, Failure | ProfilePersistenceDependencyFailure, Requirements> =>
+  assertPreparedCounterpartyRoleCurrent(role).pipe(
+    Effect.andThen(operation),
+    Effect.tap(() => assertPreparedCounterpartyRoleCurrent(role)),
+  );
 
 export interface ProfileCounterpartyRoleEligibilityResolverFactoryService {
   readonly make: (

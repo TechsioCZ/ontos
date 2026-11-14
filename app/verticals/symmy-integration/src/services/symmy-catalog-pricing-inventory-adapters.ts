@@ -485,6 +485,7 @@ const freshGateway = Effect.fn('SymmyOwnerAdapters.freshGateway')(function* fres
   const gateway = yield* acquireDelegatedGatewayContext(
     {
       audience: contract.audience,
+      callingAppId: 'symmy-integration',
       legalEntityScope: legalEntityId === undefined ? 'tenant' : 'subject',
       requestCorrelation,
       subject,
@@ -1073,6 +1074,7 @@ const freshRecoveryGateway = Effect.fn('SymmyOwnerAdapters.freshRecoveryGateway'
   const gateway = yield* acquireDelegatedGatewayContext(
     {
       audience: contract.audience,
+      callingAppId: 'symmy-integration',
       legalEntityScope: legalEntityId === undefined ? 'tenant' : 'subject',
       requestCorrelation,
       subject: {

@@ -19,6 +19,7 @@ import type {
   Expression,
   IdentifierReference,
   Function as FunctionNode,
+  ObjectExpression,
   ParamPattern,
   Program,
   Span,
@@ -37,6 +38,9 @@ import {
   describeNativeSqlTransaction,
   describeNativeSqlExecute,
   describeNativeSqlTextSelection,
+  isReviewedCoreDatabaseGuardModule,
+  isReviewedCoreDatabaseModule,
+  privateSessionPoolSettings,
 } from './native-sql-success-proof.mts';
 import type {
   NativeSqlSourceReference,
@@ -78,8 +82,27 @@ interface Module {
   readonly functions: Implementation[];
   nativeEscapes: boolean;
   readonly program: Program;
+  readonly source: string;
   readonly writes: Span[];
 }
+/** The decoded value of a closed native Config: its declared own fields, or an Option with a `value`. */
+interface NativeConfigValue {
+  readonly fields?: ReadonlyMap<string, NativeConfigValue>;
+  readonly option?: true;
+}
+const unsafeConfigFieldNames = new Set(['__proto__', 'constructor', 'prototype']);
+/** A plain `name: value` (or shorthand) property: identifier key, not computed, not a method or accessor. */
+const plainField = (
+  property: ObjectExpression['properties'][number],
+): { readonly name: string; readonly value: Expression } | undefined =>
+  property.type === 'Property' &&
+  property.kind === 'init' &&
+  !property.computed &&
+  !property.method &&
+  property.key.type === 'Identifier'
+    ? { name: property.key.name, value: property.value }
+    : undefined;
+const coreDatabaseClientTagCache = new WeakMap<Module, ReadonlySet<Expression>>();
 interface Reference {
   readonly captures: Captures;
   readonly eagerProducer?: Reference;
@@ -443,6 +466,7 @@ const parseModule = (file: string, source: string): Module | undefined => {
     functions: [],
     nativeEscapes: false,
     program: parsed.program,
+    source,
     writes: [],
   };
   const scopes: Span[] = [module.program];
@@ -1122,6 +1146,8 @@ class FactoryResolver {
   readonly parsedCandidates = new Map<string, Module>();
   readonly sources: ReadonlyMap<string, string>;
   readonly root: string;
+  /** The workspace whose `packages/core-runtime` is Core; the analysed root itself outside fixtures. */
+  readonly coreWorkspaceRoot: string;
   readonly path: Path.Path;
   readonly packageExports: ReadonlyMap<string, string>;
   readonly conditionalPackageExports: ReadonlyMap<string, readonly string[]>;
@@ -1181,7 +1207,9 @@ class FactoryResolver {
     conditionalPackageExports: ReadonlyMap<string, readonly string[]> = new Map(),
     contractSources: ReadonlyMap<string, string> = sources,
     nativeSqlRuntimeProof?: NativeSqlRuntimeProofEnvironment,
+    coreWorkspaceRoot: string = root,
   ) {
+    this.coreWorkspaceRoot = coreWorkspaceRoot;
     this.sources = sources;
     this.nativeSqlRuntimeProof = nativeSqlRuntimeProof;
     this.root = root;
@@ -1203,8 +1231,14 @@ class FactoryResolver {
     readonly bindings: readonly Binding[];
     readonly file: string;
     readonly program: Program;
+    readonly source: string;
   }[] {
-    return [...this.modules.values()].map(({ bindings, file, program }) => ({ bindings, file, program }));
+    return [...this.modules.values()].map(({ bindings, file, program, source }) => ({
+      bindings,
+      file,
+      program,
+      source,
+    }));
   }
   module(file: string): Module | undefined {
     const cached = this.modules.get(file);
@@ -1421,6 +1455,7 @@ class FactoryResolver {
         'Effect',
         'Layer',
         'Context',
+        'Config',
         'ConfigProvider',
         'Data',
         'Crypto',
@@ -3568,8 +3603,12 @@ class FactoryResolver {
         if (!FactoryResolver.consumerCallReached(module, call, readModule, frames, actualFrames)) {
           continue;
         }
+        // Security fence: guarded Core pool (transaction I/O guard + session-role check). Core's guard modules are
+        // Core's own implementations, skipped only at Core's own path and exactly as reviewed; a context provision
+        // there is still checked below.
         if (
           !exactRead &&
+          !this.reviewedCoreDatabaseGuardModule(module) &&
           !(
             actualFrames.length === 0 ? [new Map<Binding, Reference>()] : actualFrames.map((frame) => frame.captures)
           ).every((captures) => this.consumerEffectCallClosed(module, call, readModule, read, binding, captures))
@@ -3862,7 +3901,16 @@ class FactoryResolver {
     if (node.type !== 'MemberExpression' || this.unprovedRestCarrierIndex(reference, node)) {
       return true;
     }
+    if (this.nativeConfigSuccessMember(module, node)) {
+      return false;
+    }
     if (this.native(module, node, 'Schema', 'String') && this.nativeSchemaConstantCustody('String')) {
+      return false;
+    }
+    // Security fence: guarded Core pool. In Core's `db/client.ts`, the native PgClient service tag passed as the
+    // tag of `Layer.effect`, `Context.get` or `Effect.provideService` is a key, not an effect: it carries no read.
+    // Anywhere else (`yield* PgClient.PgClient`, `Context.make`, an unknown callee) it stays a possible carrier.
+    if (this.coreDatabaseClientTagArguments(module).has(node)) {
       return false;
     }
     const key = FactoryResolver.carrierProjectionKey(node);
@@ -4725,6 +4773,202 @@ class FactoryResolver {
       ? this.effectCarrierRead(FactoryResolver.reference(module, call, captures), readModule, read, seen, hops + 1)
       : values.some((value) => this.effectCarrierRead(value, readModule, read, seen, hops + 1));
   }
+  /** `<workspace root>/packages/core-runtime/src/db/`: Core's own database modules, never a path suffix. */
+  coreDatabaseDirectory(): string {
+    return `${this.path.join(this.coreWorkspaceRoot, 'packages/core-runtime/src/db')}/`;
+  }
+  /** One of Core's transaction I/O, session-role or pool-client guard modules, exactly as reviewed. */
+  reviewedCoreDatabaseGuardModule(module: Module): boolean {
+    return isReviewedCoreDatabaseGuardModule(module, this.coreDatabaseDirectory());
+  }
+  /** The native PgClient service tags Core's `db/client.ts` passes in a tag position, and only those. */
+  coreDatabaseClientTagArguments(module: Module): ReadonlySet<Expression> {
+    const cached = coreDatabaseClientTagCache.get(module);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const tags = new Set<Expression>();
+    if (module.file === `${this.coreDatabaseDirectory()}client.ts`) {
+      for (const call of module.calls) {
+        const { length } = call.arguments;
+        let position: number | undefined;
+        if (this.native(module, call.callee, 'Layer', 'effect') && length === 2) {
+          position = 0;
+        } else if (this.native(module, call.callee, 'Context', 'get') && length === 2) {
+          position = 1;
+        } else if (this.native(module, call.callee, 'Effect', 'provideService') && [2, 3].includes(length)) {
+          position = length - 2;
+        }
+        const tag = position === undefined || call.optional ? undefined : call.arguments[position];
+        if (
+          tag !== undefined &&
+          tag.type !== 'SpreadElement' &&
+          this.native(module, unwrap(tag), 'PgClient', 'PgClient')
+        ) {
+          tags.add(tag).add(unwrap(tag));
+        }
+      }
+    }
+    coreDatabaseClientTagCache.set(module, tags);
+    return tags;
+  }
+  /**
+   * Security fence: guarded Core pool. A local `const` of Core's `db/pool-configuration.ts` holding the success of a
+   * closed native Config read (`yield* config`, its failure mapped only to Core's connection error): decoded data
+   * only, so it carries no effect. Answered as the shape of the decoded value; owner code never gets this shortcut.
+   */
+  nativeConfigSuccessValue(module: Module, node: IdentifierReference): NativeConfigValue | undefined {
+    const binding = bindingAt(module, node.name, node);
+    const init = binding?.init === undefined ? undefined : unwrap(binding.init);
+    return module.file === `${this.coreDatabaseDirectory()}pool-configuration.ts` &&
+      binding !== undefined &&
+      binding.kind === 'const' &&
+      binding.origin === undefined &&
+      stable(module, binding) &&
+      init?.type === 'YieldExpression' &&
+      init.delegate &&
+      init.argument !== null
+      ? this.nativeConfigValue(module, this.failureMappedReceiver(module, unwrap(init.argument)), new Set())
+      : undefined;
+  }
+  /**
+   * A member read of a closed native Config success: an own field the `Config.all` literal declares, then, for a
+   * `Config.option` field, its `value`. Never a computed key or any other (inherited) member.
+   */
+  nativeConfigSuccessMember(module: Module, node: Expression): boolean {
+    const keys: string[] = [];
+    let base = unwrap(node);
+    while (base.type === 'MemberExpression' && keys.length <= budget) {
+      const key = propertyName(base);
+      if (key === undefined || base.optional) {
+        return false;
+      }
+      keys.unshift(key);
+      base = unwrap(base.object);
+    }
+    let decoded = base.type === 'Identifier' ? this.nativeConfigSuccessValue(module, base) : undefined;
+    for (const key of keys) {
+      if (decoded?.fields?.has(key) === true) {
+        decoded = decoded.fields.get(key);
+      } else if (decoded?.option === true && key === 'value') {
+        decoded = {};
+      } else {
+        return false;
+      }
+    }
+    return decoded !== undefined;
+  }
+  /**
+   * `effect.pipe(Effect.mapError((cause) => new DatabaseConnectionError({ cause, reason: '...' })))` answered as
+   * `effect`, the error being Core's own connection error from its sibling module; anything else as itself.
+   */
+  failureMappedReceiver(module: Module, read: Expression): Expression {
+    const callee = read.type === 'CallExpression' && !read.optional ? unwrap(read.callee) : undefined;
+    const [adapter] = read.type === 'CallExpression' ? read.arguments : [];
+    const [mapping] = adapter?.type === 'CallExpression' ? adapter.arguments : [];
+    return callee?.type === 'MemberExpression' &&
+      propertyName(callee) === 'pipe' &&
+      read.type === 'CallExpression' &&
+      read.arguments.length === 1 &&
+      adapter?.type === 'CallExpression' &&
+      adapter.arguments.length === 1 &&
+      this.native(module, adapter.callee, 'Effect', 'mapError') &&
+      mapping !== undefined &&
+      mapping.type !== 'SpreadElement' &&
+      this.coreConnectionErrorMapping(module, unwrap(mapping))
+      ? callee.object
+      : read;
+  }
+  /** `(cause) => new DatabaseConnectionError({ cause, reason: 'literal' })`, the class Core's own. */
+  coreConnectionErrorMapping(module: Module, mapping: Expression): boolean {
+    const [parameter] = mapping.type === 'ArrowFunctionExpression' ? mapping.params : [];
+    const body =
+      mapping.type === 'ArrowFunctionExpression' && mapping.body.type === 'NewExpression' ? mapping.body : undefined;
+    const [payload] = body?.arguments ?? [];
+    return (
+      mapping.type === 'ArrowFunctionExpression' &&
+      !mapping.async &&
+      mapping.params.length === 1 &&
+      parameter?.type === 'Identifier' &&
+      body?.arguments.length === 1 &&
+      this.coreConnectionErrorClass(module, body.callee) &&
+      payload?.type === 'ObjectExpression' &&
+      payload.properties.every((property) => {
+        const field = plainField(property);
+        return (
+          (field?.name === 'cause' && field.value.type === 'Identifier' && field.value.name === parameter.name) ||
+          (field?.name === 'reason' && field.value.type === 'Literal')
+        );
+      })
+    );
+  }
+  /** `DatabaseConnectionError` imported from Core's own `db/connection-error.ts`. */
+  coreConnectionErrorClass(module: Module, callee: Expression): boolean {
+    const errorClass = unwrap(callee);
+    const binding = errorClass.type === 'Identifier' ? bindingAt(module, errorClass.name, errorClass) : undefined;
+    const dependency = binding?.origin === undefined ? undefined : this.dependency(module, binding.origin.source);
+    return (
+      binding?.origin?.imported === 'DatabaseConnectionError' &&
+      stable(module, binding) &&
+      dependency?.file === `${this.coreDatabaseDirectory()}connection-error.ts`
+    );
+  }
+  /** The decoded shape of a Config built only from native Config constructors over literal keys and defaults. */
+  nativeConfigValue(module: Module, input: Expression, seen: Set<Binding>): NativeConfigValue | undefined {
+    const node = unwrap(input);
+    if (node.type === 'CallExpression') {
+      return this.nativeConfigCallValue(module, node, seen);
+    }
+    const binding = node.type === 'Identifier' ? bindingAt(module, node.name, node) : undefined;
+    return binding !== undefined &&
+      binding.kind === 'const' &&
+      binding.origin === undefined &&
+      binding.init !== undefined &&
+      !seen.has(binding) &&
+      seen.size < budget &&
+      stable(module, binding)
+      ? this.nativeConfigValue(module, binding.init, new Set(seen).add(binding))
+      : undefined;
+  }
+  nativeConfigCallValue(module: Module, call: CallExpression, seen: Set<Binding>): NativeConfigValue | undefined {
+    const [argument] = call.arguments;
+    const callee = unwrap(call.callee);
+    if (call.optional || call.arguments.length !== 1 || argument === undefined || argument.type === 'SpreadElement') {
+      return undefined;
+    }
+    if (callee.type === 'MemberExpression' && propertyName(callee) === 'pipe') {
+      return argument.type === 'CallExpression' &&
+        argument.arguments.length === 1 &&
+        argument.arguments[0]?.type === 'Literal' &&
+        this.native(module, argument.callee, 'Config', 'withDefault')
+        ? this.nativeConfigValue(module, callee.object, seen)
+        : undefined;
+    }
+    if (['Boolean', 'Int', 'Number', 'String'].some((method) => this.native(module, callee, 'Config', method))) {
+      return argument.type === 'Literal' && Schema.is(Schema.String)(argument.value) ? {} : undefined;
+    }
+    if (this.native(module, callee, 'Config', 'option')) {
+      return this.nativeConfigValue(module, argument, seen) === undefined ? undefined : { option: true };
+    }
+    const literal = this.native(module, callee, 'Config', 'all') ? unwrap(argument) : undefined;
+    return literal?.type === 'ObjectExpression' ? this.nativeConfigFields(module, literal, seen) : undefined;
+  }
+  /** The declared own fields of a `Config.all` literal, each itself a closed native Config. */
+  nativeConfigFields(module: Module, literal: ObjectExpression, seen: Set<Binding>): NativeConfigValue | undefined {
+    const fields = new Map<string, NativeConfigValue>();
+    for (const property of literal.properties) {
+      const field = plainField(property);
+      const decoded =
+        field === undefined || unsafeConfigFieldNames.has(field.name)
+          ? undefined
+          : this.nativeConfigValue(module, field.value, seen);
+      if (field === undefined || decoded === undefined || fields.has(field.name)) {
+        return undefined;
+      }
+      fields.set(field.name, decoded);
+    }
+    return { fields };
+  }
   successCarrierRead(
     reference: Reference,
     readModule: Module,
@@ -4867,6 +5111,9 @@ class FactoryResolver {
     const captured = captures.get(local);
     if (captured !== undefined) {
       return this.effectCarrierRead(captured, readModule, read, next, hops + 1);
+    }
+    if (this.nativeConfigSuccessValue(module, node) !== undefined) {
+      return false;
     }
     const symbol = this.symbol(module, node) ?? { binding: local, module };
     if (symbol.binding.init !== undefined) {
@@ -7141,7 +7388,11 @@ class FactoryResolver {
     if (member !== undefined) {
       return this.checkConsumerDataSource(module, call, member, captures, readModule, read, wanted);
     }
-    if (this.consumerOriginalCallClosed(module, call, readModule, read, wanted, captures)) {
+    if (
+      this.consumerOriginalCallClosed(module, call, readModule, read, wanted, captures) ||
+      this.guardedCorePoolAcquisition(module, call) ||
+      this.nativeSchemaComposition(module, call, 0)
+    ) {
       return true;
     }
     const local = this.consumerDataCallableSource(module, call, captures);
@@ -7633,6 +7884,80 @@ class FactoryResolver {
         (this.effectCarrierRead(FactoryResolver.reference(module, first, captures), readModule, read) ||
           this.effectContainsRead(module, first, readModule, read, new Set(), 0, true))) ||
       this.contextProvisionReads(module, call, readModule, read)
+    );
+  }
+  /** The settings a guarded pool acquisition is opened with; a private session's literal minimum only added. */
+  guardedCorePoolSettings(module: Module, call: CallExpression): Expression | undefined {
+    const [given] = call.arguments;
+    const node = given === undefined || given.type === 'SpreadElement' ? undefined : unwrap(given);
+    const spread = node === undefined ? undefined : privateSessionPoolSettings(node);
+    return spread !== undefined && this.native(module, call.callee, 'PgClient', 'make') ? unwrap(spread) : node;
+  }
+  /**
+   * Security fence: guarded Core pool (transaction I/O guard + session-role check). Inside Core's `db/client.ts`,
+   * the pool acquisition the guards wrap (native `PgClient.make` or Core's `openDatabaseClient`) over the plain
+   * pool settings Core's `configureDatabasePool` returned provides no service and runs no effect it is handed. A
+   * private session's `PgClient.make({ ...settings, minConnections: 0 })` adds only that literal minimum.
+   */
+  guardedCorePoolAcquisition(module: Module, call: CallExpression): boolean {
+    const argument = this.guardedCorePoolSettings(module, call);
+    const settings = argument?.type === 'Identifier' ? bindingAt(module, argument.name, argument) : undefined;
+    const init = settings?.init === undefined ? undefined : unwrap(settings.init);
+    const configured =
+      init?.type === 'YieldExpression' &&
+      init.delegate &&
+      init.argument?.type === 'CallExpression' &&
+      this.coreDatabaseImport(module, init.argument.callee, 'configureDatabasePool', 'pool-configuration.ts');
+    return (
+      call.arguments.length === 1 &&
+      !call.optional &&
+      settings?.kind === 'const' &&
+      stable(module, settings) &&
+      configured &&
+      (this.native(module, call.callee, 'PgClient', 'make') ||
+        this.coreDatabaseImport(module, call.callee, 'openDatabaseClient', 'database-client.ts'))
+    );
+  }
+  /**
+   * A native Schema constructor applied only to native Schema members and such constructions: it builds a
+   * description, provides no service and runs no effect (Core's database environment schema is one).
+   */
+  nativeSchemaComposition(module: Module, call: CallExpression, depth: number): boolean {
+    const callee = unwrap(call.callee);
+    const method = callee.type === 'MemberExpression' ? propertyName(callee) : undefined;
+    return (
+      depth < budget &&
+      !call.optional &&
+      method !== undefined &&
+      this.native(module, callee, 'Schema', method) &&
+      call.arguments.every((argument) => {
+        const node = argument.type === 'SpreadElement' ? undefined : unwrap(argument);
+        const member = node?.type === 'MemberExpression' ? propertyName(node) : undefined;
+        return (
+          (node?.type === 'MemberExpression' && member !== undefined && this.native(module, node, 'Schema', member)) ||
+          (node?.type === 'CallExpression' && this.nativeSchemaComposition(module, node, depth + 1))
+        );
+      })
+    );
+  }
+  /**
+   * An import, in Core's own `db/client.ts` (at the workspace root, never a path suffix), of the export declared by
+   * that exact sibling Core module, exactly as reviewed (the guard modules and the pool configuration are pinned).
+   */
+  coreDatabaseImport(module: Module, callee: Expression, name: string, file: string): boolean {
+    const directory = this.coreDatabaseDirectory();
+    const node = unwrap(callee);
+    const binding = node.type === 'Identifier' ? bindingAt(module, node.name, node) : undefined;
+    const dependency = binding?.origin === undefined ? undefined : this.dependency(module, binding.origin.source);
+    const declared = dependency === undefined ? undefined : this.exportedSymbol(dependency, name, new Set());
+    return (
+      module.file === `${directory}client.ts` &&
+      binding?.origin?.imported === name &&
+      dependency?.file === `${directory}${file}` &&
+      isReviewedCoreDatabaseModule(dependency, directory) &&
+      declared?.module === dependency &&
+      declared.binding.origin === undefined &&
+      declared.binding.kind === 'const'
     );
   }
   consumerOriginalCallClosed(
@@ -10213,6 +10538,22 @@ class FactoryResolver {
         ImportDeclaration(node) {
           allowed.push(node);
         },
+        NewExpression: (node) => {
+          // Security fence: guarded Core pool (transaction I/O guard + session-role check). Core's reviewed
+          // session-role check constructs the error only as the `cause` of another construction's argument; never
+          // as a member-access object or a call argument.
+          if (!this.reviewedCoreDatabaseGuardModule(module)) {
+            return;
+          }
+          for (const argument of node.arguments) {
+            for (const property of argument.type === 'ObjectExpression' ? argument.properties : []) {
+              const field = plainField(property);
+              if (field?.name === 'cause' && field.value.type === 'NewExpression') {
+                allowed.push(field.value.callee);
+              }
+            }
+          }
+        },
         TSTypeAnnotation(node) {
           allowed.push(node);
         },
@@ -10289,6 +10630,7 @@ class FactoryResolver {
       return undefined;
     }
     return {
+      coreDatabaseDirectory: this.coreDatabaseDirectory(),
       modules: [...modules.values()],
       resolveFunction: (reference) => this.resolveNativeSqlFunction(reference),
       resolveImport: (file, source): NativeSqlImportEdge | undefined => {
@@ -11035,6 +11377,7 @@ export const makeScopedContextFactoryResolver = (
   conditionalPackageExports: ReadonlyMap<string, readonly string[]> = new Map(),
   contractSources: ReadonlyMap<string, string> = sources,
   nativeSqlRuntimeProof?: NativeSqlRuntimeProofEnvironment,
+  coreWorkspaceRoot: string = root,
 ): Pick<
   FactoryResolver,
   | 'resolve'
@@ -11055,4 +11398,5 @@ export const makeScopedContextFactoryResolver = (
     conditionalPackageExports,
     contractSources,
     nativeSqlRuntimeProof,
+    coreWorkspaceRoot,
   );

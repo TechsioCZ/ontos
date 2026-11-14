@@ -134,6 +134,55 @@ for (const fixture of genericFailures) {
   );
 }
 
+const ROUTE_PATH = `/accounts/${ACCOUNT_ID}/workers/scripts/ontos-test-worker/subdomain`;
+
+/** Wrangler's report of an answer it could not parse, as a gateway's HTML 504 produced it. */
+const unparsedAnswer = (requests: readonly string[]) =>
+  [
+    '\u001B[31m✘ [ERROR]\u001B[0m Received a malformed response from the API',
+    '',
+    '  <!DOCTYPE html>',
+    `  <!--[if lt IE 7]> <html class="no-js ie6 oldie" lang="en-US"> <![endif]--> ${FIXTURE_SECRET}`,
+    '',
+    ...requests.map((request) => `  ${request}`),
+    '  Cloudflare Ray ID: a51d98735d8da56b-DFW',
+    '',
+  ].join('\n');
+
+it.live('names the workers.dev route request and status of an answer Wrangler could not parse', () =>
+  Effect.gen(function* unparsedRouteAnswer() {
+    const failure = yield* checkNativeFailure(unparsedAnswer([`POST ${ROUTE_PATH} -> 504 Gateway Timeout`]));
+    expect(failure.cause).toEqual({ providerPath: ROUTE_PATH, providerStatus: 504 });
+    expect(JSON.stringify(failure)).not.toContain('DOCTYPE');
+  }).pipe(Effect.provide(nativeLayer)),
+);
+
+it.live('extracts a provider code reported for a workers.dev route request', () =>
+  Effect.gen(function* routeProviderCode() {
+    const failure = yield* checkNativeFailure(providerFailure(ROUTE_PATH, '10013'));
+    expect(failure.cause).toEqual({ providerCode: 10_013, providerPath: ROUTE_PATH });
+  }).pipe(Effect.provide(nativeLayer)),
+);
+
+for (const fixture of [
+  {
+    name: 'another endpoint',
+    requests: [`POST ${ROUTE_PATH.replace('/subdomain', '/routes')} -> 504 Gateway Timeout`],
+  },
+  {
+    name: 'two requests',
+    requests: [`GET ${ROUTE_PATH} -> 502 Bad Gateway`, `POST ${ROUTE_PATH} -> 504 Gateway Timeout`],
+  },
+  { name: 'a query', requests: [`POST ${ROUTE_PATH}?token=${FIXTURE_SECRET} -> 504 Gateway Timeout`] },
+]) {
+  it.live(`keeps an unparsed answer naming ${fixture.name} as a generic native command error`, () =>
+    Effect.gen(function* genericUnparsedAnswer() {
+      const failure = yield* checkNativeFailure(unparsedAnswer(fixture.requests));
+      expect(failure.cause).toBeUndefined();
+    }).pipe(Effect.provide(nativeLayer)),
+  );
+}
+
 it.live('drains native stderr larger than a pipe buffer without retaining it in the error', () =>
   Effect.gen(function* largeNativeStderr() {
     const stderr = `unrecognized native failure\n`.repeat(8192) + FIXTURE_SECRET;

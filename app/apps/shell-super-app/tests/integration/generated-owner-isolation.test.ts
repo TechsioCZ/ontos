@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 
 import {
   ActionTransactionError,
+  defineDatabaseIdentityEnrollment,
   ActiveApplicationCompositionUnavailableError,
   ContextAccess,
   GatewayAssertionRedemptionService,
@@ -74,6 +75,7 @@ import {
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
 } from '../../../../packages/core-runtime/src/operations/context.ts';
+import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import {
   SPICEDB_CHECK_TIMEOUT_MS,
@@ -169,7 +171,14 @@ const OwnerTimelineSchema = Schema.Struct({
   ),
   projectionLagging: Schema.Boolean,
 });
-const OwnerSearchSchema = Schema.Array(Schema.Struct({ ref: ResourceRefSchema, title: Schema.String }));
+// The owner's search contract publishes the company each row belongs to; the client decode must keep it.
+const OwnerSearchSchema = Schema.Array(
+  Schema.Struct({
+    ref: ResourceRefSchema,
+    selectedLegalEntityId: LegalEntityIdSchema,
+    title: Schema.String,
+  }),
+);
 interface GeneratedOwnerModules {
   // Generated source is imported from a temporary path, so TypeScript cannot retain the private
   // Action-registration symbols across the dynamic module boundary. Runtime checks below prove it.
@@ -445,6 +454,9 @@ const createOwnerSchema = Effect.fnUntraced(function* runIntegration5(admin: PgC
   yield* admin.unsafe(`grant usage on schema ${schemaName} to ontos_runtime`);
   yield* admin.unsafe(`grant select, insert, update, delete on all tables in schema ${schemaName} to ontos_runtime`);
 });
+// This generated owner actually runs through the shared session-setting login; no separate owner login is enrolled.
+const GENERATED_OWNER_DATABASE_IDENTITIES = defineDatabaseIdentityEnrollment([]);
+
 type CoreDatabaseService = Parameters<typeof makeActionRuntime>[0];
 type RuntimeActionRegistration = ActionRegistration<
   Schema.ConstraintDecoder<unknown>,
@@ -645,7 +657,7 @@ it.live(
     const moduleGateway = makeModuleEntrypointGateway(moduleStateGate);
     const scopeResolver = withNamespaceRegistry(
       yield* makeOperationalScopeResolver(
-        makeOperationalScopeRepository(runtimeDatabase),
+        makeOperationalScopeRepository(runtimeDatabase, GENERATED_OWNER_DATABASE_IDENTITIES),
         // Each principal may select exactly their own tenant's company: the forged principals below
         // must be refused by the scope resolver before any read or write reaches the owner (O28).
         makeTestOperationalScopeAccess({
@@ -663,6 +675,7 @@ it.live(
     );
     const ownerAdmission = {
       applicationComposition: { load: Effect.succeed(approvedSnapshot) },
+      databaseIdentities: GENERATED_OWNER_DATABASE_IDENTITIES,
       expectedDeployment: contract.deployment,
       ownerRegistration,
     };
@@ -810,7 +823,10 @@ it.live(
       ],
       ['resource', requiredValue(toResourceAccessObjectId(tenantA, entityA1, resourceRef), 'Tenant A resource')],
       ['resource', requiredValue(toResourceAccessObjectId(tenantB, entityB1, resourceRef), 'Tenant B resource')],
-      ['action', toSpiceDbActionObjectId(GENERATED_OWNER.actionKey)],
+      [
+        'action',
+        toSpiceDbActionObjectId({ actionKey: GENERATED_OWNER.actionKey, legalEntityId: entityA1, tenantId: tenantA }),
+      ],
     ];
     yield* Effect.acquireRelease(
       Effect.void,
@@ -918,7 +934,9 @@ it.live(
       [principalA, principalB, tenantA, tenantB],
     );
     // The governed Action runs under tenant A's real access fence, so it carries the scopes production bootstrap writes.
-    yield* writeTestTenantScopes(adminDatabase.executor, {
+    // Scopes are installed as the enrolled runtime login, as bootstrap does; the admin login only seeds rows.
+    yield* writeTestTenantScopes(runtimeDatabase.executor, {
+      databaseIdentities: GENERATED_OWNER_DATABASE_IDENTITIES,
       legalEntityIds: [entityA1, entityA2],
       principalId: principalA,
       tenantId: tenantA,
@@ -959,7 +977,11 @@ it.live(
     );
     const resourceA = requiredValue(toResourceAccessObjectId(tenantA, entityA1, resourceRef), 'Tenant A resource');
     const resourceB = requiredValue(toResourceAccessObjectId(tenantB, entityB1, resourceRef), 'Tenant B resource');
-    const actionId = toSpiceDbActionObjectId(GENERATED_OWNER.actionKey);
+    const actionId = toSpiceDbActionObjectId({
+      actionKey: GENERATED_OWNER.actionKey,
+      legalEntityId: entityA1,
+      tenantId: tenantA,
+    });
     const relationships = [
       relationship('tenant', tenantA, 'member', 'principal', principalA),
       relationship('tenant', tenantB, 'member', 'principal', principalB),
@@ -1100,12 +1122,17 @@ it.live(
         appId: GENERATED_OWNER.appId,
         authorization: yield* issueAuthorization(principalA1),
         correlationId: randomUUID(),
+        module:
+          catalog.composition.modules.find((module) => module.moduleId === GENERATED_OWNER.moduleId) ??
+          (yield* Effect.die('Missing approved owner release')),
         query: 'searchable',
         searchKey: `${GENERATED_OWNER.moduleId}.records`,
       }),
     ).toEqual([
       {
-        ref: resourceRef,
+        // Search rows carry the tenant that owns them (ac674b875), so the ref names it alongside the resource.
+        ref: { ...resourceRef, tenantId: tenantA },
+        selectedLegalEntityId: entityA1,
         title: 'A1 searchable',
       },
     ]);
@@ -1139,8 +1166,20 @@ it.live(
         'searchable',
       ),
     ).toEqual({
+      // The owner declares no search presentation, so the business block is empty for this release.
       partial: false,
-      results: [{ kind: 'resource', ref: resourceRef, title: 'A1 searchable' }],
+      presentation: {
+        business: { compositionRevision: catalog.composition.revision, entries: [], schemaVersion: '1' },
+        pages: [],
+      },
+      results: [
+        {
+          kind: 'resource',
+          ref: { ...resourceRef, tenantId: tenantA },
+          selectedLegalEntityId: entityA1,
+          title: 'A1 searchable',
+        },
+      ],
     });
     const shellDefinitionsLayer = createShellGovernedReadDefinitionsLayer(
       gateway,
@@ -1181,6 +1220,7 @@ it.live(
               Effect.as(approvedSnapshot),
             ),
           },
+          databaseIdentities: GENERATED_OWNER_DATABASE_IDENTITIES,
           expectedDeployment: ultramodernDeliveryUnit,
           shellSystemReads: definitions,
         });
@@ -1236,6 +1276,10 @@ it.live(
       })
       .pipe(Effect.provideService(CapturedShellCompositionCatalog, catalog));
     expect(searchA.results.map(({ title }) => title)).toEqual(['A1 searchable']);
+    if (!('detail' in detailA) || !('detail' in detailB)) {
+      yield* Effect.die('Expected actual resource detail responses');
+      return;
+    }
     expect(detailA.detail.title).toBe('A1 searchable');
     expect(detailA.timeline.map(({ summary }) => summary)).toEqual(['Tenant A list']);
     expect(searchB.results.map(({ title }) => title)).toEqual(['B1 searchable']);
@@ -1314,7 +1358,7 @@ it.live(
     const unavailableContextAccess = makeContextAccessDouble('unavailable');
     const unavailableResolver: OperationalScopeResolverService = withNamespaceRegistry(
       yield* makeOperationalScopeResolver(
-        makeOperationalScopeRepository(runtimeDatabase),
+        makeOperationalScopeRepository(runtimeDatabase, GENERATED_OWNER_DATABASE_IDENTITIES),
         makeTestOperationalScopeAccess({ decision: 'unavailable' }),
       ),
     );

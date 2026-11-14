@@ -15,6 +15,7 @@ import {
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { CoreDatabase, CoreDatabaseLive } from '../../../../packages/core-runtime/src/db/client.ts';
 import { installOperationalScope } from '@app/core-runtime/testing/actions';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 import { externalPriceSourceAuthorityForScope } from '../../src/persistence/external-price-source-authority-persistence.ts';
 import { ExternalPriceSourceAuthorityGrantSchema } from '../../src/services/external-price-input-boundary.service.ts';
 
@@ -98,7 +99,7 @@ const describe = Effect.sync(() =>
   ),
 );
 
-/** One closed command over private stdin, one actual owner receipt over private fd 3. */
+/** One closed command over private stdin, one actual owner receipt over private fd 5. */
 const execute = Effect.gen(function* executePreproposalPricingSetup() {
   const document = yield* Effect.sync(() => readFileSync(0, 'utf-8'));
   if (new TextEncoder().encode(document).length > 262_144) {
@@ -155,7 +156,7 @@ const execute = Effect.gen(function* executePreproposalPricingSetup() {
           };
           return yield* database.executor.transaction(
             Effect.fn('PreproposalPricing.storeAuthority')(function* storeAuthority(transaction) {
-              const scoped = yield* installOperationalScope(transaction, scope);
+              const scoped = yield* installOperationalScope(transaction, scope, defineDatabaseIdentityEnrollment([]));
               const authority = yield* externalPriceSourceAuthorityForScope(scoped, scope);
               return yield* authority.store(command.payload.grant);
             }),
@@ -177,7 +178,7 @@ const execute = Effect.gen(function* executePreproposalPricingSetup() {
     return { operation: command.operation, protocol, result };
   });
   const encoded = yield* Schema.encodeUnknownEffect(Schema.fromJsonString(ReceiptSchema))(receipt);
-  return yield* Effect.sync(() => writeSync(3, `${encoded}\n`));
+  return yield* Effect.sync(() => writeSync(5, `${encoded}\n`));
 });
 
 if (process.argv.includes('--describe-preproposal-basis')) {

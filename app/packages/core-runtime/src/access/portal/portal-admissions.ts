@@ -1,6 +1,8 @@
 import { Context, Effect, Layer } from 'effect';
 
 import { CoreDatabase } from '../../db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../../db/database-identities.ts';
 import { installOperationalScope } from '../../db/scoped-transaction.ts';
 import type { CoreTransaction } from '../../db/types.ts';
 import type { OperationalScope } from '../../operations/context.ts';
@@ -43,27 +45,33 @@ type PortalOperation = keyof AccessPortalWrites;
 const writeUnderScope = (
   transaction: CoreTransaction,
   scope: OperationalScope,
+  enrollment: DatabaseIdentityEnrollment,
   operation: PortalOperation,
   input: AccessPortalGrantInput,
 ) =>
-  installOperationalScope(transaction, scope).pipe(
+  installOperationalScope(transaction, scope, enrollment).pipe(
     Effect.mapError((cause) =>
       accessPortalRefusal('access_portal_unavailable', 'The request scope could not be installed', cause),
     ),
     Effect.flatMap((scoped) => accessPortalWritesForTransaction(scoped, scope)[operation](input)),
   );
 
-export const AccessPortalAdmissionsLive: Layer.Layer<AccessPortalAdmissions, never, CoreDatabase> = Layer.effect(
+export const AccessPortalAdmissionsLive: Layer.Layer<
+  AccessPortalAdmissions,
+  never,
+  CoreDatabase | DatabaseIdentityEnrollmentContext
+> = Layer.effect(
   AccessPortalAdmissions,
   Effect.gen(function* accessPortalAdmissionsLayer() {
     const database = yield* CoreDatabase;
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
     const commit = (
       operation: PortalOperation,
       scope: OperationalScope,
       input: AccessPortalGrantInput,
     ): Effect.Effect<AccessPortalReceipt, AccessPortalError> =>
       database.executor
-        .transaction((transaction) => writeUnderScope(transaction, scope, operation, input))
+        .transaction((transaction) => writeUnderScope(transaction, scope, enrollment, operation, input))
         .pipe(
           Effect.catchTag('SqlError', (cause) =>
             Effect.fail(

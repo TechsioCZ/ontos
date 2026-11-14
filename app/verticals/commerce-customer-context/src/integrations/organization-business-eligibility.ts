@@ -14,6 +14,7 @@ import type {
   CommerceOrganizationBusinessRequest,
   CommerceOrganizationBusinessAuthority,
 } from './organization-business-decision.ts';
+import { commerceCustomerContextEvidenceCall } from '../declared-evidence-calls.ts';
 
 export type { CommerceOrganizationBusinessRequest } from './organization-business-decision.ts';
 
@@ -58,9 +59,11 @@ export const commerceOrganizationBusinessEligibilityLive = Layer.effect(
               reason: 'Organization business authority must belong to this native owner',
             });
           }
+          // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
           const issued = yield* acquireDelegatedGatewayContext(
             {
               audience: 'privacy',
+              callingAppId: 'commerce-customer-context',
               legalEntityScope: 'subject',
               requestCorrelation: scope.correlationId,
               subject: commerceSourceDelegationSubject(
@@ -71,13 +74,13 @@ export const commerceOrganizationBusinessEligibilityLive = Layer.effect(
               ),
             },
             crypto,
-          ).pipe(Effect.mapError(unavailable));
+          ).pipe(commerceCustomerContextEvidenceCall.organizationBusinessEligibility, Effect.mapError(unavailable));
           const response = yield* executeOrganizationBusinessApplicabilityWithAuthorization(
             request,
             issued.authorization,
             scope.correlationId,
             { baseUrl: new URL(issued.apiBaseUrl), compositionRevision: issued.compositionRevision },
-          ).pipe(Effect.mapError(unavailable));
+          ).pipe(commerceCustomerContextEvidenceCall.organizationBusinessEligibility, Effect.mapError(unavailable));
           const decoded = yield* Schema.decodeUnknownEffect(OrganizationBusinessApplicabilityResponseSchema, {
             onExcessProperty: 'error',
           })(response).pipe(Effect.mapError(unavailable));

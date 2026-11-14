@@ -317,10 +317,7 @@ const browserCompositionFixture = Effect.gen(function* serveBrowserComposition()
           publishApplicationCompositionAuthority(transaction, next).pipe(Effect.andThen(publishStorageAndReadBack)),
         );
       });
-      yield* withApplicationCompositionPublicationLock(promote, {
-        baselineRevision: approved.composition.revision,
-        targetRevision: next.composition.revision,
-      }).pipe(Effect.provideService(CoreDatabase, coreDatabase));
+      yield* withApplicationCompositionPublicationLock(promote).pipe(Effect.provideService(CoreDatabase, coreDatabase));
       const [published] = yield* database.select().from(applicationCompositionAuthority);
       if (
         published?.revision !== next.composition.revision ||

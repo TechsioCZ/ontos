@@ -177,12 +177,14 @@ export const handleCreateProduct = Effect.fn('CreateProductAction.handle')(funct
     }
     yield* context.services.sourceCorrelation.captureProduct(payload, result, context.actionInvocationId);
   }
-  const reasonEvidence = payload.reason === undefined ? {} : { reason: payload.reason };
-  yield* context.recordAuditEvidence(
-    classification.kind === 'INDEPENDENT_PRODUCT'
-      ? reasonEvidence
-      : { ...reasonEvidence, evidenceRefs: classification.evidenceRefs },
-  );
+  const evidence: Record<string, Schema.Schema.Type<typeof Schema.Json>> = {};
+  if (payload.reason !== undefined) {
+    evidence['reason'] = payload.reason;
+  }
+  if (classification.kind !== 'INDEPENDENT_PRODUCT') {
+    evidence['evidenceRefs'] = classification.evidenceRefs;
+  }
+  yield* context.recordAuditEvidence(evidence);
   yield* recordProductAccess(context, result.product.productRef.resourceId);
   yield* recordProductEvent(
     context,

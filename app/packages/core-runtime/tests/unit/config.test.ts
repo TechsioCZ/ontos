@@ -1,25 +1,22 @@
-import { NodeFileSystem, NodePath } from '@effect/platform-node';
-import { Config, Effect, FileSystem, Layer, Path, Predicate } from 'effect';
+import { NodeServices } from '@effect/platform-node';
+import { Effect, FileSystem, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
-  ROOT_ENV_PATH,
+  loadAdministrativeDatabaseConnection,
   loadDatabaseConfig,
   loadDatabaseConnectionPair,
   loadDatabaseIdentityConnections,
-  loadAdministrativeDatabaseConnection,
-  loadSelectedDatabaseIdentityConnections,
   parseDatabaseConfig,
   parseDatabaseConnectionPair,
 } from '../../src/db/config.ts';
 import type { DatabaseEnvironment } from '../../src/db/config.ts';
+import { SHARED_RUNTIME_IDENTITY, SHELL_GATEWAY_ISSUER_IDENTITY } from '../../src/db/database-identities.ts';
 import {
-  PARTY_REGISTRY_REQUEST_IDENTITY,
-  PARTY_REGISTRY_WORKER_IDENTITY,
-  SHARED_RUNTIME_IDENTITY,
-  SHELL_GATEWAY_ISSUER_IDENTITY,
-} from '../../src/db/database-identities.ts';
-import { resolveAppWorkspaceRoot } from '../../src/environment/workspace-environment.ts';
+  FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+  FIXTURE_REQUEST_IDENTITY,
+  FIXTURE_WORKER_IDENTITY,
+} from '../support/database-identities.ts';
 
 /** No dotenv file, so each test sees only the environment it passes. */
 const missingEnvPath = '/nonexistent/ontos-config-test/.env';
@@ -34,53 +31,39 @@ const identityEnvironment = {
 
 const identityFailure = (overrides: DatabaseEnvironment) =>
   Effect.flip(
-    loadDatabaseIdentityConnections({ environment: { ...identityEnvironment, ...overrides }, envPath: missingEnvPath }),
+    loadDatabaseIdentityConnections({
+      enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      environment: { ...identityEnvironment, ...overrides },
+      envPath: missingEnvPath,
+    }),
   ).pipe(Effect.map((error) => error.reason));
 
-it.effect('loads a root-anchored database file fixture independently of the invocation directory', () =>
-  Layer.build(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)).pipe(
-    Effect.flatMap((services) =>
-      Effect.gen(function* loadsRootDatabaseFixture() {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const nodePath = yield* Path.Path;
-        const originalDirectory = process.cwd();
-        const workspaceRoot = resolveAppWorkspaceRoot(originalDirectory);
-        const explicitEnvironmentPath = yield* Config.String('APP_ENV_PATH').pipe(Config.withDefault(''));
-        const expectedEnvironmentPath = nodePath.resolve(
-          workspaceRoot ?? originalDirectory,
-          explicitEnvironmentPath.length === 0 ? '.env' : explicitEnvironmentPath,
-        );
-        expect(ROOT_ENV_PATH).toBe(expectedEnvironmentPath);
-        if (explicitEnvironmentPath.length === 0) {
-          expect(ROOT_ENV_PATH.endsWith('/app/.env')).toBe(true);
-        }
+it.layer(NodeServices.layer)((suite) => {
+  suite.effect('loads an absolute configuration fixture independently of the invocation directory', () =>
+    Effect.gen(function* absoluteConfigurationFixture() {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'ontos-database-config-' });
+      const fixturePath = `${directory}/database.fixture`;
+      const connectionString = 'postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos';
+      yield* fileSystem.writeFileString(fixturePath, `DATABASE_URL=${connectionString}\n`);
+      const originalDirectory = process.cwd();
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          process.chdir(originalDirectory);
+        }),
+      );
+      process.chdir('/');
+      const configuration = yield* loadDatabaseConfig({
+        environment: {},
+        envPath: fixturePath,
+        identity: SHARED_RUNTIME_IDENTITY,
+      });
 
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            process.chdir(originalDirectory);
-          }),
-        );
-        const fixtureDirectory = yield* fileSystem.makeTempDirectoryScoped({
-          directory: workspaceRoot ?? originalDirectory,
-          prefix: '.unit-database-',
-        });
-        const fixturePath = nodePath.join(fixtureDirectory, 'database.fixture');
-        yield* fileSystem.writeFileString(fixturePath, `DATABASE_URL=${identityEnvironment.DATABASE_URL}\n`, {
-          mode: 0o600,
-        });
-        process.chdir('/');
-        expect(ROOT_ENV_PATH).toBe(expectedEnvironmentPath);
-        const configuration = yield* loadDatabaseConfig({
-          environment: {},
-          envPath: fixturePath,
-          identity: SHARED_RUNTIME_IDENTITY,
-        });
-
-        expect(configuration.connectionString).toBe(identityEnvironment.DATABASE_URL);
-      }).pipe(Effect.provide(services)),
-    ),
-  ),
-);
+      expect(configuration.expectedRole).toBe(SHARED_RUNTIME_IDENTITY.role);
+      expect(configuration.connectionString).toBe(connectionString);
+    }),
+  );
+});
 
 it.effect('parses valid local PostgreSQL connection settings', () =>
   Effect.gen(function* migratedTest() {
@@ -91,6 +74,7 @@ it.effect('parses valid local PostgreSQL connection settings', () =>
     expect(configuration).toEqual({
       connectionString: 'postgresql://ontos:ontos@localhost:5433/ontos',
       database: 'ontos',
+      expectedRole: 'ontos',
       host: 'localhost',
       port: 5433,
       user: 'ontos',
@@ -109,6 +93,47 @@ it.effect('keeps missing and malformed configuration in the typed error channel'
 
     expect(Predicate.isTagged(missing, 'DatabaseConfigError')).toBe(true);
     expect(Predicate.isTagged(malformed, 'DatabaseConfigError')).toBe(true);
+  }),
+);
+
+it.effect('loads an administrative connection without requiring or parsing runtime credentials', () =>
+  Effect.gen(function* administrativeOnly() {
+    const admin = yield* loadAdministrativeDatabaseConnection({
+      environment: {
+        DATABASE_ADMIN_URL: identityEnvironment.DATABASE_ADMIN_URL,
+        DATABASE_URL: 'not-a-runtime-connection',
+      },
+      envPath: missingEnvPath,
+    });
+    expect(admin.connectionString).toBe(identityEnvironment.DATABASE_ADMIN_URL);
+    expect(admin.user).toBe('ontos_admin');
+    const missingAdmin = yield* Effect.flip(
+      loadAdministrativeDatabaseConnection({
+        environment: { DATABASE_URL: identityEnvironment.DATABASE_URL },
+        envPath: missingEnvPath,
+      }),
+    );
+    expect(Predicate.isTagged(missingAdmin, 'DatabaseConfigError')).toBe(true);
+    expect(missingAdmin.reason).toContain('DATABASE_ADMIN_URL');
+  }),
+);
+
+it.effect('rejects malformed admin URLs and connection-identity overrides without exposing credentials', () =>
+  Effect.gen(function* administrativeIdentityRefusals() {
+    for (const connectionString of [
+      'https://ontos_admin:admin-secret@localhost/ontos',
+      'postgresql://ontos_admin:admin-secret@localhost/ontos?user=another-role',
+      'postgresql://ontos_admin:admin-secret@localhost/ontos?host=another-host',
+    ]) {
+      const error = yield* Effect.flip(
+        loadAdministrativeDatabaseConnection({
+          environment: { DATABASE_ADMIN_URL: connectionString },
+          envPath: missingEnvPath,
+        }),
+      );
+      expect(Predicate.isTagged(error, 'DatabaseConfigError')).toBe(true);
+      expect(error.reason).not.toContain('admin-secret');
+    }
   }),
 );
 
@@ -161,22 +186,22 @@ it.effect('each runtime identity loads from its own URL key and names that key w
   Effect.gen(function* identityKeysAreRead() {
     const environment = { environment: identityEnvironment, envPath: missingEnvPath };
     const issuer = yield* loadDatabaseConfig({ ...environment, identity: SHELL_GATEWAY_ISSUER_IDENTITY });
-    const party = yield* loadDatabaseConfig({ ...environment, identity: PARTY_REGISTRY_REQUEST_IDENTITY });
-    const workerPair = yield* loadDatabaseConnectionPair({ ...environment, identity: PARTY_REGISTRY_WORKER_IDENTITY });
+    const party = yield* loadDatabaseConfig({ ...environment, identity: FIXTURE_REQUEST_IDENTITY });
+    const workerPair = yield* loadDatabaseConnectionPair({ ...environment, identity: FIXTURE_WORKER_IDENTITY });
     const shared = yield* loadDatabaseConfig({ ...environment, identity: SHARED_RUNTIME_IDENTITY });
     const missing = yield* Effect.flip(
       loadDatabaseConfig({
         environment: { DATABASE_URL: identityEnvironment.DATABASE_URL },
         envPath: missingEnvPath,
-        identity: PARTY_REGISTRY_REQUEST_IDENTITY,
+        identity: FIXTURE_REQUEST_IDENTITY,
       }),
     );
 
-    expect(issuer.user).toBe('shell_gateway_issuer');
-    expect(party.user).toBe('party_registry_runtime');
+    expect(issuer.expectedRole).toBe('shell_gateway_issuer');
+    expect(party.expectedRole).toBe('party_registry_runtime');
     expect(workerPair.runtime.user).toBe('party_registry_worker');
     expect(workerPair.admin.user).toBe('ontos_admin');
-    expect(shared.user).toBe('ontos_runtime');
+    expect(shared.expectedRole).toBe('ontos_runtime');
     expect(missing.reason).toBe('PARTY_REGISTRY_DATABASE_URL is required');
   }),
 );
@@ -186,11 +211,11 @@ it.effect('a runtime identity URL must connect as that identity role', () =>
     const mismatches = [
       [SHARED_RUNTIME_IDENTITY, { DATABASE_URL: 'postgresql://party_registry_runtime:secret@localhost:5433/ontos' }],
       [
-        PARTY_REGISTRY_REQUEST_IDENTITY,
+        FIXTURE_REQUEST_IDENTITY,
         { PARTY_REGISTRY_DATABASE_URL: 'postgresql://ontos_runtime:secret@localhost:5433/ontos' },
       ],
       [
-        PARTY_REGISTRY_REQUEST_IDENTITY,
+        FIXTURE_REQUEST_IDENTITY,
         {
           PARTY_REGISTRY_DATABASE_URL:
             'postgresql://party_registry_runtime:secret@localhost:5433/ontos?user=ontos_runtime',
@@ -207,7 +232,9 @@ it.effect('a runtime identity URL must connect as that identity role', () =>
 it.effect('loads every checked-in identity against the admin database', () =>
   Effect.gen(function* identityConnectionsLoad() {
     const connections = yield* loadDatabaseIdentityConnections({
+      enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
       environment: identityEnvironment,
+
       envPath: missingEnvPath,
     });
 
@@ -252,152 +279,5 @@ it.effect('rejects identity connections that share, swap or redirect their login
       'PARTY_REGISTRY_DATABASE_URL must not override its user, server or database with parameters',
     );
     expect(adminOverride).toBe('DATABASE_ADMIN_URL must not override its user, server or database with parameters');
-  }),
-);
-
-it.effect('loads only selected canonical identity URLs and leaves excluded identities absent', () =>
-  Effect.gen(function* selectedConnections() {
-    const selected = yield* loadSelectedDatabaseIdentityConnections({
-      environment: {
-        DATABASE_ADMIN_URL: identityEnvironment.DATABASE_ADMIN_URL,
-        DATABASE_URL: identityEnvironment.DATABASE_URL,
-        PARTY_REGISTRY_DATABASE_URL: 'unrelated malformed URL',
-      },
-      envPath: missingEnvPath,
-      identityIds: ['shared_runtime'],
-    });
-    expect([...selected.runtime.keys()]).toEqual(['shared_runtime']);
-    expect(selected.runtime.get('shared_runtime')?.user).toBe('ontos_runtime');
-    expect(selected.runtime.has('party_registry_request')).toBe(false);
-    const party = yield* loadSelectedDatabaseIdentityConnections({
-      environment: {
-        DATABASE_ADMIN_URL: identityEnvironment.DATABASE_ADMIN_URL,
-        PARTY_REGISTRY_DATABASE_URL: identityEnvironment.PARTY_REGISTRY_DATABASE_URL,
-        PARTY_REGISTRY_WORKER_DATABASE_URL: identityEnvironment.PARTY_REGISTRY_WORKER_DATABASE_URL,
-      },
-      envPath: missingEnvPath,
-      identityIds: ['party_registry_worker', 'party_registry_request'],
-    });
-    expect([...party.runtime.keys()]).toEqual(['party_registry_request', 'party_registry_worker']);
-    expect(party.runtime.has('shared_runtime')).toBe(false);
-  }),
-);
-
-it.effect('rejects empty, duplicate and unknown selected identities before configuration loading', () =>
-  Effect.gen(function* invalidSelection() {
-    for (const identityIds of [[], ['shared_runtime', 'shared_runtime'], ['unknown'], ['']]) {
-      const failure = yield* loadSelectedDatabaseIdentityConnections({
-        environment: {},
-        envPath: missingEnvPath,
-        identityIds,
-      }).pipe(Effect.flip);
-      expect(failure.reason).toContain('identity selection');
-      expect(failure.reason).not.toContain('DATABASE_ADMIN_URL is required');
-    }
-  }),
-);
-
-it.effect('preserves strict role, override, target and admin separation checks for selected identities', () =>
-  Effect.gen(function* selectedIdentitySecurity() {
-    const cases: readonly { readonly environment: DatabaseEnvironment; readonly reason: string }[] = [
-      {
-        environment: { ...identityEnvironment, PARTY_REGISTRY_DATABASE_URL: identityEnvironment.DATABASE_URL },
-        reason: 'must connect as the party_registry_runtime role',
-      },
-      {
-        environment: {
-          ...identityEnvironment,
-          PARTY_REGISTRY_DATABASE_URL: 'postgresql://party_registry_runtime:party@localhost:5433/other',
-        },
-        reason: 'must target the DATABASE_ADMIN_URL server and database',
-      },
-      {
-        environment: {
-          ...identityEnvironment,
-          PARTY_REGISTRY_DATABASE_URL: 'postgresql://party_registry_runtime:party@elsewhere:5433/ontos',
-        },
-        reason: 'must target the DATABASE_ADMIN_URL server and database',
-      },
-      {
-        environment: {
-          ...identityEnvironment,
-          PARTY_REGISTRY_DATABASE_URL: 'postgresql://party_registry_runtime:party@localhost:5434/ontos',
-        },
-        reason: 'must target the DATABASE_ADMIN_URL server and database',
-      },
-      {
-        environment: { ...identityEnvironment, DATABASE_ADMIN_URL: identityEnvironment.PARTY_REGISTRY_DATABASE_URL },
-        reason: 'Administrative and runtime PostgreSQL identities must be distinct',
-      },
-      {
-        environment: {
-          ...identityEnvironment,
-          DATABASE_ADMIN_URL: `${identityEnvironment.DATABASE_ADMIN_URL}?user=other`,
-        },
-        reason: 'must not override its user, server or database with parameters',
-      },
-    ];
-    for (const parameter of ['user', 'host', 'hostaddr', 'port', 'db', 'database', 'dbname', 'USER']) {
-      const failure = yield* loadSelectedDatabaseIdentityConnections({
-        environment: {
-          ...identityEnvironment,
-          PARTY_REGISTRY_DATABASE_URL: `${identityEnvironment.PARTY_REGISTRY_DATABASE_URL}?${parameter}=other`,
-        },
-        envPath: missingEnvPath,
-        identityIds: ['party_registry_request'],
-      }).pipe(Effect.flip);
-      expect(failure.reason).toBe(
-        'PARTY_REGISTRY_DATABASE_URL must not override its user, server or database with parameters',
-      );
-    }
-    for (const { environment, reason } of cases) {
-      const failure = yield* loadSelectedDatabaseIdentityConnections({
-        environment,
-        envPath: missingEnvPath,
-        identityIds: ['party_registry_request'],
-      }).pipe(Effect.flip);
-      expect(failure.reason).toContain(reason);
-    }
-    const all = yield* loadSelectedDatabaseIdentityConnections({
-      environment: identityEnvironment,
-      envPath: missingEnvPath,
-      identityIds: ['shared_runtime', 'shell_gateway_issuer', 'party_registry_request', 'party_registry_worker'],
-    });
-    const previous = yield* loadDatabaseIdentityConnections({
-      environment: identityEnvironment,
-      envPath: missingEnvPath,
-    });
-    for (const [id, connection] of all.runtime) {
-      expect(connection).toEqual(previous.runtime[id]);
-    }
-  }),
-);
-
-it.effect('admin-only observation does not require or parse unrelated runtime credentials', () =>
-  Effect.gen(function* administrativeObservation() {
-    const connection = yield* loadAdministrativeDatabaseConnection({
-      environment: {
-        DATABASE_ADMIN_URL: identityEnvironment.DATABASE_ADMIN_URL,
-        DATABASE_URL: 'unrelated invalid URL',
-      },
-      envPath: missingEnvPath,
-    });
-    expect(connection.user).toBe('ontos_admin');
-    expect(connection.database).toBe('ontos');
-  }),
-);
-
-it.effect('admin-only observation rejects missing, malformed and identity-overriding administrative URLs', () =>
-  Effect.gen(function* invalidAdministrativeObservation() {
-    for (const environment of [
-      {},
-      { DATABASE_ADMIN_URL: 'invalid' },
-      { DATABASE_ADMIN_URL: `${identityEnvironment.DATABASE_ADMIN_URL}?host=elsewhere` },
-    ]) {
-      const failure = yield* loadAdministrativeDatabaseConnection({ environment, envPath: missingEnvPath }).pipe(
-        Effect.flip,
-      );
-      expect(failure.reason).toContain('DATABASE_ADMIN_URL');
-    }
   }),
 );

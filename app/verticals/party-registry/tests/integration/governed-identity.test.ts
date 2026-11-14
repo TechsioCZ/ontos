@@ -4,12 +4,16 @@ import {
   CoreSearchProjectionStoreLive,
   CoreSearchQueryRuntimeLive,
   loadDatabaseIdentityConnections,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
   ReadRuntime,
   SHELL_GATEWAY_ISSUER_IDENTITY,
+  SHARED_RUNTIME_IDENTITY,
   resolveActionCommit,
   runAction,
 } from '@app/core-runtime';
+import {
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '@app/party-registry-identity-contracts';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makePartyDeniedAccess } from '../support/live-access-authority.ts';
 import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
@@ -127,12 +131,21 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     () =>
       Effect.scoped(
         Effect.gen(function* governedIdentityTestEffect() {
-          const connections = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
-          const partyRuntimeConnectionString = connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id].connectionString;
-          const issuerClient = yield* makeTestPgClient(
-            connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id].connectionString,
-            { maxConnections: 1 },
-          );
+          const connections = yield* loadDatabaseIdentityConnections({
+            enrollment: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+            envPath: '/dev/null',
+          });
+          const partyConfiguration = connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id];
+          const issuerConfiguration = connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id];
+          const bootstrapConfiguration = connections.runtime[SHARED_RUNTIME_IDENTITY.id];
+          assert.isOk(partyConfiguration);
+          assert.isOk(issuerConfiguration);
+          assert.isOk(bootstrapConfiguration);
+          expect(partyConfiguration.expectedRole).toBe(PARTY_REGISTRY_REQUEST_IDENTITY.role);
+          expect(issuerConfiguration.expectedRole).toBe(SHELL_GATEWAY_ISSUER_IDENTITY.role);
+          expect(bootstrapConfiguration.expectedRole).toBe(SHARED_RUNTIME_IDENTITY.role);
+          const partyRuntimeConnectionString = partyConfiguration.connectionString;
+          const issuerClient = yield* makeTestPgClient(issuerConfiguration.connectionString, { maxConnections: 1 });
           const compositionSnapshot = yield* partyCompositionSnapshot;
           const actionKeys = [
             createPartyAction,
@@ -155,7 +168,11 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               actionKeys,
               adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
+              // The dedicated request role cannot install scope; the scoped native writers take the
+              // same target's shared runtime credential while the actor keeps its own role.
+              bootstrapConnectionString: Redacted.make(bootstrapConfiguration.connectionString),
               compositionRevision: compositionSnapshot.composition.revision,
+              databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
               ownerRegistration: partyRegistryBackendRegistration,
               runtimeConnectionString: Redacted.make(partyRuntimeConnectionString),
             }).pipe(Effect.orDie),
@@ -167,7 +184,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               actionKeys,
               adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
+              bootstrapConnectionString: Redacted.make(bootstrapConfiguration.connectionString),
               compositionRevision: compositionSnapshot.composition.revision,
+              databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
               ownerRegistration: partyRegistryBackendRegistration,
               runtimeConnectionString: Redacted.make(partyRuntimeConnectionString),
             }).pipe(Effect.orDie),
@@ -200,6 +219,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             const { assertion } = yield* registerTestGatewayScopeGrant(
               issuerClient,
               context.legalEntityId === undefined ? grant : { ...grant, legalEntityId: context.legalEntityId },
+              PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
             ).pipe(Effect.orDie);
             return trustVerifiedGatewayPrincipalContext(context, compositionSnapshot.composition.revision, {
               assertion,

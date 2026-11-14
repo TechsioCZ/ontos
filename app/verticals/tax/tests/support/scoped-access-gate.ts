@@ -11,6 +11,7 @@ import { Effect, Layer } from 'effect';
 
 import type { AccessDecision } from '../../../../packages/core-runtime/src/access/decision/contract.ts';
 import { DecisionCheck } from '../../../../packages/core-runtime/src/access/decision/engine.ts';
+import type { ListAccessResolution } from '../../../../packages/core-runtime/src/access/decision/engine.ts';
 import { LegalEntityIdSchema } from '../../../../packages/core-runtime/src/access/ids.ts';
 import { bindAccessGate } from '../../../../packages/core-runtime/src/operations/access-gate.ts';
 import type { BoundAccessGate } from '../../../../packages/core-runtime/src/operations/access-gate.ts';
@@ -55,6 +56,11 @@ export const makeSellerScopedAccessGate = (grantedLegalEntityIds: readonly strin
     input.scope.legalEntityId !== undefined && granted.has(input.scope.legalEntityId)
       ? allowedDecision()
       : seamRefusal('deny.insufficient_grant');
+  const listOf = (input: ListGateInput): ListAccessResolution => {
+    askedLists.push(input);
+    const decision = answerIn(input);
+    return decision.outcome === 'ALLOWED' ? { decision, predicate: { groups: [] } } : { decision };
+  };
   const gate: AccessDecisionService = {
     decide: (input) => {
       askedDecisions.push(input);
@@ -64,11 +70,8 @@ export const makeSellerScopedAccessGate = (grantedLegalEntityIds: readonly strin
       askedDecisions.push(...input);
       return Effect.succeed(input.map(answerIn));
     },
-    list: (input) => {
-      askedLists.push(input);
-      const decision = answerIn(input);
-      return Effect.succeed(decision.outcome === 'ALLOWED' ? { decision, predicate: { groups: [] } } : { decision });
-    },
+    list: (input) => Effect.succeed(listOf(input)),
+    listMany: (input) => Effect.succeed(input.map(listOf)),
     selectableLegalEntities: () =>
       Effect.succeed(grantedLegalEntityIds.map((legalEntityId) => LegalEntityIdSchema.make(legalEntityId))),
   };

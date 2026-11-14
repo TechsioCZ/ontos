@@ -194,6 +194,8 @@ const harness = () => {
   };
   const loader: TenantIntentLoaderService = {
     loadAuthorityCells: unused,
+    loadAuthorityCellsMany: unused,
+    loadCompanyOwnership: unused,
     loadConfigureBases: unused,
     loadConnection: unused,
     loadProjection: () => Effect.succeed(intent),
@@ -227,7 +229,8 @@ it.effect('a retried adoption reconciles the projection its first attempt failed
     const { token } = yield* commands.preview(scope, { itemIds: [ITEM_ID], mode: 'adopt' });
     faults.remaining = 1;
     const failed = yield* Effect.flip(commands.adopt(scope, adoptInput(token)));
-    expect(failed.code).toBe('access_changes_command_unavailable');
+    // The decision is recorded; only its projection is pending, and the caller is told so.
+    expect(failed.code).toBe('access_changes_command_saved_projection_pending');
     const retried = yield* commands.adopt(scope, adoptInput(token));
     expect(retried.decisionIds).toHaveLength(1);
     expect(calls).toEqual(['store:record', 'reconcile', 'reconcile']);
@@ -251,7 +254,8 @@ it.effect('a retried undo reconciles the projection its first attempt failed to 
     calls.length = 0;
     faults.remaining = 1;
     const failed = yield* Effect.flip(commands.undo(scope, input));
-    expect(failed.code).toBe('access_changes_command_unavailable');
+    // The decision is recorded; only its projection is pending, and the caller is told so.
+    expect(failed.code).toBe('access_changes_command_saved_projection_pending');
     const retried = yield* commands.undo(scope, input);
     expect(retried.decisionIds).toHaveLength(1);
     expect(calls).toEqual(['store:record', 'reconcile', 'reconcile']);

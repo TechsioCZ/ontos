@@ -1,5 +1,6 @@
 import { Effect, FileSystem, Schema } from 'effect';
 
+import { ModuleKeySchema } from '../access/ids.ts';
 import { WorkloadKeySchema } from '../authorization/access-declaration.ts';
 
 /** Environment variable naming the operator-provided stage accounts file (JSON, mode 600, outside the repo). */
@@ -44,48 +45,6 @@ const StageAccountSchema = Schema.Struct({
   principalId: PrincipalIdSchema,
 });
 
-/**
- * The machine workloads a carrier declares with `accessWorkload`: external integrations only. Module-to-module
- * calls register no workload; the receiving carrier declares the calling module with `accessActor` instead.
- */
-export const STAGE_DECLARED_WORKLOAD_KEYS: ReadonlySet<string> = new Set([
-  'commerce.storefront-client',
-  'core.identity-provider',
-  'payment.source-ingress',
-  'payment.provider-notification-ingress',
-  'payment.provider-reconciliation',
-  'integration.symmy-admit',
-  'integration.symmy-poll',
-  'commerce.catalog.symmy-product-import',
-  'commerce.catalog.symmy-product-read',
-  'commerce.catalog.symmy-variant-localized-facts',
-  'commerce.catalog.symmy-variant-localized-facts-recovery',
-  'commerce.assortment.symmy-fixture-currentness',
-  'commerce.inventory.source-write',
-  'commerce.inventory.source-read',
-  'commerce.pricing.source-write',
-  'commerce.pricing.source-read',
-  'pricing.price-group-catalog.source-write',
-  'pricing.price-group-catalog.source-read',
-  'privacy.core.source-processing-check',
-  'privacy.core.measure-execution-check',
-  'privacy.core.organization-ico-check',
-  'privacy.core.organization-profile-ico-check',
-  'privacy.core.organization-business-check',
-  'commerce.market-catalog.source-read',
-  'party.registry.source-write',
-  'party.registry.source-read',
-  'commerce.customer-context.source-write',
-  'commerce.customer-context.source-read',
-  'commerce.customer-context.organization-ico-facts.read',
-  'integration.symmy.source-organization-facts.read',
-]);
-const StageWorkloadKeySchema = WorkloadKeySchema.check(
-  Schema.makeFilter((key) =>
-    STAGE_DECLARED_WORKLOAD_KEYS.has(key) ? undefined : 'names no workload a carrier declares',
-  ),
-);
-
 const StageTenantSchema = Schema.Struct({
   accounts: Schema.NonEmptyArray(StageAccountSchema),
   defaultLocale: TrimmedNonEmptyString,
@@ -96,6 +55,8 @@ const StageTenantSchema = Schema.Struct({
     registrationCountry: Schema.String.check(Schema.isPattern(/^[A-Z]{2}$/u)),
     registrationNumber: TrimmedNonEmptyString,
   }),
+  /** Explicit operator installation intent, checked against the supplied composition before writes. */
+  moduleKey: ModuleKeySchema,
   moduleStateId: ModuleStateIdSchema,
   slug: SlugSchema,
   tenantId: TenantIdSchema,
@@ -109,7 +70,7 @@ const StageTenantSchema = Schema.Struct({
     Schema.Array(
       Schema.Struct({
         principalId: PrincipalIdSchema,
-        workloadKey: StageWorkloadKeySchema,
+        workloadKey: WorkloadKeySchema,
       }),
     ),
   ),
@@ -163,11 +124,14 @@ const hasDuplicates = (values: readonly string[]): boolean =>
 /**
  * Validates the operator accounts file without echoing any of its values: owner-only permissions,
  * the documented schema, unique identifiers and emails, grants that name only schema relations,
- * and retired data that never overlaps an active Tenant or account.
+ * and retired data that never overlaps an active Tenant or account. The caller supplies the
+ * reviewed composition's workload declarations; Core knows no deployment's workload keys.
  */
 export const parseStageAccountsFile = Effect.fn('StageAccountsFile.parse')(function* parseAccountsFile(
   contents: StageAccountsFileContents,
+  declaredWorkloadKeys: ReadonlySet<string>,
 ) {
+  const declaredWorkloads = new Set(declaredWorkloadKeys.values());
   if (contents.mode % GROUP_AND_OTHER_PERMISSION_RANGE !== 0) {
     return yield* invalid(
       `The ${STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY} file must be readable only by its owner (chmod 600)`,
@@ -203,7 +167,15 @@ export const parseStageAccountsFile = Effect.fn('StageAccountsFile.parse')(funct
     return yield* invalid('Stage account roles must be unique');
   }
   const tenantWorkloads = file.tenants.flatMap(({ workloads }) => workloads ?? []);
-  if (tenantWorkloads.some(({ principalId }) => !activePrincipalIdSet.has(principalId))) {
+  if (tenantWorkloads.some(({ workloadKey }) => !declaredWorkloads.has(workloadKey))) {
+    return yield* invalid('Every registered workload must name a workload declared by the composition');
+  }
+  if (
+    file.tenants.some(({ accounts: tenantAccounts, workloads }) => {
+      const tenantPrincipalIds = new Set(tenantAccounts.map(({ principalId }) => principalId));
+      return workloads?.some(({ principalId }) => !tenantPrincipalIds.has(principalId)) === true;
+    })
+  ) {
     return yield* invalid('Every registered workload needs a principal of its own tenant');
   }
   if (

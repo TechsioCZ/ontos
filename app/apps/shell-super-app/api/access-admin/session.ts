@@ -41,6 +41,15 @@ export const accessAdminAuthenticationRequiredProblem = (): AccessAdminProblem =
     type: 'https://ontos.dev/problems/access-admin-authentication-required',
   });
 
+/**
+ * What the person reads. `access_changes_write_refused` is the refusal Core writes as a sentence for a person: the
+ * writer proved the rule under the role's lock and says what to do about it, so it is shown exactly as it stands. A
+ * technical code is never part of a message a person reads (it stays in the server's log). Every other code is a
+ * diagnostic for a client that must tell two refusals apart, and keeps its prefix.
+ */
+export const accessAdminFailureDetail = (failure: { readonly code: string; readonly reason: string }): string =>
+  failure.code === 'access_changes_write_refused' ? failure.reason : `${failure.code}: ${failure.reason}`;
+
 export const accessAdminForbiddenProblem = (detail: string): AccessAdminProblem =>
   AccessAdminForbiddenProblemSchema.make({
     _tag: 'AccessAdminForbidden',
@@ -75,6 +84,22 @@ export const accessAdminInternalProblem = (detail: string): AccessAdminProblem =
     status: ACCESS_ADMIN_HTTP_STATUS.internal,
     title: 'Access administration failed',
     type: 'https://ontos.dev/problems/access-admin-internal',
+  });
+
+/**
+ * A change the store saved whose projection did not complete: the Action's write is committed, and the tenant's
+ * permissions are still being applied (a retry, the fence sweep or the next reconcile finishes them). A retry of the
+ * same request is safe: the saved change is found and only its projection runs again.
+ */
+export const accessAdminSavedPendingProblem = (): AccessAdminProblem =>
+  AccessAdminUnavailableProblemSchema.make({
+    _tag: 'AccessAdminUnavailable',
+    detail:
+      'The change is saved; its permissions are still being applied. Retry in a moment to finish them; nothing is saved twice.',
+    retryable: true,
+    status: ACCESS_ADMIN_HTTP_STATUS.unavailable,
+    title: 'Change saved, permissions still being applied',
+    type: 'https://ontos.dev/problems/access-admin-saved-permissions-pending',
   });
 
 export const accessAdminUnavailableProblem = (): AccessAdminProblem =>

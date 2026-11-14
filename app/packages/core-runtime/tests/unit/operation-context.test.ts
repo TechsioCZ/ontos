@@ -282,6 +282,37 @@ it.layer(NodeCrypto.layer)('operation context', (suite) => {
       expect(isTrustedSupportRecoveryPrincipalContext({ ...scope })).toBe(false);
     }),
   );
+
+  suite.effect('binds agent API key admission to its audited issuing company, not the principal’s other roles', () => {
+    const apiPrincipal = { ...principal, authMethod: 'api_key' as const };
+    const record = {
+      ...active,
+      bindingIssuingLegalEntityId: principal.legalEntityId ?? null,
+      bindingSubjectType: 'api_key',
+      principalKind: 'agent',
+    };
+    const resolve = (
+      persisted: Omit<typeof record, 'bindingIssuingLegalEntityId'> & { bindingIssuingLegalEntityId: string | null },
+      target: typeof principal = apiPrincipal,
+    ) =>
+      makeOperationalScopeResolver({ load: () => Effect.succeed(persisted) }, access('allowed')).pipe(
+        Effect.flatMap((resolver) =>
+          resolver.resolve({ correlationId: 'agent-key-admission', legalEntityScope: 'optional', principal: target }),
+        ),
+      );
+    return Effect.gen(function* companyAgentKeyAdmission() {
+      yield* resolve(record);
+      const wrongCompany = yield* Effect.flip(resolve({ ...record, bindingIssuingLegalEntityId: 'other-company' }));
+      expect(Schema.is(OperationContextDenied)(wrongCompany)).toBe(true);
+      const missingAudit = yield* Effect.flip(resolve({ ...record, bindingIssuingLegalEntityId: null }));
+      expect(Schema.is(OperationContextDenied)(missingAudit)).toBe(true);
+      const { legalEntityId: _company, ...tenantPrincipal } = apiPrincipal;
+      const tenantContext = yield* Effect.flip(resolve(record, tenantPrincipal));
+      expect(Schema.is(OperationContextDenied)(tenantContext)).toBe(true);
+      // Native tenant-managed workloads retain their existing scope rules.
+      yield* resolve({ ...record, bindingIssuingLegalEntityId: null, principalKind: 'service' }, tenantPrincipal);
+    });
+  });
 });
 
 it.layer(NodeCrypto.layer)('registered workload operation context', (suite) => {

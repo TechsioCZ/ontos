@@ -1,6 +1,11 @@
+import { TestClock } from 'effect/testing';
+import { TrustedPrincipalContextSchema, trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
+import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
+import { NodeCrypto } from '@effect/platform-node';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 /* eslint-disable effect-native/no-manual-tag-comparison -- Resolution tests assert all four exact public discriminants and evidence payloads; expires: 2027-03-01. */
 import { expect, it } from 'effect-rstest';
-import { Effect, Schema } from 'effect';
+import { Effect, Result, Schema } from 'effect';
 import { AssignCustomerPriceGroupPayloadSchema } from '../../src/actions/assign-customer-price-group.action.ts';
 import {
   customerPriceGroupAssignmentReadRead,
@@ -9,12 +14,16 @@ import {
 import {
   customerPriceGroupResolutionRead,
   resolveCustomerPriceGroupFromServices,
+  loadCustomerPriceGroupSnapshot,
+  recheckCustomerPriceGroupSnapshot,
+  finishCustomerPriceGroupSnapshot,
 } from '../../src/api/customer-price-group-resolution.read.ts';
 import {
   CustomerPriceGroupResolutionRequestSchema,
   CustomerPriceGroupResolutionResponseSchema,
   customerPriceGroupResolutionPredicateRef,
 } from '../../shared/apis/customer-price-group-resolution.ts';
+import type { CustomerPriceGroupResolutionServices } from '../../src/api/customer-price-group-resolution.read.ts';
 import type {
   CustomerPriceGroupAssignment,
   PriceGroupCatalogOutcome,
@@ -108,6 +117,96 @@ const unreachableStore: CustomerPriceGroupAssignmentStorePort = {
   remove: unavailableStore,
   resolve: unavailableStore,
 };
+
+it.effect('releases the owner snapshot before catalog I/O and revalidates the current set afterwards', () =>
+  Effect.gen(function* phasedResolution() {
+    let inTransaction = true;
+    let catalogCalls = 0;
+    const events: string[] = [];
+    const services: CustomerPriceGroupResolutionServices = {
+      catalog: {
+        resolveCurrent: () =>
+          Effect.sync(() => {
+            expect(inTransaction).toBe(false);
+            catalogCalls += 1;
+            events.push('catalog');
+            return { _tag: 'USABLE', compatibility, priceGroupRef } as const;
+          }),
+      },
+      now: Effect.succeed(observedAt),
+      profileValidation: {
+        inspect: () => Effect.succeed({ _tag: 'CURRENT', counterpartyRef: null, revision: 1, state: 'ACTIVE' }),
+      },
+      store: {
+        ...unreachableStore,
+        resolve: () =>
+          Effect.sync(() => {
+            expect(inTransaction).toBe(true);
+            events.push('snapshot');
+            return { _tag: 'found', assignments: [assignment('current')] } as const;
+          }),
+      },
+    };
+    const input = { authorizationSubject: { kind: 'RETAIL' as const }, effectiveAt: requestedEffectiveAt, profile };
+    const snapshot = yield* loadCustomerPriceGroupSnapshot(input, tenantId, services);
+    expect(catalogCalls).toBe(0);
+    inTransaction = false;
+    const result = yield* finishCustomerPriceGroupSnapshot(
+      input,
+      snapshot,
+      services.catalog,
+      Effect.sync(() => {
+        inTransaction = true;
+      }).pipe(
+        Effect.andThen(recheckCustomerPriceGroupSnapshot(input, tenantId, services, snapshot)),
+        Effect.ensuring(
+          Effect.sync(() => {
+            inTransaction = false;
+          }),
+        ),
+      ),
+      services.now,
+    );
+    expect(result.resolution._tag).toBe('ASSIGNED');
+    expect(events).toEqual(['snapshot', 'catalog', 'snapshot']);
+    expect(catalogCalls).toBe(1);
+  }),
+);
+
+it.effect('fails closed when an assignment changes while the catalog request is in flight', () =>
+  Effect.gen(function* concurrentAssignmentChange() {
+    let assignments = [assignment('current')];
+    const services: CustomerPriceGroupResolutionServices = {
+      catalog: {
+        resolveCurrent: () =>
+          Effect.sync(() => {
+            assignments = [];
+            return { _tag: 'USABLE', compatibility, priceGroupRef } as const;
+          }),
+      },
+      now: Effect.succeed(observedAt),
+      profileValidation: {
+        inspect: () => Effect.succeed({ _tag: 'CURRENT', counterpartyRef: null, revision: 1, state: 'ACTIVE' }),
+      },
+      store: {
+        ...unreachableStore,
+        resolve: () => Effect.sync(() => ({ _tag: 'found' as const, assignments })),
+      },
+    };
+    const input = { authorizationSubject: { kind: 'RETAIL' as const }, effectiveAt: requestedEffectiveAt, profile };
+    const snapshot = yield* loadCustomerPriceGroupSnapshot(input, tenantId, services);
+    const failure = yield* Effect.flip(
+      finishCustomerPriceGroupSnapshot(
+        input,
+        snapshot,
+        services.catalog,
+        recheckCustomerPriceGroupSnapshot(input, tenantId, services, snapshot),
+        services.now,
+      ),
+    );
+    expect(failure._tag).toBe('ReadHandlerUnavailable');
+  }),
+);
 
 it.effect('resolves NONE only when there is no current temporal assignment', () =>
   Effect.gen(function* noCurrentAssignment() {
@@ -383,4 +482,86 @@ it.effect('rejects invalid periods and declares tagged business-plus-resource Re
       }),
     ).toBe(false);
   }),
+);
+
+it.effect('runs the original registered load and recheck in separate committed owner transactions', () =>
+  Effect.gen(function* nativePriceGroupLifecycle() {
+    yield* TestClock.setTime(Date.parse(observedAt));
+    const principal = trustVerifiedGatewayPrincipalContext(
+      Schema.decodeSync(TrustedPrincipalContextSchema)({
+        authBindingId: '44444444-4444-4444-8444-444444444444',
+        authContextRef: 'session:price-group-native',
+        authMethod: 'session',
+        legalEntityId: '22222222-2222-4222-8222-222222222222',
+        principalId: '33333333-3333-4333-8333-333333333333',
+        tenantId,
+      }),
+      'a'.repeat(64),
+    );
+    yield* Effect.forEach(
+      ['CURRENT', 'PROFILE_CHANGED', 'GATE_DENIED'] as const,
+      Effect.fnUntraced(function* nativeCase(scenario) {
+        let inspections = 0;
+        const harness = yield* makeReadTestHarness({
+          access: scenario === 'GATE_DENIED' ? 'denied' : 'allowed',
+          compositionRevision: 'a'.repeat(64),
+          executeOwnerQuery: ({ sql }) => {
+            if (sql.includes('inspect_price_group_profile')) {
+              inspections += 1;
+              return Effect.succeed([
+                {
+                  counterparty_resource_id: null,
+                  outcome: 'CURRENT',
+                  profile_state: 'ACTIVE',
+                  revision: scenario === 'PROFILE_CHANGED' && inspections > 1 ? 2 : 1,
+                },
+              ]);
+            }
+            if (sql.includes('resolve_price_group_assignments')) {
+              return Effect.succeed([]);
+            }
+            return Effect.die(`Unexpected price-group owner query: ${sql}`);
+          },
+          operationTime: new Date(observedAt),
+          ownerAuthorizationDecision: 'allowed',
+          ownerRegistration: commerceCustomerContextRegistration,
+          scope: { ...principal, correlationId: 'price-group-native' },
+        });
+        const result = yield* harness.runtime
+          .runRead({
+            input: { authorizationSubject: { kind: 'RETAIL' }, effectiveAt: requestedEffectiveAt, profile },
+            principal,
+            registration: customerPriceGroupResolutionRead,
+            transport: { correlationId: 'price-group-native' },
+          })
+          .pipe(Effect.result);
+        if (scenario === 'CURRENT' && Result.isFailure(result)) {
+          return yield* Effect.fail(result.failure);
+        }
+        expect(Result.isSuccess(result)).toBe(scenario === 'CURRENT');
+        if (scenario === 'GATE_DENIED') {
+          expect(inspections).toBe(0);
+        } else {
+          expect(inspections).toBe(2);
+          const { statements } = harness.snapshot();
+          const inspectionsAt = statements.flatMap((statement, index) =>
+            statement.includes('inspect_price_group_profile') ? [index] : [],
+          );
+          const [loadedAt, recheckedAt] = inspectionsAt;
+          expect(loadedAt).toBeDefined();
+          expect(recheckedAt).toBeDefined();
+          expect(
+            statements
+              .slice((loadedAt ?? 0) + 1, recheckedAt)
+              .some((statement) => statement.trim().toLowerCase() === 'commit'),
+          ).toBe(true);
+        }
+        if (Result.isSuccess(result)) {
+          expect(result.success.resolution).toEqual({ _tag: 'NONE' });
+        }
+        return yield* Effect.void;
+      }),
+      { concurrency: 1, discard: true },
+    );
+  }).pipe(Effect.provide(TestClock.layer()), Effect.provide(NodeCrypto.layer)),
 );

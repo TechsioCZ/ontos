@@ -11,6 +11,7 @@ import { WorkloadKeySchema } from '../authorization/access-declaration.ts';
 import { makeCoreDatabase } from '../db/client.ts';
 import { accessWorkloadBindings, principals } from '../db/schema.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
+import { defineDatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import { stageScopeOf } from '../install/stage-context-bootstrap.ts';
 import { makeOperationalScopeRepository } from '../operations/context.ts';
@@ -71,10 +72,30 @@ export interface NativeWorkloadBindingReference {
   readonly incarnation: string;
 }
 
+const RUNTIME_IDENTITY_STAGE = 'runtime-identity';
+
+const NativeWorkloadControlStageSchema = Schema.Literals([
+  'verification',
+  RUNTIME_IDENTITY_STAGE,
+  'scope-installation',
+  'operator-identity',
+  'scope-currentness',
+  'target-lookup',
+  'binding-revoke',
+  'binding-register',
+  'transaction',
+]);
+
 export class NativeWorkloadBindingControlError extends Schema.TaggedError<NativeWorkloadBindingControlError>()(
   'NativeWorkloadBindingControlError',
-  { cause: Schema.optionalKey(Schema.Redacted(Schema.Defect())), reason: Schema.String },
+  {
+    cause: Schema.optionalKey(Schema.Redacted(Schema.Defect())),
+    reason: Schema.String,
+    stage: NativeWorkloadControlStageSchema,
+  },
 ) {}
+
+const isControlError = Schema.is(NativeWorkloadBindingControlError);
 
 export interface OwnedNativeWorkloadBindingControl {
   readonly originalBinding: NativeWorkloadBindingReference;
@@ -85,8 +106,11 @@ export interface OwnedNativeWorkloadBindingControl {
 export type OwnedSystemWriterWorkloadControl = OwnedNativeWorkloadBindingControl;
 export type OwnedIntegrationPriceGroupReaderWorkloadControl = OwnedNativeWorkloadBindingControl;
 
-const unavailable = (reason: string, cause?: unknown) =>
-  new NativeWorkloadBindingControlError({ cause: Redacted.make(cause), reason });
+const unavailable = (
+  reason: string,
+  cause?: unknown,
+  stage: typeof NativeWorkloadControlStageSchema.Type = 'verification',
+) => new NativeWorkloadBindingControlError({ cause: Redacted.make(cause), reason, stage });
 
 /**
  * TEST infrastructure only: controls one exact allowed enrollment in an authentic live clone.
@@ -114,7 +138,8 @@ const makeOwnedWorkloadBindingControlNative = Effect.fn('NativeWorkloadBindingCo
     const database = yield* makeCoreDatabase(connections.runtime).pipe(
       Effect.mapError((cause) => unavailable('Unable to open the owned enrollment control runtime', cause)),
     );
-    const writer = makeAccessWorkloadBindingDrizzleStore(database);
+    const enrollment = defineDatabaseIdentityEnrollment([]);
+    const writer = makeAccessWorkloadBindingDrizzleStore({ enrollment, executor: database.executor });
     const scope = yield* stageScopeOf({ principalId: pins.operatorPrincipalId, tenantId: pins.tenantId }).pipe(
       Effect.mapError((cause) => unavailable('Unable to resolve the native operator scope', cause)),
     );
@@ -127,16 +152,30 @@ const makeOwnedWorkloadBindingControlNative = Effect.fn('NativeWorkloadBindingCo
         yield* requireOwnership;
         return yield* database.executor.transaction(
           Effect.fn('NativeWorkloadBindingControl.verifyAndRun')(function* verifyAndRun(transaction) {
-            const [runtime] = yield* transaction.execute<{ readonly valid: boolean }>(
-              sql`select current_database()=${connections.runtime.database}
+            const [runtime] = yield* transaction
+              .execute<{ readonly valid: boolean }>(
+                sql`select current_database()=${connections.runtime.database}
                   and current_user=${connections.runtime.user} and session_user=${connections.runtime.user}
                   and not rolsuper and not rolbypassrls as valid from pg_roles where rolname=current_user`,
-              'objects',
-            );
+                'objects',
+              )
+              .pipe(
+                Effect.mapError((cause) =>
+                  unavailable('Unable to verify the runtime connection', cause, RUNTIME_IDENTITY_STAGE),
+                ),
+              );
             if (runtime?.valid !== true) {
-              return yield* unavailable('The owned enrollment control requires its exact non-privileged runtime role');
+              return yield* unavailable(
+                'The owned enrollment control requires its exact non-privileged runtime role',
+                undefined,
+                RUNTIME_IDENTITY_STAGE,
+              );
             }
-            yield* installOperationalScope(transaction, scope);
+            yield* installOperationalScope(transaction, scope, enrollment).pipe(
+              Effect.mapError((cause) =>
+                unavailable('Unable to install the operator scope', cause, 'scope-installation'),
+              ),
+            );
             const targetRows = transaction
               .select({ principalId: principals.principalId })
               .from(principals)
@@ -154,9 +193,25 @@ const makeOwnedWorkloadBindingControlNative = Effect.fn('NativeWorkloadBindingCo
               {
                 operator: makePrincipalResolver(database, {
                   authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
-                }).resolveBetterAuthUserForTenant(pins.operatorProviderUserId, pins.tenantId),
-                persisted: makeOperationalScopeRepository({ executor: transaction }).load(scope),
-                targets: targetRows,
+                })
+                  .resolveBetterAuthUserForTenant(pins.operatorProviderUserId, pins.tenantId)
+                  .pipe(
+                    Effect.mapError((cause) =>
+                      unavailable('Unable to verify the operator', cause, 'operator-identity'),
+                    ),
+                  ),
+                persisted: makeOperationalScopeRepository({ executor: transaction }, enrollment)
+                  .load(scope)
+                  .pipe(
+                    Effect.mapError((cause) =>
+                      unavailable('Unable to verify the persisted scope', cause, 'scope-currentness'),
+                    ),
+                  ),
+                targets: targetRows.pipe(
+                  Effect.mapError((cause) =>
+                    unavailable('Unable to read the target Principal', cause, 'target-lookup'),
+                  ),
+                ),
               },
               { concurrency: 1 },
             );
@@ -181,7 +236,11 @@ const makeOwnedWorkloadBindingControlNative = Effect.fn('NativeWorkloadBindingCo
           }),
         );
       },
-      Effect.mapError((cause) => unavailable('The owned enrollment control could not be verified', cause)),
+      Effect.mapError((cause) =>
+        isControlError(cause)
+          ? cause
+          : unavailable('The owned enrollment control could not be verified', cause, 'transaction'),
+      ),
     );
 
     const activeBindings = (transaction: CoreTransaction) =>
@@ -240,10 +299,14 @@ const makeOwnedWorkloadBindingControlNative = Effect.fn('NativeWorkloadBindingCo
         ) {
           return yield* unavailable('The exact original workload enrollment is no longer current');
         }
-        yield* writer.revokeBinding(operatorScope, {
-          bindingId: AccessWorkloadBindingIdSchema.make(originalBinding.bindingId),
-          revokedAt: DateTime.toDateUtc(yield* DateTime.now),
-        });
+        yield* writer
+          .revokeBinding(operatorScope, {
+            bindingId: AccessWorkloadBindingIdSchema.make(originalBinding.bindingId),
+            revokedAt: DateTime.toDateUtc(yield* DateTime.now),
+          })
+          .pipe(
+            Effect.mapError((cause) => unavailable('Unable to revoke the exact enrollment', cause, 'binding-revoke')),
+          );
         return yield* Effect.void;
       }),
     );
@@ -280,18 +343,24 @@ const makeOwnedWorkloadBindingControlNative = Effect.fn('NativeWorkloadBindingCo
         ) {
           return yield* unavailable('A rebind requires genuinely new binding and incarnation identities');
         }
-        yield* writer.registerBindings(operatorScope, {
-          bindings: [
-            {
-              bindingId,
-              createdAt: DateTime.toDateUtc(yield* DateTime.now),
-              incarnation,
-              principalId: pins.targetPrincipalId,
-              tenantId: pins.tenantId,
-              workloadKey,
-            },
-          ],
-        });
+        yield* writer
+          .registerBindings(operatorScope, {
+            bindings: [
+              {
+                bindingId,
+                createdAt: DateTime.toDateUtc(yield* DateTime.now),
+                incarnation,
+                principalId: pins.targetPrincipalId,
+                tenantId: pins.tenantId,
+                workloadKey,
+              },
+            ],
+          })
+          .pipe(
+            Effect.mapError((cause) =>
+              unavailable('Unable to register the fresh enrollment', cause, 'binding-register'),
+            ),
+          );
         const current = yield* activeBindings(transaction);
         if (current.length !== 1 || current[0]?.bindingId !== bindingId || current[0].incarnation !== incarnation) {
           return yield* unavailable('The native writer did not establish the exact fresh enrollment');

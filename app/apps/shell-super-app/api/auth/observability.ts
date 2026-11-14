@@ -1,3 +1,4 @@
+import process from 'node:process';
 import { Clock, Effect, Schema } from 'effect';
 
 import { AuthenticationUnavailableError } from './errors.ts';
@@ -111,3 +112,33 @@ export const withAuthenticationTimeout =
       }),
       observeAuthenticationPhase(phase, requestHeaders),
     );
+
+/** Native sign-in substeps, not the combined provider operation. No identity or error details. */
+const SignInPhaseSchema = Schema.Literals([
+  'credential-verify',
+  'session-create',
+  'principal-resolution',
+  'session-principal-resolution',
+]);
+export const observeSignInPhase = (phase: typeof SignInPhaseSchema.Type) =>
+  Effect.fnUntraced(function* signInPhase<Value, Failure, Requirements>(
+    effect: Effect.Effect<Value, Failure, Requirements>,
+  ) {
+    const startedAt = yield* Clock.currentTimeMillis;
+    const start = yield* Clock.monotonicTimeNanos;
+    return yield* effect.pipe(
+      Effect.ensuring(
+        Effect.gen(function* finishSignInPhase() {
+          const end = yield* Clock.monotonicTimeNanos;
+          yield* Effect.logInfo('Shell sign-in phase').pipe(
+            Effect.annotateLogs({
+              durationMs: Number(end - start) / 1_000_000,
+              phase,
+              pid: process.pid,
+              startedAt,
+            }),
+          );
+        }),
+      ),
+    );
+  });

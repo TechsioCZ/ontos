@@ -1,22 +1,7 @@
-import {
-  isActionRegistration,
-  decodeActionPostAttemptResult,
-  getActionPostAttemptHook,
-  decodeActionPayload,
-  decodeActionResult,
-  getActionAccessAmountResolver,
-  getActionAccessTargetResolver,
-  getActionOwnerFactsResolver,
-  getActionReducesAuthorityResolver,
-  getActionDecodedSuccessHook,
-  getActionOwnerPermissionTargetResolver,
-  getActionHandler,
-  getActionResourcePermissionTargetResolver,
-  getActionServiceFactory,
-} from './definition.ts';
 import { lockRegisteredSourceExecutionFence } from '../access/workloads/source-execution-fence.ts';
 import { bindScopedWorkloadAdmission } from '../access/enforcement/workload-admission.ts';
 import {
+  isGenuineCoreAction,
   loadModuleOperationAdmission,
   operationCatalogLoader,
   prepareOperationIntrinsicState,
@@ -25,6 +10,7 @@ import {
   withoutModuleOperationExecution,
 } from '../modules/module-operation-execution.ts';
 import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
+import { getVerticalRuntimeReads } from '../modules/runtime-registration.ts';
 import {
   Array as EffectArray,
   Cause,
@@ -45,17 +31,39 @@ import { ConnectionError, UnknownError, isSqlError } from 'effect/sql/SqlError';
 
 import type { AccessFieldGroup, AccessTarget } from '../authorization/access-declaration.ts';
 import type { AccessAmount, AccessDecision, AccessRecordTarget } from '../access/decision/contract.ts';
-import { lockActionAccessFence } from '../access/approvals/action-mandate-dispatch.ts';
+import { lockActionAccessFence } from '../access/approvals/action-access-fence.ts';
+import { ActionMandateDispatcher } from '../access/approvals/action-mandate-dispatch-service.ts';
+import { actionExecutionDeadlineV2 } from '../access/approvals/action-lifecycle-v2.ts';
 import { resolveGovernedAmount } from '../access/approvals/governed-amount.ts';
+import {
+  decodeActionCommandV2,
+  resolveActionCommandV2,
+  rebindRegisteredActionCommandV2,
+} from '../access/approvals/action-command-v2.ts';
+import type { ActionCommandV2 } from '../access/approvals/action-command-v2.ts';
 import type {
   ActionMandateDispatch,
   ActionProposalParked,
   MandatePrepared,
 } from '../access/approvals/action-mandate-dispatch.ts';
-import { CapabilityKeySchema, ModuleKeySchema, RecordKeySchema } from '../access/ids.ts';
-import type { BoundAccessGate } from '../operations/access-gate.ts';
-import { bindLiveAccessGate } from '../operations/access-gate.ts';
-import { authorizeDeclaredFieldWrites } from './field-write-authorization.ts';
+import {
+  CapabilityKeySchema,
+  LegalEntityIdSchema,
+  ModuleKeySchema,
+  RecordKeySchema,
+  TenantIdSchema,
+} from '../access/ids.ts';
+import type { BoundAccessGate, PreparedAccessDecision } from '../operations/access-gate.ts';
+import type { GateInput } from '../access/enforcement/contract.ts';
+import { seamUnavailable } from '../access/enforcement/decisions.ts';
+import { bindLiveActionAccessGate } from '../operations/access-gate.ts';
+import { authorizeDeclaredFieldWrites, writtenFieldPaths } from './field-write-authorization.ts';
+import { conjoinActionTargetDecisions, resolveActionTargetSet } from './target-set.ts';
+import type { ActionTargetSetAdmission } from './target-set.ts';
+import { getActionGoverningRead } from './governing-read.ts';
+import { decideActionGoverningReads, requireAllowedGoverningReads } from './governing-read-authorization.ts';
+import { actionPreparationObservation, originalActionPreparationFactory } from './preparation-observation.ts';
+import type { ActionPreparationObservation } from './preparation-observation.ts';
 
 import {
   decodeTrustedPrincipalContext,
@@ -71,6 +79,8 @@ import {
 import { isDatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
 import { findPostgresFailure } from '../database/postgres-failure.ts';
 import { CoreDatabase as CoreDatabaseService } from '../db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import { trustedTransactionTime } from '../operations/transaction-time.ts';
 import type { CoreTransaction } from '../db/types.ts';
@@ -90,19 +100,30 @@ import type { OperationalScope, OperationalScopeResolverService } from '../opera
 import { OperationalScopeResolver } from '../operations/context.ts';
 import { ContextAccess, isOwnerPermissionAccessTargetValid } from '../permissions/context-access.ts';
 import { ActionAuthorizationPreflight } from './owner-proof-preflight.ts';
+import { withPreparedAccessRecheck } from './owner-transaction-access.ts';
 import { ActionProposalAcceptedSchema } from './proposal-accepted.ts';
 import type { ActionProposalAccepted, ActionProposalSuccess, ActionSuccessContract } from './proposal-accepted.ts';
 import type { ActionAuthorizationPreflightService } from './owner-proof-preflight.ts';
-import { OwnerAuthorizationOverlay, failClosedOwnerAuthorizationOverlay } from '../access/enforcement/owner-overlay.ts';
+import {
+  OwnerAuthorizationOverlay,
+  failClosedOwnerAuthorizationOverlay,
+  ownerAuthorizationFromExit,
+} from '../access/enforcement/owner-overlay.ts';
+import { reportableReasonCodes } from '../access/enforcement/reason-codes.ts';
 import type {
+  DecodedOwnerAuthorization,
   OwnerAccessFacts,
-  OwnerAuthorizationDecision,
   OwnerAuthorizationTarget,
 } from '../access/enforcement/owner-overlay.ts';
 import type { ActionPermissionService } from '../permissions/service.ts';
 import { ActionPermission } from '../permissions/service.ts';
 import { createActionCollector } from './collector.ts';
-import type { ActionTransportMetadata, CommittedActionDomainRejection, TrustedPrincipalContext } from './context.ts';
+import type {
+  ActionOwnerTransaction,
+  ActionTransportMetadata,
+  CommittedActionDomainRejection,
+  TrustedPrincipalContext,
+} from './context.ts';
 import {
   ActionTransportMetadataSchema,
   CommittedActionDomainRejectionSchema,
@@ -115,8 +136,29 @@ import type {
   ActionDeniedAuditEvidenceDeclaration,
   ActionLegalEntityPermission,
   ActionRegistration,
+  AnyActionRegistration,
+  ActionServiceFactory,
   ActionResourcePermissionTarget,
   ActionTenantPermission,
+} from './definition.ts';
+import {
+  isActionRegistration,
+  decodeActionPostAttemptResult,
+  getActionPostAttemptHook,
+  decodeActionPayload,
+  decodeActionResult,
+  getActionAccessAmountResolver,
+  getActionAccessTargetResolver,
+  getActionAccessTargetsResolver,
+  getActionOwnerFactsResolver,
+  getActionReducesAuthorityResolver,
+  getActionDecodedSuccessHook,
+  getActionOwnerPermissionTargetResolver,
+  getActionHandler,
+  getActionResourcePermissionTargetResolver,
+  getActionServiceFactory,
+  getActionServicePreflight,
+  getActionPreparationPolicies,
 } from './definition.ts';
 import {
   ActionAlreadyCommitted,
@@ -148,7 +190,7 @@ import {
   OperationContextInvalid,
   OperationContextUnavailable,
 } from '../operations/errors.ts';
-import type { ActionPolicy, ActionPolicyEvaluatorInput } from './policy.ts';
+import type { ActionPolicy, ActionPolicyEvaluatorInput, ActionPreparationPolicyEvaluator } from './policy.ts';
 import { PolicyDenied } from './policy.ts';
 import type {
   ActionInvocationRecord,
@@ -164,7 +206,9 @@ import {
   logActionInvocationPersistenceFailureCause,
   logActionTransactionFailureCause,
   recoverSqlTransactionError,
+  trackTransactionSettlement,
 } from './repository.ts';
+import { insideDatabaseTransaction } from '../db/transaction-io-guard.ts';
 
 const requireIdempotencyKey = (idempotency: string, transport: ActionTransportMetadata) =>
   idempotency === 'required' && transport.idempotencyKey === undefined
@@ -265,6 +309,10 @@ export interface RunActionInput<
   HandlerRequirements = never,
   SuccessContract extends ActionSuccessContract = 'result',
 > {
+  /** Private testing token. It observes preparation and cannot supply services or authority. */
+  readonly [actionPreparationObservation]?: ActionPreparationObservation<
+    ActionServiceFactory<Services, HandlerRequirements>
+  >;
   /** Trusted receiving deployment audience for per-operation admission. */
   readonly audience?: string;
   readonly payload: unknown;
@@ -288,10 +336,21 @@ export interface RunActionInput<
   readonly transport: unknown;
 }
 
-export interface ResolveActionCommitInput {
-  readonly invocationId: unknown;
-  readonly principal: unknown;
-}
+export type ResolveActionCommitInput = { readonly principal: unknown } & (
+  | { readonly actionKey?: never; readonly idempotencyKey?: never; readonly invocationId: unknown }
+  | { readonly actionKey: unknown; readonly idempotencyKey: unknown; readonly invocationId?: never }
+);
+
+export type ResolveActionExecutionInput = ResolveActionCommitInput & {
+  readonly expectedRequestHash?: unknown;
+};
+
+const ExpectedActionRequestHashSchema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
+const actionRequestMismatch = () =>
+  new ActionPayloadValidationError({
+    code: 'action_payload_invalid',
+    reason: 'The original Action request could not be matched',
+  });
 
 const ActionInvocationIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('ActionInvocationId'));
 
@@ -301,6 +360,53 @@ const ActionCommitOpenSchema = Schema.TaggedStruct('ActionCommitOpen', {
 
 export type ActionCommitOpen = typeof ActionCommitOpenSchema.Type;
 
+const ActionCommitActionKeySchema = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isMinLength(1),
+  Schema.isMaxLength(300),
+).pipe(Schema.brand('ActionCommitActionKey'));
+
+/** The exact caller-owned execution state a recovery endpoint answers with (O80, O85). */
+export const ActionExecutionResolutionSchema = Schema.Union([
+  Schema.Struct({ retryCommand: Schema.Literal(true), state: Schema.Literal('NOT_STARTED') }),
+  Schema.Struct({
+    invocationId: ActionInvocationIdSchema,
+    retryCommand: Schema.Literal(true),
+    state: Schema.Literal('RETRYABLE'),
+  }),
+  Schema.Struct({
+    invocationId: ActionInvocationIdSchema,
+    retryCommand: Schema.Literal(false),
+    state: Schema.Literals(['RUNNING', 'REJECTED']),
+  }),
+  Schema.Struct({
+    actionKey: ActionCommitActionKeySchema,
+    invocationId: ActionInvocationIdSchema,
+    retryCommand: Schema.Literal(false),
+    state: Schema.Literal('COMMITTED'),
+  }),
+]);
+export type ActionExecutionResolution = typeof ActionExecutionResolutionSchema.Type;
+
+const ActionCommitIdempotencyKeySchema = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isMinLength(1),
+  Schema.isMaxLength(200),
+).pipe(Schema.brand('ActionCommitIdempotencyKey'));
+
+const ActionCommitIdentitySchema = Schema.Union([
+  Schema.Struct({
+    actionKey: Schema.optionalKey(Schema.Never),
+    idempotencyKey: Schema.optionalKey(Schema.Never),
+    invocationId: ActionInvocationIdSchema,
+  }),
+  Schema.Struct({
+    actionKey: ActionCommitActionKeySchema,
+    idempotencyKey: ActionCommitIdempotencyKeySchema,
+    invocationId: Schema.optionalKey(Schema.Never),
+  }),
+]);
+
 export interface ActionRuntimeService {
   readonly resolveActionCommit: (
     input: ResolveActionCommitInput,
@@ -309,9 +415,17 @@ export interface ActionRuntimeService {
     | ActionAlreadyCommitted
     | ActionCommitIndeterminate
     | ActionInvocationNotFound
+    | ActionInvocationPersistenceError
     | ActionInvocationStateError
     | ActionPayloadValidationError
     | ActionTrustedContextValidationError
+  >;
+  /** The exact caller-owned execution state of one Action lookup, for a recovery endpoint (O80, O85). */
+  readonly resolveActionExecution: (
+    input: ResolveActionExecutionInput,
+  ) => Effect.Effect<
+    ActionExecutionResolution,
+    ActionInvocationPersistenceError | ActionPayloadValidationError | ActionTrustedContextValidationError
   >;
   /**
    * The one Action runner (O80, O85). Its success channel is `Result`, plus the parked-proposal 202 for
@@ -360,6 +474,12 @@ export interface ActionRuntimeOptions {
   readonly authorizationPreflight?: ActionAuthorizationPreflightService;
   /** Transitional (O62, O68): the legacy ContextAccess the legacy kinds still consult until C05/C03b. */
   readonly contextAccess?: (typeof ContextAccess)['Service'];
+  /**
+   * The database-identity enrollment every scope install verifies against. It is owner-neutral: the
+   * same enrollment serves every Action, and an Action never writes under a scope the connected
+   * request role has no authority for.
+   */
+  readonly databaseIdentities: DatabaseIdentityEnrollment;
   readonly expectedDeployment?: typeof OntosDeploymentIdentitySchema.Type;
   readonly installScope?: typeof installOperationalScope;
   /** Scripted test seam; production uses the SQL shared row lock on the access fence. */
@@ -380,6 +500,11 @@ export interface ActionRuntimeOptions {
   ) => Effect.Effect<string, ActionTransactionError>;
   readonly resolveHandler?: typeof getActionHandler;
   readonly resolveServiceFactory?: typeof getActionServiceFactory;
+  /**
+   * The owner's staged service preparation (D14), when the Action declares one. Absent keeps the
+   * ordinary in-transaction service acquisition.
+   */
+  readonly resolveServicePreflight?: typeof getActionServicePreflight;
 }
 
 const logInvocationPersistenceFailure = (
@@ -426,6 +551,7 @@ const ActionCoreErrorSchema = Schema.Union([
 
 /** Nothing declared: one shared empty list, never a fresh mutable array. */
 const NO_ACCESS_FIELD_GROUPS: readonly AccessFieldGroup[] = Object.freeze([]);
+const UNAVAILABLE_AUTHORITY_REASON = 'unavailable.intent';
 
 const alreadyCommitted = (invocationId: string) =>
   new ActionAlreadyCommitted({
@@ -434,11 +560,23 @@ const alreadyCommitted = (invocationId: string) =>
     reason: 'This idempotency key already committed successfully',
   });
 
+const NOT_PERMITTED_REASON = 'The principal is not permitted to execute this Action';
+
 const permissionDeniedFailure = () =>
   new ActionPermissionDenied({
     code: 'action_permission_denied',
-    reason: 'The principal is not permitted to execute this Action',
+    reason: NOT_PERMITTED_REASON,
   });
+
+/** A same-key retry of a refused invocation answers with the codes its first refusal recorded. */
+const recordedPermissionDenial = (reasons: readonly string[]) =>
+  reasons.length === 0
+    ? permissionDeniedFailure()
+    : new ActionPermissionDenied({
+        code: 'action_permission_denied',
+        reason: NOT_PERMITTED_REASON,
+        reasons,
+      });
 
 const requestHashConflict = () =>
   new ActionRequestHashConflict({
@@ -447,12 +585,36 @@ const requestHashConflict = () =>
   });
 
 /** O67-Q9: a person who may propose but not run is told to seek an approval, never simply refused. */
+/**
+ * The reason codes a refusal carries: only codes Core may report (R3), exactly the ones a recorded
+ * rejection keeps, so the first answer and a same-key retry always say the same.
+ */
+const reportedCodes = (codes: readonly string[]): readonly string[] =>
+  Option.getOrElse(reportableReasonCodes(codes), () => []);
+
+/** The same refusal with only reportable codes; a refusal without any keeps no `reasons` at all. */
+const withReportedReasons = (failure: ActionPermissionDenied): ActionPermissionDenied => {
+  if (failure.reasons === undefined) {
+    return failure;
+  }
+  const reasons = reportedCodes(failure.reasons);
+  return reasons.length === failure.reasons.length
+    ? failure
+    : new ActionPermissionDenied(
+        reasons.length === 0
+          ? { code: failure.code, reason: failure.reason }
+          : { code: failure.code, reason: failure.reason, reasons },
+      );
+};
+
 const approvalRequiredFailure = (decision: AccessDecision) =>
-  new ActionPermissionDenied({
-    code: 'action_approval_required',
-    reason: 'This Action needs an approved mandate before it can run',
-    reasons: decision.reasons.map(({ code }) => code),
-  });
+  withReportedReasons(
+    new ActionPermissionDenied({
+      code: 'action_approval_required',
+      reason: 'This Action needs an approved mandate before it can run',
+      reasons: decision.reasons.map(({ code }) => code),
+    }),
+  );
 
 /**
  * O80: an explicit propose intent on a command the gate already allows is refused, so the client runs
@@ -473,11 +635,13 @@ const toActionProposalAccepted = (parked: ActionProposalParked): ActionProposalA
 
 /** The gate's denial, carrying the engine's own reason codes for the decision log and "Proč?". */
 const accessDeniedFailure = (decision: AccessDecision) =>
-  new ActionPermissionDenied({
-    code: 'action_permission_denied',
-    reason: 'The principal is not permitted to execute this Action',
-    reasons: decision.reasons.map(({ code }) => code),
-  });
+  withReportedReasons(
+    new ActionPermissionDenied({
+      code: 'action_permission_denied',
+      reason: NOT_PERMITTED_REASON,
+      reasons: decision.reasons.map(({ code }) => code),
+    }),
+  );
 
 const permissionUnavailable = () =>
   new ActionPermissionCheckError({
@@ -575,17 +739,63 @@ const resolveOwnerAccessFacts = <Payload>(
 const NO_OWNER_PERMISSION_TARGETS: readonly ActionOwnerPermissionTarget[] = Object.freeze([]);
 const NO_OWNER_AUTHORIZATION_TARGETS: readonly OwnerAuthorizationTarget[] = Object.freeze([]);
 
-const ownerAuthorizationFailure = (decision: Exclude<OwnerAuthorizationDecision, 'allowed'>) => {
-  if (decision === 'denied') {
-    return Effect.fail(
-      new ActionPermissionDenied({
-        code: 'action_permission_denied',
-        reason: 'The owner-local authorization state denies this Action',
-      }),
-    );
+/**
+ * The owner overlay's decoded answers for every owner target, as one. Only an answer of exactly
+ * `allowed` for every target admits; any unavailable answer (including any answer outside the closed
+ * contract) is unavailable, never a denial and never an allow; otherwise the first refusal, with the
+ * owner's own reason codes so the 403 and the refusal warning say which owner rule refused.
+ */
+const ownerAuthorizationFailure = (outcomes: readonly DecodedOwnerAuthorization[]) => {
+  if (outcomes.every(({ decision }) => decision === 'allowed')) {
+    return Effect.void;
   }
-  return Effect.fail(permissionUnavailable());
+  const refusal = outcomes.find((outcome) => outcome.decision === 'denied');
+  return outcomes.some(({ decision }) => decision === 'unavailable') || refusal?.decision !== 'denied'
+    ? Effect.fail(permissionUnavailable())
+    : Effect.fail(
+        new ActionPermissionDenied({
+          code: 'action_permission_denied',
+          reason: 'The owner-local authorization state denies this Action',
+          reasons: refusal.reasons,
+        }),
+      );
 };
+
+/** The tenant and company a refusal names, parsed from the trusted principal; never payload values. */
+const RefusalScopeSchema = Schema.Struct({
+  legalEntityId: Schema.optional(LegalEntityIdSchema),
+  tenantId: TenantIdSchema,
+});
+type RefusalScope = typeof RefusalScopeSchema.Type;
+/** The refusal context of one run: its validated tenant and company, once the principal is validated. */
+interface RefusalContext {
+  scope: Option.Option<RefusalScope>;
+}
+const isActionPermissionDenied = Schema.is(ActionPermissionDenied);
+
+/**
+ * One warning per refused Action: which Action, in which tenant and company, and which check refused
+ * (its static reason and stable codes). It never carries payload values, tokens or record content.
+ */
+const logActionRefusal = (
+  descriptor: { readonly accessDeclaration?: { readonly key: string } | undefined; readonly actionKey: string },
+  scope: Option.Option<RefusalScope>,
+  failure: ActionPermissionDenied,
+): Effect.Effect<void> =>
+  Effect.logWarning('Action refused').pipe(
+    Effect.annotateLogs({
+      code: failure.code,
+      reason: failure.reason,
+      reasons: (failure.reasons ?? []).join(','),
+      refusalCompany: Option.match(scope, {
+        onNone: () => 'unverified',
+        onSome: ({ legalEntityId }) => legalEntityId ?? 'none',
+      }),
+      refusalTenant: Option.match(scope, { onNone: () => 'unverified', onSome: ({ tenantId }) => tenantId }),
+      refusedAction: descriptor.actionKey,
+      refusedCapability: descriptor.accessDeclaration?.key ?? descriptor.actionKey,
+    }),
+  );
 
 const resolveActionTenantPermission = <Payload>(
   payload: Payload,
@@ -709,7 +919,7 @@ const recordedRejectionFailure = (rejection: Option.Option<ActionRecordedRejecti
     return terminalInvocation();
   }
   return rejection.value.stage === 'authz'
-    ? permissionDeniedFailure()
+    ? recordedPermissionDenial(rejection.value.reasons ?? [])
     : new ActionPolicyDenied({
         code: 'action_policy_denied',
         policyReasonCode: rejection.value.policyReasonCode,
@@ -862,6 +1072,21 @@ const makeHandlerExecutionError = () =>
     reason: 'The Action handler failed unexpectedly',
   });
 
+const decodeRegisteredMandateCommand = Effect.fn('ActionRuntime.decodeRegisteredMandateCommand')(
+  function* decodeRegisteredMandateCommand(input: {
+    readonly prepared: MandatePrepared | undefined;
+    readonly registration: AnyActionRegistration;
+    readonly scope: OperationalScope;
+  }) {
+    if (input.prepared === undefined) {
+      return Option.none<ActionCommandV2>();
+    }
+    const command = yield* decodeActionCommandV2(input.prepared.command.payload);
+    yield* rebindRegisteredActionCommandV2({ command, registration: input.registration, scope: input.scope });
+    return Option.some(command);
+  },
+);
+
 const policyEvidence = <Payload, Owner extends string>(policy: ActionPolicy<Payload, Owner>): ActionPolicyEvidence =>
   policy.scope === 'global'
     ? { policyKey: policy.policyKey, scope: policy.scope }
@@ -870,21 +1095,6 @@ const policyEvidence = <Payload, Owner extends string>(policy: ActionPolicy<Payl
         policyKey: policy.policyKey,
         scope: policy.scope,
       };
-
-const validateInvocationId = <Input>(
-  input: Input,
-): Effect.Effect<typeof ActionInvocationIdSchema.Type, ActionPayloadValidationError> =>
-  Schema.decodeUnknownEffect(ActionInvocationIdSchema)(input).pipe(
-    Effect.mapError((cause) =>
-      attachFailureCause(
-        new ActionPayloadValidationError({
-          code: 'action_payload_invalid',
-          reason: 'The Action invocation identifier is invalid',
-        }),
-        cause,
-      ),
-    ),
-  );
 
 type ActionRuntimeConstruction = readonly [
   database: (typeof CoreDatabaseService)['Service'],
@@ -1017,6 +1227,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
   } = options;
   const resolveHandler = options.resolveHandler ?? getActionHandler;
   const resolveServiceFactory = options.resolveServiceFactory ?? getActionServiceFactory;
+  const resolveServicePreflight = options.resolveServicePreflight ?? getActionServicePreflight;
   const installScope = options.installScope ?? installOperationalScope;
   const lockCompositionAuthority = options.lockCompositionAuthority ?? lockApplicationCompositionAuthority;
   const lockAccessExecutionFence = options.lockAccessExecutionFence ?? lockActionAccessFence;
@@ -1027,7 +1238,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
   const invocationScopeExecutor = (scope: OperationalScope): ActionInvocationScopeExecutor => ({
     transaction: (body) =>
       database.executor.transaction((transaction) =>
-        installScope(transaction, scope).pipe(Effect.andThen(() => body(transaction))),
+        installScope(transaction, scope, options.databaseIdentities).pipe(Effect.andThen(() => body(transaction))),
       ),
   });
   /** Holds the source admission lock through the complete lookup/result preparation, then restores its typed outcome. */
@@ -1237,12 +1448,15 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
     const usesAccessGate =
       input.registration.descriptor.entrypoint.authorization.kind === 'protected' ||
       input.registration.descriptor.accessWorkload !== undefined ||
-      input.registration.descriptor.accessActor !== undefined;
+      input.registration.descriptor.accessActor !== undefined ||
+      input.registration.descriptor.accessTargets !== undefined;
     /**
      * The registered, decoded carrier of this Action: definition time already decoded, validated and
      * froze it, so no request decodes it again (O5, O58, O59).
      */
     const declaredCarrier = input.registration.descriptor;
+    const accessTargetsResolver = getActionAccessTargetsResolver(declaredCarrier.accessTargets);
+    const supportsProposal = (declaredCarrier.accessDeclaration?.modes ?? []).includes('propose');
 
     const postAttemptHook = getActionPostAttemptHook(input.registration);
     const attempt: ActionAttemptState<PayloadSchema['Type'], DomainErrorSchema['Type']> = {
@@ -1251,6 +1465,8 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       original: undefined,
       revision: undefined,
     };
+    /** Filled once the principal is validated; a refusal before that names no tenant and no company. */
+    const refusalContext: RefusalContext = { scope: Option.none() };
     const executeAttempt = Effect.fn('ActionRuntime.executeAttempt')(function* executeAttemptEffect() {
       const prepareTrustedInputAndContext = Effect.fn('ActionRuntime.prepareTrustedInputAndContext')(
         function* prepareTrustedInputAndContextEffect() {
@@ -1280,6 +1496,8 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               ? yield* decodeActionPayload(input.registration.descriptor.payloadSchema, input.payload)
               : undefined;
           const principal = yield* validatePrincipal(input.principal, input.registration, initialPayload);
+          // A refusal names a tenant and company only once the principal carrying them is validated.
+          refusalContext.scope = Schema.decodeUnknownOption(RefusalScopeSchema)(principal);
           const scope = yield* operationalScopeResolver.resolve(
             withOptionalProperty(
               withOptionalProperty(
@@ -1338,18 +1556,23 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               capabilityKey,
               legalEntityScope: input.registration.descriptor.legalEntityScope,
               mandateId,
+              registration: input.registration,
               requestPayload: input.payload,
               scope,
             });
           }
+          const mandateCommand = Option.getOrUndefined(
+            yield* decodeRegisteredMandateCommand({
+              prepared: mandatePrepared,
+              registration: input.registration,
+              scope,
+            }),
+          );
           const payload =
-            mandatePrepared === undefined
+            mandateCommand === undefined
               ? (initialPayload ??
                 (yield* decodeActionPayload(input.registration.descriptor.payloadSchema, input.payload)))
-              : yield* decodeActionPayload(
-                  input.registration.descriptor.payloadSchema,
-                  mandatePrepared.command.payload,
-                );
+              : yield* decodeActionPayload(input.registration.descriptor.payloadSchema, mandateCommand.payload);
           notifyStage('payload_decoded');
           notifyStage('trusted_context_validated');
           const deniedAuditEvidenceDeclaration = input.registration.descriptor.deniedAuditEvidence;
@@ -1469,7 +1692,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             const { accessDeclaration } = declaredCarrier;
             // The record target and the governed amount are owner callbacks; run them in declaration
             // order so a defect in one is reported before the other observes mutable state.
-            const [accessTarget, accessAmount, accessOwnerFacts] = yield* Effect.all(
+            const [resolvedAccessTarget, accessAmount, accessOwnerFacts] = yield* Effect.all(
               [
                 resolveActionAccessTarget(payload, scope, getActionAccessTargetResolver(input.registration)),
                 resolveGovernedAmount(
@@ -1482,13 +1705,34 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               ] as const,
               { concurrency: 1 },
             );
-            const actionTarget = Option.isSome(accessTarget)
-              ? {
-                  targetModuleKey: accessTarget.value.moduleKey,
-                  targetResourceId: accessTarget.value.recordKey,
-                  targetResourceType: accessDeclaration?.key ?? input.registration.descriptor.actionKey,
-                }
-              : {};
+            const targetSet =
+              accessTargetsResolver === undefined
+                ? undefined
+                : yield* resolveActionTargetSet(payload, scope, declaredCarrier.owningModuleKey, accessTargetsResolver);
+            if (targetSet !== undefined) {
+              freezeActionPostAttemptValue(payload);
+            }
+            const accessTarget =
+              targetSet?.targets.length === 1 ? Option.some(targetSet.targets[0]) : resolvedAccessTarget;
+            const singleRecord =
+              targetSet?.targets.length === 1 ? targetSet.targets[0] : Option.getOrUndefined(accessTarget);
+            const singleActionTarget =
+              singleRecord === undefined
+                ? {}
+                : {
+                    targetModuleKey: singleRecord.moduleKey,
+                    targetResourceId: singleRecord.recordKey,
+                    targetResourceType: accessDeclaration?.key ?? input.registration.descriptor.actionKey,
+                  };
+            // The digest is transport/history identity only. No gate is asked about a digest record.
+            const actionTarget =
+              targetSet === undefined || targetSet.targets.length === 1
+                ? singleActionTarget
+                : {
+                    targetModuleKey: declaredCarrier.owningModuleKey,
+                    targetResourceId: targetSet.hash,
+                    targetResourceType: accessDeclaration?.key ?? declaredCarrier.actionKey,
+                  };
             return {
               accessAmount,
               accessOwnerFacts,
@@ -1501,6 +1745,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               legalEntityPermission: undefined,
               ownerPermissionTargets: NO_OWNER_PERMISSION_TARGETS,
               resourcePermissionTarget: Option.none<ActionResourcePermissionTarget>(),
+              targetSet,
               tenantPermission: Option.none<ActionTenantPermission>(),
             };
           }
@@ -1552,6 +1797,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             legalEntityPermission,
             ownerPermissionTargets,
             resourcePermissionTarget,
+            targetSet: undefined,
             tenantPermission,
           };
         },
@@ -1685,8 +1931,9 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           return yield* requestHashConflict();
         }
         // O90.4: a retried propose request answers the receipt its first attempt committed; it never
-        // parks a second proposal and never reaches the owner handler.
-        if (acceptsParkedProposal && transport.intent === 'propose') {
+        // parks a second proposal and never reaches the owner handler. A carrier without a propose
+        // mode cannot own this receipt and needs no mandate adapter to refuse the request.
+        if (acceptsParkedProposal && transport.intent === 'propose' && supportsProposal) {
           const parked = yield* findParkedProposal(invocation.actionInvocationId, scope);
           if (Option.isSome(parked)) {
             return { invocation, normalizedPayload, parked, requestHash };
@@ -1708,6 +1955,8 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           const { deniedAuditEvidence, mandatePrepared, payload, principal, scope, transport } =
             yield* prepareTrustedInputAndContext();
           const authorizationContext = yield* prepareAuthorizationContext(payload, principal, scope, transport);
+          // The original command reader above re-derives every target and applicable field. No
+          // scalar mandate target or first record is authority for a complete bulk invocation.
           const { invocation, normalizedPayload, parked, requestHash } = yield* prepareInvocation(
             payload,
             principal,
@@ -1758,13 +2007,17 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         requestHash,
         resourcePermissionTarget,
         scope,
+        targetSet,
         tenantPermission,
         transport,
       } = preparedInputAndContext;
 
       /** O80: only an explicit transport intent parks a command; NEEDS_APPROVAL alone never does. */
       const proposeIntent = acceptsParkedProposal && transport.intent === 'propose';
-      const supportsProposal = (declaredCarrier.accessDeclaration?.modes ?? []).includes('propose');
+      let targetSetAdmission: ActionTargetSetAdmission | undefined;
+      let preflightTargetDecisions: readonly AccessDecision[] = [];
+      const preparedAccess = new Map<string, PreparedAccessDecision>();
+      let authorizedMandate = mandatePrepared;
 
       const logPermissionInvocationFailure = Effect.fn('ActionRuntime.logPermissionInvocationFailure')(
         function* logPermissionInvocationFailureEffect(failure: ActionInvocationPersistenceError) {
@@ -1784,31 +2037,36 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           });
         },
       );
-      const rejectPermission = (failure: ActionPermissionDenied) =>
-        repository
-          .rejectPermissionDenied(
-            invocationScopeExecutor(scope),
-            withOptionalProperty(
-              {
-                actionInvocationId: invocation.actionInvocationId,
-                actionKey: input.registration.descriptor.actionKey,
-                auditProfile: input.registration.descriptor.auditProfile,
-                principal,
-                transport: governedTransport,
-              },
-              deniedAuditEvidence !== undefined,
-              'deniedAuditEvidence',
-              deniedAuditEvidence,
-              {},
-            ),
-          )
-          .pipe(
-            Effect.tapErrorTag('ActionInvocationPersistenceError', logPermissionInvocationFailure),
-            Effect.tapErrorTag('ActionTransactionError', logPermissionTransactionFailure),
-            Effect.flatMap((earlierRejection) =>
-              Effect.fail(Option.isSome(earlierRejection) ? recordedRejectionFailure(earlierRejection) : failure),
-            ),
-          );
+      const rejectPermission = (refused: ActionPermissionDenied) =>
+        Effect.succeed(withReportedReasons(refused)).pipe(
+          Effect.flatMap((failure) =>
+            repository
+              .rejectPermissionDenied(
+                invocationScopeExecutor(scope),
+                withOptionalProperty(
+                  {
+                    actionInvocationId: invocation.actionInvocationId,
+                    actionKey: input.registration.descriptor.actionKey,
+                    auditProfile: input.registration.descriptor.auditProfile,
+                    principal,
+                    reasonCodes: failure.reasons,
+                    transport: governedTransport,
+                  },
+                  deniedAuditEvidence !== undefined,
+                  'deniedAuditEvidence',
+                  deniedAuditEvidence,
+                  {},
+                ),
+              )
+              .pipe(
+                Effect.tapErrorTag('ActionInvocationPersistenceError', logPermissionInvocationFailure),
+                Effect.tapErrorTag('ActionTransactionError', logPermissionTransactionFailure),
+                Effect.flatMap((earlierRejection) =>
+                  Effect.fail(Option.isSome(earlierRejection) ? recordedRejectionFailure(earlierRejection) : failure),
+                ),
+              ),
+          ),
+        );
 
       const prepareAuthorizationPreflight = Effect.fn('ActionRuntime.prepareAuthorizationPreflight')(
         function* prepareAuthorizationPreflightEffect() {
@@ -1842,11 +2100,20 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         preflightDenied: boolean,
       ) {
         const permissionDecision = yield* permission
-          .checkActionPermission({
-            actionKey: input.registration.descriptor.actionKey,
-            correlationId: transport.correlationId,
-            principalId: principal.principalId,
-          })
+          .checkActionPermission(
+            withOptionalProperty(
+              {
+                actionKey: input.registration.descriptor.actionKey,
+                correlationId: transport.correlationId,
+                principalId: principal.principalId,
+                tenantId: scope.tenantId,
+              },
+              scope.legalEntityId !== undefined,
+              'legalEntityId',
+              scope.legalEntityId,
+              {},
+            ),
+          )
           .pipe(Effect.tapError((error) => Effect.logError(error.reason)));
         const tenantPermissionDecision = yield* checkTenantActionPermission(principal, tenantPermission);
         const legalEntityPermissionDecision = yield* checkActionLegalEntityPermission(scope, legalEntityPermission);
@@ -1870,6 +2137,46 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
        * of opening a second connection a nested transaction cannot use. Preflight and standalone
        * callers leave it out and keep the request's own scoped read.
        */
+      const decideInvocationAccess = Effect.fn('ActionRuntime.decideInvocationAccess')(
+        function* decideInvocationAccessEffect(question: GateInput, transaction?: CoreTransaction) {
+          if (accessDecision === undefined) {
+            return seamUnavailable(UNAVAILABLE_AUTHORITY_REASON);
+          }
+          if (accessDecision.prepare === undefined) {
+            // Scripted gates have no remote ports. Live binding always supplies revision preparation.
+            return yield* accessDecision.decide(question, transaction);
+          }
+          const key = computeCanonicalValueHash({
+            amount: question.amount,
+            carrier: {
+              accessActor: question.carrier.accessActor,
+              accessDeclaration: question.carrier.accessDeclaration,
+              accessWorkload: question.carrier.accessWorkload,
+            },
+            legalEntityScope: question.legalEntityScope,
+            mode: question.mode,
+            parentRead: question.parentRead,
+            target: question.target,
+          });
+          if (transaction !== undefined) {
+            const prepared = preparedAccess.get(key);
+            if (prepared === undefined) {
+              return seamUnavailable(UNAVAILABLE_AUTHORITY_REASON);
+            }
+            const rechecked = yield* Effect.result(prepared.recheck(question.now, transaction));
+            return Result.isFailure(rechecked)
+              ? attachFailureCause(seamUnavailable(UNAVAILABLE_AUTHORITY_REASON), rechecked.failure)
+              : rechecked.success;
+          }
+          const prepared = yield* Effect.result(accessDecision.prepare(question));
+          if (Result.isFailure(prepared)) {
+            return attachFailureCause(seamUnavailable(UNAVAILABLE_AUTHORITY_REASON), prepared.failure);
+          }
+          preparedAccess.set(key, prepared.success);
+          return prepared.success.decision;
+        },
+      );
+
       const decideAccessThroughGate = Effect.fn('ActionRuntime.decideAccess')(function* decideAccessEffect(
         now: Date,
         transaction?: CoreTransaction,
@@ -1878,27 +2185,96 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           // No gate in this composition means no protected descriptor can be admitted (fail closed).
           return yield* permissionUnavailable();
         }
-        return yield* accessDecision.decide(
+        const question = withOptionalProperty(
           withOptionalProperty(
-            withOptionalProperty(
-              {
-                carrier: declaredCarrier,
-                legalEntityScope: input.registration.descriptor.legalEntityScope,
-                now,
-                scope,
-              },
-              Option.isSome(accessTarget),
-              'target',
-              Option.getOrUndefined(accessTarget),
-              {},
-            ),
-            Option.isSome(accessAmount),
-            'amount',
-            Option.getOrUndefined(accessAmount),
+            {
+              carrier: declaredCarrier,
+              legalEntityScope: input.registration.descriptor.legalEntityScope,
+              mode: mandatePrepared === undefined ? ('run' as const) : ('approve' as const),
+              now,
+              scope,
+            },
+            Option.isSome(accessTarget),
+            'target',
+            Option.getOrUndefined(accessTarget),
             {},
           ),
-          transaction,
+          Option.isSome(accessAmount),
+          'amount',
+          Option.getOrUndefined(accessAmount),
+          {},
         );
+        if (targetSet === undefined) {
+          return yield* decideInvocationAccess(question, transaction);
+        }
+        const [firstTarget, ...otherTargets] = targetSet.targets;
+        const first = yield* decideInvocationAccess({ ...question, target: firstTarget }, transaction);
+        const rest = yield* Effect.forEach(
+          otherTargets,
+          (target) => decideInvocationAccess({ ...question, target }, transaction),
+          { concurrency: 1 },
+        );
+        if (transaction === undefined) {
+          preflightTargetDecisions = Object.freeze([first, ...rest]);
+        }
+        return conjoinActionTargetDecisions([first, ...rest]);
+      });
+
+      const decideFieldWrites = Effect.fn('ActionRuntime.decideFieldWrites')(function* decideFieldWritesEffect(
+        now: Date,
+        transaction?: CoreTransaction,
+      ) {
+        const declaration = declaredCarrier.accessDeclaration;
+        const groups = declaredCarrier.accessFieldGroups ?? NO_ACCESS_FIELD_GROUPS;
+        const decisions: AccessDecision[] = [];
+        if (groups.length === 0) {
+          return { decisions, outcomes: [] };
+        }
+        if (accessDecision === undefined || declaration === undefined) {
+          return yield* permissionUnavailable();
+        }
+        const targets = targetSet?.targets ?? [Option.getOrUndefined(accessTarget)];
+        const outcomes = yield* Effect.forEach(
+          targets,
+          (target) =>
+            authorizeDeclaredFieldWrites({
+              accessDecision: {
+                decide: (fieldInput) =>
+                  decideInvocationAccess(
+                    {
+                      ...fieldInput,
+                      mode: mandatePrepared === undefined ? 'run' : 'approve',
+                    },
+                    transaction,
+                  ).pipe(
+                    Effect.tap((decision) =>
+                      Effect.sync(() => {
+                        decisions.push(decision);
+                      }),
+                    ),
+                  ),
+              },
+              declaration,
+              groups:
+                targetSet === undefined
+                  ? groups
+                  : groups.filter((group) => writtenFieldPaths(group, payload).length > 0),
+              legalEntityScope: declaredCarrier.legalEntityScope,
+              now,
+              payload,
+              scope,
+              ...withOptionalProperty(
+                {},
+                Option.isSome(accessAmount),
+                'amount',
+                Option.getOrUndefined(accessAmount),
+                {},
+              ),
+              ...withOptionalProperty({}, target !== undefined, 'target', target, {}),
+            }),
+          { concurrency: 1 },
+        );
+        return { decisions, outcomes };
       });
 
       /**
@@ -1910,34 +2286,74 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       const authorizeFieldWrites = Effect.fn('ActionRuntime.authorizeFieldWrites')(function* authorizeFieldWritesEffect(
         now: Date,
       ) {
-        const declaration = declaredCarrier.accessDeclaration;
-        const groups = declaredCarrier.accessFieldGroups ?? NO_ACCESS_FIELD_GROUPS;
-        if (groups.length === 0) {
-          return yield* Effect.void;
-        }
-        if (accessDecision === undefined || declaration === undefined) {
-          // Definition time refuses a field group without its parent declaration (O58); a
-          // registration that lost one is a Core defect, so the Action answers a retryable 503.
-          return yield* permissionUnavailable();
-        }
-        const authorization = yield* authorizeDeclaredFieldWrites({
-          accessDecision,
-          declaration,
-          groups,
-          legalEntityScope: input.registration.descriptor.legalEntityScope,
-          now,
-          payload,
-          scope,
-          ...withOptionalProperty({}, Option.isSome(accessAmount), 'amount', Option.getOrUndefined(accessAmount), {}),
-          ...withOptionalProperty({}, Option.isSome(accessTarget), 'target', Option.getOrUndefined(accessTarget), {}),
-        });
-        if (authorization.outcome === 'unavailable') {
+        const { decisions, outcomes } = yield* decideFieldWrites(now);
+        if (outcomes.some((authorization) => authorization.outcome === 'unavailable')) {
           // An unreadable field decision is retryable, never a silent allow (O48b).
           return yield* permissionUnavailable();
         }
-        const { failure } = authorization;
-        return failure === undefined ? yield* Effect.void : yield* rejectPermission(failure);
+        const failure = outcomes.find((authorization) => authorization.failure !== undefined)?.failure;
+        if (failure !== undefined) {
+          return yield* rejectPermission(failure);
+        }
+        return decisions;
       });
+
+      const decideGoverningReads = (now: Date, transaction?: CoreTransaction) =>
+        decideActionGoverningReads({
+          decide: (question) => decideInvocationAccess(question, transaction),
+          now,
+          reference: input.registration.descriptor.accessGoverningRead,
+          scope,
+          targets: targetSet?.targets ?? Option.toArray(accessTarget),
+        });
+
+      const authorizeGoverningReads = Effect.fn('ActionRuntime.authorizeGoverningReads')(
+        function* authorizeGoverningReads() {
+          if (proposeIntent) {
+            return;
+          }
+          const governingReadDecisions = yield* decideGoverningReads(yield* DateTime.nowAsDate);
+          yield* requireAllowedGoverningReads(governingReadDecisions).pipe(
+            Effect.catchTag('ActionPermissionDenied', rejectPermission),
+          );
+          if (targetSetAdmission !== undefined) {
+            targetSetAdmission = Object.freeze({
+              ...targetSetAdmission,
+              decision: conjoinActionTargetDecisions([targetSetAdmission.decision, ...governingReadDecisions]),
+              governingReadDecisions: Object.freeze(governingReadDecisions),
+            });
+          }
+        },
+      );
+      const authorizeMandateExecution = Effect.fn('ActionRuntime.authorizeMandateExecution')(
+        function* authorizeMandateExecution() {
+          if (mandatePrepared === undefined || mandateDispatch?.authorizeExecution === undefined) {
+            return yield* Effect.void;
+          }
+          authorizedMandate = yield* mandateDispatch
+            .authorizeExecution({
+              prepared: mandatePrepared,
+              registration: input.registration,
+              scope,
+            })
+            .pipe(Effect.catchTag('ActionPermissionDenied', rejectPermission));
+          const { executionPreparation } = authorizedMandate;
+          if (executionPreparation !== undefined && targetSetAdmission !== undefined) {
+            const deadline = yield* actionExecutionDeadlineV2(executionPreparation).pipe(
+              Effect.mapError((cause) => attachFailureCause(permissionUnavailable(), cause)),
+            );
+            const existing = targetSetAdmission.decision.admissionDeadline;
+            targetSetAdmission = Object.freeze({
+              ...targetSetAdmission,
+              decision: {
+                ...targetSetAdmission.decision,
+                admissionDeadline: existing !== undefined && existing < deadline ? existing : deadline,
+              },
+            });
+          }
+          return yield* Effect.void;
+        },
+      );
 
       const authorizeThroughGate = Effect.fn('ActionRuntime.authorizeThroughGate')(function* authorizeThroughGateEffect(
         preflightDenied: boolean,
@@ -1966,7 +2382,20 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         if (proposeIntent) {
           return yield* rejectPermission(proposeNotRequiredFailure());
         }
-        return yield* authorizeFieldWrites(now);
+        const fieldDecisions = yield* authorizeFieldWrites(now);
+        if (targetSet !== undefined) {
+          targetSetAdmission = Object.freeze({
+            actionInvocationId: invocation.actionInvocationId,
+            actionKey: declaredCarrier.actionKey,
+            decision: conjoinActionTargetDecisions([decision, ...fieldDecisions]),
+            fieldDecisions: Object.freeze(fieldDecisions),
+            mode: mandatePrepared === undefined ? ('run' as const) : ('approve' as const),
+            requestHash,
+            targetDecisions: preflightTargetDecisions,
+            targetSet,
+          });
+        }
+        return yield* Effect.void;
       });
 
       /**
@@ -2024,6 +2453,23 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               Effect.mapError(unavailableActionComposition),
             );
           }
+          const governingRead = getActionGoverningRead(input.registration.descriptor.accessGoverningRead);
+          if (governingRead !== undefined) {
+            const registered = yield* Effect.try({
+              catch: unavailableActionComposition,
+              try: () =>
+                options.ownerRegistration !== undefined &&
+                getVerticalRuntimeReads(options.ownerRegistration).some((read) => read === governingRead),
+            });
+            if (!registered || admission?.catalog === undefined) {
+              return yield* unavailableActionComposition();
+            }
+            yield* validateBoundOperationOwner(governingRead, admission.catalog, options.ownerRegistration).pipe(
+              Effect.mapError(unavailableActionComposition),
+            );
+          }
+          yield* authorizeGoverningReads();
+          yield* authorizeMandateExecution();
           attempt.revision = revision;
           if (preflightPermit !== undefined) {
             yield* withModuleOperationExecution(
@@ -2042,100 +2488,124 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         },
       );
 
+      const preparationPolicies = getActionPreparationPolicies(input.registration);
+      const policyInput: ActionPolicyEvaluatorInput<typeof payload> = Object.freeze({
+        action: Object.freeze({
+          actionKey: input.registration.descriptor.actionKey,
+          owningModuleKey: input.registration.descriptor.owningModuleKey,
+          schemaVersion: input.registration.descriptor.schemaVersion,
+        }),
+        payload,
+        principal: Object.freeze({ ...principal }),
+        target: Object.freeze({ ...actionTarget }),
+        transport: Object.freeze(
+          withOptionalProperty(
+            {
+              correlationId: transport.correlationId,
+            },
+            transport.traceId !== undefined,
+            'traceId',
+            transport.traceId,
+            {},
+          ),
+        ),
+      });
+      const evaluateActionPolicy = Effect.fn('ActionRuntime.evaluatePolicy')(function* evaluatePolicy<
+        Value,
+        Requirements,
+      >(
+        policy: ActionPolicy<typeof payload, string>,
+        evaluate: (
+          input: ActionPolicyEvaluatorInput<typeof payload>,
+        ) => Effect.Effect<Value, ActionCoreError | DomainErrorSchema['Type'] | PolicyDenied, Requirements>,
+        phase: 'preparation' | 'static' = 'static',
+      ) {
+        const policyExit = yield* Effect.exit(Effect.suspend(() => evaluate(policyInput)));
+        if (Exit.isSuccess(policyExit)) {
+          return { evidence: policyEvidence(policy), value: policyExit.value };
+        }
+
+        const failureReasons = policyExit.cause.reasons.filter(Cause.isFailReason);
+        const [failureReason] = failureReasons;
+        if (
+          failureReasons.length === policyExit.cause.reasons.length &&
+          failureReason !== undefined &&
+          Schema.is(PolicyDenied)(failureReason.error)
+        ) {
+          const denial = failureReason.error;
+          const earlierRejection = yield* repository
+            .finalizePolicyDenial(
+              invocationScopeExecutor(scope),
+              withOptionalProperty(
+                {
+                  actionInvocationId: invocation.actionInvocationId,
+                  actionKey: input.registration.descriptor.actionKey,
+                  auditProfile: input.registration.descriptor.auditProfile,
+                  policy: policyEvidence(policy),
+                  principal,
+                  reasonCode: denial.reasonCode,
+                  transport: governedTransport,
+                },
+                deniedAuditEvidence !== undefined,
+                'deniedAuditEvidence',
+                deniedAuditEvidence,
+                {},
+              ),
+            )
+            .pipe(
+              Effect.tapError((error) =>
+                logInvocationPersistenceFailure(error, {
+                  actionKey: input.registration.descriptor.actionKey,
+                  correlationId: transport.correlationId,
+                  invocationId: invocation.actionInvocationId,
+                  policyKey: policy.policyKey,
+                }),
+              ),
+            );
+          if (
+            Option.isSome(earlierRejection) &&
+            !(
+              earlierRejection.value.stage === 'policy' && earlierRejection.value.policyReasonCode === denial.reasonCode
+            )
+          ) {
+            return yield* recordedRejectionFailure(earlierRejection);
+          }
+          return yield* new ActionPolicyDenied({
+            code: 'action_policy_denied',
+            policyReasonCode: denial.reasonCode,
+            reason: denial.reason,
+          });
+        }
+
+        if (phase === 'preparation' && policyExit.cause.reasons.every(Cause.isInterruptReason)) {
+          return yield* Effect.failCause(
+            Cause.fromReasons<never>(policyExit.cause.reasons.filter(Cause.isInterruptReason)),
+          );
+        }
+        if (
+          phase === 'preparation' &&
+          failureReasons.length === 1 &&
+          policyExit.cause.reasons.length === 1 &&
+          failureReason !== undefined &&
+          !Schema.is(ActionPolicyDenied)(failureReason.error) &&
+          (Schema.is(ActionCoreErrorSchema)(failureReason.error) ||
+            Schema.is(input.registration.descriptor.domainErrorSchema)(failureReason.error))
+        ) {
+          return yield* Effect.failCause(Cause.fail(failureReason.error));
+        }
+        yield* Effect.logError('Unexpected Action Policy evaluation failure', policyExit.cause);
+        return yield* new ActionPolicyEvaluationError({
+          code: 'action_policy_evaluation_failed',
+          reason: 'A required Action Policy could not be evaluated',
+        });
+      });
       const evaluatePolicies = Effect.fn('ActionRuntime.evaluatePolicies')(function* evaluatePoliciesEffect() {
         notifyStage('policy_boundary');
-
-        const policyInput: ActionPolicyEvaluatorInput<typeof payload> = Object.freeze({
-          action: Object.freeze({
-            actionKey: input.registration.descriptor.actionKey,
-            owningModuleKey: input.registration.descriptor.owningModuleKey,
-            schemaVersion: input.registration.descriptor.schemaVersion,
-          }),
-          payload,
-          principal: Object.freeze({ ...principal }),
-          target: Object.freeze({ ...actionTarget }),
-          transport: Object.freeze(
-            withOptionalProperty(
-              {
-                correlationId: transport.correlationId,
-              },
-              transport.traceId !== undefined,
-              'traceId',
-              transport.traceId,
-              {},
-            ),
-          ),
-        });
-        const evaluateActionPolicy = Effect.fn('ActionRuntime.evaluatePolicy')(function* evaluatePolicy(
-          policy: ActionPolicy<typeof payload, Owner>,
-        ) {
-          const policyExit = yield* Effect.exit(Effect.suspend(() => policy.evaluate(policyInput)));
-          if (Exit.isSuccess(policyExit)) {
-            return policyEvidence(policy);
-          }
-
-          const failureReasons = policyExit.cause.reasons.filter(Cause.isFailReason);
-          const [failureReason] = failureReasons;
-          if (
-            failureReasons.length === policyExit.cause.reasons.length &&
-            failureReason !== undefined &&
-            Schema.is(PolicyDenied)(failureReason.error)
-          ) {
-            const denial = failureReason.error;
-            const earlierRejection = yield* repository
-              .finalizePolicyDenial(
-                invocationScopeExecutor(scope),
-                withOptionalProperty(
-                  {
-                    actionInvocationId: invocation.actionInvocationId,
-                    actionKey: input.registration.descriptor.actionKey,
-                    auditProfile: input.registration.descriptor.auditProfile,
-                    policy: policyEvidence(policy),
-                    principal,
-                    reasonCode: denial.reasonCode,
-                    transport: governedTransport,
-                  },
-                  deniedAuditEvidence !== undefined,
-                  'deniedAuditEvidence',
-                  deniedAuditEvidence,
-                  {},
-                ),
-              )
-              .pipe(
-                Effect.tapError((error) =>
-                  logInvocationPersistenceFailure(error, {
-                    actionKey: input.registration.descriptor.actionKey,
-                    correlationId: transport.correlationId,
-                    invocationId: invocation.actionInvocationId,
-                    policyKey: policy.policyKey,
-                  }),
-                ),
-              );
-            if (
-              Option.isSome(earlierRejection) &&
-              !(
-                earlierRejection.value.stage === 'policy' &&
-                earlierRejection.value.policyReasonCode === denial.reasonCode
-              )
-            ) {
-              return yield* recordedRejectionFailure(earlierRejection);
-            }
-            return yield* new ActionPolicyDenied({
-              code: 'action_policy_denied',
-              policyReasonCode: denial.reasonCode,
-              reason: denial.reason,
-            });
-          }
-
-          yield* Effect.logError('Unexpected Action Policy evaluation failure', policyExit.cause);
-          return yield* new ActionPolicyEvaluationError({
-            code: 'action_policy_evaluation_failed',
-            reason: 'A required Action Policy could not be evaluated',
-          });
-        });
-        const allowedPolicies = yield* Effect.forEach(input.registration.descriptor.policies, evaluateActionPolicy, {
-          concurrency: 1,
-        });
+        const allowedPolicies = yield* Effect.forEach(
+          input.registration.descriptor.policies.filter((policy) => !preparationPolicies.includes(policy)),
+          (policy) => evaluateActionPolicy(policy, policy.evaluate).pipe(Effect.map(({ evidence }) => evidence)),
+          { concurrency: 1 },
+        );
         return allowedPolicies;
       });
 
@@ -2165,6 +2635,193 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         },
       );
       const { admittedCompositionRevision, allowedPolicies } = yield* authorizeAndEvaluatePolicies();
+      const proposalPreparation =
+        proposeIntent && mandateDispatch?.prepareProposal !== undefined
+          ? yield* mandateDispatch
+              .prepareProposal({
+                actionInvocationId: invocation.actionInvocationId,
+                command: yield* resolveActionCommandV2({ payload, registration: input.registration, scope }),
+                registration: input.registration,
+                scope,
+              })
+              .pipe(Effect.catchTag('ActionPermissionDenied', rejectPermission))
+          : undefined;
+
+      /**
+       * A short, composition-admitted SQL snapshot transaction for the owner's staged service
+       * preparation (D14). It never returns transaction-bound services, and it refuses remote I/O and
+       * a second pooled connection exactly like the owner's own write transaction.
+       */
+      const preparationTransaction: ActionOwnerTransaction = (snapshot) => {
+        const settlement = trackTransactionSettlement();
+        return database.executor
+          .transaction((transaction) =>
+            Effect.gen(function* prepareOwnerSnapshot() {
+              const scoped = yield* installScope(transaction, scope, options.databaseIdentities);
+              yield* lockCompositionAuthority(transaction, admittedCompositionRevision, 'write').pipe(
+                Effect.mapError((cause) =>
+                  createActionTransactionErrorWithCause(
+                    {
+                      code: 'action_transaction_failed',
+                      reason: 'The approved Application Composition no longer admits this Action',
+                    },
+                    cause,
+                  ),
+                ),
+              );
+              const { entrypoint } = input.registration.descriptor;
+              if (entrypoint.scope === 'tenant') {
+                yield* moduleStateGate
+                  .recheckWrite(
+                    transaction,
+                    scope.tenantId,
+                    { ...entrypoint, scope: 'tenant' as const },
+                    intrinsicDependencies.get(entrypoint.moduleKey),
+                  )
+                  .pipe(
+                    Effect.mapError((cause) =>
+                      createActionTransactionErrorWithCause(
+                        {
+                          code: 'action_transaction_failed',
+                          reason: 'The Action owner is no longer writable during preparation',
+                        },
+                        cause,
+                      ),
+                    ),
+                  );
+              }
+              return yield* snapshot(scoped);
+            }).pipe(insideDatabaseTransaction(input.registration.descriptor.actionKey), settlement.capture),
+          )
+          .pipe(
+            settlement.recover,
+            Effect.mapError((cause) =>
+              isSqlError(cause)
+                ? createActionTransactionErrorWithCause(
+                    {
+                      code: 'action_transaction_failed',
+                      reason: 'The Action preparation snapshot transaction did not complete',
+                    },
+                    cause,
+                  )
+                : cause,
+            ),
+          );
+      };
+      /**
+       * The owner's staged service preparation (D14) runs after authorization and before the business
+       * transaction, so its remote grants and owner snapshots never hold the owner's write transaction
+       * open. Its factory replaces ordinary acquisition, and a defect stays a handler execution error.
+       */
+      const prepareActionServices = Effect.fn('ActionRuntime.prepareServices')(function* prepareActionServicesEffect() {
+        const prepareServices = resolveServicePreflight(input.registration);
+        if (prepareServices === undefined) {
+          if (preparationPolicies.length > 0) {
+            return yield* new ActionPolicyEvaluationError({
+              code: 'action_policy_evaluation_failed',
+              reason: 'Required preparation Policies have no registered preparation',
+            });
+          }
+          return resolveServiceFactory(input.registration);
+        }
+        const startedPolicies = new Set<ActionPolicy<typeof payload, string>>();
+        const completedPolicies = new Set<ActionPolicy<typeof payload, string>>();
+        const policyFailures: Cause.Cause<ActionCoreError | DomainErrorSchema['Type']>[] = [];
+        let preparationOpen = true;
+        const evaluatePolicy: ActionPreparationPolicyEvaluator<typeof payload, DomainErrorSchema['Type']> = Effect.fn(
+          'ActionRuntime.evaluatePreparationPolicy',
+        )(function* evaluatePreparationPolicy<Value, Requirements>(
+          policy: ActionPolicy<typeof payload, string>,
+          evaluate: (
+            input: ActionPolicyEvaluatorInput<typeof payload>,
+          ) => Effect.Effect<Value, ActionCoreError | DomainErrorSchema['Type'] | PolicyDenied, Requirements>,
+        ) {
+          if (!preparationOpen || !preparationPolicies.includes(policy) || startedPolicies.has(policy)) {
+            const cause = Cause.fail(
+              new ActionPolicyEvaluationError({
+                code: 'action_policy_evaluation_failed',
+                reason: 'Preparation requires each exact registered Policy once',
+              }),
+            );
+            policyFailures.push(cause);
+            return yield* Effect.failCause(cause);
+          }
+          startedPolicies.add(policy);
+          const policyExit = yield* Effect.exit(evaluateActionPolicy(policy, evaluate, 'preparation'));
+          if (Exit.isFailure(policyExit)) {
+            policyFailures.push(policyExit.cause);
+            return yield* Effect.failCause(policyExit.cause);
+          }
+          completedPolicies.add(policy);
+          return policyExit.value.value;
+        });
+        const preparationExit = yield* Effect.exit(
+          withModuleOperationExecution(
+            {
+              loadCatalog: operationCatalogLoader(operationAuthority, admittedCompositionRevision),
+              ownerRegistration: options.ownerRegistration,
+              phase: 'execution',
+              registration: input.registration,
+              revision: admittedCompositionRevision,
+              scope,
+            },
+            Effect.suspend(() =>
+              prepareServices(
+                payload,
+                Object.freeze({
+                  actionInvocationId: invocation.actionInvocationId,
+                  compositionRevision: admittedCompositionRevision,
+                  evaluatePolicy,
+                  scope,
+                  ...withOptionalProperty(
+                    {},
+                    targetSetAdmission !== undefined,
+                    'targetSetAdmission',
+                    targetSetAdmission,
+                    {},
+                  ),
+                  transaction: preparationTransaction,
+                }),
+              ),
+            ),
+          ),
+        );
+        preparationOpen = false;
+        const [policyFailure] = policyFailures;
+        if (policyFailure !== undefined) {
+          // Catching a Policy failure in owner code cannot turn it into admitted authority.
+          return yield* Effect.failCause(policyFailure);
+        }
+        if (Exit.isFailure(preparationExit)) {
+          if (
+            preparationExit.cause.reasons.every(Cause.isFailReason) ||
+            preparationExit.cause.reasons.some(Cause.isInterruptReason)
+          ) {
+            return yield* Effect.failCause(preparationExit.cause);
+          }
+          yield* Effect.logError('Unexpected Action service preparation defect', preparationExit.cause);
+          return yield* makeHandlerExecutionError();
+        }
+        if (completedPolicies.size !== preparationPolicies.length) {
+          return yield* new ActionPolicyEvaluationError({
+            code: 'action_policy_evaluation_failed',
+            reason: 'A required registered preparation Policy was not evaluated',
+          });
+        }
+        // Every declared Policy is now accounted for; metadata keeps the original descriptor order.
+        allowedPolicies.splice(
+          0,
+          allowedPolicies.length,
+          ...input.registration.descriptor.policies.map(policyEvidence),
+        );
+        input[actionPreparationObservation]?.publish({
+          registration: input.registration,
+          value: preparationExit.value[originalActionPreparationFactory] ?? preparationExit.value,
+        });
+        return preparationExit.value;
+      });
+      // A proposal parks before any owner command runs, so it acquires no owner services (O85, O90).
+      const serviceFactory = proposeIntent ? resolveServiceFactory(input.registration) : yield* prepareActionServices();
 
       /** The same gate under the shared writer fence: the answer this transaction acts on (R5a-2). */
       const decideAccessInTransaction = Effect.fn('ActionRuntime.decideAccessInTransaction')(
@@ -2175,6 +2832,17 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             input.registration.descriptor.legalEntityScope,
             declaredCarrier.accessDeclaration?.kind === 'admin',
           );
+          if (targetSet !== undefined && accessTargetsResolver !== undefined) {
+            const currentTargets = yield* resolveActionTargetSet(
+              payload,
+              scope,
+              declaredCarrier.owningModuleKey,
+              accessTargetsResolver,
+            );
+            if (currentTargets.hash !== targetSet.hash) {
+              return yield* permissionUnavailable();
+            }
+          }
           const current = yield* decideAccessThroughGate(now, transaction);
           if (current.outcome === 'UNAVAILABLE') {
             return yield* permissionUnavailable();
@@ -2186,7 +2854,11 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       /** The same gate, under the shared writer fence, immediately before the owner handler. */
       const recheckAccessInTransaction = Effect.fn('ActionRuntime.recheckAccessInTransaction')(
         function* recheckAccessInTransactionEffect(transaction: CoreTransaction, now: Date) {
-          if (!usesAccessGate || reducesOwnAuthority) {
+          if (!usesAccessGate) {
+            return Option.none<AccessDecision>();
+          }
+          if (reducesOwnAuthority) {
+            yield* requireAllowedGoverningReads(yield* decideGoverningReads(now, transaction));
             return Option.none<AccessDecision>();
           }
           const current = yield* decideAccessInTransaction(transaction, now);
@@ -2195,40 +2867,22 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               ? approvalRequiredFailure(current)
               : accessDeniedFailure(current);
           }
-          const groups = declaredCarrier.accessFieldGroups ?? NO_ACCESS_FIELD_GROUPS;
-          if (groups.length === 0) {
-            return Option.some(current);
-          }
-          const declaration = declaredCarrier.accessDeclaration;
-          if (accessDecision === undefined || declaration === undefined) {
+          const { outcomes } = yield* decideFieldWrites(now, transaction);
+          if (outcomes.some((authorization) => authorization.outcome === 'unavailable')) {
             return yield* permissionUnavailable();
           }
-          const fieldWrites = yield* authorizeDeclaredFieldWrites({
-            // The same transaction-bound decision: a governed field written inside the owner transaction
-            // is decided from that transaction, exactly like the Action's own capability above (O75).
-            accessDecision: { decide: (fieldInput) => accessDecision.decide(fieldInput, transaction) },
-            declaration,
-            groups,
-            legalEntityScope: input.registration.descriptor.legalEntityScope,
-            now,
-            payload,
-            scope,
-            ...withOptionalProperty({}, Option.isSome(accessAmount), 'amount', Option.getOrUndefined(accessAmount), {}),
-            ...withOptionalProperty({}, Option.isSome(accessTarget), 'target', Option.getOrUndefined(accessTarget), {}),
-          });
-          if (fieldWrites.outcome === 'unavailable') {
-            return yield* permissionUnavailable();
+          const failure = outcomes.find((authorization) => authorization.failure !== undefined)?.failure;
+          if (failure !== undefined) {
+            return yield* failure;
           }
-          if (fieldWrites.failure !== undefined) {
-            return yield* fieldWrites.failure;
-          }
+          yield* requireAllowedGoverningReads(yield* decideGoverningReads(now, transaction));
           return Option.some(current);
         },
       );
 
       const claimMandateInTransaction = Effect.fn('ActionRuntime.claimMandateInTransaction')(
         function* claimMandateInTransactionEffect(transaction: CoreTransaction, now: Date) {
-          if (mandatePrepared === undefined) {
+          if (authorizedMandate === undefined) {
             return yield* Effect.void;
           }
           if (mandateDispatch === undefined) {
@@ -2237,7 +2891,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           yield* mandateDispatch.claim({
             actionInvocationId: invocation.actionInvocationId,
             now,
-            prepared: mandatePrepared,
+            prepared: authorizedMandate,
             scope,
             transaction,
           });
@@ -2270,10 +2924,11 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             decision,
             now,
             payload: normalizedPayload,
+            ...withOptionalProperty({}, proposalPreparation !== undefined, 'preparation', proposalPreparation, {}),
             scope,
             ...withOptionalProperty(
               {},
-              Option.isSome(accessTarget),
+              proposalPreparation === undefined && Option.isSome(accessTarget),
               'target',
               accessTarget.pipe(
                 Option.map((target) => target.recordKey),
@@ -2346,7 +3001,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         transaction: CoreTransaction,
         now: Date,
       ) {
-        if (mandatePrepared === undefined) {
+        if (authorizedMandate === undefined) {
           return yield* Effect.void;
         }
         if (mandateDispatch === undefined) {
@@ -2358,7 +3013,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         yield* mandateDispatch.commit({
           actionInvocationId: invocation.actionInvocationId,
           now,
-          prepared: mandatePrepared,
+          prepared: authorizedMandate,
           scope,
           transaction,
         });
@@ -2377,7 +3032,13 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             ActionCoreError | DomainErrorSchema['Type'],
             HandlerRequirements
           > = Effect.fn('ActionRuntime.transaction')(function* executeTransaction(drizzleTransaction: CoreTransaction) {
-            let scopedTransaction = yield* installScope(drizzleTransaction, scope);
+            // A genuine Core Action re-checks questions it prepared before this transaction from its own snapshot.
+            // The re-check runs the prepared question's own code with this transaction, so no other owner's executor
+            // carries it: theirs fails a re-check closed. The workload admission below wraps the same transaction.
+            const installed = yield* installScope(drizzleTransaction, scope, options.databaseIdentities);
+            let scopedTransaction = isGenuineCoreAction(input.registration)
+              ? withPreparedAccessRecheck(installed, drizzleTransaction)
+              : installed;
             notifyStage('database_scope_installed');
             yield* lockCompositionAuthority(drizzleTransaction, admittedCompositionRevision, 'write').pipe(
               Effect.mapError((cause) =>
@@ -2430,35 +3091,52 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             scopedTransaction = workloadAdmission.transaction;
             closeWorkloadAdmission = workloadAdmission.close;
             yield* claimMandateInTransaction(drizzleTransaction, operationDate);
-            const ownerAuthorizationDecision = yield* ownerAuthorizationOverlay.authorize(
-              scopedTransaction,
-              Object.freeze(
-                withOptionalProperty(
-                  withOptionalProperty(
-                    {
+            const ownerTargets = targetSet?.targets ?? [Option.getOrUndefined(accessTarget)];
+            const ownerAuthorizationDecisions = yield* Effect.forEach(
+              ownerTargets,
+              (ownerTarget) =>
+                Effect.exit(
+                  Effect.suspend(() =>
+                    ownerAuthorizationOverlay.authorize(
+                      scopedTransaction,
+                      Object.freeze(
+                        withOptionalProperty(
+                          withOptionalProperty(
+                            {
+                              capabilityKey:
+                                declaredCarrier.accessDeclaration?.key ?? input.registration.descriptor.actionKey,
+                              operation: 'action' as const,
+                              operationAt,
+                              operationKey: input.registration.descriptor.actionKey,
+                              owningModuleKey: input.registration.descriptor.owningModuleKey,
+                              scope,
+                              targets: frozenOwnerAuthorizationTargets,
+                            },
+                            ownerTarget !== undefined,
+                            'target',
+                            ownerTarget,
+                            {},
+                          ),
+                          Option.isSome(accessOwnerFacts),
+                          'ownerFacts',
+                          Option.getOrUndefined(accessOwnerFacts),
+                          {},
+                        ),
+                      ),
+                    ),
+                  ),
+                ).pipe(
+                  Effect.flatMap(
+                    ownerAuthorizationFromExit({
                       capabilityKey: declaredCarrier.accessDeclaration?.key ?? input.registration.descriptor.actionKey,
-                      operation: 'action' as const,
-                      operationAt,
                       operationKey: input.registration.descriptor.actionKey,
                       owningModuleKey: input.registration.descriptor.owningModuleKey,
-                      scope,
-                      targets: frozenOwnerAuthorizationTargets,
-                    },
-                    Option.isSome(accessTarget),
-                    'target',
-                    Option.getOrUndefined(accessTarget),
-                    {},
+                    }),
                   ),
-                  Option.isSome(accessOwnerFacts),
-                  'ownerFacts',
-                  Option.getOrUndefined(accessOwnerFacts),
-                  {},
                 ),
-              ),
+              { concurrency: 1 },
             );
-            if (ownerAuthorizationDecision !== 'allowed') {
-              return yield* ownerAuthorizationFailure(ownerAuthorizationDecision);
-            }
+            yield* ownerAuthorizationFailure(ownerAuthorizationDecisions);
             const runningInvocation = yield* repository
               .transitionInvocationToRunning(scopedTransaction, invocation.actionInvocationId)
               .pipe(
@@ -2475,7 +3153,6 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               requestHash,
               repository.loadRecordedRejection(scopedTransaction, runningInvocation.actionInvocationId),
             );
-            const serviceFactory = resolveServiceFactory(input.registration);
             const services = yield* serviceFactory(scopedTransaction, scope, admittedCompositionRevision);
             const handler = resolveHandler(input.registration);
 
@@ -2606,6 +3283,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                 allowedPolicies,
                 auditProfile: input.registration.descriptor.auditProfile,
                 evidence: collector.snapshot(),
+                owningModuleKey: input.registration.descriptor.owningModuleKey,
                 principal,
                 resultHash,
                 transport: governedTransport,
@@ -2645,6 +3323,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                           scope,
                         },
                         transactionProgram(transaction).pipe(
+                          insideDatabaseTransaction(input.registration.descriptor.actionKey),
                           Effect.ensuring(Effect.sync(() => closeWorkloadAdmission?.())),
                         ),
                       ).pipe(Effect.onExit((exit) => Ref.set(transactionBodyExit, exit))),
@@ -2699,11 +3378,13 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             ),
           );
           if (Exit.isFailure(transactionOutcomeExit)) {
-            const ownerDenied = transactionOutcomeExit.cause.reasons.some(
-              (reason) => Cause.isFailReason(reason) && Schema.is(ActionPermissionDenied)(reason.error),
+            // The in-transaction refusal (the gate recheck or the owner rule) is recorded with its own reason codes.
+            const ownerDenied = transactionOutcomeExit.cause.reasons.flatMap((reason) =>
+              Cause.isFailReason(reason) && isActionPermissionDenied(reason.error) ? [reason.error] : [],
             );
-            if (ownerDenied) {
-              return yield* rejectPermission(permissionDeniedFailure());
+            const [refusal] = ownerDenied;
+            if (refusal !== undefined) {
+              return yield* rejectPermission(refusal);
             }
             return yield* Effect.failCause(transactionOutcomeExit.cause);
           }
@@ -2783,7 +3464,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           return yield* Effect.fail(domainFailure.value);
         }
         if (Schema.is(ActionCoreErrorSchema)(failure.error)) {
-          return yield* failure.error;
+          return yield* Effect.failCause(cause);
         }
       }
       yield* Effect.logError('Unexpected Action post-attempt hook failure', cause);
@@ -2819,8 +3500,16 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         return result;
       },
     );
+    const warnedAttempt = () =>
+      executeAttempt().pipe(
+        Effect.tapError((failure) =>
+          isActionPermissionDenied(failure)
+            ? logActionRefusal(declaredCarrier, refusalContext.scope, failure)
+            : Effect.void,
+        ),
+      );
     if (postAttemptHook === undefined) {
-      return yield* executeAttempt();
+      return yield* warnedAttempt();
     }
     return yield* Effect.uninterruptibleMask(
       Effect.fn('ActionRuntime.settleActionAttempt')(function* settleActionAttempt(
@@ -2828,7 +3517,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           effect: Effect.Effect<Value, Failure, Requirements>,
         ) => Effect.Effect<Value, Failure, Requirements>,
       ) {
-        const executionExit = yield* Effect.exit(restore(executeAttempt()));
+        const executionExit = yield* Effect.exit(restore(warnedAttempt()));
         const { original } = attempt;
         // A parked proposal ran no owner command, so there is no attempt for the owner to settle (O85).
         if (
@@ -2925,6 +3614,66 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
   const runAction: ActionRuntimeService['runAction'] = (input) =>
     withoutModuleOperationExecution(runActionBoundary(input));
 
+  /**
+   * Exact caller-owned execution state. A caller that only knows the original key resolves through the
+   * same exact tenant, company and caller ownership; only a `COMMITTED` invocation names its Action key.
+   */
+  const resolveActionExecution: ActionRuntimeService['resolveActionExecution'] = Effect.fn(
+    'ActionRuntime.resolveActionExecution',
+  )(function* resolveActionExecutionEffect(input: ResolveActionExecutionInput) {
+    const { expectedRequestHash, ...lookupInput } = input;
+    if (expectedRequestHash !== undefined && !Schema.is(ExpectedActionRequestHashSchema)(expectedRequestHash)) {
+      return yield* actionRequestMismatch();
+    }
+    const principal = yield* validatePrincipal(input.principal);
+    const identity = yield* Schema.decodeUnknownEffect(ActionCommitIdentitySchema)(lookupInput).pipe(
+      Effect.mapError((cause) =>
+        attachFailureCause(
+          new ActionPayloadValidationError({
+            code: 'action_payload_invalid',
+            reason: 'The Action execution lookup identity is invalid',
+          }),
+          cause,
+        ),
+      ),
+    );
+    const invocation = yield* repository
+      .resolveInvocation(
+        invocationScopeExecutor(preserveSystemPrincipalContextTrust(principal, { ...principal, correlationId: '' })),
+        { ...identity, principal },
+      )
+      .pipe(
+        Effect.asSome,
+        Effect.catchTag('ActionInvocationNotFound', () => Effect.succeedNone),
+      );
+    if (
+      expectedRequestHash !== undefined &&
+      (Option.isNone(invocation) || invocation.value.requestHash !== expectedRequestHash)
+    ) {
+      return yield* actionRequestMismatch();
+    }
+    if (Option.isNone(invocation)) {
+      return { retryCommand: true, state: 'NOT_STARTED' } as const;
+    }
+    const record = invocation.value;
+    const invocationId = ActionInvocationIdSchema.make(record.actionInvocationId);
+    if (record.status === 'succeeded') {
+      return {
+        actionKey: ActionCommitActionKeySchema.make(record.actionKey),
+        invocationId,
+        retryCommand: false,
+        state: 'COMMITTED',
+      } as const;
+    }
+    if (record.status === 'received' && record.completedAt === null) {
+      return { invocationId, retryCommand: true, state: 'RETRYABLE' } as const;
+    }
+    if ((record.status === 'running' || record.status === 'indeterminate') && record.completedAt === null) {
+      return { invocationId, retryCommand: false, state: 'RUNNING' } as const;
+    }
+    return { invocationId, retryCommand: false, state: 'REJECTED' } as const;
+  });
+
   const resolveActionCommit: ActionRuntimeService['resolveActionCommit'] = Effect.fn(
     'ActionRuntime.resolveActionCommit',
   )(function* resolveActionCommitEffect(input: ResolveActionCommitInput) {
@@ -2942,8 +3691,19 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             ),
           ),
         );
-    const invocationId = yield* validateInvocationId(input.invocationId);
-    if (recovery !== undefined && invocationId !== recovery.originalActionInvocationId) {
+    const identity = yield* Schema.decodeUnknownEffect(ActionCommitIdentitySchema)(input).pipe(
+      Effect.mapError((cause) =>
+        attachFailureCause(
+          new ActionPayloadValidationError({
+            code: 'action_payload_invalid',
+            reason: 'The Action commit lookup identity is invalid',
+          }),
+          cause,
+        ),
+      ),
+    );
+    const requestedInvocationId = 'invocationId' in identity ? identity.invocationId : undefined;
+    if (recovery !== undefined && requestedInvocationId !== recovery.originalActionInvocationId) {
       return yield* new ActionInvocationNotFound({
         code: 'action_invocation_not_found',
         reason: 'The Action invocation does not match the exact recovery authority',
@@ -2952,26 +3712,28 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
     const invocation = yield* repository
       .resolveInvocation(
         invocationScopeExecutor(preserveSystemPrincipalContextTrust(principal, { ...principal, correlationId: '' })),
-        {
-          invocationId,
-          principal,
-        },
+        { ...identity, principal },
       )
       .pipe(
         Effect.tapError((error) =>
           Schema.is(ActionInvocationPersistenceError)(error)
-            ? logInvocationPersistenceFailure(error, {
-                invocationId,
-                principalId: principal.principalId,
-                tenantId: principal.tenantId,
-              })
+            ? logInvocationPersistenceFailure(
+                error,
+                withOptionalProperty(
+                  { principalId: principal.principalId, tenantId: principal.tenantId },
+                  requestedInvocationId !== undefined,
+                  'invocationId',
+                  requestedInvocationId,
+                  {},
+                ),
+              )
             : Effect.void,
         ),
         Effect.mapError((error) =>
-          Schema.is(ActionInvocationPersistenceError)(error)
+          Schema.is(ActionInvocationPersistenceError)(error) && requestedInvocationId !== undefined
             ? new ActionCommitIndeterminate({
                 code: 'action_commit_indeterminate',
-                invocationId,
+                invocationId: requestedInvocationId,
                 reason: 'The database cannot confirm the Action commit state yet',
               })
             : error,
@@ -2987,7 +3749,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
     ) {
       return Object.freeze({
         _tag: 'ActionCommitOpen',
-        invocationId,
+        invocationId: ActionInvocationIdSchema.make(invocation.actionInvocationId),
       }) satisfies ActionCommitOpen;
     }
     return yield* new ActionInvocationStateError({
@@ -2996,7 +3758,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
     });
   });
 
-  return Object.freeze({ resolveActionCommit, runAction });
+  return Object.freeze({ resolveActionCommit, resolveActionExecution, runAction });
 };
 
 export class ActionRuntime extends Context.Service<ActionRuntime, ActionRuntimeService>()(
@@ -3010,9 +3772,11 @@ export const makeActionRuntimeLive = (
   Layer.effect(
     ActionRuntime,
     Effect.gen(function* makeActionRuntimeService() {
+      const databaseIdentities = yield* DatabaseIdentityEnrollmentContext;
       const applicationComposition = yield* ActiveApplicationCompositionService;
       const ownerAuthorizationOverlay = yield* Effect.serviceOption(OwnerAuthorizationOverlay);
       const authorizationPreflight = yield* Effect.serviceOption(ActionAuthorizationPreflight);
+      const mandateDispatcher = yield* Effect.serviceOption(ActionMandateDispatcher);
       const [database, repository, permission, moduleEntrypointGateway, moduleStateGate, scopeResolver, contextAccess] =
         yield* Effect.all(
           [
@@ -3026,11 +3790,12 @@ export const makeActionRuntimeLive = (
           ] as const,
           { concurrency: 7 },
         );
-      const accessDecision = yield* bindLiveAccessGate;
+      const accessDecision = yield* bindLiveActionAccessGate;
       let runtimeOptions: ActionRuntimeOptions = {
         accessDecision,
         applicationComposition,
         contextAccess,
+        databaseIdentities,
         expectedDeployment,
         moduleEntrypointGateway,
         moduleStateGate,
@@ -3044,6 +3809,9 @@ export const makeActionRuntimeLive = (
       }
       if (Option.isSome(authorizationPreflight)) {
         runtimeOptions = { ...runtimeOptions, authorizationPreflight: authorizationPreflight.value };
+      }
+      if (Option.isSome(mandateDispatcher)) {
+        runtimeOptions = { ...runtimeOptions, mandateDispatch: mandateDispatcher.value };
       }
       return makeActionRuntime(database, repository, permission, scopeResolver, runtimeOptions);
     }),
@@ -3082,6 +3850,7 @@ export const resolveActionCommit = (
   | ActionAlreadyCommitted
   | ActionCommitIndeterminate
   | ActionInvocationNotFound
+  | ActionInvocationPersistenceError
   | ActionInvocationStateError
   | ActionPayloadValidationError
   | ActionTrustedContextValidationError,

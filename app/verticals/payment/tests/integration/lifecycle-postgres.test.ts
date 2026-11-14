@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { NodeCrypto } from '@effect/platform-node';
-import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
+import { defineDatabaseIdentityEnrollment, trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { Crypto, Deferred, Effect, Fiber, Layer, Option, Result, Schema } from 'effect';
 import type { Scope } from 'effect';
@@ -175,6 +175,7 @@ const makeLifecycleRuntimes = Effect.fn('LifecycleNative.makeRuntimes')(function
     contextAccess,
     {
       accessDecision,
+      databaseIdentities: defineDatabaseIdentityEnrollment([]),
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
     },
@@ -256,7 +257,11 @@ const enableMethod = Effect.fn('LifecycleNative.enableMethod')(function* enableM
 ) {
   yield* native.database.transaction((transaction) =>
     Effect.gen(function* configureEnablement() {
-      const scoped = yield* installOperationalScope(transaction, operationalScopeOf(scope));
+      const scoped = yield* installOperationalScope(
+        transaction,
+        operationalScopeOf(scope),
+        defineDatabaseIdentityEnrollment([]),
+      );
       yield* paymentApplicabilityPersistenceForTransaction(scoped).configureEnablement({
         customerConfigurationId,
         enabled: true,

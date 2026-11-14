@@ -3,6 +3,7 @@ import {
   AuthenticationNamespaceRegistry,
   makeAuthenticationNamespaceRegistry,
   TrustedAdmissionObservation,
+  ADMISSION_CLOCK_SKEW_TOLERANCE_MILLIS,
 } from '@app/core-runtime/auth/external-identity-admission';
 import type { TrustedAdmissionObservationService } from '@app/core-runtime/auth/external-identity-admission';
 import {
@@ -149,6 +150,7 @@ const makeProviderRequest = (request: ExternalOperationAuthenticationRequest): C
   Schema.decodeUnknownSync(CommercePortalAuthVerificationRequestSchema)({
     audience: request.audience,
     authenticationNamespaceId: request.authenticationNamespaceId,
+    authenticationOperation: 'resolve',
     nonce: request.nonce,
     operation: 'commerce-portal-authentication.verify-external-authentication.v1',
     operationRef: request.operationRef,
@@ -169,6 +171,7 @@ const makeAllowedProviderResult = (
   Schema.decodeUnknownSync(VerifyExternalAuthenticationResultSchema)({
     authenticatedAt: now,
     authenticationNamespaceId: request.authenticationNamespaceId,
+    authenticationOperation: 'resolve',
     emailVerified: true,
     nonce: request.nonce,
     observedAt: overrides.observedAt ?? now,
@@ -262,6 +265,7 @@ it.effect('publishes the exact provider request and mints only an operation-boun
     expect(calls[0]).toMatchObject({
       audience: request.audience,
       authenticationNamespaceId: request.authenticationNamespaceId,
+      authenticationOperation: 'resolve',
       nonce: request.nonce,
       operation: 'commerce-portal-authentication.verify-external-authentication.v1',
       operationRef: request.operationRef,
@@ -419,7 +423,8 @@ it.effect('rejects expired and future ALLOWED observations at the receiver clock
       verify: (request) =>
         Effect.succeed(
           makeAllowedProviderResult(request, {
-            observedAt: DateTime.add(now, { milliseconds: 1 }),
+            // Beyond the receiver's bounded early-reading tolerance.
+            observedAt: DateTime.add(now, { milliseconds: ADMISSION_CLOCK_SKEW_TOLERANCE_MILLIS + 1 }),
           }),
         ),
     };
@@ -523,6 +528,7 @@ const makeWorkloadFixture = (
 const workloadGrantConfiguration = Schema.decodeUnknownSync(CommercePortalAuthVerificationWorkloadGrantsSchema)({
   grants: [
     {
+      authenticationOperation: 'resolve',
       commerceAuthenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
       operation: 'commerce-portal-authentication.verify-external-authentication.v1',
       receivingAudience: 'commerce-customer-context',
@@ -563,6 +569,7 @@ it.effect('authorizes only a fresh, exact api_key workload grant', () =>
     const request = Schema.decodeUnknownSync(CommercePortalAuthVerificationRequestSchema)({
       audience: 'commerce-customer-context',
       authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+      authenticationOperation: 'resolve',
       nonce: '50000000-0000-4000-8000-000000000010',
       operation: 'commerce-portal-authentication.verify-external-authentication.v1',
       operationRef: 'workload-operation-1',

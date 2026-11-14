@@ -1,4 +1,5 @@
 import { Effect, Exit, Option, Schema } from 'effect';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
@@ -35,15 +36,18 @@ const fixture = Effect.fn('CurrentActionFixture.make')(function* fixture(
   readRows: (sql: string, parameters: readonly unknown[]) => Effect.Effect<readonly object[], SqlError>,
 ) {
   const database = yield* makeTestDatabase((sql, parameters) => {
-    if (sql.includes('current_setting')) {
-      return Effect.succeed([{ legal_entity_id: scope.legalEntityId, tenant_id: scope.tenantId }]);
+    // The session-setting role's one install-and-read statement answers the scope it set.
+    if (sql.includes("set_config('ontos.tenant_id'")) {
+      return Effect.succeed([
+        { legal_entity_id: scope.legalEntityId, role: 'ontos_runtime', tenant_id: scope.tenantId },
+      ]);
     }
     if (sql.includes('"core"."action_invocations"')) {
       return readRows(sql, parameters);
     }
     return Effect.succeed([]);
   });
-  const installed = yield* installOperationalScope(database, scope);
+  const installed = yield* installOperationalScope(database, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
   const bound = bindScopedWorkloadAdmission(installed, {
     actionInvocationId: current.actionInvocationId,
     carrier: {},

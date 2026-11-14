@@ -2,11 +2,13 @@
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { Effect, Option, Schema } from 'effect';
 
-import type { PartyFactAssertion } from '../../shared/apis/party-detail.ts';
+import type { PartyFactAssertion, PartyHistoricalNameAssertion } from '../../shared/apis/party-detail.ts';
 import { PartyFactAssertionSchema } from '../../shared/apis/party-detail.ts';
-import { PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
+import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
+import { AssertionIdSchema } from '../../shared/domain/correction-contracts.ts';
+import { IsoTimestampSchema, PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
 import { PartyRefSchema } from '../../shared/resources/party.ts';
-import { partyFactAssertions } from '../db/schema.ts';
+import { partyFactAssertions, partyHistoricalNameAssertions } from '../db/schema.ts';
 import type { PartyTransaction } from '../db/types.ts';
 
 export interface PartyDetailAssertions {
@@ -24,6 +26,106 @@ const unavailable = (cause?: unknown) => {
   }
   return error;
 };
+
+/**
+ * One archived display name, exactly as PostgreSQL wrote it with `to_jsonb`: snake_case keys and
+ * timestamps as strings. This is the whole shape the reader decodes out of the preserved image, so the
+ * actor, approver, acceptance and provenance columns the original row carried never reach a caller.
+ * The assertion's identity is not read here: it is the archive's own key, which the identity registry
+ * ties to the assertion this image was taken from.
+ */
+const ArchivedNameFactRowSchema = Schema.Struct({
+  external_evidence: Schema.OptionFromNullOr(AresAppliedEvidenceSchema),
+  fact_kind: Schema.Literals(['DISPLAY_NAME']),
+  is_current: Schema.Boolean,
+  normalized_value: Schema.String.check(Schema.isMinLength(1)),
+  recorded_at: IsoTimestampSchema,
+  retracts_assertion_id: Schema.OptionFromNullOr(AssertionIdSchema),
+  state: Schema.Literals(['ACTIVE', 'ENDED', 'SUPERSEDED', 'RETRACTED', 'DISPUTED']),
+  supersedes_assertion_id: Schema.OptionFromNullOr(AssertionIdSchema),
+  valid_from: IsoTimestampSchema,
+  valid_to: Schema.OptionFromNullOr(IsoTimestampSchema),
+});
+
+/** One archived row as the reader selects it: the preserved identity and the untouched original fact row. */
+export interface PartyHistoricalNameArchiveRow {
+  readonly assertionId: string;
+  readonly originalAssertion: unknown;
+}
+
+/** The whole bounded shape one archived row decodes to: the registry identity and its preserved image. */
+const ArchivedNameAssertionSchema = Schema.Struct({
+  assertionId: AssertionIdSchema,
+  originalAssertion: ArchivedNameFactRowSchema,
+});
+
+/**
+ * Decodes archived original fact rows into the history-only carrier, bounded to the fields that
+ * carrier publishes. A row whose preserved JSON is not exactly one archived `DISPLAY_NAME` assertion
+ * fails the whole read instead of yielding a partly trusted history.
+ */
+export const decodePartyHistoricalNameAssertions = Effect.fn(
+  'PartyDetailPersistenceService.decodePartyHistoricalNameAssertions',
+)(function* decodeArchivedDisplayNames(
+  tenantId: string,
+  partyId: string,
+  rows: readonly PartyHistoricalNameArchiveRow[],
+) {
+  const partyRef = PartyRefSchema.make({
+    moduleId: 'party.registry',
+    resourceId: partyId,
+    resourceType: 'party.registry.party',
+    tenantId,
+  });
+  return yield* Effect.forEach(
+    rows,
+    (row) =>
+      Schema.decodeUnknownEffect(ArchivedNameAssertionSchema)({
+        assertionId: row.assertionId,
+        originalAssertion: row.originalAssertion,
+      }).pipe(
+        Effect.map(({ assertionId, originalAssertion: original }): PartyHistoricalNameAssertion => ({
+          assertionId,
+          externalEvidence: original.external_evidence,
+          factKind: original.fact_kind,
+          isCurrent: original.is_current,
+          partyRef,
+          recordedAt: original.recorded_at,
+          retractsAssertionId: original.retracts_assertion_id,
+          state: original.state,
+          supersedesAssertionId: original.supersedes_assertion_id,
+          validFrom: original.valid_from,
+          validTo: original.valid_to,
+          value: original.normalized_value,
+        })),
+      ),
+    { concurrency: 1 },
+  );
+});
+
+/**
+ * The Party's archived display names, in the order they were recorded. The registry keeps the
+ * original rows losslessly, so this read answers them as evidence and never as the current name:
+ * nothing here is relabelled, and no current-name fallback stands in for a missing archive.
+ */
+export const findPartyHistoricalNameAssertions = Effect.fn(
+  'PartyDetailPersistenceService.findPartyHistoricalNameAssertions',
+)(function* readArchivedDisplayNames(transaction: Pick<PartyTransaction, 'select'>, tenantId: string, partyId: string) {
+  const rows = yield* transaction
+    .select({
+      assertionId: partyHistoricalNameAssertions.assertionId,
+      originalAssertion: partyHistoricalNameAssertions.originalAssertion,
+    })
+    .from(partyHistoricalNameAssertions)
+    .where(
+      and(eq(partyHistoricalNameAssertions.tenantId, tenantId), eq(partyHistoricalNameAssertions.partyId, partyId)),
+    )
+    .orderBy(
+      sql`(${partyHistoricalNameAssertions.originalAssertion} ->> 'recorded_at')::timestamptz`,
+      asc(partyHistoricalNameAssertions.assertionId),
+    );
+  return yield* decodePartyHistoricalNameAssertions(tenantId, partyId, rows);
+}, Effect.mapError(unavailable));
 
 export const findPartyDetailAssertions = Effect.fn('PartyDetailPersistenceService.findPartyDetailAssertions')(
   function* readSafeFactAssertions(

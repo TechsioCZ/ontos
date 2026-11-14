@@ -484,7 +484,7 @@ const tenantShell: AuthenticatedHomePageModel = {
     tenantId: '10000000-0000-4000-8000-000000000004',
   }),
   legalEntities: { items: [], state: 'available' },
-  navigation: { items: [], state: 'available', unavailableDeployments: [] },
+  navigation: { deniedAppIds: [], items: [], moduleIds: [], state: 'available', unavailableDeployments: [] },
   state: 'authenticated',
   tenants: { items: [], state: 'available' },
 };

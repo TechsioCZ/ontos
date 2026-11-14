@@ -1,0 +1,136 @@
+// Narrow registered Actions supply authority. This guard keeps the existing human-only and storefront protocols.
+import { Effect, Schema } from 'effect';
+import type { TrustedPrincipalContext } from '@app/core-runtime';
+import { MerchandisePermissionDenied } from '../errors/merchandise-permission-denied.ts';
+
+export const PrincipalKindSchema = Schema.Literals(['human', 'non_human']);
+export type PrincipalKind = typeof PrincipalKindSchema.Type;
+
+/** Approving or reverting AI changes stays with people in the app: a connected MCP client never runs these. */
+const AI_DECISION_COMMANDS: ReadonlySet<string> = new Set(['AiDecideChanges', 'AiRevertBatch']);
+
+/**
+ * Interactive sessions, support impersonation and an MCP connection acting as the person itself are human. A
+ * connection acting for an AI agent (`delegatedByPrincipalId` set), API keys and system jobs are not.
+ */
+export const principalKindOf = (
+  authMethod: TrustedPrincipalContext['authMethod'],
+  delegatedByPrincipalId?: string,
+  commandTag?: string,
+): PrincipalKind =>
+  authMethod === 'session' ||
+  authMethod === 'support_impersonation' ||
+  (authMethod === 'oauth_connection' &&
+    delegatedByPrincipalId === undefined &&
+    !AI_DECISION_COMMANDS.has(commandTag ?? ''))
+    ? 'human'
+    : 'non_human';
+
+/** Commands reserved for human users; non-human principals (API keys, system jobs) are rejected. */
+export const nonHumanForbiddenCommands: ReadonlySet<string> = new Set([
+  'BulkUpdateProducts',
+  'ChangePrice',
+  // Product photos are chosen and arranged by people.
+  'ChangeProductImages',
+  'EditOrder',
+  'LinkOrderCustomer',
+  'RemoveDemoOrder',
+  'ResetDemoData',
+  'ArchiveDemoProduct',
+  'CreateCategory',
+  'UpdateCategory',
+  // Market price lists and bulk market assortment change money and the whole offer of a market.
+  'ConfigureMarket',
+  'RemoveMarket',
+  'SetMarketProductOffers',
+  // AI level C: an agent may only propose; a person approves or reverts in the app.
+  'AiDecideChanges',
+  'AiRevertBatch',
+]);
+const forbidsCommand = (commandTag: string): boolean => nonHumanForbiddenCommands.has(commandTag);
+
+export const assertCommandAllowed = (
+  principalKind: PrincipalKind,
+  commandTag: string,
+): Effect.Effect<void, MerchandisePermissionDenied> =>
+  principalKind === 'human' || !forbidsCommand(commandTag)
+    ? Effect.void
+    : Effect.fail(
+        new MerchandisePermissionDenied({
+          code: 'merchandise_permission_denied',
+          reason: `Merchandise command ${commandTag} is reserved for human users`,
+        }),
+      );
+
+/** The e-shop demo company (Kavárna Doma). Its non-human principal is the storefront BFF key. */
+export const AKROS_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000024';
+export const AKROS_PLAYGROUND_LEGAL_ENTITY_ID = 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7';
+export const ESHOP_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000023';
+/** The N1 e-shop (its own storefront application and service key; see app/n1-storefront). */
+export const N1_LEGAL_ENTITY_ID = 'd7ad363a-ddb0-46c6-bb11-8d9362281297';
+export const isAkrosCompany = (id: string | undefined) =>
+  id === AKROS_LEGAL_ENTITY_ID || id === AKROS_PLAYGROUND_LEGAL_ENTITY_ID;
+const isStorefrontCompany = (id: string | undefined) =>
+  id === ESHOP_LEGAL_ENTITY_ID || id === N1_LEGAL_ENTITY_ID || isAkrosCompany(id);
+
+/** Only the storefront BFF's API key is limited to the storefront; people, MCP connections and agents use their grants. */
+export const isStorefrontServiceKey = (
+  authMethod: TrustedPrincipalContext['authMethod'],
+  legalEntityId: string | undefined,
+): boolean => authMethod === 'api_key' && isStorefrontCompany(legalEntityId);
+
+/** Commands the storefront service key may run inside the e-shop company: only the guest storefront order. */
+export const storefrontOnlyCommands: ReadonlySet<string> = new Set(['PlaceStorefrontOrder']);
+
+/** In the e-shop company, the storefront API key (the BFF) may place guest orders and nothing else. */
+export const assertStorefrontScope = (
+  authMethod: TrustedPrincipalContext['authMethod'],
+  legalEntityId: string | undefined,
+  commandTag: string,
+): Effect.Effect<void, MerchandisePermissionDenied> =>
+  !isStorefrontServiceKey(authMethod, legalEntityId) || storefrontOnlyCommands.has(commandTag)
+    ? Effect.void
+    : Effect.fail(
+        new MerchandisePermissionDenied({
+          code: 'merchandise_permission_denied',
+          reason: `Merchandise command ${commandTag} is not available to the storefront`,
+        }),
+      );
+
+/**
+ * In the e-shop company, the storefront API key (the BFF key) only ever reads the public storefront view:
+ * published active products and, at most, the one order it placed by `clientRequestId`. Staff data (all orders with
+ * customer contacts, stock ledger, order indicators) stays server-side even if the key omits the storefront flag.
+ */
+export const storefrontReadRequest = <Request extends { readonly view?: { readonly storefront?: boolean } }>(
+  authMethod: TrustedPrincipalContext['authMethod'],
+  legalEntityId: string | undefined,
+  request: Request,
+): Request =>
+  isStorefrontServiceKey(authMethod, legalEntityId)
+    ? { ...request, view: { ...request.view, storefront: true } }
+    : request;
+
+/** Wraps the apply-command handler: the guard runs before any state is loaded. */
+export const withCommandGuard =
+  <
+    Payload extends { readonly command: { readonly _tag: string } },
+    Context extends {
+      readonly scope: Pick<TrustedPrincipalContext, 'authMethod' | 'delegatedByPrincipalId' | 'legalEntityId'>;
+    },
+    Success,
+    Failure,
+    Requirements,
+  >(
+    handler: (payload: Payload, context: Context) => Effect.Effect<Success, Failure, Requirements>,
+  ) =>
+  (payload: Payload, context: Context): Effect.Effect<Success, Failure | MerchandisePermissionDenied, Requirements> =>
+    assertCommandAllowed(
+      principalKindOf(context.scope.authMethod, context.scope.delegatedByPrincipalId, payload.command._tag),
+      payload.command._tag,
+    ).pipe(
+      Effect.flatMap(() =>
+        assertStorefrontScope(context.scope.authMethod, context.scope.legalEntityId, payload.command._tag),
+      ),
+      Effect.flatMap(() => handler(payload, context)),
+    );

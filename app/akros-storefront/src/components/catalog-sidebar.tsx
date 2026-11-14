@@ -1,0 +1,250 @@
+"use client";
+
+import type { ComponentProps } from "react";
+import { Icon } from "@techsio/ui-kit/atoms/icon";
+import { VerticalNavigation } from "@techsio/ui-kit/molecules/vertical-navigation";
+import StoreLink from "@/components/store-link";
+
+import { useBrand } from "@/brand/brand-context";
+import { useDictionary } from "@/ontos/market-context";
+import type { CatalogCategory } from "@/ontos/catalog-types";
+
+interface CategoryNavigationItemProps {
+  activeIds: ReadonlySet<string>;
+  category: CatalogCategory;
+  currentCategoryId?: string;
+  depth?: number;
+  navigationId: string;
+  categories: CatalogCategory[];
+  expandRoots: boolean;
+}
+
+/** Keep the kit's navigation behavior, but ship its repeated link utilities once in CSS, not per link. */
+function CatalogLink({ className, ...props }: ComponentProps<typeof StoreLink>) {
+  return (
+    <StoreLink
+      {...props}
+      className={`sf-catalog-link${className?.includes("justify-between") ? " sf-catalog-link--branch" : ""}`}
+    />
+  );
+}
+
+function SpecialCategoriesNavigation({
+  navigationId,
+  expandRoots,
+}: {
+  navigationId: string;
+  expandRoots: boolean;
+}) {
+  const cs = useDictionary();
+  // The brand's own manufacturing site; a brand without one has no special categories.
+  const { production } = useBrand();
+  if (!production) return null;
+  return (
+    <VerticalNavigation.Branch defaultOpen={expandRoots} id={`${navigationId}-special-categories`}>
+      <VerticalNavigation.Row data-sf-depth={0}>
+        <VerticalNavigation.Link as="span">{cs.catalog.specialCategories}</VerticalNavigation.Link>
+        <VerticalNavigation.BranchTrigger aria-label={cs.catalog.specialCategories}>
+          <VerticalNavigation.BranchIndicator />
+        </VerticalNavigation.BranchTrigger>
+      </VerticalNavigation.Row>
+      <VerticalNavigation.BranchContent indent>
+        <VerticalNavigation.List>
+          <VerticalNavigation.Item>
+            <VerticalNavigation.Link href={production.externalUrl}>
+              {production.sidebarLabel}
+            </VerticalNavigation.Link>
+          </VerticalNavigation.Item>
+        </VerticalNavigation.List>
+      </VerticalNavigation.BranchContent>
+    </VerticalNavigation.Branch>
+  );
+}
+
+function CategoryNavigationItem({
+  activeIds,
+  category,
+  currentCategoryId,
+  depth = 0,
+  navigationId,
+  categories,
+  expandRoots,
+}: CategoryNavigationItemProps) {
+  const children = categories.filter((candidate) => candidate.parentId === category.id);
+  const href = `/kategorie/${category.slug}`;
+  const isCurrent = currentCategoryId === category.id;
+  const isOnCurrentPath = activeIds.has(category.id);
+  const visualDepth = Math.min(depth, 4);
+
+  if (children.length === 0) {
+    if (category.hasChildren) {
+      return (
+        <VerticalNavigation.Item>
+          <VerticalNavigation.Row data-sf-depth={visualDepth}>
+            <VerticalNavigation.Link
+              as={CatalogLink}
+              className="justify-between"
+              current={isCurrent}
+              href={href}
+            >
+              {category.name}
+              <Icon
+                data-sf-branch-indicator=""
+                icon="token-icon-vertical-navigation-chevron"
+                size="current"
+              />
+            </VerticalNavigation.Link>
+          </VerticalNavigation.Row>
+        </VerticalNavigation.Item>
+      );
+    }
+
+    return (
+      <VerticalNavigation.Item>
+        <VerticalNavigation.Link
+          as={CatalogLink}
+          current={isCurrent}
+          data-sf-depth={visualDepth}
+          href={href}
+        >
+          {category.name}
+        </VerticalNavigation.Link>
+      </VerticalNavigation.Item>
+    );
+  }
+
+  return (
+    <VerticalNavigation.Branch
+      containsCurrent={isOnCurrentPath}
+      defaultOpen={(expandRoots && depth === 0) || isOnCurrentPath}
+      id={`${navigationId}-${category.id}`}
+    >
+      <VerticalNavigation.Row data-sf-depth={visualDepth}>
+        <VerticalNavigation.Link as={CatalogLink} current={isCurrent} href={href}>
+          {category.name}
+        </VerticalNavigation.Link>
+        <VerticalNavigation.BranchTrigger aria-label={category.name}>
+          <VerticalNavigation.BranchIndicator />
+        </VerticalNavigation.BranchTrigger>
+      </VerticalNavigation.Row>
+      <VerticalNavigation.BranchContent indent>
+        <VerticalNavigation.List>
+          {children.map((child) => (
+            <CategoryNavigationItem
+              activeIds={activeIds}
+              category={child}
+              currentCategoryId={currentCategoryId}
+              depth={depth + 1}
+              key={child.id}
+              navigationId={navigationId}
+              categories={categories}
+              expandRoots={expandRoots}
+            />
+          ))}
+        </VerticalNavigation.List>
+      </VerticalNavigation.BranchContent>
+    </VerticalNavigation.Branch>
+  );
+}
+
+export function CatalogNavigation({
+  activeSlug,
+  categories,
+  navigationId,
+  expandRoots = true,
+}: {
+  activeSlug?: string;
+  categories: CatalogCategory[];
+  navigationId: string;
+  expandRoots?: boolean;
+}) {
+  const cs = useDictionary();
+  const activeCategory = activeSlug
+    ? categories.find((category) => category.slug === activeSlug)
+    : undefined;
+  const activeTrail: CatalogCategory[] = [];
+  let trailCategory = activeCategory;
+  while (trailCategory) {
+    activeTrail.unshift(trailCategory);
+    trailCategory = trailCategory.parentId
+      ? categories.find((category) => category.id === trailCategory?.parentId)
+      : undefined;
+  }
+  const activeIds = new Set(activeTrail.map((category) => category.id));
+  const topCategories = categories.filter((category) => category.parentId === null);
+
+  return (
+    <VerticalNavigation
+      aria-label={cs.catalog.title}
+      data-sf-catalog=""
+      key={`${navigationId}-${activeSlug ?? "catalog"}`}
+      maxIndentDepth={3}
+      size="sm"
+    >
+      <VerticalNavigation.Group tone="subtle">
+        <VerticalNavigation.List>
+          <SpecialCategoriesNavigation navigationId={navigationId} expandRoots={expandRoots} />
+          {topCategories.map((category) => (
+            <CategoryNavigationItem
+              activeIds={activeIds}
+              category={category}
+              currentCategoryId={activeCategory?.id}
+              key={category.id}
+              navigationId={navigationId}
+              categories={categories}
+              expandRoots={expandRoots}
+            />
+          ))}
+        </VerticalNavigation.List>
+      </VerticalNavigation.Group>
+    </VerticalNavigation>
+  );
+}
+
+export function CatalogHelpNavigation() {
+  const cs = useDictionary();
+  return (
+    <VerticalNavigation
+      aria-label={cs.catalog.recommendations}
+      className="shrink-0"
+      data-sf-catalog-help=""
+      size="sm"
+    >
+      <VerticalNavigation.Group>
+        <VerticalNavigation.GroupLabel>{cs.catalog.recommendations}</VerticalNavigation.GroupLabel>
+        <VerticalNavigation.Separator />
+        <StoreLink
+          className="flex min-h-(--dimension-44) items-center self-start text-xs font-normal underline"
+          href="/faq"
+        >
+          {cs.catalog.firstSteps}
+        </StoreLink>
+      </VerticalNavigation.Group>
+    </VerticalNavigation>
+  );
+}
+
+export function CatalogSidebar({
+  activeSlug,
+  categories,
+}: {
+  activeSlug?: string;
+  categories: CatalogCategory[];
+}) {
+  const cs = useDictionary();
+  return (
+    <aside
+      className="sf-sidebar flex max-h-(--sf-sidebar-max-height) flex-col gap-(--dimension-24)"
+      aria-label={cs.catalog.title}
+    >
+      <div className="sf-sidebar__desktop min-h-0 shrink">
+        <CatalogNavigation
+          activeSlug={activeSlug}
+          categories={categories}
+          navigationId="catalog-desktop"
+        />
+      </div>
+      <CatalogHelpNavigation />
+    </aside>
+  );
+}

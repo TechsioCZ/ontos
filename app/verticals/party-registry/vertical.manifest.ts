@@ -4,6 +4,9 @@
 import { defineOntosModuleManifest } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 import ContactsPage from './src/routes/[lang]/contacts/page.tsx';
+import { CustomerDetailPage } from './src/routes/[lang]/prodej/zakaznici/[id]/page.tsx';
+import { CustomersPage } from './src/routes/[lang]/prodej/zakaznici/page.tsx';
+import { PartyIdentityPage } from './src/routes/[lang]/prodej/strany/[partyId]/page.tsx';
 
 import { counterpartyRolePeriodResourceDescriptor } from './shared/resources/counterparty-role-period.ts';
 import { counterpartyResourceDescriptor } from './shared/resources/counterparty.ts';
@@ -20,8 +23,10 @@ import { partyResourceDescriptor } from './shared/resources/party.ts';
 import { personEngagementProfileResourceDescriptor } from './shared/resources/person-engagement-profile.ts';
 // <generated-module-manifest-imports>
 // </generated-module-manifest-imports>
+import { partyRegistryMcpContribution } from './shared/mcp/contribution.ts';
 
-import { partyRegistryRuntimeManifest } from './vertical.runtime-declaration.ts';
+import { partyRegistryOriginatorActions, partyRegistryRuntimeManifest } from './vertical.runtime-declaration.ts';
+import { partyRegistryRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 
 export const partyRegistryManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   ...partyRegistryRuntimeManifest,
@@ -31,18 +36,19 @@ export const partyRegistryManifest: OntosModuleManifestInput = defineOntosModule
     scope: 'tenant',
     supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'],
   },
-  originatorActions: [
-    // The owner's outbox delivery of a privacy measure acts for the invocation that dispatched it.
-    'privacy.core.dispatch-privacy-measure',
-  ],
+  originatorActions: partyRegistryOriginatorActions,
   publicSurface: {
     ...partyRegistryRuntimeManifest.publicSurface,
     components: {
       // <generated-module-manifest-components>
       'page-contacts': ContactsPage,
+      'page-customer-detail': CustomerDetailPage,
+      'page-customers': CustomersPage,
+      'page-party-identity': PartyIdentityPage,
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: partyRegistryMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>
@@ -88,4 +94,6 @@ export const partyRegistryManifest: OntosModuleManifestInput = defineOntosModule
       // </generated-module-manifest-search>
     ],
   },
+  // Demo divergence exception 8: see ./src/registered-workload-calls.ts.
+  registeredWorkloadCalls: partyRegistryRegisteredWorkloadCalls,
 });

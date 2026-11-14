@@ -413,7 +413,7 @@ export const scopedRoutineInvokerFromTransaction = (
           ),
         ),
       ),
-      Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.toType(routine.resultSchema)))),
+      Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(routine.resultSchema))),
       Effect.mapError((failure) =>
         Schema.is(ScopedRoutineInvocationError)(failure)
           ? failure

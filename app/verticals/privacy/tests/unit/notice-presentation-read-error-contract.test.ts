@@ -4,6 +4,7 @@ import {
   ReadPermissionDenied,
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
+  ReadRuntime,
   TrustedPrincipalContextSchema,
   trustVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime';
@@ -26,6 +27,7 @@ import {
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
+import { PrivacySubjectRecordSchema } from '../../shared/domain/privacy-subject.ts';
 import { privacyApi } from '../../shared/api.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
@@ -43,6 +45,7 @@ import {
   NoticePresentationUnavailableProblemSchema,
 } from '../../shared/apis/notice-presentation.ts';
 import { PrivacyNoticeAcknowledgementError } from '../../shared/resources/privacy-notice-acknowledgement.ts';
+import { privacyNoticeInformationStepLive } from '../../src/services/privacy-notice-acknowledgement-authority.service.ts';
 import { noticePresentationRead } from '../../src/api/notice-presentation.read.ts';
 import { CommerceCustomerContextNoticeSubjectAuthorityService } from '../../src/integrations/commerce-customer-context/commerce-customer-context-notice-subject-authority.service.ts';
 import {
@@ -77,6 +80,29 @@ const target = {
   },
   retailProfileId: 'profile:opaque-owner-id',
 } as const;
+const retainedSubject = Schema.decodeSync(PrivacySubjectRecordSchema)({
+  createdAt: '2026-10-20T12:00:00.000Z',
+  subject: {
+    kind: 'DATA_SUBJECT',
+    partyRef: {
+      moduleId: 'party.registry',
+      resourceId: '10000000-0000-4000-8000-000000000007',
+      resourceType: 'party.registry.party',
+      tenantId,
+    },
+  },
+  subjectRef: target.privacySubjectRef,
+  updatedAt: '2026-10-20T12:00:00.000Z',
+});
+const executeSnapshotQuery: Parameters<typeof makeReadTestHarness>[0]['executeOwnerQuery'] = ({ sql }) => {
+  if (sql.includes('privacy_subjects')) {
+    return Effect.succeed([{ record: retainedSubject }]);
+  }
+  if (sql.includes('notice_versions')) {
+    return Effect.succeed([]);
+  }
+  return Effect.die(`Unexpected SQL outside the Notice snapshot: ${sql}`);
+};
 const problems = makeGovernedReadProblems({
   authentication: NoticePresentationAuthenticationProblemSchema,
   forbidden: NoticePresentationForbiddenProblemSchema,
@@ -132,7 +158,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, namespaceLive))('Notice read declared 
           const harness = yield* makeReadTestHarness({
             access: 'allowed',
             compositionRevision,
-            executeOwnerQuery: () => Effect.die('Unexpected owner query after authority rejection'),
+            executeOwnerQuery: executeSnapshotQuery,
             operationTime: new Date('2026-10-20T12:00:00.000Z'),
             ownerAuthorizationDecision: 'allowed',
             ownerRegistration: privacyRegistration,
@@ -165,7 +191,10 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, namespaceLive))('Notice read declared 
             registration: noticePresentationRead,
             transport: { correlationId: 'notice-read-contract' },
           });
-          const failure = yield* read.pipe(Effect.provide(ports), Effect.flip);
+          const failure = yield* read.pipe(
+            Effect.provide(privacyNoticeInformationStepLive.pipe(Layer.provideMerge(ports))),
+            Effect.flip,
+          );
           expect(Schema.is(testCase.schema)(failure)).toBe(true);
           const handler = makeGovernedReadHttpHandler({
             authenticatePrincipal: () => Effect.succeed(principal),
@@ -176,7 +205,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, namespaceLive))('Notice read declared 
             payload: target,
             request: { headers: Headers.fromInput({ 'x-correlation-id': 'notice-read-contract' }) },
           }).pipe(
-            Effect.provide(ports),
+            Effect.provide(privacyNoticeInformationStepLive.pipe(Layer.provideMerge(ports))),
             Effect.provide(harness.layer),
             Effect.provideService(
               HttpServerRequest.HttpServerRequest,
@@ -187,10 +216,11 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, namespaceLive))('Notice read declared 
           expect(problem.status).toBe(testCase.status);
           expect(JSON.stringify(problem)).not.toContain('private authority diagnostics');
           expect(authorityCalls).toBe(2);
-          expect(harness.snapshot().ownerQueries).toEqual([]);
+          expect(harness.snapshot().ownerQueries).toHaveLength(4);
           expect(harness.snapshot().evidenceWrites).toBe(testCase.status === 403 ? 2 : 0);
-          // An owner's typed answer commits the decision row it was decided with; only an outage rolls back.
-          expect(harness.snapshot().statements.at(-1)).toBe(testCase.status === 503 ? 'ROLLBACK' : 'COMMIT');
+          // Owner load commits before finish calls authority. An outage cannot roll back that read;
+          // it still releases no result or success evidence.
+          expect(harness.snapshot().statements.at(-1)).toBe('COMMIT');
         }),
     );
   }
@@ -230,7 +260,7 @@ it.live('GET decodes exact targets, trusts only the verified Tenant and redeems 
       const harness = yield* makeReadTestHarness({
         access: 'allowed',
         compositionRevision: composition.composition.revision,
-        executeOwnerQuery: () => Effect.die('Unexpected owner SQL after controlled Subject rejection'),
+        executeOwnerQuery: executeSnapshotQuery,
         operationTime: new Date('2026-10-20T12:00:00.000Z'),
         ownerAuthorizationDecision: 'allowed',
         ownerRegistration: privacyRegistration,
@@ -242,6 +272,12 @@ it.live('GET decodes exact targets, trusts only the verified Tenant and redeems 
       });
       let redemptions = 0;
       let ownerCalls = 0;
+      let nativeReads = 0;
+      const runRead: typeof harness.runtime.runRead = (input) => {
+        expect(input.input).toEqual(target);
+        nativeReads += 1;
+        return harness.runtime.runRead(input);
+      };
       const admittedJtis = new Set<string>();
       const compositionDocument = yield* Schema.encodeEffect(
         Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
@@ -268,7 +304,10 @@ it.live('GET decodes exact targets, trusts only the verified Tenant and redeems 
               expect(scope.tenantId).toBe(tenantId);
               expect(scope.principalId).toBe(principal.principalId);
               expect(scope.legalEntityId).toBe(principal.legalEntityId);
-              expect(observedTarget).toEqual(target);
+              expect(observedTarget).toEqual({
+                privacySubjectRef: target.privacySubjectRef,
+                retailProfileId: target.retailProfileId,
+              });
               return Effect.fail(
                 new PrivacyNoticeAcknowledgementError({
                   code: 'privacy_notice_acknowledgement_conflict',
@@ -300,7 +339,14 @@ it.live('GET decodes exact targets, trusts only the verified Tenant and redeems 
               Layer.provide(noticePresentationReadApiLive),
               Layer.provideMerge(RequestSchemaProblemLive),
               Layer.provideMerge(ActionPrincipalVerifierLive.pipe(Layer.provide(configuration))),
-              Layer.provideMerge(Layer.mergeAll(harness.layer, ports, NodeCrypto.layer, HttpServer.layerServices)),
+              Layer.provideMerge(
+                Layer.mergeAll(
+                  Layer.succeed(ReadRuntime, { ...harness.runtime, runRead }),
+                  privacyNoticeInformationStepLive.pipe(Layer.provideMerge(ports), Layer.provide(NodeCrypto.layer)),
+                  NodeCrypto.layer,
+                  HttpServer.layerServices,
+                ),
+              ),
             ),
             { disableLogger: true },
           ),
@@ -343,12 +389,14 @@ it.live('GET decodes exact targets, trusts only the verified Tenant and redeems 
       expect(presented.headers.get('cache-control')).toBe('no-store');
       expect(redemptions).toBe(1);
       expect(ownerCalls).toBe(1);
+      expect(nativeReads).toBe(1);
       const replayed = yield* request(`${path}?${query}`, `Bearer ${token}`);
       expect(replayed.status).toBe(401);
       expect(replayed.headers.get('www-authenticate')).toBe('Bearer');
       expect(redemptions).toBe(2);
       expect(ownerCalls).toBe(1);
-      expect(harness.snapshot().ownerQueries).toEqual([]);
+      expect(nativeReads).toBe(1);
+      expect(harness.snapshot().ownerQueries).toHaveLength(2);
       expect(harness.snapshot().evidenceWrites).toBe(0);
     }),
   ).pipe(Effect.provide(NodeCrypto.layer)),

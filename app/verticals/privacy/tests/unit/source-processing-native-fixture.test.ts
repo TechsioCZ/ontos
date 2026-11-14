@@ -14,6 +14,7 @@ const input = {
     admin: {
       connectionString: 'postgres://fixture-admin@127.0.0.1:1/unused',
       database,
+      expectedRole: 'fixture-admin',
       host: '127.0.0.1',
       port: 1,
       user: 'fixture-admin',
@@ -21,6 +22,7 @@ const input = {
     runtime: {
       connectionString: 'postgres://fixture-runtime@127.0.0.1:1/unused',
       database,
+      expectedRole: 'fixture-runtime',
       host: '127.0.0.1',
       port: 1,
       user: 'fixture-runtime',

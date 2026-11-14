@@ -1,12 +1,14 @@
-import { Effect } from 'effect';
+import { Array as EffectArray, ConfigProvider, Effect, pipe, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
 import type { AccessCatalogModule } from '../../src/authorization/access-declaration.ts';
+import { ModuleKeySchema } from '../../src/access/ids.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { parseStageAccountsFile } from '../../src/install/stage-accounts-file.ts';
 import {
   installedModuleKeysOf,
+  loadStageContextBootstrapConfiguration,
   stageBootstrapRefusal,
   stageScopeOf,
   stageTenantsFromAccountsFile,
@@ -93,6 +95,7 @@ const accountsFile = JSON.stringify({
         registrationCountry: 'CZ',
         registrationNumber: 'FIXTURE-A',
       },
+      moduleKey: 'party.registry',
       moduleStateId: '40000000-0000-4000-8000-0000000000a0',
       slug: 'tenant-a',
       tenantId: '10000000-0000-4000-8000-0000000000a0',
@@ -105,11 +108,11 @@ const providerUserIds = new Map<string, string>([
   ['20000000-0000-4000-8000-0000000000a2', 'auth-user-colleague'],
 ]);
 
-const loadFile = parseStageAccountsFile({ mode: 0o600, source: accountsFile });
+const loadFile = parseStageAccountsFile({ mode: 0o600, source: accountsFile }, new Set());
 
 it.effect('turns the accounts file into the tenants a stage run creates', () =>
   Effect.gen(function* readsAccountsFile() {
-    const tenants = yield* stageTenantsFromAccountsFile(yield* loadFile, providerUserIds);
+    const tenants = yield* stageTenantsFromAccountsFile(yield* loadFile, providerUserIds, modules);
     expect(tenants.map(({ tenant }) => tenant.slug)).toEqual(['tenant-a']);
     const [tenant] = tenants;
     expect(tenant?.tenant).toMatchObject({
@@ -130,7 +133,7 @@ it.effect('turns the accounts file into the tenants a stage run creates', () =>
 it.effect('refuses a stage account whose Better Auth user was not created', () =>
   Effect.gen(function* refusesMissingAuthUser() {
     const incomplete = new Map([...providerUserIds].slice(0, 1));
-    const refused = yield* stageTenantsFromAccountsFile(yield* loadFile, incomplete).pipe(Effect.flip);
+    const refused = yield* stageTenantsFromAccountsFile(yield* loadFile, incomplete, modules).pipe(Effect.flip);
     expect(refused.code).toBe('stage_context_bootstrap_failed');
     expect(refused.reason).toMatch(/Better Auth user/u);
   }),
@@ -175,7 +178,7 @@ it.effect('scopes every write to the tenant it names, in the context the request
 
 it.effect('refuses a stage run with no tenant, no declaration set or no owner account', () =>
   Effect.gen(function* refusesUnbootstrappableRuns() {
-    const tenants = yield* stageTenantsFromAccountsFile(yield* loadFile, providerUserIds);
+    const tenants = yield* stageTenantsFromAccountsFile(yield* loadFile, providerUserIds, modules);
     const [tenant] = tenants;
     if (tenant === undefined) {
       return yield* Effect.die(new Error('the fixture must declare one tenant'));
@@ -196,5 +199,74 @@ it.effect('refuses a stage run with no tenant, no declaration set or no owner ac
     );
     expect(stageBootstrapRefusal({ retiredTenants: [], tenants }, options)).toBeUndefined();
     return yield* Effect.void;
+  }),
+);
+
+it.effect('uses explicit operator module intent and refuses a module absent from the composition', () =>
+  Effect.gen(function* explicitBaseModule() {
+    const file = yield* loadFile;
+    const selected = {
+      ...file,
+      tenants: pipe(
+        file.tenants,
+        EffectArray.map((tenant) => ({ ...tenant, moduleKey: ModuleKeySchema.make('commerce.catalog') })),
+      ),
+    };
+    const tenants = yield* stageTenantsFromAccountsFile(selected, providerUserIds, modules);
+    expect(tenants.map(({ tenant }) => tenant.moduleKey)).toEqual(['commerce.catalog']);
+    expect(
+      installedModuleKeysOf(
+        tenants.map(({ tenant }) => tenant.moduleKey),
+        modules,
+      ),
+    ).not.toContain('party.registry');
+    const absent = modules.filter(({ moduleId }) => moduleId !== 'commerce.catalog');
+    const refused = yield* stageTenantsFromAccountsFile(selected, providerUserIds, absent).pipe(Effect.flip);
+    expect(refused.reason).toMatch(/base module.*running composition/u);
+    expect(
+      stageBootstrapRefusal(
+        { retiredTenants: [], tenants },
+        { authenticationNamespaceId: 'namespace', modules: absent },
+      )?.reason,
+    ).toMatch(/base module/u);
+  }),
+);
+
+const bootstrapConfiguration = {
+  DATABASE_URL: 'postgresql://ontos_runtime:fixture-database-secret@database:5432/ontos_stage_fixture',
+  SPICEDB_CA_CERT: '-----BEGIN CERTIFICATE-----\nfixture-only-certificate\n-----END CERTIFICATE-----',
+  SPICEDB_ENDPOINT: 'spicedb:50051',
+  SPICEDB_PRESHARED_KEY: 'fixture-engine-secret',
+  ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
+};
+
+it.effect('retains the bootstrap database credential as Redacted until its connection boundary', () =>
+  Effect.gen(function* redactedConfiguration() {
+    const configuration = yield* loadStageContextBootstrapConfiguration().pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(bootstrapConfiguration)),
+    );
+    expect(Redacted.isRedacted(configuration.databaseUrl)).toBe(true);
+    expect(Redacted.value(configuration.databaseUrl)).toBe(bootstrapConfiguration.DATABASE_URL);
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(configuration);
+    expect(encoded).not.toContain('fixture-database-secret');
+    expect(encoded).not.toContain('fixture-engine-secret');
+    expect(Redacted.isRedacted(configuration.spiceDb)).toBe(true);
+    expect(Redacted.value(configuration.spiceDb).endpoint).toBe('spicedb:50051');
+  }),
+);
+
+it.effect('keeps the non-stage bootstrap refusal before any database or engine connection', () =>
+  Effect.gen(function* refusedConfiguration() {
+    const failure = yield* loadStageContextBootstrapConfiguration().pipe(
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromUnknown({
+          ...bootstrapConfiguration,
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'development',
+        }),
+      ),
+      Effect.flip,
+    );
+    expect(failure.reason).toBe('The Core installation bootstrap can run only in stage');
   }),
 );

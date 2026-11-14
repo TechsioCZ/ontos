@@ -1,9 +1,10 @@
 import { NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node';
 import { inspect } from 'node:util';
 import { defineEffectBff } from '@modern-js/bff-effect/effect-edge';
-import { Cause, Config, Effect, Exit, Layer, Redacted, Schema, Tracer } from 'effect';
+import { Cause, Config, Effect, Exit, Layer, Option, Redacted, Schema, Tracer } from 'effect';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
+import { commerceTenantWorkloadCredentials } from '../../api/tenant-workload-credentials.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 class EnrollmentCurrentReceiverFailure extends Schema.TaggedError<EnrollmentCurrentReceiverFailure>()(
@@ -66,17 +67,29 @@ const describe = Effect.sync(() => process.stdout.write(`${JSON.stringify(ultram
 const serve = Effect.scoped(
   Effect.gen(function* serveActualEnrollmentCurrentReceiver() {
     const { default: apiRuntime } = yield* Effect.promise(async () => await import('../../api/index.ts'));
-    const secrets = yield* Effect.forEach(
+    const namedSecrets = yield* Effect.forEach(
       [
         'BETTER_AUTH_SECRET',
         'DATABASE_URL',
-        'ONTOS_GATEWAY_MODULE_API_KEY',
+        'COMMERCE_TENANT_CREDENTIALS',
         'SPICEDB_PRESHARED_KEY',
         'ONTOS_GATEWAY_PRIVATE_JWK',
         'RESEND_API_KEY',
       ],
       (name) => Config.Redacted(name).pipe(Config.withDefault(Redacted.make(''))),
     );
+    // Each Tenant's keys are redacted individually; a span can carry one key without the surrounding map.
+    const tenantCredentials = yield* Config.option(commerceTenantWorkloadCredentials);
+    const tenantSecrets = Option.isNone(tenantCredentials)
+      ? []
+      : yield* Effect.all(
+          tenantCredentials.value.tenantIds.map((tenantId) =>
+            tenantCredentials.value
+              .forTenant(tenantId)
+              .pipe(Effect.map(({ coreIdentityApiKey, gatewayApiKey }) => [coreIdentityApiKey, gatewayApiKey])),
+          ),
+        );
+    const secrets = [...namedSecrets, ...tenantSecrets.flat()];
     const selectedSpan = yield* Config.String('ONTOS_PREPROPOSAL_FAILURE_SPAN').pipe(Config.withDefault(''));
     const observed = defineEffectBff({
       ...apiRuntime,

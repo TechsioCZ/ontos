@@ -1,6 +1,7 @@
-import type { TenantModuleState } from '@app/core-runtime';
+import type { ApplicationCompositionModule, TenantModuleState } from '@app/core-runtime';
+import { ReadPermissionDenied } from '@app/core-runtime';
 import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
-import { DateTime, Duration, Effect, Option, Schema } from 'effect';
+import { DateTime, Duration, Effect, Fiber, Logger, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -16,6 +17,11 @@ import {
 } from '../../api/modules/shell-resources.ts';
 import type { ShellProviderAssertionIssuer } from '../../api/modules/shell-resources.ts';
 import type { ShellAccessGate } from '../../api/modules/shell-access-decisions.ts';
+import { makeModuleSearchProviderGateway } from '../../api/modules/shell-search-provider-gateway.ts';
+import {
+  SHELL_SEARCH_PROVIDER_DEADLINE_MILLIS,
+  SHELL_SEARCH_REQUEST_BUDGET_MILLIS,
+} from '../../api/modules/shell-governed-search.ts';
 import {
   cell,
   makeAuthority,
@@ -39,6 +45,11 @@ const ref = Schema.decodeUnknownSync(ResourceRefSchema)({
   resourceId: 'unit-1',
   resourceType,
 });
+const resourceHit = {
+  ref: { ...ref, tenantId },
+  selectedLegalEntityId: legalEntityId,
+  title: 'Unit 1',
+};
 
 /** One protected contribution carrier; the key must be `<moduleKey>.<resource>.<verb>`. */
 const declaration = (key: string, kind: 'action' | 'read' = 'read') => ({
@@ -182,6 +193,12 @@ const propertyContract = {
 
 const catalog = () => makeInstalledModuleCatalogLoader(makeCompositionSnapshot([propertyContract]));
 
+/** The inventory a governed search answers with when its admitted owners declare no presentation bindings. */
+const emptyPresentation = {
+  business: { compositionRevision: expect.stringMatching(/^[\da-f]{64}$/u), entries: [], schemaVersion: '1' },
+  pages: [],
+};
+
 const dependencies = (input: {
   readonly access: ShellTestAccess;
   readonly extraAnswers?: Readonly<Record<string, ShellTestAccess>>;
@@ -261,7 +278,7 @@ it.effect('search asks every eligible provider in one batched decision', () =>
   Effect.gen(function* searchAsksEveryProviderInOneBatch() {
     const baseline = dependencies({ access: 'allowed' });
     const result = yield* makeShellSearch(baseline, { search: () => Effect.succeed([]) }).search(context, 'unit');
-    expect(result).toEqual({ partial: false, results: [] });
+    expect(result).toEqual({ partial: false, presentation: emptyPresentation, results: [] });
     // E-BATCH: one provider, one engine snapshot, no single-question call.
     expect({ batches: baseline.access.batches.length, singles: baseline.access.singleDecisions.length }).toEqual({
       batches: 1,
@@ -278,10 +295,10 @@ it.effect('omits a provider its declaration denies and reports partial provider 
       yield* makeShellSearch(dependencies({ access: 'denied' }), {
         search: () => {
           calls += 1;
-          return Effect.succeed([{ ref, title: 'Unit 1' }]);
+          return Effect.succeed([resourceHit]);
         },
       }).search(context, ' unit '),
-    ).toEqual({ partial: false, results: [] });
+    ).toEqual({ partial: false, presentation: emptyPresentation, results: [] });
     expect(calls).toBe(0);
 
     const installed = yield* catalog();
@@ -336,12 +353,13 @@ it.effect('omits a provider its declaration denies and reports partial provider 
         search: ({ searchKey }) =>
           searchKey === backupSearchKey
             ? Effect.fail(new ShellProviderUnavailableError())
-            : Effect.succeed([{ ref, title: 'Unit 1' }]),
+            : Effect.succeed([resourceHit]),
       },
     );
     expect(yield* partial.search(context, 'unit')).toEqual({
       partial: true,
-      results: [{ kind: 'resource', ref, title: 'Unit 1' }],
+      presentation: emptyPresentation,
+      results: [{ ...resourceHit, kind: 'resource' }],
     });
     expect(baseline.access.batches[0]).toHaveLength(2);
   }),
@@ -470,6 +488,7 @@ it.effect(
       expect(calls[0]).not.toHaveProperty('role');
       expect(result).toEqual({
         partial: false,
+        presentation: emptyPresentation,
         results: [
           {
             archived: true,
@@ -523,6 +542,7 @@ it.effect(
       ]);
       expect(result).toEqual({
         partial: false,
+        presentation: emptyPresentation,
         results: [
           {
             archived: false,
@@ -578,10 +598,11 @@ it.effect('admits a record-scoped search provider through the list gate, not a t
     // The holder of the `all` selector sees the record through the list gate.
     expect(yield* search(true)).toEqual({
       partial: false,
+      presentation: emptyPresentation,
       results: [{ ...held, kind: 'party' }],
     });
     // The non-holder is refused: no results, and the provider never runs.
-    expect(yield* search(false)).toEqual({ partial: false, results: [] });
+    expect(yield* search(false)).toEqual({ partial: false, presentation: emptyPresentation, results: [] });
   }),
 );
 
@@ -663,10 +684,12 @@ it.effect('Counterparty search preserves both identities, selected scope, roles 
     // O25: the provider filters its own rows, so the Shell keeps the collision metadata it received.
     expect(result).toEqual({
       partial: false,
+      presentation: emptyPresentation,
       results: [{ ...value, kind: 'counterparty', title: 'Canonical Party' }],
     });
     expect(yield* search.search(tenantContext, 'canonical')).toEqual({
       partial: false,
+      presentation: emptyPresentation,
       results: [],
     });
     expect(calls).toHaveLength(1);
@@ -713,7 +736,7 @@ it.effect('never returns a provider-supplied nested identity outside its own sur
       // O25: the provider filters its own rows, so the Shell never re-checks per-record read; but a
       // nested identity outside this provider's own module, resource type or tenant is never
       // returned. The unauthorized identity must not appear anywhere in the response.
-      expect(result).toEqual({ partial: false, results: [] });
+      expect(result).toEqual({ partial: false, presentation: emptyPresentation, results: [] });
       expect(JSON.stringify(result)).not.toContain(marker);
     }
   }),
@@ -746,6 +769,7 @@ it.effect('keeps a search row whose governed Party name the caller may not read,
     // The provider redacted the name, so the row carries no title instead of failing the whole provider.
     expect(result).toEqual({
       partial: false,
+      presentation: emptyPresentation,
       results: [
         { ...named, kind: 'counterparty', title: 'Named Party' },
         { ...unnamed, kind: 'counterparty' },
@@ -766,10 +790,10 @@ it.effect('treats a missing tenant module-state record as hidden rather than aut
       yield* makeShellSearch(hiddenDependencies, {
         search: () => {
           calls += 1;
-          return Effect.succeed([{ ref, title: 'Unit 1' }]);
+          return Effect.succeed([resourceHit]);
         },
       }).search(context, 'unit'),
-    ).toEqual({ partial: false, results: [] });
+    ).toEqual({ partial: false, presentation: emptyPresentation, results: [] });
     const gateway = {
       detail: () => {
         calls += 1;
@@ -794,7 +818,7 @@ it.effect('search fails closed when a provider decision is unavailable', () =>
       Schema.is(ShellProviderUnavailableError)(
         yield* Effect.flip(
           makeShellSearch(dependencies({ access: 'unavailable' }), {
-            search: () => Effect.succeed([{ ref, title: 'Unit 1' }]),
+            search: () => Effect.succeed([resourceHit]),
           }).search(context, 'unit'),
         ),
       ),
@@ -815,7 +839,7 @@ it.effect('expired composition authority blocks search and resource providers de
     const search = makeShellSearch(expiredDependencies, {
       search: () => {
         providerCalls += 1;
-        return Effect.succeed([{ ref, title: 'Unit 1' }]);
+        return Effect.succeed([resourceHit]);
       },
     });
     expect(Schema.is(ShellProviderUnavailableError)(yield* Effect.flip(search.search(context, 'unit')))).toBe(true);
@@ -834,7 +858,7 @@ it.effect('expired composition authority blocks search and resource providers de
   }),
 );
 
-it.effect('resource detail denies an unadmitted module before the gate, a tenant or provider work', () =>
+it.effect('resource detail returns not found for an unknown module before gate, tenant or provider work', () =>
   Effect.gen(function* resourceDetailDeniesAnUnadmittedModule() {
     const baseline = dependencies({ access: 'allowed' });
     let assertionCalls = 0;
@@ -862,7 +886,7 @@ it.effect('resource detail denies an unadmitted module before the gate, a tenant
         },
       },
     ).resolve(context, requested);
-    expect(result).toEqual({ outcome: 'forbidden' });
+    expect(result).toEqual({ outcome: 'not_found' });
     expect(assertionCalls).toBe(0);
     expect(providerCalls).toBe(0);
     expect(baseline.access.decisions).toEqual([]);
@@ -1138,12 +1162,262 @@ it.effect('search issues assertions for the release captured by its single catal
           return baseline.issueAssertion();
         },
       },
-      { search: () => Effect.succeed([{ ref, title: 'Unit 1' }]) },
+      { search: () => Effect.succeed([resourceHit]) },
     ).search(context, 'unit');
-    expect(result).toEqual({ partial: false, results: [{ kind: 'resource', ref, title: 'Unit 1' }] });
+    expect(result).toEqual({
+      partial: false,
+      presentation: emptyPresentation,
+      results: [{ ...resourceHit, kind: 'resource' }],
+    });
     expect(catalogLoads).toBe(1);
     expect(assertions).toEqual([
       { appId: 'property-registry', compositionRevision: approved.composition.revision, context },
     ]);
+  }),
+);
+
+const providerRequest = Effect.gen(function* providerRequestFixture() {
+  const approved = yield* catalog();
+  const [module] = approved.composition.modules;
+  if (module === undefined) {
+    return yield* Effect.die('The fixture composition admits the property registry');
+  }
+  return {
+    appId: 'property-registry',
+    authorization: 'Bearer owner-assertion',
+    correlationId: 'unit-correlation',
+    includeArchived: false,
+    module,
+    query: 'dvořák',
+    searchKey: 'property.registry.unit-search',
+  } as const;
+});
+
+it.effect("the search gateway posts to the provider's own BFF route on the approved release", () =>
+  Effect.gen(function* searchGatewayPostsToOwnerRoute() {
+    const request = yield* providerRequest;
+    const sent: { readonly body: unknown; readonly headers: Headers; readonly method: string; readonly url: string }[] =
+      [];
+    const gateway = makeModuleSearchProviderGateway((outgoing: Request, module: ApplicationCompositionModule) =>
+      Effect.promise(async () => {
+        sent.push({
+          body: await outgoing.json(),
+          headers: outgoing.headers,
+          method: outgoing.method,
+          url: `${module.deployment.appId} ${new URL(outgoing.url).pathname}`,
+        });
+        return Response.json([{ ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }]);
+      }),
+    );
+    expect(yield* gateway.search(request)).toEqual([{ ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }]);
+    expect(sent.map(({ body, method, url }) => ({ body, method, url }))).toEqual([
+      {
+        body: { includeArchived: false, query: 'dvořák' },
+        method: 'POST',
+        url: 'property-registry /property-registry-api/property.registry/search/unit-search',
+      },
+    ]);
+    expect(sent[0]?.headers.get('authorization')).toBe('Bearer owner-assertion');
+    expect(sent[0]?.headers.get('x-correlation-id')).toBe('unit-correlation');
+  }),
+);
+
+it.effect(
+  'the search gateway preserves owner entrypoint403, successful filtered200 and unavailable failures distinctly',
+  () =>
+    Effect.gen(function* searchGatewayFailsClosed() {
+      const request = yield* providerRequest;
+      let calls = 0;
+      const respondWith = (status: number) =>
+        makeModuleSearchProviderGateway(() =>
+          Effect.sync(() => {
+            calls += 1;
+            return Response.json({ _tag: 'UnitSearchProviderProblem' }, { status });
+          }),
+        );
+      const denied = yield* Effect.flip(respondWith(403).search(request));
+      expect(Schema.is(ReadPermissionDenied)(denied)).toBe(true);
+      expect(JSON.stringify(denied)).not.toContain('UnitSearchProviderProblem');
+      expect(yield* makeModuleSearchProviderGateway(() => Effect.succeed(Response.json([]))).search(request)).toEqual(
+        [],
+      );
+      const outage = yield* Effect.flip(respondWith(503).search(request));
+      expect(Schema.is(ShellProviderUnavailableError)(outage)).toBe(true);
+      const foreign = yield* Effect.flip(respondWith(200).search({ ...request, searchKey: 'party.registry.parties' }));
+      expect(Schema.is(ShellProviderUnavailableError)(foreign)).toBe(true);
+      expect(calls).toBe(2);
+    }),
+);
+
+it.effect(
+  'an admitted search owner entrypoint403 is one attempt and a sanitized overall permission denial, never retried or empty',
+  () =>
+    Effect.gen(function* entrypointRefusalIsForbidden() {
+      let assertions = 0;
+      let ownerCalls = 0;
+      const base = dependencies({ access: 'allowed' });
+      const gateway = makeModuleSearchProviderGateway(() =>
+        Effect.sync(() => {
+          ownerCalls += 1;
+          return Response.json({ credential: 'PRIVATE-JWT', privateOwnerDiagnostic: 'DO-NOT-EXPOSE' }, { status: 403 });
+        }),
+      );
+      const failure = yield* Effect.flip(
+        makeShellSearch(
+          {
+            ...base,
+            issueAssertion: () => {
+              assertions += 1;
+              return Effect.succeed('Bearer owner-test-assertion');
+            },
+          },
+          gateway,
+        ).search(context, 'Unit'),
+      );
+      expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
+      expect(assertions).toBe(1);
+      expect(ownerCalls).toBe(1);
+      expect(JSON.stringify(failure)).not.toContain('DO-NOT-EXPOSE');
+      expect(JSON.stringify(failure)).not.toContain('PRIVATE-JWT');
+    }),
+);
+
+it.effect('an owner-filtered200 collection remains successful and is not confused with entrypoint403', () =>
+  Effect.gen(function* filteredCollectionIsEmptySuccess() {
+    let ownerCalls = 0;
+    const gateway = makeModuleSearchProviderGateway(() =>
+      Effect.sync(() => {
+        ownerCalls += 1;
+        return Response.json([]);
+      }),
+    );
+    expect(yield* makeShellSearch(dependencies({ access: 'allowed' }), gateway).search(context, 'Unit')).toEqual({
+      partial: false,
+      presentation: emptyPresentation,
+      results: [],
+    });
+    expect(ownerCalls).toBe(1);
+  }),
+);
+
+it.effect('fresh-assertion retries consume the original provider deadline instead of extending it', () =>
+  Effect.gen(function* boundedRetry() {
+    const baseline = dependencies({ access: 'allowed' });
+    const installed = yield* baseline.catalog;
+    const assertions: string[] = [];
+    let completed = false;
+    const pending = yield* makeShellSearch(
+      { ...baseline, catalog: Effect.succeed(installed) },
+      {
+        search: ({ authorization }) => {
+          assertions.push(authorization);
+          const first = assertions.length === 1;
+          // The first attempt fails inside the provider deadline and gets its retry; the deadline then cuts the retry.
+          return Effect.sleep(SHELL_SEARCH_PROVIDER_DEADLINE_MILLIS * 0.6).pipe(
+            Effect.flatMap(() =>
+              first
+                ? Effect.fail(new ShellProviderUnavailableError({}))
+                : Effect.sync(() => {
+                    completed = true;
+                    return [{ ref, title: 'Unit 1' }];
+                  }),
+            ),
+          );
+        },
+      },
+    )
+      .search(context, 'unit')
+      .pipe(Effect.flip, Effect.forkChild);
+    yield* TestClock.adjust(SHELL_SEARCH_REQUEST_BUDGET_MILLIS);
+    expect(Schema.is(ShellProviderUnavailableError)(yield* Fiber.join(pending))).toBe(true);
+    expect(assertions).toHaveLength(2);
+    expect(new Set(assertions).size).toBe(2);
+    yield* TestClock.adjust(SHELL_SEARCH_REQUEST_BUDGET_MILLIS);
+    expect(completed).toBe(false);
+  }),
+);
+
+it.effect('a provider past its own deadline is left out, the answer is partial and the other hits survive', () =>
+  Effect.gen(function* slowProviderHitsItsDeadline() {
+    const both = yield* makeInstalledModuleCatalogLoader(makeCompositionSnapshot([propertyContract, partyContract]));
+    const access = makeShellTestAccessGate({ answers: { [PARTY_SEARCH_KEY]: 'allowed', [SEARCH_KEY]: 'allowed' } });
+    const logs: string[] = [];
+    let slowInterrupted = false;
+    const logger = Logger.layer([
+      Logger.make((options) => {
+        logs.push(JSON.stringify(Logger.formatStructured.log(options)));
+      }),
+    ]);
+    const fiber = yield* makeShellSearch(
+      { ...dependencies({ access: 'allowed' }), access, catalog: Effect.succeed(both) },
+      {
+        search: ({ searchKey }) =>
+          searchKey === PARTY_SEARCH_KEY
+            ? Effect.never.pipe(
+                Effect.onInterrupt(() =>
+                  Effect.sync(() => {
+                    slowInterrupted = true;
+                  }),
+                ),
+              )
+            : Effect.succeed([resourceHit]),
+      },
+    )
+      .search(context, 'unit')
+      .pipe(Effect.provide(logger), Effect.forkChild);
+    // Let the forked search reach its own waits before the clock moves past the deadline.
+    yield* Effect.yieldNow;
+    yield* TestClock.adjust(Duration.millis(SHELL_SEARCH_PROVIDER_DEADLINE_MILLIS));
+    // Checked without waiting, so a search still stuck on the slow owner fails here instead of hanging.
+    expect(fiber.pollUnsafe()).not.toBeUndefined();
+    expect(yield* Fiber.join(fiber)).toEqual({
+      partial: true,
+      presentation: emptyPresentation,
+      results: [{ ...resourceHit, kind: 'resource' }],
+    });
+    // The slow owner's call is interrupted, not left running unawaited.
+    expect(slowInterrupted).toBe(true);
+    // The provider that never answered writes one line saying it passed its deadline: its id, never the query.
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain(PARTY_SEARCH_KEY);
+    expect(logs[0]).toContain('deadline');
+  }),
+);
+
+it.effect('providers that answer at once are unchanged by the per-provider deadline', () =>
+  Effect.gen(function* fastProvidersAreNotCut() {
+    const both = yield* makeInstalledModuleCatalogLoader(makeCompositionSnapshot([propertyContract, partyContract]));
+    const access = makeShellTestAccessGate({ answers: { [PARTY_SEARCH_KEY]: 'allowed', [SEARCH_KEY]: 'allowed' } });
+    expect(
+      yield* makeShellSearch(
+        { ...dependencies({ access: 'allowed' }), access, catalog: Effect.succeed(both) },
+        {
+          search: ({ searchKey }) =>
+            searchKey === PARTY_SEARCH_KEY ? Effect.succeed([]) : Effect.succeed([resourceHit]),
+        },
+      ).search(context, 'unit'),
+    ).toEqual({
+      partial: false,
+      presentation: emptyPresentation,
+      results: [{ ...resourceHit, kind: 'resource' }],
+    });
+  }),
+);
+
+it.effect('an owner that fails once and answers on the retry still counts', () =>
+  Effect.gen(function* retryAnswerCounts() {
+    let calls = 0;
+    const result = yield* makeShellSearch(dependencies({ access: 'allowed' }), {
+      search: () => {
+        calls += 1;
+        return calls === 1 ? Effect.fail(new ShellProviderUnavailableError()) : Effect.succeed([resourceHit]);
+      },
+    }).search(context, 'unit');
+    expect(result).toEqual({
+      partial: false,
+      presentation: emptyPresentation,
+      results: [{ ...resourceHit, kind: 'resource' }],
+    });
+    expect(calls).toBe(2);
   }),
 );

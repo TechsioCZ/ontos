@@ -11,7 +11,7 @@ import { makeAccessDecisionService } from '../../src/access/enforcement/service.
 import { bindAccessGate } from '../../src/operations/access-gate.ts';
 import type { BoundAccessGate } from '../../src/operations/access-gate.ts';
 import { inertAccessEnforcementPorts, makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
-import { PrincipalIdSchema } from '../../src/access/ids.ts';
+import { LegalEntityIdSchema, PrincipalIdSchema } from '../../src/access/ids.ts';
 import { cell, makeAuthority, makeCheck, principalHolder } from './access-decision-support.ts';
 import { registeredGatewayRecoveryPrincipal } from '../support/registered-gateway-recovery.ts';
 import { historicalOwnerContract, historicalOwnerTarget } from '../support/historical-owner-targets.ts';
@@ -32,7 +32,7 @@ import {
 import type { ActiveApplicationCompositionServiceContract } from '../../src/modules/active-application-composition.ts';
 import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/active-application-composition-errors.ts';
 import { requireModuleOperation } from '../../src/modules/module-operation-requirement.ts';
-import { withModuleOperationExecution } from '../../src/modules/module-operation-execution.ts';
+import { isGenuineCoreAction, withModuleOperationExecution } from '../../src/modules/module-operation-execution.ts';
 import { ModuleOperationRequirementError } from '../../src/modules/module-operation-requirement-error.ts';
 import { defineOntosModuleManifest } from '../../src/modules/manifest.ts';
 import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
@@ -47,6 +47,7 @@ import {
   Effect,
   Exit,
   Fiber,
+  Logger,
   Match,
   Option,
   Predicate,
@@ -93,9 +94,13 @@ import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runt
 
 import { makeActionAuthorizationPreflightPermit } from '../../src/actions/owner-proof-preflight.ts';
 import type { ActionAuthorizationPreflightService } from '../../src/actions/owner-proof-preflight.ts';
-import { allowOwnerAuthorizationOverlay } from '../../src/access/enforcement/owner-overlay.ts';
+import {
+  allowOwnerAuthorizationOverlay,
+  ownerAuthorizationDenial,
+} from '../../src/access/enforcement/owner-overlay.ts';
 import type {
   OwnerAuthorizationInput,
+  OwnerAuthorizationOutcome,
   OwnerAuthorizationOverlayService,
 } from '../../src/access/enforcement/owner-overlay.ts';
 import type { PrincipalManagementRepositoryService } from '../../src/auth/principal-management.ts';
@@ -109,6 +114,7 @@ import {
 } from '../../src/auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
 import { recordSupportImpersonationAction } from '../../src/modules/actions/record-support-impersonation.action.ts';
+import { mutateAgentProposalsAction } from '../../src/modules/actions/mutate-agent-proposals.action.ts';
 import { makeModuleEntrypointGateway } from '../../src/modules/module-entrypoint-gateway.ts';
 import type { ModuleEntrypointDescriptor } from '../../src/modules/module-entrypoint.ts';
 import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -121,6 +127,7 @@ import type { TenantModuleState } from '../../src/modules/tenant-module-state-se
 import type { ActionPermissionDecision, CheckActionPermissionInput } from '../../src/permissions/service.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { makeTestDatabase } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import { fixtureActionAccess } from '../support/access-declaration-fixtures.ts';
 
 const historicalActionPermissions = <Payload>(
@@ -182,8 +189,11 @@ const unusedPrincipalManagementOperation = () =>
   Effect.die('The ambient PrincipalManagementRepository must not be used by the Action runtime');
 const ambientPrincipalManagementRepository: PrincipalManagementRepositoryService = {
   bindApiKey: unusedPrincipalManagementOperation,
+  changePlatformPrincipalStatus: unusedPrincipalManagementOperation,
   changePrincipalStatus: unusedPrincipalManagementOperation,
   createNonHumanPrincipal: unusedPrincipalManagementOperation,
+  createPlatformServicePrincipal: unusedPrincipalManagementOperation,
+  renamePlatformServicePrincipal: unusedPrincipalManagementOperation,
   setApiKeyBindingStatus: unusedPrincipalManagementOperation,
   validateSupportImpersonation: unusedPrincipalManagementOperation,
 };
@@ -196,6 +206,8 @@ const PermissionDecisionSchema = Schema.Literals(['allowed', 'denied', 'unavaila
 type PermissionDecision = typeof PermissionDecisionSchema.Type;
 const transactionOperationAt = DateTime.toDateUtc(DateTime.makeUnsafe(Date.parse('2026-09-28T09:00:00.000Z')));
 const approvedCompositionRevision = 'a'.repeat(64);
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 
 interface TestCompositionAuthority {
   readonly phase: 'active' | 'draining';
@@ -215,7 +227,7 @@ interface HarnessOptions {
   readonly commitFailureCode?: string;
   readonly compositionAuthority?: TestCompositionAuthority | 'missing';
   readonly compositionIsolation?: 'read committed' | 'repeatable read' | 'serializable';
-  readonly createRecord?: ActionInvocationRecord;
+  readonly createRecord?: ActionInvocationRecord & { readonly actionKey?: string };
   readonly expectedDeployment?: ActionRuntimeOptions['expectedDeployment'];
   readonly failCompositionAuthorityLock?: boolean;
   readonly failTransactionTimestamp?: boolean;
@@ -294,14 +306,16 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   let compositionAuthorityLockCount = 0;
   let compositionAuthorityLockHeld = false;
   const transactionSteps: string[] = [];
-  const invocation =
-    options.createRecord ??
-    ({
-      actionInvocationId: 'invocation-1',
-      completedAt: null,
-      requestHash: '',
-      status: 'received',
-    } satisfies ActionInvocationRecord);
+  const invocation: ActionInvocationRecord & { readonly actionKey: string } =
+    options.createRecord === undefined
+      ? {
+          actionInvocationId: 'invocation-1',
+          actionKey: 'shell.counter.write',
+          completedAt: null,
+          requestHash: '',
+          status: 'received',
+        }
+      : { actionKey: 'shell.counter.write', ...options.createRecord };
   let currentInvocation = invocation;
   let preparedHash = '';
 
@@ -345,7 +359,12 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       if (policyDenial !== undefined) {
         return Effect.succeedSome({ policyReasonCode: policyDenial.reasonCode, stage: 'policy' as const });
       }
-      return Effect.succeed(rejections.length > 0 ? Option.some({ stage: 'authz' as const }) : Option.none());
+      const [rejection] = rejections;
+      return Effect.succeed(
+        rejection === undefined
+          ? Option.none()
+          : Option.some({ reasons: rejection.reasonCodes ?? [], stage: 'authz' as const }),
+      );
     },
     lockInvocation: () => {
       transactionSteps.push('invocation_locked');
@@ -424,16 +443,45 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       }
       return [];
     });
+  /** Records the scope any `set_config` statement installs; answers the row of the one-statement install. */
+  const installTestScope = (text: string, values: readonly unknown[]) => {
+    if (!text.includes('set_config')) {
+      return Option.none();
+    }
+    const [tenantId, legalEntityId] = values;
+    if (Predicate.isString(tenantId) && Predicate.isString(legalEntityId)) {
+      installedTenantId = tenantId;
+      installedLegalEntityId = legalEntityId;
+    }
+    // A session-setting role installs its scope and reads back the connected role in one statement.
+    return text === installAndReadScopeSql
+      ? Option.some([{ legal_entity_id: installedLegalEntityId, role: 'ontos_runtime', tenant_id: installedTenantId }])
+      : Option.none();
+  };
   const sourceExecutionFenceAllowed = () =>
     options.readSourceExecutionFence?.() ?? options.sourceExecutionFenceOpen !== false;
+  const compositionAuthorityRows = () => {
+    const authority = options.compositionAuthority ?? {
+      phase: 'active',
+      revision: approvedCompositionRevision,
+      unexpired: true,
+    };
+    return authority === 'missing'
+      ? []
+      : [
+          {
+            phase: authority.phase,
+            revision: authority.revision,
+            subscriptionsJson: [],
+            unexpired: authority.unexpired,
+          },
+        ];
+  };
   const query = Effect.fn(function* executeQuery(statement: string, values: readonly unknown[]) {
     const text = statement.toLowerCase();
-    if (text.includes('set_config')) {
-      const [tenantId, legalEntityId] = values;
-      if (Predicate.isString(tenantId) && Predicate.isString(legalEntityId)) {
-        installedTenantId = tenantId;
-        installedLegalEntityId = legalEntityId;
-      }
+    const installedScopeRows = installTestScope(text, values);
+    if (Option.isSome(installedScopeRows)) {
+      return installedScopeRows.value;
     }
     if (text === 'begin') {
       transactionSteps.push('begin');
@@ -461,32 +509,27 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       return [];
     }
     if (text.includes('pg_advisory_xact_lock_shared')) {
-      compositionAuthorityLockCount += 1;
-      transactionSteps.push('composition_authority_locked');
-      if (options.failCompositionAuthorityLock === true) {
-        return yield* new SqlError({
-          reason: new ConnectionError({ cause: new Error('composition authority lock unavailable') }),
-        });
+      // The guarded fence only acquires its lock under READ COMMITTED; the CASE never takes it in an
+      // unsupported isolation, so an unsuitable transaction counts no lock and never holds one.
+      if ((options.compositionIsolation ?? 'read committed') === 'read committed') {
+        compositionAuthorityLockCount += 1;
+        transactionSteps.push('composition_authority_locked');
+        if (options.failCompositionAuthorityLock === true) {
+          return yield* new SqlError({
+            reason: new ConnectionError({ cause: new Error('composition authority lock unavailable') }),
+          });
+        }
+        compositionAuthorityLockHeld = true;
       }
-      compositionAuthorityLockHeld = true;
-      return [];
+      // The canonical fence is one combined statement (isolation probe + guarded lock), so it also
+      // answers the isolation read below. The separate-statement form returns here and the following
+      // statement answers it.
+      if (!text.includes("current_setting('transaction_isolation')")) {
+        return [];
+      }
     }
     if (text.includes('application_composition_authority')) {
-      const authority = options.compositionAuthority ?? {
-        phase: 'active',
-        revision: approvedCompositionRevision,
-        unexpired: true,
-      };
-      return authority === 'missing'
-        ? []
-        : [
-            {
-              phase: authority.phase,
-              revision: authority.revision,
-              subscriptionsJson: [],
-              unexpired: authority.unexpired,
-            },
-          ];
+      return compositionAuthorityRows();
     }
     if (text.includes("current_setting('transaction_isolation')")) {
       return [{ isolation: options.compositionIsolation ?? 'read committed' }];
@@ -659,6 +702,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
         );
       },
     },
+    databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
     moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
     moduleStateGate,
     ...ownerAuthorizationOptions,
@@ -1093,11 +1137,15 @@ it.effect(
       originalRevision: approvedCompositionRevision,
     });
     expect(harness.flushed[0]?.allowedPolicies).toEqual([]);
+    // The trusted scope's own tenant and legal entity ride every permission check (ScopedActionIdentity);
+    // the check never derives them from the payload.
     expect(harness.permissionChecks).toEqual([
       {
         actionKey: 'shell.counter.change',
         correlationId: 'correlation-intent-1',
+        legalEntityId: principal.legalEntityId,
         principalId: principal.principalId,
+        tenantId: principal.tenantId,
       },
     ]);
     expect(harness.gateCounts()).toEqual({
@@ -1293,6 +1341,8 @@ it.effect(
     );
 
     expect(Schema.is(ActionPermissionDenied)(failure)).toBe(true);
+    // A bare owner denial still names the rule that refused: "Proč?" cannot see an owner rule.
+    expect(failure).toMatchObject({ code: 'action_permission_denied', reasons: ['deny.owner_rule'] });
     expect(ownerInputs).toHaveLength(1);
     expect(ownerInputs[0]?.operationAt).toEqual(DateTime.makeUnsafe(Date.parse('2026-09-28T09:00:00.000Z')));
     expect(harness.transactionTimestampReads()).toBe(1);
@@ -1304,6 +1354,267 @@ it.effect(
       transitionCount: 0,
     });
     expect(harness.permissionCounts().rejectionCount).toBe(1);
+  }),
+);
+
+it.effect(
+  "carries the owner overlay's own refusal codes, and an unavailable answer stays unavailable",
+  Effect.fn(function* testOwnerOverlayReasons() {
+    const answers: readonly (readonly [string, OwnerAuthorizationOutcome])[] = [
+      [
+        'owner-reasons-denied',
+        ownerAuthorizationDenial('deny.owner.counterparty_grant_missing', 'requires.counterparty.address_book.manage'),
+      ],
+      ['owner-reasons-unavailable', 'unavailable'],
+    ];
+    const [reasoned, unavailable] = yield* Effect.forEach(
+      answers,
+      Effect.fn(function* refusalOf([key, outcome]) {
+        const harness = yield* makeHarness({
+          ownerAuthorizationOverlay: { authorize: () => Effect.succeed(outcome) },
+        });
+        return yield* Effect.flip(
+          harness.runtime.runAction({
+            payload: { amount: 3 },
+            principal,
+            registration: registration(),
+            transport: transport(key),
+          }),
+        );
+      }),
+      { concurrency: 1 },
+    );
+
+    expect(Schema.is(ActionPermissionDenied)(reasoned)).toBe(true);
+    expect(reasoned).toMatchObject({
+      code: 'action_permission_denied',
+      reasons: ['deny.owner.counterparty_grant_missing', 'requires.counterparty.address_book.manage'],
+    });
+    expect(Schema.is(ActionPermissionCheckError)(unavailable)).toBe(true);
+    expect(unavailable).toMatchObject({ code: 'action_permission_check_failed' });
+  }),
+);
+
+const capturedLogs = (entries: string[]) =>
+  Logger.layer([
+    Logger.make((options) => {
+      entries.push(JSON.stringify(Logger.formatStructured.log(options)));
+    }),
+  ]);
+
+/**
+ * Answers outside the owner contract, as a type escape or a separately built owner unit could send:
+ * untyped values the compiler cannot vet. Each is unavailable, never an allow, and nothing runs or commits.
+ */
+const outOfContract = Schema.decodeUnknownEffect(Schema.Any);
+const OUT_OF_CONTRACT_OWNER_ANSWERS: readonly (readonly [string, () => Effect.Effect<OwnerAuthorizationOutcome>])[] = [
+  ['ALLOWED', () => outOfContract('ALLOWED').pipe(Effect.orDie)],
+  ['{}', () => outOfContract({}).pipe(Effect.orDie)],
+  ['{decision: allowed}', () => outOfContract({ decision: 'allowed' }).pipe(Effect.orDie)],
+  ['null', () => outOfContract(null).pipe(Effect.orDie)],
+  ['undefined', () => outOfContract(globalThis.undefined).pipe(Effect.orDie)],
+  ['a thrown defect', () => Effect.die(new Error('owner rule defect'))],
+];
+
+for (const [label, answer] of OUT_OF_CONTRACT_OWNER_ANSWERS) {
+  it.effect(`answers an owner overlay's ${label} as unavailable on the Action path`, () =>
+    Effect.gen(function* outOfContractOwnerAction() {
+      const harness = yield* makeHarness({
+        ownerAuthorizationOverlay: {
+          authorize: answer,
+        },
+      });
+      const failure = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 3 },
+          principal,
+          registration: registration(),
+          transport: transport(`owner-odd-${label}`),
+        }),
+      );
+      expect(Schema.is(ActionPermissionCheckError)(failure)).toBe(true);
+      expect(failure).toMatchObject({ code: 'action_permission_check_failed' });
+      expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+      expect(harness.counts().transitionCount).toBe(0);
+      expect(harness.flushed).toHaveLength(0);
+      expect(harness.permissionCounts().rejectionCount).toBe(0);
+    }),
+  );
+}
+
+it.effect('a synchronous throw inside the owner overlay is unavailable with one warning, never a 500', () =>
+  Effect.gen(function* synchronousOwnerThrow() {
+    const entries: string[] = [];
+    const harness = yield* makeHarness({
+      ownerAuthorizationOverlay: {
+        authorize: () => {
+          throw new TypeError('owner rule private detail');
+        },
+      },
+    });
+    const failure = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 3 },
+        principal,
+        registration: registration(),
+        transport: transport('owner-sync-throw'),
+      }),
+      // @effect-diagnostics-next-line strictEffectProvide:off -- Test-owned diagnostic logger capture.
+    ).pipe(Effect.provide(capturedLogs(entries)));
+    expect(Schema.is(ActionPermissionCheckError)(failure)).toBe(true);
+    expect(failure).toMatchObject({ code: 'action_permission_check_failed' });
+    expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+    const warning = entries.find((entry) => entry.includes('Owner authorization overlay failed'));
+    expect(warning).toContain('"failure":"TypeError"');
+    expect(warning).toContain('"operationKey":"shell.counter.change"');
+    expect(warning).toContain('"owningModuleKey":"core.shell"');
+    expect(warning).not.toContain('private detail');
+  }),
+);
+
+it.effect('an owner answer outside the contract is unavailable with one warning naming its kind, never its value', () =>
+  Effect.gen(function* outOfContractWarning() {
+    const entries: string[] = [];
+    const harness = yield* makeHarness({
+      ownerAuthorizationOverlay: { authorize: () => outOfContract({ secret: 'value' }).pipe(Effect.orDie) },
+    });
+    yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 3 },
+        principal,
+        registration: registration(),
+        transport: transport('owner-odd-warning'),
+      }),
+      // @effect-diagnostics-next-line strictEffectProvide:off -- Test-owned diagnostic logger capture.
+    ).pipe(Effect.provide(capturedLogs(entries)));
+    const warning = entries.find((entry) => entry.includes('Owner authorization answer outside the contract'));
+    expect(warning).toContain('"answerKind":"object"');
+    expect(warning).toContain('"capabilityKey":');
+    expect(warning).toContain('"operationKey":"shell.counter.change"');
+    expect(warning).not.toContain('secret');
+  }),
+);
+
+it.effect('reports only reason codes Core may report; anything else collapses to deny.owner_rule (R3)', () =>
+  Effect.gen(function* ownerReasonsChecked() {
+    const unreportable: readonly (readonly [string, ...string[]])[] = [
+      ['Deny.Owner.Upper'],
+      ['deny.owner.someone@example.test'],
+      ['deny owner spaces'],
+      [`deny.owner.${'x'.repeat(130)}`],
+      ['deny.owner.code_0', ...Array.from({ length: 8 }, (_, index) => `deny.owner.code_${index + 1}`)],
+      ['undotted'],
+    ];
+    for (const [index, reasons] of unreportable.entries()) {
+      const harness = yield* makeHarness({
+        ownerAuthorizationOverlay: {
+          authorize: () => Effect.succeed({ decision: 'denied' as const, reasons }),
+        },
+      });
+      const failure = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 3 },
+          principal,
+          registration: registration(),
+          transport: transport(`owner-unreportable-${index}`),
+        }),
+      );
+      expect(Schema.is(ActionPermissionDenied)(failure)).toBe(true);
+      expect(failure).toMatchObject({ reasons: ['deny.owner_rule'] });
+    }
+  }),
+);
+
+it.effect('writes one refusal warning with the refusing check and no payload values', () =>
+  Effect.gen(function* refusalWarning() {
+    const entries: string[] = [];
+    const harness = yield* makeHarness({
+      ownerAuthorizationOverlay: {
+        authorize: () => Effect.succeed(ownerAuthorizationDenial('deny.owner.counterparty_grant_missing')),
+      },
+    });
+    yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 31_337 },
+        principal,
+        registration: registration(),
+        transport: transport('refusal-warning'),
+      }),
+      // @effect-diagnostics-next-line strictEffectProvide:off -- Test-owned diagnostic logger capture.
+    ).pipe(Effect.provide(capturedLogs(entries)));
+    const warnings = entries.filter((entry) => entry.includes('Action refused'));
+    expect(warnings).toHaveLength(1);
+    const [warning] = warnings;
+    for (const field of [
+      '"refusedAction":"shell.counter.change"',
+      '"code":"action_permission_denied"',
+      '"reasons":"deny.owner.counterparty_grant_missing"',
+      `"refusalTenant":"${principal.tenantId}"`,
+      `"refusalCompany":"${principalLegalEntityId}"`,
+      '"reason":"The owner-local authorization state denies this Action"',
+    ]) {
+      expect(warning).toContain(field);
+    }
+    expect(warning).not.toContain('31337');
+    expect(warning).not.toContain('amount');
+    expect(warning).not.toContain(principal.principalId);
+  }),
+);
+
+it.effect('records the refusal codes and answers a same-key retry with them', () =>
+  Effect.gen(function* retryKeepsCodes() {
+    const harness = yield* makeHarness({
+      ownerAuthorizationOverlay: {
+        authorize: () =>
+          Effect.succeed(
+            ownerAuthorizationDenial(
+              'deny.owner.counterparty_grant_missing',
+              'requires.counterparty.address_book.manage',
+            ),
+          ),
+      },
+    });
+    const run = () =>
+      Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 3 },
+          principal,
+          registration: registration(),
+          transport: transport('retry-keeps-codes'),
+        }),
+      );
+    const first = yield* run();
+    const retried = yield* run();
+    const codes = ['deny.owner.counterparty_grant_missing', 'requires.counterparty.address_book.manage'];
+    expect(harness.rejections[0]?.reasonCodes).toEqual(codes);
+    expect(Schema.is(ActionPermissionDenied)(first)).toBe(true);
+    expect(first).toMatchObject({ reasons: codes });
+    expect(Schema.is(ActionPermissionDenied)(retried)).toBe(true);
+    expect(retried).toMatchObject({ reasons: codes });
+    expect(harness.permissionCounts().rejectionCount).toBe(1);
+  }),
+);
+
+it.effect('a propose request to a result-only endpoint is refused without naming tenant or company', () =>
+  Effect.gen(function* proposeRefusedBeforeValidation() {
+    const entries: string[] = [];
+    const harness = yield* makeHarness();
+    const failure = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 3 },
+        principal,
+        registration: registration(),
+        transport: { ...transport('propose-result-only'), intent: 'propose' as const },
+      }),
+      // @effect-diagnostics-next-line strictEffectProvide:off -- Test-owned diagnostic logger capture.
+    ).pipe(Effect.provide(capturedLogs(entries)));
+    expect(Schema.is(ActionPermissionDenied)(failure)).toBe(true);
+    expect(failure).toMatchObject({ code: 'action_permission_denied' });
+    const warning = entries.find((entry) => entry.includes('Action refused'));
+    expect(warning).toContain('"refusalTenant":"unverified"');
+    expect(warning).toContain('"refusalCompany":"unverified"');
+    expect(warning).not.toContain(principal.tenantId);
+    expect(warning).not.toContain(principalLegalEntityId);
   }),
 );
 
@@ -5442,6 +5753,56 @@ it.layer(NodeCrypto.layer)('Core Actions hosted by genuine registered modules', 
       expect(recreatedCalls).toBe(0);
     }),
   );
+
+  suite.effect('hands the prepared-access re-check to a genuine Core Action only, never to another owner', () =>
+    Effect.gen(function* recheckOnlyForCore() {
+      const seen: boolean[] = [];
+      // The one consumer of the re-check is Core's own; a re-created copy of a Core descriptor is not Core's.
+      expect(isGenuineCoreAction(mutateAgentProposalsAction)).toBe(true);
+      expect(
+        isGenuineCoreAction(defineAction({ ...mutateAgentProposalsAction.descriptor }, () => Effect.die('unused'))),
+      ).toBe(false);
+      const vertical = defineAction(
+        {
+          accessDeclaration: fixtureActionAccess('commerce.fixture'),
+          accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'owner.recheck.v1' },
+          actionKey: 'commerce.fixture.recheck-probe',
+          auditProfile: 'standard',
+          domainErrorSchema: Schema.Never,
+          domainEvents: {},
+          entrypoint: defineTenantModuleEntrypoint({
+            access: 'write',
+            authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+            entrypointKey: 'commerce.fixture.recheck-probe',
+            moduleKey: 'commerce.fixture',
+            role: 'action',
+          }),
+          idempotency: 'required',
+          legalEntityScope: 'required',
+          owningModuleKey: 'commerce.fixture',
+          payloadSchema: Schema.Struct({ value: Schema.String }),
+          policies: [],
+          resultSchema: Schema.Void,
+          schemaVersion: '1',
+        },
+        () => Effect.void,
+        (transaction) => {
+          seen.push(transaction.recheckPreparedAccess !== undefined);
+          return Effect.succeed({});
+        },
+      );
+      const owner = yield* makeHarness({
+        createRecord: { actionInvocationId: 'recheck-probe', completedAt: null, requestHash: '', status: 'received' },
+      });
+      yield* owner.runtime.runAction({
+        payload: { value: 'probe' },
+        principal,
+        registration: vertical,
+        transport: transport('recheck-probe'),
+      });
+      expect(seen).toEqual([false]);
+    }),
+  );
 });
 
 it.effect('rejects signed receipt recovery authority before creating or executing any Action', () =>
@@ -5665,7 +6026,14 @@ it.effect('exposes only the actual gate-selected workload branch to the exact li
         check: check.port,
         intent: { authorityFor: () => authority.port },
         principalKinds: { readKind: () => Effect.succeed(Option.some(row.kind)) },
-        workloadBindings: { readActiveWorkloadKeys: () => Effect.succeed(new Set(row.keys)) },
+        // The workload is registered for the company it acts in (D6), so only its keys choose the branch.
+        workloadBindings: {
+          readWorkloadAuthority: () =>
+            Effect.succeed({
+              activeCompanyIds: new Set([LegalEntityIdSchema.make(principalLegalEntityId)]),
+              workloadKeys: new Set<string>(row.keys),
+            }),
+        },
       };
       const gate = makeAccessDecisionService({
         authorityFor: ports.intent.authorityFor,
@@ -5716,7 +6084,10 @@ it.effect('exposes only the actual gate-selected workload branch to the exact li
     const deniedPorts = {
       ...inertAccessEnforcementPorts(),
       principalKinds: { readKind: () => Effect.succeed(Option.some('integration' as const)) },
-      workloadBindings: { readActiveWorkloadKeys: () => Effect.succeed(new Set<string>()) },
+      workloadBindings: {
+        readWorkloadAuthority: () =>
+          Effect.succeed({ activeCompanyIds: new Set<never>(), workloadKeys: new Set<string>() }),
+      },
     };
     const deniedGate = makeAccessDecisionService({
       authorityFor: deniedPorts.intent.authorityFor,

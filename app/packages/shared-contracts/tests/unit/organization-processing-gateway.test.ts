@@ -7,6 +7,8 @@ import {
 import { ConfigProvider, Crypto, Effect, Match, Redacted, Result, Schema, Struct } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
+
+import { holdTestModuleCredentials } from '../../../core-runtime/tests/support/module-credentials.ts';
 import { acquireDelegatedGatewayContext, GatewayDelegationSourceError } from '../../src/gateway-context-server.ts';
 import { GatewayDelegatedContextRequestSchema } from '../../src/gateway-context.ts';
 
@@ -16,8 +18,12 @@ const targetDeclaration = 'integration.symmy.symmy-source-organization-facts.rea
 const tenantId = '30000000-0000-4000-8000-000000000001';
 const legalEntityId = '30000000-0000-4000-8000-000000000002';
 const configuration = ConfigProvider.fromEnvRecord({
-  ONTOS_GATEWAY_MODULE_API_KEY: 'fixture-module-key',
   ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
+});
+/** Each calling module's key, handed over the way the host does. */
+const holdCallerKeys = holdTestModuleCredentials({
+  privacy: 'fixture-privacy-module-key',
+  'symmy-integration': 'fixture-symmy-module-key',
 });
 const crypto = Crypto.make({
   digest: () => Effect.succeed(new Uint8Array()),
@@ -84,10 +90,12 @@ const recordingFetch =
 
 it.effect('preserves the exact decoded processing request hash on the typed registered-assertion wire', () =>
   Effect.gen(function* processingHashWire() {
+    yield* holdCallerKeys;
     const requests: Request[] = [];
     yield* acquireDelegatedGatewayContext(
       {
         audience: 'symmy-integration',
+        callingAppId: 'privacy',
         legalEntityScope: 'subject',
         requestCorrelation: 'processing-wire',
         subject: {
@@ -124,10 +132,12 @@ it.effect('preserves the exact decoded processing request hash on the typed regi
 
 it.effect('rejects processing/recovery mixing, changed target, and finite processing onward use before HTTP', () =>
   Effect.gen(function* processingRestrictionPreHttp() {
+    yield* holdCallerKeys;
     const normal = sourceScope();
     const cases = [
       {
         audience: 'party-registry',
+        callingAppId: 'privacy',
         subject: {
           _tag: 'RegisteredAssertion',
           declarationKey: targetDeclaration,
@@ -137,6 +147,7 @@ it.effect('rejects processing/recovery mixing, changed target, and finite proces
       },
       {
         audience: 'symmy-integration',
+        callingAppId: 'privacy',
         subject: {
           _tag: 'RegisteredAssertion',
           declarationKey: 'integration.symmy.other.read',
@@ -146,6 +157,7 @@ it.effect('rejects processing/recovery mixing, changed target, and finite proces
       },
       {
         audience: 'symmy-integration',
+        callingAppId: 'privacy',
         subject: {
           _tag: 'RegisteredAssertion',
           declarationKey: targetDeclaration,
@@ -156,6 +168,7 @@ it.effect('rejects processing/recovery mixing, changed target, and finite proces
       },
       {
         audience: 'symmy-integration',
+        callingAppId: 'privacy',
         subject: {
           _tag: 'RegisteredAssertion',
           declarationKey: targetDeclaration,
@@ -163,7 +176,11 @@ it.effect('rejects processing/recovery mixing, changed target, and finite proces
           scope: { ...normal },
         },
       },
-      { audience: 'symmy-integration', subject: { _tag: 'Assertion', scope: sourceScope(true) } },
+      {
+        audience: 'symmy-integration',
+        callingAppId: 'symmy-integration',
+        subject: { _tag: 'Assertion', scope: sourceScope(true) },
+      },
     ] as const;
     for (const item of cases) {
       const requests: Request[] = [];

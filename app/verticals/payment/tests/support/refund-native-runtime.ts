@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import { and, eq, sql } from 'drizzle-orm';
 import type { ActionRuntimeService } from '@app/core-runtime';
 import type { PgClient } from '@effect/sql-pg';
@@ -161,7 +162,9 @@ export const withScopedTransaction = <Value, Failure>(
   operation: (transaction: Effect.Success<ReturnType<typeof installOperationalScope>>) => Effect.Effect<Value, Failure>,
 ) =>
   database.transaction((transaction) =>
-    installOperationalScope(transaction, operationalScopeOf(scope)).pipe(Effect.flatMap(operation)),
+    installOperationalScope(transaction, operationalScopeOf(scope), defineDatabaseIdentityEnrollment([])).pipe(
+      Effect.flatMap(operation),
+    ),
   );
 
 /** The original gateway Provider Account of the seeded online Payments. */
@@ -513,7 +516,11 @@ export const holdPaymentRowLock = (
 ) =>
   database.transaction((transaction) =>
     Effect.gen(function* holdLock() {
-      const scoped = yield* installOperationalScope(transaction, operationalScopeOf(scope));
+      const scoped = yield* installOperationalScope(
+        transaction,
+        operationalScopeOf(scope),
+        defineDatabaseIdentityEnrollment([]),
+      );
       yield* paymentAggregatePersistenceForTransaction(scoped).lockPayment(paymentId);
       const [holder] = yield* transaction.execute<{ readonly pid: number }>(
         sql`select pg_catalog.pg_backend_pid() as pid`,

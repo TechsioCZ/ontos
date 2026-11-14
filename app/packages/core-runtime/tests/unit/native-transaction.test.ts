@@ -1,7 +1,20 @@
 import { registeredGatewayRecoveryPrincipal } from '../support/registered-gateway-recovery.ts';
 import { NodeCrypto } from '@effect/platform-node';
 import { sql } from 'drizzle-orm';
-import { Cause, Context, Crypto, Deferred, Effect, Exit, Fiber, Match, Predicate, Redacted, Schema } from 'effect';
+import {
+  Cause,
+  Context,
+  Crypto,
+  Deferred,
+  DateTime,
+  Effect,
+  Exit,
+  Fiber,
+  Match,
+  Predicate,
+  Redacted,
+  Schema,
+} from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
@@ -21,10 +34,10 @@ import type { OperationContextUnavailable } from '../../src/operations/errors.ts
 import type { ReadEvidencePersistenceError } from '../../src/reads/errors.ts';
 import { persistScopedReadEvidence } from '../../src/reads/repository.ts';
 import { makeTestDatabase } from '../support/database.ts';
-import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../../src/db/database-identities.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT, FIXTURE_REQUEST_IDENTITY } from '../support/database-identities.ts';
 
 const makeGatewayTestDatabase = (execute: Parameters<typeof makeTestDatabase>[0]) =>
-  makeTestDatabase(execute, { currentRole: PARTY_REGISTRY_REQUEST_IDENTITY.role });
+  makeTestDatabase(execute, { currentRole: FIXTURE_REQUEST_IDENTITY.role });
 
 // Failures and defects a retained cause records, so a test can prove which SQL error recovery kept.
 const retainedFailures = (cause: Cause.Cause<never> | undefined): readonly unknown[] =>
@@ -34,6 +47,70 @@ const retainedFailures = (cause: Cause.Cause<never> | undefined): readonly unkno
     }
     return Cause.isDieReason(reason) ? [reason.defect] : [];
   });
+
+/**
+ * The binding columns and the issuing-company source one scope lookup must read for its audience. The
+ * agent-key fence reads the acting principal's kind and takes the issuing company from the hardened
+ * attestation routine for a gateway-grant role; the shared runtime cannot read that evidence itself,
+ * so it derives the company from the binding's own successful creation audit.
+ */
+const expectScopeLookup = (
+  lookup: { readonly params: readonly unknown[]; readonly sql: string } | undefined,
+  principal: { readonly authBindingId: string | undefined; readonly principalId: string; readonly tenantId: string },
+  gatewayGrant: boolean,
+) => {
+  expect(lookup?.sql).toContain('from "core"."tenants"');
+  for (const column of [
+    'authentication_namespace_id',
+    'principal_id',
+    'binding_revision',
+    'revoked_at',
+    'status',
+    'subject_type',
+    'tenant_id',
+  ]) {
+    expect(lookup?.sql).toContain(`"principal_auth_bindings"."${column}"`);
+  }
+  expect(lookup?.sql).toContain('"principals"."kind"');
+  if (gatewayGrant) {
+    expect(lookup?.sql).toContain('trust.auth_binding_issuing_legal_entity(');
+    expect(lookup?.sql).not.toContain('"core"."audit_events"');
+  } else {
+    expect(lookup?.sql).not.toContain('trust.auth_binding_issuing_legal_entity(');
+    expect(lookup?.sql).toContain('"core"."audit_events"');
+  }
+  const expectedParams = gatewayGrant
+    ? [
+        principal.authBindingId,
+        principal.principalId,
+        principal.principalId,
+        '00000000-0000-0000-0000-000000000000',
+        principal.tenantId,
+        principal.authBindingId,
+        '00000000-0000-0000-0000-000000000000',
+        principal.tenantId,
+        1,
+      ]
+    : [
+        principal.principalId,
+        '00000000-0000-0000-0000-000000000000',
+        principal.tenantId,
+        principal.authBindingId,
+        'action.executed',
+        'succeeded',
+        '00000000-0000-0000-0000-000000000000',
+        principal.tenantId,
+        1,
+      ];
+  expect(lookup?.params).toEqual(expectedParams);
+};
+
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
+const establishGatewayScopeSql =
+  "select established_tenant_id::text as tenant_id, coalesce(established_legal_entity_id::text, '') as legal_entity_id from trust.establish_gateway_scope($1)";
+const readGatewayScopeSql =
+  "select current_user::text as role, coalesce(trust.current_tenant_id()::text, '') as tenant_id, coalesce(trust.current_legal_entity_id()::text, '') as legal_entity_id";
 
 const scopedPrincipal = trustVerifiedGatewayPrincipalContext(
   {
@@ -48,24 +125,151 @@ const scopedPrincipal = trustVerifiedGatewayPrincipalContext(
   { assertion: Redacted.make('verified-finalizer-test-assertion'), audience: 'party-registry' },
 );
 
+for (const [audience, role, gatewayGrant] of [
+  ['party-registry', 'party_registry_runtime', true],
+  ['catalog', 'ontos_runtime', false],
+] as const) {
+  it.effect(`scope admission uses the manifest authority and identity attestation for ${audience}`, () =>
+    Effect.gen(function* audienceScopedAdmission() {
+      const principal = trustVerifiedGatewayPrincipalContext(scopedPrincipal, 'a'.repeat(64), {
+        assertion: Redacted.make('verified-audience-test-assertion'),
+        audience,
+      });
+      const statements: { readonly params: readonly unknown[]; readonly sql: string }[] = [];
+      const executor = yield* makeTestDatabase(
+        (statement, params) => {
+          statements.push({ params, sql: statement });
+          return Effect.succeed(
+            statement.includes('from "core"."tenants"')
+              ? []
+              : [{ legal_entity_id: '', role, tenant_id: principal.tenantId }],
+          );
+        },
+        { currentRole: role },
+      );
+
+      yield* makeOperationalScopeRepository({ executor }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).load(principal);
+
+      // A gateway grant establishes its scope, then reads the database-derived scope back; a session-setting
+      // role installs its scope and reads back the connected role in one statement.
+      expect(statements.slice(0, -2)).toEqual(
+        gatewayGrant
+          ? [
+              { params: [], sql: 'BEGIN' },
+              { params: ['verified-audience-test-assertion'], sql: establishGatewayScopeSql },
+              { params: [], sql: readGatewayScopeSql },
+            ]
+          : [
+              { params: [], sql: 'BEGIN' },
+              { params: [principal.tenantId, ''], sql: installAndReadScopeSql },
+            ],
+      );
+      expect(statements).toHaveLength(gatewayGrant ? 5 : 4);
+      expectScopeLookup(statements.at(-2), principal, gatewayGrant);
+      expect(statements.at(-1)?.sql).toBe('COMMIT');
+    }),
+  );
+
+  // Main's design: the shared runtime login installs a genuine gateway context with its own session authority
+  // (scoped-transaction.test.ts), so only a foreign gateway login is a wrong authority role.
+  for (const [refusal, installedRole, installedTenant, installedCompany] of [
+    ...(gatewayGrant
+      ? []
+      : [['wrong authority role', 'party_registry_runtime', scopedPrincipal.tenantId, ''] as const]),
+    ['unknown role', 'unknown_runtime', scopedPrincipal.tenantId, ''],
+    ['foreign tenant', role, '20000000-0000-4000-8000-000000000002', ''],
+    ['unexpected company', role, scopedPrincipal.tenantId, '30000000-0000-4000-8000-000000000002'],
+  ] as const) {
+    it.effect(`scope admission refuses ${refusal} before principal lookup for ${audience}`, () =>
+      Effect.gen(function* refuseUnattestedScope() {
+        const principal = trustVerifiedGatewayPrincipalContext(scopedPrincipal, 'a'.repeat(64), {
+          assertion: Redacted.make('verified-audience-test-assertion'),
+          audience,
+        });
+        const statements: string[] = [];
+        const executor = yield* makeTestDatabase(
+          (statement) => {
+            statements.push(statement);
+            return Effect.succeed([
+              { legal_entity_id: installedCompany, role: installedRole, tenant_id: installedTenant },
+            ]);
+          },
+          { currentRole: installedRole },
+        );
+        const failure = yield* makeOperationalScopeRepository({ executor }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT)
+          .load(principal)
+          .pipe(Effect.flip);
+        expect(Predicate.isTagged(failure, 'OperationContextUnavailable')).toBe(true);
+        // The connected role is probed first: a login with another authority is refused before any install. Past
+        // the probe, the gateway grant refuses its verification read; the session-setting role refuses the row its one
+        // install-and-read statement answered.
+        const installStatements = gatewayGrant
+          ? [establishGatewayScopeSql, readGatewayScopeSql]
+          : [installAndReadScopeSql];
+        expect(statements).toEqual(['BEGIN', ...(installedRole === role ? installStatements : []), 'ROLLBACK']);
+        expect(statements.some((statement) => statement.includes('from "core"."tenants"'))).toBe(false);
+      }),
+    );
+  }
+}
+
+// The connected role, not the assertion's audience, picks the issuing-company source. Shell revalidates a Party
+// assertion on the shared runtime login, which may not execute the attestation routine; only the dedicated
+// gateway-grant role, which cannot read the audit evidence, uses it.
+for (const [connectedRole, gatewayGrant] of [
+  ['ontos_runtime', false],
+  [FIXTURE_REQUEST_IDENTITY.role, true],
+] as const) {
+  it.effect(`a party-registry assertion on ${connectedRole} reads the issuing company its role is granted`, () =>
+    Effect.gen(function* connectedRoleChoosesIssuingCompanySource() {
+      const statements: { readonly params: readonly unknown[]; readonly sql: string }[] = [];
+      const executor = yield* makeTestDatabase(
+        (statement, params) => {
+          statements.push({ params, sql: statement });
+          return Effect.succeed(
+            statement.includes('from "core"."tenants"')
+              ? []
+              : [{ legal_entity_id: '', role: connectedRole, tenant_id: scopedPrincipal.tenantId }],
+          );
+        },
+        { currentRole: connectedRole },
+      );
+
+      yield* makeOperationalScopeRepository({ executor }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).load(scopedPrincipal);
+
+      expect(statements.map(({ sql: statementSql }) => statementSql).slice(0, -2)).toEqual(
+        gatewayGrant ? ['BEGIN', establishGatewayScopeSql, readGatewayScopeSql] : ['BEGIN', installAndReadScopeSql],
+      );
+      expectScopeLookup(statements.at(-2), scopedPrincipal, gatewayGrant);
+      expect(statements.at(-1)?.sql).toBe('COMMIT');
+    }),
+  );
+}
+
 for (const boundary of ['context', 'evidence'] as const) {
   const run = (
     executor: CoreDatabaseExecutor,
   ): Effect.Effect<void, OperationContextUnavailable | ReadEvidencePersistenceError> =>
     boundary === 'context'
-      ? makeOperationalScopeRepository({ executor }).load(scopedPrincipal).pipe(Effect.asVoid)
-      : persistScopedReadEvidence(executor, {
-          accessKind: 'list',
-          captureMode: 'metadata_only',
-          outcome: 'denied',
-          outcomeCode: 'permission_denied',
-          outcomeStage: 'authz',
-          policyKey: 'test.read.v1',
-          readKey: 'test.read',
-          resultCount: 0,
-          scope: scopedPrincipal,
-          servingModuleKey: 'core.shell',
-        });
+      ? makeOperationalScopeRepository({ executor }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT)
+          .load(scopedPrincipal)
+          .pipe(Effect.asVoid)
+      : persistScopedReadEvidence(
+          executor,
+          {
+            accessKind: 'list',
+            captureMode: 'metadata_only',
+            outcome: 'denied',
+            outcomeCode: 'permission_denied',
+            outcomeStage: 'authz',
+            policyKey: 'test.read.v1',
+            readKey: 'test.read',
+            resultCount: 0,
+            scope: scopedPrincipal,
+            servingModuleKey: 'core.shell',
+          },
+          FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+        );
 
   for (const phase of ['BEGIN', 'COMMIT', 'ROLLBACK', 'RELEASE SAVEPOINT', 'ROLLBACK TO SAVEPOINT'] as const) {
     it.effect(`scoped ${boundary} maps native ${phase} failures to its declared persistence error`, () =>
@@ -83,7 +287,14 @@ for (const boundary of ['context', 'evidence'] as const) {
           }
           return Effect.succeed(
             statement.includes('trust.')
-              ? [{ legal_entity_id: '', role: 'party_registry_runtime', tenant_id: scopedPrincipal.tenantId }]
+              ? [
+                  {
+                    legal_entity_id: '',
+                    operation_at: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
+                    role: 'party_registry_runtime',
+                    tenant_id: scopedPrincipal.tenantId,
+                  },
+                ]
               : [],
           );
         });
@@ -109,7 +320,14 @@ for (const boundary of ['context', 'evidence'] as const) {
           ? Effect.die(defect)
           : Effect.succeed(
               statement.includes('trust.')
-                ? [{ legal_entity_id: '', role: 'party_registry_runtime', tenant_id: scopedPrincipal.tenantId }]
+                ? [
+                    {
+                      legal_entity_id: '',
+                      operation_at: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
+                      role: 'party_registry_runtime',
+                      tenant_id: scopedPrincipal.tenantId,
+                    },
+                  ]
                 : [],
             ),
       );
@@ -136,7 +354,14 @@ for (const boundary of ['context', 'evidence'] as const) {
         }
         return Effect.succeed(
           statement.includes('trust.')
-            ? [{ legal_entity_id: '', role: 'party_registry_runtime', tenant_id: scopedPrincipal.tenantId }]
+            ? [
+                {
+                  legal_entity_id: '',
+                  operation_at: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
+                  role: 'party_registry_runtime',
+                  tenant_id: scopedPrincipal.tenantId,
+                },
+              ]
             : [],
         );
       });
@@ -272,7 +497,9 @@ it.effect('scoped evidence recovers failed scope installation beside a failed ro
     });
     const error = yield* Effect.flip(
       executor
-        .transaction((transaction) => installOperationalScope(transaction, scopedPrincipal))
+        .transaction((transaction) =>
+          installOperationalScope(transaction, scopedPrincipal, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+        )
         .pipe(recoverSqlTransactionError),
     );
     expect(error).toBe(failure);
@@ -381,7 +608,7 @@ const surfacesSettlementFailure = (cause: Cause.Cause<unknown>, phase: string, f
   );
 
 for (const phase of ['COMMIT', 'ROLLBACK']) {
-  it.effect(`native ${phase} failure surfaces the SQL defect`, () =>
+  it.effect(`native ${phase} failure surfaces the SQL error`, () =>
     Effect.gen(function* surfaceSettlementFailure() {
       const failure = new SqlError({
         reason: new ConnectionError({ cause: new Error(`${phase} failed`) }),

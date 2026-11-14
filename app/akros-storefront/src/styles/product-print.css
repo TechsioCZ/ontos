@@ -1,0 +1,56 @@
+.sf-print-sheet {
+  display: none;
+}
+
+@media print {
+  @page {
+    margin: 15mm;
+  }
+  body:has(.sf-print-sheet) {
+    min-width: 0;
+    background: white;
+    color: black;
+  }
+  body:has(.sf-print-sheet) .sf-header,
+  body:has(.sf-print-sheet) .sf-sidebar,
+  body:has(.sf-print-sheet) .sf-footer,
+  body:has(.sf-print-sheet) .sf-product-detail-breadcrumb,
+  body:has(.sf-print-sheet) .sf-product-detail,
+  body:has(.sf-print-sheet) [data-scope="dialog"],
+  body:has(.sf-print-sheet) [data-scope="popover"],
+  body:has(.sf-print-sheet) [role="status"],
+  body:has(.sf-print-sheet) nextjs-portal {
+    display: none !important;
+  }
+  body:has(.sf-print-sheet) .sf-shell,
+  body:has(.sf-print-sheet) .sf-page-grid,
+  body:has(.sf-print-sheet) .sf-main {
+    display: block;
+    width: auto;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    box-shadow: none;
+  }
+  .sf-print-sheet {
+    display: block;
+    font-size: 11pt;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+  .sf-print-sheet h1 {
+    font-size: 20pt;
+  }
+  .sf-print-sheet img {
+    max-width: 60mm;
+    height: auto;
+  }
+  .sf-print-sheet dl > div {
+    display: flex;
+    gap: 4mm;
+    break-inside: avoid;
+  }
+  .sf-print-sheet dd {
+    margin: 0;
+  }
+}

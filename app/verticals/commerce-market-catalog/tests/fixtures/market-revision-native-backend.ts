@@ -1,14 +1,18 @@
-import { commerceMarketCatalogRegistration } from '../../vertical.registration.ts';
+import { commerceMarketCatalogBackendRegistration } from '../../vertical.runtime-declaration.ts';
+import { OwnerActionApprovals, makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import type { MarketRevisionNativeCustomerContextState } from '../support/market-revision-native-protocol.ts';
 import {
+  ActionRuntime,
   DatabaseConfig,
+  DatabaseIdentityEnrollmentContext,
   parseDatabaseConfig,
   OwnerAuthorizationOverlay,
   ReadRuntime,
-  ActionRuntime,
   bindSelfApiKeyAction,
   ActiveApplicationCompositionSnapshotSchema,
-  CorePersistenceLive,
+  CoreSearchProjectionStoreLive,
+  CoreSearchQueryRuntime,
+  CoreSearchQueryRuntimeLive,
   OntosModuleDeploymentContractSchema,
   OntosShellRuntimeContractSchema,
   ONTOS_MODULE_CONTRACT_PATH,
@@ -23,6 +27,7 @@ import {
   TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { AccessCatalogModulesSchema } from '@app/core-runtime/access/catalog';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
@@ -30,7 +35,6 @@ import {
   grantTestTenantOwnerAccess,
   grantTestTenantRoleAccess,
   liveFixtureSpiceDb,
-  markServicePrincipal,
 } from '@app/core-runtime/testing/tenant-access';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices, NodeHttpServer } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
@@ -48,6 +52,7 @@ import {
   Layer,
   Option,
   Path,
+  Predicate,
   Redacted,
   Schema,
   Scope,
@@ -58,6 +63,7 @@ import {
   makeApiKeyGatewayNativeFixture,
   sealApiKeyGatewayNativeComposition,
 } from '@app/shell-super-app/testing/api-key-gateway-native';
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { deriveActiveApplicationCompositionSnapshot } from '../../../../scripts/active-application-composition.mts';
 import { makeCurrentStorefrontNativeReceiver } from '@app/storefront-registry/testing/current-storefront-native';
 import { makeMarketRetirementNativeReceiver } from '@app/commerce-customer-context/testing/market-retirement-native';
@@ -90,10 +96,8 @@ import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-
 import {
   commerceMarketCatalogActionRuntimeDependenciesLive,
   commerceMarketCatalogApiRuntimeFromContext,
-  MarketRetirementActionRuntimeLive,
   MarketRetirementRuntimeBindings,
 } from '../../api/index.ts';
-import { MarketRetirementImpactAuthorityLive } from '../../src/integrations/market-retirement-impact.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive,
@@ -374,7 +378,7 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   };
   yield* registry.migrate(connections);
   yield* customerContext.migrate(connections);
-  if (shell.relaySourceProviderUserId === undefined) {
+  if (shell.readerProviderUserId === undefined) {
     return yield* unavailable();
   }
   const baseConfiguration = {
@@ -397,7 +401,7 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
     makeLiveOperationFixture({
       ...baseConfiguration,
       managerProviderSubjectId: shell.providerUserId,
-      readerProviderSubjectId: shell.relaySourceProviderUserId,
+      readerProviderSubjectId: shell.readerProviderUserId,
     }),
     (value) => value.close().pipe(Effect.orDie),
   );
@@ -405,9 +409,9 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   // The denied scenario instead holds every catalog capability except the private retirement Manage one,
   // so public Retire stays granted while its independent Manage step is refused.
   const accessTarget = {
-    adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
     legalEntityIds: [fixture.legalEntityId] as const,
     spiceDb: yield* liveFixtureSpiceDb(fixture.permissionEnvironment),
+    writerConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
   };
   if (retirementManagementExecutor === 'denied') {
     const { modules } = yield* filesystem
@@ -534,11 +538,7 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
     authorize: (_transaction, input) =>
       Effect.succeed(
         input.scope.tenantId === fixture.tenantId &&
-          (input.scope.principalId === fixture.manager.principalId ||
-            (input.scope.principalId === fixture.reader.principalId &&
-              input.owningModuleKey === identityModuleId &&
-              input.operationKey === bindSelfApiKeyAction.descriptor.actionKey &&
-              input.scope.legalEntityId === undefined)) &&
+          input.scope.principalId === fixture.manager.principalId &&
           (input.scope.legalEntityId === fixture.legalEntityId || input.scope.legalEntityId === undefined) &&
           ((input.owningModuleKey === moduleKey &&
             input.scope.legalEntityId === fixture.legalEntityId &&
@@ -569,11 +569,9 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   // Build scoped Core clients once; retained Registry callbacks use this same live context.
   const baseContext = yield* Layer.build(fixture.layer.pipe(Layer.provideMerge(authorization)));
   const binding = yield* shell.issueAndBind(principal).pipe(Effect.provideContext(baseContext));
-  const relayBinding = yield* shell.issueRelaySourceAndBind(fixture.reader).pipe(Effect.provideContext(baseContext));
-  yield* admin.execute(
-    markServicePrincipal({ principalId: fixture.reader.principalId, tenantId: fixture.tenantId }),
-    'objects',
-  );
+  // Market's own module credential, provisioned by the platform and handed over by the host, as on every environment.
+  const relayBinding = yield* shell.provisionRelaySource();
+  yield* holdTestModuleCredentials({ 'commerce-market-catalog': Redacted.value(relayBinding.secret) });
   const context = Context.add(
     baseContext,
     ConfigProvider.ConfigProvider,
@@ -581,7 +579,6 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
       ConfigProvider.fromEnvRecord({
         ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: shell.compositionSourceUrl,
         ONTOS_GATEWAY_ISSUER: shell.issuer,
-        ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(relayBinding.secret),
         ONTOS_GATEWAY_PUBLIC_JWKS: shell.publicJwks,
         ONTOS_SHELL_GATEWAY_BASE_URL: shell.baseUrl,
       }),
@@ -675,6 +672,10 @@ export const marketRevisionNativeBackend = Effect.fn('MarketRevisionNative.backe
       ),
     );
     const configuration = Context.get(scenario.context, ConfigProvider.ConfigProvider);
+    const databaseIdentities = Layer.succeed(
+      DatabaseIdentityEnrollmentContext,
+      Context.get(scenario.context, DatabaseIdentityEnrollmentContext),
+    );
     const dependencies = yield* Layer.build(
       commerceMarketCatalogActionRuntimeDependenciesLive.pipe(
         Layer.provide(Layer.mergeAll(Layer.succeed(DatabaseConfig, scenario.databaseConfiguration), NodeCrypto.layer)),
@@ -683,42 +684,56 @@ export const marketRevisionNativeBackend = Effect.fn('MarketRevisionNative.backe
     const accessEnforcement = AccessDecisionLive.pipe(
       Layer.provideMerge(AccessEnforcementPortsLive),
       Layer.provide(TenantIntentLoaderLive),
-      Layer.provide(CorePersistenceLive),
-      Layer.provide(Layer.succeed(DatabaseConfig, scenario.databaseConfiguration)),
+      Layer.provide(Layer.succeedContext(dependencies)),
       Layer.provide(NodeCrypto.layer),
+      Layer.provide(databaseIdentities),
     );
-    const coreFactory = makeActionRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogRegistration).pipe(
-      Layer.provide(Layer.mergeAll(Layer.succeedContext(dependencies), accessEnforcement)),
+    // Build once against this scenario's database. Admission and advisory management checks
+    // share the identical service, including when retirement rebuilds its request runtime.
+    const accessEnforcementContext = yield* Layer.build(accessEnforcement);
+    const admissionAuthority = Layer.succeedContext(accessEnforcementContext);
+    const ownerApprovalsContext = yield* Layer.build(
+      makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, commerceMarketCatalogBackendRegistration).pipe(
+        Layer.provide(Layer.mergeAll(Layer.succeedContext(dependencies), admissionAuthority)),
+        Layer.provide(databaseIdentities),
+        Layer.provide(NodeCrypto.layer),
+      ),
+    );
+    const coreFactory = makeActionRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogBackendRegistration).pipe(
+      Layer.provide(Layer.succeedContext(ownerApprovalsContext)),
+      Layer.provide(Layer.mergeAll(Layer.succeedContext(dependencies), admissionAuthority)),
+      Layer.provide(databaseIdentities),
     );
     const base = Context.get(yield* Layer.build(coreFactory), ActionRuntime);
     const readRuntime = Context.get(
       yield* Layer.build(
-        makeReadRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogRegistration).pipe(
-          Layer.provide(Layer.mergeAll(Layer.succeedContext(dependencies), accessEnforcement)),
+        makeReadRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogBackendRegistration).pipe(
+          Layer.provide(Layer.mergeAll(Layer.succeedContext(dependencies), admissionAuthority)),
+          Layer.provide(databaseIdentities),
         ),
       ),
       ReadRuntime,
     );
     const crypto = yield* Crypto.Crypto;
-    const actionContext = yield* Layer.build(
-      MarketRetirementActionRuntimeLive.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            Layer.succeed(MarketRetirementRuntimeBindings, {
-              base,
-              coreFactory,
-              crypto,
-              readRuntime,
-              scopeResolver: Context.get(dependencies, OperationalScopeResolver),
-            }),
-            MarketRetirementImpactAuthorityLive.pipe(Layer.provide(NodeCrypto.layer)),
-          ),
-        ),
+    const searchContext = yield* Layer.build(
+      CoreSearchQueryRuntimeLive.pipe(
+        Layer.provide(CoreSearchProjectionStoreLive),
+        Layer.provide(Layer.succeedContext(dependencies)),
+        Layer.provide(databaseIdentities),
       ),
     );
     const runtime = yield* commerceMarketCatalogApiRuntimeFromContext.pipe(
       Effect.provideService(ReadRuntime, readRuntime),
-      Effect.provideService(ActionRuntime, Context.get(actionContext, ActionRuntime)),
+      Effect.provideService(MarketRetirementRuntimeBindings, {
+        base,
+        coreFactory,
+        crypto,
+        readRuntime,
+        scopeResolver: Context.get(dependencies, OperationalScopeResolver),
+      }),
+      Effect.provideService(OwnerActionApprovals, Context.get(ownerApprovalsContext, OwnerActionApprovals)),
+      Effect.provideService(AccessDecisionGate, Context.get(accessEnforcementContext, AccessDecisionGate)),
+      Effect.provideService(CoreSearchQueryRuntime, Context.get(searchContext, CoreSearchQueryRuntime)),
       Effect.provideContext(redemptionContext),
     );
     const configured = defineEffectBff({
@@ -812,8 +827,11 @@ export const marketRevisionNativeBackend = Effect.fn('MarketRevisionNative.backe
           idempotencyKey: 'create',
         },
       );
+      if (Predicate.isTagged(result, 'ActionProposalAccepted')) {
+        return yield* unavailable();
+      }
       const associationAdmission = yield* issueForCommand(associateCorrelation);
-      yield* executeAssociateStorefrontWithAuthorization(
+      const association = yield* executeAssociateStorefrontWithAuthorization(
         {
           associationId: scenario.associationId,
           channel: 'B2C',
@@ -833,6 +851,9 @@ export const marketRevisionNativeBackend = Effect.fn('MarketRevisionNative.backe
           idempotencyKey: 'associate',
         },
       );
+      if (Predicate.isTagged(association, 'ActionProposalAccepted')) {
+        return yield* unavailable();
+      }
       return result;
     });
     const reviseR2 = Effect.fn('MarketRevisionPublicNative.reviseR2')(function* reviseR2(basis: {
@@ -840,7 +861,7 @@ export const marketRevisionNativeBackend = Effect.fn('MarketRevisionNative.backe
       readonly revision: number;
     }) {
       const admitted = yield* issueForCommand('market-revise');
-      return yield* executeReviseMarketDefinitionWithAuthorization(
+      const result = yield* executeReviseMarketDefinitionWithAuthorization(
         {
           channels: ['B2C'],
           effectivePeriod: { startsAt: scenario.revisedAt },
@@ -860,6 +881,10 @@ export const marketRevisionNativeBackend = Effect.fn('MarketRevisionNative.backe
           idempotencyKey: 'revise',
         },
       );
+      if (Predicate.isTagged(result, 'ActionProposalAccepted')) {
+        return yield* unavailable();
+      }
+      return result;
     });
     return Object.freeze({
       after: scenario.after,

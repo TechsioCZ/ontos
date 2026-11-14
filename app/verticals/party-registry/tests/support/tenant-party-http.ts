@@ -1,5 +1,9 @@
 // @effect-diagnostics asyncFunction:off -- Native proof fixture child owns a Node HTTP listener and its lifecycle at the process entrypoint; expires: 2027-03-31.
-import { makeDatabaseConfigLive, PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/core-runtime';
+import { DatabaseIdentityEnrollmentContext, makeDatabaseConfigLive } from '@app/core-runtime';
+import {
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '@app/party-registry-identity-contracts';
 import { createEffectBffTestHandler, defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node';
@@ -13,6 +17,7 @@ import {
 } from '../../api/auth/gateway-assertion-redemption.ts';
 import {
   partyRegistryActionRuntimeLive,
+  partyRegistryOwnerActionApprovalsLive,
   partyRegistryAresSubjectServiceLive,
   partyRegistryReadRuntimeLive,
   partyRegistrySearchProjectionGatewayLive,
@@ -56,11 +61,21 @@ const partyRegistryDatabaseConfigLive = makeDatabaseConfigLive(PARTY_REGISTRY_RE
 /**
  * The Party suite's own authority, flipped over the fixture's HTTP surface (see
  * `party-test-access-gate.ts`). The isolated database carries no v2 access intent and reaches no
- * engine, so the production default would refuse every protected read and Action; the suite still
- * proves a real revocation because the control really changes the gate's answer.
+ * engine, so the decision is scripted; Action preparation still runs the production path against the
+ * Ready scope and fence rows the owning fixture seeded. The suite proves a real revocation because
+ * the control really changes the gate's answer.
  */
 const accessGate = partyTestAccessGate();
-const runtimeDependenciesLive = Layer.mergeAll(partyRegistryDatabaseConfigLive, nodeCryptoLayer, accessGate.layer);
+const partyRegistryDatabaseIdentityEnrollmentLive = Layer.succeed(
+  DatabaseIdentityEnrollmentContext,
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+);
+const runtimeDependenciesLive = Layer.mergeAll(
+  partyRegistryDatabaseConfigLive,
+  partyRegistryDatabaseIdentityEnrollmentLive,
+  nodeCryptoLayer,
+  accessGate.layer,
+);
 const gatewayAssertionRedemptionLive = GatewayAssertionRedemptionLive.pipe(
   Layer.provide(GatewayAssertionRedemptionDatabaseLive),
   Layer.provide(partyRegistryDatabaseConfigLive),
@@ -68,8 +83,13 @@ const gatewayAssertionRedemptionLive = GatewayAssertionRedemptionLive.pipe(
 const testPartyRuntime = partyRegistryApiRuntime(
   partyRegistryReadRuntimeLive.pipe(Layer.provide(runtimeDependenciesLive)),
   partyRegistryAresSubjectServiceLive,
-  partyRegistrySearchProjectionGatewayLive.pipe(Layer.provide(partyRegistryDatabaseConfigLive)),
-  partyRegistryActionRuntimeLive.pipe(Layer.provide(runtimeDependenciesLive)),
+  partyRegistrySearchProjectionGatewayLive.pipe(
+    Layer.provide(Layer.merge(partyRegistryDatabaseConfigLive, partyRegistryDatabaseIdentityEnrollmentLive)),
+  ),
+  partyRegistryActionRuntimeLive.pipe(
+    Layer.provideMerge(partyRegistryOwnerActionApprovalsLive),
+    Layer.provide(runtimeDependenciesLive),
+  ),
   gatewayAssertionRedemptionLive,
 );
 

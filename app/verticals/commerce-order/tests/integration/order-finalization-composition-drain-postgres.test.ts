@@ -235,8 +235,10 @@ const fixture = Effect.fn('OrderFinalizationDrainTests.fixture')(function* fixtu
     [invocationId, orderTenantId, 'd'.repeat(64)],
   );
   // Persist exactly what the registered Order Action collected, as Core's Action repository does.
-  // Only the original revision is this database's release; the in-memory harness admits a fixed one.
-  const [committed] = yield* runOrderRevalidation('PROOFS_PENDING');
+  // Only the original revision is this database's release; the harness admits its actual owner composition.
+  const {
+    committed: [committed],
+  } = yield* runOrderRevalidation('PROOFS_PENDING');
   const collected = committed?.evidence.outboxMessages[0];
   const event = collected === undefined ? undefined : committed?.evidence.domainEvents[collected.domainEventIndex];
   if (collected === undefined || event === undefined) {

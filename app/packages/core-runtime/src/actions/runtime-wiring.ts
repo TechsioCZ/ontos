@@ -2,6 +2,7 @@ import { Layer } from 'effect';
 import { PrivacyDispatchLivenessSourceLive } from '../access/enforcement/privacy-dispatch-liveness.ts';
 
 import { AccessPrincipalKindSourceLive as principalKindSourceLive } from '../access/enforcement/actor.ts';
+import { AccessDecisionLogBatchLive as decisionLogBatchLive } from '../access/enforcement/decision-log-batch.ts';
 import { AccessDecisionLogLive as decisionLogLive } from '../access/enforcement/decision-log.ts';
 import { DecisionCheckLive as decisionCheckLive } from '../access/enforcement/enforcement-live.ts';
 import { AccessIntentLive as intentLive } from '../access/enforcement/intent-reader.ts';
@@ -35,6 +36,8 @@ import { AccessWorkloadBindingSourceLive as workloadBindingSourceLive } from '..
 export const AccessEnforcementPortsLive = Layer.mergeAll(
   intentLive,
   decisionLogLive,
+  // Subject inspection writes every row of one batch in one transaction through the same evidence table.
+  decisionLogBatchLive,
   principalKindSourceLive,
   legalEntityCandidatesLive,
   decisionCheckLive,
@@ -44,6 +47,7 @@ export const AccessEnforcementPortsLive = Layer.mergeAll(
 
 export { AccessPrincipalKindSourceLive } from '../access/enforcement/actor.ts';
 export { AccessDecisionGate } from '../access/enforcement/contract.ts';
+export { AccessDecisionLogBatchLive } from '../access/enforcement/decision-log-batch.ts';
 export { AccessDecisionLogLive } from '../access/enforcement/decision-log.ts';
 export { DecisionCheckLive } from '../access/enforcement/enforcement-live.ts';
 export { AccessIntentLive } from '../access/enforcement/intent-reader.ts';
@@ -55,5 +59,18 @@ export { TenantIntentLoaderLive } from '../access/intent/tenant-intent-loader.ts
 export { ModuleEntrypointGatewayLive } from '../modules/module-entrypoint-gateway.ts';
 export { ModuleStateGateLive } from '../modules/module-state-gate.ts';
 export { OperationalScopeResolverLive } from '../operations/context.ts';
-export { ActionPermissionLive } from '../permissions/service.ts';
-export { ActionRepositoryLive } from './repository.ts';
+export { ActionPermission, ActionPermissionLive, toSpiceDbActionObjectId } from '../permissions/service.ts';
+/**
+ * The canonical Action-authority seam (CUTOVER-PLAN §4.3): both questions an Action caller asks — may
+ * this Action execute, and may it be proposed — are answered by one `AccessDecisionGate.decide` over the
+ * Action's own declared carrier. There is no separate `action#execute`/`action#propose` engine; a caller
+ * passes the trusted `OperationalScope` it already resolved, never loose ids.
+ */
+export { ActionAuthority, ActionAuthorityLive } from '../permissions/action-authority.ts';
+export type {
+  ActionAuthorityQuery,
+  ActionAuthorityService,
+  ScopedActionAuthority,
+} from '../permissions/action-authority.ts';
+export { ActionRepositoryLive, computeActionRequestHash } from './repository.ts';
+export type { ActionPermissionService } from '../permissions/service.ts';

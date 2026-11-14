@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import { randomUUID } from 'node:crypto';
 
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
@@ -296,7 +297,11 @@ export const evidenceScenarioOf = ({ native, r1, r2, scope }: EvidenceScenarioIn
   ) =>
     native.database.transaction((transaction) =>
       Effect.gen(function* scopedEvidenceTransaction() {
-        const scoped = yield* installOperationalScope(transaction, operationalScopeOf(scope));
+        const scoped = yield* installOperationalScope(
+          transaction,
+          operationalScopeOf(scope),
+          defineDatabaseIdentityEnrollment([]),
+        );
         return yield* operation(
           paymentAggregatePersistenceForTransaction(scoped),
           paymentEvidencePersistenceForTransaction(scoped),

@@ -17,7 +17,6 @@ import { expect, it } from 'effect-rstest';
 
 import { AuthenticationNamespaceRegistry } from '../../src/auth/external-identity/verifier.ts';
 import { validateActiveApplicationCompositionSnapshot } from '../../src/modules/active-application-composition.ts';
-import { DATABASE_IDENTITIES } from '../../src/db/database-identities.ts';
 import { loadDatabaseIdentityConnections, loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { makeLiveOperationFixture } from '../../src/testing/actions.ts';
 import { makeContextAccessLive } from '../../src/permissions/context-access.ts';
@@ -31,6 +30,10 @@ import { makeApplicationCompositionSnapshotFixture } from '../../src/testing/mod
 import { coreRelations, tenants } from '../../src/db/schema.ts';
 import { findPostgresFailure } from '../../src/database/postgres-failure.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
+import {
+  FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+  testDatabaseIdentityConnection,
+} from '../support/database-identities.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -575,6 +578,8 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
           Effect.gen(function* independentClone() {
             const fixture = yield* makeIsolatedNativeDatabaseFixture({
               compositionSnapshot: snapshot,
+              // The clone mirrors exactly the enrollment it is given, never the source's noncanonical rows.
+              databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
               mode: 'schema-only',
               purpose: 'stabilization-1267-party-gateway',
               sourceConnections,
@@ -1089,7 +1094,10 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
     '#1296 browser clone keeps all schemas and canonical roles but leaves publication to the browser',
     () =>
       Effect.gen(function* unpublishedBrowserClone() {
-        const source = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
+        const source = yield* loadDatabaseIdentityConnections({
+          enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          envPath: '/dev/null',
+        });
         const client = yield* makeTestPgClient(source.admin.connectionString);
         const sourceCatalog = client<{ fingerprint: string }>`select encode(sha256(convert_to(json_build_object(
         'relations',(select json_agg(row_to_json(r) order by r.schema,r.name) from (
@@ -1115,7 +1123,10 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
             const fixture = yield* makeIsolatedNativeDatabaseFixture({
               mode: 'schema-only',
               purpose: 'implementation-1296-browser-composition',
-              sourceConnections: { admin: source.admin, runtime: source.runtime.shared_runtime },
+              sourceConnections: {
+                admin: source.admin,
+                runtime: testDatabaseIdentityConnection(source, 'shared_runtime'),
+              },
             });
             const { database } = fixture.connections.admin;
             expect(database).toMatch(/^ontos_test_party_gateway_[a-f0-9]{32}$/u);
@@ -1139,21 +1150,26 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
             ]);
             const environment = {
               ...Object.fromEntries(
-                DATABASE_IDENTITIES.map(({ id, urlKey }) => {
-                  const url = new URL(source.runtime[id].connectionString);
+                FIXTURE_DATABASE_IDENTITY_ENROLLMENT.identities.map(({ id, urlKey }) => {
+                  const url = new URL(testDatabaseIdentityConnection(source, id).connectionString);
                   url.pathname = `/${database}`;
                   return [urlKey, url.href];
                 }),
               ),
               DATABASE_ADMIN_URL: fixture.connections.admin.connectionString,
             };
-            const routed = yield* loadDatabaseIdentityConnections({ environment, envPath: '/dev/null' });
-            for (const identity of DATABASE_IDENTITIES) {
-              const connection = routed.runtime[identity.id];
+            const routed = yield* loadDatabaseIdentityConnections({
+              enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+              environment,
+              envPath: '/dev/null',
+            });
+            for (const identity of FIXTURE_DATABASE_IDENTITY_ENROLLMENT.identities) {
+              const connection = testDatabaseIdentityConnection(routed, identity.id);
+              const sourceConnection = testDatabaseIdentityConnection(source, identity.id);
               expect(connection.database).toBe(database);
               expect(connection.user).toBe(identity.role);
-              expect(connection.host).toBe(source.runtime[identity.id].host);
-              expect(connection.port).toBe(source.runtime[identity.id].port);
+              expect(connection.host).toBe(sourceConnection.host);
+              expect(connection.port).toBe(sourceConnection.port);
               const role = yield* makeTestPgClient(connection.connectionString);
               expect(yield* role`select current_database() as database,current_user as "user"`).toEqual([
                 { database, user: identity.role },

@@ -12,13 +12,9 @@ import {
   priceGroupDedicatedUrlMatches,
 } from '@app/commerce-customer-context/testing/price-group-temporal-protocol';
 
-import {
-  loadDatabaseConfig,
-  loadDatabaseConnectionPair,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
-  SHELL_GATEWAY_ISSUER_IDENTITY,
-} from '@app/core-runtime';
-import type { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
+import { loadDatabaseConnectionPair, SHELL_GATEWAY_ISSUER_IDENTITY } from '@app/core-runtime';
+import type { DatabaseIdentity, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
@@ -31,7 +27,20 @@ import {
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { fileURLToPath } from 'node:url';
-import { Clock, Config, Context, Crypto, DateTime, Effect, Layer, Option, Redacted, Schema, Stream } from 'effect';
+import {
+  Clock,
+  Config,
+  Context,
+  Crypto,
+  DateTime,
+  Effect,
+  Layer,
+  Option,
+  Predicate,
+  Redacted,
+  Schema,
+  Stream,
+} from 'effect';
 import { ChildProcess } from 'effect/process';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
@@ -47,6 +56,7 @@ import {
   NonePriceGroupInterpretationSchema,
 } from '@app/pricing-contracts/domain/price-group-interpretation';
 import { requireExecutedAction } from '../support/action-execution-result.ts';
+
 import {
   executeAuthorizedCommerceResolution,
   makeCommerceResolutionPort,
@@ -57,9 +67,25 @@ import { verifiedTestScope } from '../support/owner-gateway-connection.fixture.t
 import { makePriceGroupInterpretationService } from '../../src/services/price-group-interpretation.service.ts';
 
 class TemporalNativeFailure extends Schema.TaggedError<TemporalNativeFailure>()('TemporalNativeFailure', {
+  message: Schema.String,
   stage: Schema.String,
 }) {}
-const fail = (stage: string) => new TemporalNativeFailure({ stage });
+const fail = (stage: string) => new TemporalNativeFailure({ message: stage, stage });
+/** The fields a refused owner answer names: its problem tag, HTTP status and domain code. */
+const OwnerProblemFieldsSchema = Schema.Struct({
+  _tag: Schema.optionalKey(Schema.String),
+  code: Schema.optionalKey(Schema.String),
+  status: Schema.optionalKey(Schema.Number),
+});
+/** A refused owner answer as a real Error, so a failing case names the owner's problem and the reporter keeps its totals. */
+const reportableOwnerFailure = <Failure>(failure: Failure): Failure | TemporalNativeFailure => {
+  const fields = Schema.decodeUnknownOption(OwnerProblemFieldsSchema)(failure);
+  return Predicate.isError(failure) || Option.isNone(fields)
+    ? failure
+    : fail(
+        `owner-action-refused:${fields.value._tag ?? 'unknown'}:status-${String(fields.value.status ?? 'none')}:code-${fields.value.code ?? 'none'}`,
+      );
+};
 const requireCondition = (condition: boolean, stage: string) => (condition ? Effect.void : Effect.fail(fail(stage)));
 const priceGroupTemporalProtocol = 'ontos.customer-price-group-temporal.fixture.v1' as const;
 const priceGroupTemporalClosedEnvironment = (bootstrap: typeof PriceGroupTemporalBootstrapSchema.Type) =>
@@ -488,9 +514,9 @@ const makeTemporalNative = Effect.fn('TemporalNative.make')(function* makeTempor
   });
   const sourceConnections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
   const dedicatedUrl = Effect.fn('PricingTemporal.retargetDedicatedUrl')(function* retargetDedicatedUrl(
-    identity: typeof PARTY_REGISTRY_REQUEST_IDENTITY,
+    identity: DatabaseIdentity,
   ) {
-    const configured = yield* loadDatabaseConfig({ envPath: '/dev/null', identity });
+    const { runtime: configured } = yield* loadDatabaseConnectionPair({ envPath: '/dev/null', identity });
     const role = identity.id === PARTY_REGISTRY_REQUEST_IDENTITY.id ? 'party_registry_runtime' : 'shell_gateway_issuer';
     yield* requireCondition(
       configured.user === identity.role &&
@@ -609,7 +635,7 @@ const temporalConsumer = Effect.fn('PricingTemporal.actualConsumer')(function* a
       yield* nextId,
       yield* native.options(),
     ),
-  );
+  ).pipe(Effect.mapError(reportableOwnerFailure));
   yield* resource(profile.profileRef);
   yield* preparePriceGroupTemporalRetailAccess({
     certificate: native.owned.certificate,
@@ -651,7 +677,7 @@ const temporalConsumer = Effect.fn('PricingTemporal.actualConsumer')(function* a
         yield* nextId,
         yield* native.options(),
       ),
-    );
+    ).pipe(Effect.mapError(reportableOwnerFailure));
   });
   const initial = yield* assign(first.identity.priceGroupRef, start);
   const replacement = yield* assign(second.identity.priceGroupRef, transition);

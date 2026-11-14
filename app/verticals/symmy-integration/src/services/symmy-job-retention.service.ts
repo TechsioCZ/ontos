@@ -18,6 +18,7 @@ import { symmyJobRetentionStore } from './symmy-job-retention-store.ts';
 import { SymmyJobPrivacy } from './symmy-job-privacy.service.ts';
 import type { SymmyJobPrivacyAuthority } from './symmy-job-privacy.service.ts';
 import { SymmyJobPrivacyError } from './symmy-job-privacy-error.ts';
+import { symmyIntegrationEvidenceCall } from '../declared-evidence-calls.ts';
 
 const unavailable = (cause?: unknown) =>
   Object.defineProperty(new SymmyJobRetentionError({ code: 'retention_configuration_unavailable' }), 'cause', {
@@ -108,7 +109,10 @@ export const symmyJobRetentionService = Effect.fn('SymmyJobRetention.forScope')(
         targetLegalEntityId,
       });
       const privacy = yield* SymmyJobPrivacy;
-      const authority = yield* privacy.current(handoff, scope);
+      // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
+      const authority = yield* privacy
+        .current(handoff, scope)
+        .pipe(symmyIntegrationEvidenceCall.retentionPrivacyCurrent);
       if (authority.status === 'INDETERMINATE') {
         return yield* new SymmyJobPrivacyError({ code: 'retention_privacy_unavailable' });
       }
@@ -129,7 +133,9 @@ export const symmyJobRetentionService = Effect.fn('SymmyJobRetention.forScope')(
       }
       yield* cancelScopedSourceExecutionFence(transaction, originalAdmissionId).pipe(Effect.mapError(unavailable));
       // Cancellation may have waited for an existing owner transaction. Its earlier approval is not current after that wait.
-      const finalAuthority = yield* privacy.current(handoff, scope).pipe(Effect.flatMap(requireRecheckedAuthority));
+      const finalAuthority = yield* privacy
+        .current(handoff, scope)
+        .pipe(symmyIntegrationEvidenceCall.retentionPrivacyCurrent, Effect.flatMap(requireRecheckedAuthority));
       return outcome(
         yield* store.purge({
           authority: {

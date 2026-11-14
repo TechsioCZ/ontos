@@ -53,6 +53,16 @@ export const projectsManifest: OntosModuleManifestInput = defineOntosModuleManif
     ],
     search: [
       // <generated-module-manifest-search>
+      {
+        accessFiltering: 'tenant_scope',
+        accessKey: 'projects.core.project.search',
+        key: 'projects.core.projects',
+        legalEntityScope: 'optional',
+        owningModuleId: projectModuleKey,
+        requestFilters: ['includeArchived'],
+        resourceType: 'projects.project',
+        tenantPermission: 'access',
+      },
       // </generated-module-manifest-search>
     ],
   },

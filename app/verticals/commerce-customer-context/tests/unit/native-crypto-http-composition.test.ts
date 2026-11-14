@@ -23,6 +23,7 @@ import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { commerceCustomerContextManifest } from '../../vertical.manifest.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { enrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import { makeRootOwnerApprovals } from '../support/root-owner-approvals.ts';
 
 const origin = 'http://localhost:3020';
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -40,6 +41,14 @@ it.live('provides host Crypto to a deferred business Read without a portal realm
       const document = yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(
         snapshot,
       );
+      const ownerApprovals = yield* makeRootOwnerApprovals(snapshot, {
+        authBindingId: '66666666-6666-4666-8666-666666666666',
+        authContextRef: 'better-auth-session:ccc-crypto-composition',
+        authMethod: 'session',
+        correlationId: 'ccc-crypto-composition',
+        principalId,
+        tenantId,
+      });
       const issuer = 'https://shell.ccc-crypto-composition.test';
       const { privateKey, publicKey } = yield* Effect.promise(async () => await generateKeyPair('Ed25519'));
       const publicJwk = {
@@ -88,6 +97,7 @@ it.live('provides host Crypto to a deferred business Read without a portal realm
       };
       const actionRuntime: ActionRuntimeService = {
         resolveActionCommit: () => Effect.die('unused Action commit'),
+        resolveActionExecution: () => Effect.die('unused Action execution'),
         runAction: () => Effect.die('unused Action'),
       };
       const configuration = ConfigProvider.layer(
@@ -101,6 +111,7 @@ it.live('provides host Crypto to a deferred business Read without a portal realm
       const assembled = makeCommerceCustomerContextApiRuntime(
         Layer.succeed(ReadRuntime, readRuntime),
         Layer.mergeAll(
+          Layer.succeedContext(ownerApprovals),
           Layer.succeed(ActionRuntime, actionRuntime),
           Layer.succeed(ActiveApplicationCompositionSource, { load: Effect.succeed(document) }),
           configuration,
@@ -111,10 +122,7 @@ it.live('provides host Crypto to a deferred business Read without a portal realm
         // Unused enrollment pools are lazy (SDK minConnections=0); no business SQL is invoked.
         Layer.succeed(DatabaseConfig, {
           connectionString: 'postgresql://ontos_runtime:unit-only@127.0.0.1:1/unused',
-          database: 'unused',
-          host: '127.0.0.1',
-          port: 1,
-          user: 'ontos_runtime',
+          expectedRole: 'ontos_runtime',
         }),
         Layer.succeed(ContextAccess, {
           legalEntities: unusedContextAccess,

@@ -4,20 +4,17 @@ import { Config, ConfigProvider, Context, Effect, Layer, Redacted, Schema } from
 import { loadDotEnvProvider } from '../environment/dotenv-provider.ts';
 import { APP_ENV_PATH } from '../environment/workspace-environment.ts';
 import { DatabaseConfigError } from './config-error.ts';
-import {
-  DATABASE_IDENTITIES,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
-  PARTY_REGISTRY_WORKER_IDENTITY,
-  SHARED_RUNTIME_IDENTITY,
-  SHELL_GATEWAY_ISSUER_IDENTITY,
+import { SHARED_RUNTIME_IDENTITY } from './database-identity-manifest.ts';
+import type {
+  DatabaseIdentity,
+  DatabaseIdentityEnrollment,
+  DatabaseIdentityId,
+  DatabaseUrlKey,
 } from './database-identity-manifest.ts';
-import type { DatabaseIdentity, DatabaseIdentityId, DatabaseUrlKey } from './database-identity-manifest.ts';
 
 export { DatabaseConfigError } from './config-error.ts';
 
 export const ROOT_ENV_PATH = APP_ENV_PATH;
-
-const distinctDatabaseUsersReason = 'Administrative and runtime PostgreSQL identities must be distinct';
 
 const requiredDatabaseUrlSchema = Schema.Trim.pipe(Schema.check(Schema.isMinLength(1)));
 const invalidDatabaseUrlReason = (configKey: string): string =>
@@ -47,6 +44,7 @@ const makeDatabaseConfigValue = (fields: DatabaseConfigFields) =>
       return Redacted.value(fields.connectionString);
     },
     database: fields.database,
+    expectedRole: fields.user,
     host: fields.host,
     port: fields.port,
     user: fields.user,
@@ -54,22 +52,21 @@ const makeDatabaseConfigValue = (fields: DatabaseConfigFields) =>
 
 export type DatabaseConfigValue = ReturnType<typeof makeDatabaseConfigValue>;
 
+/** Runtime transport credentials carry an expected origin role, not inferred origin metadata. */
+export type RuntimeDatabaseConfigValue = Pick<DatabaseConfigValue, 'connectionString' | 'expectedRole'>;
+
 export interface DatabaseConnectionPair {
   readonly admin: DatabaseConfigValue;
   readonly runtime: DatabaseConfigValue;
 }
 
-export class DatabaseConfig extends Context.Service<DatabaseConfig, DatabaseConfigValue>()(
+export class DatabaseConfig extends Context.Service<DatabaseConfig, RuntimeDatabaseConfigValue>()(
   '@app/core-runtime/db/config/DatabaseConfig',
 ) {}
 
-export interface DatabaseEnvironment {
-  readonly DATABASE_ADMIN_URL?: string;
-  readonly DATABASE_URL?: string;
-  readonly PARTY_REGISTRY_DATABASE_URL?: string;
-  readonly PARTY_REGISTRY_WORKER_DATABASE_URL?: string;
-  readonly SHELL_GATEWAY_ISSUER_DATABASE_URL?: string;
-}
+/** Raw injected configuration values; Config.schema owns decoding each enrolled URL. */
+const DatabaseEnvironmentSchema = Schema.Record(Schema.String, Schema.OptionFromUndefinedOr(Schema.String));
+export type DatabaseEnvironment = typeof DatabaseEnvironmentSchema.Encoded;
 
 export interface LoadDatabaseConfigOptions {
   readonly environment?: DatabaseEnvironment;
@@ -92,24 +89,16 @@ export interface DatabaseIdentityConnections {
 }
 
 export interface LoadDatabaseIdentityConnectionsOptions {
+  readonly enrollment: DatabaseIdentityEnrollment;
   readonly environment?: DatabaseEnvironment;
   readonly envPath?: string;
-}
-
-export interface SelectedDatabaseIdentityConnections {
-  readonly admin: DatabaseConfigValue;
-  readonly runtime: ReadonlyMap<DatabaseIdentityId, DatabaseConfigValue>;
-}
-
-export interface LoadSelectedDatabaseIdentityConnectionsOptions extends LoadDatabaseIdentityConnectionsOptions {
-  readonly identityIds: readonly string[];
 }
 
 const configFailure = (reason: string, cause?: unknown): DatabaseConfigError =>
   new DatabaseConfigError({ cause, reason });
 
 interface ReadDatabaseUrlOptions {
-  readonly configKey: 'DATABASE_ADMIN_URL' | DatabaseUrlKey;
+  readonly configKey: DatabaseUrlKey;
   readonly provider: ConfigProvider.ConfigProvider;
   /** Rejects query parameters that would override the URL's user, server or database. */
   readonly rejectIdentityOverrides?: boolean;
@@ -192,7 +181,7 @@ const parseDatabaseConnectionPairWith = Effect.fn('Config.readDatabaseConnection
       admin.user === runtime.user ||
       runtime.user === 'postgres'
     ) {
-      return yield* configFailure(distinctDatabaseUsersReason);
+      return yield* configFailure('Administrative and runtime PostgreSQL identities must be distinct');
     }
 
     return Object.freeze({ admin, runtime });
@@ -218,35 +207,29 @@ const readIdentityConnection = Effect.fn('Config.readIdentityConnection')(functi
 });
 
 const parseDatabaseIdentityConnectionsWith = Effect.fn('Config.readDatabaseIdentityConnections')(
-  function* readDatabaseIdentityConnectionsEffect(provider: ConfigProvider.ConfigProvider) {
+  function* readDatabaseIdentityConnectionsEffect(
+    provider: ConfigProvider.ConfigProvider,
+    enrollment: DatabaseIdentityEnrollment,
+  ) {
     const admin = yield* readAdminDatabaseUrl(provider, true);
-    const read = (identity: DatabaseIdentity) => readIdentityConnection(provider, admin, identity);
-    const runtime: Readonly<Record<DatabaseIdentityId, DatabaseConfigValue>> = Object.freeze({
-      party_registry_request: yield* read(PARTY_REGISTRY_REQUEST_IDENTITY),
-      party_registry_worker: yield* read(PARTY_REGISTRY_WORKER_IDENTITY),
-      shared_runtime: yield* read(SHARED_RUNTIME_IDENTITY),
-      shell_gateway_issuer: yield* read(SHELL_GATEWAY_ISSUER_IDENTITY),
-    });
+    const entries = yield* Effect.forEach(
+      enrollment.identities,
+      (identity) =>
+        readIdentityConnection(provider, admin, identity).pipe(
+          Effect.map((connection) => [identity.id, connection] as const),
+        ),
+      { concurrency: 1 },
+    );
+    const runtime: Readonly<Record<DatabaseIdentityId, DatabaseConfigValue>> = Object.freeze(
+      Object.fromEntries(entries),
+    );
     const users = [admin.user, ...Object.values(runtime).map(({ user }) => user)];
     if (users.includes('postgres', 1) || new Set(users).size !== users.length) {
-      return yield* configFailure(distinctDatabaseUsersReason);
+      return yield* configFailure('Administrative and runtime PostgreSQL identities must be distinct');
     }
     return Object.freeze({ admin, runtime });
   },
 );
-
-/** Resolve only canonical checked-in identities, before reading any connection configuration. */
-export const selectDatabaseIdentities = Effect.fn('Config.selectDatabaseIdentities')(function* selectIdentities(
-  identityIds: readonly string[],
-) {
-  if (identityIds.length === 0 || new Set(identityIds).size !== identityIds.length) {
-    return yield* configFailure('PostgreSQL identity selection must be nonempty and contain no duplicates');
-  }
-  if (identityIds.some((id) => !DATABASE_IDENTITIES.some((identity) => identity.id === id))) {
-    return yield* configFailure('PostgreSQL identity selection contains an unknown identity');
-  }
-  return DATABASE_IDENTITIES.filter(({ id }) => identityIds.includes(id));
-});
 
 export const parseDatabaseConfig = (
   environment: DatabaseEnvironment,
@@ -266,7 +249,7 @@ export const parseDatabaseConnectionPair = (
 
 const loadWithProvider = <Value>(
   parse: (provider: ConfigProvider.ConfigProvider) => Effect.Effect<Value, DatabaseConfigError>,
-  options: LoadDatabaseIdentityConnectionsOptions,
+  options: Pick<LoadDatabaseIdentityConnectionsOptions, 'environment' | 'envPath'>,
 ): Effect.Effect<Value, DatabaseConfigError> => {
   const environmentProvider =
     options.environment === undefined
@@ -285,10 +268,15 @@ const loadWithProvider = <Value>(
 const parseIdentityDatabaseConfigWith = Effect.fn('Config.readIdentityDatabaseConfig')(
   function* readIdentityDatabaseConfigEffect(provider: ConfigProvider.ConfigProvider, identity: DatabaseIdentity) {
     const connection = yield* parseDatabaseConfigWith(provider, identity);
-    if (connection.user !== identity.role) {
+    if (databaseRuntime.connectionIdentity === 'direct' && connection.user !== identity.role) {
       return yield* configFailure(`${identity.urlKey} must connect as the ${identity.role} role`);
     }
-    return connection;
+    return Object.freeze({
+      get connectionString(): string {
+        return connection.connectionString;
+      },
+      expectedRole: identity.role,
+    });
   },
 );
 
@@ -298,7 +286,7 @@ const parseIdentityDatabaseConfigWith = Effect.fn('Config.readIdentityDatabaseCo
  */
 export const loadDatabaseConfig = (
   options: LoadDatabaseConfigOptions,
-): Effect.Effect<DatabaseConfigValue, DatabaseConfigError> =>
+): Effect.Effect<RuntimeDatabaseConfigValue, DatabaseConfigError> =>
   loadWithProvider(
     (provider) =>
       databaseRuntime
@@ -306,6 +294,12 @@ export const loadDatabaseConfig = (
         .pipe(Effect.flatMap((runtimeProvider) => parseIdentityDatabaseConfigWith(runtimeProvider, options.identity))),
     options,
   );
+
+/** Selected migration and verification operations load only their administrative connection, not runtime credentials. */
+export const loadAdministrativeDatabaseConnection = (
+  options: Pick<LoadDatabaseIdentityConnectionsOptions, 'environment' | 'envPath'> = {},
+): Effect.Effect<DatabaseConfigValue, DatabaseConfigError> =>
+  loadWithProvider((provider) => readAdminDatabaseUrl(provider, true), options);
 
 export const loadDatabaseConnectionPair = (
   options: LoadDatabaseConnectionPairOptions = {},
@@ -320,47 +314,11 @@ export const loadDatabaseConnectionPair = (
  * without parameters that override the user, server or database.
  */
 export const loadDatabaseIdentityConnections = (
-  options: LoadDatabaseIdentityConnectionsOptions = {},
+  options: LoadDatabaseIdentityConnectionsOptions,
 ): Effect.Effect<DatabaseIdentityConnections, DatabaseConfigError> =>
-  loadWithProvider(parseDatabaseIdentityConnectionsWith, options);
+  loadWithProvider((provider) => parseDatabaseIdentityConnectionsWith(provider, options.enrollment), options);
 
 export const makeDatabaseConfigLive = (identity: DatabaseIdentity): Layer.Layer<DatabaseConfig, DatabaseConfigError> =>
   Layer.effect(DatabaseConfig, loadDatabaseConfig({ identity }));
 
 export const DatabaseConfigLive = makeDatabaseConfigLive(SHARED_RUNTIME_IDENTITY);
-
-const parseSelectedIdentityConnectionsWith = Effect.fn('Config.readSelectedDatabaseIdentityConnections')(
-  function* readSelectedConnections(provider: ConfigProvider.ConfigProvider, identities: readonly DatabaseIdentity[]) {
-    const admin = yield* readAdminDatabaseUrl(provider, true);
-    const connections = yield* Effect.forEach(
-      identities,
-      (identity) =>
-        readIdentityConnection(provider, admin, identity).pipe(
-          Effect.map((connection) => [identity.id, connection] as const),
-        ),
-      { concurrency: 1 },
-    );
-    const runtime = new Map(connections);
-    const users = [admin.user, ...[...runtime.values()].map(({ user }) => user)];
-    if (users.includes('postgres', 1) || new Set(users).size !== users.length) {
-      return yield* configFailure(distinctDatabaseUsersReason);
-    }
-    return Object.freeze({ admin, runtime });
-  },
-);
-
-/** Strict admin/identity validation without reading any excluded runtime credential. */
-export const loadSelectedDatabaseIdentityConnections = (
-  options: LoadSelectedDatabaseIdentityConnectionsOptions,
-): Effect.Effect<SelectedDatabaseIdentityConnections, DatabaseConfigError> =>
-  selectDatabaseIdentities(options.identityIds).pipe(
-    Effect.flatMap((identities) =>
-      loadWithProvider((provider) => parseSelectedIdentityConnectionsWith(provider, identities), options),
-    ),
-  );
-
-/** Read-only catalog observation needs only the strictly parsed administrative connection. */
-export const loadAdministrativeDatabaseConnection = (
-  options: LoadDatabaseIdentityConnectionsOptions = {},
-): Effect.Effect<DatabaseConfigValue, DatabaseConfigError> =>
-  loadWithProvider((provider) => readAdminDatabaseUrl(provider, true), options);

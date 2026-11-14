@@ -77,7 +77,7 @@ import type {
   EnrollmentOwnerOperationSnapshot,
 } from '../../../shared/enrollment-contracts.ts';
 import { noStoreHeaders, requestHeaders, requireTrustedOrigin } from '../http-transport.ts';
-import { CommercePortalAuthService } from '../session/http.ts';
+import { CommercePortalAuthService } from '../session/auth-service.ts';
 import { CommercePortalAuthSessionLifecycle } from '../session/lifecycle-service.ts';
 import {
   CommercePortalAuthEnrollmentClaimInvitationInputSchema,

@@ -1,10 +1,20 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
-import { CorePersistenceLive, makeDatabaseConfigLive, PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/core-runtime';
+import {
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '@app/party-registry-identity-contracts';
+import { CorePersistenceLive, DatabaseIdentityEnrollmentContext, makeDatabaseConfigLive } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type { ActionRuntime, ReadRuntime, GatewayAssertionRedemptionService } from '@app/core-runtime';
+import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
+import {
+  OwnerActionApprovalSchemaErrorLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
+} from '@app/core-runtime/access/approvals/owner-http';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
-import { HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
+import { HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime, EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
@@ -12,7 +22,10 @@ import { FetchHttpClient } from 'effect/http';
 import { partyRegistryApi } from '../shared/api.ts';
 import type { PartySearchProjectionGateway } from '../shared/domain/search-projection-gateway.ts';
 import type { AresSubjectService } from '../src/integrations/ares/ares-subject.service.ts';
-import { ActionPrincipalVerifierLive } from './auth/action-principal.ts';
+import {
+  ActionPrincipalVerifierLive,
+  authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
+} from './auth/action-principal.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive,
@@ -24,7 +37,11 @@ import { counterpartyMigrationCorrelationReadApiLive } from './counterparty-migr
 import { counterpartyOrganizationIcoFactsReadApiLive } from './counterparty-organization-ico-facts-read-server.ts';
 import { counterpartyReadReadApiLive } from './counterparty-read-read-server.ts';
 import { counterpartyRoleHistoryReadApiLive } from './counterparty-role-history-read-server.ts';
+import { createCrmClientPartyActionApiLive } from './create-crm-client-party-action-server.ts';
+import { crmClientIntakeReviewReadApiLive } from './crm-client-intake-review-read-server.ts';
+import { customerListReadApiLive } from './customer-list-read-server.ts';
 import { duplicateCandidateDetailReadApiLive } from './duplicate-candidate-detail-read-server.ts';
+import { duplicateCandidateListReadApiLive } from './duplicate-candidate-list-read-server.ts';
 import { executePrivacyMeasureActionApiLive } from './execute-privacy-measure-action-server.ts';
 import { fenceLegacyIcoAuthorityActionApiLive } from './fence-legacy-ico-authority-action-server.ts';
 import { guestPartyResolutionReadApiLive } from './guest-party-resolution-read-server.ts';
@@ -34,6 +51,7 @@ import { organizationIcoFactsReadApiLive } from './organization-ico-facts-read-s
 import { organizationRecordFactsReadApiLive } from './organization-record-facts-read-server.ts';
 import { partySourceEffectReceiptReadApiLive } from './party-source-effect-receipt-read-server.ts';
 import { privacyMeasureExecutionReadApiLive } from './privacy-measure-execution-read-server.ts';
+import { searchLabelsReadApiLive } from './search-labels-read-server.ts';
 import { sourceCounterpartyAdmissionReadApiLive } from './source-counterparty-admission-read-server.ts';
 import { sourcePersonAdmissionReadApiLive } from './source-person-admission-read-server.ts';
 import { sourceProfileExportReadApiLive } from './source-profile-export-read-server.ts';
@@ -54,6 +72,7 @@ import { partyOfficialIdentifierHistoryReadApiLive } from './party-official-iden
 import { partyRegistryFoundationLive } from './party-registry-foundation.ts';
 import {
   partyRegistryActionRuntimeLive,
+  partyRegistryOwnerActionApprovalsLive,
   partyRegistryAresSubjectServiceLive,
   partyRegistryReadRuntimeLive,
   partyRegistrySearchProjectionGatewayLive,
@@ -90,6 +109,10 @@ const readShellOrigin = () => {
 const shellOrigin = readShellOrigin();
 
 const partyRegistryDatabaseConfigLive = makeDatabaseConfigLive(PARTY_REGISTRY_REQUEST_IDENTITY);
+const partyRegistryDatabaseIdentityEnrollmentLive = Layer.succeed(
+  DatabaseIdentityEnrollmentContext,
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+);
 
 const gatewayAssertionRedemptionLive = GatewayAssertionRedemptionLive.pipe(
   Layer.provide(GatewayAssertionRedemptionDatabaseLive),
@@ -107,15 +130,31 @@ const accessEnforcementLive = AccessDecisionLive.pipe(
   Layer.provide(CorePersistenceLive),
   Layer.provide(partyRegistryDatabaseConfigLive),
   Layer.provide(nodeCryptoLayer),
+  Layer.provide(partyRegistryDatabaseIdentityEnrollmentLive),
 );
 const productionReadRuntimeLive = partyRegistryReadRuntimeLive.pipe(
-  Layer.provide(Layer.mergeAll(partyRegistryDatabaseConfigLive, nodeCryptoLayer, accessEnforcementLive)),
+  Layer.provide(
+    Layer.mergeAll(
+      partyRegistryDatabaseConfigLive,
+      partyRegistryDatabaseIdentityEnrollmentLive,
+      nodeCryptoLayer,
+      accessEnforcementLive,
+    ),
+  ),
 );
 const productionSearchProjectionGatewayLive = partyRegistrySearchProjectionGatewayLive.pipe(
-  Layer.provide(partyRegistryDatabaseConfigLive),
+  Layer.provide(Layer.merge(partyRegistryDatabaseConfigLive, partyRegistryDatabaseIdentityEnrollmentLive)),
 );
 const productionActionRuntimeLive = partyRegistryActionRuntimeLive.pipe(
-  Layer.provide(Layer.mergeAll(partyRegistryDatabaseConfigLive, nodeCryptoLayer, accessEnforcementLive)),
+  Layer.provideMerge(partyRegistryOwnerActionApprovalsLive),
+  Layer.provide(
+    Layer.mergeAll(
+      partyRegistryDatabaseConfigLive,
+      partyRegistryDatabaseIdentityEnrollmentLive,
+      nodeCryptoLayer,
+      accessEnforcementLive,
+    ),
+  ),
 );
 
 type PartyRegistryApiRuntimeArguments = readonly [
@@ -125,7 +164,7 @@ type PartyRegistryApiRuntimeArguments = readonly [
     PartySearchProjectionGateway,
     Layer.Error<typeof productionSearchProjectionGatewayLive>
   >,
-  actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof productionActionRuntimeLive>>,
+  actionRuntime: Layer.Layer<ActionRuntime | OwnerActionApprovals, Layer.Error<typeof productionActionRuntimeLive>>,
   gatewayAssertionRedemption: Layer.Layer<
     GatewayAssertionRedemptionService,
     Layer.Error<typeof gatewayAssertionRedemptionLive>
@@ -149,8 +188,19 @@ export const makePartyRegistryApiRuntime: (...args: PartyRegistryApiRuntimeArgum
   const apiHandlersLive = Layer.mergeAll(
     partyRegistryFoundationLive,
     partyRegistryCommandsLive.pipe(Layer.provide(governedActionRuntimeLive)),
-    partyRegistryCommandRecoveryLive.pipe(Layer.provide(governedActionRuntimeLive)),
+    // Commit recovery reads the committed create result through the governed Read runtime.
+    partyRegistryCommandRecoveryLive.pipe(
+      Layer.provide(Layer.mergeAll(governedActionRuntimeLive, governedReadRuntimeLive)),
+    ),
     engagementProfileApiHandlersLive.pipe(Layer.provide(governedActionRuntimeLive)),
+    HttpApiBuilder.group(partyRegistryApi, 'ownerActionApprovals', (handlers) =>
+      handlers
+        .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+        .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+    ).pipe(
+      GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+    ),
     // <generated-governed-http-handler-layers>
     aresLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive), Layer.provide(aresSubjectService)),
     counterpartiesReadApiLive.pipe(
@@ -161,7 +211,14 @@ export const makePartyRegistryApiRuntime: (...args: PartyRegistryApiRuntimeArgum
     counterpartyOrganizationIcoFactsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     counterpartyReadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     counterpartyRoleHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    createCrmClientPartyActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    crmClientIntakeReviewReadApiLive.pipe(
+      GovernedReadLayer.provide(governedReadRuntimeLive),
+      Layer.provide(governedActionRuntimeLive),
+    ),
+    customerListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     duplicateCandidateDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    duplicateCandidateListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     executePrivacyMeasureActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     fenceLegacyIcoAuthorityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     guestPartyResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -184,6 +241,7 @@ export const makePartyRegistryApiRuntime: (...args: PartyRegistryApiRuntimeArgum
     partySourceEffectReceiptReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     personEngagementProfileReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     privacyMeasureExecutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    searchLabelsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     sourceCounterpartyAdmissionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     sourcePersonAdmissionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     sourceProfileExportReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

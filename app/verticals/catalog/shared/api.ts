@@ -1,3 +1,4 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import {
   MicroVerticalBuildMarkerSchema,
   MicroVerticalReadinessSchema,
@@ -446,12 +447,14 @@ type CatalogApiGroups = GroupsOf<
   | typeof UpdateProductActionApi
   | typeof UpdateProductRecoveryApi
   | typeof VariantHistoryApi
+  | typeof OwnerActionApprovalApi
 >;
 
 type CatalogApi = HttpApi.HttpApi<'CatalogApi', CatalogApiGroups>;
 
 export const catalogApi: CatalogApi = HttpApi.make('CatalogApi')
   .addHttpApi(catalogFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(ActivateLocalOverrideActionApi)
   .addHttpApi(ActivateLocalOverrideRecoveryApi)

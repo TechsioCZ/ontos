@@ -82,6 +82,8 @@ export const CommercePortalAuthEnrollmentStartInputSchema = Schema.Union([
     ...enrollmentAccountCreationFields,
     invitationId: Schema.optionalKey(Schema.Never),
     journey: Schema.Literal('RETAIL_SELF_ENROLLMENT'),
+    // Envelope bounds only; Party's native normalizer validates the number before any write.
+    phone: Schema.optionalKey(Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(100))),
   }),
   Schema.Struct({
     ...enrollmentAccountCreationFields,

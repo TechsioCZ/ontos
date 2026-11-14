@@ -2,7 +2,7 @@ import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/ef
 import { Context, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { HttpApi } from 'effect/http-api';
-import { expect, it } from 'effect-rstest';
+import { expect, it, rstest } from 'effect-rstest';
 
 import type { OTPOptions } from 'better-auth/plugins/two-factor';
 
@@ -40,10 +40,11 @@ import type {
 import {
   CommercePortalAuthMfaFreshnessReaderService,
   commercePortalAuthMfaFreshnessReaderFromApi,
+  portalAuthMfaApiLive,
   portalAuthMfaStandaloneApiLive,
 } from '../../api/portal-auth/provider/mfa/http.ts';
 import { makeCommercePortalAuthMfaProvider } from '../../api/portal-auth/provider/mfa/better-auth-provider.ts';
-import type { CommercePortalAuthTwoFactorApi } from '../../api/portal-auth/provider/mfa/better-auth-provider.ts';
+import type { CommercePortalAuthMfaResponseApi } from '../../api/portal-auth/provider/mfa/better-auth-provider.ts';
 import type {
   CommercePortalAuthMfaFreshnessReader,
   CommercePortalAuthMfaSessionReadApi,
@@ -52,6 +53,7 @@ import type {
 import { CommercePortalAuthMfaService } from '../../api/portal-auth/provider/mfa/service.ts';
 import type { CommercePortalAuthMfaSessionRollback } from '../../api/portal-auth/provider/mfa/service.ts';
 import { CommercePortalAuthRecoveryRateLimitService } from '../../api/portal-auth/rate-limit-service.ts';
+import { commercePortalAuthRealmUnavailableLive } from '../../api/portal-auth/realm-unavailable.ts';
 import type { CommercePortalAuthRecoveryRateLimit } from '../../api/portal-auth/rate-limit-service.ts';
 import { encodeCommerceSessionReference } from '../../api/portal-auth/provider/session-reference.ts';
 import { makeCommercePortalAuthSessionLifecycle } from '../../api/portal-auth/session/lifecycle.ts';
@@ -555,6 +557,38 @@ const makeMfaHttpApp = (
       (handler) => Effect.promise(handler.dispose.bind(handler)).pipe(Effect.orDie),
     );
   });
+
+it.effect('builds the composed MFA group without capturing the request realm', () =>
+  Effect.gen(function* resolvesRequestRealm() {
+    const fixture = makeMfaHttpFixture();
+    const api = HttpApi.make('CommerceCustomerContextApi').addHttpApi(CommercePortalAuthMfaApi);
+    const apiLayer = HttpApiBuilder.layer(api).pipe(
+      Layer.provide(portalAuthMfaApiLive),
+      Layer.provide(HttpServer.layerServices),
+      Layer.provide(TestClock.layer()),
+    );
+    const app = yield* Effect.acquireRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(apiLayer, { disableLogger: true })),
+      (handler) => Effect.promise(handler.dispose.bind(handler)).pipe(Effect.orDie),
+    );
+    const realm = yield* Layer.build(commercePortalAuthRealmUnavailableLive([HTTP_ORIGIN]));
+    const services = realm.pipe(
+      Context.add(CommercePortalAuthConfig, HTTP_CONFIG),
+      Context.add(CommercePortalAuthMfaService, fixture.service),
+      Context.add(CommercePortalAuthRecoveryRateLimitService, fixture.budget),
+    );
+    const response = yield* Effect.promise(() =>
+      app.handler(mfaHttpRequest('/api/portal-auth/two-factor/enable', { password: 'P'.repeat(24) }), services),
+    );
+    expect(response.status).toBe(401);
+    expect(yield* Effect.promise(() => response.json())).toMatchObject({
+      code: 'mfa_authentication_not_fresh',
+      status: 401,
+    });
+    expect(fixture.state.enableInputs).toHaveLength(0);
+    expect(fixture.state.budgetKeys).toHaveLength(0);
+  }),
+);
 
 it.effect('gates enable behind the trusted origin, the freshness window, and the durable budget, in that order', () =>
   Effect.gen(function* gateOrdering() {
@@ -1246,24 +1280,35 @@ it.effect('forwards a verification the audit store accepted, with both rows and 
  * `Set-Cookie` header must never ride along on the resulting failure — from the provider layer
  * through the strict verification's completion row to whatever the caller receives.
  */
-/**
- * The two-factor endpoint stub only `makeCommercePortalAuthMfaProvider` ever calls in this test:
- * `verifyTOTP` bound with `asResponse: true`. Better Auth's inferred endpoint type is a generic
- * conditional this fixture does not reproduce, so the whole stub is asserted once; nothing about
- * the double besides that assertion is unusual, and only `verifyTOTP` is invoked.
- */
 const malformedVerificationTwoFactorApi = () => {
-  const stub = {
-    verifyTOTP: () =>
-      Promise.resolve(
-        new Response('{"not":"the-expected-verification-shape"}', {
-          headers: { 'set-cookie': VERIFICATION_COOKIE },
-          status: 200,
-        }),
-      ),
-  };
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion, anti-slop/no-chained-type-assertions -- SAFETY: only verifyTOTP is invoked by makeCommercePortalAuthMfaProvider(...).verifyTOTP in this test; Better Auth's generic endpoint type is not reproduced by this fixture.
-  return stub as unknown as CommercePortalAuthTwoFactorApi;
+  const unexpectedEndpoint = new Error('Unexpected MFA endpoint in malformed verification fixture');
+  return {
+    disableTwoFactor: rstest
+      .fn<CommercePortalAuthMfaResponseApi['disableTwoFactor']>()
+      .mockRejectedValue(unexpectedEndpoint),
+    enableTwoFactor: rstest
+      .fn<CommercePortalAuthMfaResponseApi['enableTwoFactor']>()
+      .mockRejectedValue(unexpectedEndpoint),
+    generateBackupCodes: rstest
+      .fn<CommercePortalAuthMfaResponseApi['generateBackupCodes']>()
+      .mockRejectedValue(unexpectedEndpoint),
+    getTOTPURI: rstest.fn<CommercePortalAuthMfaResponseApi['getTOTPURI']>().mockRejectedValue(unexpectedEndpoint),
+    sendTwoFactorOTP: rstest
+      .fn<CommercePortalAuthMfaResponseApi['sendTwoFactorOTP']>()
+      .mockRejectedValue(unexpectedEndpoint),
+    verifyBackupCode: rstest
+      .fn<CommercePortalAuthMfaResponseApi['verifyBackupCode']>()
+      .mockRejectedValue(unexpectedEndpoint),
+    verifyTOTP: rstest.fn<CommercePortalAuthMfaResponseApi['verifyTOTP']>().mockResolvedValue(
+      new Response('{"not":"the-expected-verification-shape"}', {
+        headers: { 'set-cookie': VERIFICATION_COOKIE },
+        status: 200,
+      }),
+    ),
+    verifyTwoFactorOTP: rstest
+      .fn<CommercePortalAuthMfaResponseApi['verifyTwoFactorOTP']>()
+      .mockRejectedValue(unexpectedEndpoint),
+  } satisfies CommercePortalAuthMfaResponseApi;
 };
 
 it.effect('never carries a 2xx malformed-body cookie past the provider driver', () =>

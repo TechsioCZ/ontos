@@ -1,0 +1,30 @@
+zdroj;id_objednavky;cislo_objednavky;datum_objednavky;id_zakaznika;nazev_zakaznika;ico_zakaznika;email_zakaznika;castka;mena;stav;cas_udalosti;id_udalosti;polozky
+E-shop;100201;OBJ-2026-0201;2026-05-06;ESH-1001;Pekárna Malá s.r.o.;90000101;info@pekarna-mala.demo;11850.00;CZK;dorucena;2026-05-09T10:20:00+02:00;e100201-3;MOU-T650:Mouka pšeničná hladká T650 25 kg:15:7425.00|DRO-1:Droždí čerstvé 1 kg:10:1250.00|CUK-25:Cukr krystal 25 kg:3:3175.00
+E-shop;100208;OBJ-2026-0208;2026-05-19;ESH-1002;Restaurace U Zlaté husy;90000102;objednavky@restaurace-u-zlate-husy.demo;8420.50;CZK;dorucena;2026-05-22T09:00:00+02:00;e100208-3;
+E-shop;100215;OBJ-2026-0215;2026-06-03;ESH-1004;Bistro Král s.r.o.;90000107;bistro@bistro-kral.demo;6310.00;CZK;dorucena;2026-06-05T15:40:00+02:00;e100215-3;OLE-10:Olej řepkový 10 l:4:1960.00|MAS-5:Máslo 82 % 5 kg:3:4350.00
+E-shop;100221;OBJ-2026-0221;2026-06-14;ESH-1005;Lázeňský hotel Morava;90000110;recepce@lazne-hotel.demo;1240.00;EUR;dorucena;2026-06-18T11:00:00+02:00;e100221-3;KAV-1:Káva zrnková 1 kg:40:1240.00
+E-shop;100226;OBJ-2026-0226;2026-06-27;ESH-1003;Hotel Podhradí a.s.;90000104;recepce@hotel-podhradi.demo;23780.00;CZK;dorucena;2026-07-01T08:30:00+02:00;e100226-3;
+Účetní systém;UO-26-0071;PO-2026-071;2026-05-12;UCT-501;Catering Vsetín s.r.o.;90000111;;18600.00;CZK;Vyřízená;2026-05-20T12:00:00+02:00;u71-2;
+Účetní systém;UO-26-0083;PO-2026-083;2026-06-09;UCT-502;Minimarket Hodonín;90000109;info@minimarket-hodonin.demo;7350.00;CZK;Vyřízená;2026-06-16T10:00:00+02:00;u83-2;
+Účetní systém;UO-26-0094;PO-2026-094;2026-07-02;UCT-503;Školní jídelna ZŠ Blansko;90000105;jidelna@zs-blansko.demo;5980.00;CZK;Vyřízená;2026-07-09T09:15:00+02:00;u94-2;
+E-shop;100233;OBJ-2026-0233;2026-07-08;ESH-1001;Pekárna Malá s.r.o.;90000101;info@pekarna-mala.demo;14200.00;CZK;dorucena;2026-07-10T13:05:00+02:00;e100233-3;MOU-T650:Mouka pšeničná hladká T650 25 kg:20:9900.00|MOU-1050:Mouka chlebová T1050 25 kg:6:3060.00|DRO-1:Droždí čerstvé 1 kg:10:1240.00
+E-shop;100239;OBJ-2026-0239;2026-07-21;ESH-1006;Zámecká restaurace;90000108;kuchyne@zamecka-restaurace.demo;9870.00;CZK;dorucena;2026-07-24T14:00:00+02:00;e100239-3;
+Účetní systém;UO-26-0102;PO-2026-102;2026-07-28;UCT-501;Catering Vsetín s.r.o.;90000111;;11200.00;CZK;Stornována;2026-07-30T16:45:00+02:00;u102-2;
+E-shop;100244;OBJ-2026-0244;2026-08-04;ESH-1002;Restaurace U Zlaté husy;90000102;objednavky@restaurace-u-zlate-husy.demo;7650.00;CZK;stornovana;2026-08-05T08:15:00+02:00;e100244-2;
+E-shop;100248;OBJ-2026-0248;2026-08-12;ESH-1005;Lázeňský hotel Morava;90000110;recepce@lazne-hotel.demo;980.00;EUR;dorucena;2026-08-15T10:30:00+02:00;e100248-3;KAV-1:Káva zrnková 1 kg:25:775.00|CAJ-100:Čaj černý 100 sáčků:10:205.00
+E-shop;100252;OBJ-2026-0252;2026-08-25;ESH-1007;Potraviny Černá;90000103;prodejna@potraviny-cerna.demo;;;dorucena;2026-08-28T11:20:00+02:00;e100252-3;
+Účetní systém;UO-26-0117;PO-2026-117;2026-08-30;UCT-503;Školní jídelna ZŠ Blansko;90000105;jidelna@zs-blansko.demo;6420.00;CZK;Vyřízená;2026-09-04T09:00:00+02:00;u117-2;
+E-shop;100257;OBJ-2026-0257;2026-09-03;ESH-1004;Bistro Král s.r.o.;90000107;bistro@bistro-kral.demo;5480.00;CZK;dorucena;2026-09-06T12:10:00+02:00;e100257-3;
+E-shop;100261;OBJ-2026-0261;2026-09-15;ESH-1008;Kavárna Na Rohu;;;3240.00;CZK;dorucena;2026-09-17T09:45:00+02:00;e100261-3;KAV-1:Káva zrnková 1 kg:8:2480.00|MLE-1:Mléko trvanlivé 1 l:40:760.00
+Účetní systém;UO-26-0125;PO-2026-125;2026-09-18;UCT-502;Minimarket Hodonín;90000109;info@minimarket-hodonin.demo;8930.00;CZK;Přijatá;2026-09-18T15:00:00+02:00;u125-1;
+E-shop;100266;OBJ-2026-0266;2026-09-24;ESH-1001;Pekárna Malá s.r.o.;90000101;info@pekarna-mala.demo;12450.00;CZK;odeslana;2026-09-25T07:40:00+02:00;e100266-2;MOU-T650:Mouka pšeničná hladká T650 25 kg:20:9900.00|CUK-25:Cukr krystal 25 kg:2:2550.00
+Účetní systém;UO-26-0129;OBJ-2026-0266;2026-09-24;UCT-510;Pekárna Malá s.r.o.;90000101;;12450.00;CZK;Přijatá;2026-09-26T10:00:00+02:00;u129-1;
+E-shop;100270;OBJ-2026-0270;2026-10-02;ESH-1003;Hotel Podhradí a.s.;90000104;recepce@hotel-podhradi.demo;18900.00;CZK;zaplacena;2026-10-03T09:30:00+02:00;e100270-2;
+Účetní systém;UO-26-0131;PO-2026-131;2026-10-05;UCT-501;Catering Vsetín s.r.o.;90000111;;15400.00;CZK;Přijatá;2026-10-05T11:00:00+02:00;u131-1;
+E-shop;100274;OBJ-2026-0274;2026-10-06;ESH-1099;Kavárna U Mlýna;;info@kavarna-u-mlyna.demo;2860.00;CZK;nova;2026-10-06T17:25:00+02:00;e100274-1;
+E-shop;100277;OBJ-2026-0277;2026-10-08;ESH-1100;Cukrárna Sladká tečka;90000112;cukrarna@sladka-tecka.demo;4150.00;CZK;zaplacena;2026-10-08T20:10:00+02:00;e100277-2;
+E-shop;100281;OBJ-2026-0281;2026-10-12;ESH-1006;Zámecká restaurace;90000108;kuchyne@zamecka-restaurace.demo;6720.00;CZK;nova;2026-10-12T09:10:00+02:00;e100281-1;
+E-shop;100281;OBJ-2026-0281;2026-10-12;ESH-1006;Zámecká restaurace;90000108;kuchyne@zamecka-restaurace.demo;6720.00;CZK;zaplacena;2026-10-12T18:30:00+02:00;e100281-2;
+E-shop;100285;OBJ-2026-0285;2026-10-14;ESH-1005;Lázeňský hotel Morava;90000110;recepce@lazne-hotel.demo;1520.00;EUR;zaplacena;2026-10-14T19:00:00+02:00;e100285-2;KAV-1:Káva zrnková 1 kg:30:930.00|CAJ-100:Čaj černý 100 sáčků:20:410.00|CUK-1:Cukr kostky 1 kg:60:180.00
+E-shop;100288;OBJ-2026-0288;2026-10-16;ESH-1002;Restaurace U Zlaté husy;90000102;objednavky@restaurace-u-zlate-husy.demo;9340.00;CZK;nova;2026-10-16T08:05:00+02:00;e100288-1;
+E-shop;100290;OBJ-2026-0290;2026-10-17;ESH-1004;Bistro Král s.r.o.;90000107;bistro@bistro-kral.demo;4890.00;CZK;nova;2026-10-17T13:50:00+02:00;e100290-1;

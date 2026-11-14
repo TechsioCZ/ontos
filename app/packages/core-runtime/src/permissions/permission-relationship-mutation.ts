@@ -1,5 +1,5 @@
 import { v1 } from '@authzed/authzed-node';
-import { spiceDbTransport } from '#spicedb-transport';
+import { openSpiceDbRpc } from './spicedb-transaction-guard.ts';
 import { Effect } from 'effect';
 import type { Scope } from 'effect';
 
@@ -20,7 +20,7 @@ export const createPermissionRelationshipMutationClient = <Failure>(
   timeoutMilliseconds: number,
   unavailable: (cause?: unknown) => Failure,
 ): PermissionRelationshipMutationClient<Failure> => {
-  const rpc = spiceDbTransport.open(configuration, timeoutMilliseconds);
+  const rpc = openSpiceDbRpc(configuration, timeoutMilliseconds);
   return {
     close: rpc.close,
     writeRelationships: (request) =>
@@ -40,6 +40,7 @@ interface PermissionRelationshipDefinition {
 
 export interface PermissionRelationshipMutationPreparation {
   readonly granteeId: string;
+  readonly granteeRelation: 'grantee' | 'self_service_grantee';
   readonly resourceId: string;
   readonly scopeRelationships: readonly PermissionRelationshipDefinition[];
 }
@@ -91,7 +92,7 @@ export const makePermissionRelationshipMutation = <Input extends PermissionRelat
         v1.RelationshipUpdate.create({
           operation,
           relationship: relationship(definition.resourceType, prepared.resourceId, {
-            relation: 'grantee',
+            relation: prepared.granteeRelation,
             subjectId: prepared.granteeId,
             subjectType: 'principal',
           }),
@@ -121,8 +122,9 @@ export const makePermissionRelationshipMutationLive = <Failure, Service>({
     onFailure: (cause) => Effect.succeed(unavailableService(cause)),
     onSuccess: (configuration) =>
       acquireSpiceDbClientResource(() => clientFactory(configuration, SPICEDB_CHECK_TIMEOUT_MS), unavailable).pipe(
-        Effect.map(makeService),
-        // oxlint-disable-next-line promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- Effect.catch handles the typed Effect failure channel; this is not Promise chaining or callback-based Promise control flow.
-        Effect.catch((error) => Effect.succeed(unavailableService(error))),
+        Effect.matchEffect({
+          onFailure: (error) => Effect.succeed(unavailableService(error)),
+          onSuccess: (client) => Effect.succeed(makeService(client)),
+        }),
       ),
   });

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { ContextAccessLive, DatabaseConfigLive } from '@app/core-runtime';
-import { ResendEmailDeliveryConfig } from '@app/email-delivery/resend';
+import { localEmailDeliveryLive } from '../support/local-email-delivery.ts';
 import { Config, Effect, Layer, Redacted } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -42,18 +42,17 @@ const configuredRuntime = Effect.acquireRelease(
     });
     // The transactional email transport is a required input of the provider graph; a rejected
     // sign-in never reaches delivery.
-    const emailDeliveryConfiguration = Layer.succeed(ResendEmailDeliveryConfig, {
-      apiKey: Redacted.make('re_commerce_portal_auth_composition_test'),
-      endpoint: 'https://api.resend.com/emails',
-      from: 'no-reply@commerce.example.test',
-    });
     return makeCommerceCustomerContextApiRuntime(
       productionReadRuntimeLive,
       productionActionRuntimeLive,
       configuredGatewayAssertionRedemptionLive,
       commercePortalAuthRealmLive.pipe(
         Layer.provideMerge(
-          Layer.mergeAll(Layer.succeed(CommercePortalAuthConfig, configuration), emailDeliveryConfiguration),
+          Layer.mergeAll(
+            Layer.succeed(CommercePortalAuthConfig, configuration),
+            // Provider mail stays local: the realm sends with the context it captured, never the real API.
+            localEmailDeliveryLive([]),
+          ),
         ),
       ),
       Layer.empty,

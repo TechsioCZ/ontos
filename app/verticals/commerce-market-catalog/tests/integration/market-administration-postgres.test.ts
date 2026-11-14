@@ -573,18 +573,23 @@ it.live('limits forced Tenant RLS tables to governed routines and exact admissio
       );
       expect(catalog).toEqual({
         executable_routines: [
+          'advance_market_retirement_intent(uuid, uuid, jsonb)',
           'associate_storefront(uuid, uuid, jsonb)',
           'create_market(uuid, uuid, jsonb)',
           'read_current_market_catalog(uuid, uuid, jsonb)',
+          'read_market_administration_state(uuid, uuid, jsonb)',
           'read_market_eligibility_snapshot(uuid, jsonb)',
           'read_market_history(uuid, uuid, jsonb)',
+          'read_market_retirement_intent(uuid, uuid, jsonb)',
+          'read_market_search_snapshot(uuid, uuid, jsonb)',
           'read_pricing_current_market_evidence(uuid, uuid, jsonb)',
           'remove_storefront_association(uuid, uuid, jsonb)',
+          'request_market_retirement(uuid, uuid, jsonb)',
           'revise_market_definition(uuid, uuid, jsonb)',
           'revise_storefront_association(uuid, uuid, jsonb)',
           'transition_market_lifecycle(uuid, uuid, jsonb)',
         ],
-        forced_tables: 7,
+        forced_tables: 8,
         private_routines_executable: false,
         runtime_table_grants: [
           'gateway_assertion_redemptions:DELETE',

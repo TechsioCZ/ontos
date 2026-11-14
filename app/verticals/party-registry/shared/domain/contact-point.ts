@@ -3,6 +3,7 @@ import { Match, Schema } from 'effect';
 import { PartyContactPointRefSchema } from '../resources/party-contact-point.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 import { AresAppliedEvidenceSchema } from './ares-application.ts';
+import { normalizeContactPhone } from './contact-phone-normalization.ts';
 import { PartyContactPointInvalid } from './contact-point-errors.ts';
 import { IsoTimestampSchema } from './identity-contracts.ts';
 
@@ -255,49 +256,17 @@ export const normalizeEmail = (rawValue: string): NormalizedChannel => {
   };
 };
 
-const digitsOnly = (value: string): string => value.replaceAll(/[^0-9]/gu, '');
-
-const assertPhoneParts = (displayValue: string, countryCode: string | undefined, extension: string | null): void => {
-  if (countryCode !== undefined && !/^[A-Z]{2}$/u.test(countryCode)) {
-    return invalidContactPoint('PHONE country context must be a two-letter country code');
-  }
-  if (extension !== null && !/^[0-9]{1,12}$/u.test(extension)) {
-    return invalidContactPoint('PHONE extension must contain 1 to 12 digits');
-  }
-  if (!/^\+?[()0-9 .-]+$/u.test(displayValue)) {
-    return invalidContactPoint('PHONE contains unsupported characters');
-  }
-};
-
+/**
+ * The one phone rule home is the published `contact-phone-normalization` contract; this owner
+ * keeps its own error vocabulary around the shared answer, so Party's durable contact point and
+ * every ingress canonicalize identically.
+ */
 export const normalizePhone = (rawValue: string, rawCountryCode?: string, rawExtension?: string): NormalizedPhone => {
-  const displayValue = rawValue.trim();
-  const countryCode = rawCountryCode?.trim().toUpperCase();
-  const digits = digitsOnly(displayValue);
-  const extension = rawExtension?.trim() ?? null;
-  assertPhoneParts(displayValue, countryCode, extension);
-  if (displayValue.startsWith('+')) {
-    if (!/^[1-9][0-9]{6,14}$/u.test(digits)) {
-      return invalidContactPoint('PHONE international form must contain 7 to 15 digits and start with 1 to 9');
-    }
-    return {
-      countryCode: countryCode ?? (digits.startsWith('420') ? 'CZ' : null),
-      displayValue,
-      extension,
-      lookupValue: `+${digits}`,
-    };
+  const normalization = normalizeContactPhone(rawValue, rawCountryCode, rawExtension);
+  if (!normalization.ok) {
+    return invalidContactPoint(normalization.reason);
   }
-  if (countryCode === undefined) {
-    return invalidContactPoint('National PHONE requires an explicit country context');
-  }
-  if (countryCode !== 'CZ' || digits.length !== 9) {
-    return invalidContactPoint('National PHONE has no approved normalization rule for this country');
-  }
-  return {
-    countryCode,
-    displayValue,
-    extension,
-    lookupValue: `+420${digits}`,
-  };
+  return normalization.normalized;
 };
 
 const normalizedOptional = (value: string | undefined): null | string => value?.trim() || null;

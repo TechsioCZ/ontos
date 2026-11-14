@@ -38,7 +38,7 @@ Read a specification only when the task or GitHub issue names it. A specificatio
 - Start supported business artifacts with Codesmith. If a category has no approved generator or gateway, extend or approve that boundary before creating the artifact.
 - Infrastructure and architecture files may be created directly when no generator applies.
 - Keep third-party HTTP adapters private to their owner. Define provider schemas, typed failures, request construction, resilience, diagnostics, and business mapping; use the generated Effect `HttpClient` service as the test seam.
-- Run pnpm commands from `app/` through `mise exec -- pnpm`.
+- Run pnpm commands from `app/` through `mise exec -- pnpm`. Install dependencies with `mise run deps`; this task caps pnpm importer workers to reduce APFS clone contention without limiting lint or build concurrency.
 
 ## Codesmith
 
@@ -66,10 +66,11 @@ Then generate its MicroVertical module contract before its business artifacts. G
 | Framework release and package aliases   | `pnpm-workspace.yaml#catalogs.ultramodern` and the installed generator's `release-cohort.json` |
 | Deployments, remotes, ports, and owners | `topology/` and generated ownership metadata                                                   |
 | Agent skill sources and install target  | `.agents/skills-lock.json` and its bootstrap script                                            |
-| CI and stage delivery                   | `../.github/workflows/ultramodern-workspace-gates.yml`                                         |
+| CI gates                                | `../.github/workflows/ultramodern-workspace-gates.yml`                                         |
+| Stage delivery                          | `../.github/workflows/zerops-stage.yml` and `topology/stage-edge.json`                         |
 | Local database defaults                 | `.env.example`, Compose configuration, and database scripts                                    |
 
-Do not cache current versions, vertical inventory, generated fields, or package-source strategy in prose. Where source files describe the same contract, they must agree; a mismatch is a generator or validation defect, not a choice for documentation to resolve. Use the mise-managed toolchain; do not reintroduce Corepack or alternate pnpm aliases. The repository typecheck script owns the TS-Go/TS7 invocation; do not replace it with an ad hoc compiler command.
+Do not cache current versions, vertical inventory, generated fields, or package-source strategy in prose. Where source files describe the same contract, they must agree; a mismatch is a generator or validation defect, not a choice for documentation to resolve. Standalone Node scripts and shared build configuration have their own TypeScript projects (`scripts/tsconfig.json` and `packages/shared-contracts/tooling/tsconfig.json`), so framework application globals cannot contaminate their HTTP or environment types. Node-tooling projects share `tsconfig.node-tooling.json` with standard TypeScript strict checking, separate from application-only model diagnostics. Use the mise-managed toolchain; do not reintroduce Corepack or alternate pnpm aliases. The repository typecheck script owns the TS-Go/TS7 invocation; do not replace it with an ad hoc compiler command.
 
 ## Private-first routes and public output
 
@@ -91,25 +92,20 @@ Party Registry and the Shell gateway issuer connect with their own PostgreSQL ro
 
 Each owner keeps its own schema, migration journal, and verifier. See [Database Architecture](docs/architecture/DATABASE.md) and [Database Trust Boundaries](docs/architecture/DATABASE_TRUST_BOUNDARIES.md).
 
-## Public URLs and Cloudflare proof
+## Public URLs
 
-| Variable                          | Role                                         |
-| --------------------------------- | -------------------------------------------- |
-| `MODERN_PUBLIC_SITE_URL`          | Canonical origin for public SEO output       |
-| `MODERN_ASSET_PREFIX`             | Preferred JS, CSS, and static-asset prefix   |
-| `ULTRAMODERN_ASSET_PREFIX`        | Compatibility asset prefix                   |
-| `ULTRAMODERN_PUBLIC_URL_<APP_ID>` | Per-app deployment, proof, and remote origin |
+| Variable                          | Role                                       |
+| --------------------------------- | ------------------------------------------ |
+| `MODERN_PUBLIC_SITE_URL`          | Canonical origin for public SEO output     |
+| `MODERN_ASSET_PREFIX`             | Preferred JS, CSS, and static-asset prefix |
+| `ULTRAMODERN_ASSET_PREFIX`        | Compatibility asset prefix                 |
+| `ULTRAMODERN_PUBLIC_URL_<APP_ID>` | Per-app deployment and remote origin       |
 
 Do not bake absolute localhost URLs into production asset configuration. Shell assets resolve `MODERN_ASSET_PREFIX`, then `ULTRAMODERN_ASSET_PREFIX`, then origin-relative `/`. Module Federation remotes use the same prefix precedence, then their configured per-app origin. `MODERN_PUBLIC_SITE_URL` is SEO-only and never an asset-prefix fallback. When it is unset, local and preview output remains non-public. App-specific public URL keys are generated from topology; hyphens become underscores and letters become uppercase.
 
-```sh
-mise exec -- pnpm cloudflare:build
-mise exec -- pnpm cloudflare:deploy
-ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP=https://shell-super-app.example.workers.dev \
-  mise exec -- pnpm cloudflare:proof --require-public-urls
-```
-
-The live proof checks route discovery consistency, preview noindex behavior, unknown-route status, asset headers, byte budgets, and public sourcemap exposure. Local checks do not prove live Worker access. See [Deployment](docs/architecture/DEPLOYMENT.md) for release and rollback gates.
+Stage runs on Zerops through `../.github/workflows/zerops-stage.yml`; the Cloudflare Worker release
+pipeline has been removed. See [Deployment](docs/architecture/DEPLOYMENT.md#stage-on-zerops) for stage
+builds, delivery, live verification, and rollback gates. Local checks do not prove live deployment access.
 
 ## Strict Effect API
 
@@ -156,7 +152,6 @@ Use the source-owned catalog commands:
 ```sh
 mise exec -- pnpm authorization:inventory:check
 mise exec -- pnpm authorization:catalog:report
-mise exec -- pnpm deployment-impact:plan -- --outbox-worker-mode host
 mise exec -- pnpm test:scripts
 ```
 
@@ -164,7 +159,7 @@ The catalog report is a review artifact, not runtime policy. It lists every decl
 
 ## Validation
 
-For quality reports and their explicit blocking/advisory policy, see [Quality audits](docs/quality-audit.md). Run `mise exec -- pnpm quality:check` from this directory to produce a fresh full report and enforce the gate. `quality:audit` alone produces reports without rejecting Knip findings; `quality:audit:gate` applies the blocking checks to that report. Knip findings and report-integrity failures block; duplication, complexity, and semantic similarity findings are advisory. Upstream Effect TSGo, Ultracite, and custom Oxlint enforcement are unchanged.
+For quality reports and their explicit blocking/advisory policy, see [Quality audits](docs/quality-audit.md). Run `mise exec -- pnpm quality:check` from this directory to produce a fresh full report and enforce the gate. `quality:audit` alone produces reports without rejecting Knip findings; `quality:audit:gate` applies the blocking checks to that report. All code-quality findings are advisory; missing, malformed, or incomplete reports still fail report validation. The separate Quality Audit workflow owns this analysis; `pnpm check` does not rerun it. Upstream Effect TSGo, Ultracite, and custom Oxlint enforcement are unchanged.
 
 Use the explicit local feedback scopes instead of repeatedly running the aggregate gate while editing:
 
@@ -180,16 +175,25 @@ mise exec -- pnpm check:local --dry-run
 
 Scopes run existing package scripts; they do not infer impacted packages or replace the full gate.
 No scope means `full`, which runs `pnpm check`; an unknown scope fails rather than silently skipping
-validation. `pnpm check` runs its steps in four parallel lanes and prints each step's output when it
-finishes; every lane runs to completion and the summary names each failed step. On a machine with less
-than 32 GB of memory, run `mise exec -- pnpm check --concurrency 2`. `pnpm check` does not run CI's Repository Tooling gate; `--scope tooling` runs its exact
-commands (`test:scripts`, `test:deployment-impact`, `test:generation`). Use existing package-filtered
-tests for more focused application feedback. `--dry-run` prints the selected commands and the CI gates
+validation. `pnpm check` runs module contract generation first, then the remaining lanes with at most
+four steps running at once by default. It prints each step's output when it finishes. A failed step stops its lane,
+but the other lanes continue, and the summary names each failed step. On a machine with less than 32 GB
+of memory, run `mise exec -- pnpm check --concurrency 2`.
+
+`pnpm check` does not run CI's Repository Tooling gate; `--scope tooling` runs its exact commands
+(`shell:ui-candidates:check`, `test:scripts`, `module-entrypoints:check`, `test:generation`). Use existing
+package-filtered tests for more focused application feedback. `--dry-run` prints the selected commands and the CI gates
 the full scope leaves out without running anything; it is not validation.
 
 Installation bootstraps agent skills but does not format source. Format deliberately with
 `mise exec -- pnpm exec oxfmt <edited-files>` or `mise exec -- pnpm format`; CI and the full gate
 use `format:check`. Do not disable lifecycle scripts globally as a substitute for this separation.
+
+The finance-billing POHODA export tests validate their generated documents against the official
+STORMWARE dataPack 2.0 schemas, which the repository does not redistribute. Provision the pinned copy
+once with `mise exec -- pnpm provision:pohoda-xsd`; the tests read
+`app/node_modules/.cache/pohoda-xsd/version_2` (or `POHODA_XSD_DIR`) and fail, never skip, when it is
+absent.
 
 Run focused tests first. Before completion, run the required task commands and the repository gate:
 

@@ -741,10 +741,18 @@ const intentFailure = (failure: AccessIntentError) =>
     ? accessChangesCommandError('access_changes_command_unavailable', `${failure.code}: ${failure.reason}`)
     : accessChangesCommandError('access_changes_command_conflict', `${failure.code}: ${failure.reason}`);
 
+/**
+ * Every reconcile here runs after the decision was recorded, so a projection that did not complete leaves the change
+ * saved and its permissions pending: the caller says so, and a retry of the same request finishes them. Only an
+ * intent the compiler refuses to project is a conflict to re-read.
+ */
 const projectionFailure = (failure: { readonly code: string; readonly reason: string }) =>
-  failure.code === 'access_projection_write_fence_refused' || failure.code === 'access_projection_write_plan_refused'
+  failure.code === 'access_projection_write_plan_refused'
     ? accessChangesCommandError('access_changes_command_conflict', `${failure.code}: ${failure.reason}`)
-    : accessChangesCommandError('access_changes_command_unavailable', `${failure.code}: ${failure.reason}`);
+    : accessChangesCommandError(
+        'access_changes_command_saved_projection_pending',
+        `${failure.code}: ${failure.reason}`,
+      );
 
 const releaseMissing = () =>
   accessChangesCommandError(

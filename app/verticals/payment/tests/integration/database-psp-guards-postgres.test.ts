@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import type { ScopedRoutineInvoker } from '@app/core-runtime';
 import type { PgClient } from '@effect/sql-pg';
 import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
@@ -65,7 +66,9 @@ const withRoutines = <Value, Failure>(
   operation: (invoker: ScopedRoutineInvoker) => Effect.Effect<Value, Failure>,
 ) =>
   database.transaction((transaction: PaymentTestTransaction) =>
-    installOperationalScope(transaction, operationalScopeOf(scope)).pipe(Effect.flatMap(operation)),
+    installOperationalScope(transaction, operationalScopeOf(scope), defineDatabaseIdentityEnrollment([])).pipe(
+      Effect.flatMap(operation),
+    ),
   );
 
 const workerOrigin = Effect.all([randomUuid, randomUuid], { concurrency: 1 }).pipe(

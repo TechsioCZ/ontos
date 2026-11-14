@@ -1,0 +1,240 @@
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
+import { Config, Effect, Layer } from 'effect';
+import { FetchHttpClient } from 'effect/http';
+
+import {
+  ContextAccessLive,
+  CorePersistenceLive,
+  DatabaseConfigLive,
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
+  LegalEntityContextLive,
+  OAuthAuthenticationAuditLive,
+  OAuthGrantRegistryLive,
+  PrincipalResolverLive,
+  ReadRuntimeLive,
+  TenantModuleStateServiceLive,
+  makeActionRuntimeLive,
+} from '@app/core-runtime';
+import {
+  ActionAuthorityLive,
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
+  ActionPermissionLive,
+  ActionRepositoryLive,
+  ModuleEntrypointGatewayLive,
+  ModuleStateGateLive,
+  OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
+} from '@app/core-runtime/actions/runtime-wiring';
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
+import {
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
+} from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { AgentConnectionStoreLive } from '@app/core-runtime/access/intent/agent-connections';
+import { AccessPeopleDirectoryLive } from '@app/core-runtime/access/intent/people-directory';
+import { CoreAdminDatabaseLive, CoreDatabase } from '@app/core-runtime/db/client';
+import { ManagedApiKeyTargetEligibilityLive } from '@app/core-runtime/auth/managed-api-key-eligibility';
+import { OAuthFlowLive } from '../../apps/shell-super-app/api/auth/db/oauth-flow-live.ts';
+import { OAuthCredentialsLive } from '../../apps/shell-super-app/api/auth/db/oauth-credentials-live.ts';
+import { OAuthEndpointGuardDataLive } from '../../apps/shell-super-app/api/oauth-connections/grant-store.ts';
+import { OAuthConnectionHooksLive } from '../../apps/shell-super-app/api/oauth-connections/better-auth-hooks.ts';
+import { OAuthEndpointGuardsLive } from '../../apps/shell-super-app/api/auth/oauth-server/endpoint-guards.ts';
+import { ApiKeyServiceLive } from '../../apps/shell-super-app/api/auth/api-key-service.ts';
+import { IdentityLifecycleLive } from '../../apps/shell-super-app/api/auth/identity-lifecycle.ts';
+import { AuthConfig, AuthConfigLive } from '../../apps/shell-super-app/api/auth/config.ts';
+import { AuthDatabaseLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
+import { BetterAuthFrameworkLive } from '../../apps/shell-super-app/api/auth/better-auth-framework.ts';
+import { BetterAuthRuntimeLive } from '../../apps/shell-super-app/api/auth/better-auth-runtime.ts';
+import { BetterAuthNativeAdapterLive } from '../../apps/shell-super-app/api/auth/runtime-infrastructure.ts';
+import { AuthenticationService, AuthenticationServiceLive } from '../../apps/shell-super-app/api/auth/service.ts';
+import { StaffAuthenticationNamespaceRegistryLive } from '../../apps/shell-super-app/api/auth/authentication-namespace-registry.ts';
+import { ShellInstalledModuleCatalogLive } from '../../apps/shell-super-app/api/modules/installed-module-catalog.ts';
+import { AgentProfileReadDatabase } from './agent-profile-setup.mts';
+import { AgentSeedIdentityWriter } from './agent-seed-identity.mts';
+import type { SeededAgentIdentity } from './agent-seed-identity.mts';
+import { principalCompanyMemberships, principals } from '../../packages/core-runtime/src/db/schema.ts';
+import { AgentProfileSetupError, retainAgentOperatorSessionCookies } from './agent-operator-session.mts';
+
+const persistence = CorePersistenceLive.pipe(Layer.provide(DatabaseConfigLive));
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
+const access = ContextAccessLive;
+const intentLoader = TenantIntentLoaderLive.pipe(Layer.provide(persistence), Layer.provide(databaseIdentitiesLive));
+const enforcementPorts = AccessEnforcementPortsLive.pipe(
+  Layer.provide(intentLoader),
+  Layer.provide(persistence),
+  Layer.provide(databaseIdentitiesLive),
+  Layer.provide(NodeCrypto.layer),
+);
+const enforcement = Layer.merge(enforcementPorts, AccessDecisionLive.pipe(Layer.provide(enforcementPorts)));
+const authConfig = AuthConfigLive;
+const authDatabase = AuthDatabaseLive.pipe(Layer.provide(authConfig));
+const betterAuthNativeAdapter = BetterAuthNativeAdapterLive.pipe(Layer.provide(authDatabase));
+const resolver = PrincipalResolverLive({ authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID }).pipe(
+  Layer.provide(persistence),
+);
+const oauthRegistry = OAuthGrantRegistryLive.pipe(Layer.provide(persistence));
+const oauthCredentials = OAuthCredentialsLive.pipe(Layer.provide(authDatabase));
+// A refresh-token replay ends an agent grant's credential-bound access connection with the grant.
+const agentConnections = AgentConnectionStoreLive.pipe(Layer.provide(Layer.merge(persistence, databaseIdentitiesLive)));
+const oauthGuards = OAuthEndpointGuardDataLive.pipe(
+  Layer.provide(Layer.mergeAll(oauthRegistry, oauthCredentials, agentConnections)),
+);
+const oauthAudit = OAuthAuthenticationAuditLive.pipe(Layer.provide(persistence));
+const authenticationDependencies = Layer.mergeAll(
+  authConfig,
+  authDatabase,
+  betterAuthNativeAdapter,
+  resolver,
+  StaffAuthenticationNamespaceRegistryLive,
+  BetterAuthRuntimeLive,
+  oauthGuards,
+  oauthAudit,
+  OAuthConnectionHooksLive.pipe(Layer.provide(oauthRegistry)),
+);
+const authenticationFramework = BetterAuthFrameworkLive().pipe(Layer.provideMerge(authenticationDependencies));
+const authenticationGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(authenticationFramework));
+const legalEntityContext = LegalEntityContextLive.pipe(Layer.provide(persistence));
+const authentication = AuthenticationServiceLive.pipe(
+  Layer.provide(Layer.mergeAll(authenticationGuards, access, legalEntityContext, enforcement)),
+  Layer.provide(NodeCrypto.layer),
+);
+const composition = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(ActiveApplicationCompositionSourceLive.pipe(Layer.provide(FetchHttpClient.layer))),
+);
+const modules = ModuleStateGateLive.pipe(Layer.provide(TenantModuleStateServiceLive.pipe(Layer.provide(persistence))));
+const operations = Layer.mergeAll(
+  persistence,
+  access,
+  modules,
+  intentLoader,
+  enforcement,
+  databaseIdentitiesLive,
+  ModuleEntrypointGatewayLive.pipe(Layer.provide(modules)),
+  OperationalScopeResolverLive.pipe(
+    Layer.provide(Layer.mergeAll(persistence, access, enforcement, databaseIdentitiesLive)),
+  ),
+);
+// The operator runs the approved Shell contract, not whichever marker happens to be in an unbuilt checkout.
+const actionRuntime = Layer.unwrap(
+  Effect.gen(function* nativeRuntime() {
+    const snapshot = yield* (yield* ActiveApplicationCompositionService).load;
+    return makeActionRuntimeLive(snapshot.composition.shell.deployment).pipe(
+      Layer.provide(Layer.mergeAll(operations, composition, ActionPermissionLive, ActionRepositoryLive)),
+    );
+  }),
+).pipe(Layer.provide(composition));
+const reads = Layer.effect(
+  AgentProfileReadDatabase,
+  Effect.gen(function* readOnlyOperatorDatabase() {
+    // Reads only. The privileged connection writes in exactly one place, the seed writer below; every other identity
+    // write runs through runtime-scoped Action transactions. This module is operator-only: it runs from scripts and is
+    // never bundled into a unit, a vertical, a package or the Shell (scripts/tests/module-credential-reader-boundary).
+    const database = yield* CoreDatabase;
+    return { executor: database.executor };
+  }),
+).pipe(Layer.provide(CoreAdminDatabaseLive));
+// The operator's privileged connection seeds a reviewed agent's fixed id: its only write; nothing a tenant user calls
+// reaches it.
+const seedWriter = Layer.effect(
+  AgentSeedIdentityWriter,
+  Effect.gen(function* operatorSeedWriter() {
+    const database = yield* CoreDatabase;
+    return {
+      seed: (identity: SeededAgentIdentity) =>
+        database.executor
+          .transaction((transaction) =>
+            transaction
+              .insert(principals)
+              .values({
+                displayName: identity.displayName,
+                kind: 'agent',
+                principalId: identity.principalId,
+                status: 'active',
+                tenantId: identity.tenantId,
+              })
+              .pipe(
+                Effect.andThen(
+                  transaction.insert(principalCompanyMemberships).values({
+                    affiliation: null,
+                    legalEntityId: identity.legalEntityId,
+                    principalId: identity.principalId,
+                    status: 'active',
+                    tenantId: identity.tenantId,
+                  }),
+                ),
+              ),
+          )
+          .pipe(
+            Effect.asVoid,
+            Effect.mapError(
+              () =>
+                new AgentProfileSetupError({
+                  reason: `The reviewed agent ${identity.principalId} could not be seeded`,
+                }),
+            ),
+          ),
+    };
+  }),
+).pipe(Layer.provide(CoreAdminDatabaseLive));
+const readRuntime = ReadRuntimeLive.pipe(Layer.provide(operations));
+const authority = ActionAuthorityLive.pipe(Layer.provide(Layer.merge(enforcement, composition)));
+const operatorIdentities = AccessPeopleDirectoryLive.pipe(
+  Layer.provide(Layer.merge(persistence, databaseIdentitiesLive)),
+);
+const apiKeys = ApiKeyServiceLive.pipe(Layer.provide(authDatabase), Layer.provide(NodeCrypto.layer));
+const identityLifecycle = IdentityLifecycleLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      actionRuntime,
+      apiKeys,
+      resolver,
+      ManagedApiKeyTargetEligibilityLive.pipe(Layer.provide(persistence)),
+    ),
+  ),
+);
+export const AgentProfileOperatorLive = Layer.mergeAll(
+  seedWriter,
+  // Core revalidates the staff namespace when Actions run, not only while the authentication service is built.
+  StaffAuthenticationNamespaceRegistryLive,
+  identityLifecycle,
+  authority,
+  operatorIdentities,
+  operations,
+  OAuthFlowLive.pipe(Layer.provide(Layer.merge(authConfig, authDatabase))),
+  authentication,
+  actionRuntime,
+  readRuntime,
+  legalEntityContext,
+  composition,
+  ActionPermissionLive,
+  reads,
+  authDatabase,
+  authConfig,
+  access,
+  ShellInstalledModuleCatalogLive.pipe(Layer.provide(composition)),
+  NodeServices.layer,
+).pipe(Layer.provide(databaseIdentitiesLive), Layer.provide(NodeCrypto.layer), Layer.provide(authConfig));
+
+/** Real Better Auth sign-in and native principal binding resolution; no synthetic session context or default password. */
+export const authenticateAgentProfileOperator = Effect.gen(function* authenticateOperator() {
+  const email = yield* Config.String('ONTOS_AGENT_SETUP_EMAIL');
+  const secret = yield* Config.Redacted('ONTOS_AGENT_SETUP_PASSWORD');
+  const service = yield* AuthenticationService;
+  const config = yield* AuthConfig;
+  const headers = new Headers({ origin: config.baseUrl });
+  const signedIn = yield* service.signIn(email, secret, headers);
+  return yield* Effect.gen(function* resolveSignedInOperator() {
+    yield* retainAgentOperatorSessionCookies(headers, signedIn.setCookieHeaders);
+    const context = yield* service.resolveTenantContext(headers);
+    yield* retainAgentOperatorSessionCookies(headers, context.setCookieHeaders);
+    if (context.state !== 'authenticated') {
+      return yield* new AgentProfileSetupError({
+        reason: 'The operator could not resolve an authenticated native principal',
+      });
+    }
+    return { close: service.signOut(headers), principal: context.principal, requestHeaders: headers };
+  }).pipe(Effect.onError(() => service.signOut(headers).pipe(Effect.ignore)));
+});

@@ -1,0 +1,4 @@
+absolute
+rounded
+table
+transition

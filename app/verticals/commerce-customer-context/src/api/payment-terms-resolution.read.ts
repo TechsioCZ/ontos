@@ -115,6 +115,7 @@ export const paymentTermsResolutionRead = defineRead(
     }
     return Effect.gen(function* makePaymentTermResolutionServices() {
       const catalog = yield* paymentTermCatalogPortFromEnvironment({
+        compositionRevision,
         legalEntityId,
         requestCorrelation: scope.correlationId,
         subject: { _tag: 'Assertion', scope },
@@ -139,11 +140,7 @@ export const paymentTermsResolutionRead = defineRead(
             Effect.flatMap(() => catalog.resolveDefinitions(requests)),
           ),
       };
-      const policyService = yield* customerCommercePolicyAdministrationServiceFactory(
-        transaction,
-        scope,
-        compositionRevision,
-      );
+      const policyService = yield* customerCommercePolicyAdministrationServiceFactory(transaction, scope);
       const policy = customerCommercePaymentTermsPolicyResolver(
         'PROFILE',
         {

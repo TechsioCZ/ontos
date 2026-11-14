@@ -1,11 +1,5 @@
-import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
-import type { Issue } from 'effect/SchemaIssue';
-import { makeGatewayScopeGrantRegistrar } from '@app/core-runtime/testing/actions';
-import { allowedAccessLayers } from './access-gate.ts';
-import { Socket } from 'effect/socket';
-import { NodeSocket, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  DatabaseIdentityEnrollmentContext,
   ContextAccessLive,
   findPostgresFailure,
   CorePersistenceLive,
@@ -20,7 +14,18 @@ import {
   parseDatabaseConnectionPair,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
+import type { RetailPartyResolutionExecutor } from '../../src/integrations/retail-party-detail-executor.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
+import type { Issue } from 'effect/SchemaIssue';
+import { makeGatewayScopeGrantRegistrar, makeTestActionAccessLayers } from '@app/core-runtime/testing/actions';
+import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
+import { CoreDatabase } from '@app/core-runtime/db/client';
+import { Socket } from 'effect/socket';
+import { NodeSocket, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  AccessDecisionLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
@@ -47,7 +52,7 @@ import {
   executePartyDetailWithAuthorization,
   executeCounterpartyReadWithAuthorization,
 } from '@app/party-registry/api/client';
-import type { executePartyDetail, executeCounterpartyRead } from '@app/party-registry/api/client';
+import type { executeCounterpartyRead } from '@app/party-registry/api/client';
 import { partyRegistryApiContract } from '@app/party-registry/api';
 import {
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
@@ -100,6 +105,7 @@ import { commerceCustomerContextApi } from '../../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import {
   delegatedGatewayConfiguration,
+  holdDelegatedCallerKey,
   delegatedGatewayRoute,
   serveDelegatedGatewayContext,
 } from './delegated-gateway-shell.fixture.ts';
@@ -135,6 +141,7 @@ import {
   failure,
   requireCondition,
 } from './price-group-temporal-protocol.ts';
+import { RetailPartyDetailExecutor } from '../../src/integrations/retail-party-detail-executor.ts';
 
 const RequestIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('PriceGroupTemporalRequestId'),
@@ -505,29 +512,21 @@ const migrateOwner = Effect.fn('PriceGroupTemporal.migrateOwner')(function* migr
   const directory = path.join(appRoot, 'verticals', owner === 'ccc' ? commerceAppId : partyAppId);
   const migrationCommand = 'node_modules/drizzle-kit/bin.cjs';
   if (owner === 'party') {
-    // Follow Party's source-owned db:migrate gateway: prepare Contacts, migrate Contacts, then Party.
-    const steps = [
-      ['scripts/prepare-contacts-migration.mts'],
-      [migrationCommand, 'migrate', '--config', 'drizzle.contacts.config.ts'],
-      [migrationCommand, 'migrate', '--config', 'drizzle.config.ts'],
-    ];
-    for (const args of steps) {
-      const child = yield* ChildProcess.make(process.execPath, args, {
-        cwd: directory,
-        env: {
-          APP_ENV_PATH: '/dev/null',
-          DATABASE_ADMIN_URL: Redacted.value(bootstrap.database.adminUrl),
-        },
-        extendEnv: true,
-        stderr: 'pipe',
-        stdin: 'ignore',
-        stdout: 'pipe',
-      });
-      const [code] = yield* Effect.all([child.exitCode, Stream.runDrain(child.stdout), Stream.runDrain(child.stderr)], {
-        concurrency: 3,
-      });
-      yield* requireCondition(code === 0, 'owned-party-migration');
-    }
+    // Party owns Contacts preparation, structured-name preservation and migration-history convergence.
+    const child = yield* ChildProcess.make('pnpm', ['run', 'db:migrate'], {
+      cwd: directory,
+      env: {
+        APP_ENV_PATH: '/dev/null',
+        DATABASE_ADMIN_URL: Redacted.value(bootstrap.database.adminUrl),
+        DATABASE_URL: Redacted.value(bootstrap.database.runtimeUrl),
+      },
+      extendEnv: true,
+      stderr: 'inherit',
+      stdin: 'ignore',
+      stdout: 'pipe',
+    });
+    const [code] = yield* Effect.all([child.exitCode, Stream.runDrain(child.stdout)], { concurrency: 2 });
+    yield* requireCondition(code === 0, 'owned-party-migration');
     return;
   }
   const history = path.join(directory, 'drizzle');
@@ -590,7 +589,7 @@ const makeChildAuthority = Effect.fn('PriceGroupTemporal.makeChildAuthority')(fu
     yield* Layer.build(PgClient.layer({ maxConnections: 1, url: bootstrap.identities.issuerUrl })),
     PgClient.PgClient,
   );
-  const registrar = makeGatewayScopeGrantRegistrar(issuerClient);
+  const registrar = makeGatewayScopeGrantRegistrar(issuerClient, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
   const partyClient = Context.get(
     yield* Layer.build(PgClient.layer({ maxConnections: 1, url: bootstrap.identities.partyUrl })),
     PgClient.PgClient,
@@ -915,7 +914,7 @@ const startCatalog = Effect.fn('PriceGroupTemporal.startCatalog')(function* star
 });
 
 type RetailResolverLayerFor = (
-  execute: typeof executePartyDetail,
+  execute: RetailPartyResolutionExecutor,
 ) => Layer.Layer<PartyRegistryRetailPartyResolverFactory>;
 
 const catalogOwnerPath = '/price-group-catalog-owner';
@@ -948,7 +947,7 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
   });
   const compositionRevision = bootstrap.composition.composition.revision;
   const authorityContext = yield* Effect.context<Crypto.Crypto>();
-  const readParty: typeof executePartyDetail = (request, correlation) =>
+  const readParty: RetailPartyResolutionExecutor = (request, correlation) =>
     authority.issue(partyAppId, party.buildMarker).pipe(
       Effect.provideContext(authorityContext),
       Effect.orDie,
@@ -974,6 +973,14 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
   const counterpartyFactory = Context.get(factories, ProfileCounterpartyRoleEligibilityResolverFactory);
   const ownerServices = Layer.mergeAll(
     retailResolverLayerFor(readParty),
+    // Retail profile preparation reads the Party before its owner transaction through this transport seam, over the
+    // same authority-issued Party Registry client as the in-transaction resolver.
+    Layer.succeed(
+      RetailPartyDetailExecutor,
+      RetailPartyDetailExecutor.of({
+        execute: (payload, requestCorrelation) => readParty(payload, requestCorrelation),
+      }),
+    ),
     Layer.succeed(ProfileCounterpartyRoleEligibilityResolverFactory, {
       make: (input) => counterpartyFactory.make(input, readCounterparty),
     }),
@@ -986,15 +993,36 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
   const states = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
   const stateGate = ModuleStateGateLive.pipe(Layer.provide(states));
   const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(stateGate));
-  const accessGate = allowedAccessLayers({
-    legalEntityIds: bootstrap.actor.legalEntityId === undefined ? [] : [bootstrap.actor.legalEntityId],
+  const legalEntityIds = bootstrap.actor.legalEntityId === undefined ? [] : [bootstrap.actor.legalEntityId];
+  // The owned database carries no v2 access intent, so the one gate runs the production engine over the
+  // fixture's own authority: the acting principal holds the capability each request declares, and every
+  // other holder is refused exactly as an unseeded tenant refuses them. The persisted scope and Ready
+  // fence a prepared Action pins are written first, through Core's own scoped writer, so a decision
+  // reads real authority instead of an invented lease.
+  const persistenceContext = yield* Layer.build(persistence);
+  yield* writeTestTenantScopes(Context.get(persistenceContext, CoreDatabase).executor, {
+    databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+    legalEntityIds,
+    principalId: bootstrap.actor.principalId,
+    tenantId: bootstrap.actor.tenantId,
   });
+  const accessGate = AccessDecisionLive.pipe(
+    Layer.provideMerge(
+      makeTestActionAccessLayers({
+        legalEntityIds,
+        principalId: bootstrap.actor.principalId,
+        tenantId: bootstrap.actor.tenantId,
+      }),
+    ),
+  );
   const resolver = OperationalScopeResolverLive.pipe(
+    Layer.provide(Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT)),
     Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, accessGate)),
   );
   const namespace = staffAuthenticationNamespaceRegistryLayer([commerceAppId]);
   const composition = makeActiveApplicationCompositionLayer(Effect.succeed(bootstrap.composition));
   const common = Layer.mergeAll(
+    Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
     persistence,
     ContextAccessLive,
     stateGate,
@@ -1062,19 +1090,7 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
     customerPriceGroupAssignmentReadReadApiLive,
   ).pipe(
     Layer.provide(ActionPrincipalVerifierLive.pipe(Layer.provide(actions))),
-    Layer.provide(
-      Layer.mergeAll(
-        actions,
-        reads,
-        namespace,
-        redemption,
-        source,
-        RequestSchemaProblemLive,
-        allowedAccessLayers({
-          legalEntityIds: bootstrap.actor.legalEntityId === undefined ? [] : [bootstrap.actor.legalEntityId],
-        }),
-      ),
-    ),
+    Layer.provide(Layer.mergeAll(actions, reads, namespace, redemption, source, RequestSchemaProblemLive, accessGate)),
   );
   const app = yield* Effect.acquireRelease(
     Effect.sync(() =>
@@ -1130,6 +1146,7 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
   );
   const context = yield* Layer.build(NodeHttpServer.layerTest);
   const server = Context.get(context, HttpServer.HttpServer);
+  yield* holdDelegatedCallerKey;
   const requestContext = Context.add(
     Context.makeUnsafe<unknown>(new Map()),
     ConfigProvider.ConfigProvider,

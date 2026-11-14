@@ -38,6 +38,7 @@ export const makeActionRuntimeDouble = (outcomes: readonly TestActionOutcome[]) 
   const principals: unknown[] = [];
   const runtime: ActionRuntimeService = {
     resolveActionCommit: () => Effect.die('resolveActionCommit is not configured in this test'),
+    resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
     runAction: (input) => {
       payloads.push(input.payload);
       principals.push(input.principal);

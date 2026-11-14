@@ -1,7 +1,16 @@
-import { catalogRegistration } from '../vertical.registration.ts';
+import {
+  OwnerActionApprovalSchemaErrorLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
+} from '@app/core-runtime/access/approvals/owner-http';
+import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
+import { catalogBackendRegistration } from '../vertical.runtime-declaration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
@@ -35,7 +44,10 @@ import { catalogSourceActionPersistenceFactoryLive } from '../src/persistence/ca
 import { catalogExternalCorrelationResolverLive } from '../src/persistence/external-correlation-resolver.ts';
 import { cartOpenSelectionPopulationLive } from './cart-open-selection-population.ts';
 // <generated-governed-http-handler-support-imports>
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
+import {
+  ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive,
+  authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
+} from './auth/action-principal.ts';
 import {
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
   GatewayAssertionRedemptionDatabaseLive,
@@ -258,6 +270,8 @@ import {
   resolveCatalogShellOrigin,
 } from './runtime-support.ts';
 
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
+
 const catalogReadinessLayer = HttpApiBuilder.group(catalogApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
     // The typed build marker is still decoded against the published readiness schema.
@@ -308,6 +322,7 @@ const accessEnforcementLive = AccessDecisionLive.pipe(
   Layer.provide(CorePersistenceLive),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(nodeCryptoLayer),
+  Layer.provide(databaseIdentitiesLive),
 );
 const operationalScopeResolverLive = Layer.provide(
   OperationalScopeResolverLive,
@@ -330,7 +345,7 @@ const nativeCompositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(
 const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
   Layer.provide(nativeCompositionSourceLive),
 );
-const catalogReadRuntime = makeReadRuntimeLive(ultramodernDeliveryUnit, catalogRegistration).pipe(
+const catalogReadRuntime = makeReadRuntimeLive(ultramodernDeliveryUnit, catalogBackendRegistration).pipe(
   Layer.provide(Layer.mergeAll(catalogExternalCorrelationResolverLive, accessEnforcementLive)),
   Layer.provide(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
@@ -339,12 +354,13 @@ const catalogReadRuntime = makeReadRuntimeLive(ultramodernDeliveryUnit, catalogR
   Layer.provideMerge(nodeCryptoLayer),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(activeApplicationCompositionLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 
 const catalogCartPopulationLive = cartOpenSelectionPopulationLive.pipe(
   Layer.provide(Layer.mergeAll(activeApplicationCompositionLive, nodeCryptoLayer)),
 );
-const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit, catalogRegistration).pipe(
+const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, catalogBackendRegistration).pipe(
   Layer.provide(Layer.mergeAll(catalogSourceActionPersistenceLive, accessEnforcementLive)),
   Layer.provide(
     Layer.mergeAll(
@@ -361,6 +377,31 @@ const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit, cata
   // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
   Layer.provideMerge(nodeCryptoLayer),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
+);
+
+const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit, catalogBackendRegistration).pipe(
+  Layer.provideMerge(ownerActionApprovalsLive),
+  // The source and local override Actions build their persistence from this factory while they execute in the
+  // handler's request fiber, so it must stay visible beside the Action runtime.
+  Layer.provideMerge(catalogSourceActionPersistenceLive),
+  Layer.provide(accessEnforcementLive),
+  Layer.provide(
+    Layer.mergeAll(
+      CorePersistenceLive,
+      activeApplicationCompositionLive,
+      ActionRepositoryLive,
+      ActionPermissionLive,
+      ContextAccessLive,
+      moduleStateGateLive,
+      moduleEntrypointGatewayLive,
+      operationalScopeResolverLive,
+    ),
+  ),
+  // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
+  Layer.provideMerge(nodeCryptoLayer),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 
 const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
@@ -370,7 +411,7 @@ const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedempt
 
 type CatalogApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof catalogReadRuntime>>,
-  actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof catalogActionRuntime>>,
+  actionRuntime: Layer.Layer<ActionRuntime | OwnerActionApprovals, Layer.Error<typeof catalogActionRuntime>>,
   gatewayAssertionRedemption: Layer.Layer<
     GatewayAssertionRedemptionService,
     Layer.Error<typeof productionGatewayAssertionRedemptionLive>
@@ -389,6 +430,14 @@ export const makeCatalogApiRuntime = (
   );
   const apiHandlersLive = Layer.mergeAll(
     catalogReadinessLayer,
+    HttpApiBuilder.group(catalogApi, 'ownerActionApprovals', (handlers) =>
+      handlers
+        .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+        .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+    ).pipe(
+      GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+    ),
     // <generated-governed-http-handler-layers>
     activateLocalOverrideActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     activateLocalOverrideRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

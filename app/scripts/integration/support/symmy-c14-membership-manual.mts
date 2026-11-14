@@ -41,7 +41,6 @@ export const prepareManualMembershipNativeFixture = Effect.fn('SymmyC14Membershi
       SPICEDB_PRESHARED_KEY: Config.Redacted('SPICEDB_PRESHARED_KEY'),
     });
     yield* grantTestTenantRoleAccess({
-      adminConnectionString: Redacted.make(fixture.isolated.connections.admin.connectionString),
       holders: [
         {
           capabilityKeys: [
@@ -55,6 +54,7 @@ export const prepareManualMembershipNativeFixture = Effect.fn('SymmyC14Membershi
       legalEntityIds: [fixture.legalEntityId],
       spiceDb: yield* liveFixtureSpiceDb(spiceEnvironment),
       tenantId: fixture.tenantId,
+      writerConnectionString: Redacted.make(fixture.isolated.connections.runtime.connectionString),
     });
     const options = {
       baseUrl: `http://127.0.0.1:${runtime.port}/commerce-customer-context-api`,

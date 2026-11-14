@@ -29,6 +29,7 @@ export const DefinePriceActionForbiddenProblemSchema = makeProblemDetailsSchema(
       'operation_context_invalid',
       'define_price_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const DefinePriceActionNotFoundProblemSchema = makeProblemDetailsSchema(

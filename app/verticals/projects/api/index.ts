@@ -1,5 +1,15 @@
+import {
+  OwnerActionApprovalSchemaErrorLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
+} from '@app/core-runtime/access/approvals/owner-http';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { projectsBackendRegistration } from '../vertical.runtime-declaration.ts';
 import {
+  CoreSearchProjectionStoreLive,
+  CoreSearchQueryRuntimeLive,
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   makeActionRuntimeLive,
   ActionAuthorizationPreflightDatabaseLive,
   ContextAccessLive as GovernedContextAccessLive,
@@ -30,8 +40,14 @@ import { projectsApi, projectsOperationContexts, projectsMarkerSchema } from '..
 import type { OperationContext } from '../shared/api.ts';
 import { ultramodernDeliveryUnit, ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 // <generated-governed-http-handler-support-imports>
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
-import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
+import {
+  ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive,
+  authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
+} from './auth/action-principal.ts';
+import {
+  GatewayAssertionRedemptionDatabaseLive,
+  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
+} from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 import { projectDestinationAuthorityLive } from '../src/access/project-destination-authority.ts';
 
@@ -40,10 +56,14 @@ import { archiveProjectActionApiLive } from './archive-project-action-server.ts'
 import { createProjectActionApiLive } from './create-project-action-server.ts';
 import { moveProjectActionApiLive } from './move-project-action-server.ts';
 import { projectOwnerCandidatesReadApiLive } from './project-owner-candidates-read-server.ts';
+import { projectsReadApiLive } from './projects-search-server.ts';
 import { readProjectReadApiLive } from './read-project-read-server.ts';
+import { requestSearchRebuildActionApiLive } from './request-search-rebuild-action-server.ts';
 import { unarchiveProjectActionApiLive } from './unarchive-project-action-server.ts';
 import { updateProjectActionApiLive } from './update-project-action-server.ts';
 // </generated-governed-http-handler-imports>
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const governedTenantModuleStateServiceLive = GovernedTenantModuleStateServiceLive.pipe(
   GovernedReadLayer.provide(GovernedCorePersistenceLive),
@@ -92,7 +112,10 @@ const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(ultramodernDeliveryU
 const governedOwnerAuthorizationLive = projectDestinationAuthorityLive.pipe(
   GovernedReadLayer.provide(accessEnforcementLive),
 );
-const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, projectsBackendRegistration).pipe(
+const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(
+  ultramodernDeliveryUnit,
+  projectsBackendRegistration,
+).pipe(
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(
       GovernedCorePersistenceLive,
@@ -113,15 +136,56 @@ const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit,
     ),
   ),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),
+  GovernedReadLayer.provide(databaseIdentitiesLive),
+);
+
+const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, projectsBackendRegistration).pipe(
+  GovernedReadLayer.provideMerge(ownerActionApprovalsLive),
+  GovernedReadLayer.provide(
+    GovernedReadLayer.mergeAll(
+      GovernedCorePersistenceLive,
+      ActionRepositoryLive,
+      ActionPermissionLive,
+      GovernedContextAccessLive,
+      governedModuleStateGateLive,
+      GovernedModuleEntrypointGatewayLive.pipe(GovernedReadLayer.provide(governedModuleStateGateLive)),
+      GovernedOperationalScopeResolverLive.pipe(
+        GovernedReadLayer.provide(
+          GovernedReadLayer.mergeAll(GovernedCorePersistenceLive, GovernedContextAccessLive, accessEnforcementLive),
+        ),
+      ),
+      ActionAuthorizationPreflightDatabaseLive.pipe(GovernedReadLayer.provideMerge(GovernedCorePersistenceLive)),
+      activeApplicationCompositionLive,
+      accessEnforcementLive,
+      governedOwnerAuthorizationLive,
+    ),
+  ),
+  GovernedReadLayer.provide(GovernedDatabaseConfigLive),
+  GovernedReadLayer.provide(databaseIdentitiesLive),
 );
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
+  HttpApiBuilder.group(projectsApi, 'ownerActionApprovals', (handlers) =>
+    handlers
+      .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+      .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+  ).pipe(
+    GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+    GovernedReadLayer.provide(governedActionRuntimeLive),
+  ),
   // <generated-governed-http-handler-layers>
   archiveProjectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   createProjectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   moveProjectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   projectOwnerCandidatesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  projectsReadApiLive.pipe(
+    GovernedReadLayer.provide(governedReadRuntimeLive),
+    GovernedReadLayer.provide(
+      CoreSearchQueryRuntimeLive.pipe(GovernedReadLayer.provide(CoreSearchProjectionStoreLive)),
+    ),
+  ),
   readProjectReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  requestSearchRebuildActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   unarchiveProjectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   updateProjectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   // </generated-governed-http-handler-layers>
@@ -130,11 +194,11 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(
       GovernedActionPrincipalVerifierLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-      GovernedGatewayAssertionRedemptionLive,
+      GovernedGatewayAssertionRedemptionLive.pipe(GovernedReadLayer.provide(GatewayAssertionRedemptionDatabaseLive)),
     ),
   ),
   // </generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provide(GovernedContextAccessLive),
+  GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
 );
 
 const operationAttributes = (operationContext: OperationContext) => {
@@ -182,7 +246,7 @@ const projectsApiHandlersLive = Layer.mergeAll(projectsReadinessLayer, governedR
     ),
   ),
   Layer.provide(Layer.mergeAll(governedApplicationCompositionSourceLive, RequestSchemaProblemLive)),
-  Layer.provide(Layer.mergeAll(GovernedDatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(Layer.mergeAll(GovernedDatabaseConfigLive, nodeCryptoLayer, databaseIdentitiesLive)),
   Layer.orDie,
 );
 

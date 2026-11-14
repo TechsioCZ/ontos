@@ -91,7 +91,14 @@ export const makeTestAccessDecision = (spec: TestAccessDecisionSpec = {}): TestA
     const named = key === undefined ? undefined : spec.answers?.[key];
     return named ?? spec.defaultAnswer ?? { outcome: 'DENIED' };
   };
-  return {
+  const listOf = (input: ListGateInput): ListAccessResolution => {
+    askedLists.push(input);
+    const answer = answerFor(input);
+    const decision = decisionOf(answer);
+    const visible = decision.outcome === 'ALLOWED' || decision.outcome === 'NEEDS_APPROVAL';
+    return visible ? { decision, predicate: answer.predicate ?? { groups: [] } } : { decision };
+  };
+  const double: TestAccessDecision = {
     askedDecisions,
     askedLists,
     askedSelectableLegalEntities,
@@ -103,13 +110,8 @@ export const makeTestAccessDecision = (spec: TestAccessDecisionSpec = {}): TestA
       askedDecisions.push(...input);
       return Effect.succeed(input.map((one) => decisionOf(answerFor(one))));
     },
-    list: (input): Effect.Effect<ListAccessResolution> => {
-      askedLists.push(input);
-      const answer = answerFor(input);
-      const decision = decisionOf(answer);
-      const visible = decision.outcome === 'ALLOWED' || decision.outcome === 'NEEDS_APPROVAL';
-      return Effect.succeed(visible ? { decision, predicate: answer.predicate ?? { groups: [] } } : { decision });
-    },
+    list: (input): Effect.Effect<ListAccessResolution> => Effect.succeed(listOf(input)),
+    listMany: (input): Effect.Effect<readonly ListAccessResolution[]> => Effect.succeed(input.map(listOf)),
     selectableLegalEntities: (input) => {
       askedSelectableLegalEntities.push(input);
       // The double fails the same way the live gate does, so a caller's 503 path is real.
@@ -117,5 +119,9 @@ export const makeTestAccessDecision = (spec: TestAccessDecisionSpec = {}): TestA
         ? Effect.fail(accessDecisionUnavailable('The authorization engine did not answer'))
         : Effect.succeed(spec.legalEntityIds ?? []);
     },
+    // The double reads no ports, so over any other ports it is itself; its record of questions stays in one place.
+    // A prepared Action authority requires a gate that can rebind (O75).
+    rebind: () => double,
   };
+  return double;
 };

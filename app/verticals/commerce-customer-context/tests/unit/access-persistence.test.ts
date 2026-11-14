@@ -363,6 +363,7 @@ it.effect('denies once the owner grant is revoked', () =>
     const port = counterpartyAccessPortForTransaction(
       dependenciesWith(transaction, {
         currentOwnerAccess: currentOwnerAccessForTransaction(transaction, scope),
+        scope: { ...scope, principalId: Schema.decodeSync(PrincipalIdSchema)(recipientId) },
       }),
     );
 

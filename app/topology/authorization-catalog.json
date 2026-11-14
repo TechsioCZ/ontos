@@ -1,4 +1,41 @@
 {
+  "declaredWorkloadKeys": [
+    "commerce.assortment.symmy-fixture-currentness",
+    "commerce.assortment.symmy-fixture-rule-import",
+    "commerce.catalog.symmy-product-import",
+    "commerce.catalog.symmy-product-read",
+    "commerce.catalog.symmy-variant-localized-facts",
+    "commerce.catalog.symmy-variant-localized-facts-recovery",
+    "commerce.customer-context.organization-ico-facts.read",
+    "commerce.customer-context.source-read",
+    "commerce.customer-context.source-write",
+    "commerce.inventory.source-read",
+    "commerce.inventory.source-write",
+    "commerce.market-catalog.source-read",
+    "commerce.pricing.source-read",
+    "commerce.pricing.source-write",
+    "commerce.storefront-client",
+    "commerce.tax.symmy-seller-vat-fixture-import",
+    "core.identity-provider",
+    "demo.crm.party-intake",
+    "demo.storefront-client",
+    "integration.symmy-admit",
+    "integration.symmy-poll",
+    "integration.symmy.source-organization-facts.read",
+    "party.registry.source-read",
+    "party.registry.source-write",
+    "payment.provider-notification-ingress",
+    "payment.provider-reconciliation",
+    "payment.source-ingress",
+    "pricing.price-group-catalog.source-read",
+    "pricing.price-group-catalog.source-write",
+    "privacy.core.measure-execution-check",
+    "privacy.core.organization-business-check",
+    "privacy.core.organization-ico-check",
+    "privacy.core.organization-profile-ico-check",
+    "privacy.core.source-processing-check",
+    "work.storefront-client"
+  ],
   "modules": [
     {
       "descriptors": [
@@ -7160,6 +7197,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.customer-context.counterparty.list-customer-group-memberships",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "customer-groups",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.api.counterparty-customer-group-memberships",
+            "moduleKey": "commerce.customer-context",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.customer-context.customer-archive.read",
             "kind": "read",
             "modes": [
@@ -11241,6 +11304,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.market-catalog.eshops.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "markets",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.market-catalog.page.eshops",
+            "moduleKey": "commerce.market-catalog",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.market-catalog.home.read",
             "kind": "read",
             "modes": [
@@ -11262,6 +11351,32 @@
             "entrypointKey": "commerce.market-catalog.page.home",
             "moduleKey": "commerce.market-catalog",
             "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.market-catalog.market-administration.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "markets",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.market-catalog.api.market-administration",
+            "moduleKey": "commerce.market-catalog",
+            "role": "api",
             "scope": "tenant"
           }
         },
@@ -11325,6 +11440,32 @@
             "entrypointKey": "commerce.market-catalog.revise-market-definition",
             "moduleKey": "commerce.market-catalog",
             "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.market-catalog.market-detail.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "markets",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.market-catalog.page.market-detail",
+            "moduleKey": "commerce.market-catalog",
+            "role": "page",
             "scope": "tenant"
           }
         },
@@ -11584,6 +11725,34 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.market-catalog.market.search",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "markets",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.market-catalog.search.markets",
+            "moduleKey": "commerce.market-catalog",
+            "role": "search",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.market-catalog.market.suspend",
             "kind": "action",
             "modes": [
@@ -11607,6 +11776,60 @@
             "entrypointKey": "commerce.market-catalog.suspend-market",
             "moduleKey": "commerce.market-catalog",
             "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.market-catalog.markets.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "markets",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.market-catalog.search.markets",
+            "moduleKey": "commerce.market-catalog",
+            "role": "search",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.market-catalog.navigation-eshops.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "markets",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.market-catalog.page.eshops",
+            "moduleKey": "commerce.market-catalog",
+            "role": "page",
             "scope": "tenant"
           }
         },
@@ -11640,6 +11863,32 @@
               "pricing"
             ],
             "subject": "identity"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.market-catalog.search-index.rebuild",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "maintenance",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.market-catalog.request-search-rebuild",
+            "moduleKey": "commerce.market-catalog",
+            "role": "action",
+            "scope": "tenant"
           }
         },
         {
@@ -12291,6 +12540,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.pricing.commercial-fee.read-result",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "commercial-fees",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.pricing.api.commercial-fee-result-lookup",
+            "moduleKey": "commerce.pricing",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.pricing.commercial-fee.read-schedule",
             "kind": "read",
             "modes": [
@@ -12434,6 +12709,32 @@
             "entrypointKey": "commerce.pricing.manage-contractual-discount",
             "moduleKey": "commerce.pricing",
             "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.pricing.contractual-discount.read-result",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "discounts",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.pricing.api.contractual-discount-result-lookup",
+            "moduleKey": "commerce.pricing",
+            "role": "api",
             "scope": "tenant"
           }
         },
@@ -12714,6 +13015,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.pricing.price.read-result",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "prices",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.pricing.api.price-result-lookup",
+            "moduleKey": "commerce.pricing",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.pricing.price.read-schedule",
             "kind": "read",
             "modes": [
@@ -12822,6 +13149,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.pricing.quantity-tier.read-result",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "prices",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.pricing.api.quantity-tier-result-lookup",
+            "moduleKey": "commerce.pricing",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.pricing.quotation.issue",
             "kind": "action",
             "modes": [
@@ -12845,6 +13198,32 @@
             "entrypointKey": "commerce.pricing.manage-quotation",
             "moduleKey": "commerce.pricing",
             "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.pricing.quotation.read-result",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "commercial-commitments",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.pricing.api.quotation-result-lookup",
+            "moduleKey": "commerce.pricing",
+            "role": "api",
             "scope": "tenant"
           }
         },
@@ -12906,6 +13285,32 @@
             "entrypointKey": "commerce.pricing.manage-zero-floor-authorization",
             "moduleKey": "commerce.pricing",
             "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.pricing.zero-floor-authorization.read-result",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "pricing-governance",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.pricing.api.zero-floor-authorization-result-lookup",
+            "moduleKey": "commerce.pricing",
+            "role": "api",
             "scope": "tenant"
           }
         }
@@ -13501,6 +13906,32 @@
             "role": "api",
             "scope": "tenant"
           }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.storefront-registry.storefront-applications.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "storefronts",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.storefront-registry.api.storefront-applications",
+            "moduleKey": "commerce.storefront-registry",
+            "role": "api",
+            "scope": "tenant"
+          }
         }
       ],
       "moduleId": "commerce.storefront-registry"
@@ -13679,6 +14110,19 @@
             "moduleKey": "commerce.tax",
             "role": "api",
             "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "finance-billing",
+              "merchandise"
+            ],
+            "subject": "identity",
+            "subjectWorkloadCallers": [
+              "merchandise"
+            ],
+            "subjectWorkloads": [
+              "demo.storefront-client"
+            ]
           }
         },
         {
@@ -13893,6 +14337,19 @@
             "moduleKey": "commerce.tax",
             "role": "api",
             "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "finance-billing",
+              "merchandise"
+            ],
+            "subject": "identity",
+            "subjectWorkloadCallers": [
+              "merchandise"
+            ],
+            "subjectWorkloads": [
+              "demo.storefront-client"
+            ]
           }
         },
         {
@@ -13947,6 +14404,45 @@
             "moduleKey": "commerce.tax",
             "role": "api",
             "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "finance-billing",
+              "merchandise"
+            ],
+            "subject": "identity",
+            "subjectWorkloadCallers": [
+              "merchandise"
+            ],
+            "subjectWorkloads": [
+              "demo.storefront-client"
+            ]
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.tax.vat-change-rights.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "seller-vat-regime",
+              "level": "extended"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.tax.api.vat-change-rights",
+            "moduleKey": "commerce.tax",
+            "role": "api",
+            "scope": "tenant"
           }
         }
       ],
@@ -13954,6 +14450,110 @@
     },
     {
       "descriptors": [
+        {
+          "accessDeclaration": {
+            "key": "core.identity.agent-operators.replace",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "identity",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.identity.replace-agent-operators",
+            "moduleKey": "core.identity",
+            "role": "action",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.identity.agent-profile.configure",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "identity",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.identity.configure-agent",
+            "moduleKey": "core.identity",
+            "role": "action",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.identity.agent-proposal.mutate",
+            "kind": "action",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "identity",
+              "level": "extended"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.identity.mutate-agent-proposals",
+            "moduleKey": "core.identity",
+            "role": "action",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.identity.agent-status.manage",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "identity",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.identity.manage-agent-status",
+            "moduleKey": "core.identity",
+            "role": "action",
+            "scope": "system"
+          }
+        },
         {
           "accessDeclaration": {
             "key": "core.identity.binding-subject.read",
@@ -13977,6 +14577,148 @@
             "entrypointKey": "core.identity.read-binding-subject",
             "moduleKey": "core.identity",
             "role": "api",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.identity.company-agent-key.list-managed",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "identity",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [
+            {
+              "fieldClass": "authentication_metadata",
+              "fields": [
+                "items.authBindingId",
+                "items.bindingCreatedAt",
+                "items.bindingRevokedAt",
+                "items.bindingStatus"
+              ],
+              "key": "core.identity.company-agent-key.read-authentication-metadata",
+              "kind": "field_read",
+              "modes": [
+                "run"
+              ],
+              "placement": {
+                "group": "identity",
+                "level": "manage"
+              },
+              "risk": "sensitive",
+              "selectors": []
+            },
+            {
+              "fieldClass": "personal_data",
+              "fields": [
+                "items.displayName"
+              ],
+              "key": "core.identity.company-agent-key.read-personal-data",
+              "kind": "field_read",
+              "modes": [
+                "run"
+              ],
+              "placement": {
+                "group": "identity",
+                "level": "manage"
+              },
+              "risk": "sensitive",
+              "selectors": []
+            }
+          ],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.identity.company-managed-principals",
+            "moduleKey": "core.identity",
+            "role": "api",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.identity.company-membership.set",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "identity",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.identity.set-company-membership",
+            "moduleKey": "core.identity",
+            "role": "action",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.identity.demo-account.manage",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "identity",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.identity.manage-demo-account",
+            "moduleKey": "core.identity",
+            "role": "action",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.identity.demo-companies.configure",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "identity",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.identity.configure-demo-companies",
+            "moduleKey": "core.identity",
+            "role": "action",
             "scope": "system"
           }
         },
@@ -14097,6 +14839,136 @@
               "kind": "protected"
             },
             "entrypointKey": "core.identity.set-managed-api-key-binding-status",
+            "moduleKey": "core.identity",
+            "role": "action",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.identity.oauth-connection.administer",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "identity",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.identity.oauth-connection-administration",
+            "moduleKey": "core.identity",
+            "role": "api",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.identity.people-directory.list",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "identity",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.identity.people-directory",
+            "moduleKey": "core.identity",
+            "role": "api",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.identity.people-search.query",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "identity",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.identity.search.people",
+            "moduleKey": "core.identity",
+            "role": "search",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.identity.people-search.rebuild",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "identity",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.identity.request-people-search-rebuild",
+            "moduleKey": "core.identity",
+            "role": "action",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.identity.person.invite",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "identity",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.identity.invite-person",
             "moduleKey": "core.identity",
             "role": "action",
             "scope": "system"
@@ -14433,6 +15305,7 @@
       "descriptors": [
         {
           "accessDeclaration": {
+            "baseline": true,
             "key": "core.shell.composition.read",
             "kind": "read",
             "modes": [
@@ -14459,6 +15332,7 @@
         },
         {
           "accessDeclaration": {
+            "baseline": true,
             "key": "core.shell.module-target.resolve",
             "kind": "read",
             "modes": [
@@ -14534,9 +15408,3412 @@
             "role": "search",
             "scope": "system"
           }
+        },
+        {
+          "accessDeclaration": {
+            "baseline": true,
+            "key": "core.shell.tenant-module-target.resolve",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "shell",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.shell.tenant-module-target",
+            "moduleKey": "core.shell",
+            "role": "api",
+            "scope": "system"
+          }
         }
       ],
       "moduleId": "core.shell"
+    },
+    {
+      "descriptors": [
+        {
+          "accessDeclaration": {
+            "key": "crm.activities.api-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm-activities",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all",
+              "assigned"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "crm.activities.api.records",
+            "moduleKey": "crm.activities",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "crm.activities.apply-command.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "crm-activities",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "crm.activities.apply-command",
+            "moduleKey": "crm.activities",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "crm.activities.navigation-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm-activities",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "crm.activities.page.records",
+            "moduleKey": "crm.activities",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "crm.activities.page-crm-activities-home.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm-activities",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "crm.activities.page.crm-activities-home",
+            "moduleKey": "crm.activities",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "crm.activities.page-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm-activities",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "crm.activities.page.records",
+            "moduleKey": "crm.activities",
+            "role": "page",
+            "scope": "tenant"
+          }
+        }
+      ],
+      "moduleId": "crm.activities"
+    },
+    {
+      "descriptors": [
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.api-agent-review.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.api.agent-review",
+            "moduleKey": "demo.crm",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.api-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all",
+              "assigned",
+              "entrusted"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.api.records",
+            "moduleKey": "demo.crm",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.apply-command.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [
+            {
+              "fieldClass": "authority_metadata",
+              "fields": [
+                "command.toSalespersonId"
+              ],
+              "key": "demo.crm.client-owner.assign",
+              "kind": "field_write",
+              "modes": [
+                "run",
+                "propose",
+                "approve"
+              ],
+              "placement": {
+                "group": "crm",
+                "level": "manage"
+              },
+              "risk": "sensitive",
+              "selectors": []
+            }
+          ],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.apply-command",
+            "moduleKey": "demo.crm",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.component-home-summary.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.component.home-summary",
+            "moduleKey": "demo.crm",
+            "role": "public_component",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.navigation-ai.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.page.ai",
+            "moduleKey": "demo.crm",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.navigation-clients.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.page.clients",
+            "moduleKey": "demo.crm",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.navigation-imports.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.page.imports",
+            "moduleKey": "demo.crm",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.navigation-pairing.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.page.pairing",
+            "moduleKey": "demo.crm",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.navigation-plan.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.page.plan",
+            "moduleKey": "demo.crm",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.navigation-reports.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.page.reports",
+            "moduleKey": "demo.crm",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.navigation-visits.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.page.visits",
+            "moduleKey": "demo.crm",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.page-ai.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.page.ai",
+            "moduleKey": "demo.crm",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.page-clients.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.page.clients",
+            "moduleKey": "demo.crm",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.page-crm-home.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.page.crm-home",
+            "moduleKey": "demo.crm",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.page-imports.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.page.imports",
+            "moduleKey": "demo.crm",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.page-pairing.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.page.pairing",
+            "moduleKey": "demo.crm",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.page-plan.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.page.plan",
+            "moduleKey": "demo.crm",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.page-reports.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.page.reports",
+            "moduleKey": "demo.crm",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.page-visits.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.page.visits",
+            "moduleKey": "demo.crm",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.request-search-rebuild.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.request-search-rebuild",
+            "moduleKey": "demo.crm",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.search-clients.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.search.clients",
+            "moduleKey": "demo.crm",
+            "role": "search",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.crm.search-contacts.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "crm",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.crm.search.contacts",
+            "moduleKey": "demo.crm",
+            "role": "search",
+            "scope": "tenant"
+          }
+        }
+      ],
+      "moduleId": "demo.crm"
+    },
+    {
+      "descriptors": [
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.api-agent-review.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "merchandise",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.api.agent-review",
+            "moduleKey": "demo.merchandise",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.api-media.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "merchandise",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.api.media",
+            "moduleKey": "demo.merchandise",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.api-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "merchandise",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.api.records",
+            "moduleKey": "demo.merchandise",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.apply-command.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "merchandise",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.apply-command",
+            "moduleKey": "demo.merchandise",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.bootstrap-playground-catalog.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "merchandise",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.bootstrap-playground-catalog",
+            "moduleKey": "demo.merchandise",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.catalog.manage",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "catalog",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.manage-catalog",
+            "moduleKey": "demo.merchandise",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.demo.cleanup",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "demo",
+              "level": "extended"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.cleanup-demo",
+            "moduleKey": "demo.merchandise",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.markets.manage",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "markets",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.manage-markets",
+            "moduleKey": "demo.merchandise",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.navigation-orders.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "merchandise",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.page.orders",
+            "moduleKey": "demo.merchandise",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.navigation-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "merchandise",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.page.products",
+            "moduleKey": "demo.merchandise",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.order-changes.propose",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "order-changes",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.propose-order-changes",
+            "moduleKey": "demo.merchandise",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.order-changes.review",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "order-changes",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.review-order-changes",
+            "moduleKey": "demo.merchandise",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.order-status.change",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "order-status",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.change-order-status",
+            "moduleKey": "demo.merchandise",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.page-merchandise-home.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "merchandise",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.page.merchandise-home",
+            "moduleKey": "demo.merchandise",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.page-orders.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "merchandise",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.page.orders",
+            "moduleKey": "demo.merchandise",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.page-product-detail.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "merchandise",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.page.product-detail",
+            "moduleKey": "demo.merchandise",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.page-products.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "merchandise",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.page.products",
+            "moduleKey": "demo.merchandise",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.product-images.change",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "product-images",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.change-product-images",
+            "moduleKey": "demo.merchandise",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.request-search-rebuild.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "merchandise",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.request-search-rebuild",
+            "moduleKey": "demo.merchandise",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.search-orders.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "merchandise",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.search.orders",
+            "moduleKey": "demo.merchandise",
+            "role": "search",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.search-products.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "merchandise",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.search.products",
+            "moduleKey": "demo.merchandise",
+            "role": "search",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.stock-movement.record",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "stock-movement",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.record-stock-movement",
+            "moduleKey": "demo.merchandise",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.merchandise.storefront-order.place",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "storefront-order",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.merchandise.place-storefront-order",
+            "moduleKey": "demo.merchandise",
+            "role": "action",
+            "scope": "tenant"
+          }
+        }
+      ],
+      "moduleId": "demo.merchandise"
+    },
+    {
+      "descriptors": [
+        {
+          "accessDeclaration": {
+            "key": "demo.sales-insights.api-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "sales-insights",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all",
+              "assigned"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.sales-insights.api.records",
+            "moduleKey": "demo.sales-insights",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.sales-insights.apply-command.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "sales-insights",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.sales-insights.apply-command",
+            "moduleKey": "demo.sales-insights",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.sales-insights.component-crm-dashboard.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "sales-insights",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.sales-insights.component.crm-dashboard",
+            "moduleKey": "demo.sales-insights",
+            "role": "public_component",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.sales-insights.metric-state.change",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "metric-state",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.sales-insights.change-metric-state",
+            "moduleKey": "demo.sales-insights",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.sales-insights.metric.assign",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "metric",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.sales-insights.assign-metric",
+            "moduleKey": "demo.sales-insights",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.sales-insights.metric.update",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "metric",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.sales-insights.update-metric",
+            "moduleKey": "demo.sales-insights",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.sales-insights.navigation-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "sales-insights",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.sales-insights.page.records",
+            "moduleKey": "demo.sales-insights",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.sales-insights.page-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "sales-insights",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.sales-insights.page.records",
+            "moduleKey": "demo.sales-insights",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.sales-insights.page-sales-insights-home.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "sales-insights",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.sales-insights.page.sales-insights-home",
+            "moduleKey": "demo.sales-insights",
+            "role": "page",
+            "scope": "tenant"
+          }
+        }
+      ],
+      "moduleId": "demo.sales-insights"
+    },
+    {
+      "descriptors": [
+        {
+          "accessDeclaration": {
+            "key": "demo.sales-pipeline.api-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "sales-pipeline",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all",
+              "entrusted"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.sales-pipeline.api.records",
+            "moduleKey": "demo.sales-pipeline",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.sales-pipeline.apply-command.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "sales-pipeline",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [
+            {
+              "fieldClass": "authority_metadata",
+              "fields": [
+                "command.entrustedPrincipalRef",
+                "command.patch.entrustedPrincipalRef"
+              ],
+              "key": "demo.sales-pipeline.opportunity-entrust.assign",
+              "kind": "field_write",
+              "modes": [
+                "run",
+                "propose",
+                "approve"
+              ],
+              "placement": {
+                "group": "sales-pipeline",
+                "level": "manage"
+              },
+              "risk": "sensitive",
+              "selectors": []
+            }
+          ],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.sales-pipeline.apply-command",
+            "moduleKey": "demo.sales-pipeline",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.sales-pipeline.navigation-ai.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "sales-pipeline",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.sales-pipeline.page.ai",
+            "moduleKey": "demo.sales-pipeline",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.sales-pipeline.navigation-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "sales-pipeline",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.sales-pipeline.page.records",
+            "moduleKey": "demo.sales-pipeline",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.sales-pipeline.page-ai.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "sales-pipeline",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.sales-pipeline.page.ai",
+            "moduleKey": "demo.sales-pipeline",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.sales-pipeline.page-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "sales-pipeline",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.sales-pipeline.page.records",
+            "moduleKey": "demo.sales-pipeline",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.sales-pipeline.page-sales-pipeline-home.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "sales-pipeline",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.sales-pipeline.page.sales-pipeline-home",
+            "moduleKey": "demo.sales-pipeline",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.sales-pipeline.request-search-rebuild.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "sales-pipeline",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.sales-pipeline.request-search-rebuild",
+            "moduleKey": "demo.sales-pipeline",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.sales-pipeline.search-opportunities.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "sales-pipeline",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.sales-pipeline.search.opportunities",
+            "moduleKey": "demo.sales-pipeline",
+            "role": "search",
+            "scope": "tenant"
+          }
+        }
+      ],
+      "moduleId": "demo.sales-pipeline"
+    },
+    {
+      "descriptors": [
+        {
+          "accessDeclaration": {
+            "key": "demo.tagging.api-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "tagging",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.tagging.api.records",
+            "moduleKey": "demo.tagging",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.tagging.apply-command.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "tagging",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.tagging.apply-command",
+            "moduleKey": "demo.tagging",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.tagging.navigation-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "tagging",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.tagging.page.records",
+            "moduleKey": "demo.tagging",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.tagging.page-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "tagging",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.tagging.page.records",
+            "moduleKey": "demo.tagging",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.tagging.page-tagging-home.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "tagging",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.tagging.page.tagging-home",
+            "moduleKey": "demo.tagging",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.tagging.tag.assign",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "tag",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.tagging.assign-tag",
+            "moduleKey": "demo.tagging",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.tagging.tag.delete",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "tag",
+              "level": "extended"
+            },
+            "risk": "critical",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.tagging.delete-tag",
+            "moduleKey": "demo.tagging",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.tagging.tag.unassign",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "tag",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.tagging.unassign-tag",
+            "moduleKey": "demo.tagging",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.tagging.tag.update",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "tag",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.tagging.update-tag",
+            "moduleKey": "demo.tagging",
+            "role": "action",
+            "scope": "tenant"
+          }
+        }
+      ],
+      "moduleId": "demo.tagging"
+    },
+    {
+      "descriptors": [
+        {
+          "accessDeclaration": {
+            "key": "demo.workforce.api-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "workforce",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all",
+              "assigned"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.workforce.api.records",
+            "moduleKey": "demo.workforce",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.workforce.apply-command.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "workforce",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.workforce.apply-command",
+            "moduleKey": "demo.workforce",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.workforce.employee.update",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "employee",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.workforce.update-employee",
+            "moduleKey": "demo.workforce",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.workforce.navigation-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "workforce",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.workforce.page.records",
+            "moduleKey": "demo.workforce",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.workforce.page-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "workforce",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.workforce.page.records",
+            "moduleKey": "demo.workforce",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.workforce.page-workforce-home.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "workforce",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.workforce.page.workforce-home",
+            "moduleKey": "demo.workforce",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.workforce.request-search-rebuild.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "workforce",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.workforce.request-search-rebuild",
+            "moduleKey": "demo.workforce",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "demo.workforce.search-employees.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "workforce",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all",
+              "assigned"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "demo.workforce.search.employees",
+            "moduleKey": "demo.workforce",
+            "role": "search",
+            "scope": "tenant"
+          }
+        }
+      ],
+      "moduleId": "demo.workforce"
+    },
+    {
+      "descriptors": [
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.api-overview.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.api.overview",
+            "moduleKey": "facility.operations",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.api-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [
+            {
+              "fieldClass": "personal_data",
+              "fields": [
+                "agendas.assets",
+                "agendas.documents",
+                "agendas.meters.state.meters.consumer",
+                "agendas.meters.state.meters.contract",
+                "agendas.meters.state.meters.note",
+                "agendas.meters.state.meters.supplier",
+                "agendas.meters.state.meters.readings.costMinor",
+                "agendas.meters.state.meters.readings.note",
+                "agendas.meters.state.meters.readings.photo",
+                "agendas.purchasing",
+                "agendas.security"
+              ],
+              "key": "facility.operations.records-restricted.read",
+              "kind": "field_read",
+              "modes": [
+                "run"
+              ],
+              "placement": {
+                "group": "facility-operations",
+                "level": "basic"
+              },
+              "risk": "sensitive",
+              "selectors": []
+            }
+          ],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.api.records",
+            "moduleKey": "facility.operations",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.apply-command.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.apply-command",
+            "moduleKey": "facility.operations",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.navigation-agenda.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.page.agenda",
+            "moduleKey": "facility.operations",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.navigation-assets.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.page.assets",
+            "moduleKey": "facility.operations",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.navigation-documents.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.page.documents",
+            "moduleKey": "facility.operations",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.navigation-meters.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.page.meters",
+            "moduleKey": "facility.operations",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.navigation-overview.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.page.overview",
+            "moduleKey": "facility.operations",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.navigation-purchasing.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.page.purchasing",
+            "moduleKey": "facility.operations",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.navigation-security.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.page.security",
+            "moduleKey": "facility.operations",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.page-agenda.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.page.agenda",
+            "moduleKey": "facility.operations",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.page-assets.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.page.assets",
+            "moduleKey": "facility.operations",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.page-documents.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.page.documents",
+            "moduleKey": "facility.operations",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.page-facility-operations-home.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.page.facility-operations-home",
+            "moduleKey": "facility.operations",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.page-meters.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.page.meters",
+            "moduleKey": "facility.operations",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.page-overview.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.page.overview",
+            "moduleKey": "facility.operations",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.page-purchasing.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.page.purchasing",
+            "moduleKey": "facility.operations",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.page-security.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.page.security",
+            "moduleKey": "facility.operations",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.personal-agenda.update",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose"
+            ],
+            "placement": {
+              "group": "personal-agenda",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.update-personal-agenda",
+            "moduleKey": "facility.operations",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.request-search-rebuild.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.request-search-rebuild",
+            "moduleKey": "facility.operations",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.search-assets.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.search.assets",
+            "moduleKey": "facility.operations",
+            "role": "search",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.search-devices.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.search.devices",
+            "moduleKey": "facility.operations",
+            "role": "search",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.search-documents.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.search.documents",
+            "moduleKey": "facility.operations",
+            "role": "search",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "facility.operations.search-meters.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "facility-operations",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "facility.operations.search.meters",
+            "moduleKey": "facility.operations",
+            "role": "search",
+            "scope": "tenant"
+          }
+        }
+      ],
+      "moduleId": "facility.operations"
+    },
+    {
+      "descriptors": [
+        {
+          "accessDeclaration": {
+            "key": "finance.billing.api-lease-invoices.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "finance-billing",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "finance.billing.api.lease-invoices",
+            "moduleKey": "finance.billing",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "finance.billing.api-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "finance-billing",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "finance.billing.api.records",
+            "moduleKey": "finance.billing",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "finance.billing.apply-command.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "finance-billing",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "finance.billing.apply-command",
+            "moduleKey": "finance.billing",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "finance.billing.navigation-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "finance-billing",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "finance.billing.page.records",
+            "moduleKey": "finance.billing",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "finance.billing.navigation-vat.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "finance-billing",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "finance.billing.page.vat",
+            "moduleKey": "finance.billing",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "finance.billing.page-finance-billing-home.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "finance-billing",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "finance.billing.page.finance-billing-home",
+            "moduleKey": "finance.billing",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "finance.billing.page-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "finance-billing",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "finance.billing.page.records",
+            "moduleKey": "finance.billing",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "finance.billing.page-vat.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "finance-billing",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "finance.billing.page.vat",
+            "moduleKey": "finance.billing",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "finance.billing.request-search-rebuild.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "finance-billing",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "finance.billing.request-search-rebuild",
+            "moduleKey": "finance.billing",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "finance.billing.search-documents.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "finance-billing",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "finance.billing.search.documents",
+            "moduleKey": "finance.billing",
+            "role": "search",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "finance.billing.search-invoices.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "finance-billing",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "finance.billing.search.invoices",
+            "moduleKey": "finance.billing",
+            "role": "search",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "finance.billing.vat-choices.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "finance-billing",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "finance.billing.api.vat-choices",
+            "moduleKey": "finance.billing",
+            "role": "api",
+            "scope": "tenant"
+          }
+        }
+      ],
+      "moduleId": "finance.billing"
     },
     {
       "descriptors": [
@@ -14651,6 +18928,227 @@
       "descriptors": [
         {
           "accessDeclaration": {
+            "key": "legal.agreements.api-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "legal-agreements",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "legal.agreements.api.records",
+            "moduleKey": "legal.agreements",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "legal.agreements.apply-command.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "legal-agreements",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "legal.agreements.apply-command",
+            "moduleKey": "legal.agreements",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "legal.agreements.navigation-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "legal-agreements",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "legal.agreements.page.records",
+            "moduleKey": "legal.agreements",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "legal.agreements.page-legal-agreements-home.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "legal-agreements",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "legal.agreements.page.legal-agreements-home",
+            "moduleKey": "legal.agreements",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "legal.agreements.page-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "legal-agreements",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "legal.agreements.page.records",
+            "moduleKey": "legal.agreements",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "legal.agreements.request-search-rebuild.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "legal-agreements",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "legal.agreements.request-search-rebuild",
+            "moduleKey": "legal.agreements",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "legal.agreements.search-contracts.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "legal-agreements",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "legal.agreements.search.contracts",
+            "moduleKey": "legal.agreements",
+            "role": "search",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "legal.agreements.search-documents.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "legal-agreements",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "legal.agreements.search.documents",
+            "moduleKey": "legal.agreements",
+            "role": "search",
+            "scope": "tenant"
+          }
+        }
+      ],
+      "moduleId": "legal.agreements"
+    },
+    {
+      "descriptors": [
+        {
+          "accessDeclaration": {
             "key": "party.registry.ares-subject.lookup",
             "kind": "read",
             "modes": [
@@ -14703,6 +19201,15 @@
             "moduleKey": "party.registry",
             "role": "action",
             "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "crm"
+            ],
+            "subject": "rights",
+            "subjectWorkloads": [
+              "demo.crm.party-intake"
+            ]
           }
         },
         {
@@ -15100,6 +19607,15 @@
             "moduleKey": "party.registry",
             "role": "action",
             "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "crm"
+            ],
+            "subject": "rights",
+            "subjectWorkloads": [
+              "demo.crm.party-intake"
+            ]
           }
         },
         {
@@ -15202,6 +19718,95 @@
         },
         {
           "accessDeclaration": {
+            "key": "party.registry.customer-detail-page.open",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "counterparties",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.page.customer-detail",
+            "moduleKey": "party.registry",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "party.registry.customer.list",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "counterparties",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.api.customer-list",
+            "moduleKey": "party.registry",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "crm"
+            ],
+            "subject": "rights",
+            "subjectWorkloads": [
+              "demo.crm.party-intake"
+            ]
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "party.registry.customers-page.open",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "counterparties",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.page.customers",
+            "moduleKey": "party.registry",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "party.registry.duplicate-candidate.confirm",
             "kind": "action",
             "modes": [
@@ -15257,6 +19862,34 @@
             "entrypointKey": "party.registry.dismiss-duplicate-candidate",
             "moduleKey": "party.registry",
             "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "party.registry.duplicate-candidate.list",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "identity-review",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.api.duplicate-candidate-list",
+            "moduleKey": "party.registry",
+            "role": "api",
             "scope": "tenant"
           }
         },
@@ -15370,6 +20003,15 @@
             "moduleKey": "party.registry",
             "role": "action",
             "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "crm"
+            ],
+            "subject": "rights",
+            "subjectWorkloads": [
+              "demo.crm.party-intake"
+            ]
           }
         },
         {
@@ -15910,6 +20552,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "party.registry.owned-command-result.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "party-identity",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.api.owned-command-result",
+            "moduleKey": "party.registry",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "party.registry.party-correction.read",
             "kind": "read",
             "modes": [
@@ -16002,6 +20670,32 @@
             "entrypointKey": "party.registry.correct-party-fact",
             "moduleKey": "party.registry",
             "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "party.registry.party-identity-page.open",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "party-identity",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.page.party-identity",
+            "moduleKey": "party.registry",
+            "role": "page",
             "scope": "tenant"
           }
         },
@@ -16377,7 +21071,8 @@
                 "party.firstName",
                 "party.lastName",
                 "currentFactAssertions.value",
-                "factHistory.value"
+                "factHistory.value",
+                "historicalNameEvidence.value"
               ],
               "key": "party.registry.party-identity.read",
               "kind": "field_read",
@@ -16729,6 +21424,52 @@
             "entrypointKey": "party.registry.request-search-rebuild",
             "moduleKey": "party.registry",
             "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "party.registry.search-label.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "counterparties",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [
+            {
+              "fieldClass": "personal_data",
+              "fields": [
+                "labels.label"
+              ],
+              "key": "party.registry.search-label-value.read",
+              "kind": "field_read",
+              "modes": [
+                "run"
+              ],
+              "placement": {
+                "group": "sensitive-fields",
+                "level": "extended"
+              },
+              "risk": "sensitive",
+              "selectors": []
+            }
+          ],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.api.search-labels",
+            "moduleKey": "party.registry",
+            "role": "api",
             "scope": "tenant"
           }
         },
@@ -19716,6 +24457,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "projects.core.project.search",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "projects",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "projects.core.search.projects",
+            "moduleKey": "projects.core",
+            "role": "search",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "projects.core.project.unarchive",
             "kind": "action",
             "modes": [
@@ -19773,9 +24540,583 @@
             "role": "action",
             "scope": "tenant"
           }
+        },
+        {
+          "accessDeclaration": {
+            "key": "projects.core.search-index.rebuild",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "maintenance",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "projects.core.request-search-rebuild",
+            "moduleKey": "projects.core",
+            "role": "action",
+            "scope": "tenant"
+          }
         }
       ],
       "moduleId": "projects.core"
+    },
+    {
+      "descriptors": [
+        {
+          "accessDeclaration": {
+            "key": "property.leasing.api-agent-review.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "property-leasing",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "property.leasing.api.agent-review",
+            "moduleKey": "property.leasing",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "property.leasing.api-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "property-leasing",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "property.leasing.api.records",
+            "moduleKey": "property.leasing",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "property.leasing.apply-command.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "property-leasing",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "property.leasing.apply-command",
+            "moduleKey": "property.leasing",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "property.leasing.navigation-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "property-leasing",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "property.leasing.page.records",
+            "moduleKey": "property.leasing",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "property.leasing.page-property-leasing-home.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "property-leasing",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "property.leasing.page.property-leasing-home",
+            "moduleKey": "property.leasing",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "property.leasing.page-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "property-leasing",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "property.leasing.page.records",
+            "moduleKey": "property.leasing",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "property.leasing.request-search-rebuild.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "property-leasing",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "property.leasing.request-search-rebuild",
+            "moduleKey": "property.leasing",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "property.leasing.search-leases.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "property-leasing",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "property.leasing.search.leases",
+            "moduleKey": "property.leasing",
+            "role": "search",
+            "scope": "tenant"
+          }
+        }
+      ],
+      "moduleId": "property.leasing"
+    },
+    {
+      "descriptors": [
+        {
+          "accessDeclaration": {
+            "key": "property.portfolio.api-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "property-portfolio",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "property.portfolio.api.records",
+            "moduleKey": "property.portfolio",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "property.portfolio.api-search-labels.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "property-portfolio",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "property.portfolio.api.search-labels",
+            "moduleKey": "property.portfolio",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "property.portfolio.apply-command.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "property-portfolio",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "property.portfolio.apply-command",
+            "moduleKey": "property.portfolio",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "property.portfolio.navigation-overview.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "property-portfolio",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "property.portfolio.page.overview",
+            "moduleKey": "property.portfolio",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "property.portfolio.navigation-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "property-portfolio",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "property.portfolio.page.records",
+            "moduleKey": "property.portfolio",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "property.portfolio.page-overview.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "property-portfolio",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "property.portfolio.page.overview",
+            "moduleKey": "property.portfolio",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "property.portfolio.page-property-portfolio-home.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "property-portfolio",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "property.portfolio.page.property-portfolio-home",
+            "moduleKey": "property.portfolio",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "property.portfolio.page-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "property-portfolio",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "property.portfolio.page.records",
+            "moduleKey": "property.portfolio",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "property.portfolio.request-search-rebuild.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "property-portfolio",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "property.portfolio.request-search-rebuild",
+            "moduleKey": "property.portfolio",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "property.portfolio.search-assets.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "property-portfolio",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "property.portfolio.search.assets",
+            "moduleKey": "property.portfolio",
+            "role": "search",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "property.portfolio.search-properties.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "property-portfolio",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "property.portfolio.search.properties",
+            "moduleKey": "property.portfolio",
+            "role": "search",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "property.portfolio.search-units.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "property-portfolio",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "property.portfolio.search.units",
+            "moduleKey": "property.portfolio",
+            "role": "search",
+            "scope": "tenant"
+          }
+        }
+      ],
+      "moduleId": "property.portfolio"
     },
     {
       "descriptors": [
@@ -19943,7 +25284,230 @@
         }
       ],
       "moduleId": "shell-super-app"
+    },
+    {
+      "descriptors": [
+        {
+          "accessDeclaration": {
+            "key": "work.tasks.api-agent-review.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "work-tasks",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "work.tasks.api.agent-review",
+            "moduleKey": "work.tasks",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "work.tasks.api-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "work-tasks",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all",
+              "assigned"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "work.tasks.api.records",
+            "moduleKey": "work.tasks",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "work.tasks.apply-command.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "work-tasks",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "work.tasks.apply-command",
+            "moduleKey": "work.tasks",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "work.tasks.navigation-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "work-tasks",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "work.tasks.page.records",
+            "moduleKey": "work.tasks",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "work.tasks.page-records.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "work-tasks",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "work.tasks.page.records",
+            "moduleKey": "work.tasks",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "work.tasks.page-work-tasks-home.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "work-tasks",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "work.tasks.page.work-tasks-home",
+            "moduleKey": "work.tasks",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "work.tasks.request-search-rebuild.write",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "work-tasks",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "work.tasks.request-search-rebuild",
+            "moduleKey": "work.tasks",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "work.tasks.search-tasks.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "work-tasks",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all",
+              "assigned"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "work.tasks.search.tasks",
+            "moduleKey": "work.tasks",
+            "role": "search",
+            "scope": "tenant"
+          }
+        }
+      ],
+      "moduleId": "work.tasks"
     }
   ],
-  "schemaVersion": 1
+  "schemaVersion": 2
 }

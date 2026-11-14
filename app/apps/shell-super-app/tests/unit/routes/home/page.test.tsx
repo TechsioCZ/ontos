@@ -1,20 +1,23 @@
 import { getDocumentCompositionRevision } from '@app/shared-contracts';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Effect, Schema } from 'effect';
+import { Effect, Result, Schema } from 'effect';
 import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
 
 import {
   AppIdSchema,
+  EntrypointKeySchema,
   GroupKeySchema,
   LegalEntityAccessForbiddenProblemSchema,
   LegalEntityIdSchema,
   ModuleIdSchema,
   PrincipalIdSchema,
+  ResolvedModuleTargetSchema,
   TenantAccessForbiddenProblemSchema,
   TenantAuthenticationRequiredProblemSchema,
   TenantIdSchema,
 } from '../../../../shared/browser-api.ts';
+import type { ModuleTargetPageModel } from '../../../../src/routes/[lang]/modules/[moduleId]/module-page-model.ts';
 import type { HomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
 import { HomeView } from '../../../../src/routes/[lang]/page.tsx';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
@@ -22,27 +25,42 @@ import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.t
 };
 import type { LocalizedLinkCall, LocalizedLinkDoubleProps } from '../../../support/localized-link-double.tsx';
 import { renderLocalizedLinkDouble } from '../../../support/localized-link-double.tsx';
+import { useSettledRouterState } from '../../../support/settled-router-state.ts';
 
 const {
   browserRunPromiseMock,
+  clearCacheMock,
   languageState,
   localizedLinkCalls,
   navigateMock,
+  resolvedTargetMock,
+  resolveModuleTargetMock,
+  searchResourcesMock,
   signOutMock,
   switchLegalEntityMock,
   switchTenantMock,
+  switchToTenantContextMock,
 } = rstest.hoisted(() => {
   const recordedLinkCalls: LocalizedLinkCall[] = [];
   return {
     browserRunPromiseMock: rstest.fn(),
+    clearCacheMock: rstest.fn(),
     languageState: { current: 'en' },
     localizedLinkCalls: recordedLinkCalls,
     navigateMock: rstest.fn(),
+    resolvedTargetMock: rstest.fn<(props: { readonly model: ModuleTargetPageModel }) => null>(() => null),
+    resolveModuleTargetMock: rstest.fn(),
+    searchResourcesMock: rstest.fn(),
     signOutMock: rstest.fn(),
     switchLegalEntityMock: rstest.fn(),
     switchTenantMock: rstest.fn(),
+    switchToTenantContextMock: rstest.fn(),
   };
 });
+
+rstest.mock('../../../../src/routes/[lang]/modules/[moduleId]/page.tsx', () => ({
+  ResolvedTarget: resolvedTargetMock,
+}));
 
 const translations = new Map(
   Object.entries({
@@ -58,10 +76,14 @@ const translations = new Map(
     'shell.dashboard.account.label': 'Account menu',
     'shell.dashboard.brand': 'OntOS',
     'shell.dashboard.header.label': 'Dashboard header',
+    'shell.dashboard.home.noAreas': 'You have not been assigned a role yet — ask your company administrator.',
     'shell.dashboard.home.title': 'Home',
+    'shell.dashboard.legalEntity.accessBlocked': 'No legal entity is available for this account.',
     'shell.dashboard.legalEntity.accessibleLabel': 'Current legal entity',
     'shell.dashboard.legalEntity.failed': 'Legal entity switching failed',
     'shell.dashboard.legalEntity.pending': 'Switching legal entity',
+    'shell.dashboard.legalEntity.tenantContext': 'Organization (no company)',
+    'shell.dashboard.legalEntity.tenantContextActive': 'Organization scope is active',
     'shell.dashboard.legalEntity.unavailable': 'Legal entities unavailable',
     'shell.dashboard.navigation.home': 'Home',
     'shell.dashboard.navigation.label': 'Dashboard navigation',
@@ -75,8 +97,16 @@ const translations = new Map(
     'shell.modules.state.readOnly': 'Read only',
     'shell.modules.unavailable': 'Module access unavailable',
     'shell.moduleTarget.reload_required': 'Reload this page to continue',
-    'shell.search.label': 'Search this legal entity',
-    'shell.search.submit': 'Search',
+    'shell.search.archived': 'Archived',
+    'shell.search.clear': 'Clear search',
+    'shell.search.groups.counterparty': 'Customers and suppliers',
+    'shell.search.groups.party': 'Contacts',
+    'shell.search.label': 'Search',
+    'shell.search.placeholder': 'Search customers and suppliers…',
+    'shell.search.roles.CUSTOMER': 'Customer',
+    'shell.search.suggestions.all': 'Show all results',
+    'shell.search.suggestions.label': 'Search suggestions',
+    'shell.search.suggestions.loading': 'Searching…',
   }),
 );
 
@@ -99,16 +129,34 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
 rstest.mock('@tanstack/react-router', () => ({
   useLoaderData: rstest.fn(),
   useNavigate: () => navigateMock,
+  useRouter: () => ({
+    clearCache: clearCacheMock,
+    matchRoutes: () => [],
+    preloadRoute: () => Promise.resolve(),
+    routesById: {},
+  }),
+
+  // Read lazily: mock factories run before this module's imports are initialized.
+  useRouterState: (options: Parameters<typeof useSettledRouterState>[0]) => useSettledRouterState(options),
 }));
 
 rstest.mock('../../../../src/api/auth-client.ts', () => ({
+  resolveModuleTarget: resolveModuleTargetMock,
+  searchResources: searchResourcesMock,
   signOut: signOutMock,
   switchLegalEntity: switchLegalEntityMock,
   switchTenant: switchTenantMock,
+  switchToTenantContext: switchToTenantContextMock,
 }));
 
 rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
-  browserRuntime: { runPromise: browserRunPromiseMock, runSyncExit: browserRuntime.runSyncExit },
+  browserRuntime: {
+    runFork: browserRuntime.runFork,
+    runPromise: browserRunPromiseMock,
+    runPromiseExit: browserRuntime.runPromiseExit,
+    runSync: browserRuntime.runSync,
+    runSyncExit: browserRuntime.runSyncExit,
+  },
 }));
 
 const principalId = Schema.decodeUnknownSync(PrincipalIdSchema)('00000000-0000-4000-8000-000000000001');
@@ -138,13 +186,16 @@ const authenticatedModel = (options?: { readonly moduleEnabled?: boolean }): Hom
     state: 'available',
   },
   navigation: {
+    deniedAppIds: [],
     items: [
       {
         appId: inventoryAppId,
         enabled: options?.moduleEnabled ?? true,
+        entrypointKey: Schema.decodeUnknownSync(EntrypointKeySchema)('inventory.stock.page.records'),
         groupKey: navigationGroupKey,
         href: '/modules/inventory.stock',
-        label: 'Inventory',
+        icon: 'icon-[mdi--warehouse]',
+        label: { cs: 'Sklad', en: 'Inventory' },
         moduleId: inventoryModuleId,
         order: 10,
         state: 'read_only',
@@ -152,6 +203,7 @@ const authenticatedModel = (options?: { readonly moduleEnabled?: boolean }): Hom
         writable: false,
       },
     ],
+    moduleIds: [inventoryModuleId],
     state: 'available',
     unavailableDeployments: [],
   },
@@ -169,9 +221,11 @@ const authenticatedModel = (options?: { readonly moduleEnabled?: boolean }): Hom
 beforeEach(() => {
   navigateMock.mockResolvedValue(undefined);
   browserRunPromiseMock.mockImplementation(browserRuntime.runPromise);
+  searchResourcesMock.mockReturnValue(Effect.succeed({ partial: false, results: [] }));
   signOutMock.mockReturnValue(Effect.succeed({ signedOut: true }));
   switchTenantMock.mockReturnValue(Effect.succeed({ selectedTenantId: tenantId2 }));
   switchLegalEntityMock.mockReturnValue(Effect.succeed({ selectedLegalEntityId: legalEntityId2 }));
+  switchToTenantContextMock.mockReturnValue(Effect.succeed({ selectedContext: 'tenant' }));
 });
 
 afterEach(() => {
@@ -187,18 +241,16 @@ it('anonymous home exposes only the localized login action', () => {
   expect(screen.queryByRole('banner')).toBeNull();
 });
 
-it('the anonymous login action hands a canonical target to the framework link', () => {
+it('an anonymous dashboard goes straight to sign-in instead of a bare login button', () => {
   render(<HomeView initialModel={{ state: 'anonymous' }} />);
-  const loginCall = localizedLinkCalls.find((call) => call.to === '/login');
-  expect(loginCall).toBeDefined();
-  expect(loginCall?.params).toBeUndefined();
-  expect(loginCall?.href).toBeUndefined();
+  expect(navigateMock).toHaveBeenCalledWith({ href: '/en/login', replace: true });
+  expect(screen.getByRole('link', { name: 'Login' }).getAttribute('href')).toBe('/en/login');
 });
 
-it('the anonymous login action resolves Czech from the same canonical target', () => {
+it('a dead session on the dashboard goes to Czech sign-in with the reason', () => {
   languageState.current = 'cs';
-  render(<HomeView initialModel={{ state: 'anonymous' }} />);
-  expect(localizedLinkCalls.map((call) => call.to)).toContain('/login');
+  render(<HomeView initialModel={{ reason: 'account_forbidden', state: 'anonymous' }} />);
+  expect(navigateMock).toHaveBeenCalledWith({ href: '/cs/login?reason=account_forbidden', replace: true });
   expect(screen.getByRole('link', { name: 'Login' }).getAttribute('href')).toBe('/cs/login');
 });
 
@@ -250,7 +302,9 @@ it('authenticated home renders server-composed navigation and selected legal con
   render(<HomeView initialModel={authenticatedModel()} />);
   expect(screen.getByRole('link', { name: 'Inventory' }).getAttribute('href')).toBe('/en/modules/inventory.stock');
   expect(screen.getByText('Read only')).toBeTruthy();
-  expect(screen.getByText(legalEntityId1)).toBeTruthy();
+  expect(screen.getAllByText('Alpha company').length).toBeGreaterThan(0);
+  expect(screen.queryByText(legalEntityId1)).toBeNull();
+  expect(screen.queryByText(tenantId1)).toBeNull();
   expect(screen.queryByText('inventory.stock')).toBeNull();
 });
 
@@ -272,6 +326,7 @@ it.live('successful tenant switch performs a full document reload', () =>
         }),
       ),
     );
+    expect(clearCacheMock).toHaveBeenCalledTimes(1);
   }),
 );
 
@@ -295,16 +350,145 @@ it.live('successful legal-entity switch performs a full document reload', () =>
         }),
       ),
     );
+    expect(clearCacheMock).toHaveBeenCalledTimes(1);
   }),
 );
 
-it.live('search submission navigates to the localized Shell search route', () =>
-  Effect.gen(function* searchSubmissionNavigatesToTheLocalized() {
+it.live('top-bar search submits on Enter to the localized Shell search route', () =>
+  Effect.gen(function* topBarSearchSubmitsOnEnter() {
     const user = userEvent.setup();
     render(<HomeView initialModel={authenticatedModel()} />);
-    yield* Effect.promise(() => user.type(screen.getByLabelText('Search this legal entity'), 'Unit 1'));
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Search' })));
+    const header = screen.getByRole('banner', { name: 'Dashboard header' });
+    const searchbox = within(header).getByRole('searchbox', { name: 'Search' });
+    expect(searchbox.getAttribute('placeholder')).toBe('Search customers and suppliers…');
+    expect(
+      within(screen.getByRole('complementary', { name: 'Dashboard sidebar' })).queryByRole('searchbox'),
+    ).toBeNull();
+    yield* Effect.promise(() => user.type(searchbox, 'Unit 1{Enter}'));
     expect(navigateMock).toHaveBeenCalledWith({ to: '/en/search?q=Unit%201' });
+  }),
+);
+
+it.live('top-bar typeahead shows grouped matches after a pause and moves between them by keyboard', () =>
+  Effect.gen(function* topBarTypeahead() {
+    const user = userEvent.setup();
+    const partyRef = {
+      moduleId: 'party.registry',
+      resourceId: '00000000-0000-4000-8000-000000000301',
+      resourceType: 'party.registry.party',
+      tenantId: tenantId1,
+    };
+    const counterpartyRef = {
+      ...partyRef,
+      resourceId: '00000000-0000-4000-8000-000000000302',
+      resourceType: 'party.registry.counterparty',
+    };
+    const presentation = {
+      business: {
+        compositionRevision,
+        entries: [
+          {
+            ownerModuleId: 'party.registry',
+            presentation: {
+              family: {
+                icon: 'icon-[mdi--account-multiple-outline]',
+                key: 'companies',
+                label: { cs: 'Firmy', en: 'Customers and suppliers' },
+                order: 10,
+              },
+              group: {
+                icon: 'icon-[mdi--account-multiple-outline]',
+                key: 'counterparty',
+                label: { cs: 'Protiúčty', en: 'Customers and suppliers' },
+                order: 10,
+              },
+              scope: 'company',
+            },
+            resourceType: 'party.registry.counterparty',
+            searchKey: 'party.registry.search',
+          },
+          {
+            ownerModuleId: 'party.registry',
+            presentation: {
+              family: {
+                icon: 'icon-[mdi--account-multiple-outline]',
+                key: 'people',
+                label: { cs: 'Lidé', en: 'Contacts' },
+                order: 20,
+              },
+              group: {
+                icon: 'icon-[mdi--account-multiple-outline]',
+                key: 'party',
+                label: { cs: 'Strany', en: 'Contacts' },
+                order: 20,
+              },
+              scope: 'company',
+            },
+            resourceType: 'party.registry.party',
+            searchKey: 'party.registry.search.party',
+          },
+        ],
+        schemaVersion: '1',
+      },
+      pages: [],
+    };
+    searchResourcesMock.mockReturnValue(
+      Effect.succeed({
+        partial: false,
+        presentation,
+        results: [
+          {
+            currentRoles: ['CUSTOMER'],
+            kind: 'counterparty',
+            legalEntity: { legalEntityId: legalEntityId1, tenantId: tenantId1 },
+            party: { archived: false, matchedViaAlias: false, ref: partyRef, title: 'Jana Dvořáková' },
+            ref: counterpartyRef,
+            title: 'Jana Dvořáková',
+          },
+          { archived: false, kind: 'party', matchedViaAlias: false, ref: partyRef, title: 'Jana Dvořáková' },
+          {
+            archived: true,
+            kind: 'party',
+            matchedViaAlias: false,
+            ref: { ...partyRef, resourceId: '00000000-0000-4000-8000-000000000303' },
+            title: 'Dvořák Stavby',
+          },
+        ],
+      }),
+    );
+    render(<HomeView initialModel={authenticatedModel()} />);
+    const searchbox = screen.getByRole('searchbox', { name: 'Search' });
+    yield* Effect.promise(() => user.type(searchbox, 'dvor'));
+    const customers = yield* Effect.promise(() => screen.findByRole('list', { name: 'Customers and suppliers' }));
+    // One request for the whole burst of keystrokes, with the final text.
+    expect(searchResourcesMock.mock.calls.map(([payload]) => payload)).toContainEqual({
+      compositionRevision,
+      query: 'dvor',
+    });
+    const customer = within(customers).getByRole('link', { name: /Jana Dvořáková/u });
+    expect(customer.getAttribute('aria-label')).toBe('Jana Dvořáková Customer');
+    expect(customer.textContent).toContain('Customer');
+    const contacts = screen.getByRole('list', { name: 'Contacts' });
+    expect(
+      within(contacts)
+        .getAllByRole('link')
+        .map(({ textContent }) => textContent),
+    ).toEqual(['Dvořák StavbyArchived']);
+    yield* Effect.promise(() => user.keyboard('{ArrowDown}'));
+    expect(document.activeElement).toBe(customer);
+    yield* Effect.promise(() => user.keyboard('{ArrowDown}{ArrowDown}'));
+    expect(document.activeElement).toBe(screen.getByRole('searchbox', { name: 'Search' }));
+    yield* Effect.promise(() => user.keyboard('{Escape}'));
+    expect(screen.queryByRole('list', { name: 'Contacts' })).toBeNull();
+  }),
+);
+
+it.live('"/" focuses the top-bar search outside text fields', () =>
+  Effect.gen(function* slashFocusesTopBarSearch() {
+    const user = userEvent.setup();
+    render(<HomeView initialModel={authenticatedModel()} />);
+    yield* Effect.promise(() => user.keyboard('/'));
+    expect(document.activeElement).toBe(screen.getByRole('searchbox', { name: 'Search' }));
   }),
 );
 
@@ -327,6 +511,7 @@ it.live('logout clears the authenticated composition together', () =>
         }),
       ),
     );
+    expect(clearCacheMock).toHaveBeenCalledTimes(1);
   }),
 );
 
@@ -439,6 +624,160 @@ it.live.each(switchFailureCases)(
         expect(screen.queryByText(pendingText)).toBeNull();
       }
 
+      expect(clearCacheMock).toHaveBeenCalledTimes(1);
       expect(screen.getByRole('combobox', { name: comboboxName }).hasAttribute('disabled')).toBe(false);
     }),
 );
+
+it('keeps an admitted company selectable with a clear empty state when no role grants an area', () => {
+  const model = authenticatedModel();
+  if (model.state !== 'authenticated') {
+    throw new Error('Expected authenticated fixture');
+  }
+  render(
+    <HomeView
+      initialModel={{
+        ...model,
+        homeContribution: { state: 'forbidden' },
+        navigation: {
+          deniedAppIds: [],
+          items: [],
+          moduleIds: [],
+          state: 'available',
+          unavailableDeployments: [],
+        },
+      }}
+    />,
+  );
+  expect(screen.getByRole('combobox', { name: 'Current legal entity' }).textContent).toContain('Alpha company');
+  expect(screen.getByText('You have not been assigned a role yet — ask your company administrator.')).toBeDefined();
+  expect(screen.queryByText('No legal entity is available for this account.')).toBeNull();
+  expect(resolvedTargetMock).not.toHaveBeenCalled();
+});
+
+it('does not invoke the lazy owner renderer for forbidden or unavailable Home targets', () => {
+  const model = authenticatedModel();
+  if (model.state !== 'authenticated') {
+    throw new Error('Expected authenticated fixture');
+  }
+  const { rerender } = render(<HomeView initialModel={{ ...model, homeContribution: { state: 'forbidden' } }} />);
+  expect(resolvedTargetMock).not.toHaveBeenCalled();
+  rerender(<HomeView initialModel={{ ...model, homeContribution: { state: 'unavailable' } }} />);
+  expect(resolvedTargetMock).not.toHaveBeenCalled();
+});
+
+it('hands only the admitted Home target and trusted context to the existing lazy owner renderer', () => {
+  const model = authenticatedModel();
+  if (model.state !== 'authenticated') {
+    throw new Error('Expected authenticated fixture');
+  }
+  const target = Result.getOrThrow(
+    Schema.decodeResult(ResolvedModuleTargetSchema)({
+      appId: 'sales-insights',
+      componentKey: 'demo.sales-insights.crm-dashboard',
+      compositionRevision,
+      entrypointKey: 'demo.sales-insights.component.crm-dashboard',
+      federation: {
+        expose: './CrmDashboard',
+        manifest: { sha256: '3'.repeat(64), url: 'https://sales.example.test/mf-manifest.json' },
+        remoteName: 'verticalSalesInsights',
+      },
+      moduleId: 'demo.sales-insights',
+      routeParameters: {},
+      writable: true,
+    }),
+  );
+  render(<HomeView initialModel={{ ...model, homeContribution: { state: 'ready', target } }} />);
+  expect(resolvedTargetMock).toHaveBeenCalled();
+  expect(resolvedTargetMock.mock.calls[0]?.[0]).toMatchObject({
+    model: {
+      shell: { identity: model.identity, selectedLegalEntityId: model.selectedLegalEntityId },
+      state: 'resolved',
+      target,
+    },
+  });
+});
+
+it('uses the document-admitted Home target in its first render without another resolution', () => {
+  const model = authenticatedModel();
+  if (model.state !== 'authenticated') {
+    throw new Error('Expected authenticated fixture');
+  }
+  const target = Result.getOrThrow(
+    Schema.decodeResult(ResolvedModuleTargetSchema)({
+      appId: 'inventory-app',
+      componentKey: 'inventory.stock.home',
+      compositionRevision,
+      entrypointKey: 'inventory.stock.component.home',
+      federation: {
+        expose: './Home',
+        manifest: { sha256: '3'.repeat(64), url: 'https://inventory.example.test/mf-manifest.json' },
+        remoteName: 'verticalInventory',
+      },
+      moduleId: 'inventory.stock',
+      routeParameters: {},
+      writable: false,
+    }),
+  );
+  render(<HomeView initialModel={{ ...model, homeContribution: { state: 'ready', target } }} />);
+  expect(resolvedTargetMock).toHaveBeenCalled();
+  expect(resolveModuleTargetMock).not.toHaveBeenCalled();
+  expect(resolvedTargetMock.mock.calls.at(-1)?.[0]).toMatchObject({ model: { state: 'resolved', target } });
+  expect(screen.queryByText('shell.moduleTarget.loading')).toBeNull();
+});
+
+it.live('offers explicit tenant scope only when admitted and reloads after selection', () =>
+  Effect.gen(function* selectTenantScope() {
+    const model = authenticatedModel();
+    if (model.state !== 'authenticated' || model.legalEntities.state !== 'available') {
+      throw new Error('Expected authenticated fixture');
+    }
+    const user = userEvent.setup();
+    render(
+      <HomeView initialModel={{ ...model, legalEntities: { ...model.legalEntities, tenantContextAvailable: true } }} />,
+    );
+    yield* Effect.promise(() => user.click(screen.getByRole('combobox', { name: 'Current legal entity' })));
+    yield* Effect.promise(() => user.click(screen.getByRole('option', { name: 'Organization (no company)' })));
+    yield* Effect.promise(() =>
+      waitFor(() => expect(switchToTenantContextMock).toHaveBeenCalledWith({ locale: 'en' })),
+    );
+    expect(switchLegalEntityMock).not.toHaveBeenCalled();
+    yield* Effect.promise(() =>
+      waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' })),
+    );
+    expect(clearCacheMock).toHaveBeenCalledTimes(1);
+  }),
+);
+
+it.live('does not expose tenant scope from company access alone', () =>
+  Effect.gen(function* companyOnlyScope() {
+    const user = userEvent.setup();
+    render(<HomeView initialModel={authenticatedModel()} />);
+    yield* Effect.promise(() => user.click(screen.getByRole('combobox', { name: 'Current legal entity' })));
+    expect(screen.queryByRole('option', { name: 'Organization (no company)' })).toBeNull();
+    expect(switchToTenantContextMock).not.toHaveBeenCalled();
+  }),
+);
+
+it('renders persisted tenant scope without a selected company', () => {
+  const model = authenticatedModel();
+  if (model.state !== 'authenticated' || model.legalEntities.state !== 'available') {
+    throw new Error('Expected authenticated fixture');
+  }
+  const { selectedLegalEntityId, ...tenantModel } = model;
+  void selectedLegalEntityId;
+  render(
+    <HomeView
+      initialModel={{
+        ...tenantModel,
+        contextState: 'tenant_authenticated',
+        legalEntities: { ...model.legalEntities, tenantContextAvailable: true },
+      }}
+    />,
+  );
+  expect(screen.getByRole('combobox', { name: 'Current legal entity' }).textContent).toContain(
+    'Organization (no company)',
+  );
+  expect(screen.getByText('Organization scope is active')).toBeDefined();
+  expect(switchToTenantContextMock).not.toHaveBeenCalled();
+});

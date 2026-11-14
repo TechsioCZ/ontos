@@ -12,6 +12,9 @@ import { SymmyFixtureExecutionPlanSchema, SymmyOwnerReceiptSchema } from '../../
 import { symmyImportJobs, symmyIntegrationRelations, symmyJobEffects, symmyJobRoutes } from '../../src/db/schema.ts';
 import { symmyJobExecutionStore } from '../../src/persistence/symmy-job-execution-store.ts';
 import { symmyJobStoreFactory } from '../../src/persistence/symmy-job-store.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const openDatabase = (connectionString: string) =>
   PgClient.makeClient({ url: Redacted.make(connectionString) }).pipe(
@@ -44,7 +47,7 @@ const receiptSubmitter =
   ) =>
   (value: ReceiptValue) =>
     runtime.transaction((transaction) =>
-      installOperationalScope(transaction, scope).pipe(
+      installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
         Effect.flatMap((scopedTransaction) =>
           scopedTransaction.invoke(rawReceipt, [claim.jobId, claim.effectId, claim.token, claim.version, value]),
         ),
@@ -98,7 +101,9 @@ it.effect(
         correlationId: 'canonical-linked-receipt-storage',
       };
       const scoped = <A, E>(run: (transaction: ScopedTransactionExecutor) => Effect.Effect<A, E>) =>
-        runtime.transaction((transaction) => installOperationalScope(transaction, scope).pipe(Effect.flatMap(run)));
+        runtime.transaction((transaction) =>
+          installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(Effect.flatMap(run)),
+        );
       yield* Effect.addFinalizer(() =>
         admin
           .delete(symmyJobEffects)
@@ -326,7 +331,9 @@ it.effect(
         correlationId: 'canonical-onboard-receipt-storage',
       };
       const scoped = <A, E>(run: (transaction: ScopedTransactionExecutor) => Effect.Effect<A, E>) =>
-        runtime.transaction((transaction) => installOperationalScope(transaction, scope).pipe(Effect.flatMap(run)));
+        runtime.transaction((transaction) =>
+          installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(Effect.andThen(run)),
+        );
       yield* Effect.addFinalizer(() =>
         admin
           .delete(symmyJobEffects)

@@ -168,6 +168,7 @@ const verification = Effect.gen(function* verifyStorefrontRegistryDatabase() {
              where namespace.nspname = $1
                and routine.proname in (
                  'read_current_storefront_application',
+                 'read_storefront_applications',
                  'register_storefront_application',
                  'revise_storefront_application'
                )
@@ -178,6 +179,7 @@ const verification = Effect.gen(function* verifyStorefrontRegistryDatabase() {
              where namespace.nspname = $1
                and routine.proname in (
                  'read_current_storefront_application',
+                 'read_storefront_applications',
                  'register_storefront_application',
                  'revise_storefront_application'
                )
@@ -206,7 +208,7 @@ const verification = Effect.gen(function* verifyStorefrontRegistryDatabase() {
     row.journal_count !== 1 ||
     row.policy_count !== expectedPolicyCount ||
     row.raw_runtime_privilege_count !== 0 ||
-    row.runtime_routine_count !== 3 ||
+    row.runtime_routine_count !== 4 ||
     !row.runtime_schema_usage ||
     row.runtime_schema_create ||
     row.unsafe_runtime_routine_count !== 0

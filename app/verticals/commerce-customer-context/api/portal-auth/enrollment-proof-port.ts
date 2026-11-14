@@ -27,5 +27,13 @@ export class CommerceEnrollmentProofService extends Context.Service<
     readonly verify: (
       input: ExternalUserSubject & { readonly enrollmentAttemptId: string; readonly tenantId: string },
     ) => Effect.Effect<CommerceEnrollmentProof, CommerceEnrollmentProofRejected | CommerceEnrollmentProofUnavailable>;
+    readonly verifyBinding: (
+      input: ExternalUserSubject & {
+        readonly enrollmentAttemptId: string;
+        readonly providerOwnerOperationId: string;
+        readonly sellingLegalEntityId: string;
+        readonly tenantId: string;
+      },
+    ) => Effect.Effect<CommerceEnrollmentProof, CommerceEnrollmentProofRejected | CommerceEnrollmentProofUnavailable>;
   }
 >()('@app/commerce-customer-context/api/portal-auth/enrollment-proof-port/CommerceEnrollmentProofService') {}

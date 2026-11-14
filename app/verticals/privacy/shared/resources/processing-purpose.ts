@@ -2,20 +2,9 @@
 // @ontos-resource-owner privacy.core
 // @ontos-resource-slug processing-purpose
 import type { OntosResourceType } from '@app/core-runtime';
-import { Schema } from 'effect';
 
-const ResourceIdSchema = Schema.toEncoded(
-  Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(Schema.brand('PrivacyResourceId')),
-);
-const TenantIdSchema = Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrivacyTenantId')));
-
-export const ProcessingPurposeRefSchema = Schema.Struct({
-  moduleId: Schema.Literal('privacy.core'),
-  resourceId: ResourceIdSchema,
-  resourceType: Schema.Literal('privacy.core.processing-purpose'),
-  tenantId: TenantIdSchema,
-});
-export type ProcessingPurposeRef = typeof ProcessingPurposeRefSchema.Type;
+export { ProcessingPurposeRefSchema } from '@app/consent-authority-contracts';
+export type { ProcessingPurposeRef } from '@app/consent-authority-contracts';
 
 export const processingPurposeResourceDescriptor = {
   capabilities: {

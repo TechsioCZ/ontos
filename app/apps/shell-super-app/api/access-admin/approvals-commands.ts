@@ -22,9 +22,7 @@ export interface AccessApprovalsCommandsService {
   readonly approve: (
     scope: OperationalScope,
     input: {
-      readonly approval: ApprovalWitness;
-      readonly execution: ApprovalWitness;
-      readonly parentRecordRead: readonly ApprovalWitness[];
+      readonly headers: Headers;
       readonly proposalId: string;
       readonly revision: string;
     },
@@ -39,6 +37,11 @@ export interface AccessApprovalsCommandsService {
     scope: OperationalScope,
     input: { readonly proposalId: string; readonly scopeId: string },
   ) => Effect.Effect<Option.Option<AccessAmount>, ApprovalPortUnavailable>;
+  /** A current observation by the original owner, not an approval or an execution lease. */
+  readonly inspect: (
+    scope: OperationalScope,
+    input: { readonly headers: Headers; readonly proposalId: string; readonly revision: string },
+  ) => Effect.Effect<boolean, ApprovalCommandFailure>;
   readonly load: (
     scope: OperationalScope,
     proposalId: string,

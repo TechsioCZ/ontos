@@ -2,14 +2,17 @@ import { sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { pgPolicy } from 'drizzle-orm/pg-core';
-import { Context, Effect, Option, Predicate, Redacted } from 'effect';
+import { Context, DateTime, Effect, Option, Predicate, Redacted } from 'effect';
 
 import { readVerifiedGatewayScopeAssertion } from '../auth/system-principal-context-provenance.ts';
 import type { GatewayScopeAssertion } from '../auth/system-principal-context-provenance.ts';
 import type { OperationalScope } from '../operations/context.ts';
+import type { PreparedAccessDecision } from '../operations/access-gate.ts';
+import type { AccessDecision } from '../access/decision/contract.ts';
+import type { AccessDecisionUnavailable } from '../access/decision/errors.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
-import { DATABASE_IDENTITIES, gatewayScopeGrantRoleForAudience } from './database-identities.ts';
-import type { DatabaseScopeAuthority } from './database-identities.ts';
+import { gatewayScopeGrantRoleForAudience } from './database-identities.ts';
+import type { DatabaseIdentityEnrollment, DatabaseScopeAuthority } from './database-identities.ts';
 import { scopedRoutineInvokerFromTransaction } from './scoped-routine.ts';
 import type { ScopedRoutineInvoker } from './scoped-routine.ts';
 import type { CoreTransaction } from './types.ts';
@@ -18,10 +21,29 @@ const scopedTransaction: unique symbol = Symbol('@app/core-runtime/db/scoped-tra
 type ScopedRoutineRawRow = Record<string, never>;
 type OperationalScopeRawTransaction = Pick<CoreTransaction, 'delete' | 'execute' | 'insert' | 'select' | 'update'>;
 
+/** The authority a connected role installed its scope with; a role without scope authority never installs one. */
+export type InstalledOperationalScopeAuthority = Exclude<DatabaseScopeAuthority, 'none'>;
+
 /** Private owner-factory capability. It is never supplied to an Action or read handler. */
 export interface ScopedTransactionExecutor extends ScopedRoutineInvoker {
+  /**
+   * How the connected database role installed this scope, decided from `current_user` and the enrolled identities,
+   * never from the request. Statements whose grants differ by role choose their variant from this.
+   */
+  readonly authority: InstalledOperationalScopeAuthority;
   readonly delete: CoreTransaction['delete'];
   readonly insert: CoreTransaction['insert'];
+  /**
+   * Present only on the owner transaction of a genuine Core Action (`isGenuineCoreAction`): re-decides a gate
+   * question prepared before the transaction (by the bound Action gate) from this transaction's snapshot, under the
+   * authority fence the Action's carrier is re-checked under (O75, R5a-2). It grants nothing, but it runs the prepared
+   * question's own re-check with this transaction, so only Core's own Actions get it. Absent on every other owner's
+   * executor, where a re-check fails closed.
+   */
+  readonly recheckPreparedAccess?: (
+    prepared: PreparedAccessDecision,
+    now: Date,
+  ) => Effect.Effect<AccessDecision, AccessDecisionUnavailable>;
   /** Core-installed scope snapshot; owner readers bind their predicates to this transaction. */
   readonly scope: Readonly<Pick<OperationalScope, 'tenantId' | 'legalEntityId'>>;
   readonly [scopedTransaction]: true;
@@ -37,7 +59,10 @@ interface SettingRow extends Record<string, unknown> {
 export interface OperationalScopeTransactionService {
   readonly delete: CoreTransaction['delete'];
   readonly insert: CoreTransaction['insert'];
-  readonly install: (scope: OperationalScope) => Effect.Effect<void, OperationContextUnavailable>;
+  /** Installs the scope with the connected role's authority and answers which authority that was. */
+  readonly install: (
+    scope: OperationalScope,
+  ) => Effect.Effect<InstalledOperationalScopeAuthority, OperationContextUnavailable>;
   readonly scopedRoutineInvoker: (scope: OperationalScope) => ScopedRoutineInvoker;
   readonly select: CoreTransaction['select'];
   readonly update: CoreTransaction['update'];
@@ -64,6 +89,7 @@ const operationContextUnavailable = (cause?: unknown) => {
 };
 
 interface OperationalScopeAuthority {
+  readonly authority: InstalledOperationalScopeAuthority;
   readonly install: (scope: OperationalScope) => Effect.Effect<void, OperationContextUnavailable>;
   readonly verify: Effect.Effect<Option.Option<SettingRow>, OperationContextUnavailable>;
 }
@@ -71,6 +97,9 @@ interface OperationalScopeAuthority {
 interface ScopeVerificationRow extends SettingRow {
   readonly role: string;
 }
+
+const scopeAuthorityForRole = (enrollment: DatabaseIdentityEnrollment, role: string): DatabaseScopeAuthority =>
+  enrollment.identities.find((candidate) => candidate.role === role)?.scopeAuthority ?? 'none';
 
 const readSettingRow = (statement: SQL, transaction: OperationalScopeRawTransaction) =>
   transaction.execute<SettingRow>(statement, 'objects').pipe(
@@ -82,12 +111,14 @@ const readSettingRow = (statement: SQL, transaction: OperationalScopeRawTransact
  * Reads the installed scope together with the connected role. The scope counts only when that role's
  * database identity installs scope through `authority`; a gateway-grant role never trusts session
  * settings, and a role without scope authority never trusts either. Logins outside the runtime
- * identities (the migration admin) count as session-setting roles.
+ * identities are not granted implicit session-setting authority.
  */
 const readVerifiedScope = (
   statement: SQL,
   transaction: OperationalScopeRawTransaction,
-  authority: Exclude<DatabaseScopeAuthority, 'none'>,
+  authority: InstalledOperationalScopeAuthority,
+  enrollment: DatabaseIdentityEnrollment,
+  expectedRole?: string,
 ) =>
   transaction.execute<ScopeVerificationRow>(statement, 'objects').pipe(
     Effect.mapError(operationContextUnavailable),
@@ -95,34 +126,67 @@ const readVerifiedScope = (
       if (row === undefined) {
         return Effect.succeed(Option.none<SettingRow>());
       }
-      const identityAuthority =
-        DATABASE_IDENTITIES.find((candidate) => candidate.role === row.role)?.scopeAuthority ?? 'session_setting';
-      return identityAuthority === authority
-        ? Effect.succeed(Option.some<SettingRow>({ legal_entity_id: row.legal_entity_id, tenant_id: row.tenant_id }))
+      return scopeAuthorityForRole(enrollment, row.role) === authority &&
+        (expectedRole === undefined || row.role === expectedRole)
+        ? Effect.succeedSome<SettingRow>({ legal_entity_id: row.legal_entity_id, tenant_id: row.tenant_id })
         : Effect.fail(operationContextUnavailable());
     }),
   );
 
-/** Session-setting authority used by the shared runtime and worker roles. */
-const sessionSettingScopeAuthority = (transaction: OperationalScopeRawTransaction): OperationalScopeAuthority => ({
-  install: (scope) =>
-    transaction
-      .execute(
-        sql`select set_config('ontos.tenant_id', ${scope.tenantId}, true), set_config('ontos.legal_entity_id', ${scope.legalEntityId ?? ''}, true)`,
-        'objects',
-      )
-      .pipe(Effect.mapError(operationContextUnavailable), Effect.asVoid),
-  verify: readVerifiedScope(
-    sql`
+/**
+ * Session-setting authority used by the shared runtime and worker roles. Installing and reading back share one
+ * statement, as in `installOperationalScopeAt`: `set_config` answers the value it set, and the connected role is read
+ * in that same statement. `verify` judges that row by the same rules a separate read would, so a transaction pays one
+ * round trip for its scope instead of two; asked before `install`, it reads the settings itself.
+ */
+const sessionSettingScopeAuthority = (
+  transaction: OperationalScopeRawTransaction,
+  enrollment: DatabaseIdentityEnrollment,
+): OperationalScopeAuthority => {
+  let installed: readonly ScopeVerificationRow[] | undefined;
+  const judged = (rows: readonly ScopeVerificationRow[]) => {
+    const [row] = rows;
+    if (row === undefined) {
+      return Effect.succeed(Option.none<SettingRow>());
+    }
+    return scopeAuthorityForRole(enrollment, row.role) === 'session_setting'
+      ? Effect.succeedSome<SettingRow>({ legal_entity_id: row.legal_entity_id, tenant_id: row.tenant_id })
+      : Effect.fail(operationContextUnavailable());
+  };
+  return {
+    authority: 'session_setting',
+    install: (scope) =>
+      transaction
+        .execute<ScopeVerificationRow>(
+          sql`select current_user::text as role, set_config('ontos.tenant_id', ${scope.tenantId}, true) as tenant_id, set_config('ontos.legal_entity_id', ${scope.legalEntityId ?? ''}, true) as legal_entity_id`,
+          'objects',
+        )
+        .pipe(
+          Effect.mapError(operationContextUnavailable),
+          Effect.tap((rows) =>
+            Effect.sync(() => {
+              installed = rows;
+            }),
+          ),
+          Effect.asVoid,
+        ),
+    verify: Effect.suspend(() =>
+      installed === undefined
+        ? readVerifiedScope(
+            sql`
       select
         current_user::text as role,
         current_setting('ontos.tenant_id', true) as tenant_id,
         current_setting('ontos.legal_entity_id', true) as legal_entity_id
     `,
-    transaction,
-    'session_setting',
-  ),
-});
+            transaction,
+            'session_setting',
+            enrollment,
+          )
+        : judged(installed),
+    ),
+  };
+};
 
 /** Establishes the gateway-grant scope and returns the tenant and legal entity the database derived. */
 export const establishGatewayScopeStatement = (assertion: Redacted.Redacted): SQL =>
@@ -135,24 +199,59 @@ export const establishGatewayScopeStatement = (assertion: Redacted.Redacted): SQ
 const gatewayGrantScopeAuthority = (
   transaction: OperationalScopeRawTransaction,
   scopeAssertion: GatewayScopeAssertion,
+  enrollment: DatabaseIdentityEnrollment,
+  expectedRole: string,
 ): OperationalScopeAuthority => ({
+  authority: 'gateway_grant',
   install: () =>
     readSettingRow(establishGatewayScopeStatement(scopeAssertion.assertion), transaction).pipe(Effect.asVoid),
   verify: readVerifiedScope(
     sql`select current_user::text as role, coalesce(trust.current_tenant_id()::text, '') as tenant_id, coalesce(trust.current_legal_entity_id()::text, '') as legal_entity_id`,
     transaction,
     'gateway_grant',
+    enrollment,
+    expectedRole,
   ),
 });
+
+const installedScopeMatches = (installed: SettingRow, scope: OperationalScope) =>
+  installed.tenant_id === scope.tenantId && installed.legal_entity_id === (scope.legalEntityId ?? '');
+
+const scopedTransactionExecutor = (
+  transaction: Pick<CoreTransaction, 'delete' | 'insert' | 'select' | 'update'>,
+  routineInvoker: ScopedRoutineInvoker,
+  scope: OperationalScope,
+  authority: InstalledOperationalScopeAuthority,
+): ScopedTransactionExecutor =>
+  Object.freeze({
+    authority,
+    delete: transaction.delete.bind(transaction),
+    insert: transaction.insert.bind(transaction),
+    invoke: routineInvoker.invoke,
+    scope: Object.freeze(
+      scope.legalEntityId === undefined
+        ? { tenantId: scope.tenantId }
+        : { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId },
+    ),
+    [scopedTransaction]: true as const,
+    select: transaction.select.bind(transaction),
+    update: transaction.update.bind(transaction),
+  });
 
 interface CurrentDatabaseRoleRow extends Record<string, unknown> {
   readonly role: string;
 }
 
+/**
+ * The connected database role, not the presence of an assertion, chooses the scope authority:
+ * session-setting roles install settings, gateway-grant roles must carry an assertion for their own
+ * audience, and unknown or `none` roles fail closed.
+ */
 const operationalScopeAuthority = Effect.fn('OperationalScope.resolveDatabaseAuthority')(
   function* operationalScopeAuthority(
     transaction: OperationalScopeRawTransaction,
     scope: OperationalScope,
+    enrollment: DatabaseIdentityEnrollment,
   ): Effect.fn.Return<OperationalScopeAuthority, OperationContextUnavailable> {
     const rows = yield* transaction
       .execute<CurrentDatabaseRoleRow>(sql`select current_user::text as role`, 'objects')
@@ -161,10 +260,9 @@ const operationalScopeAuthority = Effect.fn('OperationalScope.resolveDatabaseAut
     if (rows.length !== 1 || row === undefined || !Predicate.isString(row.role) || row.role.length === 0) {
       return yield* operationContextUnavailable();
     }
-    const authority =
-      DATABASE_IDENTITIES.find((candidate) => candidate.role === row.role)?.scopeAuthority ?? 'session_setting';
+    const authority = scopeAuthorityForRole(enrollment, row.role);
     if (authority === 'session_setting') {
-      return sessionSettingScopeAuthority(transaction);
+      return sessionSettingScopeAuthority(transaction, enrollment);
     }
     if (authority === 'none') {
       return yield* operationContextUnavailable();
@@ -172,26 +270,28 @@ const operationalScopeAuthority = Effect.fn('OperationalScope.resolveDatabaseAut
     const scopeAssertion = readVerifiedGatewayScopeAssertion(scope);
     if (
       scopeAssertion === undefined ||
-      !Option.contains(gatewayScopeGrantRoleForAudience(scopeAssertion.audience), row.role)
+      !Option.contains(gatewayScopeGrantRoleForAudience(enrollment, scopeAssertion.audience), row.role)
     ) {
       return yield* operationContextUnavailable();
     }
-    return gatewayGrantScopeAuthority(transaction, scopeAssertion);
+    return gatewayGrantScopeAuthority(transaction, scopeAssertion, enrollment, row.role);
   },
 );
 
 const operationalScopeTransactionFromCoreTransaction = (
   transaction: OperationalScopeRawTransaction,
   scope: OperationalScope,
+  enrollment: DatabaseIdentityEnrollment,
 ): OperationalScopeTransactionService => {
   let installedAuthority: OperationalScopeAuthority | undefined;
   return {
     delete: transaction.delete.bind(transaction),
     insert: transaction.insert.bind(transaction),
     install: Effect.fn('OperationalScopeTransaction.installActualRole')(function* installActualRole(requestedScope) {
-      const authority = yield* operationalScopeAuthority(transaction, scope);
+      const authority = yield* operationalScopeAuthority(transaction, scope, enrollment);
       yield* authority.install(requestedScope);
       installedAuthority = authority;
+      return authority.authority;
     }),
     scopedRoutineInvoker: (routineScope) =>
       scopedRoutineInvokerFromTransaction(
@@ -209,42 +309,93 @@ const operationalScopeTransactionFromCoreTransaction = (
 export const installOperationalScopeFromTransactionService = Effect.fn('installOperationalScopeFromTransactionService')(
   function* installOperationalScopeFromTransactionServiceEffect(scope: OperationalScope) {
     const transaction = yield* OperationalScopeTransaction;
-    yield* transaction.install(scope);
+    const authority = yield* transaction.install(scope);
     const setting = yield* transaction.verify;
+    if (Option.isNone(setting) || !installedScopeMatches(setting.value, scope)) {
+      return yield* operationContextUnavailable();
+    }
+    return scopedTransactionExecutor(transaction, transaction.scopedRoutineInvoker(scope), scope, authority);
+  },
+);
+
+interface InstalledScopeRow extends ScopeVerificationRow {
+  readonly isolation?: string;
+  readonly operation_at: unknown;
+}
+
+/**
+ * Installs scope and reads the transaction's trusted start time. Session-setting roles share one
+ * statement; gateway-grant roles first establish scope from the sealed assertion, then verify the
+ * database-derived scope in a later statement. Both paths verify the connected role's authority.
+ */
+export const installOperationalScopeAt = Effect.fn('installOperationalScopeAt')(
+  function* installOperationalScopeAtEffect(
+    transaction: OperationalScopeRawTransaction,
+    scope: OperationalScope,
+    enrollment: DatabaseIdentityEnrollment,
+    lock?: { readonly acquire: SQL; readonly isolation: 'read committed' },
+  ) {
+    const scopeAssertion = readVerifiedGatewayScopeAssertion(scope);
+    const expectedRole =
+      scopeAssertion === undefined
+        ? Option.none<string>()
+        : gatewayScopeGrantRoleForAudience(enrollment, scopeAssertion.audience);
+    const gatewayGrant = scopeAssertion !== undefined && Option.isSome(expectedRole);
+    if (scopeAssertion !== undefined && Option.isSome(expectedRole)) {
+      yield* gatewayGrantScopeAuthority(transaction, scopeAssertion, enrollment, expectedRole.value).install(scope);
+    }
+    // Infrastructure locks may share scope installation, but any protected data read must use a later
+    // statement: READ COMMITTED needs a new snapshot after a possible advisory-lock wait.
+    const locking =
+      lock === undefined
+        ? sql``
+        : sql`, current_setting('transaction_isolation') as isolation, case when current_setting('transaction_isolation') = ${lock.isolation} then ${lock.acquire} end as publication_lock`;
+    const [installed] = yield* transaction
+      .execute<InstalledScopeRow>(
+        gatewayGrant
+          ? sql`select current_user::text as role, coalesce(trust.current_tenant_id()::text, '') as tenant_id, coalesce(trust.current_legal_entity_id()::text, '') as legal_entity_id, transaction_timestamp() as operation_at${locking}`
+          : sql`select current_user::text as role, set_config('ontos.tenant_id', ${scope.tenantId}, true) as tenant_id, set_config('ontos.legal_entity_id', ${scope.legalEntityId ?? ''}, true) as legal_entity_id, transaction_timestamp() as operation_at${locking}`,
+        'objects',
+      )
+      .pipe(Effect.mapError(operationContextUnavailable));
     if (
-      Option.isNone(setting) ||
-      setting.value.tenant_id !== scope.tenantId ||
-      setting.value.legal_entity_id !== (scope.legalEntityId ?? '')
+      installed === undefined ||
+      scopeAuthorityForRole(enrollment, installed.role) !== (gatewayGrant ? 'gateway_grant' : 'session_setting') ||
+      (Option.isSome(expectedRole) && installed.role !== expectedRole.value) ||
+      !installedScopeMatches(installed, scope) ||
+      (lock !== undefined && installed.isolation !== lock.isolation) ||
+      !Predicate.isDate(installed.operation_at) ||
+      !Number.isFinite(installed.operation_at.getTime())
     ) {
       return yield* operationContextUnavailable();
     }
-    const routineInvoker = transaction.scopedRoutineInvoker(scope);
-    return Object.freeze({
-      delete: transaction.delete.bind(transaction),
-      insert: transaction.insert.bind(transaction),
-      invoke: routineInvoker.invoke,
-      scope: Object.freeze(
-        scope.legalEntityId === undefined
-          ? { tenantId: scope.tenantId }
-          : { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId },
+    const routineInvoker = scopedRoutineInvokerFromTransaction(
+      (statement) => transaction.execute<ScopedRoutineRawRow>(statement, 'objects'),
+      scope,
+    );
+    return {
+      operationAt: DateTime.fromDateUnsafe(installed.operation_at),
+      scoped: scopedTransactionExecutor(
+        transaction,
+        routineInvoker,
+        scope,
+        gatewayGrant ? 'gateway_grant' : 'session_setting',
       ),
-      [scopedTransaction]: true as const,
-      select: transaction.select.bind(transaction),
-      update: transaction.update.bind(transaction),
-    });
+    };
   },
 );
 
 export const installOperationalScope = (
   transaction: OperationalScopeRawTransaction,
   scope: OperationalScope,
+  enrollment: DatabaseIdentityEnrollment,
 ): Effect.Effect<ScopedTransactionExecutor, OperationContextUnavailable> =>
   installOperationalScopeFromTransactionService(scope).pipe(
     Effect.updateContext((context: Context.Context<never>) =>
       Context.add(
         context,
         OperationalScopeTransaction,
-        operationalScopeTransactionFromCoreTransaction(transaction, scope),
+        operationalScopeTransactionFromCoreTransaction(transaction, scope, enrollment),
       ),
     ),
   );

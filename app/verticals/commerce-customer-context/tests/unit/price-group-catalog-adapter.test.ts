@@ -307,12 +307,14 @@ it.effect('obtains a fresh Shell-issued context for every provider attempt', () 
     expect(issuanceRequests).toEqual([
       {
         audience: 'price-group-catalog',
+        callingAppId: 'commerce-customer-context',
         legalEntityScope: 'tenant',
         requestCorrelation: 'price-group-correlation',
         subject: priceGroupSubject,
       },
       {
         audience: 'price-group-catalog',
+        callingAppId: 'commerce-customer-context',
         legalEntityScope: 'tenant',
         requestCorrelation: 'price-group-correlation',
         subject: priceGroupSubject,
@@ -447,6 +449,7 @@ it.effect('explicitly delegates sealed workload compatibility reads and ignores 
       expect(requests).toEqual(
         Array.from({ length: 2 }, () => ({
           audience: 'price-group-catalog',
+          callingAppId: 'commerce-customer-context',
           legalEntityScope: 'tenant',
           requestCorrelation: 'registered-price-group',
           subject: expectedSubject,

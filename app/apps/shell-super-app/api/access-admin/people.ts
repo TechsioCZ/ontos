@@ -4,14 +4,16 @@ import { stableUuid } from '@app/core-runtime/access/catalog';
 import type { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import {
   AccessScopeIdSchema,
+  AgentIdSchema,
   AssignmentIncarnationIdSchema,
   CapabilityKeySchema,
   DelegationIdSchema,
+  LegalEntityIdSchema,
   PrincipalIdSchema,
   RoleIdSchema,
   RoleRevisionIdSchema,
 } from '@app/core-runtime/access/ids';
-import type { PrincipalId } from '@app/core-runtime/access/ids';
+import type { LegalEntityId, PrincipalId } from '@app/core-runtime/access/ids';
 import { AccessMembershipIdSchema } from '@app/core-runtime/access/intent/memberships';
 import { AccessPeopleDirectory } from '@app/core-runtime/access/intent/people-directory';
 import type {
@@ -19,9 +21,18 @@ import type {
   AccessDirectoryScopeLabels,
 } from '@app/core-runtime/access/intent/people-directory';
 import { AccessTeamMemberIdSchema } from '@app/core-runtime/access/intent/teams';
-import { membershipIsLive, soleAdministrationScopeIds } from '@app/core-runtime/access/lifecycle/people-commands';
+import {
+  assignmentIsLive,
+  membershipIsLive,
+  roleRevisionIsAgentAssignable,
+  soleAdministrationScopeIds,
+} from '@app/core-runtime/access/lifecycle/people-commands';
 import { AccessPeopleCommands } from '@app/core-runtime/access/lifecycle/people-service';
-import type { AccessPeopleView, PeopleCommandFailure } from '@app/core-runtime/access/lifecycle/people-service';
+import type {
+  AccessPeopleView,
+  PeopleCommandFailure,
+  PeopleCommandReceipt,
+} from '@app/core-runtime/access/lifecycle/people-service';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Context, DateTime, Effect, Layer, Option, Predicate, Result, Schema } from 'effect';
 import type { Headers as EffectHeaders } from 'effect/http/Headers';
@@ -29,8 +40,10 @@ import type { Headers as EffectHeaders } from 'effect/http/Headers';
 import type {
   AccessAdminProblem,
   AccessPeopleMutationResponse,
+  AdmitAccessMemberPayload,
   AssignAccessRolePayload,
   CreateAccessDelegationPayload,
+  EndAccessMembershipPayload,
   ListAccessAssignmentsPayload,
   ListAccessAssignmentsResponse,
   ListAccessPeopleOptionsResponse,
@@ -49,21 +62,22 @@ import {
 } from '../../shared/access-admin-api.ts';
 import { ShellAuthenticationApi } from '../../shared/api.ts';
 import { AccessAdminClock } from './clock.ts';
-import { coversNoRole, roleReadScope } from './role-read-scope.ts';
+import { coversNoRole, roleReadScope, roleReadScopes } from './role-read-scope.ts';
 import type { RoleReadScope } from './role-read-scope.ts';
 import {
   AccessAdminSession,
   accessAdminConflictProblem,
   accessAdminForbiddenProblem,
   accessAdminInternalProblem,
+  accessAdminSavedPendingProblem,
   accessAdminUnavailableProblem,
   accessAdminUnprocessableProblem,
 } from './session.ts';
-import { AccessChangesWriteAvailability } from './write-gate.ts';
+import { AccessPeopleWriteAvailability } from './people-write-gate.ts';
 
 /*
  * "Lidé": who belongs to the tenant, which roles they hold where, the delegations they manage and the
- * teams they sit in, plus the six writes that change it. Core owns every rule (`people-service.ts`):
+ * teams they sit in, plus the eight writes that change it. Core owns every rule (`people-service.ts`):
  * this module admits the request, narrows what it may see, names the identities a write mints from its
  * idempotency key and maps Core's refusals onto the wire.
  *
@@ -80,10 +94,14 @@ import { AccessChangesWriteAvailability } from './write-gate.ts';
  * 3. **The revision is the screen's.** It is a digest of exactly the rows this person may see, so a
  *    change outside their authority neither leaks through it nor makes their form stale; a write whose
  *    echoed revision is not the current one is a 409 the client repairs by re-reading.
- * 4. **Writes ship behind the access write gate** (`write-gate.ts`), like Novinky: while it is closed,
- *    every write is a retryable 503 and the options report every write as unavailable. Each write's
- *    identities (assignment incarnation, delegation, team place, management memberships) are derived
- *    from its idempotency key, so a retry names the same rows instead of forking new ones.
+ * 4. **Writes ship behind Lidé's own write gate** (`people-write-gate.ts`), apart from Novinky's: while
+ *    it is closed, every write is a retryable 503 and the options report every write as unavailable and
+ *    list no admission candidates. Each write's identities (assignment incarnation, delegation, team
+ *    place, management and member memberships) are derived from its idempotency key, so a retry names
+ *    the same rows instead of forking new ones.
+ *
+ * Admission is offered only to a person the company's own directory lists as an active human, and only
+ * in a company where they hold no live member row yet; anyone else is refused here before Core runs.
  */
 
 const MODULE_KEY = 'shell-super-app';
@@ -99,9 +117,11 @@ const entrypoint = (key: string, access: 'read' | 'write') =>
 
 /** One declared entrypoint per operation, each with its own capability (O1, O27, O62). */
 export const accessPeopleEntrypoints = Object.freeze({
+  admitMember: entrypoint('admit-member', 'write'),
   assign: entrypoint('assign', 'write'),
   assignments: entrypoint('assignments', 'read'),
   delegate: entrypoint('delegate', 'write'),
+  endMembership: entrypoint('end-membership', 'write'),
   list: entrypoint('list', 'read'),
   options: entrypoint('options', 'read'),
   revokeAssignment: entrypoint('revoke-assignment', 'write'),
@@ -132,9 +152,11 @@ const peopleDeclaration = (target: PeopleEntrypoint): AccessDeclaration => {
 
 /** Published with the Shell module's declarations (O50: never a private allow of this file). */
 export const accessPeopleDeclarations = Object.freeze({
+  admitMember: peopleDeclaration(accessPeopleEntrypoints.admitMember),
   assign: peopleDeclaration(accessPeopleEntrypoints.assign),
   assignments: peopleDeclaration(accessPeopleEntrypoints.assignments),
   delegate: peopleDeclaration(accessPeopleEntrypoints.delegate),
+  endMembership: peopleDeclaration(accessPeopleEntrypoints.endMembership),
   list: peopleDeclaration(accessPeopleEntrypoints.list),
   options: peopleDeclaration(accessPeopleEntrypoints.options),
   revokeAssignment: peopleDeclaration(accessPeopleEntrypoints.revokeAssignment),
@@ -172,7 +194,9 @@ const CONFLICT_CODES: ReadonlySet<string> = new Set([
   'ownership_transfer_required',
   'people_assignment_already_ended',
   'people_assignment_unknown',
+  'people_granted_delegations_live',
   'people_membership_already_active',
+  'people_membership_unknown',
   'people_role_revision_mismatch',
   'people_team_membership_exists',
   'people_team_membership_unknown',
@@ -191,15 +215,25 @@ export const accessPeopleFailureProblem = (failure: PeopleCommandFailure): Acces
   if (CONFLICT_CODES.has(failure.code)) {
     return conflict(text);
   }
+  // Every projection runs after the people change was recorded: the change is saved, its permissions are not yet.
+  if (failure.code.startsWith('access_projection_write_') && failure.code !== 'access_projection_write_plan_refused') {
+    return accessAdminSavedPendingProblem();
+  }
   if (
     failure.code === 'access_intent_unavailable' ||
     failure.code === 'people_tenant_scope_missing' ||
-    failure.code.startsWith('access_projection_write_')
+    failure.code === 'access_projection_write_plan_refused'
   ) {
     return accessAdminUnavailableProblem();
   }
   return unprocessable(text);
 };
+
+/** The repair a stale request runs before it refuses: it saved nothing, so a failed projection is only unavailable. */
+const staleRepairProblem = (failure: PeopleCommandFailure): AccessAdminProblem =>
+  failure.code.startsWith('access_projection_write_')
+    ? accessAdminUnavailableProblem()
+    : accessPeopleFailureProblem(failure);
 
 /** An unreadable directory is a retry that keeps Core's own code, never a smaller answer. */
 const directoryUnavailable = (failure: { readonly code: string }): AccessAdminProblem => ({
@@ -263,6 +297,10 @@ const scopeIdOfTarget = (view: View, target: ScopeTarget): Option.Option<string>
 
 const principalOfHolder = (holder: ViewAssignment['holder']): string | undefined =>
   Predicate.isTagged(holder, 'Principal') ? String(holder.principalId) : undefined;
+
+/** The principal id a holder stands for: a person's own, an agent's agent id (agents are principals too). */
+const holderIdOf = (holder: ViewAssignment['holder']): string =>
+  Predicate.isTagged(holder, 'Principal') ? String(holder.principalId) : String(holder.agentId);
 
 /** A role is readable where it lives: a company's role in its company, a tenant role in the tenant context. */
 const roleIsReachable = (reach: PeopleReach, legalEntityId: string | undefined): boolean =>
@@ -378,6 +416,7 @@ const plainDelegation = (view: View, delegation: ViewDelegation) =>
 
 const plainMembership = (view: View, membership: ViewMembership) => ({
   kind: membership.kind,
+  membershipId: membership.id,
   scope: scopeTargetOf(view, membership.scopeId),
   status: membership.status,
   validFrom: membership.validFrom.toISOString(),
@@ -578,19 +617,173 @@ const scopeLabelOf = (labels: AccessDirectoryScopeLabels, view: View, scopeId: s
   );
 };
 
-/** Whether this person may run one write anywhere this reach shows, as the gate answers right now. */
-const writeAllowed = Effect.fn('AccessAdminPeople.writeAllowed')(function* writeAllowedNow(
+/**
+ * How many of the options' independent reads run at once. The process shares a small database pool among
+ * every owner it serves (six connections per identity on stage), so one request never holds more than two.
+ */
+const OPTIONS_READ_CONCURRENCY = 2;
+
+/** The writes the options report on, each decided by its own declaration. */
+const OPTION_WRITES = [
+  'assign',
+  'revokeAssignment',
+  'teamMembership',
+  'delegate',
+  'revokeDelegation',
+  'transferOwnership',
+  'endMembership',
+  'admitMember',
+] as const;
+type OptionWrite = (typeof OPTION_WRITES)[number];
+
+/**
+ * The options read's admission, then what each write's own declaration reaches right now. The read's own
+ * declaration is asked first, in the tenant context and every company's own scope like every Lidé read, and a
+ * read that covers no scope is refused before any write is asked: a refused reader leaves only the read's own
+ * evidence. Then, while the Lidé gate is open, all eight writes travel in ONE gate batch, each asked exactly as
+ * `reachFor` asks it (asked one decision at a time, a tenant owner's options were 8 writes x every scope single
+ * decisions, each its own run of pooled transactions, which held the request for tens of seconds). A closed gate
+ * asks no write and offers none; one unreadable answer refuses the whole request (503).
+ */
+const admitOptions = Effect.fn('AccessAdminPeople.admitOptions')(function* admitOptionsRead(headers: Headers) {
+  const { now, reach, scope, view } = yield* admitRead(headers, accessPeopleDeclarations.options);
+  const gate = yield* AccessPeopleWriteAvailability;
+  if (!gate.available) {
+    return { reach, reaches: Option.none<ReadonlyMap<OptionWrite, PeopleReach>>(), scope, view };
+  }
+  const readable = yield* roleReadScopes({
+    companies: companiesOf(view),
+    declarations: OPTION_WRITES.map((write) => accessPeopleDeclarations[write]),
+    now,
+    scope,
+  });
+  const reaches: ReadonlyMap<OptionWrite, PeopleReach> = new Map(
+    OPTION_WRITES.flatMap((write, index) => {
+      const one = readable[index];
+      return one === undefined ? [] : [[write, reachOf(view, one)] as const];
+    }),
+  );
+  return { reach, reaches: Option.some(reaches), scope, view };
+});
+
+/** Whether this person may run one write anywhere its reach shows; a closed gate offers none. */
+const writeAllowed = (reaches: Option.Option<ReadonlyMap<OptionWrite, PeopleReach>>, write: OptionWrite): boolean =>
+  Option.match(reaches, {
+    onNone: () => false,
+    onSome: (reach) => (reach.get(write)?.scopeIds.size ?? 0) > 0,
+  });
+
+/**
+ * Whether the acting person administers one scope permanently, as the tenant owner or that company's
+ * access administrator. Only they admit or end a membership there: Core refuses a delegate with
+ * people_authority_missing, so a delegation's reach alone never offers either write.
+ */
+const administersPermanently = (view: View, actor: string, scopeId: string): boolean => {
+  const usable = (record: View['administration']['tenantOwners'][number]) =>
+    String(record.principalId) === actor &&
+    record.status === 'active' &&
+    (record.membershipValidUntil === undefined || view.at < record.membershipValidUntil);
+  return (
+    view.administration.tenantOwners.some(usable) ||
+    view.administration.scopeAdministrators.some(
+      (entry) => String(entry.scopeId) === scopeId && entry.administrators.some(usable),
+    )
+  );
+};
+
+/** Whether ending a membership is open here: the gate, its reach, and permanent administration of a scope in it. */
+const endMembershipAllowed = (
   scope: OperationalScope,
   view: View,
-  declaration: AccessDeclaration,
-  now: Date,
+  reaches: Option.Option<ReadonlyMap<OptionWrite, PeopleReach>>,
+): boolean =>
+  Option.match(reaches, {
+    onNone: () => false,
+    onSome: (reach) =>
+      [...(reach.get('endMembership')?.scopeIds ?? [])].some((scopeId) =>
+        administersPermanently(view, scope.principalId, scopeId),
+      ),
+  });
+
+/** Whether one person holds a live 'member' row in one scope; another company's row never counts. */
+const isLiveMemberIn = (view: View, principalId: string, scopeId: string): boolean =>
+  view.memberships.some(
+    (membership) =>
+      membership.kind === 'member' &&
+      membership.scopeId === scopeId &&
+      holdsMembership(membership, principalId) &&
+      membershipIsLive(membership, view.at),
+  );
+
+/**
+ * Who may be admitted to one company: an active human its directory lists as active, holding no live
+ * member row in that very company (a live row in another company does not matter). The directory is
+ * Core's company-scoped read, so a tenant-context request sees that company's rows; whether the person
+ * may be admitted is still Core's rule, checked again inside the admission's own transaction.
+ */
+const companyCandidates = Effect.fn('AccessAdminPeople.companyCandidates')(function* companyCandidatesOf(
+  scope: OperationalScope,
+  view: View,
+  company: { readonly legalEntityId: LegalEntityId; readonly scopeId: string },
 ) {
-  const gate = yield* AccessChangesWriteAvailability;
-  if (!gate.available) {
-    return false;
+  const directory = yield* AccessPeopleDirectory;
+  const listed = yield* directory
+    .companyMembers(scope, company.legalEntityId)
+    .pipe(Effect.mapError(directoryUnavailable));
+  return listed
+    .flatMap(({ displayName, principalId, principalKind, principalStatus, status }) =>
+      status === 'active' &&
+      principalKind === 'human' &&
+      principalStatus === 'active' &&
+      !isLiveMemberIn(view, String(principalId), company.scopeId)
+        ? [
+            {
+              displayName,
+              principalId: String(principalId),
+              scope: { kind: 'company' as const, legalEntityId: String(company.legalEntityId) },
+            },
+          ]
+        : [],
+    )
+    .toSorted(
+      (left, right) =>
+        left.displayName.localeCompare(right.displayName) || left.principalId.localeCompare(right.principalId),
+    );
+});
+
+/**
+ * Admission as the options offer it: whether the gate and this person's admit authority reach any
+ * company, and the candidates of exactly those companies. A company counts only when the options
+ * list it among their scopes (`shown`) and this person administers it permanently, so the screen
+ * never offers a candidate it cannot show or Core would refuse. A closed gate lists nobody and reads
+ * nothing.
+ */
+const admissionOf = Effect.fn('AccessAdminPeople.admission')(function* admissionOptions(
+  scope: OperationalScope,
+  view: View,
+  shown: PeopleReach,
+  reaches: Option.Option<ReadonlyMap<OptionWrite, PeopleReach>>,
+) {
+  if (Option.isNone(reaches)) {
+    return { allowed: false, candidates: [] };
   }
-  const reach = yield* reachFor(scope, view, declaration, now);
-  return reach.scopeIds.size > 0;
+  const reach = reaches.value.get('admitMember');
+  if (reach === undefined) {
+    return { allowed: false, candidates: [] };
+  }
+  const companies = view.scopes.flatMap(({ legalEntityId, scopeId }) =>
+    legalEntityId !== undefined &&
+    reach.scopeIds.has(scopeId) &&
+    shown.scopeIds.has(scopeId) &&
+    administersPermanently(view, scope.principalId, String(scopeId))
+      ? [{ legalEntityId, scopeId: String(scopeId) }]
+      : [],
+  );
+  // One directory read per company, two at a time; each company's candidates keep their own order.
+  const candidates = yield* Effect.forEach(companies, (company) => companyCandidates(scope, view, company), {
+    concurrency: OPTIONS_READ_CONCURRENCY,
+  });
+  return { allowed: companies.length > 0, candidates: candidates.flat() };
 });
 
 /** The capabilities this person themselves holds live in one of the scopes, which bound a delegation (D10b). */
@@ -647,30 +840,21 @@ const options = Effect.fn('AccessAdminPeople.options')(function* listPeopleOptio
   headers: Headers,
   payload: ListAccessPeoplePayload,
 ) {
-  const { now, reach, scope, view } = yield* admitRead(headers, accessPeopleDeclarations.options);
+  const { reach, reaches, scope, view } = yield* admitOptions(headers);
   const directory = yield* AccessPeopleDirectory;
   const commands = yield* AccessPeopleCommands;
+  // Three independent reads, each one short transaction: two at a time, never more of the shared pool.
   const [people, labels, catalog] = yield* Effect.all(
     [
       visiblePeople(scope, view, reach),
       directory.scopeLabels(scope).pipe(Effect.mapError(directoryUnavailable)),
       commands.readCatalog(scope).pipe(Effect.mapError(accessPeopleFailureProblem)),
     ],
-    { concurrency: 1 },
+    { concurrency: OPTIONS_READ_CONCURRENCY },
   );
-  // One gate answer per write, so a control shows exactly what the server would admit right now.
-  const [canAssign, canUnassign, canManageTeams, canDelegate, canRevokeDelegation, canTransferOwnership] =
-    yield* Effect.all(
-      [
-        writeAllowed(scope, view, accessPeopleDeclarations.assign, now),
-        writeAllowed(scope, view, accessPeopleDeclarations.revokeAssignment, now),
-        writeAllowed(scope, view, accessPeopleDeclarations.teamMembership, now),
-        writeAllowed(scope, view, accessPeopleDeclarations.delegate, now),
-        writeAllowed(scope, view, accessPeopleDeclarations.revokeDelegation, now),
-        writeAllowed(scope, view, accessPeopleDeclarations.transferOwnership, now),
-      ],
-      { concurrency: 1 },
-    );
+  // One gate answer per write and scope (asked with the read's own admission), so a control shows exactly
+  // what the server would admit right now.
+  const admission = yield* admissionOf(scope, view, reach, reaches);
   const roles = view.roles.filter(({ role }) => roleIsReachable(reach, role.legalEntityId));
   const entryOf = new Map(catalog.map((entry) => [String(entry.key), entry] as const));
   // A tenant-wide reader is offered the release whole; a company's administrator only the
@@ -689,6 +873,7 @@ const options = Effect.fn('AccessAdminPeople.options')(function* listPeopleOptio
   return yield* encoded(
     ListAccessPeopleOptionsResponseSchema,
     {
+      admissionCandidates: admission.candidates,
       capabilities: offered.map((entry) => ({
         capabilityKey: entry.key,
         hasAmountInput: entry.amountInput !== undefined,
@@ -718,12 +903,14 @@ const options = Effect.fn('AccessAdminPeople.options')(function* listPeopleOptio
       })),
       teams: view.teams.flatMap((entry) => (reach.scopeIds.has(entry.team.scopeId) ? [plainTeam(view, entry)] : [])),
       writeAvailability: {
-        canAssign,
-        canDelegate,
-        canManageTeams,
-        canRevokeDelegation,
-        canTransferOwnership,
-        canUnassign,
+        canAdmitMember: admission.allowed,
+        canAssign: writeAllowed(reaches, 'assign'),
+        canDelegate: writeAllowed(reaches, 'delegate'),
+        canEndMembership: endMembershipAllowed(scope, view, reaches),
+        canManageTeams: writeAllowed(reaches, 'teamMembership'),
+        canRevokeDelegation: writeAllowed(reaches, 'revokeDelegation'),
+        canTransferOwnership: writeAllowed(reaches, 'transferOwnership'),
+        canUnassign: writeAllowed(reaches, 'revokeAssignment'),
       },
     },
     'people options',
@@ -777,7 +964,7 @@ const admitWrite = Effect.fn('AccessAdminPeople.admitWrite')(function* admitPeop
   expectedRevision: string,
 ) {
   const scope = yield* requireScope(headers);
-  const gate = yield* AccessChangesWriteAvailability;
+  const gate = yield* AccessPeopleWriteAvailability;
   if (!gate.available) {
     // The ship gate is closed: the surface ships the screen, never a partial write.
     return yield* Effect.fail(accessAdminUnavailableProblem());
@@ -788,10 +975,11 @@ const admitWrite = Effect.fn('AccessAdminPeople.admitWrite')(function* admitPeop
   const reach = yield* requireReach(scope, view, declaration, now);
   if (revisionOf(view, shown) !== expectedRevision) {
     // A retry of a write that committed but failed to reconcile lands here, because its own commit
-    // moved the revision. Converging the projection first means that write still takes effect.
+    // moved the revision. Converging the projection first means that write still takes effect. This
+    // request saved nothing, so a projection that fails here is plainly unavailable, never "saved".
     yield* AccessPeopleCommands.pipe(
       Effect.flatMap((commands) => commands.reconcile(scope)),
-      Effect.mapError(accessPeopleFailureProblem),
+      Effect.mapError(staleRepairProblem),
     );
     return yield* Effect.fail(conflict('the people of this tenant changed since this screen was read; reload Lidé'));
   }
@@ -848,8 +1036,8 @@ const assign = Effect.fn('AccessAdminPeople.assign')(function* assignRole({
   }
   const commands = yield* AccessPeopleCommands;
   const command = {
+    holder: { _tag: 'Principal' as const, principalId: PrincipalIdSchema.make(payload.principalId) },
     incarnationId: AssignmentIncarnationIdSchema.make(mintedId(admitted.scope, 'assignment', idempotencyKey)),
-    principalId: PrincipalIdSchema.make(payload.principalId),
     roleId: RoleIdSchema.make(payload.roleId),
     roleRevisionId: RoleRevisionIdSchema.make(payload.expectedRoleRevisionId),
     scopeId,
@@ -1009,12 +1197,299 @@ const transferOwnership = Effect.fn('AccessAdminPeople.transferOwnership')(funct
   return yield* mutationAnswer(admitted, { transferredScopes: [...payload.scopes] });
 });
 
+/** The member row a write changed, as the wire names its scope. */
+const plainMembershipChange = (view: View, membership: PeopleCommandReceipt['membership']) =>
+  membership === undefined
+    ? undefined
+    : {
+        principalId: holderIdOf(membership.holder),
+        scope: scopeTargetOf(view, membership.scopeId),
+        status: membership.status,
+      };
+
+/**
+ * Only a candidate is admitted (P2): a person the company's directory does not list as an active human
+ * is refused here, before Core runs, exactly like a person who does not exist. A person already a live
+ * member of that company is a moved row the screen repairs by re-reading.
+ */
+const requireCandidate = Effect.fn('AccessAdminPeople.requireCandidate')(function* requireAdmissionCandidate(
+  admitted: AdmittedWrite,
+  company: { readonly legalEntityId: LegalEntityId; readonly scopeId: string },
+  principalId: string,
+) {
+  if (isLiveMemberIn(admitted.view, principalId, company.scopeId)) {
+    return yield* Effect.fail(
+      conflict('people_membership_already_active: that person is already a member of this company; reload Lidé'),
+    );
+  }
+  const candidates = yield* companyCandidates(admitted.scope, admitted.view, company);
+  return candidates.some((candidate) => candidate.principalId === principalId)
+    ? undefined
+    : yield* Effect.fail(forbidden(PERSON_NOT_AVAILABLE));
+});
+
+const admitMember = Effect.fn('AccessAdminPeople.admitMember')(function* admitMemberWrite({
+  headers,
+  idempotencyKey,
+  payload,
+}: AccessPeopleWrite<AdmitAccessMemberPayload>) {
+  const admitted = yield* admitWrite(headers, accessPeopleDeclarations.admitMember, payload.expectedRevision);
+  const scopeId = yield* requireScopeTarget(admitted, payload.scope);
+  const legalEntityId = LegalEntityIdSchema.make(payload.scope.legalEntityId);
+  yield* requireCandidate(admitted, { legalEntityId, scopeId }, payload.principalId);
+  const commands = yield* AccessPeopleCommands;
+  // Both rows are named by the key, so a retry names the same tenant and company rows.
+  const receipt = yield* commands
+    .admitMember(admitted.scope, {
+      companyMembershipId: AccessMembershipIdSchema.make(
+        mintedId(admitted.scope, 'membership', idempotencyKey, scopeId),
+      ),
+      holder: { _tag: 'Principal', principalId: PrincipalIdSchema.make(payload.principalId) },
+      legalEntityId,
+      tenantMembershipId: AccessMembershipIdSchema.make(
+        mintedId(admitted.scope, 'membership', idempotencyKey, admitted.view.tenantScopeId),
+      ),
+    })
+    .pipe(Effect.mapError(accessPeopleFailureProblem));
+  return yield* mutationAnswer(
+    admitted,
+    withOptional({}, 'membership', plainMembershipChange(admitted.view, receipt.membership)),
+  );
+});
+
+const endMembership = Effect.fn('AccessAdminPeople.endMembership')(function* endMembershipWrite({
+  headers,
+  payload,
+}: AccessPeopleWrite<EndAccessMembershipPayload>) {
+  const admitted = yield* admitWrite(headers, accessPeopleDeclarations.endMembership, payload.expectedRevision);
+  yield* requirePerson(admitted, payload.principalId);
+  const scopeId = yield* requireScopeTarget(admitted, payload.scope);
+  const commands = yield* AccessPeopleCommands;
+  const receipt = yield* commands
+    .endMembership(admitted.scope, {
+      holder: { _tag: 'Principal', principalId: PrincipalIdSchema.make(payload.principalId) },
+      reason: payload.reason,
+      scopeId,
+    })
+    .pipe(Effect.mapError(accessPeopleFailureProblem));
+  return yield* mutationAnswer(
+    admitted,
+    withOptional({}, 'membership', plainMembershipChange(admitted.view, receipt.membership)),
+  );
+});
+
+/* ------------------------------------------------------------------------------------------------
+ * Agents: the same role assignment, admission and authority rules, with an agent as the holder
+ * ---------------------------------------------------------------------------------------------- */
+
+/** The input of an agent role write: the agent of the screen's company, and the People revision it was read at. */
+export interface AgentRoleWrite<Payload> {
+  readonly headers: Headers;
+  readonly idempotencyKey: string;
+  readonly payload: Payload & { readonly expectedRevision: string };
+}
+
+/** One company's agent roles as the administrator sees them: what they may assign and what each agent holds. */
+export interface AgentRolesView {
+  /** Each listed agent's live assignments in the company, with the cells they carry. */
+  readonly agents: ReadonlyMap<
+    string,
+    {
+      readonly assignments: readonly {
+        readonly incarnationId: string;
+        readonly roleId: string;
+        readonly roleName: string;
+      }[];
+      readonly cells: readonly ViewAssignmentCells[number][];
+    }
+  >;
+  /** The published release the role cells are read against. */
+  readonly catalog: Effect.Success<ReturnType<Effect.Success<typeof AccessPeopleCommands>['readCatalog']>>;
+  /** The People revision of this read: a write sends it back, exactly like the People page does. */
+  readonly revision: string;
+  /** The company roles the person may read where they live; assigning still asks the assign right. */
+  readonly roles: readonly { readonly name: string; readonly revisionId: string; readonly roleId: string }[];
+}
+
+type ViewAssignmentCells = View['roles'][number]['revision']['cells'];
+
+const agentHolderOf = (agentPrincipalId: string) => ({
+  _tag: 'Agent' as const,
+  agentId: AgentIdSchema.make(agentPrincipalId),
+});
+
+const companyScopeOf = (view: View, legalEntityId: string) =>
+  Option.fromUndefinedOr(view.scopes.find((row) => row.legalEntityId === legalEntityId));
+
+/**
+ * The agents' roles in one company. The caller is an agent administrator of the company (the agents page decided that
+ * before this read): which roles its agents hold is agent administration and is answered for them. The roles OFFERED
+ * for assignment are the People page's: only a caller whose People reach covers the company is offered any, and the
+ * assignment itself still asks the People assign right.
+ */
+const agentRoles = Effect.fn('AccessAdminPeople.agentRoles')(function* agentRolesOf(
+  headers: Headers,
+  input: { readonly agentPrincipalIds: readonly string[]; readonly legalEntityId: string },
+) {
+  const scope = yield* requireScope(headers);
+  const view = yield* readView(scope);
+  const now = yield* coreInstant;
+  const reach = yield* reachFor(scope, view, accessPeopleDeclarations.list, now);
+  const company = companyScopeOf(view, input.legalEntityId);
+  if (Option.isNone(company)) {
+    return yield* Effect.fail(forbidden(SCOPE_NOT_AVAILABLE));
+  }
+  const { scopeId } = company.value;
+  const offersRoles = reach.scopeIds.has(scopeId);
+  const catalog = yield* (yield* AccessPeopleCommands)
+    .readCatalog(scope)
+    .pipe(Effect.mapError(accessPeopleFailureProblem));
+  // Only roles an agent may hold are offered: one that runs a sensitive or administrative capability never is.
+  const roles = view.roles.flatMap((entry) =>
+    offersRoles &&
+    entry.role.legalEntityId === input.legalEntityId &&
+    roleRevisionIsAgentAssignable(entry.revision, catalog)
+      ? [{ name: entry.role.name, revisionId: entry.revision.id, roleId: entry.role.id }]
+      : [],
+  );
+  const agents = new Map(
+    input.agentPrincipalIds.map((agentPrincipalId) => {
+      const holder = agentHolderOf(agentPrincipalId);
+      const live = view.assignments.filter(
+        (assignment) =>
+          assignment.scopeId === scopeId &&
+          Predicate.isTagged(assignment.holder, 'Agent') &&
+          assignment.holder.agentId === holder.agentId &&
+          assignmentIsLive(assignment, view.at),
+      );
+      return [
+        agentPrincipalId,
+        {
+          assignments: live.map((assignment) => ({
+            incarnationId: assignment.incarnationId,
+            roleId: assignment.roleId,
+            roleName: view.roles.find((entry) => entry.role.id === assignment.roleId)?.role.name ?? '',
+          })),
+          cells: live.flatMap(
+            (assignment) =>
+              view.roles.find((entry) => entry.revision.id === assignment.roleRevisionId)?.revision.cells ?? [],
+          ),
+        },
+      ] as const;
+    }),
+  );
+  return { agents, catalog, revision: revisionOf(view, reach), roles } satisfies AgentRolesView;
+});
+
+/**
+ * Assigns a company role to an agent: the People page's own assign right and checks (the role must be readable where
+ * it lives, the revision current, the screen not stale). An agent not yet a member of the company is admitted first,
+ * under the People page's own admission right; whoever may not admit there cannot give an agent its first role.
+ */
+const assignAgentRole = Effect.fn('AccessAdminPeople.assignAgentRole')(function* assignAgentRoleWrite({
+  headers,
+  idempotencyKey,
+  payload,
+}: AgentRoleWrite<{
+  readonly agentPrincipalId: string;
+  readonly expectedRoleRevisionId: string;
+  readonly legalEntityId: string;
+  readonly roleId: string;
+}>) {
+  const admitted = yield* admitWrite(headers, accessPeopleDeclarations.assign, payload.expectedRevision);
+  const scopeId = yield* requireScopeTarget(admitted, { kind: 'company', legalEntityId: payload.legalEntityId });
+  const role = admitted.view.roles.find((entry) => entry.role.id === payload.roleId);
+  if (
+    role === undefined ||
+    role.role.legalEntityId !== payload.legalEntityId ||
+    !roleIsReachable(admitted.reach, role.role.legalEntityId)
+  ) {
+    return yield* Effect.fail(forbidden(ROLE_NOT_AVAILABLE));
+  }
+  if (role.revision.id !== payload.expectedRoleRevisionId) {
+    return yield* Effect.fail(conflict('the role changed since this screen was read; reload the agents'));
+  }
+  const commands = yield* AccessPeopleCommands;
+  const holder = agentHolderOf(payload.agentPrincipalId);
+  const member = admitted.view.memberships.some(
+    (membership) =>
+      membership.scopeId === scopeId &&
+      membership.kind === 'member' &&
+      Predicate.isTagged(membership.holder, 'Agent') &&
+      membership.holder.agentId === holder.agentId &&
+      membershipIsLive(membership, admitted.view.at),
+  );
+  if (!member) {
+    // Admission is the People page's own write, decided by its own right in its own reach.
+    yield* requireReach(admitted.scope, admitted.view, accessPeopleDeclarations.admitMember, yield* coreInstant).pipe(
+      Effect.flatMap((reach) =>
+        reach.scopeIds.has(scopeId) ? Effect.void : Effect.fail(forbidden(SCOPE_NOT_AVAILABLE)),
+      ),
+    );
+    yield* commands
+      .admitMember(admitted.scope, {
+        companyMembershipId: AccessMembershipIdSchema.make(
+          mintedId(admitted.scope, 'membership', idempotencyKey, scopeId),
+        ),
+        holder,
+        legalEntityId: LegalEntityIdSchema.make(payload.legalEntityId),
+        tenantMembershipId: AccessMembershipIdSchema.make(
+          mintedId(admitted.scope, 'membership', idempotencyKey, admitted.view.tenantScopeId),
+        ),
+      })
+      .pipe(Effect.mapError(accessPeopleFailureProblem));
+  }
+  return yield* commands
+    .assignRole(admitted.scope, {
+      holder,
+      incarnationId: AssignmentIncarnationIdSchema.make(mintedId(admitted.scope, 'assignment', idempotencyKey)),
+      roleId: RoleIdSchema.make(payload.roleId),
+      roleRevisionId: RoleRevisionIdSchema.make(payload.expectedRoleRevisionId),
+      scopeId,
+    })
+    .pipe(Effect.mapError(accessPeopleFailureProblem), Effect.asVoid);
+});
+
+/** Ends one of an agent's role assignments: the People page's own revoke right and checks. */
+const revokeAgentAssignment = Effect.fn('AccessAdminPeople.revokeAgentAssignment')(
+  function* revokeAgentAssignmentWrite({
+    headers,
+    payload,
+  }: AgentRoleWrite<{
+    readonly agentPrincipalId: string;
+    readonly incarnationId: string;
+    readonly legalEntityId: string;
+  }>) {
+    const admitted = yield* admitWrite(headers, accessPeopleDeclarations.revokeAssignment, payload.expectedRevision);
+    // Only an assignment in the agent administrator's own company: the agents page never reaches another company's.
+    const scopeId = yield* requireScopeTarget(admitted, { kind: 'company', legalEntityId: payload.legalEntityId });
+    const assignment = admitted.view.assignments.find((candidate) => candidate.incarnationId === payload.incarnationId);
+    if (
+      assignment === undefined ||
+      assignment.scopeId !== scopeId ||
+      !Predicate.isTagged(assignment.holder, 'Agent') ||
+      assignment.holder.agentId !== payload.agentPrincipalId ||
+      !admitted.reach.scopeIds.has(assignment.scopeId)
+    ) {
+      return yield* Effect.fail(forbidden(ASSIGNMENT_NOT_AVAILABLE));
+    }
+    return yield* (yield* AccessPeopleCommands)
+      .unassignRole(admitted.scope, { incarnationId: assignment.incarnationId })
+      .pipe(Effect.mapError(accessPeopleFailureProblem), Effect.asVoid);
+  },
+);
+
 const accessPeopleOperations = {
+  admitMember,
+  agentRoles,
   assign,
+  assignAgentRole,
   assignments,
   createDelegation,
+  endMembership,
   list,
   options,
+  revokeAgentAssignment,
   revokeAssignment,
   revokeDelegation,
   setTeamMembership,
@@ -1034,15 +1509,33 @@ export type AccessPeopleRequirements = OperationRequirements<
 >;
 
 export interface AccessPeopleBffService {
+  readonly admitMember: (
+    input: AccessPeopleWrite<AdmitAccessMemberPayload>,
+  ) => Effect.Effect<AccessPeopleMutationResponse, AccessAdminProblem>;
+  readonly agentRoles: (
+    headers: Headers,
+    input: { readonly agentPrincipalIds: readonly string[]; readonly legalEntityId: string },
+  ) => Effect.Effect<AgentRolesView, AccessAdminProblem>;
   readonly assign: (
     input: AccessPeopleWrite<AssignAccessRolePayload>,
   ) => Effect.Effect<AccessPeopleMutationResponse, AccessAdminProblem>;
+  readonly assignAgentRole: (
+    input: AgentRoleWrite<{
+      readonly agentPrincipalId: string;
+      readonly expectedRoleRevisionId: string;
+      readonly legalEntityId: string;
+      readonly roleId: string;
+    }>,
+  ) => Effect.Effect<void, AccessAdminProblem>;
   readonly assignments: (
     headers: Headers,
     payload: ListAccessAssignmentsPayload,
   ) => Effect.Effect<ListAccessAssignmentsResponse, AccessAdminProblem>;
   readonly createDelegation: (
     input: AccessPeopleWrite<CreateAccessDelegationPayload>,
+  ) => Effect.Effect<AccessPeopleMutationResponse, AccessAdminProblem>;
+  readonly endMembership: (
+    input: AccessPeopleWrite<EndAccessMembershipPayload>,
   ) => Effect.Effect<AccessPeopleMutationResponse, AccessAdminProblem>;
   readonly list: (
     headers: Headers,
@@ -1052,6 +1545,13 @@ export interface AccessPeopleBffService {
     headers: Headers,
     payload: ListAccessPeoplePayload,
   ) => Effect.Effect<ListAccessPeopleOptionsResponse, AccessAdminProblem>;
+  readonly revokeAgentAssignment: (
+    input: AgentRoleWrite<{
+      readonly agentPrincipalId: string;
+      readonly incarnationId: string;
+      readonly legalEntityId: string;
+    }>,
+  ) => Effect.Effect<void, AccessAdminProblem>;
   readonly revokeAssignment: (
     input: AccessPeopleWrite<RevokeAccessAssignmentPayload>,
   ) => Effect.Effect<AccessPeopleMutationResponse, AccessAdminProblem>;
@@ -1078,12 +1578,17 @@ export const AccessPeopleBffLive: Layer.Layer<AccessPeopleBff, never, AccessPeop
       const context = yield* Effect.context<AccessPeopleRequirements | AccessDecisionGate>();
       const operations = yield* Effect.succeed(accessPeopleOperations);
       return {
+        admitMember: (input) => operations.admitMember(input).pipe(Effect.provideContext(context)),
+        agentRoles: (headers, input) => operations.agentRoles(headers, input).pipe(Effect.provideContext(context)),
         assign: (input) => operations.assign(input).pipe(Effect.provideContext(context)),
+        assignAgentRole: (input) => operations.assignAgentRole(input).pipe(Effect.provideContext(context)),
         assignments: (headers, payload) =>
           operations.assignments(headers, payload).pipe(Effect.provideContext(context)),
         createDelegation: (input) => operations.createDelegation(input).pipe(Effect.provideContext(context)),
+        endMembership: (input) => operations.endMembership(input).pipe(Effect.provideContext(context)),
         list: (headers, payload) => operations.list(headers, payload).pipe(Effect.provideContext(context)),
         options: (headers, payload) => operations.options(headers, payload).pipe(Effect.provideContext(context)),
+        revokeAgentAssignment: (input) => operations.revokeAgentAssignment(input).pipe(Effect.provideContext(context)),
         revokeAssignment: (input) => operations.revokeAssignment(input).pipe(Effect.provideContext(context)),
         revokeDelegation: (input) => operations.revokeDelegation(input).pipe(Effect.provideContext(context)),
         setTeamMembership: (input) => operations.setTeamMembership(input).pipe(Effect.provideContext(context)),
@@ -1164,6 +1669,28 @@ export const accessAdminPeopleGroupLive = HttpApiBuilder.group(
         AccessPeopleBff.pipe(
           Effect.flatMap((bff) =>
             bff.transferOwnership({
+              headers: asHeaders(request.headers),
+              idempotencyKey: headers['idempotency-key'],
+              payload,
+            }),
+          ),
+        ),
+      )
+      .handle('admitAccessMember', ({ headers, payload, request }) =>
+        AccessPeopleBff.pipe(
+          Effect.flatMap((bff) =>
+            bff.admitMember({
+              headers: asHeaders(request.headers),
+              idempotencyKey: headers['idempotency-key'],
+              payload,
+            }),
+          ),
+        ),
+      )
+      .handle('endAccessMembership', ({ headers, payload, request }) =>
+        AccessPeopleBff.pipe(
+          Effect.flatMap((bff) =>
+            bff.endMembership({
               headers: asHeaders(request.headers),
               idempotencyKey: headers['idempotency-key'],
               payload,

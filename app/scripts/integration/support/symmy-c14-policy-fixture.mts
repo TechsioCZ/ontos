@@ -23,33 +23,21 @@ import {
 import type { C14PolicyFixtureOwner } from './symmy-c14-product-runtime.mts';
 
 const assortmentCurrentnessWorkload = 'commerce.assortment.symmy-fixture-currentness';
-const assortmentCurrentnessReceivers = [
-  {
-    audience: 'catalog',
-    declarationKey: 'commerce.catalog.assortment-product-classification-v1.read',
-    entrypointKey: 'commerce.catalog.api.assortment-product-classification-v1',
-    legalEntityScope: 'forbidden',
-  },
-  {
-    audience: 'commerce-customer-context',
-    declarationKey: 'commerce.customer-context.customer-group.read',
-    entrypointKey: 'commerce.customer-context.api.customer-group-detail',
-    legalEntityScope: 'required',
-  },
-  {
-    audience: 'commerce-market-catalog',
-    declarationKey: 'commerce.market-catalog.assortment-fixture-market-association.read',
-    entrypointKey: 'commerce.market-catalog.api.assortment-fixture-market-association',
-    legalEntityScope: 'required',
-  },
-  {
-    audience: 'storefront-registry',
-    declarationKey: 'commerce.storefront-registry.storefront-application.read-current',
-    entrypointKey: 'commerce.storefront-registry.api.current-storefront-application',
-    legalEntityScope: 'optional',
-  },
+/** The Assortment fixture's owners that call other modules, each holding its own platform-provisioned key. */
+const assortmentCallingOwners = [
+  'assortment',
+  'catalog',
+  'commerce-customer-context',
+  'commerce-market-catalog',
+] as const;
+const assortmentCurrentnessAudiences = [
+  'catalog',
+  'commerce-customer-context',
+  'commerce-market-catalog',
+  'storefront-registry',
 ] as const;
 const workerKey = 'integration.symmy.execute-symmy-job';
+const symmyApp = 'symmy-integration';
 
 const admissionReceipt = Schema.Struct({
   jobId: SymmyJobStatusResponseSchema.members[0].fields.jobId,
@@ -71,7 +59,7 @@ export const encodePolicyFixtureJson = Schema.encodeEffect(Schema.fromJsonString
 const addPrincipal = Effect.fn('SymmyC14Policy.addPrincipal')(function* addPrincipal(
   admin: PgClient.PgClient,
   tenantId: string,
-  kind: 'human' | 'integration' | 'service' | 'system',
+  kind: 'human' | 'integration' | 'system',
 ) {
   const principalId = randomUUID();
   yield* admin`insert into core.principals(principal_id,tenant_id,kind,status,display_name)
@@ -90,10 +78,12 @@ const bindPrincipal = (
 interface FixtureScope {
   readonly admin: PgClient.PgClient;
   readonly principalId: string;
+  readonly runtime: PgClient.PgClient;
   readonly sellerId: string;
   readonly tenantId: string;
 }
 
+/** Requires the clone's enrolled runtime `PgClient`: the test provides `scope.runtime` at its composition root. */
 export const initializePolicyFixtureScopes = ({ principalId, sellerId, tenantId }: FixtureScope) =>
   testCoreDatabase.pipe(
     Effect.flatMap((core) => writeTestTenantScopes(core, { legalEntityIds: [sellerId], principalId, tenantId })),
@@ -103,17 +93,13 @@ export const makeSymmyC14PolicyFixture = Effect.fn('SymmyC14Policy.makeFixture')
   Failure,
   Requirements,
 >({
-  declarationKey,
   initializeScopes,
   lifecyclePolicy,
-  operation,
   owner,
   workloadKey,
 }: {
-  readonly declarationKey: string;
   readonly initializeScopes: (scope: FixtureScope) => Effect.Effect<void, Failure, Requirements>;
   readonly lifecyclePolicy: { readonly policyId: string; readonly revision: string };
-  readonly operation: { readonly entrypointKey: string; readonly schemaVersion: string };
   readonly owner: C14PolicyFixtureOwner;
   readonly workloadKey: string;
 }) {
@@ -121,11 +107,11 @@ export const makeSymmyC14PolicyFixture = Effect.fn('SymmyC14Policy.makeFixture')
   const currentnessReceivers =
     owner === 'assortment'
       ? yield* Effect.forEach(
-          assortmentCurrentnessReceivers,
+          assortmentCurrentnessAudiences,
           Effect.fn('SymmyC14Policy.currentnessPort')(function* currentnessPort(
-            receiver: (typeof assortmentCurrentnessReceivers)[number],
+            audience: (typeof assortmentCurrentnessAudiences)[number],
           ) {
-            return { ...receiver, port: yield* nativePort };
+            return { audience, port: yield* nativePort };
           }),
           { concurrency: 1 },
         )
@@ -138,12 +124,12 @@ export const makeSymmyC14PolicyFixture = Effect.fn('SymmyC14Policy.makeFixture')
     {
       ...Object.fromEntries(currentnessReceivers.map(({ audience, port }) => [audience, `http://127.0.0.1:${port}/`])),
       [owner]: `http://127.0.0.1:${ownerPort}/`,
-      'symmy-integration': `http://127.0.0.1:${symmyPort}/`,
+      [symmyApp]: `http://127.0.0.1:${symmyPort}/`,
     },
     [owner],
   );
   const ownerContract = contracts.find(({ deployment }) => deployment.appId === owner);
-  const symmy = contracts.find(({ deployment }) => deployment.appId === 'symmy-integration');
+  const symmy = contracts.find(({ deployment }) => deployment.appId === symmyApp);
   assert.isOk(ownerContract);
   assert.isOk(symmy);
 
@@ -153,38 +139,14 @@ export const makeSymmyC14PolicyFixture = Effect.fn('SymmyC14Policy.makeFixture')
     purpose: 'implementation-1096-registered-workload-gateway',
   });
   const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
+  const runtime = yield* PgClient.make({ url: Redacted.make(isolated.connections.runtime.connectionString) });
   const shell = yield* makeApiKeyGatewayNativeFixture({
     ...(owner === 'assortment' && {
-      additionalRelaySources: [
-        {
-          registeredWorkloads: assortmentCurrentnessReceivers.map((receiver) => ({
-            ...receiver,
-            jobKey: workerKey,
-            schemaVersion: '1',
-            sourceWorkloadKey: workloadKey,
-            workloadKey: assortmentCurrentnessWorkload,
-          })),
-          sourceAppId: 'assortment' as const,
-        },
-      ],
+      additionalRelaySources: assortmentCallingOwners.map((sourceAppId) => ({ sourceAppId })),
     }),
     ownedDatabase: isolated,
     productionGate: true,
-    relaySource: {
-      registeredWorkloads: [
-        {
-          audience: owner,
-          declarationKey,
-          entrypointKey: operation.entrypointKey,
-          jobKey: workerKey,
-          legalEntityScope: 'required',
-          schemaVersion: operation.schemaVersion,
-          workerKey,
-          workloadKey,
-        },
-      ],
-      sourceAppId: 'symmy-integration',
-    },
+    relaySource: { sourceAppId: symmyApp },
     snapshotJson: yield* encodeProductComposition(snapshot),
   });
 
@@ -200,14 +162,10 @@ export const makeSymmyC14PolicyFixture = Effect.fn('SymmyC14Policy.makeFixture')
     yield* admin`insert into core.tenant_module_states(tenant_id,module_key,state) values(${tenantId},${module.moduleId},'active')`;
   }
   const issuer = yield* addPrincipal(admin, tenantId, 'human');
-  const relayIssuer = yield* addPrincipal(admin, tenantId, 'human');
   const integration = yield* addPrincipal(admin, tenantId, 'integration');
-  const relay = yield* addPrincipal(admin, tenantId, 'service');
   const system = yield* addPrincipal(admin, tenantId, 'system');
-  yield* initializeScopes({ admin, principalId: issuer.principalId, sellerId, tenantId });
-  assert.isOk(shell.relaySourceProviderUserId);
+  yield* initializeScopes({ admin, principalId: issuer.principalId, runtime, sellerId, tenantId });
   yield* bindPrincipal(admin, issuer, 'user', shell.providerUserId);
-  yield* bindPrincipal(admin, relayIssuer, 'user', shell.relaySourceProviderUserId);
   for (const [principalId, workload] of [
     [integration.principalId, 'integration.symmy-admit'],
     [integration.principalId, 'integration.symmy-poll'],
@@ -221,39 +179,23 @@ export const makeSymmyC14PolicyFixture = Effect.fn('SymmyC14Policy.makeFixture')
         ]
       : []),
   ]) {
+    const bindingId = randomUUID();
     yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status)
-      values(${randomUUID()},${randomUUID()},${tenantId},${principalId},${workload},'active')`;
+      values(${bindingId},${randomUUID()},${tenantId},${principalId},${workload},'active')`;
+    yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+      values(${randomUUID()},${randomUUID()},${tenantId},${bindingId},${sellerId},'active')`;
   }
   const key = yield* shell.issueFixtureProviderKey({ ...integration, issuerPrincipalId: issuer.principalId });
   yield* bindPrincipal(admin, integration, 'api_key', key.providerKeyId);
   yield* key.acknowledgeBinding;
-  const moduleKey = yield* shell.issueFixtureRelaySourceProviderKey({
-    ...relay,
-    issuerPrincipalId: relayIssuer.principalId,
-  });
-  yield* bindPrincipal(admin, relay, 'api_key', moduleKey.providerKeyId);
-  yield* moduleKey.acknowledgeBinding;
-
-  const assortmentKey =
-    owner === 'assortment'
-      ? yield* Effect.gen(function* bindAssortmentRelay() {
-          const registration = shell.additionalRelaySourceProviderUsers.find(
-            ({ sourceAppId }) => sourceAppId === 'assortment',
-          );
-          assert.isOk(registration);
-          const actor = yield* addPrincipal(admin, tenantId, 'human');
-          const assortmentRelay = yield* addPrincipal(admin, tenantId, 'service');
-          yield* bindPrincipal(admin, actor, 'user', registration.providerUserId);
-          const credential = yield* shell.issueFixtureModuleProviderKey({
-            ...assortmentRelay,
-            issuerPrincipalId: actor.principalId,
-            sourceAppId: 'assortment',
-          });
-          yield* bindPrincipal(admin, assortmentRelay, 'api_key', credential.providerKeyId);
-          yield* credential.acknowledgeBinding;
-          return credential.secret;
-        })
-      : moduleKey.secret;
+  // Each calling owner's own module key, provisioned by the platform for its module principal as on every environment.
+  const symmyModuleKey = (yield* shell.provisionRelaySource()).secret;
+  const moduleKeys = new Map<string, Redacted.Redacted>([[symmyApp, symmyModuleKey]]);
+  if (owner === 'assortment') {
+    for (const appId of assortmentCallingOwners) {
+      moduleKeys.set(appId, (yield* shell.provisionModuleSource(appId)).secret);
+    }
+  }
 
   const environment = {
     APP_ENV_PATH: '/dev/null',
@@ -262,7 +204,6 @@ export const makeSymmyC14PolicyFixture = Effect.fn('SymmyC14Policy.makeFixture')
     ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: shell.compositionSourceUrl,
     ONTOS_C14_TRACE_PROBLEMS: 'true',
     ONTOS_GATEWAY_ISSUER: shell.issuer,
-    ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(moduleKey.secret),
     ONTOS_GATEWAY_PUBLIC_JWKS: shell.publicJwks,
     ONTOS_SHELL_GATEWAY_BASE_URL: `${shell.baseUrl}/shell-super-app-api`,
     ONTOS_SYMMY_JOB_RETENTION_POLICIES: yield* encodePolicyFixtureJson([
@@ -281,17 +222,18 @@ export const makeSymmyC14PolicyFixture = Effect.fn('SymmyC14Policy.makeFixture')
     apiKey: key.secret,
     currentnessReceivers: currentnessReceivers.flatMap((receiver) => {
       const contract = contracts.find(({ deployment }) => deployment.appId === receiver.audience);
-      return contract === undefined ? [] : [{ ...receiver, contract }];
+      return contract === undefined ? [] : [{ ...receiver, contract, moduleKey: moduleKeys.get(receiver.audience) }];
     }),
     environment,
     integration,
     ownerContract,
-    ownerEnvironment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(assortmentKey) },
+    ownerModuleKey: moduleKeys.get(owner),
     ownerPort,
     routeId,
     sellerId,
     shell,
     symmy,
+    symmyModuleKey,
     symmyPort,
     system,
     tenantId,

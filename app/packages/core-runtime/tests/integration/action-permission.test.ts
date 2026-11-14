@@ -1,18 +1,19 @@
 import { v1 } from '@authzed/authzed-node';
-import { NodeCrypto } from '@effect/platform-node';
+import { NodeServices } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
-import { Context, Crypto, Deferred, Effect, Fiber, Function, Layer, Exit, Option, Schema, Predicate } from 'effect';
+import { Context, Crypto, Deferred, Effect, Fiber, Function, Layer, Option, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SqlError, UnknownError } from 'effect/sql/SqlError';
 
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
 import { defineAction } from '../../src/actions/definition.ts';
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { ActionPermissionDenied } from '../../src/actions/errors.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import type { ActionRuntimeOptions } from '../../src/actions/runtime.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
-import { loadDatabaseConfig } from '../../src/db/config.ts';
-import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
+import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../src/db/database-identities.ts';
 import {
   AuthenticationNamespaceIdSchema,
   AuthenticationNamespaceRegistrationSchema,
@@ -24,14 +25,11 @@ import {
 import {
   actionInvocations,
   auditEvents,
+  coreRelations,
   dataAccessEvents,
   domainEvents,
-  legalEntities,
   outboxMessages,
-  principalAuthBindings,
-  principals,
   tenantModuleStates,
-  tenants,
 } from '../../src/db/schema.ts';
 import type { ScopedTransactionExecutor } from '../../src/db/scoped-transaction.ts';
 import type { OperationalScopeResolverService } from '../../src/operations/context.ts';
@@ -39,17 +37,11 @@ import { OperationAuthenticationRequired, OperationContextUnavailable } from '..
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import type { SpiceDbConfigValue } from '../../src/permissions/config.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
-import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
+import { newSpiceDbGrpcClient, openSpiceDbGrpcRpc } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
-import {
-  SPICEDB_CHECK_TIMEOUT_MS,
-  createPermissionCheckClient,
-  makeActionPermissionService,
-  toSpiceDbActionObjectId,
-} from '../../src/permissions/service.ts';
 import { testOperationalScopeResolver as baseTestOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { openActionRuntimeOptions, makeTestOperationOwner } from '../support/action-runtime-options.ts';
-import { makeCoreDatabase } from '../../src/db/client.ts';
+import { CoreDatabase } from '../../src/db/client.ts';
 import { injectStatementFaults } from '../support/database-faults.ts';
 import { TestWriteError } from '../support/permission-write-error.ts';
 import {
@@ -58,7 +50,38 @@ import {
   staffAuthenticationNamespaceId,
 } from '../support/action-permission-suite.ts';
 import type { PermissionSuiteFixture } from '../support/action-permission-suite.ts';
-import { fixtureActionAccess } from '../support/access-declaration-fixtures.ts';
+import { TenantAccessBootstrap, TenantAccessBootstrapLive } from '../../src/access/bootstrap/index.ts';
+import { AccessChangesStoreLive } from '../../src/access/changes/persistence/drizzle-store.ts';
+import { AccessCatalogSnapshotWriterLive } from '../../src/access/intent/catalog-snapshot-writer.ts';
+import { AccessMembershipStoreLive } from '../../src/access/intent/memberships.ts';
+import { TenantIntentLoaderLive } from '../../src/access/intent/tenant-intent-loader.ts';
+import { AccessProjectionWriter, AccessProjectionWriterLive } from '../../src/access/intent/projection-writer.ts';
+import { AccessProjectionCompiler } from '../../src/access/intent/projection-compiler.ts';
+import { AccessWriteJournalStoreLive } from '../../src/access/lifecycle/persistence/journal-store.ts';
+import {
+  makeAccessProjectionCompiler,
+  makeAccessProjectionTransport,
+} from '../../src/access/compiler/spice-db-compiler.ts';
+import { projectionUnitKeyText, unitOfRelationship } from '../../src/access/compiler/relationship.ts';
+import { AccessIntentLive } from '../../src/access/enforcement/intent-reader.ts';
+import { AccessDecisionLive } from '../../src/access/enforcement/service.ts';
+import { AccessDecisionLogLive } from '../../src/access/enforcement/decision-log.ts';
+import { AccessPrincipalKindSourceLive } from '../../src/access/enforcement/actor.ts';
+import { LegalEntityCandidatesLive } from '../../src/access/enforcement/legal-entities.ts';
+import { DecisionCheck } from '../../src/access/decision/engine.ts';
+import { enginePortOf } from '../../src/access/enforcement/enforcement-live.ts';
+import { LegalEntityIdSchema, TenantIdSchema } from '../../src/access/ids.ts';
+import { bindLiveActionAccessGate } from '../../src/operations/access-gate.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
+import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
+import { createTemplateDatabase, dropDatabase, replacedDatabase } from '../support/access-scenarios/database.ts';
+import {
+  insertAssignment,
+  insertMembership,
+  insertRoleWithCells,
+  legalEntityScopeIdOf,
+  tenantScopeIdOf,
+} from '../support/access-scenarios/scenario.ts';
 
 /** Bind the exact late-created TEST definition; original controlled options and native bindings stay explicit. */
 const makeRegisteredTestActionRuntime = (
@@ -81,10 +104,6 @@ const makeRegisteredTestActionRuntime = (
     },
   };
 };
-
-class PermissionAdmin extends Context.Service<PermissionAdmin, ReturnType<typeof v1.NewClient>>()(
-  '@app/core-runtime/tests/integration/action-permission.test/PermissionAdmin',
-) {}
 
 const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
   Schema.decodeSync(AuthenticationNamespaceRegistrationSchema)({
@@ -134,72 +153,7 @@ const transport = (idempotencyKey: string, targetResourceId: string) => ({
 
 type ContextServiceContract = Parameters<typeof makeActionRuntime>[0];
 
-const withDatabase = <Value, Error, Requirements>(
-  operation: (
-    database: ContextServiceContract,
-    suite: PermissionSuiteFixture,
-  ) => Effect.Effect<Value, Error, Requirements>,
-) =>
-  Effect.scoped(
-    Effect.gen(function* databaseScope() {
-      const suite = yield* PermissionSuite;
-      const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
-      const database = yield* makeCoreDatabase(configuration);
-      return yield* operation(database, suite);
-    }),
-  );
-
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
-
-const relationshipActionKeys = new Set<string>();
-
-type ExecutorSubject =
-  | { readonly objectId: string; readonly objectType: 'principal' }
-  | {
-      readonly objectId: string;
-      readonly objectType: 'tenant';
-      readonly optionalRelation: 'member';
-    };
-
-const relationship = (actionKey: string, relation: 'executor' | 'restriction', executorSubject: ExecutorSubject) => {
-  relationshipActionKeys.add(actionKey);
-  return v1.Relationship.create({
-    relation,
-    resource: v1.ObjectReference.create({
-      objectId: toSpiceDbActionObjectId(actionKey),
-      objectType: 'action',
-    }),
-    subject: v1.SubjectReference.create({
-      object:
-        relation === 'restriction'
-          ? v1.ObjectReference.create({
-              objectId: toSpiceDbActionObjectId(actionKey),
-              objectType: 'action',
-            })
-          : v1.ObjectReference.create({
-              objectId: executorSubject.objectId,
-              objectType: executorSubject.objectType,
-            }),
-      optionalRelation:
-        relation === 'executor' && executorSubject.objectType === 'tenant' ? executorSubject.optionalRelation : '',
-    }),
-  });
-};
-
-const tenantMembership = (membershipTenantId: string, membershipPrincipalId: string) =>
-  v1.Relationship.create({
-    relation: 'member',
-    resource: v1.ObjectReference.create({
-      objectId: membershipTenantId,
-      objectType: 'tenant',
-    }),
-    subject: v1.SubjectReference.create({
-      object: v1.ObjectReference.create({
-        objectId: membershipPrincipalId,
-        objectType: 'principal',
-      }),
-    }),
-  });
 
 const NoDomainEvents = {};
 interface PermissionActionServices {
@@ -210,7 +164,14 @@ type PermissionActionContext = ActionHandlerContext<typeof NoDomainEvents, Permi
 const registration = (actionKey: string, moduleStateKey: string, onExecute: () => void) =>
   defineAction(
     {
-      accessDeclaration: fixtureActionAccess('core.shell'),
+      accessDeclaration: {
+        key: actionKey,
+        kind: 'action',
+        modes: ['run'],
+        placement: { group: 'identity', level: 'basic' },
+        risk: 'routine',
+        selectors: [],
+      },
       accessEvidencePolicy: {
         captureMode: 'metadata_only',
         policyKey: 'action-permission.integration.v1',
@@ -221,16 +182,13 @@ const registration = (actionKey: string, moduleStateKey: string, onExecute: () =
       domainEvents: NoDomainEvents,
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
-        authorization: {
-          kind: 'action_execution',
-          provisioning: 'tenant_membership_default',
-        },
+        authorization: { kind: 'protected' },
         entrypointKey: actionKey,
         moduleKey: 'core.shell',
         role: 'action',
       }),
       idempotency: 'required',
-      legalEntityScope: 'optional',
+      legalEntityScope: 'required',
       owningModuleKey: 'core.shell',
       payloadSchema: Schema.Void,
       policies: [],
@@ -251,224 +209,245 @@ const registration = (actionKey: string, moduleStateKey: string, onExecute: () =
     (transaction) => Effect.succeed({ transaction }),
   );
 
-const PermissionFixture = Layer.effect(
-  PermissionAdmin,
-  Effect.gen(function* integrationProgram1() {
-    const {
-      actionKeys,
-      legalEntityId,
-      nonMemberAuthBindingId,
-      nonMemberPrincipalId,
-      otherTenantAuthBindingId,
-      otherTenantId,
-      otherTenantPrincipalId,
-      principalAuthBindingId,
+/** The canonical runtime ports, over this suite's disposable PostgreSQL database. */
+const canonicalPorts = (database: ContextServiceContract) => {
+  const base = Layer.mergeAll(
+    Layer.succeed(CoreDatabase, database),
+    Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+    NodeServices.layer,
+  );
+  const intent = TenantIntentLoaderLive.pipe(Layer.provide(base));
+  const stores = Layer.mergeAll(
+    base,
+    intent,
+    AccessWriteJournalStoreLive.pipe(Layer.provide(base)),
+    AccessChangesStoreLive.pipe(Layer.provide(base)),
+    AccessMembershipStoreLive.pipe(Layer.provide(base)),
+  );
+  return Layer.mergeAll(
+    stores,
+    AccessIntentLive.pipe(Layer.provide(intent)),
+    AccessDecisionLogLive.pipe(Layer.provide(base)),
+    AccessPrincipalKindSourceLive.pipe(Layer.provide(base)),
+    LegalEntityCandidatesLive.pipe(Layer.provide(base)),
+  );
+};
+
+const makeCanonicalPermissionFixture = Effect.gen(function* makeCanonicalPermissionFixture() {
+  const suite = yield* PermissionSuite;
+  const crypto = yield* Crypto.Crypto;
+  // Do not read .env or mutate a shared database/schema. All SQL rows belong to this new database.
+  const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+  const name = `action_permission_v2_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+  const control = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
+  yield* control.unsafe(`create database "${name}"`);
+  yield* Effect.addFinalizer(() => dropDatabase(control, name));
+  const admin = yield* makeTestPgClient(replacedDatabase(connections.admin.connectionString, name));
+  yield* createTemplateDatabase(admin);
+  const runtimeClient = yield* makeTestPgClient(replacedDatabase(connections.runtime.connectionString, name), {
+    maxConnections: 4,
+  });
+  const database = { executor: yield* makeTestDatabaseFromClient(runtimeClient, coreRelations) };
+  const ports = canonicalPorts(database);
+  const configuration = yield* loadSpiceDbConfig({ envPath: '/dev/null' });
+  yield* Effect.acquireUseRelease(
+    Effect.sync(() => newSpiceDbGrpcClient(configuration)),
+    (client) =>
+      Effect.tryPromise(() =>
+        client.promises.writeSchema(v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA })),
+      ),
+    (client) => Effect.sync(() => client.close()),
+  );
+  const projectionTransport = makeAccessProjectionTransport(configuration);
+  yield* Effect.addFinalizer(() => Effect.sync(() => projectionTransport.close()));
+  const compiler = makeAccessProjectionCompiler(projectionTransport);
+  const tenantId = TenantIdSchema.make(suite.tenantId);
+  const otherTenantId = TenantIdSchema.make(suite.otherTenantId);
+  // These random tenants have no other writer. Clean every projected unit even after partial bootstrap,
+  // before closing the transport or dropping the suite's database.
+  yield* Effect.addFinalizer(() =>
+    compiler.readProjection([tenantId, otherTenantId]).pipe(
+      Effect.flatMap((relationships) =>
+        compiler.reconcile(
+          { tenants: [] },
+          {
+            fence: () => Effect.void,
+            removedUnits: [
+              ...new Map(
+                relationships
+                  .map(unitOfRelationship)
+                  .flatMap(Option.toArray)
+                  .map((unit) => [projectionUnitKeyText(unit), unit] as const),
+              ).values(),
+            ],
+          },
+        ),
+      ),
+      Effect.orDie,
+    ),
+  );
+  const platforms = Layer.mergeAll(ports, Layer.succeed(AccessProjectionCompiler, compiler));
+  const catalog = AccessCatalogSnapshotWriterLive.pipe(Layer.provide(platforms));
+  const writerLayer = AccessProjectionWriterLive.pipe(Layer.provide(platforms));
+  const bootstrapLayer = TenantAccessBootstrapLive.pipe(Layer.provide(Layer.mergeAll(platforms, catalog, writerLayer)));
+  const context = yield* Layer.build(Layer.mergeAll(writerLayer, bootstrapLayer));
+  const bootstrap = Context.get(context, TenantAccessBootstrap);
+  const writer = Context.get(context, AccessProjectionWriter);
+  const ownerId = suite.bootstrapOwnerPrincipalId;
+  const ownerScope = yield* testOperationalScopeResolver.resolve({
+    correlationId: 'permission-v2-bootstrap',
+    legalEntityScope: 'forbidden',
+    principal: yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(suite.bootstrapOwnerPrincipal),
+  });
+  const otherTenantOwnerScope = yield* testOperationalScopeResolver.resolve({
+    correlationId: 'permission-v2-other-tenant-bootstrap',
+    legalEntityScope: 'forbidden',
+    principal: yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(
+      suite.otherTenantBootstrapOwnerPrincipal,
+    ),
+  });
+  const registrations = Object.values(suite.actionKeys).map((key) =>
+    registration(key, `${key}.state`, Function.constVoid),
+  );
+  const modules = [{ descriptors: registrations.map((action) => action.descriptor), moduleId: 'core.shell' }];
+  const seed = [
+    [suite.tenantId, suite.principalId, suite.principalAuthBindingId],
+    [suite.tenantId, suite.nonMemberPrincipalId, suite.nonMemberAuthBindingId],
+    [suite.tenantId, ownerId, suite.bootstrapOwnerAuthBindingId],
+    [suite.otherTenantId, suite.otherTenantPrincipalId, suite.otherTenantAuthBindingId],
+    [suite.otherTenantId, suite.otherTenantBootstrapOwnerPrincipalId, suite.otherTenantBootstrapOwnerAuthBindingId],
+  ] as const;
+  for (const seededTenantId of [suite.tenantId, suite.otherTenantId]) {
+    yield* admin.unsafe(
+      `insert into core.tenants (tenant_id, slug, name, status, default_locale)
+       values ($1, $2, 'Canonical Action permission integration', 'active', 'en')`,
+      [seededTenantId, `permission-${seededTenantId}`],
+    );
+    yield* admin.unsafe(
+      `insert into core.tenant_module_states (tenant_id, module_key, state) values ($1, 'core.shell', 'active')`,
+      [seededTenantId],
+    );
+  }
+  for (const [companyTenantId, companyId] of [
+    [suite.tenantId, suite.legalEntityId],
+    [suite.otherTenantId, suite.otherTenantLegalEntityId],
+  ] as const) {
+    yield* admin.unsafe(
+      `insert into core.legal_entities (tenant_id, legal_entity_id, legal_name, registration_country, registration_number, status)
+       values ($1, $2, 'Permission company', 'CZ', $3, 'active')`,
+      [companyTenantId, companyId, companyId],
+    );
+  }
+  for (const [seededTenantId, principalId, bindingId] of seed) {
+    yield* admin.unsafe(
+      `insert into core.principals (tenant_id, principal_id, kind, display_name, status) values ($1, $2, 'human', 'Permission fixture', 'active')`,
+      [seededTenantId, principalId],
+    );
+    yield* admin.unsafe(
+      `insert into core.principal_auth_bindings (tenant_id, principal_auth_binding_id, principal_id, authentication_namespace_id, provider, subject_type, provider_subject_id, status)
+       values ($1, $2, $3, $4, 'better_auth', 'user', $5, 'active')`,
+      [seededTenantId, bindingId, principalId, staffAuthenticationNamespaceId, principalId],
+    );
+  }
+  // The bootstrap owner is not the actor under test. The actor receives only the adopted role below.
+  const bootstrapped = yield* bootstrap.bootstrapTenantAccess({
+    legalEntityIds: [LegalEntityIdSchema.make(suite.legalEntityId)],
+    modules,
+    scope: ownerScope,
+  });
+  yield* bootstrap.bootstrapTenantAccess({
+    legalEntityIds: [LegalEntityIdSchema.make(suite.otherTenantLegalEntityId)],
+    modules,
+    scope: otherTenantOwnerScope,
+  });
+  const otherTenantScopeId = yield* tenantScopeIdOf(admin, otherTenantId);
+  const otherTenantCompanyScopeId = yield* legalEntityScopeIdOf(admin, otherTenantId, suite.otherTenantLegalEntityId);
+  // This human has valid operational membership but no role, including the other tenant's owner role.
+  for (const scopeId of [otherTenantScopeId, otherTenantCompanyScopeId]) {
+    yield* insertMembership(admin, otherTenantId, {
+      kind: 'member',
+      principalId: suite.otherTenantPrincipalId,
+      recordedBy: suite.otherTenantBootstrapOwnerPrincipalId,
+      scopeId,
+    });
+  }
+  const tenantScopeId = yield* tenantScopeIdOf(admin, tenantId);
+  const companyScopeId = yield* legalEntityScopeIdOf(admin, tenantId, suite.legalEntityId);
+  for (const principalId of [suite.principalId, suite.nonMemberPrincipalId]) {
+    yield* insertMembership(admin, tenantId, {
+      kind: 'member',
       principalId,
-      tenantId,
-    } = yield* PermissionSuite;
-    const principalExecutor: ExecutorSubject = { objectId: principalId, objectType: 'principal' };
-    const spiceDbConfig = yield* loadSpiceDbConfig();
-    const adminClient = newSpiceDbGrpcClient(spiceDbConfig);
-
-    const prepare = Effect.gen(function* preparePermissionFixture() {
-      yield* Effect.promise(() =>
-        adminClient.promises.writeSchema(v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA })),
-      );
-      yield* withDatabase(
-        Effect.fn(function* seedPermissionFixture(database) {
-          yield* database.executor.insert(tenants).values({
-            defaultLocale: 'en',
-            name: 'Action Permission Integration',
-            slug: `action-permission-${tenantId}`,
-            status: 'active',
-            tenantId,
-          });
-          yield* database.executor.insert(tenants).values({
-            defaultLocale: 'en',
-            name: 'Other Action Permission Tenant',
-            slug: `action-permission-other-${otherTenantId}`,
-            status: 'active',
-            tenantId: otherTenantId,
-          });
-          yield* database.executor.insert(legalEntities).values({
-            legalEntityId,
-            legalName: 'Action Permission Integration',
-            registrationCountry: 'CZ',
-            registrationNumber: tenantId,
-            status: 'active',
-            tenantId,
-          });
-          yield* database.executor.insert(principals).values({
-            displayName: 'Action Permission Integration',
-            kind: 'human',
-            principalId,
-            status: 'active',
-            tenantId,
-          });
-          yield* database.executor.insert(principals).values([
-            {
-              displayName: 'Action Permission Non-member',
-              kind: 'human',
-              principalId: nonMemberPrincipalId,
-              status: 'active',
-              tenantId,
-            },
-            {
-              displayName: 'Other Tenant Action Permission Member',
-              kind: 'human',
-              principalId: otherTenantPrincipalId,
-              status: 'active',
-              tenantId: otherTenantId,
-            },
-          ]);
-          yield* database.executor.insert(principalAuthBindings).values([
-            {
-              authenticationNamespaceId: staffAuthenticationNamespaceId,
-              principalAuthBindingId,
-              principalId,
-              provider: 'better_auth',
-              providerSubjectId: `action-permission-${principalId}`,
-              status: 'active',
-              subjectType: 'user',
-              tenantId,
-            },
-            {
-              authenticationNamespaceId: staffAuthenticationNamespaceId,
-              principalAuthBindingId: nonMemberAuthBindingId,
-              principalId: nonMemberPrincipalId,
-              provider: 'better_auth',
-              providerSubjectId: `action-permission-${nonMemberPrincipalId}`,
-              status: 'active',
-              subjectType: 'user',
-              tenantId,
-            },
-            {
-              authenticationNamespaceId: staffAuthenticationNamespaceId,
-              principalAuthBindingId: otherTenantAuthBindingId,
-              principalId: otherTenantPrincipalId,
-              provider: 'better_auth',
-              providerSubjectId: `action-permission-${otherTenantPrincipalId}`,
-              status: 'active',
-              subjectType: 'user',
-              tenantId: otherTenantId,
-            },
-          ]);
-        }),
-      );
-
-      yield* Effect.promise(() =>
-        adminClient.promises.writeRelationships(
-          v1.WriteRelationshipsRequest.create({
-            updates: [
-              relationship(actionKeys.allowed, 'restriction', principalExecutor),
-              relationship(actionKeys.allowed, 'executor', principalExecutor),
-              relationship(actionKeys.membershipAllowed, 'executor', {
-                objectId: tenantId,
-                objectType: 'tenant',
-                optionalRelation: 'member',
-              }),
-              relationship(actionKeys.crossTenantDenied, 'executor', {
-                objectId: tenantId,
-                objectType: 'tenant',
-                optionalRelation: 'member',
-              }),
-              relationship(actionKeys.nonMemberDenied, 'executor', {
-                objectId: tenantId,
-                objectType: 'tenant',
-                optionalRelation: 'member',
-              }),
-              relationship(actionKeys.denied, 'restriction', principalExecutor),
-              relationship(actionKeys.concurrentDenied, 'restriction', principalExecutor),
-              tenantMembership(tenantId, principalId),
-              tenantMembership(otherTenantId, otherTenantPrincipalId),
-            ].map((item) =>
-              v1.RelationshipUpdate.create({
-                operation: v1.RelationshipUpdate_Operation.TOUCH,
-                relationship: item,
-              }),
-            ),
-          }),
-        ),
-      );
+      recordedBy: ownerId,
+      scopeId: tenantScopeId,
     });
-
-    const cleanup = Effect.gen(function* cleanPermissionFixture() {
-      const relationshipCleanupExit = yield* Effect.exit(
-        Effect.forEach(
-          [...relationshipActionKeys],
-          (actionKey) =>
-            Effect.promise(() =>
-              adminClient.promises.deleteRelationships(
-                v1.DeleteRelationshipsRequest.create({
-                  relationshipFilter: v1.RelationshipFilter.create({
-                    optionalResourceId: toSpiceDbActionObjectId(actionKey),
-                    resourceType: 'action',
-                  }),
-                }),
-              ),
-            ),
-          { discard: true },
-        ).pipe(
-          Effect.andThen(
-            Effect.forEach(
-              [tenantId, otherTenantId],
-              (membershipTenantId) =>
-                Effect.promise(() =>
-                  adminClient.promises.deleteRelationships(
-                    v1.DeleteRelationshipsRequest.create({
-                      relationshipFilter: v1.RelationshipFilter.create({
-                        optionalResourceId: membershipTenantId,
-                        resourceType: 'tenant',
-                      }),
-                    }),
-                  ),
-                ),
-              { discard: true },
-            ),
-          ),
-          Effect.ensuring(Effect.sync(() => adminClient.close())),
-        ),
-      );
-
-      yield* withDatabase((database) =>
-        Effect.forEach(
-          [
-            () => database.executor.delete(outboxMessages).where(eq(outboxMessages.tenantId, otherTenantId)),
-            () => database.executor.delete(domainEvents).where(eq(domainEvents.tenantId, otherTenantId)),
-            () => database.executor.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, otherTenantId)),
-            () => database.executor.delete(auditEvents).where(eq(auditEvents.tenantId, otherTenantId)),
-            () => database.executor.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, otherTenantId)),
-            () => database.executor.delete(actionInvocations).where(eq(actionInvocations.tenantId, otherTenantId)),
-            () => database.executor.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
-            () => database.executor.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId)),
-            () => database.executor.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
-            () => database.executor.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
-            () => database.executor.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId)),
-            () => database.executor.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
-            () =>
-              database.executor.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, otherTenantId)),
-            () => database.executor.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, tenantId)),
-            () => database.executor.delete(principals).where(eq(principals.tenantId, otherTenantId)),
-            () => database.executor.delete(principals).where(eq(principals.tenantId, tenantId)),
-            () => database.executor.delete(legalEntities).where(eq(legalEntities.tenantId, tenantId)),
-            () => database.executor.delete(tenants).where(eq(tenants.tenantId, tenantId)),
-            () => database.executor.delete(tenants).where(eq(tenants.tenantId, otherTenantId)),
-          ],
-          (query) => query(),
-          { concurrency: 1, discard: true },
-        ),
-      );
-
-      if (Exit.isFailure(relationshipCleanupExit)) {
-        return yield* Effect.failCause(relationshipCleanupExit.cause);
-      }
-      return null;
+  }
+  yield* insertMembership(admin, tenantId, {
+    kind: 'member',
+    principalId: suite.principalId,
+    recordedBy: ownerId,
+    scopeId: companyScopeId,
+  });
+  const roleId = yield* crypto.randomUUIDv4();
+  const roleRevisionId = yield* crypto.randomUUIDv4();
+  yield* insertRoleWithCells(admin, tenantId, {
+    capabilityKeys: [
+      suite.actionKeys.allowed,
+      suite.actionKeys.membershipAllowed,
+      suite.actionKeys.crossTenantDenied,
+      suite.actionKeys.nonMemberDenied,
+      suite.actionKeys.unavailable,
+    ],
+    catalogSnapshotId: bootstrapped.catalogSnapshotId,
+    createdBy: ownerId,
+    roleId,
+    roleRevisionId,
+    scopeId: companyScopeId,
+  });
+  for (const principalId of [suite.principalId, suite.nonMemberPrincipalId]) {
+    yield* insertAssignment(admin, tenantId, {
+      assignedBy: ownerId,
+      incarnationId: yield* crypto.randomUUIDv4(),
+      principalId,
+      roleId,
+      roleRevisionId,
+      scopeId: companyScopeId,
     });
+  }
+  yield* writer.reconcileTenant({ scope: ownerScope });
+  yield* writer.reconcileTenant({ scope: otherTenantOwnerScope });
+  const otherTenantMemberships = yield* admin.unsafe<{ readonly scope_id: string }>(
+    `select scope_id from core.access_memberships
+     where tenant_id = $1 and principal_id = $2 and kind = 'member' and status = 'active'`,
+    [suite.otherTenantId, suite.otherTenantPrincipalId],
+  );
+  expect(otherTenantMemberships.map((membership) => membership.scope_id).toSorted()).toEqual(
+    [otherTenantScopeId, otherTenantCompanyScopeId].toSorted(),
+  );
+  const otherTenantAssignments = yield* admin.unsafe(
+    `select incarnation_id from core.access_assignments where principal_id = $1`,
+    [suite.otherTenantPrincipalId],
+  );
+  expect(otherTenantAssignments.length).toBe(0);
+  return { database, ports };
+});
 
-    yield* Effect.acquireRelease(prepare, () => cleanup.pipe(Effect.orDie));
-    return adminClient;
-  }),
-);
+class CanonicalPermissionFixture extends Context.Service<
+  CanonicalPermissionFixture,
+  Effect.Success<typeof makeCanonicalPermissionFixture>
+>()('@app/core-runtime/tests/integration/action-permission.test/CanonicalPermissionFixture') {}
+
+const PermissionFixture = Layer.effect(CanonicalPermissionFixture, makeCanonicalPermissionFixture);
+
+const withDatabase = <Value, Error, Requirements>(
+  operation: (
+    database: ContextServiceContract,
+    suite: PermissionSuiteFixture,
+  ) => Effect.Effect<Value, Error, Requirements>,
+) =>
+  Effect.gen(function* permissionDatabaseScope() {
+    const fixture = yield* CanonicalPermissionFixture;
+    return yield* operation(fixture.database, yield* PermissionSuite);
+  });
 
 interface ExecutionCounter {
   value: number;
@@ -484,24 +463,32 @@ const runWithLivePermission = <Value, Error>(
   configuration?: SpiceDbConfigValue,
   onStage: NonNullable<ActionRuntimeOptions['onStage']> = Function.constVoid,
 ) =>
-  Effect.gen(function* runWithLivePermissionProgram() {
-    const crypto = yield* Crypto.Crypto;
-    const config = yield* configuration === undefined ? loadSpiceDbConfig() : Effect.succeed(configuration);
-    return yield* Effect.acquireUseRelease(
-      Effect.sync(() => createPermissionCheckClient(config, SPICEDB_CHECK_TIMEOUT_MS)),
-      (client) =>
-        operation(
-          makeRegisteredTestActionRuntime(
-            database,
-            makeActionRepository(crypto),
-            makeActionPermissionService(client),
-            testOperationalScopeResolver,
-            { ...openActionRuntimeOptions, onStage },
-          ),
+  Effect.scoped(
+    Effect.gen(function* runWithLivePermissionProgram() {
+      const crypto = yield* Crypto.Crypto;
+      const fixture = yield* CanonicalPermissionFixture;
+      const config = yield* configuration === undefined
+        ? loadSpiceDbConfig({ envPath: '/dev/null' })
+        : Effect.succeed(configuration);
+      const rpc = yield* Effect.acquireRelease(
+        Effect.sync(() => openSpiceDbGrpcRpc(config, 5000)),
+        (client) => Effect.sync(() => client.close()),
+      );
+      const engine = Layer.succeed(DecisionCheck, enginePortOf(rpc));
+      const gateLayer = AccessDecisionLive.pipe(Layer.provideMerge(Layer.mergeAll(fixture.ports, engine)));
+      const context = yield* Layer.build(gateLayer);
+      const accessDecision = yield* bindLiveActionAccessGate.pipe(Effect.provideContext(context));
+      return yield* operation(
+        makeRegisteredTestActionRuntime(
+          database,
+          makeActionRepository(crypto),
+          { checkActionPermission: () => Effect.die('Legacy Action permission checks must not run') },
+          testOperationalScopeResolver,
+          { ...openActionRuntimeOptions, accessDecision, onStage },
         ),
-      (client) => Effect.sync(() => client.close()),
-    );
-  });
+      );
+    }),
+  );
 
 type DenialFailureStage = typeof DenialFailureStageSchema.Type;
 const withDenialPersistenceFailure = (
@@ -631,42 +618,46 @@ const testProgram2 = () =>
         outcomeStage: audits[0]?.outcomeStage,
       }).toEqual({
         eventType: 'action.rejected',
-        evidenceJson: { actionKey: actionKeys.missing },
+        // The refusal keeps its own reportable gate code, so a same-key retry answers the same way.
+        evidenceJson: { actionKey: actionKeys.missing, reasonCodes: ['deny.insufficient_grant'] },
         outcome: 'denied',
         outcomeCode: 'spicedb_permission_denied',
         outcomeStage: 'authz',
       });
-      expect(encodeJson(audits[0]).includes((yield* loadSpiceDbConfig()).preSharedKey)).toBe(false);
+      expect(encodeJson(audits[0]).includes((yield* loadSpiceDbConfig({ envPath: '/dev/null' })).preSharedKey)).toBe(
+        false,
+      );
     }),
   );
 
 const testProgram3 = () =>
-  withDatabase((database, { actionKeys, actionPrefix, nonMemberPrincipal, otherTenantPrincipal, principal }) =>
-    Effect.forEach(
-      [
-        ['legacy-marker', actionKeys.denied, principal],
-        ['other-tenant', actionKeys.crossTenantDenied, otherTenantPrincipal],
-        ['non-member', actionKeys.nonMemberDenied, nonMemberPrincipal],
-      ] as const,
-      Effect.fn(function* verifyDeniedAction([kind, actionKey, deniedPrincipal]) {
-        const executions: ExecutionCounter = { value: 0 };
-        const moduleStateKey = `${actionPrefix}.state.${kind}`;
-        const failure = yield* runWithLivePermission(database, (runtime) =>
-          Effect.flip(
-            runtime.runAction({
-              payload: undefined,
-              principal: deniedPrincipal,
-              registration: registration(actionKey, moduleStateKey, incrementExecution.bind(undefined, executions)),
-              transport: transport(kind, moduleStateKey),
-            }),
-          ),
-        );
+  withDatabase(
+    (database, { actionKeys, actionPrefix, legalEntityId, nonMemberPrincipal, otherTenantPrincipal, principal }) =>
+      Effect.forEach(
+        [
+          ['unassigned-capability', actionKeys.denied, principal],
+          ['other-tenant', actionKeys.crossTenantDenied, otherTenantPrincipal],
+          ['non-member', actionKeys.nonMemberDenied, { ...nonMemberPrincipal, legalEntityId }],
+        ] as const,
+        Effect.fn(function* verifyDeniedAction([kind, actionKey, deniedPrincipal]) {
+          const executions: ExecutionCounter = { value: 0 };
+          const moduleStateKey = `${actionPrefix}.state.${kind}`;
+          const failure = yield* runWithLivePermission(database, (runtime) =>
+            Effect.flip(
+              runtime.runAction({
+                payload: undefined,
+                principal: deniedPrincipal,
+                registration: registration(actionKey, moduleStateKey, incrementExecution.bind(undefined, executions)),
+                transport: transport(kind, moduleStateKey),
+              }),
+            ),
+          );
 
-        expect(Predicate.isTagged(failure, 'ActionPermissionDenied'), kind).toBe(true);
-        expect(executions.value, kind).toBe(0);
-      }),
-      { concurrency: 1, discard: true },
-    ),
+          expect(Schema.is(ActionPermissionDenied)(failure), kind).toBe(true);
+          expect(executions.value, kind).toBe(0);
+        }),
+        { concurrency: 1, discard: true },
+      ),
   );
 
 const loadDenialEvidence = Effect.fn('loadDenialEvidence')(function* loadDenialEvidence(
@@ -770,30 +761,14 @@ const testProgram4b = () =>
   );
 
 const testProgram5 = () =>
-  withDatabase((database, { actionPrefix, principal, principalId }) =>
+  withDatabase((database, { actionPrefix, principal }) =>
     Effect.forEach(
       ['audit', 'invocation-update'] as const,
       Effect.fn(function* verifyDenialRollback(stage) {
         const executions: ExecutionCounter = { value: 0 };
-        const adminClient = yield* PermissionAdmin;
         const key = `denial-${stage}`;
         const actionKey = `${actionPrefix}.${stage}`;
         const moduleStateKey = `${actionPrefix}.state.${stage}`;
-        yield* Effect.promise(() =>
-          adminClient.promises.writeRelationships(
-            v1.WriteRelationshipsRequest.create({
-              updates: [
-                v1.RelationshipUpdate.create({
-                  operation: v1.RelationshipUpdate_Operation.TOUCH,
-                  relationship: relationship(actionKey, 'restriction', {
-                    objectId: principalId,
-                    objectType: 'principal',
-                  }),
-                }),
-              ],
-            }),
-          ),
-        );
         const failure = yield* runWithLivePermission(withDenialPersistenceFailure(database, stage), (runtime) =>
           Effect.flip(
             runtime.runAction({
@@ -837,7 +812,7 @@ const testProgram6 = () =>
         database,
         (runtime) => runFailedAction(runtime, principal, actionKeys.unavailable, key, moduleStateKey, executions),
         {
-          ...(yield* loadSpiceDbConfig()),
+          ...(yield* loadSpiceDbConfig({ envPath: '/dev/null' })),
           preSharedKey: 'invalid-integration-key',
         },
       );
@@ -865,11 +840,38 @@ const testProgram6 = () =>
     }),
   );
 
+it.layer(NodeServices.layer)('Permission suite fixture', (suite) => {
+  suite.effect('constructs isolated permission suite identities without borrowing bootstrap credentials', () =>
+    Effect.gen(function* verifyPermissionSuiteIdentities() {
+      const fixture = yield* makePermissionSuite;
+      const identities = [
+        fixture.principal,
+        fixture.nonMemberPrincipal,
+        fixture.bootstrapOwnerPrincipal,
+        fixture.otherTenantPrincipal,
+        fixture.otherTenantBootstrapOwnerPrincipal,
+      ];
+      for (const identity of identities) {
+        expect(Schema.is(TrustedPrincipalContextSchema)(identity)).toBe(true);
+      }
+      expect(new Set(identities.map((identity) => identity.principalId)).size).toBe(identities.length);
+      expect(new Set(identities.map((identity) => identity.authBindingId)).size).toBe(identities.length);
+      expect(new Set(identities.map((identity) => identity.authContextRef)).size).toBe(identities.length);
+      expect(fixture.otherTenantId).not.toBe(fixture.tenantId);
+      expect(fixture.otherTenantLegalEntityId).not.toBe(fixture.legalEntityId);
+      expect(fixture.bootstrapOwnerPrincipal.tenantId).toBe(fixture.tenantId);
+      expect(fixture.otherTenantBootstrapOwnerPrincipal.tenantId).toBe(fixture.otherTenantId);
+      expect(fixture.otherTenantPrincipal.tenantId).toBe(fixture.otherTenantId);
+      expect(fixture.otherTenantPrincipal.legalEntityId).toBe(fixture.otherTenantLegalEntityId);
+    }),
+  );
+});
+
 it.layer(
   Layer.merge(
     PermissionFixture.pipe(
       Layer.provideMerge(Layer.effect(PermissionSuite, makePermissionSuite)),
-      Layer.provideMerge(NodeCrypto.layer),
+      Layer.provideMerge(NodeServices.layer),
     ),
     Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
   ),
@@ -877,11 +879,11 @@ it.layer(
     excludeTestServices: true,
   },
 )('Action permissions', (suite) => {
-  suite.effect('allows direct Principal and Tenant-membership executor grants', testProgram1);
+  suite.effect('allows adopted canonical role cells in the exact company', testProgram1);
 
   suite.effect('persists one normalized terminal denial and no business or collected evidence', testProgram2);
 
-  suite.effect('denies a legacy marker without an executor and membership-set outsiders', testProgram3);
+  suite.effect('denies missing role cells, cross-tenant actors and holders without company membership', testProgram3);
 
   suite.effect('returns the recorded permission denial to a same-key retry', testProgram4);
   suite.effect('serializes concurrent denials into one Audit Event without executing the handler', testProgram4b);

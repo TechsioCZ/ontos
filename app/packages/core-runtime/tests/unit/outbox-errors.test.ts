@@ -1,6 +1,5 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Schema } from 'effect';
-import type { Cause } from 'effect';
+import { Cause, Crypto, DateTime, Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
@@ -125,19 +124,81 @@ checkErrorContract(
   },
 );
 
+/** The unfenced idle probe that precedes the match transaction; the transaction's own read locks its rows. */
+const isUnmatchedProbe = (statement: string) =>
+  statement.includes('from "core"."outbox_messages"') && !statement.includes('for update');
+
 it.layer(NodeCrypto.layer)('outbox repository failures', (suite) => {
-  suite.effect('repository persistence failures carry the driver failure as their native cause', () =>
-    Effect.gen(function* persistenceFailureCarriesCause() {
+  suite.effect(
+    'BEGIN failure after the idle probe preserves the native driver cause without observing authority or owner data',
+    () =>
+      Effect.gen(function* persistenceFailureCarriesCause() {
+        const driverError = new SqlError({
+          reason: new ConnectionError({ cause: new Error('private repository defect') }),
+        });
+        const statements: string[] = [];
+        const executor = yield* makeTestDatabase((statement) => {
+          statements.push(statement);
+          // The unfenced probe finds an unmatched message, so matching opens its transaction.
+          return isUnmatchedProbe(statement) ? Effect.succeed([{ messageId: 'message' }]) : Effect.fail(driverError);
+        });
+        const failure = yield* makeOutboxRepository(executor, yield* Crypto.Crypto)
+          .matchUnmatched('a'.repeat(64), DateTime.toDateUtc(DateTime.makeUnsafe('2026-08-03T10:00:00Z')))
+          .pipe(Effect.flip);
+        expect(failure).toBeInstanceOf(PersistenceFailure);
+        expect(failure.reason).toBe('The Outbox Worker persistence operation failed');
+        expect(failure.cause).toBe(driverError);
+        expect(statements).toHaveLength(2);
+        expect(isUnmatchedProbe(statements[0] ?? '')).toBe(true);
+        expect(statements[1]).toBe('BEGIN');
+      }),
+  );
+
+  suite.effect('fenced owner-query failure retains the Drizzle wrapper and exact native driver cause', () =>
+    Effect.gen(function* fencedPersistenceFailureCarriesCause() {
       const driverError = new SqlError({
-        reason: new ConnectionError({ cause: new Error('private repository defect') }),
+        reason: new ConnectionError({ cause: new Error('private owner query detail') }),
       });
-      const executor = yield* makeTestDatabase(() => Effect.fail(driverError));
+      const statements: string[] = [];
+      const executor = yield* makeTestDatabase((statement) => {
+        statements.push(statement);
+        if (isUnmatchedProbe(statement)) {
+          return Effect.succeed([{ messageId: 'message' }]);
+        }
+        if (statement.includes('from "core"."outbox_messages"')) {
+          return Effect.fail(driverError);
+        }
+        if (statement.includes('from "core"."application_composition_authority"')) {
+          return Effect.succeed([
+            { phase: 'active', revision: 'a'.repeat(64), subscriptionsJson: [], unexpired: true },
+          ]);
+        }
+        return Effect.succeed([{ isolation: 'read committed' }]);
+      });
       const failure = yield* makeOutboxRepository(executor, yield* Crypto.Crypto)
         .matchUnmatched('a'.repeat(64), DateTime.toDateUtc(DateTime.makeUnsafe('2026-08-03T10:00:00Z')))
         .pipe(Effect.flip);
       expect(failure).toBeInstanceOf(PersistenceFailure);
       expect(failure.reason).toBe('The Outbox Worker persistence operation failed');
-      expect(failure.cause).toBe(driverError);
+      expect(Predicate.isTagged(failure.cause, 'EffectDrizzleQueryError')).toBe(true);
+      if (!Predicate.hasProperty(failure.cause, 'cause') || !Cause.isCause(failure.cause.cause)) {
+        expect.unreachable('The Drizzle query failure must retain the native Effect cause');
+      }
+      const { reasons } = failure.cause.cause;
+      expect(reasons).toHaveLength(1);
+      const [reason] = reasons;
+      if (reason === undefined || !Cause.isFailReason(reason)) {
+        expect.unreachable('The query cause must contain the original typed SQL failure');
+      }
+      expect(reason.error).toBe(driverError);
+      expect(statements).toHaveLength(6);
+      expect(isUnmatchedProbe(statements[0] ?? '')).toBe(true);
+      expect(statements[1]).toBe('BEGIN');
+      expect(statements[2]).toContain('pg_advisory_xact_lock_shared');
+      expect(statements[2]).toContain("current_setting('transaction_isolation')");
+      expect(statements[3]).toContain('from "core"."application_composition_authority"');
+      expect(statements[4]).toContain('from "core"."outbox_messages"');
+      expect(statements[5]).toBe('ROLLBACK');
     }),
   );
 });

@@ -68,6 +68,14 @@ it.effect('posts canonical proto3 JSON with the preshared key to the gateway rou
   }),
 );
 
+it.effect('sends its deadline to the gateway, so SpiceDB ends a call the client gave up on', () =>
+  Effect.gen(function* sendsDeadline() {
+    const { requests, withGateway } = gateway(() => Response.json({ writtenAt: { token: 't' } }));
+    yield* rpc.writeRelationships(v1.WriteRelationshipsRequest.create({})).pipe(withGateway);
+    expect(requests[0]?.request.headers['grpc-timeout']).toBe(`${String(SPICEDB_CHECK_TIMEOUT_MS)}m`);
+  }),
+);
+
 it.effect('a gateway status becomes a typed failure carrying the gRPC code', () =>
   Effect.gen(function* checksGatewayStatus() {
     const { withGateway } = gateway(() =>
@@ -166,5 +174,34 @@ it.effect('a gateway that never replies is aborted at the deadline', () =>
     const failure = yield* Fiber.join(fiber);
     expect(Cause.isTimeoutError(failure.cause)).toBe(true);
     expect(requests.map(({ signal }) => signal.aborted)).toStrictEqual([true]);
+  }),
+);
+
+it.effect('reads the live schema through the native schema read route', () =>
+  Effect.gen(function* readsNativeSchema() {
+    const { requests, withGateway } = gateway(() => Response.json({ schemaText: 'definition principal {}' }));
+    const response = yield* rpc.readSchema(v1.ReadSchemaRequest.create({})).pipe(withGateway);
+    expect(response.schemaText).toBe('definition principal {}');
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url.pathname).toBe('/v1/schema/read');
+    expect(requests[0]?.request.headers['authorization']).toBe('Bearer test-key');
+  }),
+);
+
+it.effect('uses the native semantic schema diff route with the exact observed revision', () =>
+  Effect.gen(function* diffsNativeSchema() {
+    const { requests, withGateway } = gateway(() => Response.json({ diffs: [] }));
+    const response = yield* rpc
+      .diffSchema(
+        v1.DiffSchemaRequest.create({
+          comparisonSchema: 'definition principal {}',
+          consistency: {
+            requirement: { atExactSnapshot: { token: 'schema-read-token' }, oneofKind: 'atExactSnapshot' },
+          },
+        }),
+      )
+      .pipe(withGateway);
+    expect(response.diffs).toEqual([]);
+    expect(requests[0]?.url.pathname).toBe('/v1/schema/diffschema');
   }),
 );

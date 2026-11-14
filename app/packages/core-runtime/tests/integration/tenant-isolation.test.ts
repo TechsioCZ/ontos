@@ -38,6 +38,7 @@ import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { findPostgresFailure } from '../../src/database/postgres-failure.ts';
 import { fixtureReadAccess } from '../support/access-declaration-fixtures.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient, makeTestPgSession } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 import { makeTestOperationOwner } from '../support/action-runtime-options.ts';
 
@@ -351,11 +352,12 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('tenant isolation', (s
             { executor: runtimeDatabase },
             openModuleEntrypointGateway,
             yield* makeOperationalScopeResolver(
-              makeOperationalScopeRepository({ executor: runtimeDatabase }),
+              makeOperationalScopeRepository({ executor: runtimeDatabase }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
               makeTestOperationalScopeAccess(),
             ),
             contextAccess,
             {
+              databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
               ownerRegistration: makeTestOperationOwner({ moduleId: 'core.shell', reads: [registration] })
                 .ownerRegistration,
             },

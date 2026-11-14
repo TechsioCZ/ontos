@@ -1,3 +1,4 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { describe, expect, it } from 'effect-rstest';
 
 import { pricingApi } from '../../shared/api.ts';
@@ -28,6 +29,7 @@ describe('Pricing module contract', () => {
       'current-supported-currencies',
       'define-price-action',
       'exact-price-resolution',
+      'owner-action-approvals',
       'price-definition',
       'price-group-source-prices',
       'price-result-lookup',
@@ -39,6 +41,7 @@ describe('Pricing module contract', () => {
       'revise-price-action',
       'zero-floor-authorization-result-lookup',
     ]);
+    expect(pricingManifest.publicSurface.api['owner-action-approvals']).toBe(OwnerActionApprovalApi);
     expect(pricingManifest.publicSurface.resourceTypes.map(({ key }) => key)).toEqual(
       expect.arrayContaining(['commerce.pricing.commercial-fee', 'commerce.pricing.price']),
     );

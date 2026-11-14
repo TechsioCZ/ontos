@@ -96,4 +96,26 @@ describe('Storefront Registry database contract', () => {
     );
     expect(migration).not.toMatch(/grant\s+(?:select|insert|update|delete)\s+on/iu);
   });
+
+  it('publishes the Tenant registration list as one tenant-guarded, least-privilege owner routine', () => {
+    const migration = readFileSync(
+      new URL('../../drizzle/20261101175417_storefront-applications-read/migration.sql', import.meta.url),
+      'utf-8',
+    );
+    expect(migration).toContain('create or replace function storefront_registry.read_storefront_applications(');
+    expect(migration).toContain('security definer');
+    expect(migration).toContain('set search_path = pg_catalog, pg_temp');
+    expect(migration).toContain(
+      "p_tenant_id is distinct from nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+    );
+    expect(migration).toContain('revision.revision_number = application.current_revision');
+    expect(migration).toContain('\'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"\'');
+    expect(migration).toContain(
+      'revoke all on function storefront_registry.read_storefront_applications(uuid, jsonb) from public',
+    );
+    expect(migration).toContain(
+      'grant execute on function storefront_registry.read_storefront_applications(uuid, jsonb) to ontos_runtime',
+    );
+    expect(migration).not.toMatch(/grant\s+(?:select|insert|update|delete)\s+on/iu);
+  });
 });

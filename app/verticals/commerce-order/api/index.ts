@@ -1,3 +1,9 @@
+import {
+  OwnerActionApprovalSchemaErrorLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
+} from '@app/core-runtime/access/approvals/owner-http';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { commerceOrderRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
@@ -13,6 +19,8 @@ import {
 
 import {
   ActionAuthorizationPreflightDatabaseLive,
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ContextAccessLive as GovernedContextAccessLive,
   CorePersistenceLive as GovernedCorePersistenceLive,
   DatabaseConfigLive as GovernedDatabaseConfigLive,
@@ -47,7 +55,10 @@ import {
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
 import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
 // <generated-governed-http-handler-support-imports>
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
+import {
+  ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive,
+  authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
+} from './auth/action-principal.ts';
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
@@ -128,7 +139,7 @@ const configuredOrderFinalSourcesLive = OrderFinalSourceVerificationLive.pipe(
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
 );
 
-const governedActionRuntimeLive = GovernedMakeActionRuntimeLive(
+const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(
   governedActionDeliveryUnit,
   commerceOrderRegistration,
 ).pipe(
@@ -145,7 +156,33 @@ const governedActionRuntimeLive = GovernedMakeActionRuntimeLive(
   ),
 );
 
+const governedActionRuntimeLive = GovernedMakeActionRuntimeLive(
+  governedActionDeliveryUnit,
+  commerceOrderRegistration,
+).pipe(
+  GovernedReadLayer.provideMerge(ownerActionApprovalsLive),
+  GovernedReadLayer.provide(
+    GovernedReadLayer.mergeAll(
+      governedReadRuntimeDependenciesLive,
+      governedModuleStateGateLive,
+      GovernedActionRepositoryLive,
+      GovernedActionPermissionLive,
+      ActionAuthorizationPreflightDatabaseLive.pipe(GovernedReadLayer.provideMerge(GovernedCorePersistenceLive)),
+      activeApplicationCompositionLive,
+      accessEnforcementLive,
+    ),
+  ),
+);
+
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
+  HttpApiBuilder.group(commerceOrderApi, 'ownerActionApprovals', (handlers) =>
+    handlers
+      .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+      .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+  ).pipe(
+    GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+    GovernedReadLayer.provide(governedActionRuntimeLive),
+  ),
   // <generated-governed-http-handler-layers>
   cancelOrderCommitmentActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   commitOrderActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -211,6 +248,8 @@ const commerceOrderReadinessLayer = HttpApiBuilder.group(commerceOrderApi, 'foun
   ),
 );
 
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
+
 /** The native assembly installs handlers; the owner composes actual logging and span services here. */
 const runtimeObservabilityLive = GovernedReadLayer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
@@ -225,7 +264,9 @@ export const makeCommerceOrderApiRuntime = (): EffectBffDefinition<typeof commer
     api: commerceOrderApi,
     handlers: GovernedReadLayer.mergeAll(apiHandlersLive, governedReadApiHandlersLive).pipe(
       GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
-      GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, nodeCryptoLayer)),
+      GovernedReadLayer.provide(
+        GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, databaseIdentitiesLive, nodeCryptoLayer),
+      ),
       GovernedReadLayer.provide(GovernedReadLayer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive)),
       GovernedReadLayer.orDie,
     ),

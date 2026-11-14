@@ -11,7 +11,19 @@ import {
 import { Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
+import {
+  EnrollmentAttemptIdSchema,
+  EnrollmentOwnerOperationIdSchema,
+  EnrollmentLegalEntityIdSchema,
+} from './enrollment-identifiers.ts';
+
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from './portal-auth-contracts.ts';
+
+export {
+  EnrollmentAttemptIdSchema,
+  EnrollmentOwnerOperationIdSchema,
+  EnrollmentLegalEntityIdSchema,
+} from './enrollment-identifiers.ts';
 
 /**
  * Shared, secret-free vocabulary for the Commerce Portal Enrollment Attempt.  This file is
@@ -19,11 +31,8 @@ import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from './portal-auth-contracts.ts
  */
 
 const uuid = Schema.String.check(Schema.isUUID());
-export const EnrollmentAttemptIdSchema = uuid.pipe(Schema.brand('EnrollmentAttemptId'));
 export type EnrollmentAttemptId = typeof EnrollmentAttemptIdSchema.Type;
-export const EnrollmentOwnerOperationIdSchema = uuid.pipe(Schema.brand('EnrollmentOwnerOperationId'));
 export const EnrollmentInvitationIdSchema = uuid.pipe(Schema.brand('EnrollmentInvitationId'));
-export const EnrollmentLegalEntityIdSchema = uuid.pipe(Schema.brand('EnrollmentLegalEntityId'));
 export const EnrollmentActionInvocationIdSchema = ActionInvocationIdSchema;
 export const EnrollmentPrincipalIdSchema = PrincipalIdSchema;
 export const EnrollmentTenantIdSchema = TenantIdSchema;
@@ -63,6 +72,9 @@ export const EnrollmentResourceIdSchema = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(300),
 ).pipe(Schema.brand('EnrollmentResourceId'));
+
+/** A Party resource identifier: an Enrollment resource identifier that is always a UUID. */
+export const EnrollmentPartyResourceIdSchema = EnrollmentResourceIdSchema.check(Schema.isUUID());
 export const EnrollmentEvidenceReferenceSchema = uuid.pipe(Schema.brand('EnrollmentEvidenceReference'));
 /**
  * Timestamps are UTC instants in the decoded contract and one canonical UTC ISO string encoded.
@@ -96,6 +108,7 @@ export const EnrollmentAttemptStateSchema = Schema.Literals([
   'COMPLETE',
   'RECONCILIATION_REQUIRED',
   'TERMINATED',
+  'FAILED',
 ]);
 export type EnrollmentAttemptState = typeof EnrollmentAttemptStateSchema.Type;
 
@@ -141,11 +154,43 @@ export const CommercePortalAccountSubjectSchema = Schema.Struct({
 });
 export type CommercePortalAccountSubject = typeof CommercePortalAccountSubjectSchema.Type;
 
+/** Immutable business contact intent, staged by the governed start Action until Party owns it. */
+export const RetailEnrollmentRegistrationSchema = Schema.Struct({
+  displayName: Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(200)),
+  email: Schema.String.check(
+    Schema.isTrimmed(),
+    Schema.isMinLength(3),
+    Schema.isMaxLength(320),
+    Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/u),
+  ),
+  phone: Schema.optionalKey(
+    Schema.String.check(
+      Schema.isTrimmed(),
+      Schema.isMinLength(3),
+      Schema.isMaxLength(100),
+      Schema.isPattern(/^\+?[()0-9 .-]+$/u),
+    ),
+  ),
+});
+export type RetailEnrollmentRegistration = typeof RetailEnrollmentRegistrationSchema.Type;
+
+/**
+ * The trusted origin of the storefront an Attempt started on: a bare HTTP(S) origin. Verification mail links back to
+ * it, and the realm rebases a link only onto one of its trusted origins.
+ */
+export const EnrollmentStorefrontOriginSchema = Schema.String.check(
+  Schema.isMaxLength(300),
+  Schema.isPattern(/^https?:\/\/[^/?#@\s]+$/u),
+).pipe(Schema.brand('EnrollmentStorefrontOrigin'));
+
 export const EnrollmentAttemptIntentSchema = Schema.Struct({
   intentDigest: EnrollmentDigestSchema,
   intentKey: EnrollmentKeySchema,
   invitationId: Schema.optionalKey(EnrollmentInvitationIdSchema),
   journey: EnrollmentJourneySchema,
+  retailRegistration: Schema.optionalKey(RetailEnrollmentRegistrationSchema),
+  /** Recorded once, when the Attempt is created; never part of the intent identity or digest. */
+  storefrontOrigin: Schema.optionalKey(EnrollmentStorefrontOriginSchema),
   targetLegalEntityId: Schema.optionalKey(EnrollmentLegalEntityIdSchema),
   targetResourceId: Schema.optionalKey(EnrollmentResourceIdSchema),
 });
@@ -318,6 +363,11 @@ export type ReconcileEnrollmentResolution = typeof ReconcileEnrollmentResolution
 export const TerminateEnrollmentAttemptInputSchema = Schema.Struct({
   actionInvocationId: EnrollmentActionInvocationIdSchema,
   actorPrincipalId: EnrollmentPrincipalIdSchema,
+  /**
+   * The release the terminating Action runs under. A parked Attempt from an earlier release (one waiting for its
+   * customer, which nothing sweeps) is re-admitted to it first, so an operator can still settle it.
+   */
+  compositionRevision: EnrollmentCompositionRevisionSchema,
   expectedRevision: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
   portalEnrollmentAttemptId: EnrollmentAttemptIdSchema,
   reason: EnrollmentBoundedTextSchema,
@@ -354,4 +404,4 @@ export const EnrollmentProofSchema = Schema.Struct({
 });
 
 export const isEnrollmentAttemptTerminal = (state: EnrollmentAttemptState): boolean =>
-  state === 'COMPLETE' || state === 'TERMINATED';
+  state === 'COMPLETE' || state === 'TERMINATED' || state === 'FAILED';

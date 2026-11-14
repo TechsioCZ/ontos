@@ -1,10 +1,11 @@
 import { deadlineInterceptor, v1 } from '@authzed/authzed-node';
-import { Effect, Option, Predicate } from 'effect';
+import { Clock, Duration, Effect, Option, Predicate, flow } from 'effect';
 
 import { SpiceDbConfigError } from './config-error.ts';
 import type { SpiceDbConfigValue } from './config.ts';
 import { SpiceDbRpcError, spiceDbDeadline } from './spicedb-rpc.ts';
 import type { SpiceDbRpc } from './spicedb-rpc.ts';
+import { observeFirstSpiceDbRpc } from './spicedb-client-observability.ts';
 
 /**
  * The gRPC channel's only trusted CA: `SPICEDB_CA_CERT`, the certificate SpiceDB serves on its
@@ -21,14 +22,29 @@ export const spiceDbCaCertificate = (configuration: Pick<SpiceDbConfigValue, 'ca
 export const newSpiceDbGrpcClient = (
   configuration: Pick<SpiceDbConfigValue, 'caCertificate' | 'endpoint' | 'preSharedKey'>,
   options?: Parameters<typeof v1.NewClientWithCustomCert>[4],
-): v1.ZedClientInterface =>
-  v1.NewClientWithCustomCert(
-    configuration.preSharedKey,
-    configuration.endpoint,
-    spiceDbCaCertificate(configuration),
-    undefined,
-    options,
-  );
+): v1.ZedClientInterface => {
+  const clock = Clock.Clock.defaultValue();
+  const started = clock.monotonicTimeNanosUnsafe();
+  let outcome: 'success' | 'failure' = 'failure';
+  try {
+    const client = v1.NewClientWithCustomCert(
+      configuration.preSharedKey,
+      configuration.endpoint,
+      spiceDbCaCertificate(configuration),
+      undefined,
+      options,
+    );
+    outcome = 'success';
+    return client;
+  } finally {
+    globalThis.ontosSpiceDbClientObserver?.({
+      durationMs: Duration.toMillis(Duration.nanos(clock.monotonicTimeNanosUnsafe() - started)),
+      event: 'spicedb.channel-setup',
+      method: 'NewClientWithCustomCert',
+      outcome,
+    });
+  }
+};
 
 const rpcFailure = (cause: unknown): SpiceDbRpcError =>
   new SpiceDbRpcError({
@@ -37,25 +53,59 @@ const rpcFailure = (cause: unknown): SpiceDbRpcError =>
       Predicate.hasProperty(cause, 'code') && Predicate.isNumber(cause.code) ? Option.some(cause.code) : Option.none(),
   });
 
+/**
+ * The client options that give every call a gRPC deadline of `timeoutMilliseconds`. The deadline travels with the
+ * call (`grpc-timeout`), so SpiceDB cancels the request server-side when it passes, and the client cancels the stream:
+ * a timed-out call is ended, not merely abandoned while the engine keeps it. This interceptor runs before
+ * authzed-node's own 60-second default, which only applies to a call that has no deadline yet.
+ */
+export const spiceDbGrpcCallOptions = (
+  timeoutMilliseconds: number,
+): NonNullable<Parameters<typeof v1.NewClientWithCustomCert>[4]> => ({
+  interceptors: [deadlineInterceptor(timeoutMilliseconds)],
+});
+
 /** SpiceDB over gRPC through the official authzed-node client (HTTP/2, Node only). */
 export const openSpiceDbGrpcRpc = (configuration: SpiceDbConfigValue, timeoutMilliseconds: number): SpiceDbRpc => {
-  const client = newSpiceDbGrpcClient(configuration, { interceptors: [deadlineInterceptor(timeoutMilliseconds)] });
+  const client = newSpiceDbGrpcClient(configuration, spiceDbGrpcCallOptions(timeoutMilliseconds));
   const deadline = spiceDbDeadline(timeoutMilliseconds);
-  const call =
-    <Request, Response>(rpc: (request: Request) => Promise<Response>) =>
-    (request: Request): Effect.Effect<Response, SpiceDbRpcError> =>
-      Effect.tryPromise({
-        catch: rpcFailure,
-        // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign SDK Promise boundary.
-        try: () => rpc(request),
-      }).pipe(Effect.timeoutOrElse(deadline));
   const { promises } = client;
   return {
-    checkBulkPermissions: call(promises.checkBulkPermissions.bind(promises)),
-    checkPermission: call(promises.checkPermission.bind(promises)),
+    checkBulkPermissions: (request) =>
+      Effect.tryPromise({
+        catch: rpcFailure,
+        try: flow(() => request, promises.checkBulkPermissions.bind(promises)),
+      }).pipe(Effect.timeoutOrElse(deadline), observeFirstSpiceDbRpc('checkBulkPermissions')),
+    checkPermission: (request) =>
+      Effect.tryPromise({
+        catch: rpcFailure,
+        try: flow(() => request, promises.checkPermission.bind(promises)),
+      }).pipe(Effect.timeoutOrElse(deadline), observeFirstSpiceDbRpc('checkPermission')),
     close: () => client.close(),
-    readRelationships: call(promises.readRelationships.bind(promises)),
-    writeRelationships: call(promises.writeRelationships.bind(promises)),
-    writeSchema: call(promises.writeSchema.bind(promises)),
+    diffSchema: (request) =>
+      Effect.tryPromise({
+        catch: rpcFailure,
+        try: flow(() => request, promises.diffSchema.bind(promises)),
+      }).pipe(Effect.timeoutOrElse(deadline), observeFirstSpiceDbRpc('diffSchema')),
+    readRelationships: (request) =>
+      Effect.tryPromise({
+        catch: rpcFailure,
+        try: flow(() => request, promises.readRelationships.bind(promises)),
+      }).pipe(Effect.timeoutOrElse(deadline), observeFirstSpiceDbRpc('readRelationships')),
+    readSchema: (request) =>
+      Effect.tryPromise({
+        catch: rpcFailure,
+        try: flow(() => request, promises.readSchema.bind(promises)),
+      }).pipe(Effect.timeoutOrElse(deadline), observeFirstSpiceDbRpc('readSchema')),
+    writeRelationships: (request) =>
+      Effect.tryPromise({
+        catch: rpcFailure,
+        try: flow(() => request, promises.writeRelationships.bind(promises)),
+      }).pipe(Effect.timeoutOrElse(deadline), observeFirstSpiceDbRpc('writeRelationships')),
+    writeSchema: (request) =>
+      Effect.tryPromise({
+        catch: rpcFailure,
+        try: flow(() => request, promises.writeSchema.bind(promises)),
+      }).pipe(Effect.timeoutOrElse(deadline), observeFirstSpiceDbRpc('writeSchema')),
   };
 };

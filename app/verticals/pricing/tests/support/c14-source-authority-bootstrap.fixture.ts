@@ -13,6 +13,9 @@ import {
   ExternalPriceSourceAuthorityGrantSchema,
   storeInternalC14PricingSourceGrant,
 } from './c14-source-authority.fixture.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 export class InternalC14PricingSourceBootstrapUnavailable extends Schema.TaggedError<InternalC14PricingSourceBootstrapUnavailable>()(
   'InternalC14PricingSourceBootstrapUnavailable',
@@ -110,7 +113,9 @@ export const bootstrapInternalC14PricingSourceAuthority = Effect.fn('InternalC14
           ) {
             return yield* unavailable();
           }
-          const scoped = yield* installOperationalScope(transaction, scope).pipe(Effect.mapError(unavailable));
+          const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
+            Effect.mapError(unavailable),
+          );
           const resolver = makePrincipalResolver(
             { executor: database },
             { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
@@ -125,7 +130,10 @@ export const bootstrapInternalC14PricingSourceAuthority = Effect.fn('InternalC14
           ) {
             return yield* unavailable();
           }
-          const persisted = yield* makeOperationalScopeRepository({ executor: transaction })
+          const persisted = yield* makeOperationalScopeRepository(
+            { executor: transaction },
+            FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          )
             .load(scope)
             .pipe(Effect.mapError(unavailable));
           if (

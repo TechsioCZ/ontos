@@ -85,7 +85,6 @@ const parseAuthConfigFromProvider = Effect.fn('AuthConfig.parseAuthConfigFromPro
   if (secret.length < 32) {
     return yield* malformedConfiguration();
   }
-
   const baseUrl = source.baseUrl.origin;
   const configuredTrustedOrigins = source.trustedOrigins
     .split(',')

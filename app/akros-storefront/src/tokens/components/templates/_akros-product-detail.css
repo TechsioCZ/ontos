@@ -1,0 +1,123 @@
+:root {
+  --sf-product-detail-column-gap: var(--dimension-32);
+  --sf-product-detail-content-gap: var(--dimension-24);
+  --sf-product-detail-panel-padding: var(--dimension-16);
+  --sf-product-detail-panel-radius: var(--radius-sm);
+  --sf-product-detail-image-radius: var(--radius-sm);
+  --sf-product-detail-divider-color: var(--color-border-primary);
+  --sf-product-detail-tier-bg: var(--color-fill-surface);
+  --sf-product-detail-stock-fg: var(--color-fg-status-success);
+  --sf-product-detail-stock-unavailable-fg: var(--color-fg-status-error);
+  --sf-product-detail-gallery-max-width: 600px;
+  --sf-product-detail-image-aspect-ratio: 600 / 494;
+  --sf-product-detail-thumbnail-width: 148px;
+  --sf-variant-filter-padding: var(--dimension-8);
+  --sf-variant-filter-label-font-size: 13px;
+  --sf-variant-filter-label-line-height: var(--dimension-16);
+  --sf-variant-filter-measurement-width: 288px;
+  --sf-variant-filter-input-width: var(--dimension-64);
+}
+
+.sf-product-detail__variant-badge {
+  --color-badge-bg-secondary: var(--color-fg-primary);
+  --color-badge-fg-secondary: var(--color-fg-reverse);
+}
+
+.sf-purchase-form {
+  --height-form-control-md: var(--dimension-60);
+  --height-form-control-lg: var(--dimension-60);
+  --padding-button-md: var(--padding-button-y-md) var(--dimension-16);
+  --padding-input-md: var(--spacing-150) var(--dimension-4);
+  --padding-numeric-input-input-lg: var(--dimension-4);
+  --padding-numeric-input-trigger-x: var(--dimension-8);
+  --radius-button-md: var(--radius-sm);
+  --radius-numeric-input-lg: var(--radius-sm);
+  --spacing-button-md: var(--dimension-20);
+}
+
+.sf-product-detail__favorite {
+  --color-button-border-secondary: var(--color-border-primary);
+  --height-form-control-md: var(--dimension-60);
+  --padding-button-md: var(--padding-button-y-md) var(--dimension-0);
+  --radius-button-md: var(--radius-sm);
+}
+
+.sf-product-actions {
+  --sf-product-actions-column-gap: var(--dimension-30);
+  --sf-product-actions-min-height: var(--dimension-40);
+  --height-form-control-sm: var(--sf-product-actions-min-height);
+  --sf-product-actions-offset: var(--dimension-0);
+  --text-button-sm: var(--text-base);
+  --spacing-button-sm: var(--dimension-8);
+  --padding-button-sm: var(--dimension-0);
+  --color-button-fg-secondary-borderless: var(--color-fg-secondary);
+  --color-button-bg-borderless-base: var(--color-bg-transparent);
+  --color-button-bg-borderless-hover: var(--color-bg-transparent);
+  --color-button-bg-borderless-active: var(--color-bg-transparent);
+}
+
+.sf-product-detail__stock + .sf-product-actions {
+  --sf-product-actions-offset: var(--dimension-8);
+}
+
+.sf-product-actions__watch {
+  --text-icon-sm: 17px;
+  --color-button-fg-secondary-borderless: var(--color-fg-primary);
+}
+
+.sf-product-actions__question {
+  --text-icon-sm: 22px;
+}
+
+.sf-product-actions__favorite,
+.sf-product-actions__share,
+.sf-product-actions__print {
+  --text-icon-sm: var(--dimension-20);
+}
+
+.sf-variant-filter-range {
+  --height-form-control-sm: 19px;
+  --border-width-form-control: 0.5px;
+  --color-numeric-input-border: var(--color-base-dark);
+  --radius-numeric-input-sm: 5px;
+  --text-numeric-input-sm: var(--text-sm);
+  --padding-numeric-input-input-sm: var(--dimension-2);
+  --padding-input-sm: var(--dimension-2);
+  --padding-input-md: var(--dimension-2);
+  --color-numeric-input-input-bg: var(--color-base);
+  --spacing-slider: var(--dimension-6);
+  --size-slider-track-sm: var(--dimension-2);
+  --spacing-slider-track-sm: var(--dimension-2);
+  --spacing-slider-thumb-sm: var(--dimension-8);
+  --border-width-slider: var(--dimension-0);
+  --color-slider-thumb-bg: var(--color-bg-primary-base);
+  --color-slider-thumb-bg-hover: var(--color-bg-primary-hover);
+  --color-slider-track-bg: var(--color-border-primary);
+  --color-slider-track-bg-hover: var(--color-border-primary);
+}
+
+.sf-variant-purchase__filter-bar {
+  --color-button-border-secondary: var(--color-border-primary);
+}
+
+@media (max-width: 767px) {
+  .sf-variant-filter-range {
+    --height-form-control-sm: var(--dimension-32);
+  }
+
+  .sf-product-actions {
+    --sf-product-actions-min-height: var(--dimension-44);
+  }
+}
+
+@media (max-width: 1023px) {
+  .sf-purchase-form {
+    --height-form-control-md: var(--dimension-48);
+    --height-form-control-lg: var(--dimension-48);
+    --text-numeric-input-lg: var(--text-base);
+  }
+
+  .sf-product-detail__favorite {
+    --height-form-control-md: var(--dimension-48);
+  }
+}

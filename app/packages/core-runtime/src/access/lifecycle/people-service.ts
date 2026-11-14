@@ -1,7 +1,4 @@
-import { sha256 } from '@noble/hashes/sha2.js';
-import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Context, DateTime, Effect, Layer, Match, Option, Predicate, Result, Schema } from 'effect';
-import { Hex } from 'effect/encoding';
 
 import type { OperationalScope } from '../../operations/context.ts';
 import { beyondGrantorCell, coveringGrantorAssignments, delegationIsLive } from '../changes/authority.ts';
@@ -11,6 +8,7 @@ import type {
   AccessScopeId,
   AssignmentIncarnationId,
   DelegationId,
+  LegalEntityId,
   PrincipalId,
   RoleId,
   RoleRevisionId,
@@ -20,12 +18,13 @@ import { delegatedCellCeiling } from '../intent/delegated-cell.ts';
 import { AccessMembershipStore } from '../intent/memberships.ts';
 import type { AccessMembership, AccessMembershipId } from '../intent/memberships.ts';
 import { AccessPeopleStore } from '../intent/people-store.ts';
+import { peopleRevisionOf } from '../intent/people-revision.ts';
 import type { AccessPeopleIntent, AccessRoleWithRevision, TenantScopeRow } from '../intent/people-store.ts';
 import { AccessProjectionWriter } from '../intent/projection-writer.ts';
 import { AccessTeamStore } from '../intent/teams.ts';
 import { TenantIntentLoader } from '../intent/tenant-intent-loader.ts';
 import type { TenantIntentLoaderService } from '../intent/tenant-intent-loader.ts';
-import type { AccessTeamMember, AccessTeamMemberId, AccessTeamWithMembers } from '../intent/teams.ts';
+import type { AccessTeamMemberId, AccessTeamWithMembers } from '../intent/teams.ts';
 import type {
   AccessScope,
   AmountCeiling,
@@ -35,7 +34,7 @@ import type {
   Delegation,
   Holder,
 } from '../model.ts';
-import { AmountCeilingSchema } from '../model.ts';
+import { AmountCeilingSchema, holderKey, sameHolder } from '../model.ts';
 import type { ManagerAuthority } from './delegation.ts';
 import type {
   GrantorAlternative,
@@ -49,6 +48,8 @@ import {
   membershipIsLive,
   peopleRefusal,
   planDelegationGrant,
+  planMemberAdmission,
+  planMembershipEnd,
   planDelegationRevocation,
   planOwnershipTransfer,
   planRoleAssignment,
@@ -173,30 +174,6 @@ export const administrationOf = (
     tenantOwners,
     tenantScopeId,
   };
-};
-
-/**
- * The revision token of one people read: a digest of the intent a screen acts on, so a stale form is
- * refused instead of overwriting a change somebody else already made.
- */
-const revisionOf = (intent: {
-  readonly assignments: readonly Assignment[];
-  readonly delegations: readonly Delegation[];
-  readonly memberships: readonly AccessMembership[];
-  readonly teamMembers: readonly AccessTeamMember[];
-}): string => {
-  const lines = [
-    ...intent.memberships.map(
-      (membership) =>
-        `membership ${membership.id} ${membership.kind} ${membership.status} ${membership.validFrom.toISOString()}`,
-    ),
-    ...intent.assignments.map(
-      (assignment) => `assignment ${assignment.incarnationId} ${assignment.status} ${assignment.roleRevisionId}`,
-    ),
-    ...intent.delegations.map((delegation) => `delegation ${delegation.id} ${delegation.status}`),
-    ...intent.teamMembers.map((member) => `team ${member.teamId} ${member.id}`),
-  ].toSorted((left, right) => left.localeCompare(right));
-  return Hex.encode(sha256(utf8ToBytes(lines.join('\n'))));
 };
 
 const tenantOf = (scope: OperationalScope): TenantId => TenantIdSchema.make(scope.tenantId);
@@ -459,8 +436,9 @@ const firstAcceptedPlan = (
 };
 
 export interface AssignRoleCommand {
+  /** A person, or an agent of the company: rights come only from roles, for everyone (no other grant path). */
+  readonly holder: Holder;
   readonly incarnationId: AssignmentIncarnationId;
-  readonly principalId: PrincipalId;
   readonly roleId: RoleId;
   readonly roleRevisionId: RoleRevisionId;
   readonly scopeId: AccessScopeId;
@@ -501,18 +479,69 @@ export interface TransferOwnershipCommand {
   readonly toPrincipalId: PrincipalId;
 }
 
+/**
+ * Admits one person to one company as a plain 'member'. The tenant 'member' row is written as well
+ * when the person holds no live one, so the two minted ids are always named; the kind is never
+ * chosen by the caller, because owner and access_admin move only through ownership transfer.
+ */
+export interface AdmitMemberCommand {
+  readonly companyMembershipId: AccessMembershipId;
+  /** A person, or an agent with an active directory membership of this company. */
+  readonly holder: Holder;
+  readonly legalEntityId: LegalEntityId;
+  readonly tenantMembershipId: AccessMembershipId;
+}
+
+/**
+ * Ends one person's live 'member' row in one scope (the tenant context ends every company too). The
+ * reason is required and recorded with who ended it and when.
+ */
+export interface EndMembershipCommand {
+  readonly holder: Holder;
+  readonly reason: string;
+  readonly scopeId: AccessScopeId;
+}
+
+/** The member row an admission or an ending changed, as a write answers it. */
+export interface PeopleMembershipReceipt {
+  readonly holder: Holder;
+  readonly scopeId: AccessScopeId;
+  readonly status: AccessMembership['status'];
+}
+
 /** What a write answers: the token a screen re-reads with, and the row it changed. */
 export interface PeopleCommandReceipt {
   readonly assignment?: Assignment;
   readonly delegation?: Delegation;
+  readonly membership?: PeopleMembershipReceipt;
   readonly revision: string;
   readonly transferredScopeIds?: readonly AccessScopeId[];
 }
 
 export interface AccessPeopleCommandsService {
+  /**
+   * Admits a person to a company. Only permanent authority over that company admits. Refusals:
+   * people_membership_scope_mismatch (unknown company), people_authority_missing,
+   * people_directory_membership_missing, people_agent_holder_forbidden,
+   * people_membership_already_active and people_membership_ended (a row that is not live but not revoked).
+   */
+  readonly admitMember: (
+    scope: OperationalScope,
+    command: AdmitMemberCommand,
+  ) => Effect.Effect<PeopleCommandReceipt, PeopleCommandFailure>;
   readonly assignRole: (
     scope: OperationalScope,
     command: AssignRoleCommand,
+  ) => Effect.Effect<PeopleCommandReceipt, PeopleCommandFailure>;
+  /**
+   * Ends a person's live member row in one scope. Only permanent authority over that scope ends it, and
+   * the tenant owner when the leaver holds owner or access_admin in a closed scope. Refusals:
+   * people_membership_unknown, people_authority_missing, people_granted_delegations_live and
+   * ownership_transfer_required (with scopeIds).
+   */
+  readonly endMembership: (
+    scope: OperationalScope,
+    command: EndMembershipCommand,
   ) => Effect.Effect<PeopleCommandReceipt, PeopleCommandFailure>;
   readonly grantDelegation: (
     scope: OperationalScope,
@@ -599,7 +628,7 @@ export const makeAccessPeopleCommands = (dependencies: {
       at,
       delegations: loaded.intent.delegations,
       memberships: loaded.memberships,
-      revision: revisionOf({
+      revision: peopleRevisionOf({
         assignments: loaded.intent.assignments,
         delegations: loaded.intent.delegations,
         memberships: loaded.memberships,
@@ -625,11 +654,22 @@ export const makeAccessPeopleCommands = (dependencies: {
   const reconcile = (scope: OperationalScope) =>
     projection.reconcileTenant({ scope }).pipe(Effect.asVoid, Effect.mapError(storeFailureOf));
 
-  /** Persist one plan in a single transaction, then reconcile and verify the tenant (D9, D24). */
-  const applyPlan = (scope: OperationalScope, planned: PeopleChangePlan) =>
+  /**
+   * Persist one plan in a single transaction, then reconcile and verify the tenant (D9, D24). The plan
+   * commits only while the tenant's people intent is still the view it was decided on: the store
+   * compares the view's revision under the tenant's people lock, so two plans read at the same instant
+   * (two owners ending each other, an ending racing a new delegation) can never both commit.
+   */
+  const applyPlan = (scope: OperationalScope, view: AccessPeopleView, planned: PeopleChangePlan) =>
     peopleStore
-      .applyPeopleChange(scope, { writes: planned.writes })
+      .applyPeopleChange(scope, { expectedRevision: view.revision, writes: planned.writes })
       .pipe(Effect.mapError(storeFailureOf), Effect.andThen(reconcile(scope)));
+
+  /** The acting person's configure bases at the view's instant, as the gate reads them (O81). */
+  const configureBases = (scope: OperationalScope, view: AccessPeopleView) =>
+    loader
+      .loadConfigureBases(scope, { actor: actorOf(scope), at: view.at, tenantId: tenantOf(scope) })
+      .pipe(Effect.mapError(storeFailureOf));
 
   /** How the acting person reaches one scope of the view they act on, read from live intent. */
   const basesIn = Effect.fn('accessPeopleCommands.basesIn')(function* basesInEffect(
@@ -639,11 +679,23 @@ export const makeAccessPeopleCommands = (dependencies: {
   ): Effect.fn.Return<readonly ManagementBasis[], PeopleCommandFailure> {
     const actor = actorOf(scope);
     const tenantId = tenantOf(scope);
-    const bases = yield* loader
-      .loadConfigureBases(scope, { actor, at: view.at, tenantId })
-      .pipe(Effect.mapError(storeFailureOf));
+    const bases = yield* configureBases(scope, view);
     return managementBasesIn({ actor, bases, scopeId, target: accessScopeOf(view, scopeId, tenantId), view });
   });
+
+  /** Only permanent authority over a scope admits or ends a membership there, never a delegation. */
+  const requirePermanentBasis = Effect.fn('accessPeopleCommands.requirePermanentBasis')(
+    function* requirePermanentBasisEffect(scope: OperationalScope, view: AccessPeopleView, scopeId: AccessScopeId) {
+      const bases = yield* basesIn(scope, view, scopeId);
+      return bases.some(Option.isNone)
+        ? yield* Effect.void
+        : yield* refuse(
+            'people_authority_missing',
+            'Only the tenant owner or the administrator of this company admits or ends a membership here',
+            [scopeId],
+          );
+    },
+  );
 
   const receipt = (scope: OperationalScope, extra: Omit<PeopleCommandReceipt, 'revision'>) =>
     read(scope).pipe(Effect.map((view): PeopleCommandReceipt => ({ ...extra, revision: view.revision })));
@@ -675,7 +727,7 @@ export const makeAccessPeopleCommands = (dependencies: {
       actor: actorOf(scope),
       at: view.at,
       catalog: catalog.value.entries,
-      holder: { _tag: 'Principal', principalId: command.principalId },
+      holder: command.holder,
       incarnationId: command.incarnationId,
       memberships: view.memberships,
       role: chosen.role,
@@ -700,7 +752,7 @@ export const makeAccessPeopleCommands = (dependencies: {
           ),
       }),
     );
-    yield* applyPlan(scope, planned);
+    yield* applyPlan(scope, view, planned);
     const written = assignmentOfPlan(planned);
     return yield* Option.match(written, {
       onNone: () => receipt(scope, {}),
@@ -734,7 +786,7 @@ export const makeAccessPeopleCommands = (dependencies: {
         Option.match(basis, { onNone: () => created, onSome: (manager) => ({ ...created, manager }) }),
       ),
     );
-    yield* applyPlan(scope, planned);
+    yield* applyPlan(scope, view, planned);
     return yield* receipt(scope, { assignment: { ...assignment, status: 'revoked' } });
   });
 
@@ -762,7 +814,7 @@ export const makeAccessPeopleCommands = (dependencies: {
         tenantId: tenantOf(scope),
       }),
     );
-    yield* applyPlan(scope, planned);
+    yield* applyPlan(scope, view, planned);
     return yield* receipt(scope, {});
   });
 
@@ -839,7 +891,7 @@ export const makeAccessPeopleCommands = (dependencies: {
     const planned = yield* firstAcceptedPlan(yield* basesIn(scope, view, command.scopeId), (basis) =>
       planDelegationGrant({ ...envelope, managerAuthority: managerAuthorityOf(basis) }),
     );
-    yield* applyPlan(scope, planned);
+    yield* applyPlan(scope, view, planned);
     return yield* receipt(scope, { delegation });
   });
 
@@ -863,7 +915,7 @@ export const makeAccessPeopleCommands = (dependencies: {
         tenantId: tenantOf(scope),
       }),
     );
-    yield* applyPlan(scope, planned);
+    yield* applyPlan(scope, view, planned);
     return yield* receipt(scope, { delegation: { ...delegation, status: 'revoked' } });
   });
 
@@ -899,12 +951,135 @@ export const makeAccessPeopleCommands = (dependencies: {
       successor: command.toPrincipalId,
       tenantId: tenantOf(scope),
     }).pipe(Effect.mapError(peopleErrorOf));
-    yield* applyPlan(scope, planned);
+    yield* applyPlan(scope, view, planned);
     return yield* receipt(scope, { transferredScopeIds: command.scopeIds });
   });
 
+  const admitMember = Effect.fn('accessPeopleCommands.admitMember')(function* admitMemberEffect(
+    scope: OperationalScope,
+    command: AdmitMemberCommand,
+  ): Effect.fn.Return<PeopleCommandReceipt, PeopleCommandFailure> {
+    const view = yield* read(scope);
+    const company = view.scopes.find((candidate) => candidate.legalEntityId === command.legalEntityId);
+    if (company === undefined) {
+      return yield* refuse(
+        'people_membership_scope_mismatch',
+        `Company ${command.legalEntityId} has no access scope in this tenant`,
+      );
+    }
+    yield* requirePermanentBasis(scope, view, company.scopeId);
+    const planned = yield* planMemberAdmission({
+      actor: actorOf(scope),
+      administration: view.administration,
+      assignments: view.assignments,
+      at: view.at,
+      companyMembershipId: command.companyMembershipId,
+      companyScopeId: company.scopeId,
+      delegations: view.delegations,
+      holder: command.holder,
+      legalEntityId: command.legalEntityId,
+      memberships: view.memberships,
+      teamMembers: view.teams.flatMap((entry) => entry.members),
+      teams: view.teams.map((entry) => entry.team),
+      tenantId: tenantOf(scope),
+      tenantMembershipId: command.tenantMembershipId,
+    }).pipe(Effect.mapError(peopleErrorOf));
+    // The plan's first write is the directory precondition, checked inside the same transaction.
+    yield* applyPlan(scope, view, planned);
+    return yield* receipt(scope, {
+      membership: { holder: command.holder, scopeId: company.scopeId, status: 'active' },
+    });
+  });
+
+  const endMembership = Effect.fn('accessPeopleCommands.endMembership')(function* endMembershipEffect(
+    scope: OperationalScope,
+    command: EndMembershipCommand,
+  ): Effect.fn.Return<PeopleCommandReceipt, PeopleCommandFailure> {
+    const view = yield* read(scope);
+    const { holder } = command;
+    const leaver = Option.getOrUndefined(principalOf(holder));
+    const name = leaver === undefined ? `Agent ${holderKey(holder)}` : `Person ${leaver}`;
+    yield* requirePermanentBasis(scope, view, command.scopeId);
+    // A suspended row still within its window is ended for good as well; an ended or expired one is not.
+    const ending = view.memberships.find(
+      (membership) =>
+        membership.scopeId === command.scopeId &&
+        membership.kind === 'member' &&
+        membership.status !== 'revoked' &&
+        sameHolder(membership.holder, holder) &&
+        membership.validFrom <= view.at &&
+        (membership.validUntil === undefined || view.at < membership.validUntil),
+    );
+    if (ending === undefined) {
+      return yield* refuse(
+        'people_membership_unknown',
+        `${name} holds no current member row in scope ${command.scopeId}`,
+      );
+    }
+    // Leaving the tenant closes every company too; leaving a company closes that company only.
+    const closed = new Set<AccessScopeId>(
+      command.scopeId === view.tenantScopeId ? view.scopes.map((row) => row.scopeId) : [command.scopeId],
+    );
+    // Ending the operational path of a company administrator removes that administration too, which
+    // only the tenant owner decides (S4): a company administrator never ends a co-admin, nor any
+    // membership of a tenant owner, who administers every company.
+    const manages = view.memberships.some(
+      (membership) =>
+        membership.status !== 'revoked' &&
+        (membership.kind === 'owner' || (membership.kind === 'access_admin' && closed.has(membership.scopeId))) &&
+        sameHolder(membership.holder, holder),
+    );
+    if (manages) {
+      const bases = yield* configureBases(scope, view);
+      if (!bases.some((basis) => Predicate.isTagged(basis, 'Owner'))) {
+        return yield* refuse(
+          'people_authority_missing',
+          `${name} administers a scope this ends; only the tenant owner ends their membership`,
+          [command.scopeId],
+        );
+      }
+    }
+    // Assignments made under the leaver's grants stand on authority their membership carried, so the
+    // owner revokes those delegations first; nothing cascades through somebody else's envelope (S3).
+    const granted = view.delegations.filter(
+      (delegation) =>
+        leaver !== undefined &&
+        delegation.grantedBy === leaver &&
+        closed.has(delegation.scopeId) &&
+        delegationIsLive(delegation, view.at),
+    );
+    if (granted.length > 0) {
+      return yield* refuse(
+        'people_granted_delegations_live',
+        `${name} granted ${granted.length} live delegation(s) in the scopes this ends; revoke them first`,
+        [...new Set(granted.map((delegation) => delegation.scopeId))],
+      );
+    }
+    const planned = yield* planMembershipEnd({
+      actor: actorOf(scope),
+      administration: view.administration,
+      assignments: view.assignments,
+      at: view.at,
+      delegations: view.delegations,
+      membershipId: ending.id,
+      memberships: view.memberships,
+      nextStatus: 'revoked',
+      reason: command.reason,
+      scopeId: command.scopeId,
+      teamMembers: view.teams.flatMap((entry) => entry.members),
+      teams: view.teams.map((entry) => entry.team),
+      tenantId: tenantOf(scope),
+    }).pipe(Effect.mapError(peopleErrorOf));
+    yield* applyPlan(scope, view, planned);
+    return yield* receipt(scope, {
+      membership: { holder, scopeId: command.scopeId, status: 'revoked' },
+    });
+  });
+
   return Object.freeze({
+    admitMember,
     assignRole,
+    endMembership,
     grantDelegation,
     read,
     readCatalog,

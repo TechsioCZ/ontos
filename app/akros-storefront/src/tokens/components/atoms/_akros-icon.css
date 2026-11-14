@@ -1,0 +1,76 @@
+/* Keep the app collection separate from the UI kit's default Iconify loader. */
+@plugin "@iconify/tailwind4" {
+  prefix: "sf-checkout-icon";
+  square: false;
+  icon-sets: from-folder(sf-checkout, "./src/icons/akros-checkout");
+}
+
+@utility token-icon-sf-checkout-cart {
+  @apply sf-checkout-icon-[sf-checkout--cart];
+}
+
+@utility token-icon-sf-checkout-remove {
+  @apply sf-checkout-icon-[sf-checkout--remove];
+}
+
+@utility token-icon-sf-checkout-shipping {
+  @apply sf-checkout-icon-[sf-checkout--shipping];
+}
+
+@utility token-icon-sf-checkout-return {
+  @apply sf-checkout-icon-[sf-checkout--return];
+}
+
+@utility token-icon-sf-account-disclosure {
+  @apply sf-checkout-icon-[sf-checkout--account-disclosure];
+}
+
+@utility token-icon-sf-account-select-chevron {
+  @apply sf-checkout-icon-[sf-checkout--account-select-chevron];
+  @apply text-(length:--sf-account-select-glyph-size);
+}
+
+@plugin "@iconify/tailwind4" {
+  prefix: "sf-icon";
+  square: true;
+  icon-sets: from-folder(sf, "./src/icons/akros");
+}
+
+/* Preserve the non-square frames exported for the product detail actions. */
+@plugin "@iconify/tailwind4" {
+  prefix: "sf-product-icon";
+  square: false;
+  icon-sets: from-folder(sf-product-actions, "./src/icons/akros-product-actions");
+}
+
+@utility token-icon-sf-product-watch {
+  @apply sf-product-icon-[sf-product-actions--watch];
+}
+
+@utility token-icon-sf-product-question {
+  @apply sf-product-icon-[sf-product-actions--question];
+}
+
+@utility token-icon-sf-product-email {
+  @apply sf-product-icon-[sf-product-actions--email];
+}
+
+@utility token-icon-sf-product-share {
+  @apply icon-[mdi--share-variant-outline];
+}
+
+@utility token-icon-sf-product-print {
+  @apply icon-[mdi--printer-outline];
+}
+
+@utility token-icon-sf-facebook {
+  @apply sf-icon-[sf--facebook];
+}
+
+@utility token-icon-sf-instagram {
+  @apply sf-icon-[sf--instagram];
+}
+
+@utility token-icon-sf-youtube {
+  @apply sf-icon-[sf--youtube];
+}

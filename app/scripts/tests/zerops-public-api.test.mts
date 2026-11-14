@@ -1,11 +1,16 @@
-import { ConfigProvider, Effect, Fiber, Layer, Match, Option, Schema } from 'effect';
+import { ConfigProvider, Effect, Exit, Fiber, Layer, Match, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
-import type { HttpClientRequest } from 'effect/http';
-import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http';
+import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from 'effect/http';
 
 import { ZeropsApiError } from '../zerops-public-api-error.mts';
-import { ZeropsPublicApi, ZeropsPublicApiLive } from '../zerops-public-api.mts';
+import {
+  ZeropsPackageUploadClient,
+  ZeropsPackageUploadClientLive,
+  ZeropsPublicApi,
+  ZeropsPublicApiLive,
+  ZeropsPublicApiWithUploadClient,
+} from '../zerops-public-api.mts';
 
 const TEST_TOKEN = 'test-token';
 const STOP_PROCESS_PATH = '/process/stop-process';
@@ -280,6 +285,42 @@ it.effect('creates a sensitive service secret and waits for its process to finis
   }),
 );
 
+it.effect('deletes only the named service secret and waits for each deletion', () =>
+  Effect.gen(function* deletesServiceSecret() {
+    const requests: string[] = [];
+    const client = HttpClient.make((request, url) => {
+      requests.push(`${request.method} ${url.pathname}${url.search}`);
+      const answer = Match.value(`${request.method} ${url.pathname}`).pipe(
+        Match.when('GET /api/rest/public/service-stack/recovery-host/user-data', () =>
+          Response.json({
+            list: [
+              { content: 'kept', id: 'kept-entry', key: 'KEEP' },
+              { content: 'retired', id: 'retired-entry', key: 'RETIRED' },
+            ],
+            total: 2,
+          }),
+        ),
+        Match.orElse(() => Response.json({ id: 'delete-process', status: 'FINISHED' })),
+      );
+      return Effect.succeed(HttpClientResponse.fromWeb(request, answer));
+    });
+    const layer = Layer.merge(
+      ZeropsPublicApiLive.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client))),
+      ConfigProvider.layer(ConfigProvider.fromUnknown({ ZEROPS_TOKEN: TEST_TOKEN })),
+    );
+    yield* Effect.gen(function* removeSecret() {
+      const api = yield* ZeropsPublicApi;
+      yield* api.deleteServiceSecret('recovery-host', 'RETIRED');
+    }).pipe(Effect.provide(layer));
+
+    expect(requests).toEqual([
+      'GET /api/rest/public/service-stack/recovery-host/user-data?limit=100&offset=0',
+      'DELETE /api/rest/public/user-data/retired-entry',
+      'GET /api/rest/public/process/delete-process',
+    ]);
+  }),
+);
+
 it.effect('reads a deleted service as absent and any other failed read as an error', () =>
   Effect.gen(function* findsServices() {
     const client = HttpClient.make((request, url) => {
@@ -337,147 +378,114 @@ it.effect('does not accept a service-not-found payload on authentication or serv
   }),
 );
 
-const NATIVE_PROJECT_ID = 'P'.repeat(22);
-const NATIVE_SERVICE_ID = 'S'.repeat(22);
-const NATIVE_VERSION_ID = 'V'.repeat(22);
-const nativeVersion = {
-  id: NATIVE_VERSION_ID,
-  projectId: NATIVE_PROJECT_ID,
-  sequence: 7,
-  serviceStackId: NATIVE_SERVICE_ID,
-  source: 'CLI',
-  status: 'ACTIVE',
-};
-const nativeStack = {
-  activeAppVersion: nativeVersion,
-  id: NATIVE_SERVICE_ID,
-  projectId: NATIVE_PROJECT_ID,
-  status: 'ACTIVE',
-};
+const SIGNED_UPLOAD = 'https://storage.example.test/upload?signature=signed-never-rendered';
+const HOST_SERVICE = 'host-service';
 
-/** Exercises the real REST adapter while keeping provider responses and credentials entirely local. */
-const activeVersionGateway = (readStack: () => Response, readVersion: () => Response) => {
+/** Answers the application version calls; the storage endpoint answers `uploadStatus`. */
+const appVersionGateway = (uploadStatus: number, createdOn = HOST_SERVICE) => {
   const requests: string[] = [];
+  const uploads: { body: unknown; headers: Readonly<Record<string, string>> }[] = [];
+  // The signed upload bypasses the Zerops client: the storage endpoint answers through the upload client.
+  const storage = HttpClient.make((request, url) => {
+    requests.push(`${request.method} ${url.host}${url.pathname}`);
+    uploads.push({
+      body: Match.value(request.body).pipe(
+        Match.tag('Raw', ({ body }) => body),
+        Match.orElse(({ _tag }) => _tag),
+      ),
+      headers: request.headers,
+    });
+    return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { status: uploadStatus })));
+  });
+
   const client = HttpClient.make((request, url) => {
-    requests.push(`${request.method} ${url.pathname}`);
-    const response =
-      url.pathname === `/api/rest/public/service-stack/${NATIVE_SERVICE_ID}` ? readStack() : readVersion();
+    requests.push(`${request.method} ${url.host}${url.pathname}`);
+    let response = Response.json({});
+    if (url.pathname.endsWith('/app-version')) {
+      response = Response.json({ id: 'version-1', serviceStackId: createdOn, uploadUrl: SIGNED_UPLOAD });
+    } else if (url.pathname.endsWith('/deploy')) {
+      response = Response.json({ id: 'deploy-process', status: 'PENDING' });
+    } else if (url.pathname.endsWith('/process/deploy-process')) {
+      response = Response.json({ id: 'deploy-process', status: 'FINISHED' });
+    }
     return Effect.succeed(HttpClientResponse.fromWeb(request, response));
   });
-  const layer = Layer.merge(
-    ZeropsPublicApiLive.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client))),
+  const layer = Layer.mergeAll(
+    ZeropsPublicApiWithUploadClient.pipe(
+      Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+      Layer.provide(Layer.succeed(ZeropsPackageUploadClient, storage)),
+    ),
     ConfigProvider.layer(ConfigProvider.fromUnknown({ ZEROPS_TOKEN: TEST_TOKEN })),
   );
-  return { layer, requests };
+  return { layer, requests, uploads };
 };
-const readNativeVersion = Effect.gen(function* readNativeVersion() {
-  const api = yield* ZeropsPublicApi;
-  return yield* api.activeAppVersion(NATIVE_PROJECT_ID, NATIVE_SERVICE_ID);
-});
 
-it.effect('cross-checks the native active version and returns only nonsecret identity metadata', () =>
-  Effect.gen(function* readsNativeVersion() {
-    const secretFields = {
-      activationDate: null,
-      build: null,
-      publicGitSource: null,
-      userDataList: [{ content: TEST_TOKEN, key: 'SECRET' }],
-    };
-    const { layer, requests } = activeVersionGateway(
-      () => Response.json({ ...nativeStack, userData: secretFields }),
-      () => Response.json({ ...nativeVersion, ...secretFields }),
-    );
-    const version = yield* readNativeVersion.pipe(Effect.provide(layer));
-    expect(version).toEqual(nativeVersion);
-    expect(JSON.stringify(version)).not.toContain(TEST_TOKEN);
+it.effect('stages, deploys and deletes an application version without sending the token to its signed URL', () =>
+  Effect.gen(function* stagesApplicationVersion() {
+    const { layer, requests, uploads } = appVersionGateway(200);
+    yield* Effect.gen(function* stageAndDeploy() {
+      const api = yield* ZeropsPublicApi;
+      const created = yield* api.createAppVersion(HOST_SERVICE, 'revision');
+      expect(created.id).toBe('version-1');
+      expect(JSON.stringify(created)).not.toContain('signed-never-rendered');
+      yield* api.uploadAppVersionPackage(created.uploadUrl, new Uint8Array([1, 2, 3]));
+      yield* api.deployAppVersion(created.id, 'zerops: []\n', 'outbox-worker-host');
+      yield* api.deleteAppVersion(created.id);
+    }).pipe(Effect.provide(layer));
+    // Only the package and its length: Zerops identifies the gzip tar from its bytes, the signed URL authorizes it.
+    expect(uploads.map(({ body }) => body)).toEqual([new Uint8Array([1, 2, 3])]);
+    expect(
+      uploads.map(({ headers }) => [headers['content-length'], headers['content-type'], headers.authorization]),
+    ).toEqual([['3', undefined, undefined]]);
     expect(requests).toEqual([
-      `GET /api/rest/public/service-stack/${NATIVE_SERVICE_ID}`,
-      `GET /api/rest/public/app-version/${NATIVE_VERSION_ID}`,
+      'POST api.app-prg1.zerops.io/api/rest/public/service-stack/host-service/app-version',
+      'PUT storage.example.test/upload',
+      'PUT api.app-prg1.zerops.io/api/rest/public/app-version/version-1/deploy',
+      'GET api.app-prg1.zerops.io/api/rest/public/process/deploy-process',
+      'DELETE api.app-prg1.zerops.io/api/rest/public/app-version/version-1',
     ]);
   }),
 );
 
-it.effect('rejects deployment names and malformed native input IDs before any provider request', () =>
-  Effect.gen(function* rejectsInvalidNativeInputs() {
-    const inputs = [
-      { projectId: NATIVE_PROJECT_ID, serviceId: 'release-requested-name' },
-      { projectId: '../project', serviceId: NATIVE_SERVICE_ID },
-      { projectId: NATIVE_PROJECT_ID, serviceId: `${NATIVE_SERVICE_ID}x` },
-    ];
-    for (const { projectId, serviceId } of inputs) {
-      const { layer, requests } = activeVersionGateway(
-        () => Response.json(nativeStack),
-        () => Response.json(nativeVersion),
-      );
-      const error = yield* Effect.gen(function* readInvalidIdentity() {
-        const api = yield* ZeropsPublicApi;
-        return yield* api.activeAppVersion(projectId, serviceId);
-      }).pipe(Effect.provide(layer), Effect.flip);
-      expect(Schema.is(ZeropsApiError)(error)).toBe(true);
-      expect(error.cause).toBeUndefined();
-      expect(requests).toEqual([]);
+it.effect('fails a refused upload or a version created on another service without rendering the signed URL', () =>
+  Effect.gen(function* refusesStaging() {
+    const refused = appVersionGateway(403);
+    const upload = yield* Effect.gen(function* uploadRefused() {
+      const api = yield* ZeropsPublicApi;
+      const created = yield* api.createAppVersion(HOST_SERVICE, 'revision');
+      return yield* api.uploadAppVersionPackage(created.uploadUrl, new Uint8Array([1]));
+    }).pipe(Effect.provide(refused.layer), Effect.flip);
+    expect(upload.message).toBe('Zerops application version upload failed with HTTP 403');
+    const elsewhere = appVersionGateway(200, 'other-service');
+    const created = yield* Effect.gen(function* createdElsewhere() {
+      const api = yield* ZeropsPublicApi;
+      return yield* api.createAppVersion(HOST_SERVICE, 'revision');
+    }).pipe(Effect.provide(elsewhere.layer), Effect.flip);
+    expect(created.message).toBe('Zerops created the application version on another service');
+    for (const failure of [upload, created]) {
+      expect(JSON.stringify(failure)).not.toContain('signed-never-rendered');
+      expect(failure.cause).toBeUndefined();
     }
   }),
 );
 
-it.effect('requires the requested project/service and a concrete ACTIVE embedded native version', () =>
-  Effect.gen(function* rejectsInvalidNativeStacks() {
-    const withoutVersion = { id: NATIVE_SERVICE_ID, projectId: NATIVE_PROJECT_ID, status: 'ACTIVE' };
-    const stacks = [
-      withoutVersion,
-      { ...nativeStack, activeAppVersion: null },
-      { ...nativeStack, id: 'X'.repeat(22) },
-      { ...nativeStack, projectId: 'X'.repeat(22) },
-      { ...nativeStack, status: 'STOPPED' },
-      { ...nativeStack, activeAppVersion: { ...nativeVersion, id: 'requested-release-name' } },
-      { ...nativeStack, activeAppVersion: { ...nativeVersion, projectId: 'X'.repeat(22) } },
-      { ...nativeStack, activeAppVersion: { ...nativeVersion, serviceStackId: 'X'.repeat(22) } },
-      { ...nativeStack, activeAppVersion: { ...nativeVersion, status: 'BACKUP' } },
-    ];
-    for (const stack of stacks) {
-      const { layer, requests } = activeVersionGateway(
-        () => Response.json(stack),
-        () => Response.json(nativeVersion),
-      );
-      const error = yield* readNativeVersion.pipe(Effect.provide(layer), Effect.flip);
-      expect(Schema.is(ZeropsApiError)(error)).toBe(true);
-      expect(error.cause).toBeUndefined();
-      expect(requests).toHaveLength(1);
-    }
-  }),
-);
-
-it.effect('rejects mismatched native version details and never exposes provider user data or response causes', () =>
-  Effect.gen(function* rejectsContradictoryNativeDetails() {
-    const versions = [
-      { ...nativeVersion, id: 'X'.repeat(22) },
-      { ...nativeVersion, projectId: 'X'.repeat(22) },
-      { ...nativeVersion, serviceStackId: 'X'.repeat(22) },
-      { ...nativeVersion, sequence: 8 },
-      { ...nativeVersion, sequence: 7.5 },
-      { ...nativeVersion, source: 'GIT' },
-      { ...nativeVersion, source: null },
-      { ...nativeVersion, status: 'BUILDING' },
-    ];
-    for (const version of versions) {
-      const { layer, requests } = activeVersionGateway(
-        () => Response.json(nativeStack),
-        () => Response.json({ ...version, userDataList: [{ content: TEST_TOKEN }] }),
-      );
-      const error = yield* readNativeVersion.pipe(Effect.provide(layer), Effect.flip);
-      expect(Schema.is(ZeropsApiError)(error)).toBe(true);
-      expect(error.cause).toBeUndefined();
-      expect(JSON.stringify(error)).not.toContain(TEST_TOKEN);
-      expect(requests).toHaveLength(2);
-    }
-    for (const status of [401, 403, 500]) {
-      const { layer } = activeVersionGateway(
-        () => Response.json({ error: { message: TEST_TOKEN } }, { status }),
-        () => Response.json(nativeVersion),
-      );
-      const error = yield* readNativeVersion.pipe(Effect.provide(layer), Effect.flip);
-      expect(error.cause).toBeUndefined();
-      expect(JSON.stringify(error)).not.toContain(TEST_TOKEN);
-    }
+it.effect("uploads packages on Node's HTTP/1.1 client, never on fetch, whose HTTP/2 the upload proxy throttles", () =>
+  Effect.gen(function* usesNodeHttp() {
+    let fetched = 0;
+    const fetchSpy: typeof globalThis.fetch = () => {
+      fetched += 1;
+      return Promise.resolve(new Response(null, { status: 200 }));
+    };
+    // Nothing listens on port 1: Node's client fails to connect, where fetch would have answered 200.
+    const exit = yield* Effect.gen(function* uploadThroughLiveClient() {
+      const upload = yield* ZeropsPackageUploadClient;
+      return yield* upload.execute(HttpClientRequest.put('http://127.0.0.1:1/upload'));
+    }).pipe(
+      Effect.provide(ZeropsPackageUploadClientLive),
+      Effect.provideService(FetchHttpClient.Fetch, fetchSpy),
+      Effect.exit,
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(fetched).toBe(0);
   }),
 );

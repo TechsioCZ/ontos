@@ -1,0 +1,226 @@
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { ProductGrid } from "@/components/product-grid";
+import { formatPrice } from "@/lib/format";
+import { fixtureCatalog } from "../support/catalog-fixture";
+
+const { getProductBySlug, getProducts, toProductSummary } = fixtureCatalog;
+const getRecommendedProducts = () => getProducts().filter((product) => product.isRecommended);
+const getSaleProducts = () => getProducts().filter((product) => product.isSale);
+const getActionProducts = () => getProducts().filter((product) => product.isAction);
+
+describe("ProductGrid", () => {
+  afterEach(cleanup);
+
+  it.each(["catalog", "featured"] as const)(
+    "marks the %s grid for compact mobile styling without duplicating cards",
+    (columns) => {
+      const product = toProductSummary(
+        getProductBySlug("profilovana-stresni-krytina-product-35919")!,
+      );
+      const { container } = render(<ProductGrid columns={columns} products={[product]} />);
+
+      expect(container.firstElementChild?.getAttribute("data-sf-product-listing")).toBe(columns);
+      expect(screen.getAllByRole("article")).toHaveLength(1);
+      expect(screen.getAllByRole("link", { name: "Vybrat variantu" })).toHaveLength(1);
+      expect(screen.getByRole("img").getAttribute("sizes")).toContain("max-width: 359px");
+    },
+  );
+
+  it.each(["checkout", "related"] as const)(
+    "keeps the %s cards outside the mobile listing overrides",
+    (columns) => {
+      const product = toProductSummary(
+        getProductBySlug("profilovana-stresni-krytina-product-35919")!,
+      );
+      const { container } = render(<ProductGrid columns={columns} products={[product]} />);
+
+      expect(container.firstElementChild?.hasAttribute("data-sf-product-listing")).toBe(false);
+      expect(screen.getByRole("img").getAttribute("sizes")).toContain("max-width: 430px");
+    },
+  );
+
+  it("presents a mixed-unit variant group without inventing aggregate stock", () => {
+    const product = getProductBySlug("profilovana-stresni-krytina-product-35919");
+
+    expect(product).toBeDefined();
+    const { container } = render(<ProductGrid products={[toProductSummary(product!)]} />);
+    expect(container.firstElementChild?.className).toBe("sf-product-grid");
+
+    expect(screen.getByText("Cena dle varianty")).toBeDefined();
+    expect(screen.queryByText(/^od /)).toBeNull();
+    expect(screen.queryByText(/10,36/)).toBeNull();
+    expect(screen.getByText("Skladem")).toBeDefined();
+    expect(screen.getByText("Více variant")).toBeDefined();
+    expect(screen.getByRole("link", { name: "Vybrat variantu" }).getAttribute("href")).toBe(
+      `/produkt/${product!.slug}`,
+    );
+    expect(screen.getByRole("button", { name: /^Vybrat oblíbené varianty: / })).toBeDefined();
+    expect(screen.queryByText(/2[\s\u00a0]?929,4\s+ks/)).toBeNull();
+  });
+
+  it("shows recommendation tags only when the source marks the product as recommended", () => {
+    const product = getRecommendedProducts().find((item) => !item.isSale && !item.isAction)!;
+
+    render(<ProductGrid action="detail" products={[toProductSummary(product)]} />);
+
+    expect(screen.getByText("Doporučujeme")).toBeDefined();
+    expect(screen.queryByText("Doprodej")).toBeNull();
+    expect(screen.queryByText("Akce")).toBeNull();
+  });
+
+  it("shows source-backed clearance and clarifies when only selected variants are on sale", () => {
+    const product = getSaleProducts()[0];
+
+    expect(product.detail.variants.filter((variant) => variant.isSale)).toHaveLength(1);
+    expect(product.detail.variants.length).toBeGreaterThan(1);
+    render(<ProductGrid action="detail" products={[toProductSummary(product)]} />);
+
+    const badge = screen.getByText("Doprodej");
+    expect(badge.getAttribute("title")).toContain("vybraných variant");
+    expect(badge.closest("a")?.getAttribute("href")).toBe(`/produkt/${product.slug}`);
+    expect(screen.queryByText("Akce")).toBeNull();
+  });
+
+  it("shows an action tag for source-backed action products", () => {
+    const product = getActionProducts().find((item) => !item.isSale && !item.isRecommended)!;
+
+    render(<ProductGrid action="detail" products={[toProductSummary(product)]} />);
+
+    expect(screen.getByText("Akce")).toBeDefined();
+    expect(screen.queryByText("Doprodej")).toBeNull();
+  });
+
+  it("does not invent recommendation, video or novelty tags from fallback selections", () => {
+    const product = getProducts().find(
+      (item) => item.isNew && !item.isRecommended && !item.isSale && !item.isAction,
+    )!;
+    const { container } = render(
+      <ProductGrid action="detail" products={[toProductSummary(product)]} />,
+    );
+
+    expect(container.querySelector("[data-sf-product-tags]")).toBeNull();
+    expect(screen.queryByText("Novinka")).toBeNull();
+    expect(screen.queryByText("Video")).toBeNull();
+  });
+
+  it("keeps recommendation and clearance tags without duplicating the action tag", () => {
+    const product = {
+      ...toProductSummary(getSaleProducts()[0]),
+      isAction: true,
+      isRecommended: true,
+    };
+    const { container } = render(<ProductGrid action="detail" products={[product]} />);
+
+    expect(screen.getByText("Doporučujeme")).toBeDefined();
+    expect(screen.getByText("Doprodej")).toBeDefined();
+    expect(screen.queryByText("Akce")).toBeNull();
+    expect(container.querySelector("[data-sf-product-tags]")?.children).toHaveLength(2);
+    expect(screen.getByRole("link", { name: "Vybrat variantu" }).getAttribute("href")).toBe(
+      `/produkt/${product.slug}`,
+    );
+  });
+
+  it("shows an explicit comparison price next to the current price and its discount", () => {
+    const product = {
+      ...toProductSummary(getActionProducts()[0]),
+      priceMinor: 254,
+      originalPriceMinor: 330,
+      priceIsFrom: false,
+    };
+    const { container } = render(<ProductGrid action="detail" products={[product]} />);
+
+    expect(screen.getByText("-23%")).toBeDefined();
+    expect(screen.getByText("2,54 Kč")).toBeDefined();
+    expect(container.querySelector("del")?.textContent?.replaceAll("\u00a0", " ")).toContain(
+      "3,30 Kč",
+    );
+  });
+
+  it.each([254, 253, 0, Number.NaN, Number.POSITIVE_INFINITY])(
+    "does not show a discount for an invalid or non-reduced comparison price %s",
+    (originalPriceMinor) => {
+      const product = {
+        ...toProductSummary(getActionProducts()[0]),
+        priceMinor: 254,
+        originalPriceMinor,
+        priceIsFrom: false,
+      };
+      const { container } = render(<ProductGrid action="detail" products={[product]} />);
+
+      expect(container.querySelector("del")).toBeNull();
+      expect(screen.queryByText(/^-\d+%$/)).toBeNull();
+    },
+  );
+
+  it("does not compare a group-level from price with a potentially different variant", () => {
+    const product = {
+      ...toProductSummary(getActionProducts()[0]),
+      priceMinor: 254,
+      originalPriceMinor: 330,
+      priceIsFrom: true,
+    };
+    const { container } = render(<ProductGrid action="detail" products={[product]} />);
+
+    expect(screen.getByText("Cena dle varianty")).toBeDefined();
+    expect(screen.queryByText(/2,54 Kč/)).toBeNull();
+    expect(container.querySelector("del")).toBeNull();
+    expect(screen.queryByText("-23%")).toBeNull();
+  });
+
+  it("shows the exact price when the group has only one source variant", () => {
+    const product = getProducts().find(
+      (item) => item.detail.variants.length === 1 && item.detail.variants[0].priceMinor > 0,
+    )!;
+    const summary = toProductSummary(product);
+    expect(summary.priceIsFrom).toBe(false);
+    render(<ProductGrid products={[summary]} />);
+    expect(
+      screen.getByText(formatPrice(product.detail.variants[0].priceMinor).replace(/\s/g, " ")),
+    ).toBeDefined();
+    expect(screen.queryByText("Cena dle varianty")).toBeNull();
+    expect(screen.queryByText(/^od /)).toBeNull();
+  });
+
+  it("shows „Cena není dostupná“ with the reason for an unpriced concrete item", () => {
+    const product = {
+      ...toProductSummary(getProducts()[0]),
+      priceIsFrom: false,
+      hasVariants: false,
+      priceMinor: 0,
+    };
+    const { container } = render(<ProductGrid products={[product]} />);
+    expect(screen.getByText("Cena není dostupná")).toBeDefined();
+    expect(screen.queryByText("0,00 Kč")).toBeNull();
+    expect(container.querySelector("[data-sf-product-price] [title]")?.getAttribute("title")).toBe(
+      "Cena v OntOS je nulová, položku proto nelze objednat.",
+    );
+  });
+
+  it("shows which variant a search hit stands for and toggles that variant as a favourite", () => {
+    const product = getProducts().find((item) => item.detail.variants.length > 2)!;
+    const [variant] = product.detail.variants;
+    render(
+      <ProductGrid
+        products={[
+          {
+            ...toProductSummary(product),
+            priceIsFrom: false,
+            priceMinor: variant.priceMinor,
+            variantId: variant.id,
+            searchMatchLabel: `Varianta: ${variant.label} · SKU ${variant.sku}`,
+            detailHref: `/produkt/${product.slug}?variantIds=${variant.id}#product-variants`,
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByText(`Varianta: ${variant.label} · SKU ${variant.sku}`)).toBeDefined();
+    expect(
+      screen.getByRole("button", { name: `Uložit ${product.name} do oblíbených` }),
+    ).toBeDefined();
+    expect(screen.getByRole("link", { name: "Vybrat variantu" }).getAttribute("href")).toBe(
+      `/produkt/${product.slug}?variantIds=${variant.id}#product-variants`,
+    );
+  });
+});

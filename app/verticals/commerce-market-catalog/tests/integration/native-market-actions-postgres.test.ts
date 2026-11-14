@@ -1,5 +1,5 @@
-import { Crypto, DateTime, Effect, Exit, Option, Redacted, Result } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { Crypto, DateTime, Effect, Exit, Option, Predicate, Redacted, Result } from 'effect';
+import { assert, expect, it } from 'effect-rstest';
 
 import { executeActivateMarketWithAuthorization } from '../../src/api/activate-market-action-client.ts';
 import { executeAssociateStorefrontWithAuthorization } from '../../src/api/associate-storefront-action-client.ts';
@@ -12,6 +12,9 @@ import { executeReviseMarketDefinitionWithAuthorization } from '../../src/api/re
 import { executeReviseStorefrontAssociationWithAuthorization } from '../../src/api/revise-storefront-association-action-client.ts';
 import { executeSuspendMarketWithAuthorization } from '../../src/api/suspend-market-action-client.ts';
 import { makeMarketRevisionNativeFixture, marketRevisionNativeServices } from '../fixtures/market-revision-native.ts';
+
+const actionProposalAcceptedTag = 'ActionProposalAccepted';
+const committedActionRequired = 'Expected a committed Action result, not a proposal receipt';
 
 it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
   suite.effect(
@@ -66,6 +69,7 @@ it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
           creation.requestCorrelation,
           creation.options,
         );
+        assert(!Predicate.isTagged(created, actionProposalAcceptedTag), committedActionRequired);
         expect(created).toMatchObject({ created: true, marketRef: owner.marketRef, revision: 1 });
         const creationRetry = yield* admit('native-create-retry', 'native-create');
         const repeatedCreation = yield* executeCreateMarketWithAuthorization(
@@ -147,6 +151,7 @@ it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
           association.requestCorrelation,
           association.options,
         );
+        assert(!Predicate.isTagged(associated, actionProposalAcceptedTag), committedActionRequired);
         expect(associated).toMatchObject({ associationRef: owner.associationRef, changed: true, revision: 1 });
         const definition = yield* admit('native-revise');
         const revisionPayload = {
@@ -186,6 +191,7 @@ it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
           return;
         }
         const revised = winningRevision.success;
+        assert(!Predicate.isTagged(revised, actionProposalAcceptedTag), committedActionRequired);
         const suspension = yield* admit('native-suspend');
         const suspended = yield* executeSuspendMarketWithAuthorization(
           {
@@ -199,6 +205,7 @@ it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
           suspension.requestCorrelation,
           suspension.options,
         );
+        assert(!Predicate.isTagged(suspended, actionProposalAcceptedTag), committedActionRequired);
         expect(suspended.lifecycle).toBe('SUSPENDED');
         const activation = yield* admit('native-activate');
         const activated = yield* executeActivateMarketWithAuthorization(
@@ -213,6 +220,7 @@ it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
           activation.requestCorrelation,
           activation.options,
         );
+        assert(!Predicate.isTagged(activated, actionProposalAcceptedTag), committedActionRequired);
         expect(activated.lifecycle).toBe('ACTIVE');
         const associationRevision = yield* admit('native-revise-association');
         const revisedAssociation = yield* executeReviseStorefrontAssociationWithAuthorization(
@@ -230,6 +238,7 @@ it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
           associationRevision.requestCorrelation,
           associationRevision.options,
         );
+        assert(!Predicate.isTagged(revisedAssociation, actionProposalAcceptedTag), committedActionRequired);
         const removal = yield* admit('native-remove-association');
         const removed = yield* executeRemoveStorefrontAssociationWithAuthorization(
           {
@@ -244,6 +253,7 @@ it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
           removal.requestCorrelation,
           removal.options,
         );
+        assert(!Predicate.isTagged(removed, actionProposalAcceptedTag), committedActionRequired);
         expect(removed).toMatchObject({ changed: true, revision: revisedAssociation.revision + 1 });
         const beforeOutageRead = yield* admit('native-before-storefront-outage');
         const beforeOutageHistory = yield* executeMarketHistoryWithAuthorization(
@@ -303,6 +313,7 @@ it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
           return;
         }
         const retired = retirementResult.success;
+        assert(!Predicate.isTagged(retired, actionProposalAcceptedTag), committedActionRequired);
         expect(retired).toMatchObject({ changed: true, lifecycle: 'RETIRED', marketRef: owner.marketRef });
         const retirementRetry = yield* admit('native-retire-retry', 'native-retire');
         const recovered = yield* executeRetireMarketWithAuthorization(
@@ -311,6 +322,7 @@ it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
           retirementRetry.requestCorrelation,
           retirementRetry.options,
         );
+        assert(!Predicate.isTagged(recovered, actionProposalAcceptedTag), committedActionRequired);
         expect(recovered).toEqual(retired);
         const readback = yield* admit('native-readback');
         const history = yield* executeMarketHistoryWithAuthorization(
@@ -433,6 +445,7 @@ it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
         creation.requestCorrelation,
         creation.options,
       );
+      assert(!Predicate.isTagged(created, actionProposalAcceptedTag), committedActionRequired);
       const before = yield* owner.evidence();
       yield* owner.setCustomerContextState('suspended');
       const retirementPayload = {
@@ -483,6 +496,7 @@ it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
         restoredAdmission.requestCorrelation,
         restoredAdmission.options,
       );
+      assert(!Predicate.isTagged(retired, actionProposalAcceptedTag), committedActionRequired);
       expect(retired).toMatchObject({ changed: true, lifecycle: 'RETIRED', marketRef: owner.marketRef });
       const restoredEvidence = yield* owner.evidence();
       expect(restoredEvidence.admissions).toEqual([{ status: 'COMMITTED' }]);
@@ -533,6 +547,7 @@ it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
         create.requestCorrelation,
         create.options,
       );
+      assert(!Predicate.isTagged(created, actionProposalAcceptedTag), committedActionRequired);
       const before = yield* owner.evidence();
       const historyBeforeProof = yield* admit('history-before');
       const historyBefore = yield* executeMarketHistoryWithAuthorization(

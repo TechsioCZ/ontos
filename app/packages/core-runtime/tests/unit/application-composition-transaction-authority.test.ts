@@ -1,12 +1,28 @@
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
   ApplicationCompositionAuthorityError,
   lockApplicationCompositionAuthority,
+  lockApplicationCompositionReadScope,
   lockApplicationCompositionPublication,
 } from '../../src/modules/application-composition-authority.ts';
 import { makeTestDatabase } from '../support/database.ts';
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
+
+const scope = {
+  ...Schema.decodeSync(TrustedPrincipalContextSchema)({
+    authBindingId: '00000000-0000-4000-8000-000000000005',
+    authContextRef: 'better-auth-session:read-scope',
+    authMethod: 'session',
+    legalEntityId: '00000000-0000-4000-8000-000000000004',
+    principalId: '00000000-0000-4000-8000-000000000003',
+    tenantId: '00000000-0000-4000-8000-000000000001',
+  }),
+  correlationId: 'read-scope',
+};
+const operationAt = DateTime.toDateUtc(DateTime.makeUnsafe(0));
 
 const revision = 'a'.repeat(64);
 const admittedRow = {
@@ -23,6 +39,91 @@ const scriptedRows = (statement: string, authorityRows: readonly object[]) => {
   return Effect.succeed(statement.includes('from "core"."application_composition_authority"') ? authorityRows : []);
 };
 
+it.effect('reads install RLS and acquire the fence in one exchange, then admit from a later snapshot', () =>
+  Effect.gen(function* admittedReadScope() {
+    const statements: string[] = [];
+    const database = yield* makeTestDatabase((statement, values) => {
+      statements.push(statement);
+      return statement.includes('set_config')
+        ? Effect.succeed([
+            {
+              isolation: 'read committed',
+              legal_entity_id: values[1],
+              operation_at: operationAt,
+              role: 'ontos_runtime',
+              tenant_id: values[0],
+            },
+          ])
+        : scriptedRows(statement, [admittedRow]);
+    });
+    const installed = yield* database.transaction((transaction) =>
+      lockApplicationCompositionReadScope(transaction, revision, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+    );
+    expect(installed.scoped.scope).toEqual({ legalEntityId: scope.legalEntityId, tenantId: scope.tenantId });
+    expect(DateTime.toEpochMillis(installed.operationAt)).toBe(0);
+    expect(statements).toHaveLength(4);
+    expect(statements[1]).toContain('set_config');
+    expect(statements[1]).toContain('pg_advisory_xact_lock_shared');
+    expect(statements[1]).not.toContain('application_composition_authority');
+    expect(statements[2]).toContain('from "core"."application_composition_authority"');
+    expect(statements.at(-1)).toMatch(/commit/iu);
+  }),
+);
+
+it.effect('combined read scope rejects unsupported isolation, bad settings and superseded authority', () =>
+  Effect.gen(function* rejectUnadmittedReadScope() {
+    for (const scenario of ['isolation', 'scope', 'revision', 'expired', 'draining'] as const) {
+      const statements: string[] = [];
+      const database = yield* makeTestDatabase((statement, values) => {
+        statements.push(statement);
+        return statement.includes('set_config')
+          ? Effect.succeed([
+              {
+                isolation: scenario === 'isolation' ? 'repeatable read' : 'read committed',
+                legal_entity_id: values[1],
+                operation_at: operationAt,
+                role: 'ontos_runtime',
+                tenant_id: scenario === 'scope' ? 'different-tenant' : values[0],
+              },
+            ])
+          : scriptedRows(statement, [
+              {
+                ...admittedRow,
+                phase: scenario === 'draining' ? 'draining' : 'active',
+                revision: scenario === 'revision' ? 'b'.repeat(64) : revision,
+                unexpired: scenario !== 'expired',
+              },
+            ]);
+      });
+      const failure = yield* database
+        .transaction((transaction) =>
+          lockApplicationCompositionReadScope(transaction, revision, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+        )
+        .pipe(Effect.flip);
+      expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
+      expect(statements.at(-1)).toMatch(/rollback/iu);
+      if (scenario === 'isolation' || scenario === 'scope') {
+        expect(failure).toMatchObject({
+          cause: { _tag: 'OperationContextUnavailable', code: 'operation_context_unavailable' },
+          reason: 'Application Composition read scope could not be installed',
+        });
+        expect(
+          statements.some((statement) => statement.includes('from "core"."application_composition_authority"')),
+        ).toBe(false);
+      } else {
+        expect(statements).toHaveLength(4);
+        expect(statements[2]).toContain('from "core"."application_composition_authority"');
+        expect(failure).toMatchObject({
+          reason:
+            scenario === 'draining'
+              ? 'Application Composition promotion is draining outstanding work'
+              : 'The requested Application Composition is missing, expired, or no longer active',
+        });
+      }
+    }
+  }),
+);
+
 it.effect('owner writes hold native shared publication lock until their transaction commits', () =>
   Effect.gen(function* admittedOwnerTransaction() {
     const statements: string[] = [];
@@ -35,8 +136,10 @@ it.effect('owner writes hold native shared publication lock until their transact
     ).toEqual([]);
     expect(statements[0]).toMatch(/begin/iu);
     expect(statements[1]).toContain('transaction_isolation');
-    expect(statements[2]).toContain('pg_advisory_xact_lock_shared');
-    expect(statements[3]).toContain('clock_timestamp()');
+    expect(statements[1]).toContain('pg_advisory_xact_lock_shared');
+    expect(statements[1]).toContain("case when current_setting('transaction_isolation') = $1");
+    expect(statements[2]).toContain('clock_timestamp()');
+    expect(statements).toHaveLength(4);
     expect(statements.at(-1)).toMatch(/commit/iu);
   }),
 );
@@ -88,13 +191,17 @@ it.effect('unsupported transaction snapshots cannot bypass either side of the pu
       for (const lock of [
         (transaction: Parameters<typeof lockApplicationCompositionAuthority>[0]) =>
           lockApplicationCompositionAuthority(transaction, revision, 'write').pipe(Effect.asVoid),
-        (transaction: Parameters<typeof lockApplicationCompositionAuthority>[0]) =>
+        (transaction: Parameters<typeof lockApplicationCompositionPublication>[0]) =>
           lockApplicationCompositionPublication(transaction).pipe(Effect.asVoid),
       ]) {
         const failure = yield* database.transaction(lock).pipe(Effect.flip);
         expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
       }
-      expect(statements.some((statement) => statement.includes('pg_advisory_xact_lock'))).toBe(false);
+      expect(statements.filter((statement) => statement.includes('pg_advisory_xact_lock'))).toHaveLength(2);
+      expect(
+        statements.every((statement) => !statement.includes('from "core"."application_composition_authority"')),
+      ).toBe(true);
+      expect(statements.filter((statement) => /rollback/iu.test(statement))).toHaveLength(2);
     }
   }),
 );

@@ -74,7 +74,8 @@ export const admitAssertionSubject = Effect.fn('GatewayDelegation.admitAssertion
     const verification = yield* GatewayDelegationVerification;
     const configuration = yield* verification.load;
     const verified = yield* Effect.tryPromise({
-      catch: (cause) => new GatewayDelegationError({ cause, code: 'authentication_required' }),
+      catch: (cause) =>
+        new GatewayDelegationError({ cause, code: 'authentication_required', reason: 'subject_assertion_unverified' }),
       try: jwtVerify.bind(undefined, Redacted.value(input.assertion), configuration.keys, {
         algorithms: ['EdDSA'],
         audience: input.binding.sourceAppId,
@@ -82,28 +83,35 @@ export const admitAssertionSubject = Effect.fn('GatewayDelegation.admitAssertion
         currentDate: input.currentDate,
         issuer: configuration.issuer,
       }),
-    }).pipe(Effect.timeoutOrElse({ duration: '5 seconds', orElse: () => Effect.fail(delegationUnavailable()) }));
-    yield* decodeGatewayContextProtectedHeader(verified.protectedHeader).pipe(Effect.mapError(delegationForbidden));
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: '5 seconds',
+        orElse: () => Effect.fail(delegationUnavailable('subject_verification_timeout')()),
+      }),
+    );
+    yield* decodeGatewayContextProtectedHeader(verified.protectedHeader).pipe(
+      Effect.mapError(delegationForbidden('subject_assertion_malformed')),
+    );
     const source = yield* decodeSupportedGatewayContextClaims(verified.payload).pipe(
-      Effect.mapError(delegationForbidden),
+      Effect.mapError(delegationForbidden('subject_assertion_malformed')),
     );
     if (
       source.iat > input.now ||
       source.exp <= input.now ||
       !bindingAttestsSource(input.binding, source, input.requestedCompositionRevision)
     ) {
-      return yield* delegationForbidden();
+      return yield* delegationForbidden('subject_assertion_not_attested')();
     }
     if ('privacyDispatch' in source || 'organizationGovernanceRead' in source) {
-      return yield* delegationForbidden();
+      return yield* delegationForbidden('subject_assertion_finite')();
     }
     if (source.ver === 4) {
       if (input.registeredWorkload !== true) {
-        return yield* delegationForbidden();
+        return yield* delegationForbidden('subject_assertion_kind_mismatch')();
       }
     } else {
       if (input.registeredWorkload === true) {
-        return yield* delegationForbidden();
+        return yield* delegationForbidden('subject_assertion_kind_mismatch')();
       }
       yield* validateDelegationAuthentication(source.principal, input.now);
     }

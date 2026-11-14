@@ -3,6 +3,7 @@ import { Reactivity } from 'effect/reactivity';
 import { PgClient } from '@effect/sql-pg';
 import {
   ActionAlreadyCommitted,
+  ActiveApplicationCompositionService,
   ActiveApplicationCompositionSnapshotSchema,
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
@@ -12,6 +13,7 @@ import {
   makeContextPermissionRelationshipMutationLive,
   runAction,
 } from '@app/core-runtime';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { createPrivacyDeniedAccess } from '../support/live-access-authority.ts';
@@ -535,9 +537,17 @@ const makeDsrHttp = Effect.fn('DsrMultiOwner.makeHttp')(function* makeDsrHttp(
     }),
   );
   const redemption = yield* native.makeRedemption();
+  const ownerApprovals = makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, privacyRegistration).pipe(
+    Layer.provide(
+      Layer.merge(
+        Layer.succeedContext(native.context),
+        Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(native.snapshot) }),
+      ),
+    ),
+  );
   const runtime = makePrivacyApiRuntime(
     Layer.succeed(ReadRuntime, Context.get(native.context, ReadRuntime)),
-    Layer.succeedContext(native.context),
+    Layer.merge(Layer.succeedContext(native.context), ownerApprovals),
     redemption,
   );
   const handler = yield* Effect.acquireRelease(

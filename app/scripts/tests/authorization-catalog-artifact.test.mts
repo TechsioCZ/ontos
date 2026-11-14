@@ -6,8 +6,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Result, Schema } from 'effect';
+import { Effect, Predicate, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { compileFullAccessRole } from '@app/core-runtime/access/bootstrap';
+import { buildAccessCatalogRelease } from '@app/core-runtime/access/catalog';
+import { ModuleKeySchema } from '@app/core-runtime/access/ids';
+import { WorkloadKeySchema } from '../../packages/core-runtime/src/authorization/access-declaration.ts';
 
 import {
   ACCESS_CATALOG_ARTIFACT_SCHEMA_VERSION,
@@ -16,6 +20,7 @@ import {
   AccessCatalogArtifactSchema,
   checkAccessCatalogArtifact,
   readAccessCatalogArtifact,
+  readAccessCatalogArtifactDocument,
   renderAccessCatalogArtifact,
   sortAccessCatalogModules,
   writeAccessCatalogArtifact,
@@ -58,13 +63,22 @@ export const ${slug}Action = defineAction(
 `;
 
 const ZETA_ACTION_SOURCE = actionSource('zeta.core', 'zeta.core.thing.do', 'alpha');
+const ALPHA_CAPABILITY_KEY = 'alpha.core.thing.do';
+const ALPHA_MODULE_ID = 'alpha.core';
 
-const modulesOf = (sources: readonly { readonly file: string; readonly source: string }[]) =>
+const catalogOf = (sources: readonly { readonly file: string; readonly source: string }[]) =>
   Effect.gen(function* modulesOfEffect() {
     const catalog = yield* stageAccessModulesFromSources(sources, TOPOLOGY_CALLERS);
     // The scan hands the modules over as data; the same decode the artifact writes pins the type.
-    return yield* Schema.decodeUnknownEffect(AccessCatalogArtifactModulesSchema)(catalog.modules);
+    const modules = yield* Schema.decodeUnknownEffect(AccessCatalogArtifactModulesSchema)(catalog.modules);
+    return { ...catalog, modules };
   });
+const modulesOf = (sources: readonly { readonly file: string; readonly source: string }[]) =>
+  catalogOf(sources).pipe(Effect.map(({ modules }) => modules));
+const renderSources = (sources: readonly { readonly file: string; readonly source: string }[]) =>
+  catalogOf(sources).pipe(
+    Effect.flatMap(({ declaredWorkloadKeys, modules }) => renderAccessCatalogArtifact(modules, declaredWorkloadKeys)),
+  );
 
 const ACTOR_ACTION_FILE = 'verticals/alpha/src/actions/actor.action.ts';
 const actorActionSource = (callers: string, subjectWorkloads?: string) => `
@@ -103,6 +117,34 @@ export const actorAction = defineAction(
 );
 `;
 
+const machineWorkloadKey = 'alpha.machine';
+const intakeWorkloadKey = 'demo.crm.party-intake';
+const workloadActorSource = (extraCarrier = '') => `
+export const purposeAction = defineAction({
+  accessActor: {
+    callers: ['crm'],
+    subject: 'workload',
+    subjectWorkloads: [${JSON.stringify(intakeWorkloadKey)}],
+    reason: 'Only the registered producer workload may invoke this Party purpose',
+  },
+  ${extraCarrier}
+  actionKey: 'party.registry.create-crm-client-party',
+  entrypoint: defineTenantModuleEntrypoint({
+    access: 'write',
+    authorization: { kind: 'protected' },
+    entrypointKey: 'party.registry.create-crm-client-party',
+    moduleKey: 'party.registry',
+    role: 'action',
+  }),
+}, handler);
+`;
+const PURPOSE_ACTION_FILE = 'verticals/party-registry/src/actions/create-crm-client-party.action.ts';
+const workloadActionSource = (workloads: string) =>
+  actionSource(ALPHA_MODULE_ID, ALPHA_CAPABILITY_KEY, 'machine').replace(
+    /^ {4}accessDeclaration: \{[\s\S]*?^ {4}\},\n/mu,
+    `    accessWorkload: { reason: 'Only the reviewed machine performs this purpose', workloads: [${workloads}] },\n`,
+  );
+
 /** A disposable workspace root; the bootstrap reads the root's own topology, so the checkout's is copied in. */
 const makeTempRoot = async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'ontos-catalog-artifact-'));
@@ -117,6 +159,7 @@ const withTempRoot = <A, E, R>(use: (root: string) => Effect.Effect<A, E, R>) =>
   );
 
 const ArtifactDocumentSchema = Schema.Struct({
+  declaredWorkloadKeys: Schema.Array(WorkloadKeySchema),
   modules: Schema.Array(Schema.Unknown),
   schemaVersion: Schema.Number,
 });
@@ -124,7 +167,7 @@ const ArtifactDocumentSchema = Schema.Struct({
 it.effect('orders modules and descriptors canonically regardless of scan order', () =>
   Effect.gen(function* ordersCanonically() {
     const alpha = ZETA_ACTION_SOURCE;
-    const beta = actionSource('alpha.core', 'alpha.core.thing.do', 'beta');
+    const beta = actionSource(ALPHA_MODULE_ID, ALPHA_CAPABILITY_KEY, 'beta');
     const forward = yield* modulesOf([
       { file: ZETA_ACTION_FILE, source: alpha },
       { file: ALPHA_ACTION_FILE, source: beta },
@@ -133,20 +176,19 @@ it.effect('orders modules and descriptors canonically regardless of scan order',
       { file: ALPHA_ACTION_FILE, source: beta },
       { file: ZETA_ACTION_FILE, source: alpha },
     ]);
-    expect(sortAccessCatalogModules(forward).map((module) => module.moduleId)).toEqual(['alpha.core', 'zeta.core']);
-    expect(yield* renderAccessCatalogArtifact(forward)).toBe(yield* renderAccessCatalogArtifact(reversed));
+    expect(sortAccessCatalogModules(forward).map((module) => module.moduleId)).toEqual([ALPHA_MODULE_ID, 'zeta.core']);
+    expect(yield* renderAccessCatalogArtifact(forward, [])).toBe(yield* renderAccessCatalogArtifact(reversed, []));
   }),
 );
 
 it.effect('renders a canonical document with the schema version', () =>
   Effect.gen(function* rendersCanonicalDocument() {
-    const rendered = yield* renderAccessCatalogArtifact(
-      yield* modulesOf([{ file: ZETA_ACTION_FILE, source: ZETA_ACTION_SOURCE }]),
-    );
+    const rendered = yield* renderSources([{ file: ZETA_ACTION_FILE, source: ZETA_ACTION_SOURCE }]);
     expect(rendered.endsWith('\n')).toBe(true);
     const parsed = Schema.decodeUnknownSync(Schema.fromJsonString(ArtifactDocumentSchema))(rendered);
     expect(parsed.schemaVersion).toBe(ACCESS_CATALOG_ARTIFACT_SCHEMA_VERSION);
     expect(parsed.modules).toHaveLength(1);
+    expect(parsed.declaredWorkloadKeys).toEqual([]);
   }),
 );
 
@@ -157,6 +199,9 @@ it.effect('writes, reads, and drift-checks the artifact', () =>
         yield* writeAccessCatalogArtifact(root);
         // The committed document round-trips through the descriptor schema.
         expect(yield* readAccessCatalogArtifact(root)).toStrictEqual([]);
+        const document = yield* readAccessCatalogArtifactDocument(root);
+        expect(document.declaredWorkloadKeys).toEqual([]);
+        expect(document.schemaVersion).toBe(2);
         yield* checkAccessCatalogArtifact(root);
         // A stale document (any different content) fails the drift check.
         yield* Effect.promise(() =>
@@ -174,13 +219,117 @@ it.effect('writes, reads, and drift-checks the artifact', () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect('collects sorted unique workload purposes before excluding machine carriers from the human catalog', () =>
+  Effect.gen(function* machinePurposeInventory() {
+    const sources = [
+      { file: ZETA_ACTION_FILE, source: ZETA_ACTION_SOURCE },
+      { file: ALPHA_ACTION_FILE, source: workloadActionSource(`'alpha.zulu', ${JSON.stringify(machineWorkloadKey)}`) },
+      {
+        file: 'verticals/alpha/src/actions/other.action.ts',
+        source: workloadActionSource(JSON.stringify(machineWorkloadKey)),
+      },
+      { file: PURPOSE_ACTION_FILE, source: workloadActorSource() },
+    ];
+    const baseline = yield* catalogOf([{ file: ZETA_ACTION_FILE, source: ZETA_ACTION_SOURCE }]);
+    const catalog = yield* catalogOf(sources);
+    expect(catalog.modules).toEqual(baseline.modules);
+    expect(catalog.declaredWorkloadKeys).toEqual([machineWorkloadKey, 'alpha.zulu', intakeWorkloadKey]);
+    const artifact = yield* renderSources(sources);
+    expect(artifact).toBe(yield* renderSources(sources.toReversed()));
+    const decoded = Schema.decodeUnknownSync(Schema.fromJsonString(AccessCatalogArtifactSchema))(artifact);
+    expect(decoded.modules).toEqual(
+      baseline.modules.map((module) => ({
+        ...module,
+        descriptors: module.descriptors.map((descriptor) => ({ ...descriptor, accessFieldGroups: [] })),
+      })),
+    );
+    expect(decoded.declaredWorkloadKeys).toEqual(catalog.declaredWorkloadKeys);
+  }),
+);
+
+it.effect('includes validated subject workloads on a human carrier without changing its human cell', () =>
+  Effect.gen(function* humanAndMachineInventoriesRemainSeparate() {
+    const plain = yield* catalogOf([{ file: ACTOR_ACTION_FILE, source: actorActionSource("'crm'") }]);
+    const declared = yield* catalogOf([
+      { file: ACTOR_ACTION_FILE, source: actorActionSource("'crm'", JSON.stringify(intakeWorkloadKey)) },
+    ]);
+    expect(declared.declaredWorkloadKeys).toEqual([intakeWorkloadKey]);
+    expect(declared.modules[0]?.descriptors[0]?.accessDeclaration).toEqual(
+      plain.modules[0]?.descriptors[0]?.accessDeclaration,
+    );
+  }),
+);
+
+it.effect(
+  'refuses malformed and foreign workload declarations and unknown actor callers before inventory publication',
+  () =>
+    Effect.gen(function* invalidMachinePurposeInventory() {
+      for (const source of [
+        workloadActionSource(''),
+        workloadActionSource(`${JSON.stringify(machineWorkloadKey)}, ${JSON.stringify(machineWorkloadKey)}`),
+        workloadActionSource("'INVALID'"),
+        workloadActionSource("'foreign.machine'"),
+        workloadActorSource().replace("callers: ['crm']", "callers: ['unknown-caller']"),
+        workloadActorSource().replace("subject: 'workload'", "subject: 'anyone'"),
+        workloadActorSource().replace(JSON.stringify(intakeWorkloadKey), "'INVALID'"),
+      ]) {
+        const failure = yield* stageAccessModulesFromSources(
+          [{ file: PURPOSE_ACTION_FILE, source }],
+          TOPOLOGY_CALLERS,
+        ).pipe(Effect.flip);
+        expect(failure.code).toBe('stage_access_catalog_scan_refused');
+      }
+    }),
+);
+
+it.effect('requires the v2 workload inventory and rejects missing, malformed or duplicate keys without fallback', () =>
+  Effect.gen(function* requiredV2PurposeInventory() {
+    for (const data of [
+      { modules: [], schemaVersion: 1 },
+      { modules: [], schemaVersion: 2 },
+      { declaredWorkloadKeys: null, modules: [], schemaVersion: 2 },
+      { declaredWorkloadKeys: ['INVALID'], modules: [], schemaVersion: 2 },
+      { declaredWorkloadKeys: [machineWorkloadKey, machineWorkloadKey], modules: [], schemaVersion: 2 },
+    ]) {
+      yield* withTempRoot((root) =>
+        Effect.gen(function* refuseMalformedInventory() {
+          yield* Effect.promise(() =>
+            writeFile(path.join(root, AUTHORIZATION_CATALOG_ARTIFACT_PATH), JSON.stringify(data)),
+          );
+          expect((yield* readAccessCatalogArtifactDocument(root).pipe(Effect.flip)).code).toBe('artifact_unreadable');
+          expect((yield* readAccessCatalogArtifact(root).pipe(Effect.flip)).code).toBe('artifact_unreadable');
+        }),
+      );
+    }
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('detects a syntactically valid workload with no source declaration as artifact drift', () =>
+  withTempRoot((root) =>
+    Effect.gen(function* unknownPurposeHasNoSourceEvidence() {
+      yield* writeAccessCatalogArtifact(root);
+      yield* Effect.promise(() =>
+        writeFile(
+          path.join(root, AUTHORIZATION_CATALOG_ARTIFACT_PATH),
+          `${JSON.stringify({ declaredWorkloadKeys: ['unknown.workload'], modules: [], schemaVersion: 2 })}\n`,
+        ),
+      );
+      const failure = yield* checkAccessCatalogArtifact(root).pipe(Effect.flip);
+      expect(Predicate.isTagged(failure, 'AccessCatalogArtifactError')).toBe(true);
+      expect(Predicate.isTagged(failure, 'AccessCatalogArtifactError') && failure.code).toBe('artifact_stale');
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect('refuses an artifact whose schema version is unknown', () =>
   Effect.gen(function* refusesUnknownSchemaVersion() {
     yield* withTempRoot((root) =>
       Effect.gen(function* refuseUnknownVersion() {
         const artifactPath = path.join(root, AUTHORIZATION_CATALOG_ARTIFACT_PATH);
         yield* Effect.promise(() => mkdir(path.dirname(artifactPath), { recursive: true }));
-        yield* Effect.promise(() => writeFile(artifactPath, `${JSON.stringify({ modules: [], schemaVersion: 2 })}\n`));
+        yield* Effect.promise(() =>
+          writeFile(artifactPath, `${JSON.stringify({ declaredWorkloadKeys: [], modules: [], schemaVersion: 3 })}\n`),
+        );
         expect((yield* Effect.flip(readAccessCatalogArtifact(root))).reason).toMatch(/descriptor contract/u);
       }),
     );
@@ -189,9 +338,9 @@ it.effect('refuses an artifact whose schema version is unknown', () =>
 
 it.effect('pins the module callers of a declared carrier with sorted callers', () =>
   Effect.gen(function* pinsCallers() {
-    const rendered = yield* renderAccessCatalogArtifact(
-      yield* modulesOf([{ file: ACTOR_ACTION_FILE, source: actorActionSource("'commerce-order', 'catalog'") }]),
-    );
+    const rendered = yield* renderSources([
+      { file: ACTOR_ACTION_FILE, source: actorActionSource("'commerce-order', 'catalog'") },
+    ]);
     const parsed = Schema.decodeUnknownSync(Schema.fromJsonString(AccessCatalogArtifactSchema))(rendered);
     expect(parsed.modules[0]?.descriptors[0]?.actor).toStrictEqual({
       callers: ['catalog', 'commerce-order'],
@@ -205,35 +354,82 @@ it.effect('pins the module callers of a declared carrier with sorted callers', (
 
 it.effect('pins declared subject workloads in canonical order and omits them when undeclared', () =>
   Effect.gen(function* pinsSubjectWorkloads() {
-    const declared = yield* renderAccessCatalogArtifact(
-      yield* modulesOf([
-        {
-          file: ACTOR_ACTION_FILE,
-          source: actorActionSource(
-            "'commerce-order'",
-            "'commerce.storefront-client', 'commerce.order-approval-consumer'",
-          ),
-        },
-      ]),
-    );
+    const declared = yield* renderSources([
+      {
+        file: ACTOR_ACTION_FILE,
+        source: actorActionSource(
+          "'commerce-order'",
+          "'commerce.storefront-client', 'commerce.order-approval-consumer'",
+        ),
+      },
+    ]);
     const parsed = Schema.decodeUnknownSync(Schema.fromJsonString(AccessCatalogArtifactSchema))(declared);
     expect(parsed.modules[0]?.descriptors[0]?.actor).toStrictEqual({
       callers: ['commerce-order'],
       subject: 'identity',
       subjectWorkloads: ['commerce.order-approval-consumer', 'commerce.storefront-client'],
     });
-    const undeclared = yield* renderAccessCatalogArtifact(
-      yield* modulesOf([{ file: ACTOR_ACTION_FILE, source: actorActionSource("'commerce-order'") }]),
-    );
+    const undeclared = yield* renderSources([
+      { file: ACTOR_ACTION_FILE, source: actorActionSource("'commerce-order'") },
+    ]);
     expect(undeclared).not.toContain('subjectWorkloads');
   }),
 );
 
+it.effect('accepts an exclusive workload actor without publishing a human or full-owner cell', () =>
+  Effect.gen(function* excludesWorkloadActorFromRoles() {
+    const catalog = yield* catalogOf([
+      { file: ZETA_ACTION_FILE, source: ZETA_ACTION_SOURCE },
+      { file: PURPOSE_ACTION_FILE, source: workloadActorSource() },
+    ]);
+    const { modules } = catalog;
+    expect(modules.map(({ moduleId }) => moduleId)).toEqual(['zeta.core']);
+    const artifact = yield* renderAccessCatalogArtifact(modules, catalog.declaredWorkloadKeys);
+    expect(artifact).not.toContain('create-crm-client-party');
+    expect(catalog.declaredWorkloadKeys).toEqual([intakeWorkloadKey]);
+    const document = Schema.decodeUnknownSync(Schema.fromJsonString(AccessCatalogArtifactSchema))(artifact);
+    expect(document.declaredWorkloadKeys).toEqual([intakeWorkloadKey]);
+    expect(JSON.stringify(document.modules)).not.toContain('party-intake');
+    const release = yield* Effect.fromResult(
+      buildAccessCatalogRelease({
+        installedModuleKeys: [ModuleKeySchema.make('zeta.core'), ModuleKeySchema.make('party.registry')],
+        modules,
+        publishedAt: new Date(0),
+      }),
+    );
+    const fullOwner = yield* Effect.fromResult(compileFullAccessRole(release));
+    expect(fullOwner.cells.map(({ capabilityKey }) => capabilityKey)).toEqual(['zeta.core.thing.do']);
+  }),
+);
+
+it.effect(
+  'refuses a protected carrier with no authority and a workload actor mixed with a declaration or workload',
+  () =>
+    Effect.gen(function* refusesInvalidActorOnlyCarrier() {
+      const humanDeclaration = `accessDeclaration: {
+      key: 'party.registry.crm-client-party.create', kind: 'action', modes: ['run', 'propose'],
+      placement: { group: 'intake', level: 'basic' }, risk: 'sensitive', selectors: [],
+    },`;
+      for (const source of [
+        workloadActorSource().replace('subjectWorkloads:', 'missingWorkloads:'),
+        workloadActorSource(humanDeclaration),
+        workloadActorSource("accessWorkload: { reason: 'Invalid mixed carrier', workloads: ['party.intake'] },"),
+        workloadActorSource().replace(/accessActor: \{[\s\S]*?\},/u, ''),
+      ]) {
+        const refused = yield* stageAccessModulesFromSources(
+          [{ file: PURPOSE_ACTION_FILE, source }],
+          TOPOLOGY_CALLERS,
+        ).pipe(Effect.flip);
+        expect(refused.code).toBe('stage_access_catalog_scan_refused');
+      }
+    }),
+);
+
 it.effect('refuses a hand-edited artifact whose module callers are empty or repeated', () =>
   Effect.gen(function* refusesMalformedCallers() {
-    const rendered = yield* renderAccessCatalogArtifact(
-      yield* modulesOf([{ file: ACTOR_ACTION_FILE, source: actorActionSource("'commerce-order', 'catalog'") }]),
-    );
+    const rendered = yield* renderSources([
+      { file: ACTOR_ACTION_FILE, source: actorActionSource("'commerce-order', 'catalog'") },
+    ]);
     for (const callers of ['[]', '["catalog", "catalog"]']) {
       yield* withTempRoot((root) =>
         Effect.gen(function* refuseMalformedCallers() {
@@ -251,9 +447,7 @@ it.effect('refuses a hand-edited artifact whose module callers are empty or repe
 
 it.effect('omits the actor field from descriptors that declare no module caller', () =>
   Effect.gen(function* omitsActor() {
-    const rendered = yield* renderAccessCatalogArtifact(
-      yield* modulesOf([{ file: ZETA_ACTION_FILE, source: ZETA_ACTION_SOURCE }]),
-    );
+    const rendered = yield* renderSources([{ file: ZETA_ACTION_FILE, source: ZETA_ACTION_SOURCE }]);
     expect(rendered).not.toContain('"actor"');
   }),
 );
@@ -268,6 +462,22 @@ it.effect('refuses a stage scan whose module caller is not a topology vertical',
     );
     expect(refused.code).toBe('stage_access_catalog_scan_refused');
     expect(refused.reason).toContain('unknown caller "not-a-vertical"');
+  }),
+);
+
+it.effect('keeps distinct navigation and page declarations that share the same entrypoint', () =>
+  Effect.gen(function* navigationAndPageCells() {
+    const first = actionSource(ALPHA_MODULE_ID, 'alpha.core.navigation-thing.read', 'alpha');
+    const second = actionSource(ALPHA_MODULE_ID, 'alpha.core.page-thing.read', 'alpha');
+    const modules = yield* modulesOf([
+      { file: 'verticals/alpha/vertical.manifest.ts', source: first },
+      { file: 'verticals/alpha/src/routes/thing/route.meta.ts', source: second },
+    ]);
+    expect(
+      modules
+        .flatMap(({ descriptors }) => descriptors.map(({ accessDeclaration }) => accessDeclaration.key))
+        .toSorted(),
+    ).toEqual(['alpha.core.navigation-thing.read', 'alpha.core.page-thing.read']);
   }),
 );
 

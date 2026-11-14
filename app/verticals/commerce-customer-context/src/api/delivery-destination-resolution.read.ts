@@ -49,6 +49,6 @@ export const deliveryDestinationResolutionRead = defineRead(
     resultSchema: DeliveryDestinationResolutionResponseSchema,
     schemaVersion: '1',
   },
-  handleDeliveryDestinationResolution,
+  { load: handleDeliveryDestinationResolution },
   deliveryDestinationReadServiceFactory,
 );

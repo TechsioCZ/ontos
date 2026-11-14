@@ -1,6 +1,8 @@
 import { sql } from 'drizzle-orm';
 import { Context, Effect, Layer } from 'effect';
 import { CoreDatabase } from '../../db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../../db/database-identities.ts';
 import type { RegisteredGatewayPrivacyDispatch } from '../../auth/system-principal-context-provenance.ts';
 import type { OperationalScope } from '../../operations/context.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../../db/types.ts';
@@ -16,7 +18,10 @@ export interface PrivacyDispatchLiveness {
   ) => Effect.Effect<boolean, AccessDecisionUnavailable>;
 }
 /** Finite cross-owner Privacy dispatch evidence; the generic same-producer workload protocol stays unchanged. */
-const makePrivacyDispatchLiveness = (database: Pick<CoreDatabaseExecutor, 'transaction'>): PrivacyDispatchLiveness => ({
+const makePrivacyDispatchLiveness = (
+  database: Pick<CoreDatabaseExecutor, 'transaction'>,
+  enrollment: DatabaseIdentityEnrollment,
+): PrivacyDispatchLiveness => ({
   read: (scope, dispatch, transaction) => {
     const { authority } = dispatch;
     if (authority === undefined) {
@@ -51,7 +56,7 @@ const makePrivacyDispatchLiveness = (database: Pick<CoreDatabaseExecutor, 'trans
     return (
       transaction === undefined
         ? database.transaction((current) =>
-            installOperationalScope(current, scope).pipe(Effect.andThen(() => query(current))),
+            installOperationalScope(current, scope, enrollment).pipe(Effect.andThen(() => query(current))),
           )
         : query(transaction)
     ).pipe(Effect.mapError((cause) => accessDecisionUnavailable('The native Privacy dispatch is unavailable', cause)));
@@ -67,6 +72,7 @@ export const PrivacyDispatchLivenessSourceLive = Layer.effect(
   PrivacyDispatchLivenessSource,
   Effect.gen(function* privacyDispatchLivenessLive() {
     const database = yield* CoreDatabase;
-    return makePrivacyDispatchLiveness(database.executor);
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
+    return makePrivacyDispatchLiveness(database.executor, enrollment);
   }),
 );

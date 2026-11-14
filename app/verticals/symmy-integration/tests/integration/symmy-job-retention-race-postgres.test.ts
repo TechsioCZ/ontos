@@ -32,6 +32,9 @@ import {
 import { symmyJobExecutionStore } from '../../src/persistence/symmy-job-execution-store.ts';
 import { symmyJobStoreFactory } from '../../src/persistence/symmy-job-store.ts';
 import { symmyJobRetentionStore } from '../../src/services/symmy-job-retention-store.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const pidSchema = Schema.Tuple([Schema.Struct({ pid: Schema.Int })]);
 const fixture = Effect.gen(function* nativeRaceFixture() {
@@ -107,7 +110,7 @@ const fixture = Effect.gen(function* nativeRaceFixture() {
     tenantId,
   });
   const admitted = yield* firstDb.transaction((tx) =>
-    installOperationalScope(tx, scope).pipe(
+    installOperationalScope(tx, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
       Effect.flatMap((executor) => symmyJobStoreFactory(executor, scope)),
       Effect.flatMap((store) =>
         store.admit({ fixtureId: 'internal-race', idempotencyKey: 'internal-race', routeKey: 'productsBatch' }),
@@ -172,6 +175,7 @@ for (const order of ['CLAIM_FIRST', 'PURGE_FIRST'] as const) {
             const executor = yield* installOperationalScope(
               tx,
               order === 'CLAIM_FIRST' ? state.scope : state.governanceScope,
+              FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
             );
             const [pid] = yield* Schema.decodeUnknownEffect(pidSchema)(
               yield* state.first<{ pid: number }>`select pg_backend_pid() as pid`,
@@ -193,6 +197,7 @@ for (const order of ['CLAIM_FIRST', 'PURGE_FIRST'] as const) {
             const executor = yield* installOperationalScope(
               tx,
               order === 'CLAIM_FIRST' ? state.governanceScope : state.scope,
+              FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
             );
             const [pid] = yield* Schema.decodeUnknownEffect(pidSchema)(
               yield* state.second<{ pid: number }>`select pg_backend_pid() as pid`,
@@ -297,7 +302,7 @@ it.effect(
       const run = (scope: OperationalScope) =>
         state.firstDb
           .transaction((tx) =>
-            installOperationalScope(tx, scope).pipe(
+            installOperationalScope(tx, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
               Effect.flatMap((executor) => symmyJobRetentionService(executor, scope)),
               Effect.flatMap((service) => service.purge(handoff)),
               Effect.map((result) => result.status),

@@ -38,6 +38,7 @@ import {
 } from '../../src/database/schema.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import { observedEligibleCounterpartyRole } from '../support/observed-counterparty-role.ts';
 
 const platform = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -247,7 +248,16 @@ it.live(
               }),
           }),
           Layer.succeed(ProfileCounterpartyRoleEligibilityResolverFactory, {
-            make: () => () => Effect.succeed({ outcome: 'INDETERMINATE' as const }),
+            make:
+              () =>
+              ({ counterpartyResourceId, tenantId }) =>
+                counterpartyResourceId === counterpartyRef.resourceId && tenantId === fixture.tenantId
+                  ? observedEligibleCounterpartyRole({
+                      managedLegalEntityId: fixture.legalEntityId,
+                      roleResourceId: roleRef.resourceId,
+                      roleResourceRevision: '2026-11-07T00:00:00.000Z',
+                    })
+                  : Effect.succeed({ outcome: 'INDETERMINATE' as const }),
           }),
           Layer.succeed(PartyRegistryRetailPartyResolverFactory, {
             make: () => () => Effect.succeed({ outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' as const }),

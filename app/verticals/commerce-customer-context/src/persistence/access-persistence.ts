@@ -26,6 +26,7 @@ import type {
   ClaimCounterpartyAccessInvitationInput,
   CounterpartyInvitationClaimAuthorityService,
   CounterpartyInvitationProofLifecycleService,
+  CounterpartyAccessCheckInput,
   CounterpartyAccessDomainError,
   CounterpartyAccessPortService,
   CreateCounterpartyAccessInvitationOutcome,
@@ -563,6 +564,35 @@ export const currentOwnerAccessForTransaction =
       Effect.map(ownerAccessDecisionFromResult(input)),
     );
   };
+
+/** Read the exact grant projection used by invitation preflight, including its decision. */
+export const snapshotCurrentOwnerAccess = (
+  transaction: CounterpartyAccessScopedRoutineInvoker,
+  scope: Pick<OperationalScope, 'tenantId'> & { readonly legalEntityId: string },
+  input: CurrentOwnerAccessDecisionInput,
+) => {
+  if (
+    input.counterpartyRef.tenantId !== scope.tenantId ||
+    input.principal.tenantId !== scope.tenantId ||
+    input.legalEntityId !== scope.legalEntityId
+  ) {
+    return Effect.succeed({ decision: 'UNAVAILABLE' as const, rows: [] });
+  }
+  return readOwnerGrantRows(transaction, input, false).pipe(
+    Effect.flatMap((result) =>
+      Result.isFailure(result)
+        ? Effect.fail(accessUnavailable(result.failure))
+        : Effect.succeed({
+            decision: ownerAccessDecisionFromRows(result.success, input),
+            rows: result.success.map((row) => ({
+              ...row,
+              granted_at: instant(row.granted_at),
+              revoked_at: row.revoked_at === null ? null : instant(row.revoked_at),
+            })),
+          }),
+    ),
+  );
+};
 
 export const lockingCurrentOwnerAccessForTransaction = (
   transaction: CounterpartyAccessScopedRoutineInvoker,
@@ -1242,12 +1272,43 @@ const finishInvitationClaim = Effect.fn('AccessPersistence.finishInvitationClaim
   },
 );
 
+const counterpartyAccessCheckInScope = (
+  scope: OperationalScope & { readonly legalEntityId: string },
+  trustedStorefrontId: string | undefined,
+  input: CounterpartyAccessCheckInput,
+): boolean =>
+  exactScope(scope, { counterpartyRef: input.counterpartyRef, principalRefs: [input.principal] }) &&
+  input.principal.principalId === scope.principalId &&
+  (input.scope.kind === 'counterparty' || trustedStorefrontId === input.scope.storefrontKey);
+
 /**
  * Every claim proof of the invitation that somebody redeemed admitted that person as an invitee, one Core
  * assignment per proof. Once the invitation is claimed, resent or revoked, none of those proofs can be claimed
  * any more — the claim consumed one, a resend revoked the earlier one, a revocation revoked them all — so every
  * such assignment ends here, in the owner's transaction, not only the one a claim consumed.
  */
+/** Grants visible within the caller's already-checked Counterparty or Storefront scope. */
+const listCounterpartyAccessGrants = (
+  dependencies: CounterpartyAccessPersistenceContext,
+  input: Parameters<CounterpartyAccessPortService['list']>[0],
+) =>
+  dependencies.transaction
+    .invoke(listAccessGrantsRoutine, [input.counterpartyRef.resourceId, input.recipient?.principalId ?? null])
+    .pipe(
+      Effect.mapError(accessUnavailable),
+      Effect.map((rows) =>
+        rows.flatMap((row) => {
+          const grant = grantFromRow(dependencies.scope.tenantId, row);
+          const included =
+            input.scope.kind === 'counterparty'
+              ? grant.scope.kind === 'counterparty'
+              : grant.scope.kind === 'counterparty' ||
+                (grant.scope.kind === 'storefront' && grant.scope.storefrontKey === input.scope.storefrontKey);
+          return included ? [grant] : [];
+        }),
+      ),
+    );
+
 const endInvitationRedemptions = (dependencies: CounterpartyAccessPersistenceContext, invitationId: string) =>
   dependencies.transaction.invoke(readInvitationRedemptionsRoutine, [invitationId]).pipe(
     Effect.mapError(accessUnavailable),
@@ -1275,14 +1336,11 @@ export const counterpartyAccessPortForTransaction = (
   const service: CounterpartyAccessPortService = {
     bootstrapAdministrator: (input) => grantAccess(dependencies, input, true),
     check: (input) => {
-      if (
-        !exactScope(dependencies.scope, {
-          counterpartyRef: input.counterpartyRef,
-          principalRefs: [input.principal],
-        }) ||
-        !isTrustedPermissionScope(dependencies, input.scope) ||
-        dependencies.currentOwnerAccess === undefined
-      ) {
+      if (!counterpartyAccessCheckInScope(dependencies.scope, dependencies.trustedStorefrontId, input)) {
+        return Effect.succeed('UNAVAILABLE' as const);
+      }
+      if (dependencies.currentOwnerAccess === undefined) {
+        // The registered Read's gate admits the caller. Its exact owner grant is still mandatory.
         return Effect.succeed('UNAVAILABLE' as const);
       }
       return dependencies.currentOwnerAccess({
@@ -1414,22 +1472,7 @@ export const counterpartyAccessPortForTransaction = (
         legalEntityId: input.legalEntityId,
         principalRefs: [input.actor, ...(input.recipient === undefined ? [] : [input.recipient])],
       }) && isTrustedPermissionScope(dependencies, input.scope)
-        ? dependencies.transaction
-            .invoke(listAccessGrantsRoutine, [input.counterpartyRef.resourceId, input.recipient?.principalId ?? null])
-            .pipe(
-              Effect.mapError(accessUnavailable),
-              Effect.map((rows) =>
-                rows.flatMap((row) => {
-                  const grant = grantFromRow(dependencies.scope.tenantId, row);
-                  const included =
-                    input.scope.kind === 'counterparty'
-                      ? grant.scope.kind === 'counterparty'
-                      : grant.scope.kind === 'counterparty' ||
-                        (grant.scope.kind === 'storefront' && grant.scope.storefrontKey === input.scope.storefrontKey);
-                  return included ? [grant] : [];
-                }),
-              ),
-            )
+        ? listCounterpartyAccessGrants(dependencies, input)
         : Effect.fail(accessUnavailable()),
     resendInvitation: Effect.fn('CounterpartyAccessPort.resendInvitation')(function* resendInvitation(
       input: InvitationMutationInput,

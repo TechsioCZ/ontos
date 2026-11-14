@@ -12,9 +12,9 @@ import {
   CoreSearchQueryRuntimeLive,
   loadDatabaseIdentityConnections,
   OutboxRuntime,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
   ReadRuntime,
   SHELL_GATEWAY_ISSUER_IDENTITY,
+  SHARED_RUNTIME_IDENTITY,
   runAction,
 } from '@app/core-runtime';
 import { defineOutboxWorkerEntry, extractOutboxWorkerSubscriptions } from '@app/core-runtime/outbox/worker';
@@ -51,12 +51,17 @@ import { PartySearchProjectionGatewayLive } from '../../src/search/parties.provi
 import {
   outboxWorkerCorePersistenceLive,
   outboxWorkerDatabaseConfigLive,
+  outboxWorkerDatabaseIdentityEnrollmentLive,
   outboxWorkerHandlerLayers,
   outboxWorkerLayer,
   outboxWorkerRepositoryLive,
 } from '../../src/worker-host/layer.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
 import { partyCompositionSnapshot } from './application-composition.setup.ts';
+import {
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '@app/party-registry-identity-contracts';
 
 type EncodedPartyCandidate = typeof PartyCandidateSchema.Encoded;
 type EncodedFixturePrincipal = typeof TrustedPrincipalContextSchema.Encoded;
@@ -109,9 +114,11 @@ const partyWorkerRuntimeLive = outboxWorkerLayer.pipe(
   Layer.provide(outboxWorkerHandlerLayers.searchIngestion),
   Layer.provide(outboxWorkerHandlerLayers.searchProjectionStore),
   Layer.provide(outboxWorkerHandlerLayers.searchWorkerSnapshot),
+  Layer.provide(outboxWorkerHandlerLayers.searchIngestionRegistry),
   Layer.provide(outboxWorkerRepositoryLive),
   Layer.provide(outboxWorkerCorePersistenceLive),
   Layer.provide(outboxWorkerDatabaseConfigLive),
+  Layer.provide(outboxWorkerDatabaseIdentityEnrollmentLive),
   Layer.provide(NodeCrypto.layer),
 );
 
@@ -196,12 +203,21 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     () =>
       Effect.scoped(
         Effect.gen(function* requestIdentityRuntimeEffect() {
-          const connections = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
-          const partyRuntimeConnectionString = connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id].connectionString;
-          const issuerClient = yield* makeTestPgClient(
-            connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id].connectionString,
-            { maxConnections: 1 },
-          );
+          const connections = yield* loadDatabaseIdentityConnections({
+            enrollment: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+            envPath: '/dev/null',
+          });
+          const partyConfiguration = connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id];
+          const issuerConfiguration = connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id];
+          const bootstrapConfiguration = connections.runtime[SHARED_RUNTIME_IDENTITY.id];
+          assert.isOk(partyConfiguration);
+          assert.isOk(issuerConfiguration);
+          assert.isOk(bootstrapConfiguration);
+          expect(partyConfiguration.expectedRole).toBe(PARTY_REGISTRY_REQUEST_IDENTITY.role);
+          expect(issuerConfiguration.expectedRole).toBe(SHELL_GATEWAY_ISSUER_IDENTITY.role);
+          expect(bootstrapConfiguration.expectedRole).toBe(SHARED_RUNTIME_IDENTITY.role);
+          const partyRuntimeConnectionString = partyConfiguration.connectionString;
+          const issuerClient = yield* makeTestPgClient(issuerConfiguration.connectionString, { maxConnections: 1 });
           const compositionSnapshot = yield* partyCompositionSnapshot;
           const compositionRevision = compositionSnapshot.composition.revision;
           const actionKeys = [
@@ -219,7 +235,11 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               actionKeys,
               adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
+              // The dedicated request role cannot install scope; the scoped native writers take the
+              // same target's shared runtime credential while the actor keeps its own role.
+              bootstrapConnectionString: Redacted.make(bootstrapConfiguration.connectionString),
               compositionRevision,
+              databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
               ownerRegistration: partyRegistryBackendRegistration,
               runtimeConnectionString: Redacted.make(partyRuntimeConnectionString),
             }).pipe(Effect.orDie),
@@ -252,6 +272,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             const { assertion } = yield* registerTestGatewayScopeGrant(
               issuerClient,
               context.legalEntityId === undefined ? grant : { ...grant, legalEntityId: context.legalEntityId },
+              PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
             ).pipe(Effect.orDie);
             return trustVerifiedGatewayPrincipalContext(context, compositionRevision, {
               assertion,
@@ -700,7 +721,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     () =>
       Effect.scoped(
         Effect.gen(function* workerIdentityRuntimeEffect() {
-          const connections = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
+          const connections = yield* loadDatabaseIdentityConnections({
+            enrollment: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+            envPath: '/dev/null',
+          });
           const admin = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
           const compositionRevision = (yield* partyCompositionSnapshot).composition.revision;
           const [tenantId, partyId] = yield* Effect.all([nextUuid, nextUuid]);

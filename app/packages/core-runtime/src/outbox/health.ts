@@ -5,6 +5,8 @@ import { HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { NetAddress } from 'effect/net';
 import type { ServeError } from 'effect/http/HttpServerError';
 
+import type { OutboxWorkerHostStatusJson } from './status.ts';
+
 interface HealthState {
   readonly lastSuccessfulCycleAt: Option.Option<number>;
   readonly running: boolean;
@@ -87,9 +89,10 @@ export interface OutboxWorkerHealthServer {
 // Node supplies only the server constructor; the Effect adapter owns all socket I/O and cleanup.
 const createNodeHealthServer = () => process.getBuiltinModule('http').createServer();
 
+/** Serves /live, /ready and /status on the internal health port; the host has no public route. */
 export const serveOutboxWorkerHealth: (
   health: OutboxWorkerReadiness,
-  options: { readonly port: number },
+  options: { readonly port: number; readonly status: Effect.Effect<OutboxWorkerHostStatusJson> },
 ) => Effect.Effect<OutboxWorkerHealthServer, ServeError, Scope.Scope> = Effect.fn('OutboxWorkerHealth.serve')(
   function* serveOutboxWorkerHealthEffect(health, options) {
     const server = yield* makeNodeHttpServer(createNodeHealthServer, {
@@ -101,6 +104,9 @@ export const serveOutboxWorkerHealth: (
         return health.isLive.pipe(
           Effect.map((live) => HttpServerResponse.jsonUnsafe({ live }, { status: live ? 200 : 503 })),
         );
+      }
+      if (request.url === '/status') {
+        return options.status.pipe(Effect.map((status) => HttpServerResponse.jsonUnsafe(status, { status: 200 })));
       }
       if (request.url !== '/ready') {
         return Effect.succeed(HttpServerResponse.empty({ status: 404 }));

@@ -1,4 +1,4 @@
-import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
+import type { OperationalScope, ReadOwnerTransaction, ReadServiceFactory } from '@app/core-runtime';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import type { CurrentSupportedCurrenciesSuccess } from '@app/pricing-contracts/current-supported-currencies';
 import { CurrentSupportedCurrenciesSuccessSchema } from '@app/pricing-contracts/current-supported-currencies';
@@ -73,11 +73,6 @@ import {
 import { DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
 
 import { resolveCurrentSupportedCurrencies } from '../api/current-supported-currencies.read.ts';
-import { currencySupportPersistenceForScope } from '../persistence/currency-support-persistence.ts';
-import type { CommercialFeePersistence } from '../services/commercial-fee-persistence.service.ts';
-import { commercialFeePersistenceForScope } from '../services/commercial-fee-persistence.service.ts';
-import type { ContractualDiscountPersistence } from '../services/contractual-discount-persistence.service.ts';
-import { contractualDiscountPersistenceForScope } from '../services/contractual-discount-persistence.service.ts';
 import type {
   CurrentPricingDecisionAttemptSourcePort,
   CurrentPricingDecisionDiscountSetReaderPort,
@@ -98,7 +93,7 @@ import {
   makeCurrentPricingDecisionWholeEvaluationService,
 } from '../services/current-pricing-decision-whole-evaluation.service.ts';
 import type { ExactPriceResolutionService as ExactPriceResolutionPort } from '../services/exact-price-resolution.service.ts';
-import { ExactPriceResolver, exactPriceResolutionServiceForScope } from '../services/exact-price-resolution.service.ts';
+import { ExactPriceResolver, makeExactPriceResolutionService } from '../services/exact-price-resolution.service.ts';
 import type { PricingDiscountApplicability } from '../services/discount-applicability.service.ts';
 import { resolveCurrentPricingDiscountRevisions } from '../services/discount-applicability.service.ts';
 import {
@@ -112,14 +107,9 @@ import {
 import { PricingPromotionUnavailable } from '../services/pricing-promotion-unavailable.ts';
 import type { PriceGroupInterpretationService as PriceGroupInterpretationPort } from '../services/price-group-interpretation.service.ts';
 import { makePriceGroupInterpretationService } from '../services/price-group-interpretation.service.ts';
-import type { ExactPriceCandidateSetPersistence, PricePersistence } from '../services/price-persistence.service.ts';
-import { pricePersistenceForScope } from '../services/price-persistence.service.ts';
-import type { QuantityTierPersistence } from '../services/quantity-tier-persistence.service.ts';
-import { quantityTierPersistenceForScope } from '../services/quantity-tier-persistence.service.ts';
+import type { ExactPriceCandidateSetPersistence } from '../services/price-persistence.service.ts';
 import { aggregateQuantityTierLines } from '../services/quantity-tier-aggregation.service.ts';
 import { assessPricingQuantityBasis } from '../services/quantity-unit-package-basis.service.ts';
-import type { ZeroFloorAuthorizationPersistence } from '../services/zero-floor-authorization-persistence.service.ts';
-import { zeroFloorAuthorizationPersistenceForScope } from '../services/zero-floor-authorization-persistence.service.ts';
 import type { CurrentPricingDecisionSubjectAuthorityEvidence } from '../services/current-pricing-decision-subject-authority.service.ts';
 import type { CatalogQuantityBasisCompatibilityPort } from './catalog-quantity-basis-compatibility.ts';
 import { catalogQuantityBasisCompatibilityPortFromEnvironment } from './catalog-quantity-basis-compatibility.ts';
@@ -127,6 +117,11 @@ import type { CatalogPricingPurposeEquivalencePort } from './catalog-pricing-pur
 import { catalogPricingPurposeEquivalencePortFromEnvironment } from './catalog-pricing-purpose-equivalence.ts';
 import { commercePriceGroupResolutionPortFromEnvironment } from './commerce-price-group-resolution.ts';
 import { currentPricingDecisionExternalOwnerEvidencePortFromEnvironment } from './current-pricing-decision-external-owner-evidence-live.ts';
+import type { CurrentPricingDecisionOwnerState } from './current-pricing-decision-owner-state.ts';
+import {
+  currentPricingDecisionOwnerStateInTransaction,
+  currentPricingDecisionOwnerStatePerRead,
+} from './current-pricing-decision-owner-state.ts';
 import { priceGroupCompatibilityPortFromEnvironment } from './price-group-compatibility.ts';
 import { requirePricingCatalogOperation, requirePricingPriceGroupOperation } from './pricing-operation-requirements.ts';
 import type { PricingWholeEvaluationRequirements } from './pricing-operation-requirements.ts';
@@ -655,8 +650,8 @@ const exactPredicate = (key: PriceIdentityKey): string => {
 };
 
 const tierReaderFor = (
-  persistence: QuantityTierPersistence,
-  prices: PricePersistence,
+  persistence: CurrentPricingDecisionOwnerState['tier'],
+  prices: Pick<CurrentPricingDecisionOwnerState['price'], 'readSchedule'>,
   catalogEquivalence: CatalogPricingPurposeEquivalencePort,
 ): CurrentPricingDecisionTierSetReaderPort => ({
   loadCurrent: (request, attemptSnapshot, line, exactPrice, aggregationGroup) => {
@@ -780,7 +775,9 @@ const tierReaderFor = (
 const foundFromUnitPrice = (unitPrice: Parameters<CurrentPricingDecisionFeeSetReaderPort['loadCurrent']>[2]) =>
   'usedPrice' in unitPrice.input.exactPrice.path ? unitPrice.input.exactPrice.path.usedPrice : undefined;
 
-const makeFeeReader = (persistence: CommercialFeePersistence): CurrentPricingDecisionFeeSetReaderPort => ({
+const makeFeeReader = (
+  persistence: CurrentPricingDecisionOwnerState['fee'],
+): CurrentPricingDecisionFeeSetReaderPort => ({
   loadCurrent: (request, _attempt, unitPrice) =>
     persistence
       .readCurrentSet({
@@ -885,7 +882,7 @@ const assignedDiscountAudienceFor = (
 };
 
 const makeDiscountReader = (
-  persistence: ContractualDiscountPersistence,
+  persistence: CurrentPricingDecisionOwnerState['discount'],
 ): CurrentPricingDecisionDiscountSetReaderPort => ({
   loadCurrent: ({ request, unitPrices }) => {
     if (request.subject.kind === 'GUEST') {
@@ -1189,7 +1186,7 @@ const zeroFloorMaterialRevisionRefs = (
 };
 
 export const makeCurrentPricingDecisionZeroFloorSetReader = (
-  persistence: ZeroFloorAuthorizationPersistence,
+  persistence: CurrentPricingDecisionOwnerState['floor'],
 ): CurrentPricingDecisionZeroFloorSetReaderPort => ({
   loadCurrent: (request, _attempt, composition) => {
     if (
@@ -2552,8 +2549,12 @@ const promotionEvaluation = makePricingPromotionCurrentEvaluationService(
   },
 );
 
-const scopedAdapters = (
-  transaction: ScopedTransaction,
+/**
+ * The evaluation's adapters over Pricing owner state (database only) and the remote owners' ports. Remote calls run
+ * between owner-state reads, so a Read gives this per-read short transactions and an Action its own transaction.
+ */
+const adaptersFor = (
+  ownerState: CurrentPricingDecisionOwnerState,
   scope: OperationalScope,
   compositionRevision: string,
   requirements?: PricingWholeEvaluationRequirements,
@@ -2578,54 +2579,25 @@ const scopedAdapters = (
       catalogEquivalence: catalogPricingPurposeEquivalencePortFromEnvironment(environment),
       catalogQuantity: catalogQuantityBasisCompatibilityPortFromEnvironment(environment),
       commercePriceGroup: commercePriceGroupResolutionPortFromEnvironment(environment),
-      currency: currencySupportPersistenceForScope(transaction, scope, compositionRevision),
-      discount: contractualDiscountPersistenceForScope(transaction, scope),
-      exactPrice: exactPriceResolutionServiceForScope(transaction, scope, compositionRevision),
       externalOwnerEvidence: currentPricingDecisionExternalOwnerEvidencePortFromEnvironment(environment, requirements),
-      fee: commercialFeePersistenceForScope(transaction, scope),
-      floor: zeroFloorAuthorizationPersistenceForScope(transaction, scope),
-      price: pricePersistenceForScope(transaction, scope),
       priceGroupCompatibility: priceGroupCompatibilityPortFromEnvironment({
         compositionRevision,
         requestCorrelation: scope.correlationId,
         scope,
         tenantId: scope.tenantId,
       }),
-      tier: quantityTierPersistenceForScope(transaction, scope),
     },
-    { concurrency: 12 },
+    { concurrency: 5 },
   ).pipe(
     Effect.map(
-      ({
-        catalogEquivalence,
-        catalogQuantity,
-        commercePriceGroup,
-        currency,
-        discount,
-        exactPrice,
-        externalOwnerEvidence,
-        fee,
-        floor,
-        price,
-        priceGroupCompatibility,
-        tier,
-      }) => {
-        const scopedQuantity: CatalogQuantityBasisCompatibilityPort =
+      ({ catalogEquivalence, catalogQuantity, commercePriceGroup, externalOwnerEvidence, priceGroupCompatibility }) => {
+        const scopedQuantity =
           requirements === undefined
             ? catalogQuantity
             : {
-                assess: (input) =>
+                assess: (input: Parameters<typeof catalogQuantity.assess>[0]) =>
                   requirePricingCatalogOperation(requirements.quantityBasis).pipe(
                     Effect.andThen(() => catalogQuantity.assess(input)),
-                  ),
-              };
-        const scopedEquivalence: CatalogPricingPurposeEquivalencePort =
-          requirements === undefined
-            ? catalogEquivalence
-            : {
-                resolve: (input) =>
-                  requirePricingCatalogOperation(requirements.purposeEquivalence).pipe(
-                    Effect.andThen(() => catalogEquivalence.resolve(input)),
                   ),
               };
         const interpreter = makePriceGroupInterpretationService({
@@ -2649,66 +2621,106 @@ const scopedAdapters = (
                     ).pipe(Effect.andThen(() => priceGroupCompatibility.validate(input))),
                 },
         });
+        const exactPrice = makeExactPriceResolutionService({
+          loadCurrencySupport: ownerState.currency.loadCurrent,
+          lookupExact: ownerState.price.exactLookup,
+        });
         return {
           attemptSource: makeCurrentPricingDecisionAttemptSource({
             catalogQuantity: scopedQuantity,
             exactPrice,
             interpreter,
-            loadCurrencySupport: currency.loadCurrent,
-            priceCandidateSets: price,
+            loadCurrencySupport: ownerState.currency.loadCurrent,
+            priceCandidateSets: ownerState.price,
           }),
           composition: makeCurrentPricingDecisionWholeComposition(),
-          discountReader: makeDiscountReader(discount),
+          discountReader: makeDiscountReader(ownerState.discount),
           exactPrice,
           externalOwnerEvidence,
-          feeReader: makeFeeReader(fee),
-          floorReader: makeCurrentPricingDecisionZeroFloorSetReader(floor),
+          feeReader: makeFeeReader(ownerState.fee),
+          floorReader: makeCurrentPricingDecisionZeroFloorSetReader(ownerState.floor),
           promotion: promotionEvaluation,
-          tierReader: tierReaderFor(tier, price, scopedEquivalence),
+          tierReader: tierReaderFor(ownerState.tier, ownerState.price, catalogEquivalence),
         };
       },
     ),
   );
 };
 
-export const currentPricingDecisionWholeEvaluationAdaptersForScope = (
-  transaction: ScopedTransaction,
-  scope: OperationalScope,
-  compositionRevision: string,
-) =>
-  scopedAdapters(transaction, scope, compositionRevision).pipe(
-    Effect.map((adapters) =>
-      Layer.mergeAll(
-        Layer.succeed(CurrentPricingDecisionAttemptSource, adapters.attemptSource),
-        Layer.succeed(CurrentPricingDecisionTierSetReader, adapters.tierReader),
-        Layer.succeed(CurrentPricingDecisionFeeSetReader, adapters.feeReader),
-        Layer.succeed(CurrentPricingDecisionDiscountSetReader, adapters.discountReader),
-        Layer.succeed(CurrentPricingDecisionExternalOwnerEvidence, adapters.externalOwnerEvidence),
-        Layer.succeed(CurrentPricingDecisionZeroFloorSetReader, adapters.floorReader),
-        Layer.succeed(CurrentPricingDecisionWholeComposition, adapters.composition),
-        Layer.succeed(ExactPriceResolver, adapters.exactPrice),
-        Layer.succeed(PricingPromotionCurrentEvaluation, adapters.promotion),
-      ),
-    ),
-  );
-
-export const currentPricingDecisionWholeEvaluationForScope = (
+const scopedAdapters = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
   compositionRevision: string,
   requirements?: PricingWholeEvaluationRequirements,
 ) =>
-  scopedAdapters(transaction, scope, compositionRevision, requirements).pipe(
-    Effect.map((adapters) =>
-      makeCurrentPricingDecisionWholeEvaluationService({
-        attemptSource: adapters.attemptSource,
-        composition: adapters.composition,
-        discountReader: adapters.discountReader,
-        externalOwnerEvidence: adapters.externalOwnerEvidence,
-        feeReader: adapters.feeReader,
-        floorReader: adapters.floorReader,
-        promotionEvaluation: adapters.promotion,
-        tierReader: adapters.tierReader,
-      }),
-    ),
+  currentPricingDecisionOwnerStateInTransaction(transaction, scope, compositionRevision).pipe(
+    Effect.flatMap((ownerState) => adaptersFor(ownerState, scope, compositionRevision, requirements)),
   );
+
+const wholeEvaluationFrom = (adapters: Effect.Success<ReturnType<typeof adaptersFor>>) =>
+  makeCurrentPricingDecisionWholeEvaluationService({
+    attemptSource: adapters.attemptSource,
+    composition: adapters.composition,
+    discountReader: adapters.discountReader,
+    externalOwnerEvidence: adapters.externalOwnerEvidence,
+    feeReader: adapters.feeReader,
+    floorReader: adapters.floorReader,
+    promotionEvaluation: adapters.promotion,
+    tierReader: adapters.tierReader,
+  });
+
+const adaptersLayer = (adapters: Effect.Success<ReturnType<typeof adaptersFor>>) =>
+  Layer.mergeAll(
+    Layer.succeed(CurrentPricingDecisionAttemptSource, adapters.attemptSource),
+    Layer.succeed(CurrentPricingDecisionTierSetReader, adapters.tierReader),
+    Layer.succeed(CurrentPricingDecisionFeeSetReader, adapters.feeReader),
+    Layer.succeed(CurrentPricingDecisionDiscountSetReader, adapters.discountReader),
+    Layer.succeed(CurrentPricingDecisionExternalOwnerEvidence, adapters.externalOwnerEvidence),
+    Layer.succeed(CurrentPricingDecisionZeroFloorSetReader, adapters.floorReader),
+    Layer.succeed(CurrentPricingDecisionWholeComposition, adapters.composition),
+    Layer.succeed(ExactPriceResolver, adapters.exactPrice),
+    Layer.succeed(PricingPromotionCurrentEvaluation, adapters.promotion),
+  );
+
+export const currentPricingDecisionWholeEvaluationAdaptersForScope = (
+  transaction: ScopedTransaction,
+  scope: OperationalScope,
+  compositionRevision: string,
+  requirements?: PricingWholeEvaluationRequirements,
+) => scopedAdapters(transaction, scope, compositionRevision, requirements).pipe(Effect.map(adaptersLayer));
+
+/** Component consumers in a Read finish use the same adapters, with released SQL between HTTP calls. */
+export const currentPricingDecisionWholeEvaluationAdaptersPerRead = (
+  ownerTransaction: ReadOwnerTransaction,
+  scope: OperationalScope,
+  compositionRevision: string,
+  requirements?: PricingWholeEvaluationRequirements,
+) =>
+  adaptersFor(
+    currentPricingDecisionOwnerStatePerRead(ownerTransaction, scope, compositionRevision),
+    scope,
+    compositionRevision,
+    requirements,
+  ).pipe(Effect.map(adaptersLayer));
+
+/** In an Action: every owner-state read runs in the Action's own transaction. */
+export const currentPricingDecisionWholeEvaluationForScope = (
+  transaction: ScopedTransaction,
+  scope: OperationalScope,
+  compositionRevision: string,
+  requirements?: PricingWholeEvaluationRequirements,
+) => scopedAdapters(transaction, scope, compositionRevision, requirements).pipe(Effect.map(wholeEvaluationFrom));
+
+/** In a Read's `finish`: every owner-state read opens its own short owner transaction, between the remote calls. */
+export const currentPricingDecisionWholeEvaluationPerRead = (
+  ownerTransaction: ReadOwnerTransaction,
+  scope: OperationalScope,
+  compositionRevision: string,
+  requirements?: PricingWholeEvaluationRequirements,
+) =>
+  adaptersFor(
+    currentPricingDecisionOwnerStatePerRead(ownerTransaction, scope, compositionRevision),
+    scope,
+    compositionRevision,
+    requirements,
+  ).pipe(Effect.map(wholeEvaluationFrom));

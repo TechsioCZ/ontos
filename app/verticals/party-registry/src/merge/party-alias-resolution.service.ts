@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { Context, Effect, Option } from 'effect';
 
 import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-resolution.ts';
@@ -140,6 +140,106 @@ export const makePartyAliasResolutionService = (lookup: PartyAliasLookup): Party
   });
 };
 
+/** Set-based lookups for resolving many Parties at once. */
+export interface PartyAliasBatchLookup {
+  readonly findAliases: (
+    tenantId: string,
+    aliasPartyIds: readonly string[],
+  ) => Effect.Effect<readonly PartyAliasLookupRow[], PartyAliasResolutionUnavailable>;
+  readonly existingParties: (
+    tenantId: string,
+    partyIds: readonly string[],
+  ) => Effect.Effect<ReadonlySet<string>, PartyAliasResolutionUnavailable>;
+}
+
+/**
+ * Resolves many Parties to their canonical survivor with the same rules and failures as `resolvePartyAlias`, but
+ * with two set-based lookups per alias-chain level instead of two lookups per Party (lists stay O(chain depth)
+ * round trips to the database). Returns requested Party id -> canonical Party id.
+ */
+interface PendingPartyAlias {
+  readonly current: string;
+  readonly requested: string;
+  readonly seen: ReadonlySet<string>;
+}
+
+type PartyAliasBatchStep =
+  | { readonly kind: 'pending'; readonly entry: PendingPartyAlias }
+  | { readonly kind: 'resolved'; readonly current: string; readonly requested: string };
+
+const resolvePartyAliasBatchLevel = Effect.fn('PartyAliasResolutionService.resolvePartyAliasBatchLevel')(
+  function* resolveBatchLevel(
+    lookup: PartyAliasBatchLookup,
+    tenantId: string,
+    pending: readonly PendingPartyAlias[],
+    resolved: ReadonlyMap<string, string>,
+  ): Effect.fn.Return<ReadonlyMap<string, string>, PartyAliasResolutionError> {
+    if (pending.length === 0) {
+      return resolved;
+    }
+    const current = [...new Set(pending.map((entry) => entry.current))];
+    const aliases = new Map((yield* lookup.findAliases(tenantId, current)).map((row) => [row.aliasPartyId, row]));
+    const terminal = current.filter((partyId) => !aliases.has(partyId));
+    const existing = terminal.length === 0 ? new Set<string>() : yield* lookup.existingParties(tenantId, terminal);
+    const steps = yield* Effect.forEach(
+      pending,
+      (entry): Effect.Effect<PartyAliasBatchStep, PartyAliasResolutionError> => {
+        const alias = aliases.get(entry.current);
+        if (alias === undefined) {
+          if (!existing.has(entry.current)) {
+            return new PartyAliasResolutionBrokenChain({
+              code: 'party_alias_resolution_broken_chain',
+              missingPartyId: entry.current,
+              reason: 'Party Alias chain does not terminate at a canonical Party',
+              tenantId,
+            });
+          }
+          return Effect.succeed({ kind: 'resolved', current: entry.current, requested: entry.requested });
+        }
+        if (alias.tenantId !== tenantId) {
+          return new PartyAliasResolutionCrossTenant({
+            aliasPartyId: entry.current,
+            code: 'party_alias_resolution_cross_tenant',
+            reason: 'Party Alias lookup crossed its trusted tenant boundary',
+            tenantId,
+          });
+        }
+        const seen = new Set([...entry.seen, entry.current]);
+        if (seen.has(alias.canonicalPartyId)) {
+          return new PartyAliasResolutionCycle({
+            code: 'party_alias_resolution_cycle',
+            partyId: alias.canonicalPartyId,
+            reason: 'Party Alias chain contains a cycle',
+            tenantId,
+          });
+        }
+        return Effect.succeed({
+          kind: 'pending',
+          entry: { current: alias.canonicalPartyId, requested: entry.requested, seen },
+        });
+      },
+      { concurrency: 1 },
+    );
+    const next = steps.flatMap((step) => (step.kind === 'pending' ? [step.entry] : []));
+    const completed = steps.flatMap((step) =>
+      step.kind === 'resolved' ? [[step.requested, step.current] as const] : [],
+    );
+    return yield* Effect.suspend(() =>
+      resolvePartyAliasBatchLevel(lookup, tenantId, next, new Map([...resolved, ...completed])),
+    );
+  },
+);
+
+export const makeBatchPartyAliasResolution = (lookup: PartyAliasBatchLookup) =>
+  Effect.fn('makeBatchPartyAliasResolution.resolvePartyAliases')((tenantId: string, partyIds: readonly string[]) =>
+    resolvePartyAliasBatchLevel(
+      lookup,
+      tenantId,
+      [...new Set(partyIds)].map((partyId) => ({ current: partyId, requested: partyId, seen: new Set<string>() })),
+      new Map(),
+    ),
+  );
+
 type AliasTransaction = Pick<PartyTransaction, 'select'>;
 
 const attachCause = <Failure extends object>(failure: Failure, cause: unknown): Failure =>
@@ -180,6 +280,30 @@ const makeTransactionPartyAliasResolutionService = (transaction: AliasTransactio
           Effect.map((rows) => rows.length === 1),
         ),
   });
+
+/** Batch form of {@link resolvePartyAlias} for lists: requested Party id -> canonical Party id. */
+export const resolvePartyAliases = (transaction: AliasTransaction, tenantId: string, partyIds: readonly string[]) =>
+  makeBatchPartyAliasResolution({
+    existingParties: (lookupTenantId, ids) =>
+      transaction
+        .select({ partyId: parties.partyId })
+        .from(parties)
+        .where(and(eq(parties.tenantId, lookupTenantId), inArray(parties.partyId, [...ids])))
+        .pipe(
+          Effect.mapError(unavailable),
+          Effect.map((rows) => new Set(rows.map((row) => row.partyId))),
+        ),
+    findAliases: (lookupTenantId, ids) =>
+      transaction
+        .select({
+          aliasPartyId: partyAliases.aliasPartyId,
+          canonicalPartyId: partyAliases.canonicalPartyId,
+          tenantId: partyAliases.tenantId,
+        })
+        .from(partyAliases)
+        .where(and(eq(partyAliases.tenantId, lookupTenantId), inArray(partyAliases.aliasPartyId, [...ids])))
+        .pipe(Effect.mapError(unavailable)),
+  })(tenantId, partyIds);
 
 export const resolvePartyAlias = (transaction: AliasTransaction, tenantId: string, partyId: string) =>
   makeTransactionPartyAliasResolutionService(transaction).resolvePartyAlias(tenantId, partyId);

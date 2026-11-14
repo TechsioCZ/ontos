@@ -4,107 +4,99 @@ This playbook is the authoritative release guidance for OntOS application delive
 
 > [!IMPORTANT] Explicit `implementationId`, dependency-closure selection, public-contract hashes, migration-set identity, and full artifact metadata are accepted target architecture, not fields in the current manifest/catalog schema. Requirements below that name them become mandatory with that contract. Until then, releases use one implicit `standard` implementation per `moduleId` and the current generated `buildMarker`; do not simulate missing fields with ad hoc configuration.
 
-Application Composition validation and native publication are implemented; live Shell loading remains a separate integration concern. The current publisher writes the approved versioned snapshot to Workers KV and verifies readback under Core DB publication authority. Node consumers use a lazy HTTP source; Workers consumers use a native KV binding. The retired snapshot environment-variable/process-start transport is historical, not an operator recovery procedure. See [Current Composition transport](#current-composition-transport) and [ADR-0020](../../../docs/adr/0020-governed-application-composition.md). Until the live loader replaces generated registry paths, remote URL and lazy-registry changes still require Shell regeneration and redeployment; the broader composition promotion sequence remains target guidance.
-
-## Current Composition transport
-
-The source-owned publisher is `scripts/publish-active-application-composition.mts`. After the deployed candidate artifacts are observable, the environment's serialized deploy workflow supplies its reviewed candidate file:
-
-```sh
-mise exec -- pnpm active-composition:publish publish --environment <environment> \
-  --intent-file <reviewed-intent.json> --selection-file <selection.json> \
-  --candidate-file <candidate.json> --expected-composition-file <expected-composition.json>
-```
-
-The publisher observes served contracts, Module Federation manifests and Shell runtime evidence with bounded reads, validates the whole candidate, and derives its immutable content revision. It validates the provider-native KV value endpoint from `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL`, authenticates publication with the operator's `CLOUDFLARE_API_TOKEN`, performs a native HTTP PUT and waits for matching readback. This is authorized operator/CI publication, not a new snapshot-signature protocol. Runtime readers use a separate read-only credential; neither credentials nor complete snapshots belong in logs.
-
-Core DB authority coordinates publication and transaction admission with revision, phase and deadline fences. A successful HTTP/KV read alone does not authorize a business operation. Storage publication and DB settlement are distinct boundaries, not one atomic distributed transaction: failed PUT/readback or uncertain settlement must stop promotion and be resolved against the actual publication/authority state before retry. Preserve the exact candidate/revision and failure evidence.
-
-- **Node:** `active-application-composition-source.node.ts` lazily reads `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL`, with optional `ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN`. It enforces the source URL contract, bounded body/read time and a short successful-read cache capped by the snapshot's original authority deadline. Failures are not cached. Reading the same old content never extends its lease. The source constants own the timeout/cache limits.
-- **Workers:** `active-application-composition-source.workerd.ts` reads native binding `ONTOS_ACTIVE_APPLICATION_COMPOSITION`, key `active`, as defined in `active-application-composition-edge.ts`. Missing binding/key, invalid content or bounded-read failure fail closed. KV propagation is distinct from publication readback; this playbook promises no immediate global cutover SLA.
-- **Renewal:** the scheduled `active-application-composition-refresh.yml` workflow shares the environment's deployment lock and runs `active-composition:publish refresh --environment <environment>`. It re-observes the approved exact artifacts and rejects any different revision; changed artifacts require an explicit promotion. `scripts/active-application-composition.mts#ACTIVE_APPLICATION_COMPOSITION_POLICY` owns the validity window. Renewal does not select another graph or restart consumers to replace process-start JSON.
-
-Stage refresh reads `DEPLOY_TARGET` from the `stage` environment, defaulting to Zerops like deployment. It uses `stage` credentials for Zerops and `stage-edge` credentials for Cloudflare. It keeps the workflow revision already checked out by its initial checkout. The approved snapshot supplies the complete module membership, backend transports and exact artifact pins; stage does not select another source revision from deployment history. This also covers Node-only stage and target switches where a newer worker deployment did not publish a new Composition. The deployment lock, VPN and worker-mode drift checks still apply. Production retains its existing deployed-source checkout.
-
-The current policy refreshes every six hours and gives each successful observation a 24-hour validity window. A business endpoint returning HTTP 500 does not by itself prevent identity observation. Missing or changed artifact bytes, failed backend-identity observation, or a stalled identity response can prevent renewal of the complete snapshot. Without another successful authorized observation, admission expires at the original `validUntil`, including otherwise healthy operations; cached bytes and an old hash do not extend that deadline. This shared observation failure domain remains part of the bounded MIN behavior, rather than a new availability guarantee.
-
-Renewal preserves the Composition revision and existing admission phase. It does not make an ended business assignment Current, restore a revoked permission or rewrite accepted business history. Restore the failed identity-observation dependency and use the existing authorized refresh/recovery path; draining or sealed authority still requires its existing lifecycle handling.
-
-For Node source configuration the publisher's `configure-source` command installs the stable URL and read-only token through the existing provider configuration path; Workers placement supplies the native binding. Code or configuration changes may still require normal deployment/restart, but routine snapshot publication/renewal is consumed through these native sources. Do not restore `ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON` or use a restart to bypass missing, expired, inconsistent or draining/sealed authority. Check configured source/binding, published revision/deadline and DB phase, then use the existing authorized publication/recovery path. Readiness and the authenticated smoke suite still gate activation. Installation is not activation, and Tenant Module State never selects a different runtime graph.
-
-Rollback remains an explicit audited promotion of a previously validated immutable revision with compatible artifact evidence (see [Rollback](#rollback)); there is no automatic last-known-good or untrusted fallback. Accepted future manifest/artifact fields in the warning above remain target architecture, not prerequisites that current tooling silently implements.
-
-### Selective releases and original receipts
-
-The reviewed release intent defines the complete business membership **N**. Topology inventories
-available deployments; source impact selects builds. Neither an available package nor a reachable
-service enrolls another member. Shell is a separate mandatory slot. Tenant activation and operation
-availability remain independent of all three sets.
-
-`immutable-application-release.mts select` writes `complete`, `fresh`, `retained`, `removed` and the
-separate Shell mode. It consumes the existing impact closure, including shared contract/runtime/ABI
-consumers. A new member or changed provider placement requires a fresh build. Removing a member does
-not delete its retained artifacts. Zero source impact can retain every slot while still validating the
-complete desired candidate. Migration requirements remain a separate closure, including retained
-owner and Core verification where required.
-
-The workflow captures the approved baseline **B** before selection under the existing publication
-lock. `capture-approved-snapshot --allow-absent --baseline-only` records literal JSON `null` only when
-both native storage and Core authority prove absence. Transport errors, invalid/expired snapshots and
-unapproved pointers are failures. Baseline-only capture permits a valid legacy graph to be replaced by
-an explicit full build; it does not approve reusing mutable legacy URLs. Default capture still requires
-retained artifact paths.
-
-Every retained business slot needs its **original** receipt: original source revision, build marker,
-contract and MF-manifest URL/digest, and backend binding. Fresh slots must match the actual clean Git
-source and verified build. The receipt archive is named by its exact Composition Revision; retrieval
-uses that identity and qualified repository/main-run metadata, then validates the original pins and
-current native evidence. It never substitutes another Composition or reconstructs a source SHA from
-a snapshot. Missing or expired archives stop selective reuse. The first release without complete
-original receipts needs an explicit reviewed full build.
-
-Both backend targets use the existing immutable public asset Workers. Cloudflare retains its named
-backend version; Zerops keeps its Node backend and native application-version identity. Node build
-plans set the immutable asset prefix separately from the registered backend/API origin. The local Node
-SDK envelope proves the public build inventory. `node-assets` produces only retained public-asset
-evidence. `node-deploy` separately witnesses the successful clean-source provider push, preserves the
-provider's genuine Git-derived build marker, and checks the active native version and exact live
-contract before issuing a deployed receipt. An `ACTIVE` status or requested version name alone is not
-source proof; the CI public inventory is not presented as a digest of the provider-built backend.
-Public uploads use the existing deployment gateway credentials, separate from dependency-code builds
-and runtime read credentials. Worker host/dedicated mode remains explicit and independent of target.
-
-Before DDL, the existing publisher's `prepare` command fetches exact pinned public bytes, validates the
-whole graph's supported operation semantics, dependencies, Core capabilities, Shell ABI, exposes and
-singletons, and writes expected content **T**. This file contains a Composition only: no observation
-window, deployment approval or fabricated backend receipt. Fresh Node backends may still be planned;
-retained backends must already have valid native evidence. Migration and verification commands receive
-the candidate, selection and expected Composition. Under the existing native lock they require current
-authority to match B, or the exact already-active T for a legitimate retry, before provider or schema
-effects. `none` still performs no initialization. A verification-only replacement drains and seals
-the old release before worker replacement, then marks verification complete without running pending
-SQL. Verification of an already migrated or already active target does not repeat those transitions.
-
-After all actual backend deployments, final observation must derive **exactly T** before promotion.
-Matching deployment-document formats alone do not prove public-operation compatibility. Publication
-keeps the existing global admission, durable-work completion, drain/seal and revocation fences. Native
-storage readback and Core commit remain separate effects with explicit failure/reconciliation states.
-
-The immutable `prepared-application-release` artifact preserves original B, T, reviewed selection and
-receipt/plan evidence for the same run's retry. A completed Node deployment preserves its actual
-deployed receipt handoff before archiving the complete receipt set. Recovery verifies that original
-identity and skips successful deployments; it does not silently redeploy over an existing receipt or
-overwrite immutable asset addresses. Changed native evidence fails closed. New observation freshness
-never changes the Composition Revision or rewrites an Accepted Order Snapshot. Browser documents stay
-pinned to one revision until the existing document-replacement path admits another.
-
-An explicit rollback uses retained executable artifacts with the **current** captured baseline and a
-fresh validated observation of the older content. Do not replay the older candidate's stale baseline,
-remove additive schema, bypass owner verifiers, or assume artifact retention establishes compatibility.
-The existing authenticated smoke, audit and forward-only exceptions in [Rollback](#rollback) still
-apply. There is no automatic fallback, tenant-specific artifact pin or forced document hot-swap.
+Application Composition validation and stage publication are implemented; live Shell loading is not. Stage publication is described in [Stage on Zerops](#stage-on-zerops). Until #374–#377 wire those paths in, remote URL and generated lazy-registry changes still require Shell regeneration and redeployment. The composition promotion sequence below is the target flow.
 
 The rules exist because the first Zerops stage rollout was merged after source-level validation and then required 43 linear repair commits. Stage had become the first production-shaped integration test. Future releases must prove the target artifact and the distributed user journey before promotion.
+
+## Stage on Zerops
+
+Stage runs on Zerops only. Cloudflare serves only its DNS, outgoing email and the SpiceDB gateway's Origin CA certificate. The layout below comes from `app/zerops.yaml`, `app/scripts/zerops/` and `.github/workflows/zerops-stage.yml`.
+
+### Services
+
+Stage is the Zerops project `t1ljmn3DRDafgi8AuPvhdQ` (LIGHT core).
+
+- `app`: one Node container. It serves the Shell, every owner in `topology/application-release-intent.json`, and the Outbox Worker host.
+- `storefront`: the real customer's Next.js standalone server, on port 3070. It calls the Shell at `http://app:3000` with its own tenant key.
+- `shop`: ŠroubShop, the demo tenant's pseudonymous storefront, built from the same artifact. It runs as the storefront application `sroubshop-storefront` with its own managed key: the deploy workflow syncs `ONTOS_STOREFRONT_APP_ID` and `ONTOS_AKROS_STOREFRONT_API_KEY` (stage-edge secret `SHOP_STOREFRONT_API_KEY`) to the shop service before it pushes shop; `STOREFRONT_BRAND=sroubshop` is a service variable. The data cutover itself is the reviewed operator in `scripts/demo/pseudonymize-akros-demo.md`; deployment never runs it.
+- `db18`: PostgreSQL.
+- `spicedb`: SpiceDB.
+- `migrator`: keeps only its secrets, the database identity passwords that the app references as `${migrator_…}`. The app container runs the migrations itself.
+
+Each service runs one container, with no HA and no autoscaling. The app host keeps no local state, so it can scale out later.
+
+### Inside the app container
+
+`scripts/zerops/app-host.mts` is the supervisor. It listens on port 3000.
+
+- It routes `/_m/<appId>/…` to that owner's loopback server. Every other request goes to the Shell on loopback port 3020.
+- It starts three processes:
+  - the Shell: `serve-units.mts shell-super-app`;
+  - all owners in one process: `serve-units.mts <appId> …`, so shared dependencies load once;
+  - the Outbox Worker host, with its health endpoint on port 4100.
+- If any process exits, the container stops, and Zerops restarts it from a clean state.
+- Browser owners keep their topology port. Server-only owners (api-only, or without a Module Federation remote) start at 4200. Every unit listens on `127.0.0.1` only.
+
+Each owner's composition backend is its loopback `node-http` origin. The browser loads each remote's manifest and assets from `https://<origin>/_m/<appId>/`.
+
+### Composition and authority
+
+On every start, the host does the following.
+
+1. Runs the migrations with `scripts/run-zerops-migrator.mjs` (`MIGRATOR_ONCE=true`) while it waits for every unit to serve its contract. Each unit has five minutes.
+2. Observes the running artifacts over loopback, and derives the snapshot using the public artifact URLs.
+3. Proves the release against the live engine, read-only (`scripts/zerops/release-access-verification.mts`): the live SpiceDB schema must equal the canonical v2 schema, and every active Tenant must carry its scopes, its owner membership and a SpiceDB projection equal to PostgreSQL intent. The proof never writes, revokes or re-grants, and a Tenant or engine it cannot prove stops the release here with the exact Tenant and the remediation instead of publishing a release that locks its people out.
+4. Publishes the snapshot with `publishApplicationCompositionAuthoritySnapshot`. The result is one active revision in the PostgreSQL table `core.application_composition_authority`.
+5. Serves the snapshot bytes at `/_host/composition`, a loopback-only path. Every hosted process reads it through `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL`. The host serves a revision only while the database still names it.
+
+The release writes no authorization relationship and installs no schema. Authorization v2 (ADR-0030) projects every tuple from PostgreSQL intent through the one Core writer, so the retired `scoped_role`/`action`/`context_permission` reconciliation has no place in a release. The deployment's SpiceDB bootstrap file is read **only when the datastore is empty** (`scripts/run-zerops-spicedb.sh` gates it on `namespace_config`), so a live engine keeps whatever schema it was given: bringing a live engine to the canonical v2 schema, and retiring its old relationships, are each a separately approved operation that must complete **before** the read-only release verification. A live Tenant's people, Roles and workloads are seeded by the operator-gated stage bootstrap (`apps/shell-super-app/scripts/bootstrap-stage-accounts.mts`).
+
+The host renews the lease itself every 6 hours. Validity is 24 hours. A failed renewal is logged, and if renewals keep failing the lease expires. There is no KV namespace, no workers.dev route and no scheduled refresh workflow.
+
+Probes:
+
+- `/_host/live` answers as soon as the host listens.
+- `/_host/ready` returns 200 after publication. Zerops switches traffic only after it answers.
+- `ONTOS_APP_HOST_PUBLISH=false` starts and observes every unit without migrating or publishing. In that mode `/_host/ready` returns 200 after observation. Use it only to try a build next to a live stage.
+
+### Secrets
+
+- `ONTOS_OWNER_SECRETS_JSON` is a sensitive `app` service variable. Each deploy writes it from the GitHub secret `DEMO_IMMUTABLE_RELEASE_SECRETS` through `scripts/zerops/sync-service-secret.sh`. It maps each appId to that owner's secrets.
+- Each process gets only the entries of the owners it serves. Host-derived settings win over stored values: the issuer, auth URL, composition URL, gateway base URL, SpiceDB settings and `DATABASE_URL`.
+- `DATABASE_ADMIN_URL` and the identity passwords never reach an owner process. Each process gets only its own identity URL: Party Registry in the owners process, `PARTY_REGISTRY_WORKER_DATABASE_URL` in the Outbox Worker host, and `SHELL_GATEWAY_ISSUER_DATABASE_URL` in the Shell.
+- Known isolation trade-off: owners in the shared owners process share one environment, so any owner there can read every owner's entries. Two owners that store different values under one key stop the host at startup. Per-service hosting kept these apart.
+
+### Email
+
+- `EMAIL_PROVIDER=cloudflare-api`: mail is sent through the Cloudflare Email Service REST API for account `CLOUDFLARE_EMAIL_ACCOUNT_ID`. Outbound SMTP on port 465 is blocked from Zerops, so the SMTP adapter is not used on stage.
+- The API token is a Cloudflare API token with Email Sending. It is stored as the `app` service secret `SMTP_PASSWORD` and referenced as `CLOUDFLARE_EMAIL_API_TOKEN: ${SMTP_PASSWORD}`.
+- Sender: `noreply@ontos-stage.web-revolution.cz`.
+
+### Build
+
+- Node builds and runtimes use Zerops' `alpine/nodejs@26` image and its `node` executable. Builds install the workspace's pinned pnpm version; no Node archive is downloaded or included in the deployment. The local and CI Node patch pin remains in `.mise.toml`, while Zerops manages its image's Node 26 patch version.
+- GitHub Actions builds the units, in seven parallel shards (`zerops-stage.yml`, job **Build units**). Each shard runs `scripts/zerops/build-app.sh` for its units, two at a time.
+- Each unit's build script still ends with `modern deploy`, but only to write `.output/index.js`. `scripts/zerops/owner-entry.mts` turns that file into `dist/zerops-entry.mjs`, which exports `start(port)`.
+- A unit whose committed inputs are unchanged keeps its previous `dist/`. The digest is in `dist/.zerops-build-digest`. Each shard keeps its builds in the Actions cache, outside the checkout: any untracked file in the tree turns every release identity into `workspace`.
+- The deploy job packs every shard's `dist/` (no source maps, type bundles or precompressed copies) into `app/.zerops-prebuilt.tar.zst` and pushes it with the checkout.
+- The Zerops `app` build (`zerops.yaml`) unpacks that archive, installs the workspace, keeps every unit whose digest matches, builds the Outbox Worker host bundle under the hosted owners' revisions, and ships `app/`. It can still build any unit itself, two at a time, in its 5 vCPU / 8 GB build container.
+- `.deployignore` keeps `.output`, source maps, caches and tests out of the deployed package.
+
+### Deploy
+
+`.github/workflows/zerops-stage.yml` runs on each push to `demo/sales-crm`, except pushes that touch only `docs/**` or Markdown files. It also runs on manual dispatch. Runs are serialized in the `zerops-stage` concurrency group.
+
+1. **Build units**: seven shards, as above.
+2. **Deploy** (environment `stage-edge`): syncs the owner secret bundle to the `app` service, then pushes the `app` and `storefront` setups in parallel with `scripts/zerops/push-service.sh`, using the commit SHA as the version name. That script uploads over HTTP/1.1 with curl, because Zerops silently drops an upload that runs longer than about 30 seconds. On failure the job prints the app log.
+3. **Verify**: runs the timing probe (`/cs` and OAuth metadata) and checks that every storefront home lists products and the MCP OAuth proof, both blocking. The newsletter grant and withdrawal proof only warns.
+
+Environment `stage-edge` needs the variables `ZEROPS_PROJECT_ID`, `ZEROPS_APP_SERVICE_ID` and `ZEROPS_STOREFRONT_SERVICE_ID`, and the secrets `ZEROPS_TOKEN` and `DEMO_IMMUTABLE_RELEASE_SECRETS`.
+
+### Edge
+
+- Cloudflare is DNS only. DNS-only (not proxied) A and AAAA records point at the shared Zerops IPv4 and the project IPv6. Zerops terminates TLS with a Let's Encrypt certificate.
+- WAF and Access are not in front of stage. Proxying would need SSL `full` for these hostnames (the zone default is `flexible`), and the stage token cannot create page or configuration rules.
+- `scripts/zerops/route-stage-domains.sh` creates a Zerops public HTTP routing for each hostname. It detaches any Worker custom domain on that hostname (the Worker itself stays), replaces other A, AAAA and CNAME records, and writes the DNS-only A and AAAA.
 
 ## Release invariants
 
@@ -117,46 +109,8 @@ These are non-negotiable:
 5. **Installation is not activation.** Deploy a new MicroVertical dark. Tenant module state is the authoritative release flag and defaults inactive until canary verification succeeds.
 6. **Every overlap is backward compatible.** Database, authorization, manifest, BFF, Module Federation, and Shell/MicroVertical boundaries must work while old and new versions coexist.
 7. **Rollback is prepared before rollout.** Record a previously validated immutable composition and artifact for every affected delivery unit. Rollback is an explicit audited promotion, never an automatic persistent fallback, and must not depend on reversing a schema migration.
-8. **One failed required gate stops promotion.** The validated change plan selects the required CI checks; missing results and unplanned skips fail the required check. Preserve failed artifact and release evidence, reproduce in the parity environment, and fix the failure class before promotion.
+8. **One failed gate stops promotion.** Preserve the artifact and evidence, reproduce in the parity environment, fix the failure class, and rerun the release sequence from its first gate.
 9. **Continuous product delivery is not customer version pinning.** OntOS controls promotion of immutable artifacts. Customer Configuration selects permitted modules/implementations and activation state, never a separate whole-product release line.
-
-### Change-aware CI
-
-`ultramodern-workspace-gates.yml` always reports the required `Workspace gates` check for
-pull requests and merge groups. `scripts/plan-ci-changes.sh` compares the exact event base
-and checked-out head with a NUL-delimited Git diff, including both sides of renames. A diff
-confined to root `docs/`, `CONTEXT-MAP.md`, `README.md` and `AGENTS.md` needs no application
-installation, builds or services. Application documentation and unknown paths do not get
-this exemption. Missing history, an empty diff, nightly runs and an explicit full request
-require the full suite.
-
-For application changes, `scripts/plan-ci-checks.mts` computes owner and transitive consumer
-impact from workspace manifests, public-contract producer metadata, topology ownership
-and runtime federation references, including the Shell's vertical consumers.
-CI and deployment share the fixed-point consumer traversal. The checked-in
-`scripts/ci-matrices.json` owns the complete source, unit and integration matrices.
-Integration rows also declare runtime packages used by extra native proofs. A change to
-any declared proof package retains that row even when its ordinary test filters select
-no packages. Unknown proof packages require the full suite.
-
-Affected selection starts in **shadow mode**. Every application gate still runs, and the
-job summary records the candidate affected packages and integration shards. Set the
-`CI_AFFECTED_ENABLED` repository variable to `true` only after reviewing these plans against
-representative full runs. With that opt-in, unrelated package tests may be omitted; source
-checks, lint, static contracts and the complete Node artifact proof remain required.
-The retired Cloudflare build and proof jobs stay disabled and are not required gates. Core,
-authorization, schema, public-API, package-metadata, workflow and unknown changes still
-require the complete suite. Source checks do not wait for Node artifact builds; unit and
-integration fixtures retain their same-run artifact dependency.
-
-The final verifier requires a successful plan and exact agreement between every job result
-and its planned `success` or `skipped` state. An affected plan is not a deployment plan and
-does not bypass migration, database-trust, artifact or activation checks. No assertion
-retries or test quarantines are introduced.
-
-A full regression run starts daily at 02:30 UTC. A workflow dispatch with
-`force-ci-full=true` runs every gate even for a merge-queue-proven commit and performs no deployment. Otherwise an
-exact-commit merge-queue proof retains the existing no-repeat behavior on main.
 
 ## Delivery-unit contract
 
@@ -181,7 +135,7 @@ Codesmith or another approved generator must update these surfaces atomically. U
 
 Change planning must fail closed when a changed path under `apps/*`, `packages/*`, or `verticals/*` cannot be mapped to known delivery units. An unknown new vertical must never produce a no-op deploy.
 
-The stage plan diffs from the commit of the last successful `stage` deployment, not from the previous push, so a failed or cancelled deploy stays in the next plan. Planning stops when no successful deployment exists or its commit is not an ancestor of `main`; seed it once with `gh workflow run ultramodern-workspace-gates.yml --ref main -f full=true`.
+Stage deploys from `demo/sales-crm` through `.github/workflows/zerops-stage.yml`, which builds and pushes the `app` and `storefront` services on Zerops. It has no deploy plan and no release ledger. A unit whose committed inputs are unchanged keeps its cached build (see [Stage on Zerops](#stage-on-zerops)), and there is no force-full input. Run it manually with `gh workflow run zerops-stage.yml --ref demo/sales-crm`.
 
 ### Change-impact rules
 
@@ -252,10 +206,6 @@ Every owner retains its own schema and Drizzle journal. Run the release phase in
 6. run each owner verifier and the root exact schema/journal verifier;
 7. prove the previous and candidate application versions can use the expanded schema.
 
-The artifact build set and migration prerequisite closure are independent. A reviewed release intent may contain `migrationRequirements` with `mode: none`, `selected`, or `all` and explicit owner migration/verification requirements. The migration planner combines these requirements with source-owned prerequisites and actual journal names, hashes, and catalog observations. A retained owner or Core verifier can therefore run without a new build; rebuilding an owner does not create pending SQL. Deployment-impact output can carry this observed `migrationPlan` separately from its artifact phases. Without an observed plan, source-path impact remains a conservative trigger, not evidence that a migration is pending.
-
-Only selected streams and genuine prerequisites load configuration. The default remains all primary streams plus a configured optional portal-auth stream. `none` performs no initialization. Both nonempty modes use the existing publication lock and release lifecycle. A verification-only replacement finishes old durable work and Outbox deliveries, seals admission, verifies the selected schemas, and marks the Composition as migrated before workers can be replaced. It refuses pending SQL before bootstrap. A retry after committed SQL follows this same verification path to complete a sealed migration without repeating DDL. An already migrated or already active target only repeats verification. First deployment retains the initial cutover checks without inventing an old authority row. The global fence includes debt owned by excluded migration owners. Scoped selection does not promise zero downtime. The native Drizzle command migrates its whole owner folder; a reviewed `throughMigration` bound that would leave additional pending SQL in that folder is rejected before writes.
-
 Never share a migration journal between owners. Never omit a migration because only an owner-local path changed. The first v1 `drizzle-kit migrate` against a database migrated before the [Drizzle v1 upgrade](./DRIZZLE_V1_UPGRADE.md) adds `name` and `applied_at` columns to that owner's bookkeeping table and backfills `name`; it applies no schema migration and needs no manual step beyond the administrative identity. Never execute deployment migrations through an assumed workspace pnpm layout after artifact relocation; use the verified owner-local runtime binary or an explicit migration artifact.
 
 Destructive contraction is a later release after all old readers and writers are gone. Ordinary rollback leaves additive schema changes in place.
@@ -264,110 +214,112 @@ Destructive contraction is a later release after all old readers and writers are
 
 Party Registry and the Shell gateway-grant registrar use dedicated PostgreSQL logins instead of `ontos_runtime`. The design, rotation costs and the full rollback recipe are in [Database trust boundaries](./DATABASE_TRUST_BOUNDARIES.md#operations).
 
-Stage provisioning, run by a human, never an agent:
+The three passwords are sensitive `migrator` service secrets: `PARTY_REGISTRY_DB_PASSWORD`, `PARTY_REGISTRY_WORKER_DB_PASSWORD` and `SHELL_GATEWAY_ISSUER_DB_PASSWORD`. A human operator, never an agent, creates them once on the `migrator` service before the first deploy that references them. `zerops.yaml` hands them to the `app` service as `${migrator_<KEY>}`, never as project variables: every service inherits project variables, which would hand every credential to every process. `scripts/tests/zerops-deployment-contract.test.mts` enforces this.
 
-1. From a host on the Zerops VPN, with `DATABASE_ADMIN_URL` set, run `node scripts/ops/cloudflare-stage-cutover.mts database-identities`. It creates the missing sensitive `migrator` service secrets `PARTY_REGISTRY_DB_PASSWORD`, `PARTY_REGISTRY_WORKER_DB_PASSWORD` and `SHELL_GATEWAY_ISSUER_DB_PASSWORD` (never printed), then creates the three login roles with `LOGIN` and `CONNECT` only. Roles must exist first because Hyperdrive tests the connection when a config is created.
-2. Run `provision`. It creates Hyperdrive `ontos-stage-party-registry` (user `party_registry_runtime`, caching off, origin limit 10) and `ontos-stage-gateway-issuer` (user `shell_gateway_issuer`, caching off, limit 5), and writes `ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID` and `ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID` into `topology/cloudflare-placement.json` `buildEnvironment` for a reviewed PR. `verify` checks user, caching and limit drift.
-3. Merge. `edge-deploy-readiness` requires both IDs, so no deploy starts before provisioning is complete.
+On every start the app host runs the migrator (`scripts/run-zerops-migrator.mjs`), whose role bootstrap (`scripts/postgres/bootstrap-runtime-role.mts`) creates the login roles with `LOGIN` and `CONNECT` only, re-sets the three passwords, resets role settings, re-applies the grant manifest and fails if a URL user differs from its manifest role or targets another database.
 
-The passwords are `migrator` service secrets, referenced as `${migrator_<KEY>}`, never project variables: every service inherits project variables, which would hand every credential to every process. `scripts/tests/zerops-deployment-contract.test.mts` enforces this. Each process holds only its own URLs:
+`scripts/zerops/app-host.mts` keeps the administrative URL and the identity passwords to itself. Each hosted process receives only its own identity URL:
 
-| Service                 | Database URLs                                        |
-| ----------------------- | ---------------------------------------------------- |
-| `party-registry`        | `PARTY_REGISTRY_DATABASE_URL` only                   |
-| `party-registry-worker` | `PARTY_REGISTRY_WORKER_DATABASE_URL` only            |
-| `outbox-worker-host`    | `DATABASE_URL`, `PARTY_REGISTRY_WORKER_DATABASE_URL` |
-| `shellsuperapp`         | `DATABASE_URL`, `SHELL_GATEWAY_ISSUER_DATABASE_URL`  |
-| `migrator`              | all of them, plus `DATABASE_ADMIN_URL`               |
-
-Each selected login bootstrap resets its password and role settings, reapplies its existing grant manifest and rejects a URL whose user differs from the manifest role or targets another database. Selection includes identities referenced by genuinely pending SQL, such as roles required by Core policies, without loading unrelated passwords for already journaled SQL. An all-identity bootstrap retains the original full behavior. This is initialization of existing identities, not a new owner-role policy or permission rollout.
-
-Party requests fail closed during the first deploy of this change, from the end of the migrator until Shell finishes. The old Party Worker still connects as `ontos_runtime`, which no Party policy matches, or the new Party Worker receives assertions from an old Shell that registers no grants. The planner order (migrator, providers, workers, Shell) is unchanged, so announce that deploy as stage maintenance. Later deploys are unaffected.
+| Process            | Database URLs                                        |
+| ------------------ | ---------------------------------------------------- |
+| Shell              | `DATABASE_URL`, `SHELL_GATEWAY_ISSUER_DATABASE_URL`  |
+| owners             | `DATABASE_URL`, `PARTY_REGISTRY_DATABASE_URL`        |
+| Outbox Worker host | `DATABASE_URL`, `PARTY_REGISTRY_WORKER_DATABASE_URL` |
+| app host (startup) | all of them, plus `DATABASE_ADMIN_URL`               |
 
 Rotation (human operator, during stage maintenance):
 
-1. Change the relevant sensitive `migrator` service secret, then explicitly run the existing administrative bootstrap for that login with `pnpm db:bootstrap-runtime-role --identities <identity-id>` and its matching administrative/runtime URLs. A migration run with no pending SQL does not rotate credentials. Use the canonical identity ID (`shared_runtime`, `party_registry_request`, `party_registry_worker`, or `shell_gateway_issuer`), not the PostgreSQL role name.
-2. For the Party runtime or gateway issuer credential, run `node scripts/ops/cloudflare-stage-cutover.mts provision` from the VPN host with `DATABASE_ADMIN_URL` set. Provision validates the existing Hyperdrive's non-secret settings, then sends `PUT /accounts/{accountId}/hyperdrive/configs/{id}` with the current origin password from the matching `migrator` service secret. Existing config IDs stay unchanged. Because Cloudflare does not reveal origin passwords, every provision re-applies them even when the other settings match; `--dry-run` only describes the update. A drift or update failure stops provisioning; do not treat it as a completed rotation.
-3. After provision succeeds, restart every service using the credential and verify fresh connections with its deployed runtime identity. `verify` checks non-secret settings, not password equality. For `PARTY_REGISTRY_WORKER_DB_PASSWORD`, skip the Hyperdrive step: the worker connects directly.
+1. Change the relevant sensitive `migrator` service secret.
+2. Restart the `app` service. Its migrator pass runs `ALTER ROLE ... PASSWORD` before any hosted process starts, and every process then opens fresh connections with the new credential.
 
-New connections can fail after the migrator changes PostgreSQL's password until the Hyperdrive update and service restarts complete. Existing pooled connections can mask a stale credential, so run these steps back to back and confirm fresh connections before ending maintenance.
+`zerops.yaml` is shared with any future production project, which stays blocked until the same `migrator` secrets exist there.
 
-`zerops.yaml` is shared with production. Production stays blocked until the same `migrator` secrets exist there.
+### Order-flow owner credentials
 
-### Module credentials and bindings
+Commerce Order, Customer Context, Commerce Cart and Pricing call each other through the Shell's delegated issuance. A calling module presents its own module credential, which the platform hands its process on a private channel (never an environment variable); the Shell binds each credential to exactly one module, build and release (see [Module credentials and bindings](#module-credentials-and-bindings)) and signs that module as the actor of the call, with the original person as its subject. The receiving owner admits the actor by module (for example, only `commerce-order` may consume an order approval, and only for the approval's buyer). No owner admits another by Principal ID, grant list or API-key namespace. `scripts/ops/owner-runtime-configuration.mts` names the other values each owner reads, and the app host derives each owner's API bases from it:
 
-Every module deployment that calls another module presents its own module credential, `ONTOS_GATEWAY_MODULE_API_KEY`, to the Shell's delegated issuance. The Shell binds each credential to exactly one module through `ONTOS_GATEWAY_MODULE_BINDINGS` and attests that module's identity on every call, so no module admits another by Principal ID or grant list. `scripts/ops/owner-runtime-configuration.mts` names every value each module reads; the Zerops generator and the Cloudflare Worker secret plan both read it. Before the first deploy that carries them, a human operator, never an agent, issues one module credential per module in Shell (one service Principal with one managed API key) and records the values. For each module:
+| Owner                       | Credentials (sensitive)                                                   | Per-environment values (not secret)                        |
+| --------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `commerce-customer-context` | `COMMERCE_TENANT_CREDENTIALS` (per-Tenant Core identity and gateway keys) |                                                            |
+| `pricing`                   | `ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET`                               | `ONTOS_PRICING_CONFIRMATION_KEY_{REF,VERSION,LINEAGE_REF}` |
 
-1. In the platform tenant, run `core.identity.create-non-human-principal` with `kind: service` and the module's name as the display name. Record the returned principal ID.
-2. Issue a managed API key for that principal through Shell's API key service. Its Better Auth key ID is the provider key ID.
-3. Run `core.identity.bind-managed-api-key` with that principal ID and provider key ID. It binds the key to the principal in the same tenant.
-4. Record the key as the module's `ONTOS_GATEWAY_MODULE_API_KEY_<UNIT>` secret, and add one binding for it to `ONTOS_GATEWAY_MODULE_BINDINGS`.
+Add these to the owner's entry, keyed by its `appId`, in the GitHub secret `DEMO_IMMUTABLE_RELEASE_SECRETS` of the `stage-edge` environment. Each deploy writes that JSON to the `app` service as `ONTOS_OWNER_SECRETS_JSON` (see [Secrets](#secrets)), and the app host hands each process only the entries of the owners it serves; the Outbox Worker host receives every owner's entries, because it runs their workers. Every owner base is the owner's loopback API origin `<origin>/<unit>-api`, derived, never stored. At runtime each owner reads its values lazily, so an unusable one fails only the work that needs it, never the other owners in the shared process.
 
-Stage bootstrap does not issue these keys. `stage-accounts-file.ts` declares only the external workloads (`commerce.storefront-client`, `core.identity-provider`, `payment.source-ingress`, `payment.provider-notification-ingress`, `payment.provider-reconciliation`), and a test checks that list against the carriers' `accessWorkload` declarations.
+### Payment gateway relay
 
-Local development sets `ONTOS_GATEWAY_MODULE_BINDINGS=[]` (`pnpm env:local:ensure`), so local module-to-module calls stay unprovisioned and fail closed.
+Providers deliver notifications to the Shell's typed relay at `/api/payment/v1/notifications/{gopay,stripe,comgate}/<tenantId>/<routeKey>`, and the Payment reconciliation driver requests recoveries at `/api/payment/v1/reconciliation/<routeKey>/recoveries`. The Shell mounts `/api/payment/v1` as its own always-on prefix beside `/shell-super-app-api`, and the app host routes every path outside `/_m/<appId>/` to the Shell, so the relay is served at the public origin.
 
-| Module (deployment)         | Module credential (sensitive, `migrator` secret)         | Other values                                                                                                                                              |
-| --------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `catalog`                   | `ONTOS_GATEWAY_MODULE_API_KEY_CATALOG`                   |                                                                                                                                                           |
-| `commerce-cart`             | `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CART`             |                                                                                                                                                           |
-| `commerce-customer-context` | `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT` |                                                                                                                                                           |
-| `commerce-market-catalog`   | `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_MARKET_CATALOG`   |                                                                                                                                                           |
-| `commerce-order`            | `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER`            |                                                                                                                                                           |
-| `party-registry`            | `ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY`            |                                                                                                                                                           |
-| `payment`                   | `ONTOS_GATEWAY_MODULE_API_KEY_PAYMENT`                   | `ONTOS_PAYMENT_PROVIDER_CREDENTIALS`, `ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS` (secrets, see below); `ONTOS_PAYMENT_NOTIFICATION_BASE_URL`              |
-| `pricing`                   | `ONTOS_GATEWAY_MODULE_API_KEY_PRICING`                   | `ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET` (secret); `ONTOS_PRICING_CONFIRMATION_KEY_{REF,VERSION,LINEAGE_REF}`                                          |
-| `shell-super-app`           |                                                          | `ONTOS_GATEWAY_MODULE_BINDINGS` (JSON array, one binding per module credential above); `ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS` (secret, see below) |
+| Owner             | Credentials (sensitive, in `DEMO_IMMUTABLE_RELEASE_SECRETS`)                     |
+| ----------------- | -------------------------------------------------------------------------------- |
+| `payment`         | `ONTOS_PAYMENT_PROVIDER_CREDENTIALS`, `ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS` |
+| `shell-super-app` | `ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS`                                   |
 
-`party-registry` is the one worker-only unit: only its Outbox Worker makes delegated module calls, so its request service receives no module credential and none of the internal API bases its worker calls (`ONTOS_PARTY_REGISTRY_API_BASE_URL`, `ONTOS_PRIVACY_API_BASE_URL`, `ONTOS_SHELL_GATEWAY_BASE_URL`). `party-registry-worker` alone holds `ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY`.
-
-Each binding is `{compositionRevision, providerKeyId, sourceAppId, sourceBuildMarker}`: the module key's Better Auth ID, the module's topology app ID, and the composition revision and build that module runs. The Shell refuses module and API-key issuance (as unavailable) while the value is absent or malformed, so a deployment with no module enrolled sets `[]`.
-
-`ONTOS_PAYMENT_PROVIDER_CREDENTIALS` is a secret JSON object keyed by the credential secret ref of a provider account binding. Each entry is `{ "family": "GOPAY", "clientId", "clientSecret" }`, `{ "family": "STRIPE", "secretKey", "webhookSigningSecret" }` or `{ "family": "COMGATE", "secret" }`; an entry with any other field is refused. The value is optional: while it is absent every payment gateway operation is unavailable and the other Payment features keep working. Payment reads it on each cache miss, so a rotation is picked up within 60 seconds.
-
-**Payment gateway relay.** Providers deliver notifications to the Shell's typed relay at `/api/payment/v1/notifications/{gopay,stripe,comgate}/<tenantId>/<routeKey>`, and the Payment reconciliation driver requests recoveries at `/api/payment/v1/reconciliation/<routeKey>/recoveries`. Three values serve them:
-
-- `ONTOS_PAYMENT_NOTIFICATION_BASE_URL` (Payment, not secret) is the public Shell origin. Payment composes each binding's notification URL from it, the provider family, the tenant and the binding's generated route key. It must be an exact `https` origin (scheme, host, optional port; one trailing slash is tolerated). While it is missing or invalid, configuring a provider binding fails with 503 `payment_notification_route_unavailable` and the rest of Payment keeps working.
-- `ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS` (Shell, secret) and `ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS` (Payment, secret; read by the Payment Outbox Worker) are each a JSON array `[{ "tenantId": "<tenant uuid>", "apiKey": "<managed API key>" }]`, one entry per tenant. The reader decodes each entry on its own and only when it needs that tenant, so a malformed entry fails only its tenant and an absent value makes the relay or the driver unavailable while the rest keeps working. A tenant needs exactly one valid entry; two entries for the same tenant mean no key. A provider notification for a tenant with no relay entry gets the same 404 as an unknown route.
-
-The driver calls the Shell at the origin of `ONTOS_SHELL_GATEWAY_BASE_URL` (on Zerops `http://shellsuperapp:3020`) and drops the `/shell-super-app-api` path. The Shell mounts `/api/payment/v1` as its own always-on prefix, next to `/shell-super-app-api`, so relay paths are served at the Shell origin. The `payment-worker` and `outbox-worker-host` services need `ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS` and `ONTOS_SHELL_GATEWAY_BASE_URL` for the driver to run. Without a valid tenant entry, that tenant is skipped and logged at most once per hour.
+- `ONTOS_PAYMENT_NOTIFICATION_BASE_URL` is derived by the app host from the public origin (`scripts/zerops/app-host.mts`), never stored. Payment composes each binding's notification URL from it, the provider family, the tenant and the binding's generated route key. Outside an `https` origin (the local demo), configuring a provider binding fails with 503 `payment_notification_route_unavailable` and the rest of Payment keeps working.
+- `ONTOS_PAYMENT_PROVIDER_CREDENTIALS` is a JSON object keyed by the credential secret ref of a provider account binding. Each entry is `{ "family": "GOPAY", "clientId", "clientSecret" }`, `{ "family": "STRIPE", "secretKey", "webhookSigningSecret" }` or `{ "family": "COMGATE", "secret" }`; an entry with any other field is refused. While it is absent every payment gateway operation is unavailable and the other Payment features keep working. Payment reads it on each cache miss, so a rotation is picked up within 60 seconds.
+- `ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS` (Shell) and `ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS` (Payment; read by the Payment Outbox Worker in the Outbox Worker host) are each a JSON array `[{ "tenantId": "<tenant uuid>", "apiKey": "<managed API key>" }]`, one entry per tenant. Each entry is decoded on its own and only when its tenant is needed, so a malformed entry fails only that tenant and an absent value makes the relay or the driver unavailable while the rest keeps working. Two entries for one tenant mean no key. A provider notification for a tenant with no relay entry gets the same 404 as an unknown route.
+- The driver calls the Shell at the origin of `ONTOS_SHELL_GATEWAY_BASE_URL` (the host-derived loopback Shell base) and drops the `/shell-super-app-api` path. Without a valid tenant entry, that tenant is skipped and logged at most once per hour.
 
 Before a tenant uses a payment gateway, a human operator, never an agent, provisions two integration principals in that tenant and records their keys:
 
-1. Run `core.identity.create-non-human-principal` with `kind: integration` and the display name `Payment notification relay`. Bind its workloads `payment.provider-notification-ingress` and `payment.source-ingress` (on stage through the accounts file `workloads`).
-2. Run `core.identity.create-non-human-principal` with `kind: integration` and the display name `Payment reconciliation driver`. Bind its workloads `payment.provider-reconciliation` and `payment.source-ingress`.
-3. For each principal, issue a managed API key through Shell's API key service and run `core.identity.bind-managed-api-key` with the principal ID and provider key ID, as for module credentials above.
-4. Add the relay key to `ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS` and the driver key to `ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS`, each under the tenant's ID.
+1. Run `core.identity.create-non-human-principal` with `kind: integration` and the display name `Payment notification relay`. Register its workloads `payment.provider-notification-ingress` and `payment.source-ingress` (on stage through the accounts file `workloads`).
+2. Run `core.identity.create-non-human-principal` with `kind: integration` and the display name `Payment reconciliation driver`. Register its workloads `payment.provider-reconciliation` and `payment.source-ingress`.
+3. For each principal, issue a managed API key through Shell's API key service and run `core.identity.bind-managed-api-key` with the principal ID and provider key ID.
+4. Add the relay key to the Shell's `ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS` and the driver key to Payment's `ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS`, each under the tenant's ID.
 
-Rotating a relay or driver key changes only that secret; notification URLs stay the same. Revoking a key or a workload binding makes that tenant's relay or driver fail closed, and the providers retry within their own limits.
+Rotating a relay or driver key changes only that secret; notification URLs stay the same. Revoking a key or a workload registration makes that tenant's relay or driver fail closed, and the providers retry within their own limits.
 
-**Payment evidence workers.** Payment's notification and recovery Outbox Workers submit provider evidence through Payment's own public `accept-payment-observation` Action with a registered-workload assertion. Besides the usual four keys, the Payment binding in `ONTOS_GATEWAY_MODULE_BINDINGS` therefore carries one `registeredWorkloads` rule per worker; without them the Shell refuses the assertion and the evidence stays pending as reconciliation debt:
+Payment's notification and recovery Outbox Workers submit provider evidence through Payment's own `accept-payment-observation` Action with a registered-workload assertion. Payment calls through the Shell's delegated issuance with its own module credential (`MODULE_CREDENTIAL_CALLERS`), and the Shell derives the registered-workload rules of the Payment binding from the installed contracts; nobody records them. Each tenant needs exactly one active system principal registered for `payment.source-ingress`; it is the executor.
 
-```json
-{
-  "audience": "payment",
-  "declarationKey": "payment.core.observation.accept",
-  "entrypointKey": "payment.core.accept-payment-observation",
-  "jobKey": "payment.core.process-provider-notification",
-  "legalEntityScope": "required",
-  "schemaVersion": "1",
-  "workerKey": "payment.core.process-provider-notification",
-  "workloadKey": "payment.source-ingress"
-}
-```
+### Module credentials and bindings
 
-The second rule is the same with `jobKey` and `workerKey` set to `payment.core.recover-gateway-operation`. The Shell admits a request only for a live claim of that worker's delivery whose original invocation came from an active integration principal through one of Payment's `originatorActions`, in that invocation's own company. Each tenant needs exactly one active system principal bound to `payment.source-ingress`; it is the A8 executor. The Payment Outbox Worker reads `ONTOS_GATEWAY_MODULE_API_KEY` and `ONTOS_SHELL_GATEWAY_BASE_URL` like the request service. The issuer admits the `payment` audience only while Payment is in the installed composition.
+The platform provisions module credentials itself, on every environment and with no human step. Nobody issues, copies or rotates a module key by hand, and no module key or binding is stored in GitHub, Zerops or an env file. Every module key ends 24 hours after it was issued (`MODULE_CREDENTIAL_LIFETIME`), so a key nobody retired still dies on its own.
 
-The bindings pin the release. The Shell accepts a module's call only while `compositionRevision` and `sourceBuildMarker` equal the current release, so every composition publish and every module redeploy changes what the bindings must say. Refresh `ONTOS_GATEWAY_MODULE_BINDINGS` in the same deploy that changes a release, before the module calls it. Until the refresh, every module-to-module call fails closed. The Worker secrets step checks the shape only: one binding per module credential, all for one composition revision. It does not compare the revision or build markers with the published release, so the operator must.
+- **Who holds them.** Every module that calls another module through the Shell's delegated issuance gets one module credential. The list is not kept by hand: every module a carrier admits as its delegated caller (`accessActor.callers`) is one, generated with the catalog artifact into `scripts/zerops/module-credential-callers.generated.mts` (`pnpm authorization:catalog:artifact`; `--check` fails when it is stale), and a test fails when a module calls another without a carrier that admits it. Each credential is a managed API key bound to that module's own service principal, `module:<appId>`, in the platform tenant. The platform creates that tenant and nobody administers it: it has no person, membership, Role or company, so no Action, grant or tenant-managed key reaches it, and release access verification skips it. Principals, keys and bindings go through the same writers `core.identity.create-non-human-principal`, `core.identity.bind-managed-api-key` and the API-key binding lifecycle use. The key belongs to a platform provider user with no account and no password, through a server-only issuance no HTTP endpoint reaches. The database keeps only what it keeps for every managed key: hashes and bindings.
+- **When.** `scripts/zerops/provision-module-credentials.mts issue` runs with the Shell's settings and issues every hosted caller a fresh key. The app host starts its owners holding no key, runs the migrator (migrations, the runtime role bootstrap and schema verification), observes the owners, and only then runs the pass for the observed release, before it verifies release access, publishes and opens its public port. An observe-only host (`ONTOS_APP_HOST_PUBLISH=false`) runs the same pass after observing. The local demo (`scripts/demo/up.sh`) runs `issue-installed` once its local composition is published, and the native test fixtures call the same service.
+- **Database role.** The pass runs as the shared runtime role `ontos_runtime` (`DATABASE_URL`), with the grants the role manifest already gives it and no migration of its own: `insert`/`select` on `core.tenants` and `core.principals`, `insert`/`select`/`update` on `core.principal_auth_bindings`, `insert` on `core.audit_events`, `select` on `core.application_composition_authority`, and `insert`/`select`/`update` on Better Auth's `user` and `apikey` tables. It never receives `DATABASE_ADMIN_URL`. The integration test `apps/shell-super-app/tests/integration/module-credential-provisioning.test.ts` runs the real program as that role (no superuser, no `BYPASSRLS`).
+- **Bound to a build and a release.** At issue, the key's provider metadata records what the issuing host attested: the module, that module's build marker, the composition revision of the release it serves, and the issuing host (its container's host name) and boot (a fresh id each time the host process starts) (`apps/shell-super-app/api/auth/module-credential-attestation.ts`, `attested_v2`). A key that is bound but not attested binds nothing.
+- **How a key reaches its owner.** Only through process memory and a private channel: a pipe on file descriptor 3, beside standard output and standard error, which stay logs. The provisioning child writes its pass to its file descriptor 3, closes its database pools and exits; the app host reads it (one attempt with a two-minute budget, `PROVISIONING_BUDGET`, never retried before publishing, so module credentials add at most two minutes to a start that Zerops allows 15) and writes each process's handover as one line to that process's file descriptor 3: the owners process and the Outbox Worker host. The store is module-private (`packages/core-runtime/src/auth/hosted-module-credential-store.ts`): no package export and no global handle reaches it. Every built owner API bundle inlines its own copy of it (the API bundler inlines workspace sources), so a process holds one copy per bundle it loaded, and only a copy the host claimed can ever hold a key. Each unit's build therefore exposes exactly its API bundle's own one-time claim, and nothing else of the store, as one export that the unit's generated entry re-exports (`scripts/zerops/hosted-credential-claim.mts`, run by `owner-entry.mts`; the build fails if anything the unit serves carries a copy no host can claim). The host program claims each unit's copy for that unit's module right after loading the unit and before it serves (`serve-units.mts`; `scripts/demo/serve-module.mts` locally; the Outbox Worker host's `worker.mjs` is one bundle with one copy, which it claims itself), and refuses to serve a unit whose bundle carries a copy its entry does not let it claim. Every handover line then reaches every claimed copy, each of which takes only its own module's slot and refuses any other; the latest keys stay with the host, so a unit loaded after a line arrived gets them at once. A second claim of a copy is refused. Each owner's slot is written only by that receiver, fed by the host's channel: the first key at boot or later, then a replacement whenever the host renews or rotates keys. The channel stays open for the life of the process, so no key change needs a restart (`scripts/tests/hosted-credential-claim.test.mts` checks a real bundle and every built unit; the packaged relay and CRM tests run owners exactly this way). The delegated gateway client (`acquireDelegatedGatewayContext`) is the only reader of a module credential and the only importer of the reader, `@app/core-runtime/auth/owner-module-credential`: every call names its calling module, and it reads that module's slot, whichever runtime, worker or background fiber it runs in. Every module names itself by its own topology app id (`scripts/tests/module-credential-reader-boundary.test.mts` holds the importers and the names). An owner without a key has none: its delegated calls fail closed (`No module credential of <module> in this process`); there is no environment variable to read one from. If a process can no longer read its channel (a malformed line is only refused, and a channel the launcher closed after one handover, as the local demo does, is not a failure), it logs `HANDOVER CHANNEL LOST` and stops: the owners process ends its command, the Outbox Worker host stops through its `watch`. The app host treats either exit as fatal, so the container restarts with fresh keys on fresh channels. That costs a container restart (the owners and the Outbox are unavailable until the new boot publishes), in exchange for never running a process whose keys are retired under it; an acknowledgement from each process before its old key is retired would avoid the restart and is the follow-up. Both processes keep that descriptor open for later handovers, and a subprocess would inherit it, so neither starts one: their command line runs with a spawner that refuses every command (`scripts/zerops/no-subprocess-services.mts`), and a source test walks everything they load and finds no code that spawns (`scripts/tests/module-credential-channel-subprocesses.test.mts`, following imports, re-exports, `require` and `createRequire` calls; third-party code bundled into an owner and the built owner bundles `owner-entry.mts` loads are outside that walk). File descriptor 3 is not close-on-exec: Node cannot set that flag on an inherited descriptor, so any subprocess these processes did start would inherit the open channel and could read every later handover line (each owner's current key) from it. A worker thread shares the process and its descriptors: it could open descriptor 3 itself, and it can already reach every owner's slot through the shared store, like any code in the process (the cooperative isolation below). The Shell process receives no key, and its bundle carries no store copy. A copy nobody claimed holds no key.
+- **In-process isolation is cooperative.** Owners that share one process share one heap: the store keeps each owner to its own slot by code, not by an operating-system boundary, and code running in that process could ask for another owner's slot. Running each calling owner in its own process (one channel each) is the stronger option for later.
+- **Bindings are derived.** The Shell reads the platform's enrolment (which provider key belongs to which module) with each key's attestation and joins it with the release it has installed: a key binds only while the installed release runs exactly the attested build of that module at exactly the attested revision. During a deploy overlap the keys of the release that holds the authority bind, and the other host's keys bind nothing; after a rollback, the keys issued for the restored release bind again. A credential of a module the release does not install binds nothing. Any enrolled module key is refused as an ordinary key on every other API-key entry point: the API-key gateway context, the agent-platform key caller and the external-identity workload endpoints (403; an unreadable enrolment answers 503).
+- **The Shell verifies with its own key.** A live delegated call carries the subject's assertion that the Shell itself signed for the calling module. The Shell verifies it with the public half of its own signing key (`ONTOS_GATEWAY_PRIVATE_JWK`) and its own issuer (`ONTOS_GATEWAY_ISSUER`), never with a separate public key set: the Shell process does not receive `ONTOS_GATEWAY_PUBLIC_JWKS`, which only the owners and the Outbox Worker host use.
+- **Background work is bound to its message's company.** An `Originator` delegation (asynchronous work acting for a recorded invocation) carries the company of the Outbox message being handled whenever the Outbox runtime provides one (`OutboxMessageCompany`, from the message's domain event). The Shell accepts it only if Core recorded a domain event of that invocation in that company, then issues the context for exactly that company; another company named beside it (`originator_company_mismatch`) or a company Core never recorded for the invocation (`originator_company_not_recorded`) is refused. Without one, admission is unchanged.
+- **Every refusal names its step.** The delegated endpoint writes one warning per refusal, `gateway delegation refused`, with a stable `reason` code (`GatewayRefusalReasonSchema` in `packages/shared-contracts/src/gateway-context.ts`), the calling module (`callerAppId`), the subject's tenant (`subjectTenant`) and the audience, and returns the same `reason` in the problem body. The caller logs `gateway context not issued` with that reason, or its own (`No module credential of <module>…`, `No credential of <workload>…`). Neither line carries a key, a token or a subject.
+- **Rotation and retirement.** Every boot issues new keys. Eight hours before its keys end (`MODULE_CREDENTIAL_ROTATION_LEAD`, so at about 16 hours) the host issues every caller a fresh key, hands the fresh keys to the owners process and the Outbox Worker host on their channels, and after two minutes for in-flight delegated calls retires the keys they replaced. A host retires its own keys itself with `retire-own`, and "own" is proven by boot, never by host name alone: after a renewal it names exactly the provider key ids it replaced (keys only its current boot ever held), and at boot it names the ended boots its container recorded, whose keys are attested for its host name and one of those boots. It never retires a key of its current boot it still holds, or any key of another boot, so two containers that share a host name never retire each other's keys. Each host process records its boot id in the container (`.zerops/state/module-credential-boots.json`) before it issues any key; a container runs one host process at a time, so every other boot recorded there has ended. A new container (every deploy) starts with no record and retires none of the keys of the container it replaces, which keeps serving until the switch even if both carry the same host name. `retire-own` runs once the grace period passed after boot (after it published, for a host that takes the authority) and after each renewal. A key of an ended boot this host cannot prove is its own (a container replaced without a record) still ends within a day. Once the host published and two minutes passed for in-flight delegated calls, it also runs `retire`, keeping the keys it holds at that moment (and running even when its boot pass issued none), which acts only while the host's release holds the authority (`core.application_composition_authority`, phase `active`, revision equal to its own). Its cutoff is the moment that revision took the authority, `revision_activated_at`, which a renewal of the same revision keeps and a different revision (a newer release or a rollback) moves. Credentials bound before the cutoff are disabled and then their bindings revoked; credentials bound after it (another container of the same release, an observe-only host, a newer host still booting) and the host's own are never touched by `retire`. The authority is re-read with each revocation. Only the release holding the authority retires another host's keys; an observe-only host runs `retire-own` only.
+- **Audit.** Every issue and retire pass writes one system-actor row to `core.audit_events` in the platform tenant (`platform.module_credentials.issued` / `.retired` / `.retired_own`): operation id, host name and boot id, composition revision, module ids and provider key ids, the cutoff and what failed. Never a key.
+- **Healing and failure.** A pass that fails or overruns never stops the host or holds its publication: it logs `MODULE CREDENTIAL PROVISIONING FAILED` (or `MODULE CREDENTIALS UNAVAILABLE for <modules>`), the affected owners' delegated calls fail closed, and a background loop retries every minute, backing off to a quarter hour while it keeps failing; a key it obtains is handed to the empty slots without a restart. If the host finds its own keys revoked (a binding no longer active, or a key disabled or ended in the key store, checked every minute), it logs `MODULE CREDENTIALS OF THIS HOST WERE REVOKED`, issues every caller a fresh key and hands it over on the open channels, without a restart. A renewal or rotation that issues nothing changes nothing: the keys held stay in use until they end, and the loop retries with backoff; a module the pass missed keeps its old key. Healing stops once a newer release holds the authority. A retirement that fails is logged and repeated by the next boot.
+- **Local demo.** `scripts/demo/up.sh` keeps the pass's output in its own memory (never exported) and gives each calling module's server (`scripts/demo/serve-module.mts`, which runs `modern serve` in-process) a private FIFO on its file descriptor 3, writing that module's line once the keys exist; the Outbox Worker host gets its line on a pipe. The demo does not rotate or run `retire-own`: its keys simply end after 24 hours, so a demo left running longer than a day needs `up.sh` again.
+- **Internal workload credentials.** A calling module whose own server acts as one of its own internal workloads (O73) gets that workload's keys the same way: `MODULE_INTERNAL_WORKLOADS` in `scripts/zerops/module-credentials.mts` (today only CRM's Party intake, `demo.crm.party-intake`; a test derives the module list from source and checks that the module's own access declarations name each workload).
+  - **Registration is the platform's (ADR-0028).** At release `scripts/demo/release-internal-workloads.mts` (core: `packages/core-runtime/src/install/release-internal-workloads.ts`) registers each such workload that the reviewed catalogue also declares. It does so in every tenant that serves people where the module is installed, once per active company: one service principal, one workload binding, one company binding. One active workload binding acts for one company, so each company has its own registration and key.
+    - It writes through Core's own writers as the tenant's release actor, under the tenant's workload fence, with one audit row per tenant it changed.
+    - The principal's id is derived from tenant, workload and company. It holds no role, grant or relationship, is never a person, and never appears in People.
+    - It retires what is no longer wanted: module not installed, workload no longer declared, company not active. Company binding and workload binding are revoked and the principal is disabled; nothing is deleted. Re-running changes nothing.
+    - Only the platform changes a registration's status: the principal-status Action refuses any principal with a platform role and any principal of the platform tenant. A registration found disabled or archived anyway is made active again by the next release and reported as healed. The database refuses any change to `platform_role` (`core.keep_system_principals`), but all writers share one runtime role, so it cannot tell the release step's status writer from an Action's: that guard is in code.
+    - A registration someone made by hand is never adopted and never keyed.
+    - A principal that holds a derived id without the platform's marker is never adopted. One of another tenant is reported as `id taken by another principal (tenant …)`. One of the same tenant (an earlier build registered it before the marker existed) is reported as `derived id held by an unmarked principal of the same tenant created by an earlier build`; that company's registration stays unmade until an operator removes the old principal. Local fix (wipes the local demo database and builds it again): `docker --context orbstack compose -f docker-compose.yml -f scripts/demo/compose.demo.yml down -v && scripts/demo/up.sh`. On stage, count such principals with `select count(*) from core.principals where display_name like 'internal-workload:%'`.
+  - **Keys.**
+    - Each provisioning pass reads the active platform registrations tenant by tenant (one short transaction per tenant, the platform tenant skipped). For each it issues one key owned by the platform key owner, binds it to that principal in that tenant (a managed `api_key` binding) and attests it (`workload_attested_v2`: module, workload, tenant, company, principal, build, release, host, boot).
+    - The key travels beside its module's key, keyed `<app id>/<workload>/<tenant id>/<company id>`. The module reads exactly the entry of the request's tenant and company (`ownWorkloadCredential`), never another company's and never the environment; without one it fails closed and logs the tenant and company ids.
+    - It is rotated with its module's key, retired with the host's own and the superseded keys, audited in the same pass rows, and dropped (and retired) at the next renewal once its registration ends.
+  - **Order.** The publishing boot registers first and then provisions, so a first deploy keys every registration in the same pass. After publishing, the release fiber runs the registration again, after the release-time module install where that step exists. When the registrations then differ from the keys held, the next healing step renews them within a minute. The local demo (`up.sh`) registers right after the permissions and then provisions.
+  - **Admission does not change.** It is an ordinary key of the registered principal, admitted at `/auth/api-key/gateway-context` and only for what that registration admits; it is no module credential, so the delegated endpoint refuses it.
 
-1. Store the module credentials and the other credentials as sensitive `migrator` service secrets, and the per-environment values and `ONTOS_GATEWAY_MODULE_BINDINGS` as `migrator` service variables, under those names.
-2. Add all of them to the cut-over settings file for the Cloudflare Workers (see [Stage cut-over](#stage-cut-over-and-zerops-service-retirement)).
+What happens to the owners process or the Outbox Worker host on its key channel:
 
-Each module's service references only its own module credential and values as `${migrator_<KEY>}`; the Shell alone references `ONTOS_GATEWAY_MODULE_BINDINGS`. `scripts/tests/zerops-deployment-contract.test.mts` enforces these holders and derives the module callers from source. A module's Outbox Worker holds that module's credential too (`commerce-customer-context-worker`, `commerce-order-worker`, `party-registry-worker`).
+| Channel state                                                                                                                              | What the process does                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| `ONTOS_MODULE_CREDENTIAL_HANDOVER` unset                                                                                                   | Opens no socket; no owner holds a key, and none can come from the environment  |
+| End of the channel, local demo (`fd3`: the launcher may close its side after a hand-over)                                                  | Keeps running with the keys it holds                                           |
+| End of the channel, app host (`fd3-lifetime`: the host keeps it open while it lives; the kernel closes it when the host dies, even killed) | Stops, so it never serves as an orphan with keys nobody rotates                |
+| Malformed or partial line                                                                                                                  | Refuses that line, keeps reading                                               |
+| Socket error or a premature close while reading                                                                                            | Stops (`HANDOVER CHANNEL LOST`); the app host stops and the container restarts |
+| File descriptor 3 is not a pipe                                                                                                            | Stops, as for a socket error                                                   |
 
-**Stage host:** `outbox-worker-host` runs the Order, Customer Context and Party Registry workers in one process. It receives each hosted owner's credential under its own per-unit name, `ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY`, `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT` and `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER`, and never a plain `ONTOS_GATEWAY_MODULE_API_KEY`. The host runtime gives each hosted owner's layer its own configuration overlay that reads the owner's per-unit variable as `ONTOS_GATEWAY_MODULE_API_KEY`; no other owner sees it. `scripts/generate-outbox-worker-deployment.mjs` writes those references and the host entry, and the deployment contract test checks them. Stage bootstrap does not issue these three keys: that stays a manual operator step, an accepted deviation, done with the procedure above and recorded as those three `migrator` secrets.
+How long delegated calls can be without a key around a deploy:
 
-Create the values before the deploy that first references them. Every module's base is the module's internal address `http://<hostname>:<port>/<unit>-api`, generated from topology. At runtime each module reads its values lazily, so an unusable one fails only the work that needs it. Production stays blocked until the same `migrator` values exist there.
+- **Normally: 0 minutes.** The new host issues its keys and hands them over before it verifies release access and publishes, so its owners hold keys before they serve; the old host keeps its keys until 2 minutes after the new release took the authority, when it no longer serves governed requests.
+- **When the boot pass fails: about 1 to 1.5 minutes.** The host publishes without keys (one attempt, at most `PROVISIONING_BUDGET`, two minutes), and the healing loop issues the keys on its first step about a minute later.
+- **Liveness unreadable:** revocations are not noticed until the read works again, but keys are still rotated before they end; the failed read is logged once per streak.
+- **Keys reported revoked again and again:** renewals back off to 2, 4, 8 and then 15 minutes, and the log names how many came in a row.
 
 ### SpiceDB
 
@@ -384,11 +336,18 @@ For every authorization-schema change:
 
 Bootstrap files are only for an empty installation. They are not the ongoing authorization-schema deployment mechanism.
 
-Authorization v2 replaces the earlier model directly: no dual read or write, no legacy relations and no rollout contract. Deploying it publishes the v2-only SpiceDB schema, then bootstraps Tenant intent from the installed modules' declarations ([Granular Authorization](./AUTHORIZATION.md), [ADR-0028](../../../docs/adr/0028-stage-accounts-from-operator-data.md)). Apply the schema before any runtime that reads it. The v2 schema is generated from the Core schema constant and pinned by a test, so `stage-bootstrap.yaml` never drifts from it.
+The fail-closed Action authorization rollout uses an explicit expand/provision/verify/deploy gate:
 
-Authorization intent is data, not a provisioning command. The stage operator bootstrap (`stage:bootstrap-accounts`) creates each stage Tenant's scopes, owner membership, "Plný přístup" Role and assignments through `bootstrapTenantAccess`, then reconciles the SpiceDB projection through the single Core writer. Nothing else writes v2 relationships; there is no separate Action-provisioning command, no per-Action assertion set and no `authorization:provision-current-actions` step.
+1. prepare the candidate application/release artifact for the operator command while the previous runtime remains active; this is separate from the PostgreSQL migration artifact;
+2. ensure the fixed stage contexts and their Tenant membership relationships already exist;
+3. provision the stage Action grants from the canonical access catalog (`pnpm authorization:catalog:artifact` / `pnpm authorization:catalog:report`) in the stage-gated artifact. It publishes the compatible schema and membership-set executor grants for every `tenant_membership_default` Action across the fixed stage Tenants. For every `explicit` Action it writes direct executor grants for the accounts whose `grants.explicitActions` in the operator stage accounts file name it ([ADR-0028](../../../docs/adr/0028-stage-accounts-from-operator-data.md)); set `ONTOS_STAGE_ACCOUNTS_FILE` for the run;
+4. verify every default Action for the fixed stage Principals and the non-member denial. Verify every explicit Action as allowed for its grantees and denied for every other fixed account and the non-member. Verify that no fixed Principal can access the other fixed Tenant;
+5. only then deploy the runtime that treats missing `action#execute` permission as denial;
+6. smoke one provisioned Action and one deliberately unconfigured Action denial.
 
-Rollback restores the previous application artifact. A rollback must not resurrect authority that was revoked in the meantime: the v2 projection follows Core intent, and only a reviewed intent change restores a grant.
+The command is operator-invoked, idempotent, accepts no scope arguments, and must not be attached to PostgreSQL migrations, SpiceDB startup, application startup, or automatic deployment. A failure or catalog mismatch blocks promotion. Rollback restores the previous application artifact while leaving the additive schema and relationships in place.
+
+Provisioning is additive, not stale-grant reconciliation. Before narrowing an Action from `tenant_membership_default` to `explicit`, the operator must prepare its intended narrow grants, remove the obsolete `action:<encoded-key>#executor@tenant:<fixed-tenant>#member` relation for each affected fixed Tenant, and verify both the intended allowed Principal and a Tenant member who must now be denied. Removed Actions and revoked role/workload assignments likewise require an explicit, reviewed removal of their obsolete executor relations. Derive Action object IDs with `toSpiceDbActionObjectId`; never delete unrelated tuples or rely on rerunning `TOUCH` to revoke access. Record and verify this policy-data transition before promotion. An application rollback must not silently restore a revoked grant; any policy restoration needs its own reviewed decision. The fixed environment's provisioning input records at least one allowed and one denied Principal assertion for every `explicit` Action. On stage those assertions and grants are derived from the operator stage accounts file, the same data the bootstrap writes; grant data may name only accounts in the file and current `explicit` Actions, and a direct grant may name only a fixed Principal with an allowed assertion. Development has no explicit policy, so it still fails while the catalog has `explicit` Actions. Promotion verifies every fixed context plus the representative non-member for each `tenant_membership_default` Action; it verifies only those recorded per-Action assertions for an `explicit` Action. Missing, duplicate, unknown, allow-only, or deny-only explicit assertion sets fail before schema or relationship writes.
 
 ### Stage accounts bootstrap
 
@@ -431,7 +390,8 @@ The operator supplies every stage Tenant, account, and grant in a JSON file outs
             "roles": ["full_access"]
           }
         }
-      ]
+      ],
+      "workloads": [{ "principalId": "<uuid of an account of this Tenant>", "workloadKey": "<declared workload key>" }]
     }
   ],
   "retiredTenants": [{ "tenantId": "<uuid>", "legalEntityId": "<uuid>", "principalIds": ["<uuid>"] }],
@@ -439,12 +399,14 @@ The operator supplies every stage Tenant, account, and grant in a JSON file outs
 }
 ```
 
-- Every Tenant, slug, legal entity, module state, Principal, binding, and email must be unique; unknown keys are rejected. Exactly one account per Tenant sets `grants.owner`.
-- `grants.owner` names the account that owns the Tenant. `bootstrapTenantAccess` creates the Tenant's scopes, memberships, the "Plný přístup" Role compiled from the current catalog, and the owner's Assignment in every scope. `grants.roles` lists the further roles the account holds beside its membership; today the only value is `full_access`.
-- The bootstrap writes Core intent and reconciles the SpiceDB projection; nothing writes SpiceDB relationships directly. Rerunning with a changed account re-reconciles the same intent.
-- `retiredTenants` (may be empty) lists former stage Tenants. The bootstrap revokes their memberships and assignments in PostgreSQL, archives their identity rows, and reconciles, so the projected tuples go with the intent.
+- Every Tenant, slug, legal entity, module state, Principal, binding, and email must be unique; unknown keys are rejected.
+- `grants.owner` names the one account that owns the Tenant: `bootstrapTenantAccess` creates the Tenant's scopes, its owner's memberships and the "Plný přístup" role assigned to it in every scope. `grants.roles` lists what a further account holds beside its membership; `full_access` is the only role the file may name today. Nothing assigns rights by account kind, and no account receives a blanket grant: a capability a module ships later arrives through Novinky and an explicit adoption, never by rebuilding the release a role is pinned to.
+- `workloads` (optional) registers the trusted machine workloads of one Tenant (O73): each entry names a Principal of that Tenant and one `<module>.<workload-name>` key a carrier declares with `accessWorkload`. A workload that is not registered is refused, so a service principal never acts on the strength of its kind.
+- `retiredTenants` (may be empty) lists former stage Tenants. The bootstrap revokes their bindings, archives their rows, and reconciles the intent that carried their authority, so the projection of it goes with it.
 - `retiredAccountEmails` (may be empty) lists former stage accounts. The bootstrap bans each one, ends its sessions and removes its password credential. Retired data must not overlap an active Tenant, Principal, or email.
-- Keep the file mode `600`. Rerunning with a changed password resets that account's password and ends its sessions. Adding a grant to the file does not revoke anything; only removing or changing the account's data does.
+- Keep the file mode `600`. Rerunning with a changed password resets that account's password and ends its sessions. The bootstrap is insert-only: it never revives a membership, an assignment or a role an administrator ended, and removing a grant from the file does not revoke it.
+
+The bootstrap connects with the runtime identity (`DATABASE_URL`), not the administrative one: every scope it installs is a session-setting scope its enrollment must name, and the identity rows it writes are the shared runtime's own. `DATABASE_ADMIN_URL` stays with the migrator and the Better Auth store.
 
 Every later canonical state change uses a typed Action.
 
@@ -472,7 +434,7 @@ Follow [Commerce Application Boundaries](./COMMERCE_APPLICATIONS.md). Storefront
 
 - React, Modern runtime, and provider-context packages such as i18n must be exact strict singletons on both Shell and remotes.
 - Promoted compositions pin immutable `mf-manifest.json` references and permit browser execution only. Routine upgrades wait for a new browser document; they never force-replace a loaded remote.
-- Shell/Core SSR renders stable framing and typed placeholders. Any future MicroVertical SSR runs in a MicroVertical-owned isolated process, not the Shell/Core Node.js process.
+- Shell/Core SSR renders stable framing and typed placeholders. Any future MicroVertical SSR runs in a MicroVertical-owned isolated process, not the Shell/Core Node.js process. On Zerops stage the owners run in one owners process beside the Shell process in the same container, reached over loopback. Module code still never runs inside the Shell process (see [Stage on Zerops](#stage-on-zerops)).
 - Every app owns a CSS prefix/namespace. A Shell or MicroVertical build must not scan, erase, or collide with another delivery unit's utility classes.
 - A remote is healthy only when its manifest, remote entry, chunks, shared runtime, localized page, and Shell integration all load successfully.
 
@@ -483,7 +445,7 @@ Use this sequence for a new or changed MicroVertical:
 1. **Plan:** generate the impacted delivery-unit graph from topology and capture compatibility, migration, flag, smoke, and rollback declarations.
 2. **Preflight:** validate configuration and record last-known-good artifacts.
 3. **Build:** produce and verify immutable target-shaped artifacts.
-4. **Migrate:** expand PostgreSQL, verify schemas, publish the SpiceDB schema, and reconcile the v2 projection before deploying a consumer.
+4. **Migrate:** expand PostgreSQL, refresh grants, verify schemas, then compatibly update SpiceDB and complete any required operator-controlled relationship provisioning before deploying a fail-closed consumer.
 5. **Deploy providers:** deploy affected MicroVerticals in dependency order, initially dark.
 6. **Expose providers:** verify readiness, module manifest, BFF, remote assets, and public endpoint. Stage public subdomains are declared at service creation in `zerops-import.yaml`, never re-enabled per deploy.
 7. **Promote composition:** validate and explicitly promote one immutable candidate revision. A compatible MicroVertical update or installation does not redeploy Shell.
@@ -497,531 +459,29 @@ Do not report release success before all required smoke checks pass.
 
 ### Deploy target per environment
 
-One workflow deploys every GitHub deployment environment. Each environment chooses where its
-delivery units run with its `DEPLOY_TARGET` variable, and how its Outbox Workers run on Zerops with
-its required `OUTBOX_WORKER_MODE` variable (`dedicated` or `host`, see
-[Outbox Workers](./OUTBOX_WORKERS.md)). The two are independent:
+Stage is the only deployed environment. `.github/workflows/zerops-stage.yml` deploys it from `demo/sales-crm` into the GitHub environment `stage-edge` (see [Stage on Zerops](#stage-on-zerops)). `main` deploys nothing: `ultramodern-workspace-gates.yml` only runs the gates. There is no production deploy path; a production project needs its own deploy workflow, its own `migrator` identity secrets, gateway key pair, auth origin and SpiceDB TLS pairs, and its own enforced authorization evidence and context (see [Fail-closed authorization promotion](#fail-closed-authorization-promotion)) before anything deploys to it.
 
-| Environment  | `DEPLOY_TARGET`   | What deploys                                                                                                                                                                                                  |
-| ------------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `stage`      | unset or `zerops` | Fresh reviewed business members and Shell on Zerops; unchanged slots retain original receipts. Public artifacts use the existing immutable asset gateway. Migration/verifier and worker sets are independent. |
-| `stage`      | `cloudflare`      | Fresh reviewed placed members and Shell artifacts on Cloudflare; unchanged slots retain original receipts. Required infrastructure and Outbox Workers remain on Zerops.                                       |
-| `production` | unset or `zerops` | The reviewed Node release uses production configuration and its existing artifact gateway. Cloudflare backend placement remains rejected outside the reviewed stage edge environment.                         |
+`zerops.yaml` describes stage: SpiceDB, the storefront and the one application container (`app`), which runs the owner migrations, every owner and the Outbox Worker host. `zerops-import.yaml` lists the services those setups deploy, plus the `migrator` service that holds the identity secrets. Every service runs a single container.
 
-The deployment planner always emits both plans from the same topology: the Zerops phases (`phases`,
-`units.providers` with each vertical's outbox worker, `units.shell`, `units.workers`) and the edge
-units (`units.cloudflare`). The workflow filters business builds through the complete reviewed release
-selection and keeps infrastructure/worker phases separate. Tests cover both backend targets for the
-same diffs. `zerops.yaml`, its generators and materializers remain the source for Node provider builds;
-a source package outside reviewed membership is not automatically deployed or enrolled.
+Outbox Workers run in the app container's one Outbox Worker host process, which runs only the workers of the units the deployment serves (`ONTOS_OUTBOX_HOST_SERVED_UNITS`). `scripts/zerops/build-app.sh` bundles it under the release identity each hosted owner's build names, and the workspace gates prove that bundle against a freshly migrated database before any deploy (`scripts/prove-outbox-worker-host-artifact.sh`).
 
-| Environment  | `OUTBOX_WORKER_MODE` | Outbox Workers on Zerops                                                         |
-| ------------ | -------------------- | -------------------------------------------------------------------------------- |
-| `stage`      | `host`               | Every owner's worker in the one `outbox-worker-host` process, the cheap choice.  |
-| `production` | `dedicated`          | One `<owner>-worker` service per owner, deployed and failing independently (HA). |
+### SpiceDB TLS
 
-Before the Cloudflare cut-over stage runs `dedicated`, the workers it has today; `cloudflare-stage-cutover.mts
-activate` switches it to `host` beside `DEPLOY_TARGET=cloudflare`. A preview or demo environment on
-Zerops can equally run `host`.
-
-`deploy-target` reads `DEPLOY_TARGET`, `OUTBOX_WORKER_MODE`, `ZEROPS_PROJECT_ID` and the `ZEROPS_TOKEN`
-secret from the deploying environment without creating a deployment. An invalid target or mode fails
-the run, and so does a configured environment without `OUTBOX_WORKER_MODE`: it has no default. An
-environment without its Zerops project or token deploys nothing and records nothing. `deploy-plan`
-then plans in that environment from the environment's last successful deployment. After the complete
-expected candidate is prepared, `deploy-migrations` runs the independent migration/verifier closure and
-requested SpiceDB deploy. `deploy-node-backends` deploys fresh Node business units and Shell, then
-`deploy-zerops`, the environment's one deployment record, handles workers and the Node publication in the
-original environment. Pushes to `main` deploy `stage`. Production deploys
-only on an explicit dispatch:
-
-```sh
-gh workflow run ultramodern-workspace-gates.yml --ref main -f environment=production -f full=true
-```
-
-Create `production` once, outside CI, before the first dispatch, with the operator script in
-[Create production](#create-production). Leave `DEPLOY_TARGET` unset or `zerops`, and keep
-`OUTBOX_WORKER_MODE=dedicated`, which the script records. The first production deploy has no base, so dispatch it with `full=true`.
-
-`zerops.yaml` describes stage. Before any push, `deploy-migrations` and `deploy-zerops` write a copy that sets
-`ULTRAMODERN_DEPLOYMENT_ENVIRONMENT` to the deploying environment in every build and runtime that
-names it (`pnpm zerops:materialize-environment`), and every `zcli push` reads that copy. Production
-therefore never runs stage-only behaviour. Every runtime reaches SpiceDB over TLS gRPC and pins
-`SPICEDB_CA_CERT`, which `zerops.yaml` takes from the `spicedb` service's `SPICEDB_GRPC_TLS_CERT`
-secret; there is no plaintext mode. Production's copy sets every `SPICEDB_ENDPOINT` to production's
-`SPICEDB_ENDPOINT` variable, so production's SpiceDB gRPC certificate must name that host. A
-production deploy without that variable fails before it pushes anything. The
-scheduled composition refresh has a `refresh-production` lane beside `refresh-stage`, in production's
-own environment and `zerops-production` concurrency group; it publishes nothing until production is
-configured and has deployed once.
-Each refresh lane holds its environment's deploy lock, so it is bounded to 10 minutes (about two in
-practice), and it yields to a main deploy run that is still unfinished: GitHub cancels the older pending
-job when another queues in the same concurrency group, so a refresh queued behind a deploy could cancel
-the next deploy job, and every deploy re-publishes the composition anyway.
-
-The composition publisher resolves each unit's public origin by target: the Zerops subdomain of its
-service on `zerops`, and on `cloudflare` the Worker URL its edge build is given
-(`ULTRAMODERN_PUBLIC_URL_<UNIT>` in the placement `buildEnvironment`). `deploy-zerops` does not publish
-on `cloudflare`, because a new or moved Worker is unobservable until `deploy-cloudflare` ships it;
-`publish-edge-composition` then runs `active-composition:publish publish` with the complete approved
-candidate. Scheduled refresh runs `active-composition:publish refresh` for the same approved revision.
-Both invoke `scripts/publish-active-application-composition.mts` directly under the environment's
-deploy lock: the native publisher writes KV key `active`, verifies readback, and coordinates Core DB
-authority. There is no detached synchronization writer or publication-triggered consumer restart.
-Every placed Worker binds the composition KV namespace as `ONTOS_ACTIVE_APPLICATION_COMPOSITION`
-and reads key `active` on each request, failing closed when the binding or key is missing. Node
-consumers use the lazy HTTP source described in **Current Composition transport**; troubleshoot
-source/readback and authority freshness rather than restarting processes to load a snapshot.
-
-Switching stage between targets is one variable: set `DEPLOY_TARGET` on `stage` and dispatch
-`full=true`. Its other variables and secrets never change. A stage on `cloudflare` whose edge deploy
-is not configured fails in `edge-deploy-readiness`, before anything changes on Zerops.
-
-### Edge units on Cloudflare Workers
-
-`topology/cloudflare-placement.json` lists the delivery units CI also ships as Cloudflare Workers;
-each needs a `cloudflare.workerName` in the reference topology, and its Worker configuration must be
-deployable on its own. Every vertical (UI and headless API) and the Shell are placed, so every
-Worker the Shell binds as a service is placed too. The deployment planner emits the placed,
-impacted units as `units.cloudflare` in dependency order (providers before Shell).
-
-Cloudflare backend placement runs only for configured `stage`. The Node target reuses the existing
-immutable public-asset gateway; it does not perform an additive shadow deployment of every backend.
-In the `host` Outbox Worker mode, whatever the target, `deploy-zerops` deploys the one
-`outbox-worker-host` service (`ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID`) instead of each owner's
-dedicated worker service; see [Outbox Workers](./OUTBOX_WORKERS.md). The run that deploys one mode's
-workers stops the other mode's. A switch changes no source, so each deploy first checks whether the
-other mode's workers still run or this mode's do not (`active-composition:publish worker-mode-drift`);
-when either holds, the plan deploys every worker of this mode, whatever the diff, and stops the others.
-
-`capture-application-baseline` records B before `edge-plan` partitions the complete reviewed release.
-`edge-build` builds and verifies only fresh slots on separate runners, without deployment credentials.
-After workspace gates and initial-cutover verification, `deploy-cloudflare` retains immutable named
-backend/public-asset versions **before** migrations, under the existing `zerops-stage` environment
-lock. It retrieves original retained receipts, validates complete N, and uses `prepare
---observe-backends` to verify native backend versions as well as exact public pins before producing T.
-The public Shell ingress remains unchanged during this staging phase.
-
-`deploy-migrations` then receives original B/T and the independent migration requirements.
-`deploy-zerops` handles required workers; `publish-edge-composition` reobserves the full candidate and
-performs explicit publication. Only after that succeeds does `finalize-edge-deployment` activate the
-approved Shell ingress and record the successful edge deployment.
-
-Failed or cancelled releases preserve their immutable artifacts, original receipt set and prepared
-candidate. They do not automatically restore a historical Worker version, delete newly retained
-artifacts, or infer that an old revision can run against changed schema/queues. Same-run recovery uses
-the original prepared identity and native checks. Explicit compatible rollback follows
-[Rollback](#rollback). Source/build changes continue to be planned from the last successful edge
-deployment, so failed work is not hidden by an unrelated successful worker phase.
-
-Removing a unit from placement, or renaming its Worker, must list the old Worker in
-`retiredWorkers`. The planner compares placement with the last successful edge deployment, in full
-plans too, and refuses a change that drops a deployed Worker without retiring it. Placed units must
-also have distinct Worker names. Retirement has two phases, and CI never deletes a Worker. The
-deploy that drops a Worker leaves it running, so a rollback of the Shell or another dependent still
-finds its binding target. After the proofs pass, every successful edge deploy reports each retired
-Worker that still exists as a warning, until an operator deletes it with
-`wrangler delete --name <worker>`. `retiredWorkers` is a ledger: CI cannot see a deletion, so the
-planner keeps every entry the last edge deployment retired, and a deleted Worker's entry costs one
-read-only check per deploy.
-
-The job runs only when the repository is configured for Cloudflare: the `CLOUDFLARE_ACCOUNT_ID`
-variable, the `CLOUDFLARE_API_TOKEN` secret in the `stage-edge` environment, and a complete build
-environment (below). The `edge-deploy-readiness` job checks all three from `stage-edge` without
-creating a deployment. Missing required configuration fails a selected Cloudflare target before provider changes. A Node
-target checks the public-asset gateway separately from Cloudflare backend data bindings. Reading `stage-edge` without a deployment uses
-`environment.deployment: false`, which GitHub refuses for environments with custom deployment
-protection rules, so `stage-edge` must not have any.
-
-The non-secret configuration the Worker builds read is reviewed source, the `buildEnvironment` of
-`topology/cloudflare-placement.json`. It must hold `ULTRAMODERN_MF_DEV_ORIGIN`, the stage Shell
-origin (the placed units' API CORS allowlist), `ULTRAMODERN_PUBLIC_URL_<UNIT>` for every placed
-unit (the output verifier requires them), and the private data plane every Worker binds:
-`ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID` (the `HYPERDRIVE` binding, from which Core's
-`#database-runtime` takes the runtime `DATABASE_URL`) and
-`ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID` (the `SPICEDB` Workers VPC binding Core's
-`#spicedb-transport` calls), and `ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID` (the
-`ONTOS_ACTIVE_APPLICATION_COMPOSITION` KV binding Core's `#active-application-composition-source`
-reads). A Worker build without any of them fails. It may add `MODERN_ASSET_PREFIX`.
-Only `MODERN_`, `ULTRAMODERN_` and `VERTICAL_` keys are accepted. `ULTRAMODERN_SOURCE_REVISION` and
-`ULTRAMODERN_DEPLOYMENT_ENVIRONMENT` are reserved for the run. `VERTICAL_*_WORKER_NAME` and
-`VERTICAL_*_WORKER_BINDING` are rejected: a Worker's name and service-binding name are its topology
-`cloudflare.workerName` and `workerDispatch.serviceBinding`, the names CI deploys and every caller uses. Because it is a topology document,
-changing a value replans every unit, so no Worker keeps a build of the old configuration. The job
-never reads the Zerops `stage` environment.
-Each Worker's runtime configuration is set once, outside CI, before its first deploy: secrets
-(`wrangler secret put`, for example `SPICEDB_PRESHARED_KEY` and `BETTER_AUTH_SECRET`); the
-Hyperdrive config and Workers VPC service the IDs above name are account objects.
-
-Inside the account the Workers call each other through service bindings where the topology allows
-it: a binding call goes straight to the target Worker, without a public round trip or a routable
-hostname. The Shell discovers each UI vertical's module
-contract through its `VERTICAL_<UNIT>_WORKER` binding (the reference topology's
-`workerDispatch.serviceBinding`), and Commerce calls Price Group Catalog through
-`VERTICAL_PRICE_GROUP_CATALOG_WORKER` (Core's `#unit-service-fetch`). On Node both keep their URLs.
-Calls a binding cannot carry go by URL: gateway credentials come from the Shell, which binds every
-vertical, so a vertical binding the Shell would be a deploy cycle no first seed can satisfy. Those
-URLs must be the Shell's and verticals' routable custom domains. Every OntOS Worker sets
-`global_fetch_strictly_public`, the flag under which Cloudflare lets a Worker fetch another Worker
-on the same zone.
-
-The gate workflow builds the delivery units in parallel shards: each `node-artifact-build` or
-`cloudflare-artifact-build` matrix job builds a few units for its target (`node` with `build`,
-`cloudflare` with `cloudflare:build`), one unit at a time, and uploads their git-ignored outputs. The
-`Node Backend Federation Artifact Proof` and `Cloudflare Workerd Artifact Proof` jobs each download
-every shard of their target as soon as it is built (`scripts/unpack-unit-build-outputs.sh` fails
-naming any unit no shard built) and prove the whole topology from those outputs. A new unit joins
-one shard of each target; `Repository Tooling Tests`
-fails until it does. The Cloudflare proof runs as two jobs over the same outputs: one verifies the
-Worker outputs and their SSR, the other proves the Worker topology below.
-
-The `Cloudflare Workerd Artifact Proof (topology)` job runs the built Workers together before any deploy:
-`scripts/prove-cloudflare-local-topology.sh` starts each Worker in `wrangler dev` against the job's
-PostgreSQL (as the `HYPERDRIVE` local connection string) and SpiceDB (a local gateway Worker stands
-in for the `SPICEDB` VPC service), then proves repeated database requests, a SpiceDB-authorized
-Shell read, module discovery and a vertical API over service bindings, and SSR. Run it locally
-after `pnpm cloudflare:build`, `pnpm db:migrate` and `pnpm local:initialize`. The per-unit
-`cloudflare:proof` and the verified rollback catch a Worker whose configuration is incomplete.
-The first edge deploy has no previous edge deployment, so seed it with a full run:
-`gh workflow run ultramodern-workspace-gates.yml --ref main -f full=true`. Placement adds the Worker
-delivery; it never removes a Zerops service or any GitHub environment variable or secret.
+Every runtime reaches SpiceDB over TLS gRPC and pins `SPICEDB_CA_CERT`, which `zerops.yaml` takes from the `spicedb` service's `SPICEDB_GRPC_TLS_CERT` secret; there is no plaintext mode. `scripts/run-zerops-spicedb.sh` starts SpiceDB only when its four TLS secrets exist on the `spicedb` service: the gRPC pair (`SPICEDB_GRPC_TLS_CERT`, `SPICEDB_GRPC_TLS_KEY`), a self-signed certificate for `spicedb`, `localhost` and `127.0.0.1`, and the HTTP gateway pair (`SPICEDB_HTTP_TLS_CERT`, `SPICEDB_HTTP_TLS_KEY`). A human operator creates missing pairs as sensitive service secrets; no script provisions them. `generateGrpcMaterial` in `scripts/ops/spicedb-tls.mts` produces a gRPC pair of the required shape (named-curve P-256, never a CA), which `pnpm spicedb:tls:local` also uses for the local development pair.
 
 ### Adding a vertical
 
-Stage deploys to Cloudflare, so a vertical that merges without its edge placement never reaches
-stage and fails the stage edge deploy. The `Repository Tooling Tests` check fails the pull request
-first: it needs no secrets, so it also runs for forks. In the same pull request as the vertical:
+The app host serves the Shell plus every module of `topology/application-release-intent.json`, and `zerops-stage.yml` builds exactly those units, so adding the vertical's module to the release intent is what puts it on stage. In the same pull request:
 
-1. Give the vertical a `cloudflare` block in `topology/reference-topology.json`, with its
-   `workerName` and `publicUrlEnv` (`ULTRAMODERN_PUBLIC_URL_<UNIT>`).
-2. Add its id to `units` in `topology/cloudflare-placement.json`, and add its service-binding
-   targets to `unitServiceBindings` when it calls other placed units.
-3. Set `buildEnvironment.ULTRAMODERN_PUBLIC_URL_<UNIT>` to its stage origin,
-   `https://ontos-stage-<unit>.<STAGE_ZONE>`.
-4. Pick its CPU tier in its `modern.config.ts`: the default is `CLOUDFLARE_WORKER_CPU_MS.vertical`.
-   Pass `cloudflareCpuMs: CLOUDFLARE_WORKER_CPU_MS.largeApiVertical` only when Workers analytics
-   shows its BFF hitting the default cap.
+1. Add the vertical's module to `topology/application-release-intent.json`.
+2. Add its unit to one shard of the `node-artifact-build` job in `ultramodern-workspace-gates.yml`; `Repository Tooling Tests` fails until it does.
+3. Add its owner secrets, if it has any, to its `appId` entry in `DEMO_IMMUTABLE_RELEASE_SECRETS` before the deploy (see [Order-flow owner credentials](#order-flow-owner-credentials)).
 
-Before the merge, an operator runs `node scripts/ops/cloudflare-stage-cutover.mts worker-secrets`
-from the pull request's checkout, so the new Worker holds its runtime secrets when the stage deploy
-ships it, and runs `verify` after that deploy. A vertical needs no new GitHub variables or secrets.
+A vertical needs no new GitHub variables, no Zerops service and no Cloudflare configuration.
 
-## Stage cut-over and Zerops service retirement
+Payment is not in the release intent, so stage builds and serves no Payment owner; the migrator still applies its schema. Main's release intent leaves it out too, and its cross-owner evidence ports and `payment.source-ingress` workload have no stage provider yet. No other owner calls Payment, so only Payment's own features are unavailable.
 
-Two operator scripts own the one-time account and service changes around the Cloudflare stage. Run
-them from `app/` on a clean `main`. Both read before they write, so a re-run after a partial failure
-converges, and `--dry-run` performs every read and prints each mutation instead of running it. Zerops
-is reached through the locally authenticated `zcli` and GitHub through `gh`. Secret values stay in
-memory: they reach Cloudflare in request bodies, Wrangler and `zcli` on standard input, and never
-appear in a command line or in the output.
-
-`node scripts/ops/cloudflare-stage-cutover.mts <step> [--dry-run] [--env-file <path>]` reads
-`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `STAGE_ZONE` and `STAGE_SHELL_HOSTNAME` from the
-environment, or else from the dotenv file `~/.cloudflare-ontos-stage-token`. The optional
-`CLOUDFLARE_STAGE_EDGE_API_TOKEN` is the narrower token CI receives. Without it, CI receives
-`CLOUDFLARE_API_TOKEN`. The SpiceDB TLS step also needs `ZEROPS_TOKEN`, because `zcli` cannot set
-service secrets, and a `CLOUDFLARE_API_TOKEN` with the stage zone permission "SSL and
-Certificates: Edit" for the Origin CA.
-`provision` creates the composition KV namespace, and CI writes its `active` key with the
-`stage-edge` token, so both tokens need the account permission "Workers KV Storage: Edit".
-
-The same file holds the Shell's two secrets, because the Zerops Shell they used to live on is
-retired: `shellsuperapp_BETTER_AUTH_SECRET` (at least 32 characters) and
-`shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK` (the Shell's Ed25519 gateway signing key as a private JWK,
-in single quotes). They use the vault export's `<hostname>_<KEY>` names, so the file also serves
-`stage-zerops-services.mts restore --secrets-file`. Zerops is no place for them: it returns a
-sensitive project variable only masked, and every service would inherit it. The Worker secrets step
-and `verify` fail when either is missing. The file also holds
-every module credential, `ONTOS_GATEWAY_MODULE_BINDINGS` and every value in
-[Module credentials and bindings](#module-credentials-and-bindings); the Worker secrets step fails before
-writing anything, naming the setting, when one is missing, is not one binding per module credential, or is not a reference
-where one is required. Those modules' Workers also receive the module API bases
-they call by URL on the owners' custom domains. A base a Worker reaches through a service binding, or
-only an Outbox Worker on Zerops reads (`ONTOS_ORDER_API_BASE_URL`), is not set. A new value takes effect only after `worker-secrets`, which
-gives the Shell the new key and every vertical its derived public JWKS in the same run. To create
-them:
-
-```sh
-node -e "const c=require('node:crypto');const k=c.generateKeyPairSync('ed25519').privateKey.export({format:'jwk'});const kid=c.createHash('sha256').update(JSON.stringify({crv:k.crv,kty:k.kty,x:k.x})).digest('base64url');console.log('shellsuperapp_BETTER_AUTH_SECRET='+c.randomBytes(48).toString('base64url'));console.log(\"shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK='\"+JSON.stringify({alg:'EdDSA',crv:k.crv,d:k.d,kid,kty:k.kty,use:'sig',x:k.x})+\"'\")" >> ~/.cloudflare-ontos-stage-token
-```
-
-- `spicedb-tls` creates the SpiceDB TLS material as sensitive secrets on the Zerops `spicedb` service,
-  and `provision` runs it first. The gRPC pair `SPICEDB_GRPC_TLS_CERT`/`SPICEDB_GRPC_TLS_KEY` is a
-  self-signed certificate for `spicedb`, `localhost` and `127.0.0.1` that Node clients pin. The HTTP
-  gateway pair `SPICEDB_HTTP_TLS_CERT`/`SPICEDB_HTTP_TLS_KEY` is a Cloudflare Origin CA certificate
-  for `ontos-stage-spicedb.<STAGE_ZONE>`, the server name Workers VPC verifies; it needs no DNS record.
-  A pair that exists and holds is kept. A partial pair, a wrong name, a mismatched key or a
-  certificate expiring within 30 days fails with the pair to remove, instead of rotating silently.
-- `provision` runs every step in dependency order. It creates or reuses the remotely managed Tunnel
-  `ontos-stage`. It imports `cloudflared` from `zerops-import.yaml`, with the tunnel connector token
-  as its `TUNNEL_TOKEN` secret, and imports `outboxworkerhost`. It records their `ZEROPS_*_SERVICE_ID`
-  stage variables and deploys `cloudflared`, then waits until the tunnel is healthy. Next it creates
-  the Workers VPC services `ontos-stage-db18` (tcp `db18.zerops:5432`, certificate verification
-  `disabled`, because Zerops Postgres serves a self-signed certificate and the hop stays inside the
-  Tunnel and the project network) and `ontos-stage-spicedb` (HTTPS `spicedb.zerops:8443`, certificate
-  verification `verify_full`). cloudflared resolves fully qualified names, and Zerops answers only a
-  service's `<hostname>.zerops` name that way. Then it creates Hyperdrive `ontos-stage-runtime`: role
-  `ontos_runtime`, caching disabled, origin connection limit 40, and the password read from Zerops
-  `db18_password`. Service values such as that password come from the service's data through the
-  Zerops API, because `zcli project env` prints sensitive secrets and generated passwords as `REDACTED`.
-  The db18 hop is encrypted but not certificate-checked; see "Why db18 TLS is not CA-verified" below.
-  It creates the KV namespace `ontos-stage-active-application-composition`, empty until CI writes the
-  first publication. It writes the IDs
-  and stage origins into this placement's `buildEnvironment` for a reviewed PR. It sets the
-  `stage-edge` variable `CLOUDFLARE_ACCOUNT_ID` and secret `CLOUDFLARE_API_TOKEN`. Last, it sets every
-  placed Worker's secrets with `wrangler secret bulk`: the Shell's secrets from the settings file, the
-  SpiceDB preshared key from Zerops, plus `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT=stage`, because the Worker build's environment never
-  reaches the Worker's runtime. A Worker's `SPICEDB_ENDPOINT` is the gateway name
-  `ontos-stage-spicedb.<STAGE_ZONE>`, which the VPC service verifies. An existing object that differs from the runbook fails the step instead of being reused.
-- `cost-guards` repeats only the cost-guard step, which `provision` runs after the `stage-edge`
-  settings (see [Stage cost guards](#stage-cost-guards)).
-- `resume` turns the cost kill switch off again.
-- `worker-secrets` repeats only the Worker secrets step.
-- `verify` runs the cut-over checklist and changes nothing. The tunnel must be healthy, and both
-  SpiceDB TLS pairs must exist and hold. Both VPC
-  services and Hyperdrive must match the runbook, the composition KV namespace must exist, and the
-  reviewed `buildEnvironment` must name them. Every placed Worker must exist and hold each runtime secret `provision` plans for it, and the latest `stage-edge` deployment, which includes
-  `cloudflare:proof`, must have succeeded for the checked-out revision. Once `stage` targets
-  Cloudflare, the composition KV namespace must also hold key `active`, which the stage deploy's
-  composition sync writes. Before activation `verify` only reports that check as waiting, so run it again after
-  `activate` and the full deploy, and move DNS only when it passes.
-- `activate` runs `verify` and, only when every item holds, sets `OUTBOX_WORKER_MODE=host` and
-  `DEPLOY_TARGET=cloudflare` on `stage`. `provision` created the host service it needs.
-
-### Why db18 TLS is not CA-verified
-
-Checked on stage on 2026-10-01 with throwaway Workers VPC services and Hyperdrive configs, since
-removed. Hyperdrive tests the connection when a config is created, so each result below is real.
-
-| Path                                                                    | Result                                                                            |
-| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `db18.zerops:5432`, VPC `verify_ca`                                     | TLS works, self-signed certificate, so the check fails                            |
-| `db18.zerops:6432` (pgBouncer), VPC `disabled`                          | TLS works; `db` logs in, `ontos_runtime` gets "password authentication failed"    |
-| `db18.zerops:6432`, VPC `verify_ca` or `verify_full`                    | "unable to get local issuer certificate": Workers VPC doesn't trust the Zerops CA |
-| Hyperdrive `mtls` (CA id + `sslmode verify-ca`) with a VPC `service_id` | rejected: "mtls cannot be used with service_id"                                   |
-
-So the stage hop stays as it is: TLS to the 5432 self-signed certificate, with VPC verification
-`disabled`, inside the Tunnel and the Zerops project network. The Node services on Zerops connect to
-`db18:5432` over the private network with no `sslmode`. The Zerops CA (`https://app.zerops.io/ca`, an
-intermediate valid until 2027-09-01, also at `/etc/zerops-zembed/ca.crt` in every container) signs
-only pgBouncer on 6432, and `ontos_runtime` can't log in there.
-
-What would unblock a verified hop:
-
-- Hyperdrive: Workers VPC trusts a custom CA, or Hyperdrive allows `mtls` with `service_id`. It also
-  needs a Zerops-CA certificate on the port it reaches: 5432, or 6432 once pgBouncer accepts
-  `ontos_runtime`.
-- Node services: pgBouncer accepts `ontos_runtime`, or 5432 gets a Zerops-CA certificate. Then
-  `sslmode=verify-full` with `sslrootcert=/etc/zerops-zembed/ca.crt`.
-
-### Stage cost guards
-
-Stage runs on Workers Paid ($5 a month, which includes 10M requests and 30M CPU ms). That allowance
-covers the whole Cloudflare account, which also runs other projects' Workers, and the stage zone is
-shared with them. So the guards measure account-wide usage but only ever change OntOS stage objects. The cut-over script also reads `STAGE_ACCESS_EMAILS` (required, a comma-separated
-list of the usage notification emails) and `STAGE_ACCESS_ENFORCE` (default `false`).
-
-- Every Worker config sets `workers_dev: false` and `preview_urls: false`, so the only way in is the
-  zone routes the guards cover, and caps CPU per request at 200 ms for the Shell, 100 ms for a
-  vertical, and 3000 ms for Catalog and commerce-customer-context (`CLOUDFLARE_WORKER_CPU_MS` in
-  `packages/shared-contracts/tooling/modern-config.ts`). Each BFF request builds the whole Effect
-  HTTP API runtime, so CPU grows with the endpoint count, and those two verticals have far more
-  endpoints than the rest. Raise a cap only when Workers analytics shows real requests hitting it.
-- A WAF custom rule `ontos_stage_kill_switch` blocks exactly the placed OntOS stage hostnames. It is
-  added next to any rules other projects keep in the zone, created disabled, and re-runs keep its
-  current state. The WAF answers before a Worker runs, so blocked requests are never billed. There is
-  no rate-limit rule: on the Free plan a rate-limit expression cannot match a hostname, so it would
-  throttle every other project in the zone. `cost-guards` also records the zone as the `stage-edge` variable
-  `CLOUDFLARE_STAGE_ZONE_ID`.
-- The hourly `.github/workflows/stage-edge-cost-guard.yml` runs
-  `node scripts/ops/cloudflare-stage-cost-guard.mts check` once that variable exists. It sums the
-  whole account's Workers requests and CPU time since the billing cycle started, and logs each OntOS
-  Worker's share and the other Workers' total (`STAGE_BILLING_CYCLE_DAY`,
-  1-28, default 1). Past `STAGE_WORKERS_REQUEST_LIMIT` (default 8M) or `STAGE_WORKERS_CPU_MS_LIMIT`
-  (default 24M), it enables the kill switch and fails the run. All three are optional `stage-edge`
-  variables. The kill switch only stops OntOS stage traffic: if the breakdown shows other projects
-  drive the usage, they need their own action.
-- The Workers requests usage notification `ontos-stage-workers-requests` emails `STAGE_ACCESS_EMAILS` at
-  5M requests. Cloudflare offers usage notifications to Pay-as-you-go accounts, which a Workers Paid
-  account is. If the API still rejects the policy, `cost-guards` and `provision` stop there with the
-  Cloudflare error; the notification is the last guard, so the kill switch and Access are already in
-  place.
-- Access: a service token `ontos-stage-ci` (one-year duration) and a policy `ontos-stage-ci-token`
-  for it. `stage-edge`
-  holds the token as the secrets `CLOUDFLARE_ACCESS_CLIENT_ID` and `CLOUDFLARE_ACCESS_CLIENT_SECRET`;
-  when they are missing, a re-run rotates the token to recover the secret. Enable Zero Trust once in
-  the dashboard (the Free plan covers 50 people) before the first run; until then Cloudflare answers
-  `access.api.error.not_enabled`, `cost-guards` stops with that to-do, and `verify` reports it.
-
-Only with `STAGE_ACCESS_ENFORCE=true` does `cost-guards` put stage behind Access. Its job is to keep
-bots and crawlers from spending the Workers allowance, not to pick who may look: anyone who proves an
-email address gets in, through the one-time PIN login set up in Zero Trust, and a login lasts 30 days (`720h`). Only then does it set the reusable policy `ontos-stage-people`
-to admit anyone who signs in, so the audience never widens ahead of the applications. It manages three
-applications:
-
-- `ontos-stage` covers every placed stage hostname with the people policy and the CI token policy.
-  `cloudflare:proof` sends the token as `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET`.
-- `ontos-stage-public-paths` bypasses Access for the paths that must work without a login. On the
-  Shell that is `/shell-super-app-api/auth/api-key/gateway-context`, which verticals call with an API
-  key. On every vertical it is `/mf-manifest.json`, `/remoteEntry.js`, `/static/*` and `/locales/*`,
-  because the browser loads federated remotes cross-origin without credentials. Cloudflare applies
-  the more specific path application before the hostname one. Pages and BFF calls still need a login;
-  the browser reaches the BFFs through the Shell, which calls verticals over service bindings.
-- `ontos-stage-contracts` bypasses Access for the build-time contracts the Application Composition
-  publisher reads from CI: the Shell's `/.well-known/ontos-shell-runtime.json` and `/mf-manifest.json`,
-  and every vertical's `/.well-known/ontos-module-manifest.json`. They hold build metadata, never data.
-  Access caps one application's destinations, so they do not fit into `ontos-stage-public-paths`.
-
-To turn it off, set `STAGE_ACCESS_ENFORCE=false` and delete the three applications in the Zero Trust
-dashboard; `cost-guards` never deletes them.
-
-To resume after the kill switch trips, find out why, then run
-`node scripts/ops/cloudflare-stage-cutover.mts resume` (the check trips it again within the hour if
-usage is still over the limit, so raise the limit variables or wait for the next cycle). To undo the
-guards, delete the kill switch rule and the notification in the dashboard and remove the Access
-applications; deleting `CLOUDFLARE_STAGE_ZONE_ID` stops the hourly check.
-
-The cut-over token needs these permissions. Account: Cloudflare Tunnel Edit, Workers Scripts Edit,
-Hyperdrive Edit, Connectivity Directory Admin, Access: Apps and Policies Edit, Access: Service Tokens
-Edit, Notifications Edit, Account Analytics Read and Account Settings Read. Zone: Zone Read, DNS
-Edit, Workers Routes Edit and Zone WAF Edit. The narrower `stage-edge` token additionally needs
-Account Analytics Read and Zone WAF Edit for the hourly check.
-
-### Zerops service retirement
-
-`node scripts/ops/stage-zerops-services.mts retire|restore [--dry-run]` handles the 9 stage
-application services that Cloudflare mode no longer uses. The migrator, SpiceDB, `outboxworkerhost`
-and the 3 per-vertical outbox workers stay: the workers remain stopped, and the deploy workflow reads
-their status to reconcile Outbox Workers after an Outbox Worker mode switch. The script never changes
-`zerops.yaml`, `zerops-import.yaml`, a deploy script, or a GitHub variable.
-
-- `retire` records each service in the versioned file `scripts/ops/stage-zerops-retirement.json`:
-  its ID, status, `zerops-import.yaml` entry and stage service-ID variable. It also records the KEYS
-  of its variables, split three ways: keys the setup's `run.envVariables` declares, keys inherited
-  from the project, and service-level secrets. Values are never recorded. Commit the file. With
-  `--confirm`, `retire` then deletes each service with `zcli service delete`. It refuses to delete
-  until `stage` deploys with `DEPLOY_TARGET=cloudflare` and `--dns-cut-over` confirms the stage
-  hostnames already route to the Workers, which `cloudflare-stage-cutover.mts verify` checked first. `DEPLOY_TARGET`
-  only chooses where CI deploys; moving the hostnames is a DNS step outside this repository.
-  A re-run keeps the records of services that are already gone.
-- `restore --secrets-file <vault export>` re-imports every recorded service that `zerops-import.yaml`
-  still declares. It passes each service's secrets as import `envSecrets`, read from a dotenv export
-  of the vault keyed `<hostname>_<KEY>`, the names `zcli project env` shows. The export is parsed with dotenv rules, so JSON values such as the private JWK belong in single quotes. Today those secrets are
-  `ONTOS_GATEWAY_PUBLIC_JWKS` on each vertical, plus `BETTER_AUTH_SECRET`,
-  `BETTER_AUTH_TRUSTED_ORIGINS`, `BETTER_AUTH_URL` and `ONTOS_GATEWAY_PRIVATE_JWK` on the Shell. If
-  the file lacks any recorded secret, `restore` changes nothing. Otherwise it points every stage
-  `ZEROPS_*_SERVICE_ID` at the new service (and fails, changing no variable, if Zerops does not list one), sets `DEPLOY_TARGET=zerops` and dispatches the full
-  Zerops deploy. Moving the Shell hostname back to Zerops remains a DNS step.
-
-## Stage cost profile
-
-Stage on the Cloudflare target keeps only the data plane and its helpers on Zerops, each in one
-container with a hard ceiling, so a runaway process cannot grow the bill:
-
-| Service                         | Runs                 | CPU (shared) | RAM          | Disk    |
-| ------------------------------- | -------------------- | ------------ | ------------ | ------- |
-| `db18` (`postgresql:single@18`) | always               | 1-2 cores    | 1-2 GB       | 1-10 GB |
-| `spicedb`                       | always               | 1 core       | 1 GB         | 5 GB    |
-| `cloudflared`                   | always, 1 connector  | 1 core       | 0.125-0.5 GB | 1 GB    |
-| `outboxworkerhost`              | always               | 1 core       | 0.125-1 GB   | 1-2 GB  |
-| `migrator`                      | only during a deploy | 1-2 cores    | 0.5-2 GB     | 5 GB    |
-
-`zerops-import.yaml` declares the ceilings of the stage-only services. The `db18`, `spicedb` and
-`migrator` ceilings are set on the stage services only, so production's derived import keeps Zerops'
-defaults. The dedicated per-vertical outbox workers do not exist on stage while
-`OUTBOX_WORKER_MODE=host`; each deploy reads a deleted worker as stopped. To switch stage back to
-`dedicated`, import their `zerops-import.yaml` entries again and point the
-`ZEROPS_*_WORKER_SERVICE_ID` stage variables at the new services before the deploy.
-
-High availability stays one command away: `production-environment.mts` (below) derives `:ha` managed
-services and at least two containers per runtime service from the same import, and production runs the
-dedicated outbox workers instead of the host.
-
-## Create production
-
-Stage stays cheap: `zerops-import.yaml` declares its services in single-container mode
-(`postgresql:single@18`, one container per runtime). Production runs the same topology in high
-availability. `node scripts/ops/production-environment.mts` derives production's import from
-`zerops-import.yaml` instead of keeping a second copy:
-
-- every managed service switches from `:single` to `:ha` (`db18` becomes `postgresql:ha@18`);
-- every runtime service runs at least 2 containers, except the migrator, which runs once per deploy;
-- `cloudflared` and `outboxworkerhost` are left out: they serve only stage's Cloudflare target, and
-  production runs each owner's dedicated outbox worker.
-
-`render-import` prints that import without secrets, for review. `provision` builds production. Run
-it from `app/` on a clean `main`. Like the stage scripts, it reads before it writes, so a re-run after
-a partial failure converges, and `--dry-run` performs every read and prints each mutation instead of
-running it. It reaches Zerops through the locally authenticated `zcli` and GitHub through `gh`. It
-never deletes a service, variable or secret, and never touches `stage` or `stage-edge`.
-
-Before running it:
-
-1. Log `zcli` in with an account that may create projects in the stage project's organization.
-2. Create a Zerops access token for production CI.
-3. Export the supplied service secrets from the vault as a dotenv file keyed `<hostname>_<KEY>`,
-   with JSON values in single quotes: `shellsuperapp_BETTER_AUTH_URL`,
-   `shellsuperapp_BETTER_AUTH_TRUSTED_ORIGINS`, `shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK`, and
-   `<vertical>_ONTOS_GATEWAY_PUBLIC_JWKS` for each vertical with a public subdomain. Production needs
-   its own gateway key pair and auth origin, not stage's.
-
-```sh
-cd app
-printf %s "$PRODUCTION_ZEROPS_TOKEN" | node scripts/ops/production-environment.mts provision \
-  --secrets-file <vault export> --zerops-token-stdin --dry-run
-# review the plan, then run the same command without --dry-run
-```
-
-`provision` does this, in order:
-
-1. Creates the GitHub environment `production` when it is missing, deployable only from `main`, with
-   no required reviewers.
-2. Finds the production project: the one `ZEROPS_PROJECT_ID` names, else the one named
-   `ontos-production`, else creates `ontos-production` in Serious core mode, in the stage project's
-   organization (`--org-id` overrides). It refuses a `ZEROPS_PROJECT_ID` that names the stage project.
-3. Imports the services the project lacks, with their secrets. Zerops generates
-   `BETTER_AUTH_SECRET` on the Shell and `SPICEDB_DATABASE_PASSWORD` and
-   `SPICEDB_GRPC_PRESHARED_KEY` on SpiceDB at import (`#yamlPreprocessor=on`); the rest come from the
-   vault export. If the export lacks one, nothing is imported. A service-ID variable that already
-   names a different service fails the run.
-4. Sets only the `production` variables that differ, once Zerops lists every service:
-
-   | Variable                                                  | Value                                                                       |
-   | --------------------------------------------------------- | --------------------------------------------------------------------------- |
-   | `ZEROPS_PROJECT_ID`                                       | the production project                                                      |
-   | `ZEROPS_MIGRATOR_SERVICE_ID`, `ZEROPS_SPICEDB_SERVICE_ID` | the migrator and SpiceDB                                                    |
-   | `ZEROPS_SHELL_SERVICE_ID`                                 | the Shell                                                                   |
-   | `ZEROPS_<SETUP>_SERVICE_ID`                               | each vertical and each outbox worker, named after its `zerops.yaml` setup   |
-   | `SPICEDB_ENDPOINT`                                        | `spicedb:50051`, the in-project SpiceDB whose gRPC certificate runtimes pin |
-   | `DEPLOY_TARGET`                                           | `zerops`                                                                    |
-   | `OUTBOX_WORKER_MODE`                                      | `dedicated`, one worker service per owner                                   |
-
-5. Sets the `ZEROPS_TOKEN` secret from standard input when `--zerops-token-stdin` is given. Until
-   `production` holds that secret, the flag is required and the run fails before changing anything.
-
-SpiceDB starts only with its gRPC and HTTP gateway TLS secrets. After `provision`, create them on
-production's `spicedb` service with `spicedb-tls`, which reads `CLOUDFLARE_ACCOUNT_ID`,
-`CLOUDFLARE_API_TOKEN` and `ZEROPS_TOKEN` from the environment or `--env-file`:
-
-```sh
-node scripts/ops/production-environment.mts spicedb-tls --gateway-hostname <name in a Cloudflare zone> --dry-run
-node scripts/ops/production-environment.mts spicedb-tls --gateway-hostname <name in a Cloudflare zone>
-```
-
-The first command only previews; the second creates the secrets.
-
-`provision --dry-run` needs neither the token nor the secrets file; it lists what the real run needs.
-[Stand up production in under an hour](../../../docs/runbooks/production-fresh-deploy.md) walks the whole sequence.
-
-`provision` does not set Zerops project variables. Before the first deploy, set on the production
-project the values stage holds at project scope, with production's own origins:
-`MODERN_PUBLIC_SITE_URL`, `ONTOS_GATEWAY_ISSUER` and `ULTRAMODERN_MF_DEV_ORIGIN`. Production also needs its own enforced authorization evidence and
-context (see [Fail-closed authorization promotion](#fail-closed-authorization-promotion)). Then
-dispatch the first production deploy:
-
-```sh
-gh workflow run ultramodern-workspace-gates.yml --ref main -f environment=production -f full=true
-```
+Promotion is left out of the release intent on the same terms: main's release intent omits it, and the migrator applies its `promotion` schema. Pricing treats an uninstalled Promotion module through its existing not-installed fence, so promotion contributions are unavailable and nothing else changes.
 
 ## Required smoke suite
 
@@ -1096,27 +556,43 @@ No merge strategy flag is needed: the queue rebases. Before the pull request's o
 command enables auto-merge, and the pull request joins the queue once they do. It leaves the queue if
 its merge-group run fails. Nobody bypasses the queue, so do not pass `--admin`.
 
-The push that lands the commit deploys straight away. `queue-proof` looks for a successful
-`merge_group` run of the workflow on that commit; when one exists every gate job is skipped and
-`Workspace gates` passes on that proof. A commit without one (a dispatch on a commit pushed before
-the queue) runs the gates first. The deploy then runs:
+The push that lands the commit deploys nothing. `queue-proof` looks for a successful `merge_group`
+run of the workflow on that commit; when one exists every gate job is skipped and `Workspace gates`
+passes on that proof. A commit without one (a dispatch on a commit pushed before the queue) runs the
+gates.
 
-```text
-deploy-target + readiness -> capture B -> reviewed selection
-  Cloudflare: edge-build -> immutable deploy + native preparation of T
-  Node:       node-release-build -> immutable public assets + preparation of T
-workspace gates + initial-cutover proof + prepared T
-  -> migration/verifier closure guarded by B/T
-  -> actual Node backend deployment and receipts (Node target)
-  -> requested worker deploy/stop
-  -> full observed T + explicit Composition publication
-  -> approved Shell ingress finalization (Cloudflare target)
-```
+Stage deploys from `demo/sales-crm` (`zerops-stage.yml`), never from `main`.
 
-Planning and fresh builds can run alongside workspace verification. Database changes wait for the
-complete prepared candidate; unchanged builds do not remove required owner verifiers. A zero-build
-release still validates the full desired membership. Report measured build/deploy counts and elapsed
-times for the actual run rather than assuming a fixed release duration.
+## Demo branch divergence from main
+
+When `main` merges into `demo/sales-crm`, main's design wins except for these recorded exceptions:
+
+1. Owner-action approvals and agent proposals, including the AI staleness comparators.
+2. The optional `mcp` key in module manifests.
+3. Staged prepare/load/finish reads (helpers with the `Staged` suffix).
+4. Owner-declared Search presentation.
+5. Build-time public components.
+6. The module-declared external identity provider (Customer Context portal auth).
+7. Demo capability issuers.
+8. Manifest-declared registered-workload calls.
+9. Declared in-transaction evidence calls. The demo's transaction I/O guard refuses remote I/O inside every governed read and Action transaction, but main's source-evidence design makes its owner proof reads (current Privacy, Party, Customer Profile and source facts) from inside the owner write or read transaction. Its request can only be derived there, from sealed invocation facts (the current invocation and its idempotency key, the admitted workload) and from correlation and replay lookups. Those proof calls are declared at their call sites with `declaredEvidenceCallInsideTransaction`, from one registry per owner (`src/declared-evidence-calls.ts`). Inside a declared call the remote refusals are lifted and a second pool connection is still refused. `scripts/tests/declared-evidence-calls-ratchet.test.mts` pins the 23 declarations by value and every file that uses one (and how often), so the number can only go down:
+   - Assortment (1): `assortment.symmy-rule-fixture-owner-currentness` (its owner authorization overlay for the enrolled Symmy rule fixture import reads current Catalog, Customer Context, Market Catalog and Storefront Registry facts).
+   - Party Registry (3): `party.client-source-privacy`, `party.client-source-organization-privacy`, `party.legacy-ico-privacy`.
+   - Privacy (9): `privacy.organization-ico-owner-facts`, `privacy.organization-profile-ico-owner-facts`, `privacy.organization-business-owner-context`, `privacy.organization-business-owner-facts`, `privacy.organization-source-owner-facts`, `privacy.organization-profile-owner-facts`, `privacy.organization-party-record-facts`, `privacy.customer-intake-owner-context`, `privacy.source-person-party-owner`.
+   - Symmy (2): `symmy.customer-intake-privacy`, `symmy.retention-privacy-current` (both retention checks, before and after the source fence cancellation wait).
+   - Customer Context (8): `commerce.organization-business-eligibility`, `commerce.source-processing-eligibility`, `commerce.source-counterparty-admission`, `commerce.source-person-admission`, `commerce.organization-profile-ico-eligibility`, `commerce.counterparty-organization-ico-facts`, `commerce.counterparty-migration-correlation`, `commerce.legacy-ico-inventory`.
+
+   Known follow-ups:
+   - Three Privacy declarations wrap an injected owner-provider seam that no production layer provides (`OrganizationBusinessFactsOwner`, `OrganizationIcoFactsOwner`, `OrganizationProfileIcoFactsOwner` in `organization-business-applicability.service.ts`, `organization-ico-applicability.service.ts` and `organization-profile-ico-applicability.service.ts`). They exist so main's integration tests, whose injected providers fetch, pass under the guard; they go once those test fakes stop doing remote I/O inside the read.
+   - A fiber forked as a daemon, or a finalizer registered on an outer scope, from inside a declared call would inherit the lifted state. No wrapped code does this today; the follow-up is a guard test for it and clearing the lifted state by identity when the declared effect exits, a guard change that needs its digest re-pinned and a re-review.
+
+   What removes each: staging that proof in the operation's prepare step (or a read's finish step) and revalidating it against transaction-local owner state, once Core exposes the sealed invocation facts to preparation. Privacy's read-only proofs can move first: their requests need no sealed facts (branch `fix/merge4-a2-restaging-20261114` holds a first attempt).
+
+Zerops-only deployment: the demo keeps main's GATES and none of main's deploy jobs or Cloudflare/edge workflows; it deploys through `zerops-stage.yml`. The deploy chain behind `MAIN_DEPLOY_ENABLED` in `ultramodern-workspace-gates.yml` and the workflows `active-application-composition-refresh.yml`, `initial-composition-cutover.yml` and `stage-edge-cost-guard.yml` are absent on purpose.
+
+The owner generator no longer scaffolds a Cloudflare build script.
+
+Upstream risk when the demo merges back into `main`: Tax keeps the demo's migrations `20261023223119_gateway-assertion-redemptions` and `20261030121613_gateway-assertion-redemption-main-shape` instead of main's `20261109213238_tax_gateway_assertion_redemptions`. A database that already ran main's migration would replay the demo's two by name. Reconcile the Tax migration history before that merge lands.
 
 ## Pull-request and release hygiene
 
@@ -1149,11 +625,13 @@ Use the CI provider's rerun or manual dispatch for a genuine retry. Do not creat
 
 Git history and regression tests own the detailed rollout-failure record. When a failure class recurs or deployment behavior changes, add a permanent automated contract test instead of extending a prose commit list.
 
-## Authorization deployment
+## Fail-closed authorization promotion
 
-Authorization v2 is the only model: there is no compatibility baseline, no report-only window, no enforced-promotion artifact, no inventory/impact/readiness evidence chain and no fixed stage context. A release that changes authorization publishes the v2-only SpiceDB schema (generated from the Core schema constant and pinned by a test) and, for a new or changed stage Tenant, runs the operator stage bootstrap ([Stage accounts bootstrap](#stage-accounts-bootstrap)). Apply the schema before any runtime that reads it, and reconcile the projection through the single Core writer.
+Authorization changes deploy schema and data expansion first: the Contacts assertion-redemption migration and SpiceDB policy precede every provider and the Shell. Run the source-owned inventory check (`pnpm authorization:inventory:check`) and the catalog report (`pnpm authorization:catalog:report`) over one source revision. The catalog report is review evidence, not runtime policy: it lists every declaration, field group and review finding the installed modules carry, and a missing or invalid declaration fails the check. The canonical catalog artifact under `topology/` is the promotion record; keep it regenerated from the installed modules before any promotion.
 
-Production has no fixed accounts and no operator stage accounts file. Its promotion approval gate is owned by issue #369 and is independent of the authorization model. Rollback restores the prior application artifact; it must not resurrect authority that was revoked in the meantime, because the v2 projection follows Core intent and only a reviewed intent change restores a grant.
+`report_only` is valid only before its declared expiry and never in production. `enforced` has no expiry; `expiresAt` bounds only a report-only window. In production, `enforced` requires matching zero-impact, readiness, and negative-smoke evidence from the exact build. Development and stage may enforce without that evidence only while the compatibility baseline is empty, because enforcing then withdraws no allowance. Any present evidence must still match, and a non-empty baseline needs the full set. Stage enforces since 2026-10-01. Abort on an expired window, mixed build evidence, unresolved impact, missing policy/module/worker/issuer/replay data, or a failed negative smoke.
+
+Production remains blocked while no approved source-controlled production context exists; the development/stage provisioner must continue rejecting production and arbitrary tenant or Action arguments. Issue #173 owns technical implementation and readiness; issue #369 owns the separate production-promotion approval gate. Issue #169 is broader review context, not approval. Their current records—not this playbook—determine whether the gates are satisfied. An implementation override never records Petr/Jiří approval or permits production enforcement. The checked-in stage context remains `pending`; code-only override is not approval. Rollback restores the prior application mode only after preserving the exact evidence and must not remove the expanded schema or durable redemption rows while old/new consumers overlap.
 
 ## Operator-only legacy completion gate
 
@@ -1190,3 +668,57 @@ mise exec -- pnpm outbox:dead-delivery release --tenant-id <uuid> --message-id <
 Order finalization retries for about 24.5 hours, so a dead finalization delivery means a lasting owner refusal. When Customer Context refused PROOF revalidation while the approval request was still valid, redrive the delivery once the owner is available. When CONSUME died after commit because the approval was cancelled or revised, the Order already exists and no automatic terminal outcome is safe. First reconcile the buyer-facing Order by hand, then release the delivery with a reason that records that reconciliation.
 
 Privacy still verifies its own successful measure outcome before publication, so a released Privacy delivery does not satisfy the Privacy legacy-completion gate. Redrive Privacy work instead.
+
+## Outbox work that cannot drain, and Core's own work that crosses the boundary
+
+Before a publication closes durable admission it asks what the drain would wait for and refuses to start when some of that work can never finish: a dead delivery; a pending delivery whose consumer module is not background-eligible in its tenant or whose tenant is not active; a delivery whose next attempt falls after the drain budget; and, as a catch-all, work nothing has picked up for longer than a whole drain budget — a due, never-attempted, unclaimed delivery, or a `processing` one whose claim lease expired that long ago. Age is measured from `available_at`, not `created_at`, so a deploy straight after a redrive is not refused for a row that has been claimable for seconds. The refusal names every such row with its reason (`no-eligible-consumer: --tenant-id … --message-id … --worker-key … (consumer …, pending, attempts 0, available at …)`). Durable admission is unchanged and the authority stays `active`, so the running release keeps serving reads and writes. (Earlier boot steps — the migrator, workload registration, credential provisioning and the expand-only completion-schema expansion — have already run and stay applied; they are safe under the old release.)
+
+The consumer and tenant terms are the Outbox claim's own predicates, so the drain cannot wait for work the claim would refuse for those reasons. Two of the claim's terms cannot be asked without a running host — whether each worker's intrinsic provider modules are active for the tenant, and whether any live host registers the worker key at all — and those are what the age catch-all covers: nothing has picked the row up for a whole budget, whatever the cause. Work that is genuinely in flight — claimed, or retrying inside the budget with a live consumer — is not reported and still drains.
+
+An `unclaimed-longer-than-budget` refusal means no process is taking that worker key: check which host should serve it. For a core-system key (`core.authorization.*`, `core.identity.*`) that is the app container's Outbox Worker host, which always serves the Shell's core entry; for a tenant module's key it is that owner's worker in the same host. Compare the key against `ONTOS_OUTBOX_HOST_SERVED_UNITS` at build time and the authority's `subscriptions_json`, and check whether the worker's intrinsic provider modules are active in that tenant (an inactive provider holds its work back without ever attempting it). The refusal clears by itself as soon as something claims the row — re-run `composition:drain-preflight` to confirm — and there is no override: the budget cannot be argued with, only the missing consumer fixed.
+
+A `no-eligible-consumer` refusal blocks every deploy until it is resolved, and no command resolves it today. Resolve it by making the consumer claimable again: reactivate or install the consumer module in that tenant (`core.modules.change-tenant-module-state`, or the release module installation), or reactivate the tenant if that is the reason. There is no supported way to discard such a delivery — the dead-delivery commands only accept a `dead` row, and a pending delivery with no consumer never reaches `dead` because nothing ever attempts it. Until the operator command of the next change (G4) ships, a delivery whose module is intentionally gone needs a hand-written statement with the same care as the recovery below.
+
+Core's own system work crosses the release boundary instead of blocking the drain. A delivery carries over only when all of this holds: its worker key is one of `CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS`, the descriptor the retiring authority approved under that key is identical to the one this release ships, the delivery is `pending` with zero attempts and no claim, its message is matched and carries no completion debt of the retiring revision, and no `core.outbox_delivery_resolutions` row names it (a redriven delivery looks untouched, but an operator chose to run it on _this_ release, so this release drains it). The drain, the pre-flight and `composition:drain-preflight` all ask that one predicate, so what the pre-flight exempts is exactly what the drain carries over.
+
+The descriptor equivalence proves the topic and the entrypoint — not the payload schema and not the handler body. The rest rests on the handler being a whole-tenant reconcile that ignores its message payload and is idempotent, and on one rule: **a core-system payload schema change requires a new topic version.** `scripts/tests/core-system-carry-over.test.mts` pins each core-system worker key to its versioned topic so reusing a topic for a changed shape has to be a reviewed edit. Such work is not old-release work in flight: the handler is a whole-tenant reconcile owned by Core and identical in both releases, so the next release's own Outbox host finishes it under the new authority. A core-system descriptor that changed between releases does not carry over and is drained by the release that approved it.
+
+### Checking before a deploy
+
+Run this from a checkout of the release you are about to deploy, whenever anything looks stuck, before the deploy rather than during it. It writes nothing, takes no advisory lock, and so cannot stall a running publisher or release; its verdict is advisory for that reason, and the publisher re-asks under its own publication lock before it acts. It prints identifiers, worker keys, statuses and times only, never a payload.
+
+```sh
+mise exec -- pnpm composition:drain-preflight [--budget-ms <ms>] [--limit <rows>]
+```
+
+It needs the same database identities as the dead-delivery command — `DATABASE_ADMIN_URL` and `DATABASE_URL` — and reports the authority's phase, revision and durable admission; non-terminal Outbox work counted by worker key and status; for each outstanding delivery whether the next drain would `DRAIN` it (a live consumer can claim it), `CARRY OVER` it (Core's own untouched work, with `identity=identical`) or `BLOCK` on it (with the reason), where `identity` is how that worker key compares with the retiring authority's `subscriptions_json` (`identical`, `differs`, `not-core-system`, `absent`); and the verdict `a publication of this release would start its drain: yes/no`. It exits non-zero on `no`. A `BLOCK` with `identity=absent` is a delivery for a worker key the running composition no longer approves at all.
+
+## Returning a stuck authority to `active` (interim manual exception)
+
+A drain whose budget expires currently leaves the authority in `draining`, and from that moment the running release refuses every read. No code moves `draining` back to `active` yet; the supported command (`pnpm composition:abandon-drain`) and its durable audit record are the next change. Until it ships, an operator may return the row by hand, and only with every precondition below true:
+
+- The deploy failed and no publisher is alive. Prove it in the same session: `select pg_try_advisory_lock(hashtextextended('ontos.application-composition-publication', 0));` must return `true` (a live publisher holds that lock for its whole run). Keep the session open for the update below, and release it with `pg_advisory_unlock` afterwards. The `…-authority` lock in the statement below serialises against matching and owner writes; it does **not** prove a publisher is absent.
+- The authority row is exactly `phase = 'draining'` for the revision the old release serves, and `valid_until` is still in the future.
+- Nothing was sealed: no `sealed` or `migrated` phase was ever recorded for this attempt, so no incompatible schema change ran.
+- `core.application_composition_durable_work` is empty.
+
+Owner migrations of the failed release have already been applied — they run before the publication, are expand-only, and the old release is rehearsed against the migrated database, so returning to `active` is safe.
+
+With the administrative identity (`DATABASE_ADMIN_URL`), inside one transaction that takes the publication lock and must update exactly one row:
+
+```sql
+begin;
+select pg_advisory_xact_lock(hashtextextended('ontos.application-composition-authority', 0));
+update core.application_composition_authority
+   set phase = 'active', durable_work_admission = 'open', updated_at = clock_timestamp()
+ where authority_key = 'active'
+   and revision = '<the revision the old release serves>'
+   and phase = 'draining'
+   and valid_until > clock_timestamp();
+-- Exactly one row must be reported. Roll back on any other count.
+commit;
+```
+
+If the update matches zero rows, do not retry with looser conditions. Either the revision or the phase is not what you read, or `valid_until` has already passed. An expired lease cannot be returned to `active` by hand: a release whose freshness lapsed is no longer admitted for reads at all (`admitAuthority` requires an unexpired row), so the recovery is to let the next deploy publish — its own publication takes the authority with fresh validity — or, if no deploy can run, to restart the app container so a host republishes its release and renews the lease.
+
+Record who did it, when and why outside the database until the command exists; this exception leaves no audit row of its own, which is the main reason it is being replaced.

@@ -16,6 +16,9 @@ import { expect, it } from 'effect-rstest';
 
 import { symmyImportJobs, symmyIntegrationRelations, symmyJobRoutes } from '../../src/db/schema.ts';
 import { SymmyJobStoreError, symmyJobStoreFactory } from '../../src/persistence/symmy-job-store.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const fixtureScope = (tenantId: string, principalId: string, legalEntityId: string): OperationalScope => ({
   ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
@@ -48,7 +51,7 @@ const withScopedStore = <A, E>(
   openDatabase(connectionString).pipe(
     Effect.flatMap((database) =>
       database.transaction((transaction) =>
-        installOperationalScope(transaction, scope).pipe(
+        installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
           Effect.flatMap((executor) => symmyJobStoreFactory(executor, scope)),
           Effect.flatMap(run),
         ),

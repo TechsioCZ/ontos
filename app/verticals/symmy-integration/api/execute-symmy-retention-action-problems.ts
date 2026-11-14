@@ -74,10 +74,12 @@ export const executeSymmyRetentionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ExecuteSymmyRetentionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ExecuteSymmyRetentionActionForbiddenProblem'> =>
     ExecuteSymmyRetentionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -189,7 +191,8 @@ const mapCoreProblem = (error: ActionCoreError): ExecuteSymmyRetentionActionProb
       ActionInvocationStateError: (failure) => executeSymmyRetentionActionProblem.conflict(failure.code),
       ActionPayloadValidationError: executeSymmyRetentionActionProblem.invalid,
       ActionPermissionCheckError: (failure) => executeSymmyRetentionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => executeSymmyRetentionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        executeSymmyRetentionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => executeSymmyRetentionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => executeSymmyRetentionActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => executeSymmyRetentionActionProblem.conflict(failure.code),

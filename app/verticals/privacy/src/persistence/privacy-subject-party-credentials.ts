@@ -81,6 +81,7 @@ export const PrivacySubjectPartyCredentialsLive = Layer.effect(
           return yield* acquireDelegatedGatewayContext(
             {
               audience: 'party-registry',
+              callingAppId: 'privacy',
               legalEntityScope: 'subject',
               requestCorrelation: scope.correlationId,
               subject,

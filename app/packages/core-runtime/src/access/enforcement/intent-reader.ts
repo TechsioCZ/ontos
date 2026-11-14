@@ -5,6 +5,7 @@ import type { OperationalScope } from '../../operations/context.ts';
 import { AccessIntent } from '../decision/authority.ts';
 import type { AccessIntentSource, DecisionAuthorityPort } from '../decision/authority.ts';
 import { accessDecisionUnavailable } from '../decision/errors.ts';
+import { withOptional } from '../decision/optional.ts';
 import type { AccessIntentError } from '../intent/errors.ts';
 import { TenantIntentLoader } from '../intent/tenant-intent-loader.ts';
 import type { TenantIntentLoaderService } from '../intent/tenant-intent-loader.ts';
@@ -12,7 +13,13 @@ import type { TenantIntentLoaderService } from '../intent/tenant-intent-loader.t
 /** The four decision reads of the intent loader, seen as a port rather than as a service. */
 export type AccessIntentReads = Pick<
   TenantIntentLoaderService,
-  'loadAuthorityCells' | 'loadConfigureBases' | 'loadConnection' | 'loadScope' | 'loadTeamIds'
+  | 'loadAuthorityCells'
+  | 'loadAuthorityCellsMany'
+  | 'loadCompanyOwnership'
+  | 'loadConfigureBases'
+  | 'loadConnection'
+  | 'loadScope'
+  | 'loadTeamIds'
 >;
 
 /**
@@ -30,13 +37,31 @@ const intentUnavailable = (cause: AccessIntentError) =>
   accessDecisionUnavailable('The access intent of this request could not be read', cause);
 
 /** The engine's ports for one request scope, answered by the intent loader. */
-export const decisionAuthorityOf = (reads: AccessIntentReads, scope: OperationalScope): DecisionAuthorityPort => ({
-  readCells: (query) => reads.loadAuthorityCells(scope, query).pipe(Effect.mapError(intentUnavailable)),
-  readConfigureBases: (query) => reads.loadConfigureBases(scope, query).pipe(Effect.mapError(intentUnavailable)),
-  readConnection: (query) => reads.loadConnection(scope, query).pipe(Effect.mapError(intentUnavailable)),
-  readScope: (query) => reads.loadScope(scope, query).pipe(Effect.mapError(intentUnavailable)),
-  readTeamIds: (query) => reads.loadTeamIds(scope, query).pipe(Effect.mapError(intentUnavailable)),
-});
+export const decisionAuthorityOf = (
+  reads: AccessIntentReads,
+  scope: OperationalScope,
+  joined = false,
+): DecisionAuthorityPort =>
+  withOptional(
+    {
+      readCells: (query: Parameters<DecisionAuthorityPort['readCells']>[0]) =>
+        reads.loadAuthorityCells(scope, query).pipe(Effect.mapError(intentUnavailable)),
+      readCellsMany: (queries: Parameters<NonNullable<DecisionAuthorityPort['readCellsMany']>>[0]) =>
+        reads.loadAuthorityCellsMany(scope, queries).pipe(Effect.mapError(intentUnavailable)),
+      readCompanyOwnership: (query: Parameters<DecisionAuthorityPort['readCompanyOwnership']>[0]) =>
+        reads.loadCompanyOwnership(scope, query).pipe(Effect.mapError(intentUnavailable)),
+      readConfigureBases: (query: Parameters<NonNullable<DecisionAuthorityPort['readConfigureBases']>>[0]) =>
+        reads.loadConfigureBases(scope, query).pipe(Effect.mapError(intentUnavailable)),
+      readConnection: (query: Parameters<DecisionAuthorityPort['readConnection']>[0]) =>
+        reads.loadConnection(scope, query).pipe(Effect.mapError(intentUnavailable)),
+      readScope: (query: Parameters<DecisionAuthorityPort['readScope']>[0]) =>
+        reads.loadScope(scope, query).pipe(Effect.mapError(intentUnavailable)),
+      readTeamIds: (query: Parameters<DecisionAuthorityPort['readTeamIds']>[0]) =>
+        reads.loadTeamIds(scope, query).pipe(Effect.mapError(intentUnavailable)),
+    },
+    'readsThroughCallerTransaction',
+    joined ? (true as const) : undefined,
+  );
 
 /** The seam's intent source, built once from the one loader over Core's own rows. */
 export const AccessIntentLive: Layer.Layer<AccessIntent, never, TenantIntentLoader> = Layer.effect(
@@ -48,8 +73,13 @@ export const AccessIntentLive: Layer.Layer<AccessIntent, never, TenantIntentLoad
       joined: (transaction: CoreTransaction) => {
         // A loader that cannot join keeps the request source; the shipped loader joins its own
         // `callerTransactions` factory, so an owner-phase decision reads the owner's transaction.
-        const joinedReads = reads.joined?.(transaction) ?? reads;
-        return { authorityFor: (scope: OperationalScope) => decisionAuthorityOf(joinedReads, scope) };
+        const joinedReads = reads.joined?.(transaction);
+        return {
+          authorityFor: (scope: OperationalScope) =>
+            joinedReads === undefined
+              ? decisionAuthorityOf(reads, scope)
+              : decisionAuthorityOf(joinedReads, scope, true),
+        };
       },
     };
     return source;

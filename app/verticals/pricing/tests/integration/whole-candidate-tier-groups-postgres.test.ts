@@ -1,3 +1,4 @@
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { PricingOwnerMaterialEvidenceFenceGatewayUnavailable } from '../../src/integrations/material-evidence-owner-final-fence.ts';
 import { makePricingCurrentDecisionCatalogOwnerFinalFenceGateway } from '../../src/integrations/current-pricing-decision-owner-final-fence.ts';
 import {
@@ -26,7 +27,14 @@ import {
 import { PricingZeroFloorCurrentAuthorizationSetSchema } from '@app/pricing-contracts/domain/line-composition';
 import { QuantityBasisCompatibilityResponseSchema } from '@app/catalog/api/quantity-basis-compatibility';
 import {
-  currentPricingDecisionWholeEvaluationAdaptersForScope,
+  makeCurrentPricingDecisionExternalOwnerEvidenceLivePort,
+  executeCatalog,
+  executeCatalogCompatibility,
+  executeCustomer,
+  executeMarket,
+} from '../../src/integrations/current-pricing-decision-external-owner-evidence-live.ts';
+import {
+  currentPricingDecisionWholeEvaluationAdaptersPerRead,
   makeCurrentPricingDecisionWholeComposition,
 } from '../../src/integrations/current-pricing-decision-whole-evaluation-adapters.ts';
 import {
@@ -44,13 +52,6 @@ import {
 import { CommercialFeeSetAuthoritySchema } from '../../src/services/commercial-fee-persistence.service.ts';
 import { OwnerGatewayConnectionError } from '../../src/integrations/owner-gateway-connection.ts';
 import type { OwnerGatewayConnectionAcquire } from '../../src/integrations/owner-gateway-connection.ts';
-import {
-  executeCatalog,
-  executeCatalogCompatibility,
-  executeCustomer,
-  executeMarket,
-  makeCurrentPricingDecisionExternalOwnerEvidenceLivePort,
-} from '../../src/integrations/current-pricing-decision-external-owner-evidence-live.ts';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { verifiedTestScope } from '../support/owner-gateway-connection.fixture.ts';
 import { JoinedPrerequisites1225 } from '../support/joined-prerequisites-1225.ts';
@@ -67,6 +68,8 @@ import {
 } from '../unit/support/unit-price-calculation.fixture.ts';
 import { authorizationSetFor } from '../unit/support/issue-779-line-value.fixture.ts';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfig,
@@ -83,7 +86,12 @@ import {
   makeContextPermissionRelationshipMutationLive,
   parseDatabaseConfig,
 } from '@app/core-runtime';
-import type { OperationalScope, ScopedTransactionExecutor, ReadHandlerContext } from '@app/core-runtime';
+import type {
+  OperationalScope,
+  ScopedTransactionExecutor,
+  ReadLoadContext,
+  ReadOwnerTransaction,
+} from '@app/core-runtime';
 import {
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
@@ -312,6 +320,7 @@ const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeCrypto.layer),
   Layer.provideMerge(FetchHttpClient.layer),
   Layer.provideMerge(staffAuthenticationNamespaceRegistryLayer(['catalog', 'pricing'])),
+  Layer.provideMerge(makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]))),
 );
 class WholeCandidateReceiverTestUnavailable extends Schema.TaggedError<WholeCandidateReceiverTestUnavailable>()(
   'WholeCandidateReceiverTestUnavailable',
@@ -388,7 +397,7 @@ const makeNativePrice = Effect.fn('WholeCandidate.nativePrice')(function* makeNa
 // Only Fee/Discount/Market/purchase-context prerequisites are declared contracts.
 // Price, Tier, Currency and Catalog are real native/public production reads.
 const evaluateNativeWhole1225 = Effect.fn('WholeCandidate.joinedConsumer')(function* evaluateNativeWhole1225(
-  transaction: ScopedTransactionExecutor,
+  ownerTransaction: ReadOwnerTransaction,
   scope: OperationalScope,
   compositionRevision: string | undefined,
   request: typeof CurrentPricingDecisionRequestSchema.Type,
@@ -407,8 +416,8 @@ const evaluateNativeWhole1225 = Effect.fn('WholeCandidate.joinedConsumer')(funct
     return yield* unavailable('composition-mismatch');
   }
 
-  const adapters = yield* currentPricingDecisionWholeEvaluationAdaptersForScope(
-    transaction,
+  const adapters = yield* currentPricingDecisionWholeEvaluationAdaptersPerRead(
+    ownerTransaction,
     scope,
     actualRevision,
   ).pipe(
@@ -675,12 +684,9 @@ const ComponentReadInputSchema = Schema.Struct({
 const componentServicesForScope = (
   transaction: ScopedTransactionExecutor,
   scope: OperationalScope,
-  compositionRevision: string | undefined,
+  _compositionRevision: string | undefined,
 ) =>
   Effect.all({
-    evaluateWhole: Effect.succeed((request: typeof CurrentPricingDecisionRequestSchema.Type) =>
-      evaluateNativeWhole1225(transaction, scope, compositionRevision, request).pipe(Effect.scoped),
-    ),
     prices: pricePersistenceForScope(transaction, scope),
     tiers: quantityTierPersistenceForScope(transaction, scope),
   });
@@ -712,66 +718,94 @@ const componentRead = defineRead(
     resultSchema: Schema.Union([QuantityTierSelectionResultSchema, PricingCommercialTotalReadySchema]),
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<ComponentServices>) =>
-    Effect.gen(function* readRealNativeTier() {
-      if (input.wholeRequest !== undefined) {
+  {
+    load: (input, context: ReadLoadContext<ComponentServices>) =>
+      Effect.gen(function* readRealNativeTier() {
+        if (input.wholeRequest !== undefined) {
+          return null;
+        }
+        const [schedule, tiers] = yield* Effect.all([
+          context.services.prices.readSchedule(
+            input.priceRef,
+            DateTime.toDateUtc(DateTime.makeUnsafe(input.effectiveAt)),
+          ),
+          context.services.tiers.readCurrentSet({ effectiveAt: input.effectiveAt, priceRef: input.priceRef }),
+        ]);
+        if (
+          schedule.outcome !== 'PRICE_SCHEDULE_CURRENT' ||
+          schedule.schedule.current === undefined ||
+          tiers.outcome !== 'QUANTITY_TIER_SET_CURRENT'
+        ) {
+          return yield* unavailable('native-owner-schedule-or-tier-unavailable');
+        }
+        const exactPrice = {
+          path: {
+            priceGroupSelector: schedule.schedule.current.definition.identityKey.priceGroupSelector,
+            requiredAbsenceEvidence: [],
+          },
+          price: schedule.schedule.current,
+          scheduleRevision: schedule.schedule.scheduleRevision,
+        };
+        const result = yield* selectQuantityTier({
+          input: {
+            attempt: {
+              evaluatedAt: input.effectiveAt,
+              exactPrice,
+              normalizedQuantity: {
+                quantity: input.quantity,
+                quantityBasis: {
+                  catalogQuantityBasis: input.handoff.quantityBasis,
+                  priceUnitBasis: exactPrice.price.definition.identityKey.unitBasis,
+                },
+              },
+              tierSetPriceRef: input.priceRef,
+            },
+            tierSet: tiers.tierSet,
+          },
+          outcome: 'TIER_SET_CURRENT',
+        });
+        return { evidence: { resultCount: 1 }, result };
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ReadHandlerUnavailable({
+              code: 'read_handler_unavailable',
+              reason: Schema.is(WholeCandidateReceiverTestUnavailable)(cause)
+                ? cause.stage
+                : 'Native whole-candidate component authority unavailable',
+            }),
+        ),
+      ),
+    finish: (input, context) =>
+      Effect.gen(function* finishRealNativeTier() {
+        if (input.wholeRequest === undefined) {
+          if (context.loaded === null) {
+            return yield* unavailable('native-component-load-absent');
+          }
+          return context.loaded;
+        }
         return {
           evidence: { resultCount: input.wholeRequest.decision.lines.length },
-          result: yield* context.services.evaluateWhole(input.wholeRequest),
+          result: yield* evaluateNativeWhole1225(
+            context.transaction,
+            context.scope,
+            context.compositionRevision,
+            input.wholeRequest,
+          ).pipe(
+            Effect.scoped,
+            Effect.mapError(
+              (cause) =>
+                new ReadHandlerUnavailable({
+                  code: 'read_handler_unavailable',
+                  reason: Schema.is(WholeCandidateReceiverTestUnavailable)(cause)
+                    ? cause.stage
+                    : 'Native whole-candidate authority unavailable',
+                }),
+            ),
+          ),
         };
-      }
-      const [schedule, tiers] = yield* Effect.all([
-        context.services.prices.readSchedule(
-          input.priceRef,
-          DateTime.toDateUtc(DateTime.makeUnsafe(input.effectiveAt)),
-        ),
-        context.services.tiers.readCurrentSet({ effectiveAt: input.effectiveAt, priceRef: input.priceRef }),
-      ]);
-      if (
-        schedule.outcome !== 'PRICE_SCHEDULE_CURRENT' ||
-        schedule.schedule.current === undefined ||
-        tiers.outcome !== 'QUANTITY_TIER_SET_CURRENT'
-      ) {
-        return yield* unavailable('native-owner-schedule-or-tier-unavailable');
-      }
-      const exactPrice = {
-        path: {
-          priceGroupSelector: schedule.schedule.current.definition.identityKey.priceGroupSelector,
-          requiredAbsenceEvidence: [],
-        },
-        price: schedule.schedule.current,
-        scheduleRevision: schedule.schedule.scheduleRevision,
-      };
-      const result = yield* selectQuantityTier({
-        input: {
-          attempt: {
-            evaluatedAt: input.effectiveAt,
-            exactPrice,
-            normalizedQuantity: {
-              quantity: input.quantity,
-              quantityBasis: {
-                catalogQuantityBasis: input.handoff.quantityBasis,
-                priceUnitBasis: exactPrice.price.definition.identityKey.unitBasis,
-              },
-            },
-            tierSetPriceRef: input.priceRef,
-          },
-          tierSet: tiers.tierSet,
-        },
-        outcome: 'TIER_SET_CURRENT',
-      });
-      return { evidence: { resultCount: 1 }, result };
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ReadHandlerUnavailable({
-            code: 'read_handler_unavailable',
-            reason: Schema.is(WholeCandidateReceiverTestUnavailable)(cause)
-              ? cause.stage
-              : 'Native whole-candidate component authority unavailable',
-          }),
-      ),
-    ),
+      }),
+  },
   componentServicesForScope,
 );
 
@@ -1539,6 +1573,58 @@ const currentCatalogBuildIdentity = Effect.fn('WholeCandidate.currentCatalogBuil
   },
 );
 
+/**
+ * The Shell's SOURCE sharing policy when no packaged browser pair is available: the Shell hosts every governed
+ * singleton, so its observation lists each one with the version the Shell's own dependencies resolve to.
+ */
+const observeShellSourceFederation = Effect.fn('WholeCandidate.shellSourceFederation')(function* shellSource() {
+  const program = `import { createRequire } from 'node:module';
+    import { readFileSync } from 'node:fs';
+    import { Schema } from 'effect';
+    import { createSharedRuntimeConfig } from './module-federation.shared.ts';
+    const require = createRequire(process.cwd() + '/apps/shell-super-app/package.json');
+    const version = (name) => Schema.decodeUnknownSync(Schema.Struct({ version: Schema.NonEmptyString }))(
+      require(name + '/package.json')).version;
+    const { dependencies } = Schema.decodeUnknownSync(Schema.Struct({
+      dependencies: Schema.Record(Schema.String, Schema.NonEmptyString)
+    }))(require('./package.json'));
+    const { shell } = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Struct({
+      shell: Schema.Struct({ moduleFederation: Schema.Struct({ name: Schema.NonEmptyString }) })
+    })))(readFileSync('./topology/reference-topology.json', 'utf8'));
+    const sharing = createSharedRuntimeConfig({
+      '@modern-js/plugin-i18n/runtime': version('@modern-js/plugin-i18n'),
+      '@modern-js/runtime': version('@modern-js/runtime'),
+      '@tanstack/react-router': dependencies['@tanstack/react-router'],
+      react: version('react'), 'react-dom': version('react-dom')
+    });
+    process.stdout.write(JSON.stringify({ name: shell.moduleFederation.name, exposes: [],
+      shared: Object.entries(sharing).map(([name, { requiredVersion, singleton }]) => ({ name, requiredVersion, singleton }))
+    }));`;
+  const child = yield* ChildProcess.make(process.execPath, ['--experimental-strip-types', '--input-type=module', '-'], {
+    cwd: appRoot,
+    env: {
+      APP_ENV_PATH: '/dev/null',
+      HOME: yield* Config.String('HOME'),
+      PATH: yield* Config.String('PATH'),
+      TMPDIR: yield* Config.String('TMPDIR').pipe(Config.withDefault('/tmp')),
+    },
+    extendEnv: false,
+    stderr: 'pipe',
+    stdin: Stream.make(new TextEncoder().encode(program)),
+    stdout: 'pipe',
+  });
+  const [document, code, diagnostics] = yield* Effect.all(
+    [
+      child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+      child.exitCode,
+      child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+    ],
+    { concurrency: 3 },
+  );
+  expect({ code, diagnostics: code === 0 ? '' : diagnostics.slice(-4000) }).toEqual({ code: 0, diagnostics: '' });
+  return document;
+});
+
 const deriveWholeCandidateSnapshot = Effect.fn('WholeCandidate.deriveSnapshot')(function* deriveSnapshot(
   catalogContractDocument: string,
 ) {
@@ -1552,13 +1638,6 @@ const deriveWholeCandidateSnapshot = Effect.fn('WholeCandidate.deriveSnapshot')(
     catalogContractDocument,
   );
   const fs = yield* FileSystem.FileSystem;
-  const topology = yield* Schema.decodeUnknownEffect(
-    Schema.fromJsonString(
-      Schema.Struct({
-        shell: Schema.Struct({ moduleFederation: Schema.Struct({ name: Schema.NonEmptyString }) }),
-      }),
-    ),
-  )(yield* fs.readFileString(`${appRoot}topology/reference-topology.json`));
   const boundaries = new Set(catalogContract.manifest.publicSurface.components.map(({ mfBoundaryId }) => mfBoundaryId));
   const [catalogBoundary] = boundaries;
   if (boundaries.size !== 1 || catalogBoundary === undefined) {
@@ -1582,13 +1661,8 @@ const deriveWholeCandidateSnapshot = Effect.fn('WholeCandidate.deriveSnapshot')(
           name: catalogBoundary,
           shared: [],
         }),
-    shell: observedBuildPair
-      ? fs.readFileString(shellManifestPath)
-      : Schema.encodeEffect(Schema.fromJsonString(sourceFederationSchema))({
-          exposes: [],
-          name: topology.shell.moduleFederation.name,
-          shared: [],
-        }),
+    // The Shell hosts every governed singleton; its SOURCE sharing policy is observed, never left empty.
+    shell: observedBuildPair ? fs.readFileString(shellManifestPath) : observeShellSourceFederation(),
   });
   // Pricing is an actual API-only owner with no MF boundary or public components; its observation is server-only.
   const documents = new Map<string, string>([
@@ -1690,11 +1764,16 @@ const deriveWholeCandidateSnapshot = Effect.fn('WholeCandidate.deriveSnapshot')(
       stdout: 'pipe',
     },
   );
-  const [code, output] = yield* Effect.all(
-    [child.exitCode, child.stdout.pipe(Stream.decodeText(), Stream.mkString), Stream.runDrain(child.stderr)],
+  const [code, output, diagnostics] = yield* Effect.all(
+    [
+      child.exitCode,
+      child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+      child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+    ],
     { concurrency: 3 },
   );
-  expect(code).toBe(0);
+  // The derivation child prints no credentials; its stderr is the only account of a refused composition.
+  expect({ code, diagnostics: code === 0 ? '' : diagnostics.slice(-4000) }).toEqual({ code: 0, diagnostics: '' });
   const snapshot = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(
     output,
   );
@@ -2255,10 +2334,11 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
       }),
     );
     const shellAddress1225 = yield* Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Int }))(shell1225.address);
+    // Pricing's own module key, handed over the way the host does.
+    yield* holdTestModuleCredentials({ pricing: 'pricing-module-api-key-1225' });
     const callerShell1225 = yield* Layer.build(
       ConfigProvider.layerAdd(
         ConfigProvider.fromUnknown({
-          ONTOS_GATEWAY_MODULE_API_KEY: 'pricing-module-api-key-1225',
           ONTOS_SHELL_GATEWAY_BASE_URL: new URL(
             shellGatewayContextContract.apiPrefix,
             `http://127.0.0.1:${shellAddress1225.port}`,

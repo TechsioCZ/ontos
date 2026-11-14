@@ -50,7 +50,7 @@ it.effect('registers the staff namespace for this vertical’s own audience, so 
         return;
       }
       expect(found.value.allowedAudiences).toStrictEqual([commerceCustomerContextApiContract.ownerId]);
-      expect(found.value.subjectTypes).toStrictEqual(['user', 'api_key']);
+      expect(found.value.subjectTypes).toStrictEqual(['user', 'api_key', 'oauth_grant']);
       expect(found.value.requiresOperationAdmission).toBe(false);
     }),
   ),

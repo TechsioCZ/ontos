@@ -1,0 +1,18 @@
+/* Vertical-local: new loading placeholders must not depend on rebuilding the shell's utility bundle. */
+.crm-loading-skeleton-row {
+  block-size: 2.5rem;
+  border-radius: 0.5rem;
+  background: var(--color-border-primary, #dce3ec);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .crm-loading-skeleton-row {
+    animation: crm-loading-pulse 1.5s ease-in-out infinite;
+  }
+}
+
+@keyframes crm-loading-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}

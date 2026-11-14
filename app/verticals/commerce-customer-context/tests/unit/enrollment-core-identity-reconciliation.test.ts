@@ -8,6 +8,7 @@ import type { ExternalIdentityClientPort } from '../../../../packages/shared-con
 import { CommercePortalAuthAccountLookupService } from '../../api/portal-auth/provider/account-lookup-service.ts';
 import { CommercePortalAuthAccountCreationReconciliationService } from '../../api/portal-auth/provider/account-creation-reconciliation-service.ts';
 import { CommerceCoreIdentityClientConfig } from '../../api/portal-auth/provider/core-identity-client-config.ts';
+import { makeCommerceTenantWorkloadCredentials } from '../../api/tenant-workload-credentials.ts';
 import {
   ACTIVATE_PRINCIPAL_BINDING_TRANSITION_KEY,
   CORE_IDENTITY_OWNER_MODULE_KEY,
@@ -119,6 +120,15 @@ const context: CommerceEnrollmentOwnerEffectContext = {
   attempt,
   operations: [
     operation({
+      ownerInvocationId: invocation('50000000-0000-4000-8000-0000000000a0'),
+      ownerModuleKey: Schema.decodeSync(EnrollmentModuleKeySchema)('commerce.portal-auth'),
+      portalEnrollmentOwnerOperationId: Schema.decodeSync(EnrollmentOwnerOperationIdSchema)(
+        '70000000-0000-4000-8000-0000000000a0',
+      ),
+      status: 'SUCCEEDED',
+      transitionKey: Schema.decodeSync(EnrollmentTransitionKeySchema)('provider.account.verify'),
+    }),
+    operation({
       outcomeCode: Schema.decodeSync(EnrollmentKeySchema)('core_binding_reserved'),
       ownerInvocationId: invocation(RESERVE_INVOCATION_ID),
       portalEnrollmentOwnerOperationId: Schema.decodeSync(EnrollmentOwnerOperationIdSchema)(RESERVE_OPERATION_ID),
@@ -205,13 +215,19 @@ const registryLive = (bindingStatus: 'active' | 'pending') =>
       Layer.mergeAll(
         Layer.succeed(ExternalIdentityClient, coreClient(bindingStatus)),
         Layer.succeed(CommerceCoreIdentityClientConfig, {
-          apiKey: Redacted.make('enrollment-core-identity-reconciliation'),
           baseUrl: 'https://core-identity.invalid',
+          credentials: makeCommerceTenantWorkloadCredentials({
+            [TENANT_ID]: {
+              coreIdentityApiKey: Redacted.make('enrollment-core-identity-reconciliation'),
+              gatewayApiKey: Redacted.make('enrollment-core-identity-reconciliation-gateway'),
+            },
+          }),
         }),
         Layer.succeed(CommercePortalAuthAccountLookupService, {
           existsByEmail: unreachable('existsByEmail'),
           existsByProviderSubject: unreachable('existsByProviderSubject'),
           subjectForOwnerInvocation: unreachable('subjectForOwnerInvocation'),
+          verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
         }),
         Layer.succeed(CommercePortalAuthAccountCreationReconciliationService, {
           reissueVerificationEmail: unreachable('reissueVerificationEmail'),

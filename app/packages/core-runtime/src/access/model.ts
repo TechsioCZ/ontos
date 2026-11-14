@@ -1,4 +1,4 @@
-import { Match, Schema } from 'effect';
+import { DateTime, Match, Predicate, Schema } from 'effect';
 
 import {
   AccessChangeBatchIdSchema,
@@ -28,6 +28,8 @@ import {
   TenantIdSchema,
 } from './ids.ts';
 import type { AccessScopeId, PrincipalId } from './ids.ts';
+import { ActionAuthorityProofV2Schema } from './approvals/action-authority-v2-schema.ts';
+import type { ActionAuthorityProofV2 } from './approvals/action-authority-v2-schema.ts';
 
 /*
  * PostgreSQL is the source of access intent; SpiceDB is a projection written only by the Core
@@ -144,6 +146,8 @@ const catalogEntryEphemeralIssue = (entry: {
 
 export const CatalogSnapshotEntrySchema = Schema.Struct({
   amountInput: Schema.optionalKey(LabelSchema),
+  /** The Shell's frame: no Role cell, admitted by scope membership; see `AccessDeclaration.baseline`. */
+  baseline: Schema.optionalKey(Schema.Literal(true)),
   /** Present only for a short-lived proof that cannot wait for an approval (O22). */
   ephemeral: Schema.optionalKey(Schema.Literal(true)),
   fieldClass: Schema.optionalKey(LabelSchema),
@@ -448,13 +452,20 @@ export const AuthorityWitnessSchema = Schema.Struct({
 });
 export type AuthorityWitness = typeof AuthorityWitnessSchema.Type;
 /** "Approve and execute using my access": the approver is also the executor. */
-export const ApprovalSchema = Schema.Struct({
+const HistoricalApprovalSchema = Schema.Struct({
   approvalAssignmentIncarnationId: AssignmentIncarnationIdSchema,
   approvedAt: Schema.Date,
   approverId: PrincipalIdSchema,
   executionAssignmentIncarnationId: AssignmentIncarnationIdSchema,
   expiresAt: Schema.Date,
 });
+const ActionApprovalV2Schema = Schema.Struct({
+  actionAuthority: ActionAuthorityProofV2Schema,
+  approvedAt: Schema.Date,
+  approverId: PrincipalIdSchema,
+  expiresAt: Schema.Date,
+});
+export const ApprovalSchema = Schema.Union([HistoricalApprovalSchema, ActionApprovalV2Schema]);
 export type Approval = typeof ApprovalSchema.Type;
 export const ExecutionReceiptSchema = Schema.Struct({
   actionInvocationId: ActionInvocationIdSchema,
@@ -518,12 +529,59 @@ const proposalLifecycleIssue = (proposal: ProposalLifecycle): string | undefined
   return proposalEndIssue(proposal);
 };
 interface WitnessScopeFacts {
+  readonly actionAuthority?: ActionAuthorityProofV2;
   readonly approval?: Approval;
   readonly capabilityKey: string;
+  readonly commandDigest: string;
+  readonly expiresAt: Date;
   readonly requester: ActorContext;
   readonly scopeId: AccessScopeId;
+  readonly target?: string;
   readonly witnesses: readonly AuthorityWitness[];
 }
+const proofDeadlineCovers = (proof: ActionAuthorityProofV2, deadline: Date): boolean =>
+  proof.admissionDeadline === undefined ||
+  DateTime.toEpochMillis(DateTime.makeUnsafe(deadline)) <= proof.admissionDeadline;
+
+const sameForwardWriteQuestions = (requester: ActionAuthorityProofV2, approver: ActionAuthorityProofV2): boolean => {
+  const requested = requester.questions.map(({ questionHash }) => questionHash).toSorted();
+  const approved = approver.questions
+    .flatMap(({ purpose, questionHash }) => (purpose === 'approve_write' ? [questionHash] : []))
+    .toSorted();
+  return requested.length === approved.length && requested.every((hash, index) => hash === approved[index]);
+};
+
+const forwardWitnessIssue = (facts: WitnessScopeFacts, requester: ActionAuthorityProofV2): string | undefined => {
+  if (
+    facts.witnesses.length !== 0 ||
+    facts.target !== undefined ||
+    requester.phase !== 'requester' ||
+    !Predicate.isTagged(facts.requester, 'Principal') ||
+    requester.principalId !== facts.requester.principalId ||
+    requester.commandDigest !== facts.commandDigest ||
+    requester.scopeId !== facts.scopeId ||
+    !proofDeadlineCovers(requester, facts.expiresAt)
+  ) {
+    return 'A forward Action proposal binds its exact requester proof, digest, scope and deadline, never scalar witnesses';
+  }
+  const { approval } = facts;
+  if (approval === undefined) {
+    return undefined;
+  }
+  if (!('actionAuthority' in approval)) {
+    return 'A forward Action proposal cannot acquire a historical execution/RUN approval';
+  }
+  const approver = approval.actionAuthority;
+  return approver.phase === 'approver' &&
+    approver.principalId === approval.approverId &&
+    approver.scopeId === facts.scopeId &&
+    approver.commandDigest === facts.commandDigest &&
+    approver.targetSetHash === requester.targetSetHash &&
+    sameForwardWriteQuestions(requester, approver) &&
+    proofDeadlineCovers(approver, approval.expiresAt)
+    ? undefined
+    : 'A forward Action approval binds its exact approver, complete command, target set, scope and deadline';
+};
 /** Why the approving person's own authority is what an approved command needs, per purpose. */
 const APPROVER_HOLDER_ISSUES = {
   approval: 'The approval witness belongs to the approver',
@@ -550,6 +608,12 @@ const holderIssue = (facts: WitnessScopeFacts, witness: AuthorityWitness): strin
 };
 const witnessIssue = (facts: WitnessScopeFacts): string | undefined => {
   const { approval, capabilityKey, scopeId, witnesses } = facts;
+  if (facts.actionAuthority !== undefined) {
+    return forwardWitnessIssue(facts, facts.actionAuthority);
+  }
+  if (approval !== undefined && 'actionAuthority' in approval) {
+    return 'A historical proposal cannot acquire a forward Action approval';
+  }
   const slots = witnesses.map(
     (witness) => `${witness.purpose} ${witness.assignmentIncarnationId} ${witness.capabilityKey}`,
   );
@@ -593,6 +657,8 @@ const witnessIssue = (facts: WitnessScopeFacts): string | undefined => {
  * mandate: bound to the exact approver and requester incarnations, single use, never revived.
  */
 export const ProposalSchema = Schema.Struct({
+  /** Forward proof only; historical rows keep their original immutable witness contract. */
+  actionAuthority: Schema.optionalKey(ActionAuthorityProofV2Schema),
   approval: Schema.optionalKey(ApprovalSchema),
   capabilityKey: CapabilityKeySchema,
   commandDigest: CommandDigestSchema,
@@ -607,7 +673,7 @@ export const ProposalSchema = Schema.Struct({
   status: ProposalStatusSchema,
   target: Schema.optionalKey(RecordKeySchema),
   tenantId: TenantIdSchema,
-  witnesses: Schema.NonEmptyArray(AuthorityWitnessSchema),
+  witnesses: Schema.Array(AuthorityWitnessSchema),
 }).check(Schema.makeFilter((proposal) => proposalLifecycleIssue(proposal) ?? witnessIssue(proposal) ?? true));
 export type Proposal = typeof ProposalSchema.Type;
 /** A mandate is a proposal a person approved. It executes at most once while every bound witness is live. */

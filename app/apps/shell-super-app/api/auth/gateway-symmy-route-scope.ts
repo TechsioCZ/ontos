@@ -17,6 +17,7 @@ import { resolveSymmyOwnerReleaseBase } from '../symmy/owner-release-transport.t
 import { GatewayDelegationError, delegationForbidden, delegationUnavailable } from './gateway-delegation-errors.ts';
 import { gatewayPublishedOperationAccess } from './gateway-delegation-policy.ts';
 import {
+  gatewayIssuerRefusalReason,
   issueGatewayContextAssertion,
   issueRouteScopedGatewayContextAssertion,
   issueSymmyGatewayContextAssertion,
@@ -59,9 +60,11 @@ export type SymmyRouteScopeProof = SymmyRouteScopeProofValue;
 const proofSchema = Schema.instanceOf(SymmyRouteScopeProofValue);
 const proofFacts = (proof: SymmyRouteScopeProof) => {
   if (!Schema.is(proofSchema)(proof)) {
-    return Effect.fail(delegationForbidden());
+    return Effect.fail(delegationForbidden('symmy_route_not_admitted')());
   }
-  return Effect.fromOption(SymmyRouteScopeProofValue.read(proof)).pipe(Effect.mapError(delegationForbidden));
+  return Effect.fromOption(SymmyRouteScopeProofValue.read(proof)).pipe(
+    Effect.mapError(delegationForbidden('symmy_route_not_admitted')),
+  );
 };
 const sameIdentity = (left: TrustedPrincipalContext, right: TrustedPrincipalContext): boolean =>
   left.principalId === right.principalId &&
@@ -77,7 +80,7 @@ const validateRoutePrincipal = Effect.fn('SymmyRouteScope.validatePrincipal')(fu
   sourcePurpose: SourcePurpose,
 ) {
   const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(candidate).pipe(
-    Effect.mapError(delegationForbidden),
+    Effect.mapError(delegationForbidden('symmy_route_not_admitted')),
   );
   if (
     principal.authMethod !== 'api_key' ||
@@ -86,7 +89,7 @@ const validateRoutePrincipal = Effect.fn('SymmyRouteScope.validatePrincipal')(fu
     principal.authContextRef === undefined ||
     !principal.authContextRef.startsWith('better-auth-api-key:')
   ) {
-    return yield* delegationForbidden();
+    return yield* delegationForbidden('symmy_route_not_admitted')();
   }
   const providerKeyId = principal.authContextRef.slice('better-auth-api-key:'.length);
   const database = yield* CoreDatabase;
@@ -115,15 +118,15 @@ const validateRoutePrincipal = Effect.fn('SymmyRouteScope.validatePrincipal')(fu
         );
       }),
     )
-    .pipe(recoverSqlTransactionError, Effect.mapError(delegationUnavailable));
+    .pipe(recoverSqlTransactionError, Effect.mapError(delegationUnavailable('symmy_route_unavailable')));
   if (eligible.length !== 1) {
-    return yield* delegationForbidden();
+    return yield* delegationForbidden('symmy_route_not_admitted')();
   }
   return principal;
 });
 const validateCompany = Effect.fn('SymmyRouteScope.validateCompany')(function* company(route: Route, tenantId: string) {
   if (route.tenantId !== tenantId) {
-    return yield* delegationForbidden();
+    return yield* delegationForbidden('symmy_route_not_admitted')();
   }
   if (route.legalEntityId !== undefined) {
     const entities = yield* LegalEntityContext;
@@ -132,8 +135,8 @@ const validateCompany = Effect.fn('SymmyRouteScope.validateCompany')(function* c
       .pipe(
         Effect.mapError((cause) =>
           Predicate.isTagged(cause, 'LegalEntityContextUnavailableError')
-            ? delegationUnavailable(cause)
-            : delegationForbidden(cause),
+            ? delegationUnavailable('symmy_route_unavailable')(cause)
+            : delegationForbidden('symmy_route_not_admitted')(cause),
         ),
       );
   }
@@ -148,25 +151,25 @@ export const acquireSymmyRouteScopeProof = Effect.fn('SymmyRouteScope.acquire')(
   readonly sourcePurpose: SourcePurpose;
 }) {
   const sourcePurpose = yield* Schema.decodeUnknownEffect(SourcePurposeSchema)(input.sourcePurpose).pipe(
-    Effect.mapError(delegationForbidden),
+    Effect.mapError(delegationForbidden('symmy_route_not_admitted')),
   );
   const routeRequest = yield* Schema.decodeUnknownEffect(SymmyRouteContextRequestSchema)(input.routeRequest).pipe(
-    Effect.mapError(delegationForbidden),
+    Effect.mapError(delegationForbidden('symmy_route_not_admitted')),
   );
   if ((sourcePurpose === 'read') !== readRoutes.has(routeRequest.routeKey)) {
-    return yield* delegationForbidden();
+    return yield* delegationForbidden('symmy_route_not_admitted')();
   }
   const principal = yield* validateRoutePrincipal(input.principal, sourcePurpose);
   const assertion = yield* issueSymmyGatewayContextAssertion({
     compositionRevision: input.compositionRevision,
     principal,
     principalKind: 'integration',
-  }).pipe(Effect.mapError(delegationUnavailable));
+  }).pipe(Effect.mapError((failure) => delegationUnavailable(gatewayIssuerRefusalReason(failure))(failure)));
   if (assertion.compositionRevision !== input.compositionRevision) {
-    return yield* delegationForbidden();
+    return yield* delegationForbidden('symmy_route_not_admitted')();
   }
   const baseUrl = yield* resolveSymmyOwnerReleaseBase(assertion.apiBaseUrl, symmyAudience).pipe(
-    Effect.mapError(delegationUnavailable),
+    Effect.mapError(delegationUnavailable('symmy_route_unavailable')),
   );
   const route = yield* executeSymmyRouteContextWithAuthorization(
     routeRequest,
@@ -177,12 +180,14 @@ export const acquireSymmyRouteScopeProof = Effect.fn('SymmyRouteScope.acquire')(
     Effect.mapError((cause) =>
       Predicate.isTagged(cause, 'SymmyRouteContextForbiddenProblem') ||
       Predicate.isTagged(cause, 'SymmyRouteContextAuthenticationProblem')
-        ? delegationForbidden(cause)
-        : delegationUnavailable(cause),
+        ? delegationForbidden('symmy_route_not_admitted')(cause)
+        : delegationUnavailable('symmy_route_unavailable')(cause),
     ),
   );
   yield* validateCompany(route, principal.tenantId);
-  const routeJson = yield* Schema.encodeEffect(routeJsonSchema)(route).pipe(Effect.mapError(delegationUnavailable));
+  const routeJson = yield* Schema.encodeEffect(routeJsonSchema)(route).pipe(
+    Effect.mapError(delegationUnavailable('symmy_route_unavailable')),
+  );
   return new SymmyRouteScopeProofValue(
     routeScopeMintKey,
     Object.freeze({
@@ -198,7 +203,7 @@ export const acquireSymmyRouteScopeProof = Effect.fn('SymmyRouteScope.acquire')(
 export const readSymmyRouteScope = Effect.fn('SymmyRouteScope.read')(function* read(proof: SymmyRouteScopeProof) {
   const facts = yield* proofFacts(proof);
   return yield* Schema.decodeUnknownEffect(routeJsonSchema)(facts.routeJson).pipe(
-    Effect.mapError(delegationUnavailable),
+    Effect.mapError(delegationUnavailable('symmy_route_unavailable')),
   );
 });
 
@@ -208,18 +213,18 @@ export const projectSymmyRouteScopePrincipal = Effect.fn('SymmyRouteScope.projec
 ) {
   const facts = yield* proofFacts(proof);
   if (!sameIdentity(facts.principal, input.principal)) {
-    return yield* delegationForbidden();
+    return yield* delegationForbidden('symmy_route_not_admitted')();
   }
   const principal = yield* validateRoutePrincipal(input.principal, facts.sourcePurpose);
   const route = yield* readSymmyRouteScope(proof);
   if (input.legalEntityId !== route.legalEntityId) {
-    return yield* delegationForbidden();
+    return yield* delegationForbidden('symmy_route_not_admitted')();
   }
   yield* validateCompany(route, principal.tenantId);
   const catalog = yield* ShellInstalledModuleCatalog;
-  const installed = yield* catalog.load.pipe(Effect.mapError(delegationUnavailable));
+  const installed = yield* catalog.load.pipe(Effect.mapError(delegationUnavailable('installed_release_unavailable')));
   if (installed.composition.revision !== facts.compositionRevision) {
-    return yield* new GatewayDelegationError({ code: 'reload_required' });
+    return yield* new GatewayDelegationError({ code: 'reload_required', reason: 'release_changed' });
   }
   if (input.audience !== symmyAudience) {
     const destination = installed.contracts.find((contract) => contract.deployment.appId === input.audience);
@@ -235,7 +240,7 @@ export const projectSymmyRouteScopePrincipal = Effect.fn('SymmyRouteScope.projec
           ),
       )
     ) {
-      return yield* delegationForbidden();
+      return yield* delegationForbidden('symmy_route_not_admitted')();
     }
   }
   return route.legalEntityId === undefined ? principal : { ...principal, legalEntityId: route.legalEntityId };
@@ -313,13 +318,15 @@ export const issueSymmyRouteScopeAssertion = Effect.fn('SymmyRouteScope.issueAss
             compositionRevision: facts.compositionRevision,
             principal,
           })
-    ).pipe(Effect.mapError(delegationUnavailable));
+    ).pipe(Effect.mapError((failure) => delegationUnavailable(gatewayIssuerRefusalReason(failure))(failure)));
   }
   const route = yield* readSymmyRouteScope(proof);
-  const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError(delegationUnavailable));
+  const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(
+    Effect.mapError(delegationUnavailable('installed_release_unavailable')),
+  );
   const destination = installed.contracts.find((contract) => contract.deployment.appId === input.audience);
   if (installed.composition.revision !== facts.compositionRevision || destination === undefined) {
-    return yield* delegationForbidden();
+    return yield* delegationForbidden('symmy_route_not_admitted')();
   }
   const routeScopeInput = {
     legalEntityId: principal.legalEntityId,
@@ -338,12 +345,12 @@ export const issueSymmyRouteScopeAssertion = Effect.fn('SymmyRouteScope.issueAss
     Object.assign(routeScopeInput, { replayIdempotencyDigest: route.replayIdempotencyDigest });
   }
   const routeScope = yield* Schema.decodeUnknownEffect(RegisteredGatewayRouteScopeSchema)(routeScopeInput).pipe(
-    Effect.mapError(delegationUnavailable),
+    Effect.mapError(delegationUnavailable('symmy_route_unavailable')),
   );
   return yield* issueRouteScopedGatewayContextAssertion({
     audience: input.audience,
     compositionRevision: facts.compositionRevision,
     principal,
     routeScope,
-  }).pipe(Effect.mapError(delegationUnavailable));
+  }).pipe(Effect.mapError((failure) => delegationUnavailable(gatewayIssuerRefusalReason(failure))(failure)));
 });

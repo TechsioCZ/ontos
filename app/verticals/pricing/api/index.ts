@@ -1,8 +1,16 @@
+import {
+  OwnerActionApprovalSchemaErrorLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
+} from '@app/core-runtime/access/approvals/owner-http';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { pricingRegistration } from '../vertical.registration.ts';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   makeActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
@@ -36,10 +44,17 @@ import { pricingOrdinaryCurrentPublicationLive } from '../src/integrations/mater
 import { manageQuotationFreshCurrentAuthorityLive } from '../src/actions/manage-quotation.action.ts';
 import { currentPricingDecisionEvaluationFactoryLive } from '../src/services/current-pricing-decision-evaluation.service.ts';
 import { ExternalPriceInputBoundaryFactoryLive } from '../src/services/external-price-input-boundary.service.ts';
+import { pricingCommitmentConfirmationVerificationFactoryLive } from '../src/services/commitment-confirmation-verification.service.ts';
+import { pricingQuotationRevalidationFactoryLive } from '../src/services/quotation-revalidation.service.ts';
+import { pricingQuotationBackedConfirmationIssuanceFactoryLive } from '../src/services/quotation-backed-confirmation-issuance.service.ts';
+import { pricingCommitmentConfirmationRenewalFactoryLive } from '../src/services/commitment-confirmation-renewal.service.ts';
 import { pricingCommitmentConfirmationProductionLive } from '../src/integrations/commitment-confirmation-production.ts';
 import { pricingFinalizationCustomerContextGatewayIssuerLive } from '../src/integrations/order-finalization-owner-gateways.ts';
 // <generated-governed-http-handler-support-imports>
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
+import {
+  ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive,
+  authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
+} from './auth/action-principal.ts';
 import {
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
   GatewayAssertionRedemptionDatabaseLive,
@@ -78,6 +93,8 @@ import { revisePriceActionApiLive } from './revise-price-action-server.ts';
 import { setSupportedCurrenciesActionApiLive } from './set-supported-currencies-action-server.ts';
 import { zeroFloorAuthorizationResultLookupReadApiLive } from './zero-floor-authorization-result-lookup-read-server.ts';
 // </generated-governed-http-handler-imports>
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const pricingReadinessLayer = HttpApiBuilder.group(pricingApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
@@ -120,13 +137,34 @@ const accessEnforcementLive = AccessDecisionLive.pipe(
   Layer.provide(TenantIntentLoaderLive),
   Layer.provide(CorePersistenceLive),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
   Layer.provide(nodeCryptoLayer),
 );
 const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
   Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessEnforcementLive)),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
+const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, pricingRegistration).pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      CorePersistenceLive,
+      activeApplicationCompositionLive,
+      ActionRepositoryLive,
+      ActionPermissionLive,
+      ContextAccessLive,
+      moduleStateGateLive,
+      moduleEntrypointGatewayLive,
+      operationalScopeResolverLive,
+      accessEnforcementLive,
+    ),
+  ),
+  Layer.provide(DatabaseConfigLive),
+  // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
+  Layer.provideMerge(nodeCryptoLayer),
+);
+
 const pricingActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, pricingRegistration).pipe(
+  Layer.provideMerge(ownerActionApprovalsLive),
   Layer.provide(
     Layer.mergeAll(
       CorePersistenceLive,
@@ -147,12 +185,21 @@ const pricingActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, 
 /** Production Action composition with server-owned owner-client credential issuers. */
 export const productionActionRuntimeLive = pricingActionRuntimeLive.pipe(
   Layer.provideMerge(pricingCommitmentConfirmationProductionLive),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      pricingCommitmentConfirmationVerificationFactoryLive,
+      pricingQuotationRevalidationFactoryLive,
+      pricingQuotationBackedConfirmationIssuanceFactoryLive,
+      pricingCommitmentConfirmationRenewalFactoryLive,
+    ),
+  ),
   Layer.provideMerge(ExternalPriceInputBoundaryFactoryLive),
   Layer.provideMerge(manageQuotationFreshCurrentAuthorityLive),
   Layer.provideMerge(pricingFinalizationCustomerContextGatewayIssuerLive),
   Layer.provideMerge(currentPricingDecisionEvaluationFactoryLive),
   Layer.provideMerge(pricingOrdinaryCurrentPublicationLive),
   Layer.provideMerge(pricingCurrentDecisionOwnerFinalFenceGatewaysLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 const governedActionRuntimeLive = productionActionRuntimeLive;
 const actionPrincipalVerifierLive = GovernedActionPrincipalVerifierLive.pipe(Layer.provide(governedActionRuntimeLive));
@@ -167,6 +214,7 @@ const readRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, pricingRegi
   Layer.provide(readRuntimeDependenciesLive),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(activeApplicationCompositionLive),
+  Layer.provide(databaseIdentitiesLive),
   // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
   Layer.provideMerge(nodeCryptoLayer),
 );
@@ -178,11 +226,22 @@ const pricingGatewayAssertionRedemptionDatabaseLive = GatewayAssertionRedemption
 
 export const governedReadApiHandlersLive = Layer.mergeAll(
   pricingReadinessLayer,
+  HttpApiBuilder.group(pricingApi, 'ownerActionApprovals', (handlers) =>
+    handlers
+      .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+      .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+  ).pipe(
+    GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+    GovernedReadLayer.provide(governedActionRuntimeLive),
+  ),
   // <generated-governed-http-handler-layers>
   commercialFeeDefinitionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   commercialFeeResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   commercialFeeScheduleReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-  commitmentConfirmationVerificationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  commitmentConfirmationVerificationReadApiLive.pipe(
+    GovernedReadLayer.provide(governedReadRuntimeLive),
+    Layer.provide(pricingCommitmentConfirmationVerificationFactoryLive),
+  ),
   contractualDiscountResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   currencySupportResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   currentPricingDecisionReadApiLive.pipe(

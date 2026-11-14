@@ -17,6 +17,7 @@ import type {
 import { makeIsolatedNativeDatabaseFixture } from '../../packages/core-runtime/src/testing/isolated-native-database.ts';
 import { makeApplicationCompositionSnapshotFixture } from '../../packages/core-runtime/src/testing/module-contract.ts';
 import { runApplicationCompositionMigration } from '../application-composition-authority-publication.mts';
+import { MIGRATION_EQUIVALENCES } from '../migration-equivalence.mts';
 
 const services = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
 const completionMigration = '20261019161320_outbox-composition-completion';
@@ -36,11 +37,16 @@ const fixture = Effect.gen(function* baseCoreFixture() {
   const directory = yield* filesystem.makeTempDirectoryScoped({ prefix: 'composition-base-schema-' });
   // These are the only Core migrations added by this PR. All remaining folders are the
   // origin/main Core schema, including the later trusted-scope migrations already present there.
+  // A fresh database takes the main lineage of each reviewed equivalent pair, as Core's convergent migrator does.
+  const demoLineage = new Set<string>(
+    MIGRATION_EQUIVALENCES.filter(({ history }) => history === 'core').map(({ demo }) => demo),
+  );
   for (const name of yield* filesystem.readDirectory(migrationRoot)) {
     if (
       name === completionMigration ||
       name === resolutionMigration ||
-      name === '20261019193926_retained-owner-change-history'
+      name === '20261019193926_retained-owner-change-history' ||
+      demoLineage.has(name)
     ) {
       continue;
     }

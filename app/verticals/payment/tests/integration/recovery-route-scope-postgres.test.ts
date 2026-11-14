@@ -1,6 +1,7 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
-import { AccessScopeIdSchema } from '@app/core-runtime/access/ids';
+import { AccessScopeIdSchema, LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { inertAccessEnforcementPorts } from '@app/core-runtime/testing/access-gate';
 import { NodeCrypto } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
@@ -81,6 +82,8 @@ const nativeDatabase = Effect.gen(function* nativeDatabase() {
 /** An intent source that resolves every request to its Tenant scope and holds no grant cells. */
 const authorityFor: AccessEnforcementPorts['intent']['authorityFor'] = () => ({
   readCells: () => Effect.succeed([]),
+  // Every company these fixtures name is the fixture Tenant's own.
+  readCompanyOwnership: () => Effect.succeed(true),
   readConnection: () => Effect.succeed(Option.none()),
   readScope: (query) =>
     Effect.succeed(
@@ -101,7 +104,16 @@ const workloadGate = (boundKeys: readonly string[]): BoundAccessGate => {
     ...inertAccessEnforcementPorts(),
     intent: { authorityFor },
     principalKinds: { readKind: () => Effect.succeed(Option.some('integration')) },
-    workloadBindings: { readActiveWorkloadKeys: () => Effect.succeed(new Set(boundKeys)) },
+    workloadBindings: {
+      // The workload is registered for the company the call runs in (D6).
+      readWorkloadAuthority: (query) =>
+        Effect.succeed({
+          activeCompanyIds: new Set(
+            query.scope.legalEntityId === undefined ? [] : [LegalEntityIdSchema.make(query.scope.legalEntityId)],
+          ),
+          workloadKeys: new Set(boundKeys),
+        }),
+    },
   };
   return bindAccessGate(
     makeAccessDecisionService({
@@ -145,7 +157,7 @@ const createBinding = Effect.fn('RecoveryRouteScope.createBinding')(function* cr
   const provenance = yield* provenanceFor(scope);
   const merchantIdentity = yield* Schema.decodeUnknownEffect(GatewayMerchantIdentitySchema)(merchantIdentityDocument);
   const created = yield* database.database.transaction((transaction) =>
-    installOperationalScope(transaction, operationalScopeOf(scope)).pipe(
+    installOperationalScope(transaction, operationalScopeOf(scope), defineDatabaseIdentityEnrollment([])).pipe(
       Effect.flatMap((scoped) =>
         pspBindingPersistenceForTransaction(scoped).createBinding({
           environment: 'SANDBOX',

@@ -4,7 +4,7 @@ import {
   GatewayAssertionReplayError,
 } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import type { GatewayAssertionRedemption } from '@app/core-runtime/auth/gateway-assertion-redemption';
-import { recoverSqlTransactionError } from '@app/core-runtime';
+import { recoverSqlTransactionError, startGatewayAssertionRedemptionCleanup } from '@app/core-runtime';
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
 import { lt } from 'drizzle-orm';
 import { Clock, DateTime, Effect, Layer } from 'effect';
@@ -24,6 +24,13 @@ export const GatewayAssertionRedemptionLive = Layer.effect(
   GatewayAssertionRedemptionService,
   Effect.gen(function* makePromotionRedemption() {
     const { executor } = yield* PromotionDatabase;
+    // Replay evidence is pruned by the owner's scoped runtime, never inside a redemption.
+    yield* startGatewayAssertionRedemptionCleanup('promotion', GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS, (expiredBefore) =>
+      executor
+        .delete(gatewayAssertionRedemptions)
+        .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore))
+        .pipe(Effect.asVoid, Effect.mapError(unavailable)),
+    );
     return {
       consume: Effect.fn('PromotionGatewayAssertionRedemption.consume')(function* consume(input) {
         const now = yield* Clock.currentTimeMillis;
@@ -31,28 +38,15 @@ export const GatewayAssertionRedemptionLive = Layer.effect(
           return yield* replay();
         }
         const inserted = yield* executor
-          .transaction(
-            Effect.fn(function* redeem(transaction) {
-              yield* transaction
-                .delete(gatewayAssertionRedemptions)
-                .where(
-                  lt(
-                    gatewayAssertionRedemptions.expiresAt,
-                    DateTime.toDateUtc(DateTime.makeUnsafe(now - GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS * 1000)),
-                  ),
-                );
-              return yield* transaction
-                .insert(gatewayAssertionRedemptions)
-                .values({
-                  audience: input.audience,
-                  expiresAt: DateTime.toDateUtc(DateTime.makeUnsafe(input.expiresAtEpochSeconds * 1000)),
-                  issuer: input.issuer,
-                  jti: input.jti,
-                })
-                .onConflictDoNothing()
-                .returning({ jti: gatewayAssertionRedemptions.jti });
-            }),
-          )
+          .insert(gatewayAssertionRedemptions)
+          .values({
+            audience: input.audience,
+            expiresAt: DateTime.toDateUtc(DateTime.makeUnsafe(input.expiresAtEpochSeconds * 1000)),
+            issuer: input.issuer,
+            jti: input.jti,
+          })
+          .onConflictDoNothing()
+          .returning({ jti: gatewayAssertionRedemptions.jti })
           .pipe(
             recoverSqlTransactionError,
             Effect.mapError(unavailable),

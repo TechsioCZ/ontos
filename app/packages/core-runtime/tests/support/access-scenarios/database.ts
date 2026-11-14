@@ -1,7 +1,17 @@
 import type { PgClient } from '@effect/sql-pg';
-import { Context, Effect, FileSystem, Order } from 'effect';
+import { Context, Crypto, Effect, FileSystem, Order } from 'effect';
+import { ScenarioMigrationIdentityError } from './scenario-migration-identity-error.ts';
 
-import { TRUST_ROUTINES } from '../../../src/db/database-identity-manifest.ts';
+import { CORE_MIGRATION_EQUIVALENCES } from '../../../src/db/migration-equivalence-data.ts';
+
+import {
+  SHELL_GATEWAY_ISSUER_IDENTITY,
+  SHARED_RUNTIME_IDENTITY,
+  trustRoutinesForIdentities,
+} from '../../../src/db/database-identity-manifest.ts';
+
+/** The platform identities' routine vocabulary; owner routines arrive with the owner's enrollment. */
+const PLATFORM_TRUST_ROUTINES = trustRoutinesForIdentities([SHARED_RUNTIME_IDENTITY, SHELL_GATEWAY_ISSUER_IDENTITY]);
 
 /*
  * The disposable PostgreSQL databases of the access suites. Each one lives beside the integration
@@ -19,20 +29,32 @@ const RUNTIME_ROLES = ['ontos_runtime', 'party_registry_runtime', 'party_registr
 
 const migrationDirectories = new URL('../../../drizzle/', import.meta.url);
 
-/** Every migration in committed order, split into the statements Drizzle's breakpoint markers delimit. */
-export const scenarioMigrations: Effect.Effect<readonly string[], never, FileSystem.FileSystem> = Effect.gen(
-  function* readMigrations() {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const directories = yield* fileSystem.readDirectory(migrationDirectories.pathname);
+/** A fresh database uses the reviewed main identities, never an arbitrary content-hash deduplication. */
+export const coreScenarioMigrationStatements = Effect.fn('coreScenarioMigrationStatements')(
+  function* selectScenarioMigrationStatements(sources: ReadonlyMap<string, string>) {
+    const crypto = yield* Crypto.Crypto;
+    for (const pair of CORE_MIGRATION_EQUIVALENCES) {
+      for (const name of [pair.main, pair.demo]) {
+        const source = sources.get(name);
+        const digest =
+          source === undefined
+            ? undefined
+            : (yield* crypto.digest('SHA-256', new TextEncoder().encode(source)).pipe(Effect.orDie)).toHex();
+        if (digest !== pair.hash) {
+          return yield* new ScenarioMigrationIdentityError({
+            migration: name,
+            reason: 'A reviewed historical migration is missing or its immutable bytes changed',
+          });
+        }
+      }
+    }
+    const excluded: ReadonlySet<string> = new Set(CORE_MIGRATION_EQUIVALENCES.map((pair) => pair.demo));
     const statements: string[] = [];
-    for (const directory of directories.toSorted(Order.String)) {
-      const path = `${migrationDirectories.pathname}${directory}/migration.sql`;
-      const exists = yield* fileSystem.exists(path);
-      if (!exists) {
+    for (const [name, source] of [...sources].toSorted(([left], [right]) => Order.String(left, right))) {
+      if (excluded.has(name)) {
         continue;
       }
-      const contents = yield* fileSystem.readFileString(path);
-      for (const statement of contents.split('--> statement-breakpoint')) {
+      for (const statement of source.split('--> statement-breakpoint')) {
         if (statement.trim().length > 0) {
           statements.push(statement);
         }
@@ -40,7 +62,22 @@ export const scenarioMigrations: Effect.Effect<readonly string[], never, FileSys
     }
     return statements;
   },
-).pipe(Effect.orDie);
+);
+
+/** Every selected migration in committed order, split at Drizzle's statement breakpoints. */
+export const scenarioMigrations: Effect.Effect<readonly string[], never, Crypto.Crypto | FileSystem.FileSystem> =
+  Effect.gen(function* readMigrations() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const directories = yield* fileSystem.readDirectory(migrationDirectories.pathname);
+    const sources = new Map<string, string>();
+    for (const directory of directories) {
+      const path = `${migrationDirectories.pathname}${directory}/migration.sql`;
+      if (yield* fileSystem.exists(path)) {
+        sources.set(directory, yield* fileSystem.readFileString(path));
+      }
+    }
+    return yield* coreScenarioMigrationStatements(sources);
+  }).pipe(Effect.orDie);
 
 /** One connection string pointed at another database of the same server. */
 export const replacedDatabase = (connectionString: string, database: string): string => {
@@ -98,7 +135,7 @@ export const createTemplateDatabase = (admin: PgClient.PgClient) =>
       'grant execute on all functions in schema core to ontos_runtime',
       // The trust routines the runtime bootstrap lets the shared runtime execute (the Action fence lock).
       'grant usage on schema trust to ontos_runtime',
-      ...TRUST_ROUTINES.flatMap(({ executableBy, signature }) =>
+      ...PLATFORM_TRUST_ROUTINES.flatMap(({ executableBy, signature }) =>
         executableBy.includes('ontos_runtime') ? [`grant execute on function ${signature} to ontos_runtime`] : [],
       ),
     ]);

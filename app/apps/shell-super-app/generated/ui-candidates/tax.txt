@@ -1,0 +1,7 @@
+filter
+fixed
+invisible
+rounded
+shadow
+table
+visible

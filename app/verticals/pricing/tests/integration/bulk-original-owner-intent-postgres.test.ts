@@ -1,5 +1,6 @@
 import { Hex } from 'effect/encoding';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { pricingRegistration } from '../../vertical.registration.ts';
 import { pricingManifest } from '../../vertical.manifest.ts';
 // @effect-diagnostics strictEffectProvide:off -- Integration test entrypoint composes its layers once; expires: 2027-03-31.
@@ -12,9 +13,16 @@ import {
   makePublishedApplicationCompositionSnapshotFixture,
 } from '@app/core-runtime/testing/module-contract';
 import {
-  canonicalOntosPublicApiKey,
   extractVerticalRuntimeSafeDescriptors,
+  canonicalOntosPublicApiKey,
   OntosModuleDeploymentContractSchema,
+  ActionRuntime,
+  ActiveApplicationCompositionService,
+  bindAccessGate,
+  ContextAccess,
+  defineDatabaseIdentityEnrollment,
+  DatabaseIdentityEnrollmentContext,
+  makeDatabaseIdentityEnrollmentLive,
   loadDatabaseConnectionPair,
   ContextAccessLive,
   CorePersistenceLive,
@@ -22,15 +30,19 @@ import {
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
   makeReadRuntimeLive,
+  ModuleEntrypointGateway,
+  ModuleStateGate,
   OntosShellRuntimeContractSchema,
+  OperationalScopeResolver,
   validateActiveApplicationCompositionSnapshot,
   TenantModuleStateServiceLive,
   TrustedPrincipalContextSchema,
-  makeActionRuntimeLive,
   parseDatabaseConfig,
   makeContextPermissionRelationshipMutationLive,
 } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import { CoreDatabase } from '@app/core-runtime/db/client';
 import {
   PriceProductTargetOutcomeIdentitySchema,
   PriceProductTargetSnapshotSchema,
@@ -67,7 +79,7 @@ import type { Cause } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
-import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
+import { inertAccessEnforcementPorts, makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
 import { classifyBulkOriginalChildDiagnostics } from '../unit/support/bulk-original-child-diagnostics.ts';
 import {
   ManageProductPriceOperationSchema,
@@ -89,6 +101,7 @@ import { productPriceBulkActionInvocationIdFor } from '../../src/services/produc
 import { makeProductCommercialFeeBulkCommandPort } from '../../src/services/product-commercial-fee-bulk.service.ts';
 import { productCommercialFeeBulkActionInvocationIdFor } from '../../src/services/product-commercial-fee-bulk-command.port.ts';
 import {
+  ActionPermission,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
@@ -127,7 +140,7 @@ import {
   ExternalPriceSourceAuthorityGrantSchema,
 } from '../../src/services/external-price-input-boundary.service.ts';
 import { pricingApi } from '../../shared/api.ts';
-import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { ActionRepository, makeActionRuntime, makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import {
   STAFF_AUTHENTICATION_NAMESPACE_ID,
   staffAuthenticationNamespaceRegistryLayer,
@@ -154,6 +167,7 @@ const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeCrypto.layer),
   Layer.provideMerge(Reactivity.layer),
   Layer.provideMerge(FetchHttpClient.layer),
+  Layer.provideMerge(makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]))),
 );
 
 /**
@@ -1207,7 +1221,32 @@ const bulkRegisteredRuntime = (input: BulkRegisteredRuntimeInput) => {
   );
   // The one access gate decides every protected read and Action (CUTOVER-PLAN §3.1).
   const common = Layer.mergeAll(persistence, ContextAccessLive, gate, gateway, scopes, namespace, composition, access);
-  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, pricingRegistration).pipe(
+  // This suite declares its own scripted access answers, and a live authority preparation cannot
+  // rebind a double. Assemble the real runner over that already-bound gate instead of
+  // `makeActionRuntimeLive`, whose live binding would refuse every protected Action with a 503.
+  // The runner, module gates, composition lock and access fence stay the production ones; this
+  // suite therefore does not claim persisted v2 authorization currentness.
+  const actions = Layer.effect(
+    ActionRuntime,
+    Effect.gen(function* registeredBulkActionRuntime() {
+      return makeActionRuntime(
+        yield* CoreDatabase,
+        yield* ActionRepository,
+        yield* ActionPermission,
+        yield* OperationalScopeResolver,
+        {
+          accessDecision: bindAccessGate(yield* AccessDecisionGate, inertAccessEnforcementPorts()),
+          applicationComposition: yield* ActiveApplicationCompositionService,
+          contextAccess: yield* ContextAccess,
+          databaseIdentities: yield* DatabaseIdentityEnrollmentContext,
+          expectedDeployment: ultramodernDeliveryUnit,
+          moduleEntrypointGateway: yield* ModuleEntrypointGateway,
+          moduleStateGate: yield* ModuleStateGate,
+          ownerRegistration: pricingRegistration,
+        },
+      );
+    }),
+  ).pipe(
     Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
     Layer.provide(NodeCrypto.layer),
   );
@@ -1290,9 +1329,10 @@ const makeRegisteredBulkHttp = Effect.fn('BulkOriginalIntent.makeRegisteredHttp'
     }),
   );
   const shellAddress = yield* Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Int }))(shell.address);
+  // Pricing's own module key, handed over the way the host does.
+  yield* holdTestModuleCredentials({ pricing: 'pricing-module-api-key-1278' });
   const callerShell = ConfigProvider.layerAdd(
     ConfigProvider.fromUnknown({
-      ONTOS_GATEWAY_MODULE_API_KEY: 'pricing-module-api-key-1278',
       ONTOS_SHELL_GATEWAY_BASE_URL: new URL(
         shellGatewayContextContract.apiPrefix,
         `http://127.0.0.1:${shellAddress.port}`,

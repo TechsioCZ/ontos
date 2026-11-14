@@ -1,3 +1,4 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { identity } from 'effect';
 import {
   MicroVerticalBuildMarkerSchema,
@@ -58,6 +59,7 @@ export const paymentFoundationApi = HttpApi.make('PaymentApiFoundation').add(
 
 export const paymentApi = HttpApi.make('PaymentApi')
   .addHttpApi(paymentFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(AcceptPaymentObservationActionApi)
   .addHttpApi(CaptureProviderNotificationActionApi)

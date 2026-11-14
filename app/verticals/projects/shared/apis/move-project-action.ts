@@ -2,11 +2,14 @@
 // @ontos-action-http-owner projects.core
 // @ontos-action-http-slug move-project
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { MoveProjectPayloadSchema, MoveProjectResultSchema } from '../actions/move-project.ts';
 
 export { MoveProjectPayloadSchema } from '../actions/move-project.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const MoveProjectActionInvalidProblemSchema = makeProblemDetailsSchema('MoveProjectActionInvalidProblem', 400);
 export const MoveProjectActionAuthenticationProblemSchema = makeProblemDetailsSchema(
@@ -24,6 +27,7 @@ export const MoveProjectActionForbiddenProblemSchema = makeProblemDetailsSchema(
       'operation_context_denied',
       'operation_context_invalid',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const MoveProjectActionNotFoundProblemSchema = makeProblemDetailsSchema(
@@ -138,7 +142,7 @@ export const moveProjectActionGroupDefinition = HttpApiGroup.make('moveProjectAc
     HttpApiEndpoint.post('execute', '/projects/actions/move-project', {
       error: actionErrors,
       payload: Schema.toEncoded(MoveProjectPayloadSchema),
-      success: MoveProjectResultSchema,
+      success: [ActionProposalAcceptedSchema, MoveProjectResultSchema],
     }),
   )
   .middleware(MoveProjectActionSchemaErrorMiddleware);

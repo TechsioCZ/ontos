@@ -1,10 +1,13 @@
-import type { ContextAccessService, OperationalScope, ScopedRoutineDefinition } from '@app/core-runtime';
-import { getVerticalRuntimeEntrypoints, ScopedRoutineInvocationError } from '@app/core-runtime';
+import {
+  defineDatabaseIdentityEnrollment,
+  getVerticalRuntimeEntrypoints,
+  ScopedRoutineInvocationError,
+} from '@app/core-runtime';
+import type { ContextAccessService, OperationalScope, ScopedRoutineInvoker } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
-import { Effect, Predicate, Result, Schema } from 'effect';
+import { Effect, Option, Predicate, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { readVerifiedGatewayCompositionRevision } from '../../../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { makeScriptedBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 import type { TestAccessOutcome } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
@@ -40,7 +43,6 @@ import { commerceQuantityPolicyCurrentRead } from '../../src/api/commerce-quanti
 import { marketBootstrapPolicyCurrentRead } from '../../src/api/market-bootstrap-policy-current.read.ts';
 import { paymentTermPolicyCurrentRead } from '../../src/api/payment-term-policy-current.read.ts';
 import { purchaseCurrencyPolicyCurrentRead } from '../../src/api/purchase-currency-policy-current.read.ts';
-import type { CustomerCommercePolicyScopedRoutineInvoker } from '../../src/persistence/customer-commerce-policy-persistence.ts';
 import { customerCommercePolicyRepositoryForScope } from '../../src/persistence/customer-commerce-policy-persistence.ts';
 import { customerCommercePolicyAdministrationServiceFactory } from '../../src/services/customer-commerce-policy-administration.service.ts';
 import type { CustomerCommercePolicyAdministrationService } from '../../src/services/customer-commerce-policy-administration.service.ts';
@@ -49,6 +51,8 @@ import { commerceCustomerContextRegistration } from '../../vertical.registration
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 const principalId = '30000000-0000-4000-8000-000000000001';
 const purchaseCurrencyRevisionId = '50000000-0000-4000-8000-000000000001';
 const stalePurchaseCurrencyRevisionId = '50000000-0000-4000-8000-000000000002';
@@ -90,14 +94,16 @@ const makePolicyReadAuthorizationHarness = Effect.fn(function* makePolicyReadAut
   let handlerQueries = 0;
   const routineCalls: string[] = [];
   const database = {
-    executor: yield* makeTestDatabase((text) => {
+    executor: yield* makeTestDatabase((text, params) => {
       if (text.includes('transaction_timestamp')) {
         return Effect.succeed([{ operation_at: new Date(at) }]);
       }
       if (text.includes('data_access_events')) {
         return Effect.succeed([]);
       }
-      if (text.includes('current_setting')) {
+      // A session-setting role installs its scope and reads back the connected role in one statement.
+      if (text === installAndReadScopeSql) {
+        expect(params).toEqual([tenantId, legalEntityId]);
         return Effect.succeed([{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
       }
       for (const [routineName, result] of options.routineResults ?? []) {
@@ -128,6 +134,7 @@ const makePolicyReadAuthorizationHarness = Effect.fn(function* makePolicyReadAut
     contextAccess,
     {
       accessDecision: gate.bound,
+      databaseIdentities: defineDatabaseIdentityEnrollment([]),
       ownerRegistration: commerceCustomerContextRegistration,
     },
   );
@@ -186,7 +193,7 @@ interface RoutineCall {
 
 interface StatefulInvoker {
   readonly calls: RoutineCall[];
-  readonly invoker: CustomerCommercePolicyScopedRoutineInvoker;
+  readonly invoker: ScopedRoutineInvoker;
 }
 
 const statefulInvoker = (
@@ -196,34 +203,39 @@ const statefulInvoker = (
 ): StatefulInvoker => {
   const calls: RoutineCall[] = [];
   const states = new Map<string, Schema.Json>(Object.entries({ ...emptyStates(), ...stateOverrides }));
-  const fake = {
-    invoke: (routine: ScopedRoutineDefinition, values: readonly unknown[]) =>
-      Effect.sync(() => {
-        calls.push({ name: routine.name, values });
-        if (routine.name === 'load_current_market_bootstrap_policy_candidates') {
-          return [{ result: bootstrapBatch }];
-        }
-        if (routine.name === 'inspect_commerce_quantity_assignment_profile') {
-          return [{ result: profileInspection() }];
-        }
-        if (routine.name.startsWith('load_')) {
-          return [{ result: states.get(routine.name) ?? null }];
-        }
-        const loadName = routine.name.replace(/^persist_/u, 'load_');
-        const [, payloadValue] = values;
-        const payload = Schema.decodeUnknownSync(Schema.Struct({ state: Schema.Json }))(payloadValue);
-        states.set(loadName, payload.state);
-        return [{ result: { applied: true } }];
-      }),
-  };
-  // SAFETY: the fake implements the repository's sole generic `invoke` test seam and returns routine-schema-shaped rows.
-  return { calls, invoker: fake as CustomerCommercePolicyScopedRoutineInvoker };
+  const invoke: ScopedRoutineInvoker['invoke'] = (routine, values) =>
+    Effect.sync(() => {
+      calls.push({ name: routine.name, values });
+      if (routine.name === 'load_current_market_bootstrap_policy_candidates') {
+        return [{ result: bootstrapBatch }];
+      }
+      if (routine.name === 'inspect_commerce_quantity_assignment_profile') {
+        return [{ result: profileInspection() }];
+      }
+      if (routine.name.startsWith('load_')) {
+        return [{ result: states.get(routine.name) ?? null }];
+      }
+      const loadName = routine.name.replace(/^persist_/u, 'load_');
+      const payloadValue = [...values].at(1);
+      const payload = Schema.decodeUnknownSync(Schema.Struct({ state: Schema.Json }))(payloadValue);
+      states.set(loadName, payload.state);
+      return [{ result: { applied: true } }];
+    }).pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(routine.resultSchema))),
+      Effect.mapError(
+        () =>
+          new ScopedRoutineInvocationError({
+            code: 'scoped_routine_result_invalid',
+            constraint: Option.none(),
+            ownerModuleKey: routine.ownerModuleKey,
+            postgresCode: Option.none(),
+            reason: 'The fixture returned an invalid owner row',
+            routineKey: routine.routineKey,
+          }),
+      ),
+    );
+  return { calls, invoker: { invoke } };
 };
-
-const asServiceTransaction = (invoker: CustomerCommercePolicyScopedRoutineInvoker) =>
-  // SAFETY: the service uses only the scoped-routine `invoke` seam exposed by its persistence repository.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Scoped transaction behavior beyond `invoke` is unreachable in this owner repository test.
-  invoker as Parameters<typeof customerCommercePolicyAdministrationServiceFactory>[0];
 
 const purchaseCurrencyRevisionInput = {
   effectiveFrom: at,
@@ -565,11 +577,7 @@ describe('Customer Commerce Policy integration', () => {
   it.effect('persists a changed mutation once, replays idempotently, and maps stale generation', () => {
     const { calls, invoker } = statefulInvoker();
     return Effect.gen(function* mutationRoundTrip() {
-      const service = yield* customerCommercePolicyAdministrationServiceFactory(
-        asServiceTransaction(invoker),
-        scope,
-        'a'.repeat(64),
-      );
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(invoker, scope);
       const changed = yield* service.administerPurchaseCurrencyPolicy(purchaseCurrencyCommand);
       const replay = yield* service.administerPurchaseCurrencyPolicy(purchaseCurrencyCommand);
       const stale = yield* Effect.flip(service.administerPurchaseCurrencyPolicy(stalePurchaseCurrencyCommand));
@@ -586,11 +594,7 @@ describe('Customer Commerce Policy integration', () => {
   it.effect('combines quantity owner sets and rejects an incomplete bootstrap seller exchange', () => {
     const { invoker } = statefulInvoker({ sellers: [] });
     return Effect.gen(function* currentReads() {
-      const service = yield* customerCommercePolicyAdministrationServiceFactory(
-        asServiceTransaction(invoker),
-        scope,
-        readVerifiedGatewayCompositionRevision(scope),
-      );
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(invoker, scope);
       const quantity = yield* service.readCurrentCommerceQuantityPolicy(purchaseCurrencyCommand.observedAt);
       const bootstrapFailure = yield* Effect.flip(
         service.readCurrentMarketBootstrapPolicyCandidates({
@@ -610,11 +614,7 @@ describe('Customer Commerce Policy integration', () => {
   it.effect('projects resolver-facing Current sets without private administration metadata', () => {
     const { invoker } = statefulInvoker(emptyBootstrapBatch, currentProjectionStates);
     return Effect.gen(function* safeCurrentProjections() {
-      const service = yield* customerCommercePolicyAdministrationServiceFactory(
-        asServiceTransaction(invoker),
-        scope,
-        readVerifiedGatewayCompositionRevision(scope),
-      );
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(invoker, scope);
       const currency = yield* service.readCurrentPurchaseCurrencyPolicy(at);
       const paymentTerm = yield* service.readCurrentPaymentTermPolicy(at);
       const quantity = yield* service.readCurrentCommerceQuantityPolicy(at);
@@ -1163,11 +1163,7 @@ describe('quantity assignment profile admission', () => {
           }
           return { outcome };
         });
-        const service = yield* customerCommercePolicyAdministrationServiceFactory(
-          asServiceTransaction(invoker),
-          scope,
-          'a'.repeat(64),
-        );
+        const service = yield* customerCommercePolicyAdministrationServiceFactory(invoker, scope);
         for (const read of [
           service.readCurrentCommerceQuantityAssignments(at).pipe(Effect.asVoid),
           service.readCurrentCommerceQuantityPolicy(at).pipe(Effect.asVoid),
@@ -1190,11 +1186,7 @@ describe('quantity assignment profile admission', () => {
       const { calls, invoker } = statefulInvoker(emptyBootstrapBatch, currentProjectionStates, () => ({
         outcome: 'PROFILE_NOT_FOUND',
       }));
-      const service = yield* customerCommercePolicyAdministrationServiceFactory(
-        asServiceTransaction(invoker),
-        scope,
-        'a'.repeat(64),
-      );
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(invoker, scope);
       const current = yield* service.readCurrentCommerceQuantityAssignments('2026-09-20T10:00:00.000Z');
       expect(current.assignments).toEqual([]);
       expect(calls.some(({ name }) => name === 'inspect_commerce_quantity_assignment_profile')).toBe(false);
@@ -1217,11 +1209,7 @@ describe('quantity assignment profile admission', () => {
         },
         () => inspection,
       );
-      const service = yield* customerCommercePolicyAdministrationServiceFactory(
-        asServiceTransaction(invoker),
-        scope,
-        'a'.repeat(64),
-      );
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(invoker, scope);
       const trusted = {
         actionInvocationId: '70000000-0000-4000-8000-000000000001',
         actorPrincipalId: principalId,
@@ -1283,11 +1271,7 @@ describe('quantity assignment profile admission', () => {
         },
         () => ({ outcome: 'PROFILE_NOT_FOUND' }),
       );
-      const service = yield* customerCommercePolicyAdministrationServiceFactory(
-        asServiceTransaction(invoker),
-        scope,
-        'a'.repeat(64),
-      );
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(invoker, scope);
       const command = toTrustedCommerceQuantityAssignmentCommand(
         quantityAssignmentPayload,
         {
@@ -1318,11 +1302,7 @@ describe('quantity profile verification truth', () => {
           outcome: 'PROFILE_UNVERIFIABLE',
           reason,
         }));
-        const service = yield* customerCommercePolicyAdministrationServiceFactory(
-          asServiceTransaction(invoker),
-          scope,
-          'a'.repeat(64),
-        );
+        const service = yield* customerCommercePolicyAdministrationServiceFactory(invoker, scope);
         const failure = yield* Effect.flip(service.readCurrentCommerceQuantityAssignments(at));
         expect(failure).toMatchObject({
           code: 'PERSISTENCE_UNAVAILABLE',
@@ -1347,11 +1327,7 @@ describe('quantity profile verification truth', () => {
     it.effect(`refuses malformed profile inspection ${JSON.stringify(result)}`, () =>
       Effect.gen(function* malformedOwnerProof() {
         const { invoker } = statefulInvoker(emptyBootstrapBatch, currentProjectionStates, () => result);
-        const service = yield* customerCommercePolicyAdministrationServiceFactory(
-          asServiceTransaction(invoker),
-          scope,
-          'a'.repeat(64),
-        );
+        const service = yield* customerCommercePolicyAdministrationServiceFactory(invoker, scope);
         const failure = yield* Effect.flip(service.readCurrentCommerceQuantityAssignments(at));
         expect(failure).toMatchObject({ code: 'PERSISTENCE_UNAVAILABLE', retryable: true });
         expect(failure.reason).toBe(
@@ -1376,11 +1352,7 @@ describe('quantity profile verification truth', () => {
           ],
         }),
       });
-      const service = yield* customerCommercePolicyAdministrationServiceFactory(
-        asServiceTransaction(invoker),
-        scope,
-        'a'.repeat(64),
-      );
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(invoker, scope);
       const current = yield* service.readCurrentCommerceQuantityAssignments(at);
       expect(current.assignments).toHaveLength(2);
       const proofs = calls.filter(({ name }) => name === 'inspect_commerce_quantity_assignment_profile');
@@ -1425,7 +1397,7 @@ describe('quantity native profile constraint boundary', () => {
           routineKey: 'customer-commerce-policy.persist-commerce-quantity-rule-assignments',
           ...sample,
         });
-        const invoker: CustomerCommercePolicyScopedRoutineInvoker = { invoke: () => Effect.fail(failure) };
+        const invoker: ScopedRoutineInvoker = { invoke: () => Effect.fail(failure) };
         const repository = yield* customerCommercePolicyRepositoryForScope(invoker, scope);
         const result = yield* Effect.flip(
           repository.persistCommerceQuantityRuleAssignments(0, {

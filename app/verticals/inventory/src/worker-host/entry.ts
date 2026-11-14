@@ -6,8 +6,10 @@ import { Layer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import {
   ActiveApplicationCompositionConfigLive,
+  defineDatabaseIdentityEnrollment,
   defineOutboxWorkerEntry,
   extractOutboxWorkerSubscriptions,
+  makeDatabaseIdentityEnrollmentLive,
 } from '@app/core-runtime/outbox/worker';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
@@ -19,6 +21,8 @@ import {
   outboxWorkerLayer as outboxWorkerDefinitionLayer,
   outboxWorkerRepositoryLive,
 } from './layer.ts';
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 /** The combined Outbox Worker host polls this entry in its own runtime under its own claim owner. */
 export const outboxWorkerEntry = defineOutboxWorkerEntry({
@@ -42,6 +46,7 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     Layer.provide(outboxWorkerRepositoryLive),
     Layer.provide(outboxWorkerCorePersistenceLive),
     Layer.provide(outboxWorkerDatabaseConfigLive),
+    Layer.provideMerge(databaseIdentitiesLive),
     Layer.provide(NodeCrypto.layer),
   ),
   ownerRegistration: inventoryRegistration,

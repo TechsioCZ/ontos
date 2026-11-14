@@ -13,6 +13,9 @@ import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { customerProfileOrganizationIcoFactsRead } from '../../src/api/customer-profile-organization-ico-facts.read.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const historicalIdentityRoutine = defineScopedRoutine({
   name: 'read_customer_profile_organization_business_facts',
@@ -53,7 +56,12 @@ it.live(
           ),
         );
         const admin = Context.get(adminContext, PgClient.PgClient);
-        const coreDatabase = yield* testCoreDatabase.pipe(Effect.provide(adminContext));
+        const runtimeContext = yield* Layer.build(
+          PgClient.layer({ url: Redacted.make(isolated.connections.runtime.connectionString) }).pipe(
+            Layer.provideMerge(Reactivity.layer),
+          ),
+        );
+        const coreDatabase = yield* testCoreDatabase.pipe(Effect.provide(runtimeContext));
         const fixture = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
             access: 'allowed',
@@ -85,10 +93,14 @@ it.live(
         const historicalSql = () =>
           coreDatabase.transaction(
             Effect.fn('OrganizationHistoricalIdentity.sql')(function* query(transaction) {
-              const scoped = yield* installOperationalScope(transaction, {
-                ...principal,
-                correlationId: 'internal-historical-identity-sql',
-              });
+              const scoped = yield* installOperationalScope(
+                transaction,
+                {
+                  ...principal,
+                  correlationId: 'internal-historical-identity-sql',
+                },
+                FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+              );
               return yield* scoped.invoke(historicalIdentityRoutine, [profileId]);
             }),
           );

@@ -3,13 +3,17 @@ import { and, eq, sql } from 'drizzle-orm';
 import { Effect, Layer } from 'effect';
 
 import { CoreDatabase } from '../../db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../../db/database-identities.ts';
 import { installOperationalScope } from '../../db/scoped-transaction.ts';
-import { accessWorkloadBindings } from '../../db/schema.ts';
+import { accessWorkloadBindings, accessWorkloadCompanyBindings, legalEntities } from '../../db/schema.ts';
 import type { CoreTransaction } from '../../db/types.ts';
 import { accessDecisionUnavailable } from '../decision/errors.ts';
 import type { AccessDecisionUnavailable } from '../decision/errors.ts';
 import { AccessWorkloadBindingSource } from '../enforcement/workload-port.ts';
 import type { AccessWorkloadBindings, WorkloadBindingQuery } from '../enforcement/workload-port.ts';
+import { LegalEntityIdSchema } from '../ids.ts';
+import type { LegalEntityId } from '../ids.ts';
 import type { AccessIntentDatabase } from '../intent/persistence.ts';
 
 /*
@@ -22,10 +26,16 @@ import type { AccessIntentDatabase } from '../intent/persistence.ts';
  * PostgreSQL holds the registry as Core-owned intent. The reader answers only the scoped tenant's
  * rows through row-level security (O66); the write side is `binding-store.ts`, and Core is its only
  * writer.
+ *
+ * The same read answers the companies a binding is explicitly registered for (D6): a workload acts and
+ * selects only in these, directly and as the subject of a module call, and the write side of that
+ * owner-declared fact is `company-bindings.ts`.
  */
 
 /** The Core executor the registry is built over; the caller owns the pool and its deadlines. */
 export interface AccessWorkloadBindingDatabase {
+  /** The enrolled database identities whose scope authority the installed scope is verified against. */
+  readonly enrollment: DatabaseIdentityEnrollment;
   readonly executor: AccessIntentDatabase['executor'];
 }
 
@@ -33,11 +43,14 @@ const readUnavailable = (cause?: unknown): AccessDecisionUnavailable =>
   accessDecisionUnavailable('The registered workloads of this actor could not be read', cause);
 
 export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindingDatabase): AccessWorkloadBindings => ({
-  readActiveWorkloadKeys: Effect.fn('AccessWorkloadBindings.readActiveWorkloadKeys')(
-    function* readActiveWorkloadKeysEffect(query: WorkloadBindingQuery, transaction?: CoreTransaction) {
+  readWorkloadAuthority: Effect.fn('AccessWorkloadBindings.readWorkloadAuthority')(
+    function* readWorkloadAuthorityEffect(query: WorkloadBindingQuery, transaction?: CoreTransaction) {
+      // A verified gateway workload (a system workload acting for a source integration) holds exactly the one binding
+      // its assertion names; a historical delivery or an incomplete original admits nothing (source execution fence).
       const workload = readVerifiedGatewayWorkload(query.scope);
+      const nothing = { activeCompanyIds: new Set<LegalEntityId>(), workloadKeys: new Set<string>() };
       if (workload?.sourceMode === 'historical_delivery' && workload.recovery === undefined) {
-        return new Set<string>();
+        return nothing;
       }
       if (
         workload !== undefined &&
@@ -46,21 +59,48 @@ export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindin
           workload.originalWorkloadBindingIncarnation === undefined ||
           workload.originalOwnerBindingIncarnation === undefined)
       ) {
-        return new Set<string>();
+        return nothing;
       }
       const read = (opened: CoreTransaction) =>
         // The registry forces tenant row security on `ontos_runtime`, so the request's own scope is
         // installed before the read: a principal id from another tenant answers nothing (O66).
-        installOperationalScope(opened, query.scope).pipe(
+        installOperationalScope(opened, query.scope, database.enrollment).pipe(
           Effect.andThen(() =>
             opened
-              .select({ workloadKey: accessWorkloadBindings.workloadKey })
+              .select({
+                companyStatus: legalEntities.status,
+                legalEntityId: accessWorkloadCompanyBindings.legalEntityId,
+                registrationStatus: accessWorkloadCompanyBindings.status,
+                workloadKey: accessWorkloadBindings.workloadKey,
+              })
               .from(accessWorkloadBindings)
+              // A registration counts only while the binding it was written for is still active: the keys and the
+              // companies come from the same active bindings in the same read, so a revoked binding takes its key
+              // and its company together (D6).
+              .leftJoin(
+                accessWorkloadCompanyBindings,
+                and(
+                  eq(accessWorkloadCompanyBindings.tenantId, accessWorkloadBindings.tenantId),
+                  eq(accessWorkloadCompanyBindings.workloadBindingId, accessWorkloadBindings.bindingId),
+                ),
+              )
+              // The registered company is a company of this tenant, so a suspended or archived one is never
+              // selectable even though its registration is untouched.
+              .leftJoin(
+                legalEntities,
+                and(
+                  eq(legalEntities.tenantId, accessWorkloadCompanyBindings.tenantId),
+                  eq(legalEntities.legalEntityId, accessWorkloadCompanyBindings.legalEntityId),
+                ),
+              )
               .where(
                 and(
                   eq(accessWorkloadBindings.tenantId, query.tenantId),
                   eq(accessWorkloadBindings.principalId, query.principalId),
                   eq(accessWorkloadBindings.status, 'active'),
+                  // A verified gateway workload reads only the binding its assertion names, of an active system
+                  // principal, for a delivery still running when it is a worker's, and only while the original
+                  // integration's own bindings stay active; its keys and its companies are that binding's alone.
                   ...(workload === undefined
                     ? []
                     : [
@@ -82,19 +122,33 @@ export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindin
               ),
           ),
         );
-      const keys = yield* (transaction === undefined ? database.executor.transaction(read) : read(transaction)).pipe(
+      const rows = yield* (transaction === undefined ? database.executor.transaction(read) : read(transaction)).pipe(
         Effect.mapError(readUnavailable),
       );
-      return new Set(keys.map(({ workloadKey }) => workloadKey));
+      const workloadKeys = new Set<string>();
+      const activeCompanyIds = new Set<LegalEntityId>();
+      for (const row of rows) {
+        workloadKeys.add(row.workloadKey);
+        if (row.legalEntityId !== null && row.registrationStatus === 'active' && row.companyStatus === 'active') {
+          activeCompanyIds.add(LegalEntityIdSchema.make(row.legalEntityId));
+        }
+      }
+      // A workload, including a C14 system workload, acts in a company only through an active company registration.
+      // Without one, the company gate answers deny.workload_unbound.
+      return { activeCompanyIds, workloadKeys };
     },
   ),
 });
 
-export const AccessWorkloadBindingSourceLive: Layer.Layer<AccessWorkloadBindingSource, never, CoreDatabase> =
-  Layer.effect(
-    AccessWorkloadBindingSource,
-    Effect.gen(function* accessWorkloadBindingSourceLive() {
-      const database = yield* CoreDatabase;
-      return makeDrizzleAccessWorkloadBindings(database);
-    }),
-  );
+export const AccessWorkloadBindingSourceLive: Layer.Layer<
+  AccessWorkloadBindingSource,
+  never,
+  CoreDatabase | DatabaseIdentityEnrollmentContext
+> = Layer.effect(
+  AccessWorkloadBindingSource,
+  Effect.gen(function* accessWorkloadBindingSourceLive() {
+    const database = yield* CoreDatabase;
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
+    return makeDrizzleAccessWorkloadBindings({ enrollment, executor: database.executor });
+  }),
+);

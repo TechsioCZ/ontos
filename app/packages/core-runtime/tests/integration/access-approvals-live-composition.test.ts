@@ -49,12 +49,14 @@ import type { AccessMode, AuthorityWitness, Holder } from '../../src/access/mode
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import type { DatabaseConfigValue } from '../../src/db/config.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../src/db/database-identities.ts';
 import type { CoreTransaction } from '../../src/db/types.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';
 import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 /*
  * The live approvals composition against a real PostgreSQL (O61, O75, R2-H1). Everything that reads
@@ -80,6 +82,10 @@ import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/databas
  */
 const migrationPath = new URL(
   '../../drizzle/20261103093547_authorization-v2-access-intent/migration.sql',
+  import.meta.url,
+).pathname;
+const authorityV2MigrationPath = new URL(
+  '../../drizzle/20261107110051_full-target-action-authority-v2/migration.sql',
   import.meta.url,
 ).pathname;
 
@@ -251,6 +257,7 @@ const applyAccessMigration = (admin: PgClient.PgClient) =>
   Effect.gen(function* applyAccessMigrationEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const migration = yield* fileSystem.readFileString(migrationPath);
+    const authorityV2Migration = yield* fileSystem.readFileString(authorityV2MigrationPath);
     const statements = [
       'create schema core',
       'create table core.tenants (tenant_id uuid primary key)',
@@ -293,6 +300,7 @@ const applyAccessMigration = (admin: PgClient.PgClient) =>
        end
        $$`,
       ...migration.split('--> statement-breakpoint'),
+      ...authorityV2Migration.split('--> statement-breakpoint'),
       'grant usage on schema core to ontos_runtime',
       'grant select on all tables in schema core to ontos_runtime',
       // The writes the shipped proposal store performs; the trust grants migration owns them in a
@@ -424,7 +432,7 @@ const seedAccess = (admin: PgClient.PgClient, roleScope: 'company' | 'tenant') =
 const disposableDatabaseFor = (roleScope: 'company' | 'tenant') =>
   Effect.gen(function* disposableDatabaseEffect() {
     // This disposable-database suite uses explicit process configuration, never the workspace .env.
-    const connections = yield* loadDatabaseConnectionPair({ envPath: `${import.meta.filename}.no-environment-file` });
+    const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
     const crypto = yield* Crypto.Crypto;
     const bootstrap = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
     const name = `live_approvals_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
@@ -468,13 +476,17 @@ interface LiveMandateStores {
 /** The live services over the shipped stores of one disposable database. */
 const liveApprovals = Effect.fn('LiveApprovalsFixture.make')(function* liveApprovalsEffect(executor: LiveDatabase) {
   const crypto = yield* Crypto.Crypto;
-  const frozenCommands = makeDrizzleFrozenCommandStore({ executor });
-  const changes = makeAccessChangesDrizzleStore({ executor });
+  const frozenCommands = makeDrizzleFrozenCommandStore({ enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT, executor });
+  const changes = makeAccessChangesDrizzleStore({ enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT, executor });
   const records = Context.get(
     yield* Layer.build(
       ApprovalStoreLive.pipe(
         Layer.provide(
-          Layer.mergeAll(Layer.succeed(CoreDatabase, { executor }), Layer.succeed(FrozenCommands, frozenCommands)),
+          Layer.mergeAll(
+            Layer.succeed(CoreDatabase, { executor }),
+            Layer.succeed(FrozenCommands, frozenCommands),
+            Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+          ),
         ),
       ),
     ),
@@ -489,24 +501,27 @@ const liveApprovals = Effect.fn('LiveApprovalsFixture.make')(function* liveAppro
    */
   const joinedServices = (transaction: CoreTransaction): LiveApprovalServices => ({
     crypto,
-    intent: makeJoinedTenantIntentLoader(transaction),
+    intent: makeJoinedTenantIntentLoader(transaction, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
     join: joinedServices,
     loadRelease: () => changes.loadPublishedCatalog(transaction),
-    records: makeJoinedDrizzleApprovalStore({ frozenCommands, transaction }, crypto),
-    transactions: callerTransactions(transaction),
+    records: makeJoinedDrizzleApprovalStore(
+      { enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT, frozenCommands, transaction },
+      crypto,
+    ),
+    transactions: callerTransactions(transaction, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
   });
   const services: LiveApprovalServices = {
     crypto,
-    intent: makeTenantIntentLoader({ executor }),
+    intent: makeTenantIntentLoader({ enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT, executor }),
     join: joinedServices,
     loadRelease: () => changes.loadPublishedCatalog(),
     records,
-    transactions: requestTransactions({ executor }),
+    transactions: requestTransactions({ enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT, executor }),
   };
   return {
     ...services,
     frozenCommands,
-    principalKinds: makeDrizzleAccessPrincipalKinds({ executor }),
+    principalKinds: makeDrizzleAccessPrincipalKinds({ enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT, executor }),
   } satisfies LiveApprovalServices & LiveMandateStores;
 });
 
@@ -689,7 +704,7 @@ it.layer(NodeServices.layer)('live approvals composition', (suite) => {
         yield* approveVoid(approvalsFor(live, eva), proposed.id);
         const approver = approvalsFor(live, eva);
         const claimIn = (transaction: CoreTransaction) =>
-          installOperationalScope(transaction, eva).pipe(
+          installOperationalScope(transaction, eva, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
             Effect.andThen(() => executeVoid(approver, transaction, proposed.id)),
           );
 
@@ -720,7 +735,7 @@ it.layer(NodeServices.layer)('live approvals composition', (suite) => {
          */
         const suspended = yield* Effect.result(
           executor.transaction((transaction) =>
-            installOperationalScope(transaction, eva).pipe(
+            installOperationalScope(transaction, eva, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
               Effect.andThen(() =>
                 transaction.execute(
                   sql`update core.access_memberships set status = 'suspended'
@@ -1190,18 +1205,22 @@ it.layer(NodeServices.layer)('live approvals composition', (suite) => {
             liveMandateDispatchPorts({
               approvalsFor: (scope) => approvalsFor(live, scope),
               database: { executor },
+              enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
               frozenCommands: live.frozenCommands,
               principalKinds: live.principalKinds,
             }),
           ),
         );
         expect(Object.isFrozen(dispatch)).toBe(true);
+        // The forward Action (v2) entry points belong to the same adapter surface.
         expect(Object.keys(dispatch).toSorted()).toStrictEqual([
+          'authorizeExecution',
           'claim',
           'commit',
           'loadParkedProposal',
           'parkProposal',
           'prepare',
+          'prepareProposal',
         ]);
         // The composed service is the live one: it answers this tenant and refuses another.
         const ports = liveApprovalsPorts(live, eva);

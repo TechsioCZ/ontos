@@ -2,11 +2,14 @@
 // @ontos-action-http-owner projects.core
 // @ontos-action-http-slug update-project
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { UpdateProjectPayloadSchema, UpdateProjectResultSchema } from '../actions/update-project.ts';
 
 export { UpdateProjectPayloadSchema } from '../actions/update-project.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const UpdateProjectActionInvalidProblemSchema = makeProblemDetailsSchema(
   'UpdateProjectActionInvalidProblem',
@@ -27,6 +30,7 @@ export const UpdateProjectActionForbiddenProblemSchema = makeProblemDetailsSchem
       'operation_context_denied',
       'operation_context_invalid',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const UpdateProjectActionNotFoundProblemSchema = makeProblemDetailsSchema(
@@ -145,7 +149,7 @@ export const updateProjectActionGroupDefinition = HttpApiGroup.make('updateProje
     HttpApiEndpoint.post('execute', '/projects/actions/update-project', {
       error: actionErrors,
       payload: Schema.toEncoded(UpdateProjectPayloadSchema),
-      success: UpdateProjectResultSchema,
+      success: [ActionProposalAcceptedSchema, UpdateProjectResultSchema],
     }),
   )
   .middleware(UpdateProjectActionSchemaErrorMiddleware);

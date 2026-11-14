@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 
+import { DatabaseIdentityEnrollmentContext, defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import { v1 } from '@authzed/authzed-node';
 import { NodeChildProcessSpawner, NodeServices } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
@@ -43,7 +44,7 @@ import { accessDecisionLogs, domainEvents, outboxMessages } from '../../../../pa
 import { makeModuleEntrypointGateway } from '../../../../packages/core-runtime/src/modules/module-entrypoint-gateway.ts';
 import { makeModuleStateGate } from '../../../../packages/core-runtime/src/modules/module-state-gate.ts';
 import { makeTenantModuleStateService } from '../../../../packages/core-runtime/src/modules/tenant-module-state-service.ts';
-import { bindLiveAccessGate } from '../../../../packages/core-runtime/src/operations/access-gate.ts';
+import { bindLiveActionAccessGate } from '../../../../packages/core-runtime/src/operations/access-gate.ts';
 import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../../../packages/core-runtime/src/permissions/schema.ts';
 import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
@@ -149,7 +150,7 @@ const realStaffAuthorization = Effect.fn('RefundStaffTarget.realAuthorization')(
     ).pipe(Layer.provideMerge(writers)),
   );
   return {
-    accessDecision: yield* bindLiveAccessGate.pipe(Effect.provideContext(services)),
+    accessDecision: yield* bindLiveActionAccessGate.pipe(Effect.provideContext(services)),
     bootstrap: Context.get(services, TenantAccessBootstrap),
     writer: Context.get(services, AccessProjectionWriter),
   };
@@ -297,5 +298,8 @@ it.live('#1153 staff REFUND authorizes the exact Payment in a same-entity target
         ]),
       );
     }),
-  ).pipe(Effect.provide(NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
+  ).pipe(
+    Effect.provideService(DatabaseIdentityEnrollmentContext, defineDatabaseIdentityEnrollment([])),
+    Effect.provide(NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+  ),
 );

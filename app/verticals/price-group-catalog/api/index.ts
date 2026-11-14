@@ -1,7 +1,16 @@
+import {
+  OwnerActionApprovalSchemaErrorLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
+} from '@app/core-runtime/access/approvals/owner-http';
+import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { priceGroupCatalogRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   makeActionRuntimeLive,
   OwnerAuthorizationOverlay,
   ContextAccessLive,
@@ -37,7 +46,10 @@ import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from '
 import { FetchHttpClient } from 'effect/http';
 
 // <generated-governed-http-handler-support-imports>
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
+import {
+  ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive,
+  authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
+} from './auth/action-principal.ts';
 import {
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
   GatewayAssertionRedemptionDatabaseLive,
@@ -63,6 +75,8 @@ import {
   priceGroupCatalogCorsAllowedOrigins,
   resolvePriceGroupCatalogShellOrigin,
 } from './runtime-support.ts';
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const priceGroupCatalogReadinessLayer = HttpApiBuilder.group(priceGroupCatalogApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
@@ -118,6 +132,7 @@ const accessEnforcementLive = AccessDecisionLive.pipe(
   Layer.provide(CorePersistenceLive),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(nodeCryptoLayer),
+  Layer.provide(databaseIdentitiesLive),
 );
 const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
   Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessEnforcementLive)),
@@ -214,9 +229,10 @@ const priceGroupCatalogReadRuntimeLive = makeReadRuntimeLive(
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
   Layer.provide(activeApplicationCompositionLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 
-const priceGroupCatalogActionRuntimeLive = makeActionRuntimeLive(
+const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(
   ultramodernDeliveryUnit,
   priceGroupCatalogRegistration,
 ).pipe(
@@ -235,8 +251,31 @@ const priceGroupCatalogActionRuntimeLive = makeActionRuntimeLive(
     ),
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(databaseIdentitiesLive),
 );
 
+const priceGroupCatalogActionRuntimeLive = makeActionRuntimeLive(
+  ultramodernDeliveryUnit,
+  priceGroupCatalogRegistration,
+).pipe(
+  Layer.provideMerge(ownerActionApprovalsLive),
+  Layer.provide(
+    Layer.mergeAll(
+      activeApplicationCompositionLive,
+      CorePersistenceLive,
+      ActionRepositoryLive,
+      ActionPermissionLive,
+      priceGroupCatalogOwnerAuthorizationOverlayLive,
+      ContextAccessLive,
+      moduleStateGateLive,
+      moduleEntrypointGatewayLive,
+      operationalScopeResolverLive,
+      accessEnforcementLive,
+    ),
+  ),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(databaseIdentitiesLive),
+);
 const priceGroupCatalogGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
   Layer.provide(GatewayAssertionRedemptionDatabaseLive),
   Layer.provide(DatabaseConfigLive),
@@ -244,7 +283,10 @@ const priceGroupCatalogGatewayAssertionRedemptionLive = GovernedGatewayAssertion
 
 type PriceGroupCatalogApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof priceGroupCatalogReadRuntimeLive>>,
-  actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof priceGroupCatalogActionRuntimeLive>>,
+  actionRuntime: Layer.Layer<
+    ActionRuntime | OwnerActionApprovals,
+    Layer.Error<typeof priceGroupCatalogActionRuntimeLive>
+  >,
   gatewayAssertionRedemption: Layer.Layer<
     GatewayAssertionRedemptionService,
     Layer.Error<typeof priceGroupCatalogGatewayAssertionRedemptionLive>
@@ -260,6 +302,14 @@ export const makePriceGroupCatalogApiRuntime = (
   );
   const apiHandlersLive = Layer.mergeAll(
     priceGroupCatalogReadinessLayer,
+    HttpApiBuilder.group(priceGroupCatalogApi, 'ownerActionApprovals', (handlers) =>
+      handlers
+        .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+        .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+    ).pipe(
+      GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+    ),
     // <generated-governed-http-handler-layers>
     createPriceGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     createPriceGroupDefinitionRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -271,7 +321,9 @@ export const makePriceGroupCatalogApiRuntime = (
     // </generated-governed-http-handler-layers>
   ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
   const resolvedApiHandlersLive = apiHandlersLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, compositionSourceLive)),
+    Layer.provide(
+      Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, compositionSourceLive, databaseIdentitiesLive),
+    ),
     Layer.orDie,
   );
   const transportLive = HttpRouter.cors({

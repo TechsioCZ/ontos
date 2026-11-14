@@ -3,6 +3,7 @@ import { ReadHandlerNotFound, ReadHandlerUnavailable, TrustedPrincipalContextSch
 import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
 import type { AccessPrincipalKind } from '@app/core-runtime/access/enforcement';
 import {
+  LegalEntityIdSchema,
   AccessScopeIdSchema,
   AssignmentIncarnationIdSchema,
   GrantIncarnationIdSchema,
@@ -21,10 +22,8 @@ import { CurrentMarketCatalogRequestSchema } from '../../shared/apis/current-mar
 import { MarketHistoryRequestSchema } from '../../shared/apis/market-history.ts';
 import { currentMarketCatalogRead, handleCurrentMarketCatalog } from '../../src/api/current-market-catalog.read.ts';
 import { handleMarketHistory } from '../../src/api/market-history.read.ts';
-import {
-  MarketCatalogReadPersistenceUnavailable,
-  marketCatalogReadPersistenceForScope,
-} from '../../src/persistence/market-catalog-read-persistence.ts';
+import { marketCatalogReadPersistenceForScope } from '../../src/persistence/market-catalog-read-persistence.ts';
+import { MarketCatalogReadPersistenceUnavailable } from '../../src/persistence/market-history-routine.ts';
 import type { MarketCatalogReadPersistence } from '../../src/persistence/market-catalog-read-persistence.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -304,6 +303,8 @@ const marketReadGate = (input: {
                 },
               ],
         ),
+      // Every company these fixtures name is the fixture Tenant's own.
+      readCompanyOwnership: () => Effect.succeed(true),
       readConnection: () => Effect.succeed(Option.none()),
       readScope: (query) =>
         Effect.succeed(
@@ -325,14 +326,18 @@ const marketReadGate = (input: {
     legalEntities: { listCandidateIds: () => Effect.succeed([]) },
     principalKinds: { readKind: () => Effect.succeed(Option.some(input.kind)) },
     workloadBindings: {
-      readActiveWorkloadKeys: (query) =>
-        Effect.succeed(
-          new Set(
+      // The keys are bound for the seller only; the workload is registered for the company it is asked in (D6).
+      readWorkloadAuthority: (query) =>
+        Effect.succeed({
+          activeCompanyIds: new Set(
+            query.scope.legalEntityId === undefined ? [] : [LegalEntityIdSchema.make(query.scope.legalEntityId)],
+          ),
+          workloadKeys: new Set(
             query.principalId === principalId && query.tenantId === tenantId && query.scope.legalEntityId === sellerId
               ? (input.boundKeys ?? [])
               : [],
           ),
-        ),
+        }),
     },
   });
 const decideMarketRead = (gate: ReturnType<typeof marketReadGate>, operationScope: OperationalScope) =>

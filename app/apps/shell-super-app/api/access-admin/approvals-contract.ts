@@ -1,5 +1,5 @@
 import { AgentIdSchema, PrincipalIdSchema } from '@app/core-runtime/access/ids';
-import { Schema } from 'effect';
+import { DateTime, Schema } from 'effect';
 
 /**
  * The vocabulary of "Ke schválení" that both the BFF and its Core seam speak: the proposal record it
@@ -42,6 +42,14 @@ export interface ApprovalRecord {
   readonly target?: string;
   readonly tenantId: string;
 }
+
+/** A display precondition only. The owner's native lifecycle still performs the authoritative CAS. */
+export const approvalRecordRevision = (record: ApprovalRecord): string =>
+  [
+    record.status,
+    record.endedAt === undefined ? 0 : DateTime.toEpochMillis(DateTime.makeUnsafe(record.endedAt)),
+    record.execution === undefined ? 0 : DateTime.toEpochMillis(DateTime.makeUnsafe(record.execution.executedAt)),
+  ].join('.');
 
 /** The exact assignment incarnation and grant cell that justified one part of a decision (O49). */
 export interface ApprovalWitness {

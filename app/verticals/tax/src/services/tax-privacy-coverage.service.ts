@@ -26,7 +26,9 @@ import { taxMeaningFingerprint } from './tax-governance-fingerprint.ts';
 import { query } from './tax-governance-persistence.ts';
 import type { PersistenceUnavailable, ScopedTransaction } from './tax-governance-persistence.ts';
 
-type TaxTableName = (typeof TAX_TABLE_INVENTORY)[number];
+// Pre-scope replay evidence carries no actor, Tenant, or business content.
+const taxPrivacyTableInventory = TAX_TABLE_INVENTORY.filter((name) => name !== 'gateway_assertion_redemptions');
+type TaxTableName = (typeof taxPrivacyTableInventory)[number];
 
 type CoverageTableSource =
   | typeof taxOrderTaxFinalizations
@@ -78,7 +80,7 @@ const coverageTables = {
  */
 export const taxPrivacyScopePartTables = {
   ACCEPTED_TAX_TERMS_COPIES: [],
-  ACTOR_PRINCIPAL_ATTRIBUTION: TAX_TABLE_INVENTORY,
+  ACTOR_PRINCIPAL_ATTRIBUTION: taxPrivacyTableInventory,
   EXTERNAL_COPY_AND_RECOVERY_RESPONSIBILITIES: [],
   ORDER_TAX_FINALIZATION_DECISION_EVIDENCE: ['tax_order_tax_finalizations'],
   SELLER_VAT_REGIME_DECLARATION_HISTORY: ['tax_seller_vat_regime_declarations'],

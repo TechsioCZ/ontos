@@ -14,6 +14,9 @@ import { Effect, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 
 import { SymmyJobIdSchema } from '../../shared/domain/symmy-job-identities.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const fixturePurpose = 'implementation-1096-registered-workload-gateway';
 const effectKeySchema = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/u)).pipe(
@@ -80,8 +83,22 @@ export const observeAcceptedEffectIdNativeFixture = Effect.fn('SymmyAcceptedEffe
         const client = yield* PgClient.make({ url: input.adminConnectionString }).pipe(
           Effect.provideService(Reactivity.Reactivity, reactivity),
         );
-        const database = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, client));
-        return yield* database.transaction(
+        const [adminConnection] = yield* client<ConnectionFacts>`
+          select current_database()::text as database,current_user::text as "roleName",session_user::text as "sessionRoleName"`;
+        if (
+          adminConnection?.database !== configuration.database ||
+          adminConnection.roleName !== configuration.user ||
+          adminConnection.sessionRoleName !== configuration.user
+        ) {
+          return yield* unavailable();
+        }
+        const runtimeConfiguration = input.ownedDatabase.connections.runtime;
+        const runtime = yield* PgClient.make({ url: Redacted.make(runtimeConfiguration.connectionString) }).pipe(
+          Effect.provideService(Reactivity.Reactivity, reactivity),
+        );
+        const database = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, runtime));
+        const storage = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, client));
+        yield* database.transaction(
           Effect.fn('SymmyAcceptedEffectNative.readOnlyTransaction')(function* readOnlyTransaction(transaction) {
             yield* ownership;
             yield* transaction.execute(sql`set transaction read only`, 'objects');
@@ -90,20 +107,23 @@ export const observeAcceptedEffectIdNativeFixture = Effect.fn('SymmyAcceptedEffe
               'objects',
             );
             if (
-              connection?.database !== configuration.database ||
-              connection.roleName !== configuration.user ||
-              connection.sessionRoleName !== configuration.user
+              connection?.database !== runtimeConfiguration.database ||
+              connection.roleName !== runtimeConfiguration.user ||
+              connection.sessionRoleName !== runtimeConfiguration.user
             ) {
               return yield* unavailable();
             }
-            yield* installOperationalScope(transaction, scope);
+            yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
             const actor = yield* makePrincipalResolver(
               { executor: transaction },
               {
                 authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
               },
             ).resolveBetterAuthUserForTenant(pins.operatorProviderUserId, pins.tenantId);
-            const persisted = yield* makeOperationalScopeRepository({ executor: transaction }).load(scope);
+            const persisted = yield* makeOperationalScopeRepository(
+              { executor: transaction },
+              FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+            ).load(scope);
             if (
               actor.principalId !== pins.operatorPrincipalId ||
               actor.principalKind !== 'human' ||
@@ -116,7 +136,26 @@ export const observeAcceptedEffectIdNativeFixture = Effect.fn('SymmyAcceptedEffe
             ) {
               return yield* unavailable();
             }
-            const rows = yield* transaction.execute<{ readonly effectId: string }>(
+            yield* ownership;
+            return yield* Effect.void;
+          }),
+        );
+        return yield* storage.transaction(
+          Effect.fn('SymmyAcceptedEffectNative.observeStorage')(function* observeStorage(administrative) {
+            yield* ownership;
+            yield* administrative.execute(sql`set transaction read only`, 'objects');
+            const [connection] = yield* administrative.execute<ConnectionFacts>(
+              sql`select current_database()::text as database,current_user::text as "roleName",session_user::text as "sessionRoleName"`,
+              'objects',
+            );
+            if (
+              connection?.database !== configuration.database ||
+              connection.roleName !== configuration.user ||
+              connection.sessionRoleName !== configuration.user
+            ) {
+              return yield* unavailable();
+            }
+            const rows = yield* administrative.execute<{ readonly effectId: string }>(
               sql`
               select e.effect_id::text as "effectId"
               from symmy_integration.import_jobs j

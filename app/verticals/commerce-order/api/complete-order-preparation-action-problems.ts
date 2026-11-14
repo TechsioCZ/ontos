@@ -78,10 +78,12 @@ export const completeOrderPreparationActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CompleteOrderPreparationActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CompleteOrderPreparationActionForbiddenProblem'> =>
     CompleteOrderPreparationActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -200,7 +202,8 @@ const mapCoreProblem = (error: ActionCoreError): CompleteOrderPreparationActionP
       ActionInvocationStateError: (failure) => completeOrderPreparationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: completeOrderPreparationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => completeOrderPreparationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => completeOrderPreparationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        completeOrderPreparationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => completeOrderPreparationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => completeOrderPreparationActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => completeOrderPreparationActionProblem.conflict(failure.code),

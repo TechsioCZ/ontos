@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime/outbox/worker';
 import type { PgClient } from '@effect/sql-pg';
 import { readFileSync } from 'node:fs';
@@ -159,7 +160,7 @@ const inWorker = <Value, Failure, Requirements>(
   Effect.gen(function* workerCall() {
     const workerContext = yield* deliveryOf(scope);
     return yield* database.transaction((transaction: PaymentTestTransaction) =>
-      installOperationalScope(transaction, operationalScopeOf(scope)).pipe(
+      installOperationalScope(transaction, operationalScopeOf(scope), defineDatabaseIdentityEnrollment([])).pipe(
         Effect.flatMap((invoker) =>
           call({
             scope: {
@@ -774,7 +775,11 @@ it.live('#1156 Lookup through the original binding after a binding is retired fo
         { concurrency: 1 },
       );
       const replacement = yield* runtime.transaction((transaction: PaymentTestTransaction) =>
-        installOperationalScope(transaction, operationalScopeOf(fixture.scope)).pipe(
+        installOperationalScope(
+          transaction,
+          operationalScopeOf(fixture.scope),
+          defineDatabaseIdentityEnrollment([]),
+        ).pipe(
           Effect.flatMap((scoped) =>
             pspBindingPersistenceForTransaction(scoped).createBinding({
               environment: 'SANDBOX',
@@ -789,7 +794,11 @@ it.live('#1156 Lookup through the original binding after a binding is retired fo
         ),
       );
       yield* runtime.transaction((transaction: PaymentTestTransaction) =>
-        installOperationalScope(transaction, operationalScopeOf(fixture.scope)).pipe(
+        installOperationalScope(
+          transaction,
+          operationalScopeOf(fixture.scope),
+          defineDatabaseIdentityEnrollment([]),
+        ).pipe(
           Effect.flatMap((scoped) =>
             pspBindingPersistenceForTransaction(scoped).rotateCredential({
               expectedRevision: 2,
@@ -894,7 +903,11 @@ const acknowledgedRefund = Effect.fn('PspRecoveryFixture.acknowledgedRefund')(fu
   const contact = payerContactOf(binding);
   if (Option.isSome(contact)) {
     yield* harness.database.transaction((transaction: PaymentTestTransaction) =>
-      installOperationalScope(transaction, operationalScopeOf(harness.scope)).pipe(
+      installOperationalScope(
+        transaction,
+        operationalScopeOf(harness.scope),
+        defineDatabaseIdentityEnrollment([]),
+      ).pipe(
         Effect.flatMap((scoped) =>
           pspPayerContactPersistenceForTransaction(scoped).rememberForCollect(collect.operationId, contact.value),
         ),

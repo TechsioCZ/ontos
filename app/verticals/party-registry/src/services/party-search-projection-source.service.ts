@@ -191,6 +191,7 @@ const readScopedCounterparties = Effect.fn('PartySearchProjectionSourceService.r
           targetPredicate,
         ),
       );
+    const familyPartyIds = new Set(familyIds);
     const selected = rows.filter((row) => {
       if (row.tenantId !== snapshot.tenantId || row.legalEntityId !== legalEntityId) {
         return false;
@@ -199,7 +200,7 @@ const readScopedCounterparties = Effect.fn('PartySearchProjectionSourceService.r
         return row.counterpartyId === target.counterpartyId;
       }
       if ('partyId' in target) {
-        return familyIds.includes(row.partyId);
+        return familyPartyIds.has(row.partyId);
       }
       return true;
     });
@@ -312,9 +313,9 @@ const readCanonicalProjection = Effect.fn('PartySearchProjectionSourceService.re
     );
     const canonicalIds = new Map<string, string>(canonicalIdEntries);
     const wanted = wantedCanonicalIds(target, canonicalIds);
-    const initialFamily = records
-      .filter((row) => wanted.has(canonicalIds.get(row.partyId) ?? ''))
-      .map((row) => row.partyId);
+    const initialFamily = records.flatMap((row) =>
+      wanted.has(canonicalIds.get(row.partyId) ?? '') ? [row.partyId] : [],
+    );
     const contexts = yield* readCounterparties(snapshot, target, initialFamily);
     if (contexts.some((row) => !canonicalIds.has(row.partyId))) {
       return yield* unavailable();
@@ -355,24 +356,16 @@ const readCanonicalProjection = Effect.fn('PartySearchProjectionSourceService.re
           : [],
       ),
       displayName: row.displayName,
-      identifiers: facts.identifiers
-        .filter(
-          (fact) =>
-            fact.tenantId === snapshot.tenantId &&
-            fact.partyId === row.partyId &&
-            fact.state === 'ACTIVE' &&
-            fact.isCurrent,
-        )
-        .map((fact) => ({
-          state: fact.state,
-          value: fact.value,
-          ...period(fact),
-        })),
+      identifiers: facts.identifiers.flatMap((fact) =>
+        fact.tenantId === snapshot.tenantId && fact.partyId === row.partyId && fact.state === 'ACTIVE' && fact.isCurrent
+          ? [{ state: fact.state, value: fact.value, ...period(fact) }]
+          : [],
+      ),
       ref: makePartyRef(snapshot.tenantId, row.partyId),
     });
-    const removedRefs: PartySearchSourceSnapshot['removedRefs'][number][] = family
-      .filter((row) => canonicalIds.get(row.partyId) !== row.partyId)
-      .map((row) => makePartyRef(snapshot.tenantId, row.partyId));
+    const removedRefs: PartySearchSourceSnapshot['removedRefs'][number][] = family.flatMap((row) =>
+      canonicalIds.get(row.partyId) === row.partyId ? [] : [makePartyRef(snapshot.tenantId, row.partyId)],
+    );
     if ('partyId' in target && !canonicalIds.has(target.partyId)) {
       removedRefs.push(makePartyRef(snapshot.tenantId, target.partyId));
     }
@@ -387,15 +380,21 @@ const readCanonicalProjection = Effect.fn('PartySearchProjectionSourceService.re
         rolePeriods: row.roles,
         storedPartyRef: makePartyRef(snapshot.tenantId, row.partyId),
       })),
-      parties: family
-        .filter((row) => canonicalIds.get(row.partyId) === row.partyId)
-        .map((row) => ({
-          ...identity(row),
-          aliases: family
-            .filter((alias) => alias.partyId !== row.partyId && canonicalIds.get(alias.partyId) === row.partyId)
-            .map(identity),
-          archived: row.archivedAt !== null,
-        })),
+      parties: family.flatMap((row) =>
+        canonicalIds.get(row.partyId) === row.partyId
+          ? [
+              {
+                ...identity(row),
+                aliases: family.flatMap((alias) =>
+                  alias.partyId !== row.partyId && canonicalIds.get(alias.partyId) === row.partyId
+                    ? [identity(alias)]
+                    : [],
+                ),
+                archived: row.archivedAt !== null,
+              },
+            ]
+          : [],
+      ),
       projectionVersion: snapshot.projectionVersion,
       removedRefs,
       tenantId: snapshot.tenantId,

@@ -1,3 +1,4 @@
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import {
   describeControllerContracts,
@@ -6,10 +7,8 @@ import {
 } from '../support/dsr-obligation-native.ts';
 import type { DatabaseConnectionPair, OntosModuleDeploymentContractSchema } from '@app/core-runtime';
 import {
-  loadDatabaseConfig,
   loadDatabaseConnectionPair,
   SHELL_GATEWAY_ISSUER_IDENTITY,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
   ActiveApplicationCompositionSnapshotSchema,
   canonicalizeApplicationComposition,
   OntosActionContractSchema,
@@ -42,6 +41,10 @@ import type {
 } from '@app/core-runtime/legacy-completion-publication';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { runApplicationCompositionMigration } from '../../../../scripts/application-composition-authority-publication.mts';
+import {
+  encodeModuleCredentialHandover,
+  MODULE_CREDENTIAL_HANDOVER_VARIABLE,
+} from '../../../../scripts/zerops/module-credentials.mts';
 import { privacyLegacyCompletionOwner } from '../../scripts/legacy-completion-publication.ts';
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
@@ -288,9 +291,9 @@ const prepareNativeIdentities = Effect.fn('PrivacyFixture.prepareNativeIdentitie
   );
   const urls: Record<string, string> = {};
   for (const identity of [SHELL_GATEWAY_ISSUER_IDENTITY, PARTY_REGISTRY_REQUEST_IDENTITY]) {
-    const canonical = yield* loadDatabaseConfig({ envPath: '/dev/null', identity }).pipe(
-      Effect.mapError(() => failure('Canonical fixture identity configuration was unavailable')),
-    );
+    const canonical = yield* loadDatabaseConnectionPair({ envPath: '/dev/null', identity })
+      .pipe(Effect.map(({ runtime }) => runtime))
+      .pipe(Effect.mapError(() => failure('Canonical fixture identity configuration was unavailable')));
     const address = new URL(canonical.connectionString);
     if (
       canonical.database !== source.runtime.database ||
@@ -489,6 +492,20 @@ const fixtureRuntimeInventory = [
     ],
   },
   {
+    // The stable assertion identity registry: appended by the assertion trigger beside the current store.
+    operations: 'select, insert',
+    rls: true,
+    schema: 'party',
+    tables: ['party_fact_assertion_identities'],
+  },
+  {
+    // The lossless historical-name archive: owner-written history the runtime may only read.
+    operations: 'select',
+    rls: true,
+    schema: 'party',
+    tables: ['party_historical_name_assertions'],
+  },
+  {
     // Completion does not process Party source receipts or company IČO migration state.
     operations: 'none',
     rls: true,
@@ -651,6 +668,15 @@ const awaitChildReadiness = (
     ),
   );
 
+const ShellStartupFailureSchema = Schema.Literals([
+  'privacy-completion-shell:create-user',
+  'privacy-completion-shell:creator-bootstrap',
+  'privacy-completion-shell:fixture-runtime',
+  'privacy-completion-shell:module-credential',
+  'privacy-completion-shell:serve',
+]);
+const isShellStartupFailure = Schema.is(ShellStartupFailureSchema);
+
 const start = Effect.fn('PrivacyCompletionTest.start')(function* start(
   path: string,
   env: Readonly<Record<string, string>>,
@@ -660,6 +686,8 @@ const start = Effect.fn('PrivacyCompletionTest.start')(function* start(
     readonly replies: Queue.Queue<string, PrivacyCompletionTestFailure>;
   },
   bootstrap?: Parameters<typeof receivePrivateShellResponse>[2],
+  /** One module credential handover line, delivered on the child's private channel (fd 3) as a host delivers it. */
+  credentialHandover?: Uint8Array,
 ) {
   const transport = yield* Config.all({
     PATH: Config.String('PATH'),
@@ -684,9 +712,16 @@ const start = Effect.fn('PrivacyCompletionTest.start')(function* start(
         Effect.forkScoped,
       );
   }
+  let handoverEnvironment = {};
+  const additionalFds: Record<`fd${number}`, ChildProcess.AdditionalFdConfig> = {};
+  if (credentialHandover !== undefined) {
+    handoverEnvironment = { [MODULE_CREDENTIAL_HANDOVER_VARIABLE]: 'fd3' };
+    additionalFds.fd3 = { stream: Stream.make(credentialHandover), type: 'input' };
+  }
   const child = yield* ChildProcess.make(process.execPath, [path], {
+    additionalFds,
     cwd: appRoot,
-    env: childEnvironment(transport, { ...env, ...responseEnvironment }),
+    env: childEnvironment(transport, { ...env, ...responseEnvironment, ...handoverEnvironment }),
     extendEnv: false,
     stderr: 'pipe',
     stdin: retrySession?.input,
@@ -716,7 +751,12 @@ const start = Effect.fn('PrivacyCompletionTest.start')(function* start(
       Effect.forkScoped,
     );
   }
-  yield* Stream.runDrain(child.stderr).pipe(Effect.forkScoped);
+  yield* child.stderr.pipe(
+    Stream.decodeText(),
+    Stream.splitLines,
+    Stream.runForEach((value) => (isShellStartupFailure(value) ? Effect.logError(value) : Effect.void)),
+    Effect.forkScoped,
+  );
   const response = retrySession === undefined ? Deferred.await(line) : Queue.take(retrySession.replies);
   // Shell is a persistent server. One-cycle workers may legitimately exit while their stdout is draining.
   const readiness = privateReply === true ? awaitChildReadiness(response, child.exitCode) : response;
@@ -787,6 +827,31 @@ const prepareArtifacts = Effect.gen(function* prepareNativeArtifacts() {
     shell: `${roots.shell}/shell.mjs`,
     worker: `${roots.party}/worker.mjs`,
   };
+  // As the Outbox Worker host does, the worker process claims the credential store copy its worker code reads and
+  // takes Party's own module key from its private channel (fd 3) before the worker runs. The scope stays open for the
+  // process's life, so the channel is read until the launcher closes it.
+  const workerEntry = `${roots.party}/worker-entry.ts`;
+  const encodePath = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
+  yield* fs.writeFileString(
+    workerEntry,
+    `import { Effect, Scope } from 'effect';
+import {
+  holdOwnStoreCopy,
+  MODULE_CREDENTIAL_HANDOVER_VARIABLE,
+  receiveModuleCredentialHandover,
+} from ${yield* encodePath(`${appRoot}scripts/zerops/module-credentials.mts`)};
+const owners = ['party-registry'];
+if (process.env[MODULE_CREDENTIAL_HANDOVER_VARIABLE] !== undefined) {
+  Effect.runFork(
+    receiveModuleCredentialHandover(owners).pipe(
+      Effect.flatMap((holders) => holdOwnStoreCopy(holders, owners)),
+      Scope.provide(Scope.makeUnsafe()),
+    ),
+  );
+}
+await import(${yield* encodePath(`${appRoot}verticals/party-registry/tests/support/privacy-completion-worker.ts`)});
+`,
+  );
   const entries = [
     {
       identity: shellIdentity,
@@ -806,9 +871,14 @@ const prepareArtifacts = Effect.gen(function* prepareNativeArtifacts() {
     {
       identity: contractsDescription.buildIdentities['party-registry'],
       output: paths.worker,
-      source: 'verticals/party-registry/tests/support/privacy-completion-worker.ts',
+      source: workerEntry,
     },
   ];
+  // A bundle that holds a module key keeps the credential store an external file: its owner code reads it through the
+  // external `@app/core-runtime`, so an inlined second copy would hold the key where nobody reads it.
+  const credentialStore = yield* fs.realPath(
+    `${appRoot}packages/core-runtime/src/auth/hosted-module-credential-store.ts`,
+  );
   yield* Effect.forEach(
     entries,
     Effect.fn('PrivacyCompletionTest.bundleOwnedEntry')(function* bundleOwnedEntry(entry: (typeof entries)[number]) {
@@ -820,6 +890,7 @@ const prepareArtifacts = Effect.gen(function* prepareNativeArtifacts() {
         '--platform=node',
         '--format=esm',
         '--packages=external',
+        `--external:${credentialStore}`,
         `--define:ULTRAMODERN_BUILD_MARKER=${yield* encodeBuildIdentity(entry.identity.buildMarker)}`,
         `--define:ULTRAMODERN_SOURCE_REVISION=${yield* encodeBuildIdentity(entry.identity.sourceRevision)}`,
         `--outfile=${entry.output}`,
@@ -1186,7 +1257,6 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
   const snapshotJson = yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(
     snapshot,
   );
-  yield* Effect.logInfo('Privacy composition environment byte count', new TextEncoder().encode(snapshotJson).length);
   const compositionContext = yield* Layer.build(NodeHttpServer.layerTest);
   const source = Context.get(compositionContext, HttpServer.HttpServer);
   yield* source.serve(Effect.succeed(HttpServerResponse.text(snapshotJson, { contentType: 'application/json' })));
@@ -1217,7 +1287,6 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
     BETTER_AUTH_URL: 'http://localhost:3020',
     DATABASE_URL: isolated.connections.runtime.connectionString,
     ONTOS_1258_TEST_ADDITIONAL_LE: additionalLegalEntity,
-    ONTOS_1258_TEST_COMPOSITION: snapshotJson,
     ONTOS_1258_TEST_DATABASE: ownedName,
     ONTOS_1258_TEST_REVISION: snapshot.composition.revision,
     ONTOS_1258_TEST_RUNTIME: ownedRuntime,
@@ -1387,6 +1456,30 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
       })),
     });
   });
+  // Every Outbox delivery with the message it delivers. The matcher reports only totals across every
+  // subscription that matched (Privacy's own dispatch watchdog beside Party's consumer), so attribution reads the rows.
+  const deliveries = Effect.fn('PrivacyCompletionTest.deliveries')(function* deliveries() {
+    const facts = yield* Effect.all(
+      {
+        deliveries: coreEvidenceExecutor.query.outboxDeliveries.findMany({
+          columns: { consumerModuleKey: true, outboxMessageId: true, status: true, workerKey: true },
+        }),
+        messages: coreEvidenceExecutor.query.outboxMessages.findMany({
+          columns: { outboxMessageId: true, producerModuleKey: true, topic: true },
+        }),
+      },
+      { concurrency: 2 },
+    );
+    const messages = new Map(facts.messages.map((message) => [message.outboxMessageId, message]));
+    return facts.deliveries.map((delivery) => ({
+      consumerModuleKey: delivery.consumerModuleKey,
+      messageId: delivery.outboxMessageId,
+      producerModuleKey: messages.get(delivery.outboxMessageId)?.producerModuleKey,
+      status: delivery.status,
+      topic: messages.get(delivery.outboxMessageId)?.topic,
+      workerKey: delivery.workerKey,
+    }));
+  });
   const observeSealFailure = Effect.gen(function* observeSealFailure() {
     const facts = yield* Effect.all({
       deliveries: coreEvidenceExecutor.query.outboxDeliveries.findMany({
@@ -1458,6 +1551,10 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
         return response.status;
       },
     });
+  // The Party worker's own module key reaches it only over its private channel, as the Outbox Worker host hands it.
+  const workerCredentialHandover = yield* encodeModuleCredentialHandover({ 'party-registry': moduleApiKey }, [
+    'party-registry',
+  ]);
   const worker = (
     options: {
       readonly advanceMs?: number;
@@ -1465,14 +1562,20 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
       readonly revision?: string;
     } = {},
   ) =>
-    start(paths.worker, {
-      ...ownerEnvironment,
-      ONTOS_1258_TEST_BARRIER: options.barrier ?? 'none',
-      ONTOS_1258_TEST_CLOCK_ADVANCE_MS: String(options.advanceMs ?? 0),
-      ONTOS_1258_TEST_REVISION: options.revision ?? snapshot.composition.revision,
-      ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(moduleApiKey),
-      ONTOS_PRIVACY_API_BASE_URL: privacyUrl,
-    });
+    start(
+      paths.worker,
+      {
+        ...ownerEnvironment,
+        ONTOS_1258_TEST_BARRIER: options.barrier ?? 'none',
+        ONTOS_1258_TEST_CLOCK_ADVANCE_MS: String(options.advanceMs ?? 0),
+        ONTOS_1258_TEST_REVISION: options.revision ?? snapshot.composition.revision,
+        ONTOS_PRIVACY_API_BASE_URL: privacyUrl,
+      },
+      false,
+      undefined,
+      undefined,
+      workerCredentialHandover,
+    );
   const cycle = (advanceMs = 0) =>
     Effect.gen(function* actualWorkerCycle() {
       const process = yield* worker({ advanceMs });
@@ -1498,11 +1601,12 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
         ONTOS_1258_TEST_CLOCK_ADVANCE_MS: '0',
         ONTOS_1258_TEST_RETRY_SESSION: 'dead-letter',
         ONTOS_1258_TEST_REVISION: snapshot.composition.revision,
-        ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(moduleApiKey),
         ONTOS_PRIVACY_API_BASE_URL: privacyUrl,
       },
       false,
       { input: Stream.fromQueue(input).pipe(Stream.encodeText), replies },
+      undefined,
+      workerCredentialHandover,
     );
     let index = 0;
     return {
@@ -1620,6 +1724,7 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
   return {
     control,
     cycle,
+    deliveries,
     dispatch,
     evidence,
     handoff,
@@ -1769,10 +1874,18 @@ it.layer(services, { excludeTestServices: true })('owned bootstrap source contra
           Order.String,
         ),
       ).toEqual(immutable);
+      // Assertion history is least privilege: the registry is append-only beside the current store and
+      // the archive is owner-written, so those two Party tables carry narrower operations than blanket DML.
+      const partyOperationsByTable = new Map([
+        ['party_fact_assertion_identities', 'select, insert'],
+        ['party_historical_name_assertions', 'select'],
+      ]);
       for (const item of fixtureRuntimeInventory) {
         if ((item.schema === 'party' && item.operations !== 'none') || (item.schema === 'contacts' && item.rls)) {
-          expect(item.operations).toBe('select, insert, update, delete');
-          expect(item.rls).toBe(true);
+          expect(item.rls, item.schema).toBe(true);
+          for (const table of item.tables) {
+            expect(item.operations, table).toBe(partyOperationsByTable.get(table) ?? 'select, insert, update, delete');
+          }
         }
       }
       expect(
@@ -1850,6 +1963,19 @@ it.effect('counts only the declared dispatch transaction failure and rejects unr
     ).toBe(false);
     expect(isDispatchTransactionRefusal(new TypeError('TEST transport failed'))).toBe(false);
     expect(isDispatchTransactionRefusal(null)).toBe(false);
+  }),
+);
+
+it.effect('admits only fixed Shell startup stage diagnostics, never private error details', () =>
+  Effect.sync(() => {
+    expect(isShellStartupFailure('privacy-completion-shell:module-credential')).toBe(true);
+    for (const value of [
+      'TEST:secret-child-diagnostic',
+      'privacy-completion-shell:serve:TEST-private-credential',
+      'privacy-completion-shell:unknown',
+    ]) {
+      expect(isShellStartupFailure(value)).toBe(false);
+    }
   }),
 );
 
@@ -2509,6 +2635,9 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           });
           yield* f.isolated.composition.closeAdmission();
           yield* pending(f);
+          const privacyDeliveries = (rows: Effect.Success<ReturnType<typeof f.deliveries>>) =>
+            rows.filter((row) => row.messageId === originalMessage.id && row.consumerModuleKey === 'party.registry');
+          const deliveriesBefore = yield* f.deliveries();
           // Actual registered handler + repository.complete: succeeded is counted only after durable ACK.
           const completedCycle = yield* f.cycle();
           expect(completedCycle).toMatchObject({
@@ -2518,12 +2647,24 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
             retried: 0,
             succeeded: 1,
           });
+          const deliveriesAfter = yield* f.deliveries();
           // Shell's real installed-catalog matcher also runs: this worker may find its delivery already matched.
           // Keep both matchers and require the same single claim/ACK and exact message-derived debt settlement.
-          expect([0, 1]).toContain(completedCycle.matched.deliveriesCreated);
-          expect(completedCycle.matched.messagesMatched).toBeGreaterThanOrEqual(
-            completedCycle.matched.deliveriesCreated,
+          // One match inserts every subscribed delivery of the message: Party's consumer and Privacy's own
+          // dispatch watchdog. The totals count both, so this count reads Party's delivery of the one dispatch.
+          expect(privacyDeliveries(deliveriesAfter)).toHaveLength(1);
+          expect([0, 1]).toContain(
+            privacyDeliveries(deliveriesAfter).length - privacyDeliveries(deliveriesBefore).length,
           );
+          expect(completedCycle.matched.deliveriesCreated).toBeLessThanOrEqual(
+            deliveriesAfter.length - deliveriesBefore.length,
+          );
+          // Either Shell's matcher got there first and this worker matched nothing, or this worker matched the one
+          // message itself and created both of its subscribed deliveries (Party's consumer, Privacy's watchdog).
+          expect([
+            [0, 0],
+            [1, 2],
+          ]).toContainEqual([completedCycle.matched.messagesMatched, completedCycle.matched.deliveriesCreated]);
           const original = yield* coreDebtSettled(f);
           expect(original.handoffFingerprint).toBe(digest(canonical));
           expect(original.outcome).toMatchObject({

@@ -17,6 +17,7 @@ import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { makeCatalogApiRuntime } from '../../api/index.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { makeRootOwnerApprovals } from '../support/root-owner-approvals.ts';
 
 const principal = {
   authBindingId: '66666666-6666-4666-8666-666666666666',
@@ -36,6 +37,10 @@ it.live('routes an authenticated recovery request with both governed runtimes av
     const compositionDocument = yield* Schema.encodeEffect(
       Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
     )(compositionSnapshot);
+    const ownerApprovals = yield* makeRootOwnerApprovals(compositionSnapshot, {
+      ...principal,
+      correlationId: 'catalog-recovery-route-proof',
+    });
     const issuer = 'https://shell.catalog-recovery-route.test';
     const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
     const publicJwk = {
@@ -81,11 +86,13 @@ it.live('routes an authenticated recovery request with both governed runtimes av
         Effect.fail(
           new ActionAlreadyCommitted({ code: 'action_already_committed', invocationId, reason: 'committed' }),
         ),
+      resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
       runAction: () => Effect.die('unused'),
     };
     const assembled = makeCatalogApiRuntime(
       Layer.succeed(ReadRuntime, readRuntime),
       Layer.mergeAll(
+        Layer.succeedContext(ownerApprovals),
         Layer.succeed(ActionRuntime, actionRuntime),
         Layer.succeed(ActiveApplicationCompositionSource, { load: Effect.succeed(compositionDocument) }),
         ConfigProvider.layer(

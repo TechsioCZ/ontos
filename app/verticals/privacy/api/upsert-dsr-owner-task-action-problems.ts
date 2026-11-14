@@ -81,10 +81,12 @@ export const upsertDsrOwnerTaskActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'UpsertDsrOwnerTaskActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'UpsertDsrOwnerTaskActionForbiddenProblem'> =>
     UpsertDsrOwnerTaskActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -195,7 +197,8 @@ const mapCoreProblem = (error: ActionCoreError): UpsertDsrOwnerTaskActionProblem
       ActionInvocationStateError: (failure) => upsertDsrOwnerTaskActionProblem.conflict(failure.code),
       ActionPayloadValidationError: upsertDsrOwnerTaskActionProblem.invalid,
       ActionPermissionCheckError: (failure) => upsertDsrOwnerTaskActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => upsertDsrOwnerTaskActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        upsertDsrOwnerTaskActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => upsertDsrOwnerTaskActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => upsertDsrOwnerTaskActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => upsertDsrOwnerTaskActionProblem.conflict(failure.code),

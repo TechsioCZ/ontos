@@ -5,6 +5,8 @@ import {
   OntosShellRuntimeContractSchema,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
+import { loadModuleCredentialEnrolment } from '@app/core-runtime/auth/module-credentials';
+import { CoreDatabase } from '@app/core-runtime/db/client';
 import { GatewayContextV2ClaimsSchema, GatewayTrustedPrincipalContextSchema } from '@app/shared-contracts';
 import type { GatewayTrustedPrincipalContext } from '@app/shared-contracts';
 import { PAYMENT_GATEWAY_RELAY_PATH_PREFIX } from '@app/payment/payment-gateway-relay';
@@ -19,6 +21,7 @@ import {
   FileSystem,
   Option,
   Path,
+  Queue,
   Redacted,
   Ref,
   Schedule,
@@ -30,6 +33,12 @@ import { HttpClient } from 'effect/http';
 
 import { GatewayIssuer } from '../../api/auth/gateway-issuer.ts';
 import { readCompiledNodeShellIdentity } from '../../../../scripts/ontos-shell-runtime-contract.ts';
+import { ApiKeyServiceLive } from '../../api/auth/api-key-service.ts';
+import { AuthConfig } from '../../api/auth/config.ts';
+import { HostedModuleCredentialsSchema } from '@app/core-runtime/auth/hosted-module-credentials';
+import { AuthDatabase } from '../../api/auth/db/client.ts';
+import { moduleCredentialReleaseOf } from '../../api/auth/module-credential-attestation.ts';
+import { provisionModuleCredentials } from '../../api/auth/module-credential-provisioning.service.ts';
 
 const SHELL_APP_ID = 'shell-super-app';
 const CUSTOMER_CONTEXT_APP_ID = 'commerce-customer-context';
@@ -81,9 +90,39 @@ const ReleaseEnvelopeSchema = Schema.Struct({
   target: Schema.Literal('node'),
 });
 const sameIdentity = Schema.toEquivalence(IdentitySchema);
+const BUILD_IDENTITY_FILE = 'ultramodern-build.json';
 const ReadyOriginSchema = Schema.String.check(Schema.isPattern(/^http:\/\/(?:127\.0\.0\.1|\[::1\]):[1-9][0-9]*$/u));
 
 const PACKAGED_STARTUP_PHASE = 'Packaged native startup phase';
+const startupFailureCodes = [
+  'AuthConfigError',
+  'ConfigError',
+  'SchemaError',
+  'SyntaxError',
+  'TypeError',
+  'ReferenceError',
+  'NoSuchElementException',
+  'ERR_MODULE_NOT_FOUND',
+  'ERR_PACKAGE_PATH_NOT_EXPORTED',
+  'ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING',
+  'ERR_UNKNOWN_FILE_EXTENSION',
+  'ERR_UNSUPPORTED_DIR_IMPORT',
+  'ERR_REQUIRE_ESM',
+  'ERR_DLOPEN_FAILED',
+  'EADDRINUSE',
+  'ServeUnitsError',
+  'HANDOVER CHANNEL LOST',
+  'ERR_UNHANDLED_REJECTION',
+  'IoInsideDatabaseTransaction',
+] as const;
+
+/** Report only fixed public error codes; child output can contain credentials and stays redacted. */
+const reportedCodes = (diagnostics: readonly Redacted.Redacted[]) =>
+  startupFailureCodes.filter((code) => diagnostics.some((line) => Redacted.value(line).includes(code))).join(', ') ||
+  'not reported';
+
+export const packagedStartupFailureReason = (exitCode: number, diagnostics: readonly Redacted.Redacted[]): string =>
+  `Packaged application exited before readiness (exit=${String(exitCode)}; diagnostic codes=${reportedCodes(diagnostics)})`;
 
 interface PackagedApplicationInput {
   readonly appId:
@@ -116,7 +155,6 @@ interface PackagedApplicationInput {
   readonly port?: number;
   readonly relativeDirectory: string;
   readonly relaySource?: { readonly apiKey: Redacted.Redacted; readonly shellBaseUrl: string };
-  readonly sourceBindings?: Redacted.Redacted;
 }
 
 const makePackagedEnvironment = Effect.fn('ServerOwnerRelayNative.makePackagedEnvironment')(
@@ -163,10 +201,11 @@ const makePackagedEnvironment = Effect.fn('ServerOwnerRelayNative.makePackagedEn
       Object.assign(environment, { ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: input.compositionUrl });
     }
     if (input.gateway !== undefined) {
-      Object.assign(environment, {
-        ONTOS_GATEWAY_ISSUER: input.gateway.issuer,
-        ONTOS_GATEWAY_PUBLIC_JWKS: input.gateway.publicJwks,
-      });
+      Object.assign(environment, { ONTOS_GATEWAY_ISSUER: input.gateway.issuer });
+      if (input.appId !== SHELL_APP_ID) {
+        Object.assign(environment, { ONTOS_GATEWAY_PUBLIC_JWKS: input.gateway.publicJwks });
+      }
+      // The Shell gets what the app host gives it on stage: its issuer and its own signing key, and no public key set.
       if (input.gateway.privateJwk !== undefined) {
         Object.assign(environment, { ONTOS_GATEWAY_PRIVATE_JWK: Redacted.value(input.gateway.privateJwk) });
       }
@@ -176,19 +215,224 @@ const makePackagedEnvironment = Effect.fn('ServerOwnerRelayNative.makePackagedEn
         ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS: Redacted.value(input.paymentNotificationRelayCredentials),
       });
     }
-    if (input.relaySource !== undefined) {
-      Object.assign(environment, {
-        ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(input.relaySource.apiKey),
-        ONTOS_SHELL_GATEWAY_BASE_URL: input.relaySource.shellBaseUrl,
-      });
-    }
-    // The Shell requires an explicit enrolment; a deployment with no module credential enrols none.
-    Object.assign(environment, {
-      ONTOS_GATEWAY_MODULE_BINDINGS: Redacted.value(input.sourceBindings ?? Redacted.make('[]')),
-    });
     return environment;
   },
 );
+
+const HostedOwnerAppIdSchema = Schema.Literals([
+  'crm',
+  'catalog',
+  CUSTOMER_CONTEXT_APP_ID,
+  MARKET_APP_ID,
+  'merchandise',
+  'tax',
+  'finance-billing',
+]);
+type HostedOwnerAppId = typeof HostedOwnerAppIdSchema.Type;
+const HostedOwnerBuildSchema = Schema.Struct({
+  deliveryUnit: Schema.Struct({ appId: HostedOwnerAppIdSchema, buildMarker: IdentitySchema.fields.buildMarker }),
+});
+const HostedOwnerReadyLine = /^\[serve-units\] (?<appId>[a-z][a-z0-9-]*) on (?<origin>127\.0\.0\.1:[1-9][0-9]*)$/u;
+const HandoverReceivedPrefix = '[module-credentials] received the credentials of ';
+
+/**
+ * One owner served the way the app host serves its owners process: `scripts/zerops/serve-units.mts` claims the
+ * process for the owner before it loads, the owner's generated in-process entry (`dist/zerops-entry.mjs`, written by
+ * `scripts/zerops/owner-entry.mts` after the unit's build, as `scripts/zerops/build-app.sh` does) serves on the
+ * owner's topology port, and every module and workload key arrives on the process's private channel, its file
+ * descriptor 3, never in its environment. `handOver` queues one handover line on that channel; `received` takes the
+ * next acceptance the process reported (entry names only, never a key).
+ */
+export const startHostedOwnerWithHandover = Effect.fn('ServerOwnerRelayNative.startHostedOwnerWithHandover')(
+  function* startHostedOwnerWithHandover(input: {
+    readonly appId: HostedOwnerAppId;
+    readonly compositionUrl: string;
+    readonly gateway: { readonly issuer: string; readonly publicJwks: string };
+    readonly relativeDirectory: string;
+    readonly shellGatewayBaseUrl: string;
+    readonly workspaceDirectory: string;
+  }) {
+    const filesystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const workspace = path.resolve(input.workspaceDirectory);
+    const directory = path.resolve(input.relativeDirectory);
+    const compiled = yield* filesystem
+      .readFileString(path.join(directory, '.output', BUILD_IDENTITY_FILE))
+      .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(HostedOwnerBuildSchema))));
+    if (compiled.deliveryUnit.appId !== input.appId) {
+      return yield* new PackagedOwnerStartupError({ reason: 'Hosted owner identity mismatch' });
+    }
+    if (!(yield* filesystem.exists(path.join(directory, 'dist', 'zerops-entry.mjs')))) {
+      return yield* new PackagedOwnerStartupError({
+        reason: 'The owner has no in-process entry; run scripts/zerops/owner-entry.mts after its build',
+      });
+    }
+    const channel = yield* Queue.unbounded<Uint8Array>();
+    const received = yield* Queue.unbounded<string>();
+    const child = yield* ChildProcess.make(
+      'node',
+      [path.join(workspace, 'scripts/zerops/serve-units.mts'), input.appId],
+      {
+        additionalFds: { fd3: { stream: Stream.fromQueue(channel), type: 'input' } },
+        cwd: workspace,
+        env: {
+          APP_ENV_PATH: '/dev/null',
+          DATABASE_URL: Redacted.value(yield* Config.Redacted('DATABASE_URL')),
+          NODE_ENV: 'production',
+          ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: input.compositionUrl,
+          ONTOS_GATEWAY_ISSUER: input.gateway.issuer,
+          ONTOS_GATEWAY_PUBLIC_JWKS: input.gateway.publicJwks,
+          // The app host's switch: the channel lives as long as the host, so its end stops the process.
+          ONTOS_MODULE_CREDENTIAL_HANDOVER: 'fd3-lifetime',
+          ONTOS_SHELL_GATEWAY_BASE_URL: input.shellGatewayBaseUrl,
+          PATH: yield* Config.String('PATH'),
+          SPICEDB_CA_CERT: yield* Config.String('SPICEDB_CA_CERT'),
+          SPICEDB_ENDPOINT: yield* Config.String('SPICEDB_ENDPOINT'),
+          SPICEDB_PRESHARED_KEY: Redacted.value(yield* Config.Redacted('SPICEDB_PRESHARED_KEY')),
+        },
+        extendEnv: false,
+        forceKillAfter: '3 seconds',
+        stderr: 'pipe',
+        stdin: 'ignore',
+        stdout: 'pipe',
+      },
+    );
+    const diagnostics: Redacted.Redacted[] = [];
+    const ready = yield* Deferred.make<string, PackagedOwnerStartupError>();
+    yield* child.stdout.pipe(
+      Stream.decodeText(),
+      Stream.splitLines,
+      Stream.runForEach((line) => {
+        const listening = HostedOwnerReadyLine.exec(line)?.groups;
+        if (listening?.['appId'] === input.appId && listening['origin'] !== undefined) {
+          return Deferred.succeed(ready, `http://${listening['origin']}`);
+        }
+        if (line.startsWith(HandoverReceivedPrefix)) {
+          return Queue.offer(received, line.slice(HandoverReceivedPrefix.length));
+        }
+        return Effect.sync(() => {
+          diagnostics.push(Redacted.make(line));
+        });
+      }),
+      Effect.forkScoped,
+    );
+    yield* child.stderr.pipe(
+      Stream.decodeText(),
+      Stream.splitLines,
+      Stream.runForEach((line) =>
+        Effect.sync(() => {
+          diagnostics.push(Redacted.make(line));
+        }),
+      ),
+      Effect.forkScoped,
+    );
+    const origin = yield* Effect.raceFirst(
+      Deferred.await(ready),
+      child.exitCode.pipe(
+        Effect.flatMap((exitCode) =>
+          Effect.fail(new PackagedOwnerStartupError({ reason: packagedStartupFailureReason(exitCode, diagnostics) })),
+        ),
+      ),
+    );
+    const client = yield* HttpClient.HttpClient;
+    // An owner that announced its address and then stops answering says why only in its own output: wait briefly for
+    // its exit and report the fixed codes it printed, never the lines themselves.
+    const announcedButUnreachable = Effect.fn('ServerOwnerRelayNative.announcedButUnreachable')(
+      function* unreachable() {
+        const exited = yield* child.exitCode.pipe(Effect.timeoutOption('2 seconds'));
+        return yield* new PackagedOwnerStartupError({
+          reason: `Hosted owner announced ${origin} but refused its contract read (exit=${Option.match(exited, {
+            onNone: () => 'still running',
+            onSome: String,
+          })}; diagnostic codes=${reportedCodes(diagnostics)})`,
+        });
+      },
+    );
+    const response = yield* client
+      .get(`${origin}${ONTOS_MODULE_CONTRACT_PATH}`)
+      .pipe(Effect.catchTag('HttpClientError', () => announcedButUnreachable()));
+    if (response.status !== 200) {
+      return yield* new PackagedOwnerStartupError({ reason: 'Hosted owner contract endpoint is unavailable' });
+    }
+    const contract = yield* response.json.pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)),
+    );
+    if (input.appId === CUSTOMER_CONTEXT_APP_ID && contract.manifest.publicSurface.components.length !== 0) {
+      return yield* new PackagedOwnerStartupError({ reason: 'API-only application declares a frontend surface' });
+    }
+    if (
+      contract.deployment.appId !== input.appId ||
+      contract.deployment.buildMarker !== compiled.deliveryUnit.buildMarker
+    ) {
+      return yield* new PackagedOwnerStartupError({
+        reason: 'Hosted owner HTTP deployment does not match its packaged identity',
+      });
+    }
+    return {
+      buildMarker: compiled.deliveryUnit.buildMarker,
+      child,
+      diagnostics,
+      handOver: (message: Uint8Array) => Queue.offer(channel, message),
+      origin,
+      received: Queue.take(received).pipe(Effect.timeout('20 seconds')),
+    };
+  },
+);
+
+/**
+ * A module that calls others runs the way the app host runs it: served by the owners process (`serve-units.mts`), which
+ * claims the unit's own credential store copy, on the unit's topology port (so a restart keeps its origin). With a
+ * relay source its key is handed over on the process's private channel; without one it holds none. The environment
+ * never carries a module key; a unit started as a standalone server could hold none.
+ */
+const startHostedCaller = Effect.fn('ServerOwnerRelayNative.startHostedCaller')(function* startHostedCaller(
+  input: PackagedApplicationInput,
+  appId: HostedOwnerAppId,
+  apiPrefix: string,
+  compiled: typeof IdentitySchema.Type,
+) {
+  const path = yield* Path.Path;
+  if (input.compositionUrl === undefined || input.gateway === undefined) {
+    return yield* new PackagedOwnerStartupError({ reason: 'A hosted caller needs its composition and gateway' });
+  }
+  const hosted = yield* startHostedOwnerWithHandover({
+    appId,
+    compositionUrl: input.compositionUrl,
+    gateway: input.gateway,
+    relativeDirectory: input.relativeDirectory,
+    shellGatewayBaseUrl: input.relaySource?.shellBaseUrl ?? `${input.gateway.issuer}/shell-super-app-api`,
+    workspaceDirectory: path.resolve(input.relativeDirectory, '../..'),
+  });
+  if (input.relaySource !== undefined) {
+    // One handover line, in the shape `encodeModuleCredentialHandover` writes (scripts/zerops/module-credentials.mts).
+    const line = yield* Schema.encodeEffect(Schema.fromJsonString(HostedModuleCredentialsSchema))({
+      credentials: { [appId]: input.relaySource.apiKey },
+      schemaVersion: 1,
+      workloads: {},
+    });
+    yield* hosted.handOver(new TextEncoder().encode(`${line}\n`));
+    const accepted = yield* hosted.received;
+    if (!accepted.split(', ').includes(appId)) {
+      return yield* new PackagedOwnerStartupError({ reason: 'The hosted caller did not take its module credential' });
+    }
+  }
+  return { apiPrefix, child: hosted.child, compiled, diagnostics: hosted.diagnostics, origin: hosted.origin };
+});
+
+/** The packaged unit's API prefix, from its route manifest. */
+const packagedApiPrefix = Effect.fn('ServerOwnerRelayNative.packagedApiPrefix')(function* packagedApiPrefix(
+  routeFile: string,
+) {
+  const filesystem = yield* FileSystem.FileSystem;
+  const routes = yield* filesystem
+    .readFileString(routeFile)
+    .pipe(Effect.flatMap(Schema.decodeEffect(ApiRoutesDocumentSchema)));
+  const apiRoute = routes.routes.find((route) => route.isApi === true);
+  if (apiRoute === undefined) {
+    return yield* new PackagedOwnerStartupError({ reason: 'Packaged API prefix is missing' });
+  }
+  return apiRoute.urlPath;
+});
 
 export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startPackagedApplication')(
   function* startPackagedApplication(input: PackagedApplicationInput) {
@@ -196,7 +440,7 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
     const path = yield* Path.Path;
     const directory = path.resolve(input.relativeDirectory);
     const compiled = yield* filesystem
-      .readFileString(path.join(directory, '.output', 'ultramodern-build.json'))
+      .readFileString(path.join(directory, '.output', BUILD_IDENTITY_FILE))
       .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(PackagedBuildSchema))));
     if (compiled.deliveryUnit.appId !== input.appId) {
       return yield* new PackagedOwnerStartupError({ reason: 'Packaged application identity mismatch' });
@@ -205,7 +449,7 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
       input.appId === CUSTOMER_CONTEXT_APP_ID || input.appId === PRICE_GROUP_APP_ID
         ? undefined
         : yield* filesystem
-            .readFileString(path.join(directory, '.output', 'public', 'ultramodern-build.json'))
+            .readFileString(path.join(directory, '.output', 'public', BUILD_IDENTITY_FILE))
             .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(PackagedBuildSchema))));
     const release = yield* filesystem
       .readFileString(path.join(directory, '.output', 'release', 'microvertical-release-envelope.json'))
@@ -223,12 +467,14 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
         reason: 'Compiled, public and immutable release identities disagree',
       });
     }
-    const routes = yield* filesystem
-      .readFileString(path.join(directory, '.output', 'route.json'))
-      .pipe(Effect.flatMap(Schema.decodeEffect(ApiRoutesDocumentSchema)));
-    const apiRoute = routes.routes.find((route) => route.isApi === true);
-    if (apiRoute === undefined) {
-      return yield* new PackagedOwnerStartupError({ reason: 'Packaged API prefix is missing' });
+    const apiPrefix = yield* packagedApiPrefix(path.join(directory, '.output', 'route.json'));
+    // A calling module that joins a composition runs as the app host runs it; a contract-only start (no composition,
+    // no gateway) makes no delegated call and stays a standalone server.
+    if (
+      Schema.is(HostedOwnerAppIdSchema)(input.appId) &&
+      (input.relaySource !== undefined || (input.compositionUrl !== undefined && input.gateway !== undefined))
+    ) {
+      return yield* startHostedCaller(input, input.appId, apiPrefix, compiled.deliveryUnit);
     }
     const environment = yield* makePackagedEnvironment(input);
     const child = yield* ChildProcess.make('node', ['.output/index.js'], {
@@ -276,8 +522,8 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
     const origin = yield* Effect.raceFirst(
       Deferred.await(ready),
       child.exitCode.pipe(
-        Effect.flatMap(() =>
-          Effect.fail(new PackagedOwnerStartupError({ reason: 'Packaged application exited before readiness' })),
+        Effect.flatMap((exitCode) =>
+          Effect.fail(new PackagedOwnerStartupError({ reason: packagedStartupFailureReason(exitCode, diagnostics) })),
         ),
       ),
     );
@@ -298,20 +544,13 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
       input.appId === SHELL_APP_ID
         ? yield* Schema.decodeUnknownEffect(OntosShellRuntimeContractSchema)(body)
         : yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(body);
-    if (
-      input.appId === CUSTOMER_CONTEXT_APP_ID &&
-      (!Schema.is(OntosModuleDeploymentContractSchema)(contract) ||
-        contract.manifest.publicSurface.components.length !== 0)
-    ) {
-      return yield* new PackagedOwnerStartupError({ reason: 'API-only application declares a frontend surface' });
-    }
     if (contract.deployment.appId !== identity.appId || contract.deployment.buildMarker !== identity.buildMarker) {
       return yield* new PackagedOwnerStartupError({
         reason: 'Actual HTTP deployment does not match immutable packaged identity',
       });
     }
     yield* Effect.logInfo(PACKAGED_STARTUP_PHASE, { appId: input.appId, phase: 'contract-identity-verified' });
-    return { apiPrefix: apiRoute.urlPath, child, compiled: compiled.deliveryUnit, diagnostics, origin };
+    return { apiPrefix, child, compiled: compiled.deliveryUnit, diagnostics, origin };
   },
 );
 
@@ -645,7 +884,9 @@ export const runRegisteredPostalFactoryProbe = Effect.fn('ServerOwnerRelayNative
         correlationId: input.correlationId,
         deployment: input.deployment,
         factory: input.factory,
+        moduleCredential: Redacted.value(input.relaySource.apiKey),
         savedAddress: input.savedAddress,
+        storeModule: path.resolve(directory, '../../packages/core-runtime/src/auth/hosted-module-credential-store.ts'),
       }),
     );
     const child = yield* ChildProcess.make('node', [artifact], {
@@ -656,7 +897,6 @@ export const runRegisteredPostalFactoryProbe = Effect.fn('ServerOwnerRelayNative
         NODE_ENV: 'production',
         ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: input.compositionUrl,
         ONTOS_GATEWAY_ISSUER: input.gateway.issuer,
-        ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(input.relaySource.apiKey),
         ONTOS_GATEWAY_PUBLIC_JWKS: input.gateway.publicJwks,
         ONTOS_SHELL_GATEWAY_BASE_URL: input.relaySource.shellBaseUrl,
         PATH: yield* Config.String('PATH'),
@@ -715,5 +955,57 @@ export const runRegisteredPostalFactoryProbe = Effect.fn('ServerOwnerRelayNative
     ).pipe(
       Effect.mapError(() => new PackagedOwnerStartupError({ reason: 'Invalid closed postal probe result protocol' })),
     );
+  },
+);
+
+/**
+ * A source module's credential exactly as the platform provisions it on every boot: the platform's module principal,
+ * a key it owns and its binding. No person issues it, and the Shell derives its binding from the enrolment.
+ */
+export const provisionSourceModuleCredential = Effect.fn('ServerOwnerRelayNative.provisionSourceModuleCredential')(
+  function* provisionSourceModuleCredential(input: {
+    readonly appId: string;
+    /** The composition the Shell serves; the key is attested for its revision and the module's build. */
+    readonly composition: {
+      readonly composition: {
+        readonly modules: readonly { readonly deployment: { readonly appId: string; readonly buildMarker: string } }[];
+        readonly revision: string;
+      };
+    };
+    readonly configuration: typeof AuthConfig.Service;
+    readonly database: (typeof CoreDatabase.Service)['executor'];
+    readonly persistence: typeof AuthDatabase.Service;
+  }) {
+    const crypto = yield* Crypto.Crypto;
+    const provisioned = yield* provisionModuleCredentials({
+      appIds: [input.appId],
+      bootId: yield* crypto.randomUUIDv4(),
+      hostId: 'server-owner-relay-native',
+      operationId: yield* crypto.randomUUIDv4(),
+      release: moduleCredentialReleaseOf({
+        composition: input.composition.composition,
+        contracts: input.composition.composition.modules,
+      }),
+    }).pipe(
+      Effect.provide(ApiKeyServiceLive),
+      Effect.provideService(AuthConfig, input.configuration),
+      Effect.provideService(AuthDatabase, input.persistence),
+      Effect.provideService(CoreDatabase, { executor: input.database }),
+    );
+    const secret = provisioned.credentials.get(input.appId);
+    const enrolled = (yield* loadModuleCredentialEnrolment(input.database)).find(
+      (credential) => credential.appId === input.appId && provisioned.providerKeyIds.has(credential.providerKeyId),
+    );
+    if (secret === undefined || enrolled === undefined) {
+      return yield* new PackagedOwnerStartupError({
+        reason: `The platform issued no module credential for ${input.appId}`,
+      });
+    }
+    return {
+      authBindingId: enrolled.authBindingId,
+      providerKeyId: enrolled.providerKeyId,
+      secret,
+      serviceId: enrolled.principalId,
+    };
   },
 );

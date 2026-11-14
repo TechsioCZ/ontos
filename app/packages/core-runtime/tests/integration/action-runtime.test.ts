@@ -1,11 +1,24 @@
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { and, eq, sql } from 'drizzle-orm';
-import { Cause, Context, Crypto, Deferred, Effect, Layer, Exit, Fiber, Option, Schema, Predicate } from 'effect';
+import {
+  Cause,
+  ConfigProvider,
+  Context,
+  Crypto,
+  Deferred,
+  Effect,
+  Layer,
+  Exit,
+  Fiber,
+  Option,
+  Schema,
+  Predicate,
+} from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError, UnknownError } from 'effect/sql/SqlError';
 import { commitActionThenReject } from '../../src/actions/context.ts';
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
-import { defineAction } from '../../src/actions/definition.ts';
+import { defineAction, getActionHandler, getActionServiceFactory } from '../../src/actions/definition.ts';
 import {
   ActionInvocationPersistenceError,
   ActionPolicyDenied,
@@ -16,6 +29,7 @@ import { createDomainEventReference } from '../../src/actions/events.ts';
 import type { ActionPolicy } from '../../src/actions/policy.ts';
 import { defineGlobalPolicy, defineMicroverticalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
+import { OpenDatabaseTransaction, refuseInsideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
 import type { ActionRuntimeStage } from '../../src/actions/runtime.ts';
 import {
@@ -218,8 +232,8 @@ const allowedPermission = {
   checkActionPermission: () => Effect.succeed('allowed' as const),
 };
 
-const withDatabase = <Value, Error, Requirements>(
-  execute: (database: ContextServiceContract) => Effect.Effect<Value, Error, Requirements>,
+const withDatabase = <Value, Failure, Requirements>(
+  execute: (database: ContextServiceContract) => Effect.Effect<Value, Failure, Requirements>,
 ) =>
   Effect.scoped(
     Effect.gen(function* databaseScope() {
@@ -380,7 +394,11 @@ const liveModuleStateOptions = (database: ContextServiceContract) => {
   };
 };
 
-const prepareTestOwnerRows = Effect.fn(function* integrationProgram1(database: ContextServiceContract) {
+const prepareTestOwnerRows = Effect.fn(function* integrationProgram1(
+  database: ContextServiceContract,
+  /** Tenant scopes are installed only through the shared runtime identity, never the admin login. */
+  scopes: ContextServiceContract = database,
+) {
   const { authBindingId, legalEntityId, principalId, tenantId } = yield* ActionRuntimeSuite;
   yield* database.executor.insert(tenants).values({
     defaultLocale: 'en',
@@ -420,7 +438,7 @@ const prepareTestOwnerRows = Effect.fn(function* integrationProgram1(database: C
     tenantId,
   });
   // The governed module-state Action runs under the Tenant's real access fence.
-  yield* writeTestTenantScopes(database.executor, { principalId, tenantId });
+  yield* writeTestTenantScopes(scopes.executor, { principalId, tenantId });
 });
 const prepare = withDatabase(prepareTestOwnerRows);
 
@@ -584,7 +602,7 @@ const makeRegistration = ({
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-const hasFailure = <Error>(exit: Exit.Exit<unknown, Error>, tag: string): boolean =>
+const hasFailure = <Failure>(exit: Exit.Exit<unknown, Failure>, tag: string): boolean =>
   Exit.isFailure(exit) && Option.exists(Cause.findErrorOption(exit.cause), Predicate.isTagged(tag));
 
 const testProgram1 = () =>
@@ -1634,7 +1652,7 @@ const testProgram11 = () =>
 const testProgram12 = () =>
   withDatabase(
     Effect.fn(function* integrationProgram21(database) {
-      const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
+      const { authBindingId, crypto, principal, principalId, tenantId } = yield* ActionRuntimeSuite;
       const repository = makeActionRepository(crypto);
       const key = 'lost-acknowledgement';
       const moduleStateKey = `test.lost-ack.${tenantId}`;
@@ -1729,6 +1747,64 @@ const testProgram12 = () =>
         .from(tenantModuleStates)
         .where(eq(tenantModuleStates.moduleKey, moduleStateKey));
 
+      const keyedLookup = { actionKey: 'core.shell.test.lost-ack', idempotencyKey: key, principal };
+      expect(yield* resolvingRuntime.resolveActionExecution(keyedLookup)).toEqual({
+        actionKey: 'core.shell.test.lost-ack',
+        invocationId,
+        retryCommand: false,
+        state: 'COMMITTED',
+      });
+      expect(yield* resolvingRuntime.resolveActionExecution({ invocationId, principal })).toEqual({
+        actionKey: 'core.shell.test.lost-ack',
+        invocationId,
+        retryCommand: false,
+        state: 'COMMITTED',
+      });
+      const unavailableExecution = yield* resolvingRuntime.resolveActionExecution({
+        ...keyedLookup,
+        idempotencyKey: 'never-dispatched',
+      });
+      expect(unavailableExecution).toEqual({ retryCommand: true, state: 'NOT_STARTED' });
+      const executionFailure = yield* unavailableRuntime.resolveActionExecution(keyedLookup).pipe(Effect.flip);
+      expect(Schema.is(ActionInvocationPersistenceError)(executionFailure)).toBe(true);
+      const keyedCommitted = yield* Effect.flip(resolvingRuntime.resolveActionCommit(keyedLookup));
+      expect(Predicate.isTagged(keyedCommitted, 'ActionAlreadyCommitted')).toBe(true);
+      if (Predicate.isTagged(keyedCommitted, 'ActionAlreadyCommitted')) {
+        expect(keyedCommitted.invocationId).toBe(invocationId);
+        expect(keyedCommitted.invocationId).not.toBe(key);
+      }
+      const keyedUnavailable = yield* Effect.flip(unavailableRuntime.resolveActionCommit(keyedLookup));
+      expect(Predicate.isTagged(keyedUnavailable, 'ActionInvocationPersistenceError')).toBe(true);
+      for (const outsideScope of [
+        { ...keyedLookup, actionKey: 'core.shell.test.other-action' },
+        { ...keyedLookup, idempotencyKey: 'unknown-key' },
+        { ...keyedLookup, principal: { ...principal, tenantId: yield* crypto.randomUUIDv4() } },
+        { ...keyedLookup, principal: { ...principal, principalId: yield* crypto.randomUUIDv4() } },
+        { ...keyedLookup, principal: { ...principal, legalEntityId: yield* crypto.randomUUIDv4() } },
+        {
+          ...keyedLookup,
+          principal: {
+            authBindingId,
+            authContextRef: principal.authContextRef,
+            authenticationNamespaceId: staffAuthenticationNamespaceId,
+            authMethod: 'session',
+            principalId,
+            tenantId,
+          },
+        },
+      ]) {
+        expect(yield* resolvingRuntime.resolveActionExecution(outsideScope)).toEqual({
+          retryCommand: true,
+          state: 'NOT_STARTED',
+        });
+        if (outsideScope.principal !== principal) {
+          expect(
+            yield* resolvingRuntime.resolveActionExecution({ invocationId, principal: outsideScope.principal }),
+          ).toEqual({ retryCommand: true, state: 'NOT_STARTED' });
+        }
+        const deniedLookup = yield* Effect.flip(resolvingRuntime.resolveActionCommit(outsideScope));
+        expect(Predicate.isTagged(deniedLookup, 'ActionInvocationNotFound')).toBe(true);
+      }
       expect(hasFailure(committedResolution, 'ActionAlreadyCommitted')).toBe(true);
       expect(hasFailure(unauthorizedResolution, 'ActionInvocationNotFound')).toBe(true);
       expect(hasFailure(unavailableResolution, 'ActionCommitIndeterminate')).toBe(true);
@@ -1777,6 +1853,29 @@ const testProgram12 = () =>
         invocationId: openInvocationId,
         principal,
       });
+      const keyedOpen = yield* resolvingRuntime.resolveActionCommit({
+        actionKey: 'core.shell.test.lost-ack-open',
+        idempotencyKey: openKey,
+        principal,
+      });
+      expect(keyedOpen.invocationId).toBe(openInvocationId);
+      expect(
+        yield* resolvingRuntime.resolveActionExecution({
+          actionKey: 'core.shell.test.lost-ack-open',
+          idempotencyKey: openKey,
+          principal,
+        }),
+      ).toEqual({ invocationId: openInvocationId, retryCommand: true, state: 'RETRYABLE' });
+      expect(openInvocations[0]?.status).toBe('received');
+      const changedPayload = yield* resolvingRuntime
+        .runAction({
+          payload: { value: 'changed-original-payload' },
+          principal,
+          registration: openRegistration,
+          transport: transport(openKey, openModuleStateKey),
+        })
+        .pipe(Effect.exit);
+      expect(hasFailure(changedPayload, 'ActionRequestHashConflict')).toBe(true);
       const openResolved = yield* resolvingRuntime.runAction({
         payload: { value: 'rolled-back-with-lost-ack' },
         principal,
@@ -1916,7 +2015,7 @@ const testCompositionTransactionFence = () =>
       yield* isolated.migrateCoreSchema();
       const database = yield* makeCoreDatabase({ ...isolated.connections.runtime, maxConnections: 3 });
       const adminDatabase = yield* makeCoreDatabase({ ...isolated.connections.admin, maxConnections: 3 });
-      yield* prepareTestOwnerRows(adminDatabase);
+      yield* prepareTestOwnerRows(adminDatabase, database);
 
       const handlerStarted = yield* Deferred.make<null>();
       const handlerRelease = yield* Deferred.make<null>();
@@ -2056,6 +2155,143 @@ const testCompositionTransactionFence = () =>
     }),
   );
 
+const testGuardedActionRemoteIo = Effect.fn('ActionRuntimeIntegration.refuseRemoteIo')(function* refuseRemoteIo(
+  configuration: Readonly<Record<string, boolean>>,
+) {
+  const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
+  const key =
+    configuration['ONTOS_ACTION_TRANSACTION_IO_GUARD'] === false
+      ? 'guarded-remote-io-disabled'
+      : 'guarded-remote-io-default';
+  const moduleStateKey = `test.${key}.${tenantId}`;
+  let preflightSawNoTransaction = false;
+  let handlerSawTransaction = false;
+  const prepareRemoteWork = Effect.gen(function* prepareRemoteWorkEffect() {
+    preflightSawNoTransaction = Option.isNone(yield* OpenDatabaseTransaction);
+    return { outcome: 'not_applicable' } as const;
+  });
+  const forbiddenRemoteWork = Effect.gen(function* forbiddenRemoteWorkEffect() {
+    handlerSawTransaction = Option.isSome(yield* OpenDatabaseTransaction);
+    yield* refuseInsideDatabaseTransaction('outbound-fetch', 'https://owner.fixture.invalid/read');
+  });
+  yield* withDatabase((database) =>
+    Effect.gen(function* guardedAction() {
+      const runtime = makeRegisteredTestActionRuntime(
+        database,
+        makeActionRepository(crypto),
+        allowedPermission,
+        testOperationalScopeResolver,
+        {
+          ...openActionRuntimeOptions,
+          authorizationPreflight: { prepare: () => prepareRemoteWork },
+        },
+      );
+      const action = makeRegistration({
+        actionKey: 'core.shell.test.guarded-remote-io',
+        moduleStateKey,
+        onExecuteEffect: forbiddenRemoteWork,
+      });
+      const exit = yield* runtime
+        .runAction({
+          payload: { value: 'must-not-commit' },
+          principal,
+          registration: action,
+          transport: transport(key, moduleStateKey),
+        })
+        .pipe(
+          Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(configuration)),
+          Effect.exit,
+        );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(preflightSawNoTransaction).toBe(true);
+      expect(handlerSawTransaction).toBe(true);
+      expect(Option.isNone(yield* OpenDatabaseTransaction)).toBe(true);
+      const [states] = yield* persistedActionEvidence(database, key, moduleStateKey);
+      expect(states).toHaveLength(0);
+    }),
+  );
+});
+
+const ownerSnapshotUnavailable = () =>
+  new OperationContextUnavailable({
+    code: 'operation_context_unavailable',
+    reason: 'Owner snapshot unavailable',
+  });
+
+const testActionServicePreparation = Effect.fn('ActionRuntimeIntegration.prepareServices')(function* prepareServices() {
+  const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
+  const key = 'prepared-owner-services';
+  const moduleStateKey = `test.${key}.${tenantId}`;
+  const phases: string[] = [];
+  const base = makeRegistration({ actionKey: 'core.shell.test.prepared-owner-services', moduleStateKey });
+  const action = defineAction(base.descriptor, getActionHandler(base), getActionServiceFactory(base), {
+    prepareServices: Effect.fn('ActionRuntimeIntegration.prepareOwnerServices')(
+      function* prepareOwnerServices(payload, context) {
+        expect(Option.isNone(yield* OpenDatabaseTransaction)).toBe(true);
+        const before = yield* context.transaction((transaction) =>
+          Effect.gen(function* loadSnapshot() {
+            expect(Option.isSome(yield* OpenDatabaseTransaction)).toBe(true);
+            phases.push('snapshot');
+            const rows = yield* transaction
+              .select({ tenantId: tenants.tenantId })
+              .from(tenants)
+              .where(eq(tenants.tenantId, tenantId))
+              .pipe(Effect.mapError(() => new TestPersistenceError({ reason: 'snapshot unavailable' })));
+            return rows[0]?.tenantId;
+          }),
+        );
+        yield* refuseInsideDatabaseTransaction('outbound-fetch', 'https://owner.fixture.invalid/read');
+        phases.push('remote');
+        const capturedValue = payload.value;
+        return (transaction, scope, revision) =>
+          Effect.gen(function* revalidateSnapshot() {
+            expect(Option.isSome(yield* OpenDatabaseTransaction)).toBe(true);
+            const rows = yield* transaction
+              .select({ tenantId: tenants.tenantId })
+              .from(tenants)
+              .where(eq(tenants.tenantId, tenantId))
+              .pipe(Effect.mapError(ownerSnapshotUnavailable));
+            expect(rows[0]?.tenantId).toBe(before);
+            expect(capturedValue).toBe('prepared-value');
+            expect(context.compositionRevision).toBe(revision);
+            expect(context.scope.principalId).toBe(scope.principalId);
+            phases.push('commit');
+            return { transaction };
+          });
+      },
+    ),
+  });
+  yield* withDatabase((database) =>
+    Effect.gen(function* preparedAction() {
+      const runtime = makeRegisteredTestActionRuntime(
+        database,
+        makeActionRepository(crypto),
+        allowedPermission,
+        testOperationalScopeResolver,
+        openActionRuntimeOptions,
+      );
+      const result = yield* runtime
+        .runAction({
+          payload: { value: 'prepared-value' },
+          principal,
+          registration: action,
+          transport: transport(key, moduleStateKey),
+        })
+        .pipe(
+          Effect.provideService(
+            ConfigProvider.ConfigProvider,
+            ConfigProvider.fromUnknown({
+              ONTOS_ACTION_TRANSACTION_IO_GUARD: true,
+            }),
+          ),
+        );
+      expect(result.value).toBe('prepared-value');
+      expect(phases).toEqual(['snapshot', 'remote', 'commit']);
+      expect(Option.isNone(yield* OpenDatabaseTransaction)).toBe(true);
+    }),
+  );
+});
+
 it.layer(
   Layer.mergeAll(
     NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)),
@@ -2069,6 +2305,16 @@ it.layer(
     excludeTestServices: true,
   },
 )('Action runtime', (suite) => {
+  suite.effect(
+    'prepares invocation-local remote facts between guarded owner transactions',
+    testActionServicePreparation,
+  );
+  suite.effect('guards every Action transaction by default and leaves preflight outside it', () =>
+    testGuardedActionRemoteIo({}),
+  );
+  suite.effect('does not let the retired rollout flag disable Action transaction protection', () =>
+    testGuardedActionRemoteIo({ ONTOS_ACTION_TRANSACTION_IO_GUARD: false }),
+  );
   suite.effect(
     'fences release draining behind committed owner writes and their Outbox evidence',
     testCompositionTransactionFence,

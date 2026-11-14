@@ -1,10 +1,9 @@
-import type { OperationalScope } from '@app/core-runtime';
+import { RetailPartyDetailExecutor } from '../../src/integrations/retail-party-detail-executor.ts';
 import { PrincipalIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { RetailPortalProfileBindingReadRequestSchema } from '../../shared/apis/retail-portal-profile-binding-read.ts';
 import { CommerceEnrollmentAttemptUnavailable } from '../../src/enrollment/attempts/errors.ts';
 import type { ActiveApplicationCompositionServiceContract } from '@app/core-runtime/modules/active-application-composition';
-import type { PartyRegistryRetailPartyResolverFactoryInput } from '../../src/integrations/party-registry-retail-party-resolver.ts';
 import {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
@@ -13,11 +12,11 @@ import {
 import { moduleReleaseApiBaseUrl } from '@app/core-runtime/unit-service-fetch';
 import { executePartyDetailWithAuthorization } from '@app/party-registry/api/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { ResendEmailDeliveryConfigLive, RESEND_EMAILS_ENDPOINT } from '@app/email-delivery/resend';
 import {
-  PartyRegistryRetailPartyResolverFactory,
-  makePartyRegistryRetailPartyResolver,
-} from '../../src/integrations/party-registry-retail-party-resolver.ts';
+  ResendEmailDeliveryConfigLive,
+  ResendEmailDeliveryLive,
+  RESEND_EMAILS_ENDPOINT,
+} from '@app/email-delivery/resend';
 import {
   ProfilePersistenceDependencyFailure,
   profilePersistenceServicesForTransaction,
@@ -136,11 +135,13 @@ import {
 } from '@app/shared-contracts/external-identity';
 import { outboxWorkers } from '../../src/workers/index.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { holdOwnStoreCopy, receiveModuleCredentialHandover } from '../../../../scripts/zerops/module-credentials.mts';
 
 class RetainedConsentOwnerFixtureError extends Schema.TaggedError<RetainedConsentOwnerFixtureError>()(
   'RetainedConsentOwnerFixtureError',
   { stage: Schema.String },
 ) {}
+const CUSTOMER_CONTEXT_APP_ID = 'commerce-customer-context';
 const failed = (stage: string) => new RetainedConsentOwnerFixtureError({ stage });
 const bindingObservationStage = 'retail-binding-observation';
 const observeBindingTag = 'observe-binding';
@@ -222,6 +223,7 @@ const coreTransportResultSchema = Schema.Literals([
 ]);
 const enrollmentObservationSchema = Schema.TaggedStruct(enrollmentObservationStage, {
   attemptStatus: Schema.Literals([
+    'FAILED',
     'IN_PROGRESS',
     'VERIFICATION_REQUIRED',
     'COMPLETE',
@@ -504,7 +506,8 @@ const migrateOwnedPortalAuth = Effect.fn('RetainedConsentOwner.migrateOwnedPorta
 const ownedDatabaseStage = 'owned-database';
 const ownedProviderStorageIsReady = Effect.fn('RetainedConsentOwner.ownedProviderStorageIsReady')(
   function* ownedProviderStorageIsReady(runtime: Effect.Success<ReturnType<typeof loadDatabaseConfig>>) {
-    if (!/^ontos_test_party_gateway_[a-f0-9]{32}$/u.test(runtime.database)) {
+    const databaseName = new URL(runtime.connectionString).pathname.slice(1);
+    if (!/^ontos_test_party_gateway_[a-f0-9]{32}$/u.test(databaseName)) {
       return yield* failed(ownedDatabaseStage);
     }
     const providerConnection = yield* Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL');
@@ -532,8 +535,8 @@ const ownedProviderStorageIsReady = Effect.fn('RetainedConsentOwner.ownedProvide
         ),
       );
     if (
-      identities[0].database !== runtime.database ||
-      identities[0].role !== runtime.user ||
+      identities[0].database !== databaseName ||
+      identities[0].role !== runtime.expectedRole ||
       identities[0].superuser ||
       identities[0].bypass
     ) {
@@ -610,7 +613,7 @@ const readDeclaredEnrollmentPhases = Effect.fn('RetainedConsentOwner.readDeclare
       'continuation' | 'coreReadAuthentication' | 'coreReadCredential' | 'coreTransport' | 'providerVerification'
     >,
   ) {
-    const principal = yield* bindGatewayPrincipalVerifier('commerce-customer-context', ultramodernApiMarker).verify(
+    const principal = yield* bindGatewayPrincipalVerifier(CUSTOMER_CONTEXT_APP_ID, ultramodernApiMarker).verify(
       command.authorization,
     );
     const input = yield* Schema.decodeUnknownEffect(ReadEnrollmentAttemptInputSchema)({
@@ -688,87 +691,74 @@ const observeServerPartyFailure = (error: RetainedServerPartyFailure) =>
 const observePartyDetailReturned = Effect.sync(() => {
   serverPartyObservation.stage = 'PUBLIC_DETAIL_RETURNED';
 });
-const resolveRetainedParty = (
-  scope: typeof retainedServerScopeSchema.Type,
-  crypto: Crypto.Crypto,
-  currentScope: OperationalScope,
-  authority: ActiveApplicationCompositionServiceContract,
-  input: PartyRegistryRetailPartyResolverFactoryInput,
-  request: Parameters<ReturnType<typeof makePartyRegistryRetailPartyResolver>>[0],
-) =>
-  Effect.gen(function* resolveActualServerParty() {
-    serverPartyObservation.stage = 'ENTERED';
-    const snapshot = yield* authority.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
-    serverPartyObservation.stage = 'COMPOSITION_LOADED';
-    const party = snapshot.composition.modules.find(actualPartyModule);
-    if (
-      input.tenantId !== scope.tenantId ||
-      request.tenantId !== scope.tenantId ||
-      snapshot.composition.revision !== scope.compositionRevision ||
-      party === undefined
-    ) {
-      return yield* new ProfilePersistenceDependencyFailure({
-        reason: 'The owned Party server scope is not admitted',
-      });
-    }
-    // The request's verified scope is the subject: the Party read acts for the person who asked for it.
-    const gateway = yield* acquireDelegatedGatewayContext(
-      {
-        audience: retainedPartyAppId,
-        legalEntityScope: 'subject',
-        requestCorrelation: input.requestCorrelation,
-        subject: { _tag: 'Assertion', scope: currentScope },
-      },
-      crypto,
-    );
-    serverPartyObservation.stage = 'GATEWAY_ISSUED';
-    if (
-      gateway.compositionRevision !== scope.compositionRevision ||
-      new URL(gateway.apiBaseUrl).pathname !== moduleReleaseApiBaseUrl(retainedPartyAppId, party.deployment.buildMarker)
-    ) {
-      return yield* new ProfilePersistenceDependencyFailure({
-        reason: 'The actual Party gateway release does not match the owned server scope',
-      });
-    }
-    const resolved = yield* makePartyRegistryRetailPartyResolver(input, (payload, correlation) =>
-      executePartyDetailWithAuthorization(payload, gateway.authorization, correlation, {
-        baseUrl: new URL(gateway.apiBaseUrl),
-        compositionRevision: scope.compositionRevision,
-      }).pipe(Effect.tap(observePartyDetailReturned), Effect.tapError(observeServerPartyFailure)),
-    )(request);
-    serverPartyObservation.stage = 'RESOLVED';
-    return resolved;
-  }).pipe(
-    Effect.tapError(observeServerPartyFailure),
-    Effect.mapError(
-      () =>
-        new ProfilePersistenceDependencyFailure({
-          reason: 'The actual configured server Party operation is unavailable',
-        }),
-    ),
-  );
-const retainedPartyResolverFactoryLive = Layer.effect(
-  PartyRegistryRetailPartyResolverFactory,
-  Effect.gen(function* makeRetainedServerPartyResolver() {
-    const scope = yield* Config.schema(
+const retainedPartyDetailTransportLive = Layer.effect(
+  RetailPartyDetailExecutor,
+  Effect.gen(function* makeRetainedServerPartyTransport() {
+    const expected = yield* Config.schema(
       Schema.fromJsonString(retainedServerScopeSchema),
       'ONTOS_RETAINED_CONSENT_SERVER_SCOPE',
     );
-    const authority = yield* ActiveApplicationCompositionService;
-    serverPartyObservation.stage = 'FACTORY_BUILT';
-    return PartyRegistryRetailPartyResolverFactory.of({
-      make: ({ crypto, scope: currentScope }) => {
-        serverPartyObservation.stage = 'FACTORY_MADE';
-        return (request) =>
-          resolveRetainedParty(
-            scope,
+    const compositions = yield* ActiveApplicationCompositionService;
+    const crypto = yield* Crypto.Crypto;
+    return RetailPartyDetailExecutor.of({
+      execute: Effect.fn('RetainedConsentOwner.readParty')(
+        function* execute(payload, requestCorrelation, authority) {
+          serverPartyObservation.stage = 'ENTERED';
+          const snapshot = yield* compositions.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
+          const party = snapshot.composition.modules.find(actualPartyModule);
+          serverPartyObservation.stage = 'COMPOSITION_LOADED';
+          if (
+            authority.scope.tenantId !== expected.tenantId ||
+            authority.scope.legalEntityId !== expected.legalEntityId ||
+            payload.partyRef.tenantId !== expected.tenantId ||
+            authority.compositionRevision !== expected.compositionRevision ||
+            snapshot.composition.revision !== expected.compositionRevision ||
+            party === undefined
+          ) {
+            return yield* new ProfilePersistenceDependencyFailure({
+              reason: 'The exact server Party preparation scope is unavailable',
+            });
+          }
+          const gateway = yield* acquireDelegatedGatewayContext(
+            {
+              audience: retainedPartyAppId,
+              callingAppId: CUSTOMER_CONTEXT_APP_ID,
+              legalEntityScope: 'subject',
+              requestCorrelation,
+              subject: { _tag: 'Assertion', scope: authority.scope },
+            },
             crypto,
-            currentScope,
-            authority,
-            { requestCorrelation: currentScope.correlationId, tenantId: currentScope.tenantId },
-            request,
           );
-      },
+          serverPartyObservation.stage = 'GATEWAY_ISSUED';
+          if (
+            gateway.compositionRevision !== expected.compositionRevision ||
+            new URL(gateway.apiBaseUrl).pathname !==
+              moduleReleaseApiBaseUrl(retainedPartyAppId, party.deployment.buildMarker)
+          ) {
+            return yield* new ProfilePersistenceDependencyFailure({
+              reason: 'The actual Party gateway release does not match the owner preparation',
+            });
+          }
+          const detail = yield* executePartyDetailWithAuthorization(
+            payload,
+            gateway.authorization,
+            requestCorrelation,
+            {
+              baseUrl: new URL(gateway.apiBaseUrl),
+              compositionRevision: expected.compositionRevision,
+            },
+          ).pipe(Effect.tap(observePartyDetailReturned));
+          serverPartyObservation.stage = 'RESOLVED';
+          return detail;
+        },
+        Effect.tapError(observeServerPartyFailure),
+        Effect.mapError(
+          () =>
+            new ProfilePersistenceDependencyFailure({
+              reason: 'The actual Party preparation transport is unavailable',
+            }),
+        ),
+      ),
     });
   }),
 );
@@ -779,7 +769,7 @@ const readOwnedBinding = Effect.fn('RetainedConsentOwner.readOwnedBinding')(func
     Schema.fromJsonString(retainedServerScopeSchema),
     'ONTOS_RETAINED_CONSENT_SERVER_SCOPE',
   );
-  const principal = yield* bindGatewayPrincipalVerifier('commerce-customer-context', ultramodernApiMarker).verify(
+  const principal = yield* bindGatewayPrincipalVerifier(CUSTOMER_CONTEXT_APP_ID, ultramodernApiMarker).verify(
     command.authorization,
   );
   if (
@@ -849,6 +839,9 @@ const readOwnedBinding = Effect.fn('RetainedConsentOwner.readOwnedBinding')(func
 });
 const serve = Effect.scoped(
   Effect.gen(function* retainedConsentOwnerServer() {
+    // Commerce's own module key arrives only over this process's private channel, as a host hands it over.
+    const credentials = yield* receiveModuleCredentialHandover([CUSTOMER_CONTEXT_APP_ID]);
+    yield* holdOwnStoreCopy(credentials, [CUSTOMER_CONTEXT_APP_ID]);
     const { pull, writer } = yield* openPrivateCommandSocket();
     yield* verifyPreparedProviderStorage();
     const configuredOrigin = yield* Config.String('COMMERCE_PORTAL_AUTH_URL');
@@ -1054,17 +1047,29 @@ const serve = Effect.scoped(
       (value) => Effect.promise(value.dispose.bind(value)),
     );
     const serverPartyContext = yield* Layer.build(
-      retainedPartyResolverFactoryLive.pipe(
+      retainedPartyDetailTransportLive.pipe(
         Layer.provide(ActiveApplicationCompositionConfigLive.pipe(Layer.provide(compositionSource))),
       ),
     );
     const serverParty = Layer.succeed(
-      PartyRegistryRetailPartyResolverFactory,
-      Context.get(serverPartyContext, PartyRegistryRetailPartyResolverFactory),
+      RetailPartyDetailExecutor,
+      Context.get(serverPartyContext, RetailPartyDetailExecutor),
     );
-    const configuredRealm = commercePortalAuthRealmLive.pipe(
-      Layer.provideMerge(Layer.mergeAll(CommercePortalAuthConfigLive, ResendEmailDeliveryConfigLive)),
-    );
+    const configuredRealmContext = yield* Layer.build(
+      commercePortalAuthRealmLive.pipe(
+        Layer.provide(
+          ResendEmailDeliveryLive.pipe(
+            Layer.provide(ResendEmailDeliveryConfigLive),
+            Layer.provide(FetchHttpClient.layer),
+          ),
+        ),
+        Layer.provideMerge(Layer.mergeAll(CommercePortalAuthConfigLive, ResendEmailDeliveryConfigLive)),
+        // The realm captures its context here and sends every verification mail with it, so the owned inbox
+        // must be in it: without it, mail would leave for the real provider API.
+        Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, localInboxFetch)),
+      ),
+    ).pipe(Effect.mapError((cause) => Object.assign(failed('portal-realm'), { cause })));
+    const configuredRealm = Layer.succeedContext(configuredRealmContext);
     const configuredRuntime = makeCommerceCustomerContextApiRuntime(
       productionReadRuntimeLive.pipe(Layer.merge(serverParty)),
       productionActionRuntimeLive.pipe(Layer.merge(serverParty)),

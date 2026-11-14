@@ -2,11 +2,14 @@
 // @ontos-action-http-owner projects.core
 // @ontos-action-http-slug unarchive-project
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { UnarchiveProjectPayloadSchema, UnarchiveProjectResultSchema } from '../actions/unarchive-project.ts';
 
 export { UnarchiveProjectPayloadSchema } from '../actions/unarchive-project.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const UnarchiveProjectActionInvalidProblemSchema = makeProblemDetailsSchema(
   'UnarchiveProjectActionInvalidProblem',
@@ -27,6 +30,7 @@ export const UnarchiveProjectActionForbiddenProblemSchema = makeProblemDetailsSc
       'operation_context_denied',
       'operation_context_invalid',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const UnarchiveProjectActionNotFoundProblemSchema = makeProblemDetailsSchema(
@@ -143,7 +147,7 @@ export const unarchiveProjectActionGroupDefinition = HttpApiGroup.make('unarchiv
     HttpApiEndpoint.post('execute', '/projects/actions/unarchive-project', {
       error: actionErrors,
       payload: Schema.toEncoded(UnarchiveProjectPayloadSchema),
-      success: UnarchiveProjectResultSchema,
+      success: [ActionProposalAcceptedSchema, UnarchiveProjectResultSchema],
     }),
   )
   .middleware(UnarchiveProjectActionSchemaErrorMiddleware);

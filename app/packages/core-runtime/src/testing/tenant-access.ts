@@ -30,11 +30,18 @@ import {
 import { AccessPeopleStore, AccessPeopleStoreLive } from '../access/intent/people-store.ts';
 import { AccessProjectionCompiler } from '../access/intent/projection-compiler.ts';
 import { AccessProjectionWriter, AccessProjectionWriterLive } from '../access/intent/projection-writer.ts';
+import type { AccessIntentDatabase } from '../access/intent/persistence.ts';
 import { TenantIntentLoaderLive } from '../access/intent/tenant-intent-loader.ts';
 import { AccessWriteJournalStoreLive } from '../access/lifecycle/persistence/journal-store.ts';
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
 import { CoreDatabase, makeCoreDatabase } from '../db/client.ts';
-import { loadDatabaseConnectionPair, parseDatabaseConfig } from '../db/config.ts';
+import {
+  DatabaseIdentityEnrollmentContext,
+  defineDatabaseIdentityEnrollment,
+  SHARED_RUNTIME_IDENTITY,
+} from '../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
+import { loadDatabaseConfig, parseDatabaseConfig } from '../db/config.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
 import { stageScopeOf } from '../install/stage-context-bootstrap.ts';
 import type { OperationalScope } from '../operations/context.ts';
@@ -45,8 +52,9 @@ const catalogUrl = new URL('../../../../topology/authorization-catalog.json', im
 
 /** The database a Tenant's access intent is written in (an isolated clone or the shared one) and its SpiceDB. */
 export interface TestTenantAccessTarget {
-  readonly adminConnectionString: Redacted.Redacted;
   readonly spiceDb: SpiceDbConfigValue;
+  /** The shared runtime login Core writes the Tenant's access intent through, never an administrative one. */
+  readonly writerConnectionString: Redacted.Redacted;
 }
 
 /** The persisted identity of a human Core already knows, as a live operation fixture carries it. */
@@ -84,12 +92,13 @@ export interface TestTenantRoleAccessInput extends TestTenantAccessTarget {
 
 /** The shared database and SpiceDB of the test environment, for a suite that runs against those. */
 export const environmentTestAccessTarget = Effect.gen(function* environmentTestAccessTarget() {
-  const [connections, spiceDb] = yield* Effect.all([loadDatabaseConnectionPair(), loadSpiceDbConfig()], {
-    concurrency: 2,
-  });
+  const [writer, spiceDb] = yield* Effect.all(
+    [loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY }), loadSpiceDbConfig()],
+    { concurrency: 2 },
+  );
   return {
-    adminConnectionString: Redacted.make(connections.admin.connectionString),
     spiceDb,
+    writerConnectionString: Redacted.make(writer.connectionString),
   } satisfies TestTenantAccessTarget;
 }).pipe(Effect.orDie);
 
@@ -111,12 +120,21 @@ export const liveFixtureSpiceDb = (environment: {
  */
 export const writeTestTenantScopes = Effect.fn('TestTenantAccess.scopes')(function* writeTestTenantScopes(
   executor: CoreDatabaseExecutor,
-  input: { readonly legalEntityIds?: readonly string[]; readonly principalId: string; readonly tenantId: string },
+  input: {
+    readonly databaseIdentities?: DatabaseIdentityEnrollment;
+    readonly legalEntityIds?: readonly string[];
+    readonly principalId: string;
+    readonly tenantId: string;
+  },
 ) {
   const tenantId = TenantIdSchema.make(input.tenantId);
   const scope = yield* stageScopeOf({ principalId: input.principalId, tenantId });
   const legalEntityIds = (input.legalEntityIds ?? []).map((legalEntityId) => LegalEntityIdSchema.make(legalEntityId));
-  yield* writeBootstrapScopes({ executor }, scope, { scopes: bootstrapScopesOf(tenantId, legalEntityIds), tenantId });
+  const enrollment = input.databaseIdentities ?? defineDatabaseIdentityEnrollment([]);
+  yield* writeBootstrapScopes({ enrollment, executor }, scope, {
+    scopes: bootstrapScopesOf(tenantId, legalEntityIds),
+    tenantId,
+  });
 }, Effect.orDie);
 
 /**
@@ -148,14 +166,18 @@ const accessInstallation = Effect.fn('TestTenantAccess.installation')(function* 
   target: TestTenantAccessTarget,
 ) {
   const databaseConfiguration = yield* parseDatabaseConfig({
-    DATABASE_URL: Redacted.value(target.adminConnectionString),
+    DATABASE_URL: Redacted.value(target.writerConnectionString),
   });
   const database = Context.make(CoreDatabase, yield* makeCoreDatabase(databaseConfiguration));
   const transport = yield* Effect.acquireRelease(
     Effect.sync(() => makeAccessProjectionTransport(target.spiceDb)),
     (opened) => Effect.sync(() => opened.close()),
   );
-  const platform = Context.add(database, AccessProjectionCompiler, makeAccessProjectionCompiler(transport));
+  const platform = Context.add(
+    Context.add(database, AccessProjectionCompiler, makeAccessProjectionCompiler(transport)),
+    DatabaseIdentityEnrollmentContext,
+    defineDatabaseIdentityEnrollment([]),
+  );
   const stores = Context.merge(
     platform,
     yield* Layer.build(
@@ -179,7 +201,10 @@ const accessInstallation = Effect.fn('TestTenantAccess.installation')(function* 
     bootstrap: Context.get(bootstrap, TenantAccessBootstrap),
     catalog: Context.get(writers, AccessCatalogSnapshotWriter),
     changes: Context.get(writers, AccessChangesStore),
-    database: Context.get(writers, CoreDatabase),
+    database: {
+      enrollment: Context.get(writers, DatabaseIdentityEnrollmentContext),
+      executor: Context.get(writers, CoreDatabase).executor,
+    } satisfies AccessIntentDatabase,
     memberships: Context.get(writers, AccessMembershipStore),
     people: Context.get(writers, AccessPeopleStore),
     writer: Context.get(writers, AccessProjectionWriter),

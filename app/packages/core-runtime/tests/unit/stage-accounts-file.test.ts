@@ -1,11 +1,7 @@
-import { fileURLToPath } from 'node:url';
-
-import { NodeFileSystem } from '@effect/platform-node';
-import { Effect, FileSystem, Redacted } from 'effect';
-import type { PlatformError } from 'effect/PlatformError';
+import { Effect, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { parseStageAccountsFile, STAGE_DECLARED_WORKLOAD_KEYS } from '../../src/install/stage-accounts-file.ts';
+import { parseStageAccountsFile } from '../../src/install/stage-accounts-file.ts';
 
 /*
  * The operator accounts file names a stage tenant's v2 authority as data: which account owns the tenant
@@ -36,6 +32,7 @@ const tenant = (suffix: string) => ({
     registrationCountry: 'CZ',
     registrationNumber: `FIXTURE-${suffix.toUpperCase()}`,
   },
+  moduleKey: 'party.registry',
   moduleStateId: `40000000-0000-4000-8000-0000000000${suffix}0`,
   slug: `tenant-${suffix}`,
   tenantId: `10000000-0000-4000-8000-0000000000${suffix}0`,
@@ -54,7 +51,10 @@ const validFile = {
   tenants: [tenant('a'), tenant('b')],
 };
 
-const parse = <File>(file: File, mode = 0o600) => parseStageAccountsFile({ mode, source: JSON.stringify(file) });
+const reviewedWorkloads: ReadonlySet<string> = new Set(['fixture.machine-task', 'fixture.other-task']);
+const encodeFile = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const parse = <File>(file: File, mode = 0o600) =>
+  parseStageAccountsFile({ mode, source: JSON.stringify(file) }, reviewedWorkloads);
 const rejectionReason = <File>(file: File, mode?: number) =>
   Effect.flip(parse(file, mode)).pipe(Effect.map(({ reason }) => reason));
 
@@ -172,7 +172,7 @@ it.effect('refuses a Tenant with no owner or with two owners', () =>
   }),
 );
 
-it.effect('accepts only the workloads a carrier declares, and refuses module-to-module workload keys', () =>
+it.effect('accepts only the workload declarations explicitly supplied by the caller', () =>
   Effect.gen(function* acceptsDeclaredWorkloadsOnly() {
     const [first, second] = validFile.tenants;
     const principalId = first?.accounts[1]?.principalId;
@@ -180,65 +180,126 @@ it.effect('accepts only the workloads a carrier declares, and refuses module-to-
       ...validFile,
       tenants: [{ ...first, workloads: [{ principalId, workloadKey }] }, second],
     });
-    for (const workloadKey of [
-      'commerce.storefront-client',
-      'core.identity-provider',
-      'payment.provider-notification-ingress',
-      'payment.provider-reconciliation',
-    ]) {
+    for (const workloadKey of reviewedWorkloads) {
       expect((yield* parse(withWorkload(workloadKey))).tenants[0]?.workloads).toStrictEqual([
         { principalId, workloadKey },
       ]);
     }
-    const reason = yield* rejectionReason(withWorkload('commerce.order-approval-consumer'));
-    expect(reason).not.toContain('commerce.order-approval-consumer');
+    const reason = yield* rejectionReason(withWorkload('fixture.undeclared-task'));
+    expect(reason).toMatch(/declared by the composition/u);
+    expect(reason).not.toContain('fixture.undeclared-task');
   }),
 );
 
-/** The repository's `app/` root, where every carrier package lives. */
-const APP_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
-/** Where carriers declare `accessWorkload`: the Core runtime, the verticals and the Shell API. */
-const CARRIER_ROOTS = ['packages/core-runtime/src', 'verticals', 'apps/shell-super-app/api'];
-const ACCESS_WORKLOAD_LIST = /accessWorkload:\s*\{[^}]*?workloads:\s*\[(?<keys>[^\]]*)\]/gu;
+it.effect('allows the same declared workload in two tenants when each names its own principals', () =>
+  Effect.gen(function* acceptsTenantLocalWorkloads() {
+    const workloadKey = 'fixture.machine-task';
+    const tenants = validFile.tenants.map((entry) => ({
+      ...entry,
+      workloads: entry.accounts.map(({ principalId }) => ({ principalId, workloadKey })),
+    }));
+    const parsed = yield* parse({ ...validFile, tenants });
+    expect(parsed.tenants).toHaveLength(2);
+    expect(parsed.tenants.map(({ workloads }) => workloads)).toEqual(tenants.map(({ workloads }) => workloads));
+    expect(parsed.retiredTenants).toEqual(validFile.retiredTenants);
+  }),
+);
 
-/** Every production source file under a directory, skipping installed packages and test folders. */
-const productionSourceFiles = (directory: string): Effect.Effect<string[], PlatformError, FileSystem.FileSystem> =>
-  Effect.gen(function* listProductionSourceFiles() {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const files: string[] = [];
-    for (const name of yield* fileSystem.readDirectory(directory)) {
-      const entry = `${directory}/${name}`;
-      if (name === 'node_modules' || name === 'tests') {
-        continue;
-      }
-      if ((yield* fileSystem.stat(entry)).type === 'Directory') {
-        files.push(...(yield* productionSourceFiles(entry)));
-      } else if (/\.m?ts$/u.test(name) && !/\.test\./u.test(name)) {
-        files.push(entry);
-      }
+it.effect('refuses another active file tenant principal with the value-free own-tenant error', () =>
+  Effect.gen(function* refusesCrossTenantWorkloadPrincipal() {
+    const first = tenant('a');
+    const second = tenant('b');
+    const [foreignAccount] = second.accounts;
+    if (foreignAccount === undefined) {
+      expect.unreachable('The second tenant fixture needs its own active account');
     }
-    return files;
-  });
+    expect(validFile.tenants.flatMap(({ accounts }) => accounts).map(({ principalId }) => principalId)).toContain(
+      foreignAccount.principalId,
+    );
+    const failure = yield* parse({
+      ...validFile,
+      tenants: [
+        {
+          ...first,
+          workloads: [{ principalId: foreignAccount.principalId, workloadKey: 'fixture.machine-task' }],
+        },
+        second,
+      ],
+    }).pipe(Effect.flip);
+    expect(Predicate.isTagged(failure, 'StageAccountsFileError')).toBe(true);
+    expect(failure.reason).toBe('Every registered workload needs a principal of its own tenant');
+    expect(failure.cause).toBeUndefined();
+    for (const value of [
+      first.tenantId,
+      second.tenantId,
+      foreignAccount.principalId,
+      foreignAccount.email,
+      foreignAccount.password,
+    ]) {
+      expect(failure.reason).not.toContain(value);
+    }
+  }),
+);
 
-it.layer(NodeFileSystem.layer)('the carrier workload keys', (suite) => {
-  suite.effect(
-    'accepts exactly the workload keys that carriers declare with accessWorkload',
-    () =>
-      Effect.gen(function* declaresTheCarrierWorkloadKeys() {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const declared = new Set<string>();
-        for (const root of CARRIER_ROOTS) {
-          for (const file of yield* productionSourceFiles(`${APP_ROOT}${root}`)) {
-            for (const match of (yield* fileSystem.readFileString(file)).matchAll(ACCESS_WORKLOAD_LIST)) {
-              for (const key of (match.groups?.['keys'] ?? '').matchAll(/'(?<key>[^']+)'/gu)) {
-                declared.add(key.groups?.['key'] ?? '');
-              }
-            }
-          }
-        }
-        expect([...declared].toSorted()).toStrictEqual([...STAGE_DECLARED_WORKLOAD_KEYS].toSorted());
-      }),
-    // It reads every production source file of the carrier roots, which outlasts the default on CI.
-    30_000,
-  );
-});
+it.effect('uses exactly one supplied workload set, with no retained declarations between calls', () =>
+  Effect.gen(function* isolatesReviewedDeclarations() {
+    const first = tenant('a');
+    const workloadKey = 'another.integration-task';
+    const withWorkload = {
+      ...validFile,
+      tenants: [{ ...first, workloads: [{ principalId: first.accounts[0]?.principalId, workloadKey }] }],
+    };
+    const contents = { mode: 0o600, source: yield* encodeFile(withWorkload) };
+    const parsed = yield* parseStageAccountsFile(contents, new Set([workloadKey]));
+    expect(parsed.tenants[0].workloads).toEqual([{ principalId: first.accounts[0]?.principalId, workloadKey }]);
+    for (const declared of [new Set<string>(), reviewedWorkloads]) {
+      const failure = yield* parseStageAccountsFile(contents, declared).pipe(Effect.flip);
+      expect(failure.reason).toMatch(/declared by the composition/u);
+      expect(failure.reason).not.toContain(workloadKey);
+      expect(failure.reason).not.toContain(first.accounts[0]?.principalId);
+    }
+    expect(
+      (yield* parseStageAccountsFile({ mode: 0o600, source: yield* encodeFile(validFile) }, new Set())).tenants,
+    ).toHaveLength(2);
+  }),
+);
+
+it.effect('does not let supplied declarations bypass workload syntax or account identity checks', () =>
+  Effect.gen(function* validatesDeclaredWorkloadData() {
+    const first = tenant('a');
+    for (const workloadKey of ['', '*', 'invalid workload', 'upper.Task']) {
+      const file = {
+        ...validFile,
+        tenants: [{ ...first, workloads: [{ principalId: first.accounts[0]?.principalId, workloadKey }] }],
+      };
+      const failure = yield* parseStageAccountsFile(
+        { mode: 0o600, source: yield* encodeFile(file) },
+        new Set([workloadKey]),
+      ).pipe(Effect.flip);
+      expect(failure.reason).toMatch(/documented schema/u);
+      expect(failure.reason).not.toContain('fixture-');
+    }
+    const workloadKey = 'fixture.machine-task';
+    const workload = { principalId: '20000000-0000-4000-8000-000000000099', workloadKey };
+    expect(yield* rejectionReason({ ...validFile, tenants: [{ ...first, workloads: [workload] }] })).toMatch(
+      /principal of its own tenant/u,
+    );
+    const ownWorkload = { principalId: first.accounts[0]?.principalId, workloadKey };
+    expect(
+      yield* rejectionReason({ ...validFile, tenants: [{ ...first, workloads: [ownWorkload, ownWorkload] }] }),
+    ).toMatch(/only once/u);
+  }),
+);
+
+it.effect('requires explicit valid base-module intent without a legacy default', () =>
+  Effect.gen(function* explicitModuleIntent() {
+    const first = tenant('a');
+    for (const moduleKey of [undefined, '', '*', 'module access']) {
+      expect(yield* rejectionReason({ ...validFile, tenants: [{ ...first, moduleKey }] })).toMatch(
+        /documented schema/u,
+      );
+    }
+    const alternate = yield* parse({ ...validFile, tenants: [{ ...first, moduleKey: 'another.owner' }] });
+    expect(alternate.tenants[0].moduleKey).toBe('another.owner');
+  }),
+);

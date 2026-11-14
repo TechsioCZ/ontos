@@ -42,7 +42,11 @@ const Ref = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 
 export const CreatePrivacySubjectPayloadSchema = Schema.Struct({
   subject: PrivacySubjectSchema,
-  subjectRef: PrivacySubjectRefSchema,
+  // Privacy stores its own subject identity as UUID; external Party identity is subject.partyRef.
+  subjectRef: PrivacySubjectRefSchema.mapFields((fields) => ({
+    ...fields,
+    resourceId: Schema.String.check(Schema.isUUID()),
+  })),
 });
 export type CreatePrivacySubjectPayload = typeof CreatePrivacySubjectPayloadSchema.Type;
 export { PrivacySubjectRecordSchema as CreatePrivacySubjectResultSchema } from '../domain/privacy-subject.ts';

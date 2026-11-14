@@ -26,6 +26,8 @@ import {
 
 export type { MatchPartyPayload } from '../../shared/actions/match-party.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 interface Services {
   readonly match: (payload: MatchPartyPayload, invocationId: string) => ReturnType<typeof matchParty>;
 }
@@ -45,8 +47,8 @@ const handleMatchParty = Effect.fn('MatchPartyAction.handleMatchParty')(
           accessKind: 'read',
           queryHash: candidateFingerprint(payload.candidate),
           resultCount: result.candidateParties.length,
-          servingModuleKey: 'party.registry',
-          targetModuleKey: 'party.registry',
+          servingModuleKey: PARTY_REGISTRY_MODULE_ID,
+          targetModuleKey: PARTY_REGISTRY_MODULE_ID,
           targetResourceId: result.decisionRef.resourceId,
           targetResourceType: result.decisionRef.resourceType,
         }),
@@ -80,12 +82,12 @@ export const matchPartyAction = defineAction(
       access: 'write',
       authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.match-party',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: MatchPartyPayloadSchema,
     policies: [],
     resultSchema: MatchPartyResultSchema,

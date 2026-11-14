@@ -1,8 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
 import { ContextAccessLive, DatabaseConfigLive } from '@app/core-runtime';
-import { sql } from 'drizzle-orm';
-import { Effect, Layer, Match, Schema } from 'effect';
+import {
+  ReadPrincipalBindingPayloadSchema,
+  ReadPrincipalBindingResultSchema,
+} from '@app/core-runtime/auth/external-identity-contracts';
+import { eq, sql } from 'drizzle-orm';
+import { Config, DateTime, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -11,19 +15,34 @@ import {
 } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import {
   commerceCustomerContextActionRuntimeAwaitingOwnerPreparation,
+  commercePortalAuthRealmLive,
   makeCommerceCustomerContextApiRuntime,
   productionReadRuntimeLive,
 } from '../../api/index.ts';
-import { commercePortalAuthRealmUnavailableLive } from '../../api/portal-auth/realm-unavailable.ts';
+import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
+import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
+import {
+  ACTIVATE_PRINCIPAL_BINDING_TRANSITION_KEY,
+  CORE_IDENTITY_OWNER_MODULE_KEY,
+} from '../../src/enrollment/journeys/existing-account.ts';
 import {
   BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY,
   COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY,
+  ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY,
   PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
   PARTY_REGISTRY_OWNER_MODULE_KEY,
   retailPartyRefFor,
   retailSelfEnrollmentRequestDigest,
 } from '../../src/enrollment/journeys/retail-self-enrollment-contracts.ts';
-import { CommerceEnrollmentOwnerTransitionPreparation } from '../../src/enrollment/orchestration/prepared-owner-authority.ts';
+import {
+  CommerceEnrollmentOwnerTransitionPreparation,
+  PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
+  PORTAL_AUTH_OWNER_MODULE_KEY,
+} from '../../src/enrollment/orchestration/prepared-owner-authority.ts';
+import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { user } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { localEmailDeliveryLive } from '../support/local-email-delivery.ts';
 import { CustomerProfileReadResponseSchema } from '../../shared/apis/customer-profile-read.ts';
 import { RetailAccessDecisionResponseSchema } from '../../shared/apis/retail-access-decision.ts';
 import {
@@ -36,7 +55,11 @@ import {
 } from '../../shared/enrollment-contracts.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
-import { enrollmentApplicationCompositionRevision } from '../support/enrollment-application-composition.ts';
+import {
+  enrollmentApplicationCompositionRevision,
+  enrollmentApplicationCompositionSnapshot,
+  enrollmentApplicationCompositionVerificationLayer,
+} from '../support/enrollment-application-composition.ts';
 import {
   makeEnrollmentAcceptanceFixture,
   startEnrollmentAcceptanceAttempt,
@@ -62,7 +85,10 @@ import type { CounterpartyInvitationRealm } from '../support/counterparty-invita
  * client, are refused.
  *
  * Only the Party and profile-ensure steps are stood in for by the profile they leave behind: their owner is
- * the Party Registry, an HTTP owner that is not reachable from this sandbox.
+ * the Party Registry, an HTTP owner that is not reachable from this sandbox. The deployment configures the
+ * portal realm and the Core identity transport, so the binding's current target check runs for real: the
+ * provider account row the realm's account creation commits is seeded, and Core identity is answered at its
+ * HTTP boundary from the binding row Core holds.
  */
 
 const ORIGIN = 'http://localhost:3020';
@@ -83,10 +109,99 @@ const singleUseRedemptionLive = Layer.sync(GatewayAssertionRedemptionService, ()
   };
 });
 
-/** The deployed handler tree; no owner preparation is needed by the binding and the reads it serves. */
-const deployedRuntime = (gateway: AcceptanceGatewayIssuer) =>
+const providerDatabaseUrl = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
+);
+const CORE_IDENTITY_ORIGIN = 'https://core-identity.retail-portal-access.test';
+const CORE_IDENTITY_READ_URL = `${CORE_IDENTITY_ORIGIN}/auth/identity/external/bindings/read`;
+const decodeBindingRead = Schema.decodeUnknownSync(Schema.fromJsonString(ReadPrincipalBindingPayloadSchema));
+
+/**
+ * Core identity at its HTTP boundary: the deployment's Core identity client reaches it through the injected fetch,
+ * and the scenario decides each answer from the Core rows it seeded. No answer is a Core that is not reachable.
+ */
+const makeCoreIdentityStandIn = () => {
+  const reads: { readonly apiKey: string | null; readonly payload: typeof ReadPrincipalBindingPayloadSchema.Type }[] =
+    [];
+  let respond = Option.none<(providerSubjectId: string) => object>();
+  /** Every other request leaves through the ordinary fetch. */
+  const coreIdentityFetch: typeof globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    if (request.url !== CORE_IDENTITY_READ_URL) {
+      return fetch(request);
+    }
+    return request.text().then((body) => {
+      const payload = decodeBindingRead(body);
+      reads.push({ apiKey: request.headers.get('x-api-key'), payload });
+      return Option.isSome(respond) && payload.lookup === 'subject'
+        ? Response.json(respond.value(payload.providerSubjectId))
+        : new Response(null, { status: 503 });
+    });
+  };
+  return {
+    coreIdentityFetch,
+    reads,
+    reply: (next: Option.Option<(providerSubjectId: string) => object>) => {
+      respond = next;
+    },
+  };
+};
+type CoreIdentityStandIn = ReturnType<typeof makeCoreIdentityStandIn>;
+
+/**
+ * The deployment configuration of a host that opted into the portal realm and the Core identity transport, installed
+ * the way every acceptance suite installs its configuration: through the verification layer's ConfigProvider, with
+ * the owner transport behind its injected fetch.
+ */
+const deploymentConfigurationLive = Effect.fnUntraced(function* deploymentConfigurationLive(input: {
+  readonly coreIdentity: CoreIdentityStandIn;
+  readonly coreIdentityApiKey: string;
+  readonly gateway: AcceptanceGatewayIssuer;
+  readonly tenantId: string;
+}) {
+  const snapshot = yield* enrollmentApplicationCompositionSnapshot;
+  return enrollmentApplicationCompositionVerificationLayer(
+    snapshot,
+    {
+      COMMERCE_CORE_IDENTITY_BASE_URL: CORE_IDENTITY_ORIGIN,
+      COMMERCE_PORTAL_AUTH_DATABASE_URL: Redacted.value(yield* providerDatabaseUrl),
+      COMMERCE_PORTAL_AUTH_SECRET: 'r'.repeat(64),
+      COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS: ORIGIN,
+      COMMERCE_PORTAL_AUTH_URL: ORIGIN,
+      COMMERCE_TENANT_CREDENTIALS: JSON.stringify({
+        [input.tenantId]: {
+          coreIdentityApiKey: input.coreIdentityApiKey,
+          gatewayApiKey: `retail-portal-access-unused-${randomUUID()}`,
+        },
+      }),
+      ONTOS_GATEWAY_ISSUER: input.gateway.issuer,
+      ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [input.gateway.publicJwk] }),
+    },
+    input.coreIdentity.coreIdentityFetch,
+  );
+});
+
+/** The realm a host that opted in gets, assembled from the same layer the composition root uses. */
+const configuredRealmLive = Effect.fnUntraced(function* configuredRealmLive() {
+  const configuration = yield* parseCommercePortalAuthConfig({
+    COMMERCE_PORTAL_AUTH_DATABASE_URL: Redacted.value(yield* providerDatabaseUrl),
+    COMMERCE_PORTAL_AUTH_SECRET: 'r'.repeat(64),
+    COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS: ORIGIN,
+    COMMERCE_PORTAL_AUTH_URL: ORIGIN,
+  });
+  return commercePortalAuthRealmLive.pipe(
+    Layer.provide(localEmailDeliveryLive([])),
+    Layer.provideMerge(Layer.succeed(CommercePortalAuthConfig, configuration)),
+  );
+});
+
+/**
+ * The deployed handler tree of a host that configured the portal realm and the Core identity transport, so the
+ * binding's current target-identity check runs against both. No owner preparation is needed by the binding.
+ */
+const deployedRuntime = (deploymentConfiguration: Layer.Layer<never>) =>
   Effect.acquireRelease(
-    Effect.sync(() =>
+    Effect.map(configuredRealmLive(), (realmLive) =>
       makeCommerceCustomerContextApiRuntime(
         productionReadRuntimeLive,
         commerceCustomerContextActionRuntimeAwaitingOwnerPreparation.pipe(
@@ -97,8 +212,8 @@ const deployedRuntime = (gateway: AcceptanceGatewayIssuer) =>
           ),
         ),
         singleUseRedemptionLive,
-        commercePortalAuthRealmUnavailableLive([ORIGIN]),
-        gateway.verificationLive,
+        realmLive,
+        deploymentConfiguration,
         DatabaseConfigLive,
         ContextAccessLive,
       ).createHandler(),
@@ -110,11 +225,16 @@ type DeployedHandler = Effect.Success<ReturnType<typeof deployedRuntime>>;
 
 interface RetailScenario {
   readonly attemptId: string;
+  readonly bindAt: DateTime.Utc;
+  readonly coreIdentity: CoreIdentityStandIn;
+  readonly coreIdentityApiKey: string;
   readonly customerId: string;
   readonly fixture: EnrollmentAcceptanceFixture;
   readonly gateway: AcceptanceGatewayIssuer;
   readonly partyId: string;
   readonly profileId: string;
+  readonly providerInvocationId: string;
+  readonly providerSubjectId: string;
   readonly realm: CounterpartyInvitationRealm;
   readonly runtime: DeployedHandler;
 }
@@ -171,6 +291,126 @@ const seedRetailProfile = (
         .pipe(Effect.asVoid, Effect.orDie),
   );
 
+/**
+ * The provider account step as the continuation leaves it (provider-owner-effect.ts): the account-creation
+ * transition succeeded under its owner invocation, and the Attempt records the account subject it created.
+ * Answers the Attempt's own creation instant, which the continuation binds as `effectiveAt`.
+ */
+const recordAccountCreation = (
+  fixture: EnrollmentAcceptanceFixture,
+  realm: CounterpartyInvitationRealm,
+  attemptId: string,
+  account: { readonly providerInvocationId: string; readonly providerSubjectId: string },
+) =>
+  fixture.admin
+    .transaction((transaction) =>
+      Effect.gen(function* recordAccount() {
+        yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${realm.tenantId}, true)`, 'objects');
+        yield* transaction.execute(
+          sql`update commerce_customer_context.portal_enrollment_attempts
+                set authentication_namespace_id = ${COMMERCE_AUTHENTICATION_NAMESPACE_ID},
+                    subject_type = 'user',
+                    provider_subject_id = ${account.providerSubjectId}
+              where tenant_id = ${realm.tenantId}::uuid and portal_enrollment_attempt_id = ${attemptId}::uuid`,
+          'objects',
+        );
+        yield* transaction.execute(
+          sql`insert into commerce_customer_context.portal_enrollment_owner_operations
+                (tenant_id, portal_enrollment_attempt_id, owner_module_key, transition_key, owner_invocation_id,
+                 actor_principal_id, request_digest, status, completed_at, result_reference)
+              values (${realm.tenantId}::uuid, ${attemptId}::uuid, ${PORTAL_AUTH_OWNER_MODULE_KEY},
+                ${PORTAL_ACCOUNT_CREATION_TRANSITION_KEY}, ${account.providerInvocationId}::uuid,
+                ${realm.storefrontPrincipalId}::uuid, ${'d'.repeat(64)}, 'SUCCEEDED', statement_timestamp(),
+                ${account.providerSubjectId})`,
+          'objects',
+        );
+        const [row] = yield* transaction.execute<{ readonly created_at: string }>(
+          sql`select to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as created_at
+                from commerce_customer_context.portal_enrollment_attempts
+               where tenant_id = ${realm.tenantId}::uuid and portal_enrollment_attempt_id = ${attemptId}::uuid`,
+          'objects',
+        );
+        return row === undefined
+          ? yield* Effect.die('The started Attempt is missing')
+          : DateTime.makeUnsafe(row.created_at);
+      }),
+    )
+    .pipe(Effect.orDie);
+
+/** The provider directory row the realm's own account creation commits, stamped with its owner invocation. */
+const seedProviderAccount = (providerSubjectId: string, ownerInvocationId: string) =>
+  Effect.gen(function* insertProviderAccount() {
+    const database = yield* acquireOutlivingCleanup(
+      makeCommercePortalAuthDatabase({ connectionString: yield* providerDatabaseUrl }),
+    ).pipe(Effect.orDie);
+    yield* Effect.acquireRelease(
+      database.executor
+        .insert(user)
+        .values({
+          email: `retail-portal-access-${randomUUID()}@example.test`,
+          emailVerified: false,
+          enrollmentOwnerInvocationId: ownerInvocationId,
+          id: providerSubjectId,
+          name: 'Retail portal access customer',
+        })
+        .pipe(Effect.orDie),
+      () => database.executor.delete(user).where(eq(user.id, providerSubjectId)).pipe(Effect.ignore),
+    );
+  });
+
+/** The customer proves its address with the provider; only a verified account may become the binding's target. */
+const verifyProviderAccount = (providerSubjectId: string) =>
+  Effect.gen(function* markProviderAccountVerified() {
+    const database = yield* acquireOutlivingCleanup(
+      makeCommercePortalAuthDatabase({ connectionString: yield* providerDatabaseUrl }),
+    ).pipe(Effect.orDie);
+    yield* database.executor
+      .update(user)
+      .set({ emailVerified: true })
+      .where(eq(user.id, providerSubjectId))
+      .pipe(Effect.orDie);
+  });
+
+/** Core identity answers a subject read from the binding row Core actually holds for the customer. */
+const answerFromCoreBinding = (scenario: RetailScenario) =>
+  scenario.fixture.admin
+    .execute<{ readonly binding_revision: number; readonly status: string }>(
+      sql`select binding_revision, status from core.principal_auth_bindings
+           where tenant_id = ${scenario.realm.tenantId}::uuid
+             and principal_auth_binding_id = ${scenario.realm.recipientAuthBindingId}::uuid`,
+      'objects',
+    )
+    .pipe(
+      Effect.flatMap(([row]) =>
+        row === undefined ? Effect.die('The customer binding is missing') : Effect.succeed(row),
+      ),
+      Effect.flatMap((row) =>
+        Schema.encodeEffect(ReadPrincipalBindingResultSchema)(
+          Schema.decodeUnknownSync(Schema.toType(ReadPrincipalBindingResultSchema))({
+            authBindingId: scenario.realm.recipientAuthBindingId,
+            authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+            bindingRevision: row.binding_revision,
+            bindingStatus: row.status,
+            originalInvocationId: Option.none(),
+            outcome: 'FOUND',
+            principalId: scenario.customerId,
+            principalStatus: 'active',
+            tenantStatus: 'active',
+          }),
+        ),
+      ),
+      Effect.orDie,
+      Effect.tap((answer) =>
+        Effect.sync(() => {
+          scenario.coreIdentity.reply(
+            Option.some((providerSubjectId: string) =>
+              providerSubjectId === scenario.providerSubjectId ? answer : { outcome: 'NOT_FOUND' },
+            ),
+          );
+        }),
+      ),
+    );
+
 /** A Storefront-started Retail self-enrollment for a visitor whose Core Principal holds no access at all. */
 const retailScenario = Effect.fnUntraced(function* retailScenario() {
   const tenantId = randomUUID();
@@ -190,15 +430,33 @@ const retailScenario = Effect.fnUntraced(function* retailScenario() {
     targetLegalEntityId: Schema.decodeSync(EnrollmentLegalEntityIdSchema)(realm.legalEntityId),
     tenantId: Schema.decodeSync(EnrollmentTenantIdSchema)(tenantId),
   }).pipe(Effect.orDie);
+  // The provider account the continuation created for the visitor, and the subject it recorded on the Attempt.
+  const providerInvocationId = randomUUID();
+  const providerSubjectId = `counterparty-invitation-recipient-${realm.recipientPrincipalId}`;
+  const bindAt = yield* recordAccountCreation(fixture, realm, attempt.portalEnrollmentAttemptId, {
+    providerInvocationId,
+    providerSubjectId,
+  });
+  yield* seedProviderAccount(providerSubjectId, providerInvocationId);
   const gateway = yield* makeAcceptanceGatewayIssuer(ISSUER, KEY_ID);
-  const runtime = yield* deployedRuntime(gateway);
+  // The deployment's workload credential table names this Tenant, as a configured host names its Tenants.
+  const coreIdentity = makeCoreIdentityStandIn();
+  const coreIdentityApiKey = `retail-portal-access-core-identity-${randomUUID()}`;
+  const runtime = yield* deployedRuntime(
+    yield* deploymentConfigurationLive({ coreIdentity, coreIdentityApiKey, gateway, tenantId }),
+  );
   return {
     attemptId: attempt.portalEnrollmentAttemptId,
+    bindAt,
+    coreIdentity,
+    coreIdentityApiKey,
     customerId: realm.recipientPrincipalId,
     fixture,
     gateway,
     partyId: ids.partyId,
     profileId: ids.profileId,
+    providerInvocationId,
+    providerSubjectId,
     realm,
     runtime,
   } satisfies RetailScenario;
@@ -324,6 +582,14 @@ const journalRetailBinding = (scenario: RetailScenario) =>
                  ${scenario.realm.storefrontPrincipalId}::uuid, ${'c'.repeat(64)}, 'SUCCEEDED', statement_timestamp(),
                  ${scenario.partyId}),
                 (${scenario.realm.tenantId}::uuid, ${scenario.attemptId}::uuid, ${COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY},
+                 ${ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY}, ${randomUUID()}::uuid,
+                 ${scenario.realm.storefrontPrincipalId}::uuid, ${'e'.repeat(64)}, 'SUCCEEDED', statement_timestamp(),
+                 ${scenario.profileId}),
+                (${scenario.realm.tenantId}::uuid, ${scenario.attemptId}::uuid, ${CORE_IDENTITY_OWNER_MODULE_KEY},
+                 ${ACTIVATE_PRINCIPAL_BINDING_TRANSITION_KEY}, ${randomUUID()}::uuid,
+                 ${scenario.realm.storefrontPrincipalId}::uuid, ${'f'.repeat(64)}, 'SUCCEEDED', statement_timestamp(),
+                 ${scenario.realm.recipientAuthBindingId}),
+                (${scenario.realm.tenantId}::uuid, ${scenario.attemptId}::uuid, ${COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY},
                  ${BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY}, ${randomUUID()}::uuid,
                  ${scenario.realm.storefrontPrincipalId}::uuid, ${bindDigest}, 'IN_PROGRESS', null, null)`,
           'objects',
@@ -332,26 +598,13 @@ const journalRetailBinding = (scenario: RetailScenario) =>
     )
     .pipe(Effect.orDie);
 
-/** The deployment's own PostgreSQL instant: the clock the binding routine records its transition at. */
-const databaseNow = (scenario: RetailScenario) =>
-  scenario.fixture.admin
-    .execute<{ readonly now: string }>(
-      sql`select to_char(statement_timestamp() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as now`,
-      'objects',
-    )
-    .pipe(
-      Effect.flatMap(([row]) =>
-        row === undefined ? Effect.die('The deployment clock could not be read') : Effect.succeed(row.now),
-      ),
-      Effect.orDie,
-    );
-
 const bind = Effect.fnUntraced(function* bind(
   scenario: RetailScenario,
   enrollmentEvidenceRef: string,
   principalId: string = scenario.customerId,
 ) {
-  const effectiveAt = yield* databaseNow(scenario);
+  // The continuation binds at the Attempt's own creation instant (owner-effect-registry.ts).
+  const effectiveAt = DateTime.formatIso(scenario.bindAt);
   const assertion = yield* continuationAssertion(scenario);
   return yield* send(
     scenario,
@@ -456,11 +709,37 @@ it.live(
         expect(another.status).toBeLessThan(500);
         expect(another.body).toMatchObject({ code: 'ENROLLMENT_EVIDENCE_INSUFFICIENT' });
 
+        // The provider account the enrollment created is not verified yet: the current target check refuses it
+        // before Core is asked, and nothing is granted.
+        yield* answerFromCoreBinding(scenario);
+        const unverified = yield* bind(scenario, scenario.attemptId);
+        expect(unverified.status).toBeGreaterThanOrEqual(400);
+        expect(unverified.status).toBeLessThan(500);
+        expect(unverified.body).toMatchObject({ code: 'ENROLLMENT_EVIDENCE_INSUFFICIENT' });
+        expect(scenario.coreIdentity.reads).toHaveLength(0);
+        expect(yield* customerAccessIntent(scenario)).toStrictEqual({ assignments: [], memberships: [] });
+
+        // Core no longer knows the account subject: still refused, still nothing granted.
+        yield* verifyProviderAccount(scenario.providerSubjectId);
+        scenario.coreIdentity.reply(Option.some(() => ({ outcome: 'NOT_FOUND' })));
+        const unknown = yield* bind(scenario, scenario.attemptId);
+        expect(unknown.status).toBeGreaterThanOrEqual(400);
+        expect(unknown.status).toBeLessThan(500);
+        expect(unknown.body).toMatchObject({ code: 'ENROLLMENT_EVIDENCE_INSUFFICIENT' });
+        expect(yield* customerAccessIntent(scenario)).toStrictEqual({ assignments: [], memberships: [] });
+
         // The continuation's bind for the Attempt the Storefront client started commits the binding and the
-        // customer's portal access together; the rows are the customer's own, not the machine's.
+        // customer's portal access together once the verified account is the customer's current Core binding;
+        // the rows are the customer's own, not the machine's.
+        yield* answerFromCoreBinding(scenario);
         const bound = yield* bind(scenario, scenario.attemptId);
         expect(bound.status).toBe(200);
         expect(bound.body).toMatchObject({ outcome: 'BINDING_ACTIVATED', state: 'ACTIVE' });
+        // Core was read with this deployment's Core identity credential for the account subject the Attempt holds.
+        expect(scenario.coreIdentity.reads.at(-1)).toMatchObject({
+          apiKey: scenario.coreIdentityApiKey,
+          payload: { lookup: 'subject', providerSubjectId: scenario.providerSubjectId, subjectType: 'user' },
+        });
         expect(yield* customerAccessIntent(scenario)).toStrictEqual({
           assignments: [{ role: 'Zákazník e-shopu', status: 'active' }],
           memberships: [

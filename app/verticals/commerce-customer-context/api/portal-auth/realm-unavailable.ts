@@ -1,9 +1,18 @@
-import { getSession as betterAuthGetSession, signOut as betterAuthSignOut } from 'better-auth/api';
+import {
+  changePassword as betterAuthChangePassword,
+  getSession as betterAuthGetSession,
+  signOut as betterAuthSignOut,
+} from 'better-auth/api';
 import { Effect, Layer, Redacted } from 'effect';
+
+import { CommercePortalAuthAudit } from '../../src/portal-auth/audit/audit.ts';
+import { CommercePortalAuthAuditUnavailable } from '../../src/portal-auth/audit/audit-unavailable.ts';
 
 import type { CommercePortalAuthOptions } from './provider/auth.ts';
 import { CommercePortalAuthAccountCreationService } from './provider/account-create.ts';
 import { CommercePortalAuthAccountCreationUnavailable } from './provider/account-creation-unavailable.ts';
+import { CommercePortalAuthVerificationService } from './provider/verification.ts';
+import { CommercePortalAuthVerificationCallerUnavailable } from './provider/verification-caller-unavailable.ts';
 import { CommercePortalAuthConfig } from './provider/config-service.ts';
 import type { CommercePortalAuthConfigValue } from './provider/config.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from './provider/config.ts';
@@ -17,7 +26,7 @@ import { CommercePortalAuthStepUpUnavailable } from './provider/step-up/unavaila
 import { CommercePortalAuthStepUpHttpProviderUnavailableLive } from './provider/step-up/http-provider-unavailable.ts';
 import { CommercePortalAuthSessionLifecycle } from './session/lifecycle-service.ts';
 import { CommercePortalAuthProviderUnavailable, CommercePortalAuthSessionUnavailable } from './session/errors.ts';
-import { CommercePortalAuthService } from './session/http.ts';
+import { CommercePortalAuthService } from './session/auth-service.ts';
 
 /**
  * The Commerce portal realm is optional, and `assembleEffectBffRuntime` requires a handler Layer
@@ -143,6 +152,10 @@ const refuseProviderCall = (operation: string): never => {
 };
 
 const unavailableProviderApi: CommercePortalAuthService['Service']['api'] = {
+  changePassword: Object.assign(() => refuseProviderCall('change-password'), {
+    options: betterAuthChangePassword.options,
+    path: betterAuthChangePassword.path,
+  }),
   getSession: Object.assign(() => refuseProviderCall('get-session'), {
     options: providerGetSessionRoute.options,
     path: providerGetSessionRoute.path,
@@ -168,6 +181,8 @@ const unavailableAccountCreation: CommercePortalAuthAccountCreationService['Serv
 
 /** Exactly the tags the five portal-auth groups read, with no provider, database or transport. */
 export type CommercePortalAuthHandlerServices =
+  | CommercePortalAuthVerificationService
+  | CommercePortalAuthAudit
   | CommercePortalAuthAccountCreationService
   | CommercePortalAuthConfig
   | CommercePortalAuthMfaService
@@ -182,6 +197,14 @@ export const commercePortalAuthRealmUnavailableLive = (
   trustedOrigins: readonly string[],
 ): Layer.Layer<CommercePortalAuthHandlerServices> =>
   Layer.mergeAll(
+    Layer.succeed(CommercePortalAuthVerificationService, {
+      verifyExternalAuthentication: () =>
+        Effect.fail(new CommercePortalAuthVerificationCallerUnavailable({ reason: UNAVAILABLE_REASON })),
+    }),
+    Layer.succeed(CommercePortalAuthAudit, {
+      record: () =>
+        Effect.fail(new CommercePortalAuthAuditUnavailable({ operation: 'audit-record', reason: UNAVAILABLE_REASON })),
+    }),
     Layer.succeed(CommercePortalAuthAccountCreationService, unavailableAccountCreation),
     Layer.succeed(CommercePortalAuthConfig, unavailableConfiguration(trustedOrigins)),
     Layer.succeed(CommercePortalAuthMfaService, unavailableMfaService),

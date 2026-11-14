@@ -165,6 +165,7 @@ it.effect(
                 updatedAt: '2026-09-03T10:00:00.000Z',
               }),
             }),
+          historicalNames: () => Effect.succeed([]),
           resolve: () =>
             Effect.succeed({
               canonicalPartyId: partyId,

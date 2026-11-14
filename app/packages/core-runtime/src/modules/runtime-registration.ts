@@ -23,6 +23,7 @@ import type {
 } from './manifest.ts';
 import {
   OntosActionContractSchema,
+  OntosOutboxSubscriptionContractSchema,
   copyOntosModuleRequirements,
   projectOntosModuleOperationContracts,
 } from './manifest.ts';
@@ -179,8 +180,11 @@ export const defineVerticalRuntimeRegistration = <const Manifest extends OntosRu
   validateRuntimeActions(input);
   const workers = validateOutboxWorkerRegistrations(input.outboxWorkers);
   for (const worker of workers) {
-    if (worker.descriptor.consumerModuleKey !== input.manifest.module.id) {
-      failRuntimeRegistration('runtime Outbox Worker owner must match the manifest module ID');
+    if (
+      worker.descriptor.consumerModuleKey !== input.manifest.module.id ||
+      worker.descriptor.entrypoint.scope !== 'tenant'
+    ) {
+      failRuntimeRegistration('runtime Outbox Workers must be tenant-scoped and owned by the manifest module ID');
     }
   }
   const entrypoints = input.entrypoints ?? emptyEntrypoints();
@@ -306,20 +310,24 @@ export const extractVerticalRuntimeSafeDescriptors = (
     operationContracts: runtime.operationContracts,
     outboxSubscriptions: Object.freeze(
       runtime.outboxWorkers
-        .map(({ descriptor }) =>
-          Object.freeze({
-            consumerModuleKey: descriptor.consumerModuleKey,
-            entrypoint: Object.freeze({
-              ...descriptor.entrypoint,
-              authorization: Object.freeze({
-                kind: 'owner_local_background' as const,
-              }),
+        .map(({ descriptor }) => {
+          const decoded = Result.getOrThrow(
+            Schema.decodeUnknownResult(OntosOutboxSubscriptionContractSchema)({
+              consumerModuleKey: descriptor.consumerModuleKey,
+              entrypoint: descriptor.entrypoint,
+              producerModuleKey: descriptor.producerModuleKey,
+              topic: descriptor.topic,
+              workerKey: descriptor.workerKey,
             }),
-            producerModuleKey: descriptor.producerModuleKey,
-            topic: descriptor.topic,
-            workerKey: descriptor.workerKey,
-          }),
-        )
+          );
+          return Object.freeze({
+            ...decoded,
+            entrypoint: Object.freeze({
+              ...decoded.entrypoint,
+              authorization: Object.freeze(decoded.entrypoint.authorization),
+            }),
+          });
+        })
         .toSorted((left, right) => left.workerKey.localeCompare(right.workerKey)),
     ),
     shellContributions: runtime.shellContributions,

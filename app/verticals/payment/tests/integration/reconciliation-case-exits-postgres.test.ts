@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import { randomUUID } from 'node:crypto';
 
 import { NodeCrypto } from '@effect/platform-node';
@@ -84,6 +85,7 @@ const makeEvidenceRuntimes = Effect.fn('ReconciliationCaseExits.makeRuntimes')(f
     evidenceContextAccess,
     {
       accessDecision,
+      databaseIdentities: defineDatabaseIdentityEnrollment([]),
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
     },
@@ -376,6 +378,7 @@ const makeRouteRuntimes = Effect.fn('RefundRouteAttach.makeRouteRuntimes')(funct
     evidenceContextAccess,
     {
       accessDecision,
+      databaseIdentities: defineDatabaseIdentityEnrollment([]),
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
     },

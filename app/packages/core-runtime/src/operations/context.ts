@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { Context, Crypto, DateTime, Effect, Layer, Option } from 'effect';
 
@@ -20,8 +20,11 @@ import {
   readVerifiedGatewayRouteScope,
 } from '../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
-import { legalEntities, principalAuthBindings, principals, tenants } from '../db/schema.ts';
+import type { InstalledOperationalScopeAuthority } from '../db/scoped-transaction.ts';
+import { auditEvents, legalEntities, principalAuthBindings, principals, tenants } from '../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import { decodeProtectedAccessDeclaration } from '../authorization/access-declaration.ts';
 import { recordSupportImpersonationAction } from '../modules/actions/record-support-impersonation.action.ts';
@@ -96,35 +99,53 @@ const operationContextUnavailable = (cause?: unknown) => {
 };
 
 /**
- * A verified gateway principal resolves through a request role whose Core identity rows are
- * tenant-bound by row-level security. Its lookup runs after the database derives the scope from the
- * redeemed assertion, so it can read only the assertion's own tenant.
+ * A verified gateway principal resolves inside a transaction whose scope the connected role installed:
+ * a dedicated request role's Core identity rows are tenant-bound by row-level security after the
+ * database derives the scope from the redeemed assertion, and the shared runtime installs the same
+ * scope through its session settings. The lookup receives the authority the connected role actually
+ * installed with, never one inferred from the assertion's audience. Without an assertion no gateway
+ * grant can be installed, so the lookup runs on the shared connection with session authority.
  */
 const selectPersistedScope = <Row, E>(
   database: { readonly executor: Pick<CoreDatabaseExecutor, 'select' | 'transaction'> },
   principal: TrustedPrincipalContext,
-  select: (executor: Pick<CoreTransaction, 'select'>) => Effect.Effect<readonly Row[], E>,
+  enrollment: DatabaseIdentityEnrollment,
+  select: (
+    executor: Pick<CoreTransaction, 'select'>,
+    authority: InstalledOperationalScopeAuthority,
+  ) => Effect.Effect<readonly Row[], E>,
 ) =>
   Effect.suspend(() =>
     readVerifiedGatewayScopeAssertion(principal) === undefined
-      ? select(database.executor)
+      ? select(database.executor, 'session_setting')
       : database.executor.transaction((transaction) =>
           installOperationalScope(
             transaction,
             preserveSystemPrincipalContextTrust(principal, { ...principal, correlationId: '' }),
-          ).pipe(Effect.andThen(() => select(transaction))),
+            enrollment,
+          ).pipe(Effect.andThen((scoped) => select(transaction, scoped.authority))),
         ),
   );
 
-export const makeOperationalScopeRepository = (database: {
-  readonly executor: Pick<CoreDatabaseExecutor, 'select' | 'transaction'>;
-}): OperationalScopeRepository => ({
+export const makeOperationalScopeRepository = (
+  database: { readonly executor: Pick<CoreDatabaseExecutor, 'select' | 'transaction'> },
+  enrollment: DatabaseIdentityEnrollment,
+): OperationalScopeRepository => ({
   load: (principal) =>
-    selectPersistedScope(database, principal, (executor) => {
+    selectPersistedScope(database, principal, enrollment, (executor, authority) => {
       const impersonators = alias(principals, 'impersonators');
-      return executor
+      const bindingAudit = alias(auditEvents, 'binding_creation_audit');
+      // Only a connection that installed its scope as the dedicated gateway-grant role takes the attestation; the
+      // shared runtime may carry an assertion for an audience with such a role, yet it cannot execute the routine.
+      const gatewayScoped = authority === 'gateway_grant';
+      const query = executor
         .select({
           bindingAuthenticationNamespaceId: principalAuthBindings.authenticationNamespaceId,
+          bindingIssuingLegalEntityId: gatewayScoped
+            ? sql<
+                string | null
+              >`trust.auth_binding_issuing_legal_entity(${principal.authBindingId ?? null}::uuid, ${principal.principalId}::uuid)`
+            : bindingAudit.legalEntityId,
           bindingPrincipalId: principalAuthBindings.principalId,
           bindingRevision: principalAuthBindings.bindingRevision,
           bindingRevokedAt: principalAuthBindings.revokedAt,
@@ -135,6 +156,7 @@ export const makeOperationalScopeRepository = (database: {
           impersonatorTenantId: impersonators.tenantId,
           legalEntityStatus: legalEntities.status,
           legalEntityTenantId: legalEntities.tenantId,
+          principalKind: principals.kind,
           principalStatus: principals.status,
           principalTenantId: principals.tenantId,
           tenantStatus: tenants.status,
@@ -161,7 +183,25 @@ export const makeOperationalScopeRepository = (database: {
                 eq(principalAuthBindings.tenantId, principal.tenantId),
                 eq(principalAuthBindings.principalAuthBindingId, principal.authBindingId),
               ),
-        )
+        );
+      // The dedicated request role cannot read binding-creation audit evidence. Its hardened
+      // attestation returns only the issuing company within the sealed tenant and company scope;
+      // only gateway-grant roles may execute it, so the shared runtime keeps the audit join.
+      const attestedQuery = gatewayScoped
+        ? query.$dynamic()
+        : query
+            .$dynamic()
+            .leftJoin(
+              bindingAudit,
+              and(
+                eq(bindingAudit.tenantId, principalAuthBindings.tenantId),
+                eq(bindingAudit.actionInvocationId, principalAuthBindings.createdByInvocationId),
+                eq(bindingAudit.eventType, 'action.executed'),
+                eq(bindingAudit.outcome, 'succeeded'),
+                sql`${bindingAudit.evidenceJson}->>'actionKey' = 'core.identity.bind-managed-api-key'`,
+              ),
+            );
+      return attestedQuery
         .leftJoin(
           legalEntities,
           principal.legalEntityId === undefined
@@ -180,6 +220,7 @@ export const makeOperationalScopeRepository = (database: {
         ([record]) =>
           record ?? {
             bindingAuthenticationNamespaceId: null,
+            bindingIssuingLegalEntityId: null,
             bindingPrincipalId: null,
             bindingRevision: null,
             bindingRevokedAt: null,
@@ -190,6 +231,7 @@ export const makeOperationalScopeRepository = (database: {
             impersonatorTenantId: null,
             legalEntityStatus: null,
             legalEntityTenantId: null,
+            principalKind: null,
             principalStatus: null,
             principalTenantId: null,
             tenantStatus: null,
@@ -253,9 +295,14 @@ const hasInvalidPersistedBinding = (
   );
 };
 
-const subjectTypeForPrincipal = (principal: TrustedPrincipalContext): 'user' | 'api_key' | undefined => {
+const subjectTypeForPrincipal = (
+  principal: TrustedPrincipalContext,
+): 'user' | 'api_key' | 'oauth_grant' | undefined => {
   if (principal.authMethod === 'api_key') {
     return 'api_key';
+  }
+  if (principal.authMethod === 'oauth_connection') {
+    return 'oauth_grant';
   }
   if (principal.authMethod === 'session' || principal.authMethod === 'support_impersonation') {
     return 'user';
@@ -282,6 +329,20 @@ const validatePersistedPrincipal = (
     return new OperationAuthenticationRequired({
       code: 'operation_authentication_required',
       reason: 'The authenticated principal binding is no longer valid',
+    });
+  }
+  // The binding's successful creation audit, never the caller's requested scope or the principal's
+  // other roles, owns a company-issued agent key's boundary.
+  if (
+    principal.authMethod === 'api_key' &&
+    persisted.principalKind === 'agent' &&
+    (persisted.bindingIssuingLegalEntityId === null ||
+      persisted.bindingIssuingLegalEntityId === undefined ||
+      principal.legalEntityId !== persisted.bindingIssuingLegalEntityId)
+  ) {
+    return new OperationContextDenied({
+      code: 'operation_context_denied',
+      reason: 'The agent key requires its issuing company context',
     });
   }
   const expectedSubjectType = subjectTypeForPrincipal(principal);
@@ -607,7 +668,11 @@ export const makeOperationalScopeResolver = Effect.fnUntraced(function* makeOper
 
 export const OperationalScopeRepositoryLive = Layer.effect(
   OperationalScopeRepositoryContext,
-  CoreDatabase.pipe(Effect.map(makeOperationalScopeRepository)),
+  Effect.gen(function* createOperationalScopeRepositoryService() {
+    const database = yield* CoreDatabase;
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
+    return makeOperationalScopeRepository(database, enrollment);
+  }),
 );
 
 export const OperationalScopeResolverFromRepositoryLive = Layer.effect(
@@ -623,7 +688,8 @@ export const OperationalScopeResolverLive = Layer.effect(
   OperationalScopeResolver,
   Effect.gen(function* createLiveOperationalScopeResolverService() {
     const database = yield* CoreDatabase;
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
     const access = yield* bindLiveAccessGate;
-    return yield* makeOperationalScopeResolver(makeOperationalScopeRepository(database), access);
+    return yield* makeOperationalScopeResolver(makeOperationalScopeRepository(database, enrollment), access);
   }),
 );

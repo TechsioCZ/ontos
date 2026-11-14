@@ -1,75 +1,150 @@
 import {
+  startGatewayAssertionRedemptionCleanup,
+  recoverSqlTransactionError,
+  DatabaseConfig,
   GatewayAssertionRedemptionService,
   GatewayAssertionRedemptionUnavailableError,
   GatewayAssertionReplayError,
-} from '@app/core-runtime/auth/gateway-assertion-redemption';
+  configureDatabasePool,
+  openDatabaseClient,
+} from '@app/core-runtime';
 import type {
+  DatabasePoolDeadlines,
   GatewayAssertionRedemption,
   GatewayAssertionRedemptionInput,
-} from '@app/core-runtime/auth/gateway-assertion-redemption';
-import { recoverSqlTransactionError } from '@app/core-runtime';
+} from '@app/core-runtime';
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
-import { lt } from 'drizzle-orm';
-import { Clock, DateTime, Duration, Effect, Layer } from 'effect';
-import { AssortmentDatabase } from '../database/client.ts';
+import type { PgClient } from '@effect/sql-pg';
+import { defineRelations, lt } from 'drizzle-orm';
+import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
+import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
+import type { Scope } from 'effect';
+import { Clock, Context, DateTime, Duration, Effect, Layer, Redacted } from 'effect';
+import type { Reactivity } from 'effect/reactivity';
+
 import { gatewayAssertionRedemptions } from '../database/schema.ts';
 
-const redemptionTimeout = Duration.seconds(5);
-const clockSkewMillis = Duration.toMillis(Duration.seconds(GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS));
+const assortmentGatewayAssertionRedemptionRelations = defineRelations({ gatewayAssertionRedemptions });
 
-const replay = () => new GatewayAssertionReplayError({ reason: 'The Bearer assertion is no longer usable' });
-const unavailable = (cause?: unknown) => {
+export type AssortmentGatewayAssertionRedemptionDatabaseExecutor = EffectPgDatabase<
+  typeof assortmentGatewayAssertionRedemptionRelations
+>;
+
+class AssortmentGatewayAssertionRedemptionDatabase extends Context.Service<
+  AssortmentGatewayAssertionRedemptionDatabase,
+  { readonly executor: AssortmentGatewayAssertionRedemptionDatabaseExecutor }
+>()('@app/assortment/auth/gateway-assertion-redemption-runtime/AssortmentGatewayAssertionRedemptionDatabase') {}
+
+const replayError = () =>
+  new GatewayAssertionReplayError({
+    reason: 'The Bearer assertion is no longer usable',
+  });
+
+const unavailableError = (cause?: unknown) => {
   const error = new GatewayAssertionRedemptionUnavailableError({
     reason: 'Bearer assertion redemption is unavailable',
   });
-  return cause === undefined ? error : Object.defineProperty(error, 'cause', { enumerable: false, value: cause });
+  return cause === undefined
+    ? error
+    : Object.defineProperty(error, 'cause', {
+        configurable: false,
+        enumerable: false,
+        value: cause,
+        writable: false,
+      });
 };
 
-const makeGatewayAssertionRedemption = Effect.gen(function* makeRedemption() {
-  const { executor } = yield* AssortmentDatabase;
-  return {
-    consume: Effect.fn('AssortmentGatewayAssertionRedemption.consume')(function* consume(
-      input: GatewayAssertionRedemptionInput,
-    ) {
-      const now = yield* Clock.currentTimeMillis;
-      const expiresAtMillis = Duration.toMillis(Duration.seconds(input.expiresAtEpochSeconds));
-      const acceptanceDeadline = expiresAtMillis + clockSkewMillis;
-      if (input.audience !== 'assortment' || acceptanceDeadline <= now) {
-        return yield* replay();
-      }
-      // Retain each nonce past the longest redemption that could have started before expiry.
-      const expiredBefore = DateTime.toDateUtc(
-        DateTime.makeUnsafe(now - clockSkewMillis - Duration.toMillis(redemptionTimeout)),
-      );
-      const expiresAt = DateTime.toDateUtc(DateTime.makeUnsafe(expiresAtMillis));
-      const consumed = yield* executor
-        .transaction(
-          Effect.fn('AssortmentGatewayAssertionRedemption.redeem')(function* redeem(transaction) {
-            yield* transaction
-              .delete(gatewayAssertionRedemptions)
-              .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore));
-            return yield* transaction
-              .insert(gatewayAssertionRedemptions)
-              .values({ audience: input.audience, expiresAt, issuer: input.issuer, jti: input.jti })
-              .onConflictDoNothing()
-              .returning({ jti: gatewayAssertionRedemptions.jti });
-          }),
-        )
-        .pipe(
-          recoverSqlTransactionError,
-          Effect.mapError(unavailable),
-          Effect.timeoutOrElse({ duration: redemptionTimeout, orElse: () => Effect.fail(unavailable()) }),
-        );
-      const redeemedAt = yield* Clock.currentTimeMillis;
-      if (consumed.length !== 1 || acceptanceDeadline <= redeemedAt) {
-        return yield* replay();
-      }
-      return yield* Effect.void;
-    }),
-  } satisfies GatewayAssertionRedemption;
+const REDEMPTION_TIMEOUT = Duration.seconds(5);
+
+const redeemAssertion = (
+  executor: AssortmentGatewayAssertionRedemptionDatabaseExecutor,
+  input: GatewayAssertionRedemptionInput,
+  expiresAt: Date,
+) =>
+  executor
+    .insert(gatewayAssertionRedemptions)
+    .values({
+      audience: input.audience,
+      expiresAt,
+      issuer: input.issuer,
+      jti: input.jti,
+    })
+    .onConflictDoNothing()
+    .returning({ jti: gatewayAssertionRedemptions.jti });
+
+const makeGatewayAssertionRedemption = (
+  executor: AssortmentGatewayAssertionRedemptionDatabaseExecutor,
+): GatewayAssertionRedemption => ({
+  consume: Effect.fn('AssortmentGatewayAssertionRedemption.consume')(function* consumeGatewayAssertionEffect(
+    input: GatewayAssertionRedemptionInput,
+  ) {
+    const nowEpochMs = yield* Clock.currentTimeMillis;
+    // Verification can finish after its captured clock passes the assertion's skew window.
+    // Reject without modifying the durable replay evidence.
+    if (input.expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS <= Math.floor(nowEpochMs / 1000)) {
+      return yield* replayError();
+    }
+    const expiresAt = DateTime.toDateUtc(DateTime.makeUnsafe(input.expiresAtEpochSeconds * 1000));
+    const inserted = yield* redeemAssertion(executor, input, expiresAt).pipe(
+      recoverSqlTransactionError,
+      Effect.mapError(unavailableError),
+      Effect.timeoutOrElse({
+        duration: REDEMPTION_TIMEOUT,
+        orElse: () => Effect.fail(unavailableError()),
+      }),
+    );
+    if (inserted.length !== 1) {
+      return yield* replayError();
+    }
+    return yield* Effect.void;
+  }),
 });
+
+type ContextServiceContract<Service> =
+  Service extends Context.Key<infer _Identifier, infer Contract> ? Contract : never;
+
+const makeGatewayAssertionRedemptionPgClient = Effect.fn('AssortmentGatewayAssertionRedemptionDatabase.client')(
+  function* makeGatewayAssertionRedemptionPgClientEffect(
+    configuration: ContextServiceContract<typeof DatabaseConfig> & {
+      readonly maxConnections?: number;
+      readonly poolDeadlines?: Partial<DatabasePoolDeadlines>;
+    },
+  ): Effect.fn.Return<
+    PgClient.PgClient,
+    GatewayAssertionRedemptionUnavailableError,
+    Scope.Scope | Reactivity.Reactivity
+  > {
+    const poolConfiguration = yield* configureDatabasePool(
+      Redacted.make(configuration.connectionString),
+      configuration.poolDeadlines,
+      configuration.maxConnections,
+    ).pipe(Effect.mapError((error) => unavailableError(error)));
+    return yield* openDatabaseClient(poolConfiguration).pipe(Effect.mapError(unavailableError));
+  },
+);
+
+/** The redemption store's own configured pool; the composition root binds it as the store's PgClient. */
+export const gatewayAssertionRedemptionPgClient = DatabaseConfig.pipe(
+  Effect.flatMap((configuration) => makeGatewayAssertionRedemptionPgClient(configuration)),
+);
+
+export const GatewayAssertionRedemptionDatabaseLive = Layer.effect(
+  AssortmentGatewayAssertionRedemptionDatabase,
+  makeWithDefaults({ relations: assortmentGatewayAssertionRedemptionRelations }).pipe(
+    Effect.map((executor) => ({ executor })),
+  ),
+);
 
 export const GatewayAssertionRedemptionLive = Layer.effect(
   GatewayAssertionRedemptionService,
-  makeGatewayAssertionRedemption,
+  Effect.gen(function* makeRedemptionWithCleanup() {
+    const { executor } = yield* AssortmentGatewayAssertionRedemptionDatabase;
+    yield* startGatewayAssertionRedemptionCleanup('assortment', GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS, (expiredBefore) =>
+      executor
+        .delete(gatewayAssertionRedemptions)
+        .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore))
+        .pipe(Effect.asVoid, Effect.mapError(unavailableError)),
+    );
+    return makeGatewayAssertionRedemption(executor);
+  }),
 );

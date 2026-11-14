@@ -1,3 +1,5 @@
+import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../database/identity-enrollment.ts';
+import { makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -55,6 +57,8 @@ import { installedModuleKeysOf } from '@app/core-runtime/install/stage-context-b
 import type { InstallationRuntime } from '@app/core-runtime/install/stage-context-bootstrap';
 import { AccessWorkloadBindingIdSchema } from '../packages/core-runtime/src/access/workloads/store.ts';
 import { writeWorkloadBindings } from '../packages/core-runtime/src/access/workloads/binding-store.ts';
+import { writeWorkloadCompanyBindings } from '../packages/core-runtime/src/access/workloads/company-bindings.ts';
+import { AccessWorkloadCompanyBindingIdSchema } from '../packages/core-runtime/src/access/workloads/company-store.ts';
 import { WorkloadKeySchema } from '../packages/core-runtime/src/authorization/access-declaration.ts';
 import { stableUuid } from '../packages/core-runtime/src/access/catalog/stable-id.ts';
 import { stageScopeOf } from '../packages/core-runtime/src/install/stage-context-bootstrap.ts';
@@ -670,7 +674,11 @@ const localInstallationRuntime = (
   );
   const memberships = AccessMembershipStoreLive;
   // A database that cannot be opened is a defect of this seed run, not a decision of the bootstrap.
-  const platform = Layer.mergeAll(databaseLayers, engine);
+  const platform = Layer.mergeAll(
+    databaseLayers,
+    engine,
+    makeDatabaseIdentityEnrollmentLive(APP_DATABASE_IDENTITY_ENROLLMENT),
+  );
   const stores = Layer.mergeAll(
     TenantIntentLoaderLive,
     AccessWriteJournalStoreLive,
@@ -758,19 +766,20 @@ export const initializeLocalDevelopment = (
       // The operator-declared workload of the local tenant: the shared Storefront client, registered
       // through Core's own registry so the gate admits it on the portal-enrollment carriers (O73).
       const storefrontClient = LOCAL_DEVELOPMENT_STOREFRONT_CLIENT;
-      yield* writeWorkloadBindings(database, scope, {
+      const storefrontBindingId = AccessWorkloadBindingIdSchema.make(
+        stableUuid(
+          [
+            'ontos.local.workload-binding',
+            LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+            storefrontClient.principalId,
+            storefrontClient.workloadKey,
+          ].join(':'),
+        ),
+      );
+      yield* writeWorkloadBindings({ ...database, enrollment: APP_DATABASE_IDENTITY_ENROLLMENT }, scope, {
         bindings: [
           {
-            bindingId: AccessWorkloadBindingIdSchema.make(
-              stableUuid(
-                [
-                  'ontos.local.workload-binding',
-                  LOCAL_DEVELOPMENT_CONTEXT.tenantId,
-                  storefrontClient.principalId,
-                  storefrontClient.workloadKey,
-                ].join(':'),
-              ),
-            ),
+            bindingId: storefrontBindingId,
             createdAt: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
             incarnation: AccessWorkloadBindingIdSchema.make(
               stableUuid(
@@ -785,6 +794,34 @@ export const initializeLocalDevelopment = (
             principalId: PrincipalIdSchema.make(storefrontClient.principalId),
             tenantId: TenantIdSchema.make(LOCAL_DEVELOPMENT_CONTEXT.tenantId),
             workloadKey: WorkloadKeySchema.make(storefrontClient.workloadKey),
+          },
+        ],
+      }).pipe(Effect.mapError((error) => failure('local_persistence_failed', `${error.code}: ${error.reason}`)));
+      // It acts for the local company only (D6): a workload's company authority is always a registration, so a
+      // module call made for it (Customer Context → Party) is admitted in that company and in no other.
+      yield* writeWorkloadCompanyBindings({ ...database, enrollment: APP_DATABASE_IDENTITY_ENROLLMENT }, scope, {
+        bindings: [
+          {
+            companyBindingId: AccessWorkloadCompanyBindingIdSchema.make(
+              stableUuid(
+                ['ontos.local.workload-company-binding', LOCAL_DEVELOPMENT_CONTEXT.tenantId, storefrontBindingId].join(
+                  ':',
+                ),
+              ),
+            ),
+            createdAt: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
+            incarnation: AccessWorkloadCompanyBindingIdSchema.make(
+              stableUuid(
+                [
+                  'ontos.local.workload-company-incarnation',
+                  LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+                  storefrontBindingId,
+                ].join(':'),
+              ),
+            ),
+            legalEntityId: LegalEntityIdSchema.make(LOCAL_DEVELOPMENT_CONTEXT.legalEntityId),
+            tenantId: TenantIdSchema.make(LOCAL_DEVELOPMENT_CONTEXT.tenantId),
+            workloadBindingId: storefrontBindingId,
           },
         ],
       }).pipe(Effect.mapError((error) => failure('local_persistence_failed', `${error.code}: ${error.reason}`)));

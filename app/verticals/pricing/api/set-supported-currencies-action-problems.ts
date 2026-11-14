@@ -93,10 +93,12 @@ export const setSupportedCurrenciesActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'SetSupportedCurrenciesActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'SetSupportedCurrenciesActionForbiddenProblem'> =>
     SetSupportedCurrenciesActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -217,7 +219,8 @@ const mapCoreProblem = (error: ActionCoreError): SetSupportedCurrenciesActionPro
       ActionInvocationStateError: (failure) => setSupportedCurrenciesActionProblem.conflict(failure.code),
       ActionPayloadValidationError: setSupportedCurrenciesActionProblem.invalid,
       ActionPermissionCheckError: (failure) => setSupportedCurrenciesActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => setSupportedCurrenciesActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        setSupportedCurrenciesActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => setSupportedCurrenciesActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => setSupportedCurrenciesActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => setSupportedCurrenciesActionProblem.conflict(failure.code),

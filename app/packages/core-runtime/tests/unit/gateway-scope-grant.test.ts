@@ -4,12 +4,13 @@ import { Effect, Exit, Layer, Option, Predicate, Redacted, Schema } from 'effect
 import type { Effect as EffectType } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { Reactivity } from 'effect/reactivity';
-import { ConnectionError, SqlError } from 'effect/sql/SqlError';
+import { ConnectionError, SqlError, UnknownError } from 'effect/sql/SqlError';
 
 import { makeGatewayScopeGrantRegistrar } from '../../src/auth/gateway-scope-grant.ts';
 import type { GatewayScopeGrantInput } from '../../src/auth/gateway-scope-grant.ts';
 import { scriptedPgClientLayer } from '../../src/testing/scripted-pg-client.ts';
 import { testSqlConnection } from '../support/sql-connection.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -39,7 +40,9 @@ const registerWith = (
 ) =>
   Effect.gen(function* registerWithScriptedIssuer() {
     const client = yield* PgClient.PgClient;
-    const result = yield* Effect.exit(makeGatewayScopeGrantRegistrar(client).register(input));
+    const result = yield* Effect.exit(
+      makeGatewayScopeGrantRegistrar(client, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).register(input),
+    );
     return { result };
   }).pipe(
     Effect.provide(
@@ -94,5 +97,19 @@ it.effect('database failures surface as an unavailable grant with the cause kept
     expect(Predicate.isTagged(error, 'GatewayScopeGrantUnavailableError')).toBe(true);
     expect(yield* encodeJson(error)).not.toContain('issuer outage');
     expect(Object.keys(error ?? {})).not.toContain('cause');
+  }),
+);
+
+it.effect('a database refusal keeps only its SQLSTATE, so the issuer can explain the refusal without its message', () =>
+  Effect.gen(function* registrationRefusalIsClassified() {
+    const refusal = Object.assign(new Error('gateway audience is not enrolled for scope grants'), { code: '22023' });
+    const cause = new SqlError({ reason: new UnknownError({ cause: refusal, operation: 'query' }) });
+    const { result } = yield* registerWith(grant('party-registry'), () => Effect.fail(cause));
+    const error = Option.getOrUndefined(Exit.findErrorOption(result));
+    expect(error?.sqlState).toBe('22023');
+    expect(yield* encodeJson(error)).not.toContain('not enrolled');
+    const outage = new SqlError({ reason: new ConnectionError({ cause: 'issuer outage' }) });
+    const unanswered = yield* registerWith(grant('party-registry'), () => Effect.fail(outage));
+    expect(Option.getOrUndefined(Exit.findErrorOption(unanswered.result))?.sqlState).toBeUndefined();
   }),
 );

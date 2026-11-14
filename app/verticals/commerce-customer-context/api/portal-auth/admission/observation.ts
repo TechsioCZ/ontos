@@ -56,6 +56,7 @@ const providerRequest = (
     : Schema.decodeEffect(CommercePortalAuthVerificationRequestSchema)({
         audience: input.audience,
         authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+        authenticationOperation: 'resolve',
         nonce: input.nonce,
         operation: COMMERCE_PORTAL_AUTH_VERIFY_OPERATION,
         operationRef: input.operationRef,

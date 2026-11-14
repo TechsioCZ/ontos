@@ -1,0 +1,300 @@
+import {
+  CoreSearchProjectionStore,
+  CoreSearchIngestion,
+  CoreSearchProjectionUnavailable,
+  ReadHandlerUnavailable,
+  createCoreSearchQueryRuntime,
+  makeCoreSearchIngestion,
+  makeInMemoryCoreSearchProjectionStore,
+} from '@app/core-runtime';
+import { Effect, Schema } from 'effect';
+import { SearchSource } from '../../src/services/search-source.service.ts';
+import { expect, it } from 'effect-rstest';
+import {
+  crmContactSearchTerms,
+  crmSearchContactClassification,
+  crmSearchQuery,
+} from '../../shared/domain/search-contact-classification.ts';
+import {
+  buildSearchDocuments,
+  makeSearchProjection,
+  searchIngestionRegistrations,
+} from '../../src/services/search-projection.service.ts';
+import { companyId, context, otherCompanyId, rebuildContext, scope, snapshot, state } from './search-fixtures.ts';
+
+it.effect('indexes classified business/personal contact fields for lookup only and excludes notes', () =>
+  Effect.gen(function* projectionTest() {
+    const documents = yield* buildSearchDocuments(snapshot);
+    expect(documents.map((doc) => [doc.ref.resourceType, doc.title, doc.selectedLegalEntityId])).toEqual([
+      ['demo.crm.client', 'Železárny Hanák', companyId],
+      ['demo.crm.contact', 'Jiří Novotný', companyId],
+    ]);
+    expect(documents[0]?.searchableText).toEqual([
+      'Železárny Hanák',
+      '12345678',
+      'info@pekarna.example.test',
+      '420777111222',
+      '777111222',
+    ]);
+    expect(documents[1]?.searchableText).toEqual([
+      'Jiří Novotný',
+      'jiri.novotny@example.test',
+      '420606333444',
+      '606333444',
+      'Železárny Hanák',
+    ]);
+    expect(JSON.stringify(documents)).not.toContain('private');
+    for (const { searchableText: _searchOnly, ...document } of documents) {
+      expect(document.aliases).toEqual([]);
+      expect(document.metadata).toEqual([]);
+      expect(document.facets).toEqual([]);
+      expect(JSON.stringify(document)).not.toMatch(/@|777111|606333/u);
+    }
+    expect(crmSearchContactClassification.client.classification).toBe('business_contact');
+    expect(crmSearchContactClassification.contact.classification).toBe('contact_personal_data');
+  }),
+);
+
+it.effect('publishes only explicitly allowed same-owner metadata, with contact evidence absent from presentation', () =>
+  Effect.gen(function* checkApprovedEvidence() {
+    const documents = yield* buildSearchDocuments({
+      ...snapshot,
+      companies: [
+        {
+          legalEntityId: companyId,
+          state: {
+            ...state,
+            clients: {
+              ...state.clients,
+              contacts: state.clients.contacts.map((contact) => ({ ...contact, role: 'Nákupčí' })),
+              items: state.clients.items.map((client) => ({
+                ...client,
+                address: 'Dlouhá 42, Brno',
+                segment: 'excluded-segment',
+                vatNo: 'CZ12345678',
+                website: 'https://hanak.example.test',
+              })),
+            },
+          },
+        },
+      ],
+    });
+    const client = documents.find((document) => document.ref.resourceType === 'demo.crm.client');
+    const contact = documents.find((document) => document.ref.resourceType === 'demo.crm.contact');
+    expect(client?.searchableText).toEqual([
+      'Železárny Hanák',
+      '12345678',
+      'CZ12345678',
+      'Dlouhá 42, Brno',
+      'https://hanak.example.test',
+      'info@pekarna.example.test',
+      '420777111222',
+      '777111222',
+    ]);
+    expect(contact?.searchableText).toEqual([
+      'Jiří Novotný',
+      'jiri.novotny@example.test',
+      '420606333444',
+      '606333444',
+      'Nákupčí',
+      'Železárny Hanák',
+    ]);
+    expect(JSON.stringify(documents)).not.toMatch(/excluded-segment|private/u);
+    for (const { searchableText: _evidence, ...presentation } of documents) {
+      expect(JSON.stringify(presentation)).not.toMatch(/@|777111|606333|Nákupčí|CZ12345678|Dlouhá|https:/u);
+      expect(presentation.aliases).toEqual([]);
+      expect(presentation.metadata).toEqual([]);
+      expect(presentation.facets).toEqual([]);
+    }
+  }),
+);
+
+it.effect('optional empty metadata never creates an empty term and person metadata is not implicitly approved', () =>
+  Effect.gen(function* checkFieldPolicy() {
+    const documents = yield* buildSearchDocuments({
+      ...snapshot,
+      companies: [
+        {
+          legalEntityId: companyId,
+          state: {
+            ...state,
+            clients: {
+              ...state.clients,
+              contacts: state.clients.contacts.map((contact) => ({ ...contact, role: '   ' })),
+              items: state.clients.items.map((client) => ({
+                ...client,
+                address: 'person-private-address',
+                kind: 'person' as const,
+                vatNo: 'person-private-tax',
+                website: 'person-private-site',
+              })),
+            },
+          },
+        },
+      ],
+    });
+    expect(JSON.stringify(documents)).not.toContain('person-private');
+    expect(documents.flatMap((document) => document.searchableText).every((term) => term.trim().length > 0)).toBe(true);
+    const blankBusiness = yield* buildSearchDocuments({
+      ...snapshot,
+      companies: [
+        {
+          legalEntityId: companyId,
+          state: {
+            ...state,
+            clients: {
+              ...state.clients,
+              items: state.clients.items.map((client) => ({
+                ...client,
+                address: ' ',
+                regNo: '',
+                vatNo: '',
+                website: '  ',
+              })),
+            },
+          },
+        },
+      ],
+    });
+    expect(blankBusiness.flatMap((document) => document.searchableText).every((term) => term.trim().length > 0)).toBe(
+      true,
+    );
+  }),
+);
+
+it('canonicalizes phone fields/queries only, without inventing Czech aliases for foreign or partial numbers', () => {
+  expect(crmContactSearchTerms('client', { phone: '+49 777 111 222' })).toEqual(['49777111222']);
+  expect(crmContactSearchTerms('contact', { phone: '+1 777 111 222' })).toEqual(['1777111222']);
+  expect(crmContactSearchTerms('contact', { phone: '+777111222' })).toEqual(['777111222']);
+  expect(crmContactSearchTerms('client', { phone: '777 111' })).toEqual(['777111']);
+  expect(crmContactSearchTerms('client', { email: 'note user@example.test', phone: 'call 777 111 222' })).toEqual([]);
+  expect(crmContactSearchTerms('contact', {})).toEqual([]);
+  for (const query of ['+420 (777) 111-222', '420.777.111.222', '+420 777']) {
+    expect(crmSearchQuery(query)).toBe(query.replaceAll(/[ +().-]/gu, ''));
+  }
+  for (const query of ['info@pekarna', 'call 777 111 222', 'Železárny Hanák', '12', '1/23', '1234567890123456']) {
+    expect(crmSearchQuery(query)).toBe(query);
+  }
+});
+
+it.effect('updates, removes, rebuilds, and rejects stale delivery without cross-company matches', () =>
+  Effect.gen(function* projectionTest() {
+    const store = makeInMemoryCoreSearchProjectionStore();
+    const search = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
+    let current = snapshot;
+    const projector = yield* makeSearchProjection.pipe(
+      Effect.provideService(SearchSource, { load: () => Effect.succeed(current) }),
+      Effect.provideService(CoreSearchIngestion, makeCoreSearchIngestion(store, searchIngestionRegistrations)),
+      Effect.provideService(CoreSearchProjectionStore, store),
+    );
+    const find = (resourceType: string, query: string, selectedLegalEntityId = companyId) =>
+      search.search(
+        {
+          includeArchived: false,
+          moduleId: 'demo.crm',
+          query,
+          resourceType,
+          selectedLegalEntityId,
+          tenantId: scope.tenantId,
+        },
+        { ...scope, legalEntityId: selectedLegalEntityId },
+      );
+    yield* projector.project(context, { entityIds: ['client-1', 'contact-1'] });
+    expect((yield* find('demo.crm.client', 'zelezarny')).length).toBe(1);
+    expect((yield* find('demo.crm.contact', 'jiri')).length).toBe(1);
+    expect(yield* find('demo.crm.client', 'hanak', otherCompanyId)).toEqual([]);
+    expect(
+      Schema.is(CoreSearchProjectionUnavailable)(
+        yield* search
+          .search(
+            {
+              includeArchived: false,
+              moduleId: 'demo.crm',
+              query: 'hanak',
+              resourceType: 'demo.crm.client',
+              selectedLegalEntityId: companyId,
+              tenantId: otherCompanyId,
+            },
+            scope,
+          )
+          .pipe(Effect.flip),
+      ),
+    ).toBe(true);
+    current = {
+      ...snapshot,
+      companies: [
+        {
+          legalEntityId: companyId,
+          state: {
+            ...state,
+            clients: {
+              ...state.clients,
+              contacts: [],
+              items: state.clients.items.map((client) => ({ ...client, name: 'Nové železárny' })),
+            },
+          },
+        },
+      ],
+      projectionVersion: '2',
+    };
+    yield* projector.project(context, { entityIds: ['client-1', 'contact-1'] });
+    expect(yield* find('demo.crm.client', 'hanak')).toEqual([]);
+    expect((yield* find('demo.crm.client', 'nove')).length).toBe(1);
+    expect(yield* find('demo.crm.contact', 'jiri')).toEqual([]);
+    current = { ...snapshot, companies: [], projectionVersion: '3' };
+    yield* projector.project(rebuildContext, { rebuild: true });
+    yield* projector.project(rebuildContext, { rebuild: true });
+    current = snapshot;
+    yield* projector.project(context, { entityIds: ['client-1'] });
+    expect(yield* find('demo.crm.client', 'hanak')).toEqual([]);
+  }),
+);
+
+it.effect('archives contacts with their client and fails a foreign snapshot before index writes', () =>
+  Effect.gen(function* projectionTest() {
+    const docs = yield* buildSearchDocuments({
+      ...snapshot,
+      companies: [
+        {
+          legalEntityId: companyId,
+          state: {
+            ...state,
+            clients: {
+              ...state.clients,
+              items: state.clients.items.map((client) => ({ ...client, status: 'archived' as const })),
+            },
+          },
+        },
+      ],
+    });
+    expect(docs.every((doc) => doc.archived)).toBe(true);
+    const store = makeInMemoryCoreSearchProjectionStore();
+    const projector = yield* makeSearchProjection.pipe(
+      Effect.provideService(SearchSource, { load: () => Effect.succeed({ ...snapshot, tenantId: otherCompanyId }) }),
+      Effect.provideService(CoreSearchIngestion, makeCoreSearchIngestion(store, searchIngestionRegistrations)),
+      Effect.provideService(CoreSearchProjectionStore, store),
+    );
+    expect(
+      Schema.is(ReadHandlerUnavailable)(yield* projector.project(context, { entityIds: [] }).pipe(Effect.flip)),
+    ).toBe(true);
+  }),
+);
+
+it.effect('duplicate owner IDs across companies fail before any index mutation', () =>
+  Effect.gen(function* rejectDuplicateIdentity() {
+    const store = makeInMemoryCoreSearchProjectionStore();
+    const projector = yield* makeSearchProjection.pipe(
+      Effect.provideService(SearchSource, {
+        load: () =>
+          Effect.succeed({ ...snapshot, companies: [...snapshot.companies, { legalEntityId: otherCompanyId, state }] }),
+      }),
+      Effect.provideService(CoreSearchIngestion, { ingest: () => Effect.die('No partial duplicate ingestion') }),
+      Effect.provideService(CoreSearchProjectionStore, store),
+    );
+    expect(
+      Schema.is(ReadHandlerUnavailable)(
+        yield* projector.project(context, { entityIds: ['client-1'] }).pipe(Effect.flip),
+      ),
+    ).toBe(true);
+  }),
+);

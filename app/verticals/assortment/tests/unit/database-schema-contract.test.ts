@@ -26,7 +26,7 @@ const migrations = () =>
     .map((folder) => readFileSync(new URL(`${folder}/migration.sql`, migrationRoot), 'utf-8'))
     .join('\n');
 
-it('owns only the private, tenant/legal-entity-scoped Assortment policy catalog', () => {
+it('owns the Assortment policy catalog and scopes every business table with RLS', () => {
   const names = EffectArray.sort(
     ASSORTMENT_TABLES.map((table) => {
       const config = getTableConfig(table);
@@ -42,6 +42,9 @@ it('owns only the private, tenant/legal-entity-scoped Assortment policy catalog'
     ),
   );
   for (const table of ASSORTMENT_TABLES) {
+    if (getTableConfig(table).name === 'gateway_assertion_redemptions') {
+      continue;
+    }
     const config = getTableConfig(table);
     expect(config.enableRLS, `${config.name} enables RLS`).toBe(true);
     expect(config.columns.some(({ name, notNull }) => name === 'tenant_id' && notNull)).toBe(true);
@@ -230,4 +233,26 @@ it('keeps the tenant-owned Rule lineage reusable across Selling Legal Entities',
   const migration = migrations();
   expect(migration).toContain('ADD COLUMN "selector_target_owner_module_id" text');
   expect(migration).not.toMatch(/UPDATE\s+"assortment"\."assortment_rule_revisions"/u);
+});
+
+it('keeps gateway assertion replay identities global, unique and expiry-indexed', () => {
+  // Main's operational inventory (ASSORTMENT_TABLES) leaves the redemption store out; prove the table itself.
+  const config = getTableConfig(gatewayAssertionRedemptions);
+  expect(config.name).toBe('gateway_assertion_redemptions');
+  expect(config.schema).toBe('assortment');
+  expect(config.enableRLS).toBe(false);
+  expect(config.policies).toEqual([]);
+  expect(config.columns.some((column) => column.name === 'tenant_id')).toBe(false);
+  expect(config.columns.map(({ name, notNull }) => [name, notNull])).toEqual([
+    ['audience', true],
+    ['expires_at', true],
+    ['issuer', true],
+    ['jti', true],
+    ['redeemed_at', true],
+  ]);
+  expect(config.primaryKeys).toEqual([]);
+  expect(config.uniqueConstraints.map((key) => [key.name, key.columns.map(({ name }) => name)])).toEqual([
+    ['assortment_gateway_redemptions_identity_uk', ['issuer', 'audience', 'jti']],
+  ]);
+  expect(config.indexes.map(({ config: index }) => index.name)).toEqual(['assortment_gateway_redemptions_expiry_idx']);
 });

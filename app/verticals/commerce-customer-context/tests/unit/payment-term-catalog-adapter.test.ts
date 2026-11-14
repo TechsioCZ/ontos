@@ -5,6 +5,8 @@ import { Effect, Redacted, Schema } from 'effect';
 import { HttpClientError, HttpClientRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
+import { OperationContextUnavailable } from '@app/core-runtime';
+import { getActionServicePreflight } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { getActionServiceFactory } from '@app/core-runtime/testing/actions';
 import { getReadServiceFactory } from '@app/core-runtime/testing/reads';
 
@@ -74,9 +76,11 @@ it('attaches production Payment Terms factories to persistence and the public ca
   const resolutionFactory = getReadServiceFactory(paymentTermsResolutionRead).toString();
 
   expect(changeFactory).toContain('paymentTermsPersistenceForTransaction');
-  expect(changeFactory).toContain('paymentTermCatalogPort');
+  expect(changeFactory).not.toContain('paymentTermCatalogPort');
+  expect(getActionServicePreflight(changeCustomerPaymentTermsAction)).toBeDefined();
   expect(retailFactory).toContain('paymentTermsPersistenceForTransaction');
-  expect(retailFactory).toContain('paymentTermCatalogPort');
+  expect(retailFactory).not.toContain('paymentTermCatalogPort');
+  expect(getActionServicePreflight(changeRetailPaymentTermPreferenceAction)).toBeDefined();
   expect(resolutionFactory).toContain('paymentTermsPersistenceForTransaction');
   expect(resolutionFactory).toContain('paymentTermCatalogPort');
   expect(getReadServiceFactory(guestPaymentTermsResolutionRead)).toBe(makeGuestPaymentTermsResolutionServices);
@@ -237,6 +241,7 @@ it.effect('admits every production catalog call through the delegated Shell cont
     const admissions: unknown[] = [];
     const port = yield* paymentTermCatalogPortFromEnvironment(
       {
+        compositionRevision: 'a'.repeat(64),
         legalEntityId: '20000000-0000-4000-8000-000000000001',
         requestCorrelation: 'payment-correlation',
         subject: paymentTermSubject,
@@ -271,6 +276,7 @@ it.effect('admits every production catalog call through the delegated Shell cont
     expect(admissions).toEqual([
       {
         audience: 'payment-term-catalog',
+        callingAppId: 'commerce-customer-context',
         legalEntityScope: 'subject',
         requestCorrelation: 'payment-correlation',
         subject: paymentTermSubject,
@@ -357,4 +363,85 @@ it.effect('consumes a proven equivalent Current alias as its exact retained owne
     expect(definitions[0]?.definitionRevisionId).toBe(aliasDefinition.definitionRevisionId);
     expect(definition.paymentTermRef).toEqual(firstPaymentTermRef);
   }),
+);
+
+it.effect('refuses a delegated Catalog credential from another composition before calling the owner', () =>
+  Effect.gen(function* mismatchedComposition() {
+    let ownerCalls = 0;
+    const port = yield* paymentTermCatalogPortFromEnvironment(
+      {
+        compositionRevision: 'a'.repeat(64),
+        legalEntityId: '20000000-0000-4000-8000-000000000001',
+        requestCorrelation: 'payment-composition-negative',
+        subject: paymentTermSubject,
+      },
+      () => {
+        ownerCalls += 1;
+        return Effect.die('The mismatched credential must not reach the Catalog');
+      },
+      () => Effect.succeed(issuedDelegatedContext({ compositionRevision: 'b'.repeat(64), token: 'wrong-revision' })),
+    ).pipe(Effect.provide(nodeCryptoLayer));
+    const failure = yield* port
+      .resolveDefinitions([{ at: '2026-09-09T10:00:00.000Z', paymentTermRef: firstPaymentTermRef }])
+      .pipe(Effect.flip);
+    expect(failure.dependency).toBe('PAYMENT_TERM_CATALOG');
+    expect(ownerCalls).toBe(0);
+  }),
+);
+
+it.effect(
+  'requires real scoped preparation for both published Payment Terms Actions before any SQL or Catalog call',
+  () =>
+    Effect.gen(function* requiredPreparationScope() {
+      const customer = getActionServicePreflight(changeCustomerPaymentTermsAction);
+      const retail = getActionServicePreflight(changeRetailPaymentTermPreferenceAction);
+      if (customer === undefined || retail === undefined) {
+        return yield* Effect.die('The production Actions must prepare Catalog evidence');
+      }
+      const context = {
+        actionInvocationId: '30000000-0000-4000-8000-000000000001',
+        compositionRevision: 'a'.repeat(64),
+        evaluatePolicy: () => Effect.die('Payment Terms preparation does not evaluate execution Policies'),
+        scope: {
+          authMethod: 'session' as const,
+          correlationId: 'payment-prepare-no-company',
+          principalId: '40000000-0000-4000-8000-000000000001',
+          tenantId,
+        },
+        transaction: () => Effect.die('No owner transaction is valid without the scoped company'),
+      } satisfies Parameters<typeof customer>[1] & Parameters<typeof retail>[1];
+      const profileRef = {
+        moduleId: 'commerce.customer-context' as const,
+        resourceId: '70000000-0000-4000-8000-000000000001',
+        resourceType: 'commerce.customer-context.counterparty-purchasing-profile' as const,
+        tenantId,
+      };
+      const counterpartyRef = {
+        moduleId: 'party.registry' as const,
+        resourceId: '80000000-0000-4000-8000-000000000001',
+        resourceType: 'party.registry.counterparty' as const,
+        tenantId,
+      };
+      const customerFailure = yield* customer(
+        {
+          changes: [{ _tag: 'CLEAR_PREFERENCE', effectiveAt: '2026-09-09T10:00:00.000Z' }],
+          counterpartyRef,
+          expectedRevision: 1,
+          profileRef,
+          reason: 'Clear preference',
+        },
+        context,
+      ).pipe(Effect.flip);
+      expect(Schema.is(OperationContextUnavailable)(customerFailure)).toBe(true);
+      const retailFailure = yield* retail(
+        {
+          change: { _tag: 'CLEAR_PREFERENCE', effectiveAt: '2026-09-09T10:00:00.000Z' },
+          expectedRevision: 1,
+          profileRef: { ...profileRef, resourceType: 'commerce.customer-context.retail-customer-profile' },
+        },
+        context,
+      ).pipe(Effect.flip);
+      expect(Schema.is(OperationContextUnavailable)(retailFailure)).toBe(true);
+      return yield* Effect.void;
+    }).pipe(Effect.provide(nodeCryptoLayer)),
 );

@@ -1,19 +1,19 @@
-/**
- * How a runtime reaches other OntOS units. `#unit-service-fetch` selects it by runtime: Node reaches
- * a unit at its URL through the global fetch; a Worker reaches it through the unit's Worker service
- * binding, which calls the target Worker directly inside Cloudflare instead of taking a public round
- * trip through its hostname, and needs no routable hostname at all.
- */
-export type UnitServiceFetch = (serviceBinding: string) => typeof globalThis.fetch;
+import type { Effect } from 'effect';
 
-/** A unit reached at `baseUrl` by configuration and through `serviceBinding` in a Worker. */
-export interface UnitRoute {
-  readonly baseUrl: URL;
-  readonly serviceBinding: string;
-}
+import type { ApplicationCompositionModule } from '../modules/application-composition.ts';
+import type { ModuleReleaseIdentityError } from './module-release-identity.ts';
+import type { ModuleReleaseTransportError } from './module-release-transport-error.ts';
 
 /**
- * The runtime's outbound fetch with unit routes applied: requests under a route's base URL go to
- * that unit's transport, every other request keeps the global fetch.
+ * How a runtime reaches an approved module release. `#unit-service-fetch` selects it by runtime: Node
+ * reaches the release at its approved URL; a Worker reaches a Worker release through the service
+ * binding its deployment declared for that exact release, and through the release's HTTPS origin when
+ * it declared none.
  */
-export type UnitRoutedFetch = (routes: readonly UnitRoute[]) => typeof globalThis.fetch;
+export type ModuleReleaseFetch = (
+  request: Request,
+  module: ApplicationCompositionModule,
+) => Effect.Effect<Response, ModuleReleaseIdentityError | ModuleReleaseTransportError>;
+
+// Selected only by TypeScript's `types` condition; runtime selection stays Node or workerd.
+export declare const moduleReleaseFetch: ModuleReleaseFetch;

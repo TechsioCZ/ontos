@@ -1,3 +1,4 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { identity } from 'effect';
 import {
   MicroVerticalBuildMarkerSchema,
@@ -48,6 +49,7 @@ export const commerceOrderFoundationApi = HttpApi.make('CommerceOrderApiFoundati
 
 export const commerceOrderApi = HttpApi.make('CommerceOrderApi')
   .addHttpApi(commerceOrderFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(CancelOrderCommitmentActionApi)
   .addHttpApi(CommitOrderActionApi)

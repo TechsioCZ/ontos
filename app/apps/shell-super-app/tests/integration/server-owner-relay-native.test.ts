@@ -1,8 +1,53 @@
+/**
+ * Packaged-owner relay: the Shell, Party Registry, Catalog, Customer Context, Market Catalog and Price Group Catalog
+ * run from their built `.output`, as on the app host. To run it locally:
+ *
+ * 1. Build the six units from a clean source tree whose Git HEAD is `ULTRAMODERN_SOURCE_REVISION`, or from a non-Git
+ *    export (`git archive <sha> app`, then `pnpm install --frozen-lockfile --offline` and remove any `.git` the
+ *    install created) with `ULTRAMODERN_SOURCE_REVISION=<sha>`; otherwise the build stops at "sourceRevision workspace
+ *    cannot produce a promotable envelope". The public addresses do not matter: `MODERN_PUBLIC_SITE_URL=http://localhost:8080`
+ *    and `scripts/zerops/build-app.sh` with placeholder origins both pass.
+ * 2. Run it against a database migrated to this tree's level (a private `ontos_test_party_gateway_<32 hex>` database,
+ *    migrated with `pnpm db:migrate`, when this branch adds a migration the shared `ontos_ci` lacks: on an older
+ *    database the Shell's authority reads fail with "Failed query").
+ * 3. Run it alone, with the shared SpiceDB below about 6 GiB: the three flows that issue a personal-key gateway context
+ *    through the Shell (Catalog to Party Manufacturer, Customer Context Guest attribution and Retail Ensure) fail with
+ *    "Actual public personal-key gateway issuance failed" when the Shell's issuance is refused; the
+ *    "personal-key gateway issuance failure" log line before it names the Shell's declared code and status.
+ */
+import {
+  makeDatabaseIdentityEnrollmentLive,
+  ActiveApplicationCompositionSnapshotSchema,
+  ActiveApplicationCompositionConfigLive,
+  GatewayScopeGrantRegistrarLive,
+  ApplicationCompositionAuthorityError,
+  CoreSearchResourceRefSchema,
+  toLegalEntityAccessObjectId,
+  toModuleAccessObjectId,
+  closeApplicationCompositionDurableAdmission,
+  drainApplicationCompositionAuthority,
+  lockApplicationCompositionPublication,
+  validateActiveApplicationCompositionSnapshot,
+  loadDatabaseConfig,
+  loadDatabaseConnectionPair,
+  makePrincipalResolver,
+  PrincipalResolver,
+  SHELL_GATEWAY_ISSUER_IDENTITY,
+  ONTOS_MODULE_CONTRACT_PATH,
+  ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
+  OntosModuleDeploymentContractSchema,
+  OntosShellRuntimeContractSchema,
+} from '@app/core-runtime';
+import { CoreDatabase } from '@app/core-runtime/db/client';
+import { SHARED_RUNTIME_IDENTITY } from '@app/core-runtime/db/database-identity-manifest';
+import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
+import { shellTestAuthentication } from '../support/shell-authentication.ts';
 import {
   GatewayContextV2ClaimsSchema,
   GatewayContextV3ClaimsSchema,
   GatewayTrustedPrincipalContextSchema,
 } from '@app/shared-contracts';
+import type { GatewayDelegatedContextRequest } from '@app/shared-contracts';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import {
@@ -29,35 +74,13 @@ import {
 } from '@app/price-group-catalog/api/client';
 import { SignJWT, exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import {
-  ActiveApplicationCompositionSnapshotSchema,
-  ActiveApplicationCompositionConfigLive,
-  GatewayScopeGrantRegistrarLive,
-  ApplicationCompositionAuthorityError,
-  CoreSearchResourceRefSchema,
-  toLegalEntityAccessObjectId,
-  toModuleAccessObjectId,
-  closeApplicationCompositionDurableAdmission,
-  drainApplicationCompositionAuthority,
-  lockApplicationCompositionPublication,
-  validateActiveApplicationCompositionSnapshot,
-  TrustedPrincipalContextSchema,
-  loadDatabaseConfig,
-  loadDatabaseConnectionPair,
-  makePrincipalResolver,
-  PrincipalResolver,
-  SHELL_GATEWAY_ISSUER_IDENTITY,
-  ONTOS_MODULE_CONTRACT_PATH,
-  ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
-  OntosModuleDeploymentContractSchema,
-  OntosShellRuntimeContractSchema,
-} from '@app/core-runtime';
-import {
   createPartyWithAuthorization,
   addContactPointWithAuthorization,
   executePartyContactPointDetailWithAuthorization,
   executePartyDetailWithAuthorization,
   PartyContactPointDetailAuthenticationProblemSchema,
 } from '@app/party-registry/api/client';
+import { PLATFORM_TENANT } from '@app/core-runtime/auth/module-credentials';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { grantTestTenantOwnerAccess, liveFixtureSpiceDb } from '@app/core-runtime/testing/tenant-access';
@@ -73,7 +96,6 @@ import { makeProblemDetailsSchema } from '@app/shared-contracts/problem-details'
 import { NodeHttpClient, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { v1 } from '@authzed/authzed-node';
-import { getCookies } from 'better-auth/cookies';
 import {
   Brand,
   Clock,
@@ -89,6 +111,7 @@ import {
   Layer,
   Option,
   Path,
+  Predicate,
   Redacted,
   Schema,
 } from 'effect';
@@ -119,16 +142,15 @@ import {
 import { AuthConfig, parseAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { account, user } from '../../api/auth/db/schema.ts';
+import { principals } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
-import { makeAuthenticationService } from '../../api/auth/service.ts';
+
 import {
   ApiKeyIssueResponseSchema,
   AuthenticatedSessionSchema,
   CurrentSessionSchema,
-  PrincipalMutationResponseSchema,
   PrincipalIdSchema,
   TenantIdSchema,
-  ShellAuthenticationRequiredProblemSchema,
   SignInResponseSchema,
 } from '../../shared/browser-api.ts';
 import {
@@ -137,8 +159,27 @@ import {
   startPackagedApplication,
   runRegisteredPostalFactoryProbe,
   issueFixtureStorefrontGatewayAuthorization,
+  provisionSourceModuleCredential,
 } from '../support/server-owner-relay-native-fixture.ts';
 
+class RelayOwnerRefusal extends Schema.TaggedError<RelayOwnerRefusal>()('RelayOwnerRefusal', {
+  message: Schema.String,
+}) {}
+/** The fields a refused owner answer names: its problem tag, HTTP status and domain code. */
+const OwnerProblemFieldsSchema = Schema.Struct({
+  _tag: Schema.optionalKey(Schema.String),
+  code: Schema.optionalKey(Schema.String),
+  status: Schema.optionalKey(Schema.Number),
+});
+/** A refused owner answer as a real Error, so a failing case names the owner's problem and the reporter keeps its totals. */
+const reportableOwnerFailure = <Failure>(failure: Failure): Failure | RelayOwnerRefusal => {
+  const fields = Schema.decodeUnknownOption(OwnerProblemFieldsSchema)(failure);
+  return Predicate.isError(failure) || Option.isNone(fields)
+    ? failure
+    : new RelayOwnerRefusal({
+        message: `owner-refused:${fields.value._tag ?? 'unknown'}:status-${String(fields.value.status ?? 'none')}:code-${fields.value.code ?? 'none'}`,
+      });
+};
 const PARTY_MODULE_KEY = 'party.registry';
 const contactPointAddCapability = 'party.registry.contact-point.add';
 const partyReadCapability = 'party.registry.party.read';
@@ -185,7 +226,7 @@ const publishNativeCatalogRelease = Effect.fn('ServerOwnerRelayNative.publishCat
         publishedAt: DateTime.toDateUtc(yield* DateTime.now),
       }),
     );
-    const store = makeAccessChangesDrizzleStore({ executor: database });
+    const store = makeAccessChangesDrizzleStore({ enrollment: SHELL_DATABASE_IDENTITY_ENROLLMENT, executor: database });
     yield* store.publishCatalog({ snapshot: release });
     const published = yield* store.loadPublishedCatalog();
     if (Option.isNone(published) || published.value.id !== release.id) {
@@ -213,7 +254,9 @@ const makePackagedShellUserFixture = Effect.fn('ServerOwnerRelayNative.makePacka
     const issuerClient = yield* PgClient.make({ url: Redacted.make(issuerConfiguration.connectionString) });
     const issuerRoles = yield* issuerClient`select current_user::text as role`;
     expect(issuerRoles).toEqual([{ role: 'shell_gateway_issuer' }]);
-    yield* Effect.logInfo('Dedicated Shell issuer fixture connection verified', { role: issuerConfiguration.user });
+    yield* Effect.logInfo('Dedicated Shell issuer fixture connection verified', {
+      role: issuerConfiguration.expectedRole,
+    });
     const admin = yield* PgClient.make({ url: Redacted.make(connections.admin.connectionString) });
     const database = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, admin));
     const core = yield* Effect.acquireRelease(
@@ -237,9 +280,9 @@ const makePackagedShellUserFixture = Effect.fn('ServerOwnerRelayNative.makePacka
     // administers identities. When a suite flips some capabilities itself, the owner's full role is
     // replaced by a role of every other capability of the catalog.
     const accessTarget = {
-      adminConnectionString: Redacted.make(connections.admin.connectionString),
       legalEntityIds: [core.legalEntityId] as const,
       spiceDb: yield* liveFixtureSpiceDb(core.permissionEnvironment),
+      writerConnectionString: Redacted.make(connections.runtime.connectionString),
     };
     yield* publishNativeCatalogRelease(database);
     yield* grantTestTenantOwnerAccess({ ...accessTarget, owner: core.manager });
@@ -263,14 +306,15 @@ const makePackagedShellUserFixture = Effect.fn('ServerOwnerRelayNative.makePacka
       DATABASE_URL: connections.runtime.connectionString,
       NODE_ENV: 'production',
     });
-    const persistence = yield* makeAuthDatabase(configuration);
+    const persistence = yield* makeAuthDatabase({ ...configuration, expectedRole: SHARED_RUNTIME_IDENTITY.role });
     const resolver = makePrincipalResolver(
       { executor: database },
       { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
     );
-    const authentication = yield* makeAuthenticationService({ allowFixtureSignUp: true }).pipe(
+    const authentication = yield* shellTestAuthentication({ allowFixtureSignUp: true }).pipe(
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, persistence),
+      Effect.provideService(CoreDatabase, { executor: database }),
       Effect.provideService(PrincipalResolver, resolver),
     );
     const email = `packaged-${core.manager.authBindingId}@example.test`;
@@ -669,6 +713,176 @@ const diagnoseExplicitPartyLegalEntity = Effect.fn('ServerOwnerRelayNative.diagn
           }),
       }),
     );
+  },
+);
+
+const DelegatedProblemSchema = Schema.Struct({ reason: Schema.optionalKey(Schema.String), status: Schema.Number });
+const DELEGATED_REFUSAL_LOG = 'gateway delegation refused';
+
+/** A delegated request as a caller sends it on the wire; any string fits its audience, so an oversized one too. */
+type DelegatedRequestBody = GatewayDelegatedContextRequest;
+
+/** One raw POST to the Shell's delegated endpoint, with or without a key; the refusal code, if the body names one. */
+const postDelegated = Effect.fn('ServerOwnerRelayNative.postDelegated')(function* postDelegated(
+  origin: string,
+  body: DelegatedRequestBody,
+  apiKey: Redacted.Redacted | null,
+) {
+  const client = yield* HttpClient.HttpClient;
+  const response = yield* client.post(`${origin}/shell-super-app-api/auth/delegated/gateway-context`, {
+    body: yield* HttpBody.json(body),
+    headers: apiKey === null ? {} : { 'x-api-key': Redacted.value(apiKey) },
+  });
+  const raw = yield* response.json;
+  const reason = Option.flatMap(Schema.decodeUnknownOption(DelegatedProblemSchema)(raw), (problem) =>
+    Option.fromUndefinedOr(problem.reason),
+  );
+  return { hasReason: Predicate.hasProperty(raw, 'reason'), reason, status: response.status };
+});
+
+/**
+ * The Shell's refusal warnings written after `from`, each with its annotations: the logger writes the message line and
+ * then one line per annotation up to a closing brace. The response is sent after its warning is written.
+ */
+const refusalWarningsSince = (lines: readonly Redacted.Redacted[], from: number): readonly string[] => {
+  const written = lines.slice(from).map((line) => Redacted.value(line));
+  return written.flatMap((line, index) => {
+    if (!line.includes(DELEGATED_REFUSAL_LOG)) {
+      return [];
+    }
+    const rest = written.slice(index + 1);
+    const end = rest.findIndex((next) => next.trim() === '}');
+    return [[line, ...(end === -1 ? rest : rest.slice(0, end + 1))].join('\n')];
+  });
+};
+
+/**
+ * The delegated endpoint's refusals over HTTP, while no key binds for the release the Shell serves: what a caller with
+ * no key gets, that an unauthenticated body cannot put its own tenant into the Shell's warning, that an oversized
+ * audience is refused, and that a key that binds nothing is refused as unbound with that reason in the problem body.
+ */
+const assertDelegatedRefusalsBeforeBinding = Effect.fn('ServerOwnerRelayNative.assertDelegatedRefusalsBeforeBinding')(
+  function* assertDelegatedRefusalsBeforeBinding(input: {
+    readonly composition: Parameters<typeof provisionSourceModuleCredential>[0]['composition'];
+    readonly database: NativeCoreDatabase;
+    readonly fixture: NativeShellUserFixture;
+  }) {
+    const crypto = yield* Crypto.Crypto;
+    const { origin } = input.fixture;
+    const lines = input.fixture.application.diagnostics;
+    const chosenTenant = yield* crypto.randomUUIDv4();
+    const request: DelegatedRequestBody = {
+      audience: 'party-registry',
+      compositionRevision: input.composition.composition.revision,
+      exchangeId: yield* crypto.randomUUIDv4(),
+      legalEntityScope: 'subject',
+      subject: { _tag: 'Originator', actionInvocationId: yield* crypto.randomUUIDv4(), tenantId: chosenTenant },
+    };
+
+    // No key: 401, and no refusal code that could depend on the body.
+    const keyless = yield* postDelegated(origin, request, null);
+    expect(keyless.status).toBe(401);
+    expect(keyless.hasReason).toBe(false);
+
+    // No key, a release that is not the current one, a tenant of the caller's choosing: 409 `release_changed`, and the
+    // warning names neither a calling module nor that tenant.
+    const beforeStale = lines.length;
+    const stale = yield* postDelegated(origin, { ...request, compositionRevision: '0'.repeat(64) }, null);
+    expect(stale.status).toBe(409);
+    expect(stale.reason).toEqual(Option.some('release_changed'));
+    const [warning = ''] = refusalWarningsSince(lines, beforeStale);
+    expect(warning).toContain('release_changed');
+    expect(warning).not.toContain(chosenTenant);
+    expect(warning).toMatch(/subjectTenant\W+unknown/u);
+    expect(warning).toMatch(/callerAppId\W+unknown/u);
+
+    // An audience longer than any app id is refused before anything else runs.
+    const beforeLong = lines.length;
+    const long = yield* postDelegated(origin, { ...request, audience: 'a'.repeat(201) }, null);
+    expect(long.status).toBe(400);
+    expect(refusalWarningsSince(lines, beforeLong)).toEqual([]);
+
+    // A platform module key attested for another release: it verifies, but no key binds under the installed release,
+    // so the Shell registers no namespace audience and refuses the key as unbound (403), naming that reason.
+    const stray = yield* provisionSourceModuleCredential({
+      appId: 'party-registry',
+      composition: {
+        composition: { ...input.composition.composition, revision: 'f'.repeat(64) },
+      },
+      configuration: input.fixture.configuration,
+      database: input.database,
+      persistence: input.fixture.persistence,
+    });
+    const unbound = yield* postDelegated(
+      origin,
+      { ...request, subject: { _tag: 'Assertion', sourceAssertion: 'not-a-jwt' } },
+      stray.secret,
+    );
+    expect(unbound.status).toBe(403);
+    expect(unbound.reason).toEqual(Option.some('module_credential_unbound'));
+  },
+);
+
+/**
+ * The Shell endpoint the people administration calls to disable or archive a principal: an identity administrator may
+ * archive an ordinary service principal, but never the platform's internal workload principal, which stays active.
+ * The archive publishes a principal-lifecycle Outbox message no worker of this suite matches; it is released here, as
+ * every disposable fixture releases its queue, or each later composition publication would refuse outstanding work.
+ */
+const assertPlatformPrincipalStatusRefused = Effect.fn('ServerOwnerRelayNative.assertPlatformPrincipalStatusRefused')(
+  function* assertPlatformPrincipalStatusRefused(input: {
+    readonly admin: PgClient.PgClient;
+    readonly apiPrefix: string;
+    readonly cookie: Redacted.Redacted;
+    readonly database: NativeCoreDatabase;
+    readonly fixture: NativeShellUserFixture;
+  }) {
+    const crypto = yield* Crypto.Crypto;
+    const client = yield* HttpClient.HttpClient;
+    const { tenantId } = input.fixture.core;
+    const [workloadPrincipal, ordinaryPrincipal] = [yield* crypto.randomUUIDv4(), yield* crypto.randomUUIDv4()];
+    yield* input.database.insert(principals).values([
+      {
+        displayName: 'CRM · zakládání klientů · Firma',
+        kind: 'service',
+        platformRole: 'internal_workload',
+        principalId: workloadPrincipal,
+        status: 'active',
+        tenantId,
+      },
+      {
+        displayName: 'Ordinary integration',
+        kind: 'service',
+        principalId: ordinaryPrincipal,
+        status: 'active',
+        tenantId,
+      },
+    ]);
+    const archive = Effect.fn('ServerOwnerRelayNative.archivePrincipal')(function* archivePrincipal(
+      principalId: string,
+    ) {
+      const response = yield* client.post(`${input.fixture.origin}${input.apiPrefix}/auth/identity/principal-status`, {
+        body: yield* HttpBody.json({ expectedStatus: 'active', newStatus: 'archived', principalId, reason: 'Retire' }),
+        headers: {
+          cookie: Redacted.value(input.cookie),
+          'idempotency-key': yield* crypto.randomUUIDv4(),
+          origin: input.fixture.origin,
+        },
+      });
+      const [row] = yield* input.database
+        .select({ status: principals.status })
+        .from(principals)
+        .where(eq(principals.principalId, principalId));
+      return { status: response.status, stored: row?.status };
+    });
+    // The administrator's right holds: an ordinary service principal is archived.
+    expect(yield* archive(ordinaryPrincipal)).toEqual({ status: 200, stored: 'archived' });
+    // The platform's own principal is refused and stays active.
+    const refused = yield* archive(workloadPrincipal);
+    expect(refused.status).not.toBe(200);
+    expect(refused.stored).toBe('active');
+    yield* deleteTestCoreOutbox(input.admin, tenantId);
+    expect(yield* input.database.query.outboxMessages.findMany({ where: { tenantId } })).toHaveLength(0);
   },
 );
 
@@ -1389,23 +1603,37 @@ const exerciseMarketBootstrap = Effect.fn('ServerOwnerRelayNative.exerciseMarket
   },
 );
 
-const assertNativeManagedIdentityActions = Effect.fn('ServerOwnerRelayNative.assertManagedIdentityActions')(
-  function* assertNativeManagedIdentityActions(
+/**
+ * A module credential is the platform's: its principal is the module's service principal in the platform tenant, and
+ * no person ran an identity Action for it, in the fixture tenant or the platform tenant. Returns the fixture tenant's
+ * Action count, for the run's evidence log.
+ */
+const assertPlatformIssuedModuleCredential = Effect.fn('ServerOwnerRelayNative.assertPlatformIssuedModuleCredential')(
+  function* assertPlatformIssuedModuleCredential(
     database: NativeCoreDatabase,
-    input: {
-      readonly authContextRef: Redacted.Redacted;
-      readonly principalId: string;
-      readonly tenantId: string;
-    },
+    input: { readonly appId: string; readonly serviceId: string; readonly tenantId: string },
   ) {
-    const invocations = yield* database.query.actionInvocations.findMany({ where: { tenantId: input.tenantId } });
-    for (const actionKey of ['core.identity.create-non-human-principal', 'core.identity.bind-managed-api-key']) {
-      const invocation = invocations.find((entry) => entry.actionKey === actionKey);
-      expect(invocation?.status).toBe('succeeded');
-      expect(invocation?.principalId).toBe(input.principalId);
-      expect(invocation?.authContextRef === Redacted.value(input.authContextRef)).toBe(true);
-    }
-    return invocations.length;
+    const principal = yield* database.query.principals.findFirst({ where: { principalId: input.serviceId } });
+    expect(
+      Schema.is(
+        Schema.Struct({
+          displayName: Schema.Literal(`module:${input.appId}`),
+          kind: Schema.Literal('service'),
+          status: Schema.Literal('active'),
+          tenantId: Schema.Literal(PLATFORM_TENANT.tenantId),
+        }),
+      )(principal),
+    ).toBe(true);
+    const identityActions = new Set(['core.identity.create-non-human-principal', 'core.identity.bind-managed-api-key']);
+    const fixtureInvocations = yield* database.query.actionInvocations.findMany({
+      where: { tenantId: input.tenantId },
+    });
+    const platformInvocations = yield* database.query.actionInvocations.findMany({
+      where: { tenantId: PLATFORM_TENANT.tenantId },
+    });
+    expect(platformInvocations).toEqual([]);
+    expect(fixtureInvocations.filter((entry) => identityActions.has(entry.actionKey))).toEqual([]);
+    return fixtureInvocations.length;
   },
 );
 
@@ -2938,7 +3166,14 @@ it.live('signs a real Core-bound user into the actual packaged Shell and reads i
     }
   }).pipe(
     Effect.timeout('45 seconds'),
-    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeHttpClient.layerNodeHttp,
+        Reactivity.layer,
+        makeDatabaseIdentityEnrollmentLive(SHELL_DATABASE_IDENTITY_ENROLLMENT),
+      ),
+    ),
   ),
 );
 
@@ -3082,255 +3317,231 @@ it.live('derives and publishes real Shell Party Catalog Composition with matchin
     }
   }).pipe(
     Effect.timeout('60 seconds'),
-    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeHttpClient.layerNodeHttp,
+        Reactivity.layer,
+        makeDatabaseIdentityEnrollmentLive(SHELL_DATABASE_IDENTITY_ENROLLMENT),
+      ),
+    ),
   ),
 );
 
-it.live('creates a real separately bound managed service credential through packaged Shell HTTP', () =>
-  Effect.gen(function* realManagedServiceCredential() {
-    const children: ChildProcessHandle[] = [];
-    const result = yield* Effect.exit(
-      Effect.scoped(
-        Effect.gen(function* issueRealManagedServiceCredential() {
-          let encoded: string | null = null;
-          const source = yield* startNativeHttpServer((request) => {
-            if (new URL(request.url).pathname !== '/active') {
-              return Promise.resolve(new Response(null, { status: 404 }));
-            }
-            if (encoded === null) {
-              return Promise.resolve(new Response(null, { status: 503 }));
-            }
-            return Promise.resolve(
-              new Response(encoded, { headers: { 'content-type': 'application/json' }, status: 200 }),
-            );
-          });
-          const compositionUrl = `${source.origin}/active`;
-          const fixture = yield* makePackagedShellUserFixture(compositionUrl);
-          const shell = fixture.application;
-          children.push(shell.child);
-          const party = yield* startPackagedApplication({
-            appId: 'party-registry',
-            compositionUrl,
-            relativeDirectory: '../../verticals/party-registry',
-          });
-          children.push(party.child);
-          const catalog = yield* startPackagedApplication({
-            appId: 'catalog',
-            compositionUrl,
-            relativeDirectory: '../../verticals/catalog',
-          });
-          children.push(catalog.child);
-          const client = yield* HttpClient.HttpClient;
-          const observe = Effect.fn('ServerOwnerRelayNative.observeCompositionArtifact')(
-            function* observeCompositionArtifact(url: string) {
-              const response = yield* client.get(url, { headers: { 'cache-control': 'no-cache' } });
-              expect(response.status).toBe(200);
-              return { bytes: new Uint8Array(yield* response.arrayBuffer), url };
-            },
-          );
-          const snapshot = yield* deriveActiveApplicationCompositionSnapshot({
-            environment: 'development',
-            modules: [
-              {
-                appId: 'party-registry',
-                backend: { baseUrl: `${party.origin}/`, transport: 'node-http' },
-                contract: yield* observe(`${party.origin}${ONTOS_MODULE_CONTRACT_PATH}`),
-                federationManifest: yield* observe(`${party.origin}/mf-manifest.json`),
-              },
-              {
-                appId: 'catalog',
-                backend: { baseUrl: `${catalog.origin}/`, transport: 'node-http' },
-                contract: yield* observe(`${catalog.origin}${ONTOS_MODULE_CONTRACT_PATH}`),
-                federationManifest: yield* observe(`${catalog.origin}/mf-manifest.json`),
-              },
-            ],
-            observedAt: yield* DateTime.now,
-            shell: {
-              federationManifest: yield* observe(`${shell.origin}/mf-manifest.json`),
-              runtimeContract: yield* observe(`${shell.origin}${ONTOS_SHELL_RUNTIME_CONTRACT_PATH}`),
-            },
-            validity: Duration.minutes(15),
-          });
-          const approved = yield* validateActiveApplicationCompositionSnapshot(snapshot);
-          const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
-          const admin = yield* PgClient.make({ url: Redacted.make(connections.admin.connectionString) });
-          const database = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, admin));
-          yield* database.transaction(
-            Effect.fn('ServerOwnerRelayNative.drainPreviousAuthority')(function* drainPreviousAuthority(transaction) {
-              yield* lockApplicationCompositionPublication(transaction);
-              const previous = yield* transaction.query.applicationCompositionAuthority.findFirst({
-                where: { authorityKey: 'active' },
-              });
-              if (previous !== undefined && previous.revision !== approved.composition.revision) {
-                yield* closeApplicationCompositionDurableAdmission(transaction, previous.revision);
-                yield* drainApplicationCompositionAuthority(transaction, previous.revision);
+it.live(
+  'provisions a module credential through the platform, bound to the module principal and issued by no person',
+  () =>
+    Effect.gen(function* realManagedServiceCredential() {
+      const children: ChildProcessHandle[] = [];
+      const result = yield* Effect.exit(
+        Effect.scoped(
+          Effect.gen(function* issueRealManagedServiceCredential() {
+            let encoded: string | null = null;
+            const source = yield* startNativeHttpServer((request) => {
+              if (new URL(request.url).pathname !== '/active') {
+                return Promise.resolve(new Response(null, { status: 404 }));
               }
-            }),
-          );
-          yield* publishTestApplicationCompositionAuthority(database, approved);
-          encoded = yield* encodeActiveApplicationCompositionSnapshot(approved);
-          const response = yield* client.get(compositionUrl);
-          expect(response.status).toBe(200);
-          const received = yield* response.json.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(ActiveApplicationCompositionSnapshotSchema)),
-          );
-          const current = yield* validateActiveApplicationCompositionSnapshot(received);
-          expect(current.composition.revision).toBe(approved.composition.revision);
-          expect(current.composition.shell.deployment).toEqual({
-            appId: 'shell-super-app',
-            buildMarker: shell.compiled.buildMarker,
-          });
-          expect(current.composition.modules).toHaveLength(2);
-          expect(current.composition.modules).toEqual(
-            expect.arrayContaining([
-              expect.objectContaining({
-                backend: { baseUrl: `${party.origin}/`, transport: 'node-http' },
-                deployment: { appId: 'party-registry', buildMarker: party.compiled.buildMarker },
-                federation: expect.objectContaining({ execution: 'browser' }),
+              if (encoded === null) {
+                return Promise.resolve(new Response(null, { status: 503 }));
+              }
+              return Promise.resolve(
+                new Response(encoded, { headers: { 'content-type': 'application/json' }, status: 200 }),
+              );
+            });
+            const compositionUrl = `${source.origin}/active`;
+            const fixture = yield* makePackagedShellUserFixture(compositionUrl);
+            const shell = fixture.application;
+            children.push(shell.child);
+            const party = yield* startPackagedApplication({
+              appId: 'party-registry',
+              compositionUrl,
+              relativeDirectory: '../../verticals/party-registry',
+            });
+            children.push(party.child);
+            const catalog = yield* startPackagedApplication({
+              appId: 'catalog',
+              compositionUrl,
+              relativeDirectory: '../../verticals/catalog',
+            });
+            children.push(catalog.child);
+            const client = yield* HttpClient.HttpClient;
+            const observe = Effect.fn('ServerOwnerRelayNative.observeCompositionArtifact')(
+              function* observeCompositionArtifact(url: string) {
+                const response = yield* client.get(url, { headers: { 'cache-control': 'no-cache' } });
+                expect(response.status).toBe(200);
+                return { bytes: new Uint8Array(yield* response.arrayBuffer), url };
+              },
+            );
+            const snapshot = yield* deriveActiveApplicationCompositionSnapshot({
+              environment: 'development',
+              modules: [
+                {
+                  appId: 'party-registry',
+                  backend: { baseUrl: `${party.origin}/`, transport: 'node-http' },
+                  contract: yield* observe(`${party.origin}${ONTOS_MODULE_CONTRACT_PATH}`),
+                  federationManifest: yield* observe(`${party.origin}/mf-manifest.json`),
+                },
+                {
+                  appId: 'catalog',
+                  backend: { baseUrl: `${catalog.origin}/`, transport: 'node-http' },
+                  contract: yield* observe(`${catalog.origin}${ONTOS_MODULE_CONTRACT_PATH}`),
+                  federationManifest: yield* observe(`${catalog.origin}/mf-manifest.json`),
+                },
+              ],
+              observedAt: yield* DateTime.now,
+              shell: {
+                federationManifest: yield* observe(`${shell.origin}/mf-manifest.json`),
+                runtimeContract: yield* observe(`${shell.origin}${ONTOS_SHELL_RUNTIME_CONTRACT_PATH}`),
+              },
+              validity: Duration.minutes(15),
+            });
+            const approved = yield* validateActiveApplicationCompositionSnapshot(snapshot);
+            const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+            const admin = yield* PgClient.make({ url: Redacted.make(connections.admin.connectionString) });
+            const database = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, admin));
+            yield* database.transaction(
+              Effect.fn('ServerOwnerRelayNative.drainPreviousAuthority')(function* drainPreviousAuthority(transaction) {
+                yield* lockApplicationCompositionPublication(transaction);
+                const previous = yield* transaction.query.applicationCompositionAuthority.findFirst({
+                  where: { authorityKey: 'active' },
+                });
+                if (previous !== undefined && previous.revision !== approved.composition.revision) {
+                  yield* closeApplicationCompositionDurableAdmission(transaction, previous.revision);
+                  yield* drainApplicationCompositionAuthority(transaction, previous.revision);
+                }
               }),
-              expect.objectContaining({
-                backend: { baseUrl: `${catalog.origin}/`, transport: 'node-http' },
-                deployment: { appId: 'catalog', buildMarker: catalog.compiled.buildMarker },
-                federation: expect.objectContaining({ execution: 'browser' }),
-              }),
-            ]),
-          );
-          const runtime = yield* PgClient.make({ url: Redacted.make(connections.runtime.connectionString) });
-          const runtimeDatabase = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, runtime));
-          const authority = yield* runtimeDatabase.query.applicationCompositionAuthority.findFirst({
-            where: { authorityKey: 'active' },
-          });
-          expect(authority?.revision).toBe(current.composition.revision);
-          expect(authority?.phase).toBe('active');
-          expect(authority?.durableWorkAdmission).toBe('open');
+            );
+            yield* publishTestApplicationCompositionAuthority(database, approved);
+            encoded = yield* encodeActiveApplicationCompositionSnapshot(approved);
+            const response = yield* client.get(compositionUrl);
+            expect(response.status).toBe(200);
+            const received = yield* response.json.pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(ActiveApplicationCompositionSnapshotSchema)),
+            );
+            const current = yield* validateActiveApplicationCompositionSnapshot(received);
+            expect(current.composition.revision).toBe(approved.composition.revision);
+            expect(current.composition.shell.deployment).toEqual({
+              appId: 'shell-super-app',
+              buildMarker: shell.compiled.buildMarker,
+            });
+            expect(current.composition.modules).toHaveLength(2);
+            expect(current.composition.modules).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  backend: { baseUrl: `${party.origin}/`, transport: 'node-http' },
+                  deployment: { appId: 'party-registry', buildMarker: party.compiled.buildMarker },
+                  federation: expect.objectContaining({ execution: 'browser' }),
+                }),
+                expect.objectContaining({
+                  backend: { baseUrl: `${catalog.origin}/`, transport: 'node-http' },
+                  deployment: { appId: 'catalog', buildMarker: catalog.compiled.buildMarker },
+                  federation: expect.objectContaining({ execution: 'browser' }),
+                }),
+              ]),
+            );
+            const runtime = yield* PgClient.make({ url: Redacted.make(connections.runtime.connectionString) });
+            const runtimeDatabase = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, runtime));
+            const authority = yield* runtimeDatabase.query.applicationCompositionAuthority.findFirst({
+              where: { authorityKey: 'active' },
+            });
+            expect(authority?.revision).toBe(current.composition.revision);
+            expect(authority?.phase).toBe('active');
+            expect(authority?.durableWorkAdmission).toBe('open');
 
-          yield* grantNativeIdentityAdministration(fixture.core);
-          const crypto = yield* Crypto.Crypto;
-          const signIn = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/sign-in`, {
-            body: yield* HttpBody.json({ email: fixture.email, password: Redacted.value(fixture.password) }),
-            headers: { origin: fixture.origin },
-          });
-          expect(signIn.status).toBe(200);
-          const cookie = Redacted.make(Cookies.toCookieHeader(signIn.cookies));
-          const sessionResponse = yield* client.get(`${fixture.origin}${shell.apiPrefix}/auth/session`, {
-            headers: { cookie: Redacted.value(cookie), origin: fixture.origin },
-          });
-          expect(sessionResponse.status).toBe(200);
-          const sessionView = yield* sessionResponse.json.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(AuthenticatedSessionSchema)),
-          );
-          expect(sessionView.identity.principalId).toBe(fixture.core.manager.principalId);
-          const realSession = yield* fixture.persistence.executor.query.session.findFirst({
-            columns: { id: true },
-            where: { userId: fixture.core.manager.authBindingId },
-          });
-          if (realSession === undefined) {
-            return yield* new PackagedOwnerStartupError({ reason: 'Actual manager session was not persisted' });
-          }
-          const realAuthContextRef = `better-auth-session:${realSession.id}`;
-          expect(realAuthContextRef === fixture.core.manager.authContextRef).toBe(false);
-          const create = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/identity/principals`, {
-            body: yield* HttpBody.json({ displayName: 'Native source workload', kind: 'service' }),
-            headers: {
-              cookie: Redacted.value(cookie),
-              'idempotency-key': yield* crypto.randomUUIDv4(),
-              origin: fixture.origin,
-              'x-correlation-id': yield* crypto.randomUUIDv4(),
-            },
-          });
-          yield* Effect.logInfo('Real managed fixture principal HTTP result', { status: create.status });
-          expect(create.status).toBe(200);
-          const created = yield* create.json.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(PrincipalMutationResponseSchema)),
-          );
-          const serviceId = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema.fields.principalId)(
-            created.principalId,
-          );
-          expect(serviceId).not.toBe(fixture.core.manager.principalId);
-          const issue = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/identity/api-keys/managed`, {
-            body: yield* HttpBody.json({ name: 'Native source relay', principalId: serviceId }),
-            headers: {
-              cookie: Redacted.value(cookie),
-              'idempotency-key': yield* crypto.randomUUIDv4(),
-              origin: fixture.origin,
-              'x-correlation-id': yield* crypto.randomUUIDv4(),
-            },
-          });
-          yield* Effect.logInfo('Real managed fixture key HTTP result', { status: issue.status });
-          if (issue.status !== 200) {
-            const failure = yield* issue.json;
-            const mergedCookies = Cookies.merge(Cookies.merge(signIn.cookies, sessionResponse.cookies), create.cookies);
-            const sameSession = yield* client.get(`${fixture.origin}${shell.apiPrefix}/auth/session`, {
+            yield* grantNativeIdentityAdministration(fixture.core);
+            const signIn = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/sign-in`, {
+              body: yield* HttpBody.json({ email: fixture.email, password: Redacted.value(fixture.password) }),
+              headers: { origin: fixture.origin },
+            });
+            expect(signIn.status).toBe(200);
+            const cookie = Redacted.make(Cookies.toCookieHeader(signIn.cookies));
+            const sessionResponse = yield* client.get(`${fixture.origin}${shell.apiPrefix}/auth/session`, {
               headers: { cookie: Redacted.value(cookie), origin: fixture.origin },
             });
-            yield* Effect.logInfo('Sanitized managed provider authentication diagnostic', {
-              declaredShellAuthenticationRequired: Schema.is(ShellAuthenticationRequiredProblemSchema)(failure),
-              providerExpectedSessionCookieName: getCookies({ baseURL: fixture.configuration.baseUrl }).sessionToken
-                .name,
-              receivedCookieNames: Object.keys(signIn.cookies.cookies),
-              responseCookieUpdatesChanged: Cookies.toCookieHeader(mergedCookies) !== Redacted.value(cookie),
-              sameCookieSessionHttpStatus: sameSession.status,
-              secureCookieConfiguration: fixture.configuration.secureCookies,
-              status: issue.status,
+            expect(sessionResponse.status).toBe(200);
+            const sessionView = yield* sessionResponse.json.pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(AuthenticatedSessionSchema)),
+            );
+            expect(sessionView.identity.principalId).toBe(fixture.core.manager.principalId);
+            const realSession = yield* fixture.persistence.executor.query.session.findFirst({
+              columns: { id: true },
+              where: { userId: fixture.core.manager.authBindingId },
             });
-          }
-          expect(issue.status).toBe(200);
-          const issued = yield* issue.json.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(Schema.toCodecJson(ApiKeyIssueResponseSchema))),
-            Effect.mapError(
-              () => new PackagedOwnerStartupError({ reason: 'Managed key response failed its public JSON codec' }),
-            ),
-          );
-          const keys = yield* makeApiKeyService().pipe(
-            Effect.provideService(AuthConfig, fixture.configuration),
-            Effect.provideService(AuthDatabase, fixture.persistence),
-          );
-          const provider = yield* keys.verify(Redacted.value(issued.secret));
-          const service = yield* fixture.resolver.resolveBetterAuthApiKey(provider.providerKeyId);
-          expect(service.principalId).toBe(serviceId);
-          expect(service.authBindingId).toBe(issued.authBindingId);
-          expect(service.tenantId).toBe(fixture.core.tenantId);
-          expect(fixture.resolver.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
-          const principal = yield* database.query.principals.findFirst({ where: { principalId: serviceId } });
-          expect(principal?.kind).toBe('service');
-          expect(principal?.status).toBe('active');
-          const binding = yield* database.query.principalAuthBindings.findFirst({
-            where: { principalAuthBindingId: issued.authBindingId },
-          });
-          expect(binding?.principalId).toBe(serviceId);
-          expect(binding?.subjectType).toBe('api_key');
-          expect(binding?.providerSubjectId === provider.providerKeyId).toBe(true);
-          expect(binding?.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
-          const invocations = yield* database.query.actionInvocations.findMany({
-            where: { tenantId: fixture.core.tenantId },
-          });
-          for (const actionKey of ['core.identity.create-non-human-principal', 'core.identity.bind-managed-api-key']) {
-            const invocation = invocations.find((entry) => entry.actionKey === actionKey);
-            expect(invocation?.status).toBe('succeeded');
-            expect(invocation?.principalId).toBe(fixture.core.manager.principalId);
-            expect(invocation?.authContextRef === realAuthContextRef).toBe(true);
-          }
-          yield* Effect.logInfo('Real managed service credential independently verified', {
-            actionCount: invocations.length,
-            compositionRevision: approved.composition.revision,
-            namespaceMatches: true,
-            originalActorPreservedInCanonicalActions: true,
-            serviceDistinctFromActor: true,
-          });
-          return yield* Effect.void;
-        }),
+            if (realSession === undefined) {
+              return yield* new PackagedOwnerStartupError({ reason: 'Actual manager session was not persisted' });
+            }
+            const realAuthContextRef = `better-auth-session:${realSession.id}`;
+            expect(realAuthContextRef === fixture.core.manager.authContextRef).toBe(false);
+            yield* assertPlatformPrincipalStatusRefused({
+              admin,
+              apiPrefix: shell.apiPrefix,
+              cookie,
+              database,
+              fixture,
+            });
+            yield* assertDelegatedRefusalsBeforeBinding({ composition: current, database, fixture });
+            // The module credential, provisioned by the platform exactly as on every boot; no person issues it.
+            const issued = yield* provisionSourceModuleCredential({
+              appId: 'catalog',
+              // Attested for the release the Shell serves.
+              composition: current,
+              configuration: fixture.configuration,
+              database,
+              persistence: fixture.persistence,
+            });
+            const { serviceId } = issued;
+            expect(serviceId).not.toBe(fixture.core.manager.principalId);
+            const keys = yield* makeApiKeyService().pipe(
+              Effect.provideService(AuthConfig, fixture.configuration),
+              Effect.provideService(AuthDatabase, fixture.persistence),
+            );
+            const provider = yield* keys.verify(Redacted.value(issued.secret));
+            const service = yield* fixture.resolver.resolveBetterAuthApiKey(provider.providerKeyId);
+            expect(service.principalId).toBe(serviceId);
+            expect(service.authBindingId).toBe(issued.authBindingId);
+            expect(service.principalKind).toBe('service');
+            expect(service.tenantId).toBe(PLATFORM_TENANT.tenantId);
+            expect(fixture.resolver.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
+            const binding = yield* database.query.principalAuthBindings.findFirst({
+              where: { principalAuthBindingId: issued.authBindingId },
+            });
+            expect(binding?.principalId).toBe(serviceId);
+            expect(binding?.subjectType).toBe('api_key');
+            expect(binding?.providerSubjectId === provider.providerKeyId).toBe(true);
+            expect(binding?.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
+            const identityActionCount = yield* assertPlatformIssuedModuleCredential(database, {
+              appId: 'catalog',
+              serviceId,
+              tenantId: fixture.core.tenantId,
+            });
+            yield* Effect.logInfo('Real managed service credential independently verified', {
+              actionCount: identityActionCount,
+              compositionRevision: approved.composition.revision,
+              namespaceMatches: true,
+              originalActorPreservedInCanonicalActions: true,
+              serviceDistinctFromActor: true,
+            });
+            return yield* Effect.void;
+          }),
+        ),
+      );
+      for (const child of children) {
+        expect(yield* child.isRunning).toBe(false);
+      }
+      if (Exit.isFailure(result)) {
+        yield* Effect.failCause(result.cause);
+      }
+    }).pipe(
+      Effect.timeout('60 seconds'),
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeHttpClient.layerNodeHttp,
+          Reactivity.layer,
+          makeDatabaseIdentityEnrollmentLive(SHELL_DATABASE_IDENTITY_ENROLLMENT),
+        ),
       ),
-    );
-    for (const child of children) {
-      expect(yield* child.isRunning).toBe(false);
-    }
-    if (Exit.isFailure(result)) {
-      yield* Effect.failCause(result.cause);
-    }
-  }).pipe(
-    Effect.timeout('60 seconds'),
-    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
-  ),
+    ),
 );
 
 it.live(
@@ -3600,61 +3811,17 @@ it.live(
             }
             const realAuthContextRef = `better-auth-session:${realSession.id}`;
             expect(realAuthContextRef === fixture.core.manager.authContextRef).toBe(false);
-            const create = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/identity/principals`, {
-              body: yield* HttpBody.json({ displayName: 'Native source workload', kind: 'service' }),
-              headers: {
-                cookie: Redacted.value(cookie),
-                'idempotency-key': yield* crypto.randomUUIDv4(),
-                origin: fixture.origin,
-                'x-correlation-id': yield* crypto.randomUUIDv4(),
-              },
+            // The source module's credential, provisioned by the platform exactly as on every boot; no person issues it.
+            const issued = yield* provisionSourceModuleCredential({
+              appId: 'catalog',
+              // Attested for the release the Shell serves.
+              composition: current,
+              configuration: fixture.configuration,
+              database,
+              persistence: fixture.persistence,
             });
-            yield* Effect.logInfo('Real managed fixture principal HTTP result', { status: create.status });
-            expect(create.status).toBe(200);
-            const created = yield* create.json.pipe(
-              Effect.flatMap(Schema.decodeUnknownEffect(PrincipalMutationResponseSchema)),
-            );
-            const serviceId = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema.fields.principalId)(
-              created.principalId,
-            );
+            const { serviceId } = issued;
             expect(serviceId).not.toBe(fixture.core.manager.principalId);
-            const issue = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/identity/api-keys/managed`, {
-              body: yield* HttpBody.json({ name: 'Native source relay', principalId: serviceId }),
-              headers: {
-                cookie: Redacted.value(cookie),
-                'idempotency-key': yield* crypto.randomUUIDv4(),
-                origin: fixture.origin,
-                'x-correlation-id': yield* crypto.randomUUIDv4(),
-              },
-            });
-            yield* Effect.logInfo('Real managed fixture key HTTP result', { status: issue.status });
-            if (issue.status !== 200) {
-              const failure = yield* issue.json;
-              const mergedCookies = Cookies.merge(
-                Cookies.merge(signIn.cookies, sessionResponse.cookies),
-                create.cookies,
-              );
-              const sameSession = yield* client.get(`${fixture.origin}${shell.apiPrefix}/auth/session`, {
-                headers: { cookie: Redacted.value(cookie), origin: fixture.origin },
-              });
-              yield* Effect.logInfo('Sanitized managed provider authentication diagnostic', {
-                declaredShellAuthenticationRequired: Schema.is(ShellAuthenticationRequiredProblemSchema)(failure),
-                providerExpectedSessionCookieName: getCookies({ baseURL: fixture.configuration.baseUrl }).sessionToken
-                  .name,
-                receivedCookieNames: Object.keys(signIn.cookies.cookies),
-                responseCookieUpdatesChanged: Cookies.toCookieHeader(mergedCookies) !== Redacted.value(cookie),
-                sameCookieSessionHttpStatus: sameSession.status,
-                secureCookieConfiguration: fixture.configuration.secureCookies,
-                status: issue.status,
-              });
-            }
-            expect(issue.status).toBe(200);
-            const issued = yield* issue.json.pipe(
-              Effect.flatMap(Schema.decodeUnknownEffect(Schema.toCodecJson(ApiKeyIssueResponseSchema))),
-              Effect.mapError(
-                () => new PackagedOwnerStartupError({ reason: 'Managed key response failed its public JSON codec' }),
-              ),
-            );
             const keys = yield* makeApiKeyService().pipe(
               Effect.provideService(AuthConfig, fixture.configuration),
               Effect.provideService(AuthDatabase, fixture.persistence),
@@ -3663,7 +3830,7 @@ it.live(
             const service = yield* fixture.resolver.resolveBetterAuthApiKey(provider.providerKeyId);
             expect(service.principalId).toBe(serviceId);
             expect(service.authBindingId).toBe(issued.authBindingId);
-            expect(service.tenantId).toBe(fixture.core.tenantId);
+            expect(service.tenantId).toBe(PLATFORM_TENANT.tenantId);
             expect(fixture.resolver.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
             const principal = yield* database.query.principals.findFirst({ where: { principalId: serviceId } });
             expect(
@@ -3671,7 +3838,7 @@ it.live(
                 Schema.Struct({
                   kind: Schema.Literal('service'),
                   status: Schema.Literal('active'),
-                  tenantId: Schema.Literal(fixture.core.tenantId),
+                  tenantId: Schema.Literal(PLATFORM_TENANT.tenantId),
                 }),
               )(principal),
             ).toBe(true);
@@ -3681,15 +3848,15 @@ it.live(
             expect(binding?.principalId).toBe(serviceId);
             expect(
               Schema.is(
-                Schema.Struct({ status: Schema.Literal('active'), tenantId: Schema.Literal(fixture.core.tenantId) }),
+                Schema.Struct({ status: Schema.Literal('active'), tenantId: Schema.Literal(PLATFORM_TENANT.tenantId) }),
               )(binding),
             ).toBe(true);
             expect(binding?.subjectType).toBe('api_key');
             expect(binding?.providerSubjectId === provider.providerKeyId).toBe(true);
             expect(binding?.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
-            const identityActionCount = yield* assertNativeManagedIdentityActions(database, {
-              authContextRef: Redacted.make(realAuthContextRef),
-              principalId: fixture.core.manager.principalId,
+            const identityActionCount = yield* assertPlatformIssuedModuleCredential(database, {
+              appId: 'catalog',
+              serviceId,
               tenantId: fixture.core.tenantId,
             });
             yield* Effect.logInfo('Real managed service credential independently verified', {
@@ -3725,16 +3892,6 @@ it.live(
                 publicJwks: gatewayMaterial.publicJwks,
               },
               relativeDirectory: '.',
-              sourceBindings: Redacted.make(
-                JSON.stringify([
-                  {
-                    compositionRevision: approved.composition.revision,
-                    providerKeyId: provider.providerKeyId,
-                    sourceAppId: 'catalog',
-                    sourceBuildMarker: catalog.compiled.buildMarker,
-                  },
-                ]),
-              ),
             });
             children.push(enrolledShell.child);
             expect(enrolledShell.origin).toBe(shell.origin);
@@ -3742,7 +3899,7 @@ it.live(
             expect(yield* catalog.child.isRunning).toBe(true);
             yield* catalog.child.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
             expect(yield* catalog.child.isRunning).toBe(false);
-            const enrolledCatalog = yield* startPackagedApplication({
+            let enrolledCatalog = yield* startPackagedApplication({
               appId: 'catalog',
               compositionUrl,
               gateway: { issuer: fixture.origin, publicJwks: gatewayMaterial.publicJwks },
@@ -4192,6 +4349,64 @@ it.live(
               sourceWorkloadOwnGatewayContextRefused: true,
             });
 
+            // The same build with no key handed over: served by the owners process, which claims its store copy but gets
+            // no key on the channel, its delegated call fails closed with the reason; no environment variable can stand
+            // in. Then it is served again with its key, as before, for the controls below.
+            yield* enrolledCatalog.child.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
+            const keylessCatalog = yield* startPackagedApplication({
+              appId: 'catalog',
+              compositionUrl,
+              gateway: { issuer: fixture.origin, publicJwks: gatewayMaterial.publicJwks },
+              relativeDirectory: '../../verticals/catalog',
+            });
+            children.push(keylessCatalog.child);
+            expect(keylessCatalog.origin).toBe(catalog.origin);
+            const keylessAuthorization = yield* issueNativeApiKeyGatewayAuthorization({
+              apiKey: personalKey.secret,
+              audience: 'catalog',
+              authBindingId: personalKey.authBindingId,
+              authContextRef: personalAuthContextRef,
+              buildMarker: catalog.compiled.buildMarker,
+              origin: fixture.origin,
+              principalId: fixture.core.manager.principalId,
+              publicKey: signingKeyPair.publicKey,
+              revision: approved.composition.revision,
+            });
+            const keyless = yield* client.post(
+              `${keylessCatalog.origin}${keylessCatalog.apiPrefix}/catalog/actions/set-product-manufacturer`,
+              {
+                body: yield* HttpBody.json({
+                  effectivePeriod: {},
+                  evidenceRefs: ['native/manufacturer'],
+                  reason: 'Manufacturer identity verified through Party without a module credential',
+                  relationId: yield* crypto.randomUUIDv4(),
+                  subject: productRef,
+                  target: { kind: 'PARTY', partyRef },
+                }),
+                headers: {
+                  authorization: Redacted.value(keylessAuthorization.authorization),
+                  'idempotency-key': yield* crypto.randomUUIDv4(),
+                  'x-correlation-id': yield* crypto.randomUUIDv4(),
+                  'x-ontos-composition-revision': approved.composition.revision,
+                },
+              },
+            );
+            expect(keyless.status).not.toBe(200);
+            expect(
+              keylessCatalog.diagnostics.some((line) =>
+                Redacted.value(line).includes('No module credential of catalog in this process'),
+              ),
+            ).toBe(true);
+            yield* keylessCatalog.child.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
+            enrolledCatalog = yield* startPackagedApplication({
+              appId: 'catalog',
+              compositionUrl,
+              gateway: { issuer: fixture.origin, publicJwks: gatewayMaterial.publicJwks },
+              relativeDirectory: '../../verticals/catalog',
+              relaySource: { apiKey: issued.secret, shellBaseUrl: `${fixture.origin}/shell-super-app-api` },
+            });
+            children.push(enrolledCatalog.child);
+
             yield* assertNativeLegalEntityWithPartyStopped({
               catalog: enrolledCatalog,
               database,
@@ -4244,7 +4459,14 @@ it.live(
       }
     }).pipe(
       Effect.timeout('120 seconds'),
-      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeHttpClient.layerNodeHttp,
+          Reactivity.layer,
+          makeDatabaseIdentityEnrollmentLive(SHELL_DATABASE_IDENTITY_ENROLLMENT),
+        ),
+      ),
     ),
   150_000,
 );
@@ -4500,58 +4722,17 @@ it.live('completes the real CCC Guest attribution through Party with the origina
           }
           const realAuthContextRef = `better-auth-session:${realSession.id}`;
           expect(realAuthContextRef === fixture.core.manager.authContextRef).toBe(false);
-          const create = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/identity/principals`, {
-            body: yield* HttpBody.json({ displayName: 'Native source workload', kind: 'service' }),
-            headers: {
-              cookie: Redacted.value(cookie),
-              'idempotency-key': yield* crypto.randomUUIDv4(),
-              origin: fixture.origin,
-              'x-correlation-id': yield* crypto.randomUUIDv4(),
-            },
+          // The source module's credential, provisioned by the platform exactly as on every boot; no person issues it.
+          const issued = yield* provisionSourceModuleCredential({
+            appId: 'commerce-customer-context',
+            // Attested for the release the Shell serves.
+            composition: current,
+            configuration: fixture.configuration,
+            database,
+            persistence: fixture.persistence,
           });
-          yield* Effect.logInfo('Real managed fixture principal HTTP result', { status: create.status });
-          expect(create.status).toBe(200);
-          const created = yield* create.json.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(PrincipalMutationResponseSchema)),
-          );
-          const serviceId = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema.fields.principalId)(
-            created.principalId,
-          );
+          const { serviceId } = issued;
           expect(serviceId).not.toBe(fixture.core.manager.principalId);
-          const issue = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/identity/api-keys/managed`, {
-            body: yield* HttpBody.json({ name: 'Native source relay', principalId: serviceId }),
-            headers: {
-              cookie: Redacted.value(cookie),
-              'idempotency-key': yield* crypto.randomUUIDv4(),
-              origin: fixture.origin,
-              'x-correlation-id': yield* crypto.randomUUIDv4(),
-            },
-          });
-          yield* Effect.logInfo('Real managed fixture key HTTP result', { status: issue.status });
-          if (issue.status !== 200) {
-            const failure = yield* issue.json;
-            const mergedCookies = Cookies.merge(Cookies.merge(signIn.cookies, sessionResponse.cookies), create.cookies);
-            const sameSession = yield* client.get(`${fixture.origin}${shell.apiPrefix}/auth/session`, {
-              headers: { cookie: Redacted.value(cookie), origin: fixture.origin },
-            });
-            yield* Effect.logInfo('Sanitized managed provider authentication diagnostic', {
-              declaredShellAuthenticationRequired: Schema.is(ShellAuthenticationRequiredProblemSchema)(failure),
-              providerExpectedSessionCookieName: getCookies({ baseURL: fixture.configuration.baseUrl }).sessionToken
-                .name,
-              receivedCookieNames: Object.keys(signIn.cookies.cookies),
-              responseCookieUpdatesChanged: Cookies.toCookieHeader(mergedCookies) !== Redacted.value(cookie),
-              sameCookieSessionHttpStatus: sameSession.status,
-              secureCookieConfiguration: fixture.configuration.secureCookies,
-              status: issue.status,
-            });
-          }
-          expect(issue.status).toBe(200);
-          const issued = yield* issue.json.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(Schema.toCodecJson(ApiKeyIssueResponseSchema))),
-            Effect.mapError(
-              () => new PackagedOwnerStartupError({ reason: 'Managed key response failed its public JSON codec' }),
-            ),
-          );
           const keys = yield* makeApiKeyService().pipe(
             Effect.provideService(AuthConfig, fixture.configuration),
             Effect.provideService(AuthDatabase, fixture.persistence),
@@ -4560,7 +4741,7 @@ it.live('completes the real CCC Guest attribution through Party with the origina
           const service = yield* fixture.resolver.resolveBetterAuthApiKey(provider.providerKeyId);
           expect(service.principalId).toBe(serviceId);
           expect(service.authBindingId).toBe(issued.authBindingId);
-          expect(service.tenantId).toBe(fixture.core.tenantId);
+          expect(service.tenantId).toBe(PLATFORM_TENANT.tenantId);
           expect(fixture.resolver.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
           const principal = yield* database.query.principals.findFirst({ where: { principalId: serviceId } });
           expect(
@@ -4568,7 +4749,7 @@ it.live('completes the real CCC Guest attribution through Party with the origina
               Schema.Struct({
                 kind: Schema.Literal('service'),
                 status: Schema.Literal('active'),
-                tenantId: Schema.Literal(fixture.core.tenantId),
+                tenantId: Schema.Literal(PLATFORM_TENANT.tenantId),
               }),
             )(principal),
           ).toBe(true);
@@ -4578,15 +4759,15 @@ it.live('completes the real CCC Guest attribution through Party with the origina
           expect(binding?.principalId).toBe(serviceId);
           expect(
             Schema.is(
-              Schema.Struct({ status: Schema.Literal('active'), tenantId: Schema.Literal(fixture.core.tenantId) }),
+              Schema.Struct({ status: Schema.Literal('active'), tenantId: Schema.Literal(PLATFORM_TENANT.tenantId) }),
             )(binding),
           ).toBe(true);
           expect(binding?.subjectType).toBe('api_key');
           expect(binding?.providerSubjectId === provider.providerKeyId).toBe(true);
           expect(binding?.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
-          const identityActionCount = yield* assertNativeManagedIdentityActions(database, {
-            authContextRef: Redacted.make(realAuthContextRef),
-            principalId: fixture.core.manager.principalId,
+          const identityActionCount = yield* assertPlatformIssuedModuleCredential(database, {
+            appId: 'commerce-customer-context',
+            serviceId,
             tenantId: fixture.core.tenantId,
           });
           yield* Effect.logInfo('Real managed service credential independently verified', {
@@ -4617,16 +4798,6 @@ it.live('completes the real CCC Guest attribution through Party with the origina
               publicJwks: gatewayMaterial.publicJwks,
             },
             relativeDirectory: '.',
-            sourceBindings: Redacted.make(
-              JSON.stringify([
-                {
-                  compositionRevision: approved.composition.revision,
-                  providerKeyId: provider.providerKeyId,
-                  sourceAppId: 'commerce-customer-context',
-                  sourceBuildMarker: customerContext.compiled.buildMarker,
-                },
-              ]),
-            ),
           });
           children.push(enrolledShell.child);
           expect(enrolledShell.origin).toBe(shell.origin);
@@ -4956,7 +5127,14 @@ it.live('completes the real CCC Guest attribution through Party with the origina
     }
   }).pipe(
     Effect.timeout('120 seconds'),
-    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeHttpClient.layerNodeHttp,
+        Reactivity.layer,
+        makeDatabaseIdentityEnrollmentLive(SHELL_DATABASE_IDENTITY_ENROLLMENT),
+      ),
+    ),
   ),
 );
 
@@ -5276,91 +5454,41 @@ it.live(
             }
             const realAuthContextRef = `better-auth-session:${realSession.id}`;
             expect(realAuthContextRef === fixture.core.manager.authContextRef).toBe(false);
-            const create = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/identity/principals`, {
-              body: yield* HttpBody.json({ displayName: 'Native source workload', kind: 'service' }),
-              headers: {
-                cookie: Redacted.value(cookie),
-                'idempotency-key': yield* crypto.randomUUIDv4(),
-                origin: fixture.origin,
-                'x-correlation-id': yield* crypto.randomUUIDv4(),
-              },
+            // The source module's credential, provisioned by the platform exactly as on every boot; no person issues it.
+            const issued = yield* provisionSourceModuleCredential({
+              appId: 'commerce-customer-context',
+              // Attested for the release the Shell serves.
+              composition: current,
+              configuration: fixture.configuration,
+              database,
+              persistence: fixture.persistence,
             });
-            yield* Effect.logInfo('Real managed fixture principal HTTP result', { status: create.status });
-            expect(create.status).toBe(200);
-            const createdService = yield* create.json.pipe(
-              Effect.flatMap(Schema.decodeUnknownEffect(PrincipalMutationResponseSchema)),
-            );
-            const serviceId = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema.fields.principalId)(
-              createdService.principalId,
-            );
+            const { serviceId } = issued;
             expect(serviceId).not.toBe(fixture.core.manager.principalId);
-            const issue = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/identity/api-keys/managed`, {
-              body: yield* HttpBody.json({ name: 'Native source relay', principalId: serviceId }),
-              headers: {
-                cookie: Redacted.value(cookie),
-                'idempotency-key': yield* crypto.randomUUIDv4(),
-                origin: fixture.origin,
-                'x-correlation-id': yield* crypto.randomUUIDv4(),
-              },
-            });
-            yield* Effect.logInfo('Real managed fixture key HTTP result', { status: issue.status });
-            if (issue.status !== 200) {
-              const failure = yield* issue.json;
-              const mergedCookies = Cookies.merge(
-                Cookies.merge(signIn.cookies, sessionResponse.cookies),
-                create.cookies,
-              );
-              const sameSession = yield* client.get(`${fixture.origin}${shell.apiPrefix}/auth/session`, {
-                headers: { cookie: Redacted.value(cookie), origin: fixture.origin },
-              });
-              yield* Effect.logInfo('Sanitized managed provider authentication diagnostic', {
-                declaredShellAuthenticationRequired: Schema.is(ShellAuthenticationRequiredProblemSchema)(failure),
-                providerExpectedSessionCookieName: getCookies({ baseURL: fixture.configuration.baseUrl }).sessionToken
-                  .name,
-                receivedCookieNames: Object.keys(signIn.cookies.cookies),
-                responseCookieUpdatesChanged: Cookies.toCookieHeader(mergedCookies) !== Redacted.value(cookie),
-                sameCookieSessionHttpStatus: sameSession.status,
-                secureCookieConfiguration: fixture.configuration.secureCookies,
-                status: issue.status,
-              });
-            }
-            expect(issue.status).toBe(200);
-            const issued = yield* issue.json.pipe(
-              Effect.flatMap(Schema.decodeUnknownEffect(Schema.toCodecJson(ApiKeyIssueResponseSchema))),
-              Effect.mapError(
-                () => new PackagedOwnerStartupError({ reason: 'Managed key response failed its public JSON codec' }),
-              ),
-            );
             const keys = yield* makeApiKeyService().pipe(
               Effect.provideService(AuthConfig, fixture.configuration),
               Effect.provideService(AuthDatabase, fixture.persistence),
             );
             const provider = yield* keys.verify(Redacted.value(issued.secret));
-            const issueMarketKey = yield* client.post(
-              `${fixture.origin}${shell.apiPrefix}/auth/identity/api-keys/managed`,
-              {
-                body: yield* HttpBody.json({ name: 'Native Market source relay', principalId: serviceId }),
-                headers: {
-                  cookie: Redacted.value(cookie),
-                  'idempotency-key': yield* crypto.randomUUIDv4(),
-                  origin: fixture.origin,
-                  'x-correlation-id': yield* crypto.randomUUIDv4(),
-                },
-              },
-            );
-            expect(issueMarketKey.status).toBe(200);
-            const marketIssued = yield* issueMarketKey.json.pipe(
-              Effect.flatMap(Schema.decodeUnknownEffect(Schema.toCodecJson(ApiKeyIssueResponseSchema))),
-            );
+            // Market's own credential: every module holds its own platform principal and key.
+            const marketIssued = yield* provisionSourceModuleCredential({
+              appId: 'commerce-market-catalog',
+              // Attested for the release the Shell serves.
+              composition: current,
+              configuration: fixture.configuration,
+              database,
+              persistence: fixture.persistence,
+            });
             const marketProvider = yield* keys.verify(Redacted.value(marketIssued.secret));
             expect(marketProvider.providerKeyId === provider.providerKeyId).toBe(false);
             const marketService = yield* fixture.resolver.resolveBetterAuthApiKey(marketProvider.providerKeyId);
-            expect(marketService.principalId).toBe(serviceId);
+            expect(marketService.principalId).toBe(marketIssued.serviceId);
             expect(marketService.authBindingId).toBe(marketIssued.authBindingId);
+            expect(marketIssued.serviceId === serviceId).toBe(false);
             const service = yield* fixture.resolver.resolveBetterAuthApiKey(provider.providerKeyId);
             expect(service.principalId).toBe(serviceId);
             expect(service.authBindingId).toBe(issued.authBindingId);
-            expect(service.tenantId).toBe(fixture.core.tenantId);
+            expect(service.tenantId).toBe(PLATFORM_TENANT.tenantId);
             expect(fixture.resolver.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
             const principal = yield* database.query.principals.findFirst({ where: { principalId: serviceId } });
             expect(
@@ -5368,7 +5496,7 @@ it.live(
                 Schema.Struct({
                   kind: Schema.Literal('service'),
                   status: Schema.Literal('active'),
-                  tenantId: Schema.Literal(fixture.core.tenantId),
+                  tenantId: Schema.Literal(PLATFORM_TENANT.tenantId),
                 }),
               )(principal),
             ).toBe(true);
@@ -5378,15 +5506,15 @@ it.live(
             expect(binding?.principalId).toBe(serviceId);
             expect(
               Schema.is(
-                Schema.Struct({ status: Schema.Literal('active'), tenantId: Schema.Literal(fixture.core.tenantId) }),
+                Schema.Struct({ status: Schema.Literal('active'), tenantId: Schema.Literal(PLATFORM_TENANT.tenantId) }),
               )(binding),
             ).toBe(true);
             expect(binding?.subjectType).toBe('api_key');
             expect(binding?.providerSubjectId === provider.providerKeyId).toBe(true);
             expect(binding?.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
-            const identityActionCount = yield* assertNativeManagedIdentityActions(database, {
-              authContextRef: Redacted.make(realAuthContextRef),
-              principalId: fixture.core.manager.principalId,
+            const identityActionCount = yield* assertPlatformIssuedModuleCredential(database, {
+              appId: 'commerce-customer-context',
+              serviceId,
               tenantId: fixture.core.tenantId,
             });
             yield* Effect.logInfo('Real managed service credential independently verified', {
@@ -5422,22 +5550,6 @@ it.live(
                 publicJwks: gatewayMaterial.publicJwks,
               },
               relativeDirectory: '.',
-              sourceBindings: Redacted.make(
-                JSON.stringify([
-                  {
-                    compositionRevision: approved.composition.revision,
-                    providerKeyId: provider.providerKeyId,
-                    sourceAppId: 'commerce-customer-context',
-                    sourceBuildMarker: customerContext.compiled.buildMarker,
-                  },
-                  {
-                    compositionRevision: approved.composition.revision,
-                    providerKeyId: marketProvider.providerKeyId,
-                    sourceAppId: 'commerce-market-catalog',
-                    sourceBuildMarker: market.compiled.buildMarker,
-                  },
-                ]),
-              ),
             });
             children.push(enrolledShell.child);
             expect(enrolledShell.origin).toBe(shell.origin);
@@ -6443,11 +6555,18 @@ it.live(
         expect(yield* child.isRunning).toBe(false);
       }
       if (Exit.isFailure(result)) {
-        yield* Effect.failCause(result.cause);
+        yield* Effect.failCause(result.cause).pipe(Effect.mapError(reportableOwnerFailure));
       }
     }).pipe(
       Effect.timeout('120 seconds'),
-      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeHttpClient.layerNodeHttp,
+          Reactivity.layer,
+          makeDatabaseIdentityEnrollmentLive(SHELL_DATABASE_IDENTITY_ENROLLMENT),
+        ),
+      ),
     ),
   150_000,
 );

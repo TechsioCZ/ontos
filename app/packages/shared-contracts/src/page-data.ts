@@ -1,0 +1,724 @@
+// @effect-diagnostics asyncFunction:off -- MF boundary: `preloadPage` is Promise-shaped because Effect is not shared across remotes; the work stays in Effect. expires: 2027-03-31.
+import { Deferred, Effect, Exit, Fiber, MutableRef, Option, Result, Schema } from 'effect';
+import type { ManagedRuntime } from 'effect';
+
+/**
+ * Page data shared by the Shell and every exposed module page ("prepare before reveal").
+ *
+ * The Shell loads a page's remote code and calls the module's optional `preloadPage(props)` export before it
+ * reveals the page, so the page finds its primary data ready in its first render. A module keeps that data in a
+ * `definePageData` store (one per document) and reads it synchronously with React's `useSyncExternalStore`.
+ *
+ * Effect is not shared across Module Federation remotes, so only plain functions and Promises cross the boundary
+ * between the Shell and a remote: `ModulePagePreload` is Promise-shaped, everything inside a remote stays Effect.
+ */
+
+export interface ModulePageContext {
+  /** Signed-in principal name from the Shell session, never a demo persona lookup. */
+  readonly displayName?: string;
+  readonly legalEntityId: string;
+  readonly principalId: string;
+  readonly tenantId: string;
+}
+
+/**
+ * The verified tenant identity available when a signed-in session has selected no company. `ModulePageContext`
+ * remains the company-scoped context; a tenant-scoped module reads whichever context is present, so company pages
+ * keep their existing fail-closed guard.
+ */
+export interface ModuleTenantPageContext {
+  /** Signed-in principal name from the Shell session, never a demo persona lookup. */
+  readonly displayName?: string;
+  readonly principalId: string;
+  readonly tenantId: string;
+}
+
+/** Missing Shell identity never shares a detail cache with an authenticated page. */
+const ScopeKeySchema = Schema.fromJsonString(
+  Schema.Tuple([Schema.String, Schema.String, Schema.String, Schema.String]),
+);
+export const pageDataScopeKey = (context: ModulePageContext | undefined, moduleId: string): string | undefined =>
+  context !== undefined && context.tenantId !== '' && context.principalId !== '' && context.legalEntityId !== ''
+    ? Result.getOrThrow(
+        Schema.encodeResult(ScopeKeySchema)([context.tenantId, context.legalEntityId, context.principalId, moduleId]),
+      )
+    : undefined;
+
+/**
+ * Key of a tenant-scoped dataset: tenant, principal and module without a company. Its JSON tuple is longer than the
+ * company key's, so a tenant identity and a company identity can never produce the same key.
+ */
+const TenantScopeKeySchema = Schema.fromJsonString(
+  Schema.Tuple([Schema.Literal('tenant'), Schema.String, Schema.String, Schema.String, Schema.Literal('tenant')]),
+);
+export const pageDataTenantScopeKey = (
+  context: ModuleTenantPageContext | undefined,
+  moduleId: string,
+): string | undefined =>
+  context !== undefined && context.tenantId !== '' && context.principalId !== ''
+    ? Result.getOrThrow(
+        Schema.encodeResult(TenantScopeKeySchema)([
+          'tenant',
+          context.tenantId,
+          context.principalId,
+          moduleId,
+          'tenant',
+        ]),
+      )
+    : undefined;
+
+/** Lifetime of a dataset's unfinished loads, including superseded owners. Plain functions cross the MF boundary. */
+export interface PageDataWork {
+  readonly onSettled: (callback: () => void) => void;
+}
+
+/** Document-wide work notification, shared even when remotes bundle separate copies of this module. */
+export const pageDataWorkEvent = 'ontos:page-data-work';
+
+declare global {
+  interface WindowEventMap {
+    'ontos:page-data-work': CustomEvent<PageDataWork>;
+  }
+}
+
+/** Props the Shell passes to every exposed page/component and to its preloadPage. */
+export interface ModulePageProps {
+  /** The company-scoped context; absent whenever the session has no selected company. */
+  readonly context?: ModulePageContext;
+  readonly routeParams: Readonly<Record<string, string>>;
+  /** Raw query string of the URL being opened, with leading '?', or '' (same shape as TanStack location.searchStr). */
+  readonly search: string;
+  /**
+   * The session's verified tenant identity, present instead of `context` for a tenant-authenticated session
+   * without a selected company, so a tenant-scoped module does not inherit a company prerequisite.
+   */
+  readonly tenantContext?: ModuleTenantPageContext;
+}
+
+/** Optional named export `preloadPage` of an exposed module. Resolves when the page's primary data settled; never rejects. */
+// eslint-disable-next-line effect-native/no-promise-shaped-port -- MF boundary: Effect is not shared across remotes. expires: 2027-03-31.
+export type ModulePagePreload = (props: ModulePageProps) => Promise<void>;
+
+export type PageDataSnapshot<A, E> =
+  | { readonly state: 'pending' }
+  | { readonly refreshing: boolean; readonly state: 'ready'; readonly value: A }
+  | { readonly error: E; readonly refreshing: boolean; readonly state: 'failed' };
+
+/** Frozen pending snapshot; use it as `getServerSnapshot`. */
+export const pageDataPending: PageDataSnapshot<never, never> = Object.freeze({ state: 'pending' });
+
+export interface PageData<I, A, E> {
+  /** Fire-and-forget preload; call only from useEffect (cold mounts). */
+  readonly ensure: (input: I) => void;
+  /** Invalidates this store after an owner-local write, including writes that have an uncertain outcome. */
+  readonly invalidate: () => void;
+  readonly key: (input: I) => string;
+  /** Starts or joins the load. Fresh ready entry (<20 s, not invalidated): completes at once. Stale ready entry: completes at once and revalidates in the background. Missing/failed: completes when settled. Never fails. */
+  readonly preload: (input: I) => Effect.Effect<void>;
+  /** Browser-only dependency read: returns fresh data or waits for the latest generation. Propagates load failures, including failed revalidation; never returns last-good data as fresh. */
+  readonly read: (input: I) => Effect.Effect<A, E>;
+  /** Re-runs the load and keeps the current value visible (refreshing: true). Use after writes. Never fails. */
+  readonly refresh: (input: I) => Effect.Effect<void>;
+  /** Referentially stable until that entry changes (required by useSyncExternalStore). */
+  readonly snapshot: (input: I) => PageDataSnapshot<A, E>;
+  /** An optional input keeps only that mounted strict detail fresh when its TTL expires. */
+  readonly subscribe: (listener: () => void, input?: I) => () => void;
+  /** Local optimistic edit of a ready value; no-op otherwise. */
+  readonly update: (input: I, f: (value: A) => A) => void;
+}
+
+/** Window event the Shell dispatches after every settled module write; every store marks all entries stale. */
+export const moduleWriteEvent = 'ontos:module-write';
+
+/**
+ * Window event the Shell dispatches when the live channel reports a change committed elsewhere (another session,
+ * an agent, an Outbox Worker), or after it may have missed changes (reconnect, tab shown again). Its
+ * `detail.apps` names the deployment app ids whose data changed, or is `'all'`. A store that declares `changesFrom`
+ * reacts only when one of its apps is named (or `'all'`, or no list at all); a store without `changesFrom` reacts to
+ * every change. Reacting is exactly as to a write: every entry becomes stale and only what mounted readers show
+ * revalidates. Unlike a write it does not restart the Shell's menu prefetch, so a busy tenant never multiplies
+ * preload traffic.
+ */
+export const moduleChangeEvent = 'ontos:module-change';
+
+/** `detail` of `moduleChangeEvent`: deployment app ids (`/module-api/<appId>/…`, `shell` for Shell data) or `'all'`. */
+export interface ModuleChangeDetail {
+  readonly apps: readonly string[] | 'all';
+}
+
+/** A ready value this young is served without loading again. */
+const FRESH_FOR = '20 seconds';
+
+interface WriteInvalidator {
+  /** Apps whose changes concern the store; undefined = every change. */
+  readonly changesFrom: ReadonlySet<string> | undefined;
+  readonly invalidate: () => () => void;
+}
+
+/**
+ * The app ids a write or change event names, or `'all'`. Only a `moduleChangeEvent` carrying an app list narrows
+ * it; a write, a reset or an event without a readable list concerns every store (the safe default).
+ */
+const decodeChangedApps = Schema.decodeUnknownOption(Schema.Struct({ apps: Schema.Array(Schema.String) }));
+const changedApps = (event: Event | undefined): ReadonlySet<string> | 'all' =>
+  event?.type === moduleChangeEvent && 'detail' in event
+    ? Option.match(decodeChangedApps(event.detail), {
+        onNone: () => 'all' as const,
+        onSome: ({ apps }) => new Set(apps),
+      })
+    : 'all';
+
+const concerns = (changesFrom: ReadonlySet<string> | undefined, apps: ReadonlySet<string> | 'all'): boolean =>
+  changesFrom === undefined || apps === 'all' || [...changesFrom].some((app) => apps.has(app));
+
+/**
+ * Whether a `moduleWriteEvent` or `moduleChangeEvent` concerns data from `changesFrom`, by the same rule the stores
+ * use. For hooks that listen to these events themselves (a list re-warming its rows' details), so an unrelated
+ * module's change does not restart their work.
+ */
+export const changeConcerns = (event: Event, changesFrom: readonly string[]): boolean =>
+  concerns(new Set(changesFrom), changedApps(event));
+
+/** Invalidate all concerned local dependencies before any mounted store starts revalidation. */
+const writeInvalidators = MutableRef.make<ReadonlySet<WriteInvalidator>>(new Set());
+const writeListenerRegistered = MutableRef.make(false);
+const onModuleWrite = (event?: Event): void => {
+  const apps = changedApps(event);
+  const revalidate: (() => void)[] = [];
+  for (const { changesFrom, invalidate } of MutableRef.get(writeInvalidators)) {
+    if (concerns(changesFrom, apps)) {
+      revalidate.push(invalidate());
+    }
+  }
+  for (const start of revalidate) {
+    start();
+  }
+};
+
+interface LoadLifetime {
+  active: number;
+  readonly listeners: Set<() => void>;
+}
+
+interface Entry<I, A, E> {
+  /** Wakes waiters immediately when a write or refresh supersedes their owner. */
+  changed: Deferred.Deferred<boolean>;
+  /** Current generation's result, separate from the last-good snapshot retained after a failed refresh. */
+  completion: Deferred.Deferred<A, E>;
+  consumers: number;
+  /** Bumped by every load start and write; only the newest run may settle the entry. */
+  generation: number;
+  inFlight: Option.Option<Fiber.Fiber<unknown, unknown>>;
+  readonly input: I;
+  lifetime: LoadLifetime;
+  snapshot: PageDataSnapshot<A, E>;
+  /** Set by a module write, a failed load, or once a ready value is older than `FRESH_FOR`. */
+  stale: boolean;
+}
+
+const isBrowser = (): boolean => 'document' in globalThis;
+
+const supersede = <I, A, E>(entry: Entry<I, A, E>): Option.Option<Fiber.Fiber<unknown, unknown>> => {
+  const previous = entry.inFlight;
+  entry.generation += 1;
+  entry.inFlight = Option.none();
+  return previous;
+};
+
+/** Interrupt only after publishing replacements: waiters must follow them, not the obsolete owner's exit. */
+const interruptObsolete = (run: Option.Option<Fiber.Fiber<unknown, unknown>>): void => {
+  if (Option.isSome(run)) {
+    run.value.interruptUnsafe();
+  }
+};
+
+/** A preparation follows replacement owners without waiting for obsolete work to finish. */
+const awaitCurrent = <I, A, E>(entry: Entry<I, A, E>): Effect.Effect<void> =>
+  Effect.suspend(() => {
+    const { changed, generation, inFlight } = entry;
+    if (Option.isNone(inFlight)) {
+      return Effect.void;
+    }
+    return Effect.raceFirst(Fiber.await(inFlight.value).pipe(Effect.asVoid), Deferred.await(changed)).pipe(
+      Effect.andThen(Effect.suspend(() => (entry.generation === generation ? Effect.void : awaitCurrent(entry)))),
+    );
+  });
+
+export const definePageData = <I, A, E, R>(options: {
+  /** Detail stores release unfinished work when their last read/preload is interrupted. Defaults to false. */
+  readonly cancelWhenUnused?: boolean;
+  /**
+   * Deployment app ids (`appId` of a vertical's package.json, the `<appId>` of `/module-api/<appId>/…`; `shell` for
+   * Shell/Core data) whose data `load` shows: its own app plus every app it reads directly or whose data its own API
+   * returns. A live change naming none of them leaves the store untouched. Omitted: every live change concerns the
+   * store. Writes (`moduleWriteEvent`, `invalidate`) and changes without an app list always concern it. A value a
+   * mounted view shows reloads once it is 20 s old, and 20 s after a failed or abandoned load, so a write that sends
+   * no live change is not missed.
+   */
+  readonly changesFrom?: readonly string[];
+  readonly key: (input: I) => string;
+  readonly load: (input: I) => Effect.Effect<A, E, R>;
+  /** LRU bound for inactive entries. Active readers are never evicted. */
+  readonly maxEntries?: number;
+  /** False for details whose old data must not survive invalidation or a denied revalidation. */
+  readonly retainStale?: boolean;
+  readonly runtime: ManagedRuntime.ManagedRuntime<R, never>;
+}): PageData<I, A, E> => {
+  const changesFrom = options.changesFrom === undefined ? undefined : new Set(options.changesFrom);
+  const entries = new Map<string, Entry<I, A, E>>();
+  const listeners = new Set<() => void>();
+  const mountedKeys = new Map<string, number>();
+  let storeRegistered = false;
+  /** During a write notification, `snapshot` records the keys mounted readers re-read (React does so inside the listener). */
+  let observing = false;
+  const observedKeys = new Set<string>();
+  const trim = (): void => {
+    if (options.maxEntries === undefined) {
+      return;
+    }
+    for (const [key, entry] of entries) {
+      if (entries.size <= options.maxEntries) {
+        break;
+      }
+      if (entry.consumers === 0 && Option.isNone(entry.inFlight) && !mountedKeys.has(key)) {
+        entries.delete(key);
+      }
+    }
+  };
+
+  const notify = (): void => {
+    for (const listener of listeners) {
+      listener();
+    }
+  };
+
+  const settle = (entry: Entry<I, A, E>, generation: number, result: Result.Result<A, E>): void => {
+    if (entry.generation !== generation) {
+      return;
+    }
+    entry.inFlight = Option.none();
+    const previous = entry.snapshot;
+    if (Result.isSuccess(result)) {
+      entry.snapshot = { refreshing: false, state: 'ready', value: result.success };
+      entry.stale = false;
+    } else {
+      entry.stale = true;
+      // A failed revalidation keeps the value on screen instead of flashing an error.
+      entry.snapshot =
+        previous.state === 'ready' && options.retainStale !== false
+          ? { refreshing: false, state: 'ready', value: previous.value }
+          : { error: result.failure, refreshing: false, state: 'failed' };
+    }
+    notify();
+  };
+
+  /** A defect or interruption ends the run without a typed outcome: the entry stays as it was and is retried next time. */
+  const abandon = (entry: Entry<I, A, E>, generation: number): void => {
+    if (entry.generation !== generation) {
+      return;
+    }
+    entry.inFlight = Option.none();
+    entry.stale = true;
+    const previous = entry.snapshot;
+    if (previous.state !== 'pending' && previous.refreshing) {
+      entry.snapshot = { ...previous, refreshing: false };
+      notify();
+    }
+  };
+
+  const expireLater = (entry: Entry<I, A, E>, generation: number, onExpired: () => void): Effect.Effect<void> =>
+    Effect.forkDetach(
+      Effect.sleep(FRESH_FOR).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            if (entry.generation === generation) {
+              onExpired();
+            }
+          }),
+        ),
+      ),
+    ).pipe(Effect.asVoid);
+
+  /** Whether a mounted reader shows `key` now: re-reading snapshots changes nothing, so no view re-renders. */
+  const shownNow = (key: string): boolean => {
+    observedKeys.clear();
+    observing = true;
+    try {
+      notify();
+    } finally {
+      observing = false;
+    }
+    const shown = observedKeys.has(key);
+    observedKeys.clear();
+    return shown;
+  };
+
+  const startLoad = (entry: Entry<I, A, E>): Fiber.Fiber<void> => {
+    const onExpired = (): void => {
+      const key = options.key(entry.input);
+      if (entries.get(key) !== entry) {
+        entry.stale = true;
+        return;
+      }
+      // A store that ignores unrelated live changes no longer hears every commit, so a change that never sends one
+      // (an Outbox Worker's write) is picked up by expiry, also where a view subscribes without an input.
+      // Checked while the entry is still fresh: a strict snapshot of a stale value is pending, which would re-render.
+      const shown =
+        (options.retainStale === false && mountedKeys.has(key)) ||
+        (changesFrom !== undefined && (mountedKeys.has(key) || (options.cancelWhenUnused !== true && shownNow(key))));
+      entry.stale = true;
+      if (shown) {
+        startLoad(entry);
+      }
+    };
+    const obsolete = supersede(entry);
+    const { changed, generation } = entry;
+    entry.changed = Deferred.makeUnsafe<boolean>();
+    const completion = Deferred.makeUnsafe<A, E>();
+    entry.completion = completion;
+    if (entry.lifetime.active === 0) {
+      entry.lifetime = { active: 0, listeners: new Set() };
+    }
+    const { lifetime } = entry;
+    lifetime.active += 1;
+    let settled = false;
+    const fiber = options.runtime.runFork(
+      Effect.withFiber((run) => {
+        if (entry.generation !== generation) {
+          return Effect.void;
+        }
+        // Publish before executing user code, which can synchronously dispatch a write or wake a waiter.
+        entry.inFlight = Option.some(run);
+        return Effect.suspend(() => {
+          const previous = entry.snapshot;
+          if (previous.state !== 'pending' && !previous.refreshing) {
+            entry.snapshot = { ...previous, refreshing: true };
+            notify();
+          }
+          return options.load(entry.input);
+        }).pipe(
+          Effect.result,
+          Effect.flatMap((result) => {
+            settled = true;
+            settle(entry, generation, result);
+            Deferred.doneUnsafe(completion, Effect.fromResult(result));
+            // A failure is retried by the same check: a scoped store no longer hears the unrelated commits that
+            // used to retry it, and the recovery it waits for may send no live change at all.
+            return expireLater(entry, generation, onExpired);
+          }),
+        );
+      }).pipe(
+        Effect.ensuring(
+          Effect.suspend(() => {
+            if (settled) {
+              return Effect.void;
+            }
+            abandon(entry, generation);
+            return expireLater(entry, generation, onExpired);
+          }),
+        ),
+      ),
+    );
+    // A runtime still building its services has not reached `withFiber` yet.
+    if (entry.generation === generation && fiber.pollUnsafe() === undefined) {
+      entry.inFlight = Option.some(fiber);
+    }
+    // Observe the fiber itself: even interruption before its Effect starts must release the lifetime.
+    fiber.addObserver((exit) => {
+      if (Exit.isFailure(exit)) {
+        Deferred.doneUnsafe(completion, Effect.failCause(exit.cause));
+      }
+      lifetime.active -= 1;
+      if (lifetime.active === 0) {
+        for (const listener of lifetime.listeners) {
+          listener();
+        }
+        lifetime.listeners.clear();
+      }
+      trim();
+    });
+    // Completing a Deferred may resume waiters synchronously: publish the replacement before waking them.
+    Deferred.doneUnsafe(changed, Effect.succeed(true));
+    interruptObsolete(obsolete);
+    return fiber;
+  };
+
+  const invalidateOnWrite = (): (() => void) => {
+    const loadingKeys = new Set<string>();
+    const obsolete: Option.Option<Fiber.Fiber<unknown, unknown>>[] = [];
+    for (const [key, entry] of entries) {
+      if (Option.isSome(entry.inFlight)) {
+        loadingKeys.add(key);
+      }
+      obsolete.push(supersede(entry));
+      entry.stale = true;
+      if (options.retainStale === false) {
+        entry.snapshot = pageDataPending;
+      }
+    }
+    return () => {
+      observedKeys.clear();
+      observing = true;
+      try {
+        notify();
+      } finally {
+        observing = false;
+      }
+      for (const key of new Set([...loadingKeys, ...observedKeys])) {
+        const entry = entries.get(key);
+        if (
+          entry !== undefined &&
+          // A background observer restarts its bounded, cancellable batch in its own effect.
+          // Only a leased read or an explicitly mounted key may auto-restart cancellable work here.
+          (options.cancelWhenUnused !== true || entry.consumers > 0 || mountedKeys.has(key)) &&
+          // A shown failure retries too: the change may be the recovery the reader is waiting for.
+          (loadingKeys.has(key) || options.retainStale === false || entry.snapshot.state !== 'pending') &&
+          entry.stale &&
+          Option.isNone(entry.inFlight)
+        ) {
+          startLoad(entry);
+        }
+      }
+      observedKeys.clear();
+      for (const run of obsolete) {
+        interruptObsolete(run);
+      }
+    };
+  };
+
+  const entryFor = (input: I): Entry<I, A, E> => {
+    if (!storeRegistered && 'addEventListener' in globalThis) {
+      storeRegistered = true;
+      const invalidator: WriteInvalidator = { changesFrom, invalidate: invalidateOnWrite };
+      MutableRef.update(writeInvalidators, (stores) => new Set([...stores, invalidator]));
+      if (!MutableRef.get(writeListenerRegistered)) {
+        MutableRef.set(writeListenerRegistered, true);
+        globalThis.addEventListener(moduleWriteEvent, onModuleWrite);
+        globalThis.addEventListener(moduleChangeEvent, onModuleWrite);
+      }
+    }
+    const key = options.key(input);
+    const existing = entries.get(key);
+    if (existing !== undefined) {
+      entries.delete(key);
+      entries.set(key, existing);
+      return existing;
+    }
+    const created: Entry<I, A, E> = {
+      changed: Deferred.makeUnsafe<boolean>(),
+      completion: Deferred.makeUnsafe<A, E>(),
+      consumers: 0,
+      generation: 0,
+      inFlight: Option.none(),
+      input,
+      lifetime: { active: 0, listeners: new Set() },
+      snapshot: pageDataPending,
+      stale: true,
+    };
+    entries.set(key, created);
+    return created;
+  };
+
+  /** Returns the run a caller must wait for, or none when the current value may be served at once. */
+  const begin = (input: I): Option.Option<Fiber.Fiber<unknown, unknown>> => {
+    const entry = entryFor(input);
+    if (entry.snapshot.state === 'ready' && (options.retainStale !== false || !entry.stale)) {
+      if (Option.isNone(entry.inFlight) && entry.stale) {
+        startLoad(entry);
+      }
+      return Option.none();
+    }
+    return Option.isSome(entry.inFlight) ? entry.inFlight : Option.some(startLoad(entry));
+  };
+
+  const announceWork = ({ lifetime }: Entry<I, A, E>): void => {
+    if (lifetime.active > 0) {
+      globalThis.dispatchEvent(
+        new CustomEvent<PageDataWork>(pageDataWorkEvent, {
+          detail: {
+            onSettled: (listener) => {
+              if (lifetime.active === 0) {
+                listener();
+              } else {
+                lifetime.listeners.add(listener);
+              }
+            },
+          },
+        }),
+      );
+    }
+  };
+
+  /** A foreground read joining a prefetch keeps the owner alive when that page's prefetch is cancelled. */
+  const usingEntry = <Value, Failure>(
+    input: I,
+    operation: Effect.Effect<Value, Failure>,
+  ): Effect.Effect<Value, Failure> =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const entry = entryFor(input);
+        entry.consumers += 1;
+        trim();
+        return entry;
+      }),
+      () => operation,
+      (entry) =>
+        Effect.sync(() => {
+          entry.consumers -= 1;
+          if (options.cancelWhenUnused === true && entry.consumers === 0 && Option.isSome(entry.inFlight)) {
+            // No replacement owner: interrupt waiters instead of waking them to restart obsolete work.
+            const run = supersede(entry);
+            entry.stale = true;
+            interruptObsolete(run);
+          }
+          trim();
+        }),
+    );
+
+  const preloadEntry = Effect.fn('PageData.preload')(function* preloadEntry(input: I) {
+    if (!isBrowser()) {
+      return;
+    }
+    const run = begin(input);
+    const entry = entryFor(input);
+    announceWork(entry);
+    yield* Option.isSome(run) ? awaitCurrent(entry) : Effect.void;
+  });
+  const preload = (input: I): Effect.Effect<void> =>
+    isBrowser() ? usingEntry(input, preloadEntry(input)) : Effect.void;
+
+  const readCurrent = (input: I): Effect.Effect<A, E> =>
+    Effect.suspend(() => {
+      if (!isBrowser()) {
+        return Effect.die('PageData.read requires a browser document');
+      }
+      const entry = entryFor(input);
+      if (entry.snapshot.state === 'ready' && !entry.stale && Option.isNone(entry.inFlight)) {
+        return Effect.succeed(entry.snapshot.value);
+      }
+      if (Option.isNone(entry.inFlight)) {
+        startLoad(entry);
+      }
+      const { changed, completion, generation } = entry;
+      announceWork(entry);
+      return Effect.raceFirst(
+        Deferred.await(completion).pipe(Effect.exit, Effect.map(Option.some)),
+        Deferred.await(changed).pipe(Effect.as(Option.none())),
+      ).pipe(
+        Effect.flatMap((result) =>
+          entry.generation !== generation || Option.isNone(result)
+            ? readCurrent(input)
+            : Exit.match(result.value, { onFailure: Effect.failCause, onSuccess: Effect.succeed }),
+        ),
+      );
+    });
+  const read = (input: I): Effect.Effect<A, E> => usingEntry(input, readCurrent(input));
+
+  const ensure = (input: I): void => {
+    if (isBrowser()) {
+      begin(input);
+    }
+  };
+
+  const refresh = (input: I): Effect.Effect<void> =>
+    Effect.suspend(() => {
+      if (!isBrowser()) {
+        return Effect.void;
+      }
+      const entry = entryFor(input);
+      startLoad(entry);
+      return awaitCurrent(entry);
+    });
+
+  const update = (input: I, f: (value: A) => A): void => {
+    const entry = entries.get(options.key(input));
+    if (entry?.snapshot.state !== 'ready') {
+      return;
+    }
+    entry.snapshot = { ...entry.snapshot, value: f(entry.snapshot.value) };
+    notify();
+  };
+
+  const snapshot = (input: I): PageDataSnapshot<A, E> => {
+    if (!isBrowser()) {
+      return pageDataPending;
+    }
+    const key = options.key(input);
+    if (observing) {
+      observedKeys.add(key);
+    }
+    const entry = entries.get(key);
+    return entry === undefined || (options.retainStale === false && entry.stale && entry.snapshot.state === 'ready')
+      ? pageDataPending
+      : entry.snapshot;
+  };
+
+  const subscribe = (listener: () => void, input?: I): (() => void) => {
+    const key = input === undefined ? undefined : options.key(input);
+    if (key !== undefined) {
+      mountedKeys.set(key, (mountedKeys.get(key) ?? 0) + 1);
+    }
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+      if (key !== undefined) {
+        const count = (mountedKeys.get(key) ?? 1) - 1;
+        if (count === 0) {
+          mountedKeys.delete(key);
+          const entry = entries.get(key);
+          if (
+            options.cancelWhenUnused === true &&
+            entry !== undefined &&
+            entry.consumers === 0 &&
+            Option.isSome(entry.inFlight)
+          ) {
+            // React can unsubscribe/resubscribe synchronously during a render. Cancel only after that turn.
+            options.runtime.runFork(
+              Effect.yieldNow.pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    if (!mountedKeys.has(key) && entry.consumers === 0) {
+                      const obsolete = supersede(entry);
+                      entry.stale = true;
+                      interruptObsolete(obsolete);
+                    }
+                  }),
+                ),
+              ),
+            );
+          }
+        } else {
+          mountedKeys.set(key, count);
+        }
+      }
+    };
+  };
+
+  return {
+    ensure,
+    invalidate: () => invalidateOnWrite()(),
+    key: options.key,
+    preload,
+    read,
+    refresh,
+    snapshot,
+    subscribe,
+    update,
+  };
+};
+
+const PRELOAD_STEP_CONCURRENCY = 8;
+
+/** Builds the module's `preloadPage` export: runs steps concurrently, ignores failures, never rejects. */
+export const modulePagePreload = (
+  ...steps: readonly ((props: ModulePageProps) => Effect.Effect<void>)[]
+): ModulePagePreload => {
+  const preloadAll = (props: ModulePageProps): Effect.Effect<void> =>
+    Effect.forEach(steps, (step) => Effect.suspend(() => step(props)).pipe(Effect.ignoreCause), {
+      concurrency: PRELOAD_STEP_CONCURRENCY,
+      discard: true,
+    });
+  return async (props) => {
+    await Effect.runPromise(preloadAll(props));
+  };
+};

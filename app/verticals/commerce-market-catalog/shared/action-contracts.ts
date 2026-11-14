@@ -125,6 +125,10 @@ export const RetireMarketPayloadSchema = Schema.Struct(lifecyclePayloadFields).c
 );
 export type RetireMarketPayload = typeof RetireMarketPayloadSchema.Type;
 
+/**
+ * The lifecycle transitions share this result. A retirement whose Customer Context settlement stays pending
+ * fails with the typed `MarketRetirementSettlementPending` problem carrying the already-committed result.
+ */
 export const MarketLifecycleResultSchema = Schema.Struct({
   changed: Schema.Boolean,
   definitionRevisionRef: MarketDefinitionRevisionRefSchema,
@@ -138,6 +142,8 @@ export const MarketLifecycleResultSchema = Schema.Struct({
       : 'Market and definition revision must belong to the same Tenant',
   ),
 );
+
+export type MarketLifecycleResult = typeof MarketLifecycleResultSchema.Type;
 
 export const AssociateStorefrontPayloadSchema = Schema.Struct({
   associationId: StorefrontAssociationIdSchema,
@@ -215,6 +221,7 @@ export class MarketCommandRejected extends Schema.TaggedError<MarketCommandRejec
     'market_code_conflict',
     'overlapping_association',
     'replacement_impact_unresolved',
+    'retirement_in_progress',
     'revision_conflict',
     'seller_identity_immutable',
   ]),

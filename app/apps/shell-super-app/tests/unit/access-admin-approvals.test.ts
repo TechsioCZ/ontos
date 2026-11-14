@@ -32,7 +32,10 @@ import {
   makeAccessApprovalsBff,
 } from '../../api/access-admin/approvals.ts';
 import { AccessApprovalsAuthoritySource } from '../../api/access-admin/approvals-authority.ts';
-import { ApprovalPortUnavailableSchema } from '../../api/access-admin/approvals-contract.ts';
+import {
+  ApprovalCommandRefusedSchema,
+  ApprovalPortUnavailableSchema,
+} from '../../api/access-admin/approvals-contract.ts';
 import { AccessApprovalsCommands } from '../../api/access-admin/approvals-commands.ts';
 import { AccessAdminSession, accessAdminAuthenticationRequiredProblem } from '../../api/access-admin/session.ts';
 import type { AccessAdminSessionService } from '../../api/access-admin/session.ts';
@@ -144,22 +147,23 @@ const authority = (overrides: Partial<AccessApprovalsAuthority> = {}): AccessApp
 const scriptedCommands = (
   options: {
     readonly amount?: AccessAmount;
+    readonly approve?: AccessApprovalsCommandsService['approve'];
+    readonly inspect?: AccessApprovalsCommandsService['inspect'];
     readonly loaded?: ApprovalRecord;
     readonly open?: readonly ApprovalRecord[];
     readonly preview?: ApprovalCommandPreview | null;
   } = {},
 ) => {
-  const rejected = record({ endedAt: new Date('2026-11-03T10:00:00.000Z'), status: 'rejected' });
-  const approved = record({ status: 'approved' });
   const service: AccessApprovalsCommandsService = {
-    approve: () => Effect.succeed(approved),
+    approve: options.approve ?? (() => Effect.die('This case must not approve through the original owner')),
     governedAmount: () => Effect.succeed(Option.fromUndefinedOr(options.amount)),
+    inspect: options.inspect ?? (() => Effect.die('This case must not inspect through the original owner')),
     load: (_scope: OperationalScope, proposalId: string) =>
       Effect.succeed(proposalId === PROPOSAL ? Option.some(options.loaded ?? record()) : Option.none()),
     open: () => Effect.succeed(options.open ?? [record()]),
     preview: () => Effect.succeed(options.preview === null ? Option.none() : Option.some(options.preview ?? preview())),
-    reject: () => Effect.succeed(rejected),
-    withdraw: () => Effect.succeed(rejected),
+    reject: () => Effect.die('This case must not reject a proposal'),
+    withdraw: () => Effect.die('This case must not withdraw a proposal'),
   };
   return service;
 };
@@ -213,7 +217,10 @@ const problemOf = (effect: Effect.Effect<unknown, AccessAdminProblem>) => Effect
 it.effect('decides every approvals operation by its own declared capability in tenant context', () =>
   Effect.gen(function* decidesByOwnCapability() {
     const answering = gate();
-    const bff = bffOf({ gate: answering });
+    const bff = bffOf({
+      commands: scriptedCommands({ inspect: () => Effect.succeed(false) }),
+      gate: answering,
+    });
     yield* bff.list(headers(), listPayload());
     yield* bff.execute(headers(), executePayload()).pipe(Effect.flip);
     const askedKeys = answering.askedDecisions.map((ask) => ask.carrier.accessDeclaration?.key);
@@ -229,7 +236,13 @@ it.effect('decides every approvals operation by its own declared capability in t
 
 it.effect('refuses a denied inbox with 403 and reads no proposal at all', () =>
   Effect.gen(function* deniesInbox() {
-    const bff = bffOf({ gate: gate({ defaultAnswer: { outcome: 'DENIED' } }) });
+    const bff = bffOf({
+      commands: {
+        ...scriptedCommands(),
+        open: () => Effect.die('A denied inbox must not read proposals'),
+      },
+      gate: gate({ defaultAnswer: { outcome: 'DENIED' } }),
+    });
     const problem = yield* problemOf(bff.list(headers(), listPayload()));
     expect(problem.status).toBe(403);
   }),
@@ -237,7 +250,13 @@ it.effect('refuses a denied inbox with 403 and reads no proposal at all', () =>
 
 it.effect('answers an unavailable gate with the retryable 503, never a denial', () =>
   Effect.gen(function* keepsUnavailable() {
-    const bff = bffOf({ gate: makeTestAccessDecision({ unavailable: true }) });
+    const bff = bffOf({
+      commands: {
+        ...scriptedCommands(),
+        open: () => Effect.die('An unavailable admission must not read proposals'),
+      },
+      gate: makeTestAccessDecision({ unavailable: true }),
+    });
     const problem = yield* problemOf(bff.list(headers(), listPayload()));
     expect(problem.status).toBe(503);
   }),
@@ -262,7 +281,9 @@ it.effect('refuses an unauthenticated request before it asks the gate anything',
 
 it.effect('lets an eligible approver decide and tells the requester they withdraw instead', () =>
   Effect.gen(function* resolvesEligibility() {
-    const inbox = yield* bffOf().list(headers(), listPayload());
+    const inbox = yield* bffOf({
+      commands: scriptedCommands({ inspect: () => Effect.succeed(true) }),
+    }).list(headers(), listPayload());
     expect(inbox.items).toHaveLength(1);
     const [item] = inbox.items;
     expect(item?.permitted.approval.allowed).toBe(true);
@@ -278,27 +299,44 @@ it.effect('lets an eligible approver decide and tells the requester they withdra
   }),
 );
 
-it.effect('refuses to approve without approve authority and never calls Core', () =>
+it.effect('keeps original-owner approval refusal even after Shell admits the decision', () =>
   Effect.gen(function* refusesMissingAuthority() {
     let approvals = 0;
     const service = scriptedCommands();
+    const answering = gate({
+      answers: { [accessApprovalsDeclarations.decide.key]: { outcome: 'ALLOWED' } },
+      defaultAnswer: { outcome: 'DENIED' },
+    });
+    const requestHeaders = headers();
     const bff = bffOf({
       commands: {
         ...service,
-        approve: () => {
+        approve: (scope, input) => {
           approvals += 1;
-          return Effect.succeed(record({ status: 'approved' }));
+          expect(scope).toEqual(scopeFor(APPROVER));
+          expect(input).toEqual({
+            headers: requestHeaders,
+            proposalId: PROPOSAL,
+            revision: accessApprovalRevision(record()),
+          });
+          return Effect.fail(
+            ApprovalCommandRefusedSchema.make({
+              code: 'approval_authority_missing',
+              reason: 'The original owner refused this approval',
+              retryable: false,
+            }),
+          );
         },
       },
-      gate: gate({
-        answers: { [accessApprovalsDeclarations.decide.key]: { outcome: 'ALLOWED' } },
-        defaultAnswer: { outcome: 'DENIED' },
-      }),
+      gate: answering,
     });
-    const problem = yield* problemOf(bff.decide(headers(), decidePayload()));
+    const problem = yield* problemOf(bff.decide(requestHeaders, decidePayload()));
     expect(problem.status).toBe(403);
     expect(problem.detail).toContain('access_approvals_approval_authority_missing');
-    expect(approvals).toBe(0);
+    expect(approvals).toBe(1);
+    expect(answering.askedDecisions.map(({ carrier }) => carrier.accessDeclaration?.key)).toEqual([
+      accessApprovalsDeclarations.decide.key,
+    ]);
   }),
 );
 
@@ -311,7 +349,7 @@ it.effect('refuses self-approval of a command before asking for approval authori
         ...service,
         approve: () => {
           approvals += 1;
-          return Effect.succeed(record({ status: 'approved' }));
+          return Effect.die('Self-approval must be refused before contacting the original owner');
         },
       },
       session: sessionOf(scopeFor(REQUESTER)),
@@ -335,31 +373,38 @@ it.effect('refuses an agent actor outright: an agent never decides an access pro
 );
 
 /* ------------------------------------------------------------------------------------------------
- * The approval itself: only this person's own authority travels, and never an agent's cell.
+ * Approval delegates to the original owner; rejection and withdrawal retain their own witnesses.
  * ---------------------------------------------------------------------------------------------- */
 
-it.effect('carries exactly the acting person’s own-side witness into the approval', () =>
-  Effect.gen(function* carriesOwnWitness() {
+it.effect('forwards fresh headers and the stored revision to the original owner without Shell witnesses', () =>
+  Effect.gen(function* forwardsOwnerApproval() {
     const carried: Parameters<AccessApprovalsCommandsService['approve']>[1][] = [];
     const service = scriptedCommands();
+    const requestHeaders = new Headers({ 'x-test-session': 'current-human-session' });
+    const answering = gate({
+      answers: { [accessApprovalsDeclarations.decide.key]: { outcome: 'ALLOWED' } },
+      defaultAnswer: { outcome: 'DENIED' },
+    });
     const bff = bffOf({
       commands: {
         ...service,
-        approve: (_scope, input) => {
+        approve: (scope, input) => {
+          expect(scope).toEqual(scopeFor(APPROVER));
           carried.push(input);
           return Effect.succeed(record({ status: 'approved' }));
         },
       },
-      gate: gate({ defaultAnswer: { evidence: [witness('principal'), witness('agent')], outcome: 'ALLOWED' } }),
+      gate: answering,
     });
-    const approved = yield* bff.decide(headers(), decidePayload());
+    const approved = yield* bff.decide(requestHeaders, decidePayload({ revision: accessApprovalRevision(record()) }));
     expect(approved.status).toBe('approved');
     const [call] = carried;
-    expect(call?.approval.holderId).toBeDefined();
-    expect(call?.approval.assignmentIncarnationId).toBe(APPROVAL_ASSIGNMENT);
-    expect(call?.revision).toBe(accessApprovalRevision(record()));
-    // The approval the person gives is theirs alone: an agent's cell never becomes a witness (O63).
-    expect(Predicate.isTagged(call?.approval.holderId, 'Principal')).toBe(true);
+    expect(carried).toHaveLength(1);
+    expect(call).toEqual({ headers: requestHeaders, proposalId: PROPOSAL, revision: accessApprovalRevision(record()) });
+    expect(call?.headers).toBe(requestHeaders);
+    expect(answering.askedDecisions.map(({ carrier }) => carrier.accessDeclaration?.key)).toEqual([
+      accessApprovalsDeclarations.decide.key,
+    ]);
   }),
 );
 
@@ -381,10 +426,10 @@ it.effect('keeps an agent-side witness out of the derived authority', () =>
 );
 
 /* ------------------------------------------------------------------------------------------------
- * A capped grant: the approve and run questions carry the frozen command's governed amount (O18).
+ * Owner inspection decides approval; Shell amount checks still govern rejection and withdrawal.
  * ---------------------------------------------------------------------------------------------- */
 
-/** The approver's approve and run grants of the proposal's capability, capped at 1 000,00 Kč. */
+/** The local approve grant used for rejection and withdrawal, capped at 1 000,00 Kč. */
 const CEILING_MINOR = 100_000;
 const czk = (minor: number): AccessAmount => ({ currency: brand(CurrencyCodeSchema, 'CZK'), minor });
 
@@ -399,59 +444,91 @@ const capped = (input: GateInput) =>
  */
 const cappedGate = () => {
   const allowing = gate();
-  const refusing = gate({ defaultAnswer: { outcome: 'DENIED', reasons: ['deny.amount_required'] } });
   return {
     ...allowing,
-    decide: (input: GateInput) => (capped(input) ? refusing.decide(input) : allowing.decide(input)),
+    decide: (input: GateInput) =>
+      allowing
+        .decide(input)
+        .pipe(
+          Effect.map((decision): AccessDecision =>
+            capped(input)
+              ? { evidence: [], outcome: 'DENIED', reasons: [{ code: 'deny.insufficient_grant' }], selectors: [] }
+              : decision,
+          ),
+        ),
   };
 };
 
-it.effect('lets a capped approver approve a command below the ceiling, asked at the frozen amount', () =>
-  Effect.gen(function* approvesBelowCeiling() {
+it.effect('uses owner inspection for approval even when the Shell scalar amount grant refuses rejection', () =>
+  Effect.gen(function* ownerInspectsCompleteCommand() {
     const answering = cappedGate();
-    const bff = bffOf({ commands: scriptedCommands({ amount: czk(50_000) }), gate: answering });
-    const inbox = yield* bff.list(headers(), listPayload());
+    const inspections: Parameters<AccessApprovalsCommandsService['inspect']>[1][] = [];
+    const requestHeaders = headers();
+    const bff = bffOf({
+      commands: scriptedCommands({
+        amount: czk(150_000),
+        approve: () => Effect.succeed(record({ status: 'approved' })),
+        inspect: (scope, input) => {
+          expect(scope).toEqual(scopeFor(APPROVER));
+          inspections.push(input);
+          return Effect.succeed(true);
+        },
+      }),
+      gate: answering,
+    });
+    const inbox = yield* bff.list(requestHeaders, listPayload());
     expect(inbox.items[0]?.permitted.approval).toEqual({ allowed: true });
-
-    const approved = yield* bff.decide(headers(), decidePayload());
-    expect(approved.status).toBe('approved');
-    // Both of the approver's own questions name the amount the mandate will run with.
-    const ownQuestions = answering.askedDecisions.filter((ask) => ask.carrier.accessDeclaration?.key === CAPABILITY);
-    expect(ownQuestions.map((ask) => [ask.mode, ask.amount])).toEqual([
-      ['approve', czk(50_000)],
-      ['approve', czk(50_000)],
-      ['run', czk(50_000)],
+    expect(inbox.items[0]?.permitted.rejection.allowed).toBe(false);
+    expect(inbox.items[0]?.permitted.withdrawal.allowed).toBe(false);
+    expect(inspections).toEqual([
+      { headers: requestHeaders, proposalId: PROPOSAL, revision: accessApprovalRevision(record()) },
     ]);
+    expect(inspections[0]?.headers).toBe(requestHeaders);
+
+    const approved = yield* bff.decide(requestHeaders, decidePayload());
+    expect(approved.status).toBe('approved');
+    // This scalar question is for independent rejection/withdrawal, never approval or execution.
+    const ownQuestions = answering.askedDecisions.filter((ask) => ask.carrier.accessDeclaration?.key === CAPABILITY);
+    expect(ownQuestions.map((ask) => [ask.mode, ask.amount])).toEqual([['approve', czk(150_000)]]);
+    expect(inspections).toHaveLength(1);
   }),
 );
 
-it.effect('refuses a capped approver a command above the ceiling, in the inbox and on approve', () =>
-  Effect.gen(function* refusesAboveCeiling() {
+it.effect('keeps owner inspection denial separate from locally permitted rejection and withdrawal', () =>
+  Effect.gen(function* refusesOwnerInspection() {
     let approvals = 0;
-    const service = scriptedCommands({ amount: czk(150_000) });
+    const service = scriptedCommands({ amount: czk(50_000), inspect: () => Effect.succeed(false) });
     const bff = bffOf({
       commands: {
         ...service,
         approve: () => {
           approvals += 1;
-          return Effect.succeed(record({ status: 'approved' }));
+          return Effect.fail(
+            ApprovalCommandRefusedSchema.make({
+              code: 'approval_authority_missing',
+              reason: 'The original owner refused this approval',
+              retryable: false,
+            }),
+          );
         },
       },
       gate: cappedGate(),
     });
     const inbox = yield* bff.list(headers(), listPayload());
-    expect(inbox.items[0]?.permitted.approval).toEqual({ allowed: false, reason: 'approve_authority_missing' });
+    expect(inbox.items[0]?.permitted.approval).toEqual({ allowed: false, reason: 'approval_not_permitted' });
+    expect(inbox.items[0]?.permitted.rejection.allowed).toBe(true);
+    expect(inbox.items[0]?.permitted.withdrawal.allowed).toBe(true);
 
     const problem = yield* problemOf(bff.decide(headers(), decidePayload()));
     expect(problem.status).toBe(403);
     expect(problem.detail).toContain('access_approvals_approval_authority_missing');
-    expect(approvals).toBe(0);
+    expect(approvals).toBe(1);
   }),
 );
 
-it.effect('lists a proposal whose amount cannot be resolved as not approvable, never failing the inbox', () =>
+it.effect('does not replace owner inspection with an unavailable Shell amount projection', () =>
   Effect.gen(function* unreadableAmountKeepsTheInbox() {
-    const service = scriptedCommands({ amount: czk(50_000) });
+    const service = scriptedCommands({ amount: czk(50_000), inspect: () => Effect.succeed(true) });
     const bff = bffOf({
       commands: {
         ...service,
@@ -462,7 +539,9 @@ it.effect('lists a proposal whose amount cannot be resolved as not approvable, n
     });
     const inbox = yield* bff.list(headers(), listPayload());
     expect(inbox.items).toHaveLength(1);
-    expect(inbox.items[0]?.permitted.approval).toEqual({ allowed: false, reason: 'approval_amount_unavailable' });
+    expect(inbox.items[0]?.permitted.approval).toEqual({ allowed: true });
+    expect(inbox.items[0]?.permitted.rejection.allowed).toBe(false);
+    expect(inbox.items[0]?.permitted.withdrawal.allowed).toBe(false);
   }),
 );
 
@@ -475,8 +554,43 @@ it.effect('refuses a proposal that moved on with 409 and calls nothing', () =>
     const bff = bffOf();
     const problem = yield* problemOf(bff.decide(headers(), decidePayload({ expectedStatus: 'approved' })));
     expect(problem.status).toBe(409);
+    const revisionProblem = yield* problemOf(bff.decide(headers(), decidePayload({ revision: 'pending.1.0' })));
+    expect(revisionProblem.status).toBe(409);
   }),
 );
+
+for (const decision of ['reject', 'withdraw'] as const) {
+  it.effect(`retains the acting human's own-side witnesses for independent ${decision}, without owner inspection`, () =>
+    Effect.gen(function* independentDecisionWitnesses() {
+      const carried: Parameters<AccessApprovalsCommandsService['reject']>[1][] = [];
+      const settle: AccessApprovalsCommandsService['reject'] = (scope, input) => {
+        expect(scope).toEqual(scopeFor(APPROVER));
+        carried.push(input);
+        return Effect.succeed(record({ status: 'rejected' }));
+      };
+      const bff = bffOf({
+        commands: { ...scriptedCommands(), reject: settle, withdraw: settle },
+        gate: gate({ defaultAnswer: { evidence: [witness('agent'), witness('principal')], outcome: 'ALLOWED' } }),
+      });
+      const settled = yield* bff.decide(headers(), decidePayload({ decision }));
+      expect(settled.status).toBe('rejected');
+      expect(carried).toEqual([
+        {
+          approveAuthority: [
+            {
+              assignmentIncarnationId: APPROVAL_ASSIGNMENT,
+              capabilityKey: CAPABILITY,
+              grantIncarnationId: APPROVAL_GRANT,
+              holderId: { _tag: 'Principal', principalId: APPROVER },
+              scopeId: SCOPE_ID,
+            },
+          ],
+          proposalId: PROPOSAL,
+        },
+      ]);
+    }),
+  );
+}
 
 it.effect('lets a scope administrator reject without holding approve authority', () =>
   Effect.gen(function* rejectsAsAdministrator() {
@@ -504,19 +618,91 @@ it.effect('lets a scope administrator reject without holding approve authority',
   }),
 );
 
-it.effect('never offers approval of a proposal that changes one record, which no release can approve yet', () =>
-  Effect.gen(function* recordProposalIsNotApprovable() {
-    const targeted = record({ target: RECORD });
-    const service = scriptedCommands({ loaded: targeted, open: [targeted] });
-    const bff = bffOf({ commands: service, gate: cappedGate() });
-    // The inbox says why instead of offering a button Core always refuses (D30) ...
-    const inbox = yield* bff.list(headers(), listPayload());
-    expect(inbox.items[0]?.permitted.approval).toEqual({ allowed: false, reason: 'approval_record_read_unpublished' });
-    // ... and approving it anyway is refused before Core is asked.
-    const problem = yield* problemOf(bff.decide(headers(), decidePayload({ decision: 'approve' })));
-    expect(problem.status).toBe(422);
-  }),
+it.effect(
+  'inspects and approves a record-targeted proposal through its original owner instead of permanently refusing it',
+  () =>
+    Effect.gen(function* recordProposalUsesOwner() {
+      const targeted = record({ target: RECORD });
+      const inspections: Parameters<AccessApprovalsCommandsService['inspect']>[1][] = [];
+      const approvals: Parameters<AccessApprovalsCommandsService['approve']>[1][] = [];
+      const requestHeaders = headers();
+      const service = scriptedCommands({
+        approve: (_scope, input) => {
+          approvals.push(input);
+          return Effect.succeed({ ...targeted, status: 'approved' });
+        },
+        inspect: (_scope, input) => {
+          inspections.push(input);
+          return Effect.succeed(true);
+        },
+        loaded: targeted,
+        open: [targeted],
+      });
+      const answering = cappedGate();
+      const bff = bffOf({ commands: service, gate: answering });
+      const inbox = yield* bff.list(requestHeaders, listPayload());
+      expect(inbox.items[0]?.permitted.approval).toEqual({ allowed: true });
+      expect(inbox.items[0]?.command.target?.recordKey).toBe(RECORD);
+      expect(approvals).toEqual([]);
+      expect(inspections).toEqual([
+        { headers: requestHeaders, proposalId: PROPOSAL, revision: accessApprovalRevision(targeted) },
+      ]);
+      const approved = yield* bff.decide(requestHeaders, decidePayload({ decision: 'approve' }));
+      expect(approved.status).toBe('approved');
+      expect(approvals).toEqual(inspections);
+      expect(inspections).toHaveLength(1);
+      const localQuestions = answering.askedDecisions.filter(
+        ({ carrier }) => carrier.accessDeclaration?.key === CAPABILITY,
+      );
+      expect(localQuestions.map(({ mode, target }) => ({ mode, target }))).toEqual([
+        { mode: 'approve', target: { moduleKey: 'finance', recordKey: RECORD } },
+      ]);
+    }),
 );
+
+for (const outcome of ['denied', 'unavailable', 'stale'] as const) {
+  it.effect(`keeps a record-targeted proposal visible but unapprovable after owner inspection is ${outcome}`, () =>
+    Effect.gen(function* ownerInspectionRefusal() {
+      const targeted = record({ target: RECORD });
+      const inspections: string[] = [];
+      const bff = bffOf({
+        commands: scriptedCommands({
+          inspect: (_scope, input) => {
+            inspections.push(input.proposalId);
+            if (outcome === 'unavailable') {
+              return Effect.fail(ApprovalPortUnavailableSchema.make({ reason: 'The original owner is unavailable' }));
+            }
+            if (outcome === 'stale') {
+              return Effect.fail(
+                ApprovalCommandRefusedSchema.make({
+                  code: 'revision_stale',
+                  reason: 'The proposal changed during owner inspection',
+                  retryable: false,
+                }),
+              );
+            }
+            return Effect.succeed(false);
+          },
+          open: [targeted],
+        }),
+      });
+      const inbox = yield* bff.list(headers(), listPayload());
+      expect(inspections).toEqual([PROPOSAL]);
+      expect(inbox.items).toHaveLength(1);
+      expect(inbox.items[0]?.command.target?.recordKey).toBe(RECORD);
+      expect(inbox.items[0]?.permitted.approval).toEqual({
+        allowed: false,
+        reason: {
+          denied: 'approval_not_permitted',
+          stale: 'revision_stale',
+          unavailable: 'owner_approval_inspection_unavailable',
+        }[outcome],
+      });
+      expect(inbox.items[0]?.permitted.rejection.allowed).toBe(true);
+      expect(inbox.items[0]?.permitted.withdrawal.allowed).toBe(true);
+    }),
+  );
+}
 
 it.effect('lets a scope administrator reject a proposal whose amount cannot be resolved', () =>
   Effect.gen(function* rejectsWithoutAmount() {
@@ -526,6 +712,8 @@ it.effect('lets a scope administrator reject a proposal whose amount cannot be r
       authority: authority({ isAdministrator: () => Effect.succeed(true) }),
       commands: {
         ...service,
+        approve: () =>
+          Effect.fail(ApprovalPortUnavailableSchema.make({ reason: 'The original owner approval is unavailable' })),
         governedAmount: () =>
           Effect.fail(ApprovalPortUnavailableSchema.make({ reason: 'the owner amount rule is not loaded' })),
         reject: (_scope, input) => {
@@ -543,7 +731,7 @@ it.effect('lets a scope administrator reject a proposal whose amount cannot be r
     const rejected = yield* bff.decide(headers(), decidePayload({ decision: 'reject' }));
     expect(rejected.status).toBe('rejected');
     expect(rejections[0]?.approveAuthority).toHaveLength(0);
-    // Approving still needs the amount, so it refuses instead of guessing one.
+    // Approval has its own owner outage, independent of the administrator's rejection.
     const problem = yield* problemOf(bff.decide(headers(), decidePayload({ decision: 'approve' })));
     expect(problem.status).toBe(503);
   }),
@@ -607,7 +795,9 @@ it.effect('pages the inbox in the tenant’s own order and never past its end', 
       createdAt: new Date('2026-11-01T09:00:00.000Z'),
       id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
     });
-    const bff = bffOf({ commands: scriptedCommands({ open: [older, record()] }) });
+    const bff = bffOf({
+      commands: scriptedCommands({ inspect: () => Effect.succeed(false), open: [older, record()] }),
+    });
     const first = yield* bff.list(headers(), listPayload({ limit: 1 }));
     expect(first.items).toHaveLength(1);
     expect(first.nextCursor).toBe('1');
@@ -654,7 +844,9 @@ it.effect('publishes the stored revision and the stored deadlines rather than re
 
 it.effect('projects a tenant-context proposal without requiring a selected company (O28)', () =>
   Effect.gen(function* projectsTenantScope() {
-    const inbox = yield* bffOf().list(headers(), listPayload());
+    const inbox = yield* bffOf({
+      commands: scriptedCommands({ inspect: () => Effect.succeed(false) }),
+    }).list(headers(), listPayload());
     const scope = inbox.items[0]?.scope;
     expect(scope?.kind).toBe('tenant');
     expect(scope?.kind === 'company').toBe(false);
@@ -717,18 +909,33 @@ const sortedIds = (values: readonly (string | undefined)[]) =>
   values.map((value) => value ?? '').toSorted((left, right) => left.localeCompare(right));
 
 /** Every command call the suite counts, so a refused proposal is proved never to reach Core. */
-const countedCommands = () => {
+const countedCommands = (options: Partial<Pick<AccessApprovalsCommandsService, 'approve' | 'inspect'>> = {}) => {
   const previewed: string[] = [];
-  const calls = { approve: 0, preview: previewed, reject: 0, withdraw: 0 };
+  const inspected: string[] = [];
+  const calls = { approve: 0, inspect: inspected, preview: previewed, reject: 0, withdraw: 0 };
   const byId = new Map(companyRecords.map((one) => [one.id, one]));
   const service: AccessApprovalsCommandsService = {
-    approve: (_scope, input) => {
+    approve: (scope, input) => {
       calls.approve += 1;
-      return Effect.succeed({ ...(byId.get(input.proposalId) ?? record()), status: 'approved' as const });
+      return options.approve === undefined
+        ? Effect.die('This company case must not approve through the original owner')
+        : options.approve(scope, input);
     },
     governedAmount: () => Effect.succeed(Option.none()),
-    load: (_scope, proposalId) => Effect.succeed(Option.fromUndefinedOr(byId.get(proposalId))),
-    open: () => Effect.succeed(companyRecords),
+    inspect: (scope, input) => {
+      calls.inspect.push(input.proposalId);
+      return options.inspect === undefined
+        ? Effect.die('This company case must not inspect through the original owner')
+        : options.inspect(scope, input);
+    },
+    load: (scope, proposalId) => {
+      expect(scope.tenantId).toBe(TENANT);
+      return Effect.succeed(Option.fromUndefinedOr(byId.get(proposalId)));
+    },
+    open: (scope) => {
+      expect(scope.tenantId).toBe(TENANT);
+      return Effect.succeed(companyRecords);
+    },
     preview: (_scope, input) => {
       calls.preview.push(input.proposalId);
       return Effect.succeed(Option.some(preview()));
@@ -747,7 +954,7 @@ const countedCommands = () => {
 
 it.effect('lists only the proposals whose company admitted the inbox, asked in that company’s scope', () =>
   Effect.gen(function* listsReadableProposals() {
-    const commands = countedCommands();
+    const commands = countedCommands({ inspect: () => Effect.succeed(false) });
     const answering = companyGate();
     const bff = bffOf({ authority: scopedAuthority, commands: commands.service, gate: answering });
     const inbox = yield* bff.list(headers(), listPayload());
@@ -758,6 +965,8 @@ it.effect('lists only the proposals whose company admitted the inbox, asked in t
     }
     // B's frozen command was never even rendered.
     expect(commands.calls.preview).not.toContain(B_PROPOSAL);
+    expect(sortedIds(commands.calls.inspect)).toEqual(sortedIds([A_PROPOSAL, PROPOSAL]));
+    expect(commands.calls.approve).toBe(0);
     const companyAsks = answering.askedDecisions.filter(({ legalEntityScope }) => legalEntityScope === 'required');
     const inboxAsks = companyAsks.filter(
       ({ carrier }) => carrier.accessDeclaration?.key === accessApprovalsDeclarations.list.key,
@@ -805,6 +1014,7 @@ it.effect('refuses deciding or executing company B’s proposal exactly like a p
     });
     expect({ ...commands.calls, preview: commands.calls.preview.length }).toEqual({
       approve: 0,
+      inspect: [],
       preview: 0,
       reject: 0,
       withdraw: 0,
@@ -846,65 +1056,103 @@ const grantedOnlyIn = (granted: 'company' | 'tenant') => {
   return { ...inner, decide };
 };
 
-it.effect('approves a company proposal with the approver’s grants in that company', () =>
-  Effect.gen(function* approvesWithCompanyGrants() {
-    const carried: Parameters<AccessApprovalsCommandsService['approve']>[1][] = [];
-    const commands = countedCommands();
-    const answering = grantedOnlyIn('company');
-    const bff = bffOf({
-      authority: scopedAuthority,
-      commands: {
-        ...commands.service,
+it.effect(
+  'delegates company approval with fresh headers and the unchanged tenant principal, not Shell company witnesses',
+  () =>
+    Effect.gen(function* ownerReceivesCompanyApproval() {
+      const carried: Parameters<AccessApprovalsCommandsService['approve']>[1][] = [];
+      const requestHeaders = new Headers({ 'x-test-session': 'fresh-company-session' });
+      const commands = countedCommands({
         approve: (scope, input) => {
+          expect(scope).toEqual(scopeFor(APPROVER));
+          expect(scope.legalEntityId).toBeUndefined();
+          expect(input.headers).toBe(requestHeaders);
+          expect(input.proposalId).toBe(A_PROPOSAL);
           carried.push(input);
-          return commands.service.approve(scope, input);
+          return Effect.succeed(record({ id: A_PROPOSAL, scopeId: A_SCOPE_ID, status: 'approved' }));
         },
-      },
-      gate: answering,
-    });
+        inspect: (scope, input) => {
+          expect(scope).toEqual(scopeFor(APPROVER));
+          expect(scope.legalEntityId).toBeUndefined();
+          expect(input.headers).toBe(requestHeaders);
+          expect(input.revision).toBe(accessApprovalRevision(record()));
+          return Effect.succeed(input.proposalId === A_PROPOSAL);
+        },
+      });
+      const answering = grantedOnlyIn('tenant');
+      const bff = bffOf({
+        authority: scopedAuthority,
+        commands: commands.service,
+        gate: answering,
+      });
 
-    const inbox = yield* bff.list(headers(), listPayload());
-    const companyItem = inbox.items.find(({ proposalId }) => proposalId === A_PROPOSAL);
-    expect(companyItem?.permitted.approval.allowed).toBe(true);
+      const inbox = yield* bff.list(requestHeaders, listPayload());
+      const companyItem = inbox.items.find(({ proposalId }) => proposalId === A_PROPOSAL);
+      expect(companyItem?.permitted.approval.allowed).toBe(true);
+      expect(companyItem?.permitted.rejection.allowed).toBe(false);
 
-    const approved = yield* bff.decide(headers(), decidePayload({ proposalId: proposalIdOf(A_PROPOSAL) }));
-    expect(approved.status).toBe('approved');
-    const [call] = carried;
-    expect(call?.approval.scopeId).toBe(A_SCOPE_ID);
-    expect(call?.execution.scopeId).toBe(A_SCOPE_ID);
-    // The surface itself is still admitted in tenant context; only the proposal's capability moves.
-    const capabilityAsks = answering.askedDecisions.filter(
-      ({ carrier }) => carrier.accessDeclaration?.key === CAPABILITY,
-    );
-    expect(capabilityAsks.length).toBeGreaterThan(0);
-    expect(
-      capabilityAsks
-        .filter(({ scope }) => scope.legalEntityId === COMPANY_A)
-        .every(({ legalEntityScope }) => legalEntityScope === 'required'),
-    ).toBe(true);
-    const admissions = answering.askedDecisions.filter(
-      ({ carrier, scope }) =>
-        carrier.accessDeclaration?.key === accessApprovalsDeclarations.decide.key && scope.legalEntityId === undefined,
-    );
-    expect(admissions.every(({ legalEntityScope }) => legalEntityScope === 'optional')).toBe(true);
-  }),
+      const approved = yield* bff.decide(requestHeaders, decidePayload({ proposalId: proposalIdOf(A_PROPOSAL) }));
+      expect(approved.status).toBe('approved');
+      expect(carried).toEqual([
+        { headers: requestHeaders, proposalId: A_PROPOSAL, revision: accessApprovalRevision(record()) },
+      ]);
+      expect(commands.calls.approve).toBe(1);
+      // Only independent rejection/withdrawal questions use a company-qualified scalar capability.
+      const capabilityAsks = answering.askedDecisions.filter(
+        ({ carrier }) => carrier.accessDeclaration?.key === CAPABILITY,
+      );
+      expect(capabilityAsks.length).toBeGreaterThan(0);
+      expect(
+        capabilityAsks
+          .filter(({ scope }) => scope.legalEntityId === COMPANY_A)
+          .every(({ legalEntityScope }) => legalEntityScope === 'required'),
+      ).toBe(true);
+      const admissions = answering.askedDecisions.filter(
+        ({ carrier, scope }) =>
+          carrier.accessDeclaration?.key === accessApprovalsDeclarations.decide.key &&
+          scope.legalEntityId === undefined,
+      );
+      expect(admissions.every(({ legalEntityScope }) => legalEntityScope === 'optional')).toBe(true);
+    }),
 );
 
-it.effect('never lets a tenant-only grant approve a company proposal', () =>
-  Effect.gen(function* tenantGrantIsNotCompanyAuthority() {
-    const commands = countedCommands();
-    const bff = bffOf({ authority: scopedAuthority, commands: commands.service, gate: grantedOnlyIn('tenant') });
+it.effect('does not turn tenant admission or Shell company grants into owner approval authority', () =>
+  Effect.gen(function* tenantAdmissionIsNotOwnerApproval() {
+    const requestHeaders = headers();
+    const commands = countedCommands({
+      approve: (scope, input) => {
+        expect(scope.legalEntityId).toBeUndefined();
+        expect(input.headers).toBe(requestHeaders);
+        expect(input.proposalId).toBe(A_PROPOSAL);
+        return Effect.fail(
+          ApprovalCommandRefusedSchema.make({
+            code: 'approval_authority_missing',
+            reason: 'The original owner refused this company approval',
+            retryable: false,
+          }),
+        );
+      },
+      inspect: (scope, input) => {
+        expect(scope.legalEntityId).toBeUndefined();
+        expect(input.headers).toBe(requestHeaders);
+        return Effect.succeed(input.proposalId === PROPOSAL);
+      },
+    });
+    const bff = bffOf({ authority: scopedAuthority, commands: commands.service, gate: grantedOnlyIn('company') });
 
-    const inbox = yield* bff.list(headers(), listPayload());
+    const inbox = yield* bff.list(requestHeaders, listPayload());
     const companyItem = inbox.items.find(({ proposalId }) => proposalId === A_PROPOSAL);
-    expect(companyItem?.permitted.approval).toEqual({ allowed: false, reason: 'approve_authority_missing' });
+    expect(companyItem?.permitted.approval).toEqual({ allowed: false, reason: 'approval_not_permitted' });
+    expect(companyItem?.permitted.rejection.allowed).toBe(true);
     const tenantItem = inbox.items.find(({ proposalId }) => proposalId === PROPOSAL);
     expect(tenantItem?.permitted.approval.allowed).toBe(true);
 
-    const problem = yield* problemOf(bff.decide(headers(), decidePayload({ proposalId: proposalIdOf(A_PROPOSAL) })));
+    const problem = yield* problemOf(
+      bff.decide(requestHeaders, decidePayload({ proposalId: proposalIdOf(A_PROPOSAL) })),
+    );
     expect(problem.status).toBe(403);
     expect(problem.detail).toContain('access_approvals_approval_authority_missing');
-    expect(commands.calls.approve).toBe(0);
+    expect(commands.calls.approve).toBe(1);
   }),
 );
 

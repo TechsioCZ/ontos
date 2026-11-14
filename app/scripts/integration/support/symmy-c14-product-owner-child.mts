@@ -8,6 +8,8 @@ import type { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Config, Effect, FileSystem, Layer, Option, Predicate, Ref, Schema } from 'effect';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
+import { holdC14ModuleCredential } from './symmy-c14-module-credential-channel.mts';
+
 class ProductOwnerChildUnavailable extends Schema.TaggedError<ProductOwnerChildUnavailable>()(
   'ProductOwnerChildUnavailable',
   {
@@ -116,6 +118,8 @@ const serve = Effect.scoped(
       catch: unavailable,
       try: async () => await Schema.decodeUnknownPromise(ownerModuleSchema)(await import(pathToFileURL(artifact).href)),
     });
+    // The owner's module key arrives on its private channel before it serves; the environment carries none.
+    yield* holdC14ModuleCredential(owner.marker.appId);
     const app = yield* Effect.acquireRelease(
       Effect.try({ catch: unavailable, try: () => owner.assembly.createHandler() }),
       (handler) => Effect.promise(handler.dispose.bind(handler)),

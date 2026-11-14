@@ -86,16 +86,6 @@ const priceOperation = {
   moduleId: pricingModule,
   schemaVersion: '2',
 };
-const priceRule = {
-  audience: 'pricing',
-  declarationKey: 'commerce.pricing.price.define',
-  entrypointKey: priceOperation.entrypointKey,
-  jobKey: workerKey,
-  legalEntityScope: 'required' as const,
-  schemaVersion: priceOperation.schemaVersion,
-  workerKey,
-  workloadKey: priceWrite,
-};
 const createProductAction = 'commerce.catalog.create-product';
 const productEffectKey = 'catalog-product';
 const updateOperation = {
@@ -110,108 +100,6 @@ const variantFactsOperation = {
   moduleId: catalogModule,
   schemaVersion: '1',
 };
-const rules = [
-  {
-    audience: catalogApp,
-    declarationKey: 'commerce.catalog.product.create',
-    entrypointKey: createProductAction,
-    schemaVersion: '2',
-    workloadKey: catalogImport,
-  },
-  {
-    audience: catalogApp,
-    declarationKey: 'commerce.catalog.variant.create',
-    entrypointKey: 'commerce.catalog.create-variant',
-    schemaVersion: '2',
-    workloadKey: catalogImport,
-  },
-  {
-    audience: catalogApp,
-    declarationKey: 'commerce.catalog.product.update',
-    entrypointKey: 'commerce.catalog.update-product',
-    schemaVersion: '1',
-    workloadKey: catalogImport,
-  },
-  {
-    audience: catalogApp,
-    declarationKey: 'commerce.catalog.variant-localized-facts.set',
-    entrypointKey: variantFactsOperation.entrypointKey,
-    schemaVersion: variantFactsOperation.schemaVersion,
-    workloadKey: variantFactsWorkload,
-  },
-  {
-    audience: catalogApp,
-    declarationKey: 'commerce.catalog.catalog-source-products.read',
-    entrypointKey: 'commerce.catalog.api.catalog-source-products',
-    schemaVersion: '1',
-    workloadKey: catalogRead,
-  },
-].map((rule) => ({ ...rule, jobKey: workerKey, legalEntityScope: 'forbidden' as const, workerKey }));
-const recoveryRules = [
-  {
-    actionKey: createProductAction,
-    declarationKey: 'commerce.catalog.create-product-recovery.read',
-    entrypointKey: 'commerce.catalog.api.create-product-recovery',
-  },
-  {
-    actionKey: 'commerce.catalog.create-variant',
-    declarationKey: 'commerce.catalog.create-variant-recovery.read',
-    entrypointKey: 'commerce.catalog.api.create-variant-recovery',
-  },
-].map(({ actionKey, ...rule }) => ({
-  ...rule,
-  audience: catalogApp,
-  jobKey: workerKey,
-  legalEntityScope: 'forbidden' as const,
-  recoveryOf: { actionKey, jobKey: workerKey },
-  schemaVersion: '1',
-  workerKey,
-  workloadKey: catalogRead,
-}));
-
-const historicalRecoveryRules = recoveryRules.map((rule) => ({ ...rule, allowHistoricalDeliveryRecovery: true }));
-const variantFactsRecoveryRule = {
-  audience: catalogApp,
-  declarationKey: 'commerce.catalog.set-variant-localized-facts-recovery.read',
-  entrypointKey: 'commerce.catalog.api.set-variant-localized-facts-recovery',
-  jobKey: workerKey,
-  legalEntityScope: 'forbidden' as const,
-  recoveryOf: { actionKey: variantFactsOperation.entrypointKey, jobKey: workerKey },
-  schemaVersion: '1',
-  workerKey,
-  workloadKey: variantFactsRecoveryWorkload,
-};
-const priceRecoveryRule = {
-  allowHistoricalDeliveryRecovery: true,
-  audience: 'pricing',
-  declarationKey: 'commerce.pricing.price-source-result-lookup.read',
-  entrypointKey: 'commerce.pricing.api.price-source-result-lookup',
-  jobKey: workerKey,
-  legalEntityScope: 'required' as const,
-  recoveryOf: { actionKey: priceOperation.entrypointKey, jobKey: workerKey },
-  schemaVersion: '1',
-  workerKey,
-  workloadKey: priceRead,
-};
-const pricingDelegationRules = [
-  {
-    audience: catalogApp,
-    declarationKey: catalogSelectionRead,
-    entrypointKey: 'commerce.catalog.api.selection-evidence',
-    legalEntityScope: 'forbidden' as const,
-    schemaVersion: '1',
-    workloadKey: catalogRead,
-  },
-  {
-    audience: marketApp,
-    declarationKey: 'commerce.market-catalog.market-catalog.read',
-    entrypointKey: 'commerce.market-catalog.api.current-market-catalog',
-    legalEntityScope: 'required' as const,
-    schemaVersion: '1',
-    workloadKey: marketRead,
-  },
-].map((rule) => ({ ...rule, jobKey: workerKey, sourceWorkloadKey: priceWrite }));
-
 const catalogRecoveryRequirementFor = Effect.fn('InternalC14Product.catalogRecoveryRequirement')(
   function* catalogRecoveryRequirementFor(
     symmy: OntosModuleDeploymentContract,
@@ -391,7 +279,7 @@ const seedProviderHuman = Effect.fn('SymmyC14Product.seedProviderHuman')(functio
 const seedMachine = Effect.fn('SymmyC14Product.seedMachine')(function* seedMachine(
   admin: PgClient.PgClient,
   tenantId: string,
-  kind: 'integration' | 'service',
+  kind: 'integration',
 ) {
   const principalId = randomUUID();
   yield* admin`insert into core.principals(principal_id,tenant_id,kind,status,display_name) values(${principalId},${tenantId},${kind},'active','INTERNAL_C14 enrolled machine target')`;
@@ -443,25 +331,19 @@ it.live(
           purpose: fixturePurpose,
         });
         const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
+        const moduleSourceAppIds = [
+          catalogApp,
+          marketApp,
+          'party-registry',
+          'commerce-customer-context',
+          'privacy',
+          'pricing',
+        ] as const;
         const shell = yield* makeApiKeyGatewayNativeFixture({
-          additionalRelaySources: [
-            { registeredWorkloads: [], sourceAppId: 'party-registry' },
-            { registeredWorkloads: [], sourceAppId: 'commerce-customer-context' },
-            { registeredWorkloads: [], sourceAppId: 'privacy' },
-            { registeredWorkloads: pricingDelegationRules, sourceAppId: 'pricing' },
-          ],
+          additionalRelaySources: moduleSourceAppIds.map((sourceAppId) => ({ sourceAppId })),
           ownedDatabase: isolated,
           productionGate: true,
-          relaySource: {
-            registeredWorkloads: [
-              ...rules,
-              ...historicalRecoveryRules,
-              variantFactsRecoveryRule,
-              priceRule,
-              priceRecoveryRule,
-            ],
-            sourceAppId: 'symmy-integration',
-          },
+          relaySource: { sourceAppId: 'symmy-integration' },
           snapshotJson: yield* encodeProductComposition(snapshot),
         });
         const tenantId = randomUUID();
@@ -469,9 +351,6 @@ it.live(
         yield* admin`insert into core.tenants(tenant_id,name,slug,status,default_locale) values(${tenantId},'INTERNAL_C14 actual assembled Product fixture',${slug},'active','en')`;
         const issuerHuman = yield* seedProviderHuman(admin, tenantId, shell.providerUserId);
         const integration = yield* seedMachine(admin, tenantId, 'integration');
-        assert.isOk(shell.relaySourceProviderUserId);
-        const moduleIssuerHuman = yield* seedProviderHuman(admin, tenantId, shell.relaySourceProviderUserId);
-        const modulePrincipal = yield* seedMachine(admin, tenantId, 'service');
         const governanceLegalEntityId = randomUUID();
         yield* admin`insert into core.legal_entities(legal_entity_id,tenant_id,legal_name,registration_country,registration_number,status) values(${governanceLegalEntityId},${tenantId},'INTERNAL_C14 Privacy governance fixture','CZ','INTERNAL_C14','active')`;
         const systemId = randomUUID();
@@ -485,7 +364,6 @@ it.live(
           SPICEDB_PRESHARED_KEY: Config.Redacted('SPICEDB_PRESHARED_KEY'),
         });
         yield* grantTestTenantRoleAccess({
-          adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
           holders: [
             {
               capabilityKeys: [
@@ -501,6 +379,7 @@ it.live(
           legalEntityIds: [governanceLegalEntityId],
           spiceDb: yield* liveFixtureSpiceDb(spiceEnvironment),
           tenantId,
+          writerConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
         });
         for (const [principalId, workload] of [
           [integration.principalId, 'integration.symmy-admit'],
@@ -520,7 +399,10 @@ it.live(
           [integration.principalId, marketRead],
           [systemId, marketRead],
         ]) {
-          yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status) values(${randomUUID()},${randomUUID()},${tenantId},${principalId},${workload},'active')`;
+          const bindingId = randomUUID();
+          yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status) values(${bindingId},${randomUUID()},${tenantId},${principalId},${workload},'active')`;
+          yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+            values(${randomUUID()},${randomUUID()},${tenantId},${bindingId},${governanceLegalEntityId},'active')`;
         }
         const key = yield* shell.issueFixtureProviderKey({
           ...integration,
@@ -528,29 +410,13 @@ it.live(
         });
         yield* bindProviderKey(admin, integration, key.providerKeyId);
         yield* key.acknowledgeBinding;
-        const moduleKey = yield* shell.issueFixtureRelaySourceProviderKey({
-          ...modulePrincipal,
-          issuerPrincipalId: moduleIssuerHuman.principalId,
-        });
-        yield* bindProviderKey(admin, modulePrincipal, moduleKey.providerKeyId);
-        yield* moduleKey.acknowledgeBinding;
-        const deploymentKeys = [moduleKey.secret];
+        // Every calling owner's own module key, provisioned by the platform for its module principal.
+        const moduleKey = yield* shell.provisionRelaySource();
         const relayKeys = new Map<string, Redacted.Redacted>();
-        for (const provider of shell.additionalRelaySourceProviderUsers) {
-          const human = yield* seedProviderHuman(admin, tenantId, provider.providerUserId);
-          const principal = yield* seedMachine(admin, tenantId, 'service');
-          const issued = yield* shell.issueFixtureModuleProviderKey({
-            ...principal,
-            issuerPrincipalId: human.principalId,
-            sourceAppId: provider.sourceAppId,
-          });
-          yield* bindProviderKey(admin, principal, issued.providerKeyId);
-          yield* issued.acknowledgeBinding;
-          deploymentKeys.push(issued.secret);
-          relayKeys.set(provider.sourceAppId, issued.secret);
+        for (const sourceAppId of moduleSourceAppIds) {
+          relayKeys.set(sourceAppId, (yield* shell.provisionModuleSource(sourceAppId)).secret);
         }
-        const pricingModuleKey = relayKeys.get('pricing');
-        assert.isOk(pricingModuleKey);
+        const deploymentKeys = [moduleKey.secret, ...relayKeys.values()];
         const client = yield* HttpClient.HttpClient;
         for (const deploymentKey of deploymentKeys) {
           const refused = yield* client.post(`${shell.baseUrl}/shell-super-app-api/auth/api-key/gateway-context`, {
@@ -660,7 +526,6 @@ it.live(
           ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: shell.compositionSourceUrl,
           ONTOS_C14_TRACE_PROBLEMS: 'true',
           ONTOS_GATEWAY_ISSUER: shell.issuer,
-          ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(moduleKey.secret),
           ONTOS_GATEWAY_PUBLIC_JWKS: shell.publicJwks,
           ONTOS_SHELL_GATEWAY_BASE_URL: `${shell.baseUrl}/shell-super-app-api`,
           ONTOS_SYMMY_JOB_RETENTION_POLICIES: policies,
@@ -677,6 +542,7 @@ it.live(
           artifacts: catalogArtifacts,
           contract: catalog,
           environment: { ...environment, ONTOS_C14_RESPONSE_LOSS_MARKER: faultMarker },
+          moduleKey: relayKeys.get(catalogApp),
           port: catalogPort,
           prefix: '/catalog-api',
         });
@@ -684,6 +550,7 @@ it.live(
           artifacts: symmyArtifacts,
           contract: symmy,
           environment,
+          moduleKey: moduleKey.secret,
           port: symmyPort,
           prefix: '/symmy-integration-api',
         });
@@ -691,13 +558,15 @@ it.live(
           artifacts: marketArtifacts,
           contract: market,
           environment,
+          moduleKey: relayKeys.get(marketApp),
           port: marketPort,
           prefix: '/commerce-market-catalog-api',
         });
         yield* startProductOwner({
           artifacts: pricingArtifacts,
           contract: pricing,
-          environment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(pricingModuleKey) },
+          environment,
+          moduleKey: relayKeys.get('pricing'),
           port: pricingPort,
           prefix: '/pricing-api',
         });
@@ -848,10 +717,11 @@ it.live(
           }),
         ).pipe(Effect.when(Config.Boolean('ONTOS_C14_COMPILED_SHELL_SMOKE').pipe(Config.withDefault(false))));
         const workerArtifact = yield* buildProductWorker(symmy);
-        const firstWorker = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_PRODUCT_FIRST_PROCESS',
-        });
+        const firstWorker = yield* startProductWorker(
+          workerArtifact,
+          { ...environment, ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_PRODUCT_FIRST_PROCESS' },
+          moduleKey.secret,
+        );
         const ledgerFor = (jobId: string) =>
           admin`select effect_key,outcome,owner_invocation_id,owner_receipt,resolved_effect #> '{ref,originalTarget}' as resolved_target,state from symmy_integration.job_effects where job_id=${jobId}`.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(ledgerSchema))),
@@ -915,10 +785,11 @@ it.live(
         expect(['pending', 'processing']).toContain(beforeRestart.status);
         expect(beforeRestart.next_delay_ms).toBeLessThanOrEqual(30_000);
         yield* fs.remove(faultMarker);
-        const restarted = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_PRODUCT_RESTARTED_PROCESS',
-        });
+        const restarted = yield* startProductWorker(
+          workerArtifact,
+          { ...environment, ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_PRODUCT_RESTARTED_PROCESS' },
+          moduleKey.secret,
+        );
         const completed = yield* observeUntil(
           'The restarted actual worker did not settle the Product dependency graph',
           ledgerFor(accepted.jobId),
@@ -1117,6 +988,7 @@ it.live(
               ONTOS_C14_RESPONSE_LOSS_MARKER: faultMarker,
               ONTOS_C14_RESPONSE_LOSS_OPERATION: 'catalog-set-variant-localized-facts',
             },
+            moduleKey: relayKeys.get(catalogApp),
             port: catalogPort,
             prefix: '/catalog-api',
           });
@@ -1489,7 +1361,10 @@ it.live(
         const recoveryReaderId = randomUUID();
         yield* admin`insert into core.principals(principal_id,tenant_id,kind,status,display_name) values(${recoveryReaderId},${tenantId},'system','active','INTERNAL_C14 separate current recovery reader')`;
         yield* admin`update core.access_workload_bindings set status='revoked',revoked_at=now() where tenant_id=${tenantId} and ((principal_id=${systemId} and workload_key in (${catalogImport},${catalogRead})) or (principal_id=${integration.principalId} and workload_key=${catalogImport}))`;
-        yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status) values(${randomUUID()},${randomUUID()},${tenantId},${recoveryReaderId},${catalogRead},'active')`;
+        const recoveryBindingId = randomUUID();
+        yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status) values(${recoveryBindingId},${randomUUID()},${tenantId},${recoveryReaderId},${catalogRead},'active')`;
+        yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+          values(${randomUUID()},${randomUUID()},${tenantId},${recoveryBindingId},${governanceLegalEntityId},'active')`;
         const issueRecovery = (tuple: typeof originalTuple, deliveryId: string, invocationId: string) =>
           issueSymmyC14RecoveryAssertion({
             audience: catalogApp,

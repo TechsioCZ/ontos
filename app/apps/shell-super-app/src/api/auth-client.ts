@@ -10,6 +10,9 @@ import { Context, Crypto, PlatformError } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
 
 import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../shared/browser-api.ts';
+import { moduleTargetSourceHeader, moduleTargetSourcePathHeader } from '../../shared/module-target-diagnostics.ts';
+import type { ModuleTargetSource } from '../../shared/module-target-diagnostics.ts';
+import type { DocumentGatewayContextsRequest } from '../../shared/document-gateway-api.ts';
 import { AccessAdministrationApi } from '../../shared/access-admin-api.ts';
 import type {
   AccessAdminProblem,
@@ -49,6 +52,8 @@ import type {
   RevokeAccessDelegationPayload,
   SetAccessTeamMembershipPayload,
   TransferAccessOwnershipPayload,
+  AdmitAccessMemberPayload,
+  EndAccessMembershipPayload,
 } from '../../shared/access-admin-api.ts';
 // @ontos-codesmith-core-read-client-imports:start
 
@@ -67,6 +72,7 @@ import type {
   SwitchLegalEntityResponse,
   SwitchTenantPayload,
   SwitchTenantResponse,
+  SwitchToTenantContextResponse,
   TenantAccessForbiddenProblem,
   TenantAuthenticationRequiredProblem,
   TenantCapabilityUnavailableProblem,
@@ -80,11 +86,15 @@ import type {
   SignInResponse,
   SignOutResponse,
   ResolveModuleTargetPayload,
+  ResolveModuleTargetsPayload,
   ResolvedModuleTarget,
+  ResolvedModuleTargets,
   ShellAuthenticationRequiredProblem,
   ShellCapabilityUnavailableProblem,
   ShellComposition,
   ShellCompositionRequest,
+  ShellDocumentContext,
+  ShellDocumentContextRequest,
   ShellReloadRequiredProblem,
   ShellInternalProblem,
   IdentityProblem,
@@ -95,6 +105,7 @@ import type {
   IdentityListPayload,
   IssueApiKeyPayload,
   IssueManagedApiKeyPayload,
+  ManagedApiKeyListPayload,
   ManagedApiKeyListResponse,
   PrincipalMutationResponse,
   RotateApiKeyPayload,
@@ -112,6 +123,7 @@ import type {
   ShellSearchPayload,
   ShellSearchResponse,
 } from '../../shared/browser-api.ts';
+import type { PeopleList, PeopleListRequest } from '../../shared/people-api.ts';
 
 export { issueGatewayContext } from '@app/shared-contracts';
 export type {
@@ -132,6 +144,8 @@ export interface ShellAuthenticationClientOptions {
   readonly baseUrl?: string | URL;
   readonly cookie?: string;
   readonly locale?: string;
+  readonly targetSource?: ModuleTargetSource;
+  readonly targetSourcePath?: string | undefined;
 }
 
 export type ShellAuthenticationClientError =
@@ -213,6 +227,16 @@ const shellAuthenticationClientOptions = {
         if (options.cookie !== undefined) {
           nextRequest = HttpClientRequest.setHeader(nextRequest, 'cookie', options.cookie);
         }
+        if (options.targetSource !== undefined) {
+          nextRequest = HttpClientRequest.setHeader(nextRequest, moduleTargetSourceHeader, options.targetSource);
+          if (options.targetSourcePath !== undefined) {
+            nextRequest = HttpClientRequest.setHeader(
+              nextRequest,
+              moduleTargetSourcePathHeader,
+              options.targetSourcePath.slice(0, 2048),
+            );
+          }
+        }
         return nextRequest;
       }),
     ),
@@ -292,6 +316,11 @@ export const availableLegalEntities = (
 ): AvailableLegalEntitiesClientEffect =>
   invokeShellAuthenticationClient(options, (client) => client.legalEntities.availableLegalEntities({}));
 
+export const switchToTenantContext = (
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<SwitchToTenantContextResponse, SwitchTenantClientError> =>
+  invokeShellAuthenticationClient(options, (client) => client.legalEntities.switchToTenantContext({}));
+
 export const switchLegalEntity = (
   payload: SwitchLegalEntityPayload,
   options: ShellAuthenticationClientOptions = {},
@@ -304,11 +333,70 @@ export const shellComposition = (
 ): Effect.Effect<ShellComposition, ShellCompositionClientError> =>
   invokeShellAuthenticationClient(options, (client) => client.composition.shellComposition({ query: payload }));
 
+/** Server rendering's one read of a document's session, legal entities, tenants, composition, capability and assertions. */
+export const documentContext = (
+  payload: ShellDocumentContextRequest,
+  options: ShellAuthenticationClientOptions = {},
+): ShellAuthenticationClientEffect<ShellDocumentContext> =>
+  invokeShellAuthenticationClient(options, (client) => client.documentContext.documentContext({ payload }));
+
 export const resolveModuleTarget = (
   payload: ResolveModuleTargetPayload,
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ResolvedModuleTarget, ShellTargetClientError> =>
-  invokeShellAuthenticationClient(options, (client) => client.composition.resolveModuleTarget({ payload }));
+  invokeShellAuthenticationClient(
+    {
+      ...options,
+      targetSource: options.targetSource ?? ('document' in globalThis ? 'browser_page' : 'server_render'),
+      targetSourcePath:
+        options.targetSourcePath ?? ('location' in globalThis ? globalThis.location.pathname : undefined),
+    },
+    (client) => client.composition.resolveModuleTarget({ payload }),
+  );
+
+/** Several targets of one release in one request; each answers its own target or problem. */
+export const resolveModuleTargets = (
+  payload: ResolveModuleTargetsPayload,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<ResolvedModuleTargets, ShellTargetClientError> =>
+  invokeShellAuthenticationClient(
+    {
+      ...options,
+      targetSource: 'menu_prefetch',
+      targetSourcePath:
+        options.targetSourcePath ?? ('location' in globalThis ? globalThis.location.pathname : undefined),
+    },
+    (client) => client.composition.resolveModuleTargets({ payload }),
+  );
+
+/** Gateway assertions for a document's module audiences, one per audience, in one request. */
+export const issueDocumentGatewayContexts = (
+  payload: DocumentGatewayContextsRequest,
+  options: ShellAuthenticationClientOptions = {},
+) =>
+  invokeShellAuthenticationClient(options, (client) =>
+    client.documentGateway.issueDocumentGatewayContexts({ payload }),
+  );
+
+/** Navigation capability only: the server still authorizes the people page and every write. */
+export const canManageDemoAccounts = (options: ShellAuthenticationClientOptions = {}) =>
+  invokeShellAuthenticationClient(options, (client) => client.identity.demoAccountCapability({ payload: {} })).pipe(
+    Effect.map(({ canManage }) => canManage),
+    Effect.orElseSucceed(() => false),
+  );
+
+/** The generated people administration operations; the Shell people page never assembles these paths itself. */
+export const listCompanyPeople = (
+  payload: PeopleListRequest,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<PeopleList, IdentityClientError> =>
+  invokeShellAuthenticationClient(options, (client) => client.peopleAdministration.listCompanyPeople({ payload }));
+
+export const listTenantPeople = (
+  payload: PeopleListRequest,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<PeopleList, IdentityClientError> =>
+  invokeShellAuthenticationClient(options, (client) => client.peopleAdministration.listTenantPeople({ payload }));
 
 export const searchResources = (
   payload: ShellSearchPayload,
@@ -389,10 +477,14 @@ export const issueManagedApiKey = (
   );
 
 export const listManagedApiKeys = (
-  payload: IdentityListPayload,
+  payload: ManagedApiKeyListPayload,
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ManagedApiKeyListResponse, IdentityClientError> =>
-  invokeShellAuthenticationClient(options, (client) => client.identity.listManagedApiKeys({ payload }));
+  invokeShellAuthenticationClient(options, (client) =>
+    payload.scope === 'company-agent'
+      ? client.identity.listManagedApiKeys({ payload })
+      : client.identity.listManagedApiKeys({ payload }),
+  );
 
 export const setSelfApiKeyStatus = (
   payload: SetApiKeyStatusPayload,
@@ -573,6 +665,20 @@ export const transferAccessOwnership = (
 ): Effect.Effect<AccessPeopleMutationResponse, AccessAdministrationClientError> =>
   invokeAccessAdministrationClient(options, (client) =>
     client.accessAdminPeople.transferAccessOwnership({ headers: accessWriteHeaders(options), payload }),
+  );
+export const admitAccessMember = (
+  payload: AdmitAccessMemberPayload,
+  options: AccessAdministrationWriteOptions,
+): Effect.Effect<AccessPeopleMutationResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) =>
+    client.accessAdminPeople.admitAccessMember({ headers: accessWriteHeaders(options), payload }),
+  );
+export const endAccessMembership = (
+  payload: EndAccessMembershipPayload,
+  options: AccessAdministrationWriteOptions,
+): Effect.Effect<AccessPeopleMutationResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) =>
+    client.accessAdminPeople.endAccessMembership({ headers: accessWriteHeaders(options), payload }),
   );
 
 export const listAccessChanges = (

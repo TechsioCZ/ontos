@@ -14,16 +14,23 @@ import { AccessProjectionWriterLive } from '@app/core-runtime/access/intent/proj
 import { TenantIntentLoaderLive } from '@app/core-runtime/access/intent/tenant-intent-loader';
 import { AccessWriteJournalStoreLive } from '@app/core-runtime/access/lifecycle/persistence/journal-store';
 import { CoreDatabaseLive } from '@app/core-runtime/db/client';
+import type { CoreDatabase } from '@app/core-runtime/db/client';
 import { readStageAccountsFileContents } from '@app/core-runtime/install/stage-accounts-file';
 import { loadStageContextBootstrapConfiguration } from '@app/core-runtime/install/stage-context-bootstrap';
 import type { InstallationRuntime } from '@app/core-runtime/install/stage-context-bootstrap';
-import { DatabaseConfig, parseDatabaseConfig } from '@app/core-runtime';
-import type { DatabaseConnectionError } from '@app/core-runtime';
-import { Console, Effect, Exit, FileSystem, Layer, Path, Schema } from 'effect';
+import {
+  AccessWorkloadSchema,
+  DatabaseConfig,
+  makeDatabaseIdentityEnrollmentLive,
+  parseDatabaseConfig,
+} from '@app/core-runtime';
+import type { DatabaseConnectionError, DatabaseIdentityEnrollmentContext } from '@app/core-runtime';
+import { Console, Effect, Exit, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
 import type { Crypto } from 'effect';
 
 import { AuthConfig } from '../api/auth/config.ts';
 import { AuthDatabaseLive } from '../api/auth/db/client.ts';
+import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../api/database-identity-enrollment.ts';
 import { StageAccountsBootstrapError } from '../api/auth/stage-accounts-bootstrap-contract.ts';
 import type { StageAccountsFileReader } from '../api/auth/stage-accounts-bootstrap-contract.ts';
 import {
@@ -44,8 +51,9 @@ const readAccountsFile: StageAccountsFileReader = (path) =>
 const AUTHORIZATION_CATALOG_ARTIFACT_PATH = 'topology/authorization-catalog.json';
 
 const AccessCatalogArtifactSchema = Schema.Struct({
+  declaredWorkloadKeys: Schema.Array(AccessWorkloadSchema.fields.workloads.value).check(Schema.isUnique()),
   modules: AccessCatalogModulesSchema,
-  schemaVersion: Schema.Number,
+  schemaVersion: Schema.Literal(2),
 });
 
 /**
@@ -78,39 +86,19 @@ const stageAccessModules = Effect.gen(function* loadModules() {
         }),
     ),
   );
-  return { modules: artifact.modules };
+  return { declaredWorkloadKeys: new Set(artifact.declaredWorkloadKeys), modules: artifact.modules };
 });
 
-/**
- * The installation runtime of this command: one privileged pool, one engine transport and the six access
- * writers, composed here because this script is a process root. The development root
- * (`scripts/initialize-local-development.mts`) composes the same layer, and
- * `install/installation-runtime.ts` names the requirement both of them satisfy.
- */
-const stageInstallationRuntime = Effect.gen(function* buildStageInstallationRuntime() {
-  const stage = yield* loadStageContextBootstrapConfiguration();
-  const databaseConfiguration = yield* parseDatabaseConfig({ DATABASE_URL: stage.databaseAdminUrl }).pipe(
-    Effect.mapError(
-      (error) =>
-        new StageAccountsBootstrapError({
-          code: 'stage_accounts_configuration_invalid',
-          reason: error.reason,
-        }),
-    ),
-  );
-  // The privileged pool is opened once, at the startup root: a database that cannot be opened is a defect
-  // of the process, not a decision of the bootstrap.
-  const database = CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, databaseConfiguration)));
-  // The engine transport belongs to this run: it is opened with the layer and closed when the run ends.
-  const engine = Layer.effect(
-    AccessProjectionCompiler,
-    Effect.acquireRelease(
-      Effect.sync(() => makeAccessProjectionTransport(stage.spiceDb)),
-      (transport) => Effect.sync(() => transport.close()),
-    ).pipe(Effect.map((transport) => makeAccessProjectionCompiler(transport))),
-  );
+/** One native installation graph, including the enrollment required by scoped identity bootstrap writes. */
+export const makeStageInstallationRuntime = (
+  database: Layer.Layer<CoreDatabase, DatabaseConnectionError>,
+  engine: Layer.Layer<AccessProjectionCompiler>,
+) => {
   const memberships = AccessMembershipStoreLive;
-  const platform = Layer.mergeAll(database, engine);
+  // The shell's own enrollment names the session-setting role this run connects as; the access stores and
+  // the projection writer install every tenant scope from it, never from an assumed identity.
+  const enrollment = makeDatabaseIdentityEnrollmentLive(SHELL_DATABASE_IDENTITY_ENROLLMENT);
+  const platform = Layer.mergeAll(database, engine, enrollment);
   const stores = Layer.mergeAll(
     TenantIntentLoaderLive,
     AccessWriteJournalStoreLive,
@@ -121,15 +109,43 @@ const stageInstallationRuntime = Effect.gen(function* buildStageInstallationRunt
   const writer = AccessProjectionWriterLive.pipe(Layer.provide(Layer.mergeAll(stores, platform)));
   const bootstrap = TenantAccessBootstrapLive.pipe(Layer.provide(Layer.mergeAll(stores, platform, catalog, writer)));
   return Layer.mergeAll(bootstrap, writer, catalog, stores, platform) satisfies Layer.Layer<
-    InstallationRuntime,
+    InstallationRuntime | DatabaseIdentityEnrollmentContext,
     DatabaseConnectionError,
     Crypto.Crypto
   >;
+};
+
+/**
+ * The installation runtime of this command: one runtime pool, one engine transport and the six access
+ * writers, composed here because this script is a process root. The administrative connection is separate
+ * and used only by Better Auth below.
+ */
+const stageInstallationRuntime = Effect.gen(function* buildStageInstallationRuntime() {
+  const stage = yield* loadStageContextBootstrapConfiguration();
+  const databaseConfiguration = yield* parseDatabaseConfig({ DATABASE_URL: Redacted.value(stage.databaseUrl) }).pipe(
+    Effect.mapError(
+      (error) =>
+        new StageAccountsBootstrapError({
+          code: 'stage_accounts_configuration_invalid',
+          reason: error.reason,
+        }),
+    ),
+  );
+  const database = CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, databaseConfiguration)));
+  // The engine transport belongs to this run: it is opened with the layer and closed when the run ends.
+  const engine = Layer.effect(
+    AccessProjectionCompiler,
+    Effect.acquireRelease(
+      Effect.sync(() => makeAccessProjectionTransport(Redacted.value(stage.spiceDb))),
+      (transport) => Effect.sync(() => transport.close()),
+    ).pipe(Effect.map((transport) => makeAccessProjectionCompiler(transport))),
+  );
+  return makeStageInstallationRuntime(database, engine);
 });
 
 const program = Effect.gen(function* bootstrapStageAccountsProgram() {
-  const { modules } = yield* stageAccessModules;
-  const configuration = yield* loadStageAccountsConfiguration(readAccountsFile);
+  const { declaredWorkloadKeys, modules } = yield* stageAccessModules;
+  const configuration = yield* loadStageAccountsConfiguration(readAccountsFile, declaredWorkloadKeys);
   // A pool that cannot be opened is this command's failure, reported with the reason it recorded.
   const runtime = yield* stageInstallationRuntime.pipe(
     Effect.mapError(
@@ -140,7 +156,7 @@ const program = Effect.gen(function* bootstrapStageAccountsProgram() {
         }),
     ),
   );
-  const result = yield* bootstrapStageAccountsFromEnvironment(readAccountsFile, { modules }).pipe(
+  const result = yield* bootstrapStageAccountsFromEnvironment(readAccountsFile, { declaredWorkloadKeys, modules }).pipe(
     Effect.provide(runtime),
     Effect.provide(
       AuthDatabaseLive.pipe(
@@ -183,5 +199,7 @@ const program = Effect.gen(function* bootstrapStageAccountsProgram() {
   Effect.tapDefect(() => Console.error('Stage accounts bootstrap failed unexpectedly')),
 );
 
-const exit = await Effect.runPromiseExit(program.pipe(Effect.provide(NodeServices.layer), Effect.scoped));
-process.exitCode = Exit.isFailure(exit) ? 1 : 0;
+if (import.meta.main) {
+  const exit = await Effect.runPromiseExit(program.pipe(Effect.provide(NodeServices.layer), Effect.scoped));
+  process.exitCode = Exit.isFailure(exit) ? 1 : 0;
+}

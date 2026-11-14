@@ -84,10 +84,13 @@ const proposalIssue = (value: Proposal): string => {
 it('approves into a mandate bound to the approver incarnations and every required grant', () => {
   const proposal = proposalOf({ requester: agentOf(1, 4, 5) });
   const mandate = accepted(approvalOf({ proposal }));
+  if (mandate.approval === undefined || 'actionAuthority' in mandate.approval) {
+    expect.unreachable('the historical approval retains its exact original witness format');
+  }
   expect(mandate.status).toBe('approved');
   expect(mandate.approval?.approverId).toBe(person(2).principalId);
-  expect(mandate.approval?.approvalAssignmentIncarnationId).toBe(assignmentIncarnationId(31));
-  expect(mandate.approval?.executionAssignmentIncarnationId).toBe(assignmentIncarnationId(32));
+  expect(mandate.approval.approvalAssignmentIncarnationId).toBe(assignmentIncarnationId(31));
+  expect(mandate.approval.executionAssignmentIncarnationId).toBe(assignmentIncarnationId(32));
   expect(mandate.approval?.approvedAt.getTime()).toBe(AT.getTime());
   expect(mandate.approval?.expiresAt.getTime()).toBe(AT.getTime() + 24 * HOUR_MS);
   const grants = mandate.witnesses.map(({ grantIncarnationId: grant, purpose }) => `${purpose}:${grant}`);

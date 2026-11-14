@@ -49,6 +49,9 @@ export interface CoreSearchProjectionStoreService {
   ) => Effect.Effect<void, CoreSearchProjectionInvalid | CoreSearchProjectionUnavailableInstance>;
 }
 
+export { CoreSearchProjectionRefreshStore } from './projection-refresh-store.ts';
+export type { CoreSearchProjectionRefreshStoreService } from './projection-refresh-store.ts';
+
 /** Production persistence implements this Core-owned port; business modules never own an index. */
 export class CoreSearchProjectionStore extends Context.Service<
   CoreSearchProjectionStore,

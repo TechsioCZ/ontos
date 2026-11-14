@@ -52,6 +52,9 @@ import { createCounterpartyCustomerOnboardPartyRegistryCounterpartyRoleAddedV1Ou
 
 export type { CounterpartyCustomerOnboardPayload } from '../../shared/actions/counterparty-customer-onboard.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+const COUNTERPARTY_RESOURCE_TYPE = 'party.registry.counterparty' as const;
+
 const CounterpartyCustomerOnboardError = Schema.Union([
   PartyEvidenceInsufficient,
   PartyPersistenceUnavailable,
@@ -184,10 +187,10 @@ const handleCounterpartyCustomerOnboard = Effect.fn('CounterpartyCustomerOnboard
     accessKind: 'read',
     queryHash: `counterparty-customer-onboard:${result.partyRef.resourceId}`,
     resultCount: 1,
-    servingModuleKey: 'party.registry',
-    targetModuleKey: 'party.registry',
+    servingModuleKey: PARTY_REGISTRY_MODULE_ID,
+    targetModuleKey: PARTY_REGISTRY_MODULE_ID,
     targetResourceId: result.counterpartyRef.resourceId,
-    targetResourceType: 'party.registry.counterparty',
+    targetResourceType: COUNTERPARTY_RESOURCE_TYPE,
   });
   if (!sourceReplayed && result.counterpartyCreated) {
     const eventPayload = {
@@ -198,10 +201,10 @@ const handleCounterpartyCustomerOnboard = Effect.fn('CounterpartyCustomerOnboard
     const event = yield* context.addDomainEvent({
       eventType: 'party.registry.counterparty-created.v1',
       payloadJson: eventPayload,
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
+      producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+      subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
       subjectResourceId: result.counterpartyRef.resourceId,
-      subjectResourceType: 'party.registry.counterparty',
+      subjectResourceType: COUNTERPARTY_RESOURCE_TYPE,
     });
     yield* context.addOutboxMessage(
       event,
@@ -219,10 +222,10 @@ const handleCounterpartyCustomerOnboard = Effect.fn('CounterpartyCustomerOnboard
     const event = yield* context.addDomainEvent({
       eventType: 'party.registry.counterparty-role-added.v1',
       payloadJson: eventPayload,
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
+      producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+      subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
       subjectResourceId: result.counterpartyRef.resourceId,
-      subjectResourceType: 'party.registry.counterparty',
+      subjectResourceType: COUNTERPARTY_RESOURCE_TYPE,
     });
     yield* context.addOutboxMessage(
       event,
@@ -234,6 +237,13 @@ const handleCounterpartyCustomerOnboard = Effect.fn('CounterpartyCustomerOnboard
 
 export const counterpartyCustomerOnboardAction = defineAction(
   {
+    accessActor: {
+      callers: ['crm'],
+      subject: 'rights',
+      subjectWorkloads: ['demo.crm.party-intake'],
+      reason:
+        'CRM reconciles owner-held client identities through native Party operations under its bound intake workload; humans retain existing rights.',
+    },
     accessWorkload: {
       workloads: ['party.registry.source-write'],
       reason: 'Execute the enrolled client source occurrence through native Counterparty customer onboarding.',
@@ -262,12 +272,12 @@ export const counterpartyCustomerOnboardAction = defineAction(
       access: 'write',
       authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.counterparty-customer-onboard',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'required',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: CounterpartyCustomerOnboardPayloadSchema,
     policies: [],
     resultSchema: CounterpartyCustomerOnboardResultSchema,

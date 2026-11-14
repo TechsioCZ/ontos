@@ -1,0 +1,198 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import type { IsoDate } from '../../../../../shared/domain/common.ts';
+// Real Finance draft; supplier and immutable line prices are copied from the purchase order.
+import { SectionCard } from '@app/admin-ui';
+import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { FormInput } from '@app/admin-ui/form-controls';
+import { SelectTemplate as Select } from '@app/admin-ui/select-template';
+import { Effect, Option, Random } from 'effect';
+import { useRef, useState } from 'react';
+import type { PurchaseOrder, Supplier } from '../../../../../shared/domain/purchasing.ts';
+import { executeApplyCommand as applyFinanceCommand } from '@app/finance-billing/clients/apply-command';
+import { readFinance } from '../../../../ui/finance-reads.ts';
+import { FormSaveFooter, submitDone, useFormSave } from '../../../../ui/form-save.tsx';
+import { formatAmount, todayIso } from './purchasing-model.ts';
+import { purchaseInvoiceCommandOf } from './purchase-invoice-command.ts';
+
+const vatRates = [0, 10, 12, 21] as const;
+const saveFailure = 'Návrh se nepodařilo uložit. Obnovte detail objednávky a ověřte, zda již návrh existuje.';
+type VatRate = (typeof vatRates)[number];
+interface SubmitInvoiceDraftInput {
+  readonly dueDate: IsoDate;
+  readonly issueDate: IsoDate;
+  readonly lines: readonly {
+    readonly description: string;
+    readonly quantity: number;
+    readonly unitPriceMinor: number;
+    readonly vatRate: VatRate;
+  }[];
+  readonly onCreated: () => void;
+  readonly order: PurchaseOrder;
+  readonly rate: VatRate | undefined;
+  readonly setError: (value: string | undefined) => void;
+  readonly submitting: { current: boolean };
+  readonly supplier: Supplier;
+  readonly totalMinor: number;
+}
+const submitInvoiceDraft = Effect.fn('FacilityOperations.Purchasing.submitInvoiceDraft')(
+  function* submitPurchaseInvoiceDraft(input: SubmitInvoiceDraftInput) {
+    const { dueDate, issueDate, lines, onCreated, order, rate, setError, submitting, supplier, totalMinor } = input;
+    if (submitting.current) {
+      return 'failed' as const;
+    }
+    if (rate === undefined || issueDate === '' || dueDate < issueDate) {
+      setError('Vyberte sazbu DPH a zkontrolujte datum vystavení a splatnost.');
+      return 'failed' as const;
+    }
+    const command = purchaseInvoiceCommandOf({ dueDate, issueDate, lines, order, supplier, totalMinor });
+    if (Option.isNone(command)) {
+      setError(saveFailure);
+      return 'failed' as const;
+    }
+    submitting.current = true;
+    setError(undefined);
+    const result = yield* Effect.gen(function* createPurchaseInvoice() {
+      const parts = yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt], { concurrency: 1 });
+      const idempotencyKey = `purchase-invoice:${parts.join(':')}`;
+      const snapshot = yield* readFinance('facility-operations.invoice-draft.read');
+      if (!snapshot.canWrite) {
+        return { status: 'forbidden' as const };
+      }
+      yield* applyFinanceCommand(
+        {
+          command: command.value,
+          expectedRevision: snapshot.revision,
+        },
+        'facility-operations.invoice-draft.create',
+        { idempotencyKey },
+      );
+      return { status: 'created' as const };
+    }).pipe(
+      Effect.catchTag('ApplyCommandActionForbiddenProblem', (cause) =>
+        Effect.succeed({ cause, status: 'forbidden' as const }),
+      ),
+      Effect.match({ onFailure: (cause) => ({ cause, status: 'failed' as const }), onSuccess: (outcome) => outcome }),
+    );
+    submitting.current = false;
+    if (result.status === 'created') {
+      return submitDone(onCreated);
+    }
+    if (result.status === 'forbidden') {
+      setError('Návrh faktury může připravit jen účetní nebo vedení. Vaše role má ve Financích jen čtení.');
+    } else {
+      setError(saveFailure);
+    }
+    return 'failed' as const;
+  },
+);
+
+export const InvoiceDraftForm = ({
+  onCancel,
+  onCreated,
+  order,
+  supplier,
+}: {
+  readonly onCancel: () => void;
+  readonly onCreated: () => void;
+  readonly order: PurchaseOrder;
+  readonly supplier: Supplier;
+}) => {
+  const { t } = useModernI18n();
+  const [issueDate, setIssueDate] = useState(todayIso);
+  const [dueDate, setDueDate] = useState(todayIso);
+  const [rate, setRate] = useState<VatRate | undefined>();
+  const submitting = useRef(false);
+  const [error, setError] = useState<string>();
+  const lines = order.lines.map((line) => ({
+    description: line.description,
+    quantity: line.quantity,
+    unitPriceMinor: line.unitPriceMinor,
+    vatRate: rate ?? 0,
+  }));
+  let totalMinor = 0;
+  for (const line of lines) {
+    const base = line.quantity * line.unitPriceMinor;
+    totalMinor += base + Math.floor((base * line.vatRate + 50) / 100);
+  }
+  // The draft is created on Uložit only; the dates it opens with are not typed input.
+  const form = useFormSave({
+    submit: () =>
+      submitInvoiceDraft({
+        dueDate,
+        issueDate,
+        lines,
+        onCreated,
+        order,
+        rate,
+        setError,
+        submitting,
+        supplier,
+        totalMinor,
+      }),
+    value: { dueDate, issueDate, rate },
+  });
+  return (
+    <SectionCard title={t('facility-operations.ui.prepareIncomingInvoice')}>
+      <p className="text-fg-secondary text-sm">
+        Dodavatel {supplier.name} a řádky se převezmou jako samostatná kopie z {order.number}. Nejde o vystavený doklad
+        dodavatele ani o zaúčtování.
+      </p>
+      {error !== undefined && (
+        <StatusText showIcon status="error">
+          {error}
+        </StatusText>
+      )}
+      <div className="flex flex-col gap-100">
+        {order.lines.map((line) => (
+          <div className="rounded-md bg-surface-secondary p-150 text-sm" key={line.id}>
+            <span className="font-medium">{line.description}</span>
+            <div>
+              {line.quantity} × {formatAmount(line.unitPriceMinor)} bez DPH
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
+        <FormInput
+          id="draft-invoice-issue"
+          label={t('facility-operations.ui.issueDate')}
+          onChange={(event) => setIssueDate(event.target.value)}
+          required
+          type="date"
+          value={issueDate}
+        />
+        <FormInput
+          id="draft-invoice-due"
+          label={t('facility-operations.ui.dueDate')}
+          onChange={(event) => setDueDate(event.target.value)}
+          required
+          type="date"
+          value={dueDate}
+        />
+      </div>
+      <Select
+        items={vatRates.map((value) => ({
+          displayValue: `${value} %`,
+          label: `${value} %`,
+          value: String(value),
+        }))}
+        label={t('facility-operations.ui.supplierDocumentVat')}
+        name="invoice-vat-rate"
+        onValueChange={({ value }) => setRate(vatRates.find((candidate) => String(candidate) === value[0]))}
+        placeholder={t('facility-operations.ui.selectVatRate')}
+        value={rate === undefined ? [] : [String(rate)]}
+      />
+      <p className="text-fg-secondary text-xs">
+        Ceny objednávky se přebírají beze změny jako základ bez DPH. Zvolená sazba se použije pro všechny řádky; ověřte
+        ji podle skutečného dokladu dodavatele.
+      </p>
+      {rate !== undefined && <p className="font-semibold text-sm">Celkem včetně DPH: {formatAmount(totalMinor)}</p>}
+      <FormSaveFooter
+        cancelLabel={t('facility-operations.common.cancel')}
+        error={error}
+        form={form}
+        onCancel={onCancel}
+      />
+    </SectionCard>
+  );
+};

@@ -11,6 +11,7 @@ import {
   marketDefinitionRevisions,
   marketLifecyclePeriods,
   marketRetirementAdmissions,
+  marketRetirementIntents,
   markets,
   storefrontAssociationRevisions,
   storefrontAssociations,
@@ -31,11 +32,13 @@ describe('Commerce Market Catalog database contract', () => {
     );
   });
 
-  it('preserves Tenant-scoped RLS on all six business tables so eligible sellers remain discoverable before seller selection', () => {
+  it('preserves Tenant-scoped RLS on all eight scoped tables, including native admissions and the retained archive', () => {
     const businessTables = [
       marketCatalogCompletenessGenerations,
       marketDefinitionRevisions,
       marketLifecyclePeriods,
+      marketRetirementIntents,
+      marketRetirementAdmissions,
       markets,
       storefrontAssociationRevisions,
       storefrontAssociations,
@@ -44,14 +47,13 @@ describe('Commerce Market Catalog database contract', () => {
       'market_catalog_completeness_generations',
       'market_definition_revisions',
       'market_lifecycle_periods',
+      'market_retirement_intents',
+      'market_retirement_admissions',
       'markets',
       'storefront_association_revisions',
       'storefront_associations',
     ]);
-    expect(COMMERCE_MARKET_CATALOG_TABLES.filter((table) => table !== marketRetirementAdmissions)).toEqual([
-      gatewayAssertionRedemptions,
-      ...businessTables,
-    ]);
+    expect(COMMERCE_MARKET_CATALOG_TABLES).toEqual([gatewayAssertionRedemptions, ...businessTables]);
     for (const table of businessTables) {
       const config = getTableConfig(table);
       expect(config.enableRLS, `${config.name} must enable RLS`).toBe(true);
@@ -224,5 +226,121 @@ describe('Commerce Market Catalog database contract', () => {
     expect(migration).toContain("v_retirement_impact#>'{reservation,version}'");
     expect(migration).toContain('then v_retirement_impact else null end');
     expect(migration).not.toContain("v_retirement_impact->>'reservationToken'");
+  });
+
+  it('preserves the legacy retirement archive constraints and historical security DDL', () => {
+    const intents = getTableConfig(marketRetirementIntents);
+    expect(intents.indexes.map((index) => index.config.name)).toContain(
+      'commerce_market_catalog_retirement_intents_open_market_uk',
+    );
+    expect(intents.checks.map(({ name }) => name)).toEqual(
+      expect.arrayContaining([
+        'commerce_market_catalog_retirement_intents_stage_ck',
+        'commerce_market_catalog_retirement_intents_failure_ck',
+        'commerce_market_catalog_retirement_intents_reservation_ck',
+      ]),
+    );
+    const migration = readFileSync(
+      new URL('../../drizzle/20261031091616_market-retirement-intents/migration.sql', import.meta.url),
+      'utf-8',
+    );
+    for (const routine of [
+      'request_market_retirement',
+      'read_market_retirement_intent',
+      'advance_market_retirement_intent',
+    ]) {
+      expect(migration).toContain(`grant execute on function commerce_market_catalog.${routine}(uuid, uuid, jsonb)`);
+      expect(migration).toContain(
+        `revoke all on function commerce_market_catalog.${routine}(uuid, uuid, jsonb) from public`,
+      );
+    }
+    expect(migration).toContain('FORCE ROW LEVEL SECURITY');
+    expect(migration).toContain("if v_intent.stage is distinct from p_payload->>'expectedStage' then");
+    expect(migration).toContain('commerce_market_catalog.transition_market_lifecycle(p_tenant_id, p_legal_entity_id');
+    expect(migration).not.toMatch(/grant\s+(?:select|insert|update|delete)\s+on/iu);
+  });
+
+  it('exposes the Market administration state only through one scoped owner routine', () => {
+    const migration = readFileSync(
+      new URL('../../drizzle/20261101230822_market-administration-state/migration.sql', import.meta.url),
+      'utf-8',
+    );
+    const routine = 'commerce_market_catalog.read_market_administration_state(uuid, uuid, jsonb)';
+    expect(migration).toContain('security definer');
+    expect(migration).toContain('set search_path = pg_catalog, pg_temp');
+    expect(migration).toContain(
+      'perform commerce_market_catalog.assert_operation_scope(p_tenant_id, p_legal_entity_id)',
+    );
+    expect(migration).toContain(`revoke all on function ${routine} from public`);
+    expect(migration).toContain(`grant execute on function ${routine} to ontos_runtime`);
+    expect(migration).toContain('market.selling_legal_entity_id = p_legal_entity_id');
+    expect(migration).not.toMatch(/grant\s+(?:select|insert|update|delete)\s+on/iu);
+  });
+
+  it('verifies all metadata foreign keys plus the deferred current-definition back-reference', () => {
+    const declared = COMMERCE_MARKET_CATALOG_TABLES.flatMap((table) => getTableConfig(table).foreignKeys);
+    expect(declared).toHaveLength(7);
+    const migration = readFileSync(
+      new URL('../../drizzle/20260921152048_governed-market-administration/migration.sql', import.meta.url),
+      'utf-8',
+    );
+    const deferred = migration.match(/foreign key\s*\(tenant_id, current_definition_revision_id\)/giu) ?? [];
+    expect(deferred).toHaveLength(1);
+    expect(migration).toContain('deferrable initially deferred');
+    const verifier = readFileSync(new URL('../../scripts/verify-db-schema.mts', import.meta.url), 'utf-8');
+    expect(verifier).toContain(`infrastructure.foreign_key_count !== ${declared.length + deferred.length}`);
+  });
+
+  it('verifies the search snapshot routine in every governed allowlist without permitting raw runtime reads', () => {
+    const verifier = readFileSync(new URL('../../scripts/verify-db-schema.mts', import.meta.url), 'utf-8');
+    const migration = readFileSync(
+      new URL('../../drizzle/20261102164719_market-search-snapshot/migration.sql', import.meta.url),
+      'utf-8',
+    );
+    const routineLists = verifier.split('\n').filter((line) => line.includes('routine.proname '));
+    expect(routineLists).toHaveLength(3);
+    for (const list of routineLists) {
+      expect(list).toContain("'read_market_search_snapshot'");
+    }
+    expect(verifier).toContain('infrastructure.governed_routine_count !== 15');
+    expect(verifier).toContain('infrastructure.unsafe_governed_routine_count !== 0');
+    expect(verifier).toContain('infrastructure.unexpected_runtime_routine_count !== 0');
+    expect(verifier).toContain('infrastructure.private_routine_executable ||');
+    expect(verifier).toContain('infrastructure.runtime_select ||');
+    expect(verifier).toContain('not routine.prosecdef');
+    expect(verifier).toContain('search_path=pg_catalog, pg_temp');
+    const routine = 'commerce_market_catalog.read_market_search_snapshot(uuid, uuid, jsonb)';
+    expect(migration).toContain('security definer');
+    expect(migration).toContain('set search_path = pg_catalog, pg_temp');
+    expect(migration).toContain(`revoke all on function ${routine} from public`);
+    expect(migration).toContain(`grant execute on function ${routine} to ontos_runtime`);
+    expect(migration).not.toMatch(/grant\s+(?:select|insert|update|delete)\s+on/iu);
+  });
+
+  it('converges forward onto the native retirement without stranding pending legacy intents or dropping the archive', () => {
+    const migration = readFileSync(
+      new URL(
+        '../../drizzle/20261106235324_market-administration-state-native-retirement/migration.sql',
+        import.meta.url,
+      ),
+      'utf-8',
+    );
+    // The already accepted non-terminal intents stop the migration instead of being silently abandoned.
+    expect(migration).toContain("where intent.stage not in ('COMPLETED', 'FAILED')");
+    expect(migration).toContain("message = 'legacy Market retirement intents are still pending");
+    // New legacy intent writes are fenced atomically while the routine stays callable.
+    expect(migration).toContain('create or replace function commerce_market_catalog.request_market_retirement');
+    expect(migration).toContain('durable Market retirement intents are retired');
+    // The administration state reads the native admission; only the guard above names the archive.
+    const [guard, administrationState] = migration.split(
+      'create or replace function commerce_market_catalog.read_market_administration_state',
+    );
+    expect(guard).toContain('market_retirement_intents');
+    expect(administrationState).toContain('commerce_market_catalog.market_retirement_admissions admission');
+    expect(administrationState).not.toContain('market_retirement_intents');
+    // Forward-only: the archived intent table and its rows stay in place.
+    expect(migration).not.toMatch(/drop\s+(?:table|column|function)/iu);
+    expect(migration).not.toMatch(/delete\s+from/iu);
+    expect(migration).not.toMatch(/truncate/iu);
   });
 });

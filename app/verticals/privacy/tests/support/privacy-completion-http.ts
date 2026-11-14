@@ -1,6 +1,8 @@
 import { HttpApi } from 'effect/http-api';
 // Explicit TEST assembly: production Privacy defaults remain unavailable.
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ActionAuthorizationPreflightDatabaseLive,
   ContextAccessLive,
   extractVerticalRuntimeSafeDescriptors,
@@ -10,8 +12,6 @@ import {
   OntosOperationContractSchema,
   OntosOutboxSubscriptionContractSchema,
   OntosModuleRequirementsSchema,
-  CorePersistenceLive,
-  DatabaseConfigLive,
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
   GatewayAssertionRedemptionUnavailableError,
@@ -19,6 +19,8 @@ import {
   ReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
+import { CoreDatabase, testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import {
   ActionPermissionLive,
   ActionRepositoryLive,
@@ -241,6 +243,13 @@ const serve = Effect.scoped(
       }),
     });
     const crypto = yield* Crypto.Crypto;
+    // Every owner runtime and approval store uses the already validated case pool.
+    const executor = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, runtime));
+    const persistence = Layer.succeed(CoreDatabase, { executor });
+    const identitiesAndCrypto = Layer.mergeAll(
+      Layer.succeed(Crypto.Crypto, crypto),
+      makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([])),
+    );
     const authority = Layer.succeed(OwnerExecutionAuthority, {
       resolve: Effect.fn('PrivacyCompletionTest.authoritativeReceipt')(function* resolve(request, context) {
         if (!authorityAvailable) {
@@ -296,35 +305,41 @@ const serve = Effect.scoped(
       }),
     });
     const source = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(FetchHttpClient.layer));
-    const moduleState = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
+    const moduleState = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
     const gate = ModuleStateGateLive.pipe(Layer.provide(moduleState));
     const entrypoint = ModuleEntrypointGatewayLive.pipe(Layer.provide(gate));
     // The one access gate this suite scripts (C04 harness shape); the legacy pair stays beside it
     // until the runners stop requiring `ActionPermission`/`ContextAccess` (C14).
     const accessGate = makePrivacyCompletionAccessGate();
     const scope = OperationalScopeResolverLive.pipe(
-      Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessGate.layer)),
+      Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, accessGate.layer)),
     );
     const infrastructure = Layer.mergeAll(
-      CorePersistenceLive,
+      persistence,
       ContextAccessLive,
       gate,
       entrypoint,
       scope,
       ActionRepositoryLive,
       ActionPermissionLive,
-      ActionAuthorizationPreflightDatabaseLive.pipe(Layer.provideMerge(CorePersistenceLive)),
+      ActionAuthorizationPreflightDatabaseLive.pipe(Layer.provideMerge(persistence)),
       ActiveApplicationCompositionConfigLive.pipe(Layer.provide(source)),
       accessGate.layer,
     );
-    const action = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+    const ownerApprovals = makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, privacyRegistration).pipe(
       Layer.provideMerge(authority),
       Layer.provide(infrastructure),
-      Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+      Layer.provide(identitiesAndCrypto),
+    );
+    const action = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+      Layer.provideMerge(ownerApprovals),
+      Layer.provideMerge(authority),
+      Layer.provide(infrastructure),
+      Layer.provide(identitiesAndCrypto),
     );
     const read = ReadRuntimeLive.pipe(
-      Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, entrypoint, scope, accessGate.layer)),
-      Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+      Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, entrypoint, scope, accessGate.layer)),
+      Layer.provide(identitiesAndCrypto),
     );
     const api = makePrivacyApiRuntime(read, action, redemption);
     const handler = yield* Effect.acquireRelease(

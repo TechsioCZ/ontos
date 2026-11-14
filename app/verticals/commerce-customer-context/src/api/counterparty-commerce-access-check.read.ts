@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   CounterpartyCommerceAccessCheckRequestSchema,
@@ -17,7 +17,6 @@ import type {
 } from '../../shared/apis/counterparty-commerce-access-check.ts';
 import type { CounterpartyAccessPortService } from '../../shared/domain/access-port.ts';
 import { counterpartyAccessServicesForTransaction } from '../access-services.ts';
-
 import { counterpartyScopeOwnerFacts } from './read-owner-facts.ts';
 
 export interface CounterpartyCommerceAccessCheckServices {
@@ -36,6 +35,13 @@ const unavailable = () =>
     reason: 'Counterparty Commerce Access facts are temporarily unavailable',
   });
 
+const checkInput = (input: CounterpartyCommerceAccessCheckRequest, principalId: string, tenantId: string) => ({
+  counterpartyRef: input.counterpartyRef,
+  permission: input.permission,
+  principal: { principalId, tenantId },
+  scope: input.scope,
+});
+
 export const checkCounterpartyCommerceAccessFromServices = (
   input: CounterpartyCommerceAccessCheckRequest,
   principalId: string,
@@ -45,20 +51,10 @@ export const checkCounterpartyCommerceAccessFromServices = (
   if (input.counterpartyRef.tenantId !== tenantId) {
     return Effect.fail(notFound());
   }
-  return services
-    .check({
-      counterpartyRef: input.counterpartyRef,
-      permission: input.permission,
-      principal: {
-        principalId,
-        tenantId,
-      },
-      scope: input.scope,
-    })
-    .pipe(
-      Effect.map((decision) => ({ decision })),
-      Effect.catchTag('CounterpartyAccessUnavailable', () => Effect.fail(unavailable())),
-    );
+  return services.check(checkInput(input, principalId, tenantId)).pipe(
+    Effect.map((decision) => ({ decision })),
+    Effect.catchTag('CounterpartyAccessUnavailable', () => Effect.fail(unavailable())),
+  );
 };
 
 const counterpartyCommerceAccessCheckEntrypoint = defineTenantModuleEntrypoint({
@@ -94,13 +90,15 @@ export const counterpartyCommerceAccessCheckRead = defineRead(
     resultSchema: CounterpartyCommerceAccessCheckResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<CounterpartyCommerceAccessCheckServices>) =>
-    checkCounterpartyCommerceAccessFromServices(
-      input,
-      context.scope.principalId,
-      context.scope.tenantId,
-      context.services,
-    ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
+  {
+    load: (input, context: ReadLoadContext<CounterpartyCommerceAccessCheckServices>) =>
+      checkCounterpartyCommerceAccessFromServices(
+        input,
+        context.scope.principalId,
+        context.scope.tenantId,
+        context.services,
+      ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
+  },
   (transaction, scope) =>
     counterpartyAccessServicesForTransaction(transaction, scope).pipe(Effect.map((port) => ({ check: port.check }))),
 );

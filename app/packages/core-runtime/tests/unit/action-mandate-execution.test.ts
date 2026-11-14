@@ -8,12 +8,12 @@ import type {
   MandatePrepared,
   MandateTransactionInput,
 } from '../../src/access/approvals/action-mandate-dispatch.ts';
+import { freezeActionCommandV2, resolveActionCommandV2 } from '../../src/access/approvals/action-command-v2.ts';
 import type { DecisionReasonCode, GrantedAuthorityEvidence } from '../../src/access/decision/contract.ts';
 import {
   AccessScopeIdSchema,
   AssignmentIncarnationIdSchema,
   CapabilityKeySchema,
-  CommandDigestSchema,
   GrantIncarnationIdSchema,
   PrincipalIdSchema,
   ProposalIdSchema,
@@ -275,7 +275,6 @@ it.effect('without a mandate, NEEDS_APPROVAL still refuses before any owner hand
 const scopeId = AccessScopeIdSchema.make('00000000-0000-4000-8000-0000000000a1');
 const parkedProposalId = ProposalIdSchema.make('00000000-0000-4000-8000-0000000000b2');
 const parkedExpiresAt = DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-10T12:00:00.000Z'));
-const commandDigest = CommandDigestSchema.make('a'.repeat(64));
 
 /** The propose cell the gate resolved for the requesting person; the proposal binds exactly this. */
 const requesterEvidence: GrantedAuthorityEvidence = {
@@ -355,14 +354,19 @@ const makeRecordingDispatch = (options: DispatchOptions = {}) => {
       return options.parkFailure === undefined ? Effect.succeed(parked) : Effect.fail(options.parkFailure);
     },
     prepare: (input) =>
-      Effect.succeed({
-        approverId: input.scope.principalId,
-        command: { capabilityKey: CapabilityKeySchema.make(input.capabilityKey), payload: { amount: 1 } },
-        commandDigest,
-        mandateId: input.mandateId,
-        proposalId: parkedProposalId,
-        scopeId,
-      } satisfies MandatePrepared),
+      resolveActionCommandV2({ payload: { amount: 1 }, registration: action, scope: input.scope }).pipe(
+        Effect.map(
+          (command) =>
+            ({
+              approverId: input.scope.principalId,
+              command: { capabilityKey: CapabilityKeySchema.make(input.capabilityKey), payload: command },
+              commandDigest: Result.getOrThrow(freezeActionCommandV2(command)),
+              mandateId: input.mandateId,
+              proposalId: parkedProposalId,
+              scopeId,
+            }) satisfies MandatePrepared,
+        ),
+      ),
   };
   return { calls, dispatch };
 };

@@ -2,6 +2,8 @@
 // @ontos-action-http-owner commerce.market-catalog
 // @ontos-action-http-slug remove-storefront-association
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +12,7 @@ import {
 } from '../actions/remove-storefront-association.ts';
 
 export { RemoveStorefrontAssociationPayloadSchema } from '../actions/remove-storefront-association.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const RemoveStorefrontAssociationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RemoveStorefrontAssociationActionInvalidProblem',
@@ -30,6 +33,7 @@ export const RemoveStorefrontAssociationActionForbiddenProblemSchema = makeProbl
       'operation_context_denied',
       'operation_context_invalid',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const RemoveStorefrontAssociationActionNotFoundProblemSchema = makeProblemDetailsSchema(
@@ -60,6 +64,7 @@ export const RemoveStorefrontAssociationActionIneligibleProblemSchema = makeProb
       'cross_tenant_reference',
       'inconsistent_seller_or_channel',
       'replacement_impact_unresolved',
+      'retirement_in_progress',
       'seller_identity_immutable',
     ]),
   },
@@ -157,7 +162,7 @@ export const removeStorefrontAssociationActionGroupDefinition = HttpApiGroup.mak
     HttpApiEndpoint.post('execute', '/commerce-market-catalog/actions/remove-storefront-association', {
       error: actionErrors,
       payload: Schema.toEncoded(RemoveStorefrontAssociationPayloadSchema),
-      success: RemoveStorefrontAssociationResultSchema,
+      success: [ActionProposalAcceptedSchema, RemoveStorefrontAssociationResultSchema],
     }),
   )
   .middleware(RemoveStorefrontAssociationActionSchemaErrorMiddleware);

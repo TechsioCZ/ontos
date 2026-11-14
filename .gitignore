@@ -2,4 +2,5 @@
 .codex/
 .scratch/
 .DS_Store
-__pycache__
+__pycache__# Zerops build scratch (app/scripts/zerops/build-app.sh): logs, the unit cache and the shipped Node runtime.
+/app/.zerops/

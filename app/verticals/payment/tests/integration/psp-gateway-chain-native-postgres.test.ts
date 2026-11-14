@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import { readFileSync } from 'node:fs';
 
 import type { OutboxPayload } from '@app/payment/outbox/payment-core-operation-requested-v1';
@@ -153,7 +154,11 @@ const contactedCollectionFor = Effect.fn('PspGatewayChainTest.contactedCollectio
   const contact = PAYER_CONTACTS[binding.executionBinding.providerFamily];
   if (Option.isSome(contact)) {
     yield* harness.database.transaction((transaction) =>
-      installOperationalScope(transaction, operationalScopeOf(harness.scope)).pipe(
+      installOperationalScope(
+        transaction,
+        operationalScopeOf(harness.scope),
+        defineDatabaseIdentityEnrollment([]),
+      ).pipe(
         Effect.flatMap((scoped) =>
           pspPayerContactPersistenceForTransaction(scoped).rememberForCollect(collect.operationId, contact.value),
         ),

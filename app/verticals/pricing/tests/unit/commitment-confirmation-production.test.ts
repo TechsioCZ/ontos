@@ -1,3 +1,4 @@
+import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeCrypto } from '@effect/platform-node';
 import {
   OperationContextUnavailable,
@@ -9,11 +10,13 @@ import {
 } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
-import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
-import { DateTime, Effect, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Layer, Schema } from 'effect';
 import { afterAll, expect, it, rs } from 'effect-rstest';
 
-import { commitmentConfirmationProductionForScope } from '../../src/integrations/commitment-confirmation-production.ts';
+import {
+  commitmentConfirmationProductionForScope,
+  pricingCommitmentAlgorithmFactoriesLive,
+} from '../../src/integrations/commitment-confirmation-production.ts';
 
 const dependencies = rs.hoisted(() => ({
   gateway: rs.fn<(scope: OperationalScope, revision: string) => void>(),
@@ -80,7 +83,10 @@ const checkFactory = (compositionRevision?: string) =>
       },
       () => Effect.succeed({ evidence: { resultCount: 1 }, result: true }),
       (transaction, installedScope) =>
-        commitmentConfirmationProductionForScope(transaction, installedScope, compositionRevision).pipe(
+        Crypto.Crypto.pipe(
+          Effect.flatMap((crypto) =>
+            commitmentConfirmationProductionForScope(transaction, installedScope, compositionRevision, crypto),
+          ),
           Effect.flip,
           Effect.orDie,
           Effect.map((failure) => {
@@ -137,12 +143,15 @@ const checkFactory = (compositionRevision?: string) =>
     expect(harness.snapshot().ownerQueries).toEqual([]);
   });
 
-it.layer(NodeCrypto.layer)('Pricing production factory composition context', (suite) => {
-  suite.effect('refuses absent revision before proof, gateways, or persistence', () => checkFactory());
-  suite.effect('preserves present revision and installed scope at the owner gateway boundary', () =>
-    checkFactory(revision),
-  );
-});
+it.layer(Layer.merge(NodeCrypto.layer, pricingCommitmentAlgorithmFactoriesLive))(
+  'Pricing production factory composition context',
+  (suite) => {
+    suite.effect('refuses absent revision before proof, gateways, or persistence', () => checkFactory());
+    suite.effect('preserves present revision and installed scope at the owner gateway boundary', () =>
+      checkFactory(revision),
+    );
+  },
+);
 
 // With `isolate: false` one module registry is shared by every file a worker runs, so these
 // replacements outlive this file and would leak into whatever runs next. Remove them and drop the

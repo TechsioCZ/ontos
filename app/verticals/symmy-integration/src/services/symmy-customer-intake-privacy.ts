@@ -19,6 +19,7 @@ import type { SymmyPartyCommerceIntent } from '../../shared/domain/symmy-party-c
 import { projectSymmyOrganizationAcceptedEffect } from '../../shared/domain/symmy-source-organization-projections.ts';
 import { SymmyJobStoreError } from '../persistence/symmy-job-store.ts';
 import { symmyPartyCommerceIntentMatchesEffect } from './symmy-party-commerce-adapters.ts';
+import { symmyIntegrationEvidenceCall } from '../declared-evidence-calls.ts';
 
 type Target = NonNullable<SourceProcessingEligibilityRequest['target']>;
 
@@ -241,21 +242,23 @@ export const requireSymmyCustomerIntakePrivacy = Effect.fn('SymmyCustomerIntakeP
       requests,
       Effect.fn('SymmyCustomerIntakePrivacy.check')(function* check(request) {
         const requestCorrelation = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
+        // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
         const gateway = yield* acquireDelegatedGatewayContext(
           {
             audience: 'privacy',
+            callingAppId: 'symmy-integration',
             legalEntityScope: 'subject',
             requestCorrelation,
             subject: { _tag: 'Assertion', scope },
           },
           crypto,
-        ).pipe(Effect.mapError(unavailable));
+        ).pipe(symmyIntegrationEvidenceCall.customerIntakePrivacy, Effect.mapError(unavailable));
         const outcome = yield* executeSourceProcessingEligibilityWithAuthorization(
           request,
           gateway.authorization,
           requestCorrelation,
           { baseUrl: gateway.apiBaseUrl, compositionRevision: gateway.compositionRevision },
-        ).pipe(Effect.mapError(unavailable));
+        ).pipe(symmyIntegrationEvidenceCall.customerIntakePrivacy, Effect.mapError(unavailable));
         if (outcome.outcome === 'DENIED') {
           return yield* outcome.reason === 'AUTHORITY_NOT_CURRENT' ? unavailable() : denied();
         }

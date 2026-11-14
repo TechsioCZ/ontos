@@ -328,6 +328,24 @@ it.effect('leaves the originator absent when the claimed event names no action i
   }),
 );
 
+it.effect("hands the company the claimed event's invocation acted in to the worker, and only when it names one", () =>
+  Effect.gen(function* originatorCompanyOfClaim() {
+    const company = '30000000-0000-4000-8000-000000000031';
+    const controlled = repository({ claims: [{ ...claim(), originatorLegalEntityId: company }, claim()] });
+    const observed: { readonly originatorLegalEntityId?: string }[] = [];
+    const registration = worker((_payload, context) =>
+      Effect.sync(() => {
+        observed.push(context);
+      }),
+    );
+
+    yield* run(controlled.service, registration);
+
+    expect(observed.map((context) => context.originatorLegalEntityId)).toEqual([company, undefined]);
+    expect(Object.keys(observed[1] ?? {})).not.toContain('originatorLegalEntityId');
+  }),
+);
+
 it.effect('runs a worker with Effect services provided by its owning MicroVertical host', () =>
   Effect.gen(function* ownerProvidedServices() {
     const selected = { ...claim(), workerKey: 'consumer.layered-logger' };

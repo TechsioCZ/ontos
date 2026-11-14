@@ -1,6 +1,15 @@
+import {
+  OwnerActionApprovalSchemaErrorLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
+} from '@app/core-runtime/access/approvals/owner-http';
+import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { paymentTermCatalogRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   makeActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
@@ -28,7 +37,10 @@ import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effec
 import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 // <generated-governed-http-handler-support-imports>
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
+import {
+  ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive,
+  authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
+} from './auth/action-principal.ts';
 import {
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
   GatewayAssertionRedemptionDatabaseLive,
@@ -58,6 +70,8 @@ import { retirePaymentTermActionApiLive } from './retire-payment-term-action-ser
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
 import { paymentTermCatalogApi, paymentTermCatalogOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const paymentTermCatalogReadinessLayer = HttpApiBuilder.group(paymentTermCatalogApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
@@ -114,6 +128,7 @@ const accessEnforcementLive = AccessDecisionLive.pipe(
   Layer.provide(CorePersistenceLive),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(nodeCryptoLayer),
+  Layer.provide(databaseIdentitiesLive),
 );
 const operationalScopeResolverLive = Layer.provide(
   OperationalScopeResolverLive,
@@ -132,10 +147,11 @@ const productionReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, p
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
   Layer.provide(activeApplicationCompositionLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 
 /** Deployment composition seam. Trusted Customer Context issuance remains a requirement. */
-const paymentTermCatalogActionRuntime = makeActionRuntimeLive(
+const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(
   ultramodernDeliveryUnit,
   paymentTermCatalogRegistration,
 ).pipe(
@@ -153,6 +169,29 @@ const paymentTermCatalogActionRuntime = makeActionRuntimeLive(
     ),
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(databaseIdentitiesLive),
+);
+
+const paymentTermCatalogActionRuntime = makeActionRuntimeLive(
+  ultramodernDeliveryUnit,
+  paymentTermCatalogRegistration,
+).pipe(
+  Layer.provideMerge(ownerActionApprovalsLive),
+  Layer.provide(
+    Layer.mergeAll(
+      activeApplicationCompositionLive,
+      CorePersistenceLive,
+      ActionRepositoryLive,
+      ActionPermissionLive,
+      ContextAccessLive,
+      moduleStateGateLive,
+      moduleEntrypointGatewayLive,
+      operationalScopeResolverLive,
+      accessEnforcementLive,
+    ),
+  ),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(databaseIdentitiesLive),
 );
 const productionActionRuntimeLive = paymentTermCatalogActionRuntime.pipe(
   Layer.provideMerge(unavailableCustomerContextGatewayCredentialLive),
@@ -165,7 +204,7 @@ const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedempt
 
 type PaymentTermCatalogApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,
-  actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof productionActionRuntimeLive>>,
+  actionRuntime: Layer.Layer<ActionRuntime | OwnerActionApprovals, Layer.Error<typeof productionActionRuntimeLive>>,
   gatewayAssertionRedemption: Layer.Layer<
     GatewayAssertionRedemptionService,
     Layer.Error<typeof productionGatewayAssertionRedemptionLive>
@@ -181,6 +220,14 @@ export const makePaymentTermCatalogApiRuntime = (
   );
   const apiHandlersLive = Layer.mergeAll(
     paymentTermCatalogReadinessLayer,
+    HttpApiBuilder.group(paymentTermCatalogApi, 'ownerActionApprovals', (handlers) =>
+      handlers
+        .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+        .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+    ).pipe(
+      GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+    ),
     // <generated-governed-http-handler-layers>
     acceptPaymentTermSourceStatementActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     configurePaymentTermSourceAuthorityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -195,7 +242,9 @@ export const makePaymentTermCatalogApiRuntime = (
     // </generated-governed-http-handler-layers>
   ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
   const resolvedApiHandlersLive = apiHandlersLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, compositionSourceLive)),
+    Layer.provide(
+      Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, compositionSourceLive, databaseIdentitiesLive),
+    ),
     Layer.orDie,
   );
   const transportLive = HttpRouter.cors({

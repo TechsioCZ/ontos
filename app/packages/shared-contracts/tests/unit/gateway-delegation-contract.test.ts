@@ -1,12 +1,20 @@
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { ConfigProvider, Crypto, Effect, Match, Redacted, Schema } from 'effect';
+import { OutboxMessageCompany } from '@app/core-runtime/outbox/message-company';
+import { readFileSync } from 'node:fs';
+
+import { ConfigProvider, Crypto, Effect, Match, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
+import { holdTestModuleCredentials } from '../../../core-runtime/tests/support/module-credentials.ts';
 import { GatewayDelegationSourceError, acquireDelegatedGatewayContext } from '../../src/gateway-context-server.ts';
-import { GatewayDelegatedContextRequestSchema } from '../../src/gateway-context.ts';
+import {
+  GATEWAY_AUDIENCE_MAX_LENGTH,
+  GatewayAudienceSchema,
+  GatewayDelegatedContextRequestSchema,
+} from '../../src/gateway-context.ts';
 
 type DecodedSubject = Schema.Schema.Type<typeof GatewayDelegatedContextRequestSchema>['subject'];
 
@@ -20,9 +28,10 @@ const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   tenantId: '30000000-0000-4000-8000-000000000001',
 });
 const configuration = ConfigProvider.fromEnvRecord({
-  ONTOS_GATEWAY_MODULE_API_KEY: 'fixture-module-credential',
   ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
 });
+/** The calling module's key, handed over the way the host does. */
+const holdCallerKey = holdTestModuleCredentials({ catalog: 'fixture-module-credential' });
 const crypto = Crypto.make({
   digest: () => Effect.succeed(new Uint8Array()),
   randomBytes: (size) => new Uint8Array(size).fill(1),
@@ -158,10 +167,12 @@ it.effect('rejects unknown subject tags, extra fields, and malformed identities'
 
 it.effect('authenticates with the module credential and sends the Originator subject', () =>
   Effect.gen(function* delegatedOriginatorWire() {
+    yield* holdCallerKey;
     const requests: Request[] = [];
     const issued = yield* acquireDelegatedGatewayContext(
       {
         audience: 'party-registry',
+        callingAppId: 'catalog',
         legalEntityScope: 'tenant',
         requestCorrelation: 'delegation-wire-correlation',
         subject: {
@@ -200,8 +211,50 @@ it.effect('authenticates with the module credential and sends the Originator sub
   }),
 );
 
+const messageCompany = '30000000-0000-4000-8000-00000000000a';
+
+/** Sends one Originator delegation with the Outbox message company the runtime provides; returns the wire's company. */
+const sendOriginatorWith = (company: Option.Option<string>) =>
+  Effect.gen(function* sendOriginator() {
+    const requests: Request[] = [];
+    yield* acquireDelegatedGatewayContext(
+      {
+        audience: 'party-registry',
+        callingAppId: 'catalog',
+        legalEntityScope: 'subject',
+        requestCorrelation: 'delegation-message-company',
+        subject: {
+          _tag: 'Originator',
+          actionInvocationId: originatorInvocationId,
+          compositionRevision,
+          tenantId: principal.tenantId,
+        },
+      },
+      crypto,
+    ).pipe(
+      Effect.provideService(OutboxMessageCompany, company),
+      Effect.provideService(ConfigProvider.ConfigProvider, configuration),
+      Effect.provideService(FetchHttpClient.Fetch, recordingFetch(compositionRevision, requests)),
+    );
+    const [request] = requests;
+    const wire = yield* requestBodyOf(request);
+    return Match.value(wire.subject).pipe(
+      Match.tag('Originator', ({ messageLegalEntityId }) => messageLegalEntityId ?? null),
+      Match.orElse(() => null),
+    );
+  });
+
+it.effect('carries the Outbox message company of Originator work only when the Outbox provides one', () =>
+  Effect.gen(function* delegatedOriginatorMessageCompany() {
+    yield* holdCallerKey;
+    expect(yield* sendOriginatorWith(Option.some(messageCompany))).toBe(messageCompany);
+    expect(yield* sendOriginatorWith(Option.none())).toBeNull();
+  }),
+);
+
 it.effect('sends the verified incoming assertion and the requested legal entity for an Assertion subject', () =>
   Effect.gen(function* delegatedAssertionWire() {
+    yield* holdCallerKey;
     const scope = trustVerifiedGatewayPrincipalContext(principal, compositionRevision, {
       assertion: Redacted.make('fixture-signed-source-proof'),
       audience: 'commerce-market-catalog',
@@ -210,6 +263,7 @@ it.effect('sends the verified incoming assertion and the requested legal entity 
     const issued = yield* acquireDelegatedGatewayContext(
       {
         audience: 'party-registry',
+        callingAppId: 'catalog',
         legalEntityScope: 'subject',
         requestCorrelation: 'delegation-assertion-correlation',
         subject: { _tag: 'Assertion', scope },
@@ -229,10 +283,12 @@ it.effect('sends the verified incoming assertion and the requested legal entity 
 
 it.effect('fails typed without requests when an Assertion subject has no verified scope', () =>
   Effect.gen(function* delegatedMissingScope() {
+    yield* holdCallerKey;
     const requests: Request[] = [];
     const failure = yield* acquireDelegatedGatewayContext(
       {
         audience: 'party-registry',
+        callingAppId: 'catalog',
         legalEntityScope: 'subject',
         requestCorrelation: 'delegation-missing-scope',
         subject: { _tag: 'Assertion', scope: principal },
@@ -251,9 +307,11 @@ it.effect('fails typed without requests when an Assertion subject has no verifie
 
 it.effect('refuses a response for a different admitted release', () =>
   Effect.gen(function* delegatedRevisionChange() {
+    yield* holdCallerKey;
     const failure = yield* acquireDelegatedGatewayContext(
       {
         audience: 'party-registry',
+        callingAppId: 'catalog',
         legalEntityScope: 'subject',
         requestCorrelation: 'delegation-revision-change',
         subject: {
@@ -276,6 +334,7 @@ it.effect('refuses a response for a different admitted release', () =>
 
 it.effect('preserves the recorded executor pin on the actual worker and admission HTTP requests', () =>
   Effect.gen(function* registeredPinWire() {
+    yield* holdCallerKey;
     const expectedPrincipalId = '90000000-0000-4000-8000-000000000001';
     const context = makeWorkerContext();
     const requests: Request[] = [];
@@ -298,7 +357,13 @@ it.effect('preserves the recorded executor pin on the actual worker and admissio
       },
     ]) {
       yield* acquireDelegatedGatewayContext(
-        { audience: 'party-registry', legalEntityScope: 'tenant', requestCorrelation: 'executor-pin-wire', subject },
+        {
+          audience: 'party-registry',
+          callingAppId: 'catalog',
+          legalEntityScope: 'tenant',
+          requestCorrelation: 'executor-pin-wire',
+          subject,
+        },
         crypto,
       ).pipe(
         Effect.provideService(ConfigProvider.ConfigProvider, configuration),
@@ -329,11 +394,18 @@ it.effect('preserves the recorded executor pin on the actual worker and admissio
 
 it.effect('sends a company-scoped worker delivery only with its company for Shell to bind to the admission', () =>
   Effect.gen(function* companyScopedWorkerWire() {
+    yield* holdCallerKey;
     const legalEntityId = '50000000-0000-4000-8000-000000000001';
     const requests: Request[] = [];
     const acquire = (subject: Parameters<typeof acquireDelegatedGatewayContext>[0]['subject']) =>
       acquireDelegatedGatewayContext(
-        { audience: 'party-registry', legalEntityScope: 'subject', requestCorrelation: 'company-worker-wire', subject },
+        {
+          audience: 'party-registry',
+          callingAppId: 'catalog',
+          legalEntityScope: 'subject',
+          requestCorrelation: 'company-worker-wire',
+          subject,
+        },
         crypto,
       ).pipe(
         Effect.provideService(ConfigProvider.ConfigProvider, configuration),
@@ -376,11 +448,13 @@ it.effect('sends a company-scoped worker delivery only with its company for Shel
 
 it.effect('sends an explicit historical delivery recovery witness without a claim or admission substitution', () =>
   Effect.gen(function* historicalRecoveryWire() {
+    yield* holdCallerKey;
     const requests: Request[] = [];
     const deliveryId = '70000000-0000-4000-8000-000000000001';
     yield* acquireDelegatedGatewayContext(
       {
         audience: 'party-registry',
+        callingAppId: 'catalog',
         legalEntityScope: 'tenant',
         requestCorrelation: 'historical-delivery-wire',
         subject: {
@@ -438,6 +512,7 @@ it.effect('sends an explicit historical delivery recovery witness without a clai
 
 it.effect('refuses conditional delegation outside the actual Core operation lease before HTTP', () =>
   Effect.gen(function* conditionalLeaseRequired() {
+    yield* holdCallerKey;
     const requests: Request[] = [];
     const scope = trustVerifiedGatewayPrincipalContext(principal, compositionRevision, {
       assertion: Redacted.make('fixture-source-assertion'),
@@ -446,6 +521,7 @@ it.effect('refuses conditional delegation outside the actual Core operation leas
     const failure = yield* acquireDelegatedGatewayContext(
       {
         audience: 'privacy',
+        callingAppId: 'catalog',
         legalEntityScope: 'subject',
         requestCorrelation: 'conditional-outside-lease',
         subject: {
@@ -468,10 +544,12 @@ it.effect('refuses conditional delegation outside the actual Core operation leas
 
 it.effect('refuses conditional worker delegation outside its actual Core worker lease before HTTP', () =>
   Effect.gen(function* conditionalWorkerLeaseRequired() {
+    yield* holdCallerKey;
     const requests: Request[] = [];
     const failure = yield* acquireDelegatedGatewayContext(
       {
         audience: 'party-registry',
+        callingAppId: 'catalog',
         legalEntityScope: 'tenant',
         requestCorrelation: 'conditional-worker-outside-lease',
         subject: {
@@ -522,10 +600,12 @@ it.effect('round trips only the conditional worker requirement key without a cal
 
 it.effect('refuses conditional current-worker recovery without its actual live handler lease before HTTP', () =>
   Effect.gen(function* currentWorkerRecoveryRequiresLiveLease() {
+    yield* holdCallerKey;
     const requests: Request[] = [];
     const failure = yield* acquireDelegatedGatewayContext(
       {
         audience: 'party-registry',
+        callingAppId: 'catalog',
         legalEntityScope: 'tenant',
         requestCorrelation: 'closed-worker-recovery',
         subject: {
@@ -553,10 +633,12 @@ it.effect('refuses conditional current-worker recovery without its actual live h
 
 it.effect('preserves post-commit admission recovery conditional keys for independent native Shell evidence', () =>
   Effect.gen(function* admissionRecoveryConditionalWire() {
+    yield* holdCallerKey;
     const requests: Request[] = [];
     yield* acquireDelegatedGatewayContext(
       {
         audience: 'party-registry',
+        callingAppId: 'catalog',
         legalEntityScope: 'tenant',
         requestCorrelation: 'admission-recovery-key',
         subject: {
@@ -592,3 +674,16 @@ it.effect('preserves post-commit admission recovery conditional keys for indepen
     ).toBe('integration.source.requirement.admission-party-recovery');
   }),
 );
+it('bounds an audience: every topology app id fits, and an oversized one is refused before anything reads it', () => {
+  const TopologySchema = Schema.Struct({ verticals: Schema.Array(Schema.Struct({ id: Schema.String })) });
+  const topology = Schema.decodeUnknownSync(Schema.fromJsonString(TopologySchema))(
+    readFileSync(new URL('../../../../topology/reference-topology.json', import.meta.url), 'utf-8'),
+  );
+  const appIds = [...topology.verticals.map(({ id }) => id), 'shell-super-app'];
+  for (const appId of appIds) {
+    expect(appId.length).toBeLessThanOrEqual(GATEWAY_AUDIENCE_MAX_LENGTH);
+    expect(Schema.is(GatewayAudienceSchema)(appId)).toBe(true);
+  }
+  expect(Schema.is(GatewayAudienceSchema)('a'.repeat(GATEWAY_AUDIENCE_MAX_LENGTH))).toBe(true);
+  expect(Schema.is(GatewayAudienceSchema)('a'.repeat(GATEWAY_AUDIENCE_MAX_LENGTH + 1))).toBe(false);
+});

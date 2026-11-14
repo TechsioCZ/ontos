@@ -1,18 +1,24 @@
 import { ReadHandlerNotFound, ReadHandlerUnavailable, ReadPermissionDenied } from '@app/core-runtime';
-import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
-import { Effect, Match, Option } from 'effect';
+import type { OperationalScope, ReadServiceFactory, ScopedTransactionExecutor } from '@app/core-runtime';
+import { Effect, Match } from 'effect';
 import type { HistoryCompositionError } from '../../shared/domain/history-errors.ts';
-import { CustomerHistoryPortsService, unavailableCustomerHistoryPorts } from '../../shared/domain/history-ports.ts';
-import { customerHistoryPortsForOperation } from '../history-production-services.ts';
+import { counterpartyAssociationReader } from '../history-production-services.ts';
 
-/** Production loader; the API host chooses live or explicit fail-closed owner adapters. */
-export const loadCustomerHistoryReadServices = (transaction: ScopedTransactionExecutor, scope: OperationalScope) =>
-  Effect.serviceOption(CustomerHistoryPortsService).pipe(
-    Effect.flatMap((ports) =>
-      customerHistoryPortsForOperation(Option.getOrElse(ports, unavailableCustomerHistoryPorts), transaction, scope),
-    ),
-    Effect.map((ports) => ({ ports })),
-  );
+/** The one owner-local input of a history composition, read inside the transaction. */
+export interface CustomerHistoryReadServices {
+  readonly counterpartyAssociation: ReturnType<typeof counterpartyAssociationReader>;
+}
+
+export const loadCustomerHistoryReadServices: ReadServiceFactory<CustomerHistoryReadServices> = (
+  transaction: ScopedTransactionExecutor,
+  scope: OperationalScope,
+) =>
+  Effect.succeed({
+    counterpartyAssociation:
+      scope.legalEntityId === undefined
+        ? () => Effect.succeed('INDETERMINATE' as const)
+        : counterpartyAssociationReader(transaction, { ...scope, legalEntityId: scope.legalEntityId }),
+  });
 
 export interface HistoryReadFailureMessages {
   readonly denied: string;

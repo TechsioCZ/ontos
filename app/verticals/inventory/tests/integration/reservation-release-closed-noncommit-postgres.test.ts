@@ -697,6 +697,7 @@ it.live(
         // Preserve the ingress table's narrower migration-owned privileges.
         const runtimeRole = sql.identifier(isolated.connections.runtime.user);
         yield* admin.execute(sql`grant usage on schema inventory to ${runtimeRole}`, 'objects');
+        // The migrations already grant the gateway assertion redemption table its exact SELECT, INSERT, DELETE.
         yield* Effect.forEach(
           INVENTORY_GOVERNED_TABLES,
           (table) =>

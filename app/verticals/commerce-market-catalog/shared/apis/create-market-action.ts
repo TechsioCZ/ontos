@@ -2,11 +2,14 @@
 // @ontos-action-http-owner commerce.market-catalog
 // @ontos-action-http-slug create-market
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { CreateMarketPayloadSchema, CreateMarketResultSchema } from '../actions/create-market.ts';
 
 export { CreateMarketPayloadSchema } from '../actions/create-market.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const CreateMarketActionInvalidProblemSchema = makeProblemDetailsSchema('CreateMarketActionInvalidProblem', 400);
 export const CreateMarketActionAuthenticationProblemSchema = makeProblemDetailsSchema(
@@ -24,6 +27,7 @@ export const CreateMarketActionForbiddenProblemSchema = makeProblemDetailsSchema
       'operation_context_denied',
       'operation_context_invalid',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const CreateMarketActionNotFoundProblemSchema = makeProblemDetailsSchema(
@@ -54,6 +58,7 @@ export const CreateMarketActionIneligibleProblemSchema = makeProblemDetailsSchem
       'cross_tenant_reference',
       'inconsistent_seller_or_channel',
       'replacement_impact_unresolved',
+      'retirement_in_progress',
       'seller_identity_immutable',
     ]),
   },
@@ -151,7 +156,7 @@ export const createMarketActionGroupDefinition = HttpApiGroup.make('createMarket
     HttpApiEndpoint.post('execute', '/commerce-market-catalog/actions/create-market', {
       error: actionErrors,
       payload: Schema.toEncoded(CreateMarketPayloadSchema),
-      success: CreateMarketResultSchema,
+      success: [ActionProposalAcceptedSchema, CreateMarketResultSchema],
     }),
   )
   .middleware(CreateMarketActionSchemaErrorMiddleware);

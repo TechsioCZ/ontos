@@ -21,7 +21,7 @@ import { InventoryBackendConfigurationSchema } from '../../shared/domain/invento
 import { StockItemSchema } from '../../shared/domain/stock-item.ts';
 import { catalogToStockBindingResolutionRead } from '../../src/api/catalog-to-stock-binding-resolution.read.ts';
 import {
-  getReadHandler,
+  runReadOwnerSteps,
   getReadPermissionTargetResolver,
 } from '../../../../packages/core-runtime/src/reads/definition.ts';
 
@@ -131,7 +131,8 @@ it.effect('decides the read through its own declaration and refuses a foreign-Te
     // Negative control: a Selection from another Tenant never reaches the owner's configuration
     // read, exactly what the removed target resolver refused by emptying its Tenant.
     let configurationReads = 0;
-    const failure = yield* getReadHandler(catalogToStockBindingResolutionRead)(
+    const failure = yield* runReadOwnerSteps(
+      catalogToStockBindingResolutionRead,
       Schema.decodeUnknownSync(CatalogToStockBindingResolutionRequestSchema)({
         ...input,
         demand: {
@@ -164,8 +165,7 @@ it.effect('decides the read through its own declaration and refuses a foreign-Te
 
 it.effect('resolves through the trusted configuration and returns metadata evidence with the exact demand', () =>
   Effect.gen(function* resolveGovernedBinding() {
-    const handler = getReadHandler(catalogToStockBindingResolutionRead);
-    const handled = yield* handler(input, {
+    const handled = yield* runReadOwnerSteps(catalogToStockBindingResolutionRead, input, {
       readKey: catalogToStockBindingResolutionRead.descriptor.readKey,
       scope,
       services: {
@@ -191,8 +191,7 @@ it.effect('resolves through the trusted configuration and returns metadata evide
 
 it.effect('turns a missing binding into the governed 404 path without inventing a Stock Item', () =>
   Effect.gen(function* rejectMissingBinding() {
-    const handler = getReadHandler(catalogToStockBindingResolutionRead);
-    const failure = yield* handler(input, {
+    const failure = yield* runReadOwnerSteps(catalogToStockBindingResolutionRead, input, {
       readKey: catalogToStockBindingResolutionRead.descriptor.readKey,
       scope,
       services: {

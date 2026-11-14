@@ -13,7 +13,7 @@ it.effect('constructs Shell receiving trust without requiring installed composit
       .lookup(STAFF_AUTHENTICATION_NAMESPACE_ID)
       .pipe(Effect.flatMap(Effect.fromOption));
     expect(registration.allowedAudiences).toEqual(['shell-super-app']);
-    expect(registration.subjectTypes).toEqual(['user', 'api_key']);
+    expect(registration.subjectTypes).toEqual(['user', 'api_key', 'oauth_grant']);
     expect(registration.requiresOperationAdmission).toBe(false);
     expect(registration.trustedAttesterPrincipalIds).toEqual([]);
     const unregisteredNamespace = yield* Schema.decodeEffect(AuthenticationNamespaceIdSchema)(

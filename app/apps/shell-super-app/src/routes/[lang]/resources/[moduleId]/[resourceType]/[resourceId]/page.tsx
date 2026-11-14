@@ -1,7 +1,8 @@
 /* eslint-disable no-negated-condition, unicorn/no-negated-condition -- Closed route states read most clearly as error-versus-ready branches. expires: 2026-12-31. */
-import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
+import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useLoaderData, useParams } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { DateTime, Effect, Schema } from 'effect';
 import { useState } from 'react';
@@ -9,7 +10,11 @@ import { useState } from 'react';
 import { ShellReloadRequiredProblemSchema } from '../../../../../../../shared/browser-api.ts';
 import { attachResourceMedia } from '../../../../../../api/auth-client.ts';
 import { browserRuntime } from '../../../../../../runtime/browser-effect-runtime.ts';
+import type { ShellNavigationItem } from '../../../../../../../shared/browser-api.ts';
 import { ShellContentLayout } from '../../../../../shell-content-layout.tsx';
+import { buildShellNavigation, ShellRouteLink } from '../../../../../shell-frame.tsx';
+import { ShellStatusPanel, shellStatusTitleKey } from '../../../../../shell-status-panel.tsx';
+import { SignInRedirect } from '../../../../../sign-in-redirect.tsx';
 import { useShellControls } from '../../../../../use-shell-controls.ts';
 import type { ResourcePageModel } from './resource-page-model.ts';
 
@@ -92,11 +97,95 @@ const ResourceDetails = ({
   );
 };
 
+/**
+ * When the Shell cannot show a record itself, the agendas that list it stay one click away: the ones its type names
+ * (also Shell pages, e.g. people administration for a person), else every agenda of the owning module. Only
+ * destinations in the person's own navigation appear, so a link is shown only when it may be opened.
+ */
+const OwningAgendaLinks = ({
+  agendaPaths,
+  moduleId,
+  navigation,
+}: {
+  readonly agendaPaths: readonly string[] | undefined;
+  readonly moduleId: string;
+  readonly navigation: readonly ShellNavigationItem[];
+}) => {
+  const { language, t } = useModernI18n();
+  const agendas = agendaPaths === undefined ? undefined : new Set(agendaPaths);
+  const links = buildShellNavigation(
+    {
+      language: language ?? '',
+      navigation: navigation.filter((item) =>
+        agendas === undefined ? item.moduleId === moduleId : agendas.has(item.href ?? ''),
+      ),
+      unavailableDeployments: [],
+    },
+    t,
+  ).groups.flatMap((group) => group.links.filter(({ enabled, href }) => enabled && href !== null));
+  if (links.length === 0) {
+    return null;
+  }
+  return (
+    <nav aria-labelledby="resource-agendas" className="grid w-full max-w-2xl gap-150">
+      <h2 className="font-semibold text-base" id="resource-agendas">
+        {t('shell.resource.open_in_agenda')}
+      </h2>
+      <ul className="grid gap-150 md:grid-cols-2">
+        {links.map((link) => (
+          <li key={link.key}>
+            <LinkButton
+              as={ShellRouteLink}
+              block
+              className="justify-start hover:bg-overlay"
+              icon={link.icon}
+              size="sm"
+              theme="unstyled"
+              to={link.href ?? '/'}
+              variant="secondary"
+            >
+              {link.label}
+            </LinkButton>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+};
+
+/**
+ * A record type the Shell admits but cannot show itself. The response says only that the catalog has no detail
+ * binding; it says nothing about whether this record exists. Name the limitation and keep real navigation.
+ */
+const UnsupportedDetail = ({
+  agendaPaths,
+  moduleId,
+  navigation,
+}: {
+  readonly agendaPaths: readonly string[] | undefined;
+  readonly moduleId: string;
+  readonly navigation: readonly ShellNavigationItem[];
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <>
+      <section className="ontos-card flex w-full max-w-2xl flex-col items-start gap-200 rounded-lg border border-border-primary/60 bg-base p-300">
+        <p className="text-sm">{t('shell.resource.detail_not_supported')}</p>
+        <LinkButton as={LocalizedLink} icon="icon-[mdi--home-outline]" size="sm" theme="solid" to="/" variant="primary">
+          {t('shell.recovery.home')}
+        </LinkButton>
+      </section>
+      <OwningAgendaLinks agendaPaths={agendaPaths} moduleId={moduleId} navigation={navigation} />
+    </>
+  );
+};
+
 const ResourcePage = () => {
   const { t } = useModernI18n();
   const model = useLoaderData({
     from: '/$lang/resources/$moduleId/$resourceType/$resourceId',
   });
+  const { moduleId } = useParams({ from: '/$lang/resources/$moduleId/$resourceType/$resourceId' });
   const [mediaState, setMediaState] = useState<MediaState>('idle');
   const [attachmentReloadRequired, setAttachmentReloadRequired] = useState(false);
   const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
@@ -133,9 +222,17 @@ const ResourcePage = () => {
   ) {
     return (
       <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
-        <StatusText aria-live="polite" showIcon status="error">
-          {t('shell.moduleTarget.reload_required')}
-        </StatusText>
+        <ShellStatusPanel messageKey="shell.moduleTarget.reload_required" status="unavailable" />
+      </main>
+    );
+  }
+  if (model.shell.state === 'anonymous') {
+    return <SignInRedirect reason={model.shell.reason} />;
+  }
+  if (model.shell.state === 'unavailable') {
+    return (
+      <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
+        <ShellStatusPanel messageKey="shell.dashboard.unavailable" status="unavailable" />
       </main>
     );
   }
@@ -143,16 +240,29 @@ const ResourcePage = () => {
     return (
       <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
         <StatusText aria-live="polite" showIcon status="error">
-          {t(model.shell.state === 'unavailable' ? 'shell.dashboard.unavailable' : 'shell.resource.selection_required')}
+          {t('shell.resource.selection_required')}
         </StatusText>
       </main>
     );
   }
+  const agendaPaths = model.state === 'ready' ? undefined : model.agendaPaths;
+  // Only an admitted, authorized detail response proves the record and may render its title, fields or actions.
+  // A search history title is navigation input, never evidence that a failed, missing or unsupported read found a record.
+  const detailNotSupported = model.state === 'unavailable' && model.detailSupport === 'not_supported';
+  const closedContent = detailNotSupported ? (
+    <UnsupportedDetail agendaPaths={agendaPaths} moduleId={moduleId} navigation={model.shell.navigation.items} />
+  ) : (
+    // Distinct states: forbidden (lock), not found (search), temporarily unavailable (retry).
+    <>
+      <ShellStatusPanel messageKey={`shell.resource.${model.state}`} status={model.state} />
+      {model.state === 'forbidden' ? null : (
+        <OwningAgendaLinks agendaPaths={agendaPaths} moduleId={moduleId} navigation={model.shell.navigation.items} />
+      )}
+    </>
+  );
   const content =
     model.state !== 'ready' ? (
-      <StatusText aria-live="polite" showIcon status="error">
-        {t(`shell.resource.${model.state}`)}
-      </StatusText>
+      closedContent
     ) : (
       <ResourceDetails
         mediaState={mediaState}
@@ -160,12 +270,20 @@ const ResourcePage = () => {
         onAttach={() => handleMediaAttachment(model.resource.ref)}
       />
     );
+  let pageTitle: string;
+  if (model.state === 'ready') {
+    pageTitle = model.resource.detail.title;
+  } else if (detailNotSupported) {
+    pageTitle = t('shell.resource.detail_not_supported_title');
+  } else {
+    pageTitle = t(shellStatusTitleKey(model.state, 'recordMissing'));
+  }
   return (
     <ShellContentLayout
       controls={controls}
       shell={model.shell}
       {...(model.state === 'ready' ? { currentModuleId: model.resource.ref.moduleId } : {})}
-      title={model.state === 'ready' ? model.resource.detail.title : t('shell.resource.title')}
+      title={pageTitle}
     >
       {content}
     </ShellContentLayout>

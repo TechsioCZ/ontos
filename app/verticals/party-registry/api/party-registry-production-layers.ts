@@ -1,4 +1,5 @@
 import { partyRegistryBackendRegistration } from '../vertical.runtime-declaration.ts';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import {
   ContextAccessLive,
   CorePersistenceLive,
@@ -8,7 +9,13 @@ import {
   TenantModuleStateServiceLive,
   makeActionRuntimeLive,
 } from '@app/core-runtime';
-import type { ActionRuntime, DatabaseConfig, DatabaseConnectionError, ReadRuntime } from '@app/core-runtime';
+import type {
+  ActionRuntime,
+  DatabaseConfig,
+  DatabaseConnectionError,
+  DatabaseIdentityEnrollmentContext,
+  ReadRuntime,
+} from '@app/core-runtime';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type {
@@ -49,6 +56,7 @@ type PartyRegistryAccessRequirements =
   | AccessPrincipalKindSource
   | Crypto.Crypto
   | DatabaseConfig
+  | DatabaseIdentityEnrollmentContext
   | DecisionCheck
   | LegalEntityCandidates;
 
@@ -81,6 +89,10 @@ const actionRuntimeDependenciesLive = Layer.mergeAll(
   ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive)),
   OperationalScopeResolverLive.pipe(Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive))),
 );
+export const partyRegistryOwnerActionApprovalsLive = makeOwnerActionApprovalsLive(
+  ultramodernDeliveryUnit,
+  partyRegistryBackendRegistration,
+).pipe(Layer.provide(actionRuntimeDependenciesLive));
 export const partyRegistryActionRuntimeLive: Layer.Layer<
   ActionRuntime,
   DatabaseConnectionError,

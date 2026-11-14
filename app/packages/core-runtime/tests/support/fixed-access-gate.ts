@@ -5,6 +5,7 @@ import { Effect } from 'effect';
 import type { CoreDatabaseExecutor } from '../../src/db/types.ts';
 import { bindAccessGate } from '../../src/operations/access-gate.ts';
 import type { BoundAccessGate } from '../../src/operations/access-gate.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
 
 /**
  * The real enforcement seam over a fixed capability set, for suites whose subject is identity
@@ -26,9 +27,14 @@ export const bindFixedAccessGate = (input: {
   /** The registered workload keys by principal id; absent means every workload is unbound (O73). */
   readonly workloads?: Readonly<Record<string, readonly string[]>>;
 }): BoundAccessGate => {
-  const principalKinds = makeDrizzleAccessPrincipalKinds({ executor: input.executor });
+  const principalKinds = makeDrizzleAccessPrincipalKinds({
+    enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+    executor: input.executor,
+  });
   const workloadBindings: AccessWorkloadBindings = {
-    readActiveWorkloadKeys: ({ principalId }) => Effect.succeed(new Set(input.workloads?.[principalId])),
+    // This fixture registers no company for any binding, so a workload acts only in the tenant context (D6).
+    readWorkloadAuthority: ({ principalId }) =>
+      Effect.succeed({ activeCompanyIds: new Set(), workloadKeys: new Set(input.workloads?.[principalId]) }),
   };
   const ports = {
     candidates: { listCandidateIds: () => Effect.succeed([]) },

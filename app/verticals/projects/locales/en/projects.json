@@ -39,6 +39,35 @@
         "idle": "Select one eligible user from the results.",
         "uncertain": "The creation result is uncertain. Verify the Project before trying again.",
         "prefixLabel": "Prefix"
+      },
+      "projectDetail": {
+        "title": "Project detail",
+        "seoTitle": "Project detail",
+        "seoDescription": "A Project detail in the current tenant.",
+        "loading": "Loading Project…",
+        "invalid": "This Project link is not valid.",
+        "missing": "The Project was not found or is not available to you.",
+        "forbidden": "You do not have permission to open this Project.",
+        "unavailable": "The Project could not be loaded. Please try again.",
+        "scopeUnavailable": "Open this Project from the signed-in application.",
+        "retry": "Try again",
+        "openCreate": "Go to Project creation",
+        "archivedNotice": "This Project is archived and read-only.",
+        "fields": {
+          "prefix": "Prefix",
+          "shortText": "Short text",
+          "owner": "Owner (principal ID)",
+          "createdBy": "Created by (principal ID)",
+          "createdAt": "Created",
+          "parentProject": "Parent Project",
+          "projectId": "Project ID"
+        },
+        "lifecycle": {
+          "active": "Active",
+          "archived": "Archived"
+        },
+        "notProvided": "Not provided",
+        "noParent": "None"
       }
     }
   }

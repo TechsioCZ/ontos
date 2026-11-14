@@ -141,43 +141,27 @@ const hasPurchasingApprovalScope = Schema.is(
   }),
 );
 
-export const purchasingApprovalCurrentnessServicesForScope = (
-  transaction: PurchasingApprovalTransaction,
-  scope: OperationalScope,
-) =>
-  Effect.all(
+export const purchasingApprovalCurrentnessServicesForScope = Effect.fn(
+  'PurchasingApprovalActionSupport.currentnessServicesForScope',
+)(function* currentnessServicesForScope(transaction: PurchasingApprovalTransaction, scope: OperationalScope) {
+  if (!hasPurchasingApprovalScope(scope)) {
+    return yield* new OperationContextUnavailable({
+      code: 'operation_context_unavailable',
+      reason: 'Current Purchasing Approval evidence requires trusted owner scope',
+    });
+  }
+  const { currentnessFactory, evaluationSourceFactory, purchaseLimitCurrentness } = yield* Effect.all(
     {
-      currentness: Effect.all(
-        {
-          currentnessFactory: PurchaseApprovalCurrentnessFactory,
-          evaluationSourceFactory: PurchaseLimitEvaluationSourceFactory,
-          purchaseLimitCurrentness: PurchaseLimitEvaluationCurrentnessPort,
-        },
-        { concurrency: 3 },
-      ).pipe(
-        Effect.flatMap(({ currentnessFactory, evaluationSourceFactory, purchaseLimitCurrentness }) =>
-          hasPurchasingApprovalScope(scope)
-            ? evaluationSourceFactory.make(transaction, scope).pipe(
-                Effect.mapError(purchaseApprovalEvaluationUnavailable),
-                Effect.map((evaluationSource) =>
-                  currentnessFactory.make(transaction, scope, purchaseLimitCurrentness, evaluationSource),
-                ),
-              )
-            : Effect.void,
-        ),
-      ),
-      workflow: purchasingApprovalWorkflowForScope(transaction, scope),
+      currentnessFactory: PurchaseApprovalCurrentnessFactory,
+      evaluationSourceFactory: PurchaseLimitEvaluationSourceFactory,
+      purchaseLimitCurrentness: PurchaseLimitEvaluationCurrentnessPort,
     },
-    { concurrency: 2 },
-  ).pipe(
-    Effect.flatMap(({ currentness, workflow }) =>
-      currentness === undefined
-        ? Effect.fail(
-            new OperationContextUnavailable({
-              code: 'operation_context_unavailable',
-              reason: 'Current Purchasing Approval evidence requires trusted owner scope',
-            }),
-          )
-        : Effect.succeed({ currentness, workflow } satisfies PurchasingApprovalCurrentnessServices),
-    ),
+    { concurrency: 3 },
   );
+  const evaluationSource = yield* evaluationSourceFactory
+    .make(transaction, scope)
+    .pipe(Effect.mapError(purchaseApprovalEvaluationUnavailable));
+  const currentness = currentnessFactory.make(transaction, scope, purchaseLimitCurrentness, evaluationSource);
+  const workflow = yield* purchasingApprovalWorkflowForScope(transaction, scope);
+  return { currentness, workflow } satisfies PurchasingApprovalCurrentnessServices;
+});

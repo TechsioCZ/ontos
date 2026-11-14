@@ -1,4 +1,5 @@
 import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
+import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { Effect, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -94,6 +95,7 @@ it.effect('denies CUSTOMER onboarding before the owner handler when Action permi
   Effect.gen(function* deniedOnboarding() {
     const harness = yield* makeActionTestHarness({
       access: 'denied',
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       ownerRegistration: partyRegistryBackendRegistration,
       services: [
         bindActionTestServices(counterpartyCustomerOnboardAction, {
@@ -116,6 +118,7 @@ it.effect('recovers a committed CUSTOMER onboarding invocation without replaying
     let calls = 0;
     const harness = yield* makeActionTestHarness({
       access: 'allowed',
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       ownerRegistration: partyRegistryBackendRegistration,
       services: [
         bindActionTestServices(counterpartyCustomerOnboardAction, {
@@ -150,6 +153,7 @@ it.effect('exact-equivalent onboarding commits no duplicate domain events', () =
   Effect.gen(function* exactReplay() {
     const harness = yield* makeActionTestHarness({
       access: 'allowed',
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       ownerRegistration: partyRegistryBackendRegistration,
       services: [
         bindActionTestServices(counterpartyCustomerOnboardAction, {

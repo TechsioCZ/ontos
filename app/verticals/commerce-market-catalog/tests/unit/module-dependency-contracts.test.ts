@@ -6,7 +6,7 @@ import { commerceMarketCatalogApi } from '../../shared/api.ts';
 import { manageMarketRetirementAdmissionAction } from '../../src/actions/manage-market-retirement-admission.action.ts';
 
 describe('Market owner-authored dependency contracts', () => {
-  it('advertises all eight mounted Actions while keeping owner-local admission management private', () => {
+  it('advertises all mounted Actions while keeping owner-local admission management private', () => {
     const safe = extractVerticalRuntimeSafeDescriptors(commerceMarketCatalogRegistration);
     const claims = safe.operationContracts.filter(({ operationKey }) => operationKey.split('.')[0]?.endsWith('Action'));
     const mountedActionGroups = Object.keys(commerceMarketCatalogApi.groups).filter((key) => key.endsWith('Action'));
@@ -14,7 +14,7 @@ describe('Market owner-authored dependency contracts', () => {
       expect.arrayContaining(mountedActionGroups),
     );
     expect(claims).toHaveLength(mountedActionGroups.length);
-    expect(claims).toHaveLength(8);
+    expect(claims).toHaveLength(9);
     expect(
       safe.operationContracts.some(
         ({ entrypoint }) =>

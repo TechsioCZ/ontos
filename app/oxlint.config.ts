@@ -37,6 +37,18 @@ const antiSlopEffectRules = {
   'anti-slop-effect/no-service-constructor-imports': 'error',
 };
 
+// Only a top-level call can use this exact value import without a nested binding
+// shadowing it. Aliases and nested calls fail closed. The second argument alone
+// owns Core's inference-sensitive prepare/load/finish order, not its nested data.
+const coreReadValueImport =
+  'Program:has(ImportDeclaration[source.value="@app/core-runtime"][importKind!="type"] > ImportSpecifier[imported.name="defineRead"][local.name="defineRead"][importKind!="type"])';
+const coreReadPipelineArgument =
+  'VariableDeclarator > CallExpression[callee.type="Identifier"][callee.name="defineRead"] > ObjectExpression.arguments:nth-child(2)';
+const coreReadPipelineSelector = [
+  `${coreReadValueImport} > VariableDeclaration > ${coreReadPipelineArgument}`,
+  `${coreReadValueImport} > ExportNamedDeclaration > VariableDeclaration > ${coreReadPipelineArgument}`,
+].join(', ');
+
 // Effect-native architecture rules derived from docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md.
 // Each rule cites the audit finding it enforces; see tools/oxlint/effect-native/README.md.
 const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']> = {
@@ -44,7 +56,19 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
   'effect-native/no-ambient-date': 'error',
   'effect-native/no-ambient-process-env': 'error',
   'effect-native/no-async-script-program': 'error',
-  'effect-native/no-bare-effect-run': 'error',
+  'effect-native/no-bare-effect-run': [
+    'error',
+    {
+      adapterFiles: [
+        'apps/*/api/index.ts',
+        'verticals/*/api/index.ts',
+        'packages/core-runtime/src/outbox/process.ts',
+        // The Shell calls a remote's `preloadPage` as a Promise (ModulePagePreload); modulePagePreload is that
+        // one Promise adapter over requirement-free preload steps whose loads fork on each page data's own runtime.
+        'packages/shared-contracts/src/page-data.ts',
+      ],
+    },
+  ],
   'effect-native/no-console-in-scripts': 'error',
   'effect-native/no-dependency-parameters': 'error',
   'effect-native/no-direct-node-io-in-scripts': 'error',
@@ -72,11 +96,17 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
         // The workerd SpiceDB transport binds the Workers VPC fetcher to the Effect HttpClient.
         'packages/core-runtime/src/permissions/spicedb-transport.workerd.ts',
         'apps/shell-super-app/api/auth/db/client.ts',
+        // The customer portal routes bind each request's own exchange (session reference, result cell, redacted
+        // passwords) to the one Action that request invokes.
+        'verticals/commerce-customer-context/api/portal-auth/own/own-portal-exchange.ts',
         'verticals/party-registry/src/db/client.ts',
         'packages/core-runtime/src/testing/actions.ts',
         // This CLI composes administrative Auth/Core database Layers for local initialization.
         'scripts/initialize-local-development.mts',
         'apps/shell-super-app/scripts/bootstrap-stage-accounts.mts',
+        // Exception 1 (agent proposals): the MCP request seam binds each agent request's correlation, trace
+        // and idempotency identity to that one request, as a composition root does.
+        'apps/shell-super-app/api/mcp/request-identity.ts',
       ],
     },
   ],
@@ -178,6 +208,8 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
   'effect-native/require-context-service-for-service-interface': 'error',
   'effect-native/require-observability-layers-at-runtime-root': 'error',
   'effect-native/require-timeout-on-external-effect': 'error',
+  // Required admin fields read the required text in the page language; see packages/admin-ui/src/form-controls.tsx.
+  'effect-native/ui-kit-required-label': 'error',
 } as const;
 
 export default defineConfig({
@@ -207,6 +239,8 @@ export default defineConfig({
     '**/shared/ultramodern-build.ts',
     'tools/oxlint/anti-slop/**',
     'tools/oxlint/effect-native/tests/fixtures/**',
+    // Written against the trunk a deploy replaces: the VAT deploy rehearsal runs it in a checkout of that trunk.
+    'scripts/integration/tests/*.old-release.mts',
   ],
   jsPlugins: [
     ...jsPlugins.jsPlugins,
@@ -229,6 +263,13 @@ export default defineConfig({
     typeCheck: true,
   },
   overrides: [
+    {
+      // The admin's form controls are the one place that passes props on to ui-kit's label-bearing controls.
+      files: ['packages/admin-ui/src/form-controls.tsx'],
+      rules: {
+        'effect-native/ui-kit-required-label': 'off',
+      },
+    },
     {
       files: ['**/*.{test,spec}.{ts,tsx,mts}'],
       rules: {
@@ -923,6 +964,43 @@ export default defineConfig({
       rules: { 'perfectionist/sort-objects': 'off' },
     },
     {
+      // Drizzle column declaration order is each owner's physical schema contract (as for Assortment above).
+      files: [
+        'packages/core-runtime/src/db/access-schema.ts',
+        'verticals/commerce-market-catalog/src/database/schema.ts',
+        'verticals/inventory/src/persistence/binding-correction-impact-table.ts',
+        'verticals/inventory/src/persistence/catalog-to-stock-binding-table.ts',
+        'verticals/inventory/src/persistence/external-stock-correlation-table.ts',
+        'verticals/inventory/src/persistence/inventory-effect-ledger-table.ts',
+        'verticals/inventory/src/persistence/inventory-source-assertion-table.ts',
+        'verticals/inventory/src/persistence/inventory-source-conflict-table.ts',
+        'verticals/inventory/src/persistence/inventory-source-import-ledger-table.ts',
+        'verticals/inventory/src/persistence/reservation-create-effect-table.ts',
+        'verticals/inventory/src/persistence/reservation-shortage-impact-table.ts',
+        'verticals/inventory/src/persistence/stock-correction-source-evidence-table.ts',
+        'verticals/inventory/src/persistence/stock-correction-table.ts',
+        'verticals/inventory/src/persistence/stock-location-table.ts',
+        'verticals/inventory/src/persistence/stock-position-table.ts',
+        'verticals/inventory/src/persistence/stock-sharing-eligibility-table.ts',
+        'verticals/price-group-catalog/src/database/schema.ts',
+        'verticals/pricing/src/database/schema.ts',
+        'verticals/storefront-registry/src/database/schema.ts',
+      ],
+      rules: { 'perfectionist/sort-objects': 'off' },
+    },
+    {
+      // The demo-only exception sections (owner approvals, staged reads, owner-declared Search) are appended
+      // after main's helpers as marked blocks; main's proofs call into them, so definition order cannot follow use.
+      files: ['scripts/generated-governed-http-boundary.mts'],
+      rules: { 'eslint/no-use-before-define': 'off' },
+    },
+    {
+      // The scripted driver rows are positional, in the exact real Drizzle table projection order;
+      // alphabetizing them would stop the fixture from proving the physical column contract.
+      files: ['packages/core-runtime/tests/unit/search-evidence-codec.test.ts'],
+      rules: { 'perfectionist/sort-objects': 'off' },
+    },
+    {
       // Codesmith emits these exact owner shims as re-exports of canonical public contracts.
       // The module API boundary checker verifies their generated source and target specifier.
       files: [
@@ -1333,6 +1411,114 @@ export default defineConfig({
         'typescript/strict-void-return': 'off',
       },
     },
+    // Demo exceptions recorded at the main→demo merge. Each block names the approved exception or the
+    // fence whose behaviour a rewrite would change. The code stays as reviewed; only the named rules are off.
+    {
+      // Exception 1 (owner-action approvals and agent proposals): the AI approval staleness comparators
+      // compare the proposed change with the current record by canonical JSON, over values of any shape.
+      files: ['packages/shared-contracts/src/ai-approvals.ts', 'verticals/crm/shared/commands/ai-changes.ts'],
+      rules: {
+        'anti-slop/no-runtime-typeof': 'off',
+        'anti-slop/no-unknown-parameters': 'off',
+        'anti-slop/no-unknown-returns': 'off',
+        'effect-native/no-native-json-stringify': 'off',
+      },
+    },
+    {
+      // Exception 1 (owner-action approvals and agent proposals): the approval lifecycle, mandate dispatch and
+      // owner-native approval services compose their stores, intent loaders and currentness per transaction.
+      files: [
+        'packages/core-runtime/src/access/approvals/action-lifecycle-v2.ts',
+        'packages/core-runtime/src/access/approvals/action-mandate-dispatch-service.ts',
+        'packages/core-runtime/src/access/approvals/action-mandate-dispatch.ts',
+        'packages/core-runtime/src/access/approvals/owner-native-services.ts',
+        'packages/core-runtime/src/access/approvals/owner-runtime.ts',
+      ],
+      rules: { 'anti-slop-effect/no-service-constructor-imports': 'off' },
+    },
+    {
+      // Exception 1 (owner-action approvals and agent proposals): the native approval-v2 test composition. It
+      // cannot move under src/testing: lean-core forbids src importing its tests/support helpers, and its
+      // Node-only closure needs the `node`-conditioned export the gate accepts.
+      files: ['packages/core-runtime/tests/support/action-live-v2.ts'],
+      rules: { 'anti-slop-effect/no-service-constructor-imports': 'off' },
+    },
+    {
+      // Exception 4 (owner-declared Search): each Facility Ops search provider binds its staged read to
+      // `makeFacilitySearchServices('<kind>')`, the call the owner-declared Search seam proof follows to the resource
+      // kind the provider reads. Pre-binding the factory in an owner service module or a sibling module fails main's
+      // generated-source and owner-local-callback proofs, so the call stays and only this rule is off here.
+      files: [
+        'verticals/facility-operations/src/search/assets.provider.ts',
+        'verticals/facility-operations/src/search/devices.provider.ts',
+        'verticals/facility-operations/src/search/documents.provider.ts',
+        'verticals/facility-operations/src/search/meters.provider.ts',
+      ],
+      rules: { 'anti-slop-effect/no-service-constructor-imports': 'off' },
+    },
+    {
+      // Exception 2 (the optional `mcp` manifest key): these are main's Outbox worker compositions, byte for
+      // byte. The data-factory proof cannot follow makeModuleContractFixture through the demo manifest schema's
+      // `mcp` contribution (or owner-declared Search, exception 4), so main's clean imports report here.
+      files: [
+        'packages/core-runtime/tests/fixtures/outbox-worker-process.fixture.ts',
+        'packages/core-runtime/tests/support/outbox-worker-composition.ts',
+        'packages/core-runtime/tests/support/outbox-worker-native-composition.ts',
+      ],
+      rules: { 'anti-slop-effect/no-service-constructor-imports': 'off' },
+    },
+    {
+      // Fence: the transaction I/O guard proxies forward every other member with its original receiver.
+      // Typed access, or binding `this` to the target, would bypass the guard on the pooled client.
+      files: ['packages/core-runtime/src/db/transaction-io-guard.ts'],
+      rules: { 'anti-slop/no-reflect-get': 'off' },
+    },
+    {
+      // These tests wrap the executor so `transaction` runs as the worker; every other member must be forwarded
+      // unchanged, as main's adversarial Schema proxy in problem-details.test.ts forwards its members.
+      files: [
+        'packages/core-runtime/tests/integration/search-derived-stamp-sweep.test.ts',
+        'packages/core-runtime/tests/integration/search-indexed-query.test.ts',
+      ],
+      rules: { 'anti-slop/no-reflect-get': 'off' },
+    },
+    {
+      // Fence: CIMD fetches and the OAuth metadata adapter forward upstream Set-Cookie lines verbatim. A
+      // parse-and-reserialize through Effect cookies would change the bytes of the authentication cookies.
+      files: [
+        'apps/shell-super-app/api/auth/cimd-transport.workerd.ts',
+        'apps/shell-super-app/api/auth/oauth-server/forward.ts',
+      ],
+      rules: { 'effect-native/no-manual-cookie-serialization': 'off' },
+    },
+    {
+      // Demo UI owned by the ui-kit/AKROS team: the shared scroll region joins the tab order only while its
+      // content overflows, so keyboard users can reach and scroll it (WCAG 2.1.1, axe scrollable-region-focusable).
+      files: ['packages/admin-ui/src/scroll-region.tsx'],
+      rules: { 'jsx-a11y/no-noninteractive-tabindex': 'off' },
+    },
+    {
+      // Demo UI owned by the ui-kit/AKROS team: the people row is clickable; this wrapper only stops the actions
+      // menu's clicks from also opening the detail, and the Menu's Button trigger is the keyboard target.
+      files: ['apps/shell-super-app/src/routes/people/people-table.tsx'],
+      rules: {
+        'jsx-a11y/click-events-have-key-events': 'off',
+        'jsx-a11y/no-static-element-interactions': 'off',
+      },
+    },
+    {
+      // Test doubles: the routine-only scoped executor and the operation-requirement catalog fake expose just
+      // the members Price Group persistence and the requirement check read, as main's Assortment owner tests do.
+      // Party's Create recovery requirement test uses the same catalog fake.
+      files: [
+        'verticals/commerce-customer-context/tests/unit/price-group-action-preparation.test.ts',
+        'verticals/party-registry/tests/unit/party-command-result-source-privacy-requirement.test.ts',
+      ],
+      rules: {
+        'anti-slop/no-chained-type-assertions': 'off',
+        'typescript/no-unsafe-type-assertion': 'off',
+      },
+    },
   ],
   rules: {
     '@nkzw/require-use-effect-arguments': 'error',
@@ -1348,7 +1534,18 @@ export default defineConfig({
     'perfectionist/sort-interfaces': 'error',
     'perfectionist/sort-jsx-props': 'error',
     'perfectionist/sort-object-types': 'error',
-    'perfectionist/sort-objects': ['error', { partitionByComment: true }],
+    'perfectionist/sort-objects': [
+      'error',
+      {
+        // Core's staged reads infer `prepared` from the prepare/load/finish order (demo-only exception 3).
+        type: 'unsorted',
+        useConfigurationIf: {
+          allNamesMatchPattern: '^(?:prepare|load|finish)$',
+          matchesAstSelector: coreReadPipelineSelector,
+        },
+      },
+      { partitionByComment: true },
+    ],
     'react/no-unknown-property': 'error',
     // The base rule conflicts with the type-aware promise-function-async rule:
     // removing `async` immediately recreates the type-aware diagnostic.

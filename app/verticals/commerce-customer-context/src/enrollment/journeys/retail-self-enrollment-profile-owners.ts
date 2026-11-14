@@ -1,13 +1,15 @@
+import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
+import {
+  EnrollmentCommandRecoveryApi,
+  EnrollmentCommandRecoveryInputSchema,
+} from '../../../shared/enrollment-command-recovery-api.ts';
 import type { PartyRef } from '@app/party-registry/resources/party';
-import { DateTime, Effect, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Predicate, Redacted, Schema } from 'effect';
 import type { Crypto } from 'effect';
 
 import { BindRetailPortalProfilePayloadSchema } from '../../../shared/actions/bind-retail-portal-profile.ts';
 import type { RetailPortalBindingResult } from '../../../shared/actions/bind-retail-portal-profile.ts';
-import {
-  EnsureRetailCustomerProfilePayloadSchema,
-  EnsureRetailCustomerProfileResultSchema,
-} from '../../../shared/actions/ensure-retail-customer-profile.ts';
+import { EnsureRetailCustomerProfilePayloadSchema } from '../../../shared/actions/ensure-retail-customer-profile.ts';
 import type { EnsureRetailCustomerProfileResult } from '../../../shared/actions/ensure-retail-customer-profile.ts';
 import type { SellingLegalEntityRefSchema } from '../../../shared/domain/profile-contracts.ts';
 import type { ReconcileEnrollmentResolution } from '../../../shared/enrollment-contracts.ts';
@@ -15,12 +17,9 @@ import type { RetailCustomerProfileRefSchema } from '../../../shared/resources/r
 import type { RetailPortalPrincipalRefSchema } from '../../../shared/resources/retail-portal-profile-binding.ts';
 import { executeBindRetailPortalProfileWithAuthorization } from '../../api/bind-retail-portal-profile-action-client.ts';
 import { executeEnsureRetailCustomerProfileWithAuthorization } from '../../api/ensure-retail-customer-profile-action-client.ts';
-import {
-  decodeOwnerOutcome,
-  decodeOwnerResolution,
-  ownerRejected,
-  ownerUnavailable,
-} from '../orchestration/owner-effect-codec.ts';
+import { acquireRetailOwnerCredential } from './retail-owner-gateway-credential.ts';
+import type { RetailEnrollmentOriginator } from './retail-owner-gateway-credential.ts';
+import { decodeOwnerOutcome, decodeOwnerResolution, ownerUnavailable } from '../orchestration/owner-effect-codec.ts';
 import type { OwnerOutcomeDraft, OwnerResolutionDraft } from '../orchestration/owner-effect-codec.ts';
 import type {
   CommerceEnrollmentOwnerEffect,
@@ -36,20 +35,17 @@ import {
   RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE,
   retailSelfEnrollmentEvidenceReference,
 } from './retail-self-enrollment-contracts.ts';
-import { acquireRetailOwnerCredential } from './retail-owner-gateway-credential.ts';
-import type { RetailEnrollmentOriginator } from './retail-owner-gateway-credential.ts';
 
 /**
  * The two Commerce-owned Retail self-enrollment transitions: ensure the Retail Customer Profile,
  * then activate the Retail Portal Profile Binding.
  *
- * This vertical has no separate retail grant Action: the binding Action grants the reviewed
- * baseline in its own transaction. A binding whose baseline is not Current is recorded as
- * `retail_portal_grants_incomplete` so the journey halts rather than reporting portal access that
- * does not exist.
+ * The binding Action commits its terminal owner authorization with its Core portal assignment.
+ * The journey rechecks the exact current binding before reporting portal access. Missing or
+ * revoked authority halts enrollment rather than reporting access that does not exist.
  *
  * Both dispatch under the immutable owner invocation as idempotency key; a timeout after commit
- * reconciles through the Action commit resolution port, never through a second dispatch.
+ * resolves native execution state: only NOT_STARTED or RETRYABLE redispatch the exact original payload/key.
  */
 
 type EnsureProfilePayload = Parameters<typeof executeEnsureRetailCustomerProfileWithAuthorization>[0];
@@ -71,7 +67,10 @@ export class CommerceActionCommitResolutionFailed extends Schema.TaggedError<Com
 
 type CommerceActionCommitState<Result> =
   | { readonly result: Result; readonly state: 'COMMITTED' }
-  | { readonly state: 'OPEN' };
+  | { readonly state: 'NOT_STARTED' }
+  | { readonly state: 'RETRYABLE' }
+  | { readonly state: 'RUNNING' }
+  | { readonly state: 'REJECTED' };
 
 /**
  * Exact read of one Commerce Action invocation's committed result.  It resolves commit state and
@@ -83,7 +82,6 @@ export type CommerceActionCommitResolution<Result> = (
 
 export interface RetailCustomerProfileOwnerInput {
   readonly compositionRevision: string;
-  readonly crypto: Crypto.Crypto;
   /** Stable for the Attempt, so an equivalent retry produces an identical Action payload. */
   readonly effectiveAt: DateTime.Utc;
   readonly originator: RetailEnrollmentOriginator;
@@ -103,7 +101,6 @@ export interface RetailCustomerProfileOwnerExecutors {
 
 export interface RetailPortalBindingOwnerInput {
   readonly compositionRevision: string;
-  readonly crypto: Crypto.Crypto;
   readonly effectiveAt: DateTime.Utc;
   /** Opaque, non-secret reference to the Attempt evidence the binding Action re-verifies. */
   readonly enrollmentEvidenceRef: string;
@@ -233,7 +230,7 @@ const ensureVerdict = (result: EnsureRetailCustomerProfileResult): CommerceOwner
         reason: `The Commerce Retail Customer Profile is ${result.state} and cannot carry portal access`,
       };
 
-/** The binding is written with its final authorization, so an ACTIVE grant carries the reviewed baseline. */
+/** Exact current owner state is independently rechecked before enrollment reports success. */
 export const retailPortalGrantsAreComplete = (result: RetailPortalBindingResult): boolean =>
   result.authorizationOperation === 'grant' && result.authorizationState === 'ACTIVE';
 
@@ -308,11 +305,21 @@ export const retailCustomerProfileOwnerEffect = (
       .pipe(
         Effect.mapError((cause) => unavailable('The Retail Customer Profile commit resolution is unavailable', cause)),
       );
-    if (resolved.state === 'OPEN') {
-      return yield* ownerRejected(
-        'commerce_profile_commit_open',
-        'The Commerce Action invocation has not committed yet and must be retried',
-      );
+    if (resolved.state === 'RUNNING') {
+      return yield* unavailable('The original Commerce Action is still running or indeterminate');
+    }
+    if (resolved.state === 'REJECTED') {
+      return yield* resolutionOf(reconciliation, ENSURE_OWNER_KEY, reconciliation.ownerInvocationId, {
+        kind: 'REJECTED',
+        outcomeCode: 'commerce_command_rejected',
+        reason: 'The original Commerce Action was terminally rejected',
+      });
+    }
+    if (resolved.state === 'NOT_STARTED' || resolved.state === 'RETRYABLE') {
+      const result = yield* executors
+        .ensureProfile(yield* payload(), input.requestCorrelation, { idempotencyKey: reconciliation.ownerInvocationId })
+        .pipe(Effect.mapError((cause) => unavailable('The original Commerce Action retry is unavailable', cause)));
+      return yield* resolutionOf(reconciliation, ENSURE_OWNER_KEY, result.profileRef.resourceId, ensureVerdict(result));
     }
     return yield* resolutionOf(
       reconciliation,
@@ -360,10 +367,25 @@ export const retailPortalBindingOwnerEffect = (
       .pipe(
         Effect.mapError((cause) => unavailable('The Retail Portal Binding commit resolution is unavailable', cause)),
       );
-    if (resolved.state === 'OPEN') {
-      return yield* ownerRejected(
-        'commerce_profile_commit_open',
-        'The Commerce Action invocation has not committed yet and must be retried',
+    if (resolved.state === 'RUNNING') {
+      return yield* unavailable('The original Commerce Action is still running or indeterminate');
+    }
+    if (resolved.state === 'REJECTED') {
+      return yield* resolutionOf(reconciliation, BIND_OWNER_KEY, reconciliation.ownerInvocationId, {
+        kind: 'REJECTED',
+        outcomeCode: 'commerce_command_rejected',
+        reason: 'The original Commerce Action was terminally rejected',
+      });
+    }
+    if (resolved.state === 'NOT_STARTED' || resolved.state === 'RETRYABLE') {
+      const result = yield* executors
+        .bindProfile(yield* payload(), input.requestCorrelation, { idempotencyKey: reconciliation.ownerInvocationId })
+        .pipe(Effect.mapError((cause) => unavailable('The original Commerce Action retry is unavailable', cause)));
+      return yield* resolutionOf(
+        reconciliation,
+        BIND_OWNER_KEY,
+        result.bindingRef.resourceId,
+        yield* bindingVerdict(result, executors),
       );
     }
     return yield* resolutionOf(
@@ -379,41 +401,40 @@ export const retailPortalBindingOwnerEffect = (
 
 interface RetailOwnerInvocationAuthority {
   readonly compositionRevision: string;
-  readonly crypto: Crypto.Crypto;
   readonly legalEntityId: string;
   readonly originator: RetailEnrollmentOriginator;
   readonly requestCorrelation: string;
   readonly tenantId: string;
 }
 
-/** The owner call acts for the Attempt's originator; the verified actor is this Commerce module. */
-const issueRetailOwnerConnection = Effect.fn('RetailEnrollment.issueOwnerConnection')(
-  function* issueRetailOwnerConnectionEffect(input: RetailOwnerInvocationAuthority) {
-    if (
-      input.originator.tenantId !== input.tenantId ||
-      input.originator.compositionRevision !== input.compositionRevision
-    ) {
-      return yield* unavailable('The enrollment originator does not match the Attempt scope');
-    }
-    return yield* acquireRetailOwnerCredential({
-      audience: 'commerce-customer-context',
-      crypto: input.crypto,
-      legalEntityId: input.legalEntityId,
-      originator: input.originator,
-      requestCorrelation: input.requestCorrelation,
-    }).pipe(Effect.mapError((cause) => unavailable('The Retail owner credential is unavailable', cause)));
-  },
-);
+const issueRetailOwnerConnection = Effect.fn('RetailEnrollment.issueOwnerConnection')(function* issue(
+  input: RetailOwnerInvocationAuthority,
+  crypto: Crypto.Crypto,
+) {
+  if (
+    input.originator.tenantId !== input.tenantId ||
+    input.originator.compositionRevision !== input.compositionRevision
+  ) {
+    return yield* unavailable('The enrollment originator does not match the immutable Attempt scope');
+  }
+  return yield* acquireRetailOwnerCredential({
+    audience: 'commerce-customer-context',
+    crypto,
+    legalEntityId: input.legalEntityId,
+    originator: Object.freeze({ ...input.originator }),
+    requestCorrelation: input.requestCorrelation,
+  });
+});
 
-/** Each scheduled dispatch uses its Attempt's immutable release and a fresh server-owned service credential. */
+/** Every dispatch delegates the immutable Attempt originator; no standalone service executes the owner Action. */
 export const retailCustomerProfileActionExecutor = (
   input: RetailCustomerProfileOwnerInput,
+  crypto: Crypto.Crypto,
 ): RetailCustomerProfileOwnerExecutors['ensureProfile'] => {
   const authority: RetailOwnerInvocationAuthority = Object.freeze({
     compositionRevision: input.compositionRevision,
-    crypto: input.crypto,
     legalEntityId: input.sellingLegalEntityRef.resourceId,
-    originator: input.originator,
+    originator: Object.freeze({ ...input.originator }),
     requestCorrelation: input.requestCorrelation,
     tenantId: input.partyRef.tenantId,
   });
@@ -422,10 +443,10 @@ export const retailCustomerProfileActionExecutor = (
     _requestCorrelation: string,
     options: { readonly idempotencyKey: string },
   ): Effect.fn.Return<EnsureRetailCustomerProfileResult, EnsureProfileError> {
-    const connection = yield* issueRetailOwnerConnection(authority).pipe(
+    const connection = yield* issueRetailOwnerConnection(authority, crypto).pipe(
       Effect.mapError((cause) => unavailable('The Retail Customer Profile owner credential is unavailable', cause)),
     );
-    const answered = yield* executeEnsureRetailCustomerProfileWithAuthorization(
+    const result = yield* executeEnsureRetailCustomerProfileWithAuthorization(
       payload,
       Redacted.value(connection.credential),
       authority.requestCorrelation,
@@ -435,22 +456,21 @@ export const retailCustomerProfileActionExecutor = (
         idempotencyKey: options.idempotencyKey,
       },
     );
-    // O85: a parked proposal is a public 202 success body, never a created Retail profile. This executor
-    // requires execution, so the Action's own result schema decides the seam.
-    return yield* Schema.decodeUnknownEffect(Schema.toType(EnsureRetailCustomerProfileResultSchema))(answered).pipe(
-      Effect.mapError((cause) => unavailable('The Retail Customer Profile owner did not execute the request', cause)),
-    );
+    if (Predicate.isTagged(result, 'ActionProposalAccepted')) {
+      return yield* unavailable('The Retail Customer Profile Action awaits approval and has not committed');
+    }
+    return result;
   });
 };
 
 export const retailPortalBindingActionExecutor = (
   input: RetailPortalBindingOwnerInput,
+  crypto: Crypto.Crypto,
 ): RetailPortalBindingOwnerExecutors['bindProfile'] => {
   const authority: RetailOwnerInvocationAuthority = Object.freeze({
     compositionRevision: input.compositionRevision,
-    crypto: input.crypto,
     legalEntityId: input.sellingLegalEntityRef.resourceId,
-    originator: input.originator,
+    originator: Object.freeze({ ...input.originator }),
     requestCorrelation: input.requestCorrelation,
     tenantId: input.profileRef.tenantId,
   });
@@ -459,7 +479,7 @@ export const retailPortalBindingActionExecutor = (
     _requestCorrelation: string,
     options: { readonly idempotencyKey: string },
   ): Effect.fn.Return<RetailPortalBindingResult, BindProfileError> {
-    const connection = yield* issueRetailOwnerConnection(authority).pipe(
+    const connection = yield* issueRetailOwnerConnection(authority, crypto).pipe(
       Effect.mapError((cause) => unavailable('The Retail Portal Binding owner credential is unavailable', cause)),
     );
     return yield* executeBindRetailPortalProfileWithAuthorization(
@@ -474,3 +494,27 @@ export const retailPortalBindingActionExecutor = (
     );
   });
 };
+
+/** Fresh service transport, exact original key; native runtime owns execution/locking decisions. */
+export const resolveRetailOwnerCommand = Effect.fn('RetailEnrollment.resolveOwnerCommand')(
+  function* resolveRetailOwnerCommand(
+    authority: RetailOwnerInvocationAuthority,
+    payload: typeof EnrollmentCommandRecoveryInputSchema.Encoded,
+    crypto: Crypto.Crypto,
+  ) {
+    const connection = yield* issueRetailOwnerConnection(authority, crypto);
+    const client = yield* makeGovernedEffectBffClient(
+      {
+        api: EnrollmentCommandRecoveryApi,
+        credential: connection.credential,
+        defaultApiPrefix: '/commerce-customer-context-api',
+        requestCorrelation: authority.requestCorrelation,
+      },
+      { baseUrl: connection.baseUrl, compositionRevision: authority.compositionRevision },
+    );
+    const decoded = yield* Schema.decodeEffect(EnrollmentCommandRecoveryInputSchema)(payload).pipe(
+      Effect.mapError((cause) => unavailable('The native owner recovery identity is invalid', cause)),
+    );
+    return yield* client.enrollmentCommandRecovery.resolve({ payload: decoded });
+  },
+);

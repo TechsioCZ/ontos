@@ -6,7 +6,6 @@ import {
   requireScopedSourceExecutionFenceOpen,
 } from '../../src/access/workloads/source-execution-fence.ts';
 import { readScopedSourceAdmissionEnrollment } from '../../src/access/workloads/source-admission-enrollment.ts';
-import type { ReadServiceFactory } from '../../src/reads/definition.ts';
 import type { ScopedRoutineInvoker } from '../../src/db/scoped-routine.ts';
 import { registeredGatewayRecoveryPrincipal } from '../support/registered-gateway-recovery.ts';
 import { computeCanonicalValueHash } from '../../src/actions/repository.ts';
@@ -25,6 +24,8 @@ import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-reg
 import type { VerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
+import { agentProposalQueueReadKey } from '../../src/auth/agent-proposal-queue-contract.ts';
+import { LegalEntityIdSchema } from '../../src/access/ids.ts';
 import {
   freshOutboxWorkerCompositionSnapshot,
   makeOutboxWorkerComposition,
@@ -34,7 +35,23 @@ import {
   LegalEntityDetailRequestSchema,
 } from '../../src/generated-reads/legal-entity-detail.ts';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
-import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema } from 'effect';
+import {
+  Cause,
+  Context,
+  DateTime,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Logger,
+  Option,
+  Predicate,
+  Schema,
+} from 'effect';
+import { PgClient } from '@effect/sql-pg';
+import { sql } from 'drizzle-orm';
+import { Reactivity } from 'effect/reactivity';
 /* oxlint-disable sonarjs/use-type-alias, typescript/no-unsafe-type-assertion -- Existing compatibility boundary; expires: 2026-12-31. */
 import { expect, it } from 'effect-rstest';
 import {
@@ -58,15 +75,19 @@ import type { OperationalScope } from '../../src/operations/context.ts';
 import type { OwnerPermissionAccessTarget } from '../../src/permissions/context-access.ts';
 import type {
   OwnerAuthorizationInput,
+  OwnerAuthorizationOutcome,
   OwnerAuthorizationOverlayService,
 } from '../../src/access/enforcement/owner-overlay.ts';
 import { allowOwnerAuthorizationOverlay } from '../../src/access/enforcement/owner-overlay.ts';
+import type { AccessPrincipalKind, AccessPrincipalKinds } from '../../src/access/enforcement/actor.ts';
 import {
   defineRead,
   defineReadOwnerPermission,
   defineReadConditionalPermission,
   defineReadResourcePermission,
 } from '../../src/reads/definition.ts';
+import type { ReadServiceFactory, ResolvedReadPermissionTarget } from '../../src/reads/definition.ts';
+import type { ReadFinishContext, ReadLoadContext, ReadPrepareContext } from '../../src/reads/context.ts';
 import {
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
@@ -75,8 +96,18 @@ import {
 } from '../../src/reads/errors.ts';
 import type { BoundAccessGate } from '../../src/operations/access-gate.ts';
 import type { CoreTransaction } from '../../src/db/types.ts';
+import type { ScopedTransactionExecutor } from '../../src/db/scoped-transaction.ts';
 import { makeReadRuntime, READ_RUNTIME_STAGES } from '../../src/reads/runtime.ts';
-import { makeTestDatabase } from '../support/database.ts';
+import { makeTestDatabaseFromClient } from '../support/database.ts';
+import { scriptedPgClientLayer, testSqlConnection } from '../../src/testing/scripted-pg-client.ts';
+import {
+  guardPoolAcquisition,
+  OpenDatabaseTransaction,
+  refuseInsideDatabaseTransaction,
+} from '../../src/db/transaction-io-guard.ts';
+import { coreRelations, tenants } from '../../src/db/schema.ts';
+import { makeTestOperationOwner } from '../support/action-runtime-options.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 import { fixtureReadAccess } from '../support/access-declaration-fixtures.ts';
 
@@ -94,6 +125,8 @@ const scope: OperationalScope = Object.freeze({
 });
 const transactionOperationAt = DateTime.toDateUtc(DateTime.makeUnsafe(Date.parse('2026-09-28T09:00:00.000Z')));
 const approvedCompositionRevision = 'a'.repeat(64);
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 interface ReadAuthorityFixture {
   readonly phase: 'active' | 'draining' | 'sealed' | 'migrated';
   readonly revision: string;
@@ -141,13 +174,18 @@ const makeHarness = Effect.fn(function* makeHarness(
     readonly contextPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly failEvidence?: boolean;
     readonly failTransactionTimestamp?: boolean;
-    readonly legalEntityRows?: readonly { readonly legalName: string; readonly status: string }[];
+    readonly legalEntityRows?: readonly {
+      readonly legalName: string;
+      readonly status: string;
+      readonly welcome: string | null;
+    }[];
     readonly modulePermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly omitOwnerAuthorizationOverlay?: boolean;
     readonly omitOwnerRegistration?: boolean;
     readonly onBusinessPermissionTarget?: (
       target: Readonly<{ readonly permission: string; readonly target: object }>,
     ) => void;
+    readonly onCheckout?: (count: number) => void;
     readonly onContextPermissionTarget?: (target: { readonly moduleId: string; readonly permission: string }) => void;
     readonly onLegalEntityPermission?: (permission: string | undefined) => void;
     readonly onLegalEntityTarget?: (legalEntityId: string, tenantId: string) => void;
@@ -167,6 +205,8 @@ const makeHarness = Effect.fn(function* makeHarness(
     readonly ownerPermissionKey?: string;
     readonly ownerPermissionResponse?: 'empty';
     readonly permissionDecision?: 'allowed' | 'denied' | 'unavailable';
+    readonly principalKinds?: AccessPrincipalKinds;
+    readonly readCompositionAuthority?: () => ReadAuthorityFixture | 'missing';
     readonly resolvedScope?: typeof scope & {
       readonly legalEntityId?: string;
       readonly trustedStorefrontId?: string;
@@ -202,6 +242,7 @@ const makeHarness = Effect.fn(function* makeHarness(
   let authorityReads = 0;
   let scopeInstalls = 0;
   let transactionTimestampReadCount = 0;
+  let checkedOutConnections = 0;
   let resourcePermissionChecks = 0;
   let tenantPermissionChecks = 0;
   const evidenceRows: EvidenceRow[] = [];
@@ -211,6 +252,13 @@ const makeHarness = Effect.fn(function* makeHarness(
     role: 'ontos_runtime',
     tenant_id: options.resolvedScope?.tenantId ?? scope.tenantId,
   });
+  const currentAuthority = () =>
+    options.readCompositionAuthority?.() ??
+    options.compositionAuthority ?? {
+      phase: 'active',
+      revision: approvedCompositionRevision,
+      unexpired: true,
+    };
   const query = (text: string, values: readonly unknown[]) => {
     if (text.includes('read_source_execution_fence')) {
       const [tenantId, admissionInvocationId] = values;
@@ -259,21 +307,22 @@ const makeHarness = Effect.fn(function* makeHarness(
       if (/^(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE SAVEPOINT)/u.test(text)) {
         options.sqlEvents?.push(text);
       }
+      // The publication fence is one combined statement (isolation probe + guarded lock) and, on the
+      // older form, two separate statements. The CASE never acquires the lock under an unsupported
+      // isolation, so the lock counts only when this transaction is READ COMMITTED.
+      if (
+        text.includes('pg_advisory_xact_lock_shared') &&
+        (options.compositionIsolation ?? 'read committed') === 'read committed'
+      ) {
+        authorityLocks += 1;
+        options.authorityEvents?.push('authority_locked');
+      }
       if (text.includes("current_setting('transaction_isolation')")) {
         return [{ isolation: options.compositionIsolation ?? 'read committed' }];
       }
-      if (text.includes('pg_advisory_xact_lock_shared')) {
-        authorityLocks += 1;
-        options.authorityEvents?.push('authority_locked');
-        return [];
-      }
       if (text.includes('application_composition_authority')) {
         authorityReads += 1;
-        const authority = options.compositionAuthority ?? {
-          phase: 'active',
-          revision: approvedCompositionRevision,
-          unexpired: true,
-        };
+        const authority = currentAuthority();
         return authority === 'missing'
           ? []
           : [
@@ -288,6 +337,10 @@ const makeHarness = Effect.fn(function* makeHarness(
       if (text.includes('set_config')) {
         scopeInstalls += 1;
         options.authorityEvents?.push('scope_installed');
+      }
+      // A session-setting role installs its scope and reads back the connected role in one statement.
+      if (text === installAndReadScopeSql) {
+        return [databaseScopeRow()];
       }
       if (text.includes('transaction_timestamp')) {
         transactionTimestampReadCount += 1;
@@ -314,14 +367,38 @@ const makeHarness = Effect.fn(function* makeHarness(
       return text.includes('current_setting') ? [databaseScopeRow()] : [];
     });
   };
+  const executeSql = (text: string, values: readonly unknown[]) => {
+    // Main's scope authority probes the connected role first; this script connects as the row's role.
+    if (text === 'select current_user::text as role') {
+      return Effect.succeed([{ role: databaseScopeRow().role }]);
+    }
+    if (text === 'COMMIT' && options.transactionSettlementFailure !== undefined) {
+      options.sqlEvents?.push(text);
+      return Effect.fail(options.transactionSettlementFailure);
+    }
+    return query(text, values);
+  };
+  const client = yield* Layer.build(
+    scriptedPgClientLayer(
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          checkedOutConnections += 1;
+          options.onCheckout?.(checkedOutConnections);
+          return testSqlConnection(executeSql);
+        }),
+        () =>
+          Effect.sync(() => {
+            checkedOutConnections -= 1;
+            options.onCheckout?.(checkedOutConnections);
+          }),
+      ),
+    ).pipe(Layer.provide(Reactivity.layer)),
+  );
   const database = {
-    executor: yield* makeTestDatabase((text, values) => {
-      if (text === 'COMMIT' && options.transactionSettlementFailure !== undefined) {
-        options.sqlEvents?.push(text);
-        return Effect.fail(options.transactionSettlementFailure);
-      }
-      return query(text, values);
-    }),
+    executor: yield* makeTestDatabaseFromClient(
+      guardPoolAcquisition(Context.get(client, PgClient.PgClient)),
+      coreRelations,
+    ),
   };
   const transact = database.executor.transaction.bind(database.executor);
   const transaction: typeof database.executor.transaction = (body) =>
@@ -344,6 +421,7 @@ const makeHarness = Effect.fn(function* makeHarness(
           ownerAuthorizationOverlay: options.ownerAuthorizationOverlay ?? allowOwnerAuthorizationOverlay,
         };
   let ownedRuntimeOptions: ReadRuntimeOptions = {
+    databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
     onStage: (stage) => stages.push(stage),
     ...ownerAuthorizationOptions,
     ...accessDecisionOptions,
@@ -351,6 +429,9 @@ const makeHarness = Effect.fn(function* makeHarness(
   };
   if (options.applicationComposition !== undefined) {
     ownedRuntimeOptions = { ...ownedRuntimeOptions, applicationComposition: options.applicationComposition };
+  }
+  if (options.principalKinds !== undefined) {
+    ownedRuntimeOptions = { ...ownedRuntimeOptions, principalKinds: options.principalKinds };
   }
   const constructRuntime = (ownerRegistration?: VerticalRuntimeRegistration) => {
     const runtimeOptions =
@@ -470,6 +551,7 @@ const makeHarness = Effect.fn(function* makeHarness(
   const runtime = { runRead };
   return {
     authorityCounts: () => ({ authorityLocks, authorityReads, scopeInstalls }),
+    checkedOutConnections: () => checkedOutConnections,
     evidence: () => evidence,
     evidenceParameterRows: () => evidenceParameterRows,
     evidenceRows: () => evidenceRows,
@@ -521,6 +603,213 @@ const registration = (items: readonly string[] = []) =>
     () => Effect.succeed({ items }),
     () => ({ kind: 'module', moduleId: 'core.shell' }),
   );
+
+const boundaryInput = Schema.Struct({});
+type BoundaryInput = typeof boundaryInput.Type;
+interface BoundaryPreparation {
+  readonly ready: true;
+}
+const boundaryRows = (transaction: Pick<ScopedTransactionExecutor, 'select'>, readScope: OperationalScope) =>
+  transaction
+    .select({ tenantId: tenants.tenantId })
+    .from(tenants)
+    .where(sql`${tenants.tenantId} = ${readScope.tenantId}`)
+    .pipe(
+      Effect.mapError(
+        () =>
+          new ReadHandlerUnavailable({
+            code: 'read_handler_unavailable',
+            reason: 'Owner SQL is unavailable',
+          }),
+      ),
+    );
+interface BoundaryServices {
+  readonly rows: ReturnType<typeof boundaryRows>;
+}
+const boundaryServices: ReadServiceFactory<BoundaryServices> = (transaction, readScope) =>
+  Effect.succeed({ rows: boundaryRows(transaction, readScope) });
+
+for (const verified of [false, true]) {
+  for (const control of [
+    'success',
+    'prepare-unavailable',
+    'finish-unavailable',
+    'prepare-interrupted',
+    'finish-interrupted',
+    'load-unavailable',
+    'evidence-unavailable',
+    'stale-after-prepare',
+    'stale-in-finish',
+  ] as const) {
+    it.effect(`releases actual ${verified ? 'verified' : 'native'} Read checkouts across ${control}`, () =>
+      Effect.gen(function* stagedCheckoutBoundary() {
+        const acquired = { count: 0 };
+        let revision = '';
+        let authority: ReadAuthorityFixture;
+        const sqlEvents: string[] = [];
+        const phases: string[] = [];
+        const remote = (phase: 'prepare' | 'finish') =>
+          Effect.gen(function* remoteOwnerPhase() {
+            expect(acquired.count).toBe(0);
+            expect(Option.isNone(yield* OpenDatabaseTransaction)).toBe(true);
+            yield* refuseInsideDatabaseTransaction('spicedb', `read-boundary.${phase}`);
+            if (phase === 'finish') {
+              expect(sqlEvents.at(-1)).toBe('COMMIT');
+            }
+            phases.push(phase);
+            if (control === `${phase}-unavailable`) {
+              return yield* new ReadHandlerUnavailable({
+                code: 'read_handler_unavailable',
+                reason: 'Remote owner is unavailable',
+              });
+            }
+            if (control === `${phase}-interrupted`) {
+              return yield* Effect.interrupt;
+            }
+            if (
+              (phase === 'prepare' && control === 'stale-after-prepare') ||
+              (phase === 'finish' && control === 'stale-in-finish')
+            ) {
+              authority = { phase: 'active', revision: 'f'.repeat(64), unexpired: true };
+            }
+            return yield* Effect.void;
+          });
+        const staged = defineRead(
+          {
+            accessDeclaration: {
+              key: 'test.read-boundaries.value.read',
+              kind: 'read',
+              modes: ['run'],
+              placement: { group: 'boundaries', level: 'basic' },
+              risk: 'routine',
+              selectors: [],
+            },
+            accessKind: 'detail',
+            entrypoint: defineTenantModuleEntrypoint({
+              access: 'read',
+              authorization: { kind: 'protected' },
+              entrypointKey: 'test.read-boundaries.value',
+              moduleKey: 'test.read-boundaries',
+              role: 'api',
+            }),
+            evidencePolicy: { captureMode: 'metadata_only', policyKey: 'test.read-boundaries.evidence' },
+            inputSchema: boundaryInput,
+            legalEntityScope: 'forbidden',
+            owningModuleKey: 'test.read-boundaries',
+            policies: [],
+            readKey: 'test.read-boundaries.value',
+            resultSchema: Schema.Array(Schema.String),
+            schemaVersion: '1',
+          },
+          {
+            finish: (_input: BoundaryInput, context: ReadFinishContext<BoundaryPreparation, readonly string[]>) =>
+              Effect.gen(function* finishOutsideCheckout() {
+                expect(context.compositionRevision).toBe(revision);
+                yield* remote('finish');
+                if (control !== 'stale-in-finish') {
+                  yield* context.transaction((transaction) =>
+                    Effect.gen(function* shortOwnerStateRead() {
+                      expect(acquired.count).toBe(1);
+                      expect(Option.isSome(yield* OpenDatabaseTransaction)).toBe(true);
+                      yield* boundaryRows(transaction, context.scope);
+                    }),
+                  );
+                  expect(acquired.count).toBe(0);
+                  expect(sqlEvents.at(-1)).toBe('COMMIT');
+                  yield* refuseInsideDatabaseTransaction('outbound-fetch', 'read-boundary.after-owner-state');
+                }
+                return { evidence: { resultCount: context.loaded.length }, result: context.loaded };
+              }),
+            load: (_input: BoundaryInput, context: ReadLoadContext<BoundaryServices, BoundaryPreparation>) =>
+              Effect.gen(function* loadInsideCheckout() {
+                expect(context.compositionRevision).toBe(revision);
+                expect(acquired.count).toBe(1);
+                expect(Option.isSome(yield* OpenDatabaseTransaction)).toBe(true);
+                phases.push('load');
+                yield* context.services.rows;
+                if (control === 'load-unavailable') {
+                  return yield* new ReadHandlerUnavailable({
+                    code: 'read_handler_unavailable',
+                    reason: 'Owner SQL is unavailable',
+                  });
+                }
+                return ['loaded'];
+              }),
+            prepare: (_input: BoundaryInput, context: ReadPrepareContext) =>
+              Effect.gen(function* prepareOutsideCheckout() {
+                expect(context.compositionRevision).toBe(revision);
+                yield* remote('prepare');
+                return { ready: true } as const;
+              }),
+          },
+          boundaryServices,
+        );
+        const owner = makeTestOperationOwner({ moduleId: 'test.read-boundaries', reads: [staged] });
+        ({ revision } = (yield* owner.snapshot).composition);
+        authority = { phase: 'active', revision, unexpired: true };
+        const harness = yield* makeHarness({
+          accessDecision: makeScriptedBoundAccessGate('allowed').bound,
+          failEvidence: control === 'evidence-unavailable',
+          onCheckout: (count) => {
+            acquired.count = count;
+          },
+          readCompositionAuthority: () => authority,
+          runtimeAdmission: {
+            applicationComposition: owner.applicationComposition,
+            expectedDeployment: owner.expectedDeployment,
+            ownerRegistration: owner.ownerRegistration,
+          },
+          sqlEvents,
+        });
+        const fiber = yield* harness.runtime
+          .runRead({
+            input: {},
+            principal: verified ? trustVerifiedGatewayPrincipalContext(scope, revision) : scope,
+            registration: staged,
+            transport: { correlationId: scope.correlationId },
+          })
+          .pipe(Effect.forkChild);
+        const exit = yield* Fiber.await(fiber);
+        expect(harness.checkedOutConnections()).toBe(0);
+        expect(sqlEvents.some((statement) => /SAVEPOINT/u.test(statement))).toBe(false);
+        if (control === 'success') {
+          if (Exit.isFailure(exit)) {
+            return yield* Effect.failCause(exit.cause);
+          }
+          expect(exit).toEqual(Exit.succeed(['loaded']));
+          expect(phases).toEqual(['prepare', 'load', 'finish']);
+          expect(harness.evidence()).toBe(1);
+          expect(harness.authorityCounts().authorityLocks).toBe(verified ? 4 : 3);
+          expect(sqlEvents.filter((statement) => statement === 'COMMIT')).toHaveLength(verified ? 4 : 3);
+        } else {
+          expect(harness.evidence()).toBe(0);
+          if (!Exit.isFailure(exit)) {
+            expect.unreachable('A failed or stale phase must not release its loaded result');
+          }
+          if (control.endsWith('interrupted')) {
+            expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+          } else {
+            const error = Option.getOrThrow(Cause.findErrorOption(exit.cause));
+            expect(
+              Predicate.isTagged(
+                error,
+                control === 'evidence-unavailable' ? 'ReadEvidencePersistenceError' : 'ReadHandlerUnavailable',
+              ),
+            ).toBe(true);
+          }
+          if (control === 'stale-after-prepare' || control.startsWith('prepare-')) {
+            expect(phases).toEqual(['prepare']);
+          } else if (control === 'load-unavailable') {
+            expect(phases).toEqual(['prepare', 'load']);
+          } else {
+            expect(phases).toEqual(['prepare', 'load', 'finish']);
+          }
+        }
+        return yield* Effect.void;
+      }),
+    );
+  }
+}
 
 const ownerReadTarget = ownerPermissionTarget(
   { legalEntityId: '00000000-0000-4000-8000-000000000002', tenantId: scope.tenantId },
@@ -962,6 +1251,126 @@ it.effect('runs the owner authorization overlay inside the transaction before th
   }),
 );
 
+/**
+ * Answers outside the owner contract. Before this the Read path let an unknown answer through to the
+ * handler (pre-existing fail-open); each is now unavailable and the handler never runs.
+ */
+/** Untyped values the compiler cannot vet, as a type escape or a separately built owner unit could send. */
+const outOfContract = Schema.decodeUnknownEffect(Schema.Any);
+const OUT_OF_CONTRACT_OWNER_ANSWERS: readonly (readonly [string, () => Effect.Effect<OwnerAuthorizationOutcome>])[] = [
+  ['ALLOWED', () => outOfContract('ALLOWED').pipe(Effect.orDie)],
+  ['{}', () => outOfContract({}).pipe(Effect.orDie)],
+  ['{decision: allowed}', () => outOfContract({ decision: 'allowed' }).pipe(Effect.orDie)],
+  ['null', () => outOfContract(null).pipe(Effect.orDie)],
+  ['undefined', () => outOfContract(globalThis.undefined).pipe(Effect.orDie)],
+  ['a thrown defect', () => Effect.die(new Error('owner rule defect'))],
+];
+
+it.effect('a synchronous throw inside the owner overlay is unavailable on the Read path, never a 500', () =>
+  Effect.gen(function* synchronousOwnerThrowRead() {
+    let handlerCalls = 0;
+    const harness = yield* makeHarness({
+      contextPermissionDecision: 'allowed',
+      ownerAuthorizationOverlay: {
+        authorize: () => {
+          throw new TypeError('owner rule private detail');
+        },
+      },
+      permissionDecision: 'allowed',
+    });
+    const testRegistration = defineRead(
+      registration().descriptor,
+      () => {
+        handlerCalls += 1;
+        return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: testRegistration,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ReadPermissionUnavailable')).toBe(true);
+    expect(handlerCalls).toBe(0);
+  }),
+);
+
+it.effect('a Read refusal with unreportable owner codes still refuses and reports deny.owner_rule', () =>
+  Effect.gen(function* unreportableReadCodes() {
+    const entries: string[] = [];
+    const harness = yield* makeHarness({
+      contextPermissionDecision: 'allowed',
+      ownerAuthorizationOverlay: {
+        authorize: () =>
+          Effect.succeed({ decision: 'denied' as const, reasons: ['deny.owner.someone@example.test'] as const }),
+      },
+      permissionDecision: 'allowed',
+    });
+    const testRegistration = defineRead(
+      registration().descriptor,
+      () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: testRegistration,
+        transport: { correlationId: scope.correlationId },
+      }),
+    ).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- Test-owned diagnostic logger capture.
+      Effect.provide(
+        Logger.layer([Logger.make((options) => entries.push(JSON.stringify(Logger.formatStructured.log(options))))]),
+      ),
+    );
+    expect(Predicate.isTagged(failure, 'ReadPermissionDenied')).toBe(true);
+    const warning = entries.find((entry) => entry.includes('Read refused'));
+    expect(warning).toContain('"reasons":"deny.owner_rule"');
+    expect(warning).not.toContain('example.test');
+  }),
+);
+
+for (const [label, answer] of OUT_OF_CONTRACT_OWNER_ANSWERS) {
+  it.effect(`answers an owner overlay's ${label} as unavailable on the Read path`, () =>
+    Effect.gen(function* outOfContractOwnerRead() {
+      let handlerCalls = 0;
+      const harness = yield* makeHarness({
+        contextPermissionDecision: 'allowed',
+        ownerAuthorizationOverlay: {
+          authorize: answer,
+        },
+        permissionDecision: 'allowed',
+      });
+      const testRegistration = defineRead(
+        registration().descriptor,
+        () => {
+          handlerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+        },
+        () => Effect.succeed({}),
+        () => ({ kind: 'module', moduleId: 'core.shell' }),
+      );
+      const failure = yield* Effect.flip(
+        harness.runtime.runRead({
+          input: {},
+          principal: scope,
+          registration: testRegistration,
+          transport: { correlationId: scope.correlationId },
+        }),
+      );
+      expect(Predicate.isTagged(failure, 'ReadPermissionUnavailable')).toBe(true);
+      expect(handlerCalls).toBe(0);
+    }),
+  );
+}
+
 it.effect('fails closed before owner authorization when PostgreSQL cannot provide transaction time', () =>
   Effect.gen(function* transactionTimeUnavailable() {
     let overlayCalls = 0;
@@ -1398,8 +1807,21 @@ it.effect('admits the new active Read revision before scope, service factory, an
         transport: { correlationId: scope.correlationId },
       }),
     ).toEqual(['current']);
-    expect(events).toEqual(['authority_locked', 'scope_installed', 'factory', 'handler', 'transaction_settled']);
-    expect(harness.authorityCounts()).toEqual({ authorityLocks: 1, authorityReads: 1, scopeInstalls: 1 });
+    // The owner transaction installs the read's scope, and the after-commit allowed evidence opens its
+    // own short scoped transaction, so a successful read installs scope twice.
+    expect(events).toEqual([
+      'authority_locked',
+      'transaction_settled',
+      'authority_locked',
+      'scope_installed',
+      'factory',
+      'handler',
+      'transaction_settled',
+      'authority_locked',
+      'scope_installed',
+      'transaction_settled',
+    ]);
+    expect(harness.authorityCounts()).toEqual({ authorityLocks: 3, authorityReads: 3, scopeInstalls: 2 });
     expect(harness.evidence()).toBe(1);
   }),
 );
@@ -1437,7 +1859,9 @@ it.effect('leaves owner-local Reads independent from composition authority queri
         transport: { correlationId: scope.correlationId },
       }),
     ).toEqual(['local']);
-    expect(harness.authorityCounts()).toEqual({ authorityLocks: 0, authorityReads: 0, scopeInstalls: 1 });
+    // The owner transaction installs the read's scope, and the after-commit allowed evidence opens its
+    // own short scoped transaction, so a successful read installs scope twice.
+    expect(harness.authorityCounts()).toEqual({ authorityLocks: 0, authorityReads: 0, scopeInstalls: 2 });
   }),
 );
 
@@ -1564,6 +1988,187 @@ it.effect(
     }
     expect(handlerCalls).toBe(1);
     expect(observed).toEqual(Array.from({ length: 3 }, () => `${scope.tenantId}:${targetId}`));
+  }),
+);
+
+/** Core's principal kind of the acting principal, as the access gate reads it. */
+const principalKindsOf = (kind: AccessPrincipalKind | undefined): AccessPrincipalKinds => ({
+  readKind: () => Effect.succeed(Option.fromUndefinedOr(kind)),
+});
+
+const selectedCompanyRead = (
+  target: ResolvedReadPermissionTarget,
+  readKey = 'core.identity.api.selected-company-test',
+) => {
+  const { accessDeclaration, ...unprotectedRegistration } = registration().descriptor;
+  expect(accessDeclaration?.key).toBe('core.shell.fixture.read');
+  return defineRead(
+    {
+      ...unprotectedRegistration,
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'read',
+        authorization: { kind: 'authenticated_principal' },
+        entrypointKey: 'core.identity.api.selected-company-test',
+        moduleKey: 'core.identity',
+        role: 'api',
+      }),
+      legalEntityScope: 'required',
+      owningModuleKey: 'core.identity',
+      permissionTarget: 'legal_entity',
+      readKey,
+    },
+    () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
+    () => Effect.succeed({}),
+    () => target,
+  );
+};
+
+const selectedCompanyId = '00000000-0000-4000-8000-000000000004';
+const otherCompanyId = '00000000-0000-4000-8000-000000000099';
+const selectedCompanyScope = { ...scope, legalEntityId: selectedCompanyId };
+
+/** A legacy target run once: the outcome and every company the retired relation was asked about, with its permission. */
+const runSelectedCompanyRead = Effect.fn(function* runSelectedCompanyRead(
+  target: ResolvedReadPermissionTarget,
+  kind: AccessPrincipalKind | undefined,
+) {
+  // A person who exists only in the v2 model holds no legacy `legal_entity#member` tuple: the relation denies.
+  const asked: string[] = [];
+  let permission: string | undefined;
+  const harness = yield* makeHarness({
+    onLegalEntityPermission: (requested) => {
+      permission = requested;
+    },
+    onLegalEntityTarget: (id) => asked.push(id),
+    permissionDecision: 'denied',
+    principalKinds: principalKindsOf(kind),
+    resolvedScope: selectedCompanyScope,
+  });
+  const outcome = yield* Effect.exit(
+    harness.runtime.runRead({
+      input: {},
+      principal: selectedCompanyScope,
+      registration: selectedCompanyRead(target),
+      transport: { correlationId: scope.correlationId },
+    }),
+  );
+  return { asked, outcome, permission };
+});
+
+const deniedByLegacyRelation = (outcome: Exit.Exit<unknown, unknown>): boolean =>
+  Exit.isFailure(outcome) && Option.exists(Cause.findErrorOption(outcome.cause), Schema.is(ReadPermissionDenied));
+
+it.effect(
+  "answers a person's own selected company from the resolved scope, never the retired company relation",
+  Effect.fn(function* personInSelectedCompany() {
+    // Scope resolution already refused any company this person may not select (O28).
+    const own = yield* runSelectedCompanyRead({ kind: 'legal_entity' }, 'human');
+    expect(Exit.isSuccess(own.outcome)).toBe(true);
+    expect(own.asked).toEqual([]);
+  }),
+);
+
+it.effect(
+  'asks the retired company relation for another company and for an explicit permission on the own company',
+  Effect.fn(function* legacyTargetsStayLegacy() {
+    const other = yield* runSelectedCompanyRead({ kind: 'legal_entity', legalEntityId: otherCompanyId }, 'human');
+    expect(deniedByLegacyRelation(other.outcome)).toBe(true);
+    expect(other.asked).toEqual([otherCompanyId]);
+    const explicit = yield* runSelectedCompanyRead({ kind: 'legal_entity', permission: 'manage_people' }, 'human');
+    expect(deniedByLegacyRelation(explicit.outcome)).toBe(true);
+    expect(explicit.asked).toEqual([selectedCompanyId]);
+    expect(explicit.permission).toBe('manage_people');
+  }),
+);
+
+it.effect(
+  'keeps the retired company relation for a workload or an unreadable kind, and refuses an agent outright',
+  Effect.fn(function* nonPersonInSelectedCompany() {
+    // A workload behind a verified module call may select every company of its tenant, so its scope proves nothing.
+    for (const kind of ['service', undefined] as const) {
+      const run = yield* runSelectedCompanyRead({ kind: 'legal_entity' }, kind);
+      expect(deniedByLegacyRelation(run.outcome)).toBe(true);
+      expect(run.asked).toEqual([selectedCompanyId]);
+    }
+    // An agent holds nothing on the retired relation and v2 never writes one: it is refused without asking at all.
+    const agent = yield* runSelectedCompanyRead({ kind: 'legal_entity' }, 'agent');
+    expect(deniedByLegacyRelation(agent.outcome)).toBe(true);
+    expect(agent.asked).toEqual([]);
+  }),
+);
+
+/** The agent on its credential-bound connection in its own company, as the MCP transport scopes it. */
+const agentConnectionScope = {
+  ...selectedCompanyScope,
+  authContextRef: 'oauth-grant:00000000-0000-4000-8000-000000000042',
+  authMethod: 'oauth_connection' as const,
+  connection: {
+    agentConnection: { connectionId: '00000000-0000-4000-8000-000000000041', revision: 1 },
+    clientId: 'https://client.example/oauth/metadata.json',
+    clientName: 'Client',
+    grantId: '00000000-0000-4000-8000-000000000042',
+    modules: 'all' as const,
+    writePolicy: 'direct' as const,
+  },
+  delegatedByPrincipalId: '00000000-0000-4000-8000-000000000043',
+};
+
+/** The v2 gate as the agent finds it: only the company list matters, every other question would be a bug here. */
+const agentSelectionGate = (selectable: readonly string[]): BoundAccessGate => ({
+  decide: () => Effect.die('a legacy read never asks the gate for a decision'),
+  list: () => Effect.die('a legacy read never asks the gate for a listing'),
+  selectableLegalEntities: () => Effect.succeed(selectable.map((id) => LegalEntityIdSchema.make(id))),
+});
+
+const runAgentLegacyRead = Effect.fn(function* runAgentLegacyRead(readKey: string, selectable: readonly string[]) {
+  const asked: string[] = [];
+  const harness = yield* makeHarness({
+    accessDecision: agentSelectionGate(selectable),
+    onLegalEntityTarget: (id) => asked.push(id),
+    permissionDecision: 'denied',
+    principalKinds: principalKindsOf('agent'),
+    resolvedScope: agentConnectionScope,
+  });
+  const outcome = yield* Effect.exit(
+    harness.runtime.runRead({
+      input: {},
+      principal: agentConnectionScope,
+      registration: selectedCompanyRead({ kind: 'legal_entity' }, readKey),
+      transport: { correlationId: scope.correlationId },
+    }),
+  );
+  return { asked, outcome };
+});
+
+it.effect(
+  'admits an agent on its live connection only to its own proposal queue, never to another legacy read',
+  Effect.fn(function* agentProposalQueueOnly() {
+    const queue = yield* runAgentLegacyRead(agentProposalQueueReadKey, [selectedCompanyId]);
+    expect(Exit.isSuccess(queue.outcome)).toBe(true);
+    expect(queue.asked).toEqual([]);
+    // The actors and profiles reads refuse the agent even in a company it may select, and never ask the retired
+    // relation: no agent ever holds a tuple of it on v2.
+    for (const readKey of ['core.identity.agent-activity-actors', 'core.identity.agent-profiles']) {
+      const refused = yield* runAgentLegacyRead(readKey, [selectedCompanyId]);
+      expect(deniedByLegacyRelation(refused.outcome)).toBe(true);
+      expect(refused.asked).toEqual([]);
+    }
+    // The gate re-reads the connection row: once it is revoked the agent selects nothing and reads nothing.
+    const revoked = yield* runAgentLegacyRead(agentProposalQueueReadKey, []);
+    expect(deniedByLegacyRelation(revoked.outcome)).toBe(true);
+    expect(revoked.asked).toEqual([]);
+  }),
+);
+
+it.effect(
+  'never answers a bare company alternative inside any_of from the resolved scope',
+  Effect.fn(function* selectedCompanyAlternative() {
+    const run = yield* runSelectedCompanyRead(
+      { kind: 'any_of', targets: [{ kind: 'legal_entity' }, { kind: 'module', moduleId: 'core.identity' }] },
+      'human',
+    );
+    expect(deniedByLegacyRelation(run.outcome)).toBe(true);
+    expect(run.asked).toEqual([selectedCompanyId]);
   }),
 );
 
@@ -2668,7 +3273,9 @@ for (const mode of ['local', 'governed'] as const) {
         expect(harness.authorityCounts()).toEqual({
           authorityLocks: mode === 'governed' ? 1 : 0,
           authorityReads: mode === 'governed' ? 1 : 0,
-          scopeInstalls: 1,
+          // A verified request first settles its short admission transaction. If that commit fails,
+          // no owner scope, service factory, handler or allowed evidence may run.
+          scopeInstalls: mode === 'governed' ? 0 : 1,
         });
       }),
     );
@@ -2711,12 +3318,16 @@ for (const mode of ['local', 'governed'] as const) {
         expect.unreachable('Expected value to be present');
       }
       expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true);
-      expect(events).toEqual(['transaction_settled', 'read_completed']);
+      expect(events).toEqual(
+        mode === 'governed'
+          ? ['transaction_settled', 'transaction_settled', 'read_completed']
+          : ['transaction_settled', 'read_completed'],
+      );
       expect(sqlEvents).toContain('ROLLBACK');
-      expect(sqlEvents).not.toContain('COMMIT');
+      expect(sqlEvents.filter((statement) => statement === 'COMMIT')).toHaveLength(mode === 'governed' ? 1 : 0);
       expect(harness.authorityCounts()).toEqual({
-        authorityLocks: mode === 'governed' ? 1 : 0,
-        authorityReads: mode === 'governed' ? 1 : 0,
+        authorityLocks: mode === 'governed' ? 2 : 0,
+        authorityReads: mode === 'governed' ? 2 : 0,
         scopeInstalls: 1,
       });
       expect(harness.evidence()).toBe(0);
@@ -2755,7 +3366,7 @@ const protectedIdentityRead = <Failure>(
     () => ({ kind: 'module', moduleId: 'core.shell' }),
   );
 
-/** An ALLOWED gate that records the transaction each decision was written into (O75). */
+/** Records whether Core incorrectly lends an owner SQL transaction to the standalone gate. */
 const allowingGate = (decidedIn: (transaction: CoreTransaction | undefined) => void): BoundAccessGate => ({
   decide: (_input, transaction) =>
     Effect.sync(() => {
@@ -2771,7 +3382,7 @@ const allowingGate = (decidedIn: (transaction: CoreTransaction | undefined) => v
   selectableLegalEntities: () => Effect.succeed([]),
 });
 
-it.effect('keeps the ALLOWED decision row when a governed Read fails with a typed owner error', () =>
+it.effect('authorizes outside owner SQL and preserves a governed Read typed owner failure', () =>
   Effect.gen(function* keepsDecisionOnTypedFailure() {
     const sqlEvents: string[] = [];
     const decidedIn: (CoreTransaction | undefined)[] = [];
@@ -2791,12 +3402,12 @@ it.effect('keeps the ALLOWED decision row when a governed Read fails with a type
         transport: { correlationId: scope.correlationId },
       }),
     );
-    // The decision was written inside the Read's own transaction, and that transaction commits, so the
-    // decision log keeps the row. The caller still receives the owner's typed failure, unchanged.
-    expect(decidedIn.length).toBe(1);
-    expect(decidedIn[0]).toBeDefined();
-    expect(sqlEvents).toContain('COMMIT');
-    expect(sqlEvents).not.toContain('ROLLBACK');
+    // The canonical gate owns its scoped evidence. Core lends it no owner transaction, and the
+    // failed owner load rolls back independently after the initial composition admission committed.
+    expect(decidedIn).toEqual([undefined]);
+    expect(sqlEvents).toEqual(['BEGIN', 'COMMIT', 'BEGIN', 'ROLLBACK']);
+    expect(harness.evidence()).toBe(0);
+    expect(harness.checkedOutConnections()).toBe(0);
     if (!Exit.isFailure(exit)) {
       expect.unreachable('Expected a typed failure');
     }
@@ -2805,7 +3416,7 @@ it.effect('keeps the ALLOWED decision row when a governed Read fails with a type
     expect(Cause.hasInterruptsOnly(exit.cause)).toBe(false);
   }),
 );
-it.effect('rolls back the ALLOWED decision row when a governed Read dies', () =>
+it.effect('rolls back the governed owner load on a defect without holding the gate transaction', () =>
   Effect.gen(function* rollsBackDecisionOnDefect() {
     const sqlEvents: string[] = [];
     const decidedIn: (CoreTransaction | undefined)[] = [];
@@ -2821,10 +3432,10 @@ it.effect('rolls back the ALLOWED decision row when a governed Read dies', () =>
         transport: { correlationId: scope.correlationId },
       }),
     );
-    expect(decidedIn.length).toBe(1);
-    expect(decidedIn[0]).toBeDefined();
-    expect(sqlEvents).toContain('ROLLBACK');
-    expect(sqlEvents).not.toContain('COMMIT');
+    expect(decidedIn).toEqual([undefined]);
+    expect(sqlEvents).toEqual(['BEGIN', 'COMMIT', 'BEGIN', 'ROLLBACK']);
+    expect(harness.evidence()).toBe(0);
+    expect(harness.checkedOutConnections()).toBe(0);
     expect(Exit.isFailure(exit)).toBe(true);
     if (!Exit.isFailure(exit)) {
       expect.unreachable('Expected a defect');
@@ -2865,10 +3476,10 @@ for (const mode of ['local', 'governed'] as const) {
       expect(failures[1]).toBe(denied);
       expect(Predicate.isTagged(failures[1], 'ReadPermissionDenied')).toBe(true);
       expect(sqlEvents).toContain('ROLLBACK');
-      expect(sqlEvents).not.toContain('COMMIT');
+      expect(sqlEvents.filter((statement) => statement === 'COMMIT')).toHaveLength(mode === 'governed' ? 1 : 0);
       expect(harness.authorityCounts()).toEqual({
-        authorityLocks: mode === 'governed' ? 1 : 0,
-        authorityReads: mode === 'governed' ? 1 : 0,
+        authorityLocks: mode === 'governed' ? 3 : 0,
+        authorityReads: mode === 'governed' ? 3 : 0,
         scopeInstalls: 2,
       });
     }),
@@ -3435,7 +4046,7 @@ it.effect('runs the exact Core Legal Entity Read in a genuine vertical-bound rec
     const harness = yield* makeHarness({
       accessDecision: makeScriptedBoundAccessGate('allowed').bound,
       compositionAuthority: { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
-      legalEntityRows: [{ legalName: 'Managed Legal Entity', status: 'active' }],
+      legalEntityRows: [{ legalName: 'Managed Legal Entity', status: 'active', welcome: null }],
       runtimeAdmission: {
         applicationComposition: { load: Effect.succeed(snapshot) },
         expectedDeployment: { appId: 'core-read-host', buildMarker: 'actual-host-build' },
@@ -3452,7 +4063,7 @@ it.effect('runs the exact Core Legal Entity Read in a genuine vertical-bound rec
     expect(result).toEqual({ ...input, legalName: 'Managed Legal Entity', status: 'active' });
     expect(harness.legalEntityReads()).toBe(1);
     expect(harness.evidence()).toBe(1);
-    expect(harness.authorityCounts().authorityLocks).toBe(1);
+    expect(harness.authorityCounts().authorityLocks).toBe(2);
   }),
 );
 
@@ -3507,7 +4118,7 @@ it.effect('rejects recreated Core Reads, wrong receiver builds and every mismatc
       const harness = yield* makeHarness({
         accessDecision: makeScriptedBoundAccessGate(control === 'denied' ? 'denied' : 'allowed').bound,
         compositionAuthority: { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
-        legalEntityRows: [{ legalName: 'Managed Legal Entity', status: 'active' }],
+        legalEntityRows: [{ legalName: 'Managed Legal Entity', status: 'active', welcome: null }],
         runtimeAdmission,
       });
       const readInput = {
@@ -3566,6 +4177,7 @@ const shellHostDefinitions = (onHandler: () => void, attest = false) => {
     moduleTarget: make('core.shell.module-target', 'api'),
     resourceDetail: make('core.shell.resource-detail-timeline', 'api'),
     search: make('core.shell.search', 'search'),
+    tenantModuleTarget: make('core.shell.tenant-module-target', 'api'),
   };
 };
 
@@ -3674,15 +4286,17 @@ it.effect('gives bound Shell system Reads no provider-operation execution lease'
         shellSystemReads: definitions,
       },
     });
-    const failure = yield* Effect.flip(
-      harness.runtime.runRead({
-        input: {},
-        principal: scope,
-        registration: definitions.composition,
-        transport: { correlationId: scope.correlationId },
-      }),
-    );
-    expect(Schema.is(ModuleOperationRequirementError)(failure)).toBe(true);
+    for (const boundRead of [definitions.composition, definitions.tenantModuleTarget]) {
+      const failure = yield* Effect.flip(
+        harness.runtime.runRead({
+          input: {},
+          principal: scope,
+          registration: boundRead,
+          transport: { correlationId: scope.correlationId },
+        }),
+      );
+      expect(Schema.is(ModuleOperationRequirementError)(failure)).toBe(true);
+    }
     expect(harness.evidence()).toBe(0);
   }),
 );

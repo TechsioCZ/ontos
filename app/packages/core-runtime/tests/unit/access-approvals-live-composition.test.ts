@@ -1,4 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import type { PgTransactionConfig } from 'drizzle-orm/pg-core';
 import { Cause, Context, Crypto, DateTime, Effect, Exit, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -29,6 +31,7 @@ import { callerTransactions, requestTransactions } from '../../src/access/intent
 import { intentUnavailable } from '../../src/access/intent/errors.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import type { CoreTransaction } from '../../src/db/types.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { administersScope } from '../../src/access/approvals/live-administration.ts';
 import type {
@@ -450,16 +453,31 @@ const tripwired = (what: string): AccessTransactions => ({
 /** A statement the seam is never expected to send through the transaction it was handed. */
 const unexpectedStatement = (what: string) => () => Effect.die(new Error(`the seam ran a ${what} of its own`));
 
+const roleProbeSql = 'select current_user::text as role';
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
+/** One transaction's scope statements: the connected role chooses the authority, then one install-and-read. */
+const scopeStatements = [roleProbeSql, installAndReadScopeSql];
+
 /**
  * A transaction that answers the operational scope installation and nothing else: the row it returns is
  * the scope the request installed, which is the only statement an access source issues before its body
- * (`installOperationalScope`: `set_config` and then its own verification read).
+ * (`installOperationalScope`: the connected role is probed, then one statement installs the session settings and reads
+ * back the connected role).
  */
 const seamTransaction = (scope: OperationalScope, statements: string[]): CoreTransaction =>
   Object.assign(Object.create(null), {
     delete: unexpectedStatement('delete'),
-    execute: () => {
-      statements.push('execute');
+    execute: (statement: SQL) => {
+      const query = new PgDialect().sqlToQuery(statement);
+      statements.push(query.sql);
+      if (query.sql === roleProbeSql) {
+        return Effect.succeed([{ role: 'ontos_runtime' }]);
+      }
+      if (query.sql !== installAndReadScopeSql) {
+        return Effect.die(new Error(`the seam ran an unexpected statement: ${query.sql}`));
+      }
+      expect(query.params).toEqual([scope.tenantId, scope.legalEntityId ?? '']);
       return Effect.succeed([
         { legal_entity_id: scope.legalEntityId ?? '', role: 'ontos_runtime', tenant_id: scope.tenantId },
       ]);
@@ -478,6 +496,7 @@ const recordingPool = (scope: OperationalScope) => {
   const statements: string[] = [];
   const transaction = seamTransaction(scope, statements);
   const database: AccessIntentDatabase = Object.assign(Object.create(null), {
+    enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
     executor: Object.assign(Object.create(null), {
       $client: { transactionService: Context.Service<unknown>('test/RecordingPoolTransaction') },
       transaction: <Value, Failure>(
@@ -606,8 +625,8 @@ it.layer(NodeCrypto.layer)('live approvals transaction binding', (suite) => {
         .pipe(Effect.orDie);
       expect(read).toBe(pool.transaction);
       expect(pool.opened).toStrictEqual([undefined, { isolationLevel: 'repeatable read' }]);
-      // Each call installed and verified the request's scope on its own transaction: role selection, installation and verification.
-      expect(pool.statements.length).toBe(6);
+      // Each call installed and verified the request's scope on its own transaction in one statement.
+      expect(pool.statements).toEqual([...scopeStatements, ...scopeStatements]);
       // A failure of the body reaches the caller unchanged, so a rolled-back read stays a failure.
       const refusal = intentUnavailable('The intent store refused this read');
       expect(yield* Effect.flip(transactions.scoped(jana, new Set<string>(), () => Effect.fail(refusal)))).toBe(
@@ -621,7 +640,7 @@ it.layer(NodeCrypto.layer)('live approvals transaction binding', (suite) => {
       const jana = yield* scopeFor(JANA);
       const statements: string[] = [];
       const caller = seamTransaction(jana, statements);
-      const transactions = callerTransactions(caller);
+      const transactions = callerTransactions(caller, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
 
       // The source states what it is: the caller's snapshot, never a level it could have chosen.
       expect(transactions.readIsolation).toBe('caller-transaction');
@@ -634,8 +653,8 @@ it.layer(NodeCrypto.layer)('live approvals transaction binding', (suite) => {
         .pipe(Effect.orDie);
       expect(written).toBe(caller);
       expect(read).toBe(caller);
-      // ...and neither opened, ended or partitioned it: the only statements are the scope's own role selection, installation and verification.
-      expect(statements.length).toBe(6);
+      // ...and neither opened, ended or partitioned it: the only statements are the scope's own, one per call.
+      expect(statements).toEqual([...scopeStatements, ...scopeStatements]);
       const refusal = intentUnavailable('The owner transaction refused this read');
       expect(yield* Effect.flip(transactions.scopedRead(jana, new Set<string>(), () => Effect.fail(refusal)))).toBe(
         refusal,
@@ -657,7 +676,7 @@ it.layer(NodeCrypto.layer)('live approvals transaction binding', (suite) => {
             joinedTransactions.push(transaction);
             return liveServices(crypto, {
               records: recordsNamed('the joined records'),
-              transactions: callerTransactions(caller),
+              transactions: callerTransactions(caller, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
             });
           },
         }),

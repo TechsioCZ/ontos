@@ -34,6 +34,8 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     tsConfigPath: './tsconfig.mf-types.json',
   },
   exposes: {
+    './PageEshops': './src/routes/[lang]/prodej/eshopy/page.tsx',
+    './PageMarketDetail': './src/routes/[lang]/prodej/eshopy/trhy/[marketId]/page.tsx',
     './Route': './src/federation-entry.tsx',
   },
   filename: 'remoteEntry.js',

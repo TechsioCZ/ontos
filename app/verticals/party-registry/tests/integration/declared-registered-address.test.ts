@@ -2,9 +2,13 @@
 // @rstest-environment-options {"url":"https://party.ontos.test"}
 import {
   loadDatabaseIdentityConnections,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
+  SHARED_RUNTIME_IDENTITY,
 } from '@app/core-runtime';
+import {
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '@app/party-registry-identity-contracts';
 import { NodeCrypto } from '@effect/platform-node';
 import { DateTime, Effect, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
@@ -38,14 +42,26 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     'governed contact writes and Reads preserve an omitted registry scope through preference, correction and future End',
     () =>
       Effect.gen(function* declaredRegisteredAddress() {
-        const connections = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
+        const connections = yield* loadDatabaseIdentityConnections({
+          enrollment: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+          envPath: '/dev/null',
+        });
         const composition = yield* partyCompositionSnapshot;
+        const partyConfiguration = connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id];
+        const issuerConfiguration = connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id];
+        const bootstrapConfiguration = connections.runtime[SHARED_RUNTIME_IDENTITY.id];
+        assert.isOk(partyConfiguration);
+        assert.isOk(issuerConfiguration);
+        assert.isOk(bootstrapConfiguration);
+        expect(partyConfiguration.expectedRole).toBe(PARTY_REGISTRY_REQUEST_IDENTITY.role);
+        expect(issuerConfiguration.expectedRole).toBe(SHELL_GATEWAY_ISSUER_IDENTITY.role);
         const native = {
-          issuer: yield* makeTestPgClient(connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id].connectionString),
-          partyConfiguration: connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id],
+          issuer: yield* makeTestPgClient(issuerConfiguration.connectionString),
+          partyConfiguration,
         };
         const h = yield* makeGovernedContactFixture({
           adminConnectionString: connections.admin.connectionString,
+          bootstrapConnectionString: bootstrapConfiguration.connectionString,
           composition,
           gateway: yield* makePartyReconciliationGateway(native, composition),
           partyConfiguration: native.partyConfiguration,

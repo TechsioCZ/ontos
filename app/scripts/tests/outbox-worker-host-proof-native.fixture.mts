@@ -13,7 +13,7 @@ import {
   decodeActiveApplicationCompositionSnapshot,
   encodeActiveApplicationCompositionSnapshot,
 } from '../active-application-composition.mts';
-import { readOutboxWorkerHostRelease } from '../generate-outbox-worker-deployment.mjs';
+import { readOutboxWorkerHost } from '../generate-outbox-worker-deployment.mjs';
 import {
   deriveHostProofSnapshot,
   HostProofTopologySchema,
@@ -27,26 +27,24 @@ import {
 const nativeHostAdmissionControl = Effect.gen(function* nativeHostAdmissionControls() {
   const workspaceRoot = process.cwd();
   const fileSystem = yield* FileSystem.FileSystem;
-  const inventoryTopology = yield* Schema.decodeEffect(Schema.fromJsonString(HostProofTopologySchema))(
+  const topology = yield* Schema.decodeEffect(Schema.fromJsonString(HostProofTopologySchema))(
     yield* fileSystem.readFileString('topology/reference-topology.json'),
   );
-  const release = yield* readOutboxWorkerHostRelease(workspaceRoot);
-  const { host } = release;
+  const host = yield* readOutboxWorkerHost(workspaceRoot);
   assert.ok(host);
-  const topology = {
-    ...inventoryTopology,
-    verticals: inventoryTopology.verticals.filter(({ id }) => release.moduleAppIds.includes(id)),
-  };
   // Unit control identities derive natively. The packaged shell proof supplies actual compiler metadata.
   const sourceRevision = yield* Effect.try({
     catch: () => new OutboxWorkerHostProofFixtureError({ reason: 'native source identity is unavailable' }),
     try: () => resolveUltramodernSourceRevision(workspaceRoot),
   });
+  // The Shell hosts the Core system worker beside every vertical worker owner.
+  const hostedOwnerIds = [host.coreOwner.ownerId, ...host.owners.map(({ ownerId }) => ownerId)];
   const ownerBuildIdentities = yield* Effect.try({
     catch: () => new OutboxWorkerHostProofFixtureError({ reason: 'native owner identity is unavailable' }),
     try: () =>
-      host.owners.map(({ ownerId }) => {
-        const owner = topology.verticals.find(({ id }) => id === ownerId);
+      hostedOwnerIds.map((ownerId) => {
+        const owner =
+          ownerId === topology.shell.id ? topology.shell : topology.verticals.find(({ id }) => id === ownerId);
         assert.ok(owner);
         return {
           appId: ownerId,
@@ -64,7 +62,7 @@ const nativeHostAdmissionControl = Effect.gen(function* nativeHostAdmissionContr
     appId: 'outbox-worker-host',
     entry: 'worker.mjs',
     ownerBuildIdentities,
-    schemaVersion: 2,
+    schemaVersion: 4,
     serviceId: 'outbox-worker-host',
     sourceInputs: [host.entry],
     sourceRevision,
@@ -75,8 +73,6 @@ const nativeHostAdmissionControl = Effect.gen(function* nativeHostAdmissionContr
   assert.equal((yield* client.get(`${origin}/active`)).status, 503);
   const { artifacts, snapshot } = yield* deriveHostProofSnapshot({ artifact, origin, workspaceRoot });
   assert.equal(snapshot.composition.modules.length, topology.verticals.length);
-  assert.ok(!snapshot.composition.modules.some(({ deployment }) => deployment.appId === 'commerce-order'));
-  assert.ok(!host.owners.some(({ ownerId }) => ownerId === 'commerce-order'));
   assert.equal(
     new Set(snapshot.composition.modules.map(({ backend }) => backend.baseUrl)).size,
     topology.verticals.length,
@@ -96,10 +92,13 @@ const nativeHostAdmissionControl = Effect.gen(function* nativeHostAdmissionContr
   const decoded = yield* decodeActiveApplicationCompositionSnapshot(encoded);
   const catalog = yield* buildApplicationCompositionCatalog(decoded.composition);
   assert.deepEqual(catalog.outboxSubscriptions, expected);
+  const [shellIdentity] = ownerBuildIdentities;
+  assert.ok(shellIdentity !== undefined);
   const base = {
     artifact,
     contracts,
-    hostedOwnerIds: host.owners.map(({ ownerId }) => ownerId),
+    hostedOwnerIds,
+    shellBuildMarker: shellIdentity.buildMarker,
     sourceRevision,
     topology,
   };

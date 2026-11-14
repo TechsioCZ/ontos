@@ -2,12 +2,15 @@ import { EmailDeliveryService } from '@app/email-delivery/server';
 import { Effect, Layer, Redacted } from 'effect';
 
 import type { CommercePortalAuthEmailDelivery } from './auth.ts';
+import { CommercePortalAuthConfig } from './config-service.ts';
 import { CommercePortalAuthRawEmailDeliveryService } from './raw-email-delivery-service.ts';
+import { storefrontVerificationLink } from './storefront-verification-link.ts';
 
 /** Commerce owns authentication content; the installed delivery service owns transport. */
 export const makeCommercePortalAuthTransactionalEmail = Effect.fn('CommercePortalAuthTransactionalEmail.make')(
   function* makeCommercePortalAuthTransactionalEmailEffect() {
     const delivery = yield* EmailDeliveryService;
+    const { trustedOrigins } = yield* CommercePortalAuthConfig;
     const context = yield* Effect.context();
     const runWithContext = Effect.runPromiseWith(context);
     const run: <A, E>(effect: Effect.Effect<A, E>) => ReturnType<typeof runWithContext<A, E>> = runWithContext;
@@ -17,7 +20,8 @@ export const makeCommercePortalAuthTransactionalEmail = Effect.fn('CommercePorta
       yield* delivery.send({
         subject: 'Verify your OntOS Commerce email address',
         text: Redacted.make(
-          `Verify your email address using this link:\n\n${data.url}\n\nIf you did not request this, you can ignore this email.`,
+          // One realm serves every storefront: the link returns to the storefront the customer registered on.
+          `Verify your email address using this link:\n\n${storefrontVerificationLink(data.url, trustedOrigins)}\n\nIf you did not request this, you can ignore this email.`,
         ),
         to: data.user.email,
       });

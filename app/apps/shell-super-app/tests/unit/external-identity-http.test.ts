@@ -11,7 +11,15 @@ import type { ExternalIdentityWorkloadAuthorizationError } from '../../api/auth/
 import { Cause, Effect, Exit, Layer, Option, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import type { ModuleCredentialEnrolmentSource } from '../../api/auth/gateway-delegation-policy.ts';
 import { makeApiKeyServiceDouble, makePrincipalResolverDouble } from '../support/identity-service-doubles.ts';
+import {
+  enrolledModuleCredentials,
+  noInternalWorkloadPrincipals,
+  refusingInternalWorkloadKeys,
+  unreadableModuleCredentialEnrolment,
+} from '../support/module-credential-enrolment.ts';
+import type { PlatformWorkloadKeyAdmission } from '../../api/auth/platform-workload-key-admission.ts';
 
 const tenantId = '30000000-0000-4000-8000-000000000001';
 const workloadPrincipalId = '40000000-0000-4000-8000-000000000001';
@@ -37,9 +45,13 @@ const configuration = Schema.decodeUnknownSync(ExternalIdentityHttpConfiguration
 const makeAuthorization = (
   overrides: {
     readonly configuration?: ExternalIdentityHttpConfiguration;
+    readonly enrolment?: Layer.Layer<ModuleCredentialEnrolmentSource>;
     readonly verify?: (rawKey: string) => Effect.Effect<{ providerKeyId: string }>;
+    /** The workload key check; by default no principal is a module's internal workload. */
+    readonly workloadKeys?: Layer.Layer<PlatformWorkloadKeyAdmission>;
   } = {},
 ) => {
+  let resolutions = 0;
   let verificationCalls = 0;
   const apiKeyService = makeApiKeyServiceDouble({
     verify: (rawKey) => {
@@ -50,19 +62,24 @@ const makeAuthorization = (
   const principalResolver = makePrincipalResolverDouble({
     authenticationNamespaceId: staffNamespace,
     resolveBetterAuthApiKey: () =>
-      Effect.succeed({
-        authBindingId: workloadBindingId,
-        displayName: 'Fixture workload',
-        principalId: workloadPrincipalId,
-        principalKind: 'service',
-        tenantId,
-      }),
+      Effect.sync(() => {
+        resolutions += 1;
+      }).pipe(
+        Effect.as({
+          authBindingId: workloadBindingId,
+          displayName: 'Fixture workload',
+          principalId: workloadPrincipalId,
+          principalKind: 'service' as const,
+          tenantId,
+        }),
+      ),
   });
   const dependencies = Layer.mergeAll(
+    overrides.workloadKeys ?? noInternalWorkloadPrincipals,
     Layer.succeed(ApiKeyService, apiKeyService),
     Layer.succeed(ExternalIdentityHttpConfigurationService, overrides.configuration ?? configuration),
     Layer.succeed(PrincipalResolver, principalResolver),
-    externalIdentityWorkloadAuthorizationLive,
+    externalIdentityWorkloadAuthorizationLive.pipe(Layer.provide(overrides.enrolment ?? enrolledModuleCredentials([]))),
   );
   const authorize = <A>(
     effect: Effect.Effect<
@@ -72,9 +89,10 @@ const makeAuthorization = (
       | ApiKeyService
       | PrincipalResolver
       | ExternalIdentityHttpConfigurationService
+      | PlatformWorkloadKeyAdmission
     >,
   ) => effect.pipe(Effect.provide(dependencies));
-  return { authorize, verificationCalls: () => verificationCalls };
+  return { authorize, resolutions: () => resolutions, verificationCalls: () => verificationCalls };
 };
 
 it.effect('verifies the workload key on every authorization and returns an API-key principal context', () =>
@@ -101,6 +119,61 @@ it.effect('verifies the workload key on every authorization and returns an API-k
       tenantId,
     });
     expect(fixture.verificationCalls()).toBe(1);
+  }),
+);
+
+it.effect('refuses a key of an internal workload principal the platform did not issue', () =>
+  Effect.gen(function* refusesUnattestedWorkloadKey() {
+    const fixture = makeAuthorization({ workloadKeys: refusingInternalWorkloadKeys });
+    const failure = yield* Effect.flip(
+      fixture.authorize(
+        ExternalIdentityWorkloadAuthorization.pipe(
+          Effect.flatMap((authorization) =>
+            authorization.authorize({
+              apiKey: Redacted.make('workload-api-key'),
+              operation: 'read',
+              targetAuthenticationNamespaceId: customerNamespace,
+            }),
+          ),
+        ),
+      ),
+    );
+    expect(Predicate.isTagged(failure, 'ExternalIdentityWorkloadForbiddenError')).toBe(true);
+  }),
+);
+
+/** One workload authorization over the given enrolment, and how many principals it resolved on the way. */
+const attemptWorkload = (enrolment: Layer.Layer<ModuleCredentialEnrolmentSource>) => {
+  const fixture = makeAuthorization({ enrolment });
+  return fixture
+    .authorize(
+      ExternalIdentityWorkloadAuthorization.pipe(
+        Effect.flatMap((authorization) =>
+          authorization.authorize({
+            apiKey: Redacted.make('module-api-key'),
+            operation: 'read',
+            targetAuthenticationNamespaceId: customerNamespace,
+          }),
+        ),
+      ),
+    )
+    .pipe(
+      Effect.flip,
+      Effect.map((error) => ({ error, resolutions: fixture.resolutions() })),
+    );
+};
+
+it.effect('refuses a platform module credential as a workload and answers an unreadable enrolment as unavailable', () =>
+  Effect.gen(function* moduleCredentialScenario() {
+    // The verified key is the commerce-customer-context module credential: refused before any principal resolves.
+    const moduleKey = yield* attemptWorkload(
+      enrolledModuleCredentials([{ appId: 'commerce-customer-context', providerKeyId: 'better-auth-workload-key' }]),
+    );
+    expect(Predicate.isTagged(moduleKey.error, 'ExternalIdentityWorkloadForbiddenError')).toBe(true);
+    expect(moduleKey.resolutions).toBe(0);
+    const unreadable = yield* attemptWorkload(unreadableModuleCredentialEnrolment);
+    expect(Predicate.isTagged(unreadable.error, 'ExternalIdentityWorkloadUnavailableError')).toBe(true);
+    expect(unreadable.resolutions).toBe(0);
   }),
 );
 

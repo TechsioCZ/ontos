@@ -1,3 +1,7 @@
+import { CoreDatabase } from '@app/core-runtime/db/client';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
+import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
+import { shellTestAuthentication } from '../support/shell-authentication.ts';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 
 import { randomUUID } from 'node:crypto';
@@ -21,7 +25,6 @@ import {
   TrustedPrincipalContextSchema,
   loadDatabaseConnectionPair,
   loadDatabaseIdentityConnections,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
   SHARED_RUNTIME_IDENTITY,
   makePrincipalResolver,
@@ -64,6 +67,8 @@ import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 
 import {
+  accessScopeFences,
+  accessScopes,
   actionInvocations,
   auditEvents,
   coreRelations,
@@ -92,8 +97,10 @@ import { account, apikey, authRelations, session, user } from '../../api/auth/db
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import { makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
-import { AuthenticationService, makeAuthenticationService } from '../../api/auth/service.ts';
+import { AuthenticationService } from '../../api/auth/service.ts';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import { bootstrapScopesOf } from '@app/core-runtime/access/bootstrap';
+import { LegalEntityIdSchema, TenantIdSchema } from '@app/core-runtime/access/ids';
 import type { AccessDecisionService, GateInput } from '@app/core-runtime/access/enforcement';
 import { makeShellAuthenticationApiRuntime as makeProductionShellAuthenticationApiRuntime } from '../../api/index.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
@@ -246,6 +253,33 @@ const legalEntitySelectionOptions = {
         : Effect.die('missing fixture legal entity'),
   },
 } as const;
+/**
+ * A signed-in person who is not an administrator. Identity administration is definitely denied for the tenant
+ * (`manage_identity`) and the company (`manage_people`); company selection and the other permissions answer as above.
+ */
+const nonAdministratorContextAccess = {
+  ...legalEntitySelectionOptions.contextAccess,
+  legalEntities: ({
+    legalEntityIds,
+    permission,
+  }: {
+    readonly legalEntityIds: readonly string[];
+    readonly permission?: string;
+  }) =>
+    Effect.succeed(
+      legalEntityIds.map((key) => ({
+        decision: permission === 'manage_people' ? ('denied' as const) : ('allowed' as const),
+        key,
+      })),
+    ),
+  tenants: ({ permission, tenantIds }: { readonly permission: string; readonly tenantIds: readonly string[] }) =>
+    Effect.succeed(
+      tenantIds.map((key) => ({
+        decision: permission === 'manage_identity' ? ('denied' as const) : ('allowed' as const),
+        key,
+      })),
+    ),
+};
 const contextAccessLayer = Layer.mergeAll(
   Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
   Layer.succeed(ContextAccess, legalEntitySelectionOptions.contextAccess),
@@ -417,6 +451,8 @@ const installedPageCatalog = () =>
                     scope: 'tenant',
                   },
                   groupKey: 'shell.navigation.modules',
+                  icon: 'icon-[mdi--view-grid-outline]',
+                  label: { cs: 'Integration module', en: 'Integration module' },
                   order: 100,
                   pageKey: 'testing.pages.page.home',
                 },
@@ -494,6 +530,7 @@ it.live(
     const approvedPageCatalog = yield* installedPageCatalog();
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: yield* fixtureSnapshotForRevision(approvedPageCatalog.composition.revision),
+      databaseIdentities: SHELL_DATABASE_IDENTITY_ENROLLMENT,
       mode: 'schema-only',
       purpose: 'stabilization-1287-shell-auth',
     });
@@ -504,17 +541,18 @@ it.live(
     };
     const coreClient = yield* makeTestPgClient(isolated.connections.admin.connectionString);
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
-    const authPersistence = yield* makeAuthDatabase(configuration);
+    const authPersistence = yield* makeAuthDatabase({ ...configuration, expectedRole: SHARED_RUNTIME_IDENTITY.role });
     const authDatabase = authPersistence.executor;
     const resolver = makePrincipalResolver(
       { executor: coreDatabase },
       { authenticationNamespaceId: staffAuthenticationNamespaceId },
     );
-    const authentication = yield* makeAuthenticationService({
+    const authentication = yield* shellTestAuthentication({
       allowFixtureSignUp: true,
     }).pipe(
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
+      Effect.provideService(CoreDatabase, { executor: coreDatabase }),
       Effect.provideService(PrincipalResolver, resolver),
     );
     const authenticationLayer = Layer.succeed(AuthenticationService, authentication);
@@ -550,8 +588,8 @@ it.live(
         coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId)),
         coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, foreignTenantId)),
         coreDatabase.delete(principals).where(inArray(principals.principalId, [principalId, changedPrincipalId])),
-        coreDatabase.delete(legalEntities).where(eq(legalEntities.legalEntityId, fixtureLegalEntityId)),
-        coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)),
+        // The fixture tenant and its company hold access scopes whose fences are never removed (the
+        // access record is permanent), so they stay until the isolated database is dropped.
         coreDatabase.delete(tenants).where(eq(tenants.tenantId, foreignTenantId)),
       ]);
     });
@@ -607,6 +645,28 @@ it.live(
       status: 'active',
       tenantId,
     });
+    // A provisioned tenant has its access scopes, each with a Ready fence, as bootstrap writes them: a
+    // prepared Action authority pins its decision to those revisions and is unavailable without them.
+    const fixtureAccessScopes = bootstrapScopesOf(TenantIdSchema.make(tenantId), [
+      LegalEntityIdSchema.make(fixtureLegalEntityId),
+    ]);
+    yield* coreDatabase.insert(accessScopes).values(
+      fixtureAccessScopes.map((entry) => ({
+        legalEntityId: Predicate.isTagged(entry, 'LegalEntity') ? entry.legalEntityId : null,
+        scopeId: entry.scopeId,
+        tenantContextId: Predicate.isTagged(entry, 'TenantContext') ? tenantId : null,
+        tenantId,
+      })),
+    );
+    yield* coreDatabase.insert(accessScopeFences).values(
+      fixtureAccessScopes.map(({ scopeId }) => ({
+        owningOperationId: null,
+        revision: 1,
+        scopeId,
+        state: 'Ready' as const,
+        tenantId,
+      })),
+    );
     yield* coreDatabase.insert(principalAuthBindings).values({
       authenticationNamespaceId: staffAuthenticationNamespaceId,
       principalAuthBindingId: fixtureAuthBindingId,
@@ -672,6 +732,20 @@ it.live(
     );
     expect(anonymousModulesResponse.status).toBe(401);
     expect(headerValue(anonymousModulesResponse.headers, 'www-authenticate')).toMatch(/^Bearer/u);
+    // The frame (admitted to members by the baseline) reads the Shell session only: an OAuth connection's bearer
+    // token or an API key is no session (`enableSessionForAPIKeys: false`), so it gets no frame either.
+    const credentialOnlyResponse = yield* Effect.tryPromise(() =>
+      unavailableHandler.handler(
+        new Request(`${configuration.baseUrl}/shell/composition`, {
+          headers: {
+            authorization: 'Bearer connection-access-token-is-not-a-session',
+            origin: configuration.baseUrl,
+            'x-api-key': 'an-api-key-is-not-a-session',
+          },
+        }),
+      ),
+    );
+    expect(credentialOnlyResponse.status).toBe(401);
     const anonymousPageResponse = yield* Effect.tryPromise(() =>
       unavailableHandler.handler(
         new Request(`${configuration.baseUrl}/shell/module-target`, {
@@ -1100,12 +1174,12 @@ it.live(
         exactPageRequest('testing.pages.page.customers', replacementSnapshot.composition.revision),
       ),
     );
-    // An explicit module selector absent from the approved catalog is a permission denial;
-    // the resolver reserves not_found for a missing page or a state-hidden installed target.
-    expect(removedTarget.status).toBe(403);
+    // The replacement removed this module from the approved catalog entirely. No real target
+    // remains to authorize; explicit selectors and missing paths both resolve as not found.
+    expect(removedTarget.status).toBe(404);
     const removedBody = yield* Effect.tryPromise(() => removedTarget.json());
-    const removedProblem = yield* Schema.decodeUnknownEffect(ShellTargetForbiddenProblemSchema)(removedBody);
-    expect(removedProblem.detail).toBe('The requested module is forbidden in the selected context.');
+    const removedProblem = yield* Schema.decodeUnknownEffect(ShellTargetNotFoundProblemSchema)(removedBody);
+    expect(removedProblem.detail).toBe('The requested module target was not found.');
     expect(removedBody).not.toHaveProperty('federation');
     expect(physicalLoads).toBe(2);
     const supersededPageResponse = yield* Effect.tryPromise(() => pageRuntime.handler(exactPageRequest()));
@@ -1150,7 +1224,7 @@ it.live(
       false,
       Layer.mergeAll(
         Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
-        Layer.succeed(ContextAccess, legalEntitySelectionOptions.contextAccess),
+        Layer.succeed(ContextAccess, nonAdministratorContextAccess),
       ),
       undefined,
       undefined,
@@ -1214,6 +1288,9 @@ it.live(
     expect(activeModulesResponse.status).toBe(200);
     expect(yield* Effect.tryPromise(() => activeModulesResponse.json())).toEqual({
       compositionRevision: testRevision,
+      deniedAppIds: [],
+      gatewayAudiences: ['inventory-stock'],
+      homeComponents: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -1534,12 +1611,24 @@ it.live(
     expect(generatedPrincipal.tenantId).toBe(tenantId);
     const databaseConnections = isolated.connections;
     const scopeGrantAdminClient = yield* makeTestPgClient(databaseConnections.admin.connectionString);
-    const sourceIdentities = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
+    const sourceIdentities = yield* loadDatabaseIdentityConnections({
+      enrollment: SHELL_DATABASE_IDENTITY_ENROLLMENT,
+      envPath: '/dev/null',
+    });
     const sourceIssuer = sourceIdentities.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id];
+    if (sourceIssuer === undefined) {
+      yield* Effect.die('Enrolled Shell database identity is missing');
+      return;
+    }
+    const sourceShared = sourceIdentities.runtime[SHARED_RUNTIME_IDENTITY.id];
+    if (sourceShared === undefined) {
+      yield* Effect.die('Enrolled shared runtime identity is missing');
+      return;
+    }
     const issuerAddress = new URL(sourceIssuer.connectionString);
     expect(sourceIssuer.host).toBe(isolated.connections.runtime.host);
     expect(sourceIssuer.port).toBe(isolated.connections.runtime.port);
-    expect(sourceIssuer.database).toBe(sourceIdentities.runtime[SHARED_RUNTIME_IDENTITY.id].database);
+    expect(sourceIssuer.database).toBe(sourceShared.database);
     expect(sourceIssuer.user).toBe(SHELL_GATEWAY_ISSUER_IDENTITY.role);
     expect(issuerAddress.search).toBe('');
     expect(issuerAddress.hash).toBe('');
@@ -1570,7 +1659,13 @@ it.live(
           audiences: new Map([['party-registry', 'integration-build']]),
           revision: testRevision,
         }),
-      }).pipe(Layer.provide(scopeGrantRegistrarLayer(makeGatewayScopeGrantRegistrar(scopeGrantIssuerClient)))),
+      }).pipe(
+        Layer.provide(
+          scopeGrantRegistrarLayer(
+            makeGatewayScopeGrantRegistrar(scopeGrantIssuerClient, SHELL_DATABASE_IDENTITY_ENROLLMENT),
+          ),
+        ),
+      ),
       moduleStateLayer,
       installedCatalog(['testing.one']),
       false,
@@ -1805,6 +1900,7 @@ it.live(
     const testRevision = initialSnapshot.composition.revision;
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: initialSnapshot,
+      databaseIdentities: SHELL_DATABASE_IDENTITY_ENROLLMENT,
       mode: 'schema-only',
       purpose: 'stabilization-1287-shell-auth',
     });
@@ -1817,18 +1913,19 @@ it.live(
     const adminClient = yield* makeTestPgClient(databaseConnections.admin.connectionString);
     const coreClient = yield* makeTestPgClient(isolated.connections.admin.connectionString);
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
-    const authPersistence = yield* makeAuthDatabase(configuration);
+    const authPersistence = yield* makeAuthDatabase({ ...configuration, expectedRole: SHARED_RUNTIME_IDENTITY.role });
     const authDatabase = authPersistence.executor;
     const adminAuthDatabase = yield* makeTestDatabaseFromClient(adminClient, authRelations);
     const resolver = makePrincipalResolver(
       { executor: coreDatabase },
       { authenticationNamespaceId: staffAuthenticationNamespaceId },
     );
-    const authentication = yield* makeAuthenticationService({
+    const authentication = yield* shellTestAuthentication({
       allowFixtureSignUp: true,
     }).pipe(
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
+      Effect.provideService(CoreDatabase, { executor: coreDatabase }),
       Effect.provideService(PrincipalResolver, resolver),
     );
     const moduleStateLayer = Layer.succeed(
@@ -1840,6 +1937,8 @@ it.live(
     // Ordered child-before-parent within the owned fixture rows.
     const cleanup = Effect.fnUntraced(function* runIntegration7() {
       yield* coreDatabase.delete(dataAccessEvents).where(inArray(dataAccessEvents.tenantId, fixtureTenants));
+      // Audit rows reference the bindings they were written under (restrict), so they go before the bindings.
+      yield* coreDatabase.delete(auditEvents).where(inArray(auditEvents.tenantId, fixtureTenants));
       const existingUsers = yield* authDatabase.select({ id: user.id }).from(user).where(eq(user.email, multiEmail));
       const existingUserIds = existingUsers.map(({ id }) => id);
       if (existingUserIds.length > 0) {
@@ -2051,6 +2150,9 @@ it.live(
     );
     expect(yield* Effect.tryPromise(() => firstModules.json())).toEqual({
       compositionRevision: testRevision,
+      deniedAppIds: [],
+      gatewayAudiences: ['inventory-stock', 'testing-second'],
+      homeComponents: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -2073,9 +2175,10 @@ it.live(
       .update(principals)
       .set({ status: 'active' })
       .where(eq(principals.principalId, secondPrincipalId));
-    const resolverUnavailableAuthentication = yield* makeAuthenticationService({}).pipe(
+    const resolverUnavailableAuthentication = yield* shellTestAuthentication({}).pipe(
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
+      Effect.provideService(CoreDatabase, { executor: coreDatabase }),
       Effect.provideService(PrincipalResolver, {
         ...resolver,
         resolveBetterAuthUserForTenant: (userId, selectedTenantId) =>
@@ -2263,6 +2366,9 @@ it.live(
     );
     expect(yield* Effect.tryPromise(() => secondModules.json())).toEqual({
       compositionRevision: testRevision,
+      deniedAppIds: [],
+      gatewayAudiences: ['inventory-stock', 'testing-second'],
+      homeComponents: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -2397,6 +2503,8 @@ it.live(
     // resolver can still prove that an existing selected session rejects a genuinely missing row.
     yield* purgeFixtureRows([
       coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, secondTenantId)),
+      // Audit rows reference the bindings they were written under (restrict), so they go before the bindings.
+      coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, secondTenantId)),
       coreDatabase.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, secondTenantId)),
     ]);
     yield* assertSessionForbidden(
@@ -2649,6 +2757,7 @@ const prepareTenantPartyCase = Effect.fn('TenantPartyGatewayTest.prepareCase')(f
   expect(snapshot.composition.shell.runtimeContract.sha256).toBe(shellRuntimeSha256);
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: snapshot,
+    databaseIdentities: SHELL_DATABASE_IDENTITY_ENROLLMENT,
     mode: 'schema-only',
     purpose: 'stabilization-1267-party-gateway',
   });
@@ -2669,12 +2778,23 @@ const prepareTenantPartyCase = Effect.fn('TenantPartyGatewayTest.prepareCase')(f
   const pair = yield* Effect.tryPromise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
   const privateJwk = yield* Effect.tryPromise(() => exportJWK(pair.privateKey));
   const publicJwk = yield* Effect.tryPromise(() => exportJWK(pair.publicKey));
-  const sourceIdentities = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
-  const partyUrl = new URL(sourceIdentities.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id].connectionString);
-  const issuerUrl = new URL(sourceIdentities.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id].connectionString);
+  const sourceIdentities = yield* loadDatabaseIdentityConnections({
+    enrollment: SHELL_DATABASE_IDENTITY_ENROLLMENT,
+    envPath: '/dev/null',
+  });
+  const partyIdentity = sourceIdentities.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id];
+  const issuerIdentity = sourceIdentities.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id];
   const sourceShared = sourceIdentities.runtime[SHARED_RUNTIME_IDENTITY.id];
+  if (partyIdentity === undefined || issuerIdentity === undefined || sourceShared === undefined) {
+    return yield* new TenantPartyGatewayTestError({ reason: 'Required enrolled database identity is missing' });
+  }
+  const partyUrl = new URL(partyIdentity.connectionString);
+  const issuerUrl = new URL(issuerIdentity.connectionString);
   for (const identity of [PARTY_REGISTRY_REQUEST_IDENTITY, SHELL_GATEWAY_ISSUER_IDENTITY]) {
     const canonical = sourceIdentities.runtime[identity.id];
+    if (canonical === undefined) {
+      return yield* new TenantPartyGatewayTestError({ reason: 'Required enrolled identity is missing' });
+    }
     const address = new URL(canonical.connectionString);
     const exactSourceAndOwnedTarget = [
       canonical.database === sourceIdentities.admin.database,
@@ -2731,16 +2851,17 @@ const prepareTenantPartyCase = Effect.fn('TenantPartyGatewayTest.prepareCase')(f
   const sourceConfiguration = yield* loadAuthConfig({ envPath: '/dev/null' });
   const configuration = { ...sourceConfiguration, connectionString: isolated.connections.runtime.connectionString };
   expect(new URL(configuration.connectionString).pathname === `/${isolated.connections.runtime.database}`).toBe(true);
-  const authPersistence = yield* makeAuthDatabase(configuration);
+  const authPersistence = yield* makeAuthDatabase({ ...configuration, expectedRole: SHARED_RUNTIME_IDENTITY.role });
   const resolverContext = yield* Layer.build(
     PrincipalResolverLive({ authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID }).pipe(
-      Layer.provide(CorePersistenceLive),
+      Layer.provideMerge(CorePersistenceLive),
       Layer.provide(Layer.succeed(DatabaseConfig, isolated.connections.runtime)),
     ),
   );
-  const authentication = yield* makeAuthenticationService({ allowFixtureSignUp: true }).pipe(
+  const authentication = yield* shellTestAuthentication({ allowFixtureSignUp: true }).pipe(
     Effect.provideService(AuthConfig, configuration),
     Effect.provideService(AuthDatabase, authPersistence),
+    Effect.provideService(CoreDatabase, { executor: Context.get(resolverContext, CoreDatabase).executor }),
     Effect.provideContext(resolverContext),
   );
   const fixtureEmail = `party-gateway-${suffix}@example.test`;
@@ -2952,8 +3073,6 @@ const prepareTenantPartyReceivers = Effect.fn('TenantPartyGatewayTest.receivers'
         BETTER_AUTH_SECRET: configuration.secret,
         BETTER_AUTH_TRUSTED_ORIGINS: configuration.trustedOrigins.join(','),
         BETTER_AUTH_URL: configuration.baseUrl,
-        // No module credential is enrolled: the staff API key is never a module deployment credential.
-        ONTOS_GATEWAY_MODULE_BINDINGS: '[]',
         ONTOS_GATEWAY_PRIVATE_JWK: JSON.stringify({ ...privateJwk, alg: 'EdDSA', kid, use: 'sig' }),
         SHELL_GATEWAY_ISSUER_DATABASE_URL: issuerConnections.runtime.connectionString,
       },

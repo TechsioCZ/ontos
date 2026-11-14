@@ -2,10 +2,14 @@ import { APIError } from 'better-auth';
 import { isAPIError } from 'better-auth/api';
 import { getCookies } from 'better-auth/cookies';
 import { HttpApiBuilder, HttpApiMiddleware, Layer } from '@modern-js/bff-effect/effect-edge';
-import { Context, DateTime, Duration, Effect, Option, Result, Schema } from 'effect';
+import { DateTime, Duration, Effect, Match, Option, Redacted, Result, Schema } from 'effect';
+import type { ReadCoreError } from '@app/core-runtime';
 import type { HttpServerRequest } from 'effect/http';
 import { empty as emptyCookies, expireCookieUnsafe, toSetCookieHeaders } from 'effect/http/Cookies';
 
+import { authenticateOperationPrincipal } from '../../auth/action-principal.ts';
+import { readCustomerOwnAddressBook } from './customer-address-book.ts';
+import { EnrollmentTenantIdSchema } from '../../../shared/enrollment-contracts.ts';
 import { commerceCustomerContextApi } from '../../../shared/api.ts';
 import { CommerceSessionReferenceSchema } from '../../../shared/portal-auth-contracts.ts';
 import {
@@ -38,7 +42,7 @@ import { failureLogSummary } from '../problems-support.ts';
 import { consumeRateLimitBudget } from '../rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../rate-limit-service.ts';
 import { CommercePortalAuthInstance } from '../provider/auth.ts';
-import type { CommercePortalAuth } from '../provider/auth.ts';
+import { CommercePortalAuthService } from './auth-service.ts';
 import { CommercePortalAuthConfig } from '../provider/config-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../provider/config.ts';
 import type { CommercePortalAuthConfigValue } from '../provider/config.ts';
@@ -52,6 +56,8 @@ import type {
 } from './contracts.ts';
 import { CommercePortalAuthSessionEvidenceRejected, CommercePortalAuthSessionInvalidRequest } from './errors.ts';
 import { CommercePortalAuthSessionLifecycle } from './lifecycle.ts';
+import { CommerceCustomerAuthority, CustomerAuthorityRejected } from './customer-authority.ts';
+import type { RetailPortalPermissionCode } from '../../../shared/domain/profile-contracts.ts';
 import type { CommercePortalAuthSessionEvidenceFailure, CommercePortalAuthSessionFailure } from './lifecycle.ts';
 
 const httpBridgeTimeout = Duration.millis(COMMERCE_PORTAL_AUTH_POLICY.session.providerCallTimeoutMilliseconds);
@@ -76,18 +82,6 @@ const httpBridgeTimeoutPolicy = Effect.timeoutOrElse({
       }),
     ),
 });
-
-/**
- * Better Auth is a foreign HTTP provider; its Promise surface is supplied by the root layer. Only
- * the typed API is exposed: the raw `auth.handler` proxy is no longer part of this transport.
- */
-interface CommercePortalAuthHttpPort {
-  readonly api: Pick<CommercePortalAuth['api'], 'getSession' | 'signOut'>;
-}
-
-export class CommercePortalAuthService extends Context.Service<CommercePortalAuthService, CommercePortalAuthHttpPort>()(
-  '@app/commerce-customer-context/api/portal-auth/session/http/CommercePortalAuthService',
-) {}
 
 const PROBLEM_TYPE_PREFIX = 'https://ontos.dev/problems/commerce-portal-auth-session-';
 const problemStatus = {
@@ -195,6 +189,7 @@ const answerEvidenceFailure = (
 };
 
 interface AuthSessionResponse {
+  readonly account: { readonly email: string; readonly name: string };
   readonly createdAt: Date;
   readonly expiresAt: Date;
   readonly providerSubjectId: string;
@@ -210,7 +205,7 @@ const ProviderSessionResponseSchema = Schema.Struct({
     expiresAt: ProviderDateSchema,
     id: Schema.String,
   }),
-  user: Schema.Struct({ id: Schema.String }),
+  user: Schema.Struct({ email: Schema.String, id: Schema.String, name: Schema.String }),
 });
 type ProviderSessionResponse = typeof ProviderSessionResponseSchema.Type;
 
@@ -231,6 +226,7 @@ const readSessionResponse = (value: ProviderSessionResponse): AuthSessionRespons
   return createdAt === null || expiresAt === null
     ? null
     : {
+        account: { email: value.user.email, name: value.user.name },
         createdAt,
         expiresAt,
         providerSubjectId: value.user.id,
@@ -624,8 +620,113 @@ const getSession = Effect.fn('CommercePortalAuthSessionHttp.getSession')(functio
   if (Result.isFailure(evidence)) {
     return yield* answerEvidenceFailure(evidence.failure);
   }
-  return { session: toSessionSnapshot(evidence.success), state: 'authenticated' } as const;
+  return {
+    account: providerSession.value.session.account,
+    session: toSessionSnapshot(evidence.success),
+    state: 'authenticated',
+  } as const;
 });
+
+/** The live session proves the account; the redeemed gateway assertion supplies only tenant/LE scope. */
+export const admitCustomerAccount = Effect.fn('CommercePortalAuthSessionHttp.admitCustomerAccount')(
+  function* admitCustomerAccountEffect(
+    request: HttpServerRequest.HttpServerRequest,
+    permission: RetailPortalPermissionCode = 'retail.profile.read',
+  ) {
+    const current = yield* getSession(request);
+    if (current.state === 'anonymous') {
+      return current;
+    }
+    const principal = yield* authenticateOperationPrincipal(Redacted.make(request.headers['authorization']), {
+      authentication: () => authenticationProblem('authentication_failed'),
+      unavailable: () => unavailableProblem(),
+    });
+    if (principal.legalEntityId === undefined) {
+      return yield* Effect.fail(unavailableProblem());
+    }
+    const tenantId = yield* Schema.decodeEffect(EnrollmentTenantIdSchema)(principal.tenantId).pipe(
+      Effect.catch(answerUnavailable()),
+    );
+    const authority = yield* CommerceCustomerAuthority;
+    const customerAuthority = yield* authority
+      .admit({
+        legalEntityId: principal.legalEntityId,
+        permission,
+        providerSubjectId: current.session.providerSubjectId,
+        sessionRef: current.session.sessionRef,
+        tenantId: principal.tenantId,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          Schema.is(CustomerAuthorityRejected)(cause) ? forbiddenProblem('account_disabled') : unavailableProblem(),
+        ),
+      );
+    return {
+      account: {
+        ...current.account,
+        id: current.session.providerSubjectId,
+        partyId: customerAuthority.partyId,
+        tenantId,
+      },
+      customerAuthority,
+      session: current.session,
+      state: 'authenticated',
+      workloadPrincipal: principal,
+    } as const;
+  },
+);
+
+const getCustomerAccount = Effect.fn('CommercePortalAuthSessionHttp.getCustomerAccount')(
+  function* getCustomerAccountEffect(request: HttpServerRequest.HttpServerRequest) {
+    const current = yield* admitCustomerAccount(request);
+    return current.state === 'anonymous' ? current : ({ account: current.account, state: 'authenticated' } as const);
+  },
+);
+
+const addressBookReadProblem = (error: ReadCoreError) =>
+  Match.value(error).pipe(
+    Match.tags({
+      ModuleStateCheckUnavailableError: unavailableProblem,
+      ModuleStateDeniedError: () => forbiddenProblem('account_disabled'),
+      OperationAuthenticationRequired: () => authenticationProblem('authentication_failed'),
+      OperationContextDenied: () => forbiddenProblem('account_disabled'),
+      OperationContextInvalid: () => forbiddenProblem('account_disabled'),
+      OperationContextUnavailable: unavailableProblem,
+      ReadEvidencePersistenceError: unavailableProblem,
+      ReadEvidenceValidationError: unavailableProblem,
+      ReadHandlerExecutionError: unavailableProblem,
+      ReadHandlerNotFound: unavailableProblem,
+      ReadHandlerUnavailable: unavailableProblem,
+      ReadInputValidationError: unavailableProblem,
+      ReadPermissionDenied: () => forbiddenProblem('account_disabled'),
+      ReadPermissionUnavailable: unavailableProblem,
+      ReadPolicyDenied: () => forbiddenProblem('account_disabled'),
+      ReadPolicyEvaluationError: unavailableProblem,
+      ReadResultValidationError: unavailableProblem,
+    }),
+    Match.exhaustive,
+  );
+
+const getCustomerAddressBook = Effect.fn('CommercePortalAuthSessionHttp.getCustomerAddressBook')(
+  function* getCustomerAddressBookEffect(request: HttpServerRequest.HttpServerRequest) {
+    yield* noStoreHeaders;
+    const current = yield* admitCustomerAccount(request, 'retail.address_book.use');
+    if (current.state !== 'authenticated') {
+      return yield* Effect.fail(authenticationProblem('authentication_failed'));
+    }
+    const { legalEntityId } = current.workloadPrincipal;
+    if (legalEntityId === undefined) {
+      return yield* Effect.fail(unavailableProblem());
+    }
+    return yield* readCustomerOwnAddressBook({
+      authority: current.customerAuthority,
+      legalEntityId,
+      sessionRef: current.session.sessionRef,
+      tenantId: current.account.tenantId,
+      workloadPrincipal: current.workloadPrincipal,
+    }).pipe(Effect.mapError(addressBookReadProblem));
+  },
+);
 
 const portalAuthSessionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   CommercePortalAuthSessionSchemaErrorMiddleware,
@@ -641,7 +742,9 @@ export const portalAuthSessionApiLive = HttpApiBuilder.group(
       .handle('signIn', ({ payload, request }) => signIn(payload, request))
       .handle('signOut', ({ request }) => signOut(request))
       .handle('refresh', ({ request }) => refresh(request))
-      .handle('getSession', ({ request }) => getSession(request)),
+      .handle('getSession', ({ request }) => getSession(request))
+      .handle('getCustomerAccount', ({ request }) => getCustomerAccount(request))
+      .handle('getCustomerAddressBook', ({ request }) => getCustomerAddressBook(request)),
 ).pipe(Layer.provide(portalAuthSessionSchemaErrorLive));
 
 /**
@@ -664,7 +767,9 @@ export const portalAuthSessionStandaloneApiLive = HttpApiBuilder.group(
       .handle('signIn', ({ payload, request }) => signIn(payload, request))
       .handle('signOut', ({ request }) => signOut(request))
       .handle('refresh', ({ request }) => refresh(request))
-      .handle('getSession', ({ request }) => getSession(request)),
+      .handle('getSession', ({ request }) => getSession(request))
+      .handle('getCustomerAccount', () => Effect.fail(unavailableProblem()))
+      .handle('getCustomerAddressBook', () => Effect.fail(unavailableProblem())),
 ).pipe(Layer.provide(portalAuthSessionSchemaErrorLive));
 
 /** The constructed realm stays a visible requirement; the composition root supplies it once. */

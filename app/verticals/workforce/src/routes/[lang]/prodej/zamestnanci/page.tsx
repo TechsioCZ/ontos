@@ -1,0 +1,1205 @@
+import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import {
+  BulkActionBar,
+  EmptyState,
+  PageHeader,
+  StatCard,
+  StatRow,
+  formatNumber,
+  Toaster,
+  dataTableRowLabels,
+  paginationTranslations,
+  surfaceTileClassName,
+} from '@app/admin-ui';
+import { modulePagePreload, pageDataScopeKey } from '@app/shared-contracts/page-data';
+import type { ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
+import { BulkTagDialog, TagCell, TagFilter } from '@app/tagging/components/tag-controls';
+import type { TagCallFailure, TagCatalog, TagsStatus } from '@app/tagging/components/tag-controls';
+import type { SubjectId, Tag, TagId } from '@app/tagging/contracts/records';
+import { SubjectIdSchema } from '@app/tagging/contracts/records';
+import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Button } from '@techsio/ui-kit/atoms/button';
+import { Input } from '@techsio/ui-kit/atoms/input';
+import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
+import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { Accordion } from '@techsio/ui-kit/molecules/accordion';
+import { Switch } from '@techsio/ui-kit/molecules/switch';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
+import { DataTable } from '@techsio/ui-kit/organisms/data-table';
+import type { CellContext, ColumnDef, DataTableTranslations, Row } from '@techsio/ui-kit/organisms/data-table';
+import { SelectTemplate } from '@app/admin-ui/select-template';
+import { Effect, Fiber, Match, Option, Predicate, Schema } from 'effect';
+import { createContext, use, useEffect, useRef, useState } from 'react';
+import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
+import { executeUpdateEmployee } from '../../../../api/update-employee-action-client.ts';
+import { committedResult, pendingProposalMessage } from '../../../../api/action-result.ts';
+import { executeFreshRecords } from './employee-records.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { legalEntityOf, usePageData } from '../../../../runtime/use-page-data.ts';
+import type { WorkforceCommand } from '../../../../../shared/actions/apply-command.ts';
+import type { Employee, EmployeeId, EmployeeRole, RecordsResponse } from '../../../../../shared/apis/records.ts';
+import csResource from '../../../../../locales/cs/workforce.json';
+import enResource from '../../../../../locales/en/workforce.json';
+import { UltramodernRouteHead } from '../../../ultramodern-route-head';
+import '../../../index.css';
+import { AiActivityCard } from './ai-activity-card.tsx';
+import { aiActivityData, employeeTagsData, employeesData, tagsFailureStatus, tagsReadable } from './employees-data.ts';
+import type { EmployeeTags, EmployeesLoadError } from './employees-data.ts';
+import {
+  BulkDepartmentDialog,
+  BulkRoleDialog,
+  EmployeeFormDialog,
+  EmployeeTargetController,
+  employeeSearchNotice,
+  employeeSearchPanelMode,
+  employeeSearchTargetFromSearchStr,
+  employeeTargetNotice,
+  employeeTargetRequestKey,
+  employeeTargetScopeKey,
+  selectLabelProps,
+} from './employee-dialogs.tsx';
+import type {
+  EditCommitCommand,
+  CommitCommand,
+  EmployeeSearchNotice,
+  EmployeeTargetRecord,
+  EmployeeTargetScope,
+  EmployeeTargetState,
+  ShownEdit,
+} from './employee-dialogs.tsx';
+import type { CommitOutcome, EditCommitResult, EmployeeFilters } from './employee-model.ts';
+import {
+  allOption,
+  bulkCommand,
+  departmentFromValue,
+  departmentsOf,
+  employeeRoles,
+  filterEmployees,
+  hasActiveFilters,
+  newRequestToken,
+  noFilters,
+  roleFromValue,
+  sortEmployees,
+} from './employee-model.ts';
+
+const workforceI18nResources = {
+  cs: { workforce: csResource },
+  en: { workforce: enResource },
+} as const;
+
+const key = 'workforce.pages.employees';
+const pageSizeOptions = [50, 100, 200];
+/** The row-selection column stays first, ahead of the pinned name. */
+const pinning = { end: [], start: ['__select', 'fullName'] };
+
+type LoadState =
+  | { readonly status: 'loading' }
+  | { readonly status: 'error' }
+  | { readonly status: 'forbidden' }
+  | { readonly data: RecordsResponse; readonly status: 'ready' };
+
+/** Row selection as the ui-kit DataTable types it: selected row ids only. */
+type Selection = Record<string, true>;
+
+const BulkDialogKindSchema = Schema.Literals(['department', 'role']);
+type BulkDialogKind = typeof BulkDialogKindSchema.Type;
+
+/** Sales staff are the heads and the representatives; the stat row counts both. */
+const salesStaff = (byRole: Partial<Record<EmployeeRole, number>>): number =>
+  (byRole.SALES_HEAD ?? 0) + (byRole.SALES_REP ?? 0);
+
+/**
+ * Named export of the exposed page: the Shell runs it before it reveals the page. The employees and their tags are
+ * awaited; the AI activity feed only starts, so a slow audit read never holds the page back.
+ */
+export const preloadPage = modulePagePreload(
+  (props) => employeesData.preload(legalEntityOf(props)),
+  (props) => employeeTagsData.preload(legalEntityOf(props)),
+  (props) => Effect.sync(() => aiActivityData.ensure(legalEntityOf(props))),
+);
+
+const loadStateOf = (snapshot: PageDataSnapshot<RecordsResponse, EmployeesLoadError>): LoadState => {
+  if (snapshot.state === 'pending') {
+    return { status: 'loading' };
+  }
+  return snapshot.state === 'failed' ? { status: snapshot.error } : { data: snapshot.value, status: 'ready' };
+};
+
+const noTags: EmployeeTags = { catalog: [], tagsBySubject: new Map() };
+
+/** A role that may not read tags reads `forbidden` (no Štítky column, filter or bulk action), never an error. */
+const tagsStatusOf = (snapshot: PageDataSnapshot<EmployeeTags, TagCallFailure>): TagsStatus => {
+  if (!tagsReadable()) {
+    return 'forbidden';
+  }
+  if (snapshot.state === 'pending') {
+    return 'loading';
+  }
+  return snapshot.state === 'failed' ? tagsFailureStatus(snapshot.error) : 'ready';
+};
+
+/** Text columns sort in Czech collation. The default sort compares code points, so "Účetní" would land after "Vedoucí". */
+const czechSortFn = (left: Row<Employee>, right: Row<Employee>, columnId: string): number =>
+  left.getValue<string>(columnId).localeCompare(right.getValue<string>(columnId), 'cs');
+
+const nameCell = (info: CellContext<Employee>) => (
+  <span className="block truncate font-medium">{info.row.original.fullName}</span>
+);
+const emailCell = (info: CellContext<Employee>) => <span className="block truncate">{info.row.original.email}</span>;
+const statusCell = (info: CellContext<Employee>) => (
+  <Badge size="sm" variant={info.row.original.active ? 'success' : 'outline'}>
+    {info.getValue<string>()}
+  </Badge>
+);
+/** A linked account is a small text marker; the role already has its own column. */
+const accountCell = (info: CellContext<Employee>) =>
+  info.row.original.principalRef === undefined ? (
+    <span className="block text-fg-secondary">—</span>
+  ) : (
+    <span className="block text-xs text-fg-secondary">{info.getValue<string>()}</span>
+  );
+
+/** Tagging subject ids are the employee ids. An id that does not decode as a subject id is skipped, never thrown. */
+const subjectIdOf = (id: string): Option.Option<SubjectId> => Schema.decodeOption(SubjectIdSchema)(id);
+const subjectIdsOf = (ids: readonly string[]): SubjectId[] =>
+  ids.flatMap((id) =>
+    Option.match(subjectIdOf(id), {
+      onNone: (): SubjectId[] => [],
+      onSome: (subject): SubjectId[] => [subject],
+    }),
+  );
+
+type TagsBySubject = ReadonlyMap<SubjectId, readonly Tag[]>;
+
+/** Tags of the listed employees and their load status, shared with the Štítky cells. */
+const EmployeeTagsContext = createContext<TagsBySubject>(new Map());
+const EmployeeTagStatusContext = createContext<TagsStatus>('loading');
+
+const tagsOf = (tagsBySubject: TagsBySubject, id: string): readonly Tag[] =>
+  Option.match(subjectIdOf(id), {
+    onNone: (): readonly Tag[] => [],
+    onSome: (subject): readonly Tag[] => tagsBySubject.get(subject) ?? [],
+  });
+
+/**
+ * The Štítky cell reads the tags from context, not from a column accessor. The table caches accessor values per row
+ * until its rows rebuild, so a cached "still loading" value would outlive the tags read and a bulk tag change.
+ */
+const EmployeeTagsCell = ({ row }: CellContext<Employee>) => {
+  const status = use(EmployeeTagStatusContext);
+  const tagsBySubject = use(EmployeeTagsContext);
+  return <TagCell loading={status === 'loading'} tags={tagsOf(tagsBySubject, row.original.id)} />;
+};
+
+/** Maps a failed apply-command call to the outcome the forms show. A duplicate e-mail stays on the field. */
+const outcomeOfFailure = (error: Effect.Error<ReturnType<typeof execute>>): CommitOutcome =>
+  Match.value(error).pipe(
+    Match.tag('ApplyCommandActionConflictProblem', 'UpdateEmployeeActionConflictProblem', (problem): CommitOutcome =>
+      problem.code === 'workforce_revision_conflict' ? 'conflict' : 'failed',
+    ),
+    Match.tag('WorkforceDuplicateEmailProblem', (): CommitOutcome => 'duplicateEmail'),
+    Match.tag(
+      'ApplyCommandActionForbiddenProblem',
+      'UpdateEmployeeActionForbiddenProblem',
+      (): CommitOutcome => 'forbidden',
+    ),
+    Match.orElse((): CommitOutcome => 'failed'),
+  );
+
+const execute = (command: WorkforceCommand, expectedRevision: number) =>
+  newRequestToken.pipe(
+    Effect.flatMap((token) => {
+      const correlation = `workforce:command:${token}`;
+      const options = { idempotencyKey: `workforce:${token}` };
+      return Match.value(command).pipe(
+        Match.tag('CreateEmployee', (value) =>
+          executeApplyCommand({ command: value, expectedRevision }, correlation, options),
+        ),
+        Match.tag('UpdateEmployee', 'BulkUpdateEmployees', (value) =>
+          executeUpdateEmployee({ command: value, expectedRevision }, correlation, options),
+        ),
+        Match.exhaustive,
+      );
+    }),
+    Effect.flatMap(committedResult),
+  );
+
+/**
+ * The edit panel's Save: the draft's base revision, no toast; the saved fields show on the row right away. A change
+ * parked for approval is `proposed`: the panel's save bar says so and nothing on the row changes.
+ */
+const editCommitOf =
+  (reload: () => void, showSaved: (shown: ShownEdit) => void): EditCommitCommand =>
+  (command, expectedRevision, shown) =>
+    execute(command, expectedRevision).pipe(
+      Effect.match({
+        onFailure: (error): EditCommitResult =>
+          pendingProposalMessage(error) === undefined ? outcomeOfFailure(error) : 'proposed',
+        onSuccess: (response): EditCommitResult => response.revision,
+      }),
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          if (Predicate.isNumber(result)) {
+            showSaved(shown);
+          }
+          if (result === 'conflict' || Predicate.isNumber(result)) {
+            reload();
+          }
+        }),
+      ),
+    );
+
+/** The open panel's Employee as the list has it now, so live rereads reach the edit panel. */
+const currentEmployee = (items: readonly Employee[], opened: Employee | null): Employee | null =>
+  opened === null ? null : (items.find(({ id }) => id === opened.id) ?? opened);
+
+/** The list after a saved edit: the named rows show the saved fields. The reread that follows brings the server's values. */
+const withSavedEdit = (data: RecordsResponse, shown: ShownEdit): RecordsResponse => {
+  const ids = new Set(shown.ids);
+  return {
+    ...data,
+    items: data.items.map((employee) => (ids.has(employee.id) ? { ...employee, ...shown.patch } : employee)),
+  };
+};
+
+/** Rows that carry the selected tag, read from the tags the list already loaded. No tag selected keeps every row. */
+const rowsWithTag = (rows: readonly Employee[], tagId: TagId | null, tagsBySubject: TagsBySubject): Employee[] =>
+  tagId === null ? [...rows] : rows.filter((row) => tagsOf(tagsBySubject, row.id).some((tag) => tag.id === tagId));
+
+/** Static role matrix from app/scripts/demo/permissions.mts. Read-only, for the demo audience. */
+const accessRows = [
+  { access: 'vše', role: 'Vedoucí obchodu' },
+  { access: 'zákazníci, příležitosti, úkoly, štítky; faktury jen čtení', role: 'Obchodník' },
+  { access: 'faktury, zákazníci (čtení), statistiky', role: 'Účetní' },
+  { access: 'produkty a sklad, úkoly', role: 'Skladník' },
+  {
+    access: 'čtení všeho; zápis jen úkoly, příležitosti, štítky; bez cen, faktur a mazání štítků',
+    role: 'Agent (bot)',
+  },
+] as const;
+
+/** Read-only overview of who may do what in the demo. Static copy; the matrix lives in the demo permissions script. Collapsed by default. */
+const PermissionsCard = () => {
+  const { t } = useModernI18n();
+  return (
+    <Accordion className={surfaceTileClassName} collapsible multiple={false}>
+      <Accordion.Item value="permissions">
+        <Accordion.Header aria-level={2}>
+          <Accordion.Title>{t(`${key}.permissions.title`)}</Accordion.Title>
+          <Accordion.Indicator />
+        </Accordion.Header>
+        <Accordion.Content>
+          <div className="overflow-x-auto p-250 pt-150">
+            <table className="w-full table-fixed border-collapse text-left text-sm">
+              <thead>
+                <tr className="border-border-primary border-b">
+                  <th className="w-56 py-100 pr-150 font-medium">{t(`${key}.permissions.role`)}</th>
+                  <th className="py-100 font-medium">{t(`${key}.permissions.access`)}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {accessRows.map((row) => (
+                  <tr className="border-border-primary border-b last:border-b-0" key={row.role}>
+                    <td className="py-100 pr-150 align-top font-medium">{row.role}</td>
+                    <td className="py-100 align-top">{row.access}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Accordion.Content>
+      </Accordion.Item>
+    </Accordion>
+  );
+};
+
+const format = (count: number | undefined) => (count === undefined ? '—' : formatNumber(count));
+
+const EmployeeStats = ({
+  data,
+  loading,
+}: {
+  readonly data: RecordsResponse | undefined;
+  readonly loading: boolean;
+}) => {
+  const { t } = useModernI18n();
+  if (loading) {
+    return (
+      <StatRow>
+        {[0, 1, 2, 3].map((index) => (
+          <Skeleton isLoaded={false} key={index}>
+            <Skeleton.Rectangle className="h-22 w-full" />
+          </Skeleton>
+        ))}
+      </StatRow>
+    );
+  }
+  const indicators = data?.indicators;
+  return (
+    <StatRow>
+      <StatCard label={t(`${key}.stats.total`)} value={format(indicators?.total)} />
+      <StatCard label={t(`${key}.stats.active`)} value={format(indicators?.active)} />
+      <StatCard
+        label={t(`${key}.stats.sales`)}
+        value={format(indicators === undefined ? undefined : salesStaff(indicators.byRole))}
+      />
+      <StatCard label={t(`${key}.stats.departments`)} value={format(indicators?.byDepartment.length)} />
+    </StatRow>
+  );
+};
+
+const EmployeeFilterBar = ({
+  departments,
+  filters,
+  onChange,
+  onTagChange,
+  tagCatalog,
+  tagValue,
+}: {
+  readonly departments: readonly string[];
+  readonly filters: EmployeeFilters;
+  readonly onChange: (patch: Partial<EmployeeFilters>) => void;
+  readonly onTagChange: (tagId: TagId | null) => void;
+  readonly tagCatalog: TagCatalog;
+  readonly tagValue: TagId | null;
+}) => {
+  const { t } = useModernI18n();
+  const roleItems = [
+    { displayValue: t(`${key}.filters.allRoles`), label: t(`${key}.filters.allRoles`), value: allOption },
+    ...employeeRoles.map((role) => {
+      const label = t(`${key}.roles.${role}`);
+      return { displayValue: label, label, value: role };
+    }),
+  ];
+  const departmentItems = [
+    { displayValue: t(`${key}.filters.allDepartments`), label: t(`${key}.filters.allDepartments`), value: allOption },
+    ...departments.map((department) => ({ displayValue: department, label: department, value: department })),
+  ];
+  return (
+    <div className="flex flex-wrap items-end gap-150">
+      <Input
+        aria-label={t(`${key}.filters.searchLabel`)}
+        className="w-64"
+        onChange={(event) => onChange({ query: event.target.value })}
+        placeholder={t(`${key}.filters.search`)}
+        size="sm"
+        type="search"
+        value={filters.query}
+      />
+      <SelectTemplate
+        className="w-48"
+        items={roleItems}
+        label={t(`${key}.filters.role`)}
+        labelProps={selectLabelProps}
+        name="roleFilter"
+        onValueChange={(details) => onChange({ role: roleFromValue(details.value[0]) })}
+        placeholder={t('workforce.selectPlaceholder')}
+        size="sm"
+        value={[filters.role ?? allOption]}
+      />
+      <SelectTemplate
+        className="w-48"
+        items={departmentItems}
+        label={t(`${key}.filters.department`)}
+        labelProps={selectLabelProps}
+        name="departmentFilter"
+        onValueChange={(details) => onChange({ department: departmentFromValue(details.value[0]) })}
+        placeholder={t('workforce.selectPlaceholder')}
+        size="sm"
+        value={[filters.department ?? allOption]}
+      />
+      <div className="w-48">
+        <TagFilter
+          catalog={tagCatalog}
+          kind="employee"
+          label={t(`${key}.filters.tag`)}
+          onChange={onTagChange}
+          value={tagValue}
+        />
+      </div>
+      <Switch checked={filters.activeOnly} onCheckedChange={(checked) => onChange({ activeOnly: checked })}>
+        {t(`${key}.filters.activeOnly`)}
+      </Switch>
+    </div>
+  );
+};
+
+const EmployeeBulkBar = ({
+  busy,
+  count,
+  onClear,
+  onDepartment,
+  onRole,
+  onSetActive,
+  onTags,
+}: {
+  readonly busy: boolean;
+  readonly count: number;
+  readonly onClear: () => void;
+  readonly onDepartment: () => void;
+  readonly onRole: () => void;
+  readonly onSetActive: (active: boolean) => void;
+  /** Absent for a role that may not read tags, so the bar offers no tag panel the owner would refuse. */
+  readonly onTags: (() => void) | undefined;
+}) => {
+  const { t } = useModernI18n();
+  // No selection renders nothing, so the page column keeps no empty gap for the bar.
+  if (count === 0) {
+    return null;
+  }
+  return (
+    // Stays under the shell top bar (`--spacing-700` high) while the page scrolls, so the bulk actions stay in reach.
+    // The page background hides the rows scrolling under the bar's rounded corners.
+    <div className="sticky top-(--spacing-700) z-10 bg-base">
+      <BulkActionBar onClear={onClear} selectedCount={count}>
+        <Button disabled={busy} onClick={onDepartment} size="sm" theme="outlined" variant="secondary">
+          {t(`${key}.bulk.department`)}
+        </Button>
+        <Button disabled={busy} onClick={onRole} size="sm" theme="outlined" variant="secondary">
+          {t(`${key}.bulk.role`)}
+        </Button>
+        {onTags !== undefined && (
+          <Button disabled={busy} onClick={onTags} size="sm" theme="outlined" variant="secondary">
+            {t(`${key}.bulk.tags`)}
+          </Button>
+        )}
+        <Button
+          disabled={busy}
+          onClick={() => {
+            onSetActive(true);
+          }}
+          size="sm"
+          theme="outlined"
+          variant="secondary"
+        >
+          {t(`${key}.bulk.activate`)}
+        </Button>
+        <Button
+          disabled={busy}
+          onClick={() => {
+            onSetActive(false);
+          }}
+          size="sm"
+          theme="outlined"
+          variant="secondary"
+        >
+          {t(`${key}.bulk.deactivate`)}
+        </Button>
+      </BulkActionBar>
+    </div>
+  );
+};
+
+/**
+ * Table columns. The text columns sort in Czech collation; the others keep the table's default sort. The widths plus the
+ * 44 px selection column add up to 1104 px, so at a 1440 px window (256 px sidebar, page padding) the table needs no
+ * horizontal scroll and the last column is not clipped. Wider windows share the spare width across the columns.
+ */
+const employeeColumns = (t: (key: string) => string, tagsShown: boolean): ColumnDef<Employee>[] => [
+  {
+    accessorKey: 'fullName',
+    cell: nameCell,
+    header: t(`${key}.columns.name`),
+    meta: { width: 190 },
+    sortFn: czechSortFn,
+  },
+  // A role that may not read tags gets no Štítky column.
+  ...(tagsShown
+    ? [
+        {
+          cell: EmployeeTagsCell,
+          enableSorting: false,
+          header: t(`${key}.columns.tags`),
+          id: 'tags',
+          meta: { width: 160 },
+        } satisfies ColumnDef<Employee>,
+      ]
+    : []),
+  { accessorKey: 'email', cell: emailCell, header: t(`${key}.columns.email`), meta: { width: 220 } },
+  {
+    accessorFn: (row) => t(`${key}.roles.${row.role}`),
+    header: t(`${key}.columns.role`),
+    id: 'role',
+    meta: { width: 140 },
+    sortFn: czechSortFn,
+  },
+  {
+    accessorKey: 'department',
+    header: t(`${key}.columns.department`),
+    meta: { width: 150 },
+    sortFn: czechSortFn,
+  },
+  {
+    accessorFn: (row) => t(row.active ? `${key}.status.active` : `${key}.status.inactive`),
+    cell: statusCell,
+    header: t(`${key}.columns.status`),
+    id: 'status',
+    meta: { width: 100 },
+  },
+  {
+    accessorFn: (row) => t(row.principalRef === undefined ? `${key}.account.none` : `${key}.account.linked`),
+    cell: accountCell,
+    header: t(`${key}.columns.account`),
+    id: 'account',
+    meta: { width: 100 },
+  },
+];
+
+const readEmployeeTargetRecord = (employeeId: EmployeeId) =>
+  newRequestToken.pipe(Effect.flatMap((token) => executeFreshRecords({ employeeId }, `workforce:target:${token}`)));
+
+type EmployeeTargetReadFailure = Effect.Error<ReturnType<typeof readEmployeeTargetRecord>>;
+
+const interruptTargetRead = (effect: Effect.Effect<void>): (() => void) => {
+  const fiber = browserRuntime.runFork(effect);
+  return () => {
+    browserRuntime.runFork(Fiber.interrupt(fiber));
+  };
+};
+
+interface EmployeeTargetApplied {
+  readonly key: string;
+  readonly state: EmployeeTargetState;
+}
+
+/** The open fresh-read panel keeps its own record; it never falls back to the cached list row. */
+interface EmployeeTargetPanel {
+  readonly employeeId: EmployeeId;
+  readonly record: EmployeeTargetRecord;
+  readonly requestKey: string;
+  readonly scopeKey: string;
+}
+
+interface EmployeeTargetDestination {
+  readonly handleClose: () => void;
+  readonly handleRetry: () => void;
+  readonly notice: EmployeeSearchNotice | undefined;
+  readonly panel: EmployeeTargetPanel | undefined;
+}
+
+const noTargetCleanup = () => {
+  // Nothing is pending when no fresh target read is active.
+};
+
+const targetRequestKeyOf = (
+  scope: EmployeeTargetScope | undefined,
+  employeeId: EmployeeId | undefined,
+): string | undefined => {
+  if (scope === undefined || employeeId === undefined) {
+    return undefined;
+  }
+  return `${employeeTargetScopeKey(scope)}\u0000${employeeId}`;
+};
+
+const targetPanelOf = (
+  applied: EmployeeTargetApplied | null,
+  scopeKey: string | undefined,
+): EmployeeTargetPanel | undefined => {
+  if (applied === null || applied.state.status !== 'ready' || scopeKey === undefined) {
+    return undefined;
+  }
+  if (!applied.key.startsWith(`${scopeKey}\u0000`)) {
+    return undefined;
+  }
+  return {
+    employeeId: applied.state.employeeId,
+    record: applied.state.record,
+    requestKey: applied.key,
+    scopeKey,
+  };
+};
+
+const targetNoticeOf = (
+  scope: EmployeeTargetScope | undefined,
+  target: ReturnType<typeof employeeSearchTargetFromSearchStr>,
+  currentState: EmployeeTargetState | undefined,
+): EmployeeSearchNotice | undefined => {
+  if (scope !== undefined && target.kind === 'invalid') {
+    return employeeSearchNotice({ status: 'invalid' });
+  }
+  return currentState === undefined ? undefined : employeeTargetNotice(currentState);
+};
+
+/**
+ * Owns the fresh target lookup for the copied URL: each scope/target change cancels the previous lookup, and only the
+ * current successful authorized read may open a panel. The panel keeps that response's revision/capabilities and never
+ * reads the cached list. A retry starts a new read without changing the target identity.
+ */
+const useEmployeeTargetDestination = ({
+  formOpened,
+  scope,
+  searchStr,
+}: {
+  readonly formOpened: boolean;
+  readonly scope: EmployeeTargetScope | undefined;
+  readonly searchStr: string;
+}): EmployeeTargetDestination => {
+  const [applied, setApplied] = useState<EmployeeTargetApplied | null>(null);
+  const [dismissedKey, setDismissedKey] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+  const controllerRef = useRef<EmployeeTargetController<EmployeeTargetReadFailure> | null>(null);
+  useEffect(() => {
+    if (controllerRef.current !== null) {
+      return;
+    }
+    controllerRef.current = new EmployeeTargetController<EmployeeTargetReadFailure>(
+      (request, next) => setApplied({ key: employeeTargetRequestKey(request), state: next }),
+      (failure) =>
+        Match.value(failure).pipe(
+          Match.tag('RecordsForbiddenProblem', () => 'forbidden' as const),
+          Match.orElse(() => 'unavailable' as const),
+        ),
+      readEmployeeTargetRecord,
+      interruptTargetRead,
+    );
+  }, []);
+  const target = employeeSearchTargetFromSearchStr(searchStr);
+  const employeeId = target.kind === 'id' ? target.id : undefined;
+  const scopeKey = scope === undefined ? undefined : employeeTargetScopeKey(scope);
+  const requestKey = targetRequestKeyOf(scope, employeeId);
+  const appliedPanel = targetPanelOf(applied, scopeKey);
+  const panel = formOpened ? undefined : appliedPanel;
+  const enabled = !formOpened && appliedPanel === undefined && requestKey !== undefined && dismissedKey !== requestKey;
+  const legalEntityId = scope?.legalEntityId;
+  const principalId = scope?.principalId;
+  const tenantId = scope?.tenantId;
+  useEffect(() => {
+    const controller = controllerRef.current;
+    if (controller === null) {
+      return noTargetCleanup;
+    }
+    if (
+      !enabled ||
+      employeeId === undefined ||
+      legalEntityId === undefined ||
+      principalId === undefined ||
+      tenantId === undefined
+    ) {
+      controller.cancel();
+      return noTargetCleanup;
+    }
+    controller.update({
+      enabled: true,
+      request: { attempt: retry, employeeId, scope: { legalEntityId, principalId, tenantId } },
+    });
+    return () => controller.cancel();
+  }, [employeeId, enabled, legalEntityId, principalId, retry, tenantId]);
+  const currentState = requestKey !== undefined && applied?.key === requestKey ? applied.state : undefined;
+  const notice = targetNoticeOf(scope, target, currentState);
+  const handleClose = () => {
+    if (appliedPanel !== undefined) {
+      setDismissedKey(appliedPanel.requestKey);
+    }
+    setApplied(null);
+  };
+  const handleRetry = () => {
+    setDismissedKey(null);
+    setApplied(null);
+    setRetry((current) => current + 1);
+  };
+  return { handleClose, handleRetry, notice, panel };
+};
+
+/** The honest notice of a copied target this reader cannot currently open; no record content is revealed. */
+const EmployeeSearchNoticeBanner = ({
+  notice,
+  onRetry,
+}: {
+  readonly notice: EmployeeSearchNotice;
+  readonly onRetry: () => void;
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <div className="flex flex-wrap items-center gap-150">
+      <StatusText showIcon status={notice.tone}>
+        {t(notice.labelKey)}
+      </StatusText>
+      {notice.retry && (
+        <Button onClick={onRetry} size="sm" theme="outlined" variant="secondary">
+          {t(`${key}.errors.retry`)}
+        </Button>
+      )}
+    </div>
+  );
+};
+
+/** Shows the copied-target notice only while no draft dialog owns the screen. */
+const EmployeeSearchNoticeSlot = ({
+  activeDialogOpened,
+  notice,
+  onRetry,
+}: {
+  readonly activeDialogOpened: boolean;
+  readonly notice: EmployeeSearchNotice | undefined;
+  readonly onRetry: () => void;
+}) =>
+  notice === undefined || activeDialogOpened ? null : <EmployeeSearchNoticeBanner notice={notice} onRetry={onRetry} />;
+
+/** The copied-target panel uses only the fresh response's record, revision and write capability. */
+const EmployeeSearchDialog = ({
+  activeDialogOpened,
+  commitEdit,
+  onDismiss,
+  panel,
+}: {
+  readonly activeDialogOpened: boolean;
+  readonly commitEdit: EditCommitCommand;
+  readonly onDismiss: () => void;
+  readonly panel: EmployeeTargetPanel | undefined;
+}) => {
+  if (activeDialogOpened || panel === undefined) {
+    return null;
+  }
+  const { record } = panel;
+  return (
+    <EmployeeFormDialog
+      availablePrincipals={record.availablePrincipals}
+      commitEdit={commitEdit}
+      employee={record.employee}
+      onClose={onDismiss}
+      readOnly={employeeSearchPanelMode(record.canWrite) === 'read-only'}
+      revision={record.revision}
+    />
+  );
+};
+
+/** The row-click edit panel and the fresh copied-target panel never coexist; the page owns both close handlers. */
+const EmployeeRecordPanels = ({
+  commitEdit,
+  data,
+  form,
+  items,
+  onCloseForm,
+  onDismissTarget,
+  panel,
+}: {
+  readonly commitEdit: EditCommitCommand;
+  readonly data: RecordsResponse | undefined;
+  readonly form: { readonly employee: Employee | null } | null;
+  readonly items: readonly Employee[];
+  readonly onCloseForm: () => void;
+  readonly onDismissTarget: () => void;
+  readonly panel: EmployeeTargetPanel | undefined;
+}) => (
+  <>
+    {form !== null && (
+      <EmployeeFormDialog
+        availablePrincipals={data?.availablePrincipals ?? []}
+        commitEdit={commitEdit}
+        employee={currentEmployee(items, form.employee)}
+        onClose={onCloseForm}
+        revision={data?.revision ?? 0}
+      />
+    )}
+    <EmployeeSearchDialog
+      activeDialogOpened={form !== null}
+      commitEdit={commitEdit}
+      onDismiss={onDismissTarget}
+      panel={panel}
+    />
+  </>
+);
+
+/** The bulk/tag overlays stay one small surface; the page body keeps the table and the single-record panels. */
+const EmployeeBulkOverlays = ({
+  bulk,
+  commit,
+  ids,
+  onBulkClose,
+  onBulkSaved,
+  onTagDone,
+  onTagOpenChange,
+  tagDialogOpen,
+  tagSubjectIds,
+}: {
+  readonly bulk: BulkDialogKind | null;
+  readonly commit: CommitCommand;
+  readonly ids: readonly EmployeeId[];
+  readonly onBulkClose: () => void;
+  readonly onBulkSaved: () => void;
+  readonly onTagDone: () => void;
+  readonly onTagOpenChange: (open: boolean) => void;
+  readonly tagDialogOpen: boolean;
+  readonly tagSubjectIds: readonly SubjectId[];
+}) => (
+  <>
+    <BulkTagDialog
+      kind="employee"
+      onDone={onTagDone}
+      onOpenChange={onTagOpenChange}
+      open={tagDialogOpen}
+      subjectIds={tagSubjectIds}
+    />
+    {bulk === 'department' && (
+      <BulkDepartmentDialog commit={commit} ids={ids} onClose={onBulkClose} onSaved={onBulkSaved} />
+    )}
+    {bulk === 'role' && <BulkRoleDialog commit={commit} ids={ids} onClose={onBulkClose} onSaved={onBulkSaved} />}
+  </>
+);
+
+const EmployeesEmptyState = ({
+  canWrite,
+  filtered,
+  onClear,
+  onCreate,
+  onRetry,
+  status,
+  tagFilterFailed,
+}: {
+  readonly canWrite: boolean;
+  readonly filtered: boolean;
+  readonly onClear: () => void;
+  readonly onCreate: () => void;
+  readonly onRetry: () => void;
+  readonly status: LoadState['status'];
+  readonly tagFilterFailed: boolean;
+}) => {
+  const { t } = useModernI18n();
+  if (status === 'error') {
+    return (
+      <EmptyState
+        action={
+          <Button onClick={onRetry} size="sm" theme="outlined" variant="secondary">
+            {t(`${key}.errors.retry`)}
+          </Button>
+        }
+        description={t(`${key}.errors.loadDescription`)}
+        title={t(`${key}.errors.load`)}
+      />
+    );
+  }
+  if (status === 'forbidden') {
+    return <EmptyState title={t(`${key}.empty.forbidden`)} />;
+  }
+  if (tagFilterFailed) {
+    return <EmptyState description={t(`${key}.errors.loadDescription`)} title={t(`${key}.errors.load`)} />;
+  }
+  if (filtered) {
+    return (
+      <EmptyState
+        action={
+          <Button onClick={onClear} size="sm" theme="outlined" variant="secondary">
+            {t(`${key}.filters.clear`)}
+          </Button>
+        }
+        title={t(`${key}.empty.noResults`)}
+      />
+    );
+  }
+  return (
+    <EmptyState
+      action={
+        canWrite ? (
+          <Button onClick={onCreate} size="sm" theme="outlined" variant="secondary">
+            {t(`${key}.create`)}
+          </Button>
+        ) : undefined
+      }
+      description={t(`${key}.empty.firstDescription`)}
+      title={t(`${key}.empty.first`)}
+    />
+  );
+};
+
+const EmployeesPageContent = ({
+  legalEntityId,
+  scope,
+  searchStr,
+}: {
+  readonly legalEntityId: string;
+  readonly scope: EmployeeTargetScope | undefined;
+  readonly searchStr: string;
+}) => {
+  const { t } = useModernI18n();
+  const toaster = useToast();
+  const state = loadStateOf(usePageData(employeesData, legalEntityId));
+  const tagsSnapshot = usePageData(employeeTagsData, legalEntityId);
+  const [filters, setFilters] = useState<EmployeeFilters>(noFilters);
+  const [selection, setSelection] = useState<Selection>({});
+  const [form, setForm] = useState<{ readonly employee: Employee | null } | null>(null);
+  const [bulk, setBulk] = useState<BulkDialogKind | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [tagFilter, setTagFilter] = useState<TagId | null>(null);
+  const [tagDialogOpen, setTagDialogOpen] = useState(false);
+
+  /** Re-reads the list while the current rows stay on screen. */
+  const reload = () => {
+    void browserRuntime.runPromise(employeesData.refresh(legalEntityId));
+  };
+
+  const showSaved = (shown: ShownEdit) => employeesData.update(legalEntityId, (data) => withSavedEdit(data, shown));
+
+  /** Sends one command on the revision the page last read. A conflict or a success reloads the list. */
+  const failed: typeof outcomeOfFailure = (error) => {
+    const pending = pendingProposalMessage(error);
+    if (pending !== undefined) {
+      toaster.create({ title: pending, type: 'info' });
+    }
+    return outcomeOfFailure(error);
+  };
+  const commitEdit = editCommitOf(reload, showSaved);
+
+  const commit: CommitCommand = (build, successKey, shown) => {
+    if (state.status !== 'ready') {
+      return Effect.succeed<CommitOutcome>('failed');
+    }
+    const { revision } = state.data;
+    return build.pipe(
+      Effect.flatMap((command) => execute(command, revision)),
+      Effect.match({
+        onFailure: failed,
+        onSuccess: (): CommitOutcome => 'saved',
+      }),
+      Effect.tap((outcome) =>
+        Effect.sync(() => {
+          if (outcome === 'saved') {
+            if (shown !== undefined) {
+              showSaved(shown);
+            }
+            toaster.create({ title: t(successKey), type: 'success' });
+          }
+          if (outcome === 'saved' || outcome === 'conflict') {
+            reload();
+          }
+        }),
+      ),
+    );
+  };
+
+  const data = state.status === 'ready' ? state.data : undefined;
+  const items = data?.items ?? [];
+  const canWrite = data?.canWrite === true;
+  // Prepared together with the employee read, so the Štítky cells settle with the rows. The same read feeds the tag
+  // filter, so the page issues no separate catalog read.
+  const { catalog: tags, tagsBySubject } = tagsSnapshot.state === 'ready' ? tagsSnapshot.value : noTags;
+  const tagStatus = tagsStatusOf(tagsSnapshot);
+  const refetchTags = () => {
+    void browserRuntime.runPromise(employeeTagsData.refresh(legalEntityId));
+  };
+  const tagCatalog: TagCatalog = { refetch: refetchTags, status: tagStatus, tags };
+  // The tag filter works on the tags already loaded for the list, so picking a tag never waits for another read.
+  const tagFilterLoading = tagFilter !== null && tagStatus === 'loading';
+  const tagFilterFailed = tagFilter !== null && tagStatus === 'error';
+  const visible = rowsWithTag(filterEmployees(sortEmployees(items), filters), tagFilter, tagsBySubject);
+  const selectedIds = items.flatMap((employee) => (selection[employee.id] === true ? [employee.id] : []));
+  const targetDestination = useEmployeeTargetDestination({
+    formOpened: form !== null,
+    scope,
+    searchStr,
+  });
+  const visibleTargetPanel = targetDestination.panel;
+
+  /** Any filter change clears the selection so a bulk action never reaches rows the user cannot see. */
+  const updateFilters = (patch: Partial<EmployeeFilters>) => {
+    setFilters((current) => ({ ...current, ...patch }));
+    setSelection({});
+  };
+
+  const changeTagFilter = (tagId: TagId | null) => {
+    setTagFilter(tagId);
+    setSelection({});
+  };
+
+  const clearFilters = () => {
+    updateFilters(noFilters);
+    setTagFilter(null);
+  };
+
+  const bulkSetActive = (active: boolean) => {
+    setBulkBusy(true);
+    void browserRuntime.runPromise(
+      commit(Effect.succeed(bulkCommand(selectedIds, { active })), `${key}.toast.bulkSaved`, {
+        ids: selectedIds,
+        patch: { active },
+      }).pipe(
+        Effect.tap((outcome) =>
+          Effect.sync(() => {
+            setBulkBusy(false);
+            if (outcome === 'saved') {
+              setSelection({});
+            } else {
+              toaster.create({ title: t(`${key}.toast.error`), type: 'error' });
+            }
+          }),
+        ),
+      ),
+    );
+  };
+
+  const afterBulkSave = () => {
+    setBulk(null);
+    setSelection({});
+  };
+
+  const columns = employeeColumns(t, tagStatus !== 'forbidden');
+
+  const translations: DataTableTranslations = {
+    ...dataTableRowLabels,
+    actionsLabel: t(`${key}.table.actions`),
+    filtersLabel: t(`${key}.table.filters`),
+    loadingLabel: t(`${key}.table.loading`),
+    pageSizeLabel: t(`${key}.table.pageSize`),
+    rangeLabel: ({ end, start, total }) => t(`${key}.table.range`, { end, start, total }),
+    selectAllLabel: t(`${key}.table.selectAll`),
+    selectionLabel: t(`${key}.table.selectRow`),
+  };
+
+  const openCreate = () => setForm({ employee: null });
+
+  const renderEmpty = () => (
+    <EmployeesEmptyState
+      canWrite={canWrite}
+      filtered={hasActiveFilters(filters) || tagFilter !== null}
+      onClear={clearFilters}
+      onCreate={openCreate}
+      onRetry={reload}
+      status={state.status}
+      tagFilterFailed={tagFilterFailed}
+    />
+  );
+
+  return (
+    <>
+      <UltramodernRouteHead />
+      <Toaster />
+      <div className="flex min-w-0 flex-col gap-250">
+        <PageHeader
+          actions={
+            canWrite ? (
+              <Button icon="icon-[mdi--plus]" onClick={openCreate} size="sm" variant="primary">
+                {t(`${key}.create`)}
+              </Button>
+            ) : undefined
+          }
+          description={t(`${key}.description`)}
+          title={t(`${key}.title`)}
+        />
+
+        <EmployeeSearchNoticeSlot
+          activeDialogOpened={form !== null || visibleTargetPanel !== undefined}
+          notice={targetDestination.notice}
+          onRetry={targetDestination.handleRetry}
+        />
+
+        <EmployeeStats data={data} loading={state.status === 'loading'} />
+
+        <EmployeeFilterBar
+          departments={departmentsOf(items)}
+          filters={filters}
+          onChange={updateFilters}
+          onTagChange={changeTagFilter}
+          tagCatalog={tagCatalog}
+          tagValue={tagFilter}
+        />
+
+        {canWrite && (
+          <EmployeeBulkBar
+            busy={bulkBusy}
+            count={selectedIds.length}
+            onClear={() => setSelection({})}
+            onDepartment={() => setBulk('department')}
+            onRole={() => setBulk('role')}
+            onSetActive={bulkSetActive}
+            onTags={tagStatus === 'forbidden' ? undefined : () => setTagDialogOpen(true)}
+          />
+        )}
+
+        <EmployeeTagStatusContext value={tagStatus}>
+          <EmployeeTagsContext value={tagsBySubject}>
+            <DataTable
+              columnPinning={pinning}
+              columns={columns}
+              data={visible}
+              enableColumnPinning
+              enablePagination
+              enableRowSelection={canWrite}
+              enableSorting
+              getRowId={(row) => row.id}
+              getRowLabel={(row) => row.original.fullName}
+              loading={state.status === 'loading' || tagFilterLoading}
+              loadingRowCount={10}
+              maxHeight="calc(100dvh - 15rem)"
+              paginationProps={{ translations: paginationTranslations }}
+              {...(canWrite
+                ? { onRowClick: (row: { readonly original: Employee }) => setForm({ employee: row.original }) }
+                : {})}
+              onRowSelectionChange={setSelection}
+              pageSizeOptions={pageSizeOptions}
+              renderEmpty={renderEmpty}
+              rowSelection={selection}
+              size="sm"
+              stickyHeader
+              tableLayout="fixed"
+              translations={translations}
+            />
+          </EmployeeTagsContext>
+        </EmployeeTagStatusContext>
+
+        <AiActivityCard legalEntityId={legalEntityId} />
+
+        <PermissionsCard />
+      </div>
+
+      <EmployeeRecordPanels
+        commitEdit={commitEdit}
+        data={data}
+        form={form}
+        items={items}
+        onCloseForm={() => setForm(null)}
+        onDismissTarget={targetDestination.handleClose}
+        panel={visibleTargetPanel}
+      />
+      <EmployeeBulkOverlays
+        bulk={bulk}
+        commit={commit}
+        ids={selectedIds}
+        onBulkClose={() => setBulk(null)}
+        onBulkSaved={afterBulkSave}
+        onTagDone={() => {
+          refetchTags();
+          // Like the bulk role and department changes, a finished bulk tag change clears the selection.
+          setSelection({});
+        }}
+        onTagOpenChange={setTagDialogOpen}
+        tagDialogOpen={tagDialogOpen}
+        tagSubjectIds={subjectIdsOf(selectedIds)}
+      />
+    </>
+  );
+};
+
+/** Rendered by the Shell with the props its `preloadPage` received; the standalone app passes none. */
+const EmployeesPage = (props: Partial<ModulePageProps>) => {
+  const location = useRouterState({ select: (routerState) => routerState.location.searchStr });
+  const actorScopeKey = pageDataScopeKey(props.context, 'demo.workforce');
+  const scope =
+    props.context === undefined || actorScopeKey === undefined
+      ? undefined
+      : {
+          legalEntityId: props.context.legalEntityId,
+          principalId: props.context.principalId,
+          tenantId: props.context.tenantId,
+        };
+  const searchStr = location === '' ? (props.search ?? '') : location;
+  return (
+    <FederatedI18nBoundary
+      defaultNamespace="workforce"
+      fallbackLanguage="en"
+      resources={workforceI18nResources}
+      supportedLanguages={['en', 'cs']}
+    >
+      <EmployeesPageContent
+        key={actorScopeKey ?? 'standalone:demo.workforce'}
+        legalEntityId={legalEntityOf(props)}
+        scope={scope}
+        searchStr={searchStr}
+      />
+    </FederatedI18nBoundary>
+  );
+};
+
+/** `vertical.manifest.ts` imports this page under its registered name. */
+export { EmployeesPage as RecordsPage };
+
+export default EmployeesPage;

@@ -78,6 +78,7 @@ const prepare = (
   }
   return {
     granteeId: input.principal.principalId,
+    granteeRelation: 'grantee',
     resourceId,
     scopeRelationships: [
       {

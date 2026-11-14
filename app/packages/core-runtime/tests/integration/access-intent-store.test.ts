@@ -26,6 +26,7 @@ import {
   replacedDatabase,
 } from '../support/access-scenarios/database.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 /** Model instants are Effect `DateTime`s: the suite never builds a mutable `Date` of its own. */
 const INSTANT = DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-03T09:35:47Z'));
@@ -186,12 +187,21 @@ const makeAccessIntentSchema = Effect.gen(function* accessIntentSchema() {
   const otherDatabase = yield* makeTestDatabaseFromClient(otherRuntime, coreRelations);
   return {
     admin,
-    membershipStore: makeAccessMembershipDrizzleStore({ executor: runtimeDatabase }),
-    otherMembershipStore: makeAccessMembershipDrizzleStore({ executor: otherDatabase }),
+    membershipStore: makeAccessMembershipDrizzleStore({
+      enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      executor: runtimeDatabase,
+    }),
+    otherMembershipStore: makeAccessMembershipDrizzleStore({
+      enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      executor: otherDatabase,
+    }),
     scopeA: yield* scopeOf(tenantA, jana, legalEntityA),
     scopeB: yield* scopeOf(tenantB, pavel),
     scopeOwnedByJana: yield* scopeOf(tenantA, jana),
-    teamStore: makeAccessTeamDrizzleStore({ executor: runtimeDatabase }),
+    teamStore: makeAccessTeamDrizzleStore({
+      enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      executor: runtimeDatabase,
+    }),
   } satisfies AccessIntentSchema;
 });
 

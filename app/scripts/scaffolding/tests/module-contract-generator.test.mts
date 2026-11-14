@@ -184,8 +184,6 @@ const createFixture = (apiOnly = false): Effect.Effect<string, unknown> =>
         private: true,
         scripts: {
           build: 'modern build --deploy-target node && modern deploy --skip-build --deploy-target node',
-          'cloudflare:build':
-            'modern build --deploy-target cloudflare && modern deploy --skip-build --deploy-target cloudflare',
           existing: 'preserve-me',
         },
         type: 'module',
@@ -222,7 +220,6 @@ const createFixture = (apiOnly = false): Effect.Effect<string, unknown> =>
         private: true,
         scripts: {
           build: 'modern build --deploy-target node',
-          'cloudflare:build': 'modern build --deploy-target cloudflare',
         },
         type: 'module',
         version: '0.1.0',
@@ -1004,9 +1001,7 @@ it.live(
         expect(packageJson.exports).toEqual({ '.': './src/index.ts' });
         expect(packageJson.scripts['existing']).toBe('preserve-me');
         expect(packageJson.scripts['build'] ?? '').toMatch(/--vertical property-registry --target dist/u);
-        expect(packageJson.scripts['cloudflare:build'] ?? '').toMatch(
-          /--vertical property-registry --target cloudflare-dist/u,
-        );
+        expect(Object.keys(packageJson.scripts).toSorted()).toEqual(['build', 'existing']);
         expect(packageJson.modernjs.ontosModule).toEqual({
           contractPath: '/.well-known/ontos-module-manifest.json',
           manifest: './vertical.manifest.ts',
@@ -1203,19 +1198,19 @@ it.live(
 );
 
 it.live(
-  'maps Cloudflare emission to the Modern output root and validates authored contracts',
+  'maps Node emission to the Modern output root and validates authored contracts',
   Effect.fn(function* scenario15() {
     yield* withFixture(
       Effect.fn(function* scenario16(root) {
         yield* scaffold(root);
         yield* scaffold(root, DOCUMENTS_APP_ID, DOCUMENTS_MODULE_ID);
         const emitted = yield* generateOntosModuleContract({
-          target: 'cloudflare-dist',
+          target: 'dist',
           vertical: APP_ID,
           workspaceRoot: root,
         }).pipe(Effect.provide(NodeServices.layer));
         expect(emitted.path).toMatch(
-          /verticals\/property-registry\/dist-cloudflare\/public\/\.well-known\/ontos-module-manifest\.json$/u,
+          /verticals\/property-registry\/dist\/public\/\.well-known\/ontos-module-manifest\.json$/u,
         );
         yield* checkOntosModuleContracts(root).pipe(Effect.provide(NodeServices.layer));
       }),
@@ -1470,18 +1465,15 @@ it.live(
         expect((yield* scaffold(root)).kind).toBe('generated');
         yield* scaffold(root, DOCUMENTS_APP_ID, DOCUMENTS_MODULE_ID);
         for (const vertical of [APP_ID, DOCUMENTS_APP_ID]) {
-          for (const target of ['dist', 'cloudflare-dist'] as const) {
-            const generated = yield* generateOntosModuleContract({ target, vertical, workspaceRoot: root }).pipe(
-              Effect.provide(NodeServices.layer),
-            );
-            const document = yield* decodeModuleContract(
-              yield* Effect.promise(() => readFile(generated.path, 'utf-8')),
-            );
-            expect(document.manifest.publicSurface.components).toEqual([]);
-          }
+          const generated = yield* generateOntosModuleContract({ target: 'dist', vertical, workspaceRoot: root }).pipe(
+            Effect.provide(NodeServices.layer),
+          );
+          const document = yield* decodeModuleContract(yield* Effect.promise(() => readFile(generated.path, 'utf-8')));
+          expect(document.manifest.publicSurface.components).toEqual([]);
         }
         yield* checkOntosModuleContracts(root).pipe(Effect.provide(NodeServices.layer));
         const files = yield* snapshotTree(root, ['node_modules']);
+        expect(Object.keys(files).filter((file) => /cloudflare|wrangler/iu.test(file))).toEqual([]);
         expect(
           Object.keys(files).filter(
             (file) =>

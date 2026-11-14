@@ -237,6 +237,7 @@ const submitWith = (crypto: Crypto.Crypto, store: ProviderEvidenceStoreContract)
       .acquire(
         {
           audience: A8_AUDIENCE,
+          callingAppId: 'payment',
           legalEntityScope: 'subject',
           requestCorrelation,
           subject: pinnedExecutor === undefined ? workload : { ...workload, expectedPrincipalId: pinnedExecutor },

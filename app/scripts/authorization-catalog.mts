@@ -18,6 +18,7 @@ import type {
   AccessDeclaration,
   AccessDeclarationOwner,
   AccessFieldGroup,
+  AccessWorkload,
 } from '../packages/core-runtime/src/authorization/access-declaration.ts';
 import { ModuleEntrypointSchema } from '../packages/core-runtime/src/modules/module-entrypoint.ts';
 import {
@@ -1115,16 +1116,19 @@ export const decodeCarrierActor = (
   owner: AccessDeclarationOwner,
   declaration: AccessDeclaration | undefined,
   callerAppIds: ReadonlySet<string>,
+  workload?: AccessWorkload,
 ): Result.Result<AccessActor, string> => {
   const decoded = decodeAccessActor(literal, owner);
   if (Result.isFailure(decoded)) {
     return Result.fail(decoded.failure.reason);
   }
-  const issue = accessCarrierIssue(
-    declaration === undefined
-      ? { accessActor: decoded.success, entrypoint: owner }
-      : { accessActor: decoded.success, accessDeclaration: declaration, entrypoint: owner },
-  );
+  const base = {
+    accessActor: decoded.success,
+    entrypoint: owner,
+  };
+  const declared = declaration === undefined ? base : { ...base, accessDeclaration: declaration };
+  const complete = workload === undefined ? declared : { ...declared, accessWorkload: workload };
+  const issue = accessCarrierIssue(complete);
   if (issue !== undefined) {
     return Result.fail(issue);
   }
@@ -1308,6 +1312,21 @@ const collectWorkload = (
   }
 };
 
+const collectedActor = (
+  literal: LiteralObject,
+  workloadLiteral: LiteralObject | null,
+  owner: AccessDeclarationOwner,
+  declaration: AccessDeclaration | null,
+  callerAppIds: ReadonlySet<string>,
+): Result.Result<AccessActor, string> =>
+  Result.gen(function* collectedActorResult() {
+    let workload: AccessWorkload | undefined;
+    if (workloadLiteral !== null) {
+      workload = yield* decodeAccessWorkload(workloadLiteral, owner).pipe(Result.mapError((failure) => failure.reason));
+    }
+    return yield* decodeCarrierActor(literal, owner, declaration ?? undefined, callerAppIds, workload);
+  });
+
 /**
  * One entrypoint may be carried twice (a page and its navigation entry): declaring either counts,
  * whichever copy the scan meets first. Missing entries are therefore settled after the whole scan.
@@ -1337,10 +1356,11 @@ const collectCarrier = (
   if (carrier.accessActor !== null) {
     // A module caller settles the entrypoint too, with or without a declaration (D5, D6). The `rights`
     // rule reads the carrier's own declaration, so the actor is checked after it is decoded.
-    const actor = decodeCarrierActor(
+    const actor = collectedActor(
       carrier.accessActor,
+      carrier.accessWorkload,
       entrypoint.success.entrypoint,
-      declared.success ?? undefined,
+      declared.success,
       callerAppIds,
     );
     if (Result.isFailure(actor)) {
@@ -1357,7 +1377,7 @@ const collectCarrier = (
       return;
     }
     if (carrier.accessActor !== null) {
-      // An identity-mode caller carries no catalog entry, so the entrypoint is settled, not missing.
+      // A validated identity/workload actor carries no catalog entry, so it is settled, not missing.
       return;
     }
     const isProtected = PROTECTED_AUTHORIZATIONS.has(carrier.entrypoint.authorization.kind);

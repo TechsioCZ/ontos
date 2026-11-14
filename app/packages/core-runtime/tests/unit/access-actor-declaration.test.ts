@@ -4,6 +4,7 @@ import { expect, it } from 'effect-rstest';
 import {
   accessCarrierIssue,
   decodeAccessActor,
+  decodeAccessWorkload,
   declaredAccessCarrier,
 } from '../../src/authorization/access-declaration.ts';
 import type { AccessActorInput } from '../../src/authorization/access-declaration.ts';
@@ -57,7 +58,7 @@ it('refuses an actor with no caller, a repeated caller, or a malformed app id (D
   }
 });
 
-it('refuses a subject other than rights or identity, and a reason that is empty', () => {
+it('refuses an unknown subject mode and a reason that is empty', () => {
   const badSubject = decodeAccessActor({ ...validActor, subject: 'agent' }, actionOwner);
   const emptyReason = decodeAccessActor({ ...validActor, reason: '' }, actionOwner);
   expect(Result.isFailure(badSubject)).toBe(true);
@@ -149,4 +150,84 @@ it('refuses a subjectWorkloads key that is not a workload key, and an empty or r
     const decoded = decodeAccessActor({ ...validActor, subjectWorkloads }, actionOwner);
     expect(Result.isFailure(decoded)).toBe(true);
   }
+});
+
+it('narrows a workload subject to the callers it names, which must be callers and need subjectWorkloads', () => {
+  const decoded = decodeAccessActor({ ...workloadActor, subjectWorkloadCallers: ['commerce-order'] }, actionOwner);
+  expect(Result.isSuccess(decoded)).toBe(true);
+  if (Result.isSuccess(decoded)) {
+    expect(decoded.success.subjectWorkloadCallers).toEqual(['commerce-order']);
+    expect(Object.isFrozen(decoded.success.subjectWorkloadCallers)).toBe(true);
+  }
+  for (const actor of [
+    { ...workloadActor, subjectWorkloadCallers: ['party-registry'] },
+    { ...workloadActor, subjectWorkloadCallers: [] },
+    { ...validActor, subjectWorkloadCallers: ['commerce-order'] },
+  ]) {
+    expect(Result.isFailure(decodeAccessActor(actor, actionOwner))).toBe(true);
+  }
+});
+
+it('decodes an exclusive workload module actor without a human declaration', () => {
+  const actor = { ...workloadActor, subject: 'workload' } as const;
+  const carriers = declaredAccessCarrier({ accessActor: actor, entrypoint: actionOwner });
+  expect(carriers.accessActor?.subject).toBe('workload');
+  expect(carriers.accessActor?.subjectWorkloads).toEqual(['commerce.storefront-client']);
+  expect(carriers.accessDeclaration).toBeUndefined();
+  expect(carriers.accessWorkload).toBeUndefined();
+  expect(carriers.accessFieldGroups).toBeUndefined();
+  expect(Object.isFrozen(carriers.accessActor)).toBe(true);
+  expect(Object.isFrozen(carriers.accessActor?.subjectWorkloads)).toBe(true);
+  expect(Result.isFailure(decodeAccessActor({ ...validActor, subject: 'workload' }, actionOwner))).toBe(true);
+});
+
+it('keeps a source module workload namespace distinct from the attested topology app and receiving module', () => {
+  const workloadKey = 'example.producer.intake';
+  const source = defineTenantModuleEntrypoint({
+    access: 'write',
+    authorization: { kind: 'protected' },
+    entrypointKey: 'example.producer.intake',
+    moduleKey: 'example.producer',
+    role: 'action',
+  });
+  const direct = { reason: 'The source owns this registered intake workload', workloads: [workloadKey] };
+  expect(Result.isSuccess(decodeAccessWorkload(direct, source))).toBe(true);
+  expect(Result.isFailure(decodeAccessWorkload({ ...direct, workloads: ['producer.intake'] }, source))).toBe(true);
+  const receiver = declaredAccessCarrier({
+    accessActor: {
+      callers: ['producer'],
+      reason: 'The attested source calls for the same registered workload subject',
+      subject: 'workload',
+      subjectWorkloads: [workloadKey],
+    },
+    entrypoint: actionOwner,
+  });
+  expect(receiver.accessActor?.callers).toEqual(['producer']);
+  expect(receiver.accessActor?.subjectWorkloads).toEqual(direct.workloads);
+  expect(receiver.accessDeclaration).toBeUndefined();
+});
+
+it('refuses human capabilities, direct workload admission and field groups beside a workload module actor', () => {
+  const accessActor = { ...workloadActor, subject: 'workload' } as const;
+  for (const extra of [
+    { accessDeclaration: declaration },
+    { accessWorkload: { reason: 'Direct workload must not be admitted', workloads: ['commerce-order.import'] } },
+    {
+      accessFieldGroups: [
+        {
+          fieldClass: 'personal_data',
+          fields: ['name'],
+          key: 'commerce-order.order.write-personal-data',
+          kind: 'field_write',
+          modes: ['run'],
+          placement: { group: 'orders', level: 'manage' },
+          risk: 'sensitive',
+          selectors: [],
+        },
+      ],
+    },
+  ] as const) {
+    expect(accessCarrierIssue({ accessActor, entrypoint: actionOwner, ...extra })).toContain('workload-only');
+  }
+  expect(Result.isFailure(decodeAccessActor(accessActor, pageOwner))).toBe(true);
 });

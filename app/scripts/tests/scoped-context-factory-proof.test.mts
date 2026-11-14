@@ -3401,33 +3401,219 @@ it.effect('fails closed when native snapshot constraints exceed the finite proof
   return resolve(snapshot).pipe(Effect.map((result) => expect(result).toBeUndefined()));
 });
 
+/** Core's guarded pool modules: the proof accepts their exports only as these exact Core declarations. */
+const databaseClientGuard = 'database-client';
+const sessionIdentityGuard = 'session-identity';
+const transactionIoGuard = 'transaction-io-guard';
+const coreDatabaseGuardFiles = [databaseClientGuard, sessionIdentityGuard, transactionIoGuard] as const;
+const foreignGuardSource = 'export const guardPoolAcquisition = (client) => client;';
+const privateAcquisition = 'PgClient.make({ ...configuration, minConnections: 0 })';
+const coreAcquisition = `session.pooling === 'pooled'
+          ? openDatabaseClient(configuration)
+          : ${privateAcquisition}`;
+const guardedReturn = 'return guardPoolAcquisition(client);';
+const sessionRoleCheck =
+  'verifySessionRoleOnFirstUse(Context.get(context, PgClient.PgClient), configuration.expectedRole)';
+const guardImport =
+  "import { guardPoolAcquisition, refuseInsideDatabaseTransaction } from './transaction-io-guard.ts';";
+const replaceOnce = (source: string, from: string, to: string): string => {
+  expect(source.split(from)).toHaveLength(2);
+  return source.replace(from, to);
+};
+const unguardedReturn = 'return client;';
+/** Each edit leaves the security fence's guarded Core pool shape, so each must be refused. */
+const guardedPoolEdits = {
+  'foreign pool guard': (source: string) =>
+    replaceOnce(
+      source,
+      guardImport,
+      "import { refuseInsideDatabaseTransaction } from './transaction-io-guard.ts';import { guardPoolAcquisition } from './foreign-guard.ts';",
+    ),
+  'injected codec options': (source: string) =>
+    replaceOnce(
+      source,
+      privateAcquisition,
+      'PgClient.make({ ...configuration, minConnections: 0, types: foreignRegistry })',
+    ),
+  'look-alike session-role check': (source: string) =>
+    replaceOnce(
+      source,
+      "import { verifySessionRoleOnFirstUse } from './session-identity.ts';",
+      'const verifySessionRoleOnFirstUse = (client: PgClient.PgClient, _role: string) => client;',
+    ),
+  'missing session-role check': (source: string) =>
+    replaceOnce(source, sessionRoleCheck, 'Context.get(context, PgClient.PgClient)'),
+  'missing transaction I/O refusal': (source: string) =>
+    replaceOnce(
+      source,
+      "yield* refuseInsideDatabaseTransaction('pool-acquisition', 'PostgreSQL connection pool');",
+      '',
+    ),
+  'nonzero private minimum': (source: string) =>
+    replaceOnce(source, privateAcquisition, 'PgClient.make({ ...configuration, minConnections: 5 })'),
+  'pool settings rebuilt in the client module': (source: string) =>
+    replaceOnce(
+      source,
+      privateAcquisition,
+      "PgClient.make({ url: configuration.url, startupParameters: { search_path: 'attacker' } })",
+    ),
+  'search_path startup parameter added in the client module': (source: string) =>
+    replaceOnce(
+      source,
+      privateAcquisition,
+      "PgClient.make({ ...configuration, minConnections: 0, startupParameters: { search_path: 'attacker' } })",
+    ),
+  'search_path startup parameters for the shared pool': (source: string) =>
+    replaceOnce(
+      source,
+      'openDatabaseClient(configuration)',
+      "openDatabaseClient({ ...configuration, startupParameters: { search_path: 'attacker' } })",
+    ),
+  'search_path startup parameters replacing the private minimum': (source: string) =>
+    replaceOnce(
+      source,
+      privateAcquisition,
+      "PgClient.make({ ...configuration, startupParameters: { search_path: 'attacker' } })",
+    ),
+  'unguarded openDatabaseClient pool': (source: string) =>
+    replaceOnce(
+      replaceOnce(source, coreAcquisition, 'openDatabaseClient(configuration)'),
+      guardedReturn,
+      unguardedReturn,
+    ),
+  'unguarded PgClient.make pool': (source: string) =>
+    replaceOnce(replaceOnce(source, coreAcquisition, 'PgClient.make(configuration)'), guardedReturn, unguardedReturn),
+  'unguarded pool behind the session-role check': (source: string) =>
+    replaceOnce(source, guardedReturn, unguardedReturn),
+} satisfies Readonly<Record<string, (source: string) => string>>;
+const guardedPoolEdit = (name: string) => Object.entries(guardedPoolEdits).find(([edit]) => edit === name)?.[1];
+const replaceTail = (source: string, from: string, to: string): string => {
+  expect(source.split(from)).toHaveLength(2);
+  return `${source.slice(0, source.indexOf(from))}${to}`;
+};
+const poolGuardDeclaration = 'export const guardPoolAcquisition = ';
+const identityPoolGuard = `${poolGuardDeclaration}(client: PgClient.PgClient): PgClient.PgClient => client;\n`;
+const sharedPoolAcquisition = '    : PgClient.make(configuration);';
+/**
+ * Security fence: guarded Core pool. Each edit changes a Core guard module the proofs trust only as reviewed (a
+ * no-op guard, a skipped role query, injected codecs, a foreign URL, a row-rewriting Proxy, a mutated error
+ * prototype), so each must be refused.
+ */
+const guardModuleEdits = {
+  'foreign URL in openDatabaseClient': [
+    databaseClientGuard,
+    (source: string) =>
+      replaceOnce(
+        source,
+        sharedPoolAcquisition,
+        "    : PgClient.make({ url: Redacted.make('postgres://attacker.example/db'), types: foreignRegistry });",
+      ),
+  ],
+  'identity pool guard': [
+    transactionIoGuard,
+    (source: string) => replaceTail(source, poolGuardDeclaration, identityPoolGuard),
+  ],
+  'injected codecs in openDatabaseClient': [
+    databaseClientGuard,
+    (source: string) =>
+      replaceOnce(source, sharedPoolAcquisition, '    : PgClient.make({ ...configuration, types: foreignRegistry });'),
+  ],
+  'injected codecs in the shared pool lookup': [
+    databaseClientGuard,
+    (source: string) =>
+      replaceOnce(source, '          url: key.url,', '          url: key.url,\n          types: foreignRegistry,'),
+  ],
+  'mutated error prototype through a constructed error': [
+    sessionIdentityGuard,
+    (source: string) =>
+      `${source}\nObject.defineProperty(Object.getPrototypeOf(new DatabaseConnectionError({ reason: 'x' })), Symbol.iterator, { value: counterfeitIterator });\n`,
+  ],
+  'no-op transaction I/O refusal': [
+    transactionIoGuard,
+    (source: string) =>
+      replaceOnce(
+        source,
+        source.slice(
+          source.indexOf('export const refuseInsideDatabaseTransaction = '),
+          source.indexOf('\n\n', source.indexOf('export const refuseInsideDatabaseTransaction = ')),
+        ),
+        'export const refuseInsideDatabaseTransaction = (_io: TransactionIo, _target: string): Effect.Effect<void> => Effect.void;',
+      ),
+  ],
+  'row-rewriting pool guard': [
+    transactionIoGuard,
+    (source: string) =>
+      replaceTail(
+        source,
+        poolGuardDeclaration,
+        `${poolGuardDeclaration}(client: PgClient.PgClient): PgClient.PgClient => new Proxy(client, { get: (target, key) => (key === 'unsafe' ? (_sql: string) => target.unsafe('select forged_rows()') : Reflect.get(target, key)) });\n`,
+      ),
+  ],
+  'session-role check without its role query': [
+    sessionIdentityGuard,
+    (source: string) =>
+      replaceTail(
+        source,
+        'export const verifySessionRoleOnFirstUse = ',
+        'export const verifySessionRoleOnFirstUse = (client: PgClient.PgClient, _expectedRole: string): PgClient.PgClient => client;\n',
+      ),
+  ],
+} satisfies Readonly<Record<string, readonly [(typeof coreDatabaseGuardFiles)[number], (source: string) => string]>>;
+/**
+ * Security fence: guarded Core pool. Core's pool configuration is trusted only as reviewed source, so any edit to it,
+ * a `search_path` startup parameter as much as a reworded comment, must be refused until its digest is reviewed.
+ */
+const poolConfigurationEdits = {
+  'pool configuration with a reworded comment': (source: string) =>
+    replaceOnce(
+      source,
+      '/** The native pool opens at most ten connections',
+      '/** The native pool opens up to ten connections',
+    ),
+  'pool configuration with a search_path startup parameter': (source: string) =>
+    replaceOnce(
+      source,
+      'const startupParameters: Record<string, string> = {};',
+      "const startupParameters: Record<string, string> = { search_path: 'attacker' };",
+    ),
+} satisfies Readonly<Record<string, (source: string) => string>>;
+/** The named pool configuration edit, or the unchanged source. */
+const poolConfigurationEdit = (name: string): ((source: string) => string) =>
+  Object.entries(poolConfigurationEdits).find(([edit]) => edit === name)?.[1] ?? ((source) => source);
+const guardModuleEdit = (name: string, guard: string) =>
+  Object.entries(guardModuleEdits).find(([edit, [file]]) => edit === name && file === guard)?.[1][1];
+/** Core's database modules copied outside Core's own directory are not Core, whatever their path suffix. */
+const relocatedCoreDatabase = 'Core database modules copied under an owner path';
+const relocatedRowRewritingCoreDatabase = 'Core database modules copied under an owner path with a row-rewriting guard';
+
 it.effect.each([
   'actual constructor',
-  'injected codec options',
   'counterfeit error native',
   'overridden error iterator',
   'mutated error prototype',
   'spread error payload',
   'ordinary successful error value',
   'overridden error evaluator payload',
+  ...Object.keys(guardedPoolEdits),
+  ...Object.keys(guardModuleEdits),
+  ...Object.keys(poolConfigurationEdits),
+  relocatedCoreDatabase,
+  relocatedRowRewritingCoreDatabase,
 ])('proves the real Core database constructor source: %s', (name) =>
   Effect.gen(function* actualDatabaseConstructor() {
     const path = yield* Path.Path;
     const app = nodePath.resolve(import.meta.dirname, '../..');
-    const clientFile = nodePath.join(app, 'packages/core-runtime/src/db/client.ts');
-    const poolFile = nodePath.join(app, 'packages/core-runtime/src/db/pool-configuration.ts');
-    const original = yield* Effect.tryPromise(() => readFile(clientFile, 'utf-8'));
-    const clientSource =
-      name === 'injected codec options'
-        ? original.replace(
-            '...poolConfiguration, maxConnections:',
-            '...poolConfiguration, types: foreignRegistry, maxConnections:',
-          )
-        : original;
-    let poolSource = yield* Effect.tryPromise(() => readFile(poolFile, 'utf-8'));
-    let errorSource = yield* Effect.tryPromise(() =>
-      readFile(nodePath.join(app, 'packages/core-runtime/src/db/connection-error.ts'), 'utf-8'),
-    );
+    const coreDb = nodePath.join(app, 'packages/core-runtime/src/db');
+    const db = name.startsWith(relocatedCoreDatabase)
+      ? nodePath.join(app, 'verticals/evil/packages/core-runtime/src/db')
+      : coreDb;
+    const clientFile = nodePath.join(db, 'client.ts');
+    const poolFile = nodePath.join(db, 'pool-configuration.ts');
+    const original = yield* Effect.tryPromise(() => readFile(nodePath.join(coreDb, 'client.ts'), 'utf-8'));
+    const clientSource = guardedPoolEdit(name)?.(original) ?? original;
+    let poolSource = yield* Effect.tryPromise(() => readFile(nodePath.join(coreDb, 'pool-configuration.ts'), 'utf-8'));
+    poolSource = poolConfigurationEdit(name)(poolSource);
+    let errorSource = yield* Effect.tryPromise(() => readFile(nodePath.join(coreDb, 'connection-error.ts'), 'utf-8'));
     if (name === 'counterfeit error native') {
       errorSource = errorSource.replace("from 'effect'", "from 'counterfeit'");
     }
@@ -3440,8 +3626,8 @@ it.effect.each([
     }
     if (name === 'spread error payload') {
       poolSource = poolSource.replace(
-        'new DatabaseConnectionError({',
-        'new DatabaseConnectionError({...foreignOptions,',
+        'return yield* new DatabaseConnectionError({',
+        'return yield* new DatabaseConnectionError({...foreignOptions,',
       );
     }
     if (name === 'ordinary successful error value') {
@@ -3452,15 +3638,26 @@ it.effect.each([
     }
     if (name === 'overridden error evaluator payload') {
       poolSource = poolSource.replace(
-        'new DatabaseConnectionError({',
-        'new DatabaseConnectionError({"~effect/Effect/evaluate":()=>Effect.succeed({url:foreignUrl,types:foreignRegistry}),',
+        'return yield* new DatabaseConnectionError({',
+        'return yield* new DatabaseConnectionError({"~effect/Effect/evaluate":()=>Effect.succeed({url:foreignUrl,types:foreignRegistry}),',
       );
     }
     const snapshot = new Map([
       [clientFile, clientSource],
       [poolFile, poolSource],
-      [nodePath.join(app, 'packages/core-runtime/src/db/connection-error.ts'), errorSource],
+      [nodePath.join(db, 'connection-error.ts'), errorSource],
+      [nodePath.join(db, 'foreign-guard.ts'), foreignGuardSource],
     ]);
+    for (const guard of coreDatabaseGuardFiles) {
+      const source = yield* Effect.tryPromise(() => readFile(nodePath.join(coreDb, `${guard}.ts`), 'utf-8'));
+      const edited = guardModuleEdit(name, guard)?.(source) ?? source;
+      snapshot.set(
+        nodePath.join(db, `${guard}.ts`),
+        name === relocatedRowRewritingCoreDatabase && guard === transactionIoGuard
+          ? guardModuleEdits['row-rewriting pool guard'][1](edited)
+          : edited,
+      );
+    }
     const resolver = makeScopedContextFactoryResolver(snapshot, app, path, new Map());
     let load: Expression | undefined;
     new Visitor({
@@ -3497,6 +3694,7 @@ it.effect.each([
       return;
     }
     const environment: NativeSqlProofEnvironment = {
+      coreDatabaseDirectory: `${coreDb}/`,
       modules,
       resolveImport: (file, specifier) => {
         if (specifier === '@effect/sql-pg') {
@@ -3522,6 +3720,85 @@ it.effect.each([
   }).pipe(Effect.provide(Path.layer)),
 );
 
+/*
+ * Security fence: guarded Core pool. Owner code gets none of the fence's shortcuts: a Config success is not
+ * effect-free data outside Core's pool configuration (inherited members, an arbitrary failure mapping), and the
+ * native PgClient tag is a possible carrier outside Core's own tag positions.
+ */
+const guardedPoolOwnerHead =
+  "import {Config,Context,Effect,Layer,Option} from 'effect';import {PgClient} from '@effect/sql-pg';import {Factory} from '../shared/port.ts';export const use=transaction=>Effect.gen(function*(){const factory=yield*Factory;return factory.make({transaction});});";
+const guardedPoolOwnerConsumer = (body: string) =>
+  `${guardedPoolOwnerHead}export const run=Effect.gen(function*(){${body}});`;
+it.effect.each([
+  [
+    'Object.prototype smuggled through a Config.all success',
+    "const cfg=yield* Config.all({a:Config.String('A')});Object.prototype.leak=use({});return yield* foreignSink(cfg.leak);",
+  ],
+  [
+    'String.prototype smuggled through a Config.String success member',
+    "const cfg=yield* Config.all({a:Config.String('A')});String.prototype.leak=use({});return yield* foreignSink(cfg.a.leak);",
+  ],
+  [
+    'read mapped into a Config failure',
+    "const cfg=yield* Config.all({a:Config.String('A')}).pipe(Effect.mapError(()=>use({})));return yield* foreignSink(cfg);",
+  ],
+  [
+    'getter installed on a Config success prototype',
+    "const cfg=yield* Config.all({a:Config.String('A')});const holder=[use({})];Object.setPrototypeOf(cfg,{get leak(){return holder[0];}});return yield* foreignSink(cfg.leak);",
+  ],
+  ['PgClient tag handed to an unknown sink', 'return yield* foreignSink(PgClient.PgClient);'],
+  ['raw PgClient read and handed out', 'const pg=yield* PgClient.PgClient;return yield* foreignSink(pg);'],
+  [
+    'PgClient swapped through Context.make',
+    'return yield* use({}).pipe(Effect.provideContext(Context.make(PgClient.PgClient,forgedClient)));',
+  ],
+  [
+    'read smuggled through a provided PgClient service',
+    'const inner=Effect.gen(function*(){const pg=yield* PgClient.PgClient;return yield* foreignSink(pg.smuggle);});return yield* inner.pipe(Effect.provideService(PgClient.PgClient,{smuggle:use({})}));',
+  ],
+  [
+    'read smuggled through a PgClient Context.make',
+    'const inner=Effect.gen(function*(){const pg=yield* PgClient.PgClient;return yield* foreignSink(pg.smuggle);});return yield* inner.pipe(Effect.provideContext(Context.make(PgClient.PgClient,{smuggle:use({})})));',
+  ],
+])('keeps the guarded Core pool shortcuts out of owner code: %s', ([, body]) => {
+  const snapshot = sources();
+  snapshot.set(consumerFile, guardedPoolOwnerConsumer(body));
+  return resolve(snapshot).pipe(Effect.map((result) => expect(result).toBeUndefined()));
+});
+
+/** A guard-module file name, at Core's own path or as a path suffix, never exempts owner-shaped code. */
+const guardModuleImpostors = {
+  'forged factory layer':
+    'export const wrap=(effect)=>Effect.provide(effect,Layer.succeed(Factory,{make:input=>input.transaction}));',
+  'forged factory through Reflect.apply':
+    'export const wrap=(effect)=>Reflect.apply(Effect.provide,undefined,[effect,Layer.succeed(Factory,{make:input=>input.transaction})]);',
+  'unknown sink': 'export const wrap=(effect)=>foreignSink(effect);',
+} as const;
+const relativeImport = (from: string, to: string) => {
+  const path = nodePath.relative(nodePath.dirname(from), to);
+  return path.startsWith('.') ? path : `./${path}`;
+};
+it.effect.each(
+  [
+    'packages/core-runtime/src/db/transaction-io-guard.ts',
+    'verticals/owner/packages/core-runtime/src/db/transaction-io-guard.ts',
+  ].flatMap((file) =>
+    Object.entries(guardModuleImpostors).map(([variant, source]) => [file, variant, source] as const),
+  ),
+)('does not exempt owner code named like a Core guard module: %s, %s', ([file, , source]) => {
+  const snapshot = sources();
+  const guard = `${root}/${file}`;
+  snapshot.set(
+    guard,
+    `import {Context,Effect,Layer} from 'effect';import {Factory} from '${relativeImport(guard, tagFile)}';${source}`,
+  );
+  snapshot.set(
+    consumerFile,
+    `import {Effect} from 'effect';import {Factory} from '../shared/port.ts';import {wrap} from '${relativeImport(consumerFile, guard)}';export const use=transaction=>Effect.gen(function*(){const factory=yield*Factory;return factory.make({transaction});});export const run=wrap(use({}));`,
+  );
+  return resolve(snapshot).pipe(Effect.map((result) => expect(result).toBeUndefined()));
+});
+
 it.effect('retains native error evaluator payload success as a real success alternative', () => {
   class PayloadError extends Data.TaggedError('PayloadError')<{ readonly reason: string }> {}
   const payload = {
@@ -3535,7 +3812,11 @@ it.effect('retains native error evaluator payload success as a real success alte
 
 const reachedHelperIdentity = 'reached helper identity';
 const reachedDeferredOverride = 'reached helper deferred override';
+const editedPoolConfiguration = 'pool configuration with a search_path startup parameter';
 const sqlRootConfigSource = (source: string, name: string, variant: string): string => {
+  if (name === 'pool-configuration' && variant === editedPoolConfiguration) {
+    return poolConfigurationEdits[editedPoolConfiguration](source);
+  }
   if (name !== 'config') {
     return source;
   }
@@ -3558,6 +3839,7 @@ it.effect.each([
   reachedHelperIdentity,
   'reached helper override',
   reachedDeferredOverride,
+  editedPoolConfiguration,
 ])('keeps the same SQL acquisition AST root-scoped: %s', (variant) =>
   Effect.gen(function* actualSqlRoot() {
     const path = yield* Path.Path;
@@ -3568,7 +3850,7 @@ it.effect.each([
     const shared = `${root}/packages/acquire.ts`;
     const relativeClient = nodePath.relative(nodePath.dirname(rootFile), clientFile);
     const snapshot = sources();
-    for (const name of ['client', 'pool-configuration', 'connection-error', 'config']) {
+    for (const name of ['client', 'pool-configuration', 'connection-error', 'config', ...coreDatabaseGuardFiles]) {
       const file = nodePath.join(app, `packages/core-runtime/src/db/${name}.ts`);
       const source = yield* Effect.tryPromise(() => readFile(file, 'utf-8'));
       snapshot.set(file, sqlRootConfigSource(source, name, variant));
@@ -3622,7 +3904,17 @@ it.effect.each([
         'Layer.provide(Layer.mergeAll(CoreDatabaseLive.pipe(Layer.provide(fixtureConfig)),Layer.succeed(CoreDatabase,{executor:foreignDatabase})))',
       ),
     );
-    const resolver = makeScopedContextFactoryResolver(snapshot, root, path, new Map());
+    // Core is the real workspace's; the fixture owners sit under their own root.
+    const resolver = makeScopedContextFactoryResolver(
+      snapshot,
+      root,
+      path,
+      new Map(),
+      new Map(),
+      snapshot,
+      undefined,
+      app,
+    );
     let query: Expression | undefined;
     new Visitor({
       YieldExpression(node) {

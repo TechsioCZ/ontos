@@ -3,14 +3,18 @@ import { Reactivity } from 'effect/reactivity';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
+  FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '../support/database-identities.ts';
+import {
   ActionPayloadValidationError,
   ActionRuntime,
+  OperationContextUnavailable,
   loadDatabaseConnectionPair,
-  loadDatabaseConfig,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
   ActiveApplicationCompositionSnapshotSchema,
   ContextAccessLive,
+  DatabaseIdentityEnrollmentContext,
   OntosModuleDeploymentContractSchema,
   defineScopedRoutine,
 } from '@app/core-runtime';
@@ -72,6 +76,7 @@ import {
   makePartyRegistryRetailPartyResolver,
   PartyRegistryRetailPartyResolverFactory,
 } from '../../src/integrations/party-registry-retail-party-resolver.ts';
+import { RetailPartyDetailExecutor } from '../../src/integrations/retail-party-detail-executor.ts';
 import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../../src/persistence/owner-authorization-overlay.ts';
 import { addressReadServicesForTransaction } from '../../src/persistence/address-persistence.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
@@ -85,6 +90,7 @@ import {
 const appRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT)),
   Layer.provideMerge(NodeCrypto.layer),
 );
 const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
@@ -174,6 +180,9 @@ const preparePostalFutureEnd = Effect.fn('PostalFutureEnd.prepare')(function* pr
   );
   const coreEvidenceExecutor = yield* testCoreDatabase.pipe(Effect.provide(coreEvidenceContext));
   const transportConfiguration = yield* Config.all({
+    ONTOS_ACTION_TRANSACTION_IO_GUARD: Config.String('ONTOS_ACTION_TRANSACTION_IO_GUARD').pipe(
+      Config.withDefault('false'),
+    ),
     PATH: Config.String('PATH'),
     SPICEDB_CA_CERT: Config.String('SPICEDB_CA_CERT'),
     SPICEDB_ENDPOINT: Config.String('SPICEDB_ENDPOINT'),
@@ -199,7 +208,9 @@ const preparePostalFutureEnd = Effect.fn('PostalFutureEnd.prepare')(function* pr
   )(physicalIdentity);
   const identityUrls: Record<string, string> = {};
   for (const databaseIdentity of [SHELL_GATEWAY_ISSUER_IDENTITY, PARTY_REGISTRY_REQUEST_IDENTITY]) {
-    const canonical = yield* loadDatabaseConfig({ envPath: '/dev/null', identity: databaseIdentity });
+    const canonical = yield* loadDatabaseConnectionPair({ envPath: '/dev/null', identity: databaseIdentity }).pipe(
+      Effect.map(({ runtime }) => runtime),
+    );
     const address = new URL(canonical.connectionString);
     const exactSourceAndOwnedTarget = [
       canonical.database === sourceConnections.runtime.database,
@@ -321,7 +332,10 @@ const preparePostalFutureEnd = Effect.fn('PostalFutureEnd.prepare')(function* pr
   const issuerContext = yield* Layer.build(
     PgClient.layer({ maxConnections: 2, url: Redacted.make(issuerUrl) }).pipe(Layer.provide(Reactivity.layer)),
   );
-  const scopeGrantRegistrar = makeGatewayScopeGrantRegistrar(Context.get(issuerContext, PgClient.PgClient));
+  const scopeGrantRegistrar = makeGatewayScopeGrantRegistrar(
+    Context.get(issuerContext, PgClient.PgClient),
+    FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+  );
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
       access: 'allowed',
@@ -365,6 +379,7 @@ const preparePostalFutureEnd = Effect.fn('PostalFutureEnd.prepare')(function* pr
     env: {
       APP_ENV_PATH: '/dev/null',
       DATABASE_URL: isolated.connections.runtime.connectionString,
+      ONTOS_ACTION_TRANSACTION_IO_GUARD: transportConfiguration.ONTOS_ACTION_TRANSACTION_IO_GUARD,
       ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: `http://127.0.0.1:${source.address.port}/active-composition`,
       ONTOS_GATEWAY_ISSUER: issuer,
       ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [{ ...publicJwk, alg: 'EdDSA', kid, use: 'sig' }] }),
@@ -444,30 +459,45 @@ const preparePostalFutureEnd = Effect.fn('PostalFutureEnd.prepare')(function* pr
       ),
     );
   const retailFactory = Layer.succeed(PartyRegistryRetailPartyResolverFactory, {
-    make: ({ scope }) =>
-      makePartyRegistryRetailPartyResolver(
-        { requestCorrelation: scope.correlationId, tenantId: scope.tenantId },
-        (request, correlation) =>
-          authorization().pipe(
-            Effect.provideContext(authorizationContext),
-            Effect.orDie,
-            Effect.flatMap((credential) =>
-              executePartyDetailWithAuthorization(request, credential, correlation, {
-                baseUrl,
-                compositionRevision: snapshot.composition.revision,
-              }),
-            ),
+    make: (scope) =>
+      makePartyRegistryRetailPartyResolver(scope, (request, correlation) =>
+        authorization().pipe(
+          Effect.provideContext(authorizationContext),
+          Effect.orDie,
+          Effect.flatMap((credential) =>
+            executePartyDetailWithAuthorization(request, credential, correlation, {
+              baseUrl,
+              compositionRevision: snapshot.composition.revision,
+            }),
           ),
+        ),
       ),
   });
   const owners = Layer.mergeAll(
+    Layer.succeed(RetailPartyDetailExecutor, {
+      execute: (request, correlation) =>
+        authorization().pipe(
+          Effect.provideContext(authorizationContext),
+          Effect.orDie,
+          Effect.flatMap((credential) =>
+            executePartyDetailWithAuthorization(request, credential, correlation, {
+              baseUrl,
+              compositionRevision: snapshot.composition.revision,
+            }),
+          ),
+        ),
+    }),
     retailFactory,
     partyRegistryGuestResolverFactoryLive,
     profileCounterpartyRoleEligibilityResolverFactoryLive,
     profileReactivationEligibilityEvaluatorFactoryLive.pipe(Layer.provide(profileReconfirmationPolicyUnavailableLive)),
     commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(Layer.provide(ContextAccessLive)),
   );
-  const context = yield* Layer.build(fixture.layer.pipe(Layer.provideMerge(owners)));
+  const enrolled = yield* Effect.context<DatabaseIdentityEnrollmentContext>();
+  const context = Context.merge(
+    Context.merge(enrolled, authorizationContext),
+    yield* Layer.build(fixture.layer.pipe(Layer.provideMerge(owners))),
+  );
   const runtime = Context.get(context, ActionRuntime);
   // The layer owns infrastructure; no business producer runs until the case consumes this fixture.
   return { authorization, child, client, context, coreEvidenceExecutor, fixture, options, principal, runtime };
@@ -892,6 +922,47 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
     )
     .pipe(Effect.provideContext(context));
   expect(retained.address.origin).toEqual(origin);
+  // Change the real owner state after Party answered and before the guarded write. The
+  // injected transport delegates to the genuine Party owner; it does not invent evidence.
+  const racingClient = (request: Parameters<typeof client>[0], correlation: string) =>
+    client(request, correlation).pipe(
+      Effect.tap(() =>
+        add({
+          origin: {
+            kind: 'COMMERCE_ONLY',
+            postalAddress: {
+              addressLine1: 'Concurrent local address',
+              city: 'Prague',
+              countryCode: 'CZ',
+              postalCode: '11000',
+            },
+          },
+          profile,
+          purposes: ['DELIVERY'],
+          reason: 'Concurrent owner change during Party lookup',
+        }).pipe(Effect.orDie, Effect.asVoid),
+      ),
+    );
+  const racedPayload = yield* Schema.encodeEffect(AddSavedAddressPayloadSchema)({
+    origin,
+    profile,
+    purposes: ['DELIVERY'],
+    reason: 'Reject stale owner snapshot',
+  });
+  const raced = yield* runtime
+    .runAction({
+      payload: racedPayload,
+      principal,
+      registration: addSavedAddressAction,
+      transport: {
+        correlationId: randomUUID(),
+        idempotencyKey: randomUUID(),
+        targetModuleKey: 'commerce.customer-context',
+      },
+    })
+    .pipe(Effect.provideContext(Context.add(context, PartyAddressSourceExecutor, racingClient)), Effect.result);
+  assert.isOk(Result.isFailure(raced));
+  expect(Schema.is(OperationContextUnavailable)(raced.failure)).toBe(true);
   const stale = yield* Effect.result(
     add({ origin: openOrigin, profile, purposes: ['BILLING'], reason: 'Stale pre-End revision' }),
   );

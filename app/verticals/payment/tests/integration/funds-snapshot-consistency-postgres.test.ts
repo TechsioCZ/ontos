@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import { randomUUID } from 'node:crypto';
 
 import { NodeCrypto } from '@effect/platform-node';
@@ -97,6 +98,7 @@ const readsOf = (refundCase: RefundCase) =>
     refundRuntimeContextAccess,
     {
       accessDecision: makeScriptedBoundAccessGate('allowed').bound,
+      databaseIdentities: defineDatabaseIdentityEnrollment([]),
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
     },

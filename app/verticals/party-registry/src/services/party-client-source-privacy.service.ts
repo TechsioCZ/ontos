@@ -45,6 +45,7 @@ import type {
   PartyClientSourceScope,
   SourceIntent,
 } from './party-client-source-evidence.service.ts';
+import { partyRegistryEvidenceCall } from '../declared-evidence-calls.ts';
 
 const PartyPrivacyRequirement = Context.Reference<string | null>('@app/party-registry/PartyPrivacyRequirement', {
   defaultValue: () => null,
@@ -210,16 +211,23 @@ const executeOrganizationPrivacy = Effect.fn('PartyClientSourcePrivacy.executeOr
     .randomUUIDv4()
     .pipe(Effect.catch((error) => failUnavailable('crypto', error)));
   yield* tracePartyPrivacyCarrier(scope, subject, operationRequirementKey);
+  // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
   const credential = yield* acquireDelegatedGatewayContext(
-    { audience: 'privacy', legalEntityScope: 'subject', requestCorrelation, subject },
+    { audience: 'privacy', callingAppId: 'party-registry', legalEntityScope: 'subject', requestCorrelation, subject },
     crypto,
-  ).pipe(Effect.catch((error) => failUnavailable('delegation', error)));
+  ).pipe(
+    partyRegistryEvidenceCall.clientSourceOrganizationPrivacy,
+    Effect.catch((error) => failUnavailable('delegation', error)),
+  );
   const result = yield* executeOrganizationBusinessApplicabilityWithAuthorization(
     nativeRequest,
     credential.authorization,
     requestCorrelation,
     { baseUrl: credential.apiBaseUrl, compositionRevision: credential.compositionRevision },
-  ).pipe(Effect.catch((error) => failUnavailable('privacy-read', error)));
+  ).pipe(
+    partyRegistryEvidenceCall.clientSourceOrganizationPrivacy,
+    Effect.catch((error) => failUnavailable('privacy-read', error)),
+  );
   if (result.outcome === 'INDETERMINATE') {
     return yield* failUnavailable('privacy-read');
   }
@@ -763,12 +771,16 @@ export const checkPartyClientSourcePrivacy = Effect.fn('PartyClientSourcePrivacy
   const credential = yield* acquireDelegatedGatewayContext(
     {
       audience: 'privacy',
+      callingAppId: 'party-registry',
       legalEntityScope: 'subject',
       requestCorrelation,
       subject,
     },
     crypto.value,
-  ).pipe(Effect.catch((error) => failUnavailable('delegation', error)));
+  ).pipe(
+    partyRegistryEvidenceCall.clientSourcePrivacy,
+    Effect.catch((error) => failUnavailable('delegation', error)),
+  );
   const result = yield* executeSourceProcessingEligibilityWithAuthorization(
     payload,
     credential.authorization,
@@ -777,6 +789,9 @@ export const checkPartyClientSourcePrivacy = Effect.fn('PartyClientSourcePrivacy
       baseUrl: credential.apiBaseUrl,
       compositionRevision: credential.compositionRevision,
     },
-  ).pipe(Effect.catch((error) => failUnavailable('privacy-read', error)));
+  ).pipe(
+    partyRegistryEvidenceCall.clientSourcePrivacy,
+    Effect.catch((error) => failUnavailable('privacy-read', error)),
+  );
   return result.outcome;
 });

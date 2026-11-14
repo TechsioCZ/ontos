@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import { Array as EffectArray, Effect, FileSystem, Order, Schema } from 'effect';
 
-import { DATABASE_IDENTITIES } from '../packages/core-runtime/src/db/database-identities.ts';
+import { DATABASE_IDENTITIES } from '../database/identity-enrollment.ts';
 
 import type { ApplicationMigrationOwnerInventory } from './application-migration-plan.mts';
 
@@ -72,8 +72,8 @@ const orderedSources: readonly OwnerStreamSource[] = [
     ...primary(
       'core-runtime',
       'packages/core-runtime',
-      ['core', 'trust'],
-      ['packages/core-runtime/scripts/verify-db-schema.mts'],
+      ['core', 'trust', 'demo_email'],
+      ['scripts/verify-core-db-schema.mts'],
       [],
     ),
     // Core's own verifier checks the registrar's exclusive executor before Shell migrations run.
@@ -128,6 +128,36 @@ const orderedSources: readonly OwnerStreamSource[] = [
   ).map(([ownerId, schema]) =>
     primary(ownerId, `verticals/${ownerId}`, [schema], [`verticals/${ownerId}/scripts/verify-db-schema.mts`]),
   ),
+  // These names come from the owners' actual schema declarations and Drizzle configurations.
+  ...(
+    [
+      ['property-portfolio', 'property_portfolio'],
+      ['property-leasing', 'property_leasing'],
+      ['legal-agreements', 'legal_agreements'],
+      ['work-tasks', 'work_tasks'],
+      ['workforce', 'demo_workforce'],
+      ['tagging', 'demo_tagging'],
+      ['crm', 'demo_crm'],
+      ['sales-pipeline', 'demo_sales_pipeline'],
+      ['merchandise', 'demo_merchandise'],
+      ['facility-operations', 'facility_operations'],
+      ['sales-insights', 'demo_sales_insights'],
+      ['finance-billing', 'finance_billing'],
+      ['crm-activities', 'crm_activities'],
+      ['projects', 'projects'],
+      ['commerce-cart', 'commerce_cart'],
+    ] as const
+  ).map(([ownerId, schema]) =>
+    primary(ownerId, `verticals/${ownerId}`, [schema], [`verticals/${ownerId}/scripts/verify-db-schema.mts`]),
+  ),
+  primary(
+    'commerce-order',
+    'verticals/commerce-order',
+    ['commerce_order'],
+    ['verticals/commerce-order/scripts/verify-database.mts'],
+  ),
+  primary('payment', 'verticals/payment', ['payment'], ['verticals/payment/scripts/verify-db-schema.mts']),
+  primary('promotion', 'verticals/promotion', ['promotion'], ['verticals/promotion/scripts/verify-db-schema.mts']),
 ];
 const portal: OwnerStreamSource = {
   configFile: 'drizzle.portal-auth.config.ts',
@@ -178,6 +208,11 @@ const readStream = Effect.fn('ApplicationMigrationInventory.readStream')(functio
   if (journalName === undefined || output === undefined) {
     return yield* invalid(`Invalid source migration metadata for ${source.ownerId}`);
   }
+  for (const verifier of source.verifierPaths) {
+    if (!(yield* fs.exists(path.join(root, verifier)))) {
+      return yield* invalid(`Missing source verifier gateway for ${source.ownerId}`);
+    }
+  }
   const migrationDirectory = path.join(source.directory, output);
   const names = EffectArray.sort(
     (yield* fs.readDirectory(path.join(root, migrationDirectory))).filter((name) => migrationName.test(name)),
@@ -217,10 +252,15 @@ export const loadApplicationMigrationInventory = Effect.fn('ApplicationMigration
     const topology = yield* Schema.decodeEffect(TopologySchema)(
       yield* fs.readFileString(path.join(root, 'topology/reference-topology.json')),
     );
+    if (
+      new Set(topology.verticals.map((owner) => owner.id)).size !== topology.verticals.length ||
+      new Set(topology.verticals.map((owner) => owner.path)).size !== topology.verticals.length
+    ) {
+      return yield* invalid('Duplicate topology migration owner');
+    }
     const declared = new Set(
       orderedSources.filter((source) => source.configFile === defaultDrizzleConfig).map((source) => source.directory),
     );
-    const generated: OwnerStreamSource[] = [];
     for (const owner of topology.verticals) {
       if (declared.has(owner.path) || !(yield* fs.exists(path.join(root, owner.path, 'drizzle.config.ts')))) {
         continue;
@@ -228,17 +268,9 @@ export const loadApplicationMigrationInventory = Effect.fn('ApplicationMigration
       if (!/^verticals\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(owner.path) || owner.path !== `verticals/${owner.id}`) {
         return yield* invalid('Invalid topology migration owner');
       }
-      const schema = owner.id.replaceAll('-', '_');
-      generated.push(
-        primary(
-          owner.id,
-          owner.path,
-          [schema],
-          [`${owner.path}/scripts/${owner.id === 'commerce-order' ? 'verify-database' : 'verify-db-schema'}.mts`],
-        ),
-      );
+      return yield* invalid(`Missing reviewed source migration metadata for ${owner.id}`);
     }
-    return yield* Effect.forEach([...orderedSources, ...generated, portal], (source) => readStream(source, root), {
+    return yield* Effect.forEach([...orderedSources, portal], (source) => readStream(source, root), {
       concurrency: 4,
     });
   },

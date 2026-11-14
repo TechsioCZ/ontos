@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   RetailPrincipalResolutionRequestSchema,
@@ -15,7 +15,7 @@ import type {
   RetailPrincipalResolutionRequest,
   RetailPrincipalResolutionResponse,
 } from '../../shared/apis/retail-principal-resolution.ts';
-import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
+import { profileReadServicesForVerifiedScope } from '../profile-service-factory.ts';
 import { retailProfileOwnerFacts } from './read-owner-facts.ts';
 
 export interface RetailPrincipalResolutionServices {
@@ -85,12 +85,17 @@ export const retailPrincipalResolutionRead = defineRead(
     resultSchema: RetailPrincipalResolutionResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<RetailPrincipalResolutionServices>) =>
-    resolveRetailPrincipalFromServices(input, context.scope.principalId, context.scope.tenantId, context.services).pipe(
-      Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
-    ),
+  {
+    load: (input, context: ReadLoadContext<RetailPrincipalResolutionServices>) =>
+      resolveRetailPrincipalFromServices(
+        input,
+        context.scope.principalId,
+        context.scope.tenantId,
+        context.services,
+      ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
+  },
   (transaction, scope) =>
-    profileServicesForVerifiedScope(transaction, scope).pipe(
+    profileReadServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(({ retailPrincipalResolution }): RetailPrincipalResolutionServices => retailPrincipalResolution),
     ),
 );

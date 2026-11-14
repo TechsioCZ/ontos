@@ -13,6 +13,7 @@ import { loadDatabaseConnectionPair, parseDatabaseConnectionPair } from '../../s
 import { coreRelations } from '../../src/db/schema.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const migrationPath = new URL(
   '../../drizzle/20261103093547_authorization-v2-access-intent/migration.sql',
@@ -113,7 +114,11 @@ const database = Effect.gen(function* databaseEffect() {
   yield* admin.unsafe('grant select, insert on core.access_frozen_commands to ontos_runtime');
   const runtime = yield* makeTestPgClient(isolated.runtime.connectionString);
   const executor = yield* makeTestDatabaseFromClient(runtime, coreRelations);
-  return { admin, executor, store: makeDrizzleFrozenCommandStore({ executor }) };
+  return {
+    admin,
+    executor,
+    store: makeDrizzleFrozenCommandStore({ enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT, executor }),
+  };
 });
 
 it.layer(NodeServices.layer)('frozen-command PostgreSQL repository', (suite) => {

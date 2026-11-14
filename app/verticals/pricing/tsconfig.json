@@ -9,7 +9,7 @@
     "noEmit": false,
     "outDir": "../../node_modules/.cache/tsgo/declarations/verticals__pricing",
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/verticals__pricing.tsbuildinfo",
-    "types": ["node"]
+    "types": ["node", "bun-types/sqlite"]
   },
   "include": [
     "api",
@@ -32,6 +32,7 @@
     { "path": "../../packages/core-runtime" },
     { "path": "../../packages/gateway-principal-verifier" },
     { "path": "../../packages/price-group-catalog-contracts" },
+    { "path": "../../packages/party-registry-identity-contracts" },
     { "path": "../../packages/pricing-contracts" },
     { "path": "../../packages/shared-contracts" }
   ]

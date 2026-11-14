@@ -579,7 +579,7 @@ const problem = (status: number, value: RelayProblem): Reply => ({ body: problem
 
 const shellBaseUrl = (baseUrl: string) =>
   ConfigProvider.layer(ConfigProvider.fromUnknown({ ONTOS_SHELL_GATEWAY_BASE_URL: baseUrl }));
-const SHELL_BASE_URL = shellBaseUrl('http://shell.internal.test:3020/shell-super-app-api');
+const SHELL_BASE_URL = shellBaseUrl('https://shell.internal.test:3020/shell-super-app-api');
 
 /** The live invoker over one recorded Shell reply; the base URL is read per request from the ambient config. */
 const invokerOver = (reply: Reply) =>
@@ -615,7 +615,7 @@ it.effect('#1158 the live invoker sends one route-scoped request to the Shell re
       expect(request?.method).toBe('POST');
       // Only the origin of ONTOS_SHELL_GATEWAY_BASE_URL is used: the relay serves absolute host paths.
       expect(request?.url).toBe(
-        `http://shell.internal.test:3020/api/payment/v1/reconciliation/${row.routeKey}/recoveries`,
+        `https://shell.internal.test:3020/api/payment/v1/reconciliation/${row.routeKey}/recoveries`,
       );
       expect(request?.headers['idempotency-key']).toBe(`payment.gateway-reconciliation:${row.operationId}:r2`);
       expect(request?.headers['x-api-key']).toBe('fake-driver-key-1');
@@ -694,6 +694,12 @@ it.effect('#1158 relay answers map to the driver outcome table', () =>
       expect(yield* invoker.request(row, fakeKey(1)).pipe(Effect.provide(shellBaseUrl('not a url')))).toEqual(
         GATEWAY_RECONCILIATION_UNAVAILABLE,
       );
+      // A key never travels in clear text off the machine: plain HTTP reaches only a loopback Shell.
+      expect(
+        yield* invoker
+          .request(row, fakeKey(1))
+          .pipe(Effect.provide(shellBaseUrl('http://shell.internal.test:3020/shell-super-app-api'))),
+      ).toEqual(GATEWAY_RECONCILIATION_UNAVAILABLE);
       expect(yield* invoker.request(row, fakeKey(1))).toEqual(GATEWAY_RECONCILIATION_UNAVAILABLE);
       expect(sent).toEqual([]);
     }),

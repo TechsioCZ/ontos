@@ -10,6 +10,9 @@ import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
 import { Effect, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 export interface CustomerContextOwnedFixtureInput {
   readonly adminConnectionString: Redacted.Redacted;
@@ -37,13 +40,19 @@ interface ConnectionFacts extends Record<string, unknown> {
 /** Inspection coordinates never escape as an admitted scope or a grant. */
 export const withVerifiedCustomerContextFixture = <A, E, R>(
   input: CustomerContextOwnedFixtureInput,
-  work: (transaction: FixtureTransaction, database: FixtureDatabase, scope: OperationalScope) => Effect.Effect<A, E, R>,
+  work: (
+    transaction: FixtureTransaction,
+    database: FixtureDatabase,
+    scope: OperationalScope,
+    inspection: FixtureTransaction,
+  ) => Effect.Effect<A, E, R>,
 ) =>
   Effect.scoped(
     Effect.gen(function* verifiedCustomerContextFixture() {
       const ownership = requireOwnedNativeDatabaseFixture(input.ownedDatabase, {
         adminConnectionString: input.adminConnectionString,
         purpose: 'implementation-1096-registered-workload-gateway',
+        runtimeConnectionString: Redacted.make(input.ownedDatabase.connections.runtime.connectionString),
       });
       yield* ownership;
       const configuration = yield* parseDatabaseConfig({ DATABASE_URL: Redacted.value(input.adminConnectionString) });
@@ -57,22 +66,21 @@ export const withVerifiedCustomerContextFixture = <A, E, R>(
         Effect.provideService(Reactivity.Reactivity, reactivity),
       );
       const database = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, client));
-      return yield* database.transaction(
-        Effect.fn('CustomerContextOwnedFixture.transaction')(function* transaction(owned) {
-          yield* ownership;
-          const [connection] = yield* owned.execute<ConnectionFacts>(
-            sql`select current_database()::text as database,current_user::text as "roleName"`,
-            'objects',
-          );
-          if (connection?.database !== configuration.database || connection.roleName !== configuration.user) {
-            return yield* unavailable();
-          }
-          yield* installOperationalScope(owned, scope);
+      const runtimeClient = yield* PgClient.make({
+        url: Redacted.make(input.ownedDatabase.connections.runtime.connectionString),
+      }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity));
+      const runtimeDatabase = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, runtimeClient));
+      const inspectRuntimeScope = Effect.fn('CustomerContextOwnedFixture.inspectRuntimeScope')(
+        function* inspectRuntimeScope(inspection: FixtureTransaction, owned: FixtureTransaction) {
+          yield* installOperationalScope(inspection, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
           const actor = yield* makePrincipalResolver(
-            { executor: database },
+            { executor: inspection },
             { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
           ).resolveBetterAuthUserForTenant(input.operatorProviderUserId, input.tenantId);
-          const persisted = yield* makeOperationalScopeRepository({ executor: owned }).load(scope);
+          const persisted = yield* makeOperationalScopeRepository(
+            { executor: inspection },
+            FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          ).load(scope);
           if (
             actor.principalId !== input.operatorPrincipalId ||
             actor.principalKind !== 'human' ||
@@ -86,7 +94,20 @@ export const withVerifiedCustomerContextFixture = <A, E, R>(
             return yield* unavailable();
           }
           yield* ownership;
-          return yield* work(owned, database, scope);
+          return yield* work(owned, database, scope, inspection);
+        },
+      );
+      return yield* database.transaction(
+        Effect.fn('CustomerContextOwnedFixture.transaction')(function* transaction(owned) {
+          yield* ownership;
+          const [connection] = yield* owned.execute<ConnectionFacts>(
+            sql`select current_database()::text as database,current_user::text as "roleName"`,
+            'objects',
+          );
+          if (connection?.database !== configuration.database || connection.roleName !== configuration.user) {
+            return yield* unavailable();
+          }
+          return yield* runtimeDatabase.transaction((inspection) => inspectRuntimeScope(inspection, owned));
         }),
       );
     }),

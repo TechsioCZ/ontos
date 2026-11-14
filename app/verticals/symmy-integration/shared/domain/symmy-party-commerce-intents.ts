@@ -143,7 +143,7 @@ export const SymmyPartyCommerceIntentSchema = Schema.Union([
 ]);
 export type SymmyPartyCommerceIntent = typeof SymmyPartyCommerceIntentSchema.Type;
 
-const invocationId = Schema.optionalKey(ResolvePartyCommandCommitPayloadSchema.fields.invocationId);
+const invocationId = Schema.optionalKey(ResolvePartyCommandCommitPayloadSchema.members[0].fields.invocationId);
 /** Minimal private dependency receipts; no names, contacts or source document bodies. */
 export const SymmyPartyCommerceOwnerReceiptSchema = Schema.Union([
   Schema.TaggedStruct('CounterpartyCustomerOnboarded', {

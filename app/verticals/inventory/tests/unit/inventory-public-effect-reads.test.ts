@@ -30,7 +30,7 @@ import type {
 } from '../../src/services/inventory-effect-ledger.service.ts';
 import { physicalStockLedgerIntent } from '../../src/services/inventory-effect-ledger.service.ts';
 import {
-  getReadHandler,
+  runReadOwnerSteps,
   getReadPermissionTargetResolver,
 } from '../../../../packages/core-runtime/src/reads/definition.ts';
 
@@ -131,8 +131,7 @@ it('decides both public effect reads through their own declarations', () => {
 
 it.effect('returns typed unresolved and indeterminate outcomes only under the original full intent', () =>
   Effect.gen(function* resolveEffectOutcome() {
-    const handler = getReadHandler(inventoryEffectOutcomeRead);
-    const unresolved = yield* handler(effectRequest, {
+    const unresolved = yield* runReadOwnerSteps(inventoryEffectOutcomeRead, effectRequest, {
       readKey: inventoryEffectOutcomeRead.descriptor.readKey,
       scope,
       services: { ledger: ledgerFor(), persistence: persistenceFor() },
@@ -155,7 +154,7 @@ it.effect('returns typed unresolved and indeterminate outcomes only under the or
       tenantId,
       updatedAt: '2026-09-25T10:01:00.000Z',
     });
-    const indeterminate = yield* handler(effectRequest, {
+    const indeterminate = yield* runReadOwnerSteps(inventoryEffectOutcomeRead, effectRequest, {
       readKey: inventoryEffectOutcomeRead.descriptor.readKey,
       scope,
       services: { ledger: ledgerFor(record), persistence: persistenceFor(record) },
@@ -202,7 +201,7 @@ it.effect('does not reveal a Protection outside the exact Tenant scope', () =>
         tenantId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
       },
     });
-    const failure = yield* getReadHandler(commitmentProtectionVerificationRead)(request, {
+    const failure = yield* runReadOwnerSteps(commitmentProtectionVerificationRead, request, {
       readKey: commitmentProtectionVerificationRead.descriptor.readKey,
       scope,
       services: protections,

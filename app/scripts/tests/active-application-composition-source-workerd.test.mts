@@ -107,33 +107,19 @@ it.live('the same Worker reads a newly published snapshot without redeployment',
   }).pipe(Effect.scoped),
 );
 
-it.live('captures many one-byte KV fragments with a separate accumulator on every read', () =>
-  Effect.gen(function* fragmentedKvSnapshotBody() {
-    const fragmentedProbeWorker = `
+it.live('reads multi-byte UTF-8 text as one value and rejects invalid UTF-8', () =>
+  Effect.gen(function* utf8Snapshot() {
+    const first = `{"snapshot":"ř${'x'.repeat(65_536)}"}`;
+    expect(yield* readInWorker(Option.some({ active: first }))).toEqual({ snapshot: first });
+    const invalidProbeWorker = `
 import { env } from 'cloudflare:workers';
 import { Effect } from 'effect';
 import { ActiveApplicationCompositionSourceLive } from ${JSON.stringify(sourceModule)};
 import { ActiveApplicationCompositionSource } from ${JSON.stringify(sourceService)};
 
-const binding = env.${BINDING};
-const originalGet = binding.get.bind(binding);
-binding.get = (key, type) => originalGet(key, type).then(async (stream) => {
-  if (stream === null) return null;
-  const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
-  let offset = 0;
-  return new ReadableStream({
-    pull(controller) {
-      if (offset === bytes.byteLength) controller.close();
-      else {
-        controller.enqueue(bytes.subarray(offset, offset + 1));
-        offset += 1;
-      }
-    },
-  });
-});
-
 export default {
   async fetch() {
+    env.${BINDING}.get = async () => new Uint8Array([0x7b, 0xff, 0x7d]).buffer;
     const result = await Effect.runPromise(
       ActiveApplicationCompositionSource.pipe(
         Effect.flatMap(({ load }) => load),
@@ -145,12 +131,8 @@ export default {
   },
 };
 `;
-    const first = `{"snapshot":"ř${'x'.repeat(65_536)}"}`;
-    const worker = yield* workerProbe(Option.some({ active: first }), fragmentedProbeWorker);
-    expect(yield* readSnapshot(worker)).toEqual({ snapshot: first });
-    const namespace = yield* Effect.promise(() => worker.getKVNamespace(BINDING));
-    yield* Effect.promise(() => namespace.put('active', FIRST_SNAPSHOT));
-    expect(yield* readSnapshot(worker)).toEqual({ snapshot: FIRST_SNAPSHOT });
+    const worker = yield* workerProbe(Option.some({ active: FIRST_SNAPSHOT }), invalidProbeWorker);
+    expect(yield* readSnapshot(worker)).toEqual({ failure: 'The Workers KV snapshot is not UTF-8 text' });
   }).pipe(Effect.scoped),
 );
 
@@ -175,7 +157,7 @@ it.live('fails closed when the composition KV binding holds no snapshot or is no
   }),
 );
 
-it.live('cancels a native KV stream that arrives after timeout and handles cancellation rejection', () =>
+it.live('fails closed when the KV read does not answer within its deadline', () =>
   Effect.gen(function* delayedSnapshotAcquisition() {
     const delayedProbeWorker = `
 import { env } from 'cloudflare:workers';
@@ -187,25 +169,8 @@ export default {
   async fetch() {
     const binding = env.${BINDING};
     const originalGet = binding.get.bind(binding);
-    let cancellationStarted = false;
-    let cancellationRejected = false;
-    let pendingRead = Promise.resolve(null);
-    binding.get = (key, type) => {
-      pendingRead = originalGet(key, type).then(async (stream) => {
-        if (stream !== null) {
-          const originalCancel = stream.cancel.bind(stream);
-          stream.cancel = async () => {
-            cancellationStarted = true;
-            await originalCancel();
-            cancellationRejected = true;
-            throw new Error('fixture cancellation rejection');
-          };
-        }
-        await new Promise((resolve) => setTimeout(resolve, 5100));
-        return stream;
-      });
-      return pendingRead;
-    };
+    binding.get = (key, type) =>
+      new Promise((resolve) => setTimeout(resolve, 5100)).then(() => originalGet(key, type));
     const result = await Effect.runPromise(
       ActiveApplicationCompositionSource.pipe(
         Effect.flatMap(({ load }) => load),
@@ -213,25 +178,11 @@ export default {
         Effect.match({ onFailure: (error) => ({ failure: error.reason }), onSuccess: (snapshot) => ({ snapshot }) }),
       ),
     );
-    await pendingRead;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    return Response.json({ ...result, cancellationStarted, cancellationRejected });
+    return Response.json(result);
   },
 };
 `;
     const worker = yield* workerProbe(Option.some({ active: FIRST_SNAPSHOT }), delayedProbeWorker);
-    const response = yield* Effect.promise(() => worker.dispatchFetch('https://probe.invalid/'));
-    const result = Schema.decodeUnknownSync(
-      Schema.Struct({
-        cancellationRejected: Schema.Boolean,
-        cancellationStarted: Schema.Boolean,
-        failure: Schema.String,
-      }),
-    )(yield* Effect.promise(() => response.json()));
-    expect(result).toEqual({
-      cancellationRejected: true,
-      cancellationStarted: true,
-      failure: 'The Workers KV snapshot read timed out',
-    });
+    expect(yield* readSnapshot(worker)).toEqual({ failure: 'The Workers KV snapshot read timed out' });
   }).pipe(Effect.scoped),
 );

@@ -7,6 +7,8 @@ import {
   CorePersistenceLive,
   DatabaseConfigLive,
   TenantModuleStateServiceLive,
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   makeActionRuntimeLive,
   makeReadRuntimeLive,
 } from '@app/core-runtime';
@@ -162,6 +164,8 @@ const runtimeObservabilityLive = Layer.mergeAll(
   Layer.succeed(References.MinimumLogLevel, 'Info'),
 );
 
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
+
 const apiHandlersLive = Layer.mergeAll(symmyIntegrationReadinessLayer, governedReadApiHandlersLive).pipe(
   Layer.provide(SymmyJobPrivacyLive),
   Layer.provide(SymmyCatalogPricingInventoryAdaptersLive),
@@ -172,7 +176,7 @@ const apiHandlersLive = Layer.mergeAll(symmyIntegrationReadinessLayer, governedR
   Layer.provide(
     Layer.mergeAll(governedApplicationCompositionSourceLive, RequestSchemaProblemLive, runtimeObservabilityLive),
   ),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer, databaseIdentitiesLive)),
   Layer.orDie,
 );
 

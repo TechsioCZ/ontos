@@ -17,7 +17,7 @@ import type {
 import type { CommercePortalAuthAuditEvent } from '../audit/audit-contracts.ts';
 import { writeCommercePortalAuthAuditRow } from '../audit/audit-transaction.ts';
 import { CommercePortalAuthAuditUnavailable } from '../audit/audit-unavailable.ts';
-import { CommercePortalAuthDatabase } from './portal-auth-database.ts';
+import { CommercePortalAuthDatabase } from './portal-auth-database-service.ts';
 import type { CommercePortalAuthDatabaseExecutor } from './portal-auth-database-types.ts';
 import { session, user } from './portal-auth-tables.ts';
 

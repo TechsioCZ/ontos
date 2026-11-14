@@ -139,7 +139,6 @@ it.live(
           SPICEDB_PRESHARED_KEY: Config.Redacted('SPICEDB_PRESHARED_KEY'),
         });
         yield* grantTestTenantRoleAccess({
-          adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
           holders: [
             {
               capabilityKeys: [
@@ -153,11 +152,15 @@ it.live(
           legalEntityIds: [legalEntityId],
           spiceDb: yield* liveFixtureSpiceDb(spiceEnvironment),
           tenantId,
+          writerConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
         });
         yield* Effect.logInfo(fixtureStageMessage, { stage: 'current human setup rights granted' });
         for (const workload of ['integration.symmy-admit', 'integration.symmy-poll', marketRead, currencyRead]) {
+          const bindingId = yield* uuid;
           yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status)
-            values(${yield* uuid},${yield* uuid},${tenantId},${integration.principalId},${workload},'active')`;
+            values(${bindingId},${yield* uuid},${tenantId},${integration.principalId},${workload},'active')`;
+          yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+            values(${yield* uuid},${yield* uuid},${tenantId},${bindingId},${legalEntityId},'active')`;
         }
         const key = yield* shell.issueFixtureProviderKey(integration);
         yield* bindProviderKey(admin, integration, key.providerKeyId);
@@ -263,7 +266,7 @@ it.live(
           },
         );
         yield* Effect.logInfo(fixtureStageMessage, { stage: 'actual CZ Market created' });
-        expect(created.marketRef).toEqual(marketRef);
+        expect('marketRef' in created ? created.marketRef : created).toEqual(marketRef);
         const currencySetup = yield* shell.issueFixtureSetupGateway({ audience: 'pricing' });
         const currencyOptions = {
           baseUrl: `http://127.0.0.1:${pricingPort}/pricing-api`,
@@ -342,7 +345,10 @@ it.live(
         const denied = yield* get('limit=1');
         expect(denied.status).toBe(403);
         expect((yield* denied.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(problemSchema)))).status).toBe(403);
-        yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status) values(${yield* uuid},${yield* uuid},${tenantId},${integration.principalId},${currencyRead},'active')`;
+        const restoredCurrencyBindingId = yield* uuid;
+        yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status) values(${restoredCurrencyBindingId},${yield* uuid},${tenantId},${integration.principalId},${currencyRead},'active')`;
+        yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+          values(${yield* uuid},${yield* uuid},${tenantId},${restoredCurrencyBindingId},${legalEntityId},'active')`;
         expect((yield* get('limit=1')).status).toBe(200);
         const pricing = owners.get('pricing');
         assert.isOk(pricing);

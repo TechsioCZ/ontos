@@ -1,4 +1,4 @@
-import { Effect, Layer, Predicate } from 'effect';
+import { Context, Effect, Layer, Predicate } from 'effect';
 
 import { AccessPrincipalKindSource } from '../access/enforcement/actor.ts';
 import { AccessDecisionGate } from '../access/enforcement/contract.ts';
@@ -9,6 +9,9 @@ import type {
   SelectableLegalEntitiesInput,
 } from '../access/enforcement/contract.ts';
 import { AccessDecisionLog } from '../access/enforcement/decision-log.ts';
+import { AccessDecisionLive } from '../access/enforcement/service.ts';
+import { makeAccessAuthorityCurrentness } from '../access/enforcement/currentness.ts';
+import { AccessWorkloadBindingSource } from '../access/enforcement/workload-port.ts';
 import { AccessIntent } from '../access/decision/authority.ts';
 import { LegalEntityCandidates } from '../access/enforcement/legal-entities.ts';
 import { makeTestAccessDecision } from '../access/enforcement/testing.ts';
@@ -16,6 +19,7 @@ import type { TestAccessDecision, TestAccessDecisionSpec } from '../access/enfor
 import { accessDecisionUnavailable } from '../access/decision/errors.ts';
 import type { AccessDecision } from '../access/decision/contract.ts';
 import { DecisionCheck } from '../access/decision/engine.ts';
+import type { ListAccessResolution } from '../access/decision/engine.ts';
 import { LegalEntityIdSchema } from '../access/ids.ts';
 import type { BoundAccessGate, AccessEnforcementPorts } from '../operations/access-gate.ts';
 import { bindAccessGate } from '../operations/access-gate.ts';
@@ -63,23 +67,41 @@ export const testAccessSpecOf = (
  */
 const inertPortAnswer = () => Effect.fail(accessDecisionUnavailable('The scripted gate reads no authority'));
 
+/** The one authority the inert source answers with; it reads nothing, so every answer is the same. */
+const inertAuthority = Object.freeze({
+  readCells: inertPortAnswer,
+  readCompanyOwnership: inertPortAnswer,
+  readConnection: inertPortAnswer,
+  readScope: inertPortAnswer,
+  readTeamIds: inertPortAnswer,
+});
+
 export const inertAccessEnforcementPorts = (): AccessEnforcementPorts =>
   Object.freeze({
     candidates: Object.freeze({ listCandidateIds: () => Effect.succeed([]) }),
     check: Object.freeze({ checkBulk: inertPortAnswer }),
     decisionLog: Object.freeze({ record: () => Effect.void }),
     intent: Object.freeze({
-      authorityFor: () =>
-        Object.freeze({
-          readCells: inertPortAnswer,
-          readConnection: inertPortAnswer,
-          readScope: inertPortAnswer,
-          readTeamIds: inertPortAnswer,
-        }),
+      authorityFor: () => inertAuthority,
+      // Prepared Action authority joins the caller's transaction (O75). The inert source has no rows to
+      // join, so its joined answer is the same inert authority; a binding without it fails closed.
+      joined: () => Object.freeze({ authorityFor: () => inertAuthority }),
     }),
     principalKinds: Object.freeze({ readKind: inertPortAnswer }),
-    workloadBindings: Object.freeze({ readActiveWorkloadKeys: inertPortAnswer }),
+    workloadBindings: Object.freeze({
+      readWorkloadAuthority: inertPortAnswer,
+    }),
   });
+
+/**
+ * A scripted gate reads no ports, so its answers hold whichever ports a binding rebinds it to. The
+ * binding already keeps such a gate when `rebind` is absent; a prepared Action authority requires the
+ * method to exist, so a scripted gate states that identity explicitly instead of leaving it out.
+ */
+type ScriptedGate = Omit<AccessDecisionService, 'rebind'>;
+
+export const withScriptedRebind = (gate: ScriptedGate): AccessDecisionService =>
+  Object.freeze({ ...gate, rebind: () => withScriptedRebind(gate) });
 
 /** A bound gate plus the double's own record of what it was asked, for the runner suites. */
 export interface TestBoundAccessGate {
@@ -91,9 +113,61 @@ export const makeTestBoundAccessGate = (
   spec: TestAccessDecisionSpec = {},
   ports: AccessEnforcementPorts = inertAccessEnforcementPorts(),
 ): TestBoundAccessGate => {
-  const accessDecision = makeTestAccessDecision(spec);
+  // The scripted double states its own rebind, which a prepared Action authority needs.
+  const accessDecision: TestAccessDecision = makeTestAccessDecision(spec);
   return Object.freeze({ accessDecision, bound: bindAccessGate(accessDecision, ports) });
 };
+
+/**
+ * An owner fixture proving prepared Action execution supplies genuine decision ports, not scripted
+ * ALLOWED answers. Joined intent and currentness are mandatory; none is inferred from a grant.
+ */
+export type CanonicalActionTestAccessPorts = AccessEnforcementPorts & {
+  readonly currentness: NonNullable<AccessEnforcementPorts['currentness']>;
+  readonly intent: AccessEnforcementPorts['intent'] & {
+    readonly joined: NonNullable<AccessEnforcementPorts['intent']['joined']>;
+  };
+};
+
+/**
+ * Public fixture composition of the shipped gate and its persisted-revision preparation contract.
+ * The fixture owns its authority/check/currentness sources. This helper creates no authority,
+ * invents no snapshot, and never teaches the scripted outcome double to cache an ALLOWED verdict.
+ */
+export const makeCanonicalActionTestAccessGate = (ports: CanonicalActionTestAccessPorts) =>
+  Effect.scoped(
+    Effect.gen(function* canonicalActionTestAccessGate() {
+      const platform = Context.make(AccessIntent, ports.intent).pipe(
+        Context.add(AccessDecisionLog, ports.decisionLog),
+        Context.add(AccessPrincipalKindSource, ports.principalKinds),
+        Context.add(DecisionCheck, ports.check),
+        Context.add(LegalEntityCandidates, ports.candidates),
+      );
+      const configured =
+        ports.workloadBindings === undefined
+          ? platform
+          : Context.add(platform, AccessWorkloadBindingSource, ports.workloadBindings);
+      const context = yield* Layer.build(AccessDecisionLive).pipe(Effect.provideContext(configured));
+      return bindAccessGate(Context.get(context, AccessDecisionGate), ports);
+    }),
+  );
+
+/**
+ * Uses the production scoped SQL fence/revision reader over the fixture's real Core executor.
+ * The caller supplies explicit persisted rows and ordinary authority/check ports. Missing, Changing
+ * or unreadable fence rows fail closed; this constructor supplies no authority or synthetic lease.
+ */
+export const makePersistedActionTestAccessGate = (input: {
+  readonly database: Parameters<typeof makeAccessAuthorityCurrentness>[0];
+  readonly ports: Omit<CanonicalActionTestAccessPorts, 'currentness'>;
+}) =>
+  makeCanonicalActionTestAccessGate({
+    ...input.ports,
+    currentness: makeAccessAuthorityCurrentness(input.database),
+  });
+
+/** The actual production Action binding for native fixture layers, without a testing substitute. */
+export { bindLiveActionAccessGate } from '../operations/access-gate.ts';
 
 /** The gate a runner receives when a suite scripts outcomes instead of a full decision spec. */
 export const makeScriptedBoundAccessGate = (
@@ -219,19 +293,23 @@ export const makeTestAccessGateLayers = (options: TestAccessGateScript = {}): Te
     return scopeAccess?.decide(input) ?? scripted.decide(input);
   };
 
-  const gate: AccessDecisionService = {
+  const listOf = (input: ListGateInput): Effect.Effect<ListAccessResolution> => {
+    if (unavailable) {
+      return Effect.succeed({ decision: scopeDecisionOf('unavailable') });
+    }
+    if (refusedThisCapability(input.scope.principalId)) {
+      // A refusal carries no owner predicate: it never widens into an unfiltered read (O25).
+      return Effect.succeed({ decision: scopeDecisionOf('denied') });
+    }
+    return scripted.list(input);
+  };
+
+  // A scripted gate reads no ports, so it states its rebind: a prepared Action authority needs one to prove currentness.
+  const gate = withScriptedRebind({
     decide: decideOf,
     decideMany: (input) => Effect.forEach(input, decideOf, { concurrency: 1 }),
-    list: (input: ListGateInput) => {
-      if (unavailable) {
-        return Effect.succeed({ decision: scopeDecisionOf('unavailable') });
-      }
-      if (refusedThisCapability(input.scope.principalId)) {
-        // A refusal carries no owner predicate: it never widens into an unfiltered read (O25).
-        return Effect.succeed({ decision: scopeDecisionOf('denied') });
-      }
-      return scripted.list(input);
-    },
+    list: listOf,
+    listMany: (input: readonly ListGateInput[]) => Effect.forEach(input, listOf, { concurrency: 1 }),
     selectableLegalEntities: (input: SelectableLegalEntitiesInput) => {
       if (unavailable) {
         // An unreadable authority stays a typed failure, so the caller answers a retryable 503.
@@ -250,7 +328,7 @@ export const makeTestAccessGateLayers = (options: TestAccessGateScript = {}): Te
       const { legalEntityId: selected } = input.scope;
       return Effect.succeed(selected === undefined ? [] : [LegalEntityIdSchema.make(selected)]);
     },
-  };
+  });
 
   return Layer.mergeAll(
     Layer.succeed(AccessDecisionGate, gate),
@@ -261,3 +339,6 @@ export const makeTestAccessGateLayers = (options: TestAccessGateScript = {}): Te
     Layer.succeed(LegalEntityCandidates, ports.candidates),
   );
 };
+
+/** The agent lifecycle question over a scripted gate, re-asked on re-check (see `AgentLifecycleAuthority`). */
+export { makeTestAgentLifecycleAuthority } from '../auth/agent-lifecycle-authority.ts';

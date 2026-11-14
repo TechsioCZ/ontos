@@ -161,7 +161,28 @@ it.effect('bounds an unterminated frame before JSON decoding', () =>
 
 const marketNativeDescription = Effect.scoped(
   Effect.gen(function* prepareMarketNativeDescription() {
-    const { artifact, directory } = yield* bundleMarketRevisionNativeChild();
+    const { artifact, directory, publishedOwners } = yield* bundleMarketRevisionNativeChild();
+    const ownerImports = yield* Effect.forEach(
+      publishedOwners.filter(({ specifier }) => !specifier.startsWith('@app/commerce-customer-context/')),
+      ({ artifact: ownerArtifact, specifier }) =>
+        Effect.gen(function* importPublishedOwner() {
+          const owner = yield* ChildProcess.make(
+            process.execPath,
+            ['--input-type=module', '--eval', 'await import(process.argv[1]);', ownerArtifact],
+            { cwd: directory, stderr: 'pipe', stdin: 'ignore', stdout: 'pipe' },
+          );
+          const [code, stdout, stderr] = yield* Effect.all(
+            [
+              owner.exitCode,
+              owner.stdout.pipe(Stream.decodeText, Stream.mkString),
+              owner.stderr.pipe(Stream.decodeText, Stream.mkString),
+            ],
+            { concurrency: 3 },
+          );
+          return { code, specifier, stderr, stdout };
+        }),
+      { concurrency: 1 },
+    );
     const child = yield* ChildProcess.make(process.execPath, [artifact, '--describe'], {
       cwd: directory,
       stderr: 'pipe',
@@ -185,7 +206,7 @@ const marketNativeDescription = Effect.scoped(
         ?.groups?.moduleName?.split('/')
         .slice(-4)
         .join('/') ?? null;
-    return { code, errorClasses, missingExport, missingModule, stdout };
+    return { code, errorClasses, missingExport, missingModule, ownerImports, stderr, stdout };
   }),
 );
 
@@ -194,19 +215,37 @@ class MarketNativeDescription extends Context.Service<
   Effect.Success<typeof marketNativeDescription>
 >()('MarketNativeTransportTest/Description') {}
 
-// Bundling, child startup and scoped shutdown share the bounded preparation hook.
-// Receipt assertions retain the default 5-second test-body budget.
+// Four bundles and three native children exceeded the 30s setup budget on cold CI.
+// Assertions keep their 5s limit; fixture finalization interrupts setup and closes the owned process scope.
 const marketNativeDescriptionLayer = Layer.effect(MarketNativeDescription, marketNativeDescription).pipe(
   Layer.provideMerge(marketRevisionNativeServices),
 );
 
-it.layer(marketNativeDescriptionLayer, { timeout: '30 seconds' })(
+it.layer(marketNativeDescriptionLayer, { timeout: '120 seconds' })(
   'Market native bundle in the actual test runner',
   (suite) => {
+    for (const specifier of [
+      '@app/shell-super-app/testing/api-key-gateway-native',
+      '@app/storefront-registry/testing/current-storefront-native',
+    ]) {
+      suite.effect(`imports the isolated published fixture ${specifier} without opening its backend`, () =>
+        Effect.gen(function* importOwner() {
+          const { ownerImports } = yield* MarketNativeDescription;
+          const owner = yield* Effect.fromNullishOr(ownerImports.find((result) => result.specifier === specifier));
+          expect(
+            owner.code,
+            `${specifier} import exited with ${owner.code}\nstdout:\n${owner.stdout}\nstderr:\n${owner.stderr}`,
+          ).toBe(0);
+        }),
+      );
+    }
     suite.effect('resolves public owner exports and describes the bundled child without opening its backend', () =>
       Effect.gen(function* describeBundledChild() {
-        const { code, errorClasses, missingExport, missingModule, stdout } = yield* MarketNativeDescription;
-        expect({ code, errorClasses, missingExport, missingModule }).toEqual({
+        const { code, errorClasses, missingExport, missingModule, stderr, stdout } = yield* MarketNativeDescription;
+        expect(
+          { code, errorClasses, missingExport, missingModule },
+          `Market child --describe exited with ${code}\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+        ).toEqual({
           code: 0,
           errorClasses: [],
           missingExport: null,

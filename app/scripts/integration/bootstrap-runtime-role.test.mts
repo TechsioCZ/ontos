@@ -1,20 +1,24 @@
+import { DATABASE_IDENTITIES, APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
 import type { PgClient } from '@effect/sql-pg';
 import { Effect, Option } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 
 import { findPostgresFailure } from '../../packages/core-runtime/src/database/postgres-failure.ts';
-import { DATABASE_IDENTITIES } from '../../packages/core-runtime/src/db/database-identities.ts';
+
 import { loadDatabaseIdentityConnections } from '../../packages/core-runtime/src/db/config.ts';
 import { makeTestPgSession } from '../../packages/core-runtime/tests/support/database.ts';
 import { quoteIdentifier } from '../postgres/database-login-roles.mts';
 import { manifestEntryForRole } from '../postgres/database-role-manifest.mts';
 import {
+  assertDatabaseRoleManifestComplete,
   assertExplicitRole,
   explicitEntries,
   grantExplicitRole,
   grantSharedRuntimeRole,
   grantTrustAuthority,
   legacySharedEntries,
+  revokePublicStatementStatistics,
+  tableGrantTarget,
 } from '../postgres/runtime-role-bootstrap.mts';
 import type { ExplicitManifestEntry } from '../postgres/runtime-role-bootstrap.mts';
 
@@ -23,10 +27,11 @@ const qualified = (relation: string): string => relation.split('.').map(quoteIde
 /** Applies the database-local grant passes inside one transaction that is always rolled back. */
 const rolledBack = <Value, Failure>(body: (session: PgClient.PgClient) => Effect.Effect<Value, Failure>) =>
   Effect.gen(function* rolledBackBootstrap() {
-    const connections = yield* loadDatabaseIdentityConnections();
+    const connections = yield* loadDatabaseIdentityConnections({ enrollment: APP_DATABASE_IDENTITY_ENROLLMENT });
     const session = yield* makeTestPgSession(connections.admin.connectionString);
     yield* session.unsafe('begin');
     return yield* Effect.gen(function* grantThenRun() {
+      yield* revokePublicStatementStatistics(session);
       yield* Effect.forEach(legacySharedEntries, (entry) => grantSharedRuntimeRole(session, entry), { discard: true });
       yield* Effect.forEach(explicitEntries, (entry) => grantExplicitRole(session, entry), { discard: true });
       yield* grantTrustAuthority(session);
@@ -51,9 +56,151 @@ const entryWith = (predicate: (entry: ExplicitManifestEntry) => boolean): Explic
 const isWholeTableSelect = ({ columns, privileges }: ExplicitManifestEntry['grants']['tables'][number]) =>
   privileges.includes('select') && columns?.select === undefined;
 
+/** Small grant fixtures need explicit test URLs, not migrated owner tables or a workspace .env. */
+const rolledBackGrantProbe = <Value, Failure>(body: (session: PgClient.PgClient) => Effect.Effect<Value, Failure>) =>
+  Effect.gen(function* rolledBackProbe() {
+    const connections = yield* loadDatabaseIdentityConnections({
+      enrollment: APP_DATABASE_IDENTITY_ENROLLMENT,
+      envPath: '/dev/null',
+    });
+    const session = yield* makeTestPgSession(connections.admin.connectionString);
+    yield* session.unsafe('begin');
+    return yield* body(session).pipe(Effect.ensuring(session.unsafe('rollback').pipe(Effect.orDie)));
+  }).pipe(Effect.scoped);
+
+for (const columns of [
+  undefined,
+  { insert: ['present', 'future'], select: ['present', 'future'], update: ['future'] },
+  { insert: ['missing'], select: ['missing'], update: ['missing'] },
+] as const) {
+  it.live(`matches sequential table and column ACLs with one GRANT: ${JSON.stringify(columns)}`, () =>
+    rolledBackGrantProbe((session) =>
+      Effect.gen(function* batchedTablePrivilegeParity() {
+        const original = entryWith(() => true);
+        const role = quoteIdentifier(original.identity.role);
+        const table = 'core.bootstrap_batch_probe';
+        const privileges = ['select', 'insert', 'update', 'delete'] as const;
+        const entry: ExplicitManifestEntry = {
+          grants: {
+            ...original.grants,
+            routines: [],
+            schemas: ['core'],
+            sequences: [],
+            tables: [{ columns, privileges, reason: 'Compare sequential and batched table grants', table }],
+          },
+          identity: original.identity,
+        };
+        yield* session.unsafe(`create table ${table} (present text, future text)`);
+        const snapshot = session.unsafe<{ column_name: string; grantable: boolean; privilege: string }>(
+          `select '' as column_name, acl.is_grantable as grantable, acl.privilege_type as privilege
+             from pg_catalog.pg_class as relation
+             cross join lateral pg_catalog.aclexplode(relation.relacl) as acl
+            where relation.oid = pg_catalog.to_regclass($1)
+              and acl.grantee = (select oid from pg_catalog.pg_roles where rolname = $2)
+           union all
+           select attribute.attname, acl.is_grantable, acl.privilege_type
+             from pg_catalog.pg_attribute as attribute
+             cross join lateral pg_catalog.aclexplode(attribute.attacl) as acl
+            where attribute.attrelid = pg_catalog.to_regclass($1)
+              and acl.grantee = (select oid from pg_catalog.pg_roles where rolname = $2)
+           order by 1, 3, 2`,
+          [table, original.identity.role],
+        );
+        // Compare both sides from the same ACL state, before and after a column migration.
+        for (const existingColumns of [['present'], ['present', 'future']]) {
+          yield* session.unsafe('savepoint batch_parity');
+          if (!existingColumns.includes('future')) {
+            yield* session.unsafe(`alter table ${table} drop column future`);
+          }
+          for (const privilege of privileges) {
+            const target = tableGrantTarget(privilege, columns, existingColumns);
+            if (target !== undefined) {
+              yield* session.unsafe(`grant ${target} on table ${table} to ${role}`);
+            }
+          }
+          const sequential = yield* snapshot;
+          yield* session.unsafe('rollback to savepoint batch_parity');
+          if (!existingColumns.includes('future')) {
+            yield* session.unsafe(`alter table ${table} drop column future`);
+          }
+          yield* grantExplicitRole(session, entry);
+          expect(yield* snapshot).toEqual(sequential);
+          yield* grantExplicitRole(session, entry);
+          expect(yield* snapshot).toEqual(sequential);
+          yield* session.unsafe('rollback to savepoint batch_parity');
+          yield* session.unsafe('release savepoint batch_parity');
+        }
+      }),
+    ),
+  );
+}
+
 it.live('accepts the exact manifest privileges for every explicit role', () =>
   rolledBack((session) =>
     Effect.forEach(explicitEntries, (entry) => assertExplicitRole(session, entry), { discard: true }),
+  ),
+);
+
+it.live('preserves shared-owner replay receipt permissions after both bootstrap grant passes', () =>
+  rolledBack((session) =>
+    Effect.gen(function* replayReceiptPrivileges() {
+      const rows = yield* session.unsafe<{ schema_name: string; updatable: boolean; usable: boolean }>(
+        `select namespace.nspname as schema_name,
+                pg_catalog.has_table_privilege('ontos_runtime', relation.oid, 'UPDATE') as updatable,
+                (pg_catalog.has_table_privilege('ontos_runtime', relation.oid, 'SELECT')
+                 and pg_catalog.has_table_privilege('ontos_runtime', relation.oid, 'INSERT')
+                 and pg_catalog.has_table_privilege('ontos_runtime', relation.oid, 'DELETE')) as usable
+           from pg_catalog.pg_class as relation
+           join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+          where relation.relname = 'gateway_assertion_redemptions'
+            and namespace.nspname in ('catalog', 'inventory')
+          order by namespace.nspname`,
+      );
+      expect(rows).toEqual([
+        { schema_name: 'catalog', updatable: false, usable: true },
+        { schema_name: 'inventory', updatable: false, usable: true },
+      ]);
+    }),
+  ),
+);
+
+it.live('bootstraps pre-namespace auth bindings while final readiness rejects the incomplete migration', () =>
+  rolledBack((session) =>
+    Effect.gen(function* preNamespaceBindings() {
+      const entry = entryWith(({ identity }) => identity.role === 'party_registry_runtime');
+      yield* assertDatabaseRoleManifestComplete(session);
+      yield* session.unsafe('savepoint pre_namespace_bindings');
+      // These four columns were introduced by 20260916130129_auth-namespace-bindings.
+      yield* session.unsafe(
+        `alter table core.principal_auth_bindings
+           drop column authentication_namespace_id,
+           drop column binding_revision,
+           drop column created_by_invocation_id,
+           drop column last_transition_ref`,
+      );
+      yield* grantExplicitRole(session, entry);
+      yield* assertExplicitRole(session, entry);
+      const incomplete = yield* assertDatabaseRoleManifestComplete(session).pipe(Effect.flip);
+      expect(incomplete.reason).toContain('core.principal_auth_bindings.authentication_namespace_id');
+      expect(incomplete.reason).toContain('core.principal_auth_bindings.binding_revision');
+
+      // An absent grant on an existing column must still fail the pre-migration assertion.
+      yield* session.unsafe(
+        'revoke select (principal_auth_binding_id) on core.principal_auth_bindings from party_registry_runtime',
+      );
+      expect(yield* assertionFailure(session, entry)).toContain(
+        'core.principal_auth_bindings.principal_auth_binding_id:SELECT',
+      );
+
+      yield* session.unsafe('rollback to savepoint pre_namespace_bindings');
+      yield* session.unsafe(
+        'revoke select (authentication_namespace_id, binding_revision) on core.principal_auth_bindings from party_registry_runtime',
+      );
+      const missingGrants = yield* assertDatabaseRoleManifestComplete(session).pipe(Effect.flip);
+      expect(missingGrants.reason).toContain('is missing manifest column privileges');
+      yield* grantExplicitRole(session, entry);
+      yield* assertDatabaseRoleManifestComplete(session);
+    }),
   ),
 );
 
@@ -177,9 +324,11 @@ it.live('rejects ordinary default grants made by a different object creator', ()
 
 it.live('every runtime login is denied changing protected logging defaults', () =>
   Effect.gen(function* runtimeSelfSettings() {
-    const connections = yield* loadDatabaseIdentityConnections();
+    const connections = yield* loadDatabaseIdentityConnections({ enrollment: APP_DATABASE_IDENTITY_ENROLLMENT });
     for (const { id, role } of DATABASE_IDENTITIES) {
-      const session = yield* makeTestPgSession(connections.runtime[id].connectionString);
+      const connection = connections.runtime[id];
+      assert.isOk(connection !== undefined, `The enrolled ${id} database connection must be present`);
+      const session = yield* makeTestPgSession(connection.connectionString);
       // RESET of an absent setting is a harmless no-op. Configured bearer-role defaults must be protected too.
       const clauses = ['set log_parameter_max_length = -1'];
       if (manifestEntryForRole(role)?.roleSettings.includes('log_parameter_max_length=0') === true) {
@@ -195,4 +344,65 @@ it.live('every runtime login is denied changing protected logging defaults', () 
       }
     }
   }).pipe(Effect.scoped),
+);
+
+for (const relation of ['pg_stat_statements', 'pg_stat_statements_info']) {
+  it.live(`removes PUBLIC SELECT on public.${relation} before exact role assertions`, () =>
+    rolledBack((session) =>
+      Effect.gen(function* statisticsPrivilegeDrift() {
+        const [existing] = yield* session.unsafe<{ present: boolean }>(
+          'select pg_catalog.to_regclass($1) is not null as present',
+          [`public.${relation}`],
+        );
+        if (!existing?.present) {
+          yield* session.unsafe(`create view public.${quoteIdentifier(relation)} as select 1 as probe`);
+        }
+        yield* session.unsafe(`grant select on public.${quoteIdentifier(relation)} to public`);
+        const entry = entryWith(() => true);
+        expect(yield* assertionFailure(session, entry)).toContain(`public.${relation}:SELECT`);
+        yield* revokePublicStatementStatistics(session);
+        yield* revokePublicStatementStatistics(session);
+        yield* assertExplicitRole(session, entry);
+      }),
+    ),
+  );
+}
+
+for (const [statement, missing] of [
+  [
+    'alter table contacts.gateway_assertion_redemptions rename to missing_redemptions_probe',
+    'contacts.gateway_assertion_redemptions',
+  ],
+  [
+    'alter sequence core.domain_event_tenant_sequence_no_seq rename to missing_sequence_probe',
+    'core.domain_event_tenant_sequence_no_seq',
+  ],
+  [
+    'drop function contacts.prune_expired_gateway_assertion_redemptions(timestamptz)',
+    'contacts.prune_expired_gateway_assertion_redemptions',
+  ],
+] as const) {
+  it.live(`readiness rejects missing ${missing}`, () =>
+    rolledBack((session) =>
+      Effect.gen(function* missingRequiredObject() {
+        yield* assertDatabaseRoleManifestComplete(session);
+        yield* session.unsafe(statement);
+        const failure = yield* assertDatabaseRoleManifestComplete(session).pipe(Effect.flip);
+        expect(failure.reason).toContain('Required database role manifest objects are missing');
+        expect(failure.reason).toContain(missing);
+      }),
+    ),
+  );
+}
+
+it.live('readiness rejects an audience assigned to the worker identity', () =>
+  rolledBack((session) =>
+    Effect.gen(function* wrongAudience() {
+      yield* session.unsafe(
+        "update trust.gateway_audience_roles set role_name = 'party_registry_worker' where audience = 'party-registry'",
+      );
+      const failure = yield* assertDatabaseRoleManifestComplete(session).pipe(Effect.flip);
+      expect(failure.reason).toContain('exactly party-registry -> party_registry_runtime');
+    }),
+  ),
 );

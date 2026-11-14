@@ -20,6 +20,7 @@ export interface CommercePortalAuthAccountLookup {
   readonly existsByEmail: (input: {
     readonly email: string;
   }) => Effect.Effect<boolean, CommercePortalAuthAccountCreationUnavailable>;
+
   /**
    * Confirms that the provider still holds the exact stable subject Commerce already observed.
    * Owner reconciliation calls it after an unknown provider outcome without an `email`, so account
@@ -39,6 +40,11 @@ export interface CommercePortalAuthAccountLookup {
   readonly subjectForOwnerInvocation: (input: {
     readonly ownerInvocationId: string;
   }) => Effect.Effect<Option.Option<string>, CommercePortalAuthAccountCreationUnavailable>;
+  /** Exact invocation + subject; reads current provider-owned email verification, never an address lookup. */
+  readonly verifiedEmailForOwnerInvocation: (input: {
+    readonly ownerInvocationId: string;
+    readonly providerSubjectId: string;
+  }) => Effect.Effect<boolean, CommercePortalAuthAccountCreationUnavailable>;
 }
 
 export class CommercePortalAuthAccountLookupService extends Context.Service<

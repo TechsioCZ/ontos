@@ -1,9 +1,9 @@
 /* oxlint-disable effect-native/no-effect-provide-in-library -- Native Drizzle construction is this owner's database factory boundary; expires: 2027-03-31. */
 import { makeEffectDrizzleAuthAdapter } from '@app/better-auth-effect-drizzle/server';
-import { configureDatabasePool } from '@app/core-runtime';
+import { configureDatabasePool, openDatabaseClient, DatabaseConfig } from '@app/core-runtime';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Context, Effect, Layer } from 'effect';
+import { Effect, Layer, Redacted } from 'effect';
 import type { Scope } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 
@@ -11,18 +11,7 @@ import { CommercePortalAuthDatabaseConnectionError } from '../../../api/portal-a
 import { CommercePortalAuthConfig } from '../../../api/portal-auth/provider/config.ts';
 import type { CommercePortalAuthConfigValue } from '../../../api/portal-auth/provider/config.ts';
 import { commercePortalAuthDatabaseSchema, commercePortalAuthRelations } from './portal-auth-tables.ts';
-import type {
-  CommercePortalAuthDatabaseAdapter,
-  CommercePortalAuthDatabaseExecutor,
-} from './portal-auth-database-types.ts';
-
-export class CommercePortalAuthDatabase extends Context.Service<
-  CommercePortalAuthDatabase,
-  {
-    readonly adapter: CommercePortalAuthDatabaseAdapter;
-    readonly executor: CommercePortalAuthDatabaseExecutor;
-  }
->()('@app/commerce-customer-context/portal-auth/persistence/portal-auth-database/CommercePortalAuthDatabase') {}
+import { CommercePortalAuthDatabase } from './portal-auth-database-service.ts';
 
 const connectionFailure = (cause: unknown): CommercePortalAuthDatabaseConnectionError =>
   new CommercePortalAuthDatabaseConnectionError({
@@ -46,7 +35,7 @@ export const makeCommercePortalAuthDatabase = Effect.fn('CommercePortalAuthDatab
     ),
   );
   const reactivity = yield* Reactivity.make;
-  const client = yield* PgClient.make(poolConfiguration).pipe(
+  const client = yield* openDatabaseClient(poolConfiguration).pipe(
     Effect.provideService(Reactivity.Reactivity, reactivity),
     Effect.mapError(connectionFailure),
   );
@@ -56,6 +45,15 @@ export const makeCommercePortalAuthDatabase = Effect.fn('CommercePortalAuthDatab
   const adapter = yield* makeEffectDrizzleAuthAdapter(executor, commercePortalAuthDatabaseSchema);
   return { adapter, executor };
 });
+
+/** Operator entrypoint: use the explicitly parsed database identity rather than the request realm's URL. */
+export const CommercePortalAuthDatabaseFromDatabaseConfigLive = Layer.effect(
+  CommercePortalAuthDatabase,
+  Effect.gen(function* makeCommercePortalAuthOperatorDatabase() {
+    const configuration = yield* DatabaseConfig;
+    return yield* makeCommercePortalAuthDatabase({ connectionString: Redacted.make(configuration.connectionString) });
+  }),
+);
 
 export const CommercePortalAuthDatabaseLive = Layer.effect(
   CommercePortalAuthDatabase,

@@ -1,3 +1,4 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { identity } from 'effect';
 import {
   MicroVerticalBuildMarkerSchema,
@@ -101,6 +102,7 @@ export type {
 
 export const pricingApi = HttpApi.make('PricingApi')
   .addHttpApi(pricingFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
   .annotate(HttpApi.HeadersParseOptions, { onExcessProperty: 'ignore' })
   // <generated-governed-http-api-additions>
   .addHttpApi(CommercialFeeDefinitionApi)

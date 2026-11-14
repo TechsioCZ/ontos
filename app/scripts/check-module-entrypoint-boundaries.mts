@@ -33,6 +33,7 @@ import type { PlatformError } from 'effect/PlatformError';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import {
+  demoCapabilityIssuerEntrypoints,
   gatewayContextAuthorizationEntrypoints,
   shellGatewayContextContract,
 } from '../packages/shared-contracts/src/gateway-context.ts';
@@ -61,6 +62,8 @@ import {
   hasValidActionGateway,
 } from './published-outbox-contracts.mts';
 import { isAllowedCompositionSeam } from './check-lean-core-dependencies.mts';
+import { publicComponentEntry, publicComponentImportViolations } from './public-component-boundary.mts';
+import type { PublicComponentOwner } from './public-component-boundary.mts';
 import { isProblemDetailsFactory } from './api-contract-schema-rules.mts';
 import {
   PublicContractOwnerAppIdSchema,
@@ -89,6 +92,8 @@ import {
   hasGeneratedProviderRegistration,
   hasGeneratedSourceHeader,
   hasGeneratedModuleApiContract,
+  hasOwnerDeclaredProviderManifest,
+  hasOwnerDeclaredProviderReadContract,
 } from './generated-module-api-boundary.mts';
 import {
   maskNonCode,
@@ -3119,6 +3124,147 @@ const hasSelectedContractConstructor = (
   );
 };
 
+// Demo addition (rejection only): a published contract routine must not capture owner state that
+// any code can mutate. Compare native value identities, not identifier spellings: a local counter or
+// collection can mutate without sharing the owner's module-level binding.
+const mutableContractCaptureCache = new WeakMap<SourceModule, ReadonlySet<SchemaNode>>();
+
+const mutableContractCaptureEvidence = (state: BoundaryCheckState, module: SourceModule): ReadonlySet<SchemaNode> => {
+  const cached = mutableContractCaptureCache.get(module);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const evidence = new Set<SchemaNode>();
+  for (const statement of module.file.program.body) {
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+    if (declaration?.type !== 'VariableDeclaration') {
+      continue;
+    }
+    for (const local of declaration.declarations) {
+      if (declaration.kind === 'const' && local.init !== null && local.init !== undefined && isFunction(local.init)) {
+        continue;
+      }
+      for (const identifier of Object.values(getBindingIdentifiers(local.id))) {
+        if (declaration.kind === 'const' && state.graph.resolveReference(module, identifier) !== undefined) {
+          continue;
+        }
+        for (const value of state.graph.evaluate(module, identifier)) {
+          if (value.kind === 'node' || value.kind === 'unresolved') {
+            evidence.add(value.node);
+          }
+        }
+      }
+    }
+  }
+  mutableContractCaptureCache.set(module, evidence);
+  return evidence;
+};
+
+const contractRoutineNonreferences = (routine: SchemaNode): ReadonlySet<SchemaNode> => {
+  const excluded = new Set<SchemaNode>();
+  traverseFast(routine, (node) => {
+    if (isFunction(node) || node.type === 'VariableDeclarator' || node.type === 'CatchClause') {
+      for (const identifier of Object.values(getBindingIdentifiers(node))) {
+        excluded.add(identifier);
+      }
+    }
+    if ((node.type === 'MemberExpression' || node.type === 'ObjectProperty') && !node.computed) {
+      excluded.add(node.type === 'MemberExpression' ? node.property : node.key);
+    }
+    if ('typeAnnotation' in node && node.typeAnnotation !== null && node.typeAnnotation !== undefined) {
+      traverseFast(node.typeAnnotation, (child) => {
+        excluded.add(child);
+      });
+    }
+  });
+  return excluded;
+};
+
+const contractMutationRoot = (mutation: SchemaNode): SchemaNode => {
+  let target: SchemaNode = mutation;
+  if (mutation.type === 'AssignmentExpression') {
+    target = mutation.left;
+  } else if (mutation.type === 'UpdateExpression') {
+    target = mutation.argument;
+  }
+  while (target.type === 'MemberExpression') {
+    target = target.object;
+  }
+  return target;
+};
+
+const isOwnConstantScalarCapture = (module: SourceModule, reference: SchemaNode, value: GraphValue): boolean => {
+  if (
+    reference.type !== 'Identifier' ||
+    (value.kind !== 'node' && value.kind !== 'unresolved') ||
+    value.module !== module ||
+    !['StringLiteral', 'NumericLiteral', 'BooleanLiteral', 'NullLiteral', 'BigIntLiteral'].includes(value.node.type)
+  ) {
+    return false;
+  }
+  const declared = module.file.program.body.some((statement) => {
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+    return (
+      declaration?.type === 'VariableDeclaration' &&
+      declaration.kind === 'const' &&
+      declaration.declarations.some(
+        (local) => local.id.type === 'Identifier' && local.id.name === reference.name && local.init === value.node,
+      )
+    );
+  });
+  return (
+    declared &&
+    module.mutations.every((mutation) => {
+      const target = contractMutationRoot(mutation);
+      return target.type !== 'Identifier' || target.name !== reference.name;
+    })
+  );
+};
+
+const hasImmutableContractRoutineCaptures = (
+  state: BoundaryCheckState,
+  module: SourceModule,
+  expression: SchemaNode,
+): boolean => {
+  const pending = [{ expression, module }];
+  const visited = new Set<SchemaNode>();
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    if (visited.has(next.expression)) {
+      continue;
+    }
+    if (visited.size >= 128) {
+      return false;
+    }
+    visited.add(next.expression);
+    const current = next;
+    const excluded = contractRoutineNonreferences(current.expression);
+    let immutable = true;
+    traverseFast(current.expression, (node) => {
+      if (node.type !== 'Identifier' || excluded.has(node)) {
+        return;
+      }
+      for (const value of state.graph.evaluate(current.module, node)) {
+        if (value.kind !== 'node' && value.kind !== 'unresolved') {
+          continue;
+        }
+        if (
+          mutableContractCaptureEvidence(state, value.module).has(value.node) &&
+          !isOwnConstantScalarCapture(current.module, node, value)
+        ) {
+          immutable = false;
+        }
+        if (value.kind === 'node' && isFunction(value.node)) {
+          pending.push({ expression: value.node, module: value.module });
+        }
+      }
+    });
+    if (!immutable) {
+      return false;
+    }
+  }
+  return true;
+};
+
 // Publication and closure origins establish a contract routine boundary, not
 // arbitrary body purity. Runtime authority remains a distinct dependency role.
 const hasPublishedContractRoutine = (
@@ -3158,6 +3304,7 @@ const hasPublishedContractRoutine = (
   });
   return (
     valid &&
+    hasImmutableContractRoutineCaptures(state, binding.module, binding.expression) &&
     !state.graph
       .reachable(binding.module, binding.expression)
       .some((value) =>
@@ -3807,6 +3954,45 @@ const foreignPrivateOrigin = (
   return undefined;
 };
 
+// ---------------------------------------------------------------------------------------------------------------
+// Demo-only exception 5: build-time public components (proof in ./public-component-boundary.mts).
+// Main's mechanism is Module Federation; build-time inline controls are a deliberate divergence to raise with the
+// owner. Returns undefined when the specifier does not select a declared public-component entry.
+// ---------------------------------------------------------------------------------------------------------------
+const publicComponentImportViolationsFor = (
+  state: BoundaryCheckState,
+  consumer: string,
+  specifier: string,
+): readonly string[] | undefined => {
+  const pkg = [...state.ownershipPackages.values()].find(
+    ({ metadata }) => metadata.name !== undefined && specifier.startsWith(`${metadata.name}/`),
+  );
+  if (pkg?.metadata.name === undefined) {
+    return undefined;
+  }
+  const owner: PublicComponentOwner = {
+    directory: pkg.directory,
+    exports: Object.fromEntries(
+      Object.entries(pkg.metadata.exports ?? {}).filter((entry): entry is [string, string] =>
+        Schema.is(Schema.String)(entry[1]),
+      ),
+    ),
+    packageName: pkg.metadata.name,
+  };
+  if (publicComponentEntry(owner, specifier, state.sourceMap) === undefined) {
+    return undefined;
+  }
+  return publicComponentImportViolations({
+    consumer,
+    consumerDependencies: new Set(
+      Object.keys(findConsumerOwnershipPackage(state, consumer)?.metadata.dependencies ?? {}),
+    ),
+    owner,
+    sources: state.sourceMap,
+    specifier,
+  });
+};
+
 const validateResolvedOwnerImports = (state: BoundaryCheckState, file: string, source: string) =>
   Effect.gen(function* validateResolvedOwnerImportsEffect() {
     const consumerOwner = deploymentOwner(state, file);
@@ -3827,8 +4013,20 @@ const validateResolvedOwnerImports = (state: BoundaryCheckState, file: string, s
     if (specifiers.length === 0) {
       return;
     }
+    // Demo-only exception 5: an import of a declared public-component entry is decided only by its proof.
+    const componentImports = new Map(
+      specifiers.flatMap((specifier) => {
+        const violations = publicComponentImportViolationsFor(state, file, specifier);
+        return violations === undefined ? [] : [[specifier, violations] as const];
+      }),
+    );
+    for (const [specifier, violations] of componentImports) {
+      for (const violation of violations) {
+        yield* fail(file, `public component ${specifier}: ${violation}`);
+      }
+    }
     const origins = nativeOwnershipOrigins(state, file);
-    for (const specifier of specifiers) {
+    for (const specifier of specifiers.filter((candidate) => !componentImports.has(candidate))) {
       const direct = ownershipDeclarationTarget(state, file, specifier);
       if (direct !== undefined && isApprovedOwnerContract(state, file, direct, specifier)) {
         continue;
@@ -4106,10 +4304,21 @@ const validateGeneratedProviderClient = (
       contractHeader: hasGeneratedSourceHeader(contractSource, generatedHeader),
       endpointGroup: expectedGroups.has(endpointGroup),
       legalEntityScope: hasMatchingProviderLegalEntityScope(providerSource, manifest, moduleId, name, kind),
-      manifest: hasGeneratedProviderManifest(manifest, moduleId, name, kind),
+      manifest:
+        hasGeneratedProviderManifest(manifest, moduleId, name, kind) ||
+        // Demo-only exception 4: owner-declared Search presentation.
+        hasOwnerDeclaredProviderManifest(
+          sourceOrEmpty(sourceMap, `${vertical}/vertical.manifest.ts`),
+          sourceMap.get(`${vertical}/vertical.runtime-declaration.ts`),
+          moduleId,
+          name,
+          kind,
+        ),
       operationGateway: hasGeneratedOperationGatewayContract(gateway, deploymentAppId),
       providerHeader: hasGeneratedSourceHeader(providerSource, generatedHeader),
-      readContract: hasGeneratedProviderReadContract(providerSource, moduleId, name, kind),
+      readContract:
+        hasGeneratedProviderReadContract(providerSource, moduleId, name, kind) ||
+        hasOwnerDeclaredProviderReadContract(providerSource, moduleId, name, kind),
       registration: hasGeneratedProviderRegistration(registration, name, kind),
       serverContract: hasGeneratedGovernedServerContract(
         serverSource,
@@ -4612,6 +4821,10 @@ const validateRouteManifests = (path: Path.Path, files: readonly string[], root:
     }
   });
 
+const GATEWAY_CONTRACT_FILE = 'packages/shared-contracts/src/gateway-context.ts';
+const SHELL_API_CONTRACT_FILE = 'apps/shell-super-app/shared/api.ts';
+const SHELL_API_RUNTIME_FILE = 'apps/shell-super-app/api/index.ts';
+
 interface GatewayIssuerBinding {
   readonly credential: 'session' | 'api_key';
   readonly handler: string;
@@ -4665,7 +4878,7 @@ export const validateGatewayIssuerEntrypoints = (issuers: readonly GatewayIssuer
     });
     if (issuers.length !== 3 || !exactIssuers) {
       yield* fail(
-        'packages/shared-contracts/src/gateway-context.ts',
+        GATEWAY_CONTRACT_FILE,
         'gateway authorization contract must classify exactly the session, direct API-key, and module delegation issuers',
       );
     }
@@ -4689,7 +4902,7 @@ const validateGatewayRuntime = (shellApiContract: string, shellApiRuntime: strin
     });
     if (!shellApiContract.includes('.add(GatewayContextApiGroup)') || !allHandlersMounted) {
       yield* fail(
-        'apps/shell-super-app/api/index.ts',
+        SHELL_API_RUNTIME_FILE,
         'all three classified capability issuers must be mounted by the Shell API runtime',
       );
     }
@@ -4728,11 +4941,116 @@ const hasMountedIssuerPath = (
   );
 };
 
+// ---------------------------------------------------------------------------------------------------------------
+// Demo-only exception 6: the demo's capability issuers beside main's three gateway issuers.
+// The API-key read relay and the Shell document's two session issuers are classified in
+// `demoCapabilityIssuerEntrypoints`, so main's exact-three issuer rule and its Shell gateway database proof hold. They
+// get the same treatment as main's issuers: an exact classification, a declared endpoint in their own contract group,
+// that group added to the Shell API, a mounted runtime handler, and an entry in the protected entrypoint inventory.
+// ---------------------------------------------------------------------------------------------------------------
+export interface DemoGatewayIssuerBinding extends GatewayIssuerBinding {
+  readonly contractFile: string;
+  readonly entrypointKey: string;
+  readonly groupExport: string;
+  readonly groupId: string;
+}
+
+export const demoGatewayIssuerBindings: readonly DemoGatewayIssuerBinding[] = [
+  {
+    contractFile: GATEWAY_CONTRACT_FILE,
+    credential: 'api_key',
+    entrypointKey: 'shell.gateway-read.issue.api-key',
+    groupExport: 'ApiKeyGatewayReadApiGroup',
+    groupId: 'apiKeyGatewayRead',
+    handler: 'readWithApiKeyGatewayContext',
+    path: shellGatewayContextContract.readWithApiKeyGatewayContextPath,
+  },
+  {
+    contractFile: 'apps/shell-super-app/shared/document-gateway-api.ts',
+    credential: 'session',
+    entrypointKey: 'shell.gateway-contexts.issue.session',
+    groupExport: 'DocumentGatewayApiGroup',
+    groupId: 'documentGateway',
+    handler: 'issueDocumentGatewayContexts',
+    path: shellGatewayContextContract.issueDocumentGatewayContextsPath,
+  },
+];
+
+export const hasClassifiedDemoIssuers = (issuers: readonly GatewayIssuerEntrypoint[]): boolean => {
+  const keys = new Set(issuers.map((issuer) => issuer.entrypointKey));
+  return (
+    issuers.length === demoGatewayIssuerBindings.length &&
+    keys.size === issuers.length &&
+    issuers.every((issuer) => {
+      const binding = demoGatewayIssuerBindings.find((candidate) => candidate.entrypointKey === issuer.entrypointKey);
+      return (
+        binding !== undefined &&
+        issuer.authorization.kind === 'capability_issuance' &&
+        issuer.authorization.credential === binding.credential &&
+        issuer.path === binding.path &&
+        issuer.owner === shellGatewayContextContract.ownerId &&
+        issuer.deployment === shellGatewayContextContract.ownerId &&
+        issuer.surface === 'capability_issuance'
+      );
+    })
+  );
+};
+
+export const hasMountedDemoIssuer = (
+  sourceMap: ReadonlyMap<string, string>,
+  binding: DemoGatewayIssuerBinding,
+): boolean => {
+  const group = gatewayDeclaration(sourceOrEmpty(sourceMap, binding.contractFile), binding.groupExport);
+  const shellApi = gatewayDeclaration(sourceOrEmpty(sourceMap, SHELL_API_CONTRACT_FILE), 'ShellAuthenticationApi');
+  const runtime = sourceOrEmpty(sourceMap, SHELL_API_RUNTIME_FILE);
+  const endpointPath = binding.path.slice(shellGatewayContextContract.apiPrefix.length);
+  const added = new RegExp(
+    String.raw`\.add\(\s*(?:${binding.groupExport}|ShellBrowserApi\.groups\.${binding.groupId})\s*\)`,
+    'gu',
+  );
+  return (
+    group.startsWith(`HttpApiGroup.make('${binding.groupId}')`) &&
+    new RegExp(String.raw`HttpApiEndpoint\.post\(\s*'${binding.handler}'\s*,\s*'${endpointPath}'\s*,`, 'u').test(
+      group,
+    ) &&
+    [...shellApi.matchAll(added)].length === 1 &&
+    new RegExp(
+      String.raw`^const \w+ = HttpApiBuilder\.group\(ShellAuthenticationApi, '${binding.groupId}',`,
+      'mu',
+    ).test(runtime) &&
+    hasIssuerHandler(runtime, binding.handler)
+  );
+};
+
+export const validateDemoCapabilityIssuers = (
+  sourceMap: ReadonlyMap<string, string>,
+  inventoryEntries: ProtectedEntrypointInventoryEntry[],
+) =>
+  Effect.gen(function* validateDemoCapabilityIssuersEffect() {
+    if (!hasClassifiedDemoIssuers(demoCapabilityIssuerEntrypoints)) {
+      yield* fail(
+        GATEWAY_CONTRACT_FILE,
+        'demo capability issuers must classify exactly the API-key read relay and the Shell document gateway batch issuer',
+      );
+    }
+    for (const binding of demoGatewayIssuerBindings) {
+      if (!hasMountedDemoIssuer(sourceMap, binding)) {
+        yield* fail(
+          SHELL_API_CONTRACT_FILE,
+          `capability issuer ${binding.path} is missing from its mounted contract group ${binding.groupId}`,
+        );
+      }
+    }
+    for (const issuer of demoCapabilityIssuerEntrypoints) {
+      inventoryEntries.push(issuer);
+    }
+  });
+
 const validateGatewayContract = (state: BoundaryCheckState) =>
   Effect.gen(function* validateGatewayContractEffect() {
-    const gatewayContract = sourceOrEmpty(state.sourceMap, 'packages/shared-contracts/src/gateway-context.ts');
-    const shellApiContract = sourceOrEmpty(state.sourceMap, 'apps/shell-super-app/shared/api.ts');
-    const shellApiRuntime = sourceOrEmpty(state.sourceMap, 'apps/shell-super-app/api/index.ts');
+    const gatewayContract = sourceOrEmpty(state.sourceMap, GATEWAY_CONTRACT_FILE);
+    const shellApiContract = sourceOrEmpty(state.sourceMap, SHELL_API_CONTRACT_FILE);
+    const shellApiRuntime = sourceOrEmpty(state.sourceMap, SHELL_API_RUNTIME_FILE);
     yield* validateGatewayIssuerEntrypoints(gatewayContextAuthorizationEntrypoints);
     for (const issuer of gatewayContextAuthorizationEntrypoints) {
       if (
@@ -4740,13 +5058,15 @@ const validateGatewayContract = (state: BoundaryCheckState) =>
         !hasMountedIssuerPath(shellApiContract, gatewayContract, issuer)
       ) {
         yield* fail(
-          'apps/shell-super-app/shared/api.ts',
+          SHELL_API_CONTRACT_FILE,
           `capability issuer ${issuer.path} is missing from the mounted gateway contract`,
         );
       }
       state.inventoryEntries.push(issuer);
     }
     yield* validateGatewayRuntime(shellApiContract, shellApiRuntime);
+    // Demo-only exception 6: the demo's capability issuers, checked and inventoried like main's.
+    yield* validateDemoCapabilityIssuers(state.sourceMap, state.inventoryEntries);
   });
 
 const checkModuleEntrypointBoundariesEffect = (workspaceRoot: string) =>

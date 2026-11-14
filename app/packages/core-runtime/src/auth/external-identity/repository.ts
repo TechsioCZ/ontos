@@ -8,10 +8,14 @@ import { Hex } from 'effect/encoding';
 
 import {
   AuthBindingStatusSchema,
+  AuthBindingIdSchema,
   AuthenticationNamespaceIdSchema,
+  BindingRevisionSchema,
   ExternalAuthenticationSubjectSchema,
+  PrincipalIdSchema,
   ReadPrincipalBindingResultSchema,
   ResolveExternalSubjectResultSchema,
+  TenantIdSchema,
 } from '../external-identity-contracts.ts';
 import type {
   AuthenticationNamespaceRegistration,
@@ -34,6 +38,9 @@ import type {
 } from './verifier.ts';
 import { externalIdentityFailure } from './errors.ts';
 import type { ExternalIdentityFailure } from './errors.ts';
+import { ExternalIdentityBindingCurrentnessError } from './binding-currentness-error.ts';
+
+export { ExternalIdentityBindingCurrentnessError } from './binding-currentness-error.ts';
 
 export type ExternalUserSubject = ExternalAuthenticationSubject;
 type ReadPrincipalBindingResult = Schema.Schema.Type<typeof ReadPrincipalBindingResultSchema>;
@@ -924,5 +931,85 @@ export const externalIdentitySubjectForBinding = Effect.fn('Repository.externalI
       providerSubjectId: loaded.value.providerSubjectId,
       subjectType: loaded.value.subjectType,
     }).pipe(Effect.mapError((cause) => persistenceFailure('The binding subject is malformed', cause)));
+  },
+);
+
+/**
+ * A comparison snapshot, not authentication or an authorization capability. Identity and revision
+ * use the very same schemas as the published binding Read; subject fields come from its subject
+ * lookup. The receiving owner retains responsibility for its actor, operation journal and CAS.
+ */
+export const CurrentExternalIdentityBindingSchema = Schema.Struct({
+  ...ExternalAuthenticationSubjectSchema.fields,
+  authBindingId: AuthBindingIdSchema,
+  bindingRevision: BindingRevisionSchema,
+  principalId: PrincipalIdSchema,
+  tenantId: TenantIdSchema,
+});
+export type CurrentExternalIdentityBinding = typeof CurrentExternalIdentityBindingSchema.Type;
+
+const bindingCurrentnessFailure = (
+  code: ExternalIdentityBindingCurrentnessError['code'],
+  cause?: unknown,
+): ExternalIdentityBindingCurrentnessError => {
+  const failure = new ExternalIdentityBindingCurrentnessError({ code });
+  return cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
+};
+
+/**
+ * Rechecks a previously governed Read in the receiving owner's genuine transaction. The joined
+ * FOR UPDATE locks the binding, principal and tenant until that owner commits or rolls back.
+ * This is SQL-only currentness, not a second namespace authorization or authentication path.
+ * Namespace permission/registration were checked by the published Read outside this transaction.
+ */
+export const assertCurrentExternalIdentityBinding = Effect.fn('ExternalIdentity.assertCurrentBinding')(
+  function* assertCurrentExternalIdentityBindingEffect(
+    transaction: ScopedTransactionExecutor,
+    expected: CurrentExternalIdentityBinding,
+  ): Effect.fn.Return<void, ExternalIdentityBindingCurrentnessError> {
+    const snapshot = yield* Schema.decodeUnknownEffect(CurrentExternalIdentityBindingSchema, {
+      onExcessProperty: 'error',
+    })(expected).pipe(Effect.mapError((cause) => bindingCurrentnessFailure('identity_forbidden', cause)));
+    if (snapshot.tenantId !== transaction.scope.tenantId) {
+      return yield* bindingCurrentnessFailure('identity_forbidden');
+    }
+    const loaded = yield* loadByBinding(transaction, {
+      authBindingId: snapshot.authBindingId,
+      forUpdate: true,
+      tenantId: transaction.scope.tenantId,
+    }).pipe(
+      Effect.mapError((cause) =>
+        bindingCurrentnessFailure(
+          cause.code === 'identity_unavailable' ? 'identity_unavailable' : 'identity_forbidden',
+          cause,
+        ),
+      ),
+    );
+    if (Option.isNone(loaded)) {
+      return yield* bindingCurrentnessFailure('identity_forbidden');
+    }
+    const binding = loaded.value;
+    yield* validateCurrentBinding(binding).pipe(
+      Effect.mapError((cause) => bindingCurrentnessFailure('identity_forbidden', cause)),
+    );
+    // Keep the revision a persisted Core fact, exactly as the registered Read projects it. A
+    // malformed persisted row is unavailable, never an invented revision or an eligibility pass.
+    const current = yield* Schema.decodeUnknownEffect(ReadPrincipalBindingResultSchema)(toReadResult(binding)).pipe(
+      Effect.mapError((cause) => bindingCurrentnessFailure('identity_unavailable', cause)),
+    );
+    if (
+      current.outcome !== 'FOUND' ||
+      current.authBindingId !== snapshot.authBindingId ||
+      current.authenticationNamespaceId !== snapshot.authenticationNamespaceId ||
+      current.bindingRevision !== snapshot.bindingRevision ||
+      current.principalId !== snapshot.principalId ||
+      binding.tenantId !== snapshot.tenantId ||
+      binding.providerSubjectId !== snapshot.providerSubjectId ||
+      binding.subjectType !== snapshot.subjectType ||
+      binding.principalKind !== 'human'
+    ) {
+      return yield* bindingCurrentnessFailure('identity_forbidden');
+    }
+    return yield* Effect.void;
   },
 );

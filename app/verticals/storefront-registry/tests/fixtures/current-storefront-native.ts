@@ -11,6 +11,8 @@ import {
   ActionRuntime,
   ReadRuntime,
   DatabaseConfig,
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   parseDatabaseConnectionPair,
   ContextAccessLive,
   CorePersistenceLive,
@@ -29,6 +31,7 @@ import {
   OperationalScopeResolverLive,
   TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
+import { OwnerActionApprovals, makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { defineEffectBff, dispatchEffectBffRequest } from '@modern-js/bff-effect/effect-edge';
@@ -60,13 +63,16 @@ import { storefrontRegistryApiRuntimeFromContext } from '../../api/index.ts';
 import { storefrontRegistryApiContract } from '../../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 
-import type { RegisterStorefrontApplicationPayloadSchema } from '../../shared/action-contracts.ts';
+import type { RegisterStorefrontApplicationPayloadSchema } from '../../shared/actions/register-storefront-application.ts';
 import { registerStorefrontApplicationAction } from '../../src/actions/register-storefront-application.action.ts';
 
 export class CurrentStorefrontNativeFixtureError extends Schema.TaggedError<CurrentStorefrontNativeFixtureError>()(
   'CurrentStorefrontNativeFixtureError',
   { cause: Schema.optionalKey(Schema.Redacted(Schema.Defect())), reason: Schema.String },
 ) {}
+
+// The Registry shares the Core request/issuer identities and declares no owner-specific database role.
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const unavailable = (cause?: unknown) =>
   new CurrentStorefrontNativeFixtureError({
@@ -143,13 +149,17 @@ export const makeCurrentStorefrontNativeFixture = Effect.fn('CurrentStorefrontNa
       overlay,
       accessEnforcement,
     );
+    const ownerApprovals = makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, storefrontRegistryRegistration).pipe(
+      Layer.provide(common),
+    );
     // The Registry creates both runtimes from its own published registration and compiled release.
     const runtimes = Layer.mergeAll(
       makeActionRuntimeLive(ultramodernDeliveryUnit, storefrontRegistryRegistration).pipe(
+        Layer.provideMerge(ownerApprovals),
         Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
       ),
       makeReadRuntimeLive(ultramodernDeliveryUnit, storefrontRegistryRegistration).pipe(Layer.provide(common)),
-    ).pipe(Layer.provide(NodeCrypto.layer));
+    ).pipe(Layer.provide(NodeCrypto.layer), Layer.provide(databaseIdentitiesLive));
     const ownerContext = yield* Layer.build(runtimes).pipe(
       Effect.provideService(ConfigProvider.ConfigProvider, provider),
     );
@@ -158,11 +168,16 @@ export const makeCurrentStorefrontNativeFixture = Effect.fn('CurrentStorefrontNa
     const closed = yield* Ref.make(false);
     yield* Effect.addFinalizer(() => Ref.set(closed, true));
     const redemption = yield* Layer.build(
-      GatewayAssertionRedemptionLive.pipe(Layer.provide(GatewayAssertionRedemptionDatabaseLive)),
+      GatewayAssertionRedemptionLive.pipe(
+        Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+        Layer.provide(databaseIdentitiesLive),
+      ),
     );
     // Static imports describe the owner runtime; acquire it only after validated fixture setup.
     const runtime = yield* storefrontRegistryApiRuntimeFromContext.pipe(
       Effect.provideService(ReadRuntime, readRuntime),
+      Effect.provideService(ActionRuntime, actionRuntime),
+      Effect.provideService(OwnerActionApprovals, Context.get(ownerContext, OwnerActionApprovals)),
       Effect.provideContext(redemption),
       Effect.catchDefect((cause) => Effect.fail(unavailable(cause))),
       Effect.timeoutOrElse({ duration: Duration.seconds(10), orElse: () => Effect.fail(unavailable()) }),

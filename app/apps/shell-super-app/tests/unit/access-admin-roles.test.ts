@@ -53,7 +53,11 @@ import {
   accessRolesEntrypoints,
   accessRolesFailureProblem,
 } from '../../api/access-admin/roles.ts';
-import { AccessAdminSession, accessAdminAuthenticationRequiredProblem } from '../../api/access-admin/session.ts';
+import {
+  AccessAdminSession,
+  accessAdminAuthenticationRequiredProblem,
+  accessAdminSavedPendingProblem,
+} from '../../api/access-admin/session.ts';
 import type { OperationalScope } from '@app/core-runtime';
 
 /*
@@ -245,6 +249,9 @@ const fixture = (input: FixtureInput = {}) => {
 
   const loader: TenantIntentLoaderService = {
     loadAuthorityCells: () => Effect.succeed([]),
+    loadAuthorityCellsMany: (_scope, queries) => Effect.succeed(queries.map(() => [])),
+    // One fixture tenant: every company a request names is its own.
+    loadCompanyOwnership: () => Effect.succeed(true),
     loadConfigureBases: () => Effect.succeed(input.bases ?? [{ _tag: 'Owner' }]),
     loadConnection: () => Effect.succeed(Option.none()),
     loadProjection: () => Effect.succeed(intent(assignments)),
@@ -629,6 +636,26 @@ it.effect('creates an empty role and refuses any cells at creation, so cells onl
   }),
 );
 
+it.effect("shows the writer's own refusal as the sentence a person reads, with no technical code in it", () =>
+  Effect.sync(() => {
+    // The role an agent holds may not run a sensitive capability: the person reads what to do, never a code.
+    const refused = accessRolesFailureProblem({
+      code: 'access_changes_write_refused',
+      reason:
+        'Roli drží agent (Agent úkolů). Agent smí citlivé a správcovské akce jen navrhovat, ne provádět: roli mu nejdřív odeberte, nebo tuto změnu upravte.',
+    });
+    expect(refused.status).toBe(409);
+    expect(refused.detail).toBe(
+      'Roli drží agent (Agent úkolů). Agent smí citlivé a správcovské akce jen navrhovat, ne provádět: roli mu nejdřív odeberte, nebo tuto změnu upravte.',
+    );
+    expect(refused.detail).not.toContain('access_changes');
+    // A diagnostic code a client tells two refusals apart by keeps its prefix.
+    expect(accessRolesFailureProblem({ code: 'access_changes_revision_stale', reason: 'x' }).detail).toBe(
+      'access_changes_revision_stale: x',
+    );
+  }),
+);
+
 it.effect('maps every Core refusal onto the one status a client can act on', () =>
   Effect.sync(() => {
     expect(accessRolesFailureProblem({ code: 'access_changes_authority_missing', reason: 'x' }).status).toBe(403);
@@ -637,7 +664,10 @@ it.effect('maps every Core refusal onto the one status a client can act on', () 
     expect(accessRolesFailureProblem({ code: 'access_changes_revision_stale', reason: 'x' }).status).toBe(409);
     expect(accessRolesFailureProblem({ code: 'access_changes_record_conflict', reason: 'x' }).status).toBe(409);
     expect(accessRolesFailureProblem({ code: 'access_changes_store_unavailable', reason: 'x' }).status).toBe(503);
-    expect(accessRolesFailureProblem({ code: 'access_projection_write_unavailable', reason: 'x' }).status).toBe(503);
+    // The role revision is recorded before it is projected: a projection that did not complete is a saved change.
+    expect(accessRolesFailureProblem({ code: 'access_projection_write_unavailable', reason: 'x' })).toEqual(
+      accessAdminSavedPendingProblem(),
+    );
     expect(accessRolesFailureProblem({ code: 'access_changes_capability_not_configurable', reason: 'x' }).status).toBe(
       422,
     );

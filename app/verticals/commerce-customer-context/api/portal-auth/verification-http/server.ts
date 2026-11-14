@@ -2,6 +2,7 @@ import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Context, Effect } from 'effect';
 import type { HttpServerRequest } from 'effect/http';
 import type { CommercePortalAuthVerificationService } from '../provider/verification.ts';
+import { commerceCustomerContextApi } from '../../../shared/api.ts';
 import { CommercePortalAuthVerificationApi } from '../../../shared/portal-auth-verification.ts';
 import type { CommercePortalAuthVerificationRequest } from '../../../shared/portal-auth-verification.ts';
 import type { VerifyExternalAuthenticationResult } from '../../../shared/portal-auth-contracts.ts';
@@ -60,6 +61,16 @@ const executeVerificationHttp = Effect.fn('CommercePortalAuthVerificationHttp.de
 /** Standalone mounting is explicit; this group supplies neither authority nor a provider graph. */
 export const commercePortalAuthVerificationApiLive = HttpApiBuilder.group(
   CommercePortalAuthVerificationApi,
+  'externalAuthenticationVerification',
+  (handlers) =>
+    handlers.handle('verifyExternalAuthentication', ({ payload, request }) =>
+      executeVerificationHttp(payload, request),
+    ),
+);
+
+/** The production mount inside the Commerce API; the root installs the executor and its full gate. */
+export const commercePortalAuthVerificationCommerceApiLive = HttpApiBuilder.group(
+  commerceCustomerContextApi,
   'externalAuthenticationVerification',
   (handlers) =>
     handlers.handle('verifyExternalAuthentication', ({ payload, request }) =>

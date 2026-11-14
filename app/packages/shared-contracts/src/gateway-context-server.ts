@@ -6,6 +6,8 @@ import {
 } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime/outbox/worker';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
+import { ownModuleCredential, ownWorkloadCredential } from '@app/core-runtime/auth/owner-module-credential';
+import { OutboxMessageCompany } from '@app/core-runtime/outbox/message-company';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import {
   readVerifiedGatewayCompositionRevision,
@@ -17,7 +19,7 @@ import {
   readVerifiedGatewayOrganizationProcessingRead,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { Crypto } from 'effect';
-import { Config, Effect, Match, Redacted, Schema } from 'effect';
+import { ConfigProvider, Effect, Match, Option, Redacted, Schema } from 'effect';
 
 import {
   GatewayCapabilityKeySchema,
@@ -27,8 +29,14 @@ import {
   organizationGovernanceReadOperationContract,
   privacyDispatchOperationContract,
 } from './gateway-context.ts';
-import { issueDelegatedGatewayContext } from './gateway-context-api-key.ts';
-import type { GatewayContextResponse, GatewayDelegatedContextRequest } from './gateway-context.ts';
+import { issueApiKeyGatewayContext, issueDelegatedGatewayContext } from './gateway-context-api-key.ts';
+import { shellGatewayBaseUrlConfig } from './shell-gateway-url.ts';
+import type {
+  GatewayContextClientError,
+  GatewayContextProblem,
+  GatewayContextResponse,
+  GatewayDelegatedContextRequest,
+} from './gateway-context.ts';
 
 export class GatewayDelegationSourceError extends Schema.TaggedError<GatewayDelegationSourceError>()(
   'GatewayDelegationSourceError',
@@ -37,6 +45,50 @@ export class GatewayDelegationSourceError extends Schema.TaggedError<GatewayDele
     reason: Schema.String,
   },
 ) {}
+
+/** Every way getting a gateway context can fail at the caller. */
+export type GatewayContextFailure = GatewayContextClientError | GatewayDelegationSourceError;
+
+const describeShellRefusal = (problem: GatewayContextProblem): string =>
+  Match.value(problem).pipe(
+    Match.tag(
+      'GatewayAuthenticationRequiredProblem',
+      'GatewayForbiddenProblem',
+      'GatewayReloadRequiredProblem',
+      'GatewayUnavailableProblem',
+      (refusal) =>
+        refusal.reason === undefined
+          ? `Shell refused (${refusal._tag})`
+          : `Shell refused (${refusal._tag}, reason ${refusal.reason})`,
+    ),
+    Match.orElse((refusal) => `Shell refused (${refusal._tag})`),
+  );
+
+/**
+ * What went wrong getting a gateway context, in words an operator can act on and nothing secret: the caller's own
+ * reason, the Shell's problem with its refusal code, or the transport failure. Never a key, token or subject.
+ */
+export const describeGatewayContextFailure = (failure: GatewayContextFailure): string =>
+  Match.value(failure).pipe(
+    Match.tag('GatewayDelegationSourceError', ({ reason }) => reason),
+    Match.tag('SchemaError', () => 'the Shell response could not be decoded'),
+    Match.tag('HttpClientError', ({ reason }) => `transport failure (${reason._tag})`),
+    Match.orElse(describeShellRefusal),
+  );
+
+/** The one warning a caller writes when its gateway context was not issued. */
+const logGatewayContextFailure = (
+  failure: GatewayContextFailure,
+  request: { readonly audience: string; readonly callingAppId: string; readonly subjectTenant: string },
+) =>
+  Effect.logWarning('gateway context not issued').pipe(
+    Effect.annotateLogs({
+      audience: request.audience,
+      callingAppId: request.callingAppId,
+      reason: describeGatewayContextFailure(failure),
+      subjectTenant: request.subjectTenant,
+    }),
+  );
 
 const VerifiedScopeSchema = VerifiedGatewayPrincipalContextSchema;
 const uuidString = Schema.String.check(Schema.isUUID());
@@ -170,6 +222,11 @@ const checkConditionalWorkerRequirement = Effect.fn('GatewayDelegation.checkCond
 
 export interface GatewayDelegationRequest {
   readonly audience: string;
+  /**
+   * The module making the call. Its own module credential authenticates the call: in a process that hosts several
+   * owners, the one the host handed this module, never another owner's and never the shared environment's.
+   */
+  readonly callingAppId: string;
   readonly legalEntityScope: 'subject' | 'tenant';
   readonly requestCorrelation: string;
   readonly subject: GatewayDelegationSubject;
@@ -373,6 +430,10 @@ const checkPrivacyDispatchSource = Effect.fn('GatewayDelegation.checkPrivacyDisp
   },
 );
 
+/**
+ * The wire form of one subject. An `Originator` carries the company of the Outbox message being handled when the Outbox
+ * runtime provides one (`OutboxMessageCompany`); the caller never sets it.
+ */
 const subjectWireOf = (
   subject: GatewayDelegationSubject,
 ): Effect.Effect<WireSubjectRevision, GatewayDelegationSourceError> =>
@@ -439,18 +500,24 @@ const subjectWireOf = (
       ),
     ),
     Match.tag('Originator', (originator) =>
-      Effect.succeed({
-        compositionRevision: originator.compositionRevision,
-        subject:
-          originator.legalEntityId === undefined
-            ? { _tag: 'Originator', actionInvocationId: originator.actionInvocationId, tenantId: originator.tenantId }
-            : {
-                _tag: 'Originator',
-                actionInvocationId: originator.actionInvocationId,
-                legalEntityId: originator.legalEntityId,
-                tenantId: originator.tenantId,
-              },
-      } satisfies WireSubjectRevision),
+      OutboxMessageCompany.pipe(
+        Effect.map((messageCompany): WireSubjectRevision => ({
+          compositionRevision: originator.compositionRevision,
+          subject: {
+            _tag: 'Originator',
+            actionInvocationId: originator.actionInvocationId,
+            tenantId: originator.tenantId,
+            ...Option.match(Option.fromUndefinedOr(originator.legalEntityId), {
+              onNone: () => ({}),
+              onSome: (legalEntityId) => ({ legalEntityId }),
+            }),
+            ...Option.match(messageCompany, {
+              onNone: () => ({}),
+              onSome: (messageLegalEntityId) => ({ messageLegalEntityId }),
+            }),
+          },
+        })),
+      ),
     ),
     Match.tag('RegisteredAdmission', ({ compositionRevision, ...admission }) =>
       Effect.succeed({ compositionRevision, subject: admission }),
@@ -528,166 +595,275 @@ const subjectWireOf = (
     Match.exhaustive,
   );
 
-/** Requests a fresh module-to-module context authenticated by this deployment's own module credential. */
-export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acquire')(function* acquire(
-  request: GatewayDelegationRequest,
-  crypto: Crypto.Crypto,
-) {
-  const configuration = yield* Config.all({
-    apiKey: Config.Redacted('ONTOS_GATEWAY_MODULE_API_KEY'),
-    baseUrl: Config.schema(
-      Schema.URLFromString.check(
-        Schema.makeFilter((url) =>
-          (url.protocol === 'http:' || url.protocol === 'https:') &&
-          url.username === '' &&
-          url.password === '' &&
-          url.hash === ''
-            ? undefined
-            : 'Gateway transport requires an HTTP URL without credentials or fragment',
-        ),
+const ShellGatewayBaseUrl = shellGatewayBaseUrlConfig;
+
+/** The tenant a delegated request is for, as its refusal warning names it: never the subject itself. */
+const subjectTenantOf = (subject: GatewayDelegationSubject): string =>
+  Match.value(subject).pipe(
+    Match.tag('Originator', 'RegisteredAdmission', ({ tenantId }) => tenantId),
+    Match.tag('Assertion', 'OrganizationGovernanceRead', 'RegisteredAssertion', ({ scope }) => scope.tenantId),
+    Match.tag('RegisteredWorkload', ({ context }) => context.tenantId),
+    Match.tag('RegisteredRecovery', ({ source }) =>
+      Match.value(source).pipe(
+        Match.tag('Worker', ({ context }) => context.tenantId),
+        Match.tag('HistoricalDelivery', 'Admission', ({ tenantId }) => tenantId),
+        Match.exhaustive,
       ),
-      'ONTOS_SHELL_GATEWAY_BASE_URL',
     ),
-  }).pipe(
-    Effect.mapError(
-      (cause) => new GatewayDelegationSourceError({ cause, reason: 'Gateway delegation transport is unavailable' }),
+    Match.tag('PrivacyDispatch', ({ source }) =>
+      Match.value(source).pipe(
+        Match.tag('Worker', ({ context }) => context.tenantId),
+        Match.tag('Dispatch', ({ tenantId }) => tenantId),
+        Match.tag('Assertion', ({ scope }) => scope.tenantId),
+        Match.exhaustive,
+      ),
     ),
+    Match.exhaustive,
   );
-  yield* Match.value(request.subject).pipe(
-    Match.tag('OrganizationGovernanceRead', () =>
-      request.audience === organizationGovernanceReadOperationContract().appId && request.legalEntityScope === 'subject'
-        ? Effect.void
-        : Effect.fail(
-            new GatewayDelegationSourceError({
-              reason: 'Organization governance permits only its fixed Read and original governance scope',
-            }),
-          ),
-    ),
-    Match.tag('PrivacyDispatch', (subject) => checkPrivacyDispatchSource(request, subject)),
-    Match.tag(
-      'RegisteredWorkload',
-      Effect.fn('GatewayDelegation.checkConditionalWorkerLease')(function* conditionalWorkerLease(
-        subject: RegisteredWorkloadDelegationSubject,
-      ) {
-        if (subject.operationRequirementKey === undefined) {
-          return yield* Effect.void;
-        }
-        return yield* checkConditionalWorkerRequirement(
-          subject.operationRequirementKey,
-          subject.context,
-          request.audience,
-        );
-      }),
-    ),
-    Match.tag(
-      'RegisteredRecovery',
-      Effect.fn('GatewayDelegation.checkConditionalRecoverySource')(function* conditionalRecoverySource(
-        subject: RegisteredRecoveryDelegationSubject,
-      ) {
-        const key = subject.operationRequirementKey;
-        if (key === undefined) {
-          return yield* Effect.void;
-        }
-        return yield* Match.value(subject.source).pipe(
-          Match.tag('Worker', ({ context }) => checkConditionalWorkerRequirement(key, context, request.audience)),
-          // Historical and post-commit Admission witnesses are independently bound by Shell's native source checks.
-          Match.orElse(() => Effect.void),
-        );
-      }),
-    ),
-    Match.tag(
-      'RegisteredAssertion',
-      Effect.fn('GatewayDelegation.checkConditionalLease')(function* conditionalLease(
-        subject: RegisteredAssertionDelegationSubject,
-      ) {
-        const sourceWorkload = readVerifiedGatewayWorkload(subject.scope);
-        if (readVerifiedGatewayOrganizationProcessingRead(subject.scope) !== undefined) {
-          return yield* new GatewayDelegationSourceError({
-            reason: 'A finite processing Read cannot authorize onward delegation',
-          });
-        }
-        if (
-          subject.processingRequestHash !== undefined &&
-          (sourceWorkload === undefined ||
-            sourceWorkload.recovery !== undefined ||
-            subject.recoveryRequestHash !== undefined ||
-            request.audience !== 'symmy-integration' ||
-            subject.declarationKey !== 'integration.symmy.symmy-source-organization-facts.read' ||
-            request.legalEntityScope !== 'subject')
-        ) {
-          return yield* new GatewayDelegationSourceError({
-            reason: 'Processing request authority requires its exact scoped workload Read',
-          });
-        }
-        if (subject.operationRequirementKey === undefined) {
-          return yield* Effect.void;
-        }
-        const fact = yield* readModuleOperationRequirement(subject.operationRequirementKey, subject.scope).pipe(
+
+/** Requests a fresh module-to-module context authenticated by this deployment's own module credential. */
+export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acquire')(
+  function* acquire(request: GatewayDelegationRequest, crypto: Crypto.Crypto) {
+    // Every delegated call reads its caller's own key from the slot the host claimed for that module, whichever
+    // runtime, worker or background fiber it runs in; nothing else in a process reads a module credential.
+    const apiKey = yield* ownModuleCredential(request.callingAppId);
+    if (Option.isNone(apiKey)) {
+      // Owners turn this into a generic unavailable problem; the warning below keeps the reason visible to the operator.
+      return yield* new GatewayDelegationSourceError({
+        reason: `No module credential of ${request.callingAppId} in this process: the host has not handed one over`,
+      });
+    }
+    const [baseUrl, source] = yield* Effect.all(
+      [
+        ShellGatewayBaseUrl.parse(yield* ConfigProvider.ConfigProvider).pipe(
           Effect.mapError(
             (cause) =>
-              new GatewayDelegationSourceError({
-                cause,
-                reason: 'Conditional delegation requires its exact active operation lease',
-              }),
+              new GatewayDelegationSourceError({ cause, reason: 'Gateway delegation transport is unavailable' }),
           ),
-        );
-        const workload = readVerifiedGatewayWorkload(subject.scope);
-        if (
-          workload === undefined ||
-          fact.providerAppId !== request.audience ||
-          fact.consumerEntrypointKey !== workload.entrypointKey ||
-          fact.consumerSchemaVersion !== workload.schemaVersion ||
-          fact.compositionRevision !== readVerifiedGatewayCompositionRevision(subject.scope) ||
-          fact.tenantId !== subject.scope.tenantId
+        ),
+        subjectWireOf(request.subject),
+      ],
+      { concurrency: 1 },
+    );
+    yield* Match.value(request.subject).pipe(
+      Match.tag('OrganizationGovernanceRead', () =>
+        request.audience === organizationGovernanceReadOperationContract().appId &&
+        request.legalEntityScope === 'subject'
+          ? Effect.void
+          : Effect.fail(
+              new GatewayDelegationSourceError({
+                reason: 'Organization governance permits only its fixed Read and original governance scope',
+              }),
+            ),
+      ),
+      Match.tag('PrivacyDispatch', (subject) => checkPrivacyDispatchSource(request, subject)),
+      Match.tag(
+        'RegisteredWorkload',
+        Effect.fn('GatewayDelegation.checkConditionalWorkerLease')(function* conditionalWorkerLease(
+          subject: RegisteredWorkloadDelegationSubject,
         ) {
-          return yield* new GatewayDelegationSourceError({
-            reason: 'Conditional delegation does not match the verified operation',
-          });
-        }
-        return yield* Effect.void;
-      }),
+          if (subject.operationRequirementKey === undefined) {
+            return yield* Effect.void;
+          }
+          return yield* checkConditionalWorkerRequirement(
+            subject.operationRequirementKey,
+            subject.context,
+            request.audience,
+          );
+        }),
+      ),
+      Match.tag(
+        'RegisteredRecovery',
+        Effect.fn('GatewayDelegation.checkConditionalRecoverySource')(function* conditionalRecoverySource(
+          subject: RegisteredRecoveryDelegationSubject,
+        ) {
+          const key = subject.operationRequirementKey;
+          if (key === undefined) {
+            return yield* Effect.void;
+          }
+          return yield* Match.value(subject.source).pipe(
+            Match.tag('Worker', ({ context }) => checkConditionalWorkerRequirement(key, context, request.audience)),
+            // Historical and post-commit Admission witnesses are independently bound by Shell's native source checks.
+            Match.orElse(() => Effect.void),
+          );
+        }),
+      ),
+      Match.tag(
+        'RegisteredAssertion',
+        Effect.fn('GatewayDelegation.checkConditionalLease')(function* conditionalLease(
+          subject: RegisteredAssertionDelegationSubject,
+        ) {
+          const sourceWorkload = readVerifiedGatewayWorkload(subject.scope);
+          if (readVerifiedGatewayOrganizationProcessingRead(subject.scope) !== undefined) {
+            return yield* new GatewayDelegationSourceError({
+              reason: 'A finite processing Read cannot authorize onward delegation',
+            });
+          }
+          if (
+            subject.processingRequestHash !== undefined &&
+            (sourceWorkload === undefined ||
+              sourceWorkload.recovery !== undefined ||
+              subject.recoveryRequestHash !== undefined ||
+              request.audience !== 'symmy-integration' ||
+              subject.declarationKey !== 'integration.symmy.symmy-source-organization-facts.read' ||
+              request.legalEntityScope !== 'subject')
+          ) {
+            return yield* new GatewayDelegationSourceError({
+              reason: 'Processing request authority requires its exact scoped workload Read',
+            });
+          }
+          if (subject.operationRequirementKey === undefined) {
+            return yield* Effect.void;
+          }
+          const fact = yield* readModuleOperationRequirement(subject.operationRequirementKey, subject.scope).pipe(
+            Effect.mapError(
+              (cause) =>
+                new GatewayDelegationSourceError({
+                  cause,
+                  reason: 'Conditional delegation requires its exact active operation lease',
+                }),
+            ),
+          );
+          const workload = readVerifiedGatewayWorkload(subject.scope);
+          if (
+            workload === undefined ||
+            fact.providerAppId !== request.audience ||
+            fact.consumerEntrypointKey !== workload.entrypointKey ||
+            fact.consumerSchemaVersion !== workload.schemaVersion ||
+            fact.compositionRevision !== readVerifiedGatewayCompositionRevision(subject.scope) ||
+            fact.tenantId !== subject.scope.tenantId
+          ) {
+            return yield* new GatewayDelegationSourceError({
+              reason: 'Conditional delegation does not match the verified operation',
+            });
+          }
+          return yield* Effect.void;
+        }),
+      ),
+      Match.orElse(() => Effect.void),
+    );
+    const exchangeId = yield* crypto
+      .randomUUIDv4()
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new GatewayDelegationSourceError({ cause, reason: 'Gateway delegation attempt identity is unavailable' }),
+        ),
+      );
+    const payload = {
+      audience: request.audience,
+      compositionRevision: source.compositionRevision,
+      exchangeId,
+      legalEntityScope: request.legalEntityScope,
+      subject: source.subject,
+    };
+    const response = yield* issueDelegatedGatewayContext(payload, {
+      apiKey: apiKey.value,
+      baseUrl,
+      requestCorrelation: request.requestCorrelation,
+    });
+    if (response.compositionRevision !== source.compositionRevision) {
+      return yield* new GatewayDelegationSourceError({ reason: 'Gateway delegation changed the admitted release' });
+    }
+    const authorization: `Bearer ${string}` = `Bearer ${response.token}`;
+    const destination = {
+      apiBaseUrl: new URL(response.apiBaseUrl, baseUrl).toString(),
+      authorization,
+      compositionRevision: response.compositionRevision,
+      expiresAt: response.expiresAt,
+    };
+    let metadata: AcquiredDelegatedGatewayMetadata = {};
+    if (response.machineContext !== undefined) {
+      metadata = { ...metadata, machineContext: response.machineContext };
+    }
+    if (response.recovery !== undefined) {
+      metadata = { ...metadata, recovery: response.recovery };
+    }
+    return { ...destination, ...metadata };
+  },
+  (effect, request) =>
+    effect.pipe(
+      Effect.tapError((failure) =>
+        logGatewayContextFailure(failure, {
+          audience: request.audience,
+          callingAppId: request.callingAppId,
+          subjectTenant: subjectTenantOf(request.subject),
+        }),
+      ),
     ),
-    Match.orElse(() => Effect.void),
-  );
-  const source = yield* subjectWireOf(request.subject);
-  const exchangeId = yield* crypto
-    .randomUUIDv4()
-    .pipe(
+);
+
+/** One internal workload context request: the calling module, its own workload and the tenant and company. */
+export interface WorkloadGatewayRequest {
+  readonly audience: string;
+  /** The module whose own internal workload acts; it holds that workload's key for the tenant. */
+  readonly callingAppId: string;
+  readonly compositionRevision: string;
+  readonly legalEntityId: string;
+  readonly requestCorrelation: string;
+  readonly tenantId: string;
+  readonly workloadKey: string;
+}
+
+/**
+ * Requests a gateway context AS a module's internal workload (O73): the principal the operator registered for that
+ * workload in the tenant, authenticated by its own key, which the platform issued and the host handed to this module
+ * (never an environment variable). The Shell admits it exactly as any API key of that principal: through the
+ * workload's binding and the carriers that declare it. Without a key for that tenant it fails closed.
+ */
+export const acquireWorkloadGatewayContext = Effect.fn('GatewayWorkload.acquire')(
+  function* acquireWorkload(request: WorkloadGatewayRequest) {
+    const key = yield* ownWorkloadCredential({
+      appId: request.callingAppId,
+      legalEntityId: request.legalEntityId,
+      tenantId: request.tenantId,
+      workloadKey: request.workloadKey,
+    });
+    if (Option.isNone(key)) {
+      // The caller shows its own unavailable answer; the warning below keeps which tenant and company had no key.
+      return yield* new GatewayDelegationSourceError({
+        reason: `No credential of ${request.workloadKey} for tenant ${request.tenantId} company ${request.legalEntityId}: the workload is not registered there, or not provisioned yet`,
+      });
+    }
+    const baseUrl = yield* ShellGatewayBaseUrl.parse(yield* ConfigProvider.ConfigProvider).pipe(
       Effect.mapError(
-        (cause) =>
-          new GatewayDelegationSourceError({ cause, reason: 'Gateway delegation attempt identity is unavailable' }),
+        (cause) => new GatewayDelegationSourceError({ cause, reason: 'Gateway workload transport is unavailable' }),
       ),
     );
-  const payload = {
-    audience: request.audience,
-    compositionRevision: source.compositionRevision,
-    exchangeId,
-    legalEntityScope: request.legalEntityScope,
-    subject: source.subject,
-  };
-  const response = yield* issueDelegatedGatewayContext(payload, {
-    apiKey: configuration.apiKey,
-    baseUrl: configuration.baseUrl,
-    requestCorrelation: request.requestCorrelation,
-  });
-  if (response.compositionRevision !== source.compositionRevision) {
-    return yield* new GatewayDelegationSourceError({ reason: 'Gateway delegation changed the admitted release' });
-  }
-  const authorization: `Bearer ${string}` = `Bearer ${response.token}`;
-  const destination = {
-    apiBaseUrl: new URL(response.apiBaseUrl, configuration.baseUrl).toString(),
-    authorization,
-    compositionRevision: response.compositionRevision,
-    expiresAt: response.expiresAt,
-  };
-  let metadata: AcquiredDelegatedGatewayMetadata = {};
-  if (response.machineContext !== undefined) {
-    metadata = { ...metadata, machineContext: response.machineContext };
-  }
-  if (response.recovery !== undefined) {
-    metadata = { ...metadata, recovery: response.recovery };
-  }
-  return { ...destination, ...metadata };
-});
+    const response = yield* issueApiKeyGatewayContext(
+      {
+        audience: request.audience,
+        compositionRevision: request.compositionRevision,
+        legalEntityId: request.legalEntityId,
+      },
+      { apiKey: key.value, baseUrl, requestCorrelation: request.requestCorrelation },
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new GatewayDelegationSourceError({
+            cause,
+            reason: `The workload gateway context was not issued: ${describeGatewayContextFailure(cause)}`,
+          }),
+      ),
+    );
+    const authorization: `Bearer ${string}` = `Bearer ${response.token}`;
+    return {
+      apiBaseUrl: new URL(response.apiBaseUrl, baseUrl).toString(),
+      authorization,
+      compositionRevision: response.compositionRevision,
+      expiresAt: response.expiresAt,
+    };
+  },
+  (effect, request) =>
+    effect.pipe(
+      Effect.tapError((failure) =>
+        logGatewayContextFailure(failure, {
+          audience: request.audience,
+          callingAppId: request.callingAppId,
+          subjectTenant: request.tenantId,
+        }),
+      ),
+    ),
+);
 
 export { GatewayCapabilityKeySchema } from './gateway-context.ts';

@@ -145,21 +145,30 @@ it.live(
           purpose: fixturePurpose,
         });
         const authority = yield* prepareInternalSyncAuthority(isolated, snapshot);
-        const { admin, environment, ingressKey, integration, legalEntityId, shell, systemPrincipalId, tenantId } =
-          authority;
+        const {
+          admin,
+          environment,
+          ingressKey,
+          integration,
+          legalEntityId,
+          moduleKeys,
+          shell,
+          systemPrincipalId,
+          tenantId,
+        } = authority;
         const spiceEnvironment = yield* Config.all({
           SPICEDB_CA_CERT: Config.String('SPICEDB_CA_CERT'),
           SPICEDB_ENDPOINT: Config.String('SPICEDB_ENDPOINT'),
           SPICEDB_PRESHARED_KEY: Config.Redacted('SPICEDB_PRESHARED_KEY'),
         });
         yield* grantTestTenantRoleAccess({
-          adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
           holders: [
             { capabilityKeys: ['commerce.catalog.product-unit.create'], principalId: integration.issuerPrincipalId },
           ],
           legalEntityIds: [legalEntityId],
           spiceDb: yield* liveFixtureSpiceDb(spiceEnvironment),
           tenantId,
+          writerConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
         });
         const writerControlInput = {
           operatorPrincipalId: integration.issuerPrincipalId,
@@ -322,6 +331,7 @@ it.live(
             artifacts: yield* buildProductOwner(contract),
             contract,
             environment: { ...ownerEnvironment, ...faultByOwner.get(appId) },
+            moduleKey: moduleKeys.get(appId),
             port,
             prefix,
           });
@@ -412,6 +422,8 @@ it.live(
           Effect.flatMap(Schema.decodeUnknownEffect(syncUnavailableProblemSchema, { onExcessProperty: 'error' })),
         );
         const reboundGroupWriter = yield* groupWriter.rebind();
+        yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+          values(${randomUUID()},${randomUUID()},${tenantId},${reboundGroupWriter.bindingId},${legalEntityId},'active')`;
         expect(reboundGroupWriter.bindingId).not.toBe(groupWriter.originalBinding.bindingId);
         expect(reboundGroupWriter.incarnation).not.toBe(groupWriter.originalBinding.incarnation);
         const groups =

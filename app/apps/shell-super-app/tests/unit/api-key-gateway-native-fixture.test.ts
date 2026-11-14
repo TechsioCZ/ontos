@@ -20,17 +20,16 @@ import {
   ShellNativeChildReadySchema,
   ShellNativeChildResponseSchema,
   ShellNativeRelaySourceSchema,
-  ShellNativeRelaySourceIssueCommandSchema,
-  ShellNativeRelaySourceBoundCommandSchema,
   ShellNativeAdditionalRelaySourceSchema,
-  ShellNativeModuleSourceIssueCommandSchema,
-  ShellNativeModuleSourceBoundCommandSchema,
+  ShellNativeModuleSourceProvisionCommandSchema,
   decodeShellNativeRegionsEnvironment,
   decodeShellNativePriceReadEnvironment,
   ShellNativeStartupEventSchema,
   ShellNativeSetupKeyIssueCommandSchema,
   ShellNativeSetupKeyIssuedResponseSchema,
   ShellNativeTenantSetupGatewayCommandSchema,
+  ShellNativeProvisionedResponseSchema,
+  ShellNativeRelaySourceProvisionCommandSchema,
   makeApiKeyGatewayNativeFixture,
   openShellNativePrivateChannel,
   observeShellNativeRequestDispatch,
@@ -51,6 +50,7 @@ const connection = (database: string, user: string) =>
   Object.freeze({
     connectionString: `postgresql://${user}:fixture@localhost/${database}`,
     database,
+    expectedRole: user,
     host: 'localhost',
     port: 5432,
     user,
@@ -137,8 +137,8 @@ it.layer(infrastructure)('owned Shell native fixture', (suite) => {
       Effect.gen(function* serializeModuleCredentialExchanges() {
         const channel = yield* openShellNativePrivateChannel();
         const socket = yield* NodeSocket.makeNet({ openTimeout: '2 seconds', path: channel.socketPath });
-        const first = '11111111-1111-4111-8111-111111111111';
-        const second = '22222222-2222-4222-8222-222222222222';
+        const first = 'privacy';
+        const second = 'party-registry';
         const peer = yield* Socket.toStream(socket).pipe(
           Stream.decodeText(),
           Stream.splitLines,
@@ -148,16 +148,19 @@ it.layer(infrastructure)('owned Shell native fixture', (suite) => {
               Effect.gen(function* respondToTransportCommand() {
                 // Transport-only scheduling deliberately reverses overlapping responses. No credential is issued here.
                 const command = yield* Schema.decodeUnknownEffect(
-                  Schema.fromJsonString(ShellNativeModuleSourceIssueCommandSchema),
+                  Schema.fromJsonString(ShellNativeModuleSourceProvisionCommandSchema),
                 )(line);
-                if (command.principalId === first) {
+                if (command.sourceAppId === first) {
                   yield* Effect.yieldNow;
                 }
-                const response = yield* Schema.decodeUnknownEffect(ShellNativeIssuedResponseSchema)({
-                  _tag: 'issued',
-                  providerKeyId: command.principalId,
+                const response = yield* Schema.decodeUnknownEffect(ShellNativeProvisionedResponseSchema)({
+                  _tag: 'provisioned',
+                  principalId: '11111111-1111-4111-8111-111111111111',
+                  providerKeyId: command.sourceAppId,
                   secret: 'transport-only-private-value',
-                }).pipe(Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(ShellNativeIssuedResponseSchema))));
+                }).pipe(
+                  Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(ShellNativeProvisionedResponseSchema))),
+                );
                 const writer = yield* socket.writer;
                 yield* writer.write(`${response}\n`);
               }),
@@ -167,19 +170,13 @@ it.layer(infrastructure)('owned Shell native fixture', (suite) => {
           Effect.forkChild,
         );
         const responses = yield* Effect.forEach(
-          [first, second],
-          (principalId) =>
-            channel.exchange({
-              _tag: 'module-source-issue',
-              principalId,
-              sourceAppId: 'privacy',
-              tenantId: '33333333-3333-4333-8333-333333333333',
-            }),
+          [first, second] as const,
+          (sourceAppId) => channel.exchange({ _tag: 'module-source-provision', sourceAppId }),
           { concurrency: 2 },
         );
         expect(
           responses.map((response) =>
-            Schema.is(ShellNativeIssuedResponseSchema)(response) ? response.providerKeyId : undefined,
+            Schema.is(ShellNativeProvisionedResponseSchema)(response) ? response.providerKeyId : undefined,
           ),
         ).toEqual([first, second]);
         yield* Fiber.join(peer);
@@ -600,31 +597,28 @@ it.effect('forwards only the typed price-read source mapping to the child enviro
   }),
 );
 
-it('keeps source issuance closed to the independently authenticated actor and a separate bound acknowledgement', () => {
-  const command = {
-    _tag: 'relay-source-issue',
-    principalId: '11111111-1111-4111-8111-111111111111',
-    tenantId: '22222222-2222-4222-8222-222222222222',
-  };
-  const decode = Schema.decodeUnknownResult(ShellNativeRelaySourceIssueCommandSchema, { onExcessProperty: 'error' });
-  expect(Result.isSuccess(decode(command))).toBe(true);
-  expect(Result.isSuccess(decode({ ...command, issuerPrincipalId: '33333333-3333-4333-8333-333333333333' }))).toBe(
-    true,
-  );
-  for (const invalid of [
-    { ...command, issuerPrincipalId: 'invalid' },
-    { ...command, principalId: 'invalid' },
-    { ...command, tenantId: 'invalid' },
-    { ...command, providerKeyId: 'caller-selected' },
-    { ...command, sourceBuildMarker: 'caller-selected' },
-    { ...command, compositionRevision: 'a'.repeat(64) },
-    { ...command, secret: 'caller-selected' },
+it('lets the parent ask only for the platform to provision the relay source, choosing nothing about it', () => {
+  const decode = Schema.decodeUnknownResult(ShellNativeRelaySourceProvisionCommandSchema, {
+    onExcessProperty: 'error',
+  });
+  expect(Result.isSuccess(decode({ _tag: 'relay-source-provision' }))).toBe(true);
+  for (const chosen of [
+    { principalId: '11111111-1111-4111-8111-111111111111' },
+    { providerKeyId: 'caller-selected' },
+    { sourceAppId: 'catalog' },
+    { secret: 'caller-selected' },
   ]) {
-    expect(Result.isFailure(decode(invalid))).toBe(true);
+    expect(Result.isFailure(decode({ _tag: 'relay-source-provision', ...chosen }))).toBe(true);
   }
-  const bound = Schema.decodeUnknownResult(ShellNativeRelaySourceBoundCommandSchema, { onExcessProperty: 'error' });
-  expect(Result.isSuccess(bound({ _tag: 'relay-source-bound' }))).toBe(true);
-  expect(Result.isFailure(bound({ _tag: 'relay-source-bound', providerKeyId: 'caller-selected' }))).toBe(true);
+  const provisioned = Schema.decodeUnknownResult(ShellNativeProvisionedResponseSchema, { onExcessProperty: 'error' });
+  const answer = {
+    _tag: 'provisioned',
+    principalId: '11111111-1111-4111-8111-111111111111',
+    providerKeyId: 'platform-provider-key',
+    secret: 'platform-issued-module-key',
+  };
+  expect(Result.isSuccess(provisioned(answer))).toBe(true);
+  expect(Result.isFailure(provisioned({ ...answer, principalId: 'invalid' }))).toBe(true);
 });
 
 it('restricts fixture source configuration to exact Market release metadata and keeps credentials off readiness', () => {
@@ -653,28 +647,21 @@ it('restricts fixture source configuration to exact Market release metadata and 
   const ready = Schema.decodeUnknownResult(ShellNativeChildReadySchema, { onExcessProperty: 'error' });
   const oldReady = { baseUrl: 'http://127.0.0.1:1234', providerUserId: 'personal-provider-user' };
   expect(Result.isSuccess(ready(oldReady))).toBe(true);
-  const sourceReady = { ...oldReady, relaySourceProviderUserId: 'source-provider-user' };
+  const sourceReady = { ...oldReady, readerProviderUserId: 'reader-provider-user' };
   expect(Result.isSuccess(ready(sourceReady))).toBe(true);
   expect(Result.isFailure(ready({ ...sourceReady, secret: 'credential' }))).toBe(true);
 });
 
-it('closes additional module issuance to configured application identities without accepting credentials or revisions', () => {
-  const command = {
-    _tag: 'module-source-issue',
-    principalId: '11111111-1111-4111-8111-111111111111',
-    sourceAppId: 'party-registry',
-    tenantId: '22222222-2222-4222-8222-222222222222',
-  };
-  const decode = Schema.decodeUnknownResult(ShellNativeModuleSourceIssueCommandSchema, { onExcessProperty: 'error' });
+it('lets the parent name only a configured module for platform provisioning, choosing nothing else about it', () => {
+  const decode = Schema.decodeUnknownResult(ShellNativeModuleSourceProvisionCommandSchema, {
+    onExcessProperty: 'error',
+  });
+  const command = { _tag: 'module-source-provision', sourceAppId: 'party-registry' };
   expect(Result.isSuccess(decode(command))).toBe(true);
-  expect(Result.isSuccess(decode({ ...command, issuerPrincipalId: '33333333-3333-4333-8333-333333333333' }))).toBe(
-    true,
-  );
   for (const invalid of [
-    { ...command, issuerPrincipalId: 'invalid' },
     { ...command, sourceAppId: 'caller-selected' },
-    { ...command, principalId: 'invalid' },
-    { ...command, tenantId: 'invalid' },
+    { ...command, principalId: '11111111-1111-4111-8111-111111111111' },
+    { ...command, tenantId: '22222222-2222-4222-8222-222222222222' },
     { ...command, providerKeyId: 'caller-selected' },
     { ...command, secret: 'caller-selected' },
     { ...command, sourceBuildMarker: 'caller-selected' },
@@ -682,15 +669,9 @@ it('closes additional module issuance to configured application identities witho
   ]) {
     expect(Result.isFailure(decode(invalid))).toBe(true);
   }
-  const bound = Schema.decodeUnknownResult(ShellNativeModuleSourceBoundCommandSchema, { onExcessProperty: 'error' });
-  expect(Result.isSuccess(bound({ _tag: 'module-source-bound', sourceAppId: 'privacy' }))).toBe(true);
-  expect(Result.isFailure(bound({ _tag: 'module-source-bound', sourceAppId: 'caller-selected' }))).toBe(true);
-  expect(
-    Result.isFailure(bound({ _tag: 'module-source-bound', providerKeyId: 'caller-selected', sourceAppId: 'privacy' })),
-  ).toBe(true);
 });
 
-it('keeps additional provider users separate from credentials and derives module releases from the admitted composition', () => {
+it('derives additional module releases from the admitted composition and keeps provider users off readiness', () => {
   const source = {
     compositionRevision: 'a'.repeat(64),
     sourceAppId: 'privacy',
@@ -700,20 +681,15 @@ it('keeps additional provider users separate from credentials and derives module
   expect(Result.isSuccess(decode(source))).toBe(true);
   expect(Result.isFailure(decode({ ...source, providerKeyId: 'caller-selected' }))).toBe(true);
   expect(Result.isFailure(decode({ ...source, sourceAppId: 'caller-selected' }))).toBe(true);
+  // A module's credential belongs to the platform's module principal: no person per module is published.
   const ready = Schema.decodeUnknownResult(ShellNativeChildReadySchema, { onExcessProperty: 'error' });
-  const readiness = {
-    additionalRelaySourceProviderUsers: [{ providerUserId: 'private-provider-join-id', sourceAppId: 'privacy' }],
-    baseUrl: 'http://127.0.0.1:1234',
-    providerUserId: 'personal-provider-user',
-  };
+  const readiness = { baseUrl: 'http://127.0.0.1:1234', providerUserId: 'personal-provider-user' };
   expect(Result.isSuccess(ready(readiness))).toBe(true);
   expect(
     Result.isFailure(
       ready({
         ...readiness,
-        additionalRelaySourceProviderUsers: [
-          { ...readiness.additionalRelaySourceProviderUsers[0], secret: 'credential' },
-        ],
+        additionalRelaySourceProviderUsers: [{ providerUserId: 'private-provider-join-id', sourceAppId: 'privacy' }],
       }),
     ),
   ).toBe(true);

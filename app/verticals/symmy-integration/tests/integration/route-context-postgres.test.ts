@@ -16,6 +16,9 @@ import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-e
 import { encodeSymmySourceSelector } from '../../shared/domain/symmy-source-selector.ts';
 import { symmyImportJobs, symmyIntegrationRelations, symmyJobEffects, symmyJobRoutes } from '../../src/db/schema.ts';
 import { symmyJobStoreFactory } from '../../src/persistence/symmy-job-store.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const openDatabase = (connectionString: string) =>
   PgClient.makeClient({ url: Redacted.make(connectionString) }).pipe(
@@ -127,7 +130,7 @@ it.effect(
       const read = (code: string, caller = scope, replayIdempotencyKey?: string) =>
         runtime.transaction((transaction) =>
           Effect.gen(function* readContext() {
-            const executor = yield* installOperationalScope(transaction, caller);
+            const executor = yield* installOperationalScope(transaction, caller, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
             const store = yield* symmyJobStoreFactory(executor, caller);
             const input = { code, routeKey: 'priceListPricesBatch' as const };
             if (replayIdempotencyKey !== undefined) {
@@ -179,7 +182,7 @@ it.effect(
       const admit = (caller = companyScope, key = idempotencyKey) =>
         runtime.transaction((transaction) =>
           Effect.gen(function* admitSelectedJob() {
-            const executor = yield* installOperationalScope(transaction, caller);
+            const executor = yield* installOperationalScope(transaction, caller, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
             const store = yield* symmyJobStoreFactory(executor, caller);
             return yield* store.admit({
               code: first.routeCode,

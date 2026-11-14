@@ -44,6 +44,7 @@ export const promotionRegistration = defineVerticalRuntimeRegistration({
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'preview-promotions': () => import('./src/api/preview-promotions-client.ts'),
       'read-promotion-policies': () => import('./src/api/read-promotion-policies-client.ts'),
       'read-promotions': () => import('./src/api/read-promotions-client.ts'),

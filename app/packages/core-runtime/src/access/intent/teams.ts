@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import { Context, Effect, Layer, Schema } from 'effect';
 
 import { CoreDatabase } from '../../db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../db/database-identities.ts';
 import { accessTeamMembers, accessTeams } from '../../db/schema.ts';
 import type { CoreTransaction } from '../../db/types.ts';
 import type { OperationalScope } from '../../operations/context.ts';
@@ -274,10 +275,15 @@ export class AccessTeamStore extends Context.Service<AccessTeamStore, AccessTeam
 ) {}
 
 /** The team store over the process's Core pool; every call still names its request scope (O66). */
-export const AccessTeamStoreLive: Layer.Layer<AccessTeamStore, never, CoreDatabase> = Layer.effect(
+export const AccessTeamStoreLive: Layer.Layer<
+  AccessTeamStore,
+  never,
+  CoreDatabase | DatabaseIdentityEnrollmentContext
+> = Layer.effect(
   AccessTeamStore,
   Effect.gen(function* accessTeamStoreLayer() {
     const database = yield* CoreDatabase;
-    return makeAccessTeamDrizzleStore(database);
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
+    return makeAccessTeamDrizzleStore({ enrollment, executor: database.executor });
   }),
 );

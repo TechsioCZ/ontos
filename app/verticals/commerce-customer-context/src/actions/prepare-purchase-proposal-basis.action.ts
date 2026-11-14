@@ -9,7 +9,10 @@ import {
   PurchaseProposalBasisSchema,
   PreparePurchaseProposalBasisRejected,
 } from '../../shared/actions/prepare-purchase-proposal-basis.ts';
-import { purchaseProposalBasisService } from '../services/purchase-proposal-basis.service.ts';
+import {
+  preparePurchaseProposalBasisActionServices,
+  purchaseProposalBasisService,
+} from '../services/purchase-proposal-basis.service.ts';
 import { purchaseValueAccessAmount } from './purchase-value-access-amount.ts';
 import type { ActionHandlerContext } from '@app/core-runtime';
 
@@ -72,6 +75,7 @@ export const preparePurchaseProposalBasisAction = defineAction(
   },
   handlePreparePurchaseProposalBasis,
   purchaseProposalBasisService,
+  { prepareServices: preparePurchaseProposalBasisActionServices },
 );
 
 // <generated-outbox-message-exports>

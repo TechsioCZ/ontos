@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import { NodeCrypto } from '@effect/platform-node';
 import { and, asc, eq, like, sql } from 'drizzle-orm';
 import { Array as Arr, Crypto, Deferred, Effect, Fiber, Option, Order, Predicate, Result } from 'effect';
@@ -314,7 +315,11 @@ it.live(
         const holder = yield* database
           .transaction((transaction) =>
             Effect.gen(function* holdUncommittedAttribution() {
-              const scoped = yield* installOperationalScope(transaction, operationalScopeOf(scope));
+              const scoped = yield* installOperationalScope(
+                transaction,
+                operationalScopeOf(scope),
+                defineDatabaseIdentityEnrollment([]),
+              );
               const claim = yield* paymentEvidencePersistenceForTransaction(scoped).attributeEconomicEffect({
                 economicEffectKey: BANK_TRANSACTION,
                 factKind: 'COLLECTION_CONFIRMED',
@@ -370,7 +375,11 @@ it.live('#1152 attachment waits for a pending authority revocation and refuses a
       const revoke = yield* database
         .transaction((transaction) =>
           Effect.gen(function* pauseRevocation() {
-            const scoped = yield* installOperationalScope(transaction, operationalScopeOf(scope));
+            const scoped = yield* installOperationalScope(
+              transaction,
+              operationalScopeOf(scope),
+              defineDatabaseIdentityEnrollment([]),
+            );
             const sources = paymentSourcePersistenceForTransaction(
               scoped,
               scope,

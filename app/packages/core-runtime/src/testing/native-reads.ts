@@ -34,7 +34,12 @@ import {
 import { AuthenticationNamespaceRegistry } from '../auth/external-identity/verifier.ts';
 import { makeCoreDatabase } from '../db/client.ts';
 import { NativeReadTestOwnerRegistration } from './native-read-owner-registration.ts';
-import { SHARED_RUNTIME_IDENTITY } from '../db/database-identities.ts';
+import {
+  SHARED_RUNTIME_IDENTITY,
+  DatabaseIdentityEnrollmentContext,
+  defineDatabaseIdentityEnrollment,
+} from '../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
 import { loadDatabaseConfig, loadDatabaseConnectionPair, parseDatabaseConnectionPair } from '../db/config.ts';
 import {
   dataAccessEvents,
@@ -187,6 +192,7 @@ const relation = (resourceType: string, resourceId: string, name: string, subjec
 const initializeNativeOwnerAccessScopes = (
   configured: boolean,
   executor: CoreDatabaseExecutor,
+  enrollment: DatabaseIdentityEnrollment,
   principal: TrustedPrincipalContext,
   legalEntityId: string,
 ): Effect.Effect<void, NativeReadTestError> => {
@@ -195,7 +201,7 @@ const initializeNativeOwnerAccessScopes = (
   }
   const tenantId = TenantIdSchema.make(principal.tenantId);
   return writeBootstrapScopes(
-    { executor },
+    { enrollment, executor },
     { ...principal, correlationId: `native-read-access-bootstrap-${principal.principalId}` },
     { scopes: bootstrapScopesOf(tenantId, [LegalEntityIdSchema.make(legalEntityId)]), tenantId },
   ).pipe(Effect.mapError((cause) => unavailable(cause, 'Native Read access fence initialization failed')));
@@ -420,7 +426,18 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
       }),
     )
     .pipe(Effect.mapError(unavailable));
-  yield* initializeNativeOwnerAccessScopes(owner !== undefined, admin.executor, principal, legalEntityId);
+  // An owner with dedicated database identities supplies its enrollment; Core-only owners enroll none.
+  const databaseIdentities = Option.getOrElse(yield* Effect.serviceOption(DatabaseIdentityEnrollmentContext), () =>
+    defineDatabaseIdentityEnrollment([]),
+  );
+  // Core's bootstrap writer installs the tenant scope, which only an enrolled runtime role may do.
+  yield* initializeNativeOwnerAccessScopes(
+    owner !== undefined,
+    database.executor,
+    databaseIdentities,
+    principal,
+    legalEntityId,
+  );
   const legalEntityObjectId = yield* requiredObjectId(toLegalEntityAccessObjectId(tenantId, legalEntityId));
   const moduleObjectId = yield* requiredObjectId(toModuleAccessObjectId(tenantId, legalEntityId, options.moduleId));
   remember([
@@ -457,11 +474,11 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
     {
       contextAccess: makeContextAccessLive(),
       scopeResolver: makeOperationalScopeResolver(
-        makeOperationalScopeRepository(database),
+        makeOperationalScopeRepository(database, databaseIdentities),
         makeTestOperationalScopeAccess(),
       ),
     },
-    { concurrency: 2 },
+    { concurrency: 1 },
   );
   const moduleStateGate = makeModuleStateGate(makeTenantModuleStateService(database));
   const gateway = makeModuleEntrypointGateway(moduleStateGate);
@@ -476,6 +493,7 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
   const runtime = makeReadRuntime(database, gateway, scopeResolver, contextAccess, {
     ...runtimeOptions,
     accessDecision,
+    databaseIdentities,
   });
   const actionRuntime =
     ownedRuntimeOptions === undefined
@@ -484,6 +502,7 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
           ...ownedRuntimeOptions,
           accessDecision,
           contextAccess,
+          databaseIdentities,
           moduleEntrypointGateway: gateway,
           moduleStateGate,
         });
@@ -527,7 +546,7 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
     const produce = Effect.fn('NativeReadTestContext.produce')(function* produce(
       transaction: CoreTransaction,
     ): Effect.fn.Return<Value, Failure | OperationContextError, Requirements> {
-      const scoped = yield* installOperationalScope(transaction, scope);
+      const scoped = yield* installOperationalScope(transaction, scope, databaseIdentities);
       return yield* producer(scoped, scope);
     });
     ownerProducerStarted = true;
@@ -596,7 +615,11 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
       const values = [
         relation(
           'action',
-          toSpiceDbActionObjectId(registration.descriptor.actionKey),
+          toSpiceDbActionObjectId({
+            actionKey: registration.descriptor.actionKey,
+            legalEntityId,
+            tenantId,
+          }),
           'executor',
           'principal',
           principalId,
@@ -688,7 +711,7 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
   const ownerOutboxCount = () =>
     database.executor.transaction(
       Effect.fn('NativeReadTestContext.ownerOutboxCount')(function* countOwnerOutbox(transaction: CoreTransaction) {
-        yield* installOperationalScope(transaction, yield* fixtureScope());
+        yield* installOperationalScope(transaction, yield* fixtureScope(), databaseIdentities);
         const rows = yield* transaction
           .select({ id: outboxMessages.outboxMessageId })
           .from(outboxMessages)
@@ -820,7 +843,7 @@ export const withVerifiedNativeReadScope = Effect.fn('NativeReadTestContext.with
       return yield* unavailable(undefined, 'Native verified Read requires the restricted runtime database role');
     }
     const resolver = yield* makeOperationalScopeResolver(
-      makeOperationalScopeRepository(database),
+      makeOperationalScopeRepository(database, defineDatabaseIdentityEnrollment([])),
       makeTestOperationalScopeAccess(),
     );
     const scope = yield* resolver.resolve({
@@ -850,7 +873,7 @@ export const withVerifiedNativeReadScope = Effect.fn('NativeReadTestContext.with
           Requirements
         > {
           yield* lockApplicationCompositionAuthority(transaction, revision, 'read');
-          const scoped = yield* installOperationalScope(transaction, scope);
+          const scoped = yield* installOperationalScope(transaction, scope, defineDatabaseIdentityEnrollment([]));
           return yield* observe(scoped, scope, revision);
         },
       ),

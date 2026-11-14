@@ -45,6 +45,7 @@ const payload = Schema.decodeUnknownSync(EnsureRetailCustomerProfilePayloadSchem
 
 const context = {
   actionInvocationId,
+  compositionRevision: 'a'.repeat(64),
   scope: {
     authMethod: 'session' as const,
     correlationId: 'retail-ensure-correlation',
@@ -100,7 +101,12 @@ it.effect('requires exact current Party owner evidence before invoking Retail en
   return services.ensureRetailCustomerProfile.ensure(payload, context).pipe(
     Effect.tap((result) =>
       Effect.sync(() => {
-        expect(observedParty).toEqual({ partyResourceId: partyId, tenantId });
+        expect(observedParty).toEqual({
+          actionInvocationId,
+          compositionRevision: context.compositionRevision,
+          partyResourceId: partyId,
+          tenantId,
+        });
         expect(observedValues).toEqual([
           partyId,
           '7',

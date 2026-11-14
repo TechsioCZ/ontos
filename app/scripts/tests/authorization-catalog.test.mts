@@ -1022,10 +1022,15 @@ describe('access catalog gap check (O62)', () => {
 
 describe('access catalog module callers (accessActor)', () => {
   const callerReason = 'order finalization reads the buyer through the commerce module';
-  const moduleActor = (callers: string, subject: 'identity' | 'rights') => `    accessActor: {
+  const moduleActor = (
+    callers: string,
+    subject: 'identity' | 'rights' | 'workload',
+    workloads?: string,
+  ) => `    accessActor: {
       callers: [${callers}],
       reason: '${callerReason}',
       subject: '${subject}',
+      ${workloads === undefined ? '' : `subjectWorkloads: [${workloads}],`}
     },`;
   const callerActionSlug = 'read-buyer';
 
@@ -1051,6 +1056,31 @@ describe('access catalog module callers (accessActor)', () => {
     expect(snapshot.missing).toStrictEqual([]);
     expect(snapshot.entries).toStrictEqual([]);
     expect(snapshot.workloads).toStrictEqual([]);
+  });
+
+  it('settles an exclusive workload actor using the producer namespace without a human catalog entry', () => {
+    const source = actionSource(moduleActor("'crm'", 'workload', "'demo.crm.party-intake'"), callerActionSlug);
+    const snapshot = buildSnapshot([{ file: actionFile, source }]);
+    expect(snapshot.invalid).toEqual([]);
+    expect(snapshot.missing).toEqual([]);
+    expect(snapshot.entries).toEqual([]);
+    expect(snapshot.workloads).toEqual([]);
+  });
+
+  it('refuses a workload actor without bound workloads or mixed with another access carrier', () => {
+    const exclusive = moduleActor("'crm'", 'workload', "'demo.crm.party-intake'");
+    for (const carrier of [
+      moduleActor("'crm'", 'workload'),
+      `${exclusive}\n${declaredAction()}`,
+      `${exclusive}\naccessWorkload: { reason: 'Invalid dual actor fixture', workloads: ['projects.intake'] },`,
+      `${exclusive}\naccessFieldGroups: [{ key: 'projects.core.private.read', kind: 'field_read',
+        modes: ['run'], placement: { group: 'private', level: 'basic' }, risk: 'sensitive',
+        selectors: [], fieldClass: 'personal_data', fields: ['private'] }],`,
+    ]) {
+      const snapshot = buildSnapshot([{ file: actionFile, source: actionSource(carrier, callerActionSlug) }]);
+      expect(snapshot.invalid.length).toBeGreaterThan(0);
+      expect(snapshot.entries).toEqual([]);
+    }
   });
 
   it('refuses a caller that is not a topology vertical', () => {

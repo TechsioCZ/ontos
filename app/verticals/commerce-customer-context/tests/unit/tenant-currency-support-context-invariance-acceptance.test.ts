@@ -112,6 +112,7 @@ describe('Tenant Currency Support purchase-context invariance', () => {
       expect(issued).toEqual(
         purchaseContexts.map((purchase) => ({
           audience: 'pricing',
+          callingAppId: 'commerce-customer-context',
           legalEntityScope: 'tenant',
           requestCorrelation: purchase.correlation,
           subject,

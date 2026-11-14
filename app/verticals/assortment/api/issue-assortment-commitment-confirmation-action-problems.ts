@@ -61,10 +61,12 @@ export const issueAssortmentCommitmentConfirmationActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'IssueAssortmentCommitmentConfirmationActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'IssueAssortmentCommitmentConfirmationActionForbiddenProblem'> =>
     IssueAssortmentCommitmentConfirmationActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -173,7 +175,8 @@ const mapCoreProblem = (error: ActionCoreError): IssueAssortmentCommitmentConfir
       ActionPayloadValidationError: issueAssortmentCommitmentConfirmationActionProblem.invalid,
       ActionPermissionCheckError: (failure) =>
         issueAssortmentCommitmentConfirmationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => issueAssortmentCommitmentConfirmationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        issueAssortmentCommitmentConfirmationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => issueAssortmentCommitmentConfirmationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         issueAssortmentCommitmentConfirmationActionProblem.unavailable(failure.code),

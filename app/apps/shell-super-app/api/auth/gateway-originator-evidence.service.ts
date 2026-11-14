@@ -6,7 +6,7 @@ import { Clock, Effect, Layer, Option } from 'effect';
 import { AuthDatabase } from './db/client.ts';
 import { user } from './db/schema.ts';
 import { userBanHoldsAt } from './gateway-delegation-authentication.service.ts';
-import { delegationUnavailable } from './gateway-delegation-errors.ts';
+import { delegationUnavailable as unavailableBecause } from './gateway-delegation-errors.ts';
 import {
   GatewayOriginatorEvidence,
   admitInvocationEvidence,
@@ -14,6 +14,8 @@ import {
   decodeOriginatorEvidenceRows,
 } from './gateway-originator-evidence.ts';
 import type { GatewayOriginatorEvidenceService, OriginatorEvidenceRow } from './gateway-originator-evidence.ts';
+
+const delegationUnavailable = unavailableBecause('originator_evidence_unavailable');
 
 type CoreExecutor = (typeof CoreDatabase)['Service']['executor'];
 type AuthExecutor = (typeof AuthDatabase)['Service']['executor'];
@@ -81,6 +83,29 @@ const subjectUserBanned = (auth: AuthExecutor, row: OriginatorEvidenceRow | unde
     );
 };
 
+/** Whether Core recorded a domain event of the invocation in the company, in the invocation's own tenant. */
+const selectMessageCompany = (
+  executor: CoreExecutor,
+  input: { readonly actionInvocationId: string; readonly legalEntityId: string; readonly tenantId: string },
+) =>
+  executor
+    .execute(
+      sql`
+        select 1 as "recorded"
+        from core.domain_events as e
+        where e.tenant_id = ${input.tenantId}
+          and e.action_invocation_id = ${input.actionInvocationId}
+          and e.legal_entity_id = ${input.legalEntityId}
+        limit 1
+      `,
+      'objects',
+    )
+    .pipe(
+      recoverSqlTransactionError,
+      Effect.mapError(delegationUnavailable),
+      Effect.map((rows) => rows.length > 0),
+    );
+
 const makeGatewayOriginatorEvidence = (core: CoreExecutor, auth: AuthExecutor): GatewayOriginatorEvidenceService => ({
   load: Effect.fn('GatewayOriginatorEvidence.load')(function* loadOriginatorEvidence(input: {
     readonly actionInvocationId: string;
@@ -105,6 +130,7 @@ const makeGatewayOriginatorEvidence = (core: CoreExecutor, auth: AuthExecutor): 
       return yield* admitPrivacyDispatchHumanEvidence(rows, { subjectUserBanned: banned, tenantId: input.tenantId });
     },
   ),
+  messageCompanyRecorded: (input) => selectMessageCompany(core, input),
 });
 
 export const GatewayOriginatorEvidenceLive = Layer.effect(

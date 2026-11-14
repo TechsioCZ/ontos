@@ -1,9 +1,20 @@
 import { tenantRlsPolicies } from '@app/core-runtime';
 import { defineRelations, sql } from 'drizzle-orm';
-import { check, foreignKey, index, pgSchema, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import {
+  check,
+  foreignKey,
+  index,
+  pgSchema,
+  primaryKey,
+  text,
+  timestamp,
+  unique,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 
 export const PROJECTS_SCHEMA_NAME = 'projects';
-export const PROJECTS_TABLE_INVENTORY = ['projects'] as const;
+export const PROJECTS_TABLE_INVENTORY = ['gateway_assertion_redemptions', 'projects'] as const;
 
 export const projectsSchema = pgSchema(PROJECTS_SCHEMA_NAME);
 export const projects = projectsSchema.table.withRLS(
@@ -44,7 +55,22 @@ export const projects = projectsSchema.table.withRLS(
   ],
 );
 
-export const projectsDatabaseSchema = { projects } as const;
+/** Pre-scope Bearer replay evidence; never business data, so no tenant RLS. */
+export const gatewayAssertionRedemptions = projectsSchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: text('jti').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.issuer, table.audience, table.jti] }),
+    index('projects_redemption_expiry').on(table.expiresAt),
+  ],
+);
+
+export const projectsDatabaseSchema = { gatewayAssertionRedemptions, projects } as const;
 
 export type ProjectRecord = typeof projects.$inferSelect;
 

@@ -159,8 +159,7 @@ export const administerCommerceQuantityRuleAction = defineAction(
     schemaVersion: '2',
   },
   handleAdministerCommerceQuantityRule,
-  (transaction, scope, compositionRevision) =>
-    customerCommercePolicyAdministrationServiceFactory(transaction, scope, compositionRevision),
+  (transaction, scope) => customerCommercePolicyAdministrationServiceFactory(transaction, scope),
 );
 
 // <generated-outbox-message-exports>

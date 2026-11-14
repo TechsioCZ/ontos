@@ -1,12 +1,14 @@
 import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
-import { ReadHandlerUnavailable, ReadPermissionDenied, allowOwnerAuthorizationOverlay } from '@app/core-runtime';
-import type { ContextAccessService } from '@app/core-runtime';
+import {
+  ReadHandlerUnavailable,
+  ReadPermissionDenied,
+  TrustedPrincipalContextSchema,
+  trustVerifiedGatewayPrincipalContext,
+} from '@app/core-runtime';
+import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
+import { NodeCrypto } from '@effect/platform-node';
 import { getReadResultPermissionTargetResolver } from '../../../../packages/core-runtime/src/reads/definition.ts';
-import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
-import { makeTestBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
-import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
-import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
 import { counterpartyAllOrderHistoryRead } from '../../src/api/counterparty-all-order-history.read.ts';
 import { counterpartyAllCustomerArchiveRead } from '../../src/api/counterparty-all-customer-archive.read.ts';
 import { counterpartyAllOrderHistoryDetailRead } from '../../src/api/counterparty-all-order-history-detail.read.ts';
@@ -97,13 +99,13 @@ const profileTransaction = (
   state: 'ACTIVE' | 'SUSPENDED' | 'ARCHIVED',
   overrides: Parameters<typeof counterpartyProfilePayload>[1] = {},
 ): ProfileScopedRoutineInvoker => ({
-  invoke: () =>
-    Effect.succeed([
+  invoke: (routine) =>
+    Schema.decodeUnknownEffect(Schema.Array(Schema.toType(routine.resultSchema)))([
       {
         outcome: 'PROFILE_AVAILABLE',
         payload: counterpartyProfilePayload(state, overrides),
       },
-    ]),
+    ]).pipe(Effect.orDie),
 });
 it.effect('keeps exact Counterparty history association independent from the new-order lifecycle gate', () =>
   Effect.gen(function* counterpartyLifecycleSeparation() {
@@ -203,56 +205,36 @@ it('does not attach illegal generic result filtering to business-permission Read
 });
 
 it.effect('runs the handler only after the gate allows and fails closed when it denies', () =>
-  Effect.gen(function* runtimeAuthorization() {
-    const database = {
-      executor: yield* makeTestDatabase((text) => {
-        if (text.includes('transaction_timestamp')) {
-          return Effect.succeed([{ operation_at: new Date('2026-09-21T10:00:00.000Z') }]);
+  Effect.scoped(
+    Effect.gen(function* runtimeAuthorization() {
+      const compositionRevision = 'a'.repeat(64);
+      const verified = trustVerifiedGatewayPrincipalContext(
+        Schema.decodeSync(TrustedPrincipalContextSchema)(principal),
+        compositionRevision,
+      );
+      for (const access of ['allowed', 'denied'] as const) {
+        const harness = yield* makeReadTestHarness({
+          access,
+          compositionRevision,
+          executeOwnerQuery: () => Effect.die('The Retail history load must not query another owner'),
+          operationTime: new Date('2026-09-21T10:00:00.000Z'),
+          ownerAuthorizationDecision: 'allowed',
+          ownerRegistration: commerceCustomerContextRegistration,
+          scope: { ...verified, correlationId: scope.correlationId },
+        });
+        const failure = yield* harness.runtime
+          .runRead({
+            input: { profileRef: retailProfileRef },
+            principal: verified,
+            registration: retailOrderHistoryRead,
+            transport: { correlationId: scope.correlationId },
+          })
+          .pipe(Effect.provideService(CustomerHistoryPortsService, unavailableCustomerHistoryPorts()), Effect.flip);
+        expect(Schema.is(access === 'allowed' ? ReadHandlerUnavailable : ReadPermissionDenied)(failure)).toBe(true);
+        if (access === 'denied') {
+          expect(harness.snapshot().ownerQueries).toEqual([]);
         }
-        return Effect.succeed(
-          text.includes('current_setting')
-            ? [{ legal_entity_id: scope.legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]
-            : [],
-        );
-      }),
-    };
-    const contextAccess: ContextAccessService = {
-      legalEntities: ({ legalEntityIds }) =>
-        Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
-      modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
-      resources: ({ resources }) =>
-        Effect.succeed(
-          resources.map((resource) => ({
-            decision: 'allowed' as const,
-            key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-          })),
-        ),
-      tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
-    };
-    const makeRuntime = (accessDecision: ReturnType<typeof makeTestBoundAccessGate>['bound']) =>
-      makeReadRuntime(database, openModuleEntrypointGateway, { resolve: () => Effect.succeed(scope) }, contextAccess, {
-        accessDecision,
-        ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
-        ownerRegistration: commerceCustomerContextRegistration,
-      });
-    const invocation = {
-      input: { profileRef: retailProfileRef },
-      principal,
-      registration: retailOrderHistoryRead,
-      transport: { correlationId: scope.correlationId },
-    };
-    const ownerPorts = unavailableCustomerHistoryPorts();
-
-    // An allowed list decision reaches the owner ports, which are unavailable here.
-    const unavailable = yield* makeRuntime(makeTestBoundAccessGate({ defaultAnswer: { outcome: 'ALLOWED' } }).bound)
-      .runRead(invocation)
-      .pipe(Effect.provideService(CustomerHistoryPortsService, ownerPorts), Effect.flip);
-    expect(Schema.is(ReadHandlerUnavailable)(unavailable)).toBe(true);
-
-    // Negative control: a denied gate stops before the owner ports are ever resolved.
-    const refusal = yield* makeRuntime(makeTestBoundAccessGate().bound)
-      .runRead(invocation)
-      .pipe(Effect.provideService(CustomerHistoryPortsService, ownerPorts), Effect.flip);
-    expect(Schema.is(ReadPermissionDenied)(refusal)).toBe(true);
-  }),
+      }
+    }),
+  ).pipe(Effect.provide(NodeCrypto.layer)),
 );

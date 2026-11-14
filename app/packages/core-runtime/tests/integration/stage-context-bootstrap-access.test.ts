@@ -34,6 +34,7 @@ import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-d
 import type { AccessCatalogModule, AccessDeclarationInput } from '../../src/authorization/access-declaration.ts';
 import type { AccessDecision } from '../../src/access/decision/contract.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../src/db/database-identities.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -45,6 +46,7 @@ import { reconcileStageContextBootstraps } from '../../src/install/stage-context
 import type { StageTenantBootstrap } from '../../src/install/stage-context-bootstrap.ts';
 import { createTemplateDatabase, replacedDatabase } from '../support/access-scenarios/database.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 /*
  * The stage bootstrap, end to end (CUTOVER-PLAN §3.5, ADR-0028, O67-Q6). An operator accounts file
@@ -233,9 +235,12 @@ interface Stage {
 const withStage = <Value, Failure>(run: (stage: Stage) => Effect.Effect<Value, Failure>) =>
   Effect.gen(function* stageScenario() {
     const crypto = yield* Crypto.Crypto;
-    const [connections, spiceDb] = yield* Effect.all([loadDatabaseConnectionPair(), loadSpiceDbConfig()], {
-      concurrency: 2,
-    }).pipe(Effect.orDie);
+    const [connections, spiceDb] = yield* Effect.all(
+      [loadDatabaseConnectionPair({ envPath: '/dev/null' }), loadSpiceDbConfig({ envPath: '/dev/null' })],
+      {
+        concurrency: 2,
+      },
+    ).pipe(Effect.orDie);
     const bootstrapConnection = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
     const database = `stage_bootstrap_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
     yield* bootstrapConnection.unsafe(`create database "${database}"`).pipe(Effect.orDie);
@@ -270,7 +275,10 @@ const withStage = <Value, Failure>(run: (stage: Stage) => Effect.Effect<Value, F
       AccessProjectionCompiler,
       Effect.sync(() => makeAccessProjectionCompiler(makeAccessProjectionTransport(spiceDb))),
     );
-    const core = Layer.succeed(CoreDatabase, { executor });
+    const core = Layer.mergeAll(
+      Layer.succeed(CoreDatabase, { executor }),
+      Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+    );
     const platforms = Layer.mergeAll(core, engine, NodeServices.layer);
     const intent = TenantIntentLoaderLive.pipe(Layer.provide(platforms));
     const journal = AccessWriteJournalStoreLive.pipe(Layer.provide(platforms));

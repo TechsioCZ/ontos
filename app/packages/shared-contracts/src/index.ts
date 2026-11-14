@@ -57,6 +57,9 @@ export type {
 } from './privacy-owner-contract.ts';
 
 export {
+  API_KEY_GATEWAY_CONTEXT_HEADER,
+  ApiKeyGatewayContextRequestSchema,
+  ApiKeyGatewayReadRequestSchema,
   DELEGATED_GATEWAY_ASSERTION_VERSION,
   WORKLOAD_GATEWAY_ASSERTION_VERSION,
   GatewayContextV4ClaimsSchema,
@@ -70,6 +73,7 @@ export {
   GatewayAudienceInvalidProblemSchema,
   GatewayAuthenticationRequiredProblemSchema,
   GatewayContextApi,
+  ApiKeyGatewayReadApiGroup,
   GatewayContextApiGroup,
   GatewayContextClaimsSchema,
   GatewayContextV2ClaimsSchema,
@@ -96,11 +100,13 @@ export {
   GatewayContextProtectedHeaderSchema,
   GatewayContextRequestSchema,
   GatewayContextResponseSchema,
+  GATEWAY_MODULE_NOT_INSTALLED_TYPE,
   GatewayForbiddenProblemSchema,
   GatewayInternalProblemSchema,
   GatewayRateLimitedProblemSchema,
   GatewayReloadRequiredProblemSchema,
   GatewayTrustedPrincipalContextSchema,
+  GatewayRefusalReasonSchema,
   GatewayUnavailableProblemSchema,
   decodeGatewayContextClaims,
   decodeSupportedGatewayContextClaims,
@@ -109,6 +115,7 @@ export {
   shellGatewayContextContract,
 } from './gateway-context.ts';
 export type {
+  ApiKeyGatewayContextRequest,
   GatewayAudienceInvalidProblem,
   GatewayAuthenticationRequiredProblem,
   GatewayContextClientEffect,
@@ -128,6 +135,7 @@ export type {
   GatewayContextRequest,
   GatewayContextResponse,
   GatewayInternalProblem,
+  GatewayRefusalReason,
   GatewayReloadRequiredProblem,
   GatewayTrustedPrincipalContext,
   GatewayUnavailableProblem,
@@ -146,13 +154,16 @@ export type {
   MicroVerticalOperationSource,
   MicroVerticalReadiness,
 } from '@modern-js/bff-effect/microvertical-api';
-export { makeOperationGateway } from './operation-gateway.ts';
+export { makeOperationGateway, makeReferenceGatewayCredentials } from './operation-gateway.ts';
+export { ReferenceGatewayCredentialsSchema, REFERENCE_GATEWAY_CREDENTIALS_HEADER } from './reference-gateway.ts';
 export type { OperationGateway, OperationGatewayAttempt, OperationGatewayIssuer } from './operation-gateway.ts';
 export {
   DocumentCompositionRevisionError,
   getDocumentCompositionRevision,
   pinDocumentCompositionRevision,
 } from './document-composition-revision.ts';
+export { isDocumentAppDenied, pinDocumentDeniedApps } from './document-denied-apps.ts';
+export { documentNavigationModules, pinDocumentNavigationModules } from './document-navigation-modules.ts';
 
 export const UltramodernPublicSitemapChangeFrequencySchema = Schema.Literals([
   'always',
@@ -446,3 +457,6 @@ export const onUltramodernPerformanceSignal = (
     event: CustomEvent<UltramodernPerformanceSignalPayload>,
   ) => void,
 ) => onUltramodernWorkspaceEvent(target, ultramodernWorkspaceEventNames.performanceSignal, handler);
+
+export { CalendarDateSchema, CalendarDateWireSchema } from './calendar-date.ts';
+export { czechPlural, formatCzechDays } from './czech-plural.ts';

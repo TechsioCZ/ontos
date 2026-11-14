@@ -134,16 +134,21 @@ type ClaimCounterpartyAccessInvitationOutcome =
       readonly rejection: InvitationClaimRejection;
     }>;
 
+export interface CounterpartyAccessCheckInput {
+  readonly counterpartyRef: CounterpartyRef;
+  readonly permission: CounterpartyPermissionCode;
+  readonly principal: PrincipalRef;
+  readonly scope: CounterpartyPermissionScope;
+}
+
 export interface CounterpartyAccessPortService {
   readonly bootstrapAdministrator: (
     input: GrantCounterpartyAccessInput,
   ) => Effect.Effect<GrantCounterpartyAccessOutcome, CounterpartyAccessDomainError>;
-  readonly check: (input: {
-    readonly counterpartyRef: CounterpartyRef;
-    readonly permission: CounterpartyPermissionCode;
-    readonly principal: PrincipalRef;
-    readonly scope: CounterpartyPermissionScope;
-  }) => Effect.Effect<CounterpartyAccessDecision, CounterpartyAccessUnavailable>;
+  /** The registered entrypoint's canonical gate admits the caller; this reads its exact owner grant. */
+  readonly check: (
+    input: CounterpartyAccessCheckInput,
+  ) => Effect.Effect<CounterpartyAccessDecision, CounterpartyAccessUnavailable>;
   readonly claimInvitation: (
     input: ClaimCounterpartyAccessInvitationInput,
   ) => Effect.Effect<ClaimCounterpartyAccessInvitationOutcome, CounterpartyAccessDomainError>;

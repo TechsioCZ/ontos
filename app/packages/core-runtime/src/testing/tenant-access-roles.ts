@@ -27,6 +27,7 @@ import { AccessProjectionWriter, AccessProjectionWriterLive } from '../access/in
 import { TenantIntentLoaderLive } from '../access/intent/tenant-intent-loader.ts';
 import { AccessWriteJournalStoreLive } from '../access/lifecycle/persistence/journal-store.ts';
 import { CoreDatabase, makeCoreDatabase } from '../db/client.ts';
+import { DatabaseIdentityEnrollmentContext, defineDatabaseIdentityEnrollment } from '../db/database-identities.ts';
 import { parseDatabaseConfig } from '../db/config.ts';
 import { stageScopeOf } from '../install/stage-context-bootstrap.ts';
 import type { TestTenantAccessTarget } from './tenant-access.ts';
@@ -104,14 +105,18 @@ export const makeTestTenantRoleAccess = Effect.fn('TestTenantAccessRoles.make')(
   },
 ) {
   const databaseConfiguration = yield* parseDatabaseConfig({
-    DATABASE_URL: Redacted.value(input.adminConnectionString),
+    DATABASE_URL: Redacted.value(input.writerConnectionString),
   });
   const database = Context.make(CoreDatabase, yield* makeCoreDatabase(databaseConfiguration));
   const transport = yield* Effect.acquireRelease(
     Effect.sync(() => makeAccessProjectionTransport(input.spiceDb)),
     (opened) => Effect.sync(() => opened.close()),
   );
-  const platform = Context.add(database, AccessProjectionCompiler, makeAccessProjectionCompiler(transport));
+  const platform = Context.add(
+    Context.add(database, AccessProjectionCompiler, makeAccessProjectionCompiler(transport)),
+    DatabaseIdentityEnrollmentContext,
+    defineDatabaseIdentityEnrollment([]),
+  );
   const stores = Context.merge(
     platform,
     yield* Layer.build(

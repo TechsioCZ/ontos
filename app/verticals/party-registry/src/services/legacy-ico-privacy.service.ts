@@ -16,6 +16,7 @@ import {
   OrganizationIcoFieldContractVersion,
   OrganizationIcoProjectionFields,
 } from '../../shared/apis/organization-ico-facts.ts';
+import { partyRegistryEvidenceCall } from '../declared-evidence-calls.ts';
 
 const LegacyIcoPrivacySiteKindSchema = Schema.Literals(['legacy-read', 'legacy-fence']);
 type LegacyIcoPrivacySiteKind = typeof LegacyIcoPrivacySiteKindSchema.Type;
@@ -136,10 +137,20 @@ export const checkLegacyIcoPrivacy = Effect.fn('PartyLegacyIcoPrivacy.check')(fu
       const requestCorrelation = yield* crypto.value
         .randomUUIDv4()
         .pipe(Effect.catch((error) => failUnavailable('crypto', error)));
+      // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
       const credential = yield* acquireDelegatedGatewayContext(
-        { audience: 'privacy', legalEntityScope: 'subject', requestCorrelation, subject: { _tag: 'Assertion', scope } },
+        {
+          audience: 'privacy',
+          callingAppId: 'party-registry',
+          legalEntityScope: 'subject',
+          requestCorrelation,
+          subject: { _tag: 'Assertion', scope },
+        },
         crypto.value,
-      ).pipe(Effect.catch((error) => failUnavailable('delegation', error)));
+      ).pipe(
+        partyRegistryEvidenceCall.legacyIcoPrivacy,
+        Effect.catch((error) => failUnavailable('delegation', error)),
+      );
       const organization = organizations.find((item) => item.partyId === partyId);
       if (organization !== undefined) {
         yield* requireModuleOperation(organizationRequirement).pipe(
@@ -155,7 +166,10 @@ export const checkLegacyIcoPrivacy = Effect.fn('PartyLegacyIcoPrivacy.check')(fu
           credential.authorization,
           requestCorrelation,
           { baseUrl: credential.apiBaseUrl, compositionRevision: credential.compositionRevision },
-        ).pipe(Effect.catch((error) => failUnavailable('policy-read', error)));
+        ).pipe(
+          partyRegistryEvidenceCall.legacyIcoPrivacy,
+          Effect.catch((error) => failUnavailable('policy-read', error)),
+        );
         if (!organizationIcoDecisionMatchesFacts(result, scope.tenantId, organization)) {
           return yield* failUnavailable('policy-result');
         }
@@ -175,7 +189,10 @@ export const checkLegacyIcoPrivacy = Effect.fn('PartyLegacyIcoPrivacy.check')(fu
         credential.authorization,
         requestCorrelation,
         { baseUrl: credential.apiBaseUrl, compositionRevision: credential.compositionRevision },
-      ).pipe(Effect.catch((error) => failUnavailable('policy-read', error)));
+      ).pipe(
+        partyRegistryEvidenceCall.legacyIcoPrivacy,
+        Effect.catch((error) => failUnavailable('policy-read', error)),
+      );
       if (result.outcome !== 'ALLOWED') {
         return yield* failUnavailable('policy-result');
       }

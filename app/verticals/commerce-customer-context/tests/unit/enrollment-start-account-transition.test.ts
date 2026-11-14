@@ -1,4 +1,4 @@
-import { DateTime, Effect, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CommercePortalAuthEnrollmentStartInputSchema } from '../../api/portal-auth/enrollment/contracts.ts';
@@ -6,11 +6,14 @@ import {
   commercePortalAuthEnrollmentAccountCreationOutcome,
   commercePortalAuthEnrollmentOwesTransitionOutcome,
   commercePortalAuthEnrollmentReadableBy,
+  commercePortalAuthEnrollmentResumeOnRead,
+  enrollmentSubjectOwnsAttempt,
 } from '../../api/portal-auth/enrollment/http.ts';
 import { commercePortalAuthEnrollmentAccountCreationClaim } from '../../api/portal-auth/enrollment/intent.ts';
 import type { CommercePortalAuthEnrollmentTransitionClaim } from '../../api/portal-auth/enrollment/intent.ts';
 import type { CommercePortalAccountCreateResult } from '../../api/portal-auth/provider/account-create.ts';
 import {
+  CommercePortalAccountSubjectSchema,
   EnrollmentActionInvocationIdSchema,
   EnrollmentAttemptIdSchema,
   EnrollmentEvidenceReferenceSchema,
@@ -20,8 +23,13 @@ import {
   EnrollmentPrincipalIdSchema,
   EnrollmentTenantIdSchema,
 } from '../../shared/enrollment-contracts.ts';
-import type { EnrollmentAttemptSnapshot, EnrollmentOwnerOperationSnapshot } from '../../shared/enrollment-contracts.ts';
+import type {
+  EnrollmentAttemptSnapshot,
+  EnrollmentOwnerOperationSnapshot,
+  ReadEnrollmentAttemptInput,
+} from '../../shared/enrollment-contracts.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
+import type { CommerceEnrollmentContinuationOptions } from '../../src/enrollment/continuation/enrollment-continuation.ts';
 
 /**
  * What the enrollment start route owes the Attempt journal once its one provider effect has run,
@@ -114,6 +122,20 @@ const created = (overrides: Partial<CommercePortalAccountCreateResult> = {}): Co
   revision: 2,
   ...overrides,
 });
+
+it.effect('successful signup parks awaiting email verification when the provider lease is released', () =>
+  Effect.gen(function* signupAwaitsVerification() {
+    const claim = yield* claimFor();
+    const outcome = yield* commercePortalAuthEnrollmentAccountCreationOutcome(
+      claim,
+      attempt(),
+      operation(claim),
+      created(),
+    );
+    expect(outcome.status).toBe('SUCCEEDED');
+    expect(outcome.nextState).toBe('VERIFICATION_REQUIRED');
+  }),
+);
 
 it.effect('the recorded outcome binds the created account to the claim PostgreSQL committed', () =>
   Effect.gen(function* recordedOutcomeBindsTheClaim() {
@@ -215,3 +237,84 @@ it('only the Principal that started an Attempt may read it back', () => {
   expect(commercePortalAuthEnrollmentReadableBy(started, actorPrincipalId)).toBe(true);
   expect(commercePortalAuthEnrollmentReadableBy(started, otherPrincipalId)).toBe(false);
 });
+
+it('the shared storefront creator does not prove which customer owns an Attempt', () => {
+  const subject = Schema.decodeSync(CommercePortalAccountSubjectSchema)({
+    authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+    providerSubjectId: PROVIDER_SUBJECT_ID,
+    subjectType: 'user',
+  });
+  const current = attempt({ accountSubject: subject });
+  expect(enrollmentSubjectOwnsAttempt(current, subject)).toBe(true);
+  expect(
+    enrollmentSubjectOwnsAttempt(
+      current,
+      Schema.decodeSync(CommercePortalAccountSubjectSchema)({ ...subject, providerSubjectId: 'another-customer' }),
+    ),
+  ).toBe(false);
+  expect(
+    Schema.is(CommercePortalAccountSubjectSchema)({ ...subject, authenticationNamespaceId: 'another.namespace' }),
+  ).toBe(false);
+  expect(enrollmentSubjectOwnsAttempt(attempt(), subject)).toBe(false);
+});
+
+it.effect('manual recovery keeps the original native Attempt identity and leaves every terminal state alone', () =>
+  Effect.gen(function* manualRecovery() {
+    const calls: string[] = [];
+    const continuation = {
+      advance: (input: { readonly portalEnrollmentAttemptId: string }) => {
+        calls.push(input.portalEnrollmentAttemptId);
+        return Effect.succeed({ outcome: 'COMPLETE' as const });
+      },
+      openSweepPass: Effect.die('No discovery in manual recovery'),
+    };
+    const resumed = yield* commercePortalAuthEnrollmentResumeOnRead(
+      continuation,
+      attempt({
+        lease: { leaseExpiresAt: DateTime.makeUnsafe(0), leaseToken, workerId },
+        state: 'RECONCILIATION_REQUIRED',
+      }),
+    );
+    expect(Option.isSome(resumed)).toBe(true);
+    expect(calls).toEqual([attemptId]);
+    for (const state of ['FAILED', 'TERMINATED', 'COMPLETE'] as const) {
+      expect(
+        Option.isNone(
+          yield* commercePortalAuthEnrollmentResumeOnRead(
+            continuation,
+            attempt({ lease: { leaseExpiresAt: DateTime.makeUnsafe(0), leaseToken, workerId }, state }),
+          ),
+        ),
+      ).toBe(true);
+    }
+    expect(Option.isNone(yield* commercePortalAuthEnrollmentResumeOnRead(continuation, attempt()))).toBe(true);
+    expect(calls).toEqual([attemptId]);
+  }),
+);
+
+it.effect('HTTP resume selects verification yielding on the native continuation, not from a browser identifier', () =>
+  Effect.gen(function* requestSelectsTheNativeYieldPolicy() {
+    const calls: {
+      readonly input: ReadEnrollmentAttemptInput;
+      readonly options: CommerceEnrollmentContinuationOptions | undefined;
+    }[] = [];
+    const continuation = {
+      advance: (input: ReadEnrollmentAttemptInput, options?: CommerceEnrollmentContinuationOptions) =>
+        Effect.sync(() => {
+          calls.push({ input, options });
+          return { outcome: 'COMPLETE' as const };
+        }),
+      openSweepPass: Effect.die('Explicit resume must not depend on background discovery'),
+    };
+    yield* commercePortalAuthEnrollmentResumeOnRead(
+      continuation,
+      attempt({
+        lease: { leaseExpiresAt: DateTime.makeUnsafe(0), leaseToken, workerId },
+        state: 'VERIFICATION_REQUIRED',
+      }),
+    );
+    expect(calls).toStrictEqual([
+      { input: { portalEnrollmentAttemptId: attemptId, tenantId }, options: { yieldAfterVerification: true } },
+    ]);
+  }),
+);

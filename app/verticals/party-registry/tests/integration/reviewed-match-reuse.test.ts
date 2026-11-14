@@ -1,4 +1,5 @@
 import { computeActionRequestHash } from '@app/core-runtime/access/enforcement';
+import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
 import {
   createPartyRequestIdentity,
   updatePartyRequestIdentity,
@@ -24,6 +25,7 @@ import { PgClient } from '@effect/sql-pg';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq } from 'drizzle-orm';
 import {
+  Cause,
   ConfigProvider,
   Context,
   Crypto,
@@ -91,6 +93,54 @@ import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/iso
 const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const emptyContext = Context.makeUnsafe<unknown>(new Map());
 
+const unavailableSourceFailureField = 'unavailable';
+const sourceCreateSucceeded = 'succeeded';
+const decodeSourceFailure = Schema.decodeUnknownOption(
+  Schema.Struct({
+    _tag: Schema.optional(Schema.String),
+    code: Schema.optional(Schema.String),
+    reason: Schema.optional(Schema.String),
+  }),
+);
+const sourceCauseDescription = <E>(cause: Cause.Cause<E>): string => {
+  const failures = cause.reasons
+    .filter(Cause.isFailReason)
+    .slice(0, 4)
+    .flatMap(({ error }) =>
+      Option.match(decodeSourceFailure(error), {
+        onNone: () => [],
+        onSome: (fields) => [
+          `failure _tag=${fields._tag ?? unavailableSourceFailureField} code=${fields.code ?? unavailableSourceFailureField} reason=${fields.reason ?? unavailableSourceFailureField}`,
+        ],
+      }),
+    );
+  return `${failures.join('\n').slice(0, 1024)}\n${Cause.pretty(cause).slice(0, 3072)}`.slice(0, 4096);
+};
+
+const createSourceConcurrently = Effect.fn('ReviewedMatchReuse.createSourceConcurrently')(
+  function* createSourceConcurrently<A, E, R>(createSource: Effect.Effect<A, E, R>) {
+    const [createdExit, replayedExit] = yield* Effect.all([Effect.exit(createSource), Effect.exit(createSource)], {
+      concurrency: 2,
+    });
+    if (Exit.isFailure(createdExit) || Exit.isFailure(replayedExit)) {
+      const createdDescription = Exit.isFailure(createdExit)
+        ? sourceCauseDescription(createdExit.cause)
+        : sourceCreateSucceeded;
+      const replayedDescription = Exit.isFailure(replayedExit)
+        ? sourceCauseDescription(replayedExit.cause)
+        : sourceCreateSucceeded;
+      yield* Effect.logError(`1316 source-create first: ${createdDescription}`);
+      yield* Effect.logError(`1316 source-create replay: ${replayedDescription}`);
+      return yield* Effect.die(
+        new Error(
+          `Concurrent source-create failed: first=${Exit.isFailure(createdExit) ? 'failed' : sourceCreateSucceeded}, replay=${Exit.isFailure(replayedExit) ? 'failed' : sourceCreateSucceeded}; bounded causes are logged above`,
+        ),
+      );
+    }
+    return yield* Effect.succeed([createdExit.value, replayedExit.value] as const);
+  },
+);
+
 it.layer(
   NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer), Layer.provideMerge(NodeCrypto.layer)),
   { excludeTestServices: true },
@@ -123,6 +173,10 @@ it.layer(
           ownerRegistration: partyRegistryBackendRegistration,
           adminConnectionString: Redacted.make(connections.admin.connectionString),
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
+          // Scoped native writers need session-setting authority: this isolated target's shared runtime
+          // credential. The dedicated request role above still serves every Action and Read.
+          bootstrapConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
+          databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
         }),
         (value) => value.close().pipe(Effect.orDie),
       );
@@ -511,6 +565,10 @@ it.layer(
           ownerRegistration: partyRegistryBackendRegistration,
           adminConnectionString: Redacted.make(connections.admin.connectionString),
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
+          // Scoped native writers need session-setting authority: this isolated target's shared runtime
+          // credential. The dedicated request role above still serves every Action and Read.
+          bootstrapConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
+          databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
         }),
         (value) => value.close().pipe(Effect.orDie),
       );
@@ -706,13 +764,14 @@ it.layer(
           );
         });
       yield* Effect.logInfo('1316 stage source-create');
+      yield* Effect.logInfo('1316 stage source-create request-identity');
       const sourceCreateIdentity = yield* createPartyRequestIdentity(
         yield* Schema.encodeEffect(CreatePartyPayloadSchema)({ candidate: sourceCandidate }),
       );
       const originalCreateHash = computeActionRequestHash({ ...sourceCreateIdentity, principal });
       const beforeSource = yield* ownerSnapshot();
       const beforeSourceEvidence = yield* fixture.evidence(coreEvidenceExecutor);
-      const [sourceCreated, sourceReplayed] = yield* Effect.all([createSource(), createSource()], { concurrency: 2 });
+      const [sourceCreated, sourceReplayed] = yield* createSourceConcurrently(createSource());
       assert.isOk(sourceCreated.outcome === 'CREATED');
       expect(sourceReplayed).toEqual(sourceCreated);
       const sourceReceipts = yield* admin
@@ -770,6 +829,7 @@ it.layer(
         ),
       );
       expect(sourceCreateReceipt).toMatchObject({ outcome: 'COMMITTED', operation: 'CREATE', result: sourceCreated });
+      yield* Effect.logInfo('1316 stage source-receipt-missing');
       const missingSourceReceipt = yield* runHttp(
         executePartySourceEffectReceiptWithAuthorization(
           {
@@ -796,6 +856,7 @@ it.layer(
         receipt.actionInvocationId,
       );
       const sourceReadOptions = { baseUrl, compositionRevision: composition.composition.revision };
+      yield* Effect.logInfo('1316 stage source-decision');
       const exactDecision = yield* runHttp(
         executePartyMatchDecisionWithAuthorization(
           { actionInvocationId: initialSourceInvocationId },
@@ -818,9 +879,11 @@ it.layer(
       expect((yield* readDecision(sourceCreated.decisionRef)).evidenceEvaluation?.evidence[0]?.kind).toBe(
         'CLIENT_SOURCE_ASSERTION',
       );
+      yield* Effect.logInfo('1316 stage source-conflict');
       expect(
         yield* createSource({ ...sourceCandidate, businessName: 'Conflicting intent' }).pipe(Effect.flip),
       ).toMatchObject({ status: 409 });
+      yield* Effect.logInfo('1316 stage source-denied-create');
       targetAllowed.PARTY = false;
       expect(yield* createSource().pipe(Effect.flip)).toMatchObject({ status: 403 });
       const nextOccurrence = {
@@ -836,11 +899,13 @@ it.layer(
           matchPartyWithAuthorization({ candidate: nextOccurrence }, yield* authorization(), yield* options),
         ).pipe(Effect.flip),
       ).toMatchObject({ status: 403 });
+      yield* Effect.logInfo('1316 stage source-denied-recovery');
       for (const { actionInvocationId } of sourceReceipts) {
         expect(yield* recoverSource(actionInvocationId).pipe(Effect.flip)).toMatchObject({ status: 503 });
       }
       expect(yield* ownerSnapshot()).toEqual(afterSource);
       targetAllowed.PARTY = true;
+      yield* Effect.logInfo('1316 stage source-lost-ack');
       fixture.faultNextTransaction('lost-ack');
       const lostAcknowledgement = yield* createSource().pipe(Effect.flip);
       assert.isOk(Predicate.isTagged(lostAcknowledgement, 'PartyCommandCommitIndeterminateProblem'));

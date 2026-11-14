@@ -4,6 +4,7 @@
 import { Effect, Schema } from 'effect';
 
 import type { ActionHandlerContext } from '../../actions/context.ts';
+import { createChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxMessage } from './change-tenant-module-state-core-modules-tenant-module-state-changed-v1.outbox-message.ts';
 import { defineAction } from '../../actions/definition.ts';
 import { InstalledModuleCatalogService } from '../catalog.ts';
 import { OntosModuleIdSchema } from '../manifest.ts';
@@ -49,10 +50,16 @@ const ChangeTenantModuleStatePayloadSchema = Schema.Struct({
 });
 export type ChangeTenantModuleStatePayload = Schema.Schema.Type<typeof ChangeTenantModuleStatePayloadSchema>;
 
-const ChangeTenantModuleStateResultSchema = Schema.Struct({
+const TenantModuleStateChangedEventSchema = Schema.Struct({
   moduleKey: moduleKeySchema,
   newState: TenantModuleStateSchema,
   previousState: Schema.Union([TenantModuleStateSchema, Schema.Null]),
+});
+
+const ChangeTenantModuleStateResultSchema = Schema.Struct({
+  ...TenantModuleStateChangedEventSchema.fields,
+  /** The modules installed `active` with this one (its manifest's `installsWith` the Tenant had no state for). */
+  installedWith: Schema.Array(moduleKeySchema),
 });
 
 const ChangeTenantModuleStateError = Schema.Union([
@@ -67,7 +74,10 @@ const ChangeTenantModuleStateError = Schema.Union([
   TenantModuleStateValidationUnavailableError,
 ]);
 
-type ChangeTenantModuleStateDomainEvents = Readonly<Record<never, Schema.ConstraintDecoder<unknown>>>;
+const changeTenantModuleStateDomainEvents = {
+  'core.modules.tenant-module-state-changed.v1': TenantModuleStateChangedEventSchema,
+};
+type ChangeTenantModuleStateDomainEvents = typeof changeTenantModuleStateDomainEvents;
 
 interface ChangeTenantModuleStateServices {
   readonly persist: (
@@ -83,13 +93,15 @@ const handleChangeTenantModuleState = Effect.fn('ChangeTenantModuleStateAction.h
     const installedCatalog = yield* InstalledModuleCatalogService;
     const catalog = yield* installedCatalog.loadForRevision(context.compositionRevision);
     yield* validateTenantModuleStateTransition(catalog, payload.moduleKey, payload.newState);
-    const result = yield* context.services.persist(
+    const { installedWith, ...result } = yield* context.services.persist(
       withOptionalProperty(
         withOptionalProperty(
           {
             actionInvocationId: context.actionInvocationId,
+            actor: context.scope,
             authMethod: context.scope.authMethod,
             catalog,
+            compositionRevision: context.compositionRevision,
           },
           payload.expectedState !== undefined,
           'expectedState',
@@ -119,7 +131,35 @@ const handleChangeTenantModuleState = Effect.fn('ChangeTenantModuleStateAction.h
       targetResourceType: 'tenant-module-state',
     });
 
-    return result;
+    const event = yield* context.addDomainEvent({
+      eventType: 'core.modules.tenant-module-state-changed.v1',
+      payloadJson: result,
+      producerModuleKey: 'core.modules',
+      subjectModuleKey: payload.moduleKey,
+      subjectResourceId: payload.moduleKey,
+      subjectResourceType: 'tenant-module-state',
+    });
+    // Each module installed with it is its own state change; the one Outbox wake-up reconciles the whole Tenant.
+    yield* Effect.forEach(
+      installedWith,
+      (moduleKey) =>
+        context.addDomainEvent({
+          eventType: 'core.modules.tenant-module-state-changed.v1',
+          payloadJson: { moduleKey, newState: 'active', previousState: null },
+          producerModuleKey: 'core.modules',
+          subjectModuleKey: moduleKey,
+          subjectResourceId: moduleKey,
+          subjectResourceType: 'tenant-module-state',
+        }),
+      { concurrency: 1, discard: true },
+    );
+    yield* context.addOutboxMessage(
+      event,
+      createChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxMessage({
+        data: { moduleKey: payload.moduleKey },
+      }),
+    );
+    return { ...result, installedWith };
   },
 );
 
@@ -142,7 +182,7 @@ export const changeTenantModuleStateAction = defineAction(
     actionKey: 'core.modules.change-tenant-module-state',
     auditProfile: 'sensitive',
     domainErrorSchema: ChangeTenantModuleStateError,
-    domainEvents: {},
+    domainEvents: changeTenantModuleStateDomainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'protected' },
@@ -164,3 +204,11 @@ export const changeTenantModuleStateAction = defineAction(
       persist: (input) => persistTenantModuleStateChange(transaction, input),
     }),
 );
+
+// <generated-outbox-message-exports>
+export { ChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxPayloadSchema } from './change-tenant-module-state-core-modules-tenant-module-state-changed-v1.outbox-message.ts';
+export { ChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxProducerModuleKey } from './change-tenant-module-state-core-modules-tenant-module-state-changed-v1.outbox-message.ts';
+export { ChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxTopic } from './change-tenant-module-state-core-modules-tenant-module-state-changed-v1.outbox-message.ts';
+export { createChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxMessage } from './change-tenant-module-state-core-modules-tenant-module-state-changed-v1.outbox-message.ts';
+export type { ChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxPayload } from './change-tenant-module-state-core-modules-tenant-module-state-changed-v1.outbox-message.ts';
+// </generated-outbox-message-exports>

@@ -3,38 +3,10 @@
 // @ontos-module-id commerce.market-catalog
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { commerceMarketCatalogManifest } from './vertical.manifest.ts';
-// <generated-module-registration-imports>
-import { assortmentFixtureMarketAssociationRead } from './src/api/assortment-fixture-market-association.read.ts';
-import { activateMarketAction } from './src/actions/activate-market.action.ts';
-import { associateStorefrontAction } from './src/actions/associate-storefront.action.ts';
-import { createMarketAction } from './src/actions/create-market.action.ts';
-import { manageMarketRetirementAdmissionAction } from './src/actions/manage-market-retirement-admission.action.ts';
-import { removeStorefrontAssociationAction } from './src/actions/remove-storefront-association.action.ts';
-import { retireMarketAction } from './src/actions/retire-market.action.ts';
-import { reviseMarketDefinitionAction } from './src/actions/revise-market-definition.action.ts';
-import { reviseStorefrontAssociationAction } from './src/actions/revise-storefront-association.action.ts';
-import { suspendMarketAction } from './src/actions/suspend-market.action.ts';
-import { currentMarketCatalogRead } from './src/api/current-market-catalog.read.ts';
-import { eligibleMarketTuplesRead } from './src/api/eligible-market-tuples.read.ts';
-import { resolveCommerceMarketRead } from './src/api/resolve-commerce-market.read.ts';
-import { verifyMarketEligibilityV1Read } from './src/api/verify-market-eligibility-v1.read.ts';
-import { pricingCurrentMarketEvidenceRead } from './src/api/pricing-current-market-evidence.read.ts';
-// </generated-module-registration-imports>
+import { commerceMarketCatalogRuntimeDeclaration } from './vertical.runtime-declaration.ts';
 
 export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistration({
-  actions: [
-    // <generated-module-registration-actions>
-    activateMarketAction,
-    associateStorefrontAction,
-    createMarketAction,
-    manageMarketRetirementAdmissionAction,
-    removeStorefrontAssociationAction,
-    retireMarketAction,
-    reviseMarketDefinitionAction,
-    reviseStorefrontAssociationAction,
-    suspendMarketAction,
-    // </generated-module-registration-actions>
-  ],
+  ...commerceMarketCatalogRuntimeDeclaration,
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
@@ -42,8 +14,10 @@ export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistrati
         import('./src/api/assortment-fixture-market-association-client.ts'),
       'current-market-catalog': () => import('./src/api/current-market-catalog-client.ts'),
       'eligible-market-tuples': () => import('./src/api/eligible-market-tuples-client.ts'),
+      'market-administration': () => import('./src/api/market-administration-client.ts'),
       'market-history': () => import('./src/api/market-history-client.ts'),
       'market-retirement-effect-recovery': () => import('./src/api/market-retirement-effect-recovery-client.ts'),
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'pricing-current-market-evidence': () => import('./src/api/pricing-current-market-evidence-client.ts'),
       'resolve-commerce-market': () => import('./src/api/resolve-commerce-market-client.ts'),
       'verify-market-eligibility-v1': () => import('./src/api/verify-market-eligibility-v1-client.ts'),
@@ -55,6 +29,8 @@ export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistrati
     },
     pages: {
       // <generated-module-registration-pages>
+      'page-eshops': () => import('./src/routes/[lang]/prodej/eshopy/page.tsx'),
+      'page-market-detail': () => import('./src/routes/[lang]/prodej/eshopy/trhy/[marketId]/page.tsx'),
       // </generated-module-registration-pages>
     },
     reports: {
@@ -63,24 +39,11 @@ export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistrati
     },
     search: {
       // <generated-module-registration-search>
+      markets: () => import('./src/api/markets-search-client.ts'),
       // </generated-module-registration-search>
     },
   },
   manifest: commerceMarketCatalogManifest,
-  outboxWorkers: [
-    // <generated-module-registration-workers>
-    // </generated-module-registration-workers>
-  ],
-  reads: [
-    // <generated-module-registration-reads>
-    assortmentFixtureMarketAssociationRead,
-    currentMarketCatalogRead,
-    eligibleMarketTuplesRead,
-    resolveCommerceMarketRead,
-    verifyMarketEligibilityV1Read,
-    pricingCurrentMarketEvidenceRead,
-    // </generated-module-registration-reads>
-  ],
 });
 
 // <generated-public-component-registrations>

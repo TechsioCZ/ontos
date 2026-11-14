@@ -166,6 +166,7 @@ export const makeGuestPaymentTermsResolutionServices = Effect.fn('GuestPaymentTe
       });
     }
     const catalog = yield* paymentTermCatalogPortFromEnvironment({
+      compositionRevision,
       legalEntityId,
       requestCorrelation: scope.correlationId,
       subject: { _tag: 'Assertion', scope },
@@ -190,11 +191,7 @@ export const makeGuestPaymentTermsResolutionServices = Effect.fn('GuestPaymentTe
           Effect.flatMap(() => catalog.resolveDefinitions(requests)),
         ),
     };
-    const policyService = yield* customerCommercePolicyAdministrationServiceFactory(
-      _transaction,
-      scope,
-      compositionRevision,
-    );
+    const policyService = yield* customerCommercePolicyAdministrationServiceFactory(_transaction, scope);
     const policy = customerCommercePaymentTermsPolicyResolver(
       'GUEST',
       {

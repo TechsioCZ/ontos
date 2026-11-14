@@ -1,21 +1,29 @@
-import { pinDocumentCompositionRevision } from '@app/shared-contracts';
+import {
+  pinDocumentCompositionRevision,
+  pinDocumentDeniedApps,
+  pinDocumentNavigationModules,
+} from '@app/shared-contracts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { Effect, Exit, Match, Schema } from 'effect';
 import { useState } from 'react';
 
 import { SwitchLegalEntityPayloadSchema, SwitchTenantPayloadSchema } from '../../shared/browser-api.ts';
-import { signOut, switchLegalEntity, switchTenant } from '../api/auth-client.ts';
+import { signOut, switchLegalEntity, switchTenant, switchToTenantContext } from '../api/auth-client.ts';
 import type { SwitchLegalEntityClientError, SwitchTenantClientError } from '../api/auth-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { endBrowserSession } from './session-scope.ts';
+import { warmDocumentGatewayAssertions } from './document-gateway-assertions.ts';
+import { primeBrowserReads } from './[lang]/home-page-model.ts';
 import type { AuthenticatedHomePageModel } from './[lang]/home-page-model.ts';
 
-const SwitchFailureStateSchema = Schema.Literals(['authentication-required', 'failed']);
+const authenticationRequired = 'authentication-required' as const;
+const SwitchFailureStateSchema = Schema.Literals([authenticationRequired, 'failed']);
 type SwitchFailureState = typeof SwitchFailureStateSchema.Type;
 
 const tenantSwitchFailureState = (error: SwitchTenantClientError): SwitchFailureState =>
   Match.value(error).pipe(
-    Match.tag('TenantAuthenticationRequiredProblem', () => 'authentication-required' as const),
+    Match.tag('TenantAuthenticationRequiredProblem', () => authenticationRequired),
     Match.tag(
       'HttpClientError',
       'SchemaError',
@@ -29,7 +37,7 @@ const tenantSwitchFailureState = (error: SwitchTenantClientError): SwitchFailure
 
 const legalEntitySwitchFailureState = (error: SwitchLegalEntityClientError): SwitchFailureState =>
   Match.value(error).pipe(
-    Match.tag('TenantAuthenticationRequiredProblem', () => 'authentication-required' as const),
+    Match.tag('TenantAuthenticationRequiredProblem', () => authenticationRequired),
     Match.tag(
       'HttpClientError',
       'LegalEntityAccessForbiddenProblem',
@@ -50,6 +58,23 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
     compositionRevision !== undefined &&
     browserDocument !== undefined &&
     Exit.isFailure(browserRuntime.runSyncExit(pinDocumentCompositionRevision(compositionRevision, browserDocument)));
+  // Pinned during render, so routed module pages (children) see it before their first reads.
+  if (browserDocument !== undefined && model?.navigation.state === 'available') {
+    pinDocumentDeniedApps(model.navigation.deniedAppIds, browserDocument);
+    // Remotes narrow optional cross-module reads with it instead of reading the composition again.
+    if (compositionRevision !== undefined) {
+      pinDocumentNavigationModules(model.navigation.moduleIds, browserDocument);
+    }
+  }
+  // Before any browser loader runs: the server-rendered document's own Shell reads answer its first loaders.
+  if (browserDocument !== undefined && model?.browserReads !== undefined) {
+    browserRuntime.runSync(primeBrowserReads(model.identity, model.browserReads).pipe(Effect.ignore));
+  }
+  // Started during render too: every audience of the document gets its assertion in one batch that module pages join
+  // (a no-op while all are fresh), before they mount and ask.
+  if (browserDocument !== undefined && compositionRevision !== undefined && model?.gatewayAudiences !== undefined) {
+    browserRuntime.runSync(warmDocumentGatewayAssertions(compositionRevision, model.gatewayAudiences));
+  }
   const [logoutPending, setLogoutPending] = useState(false);
   const [logoutFailed, setLogoutFailed] = useState(false);
   const [tenantSwitchPending, setTenantSwitchPending] = useState(false);
@@ -68,6 +93,7 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
     setLogoutFailed(false);
     void browserRuntime.runPromise(
       signOut({ locale: language }).pipe(
+        Effect.andThen(endBrowserSession),
         Effect.andThen(
           Effect.tryPromise(() => navigate({ reloadDocument: true, to: `/${language}/login` })).pipe(
             Effect.timeout('10 seconds'),
@@ -101,8 +127,8 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
           onSuccess: () => Effect.succeed('switched' as const),
         }),
         Effect.flatMap((outcome) =>
-          outcome === 'authentication-required' || outcome === 'switched'
-            ? reload()
+          outcome === authenticationRequired || outcome === 'switched'
+            ? endBrowserSession.pipe(Effect.andThen(reload()))
             : Effect.sync(() => setFailed(true)),
         ),
         Effect.matchEffect({
@@ -155,6 +181,17 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
       });
     },
     handleTenantChange,
+    handleTenantContextChange: () => {
+      if (model === undefined || legalEntitySwitchPending || model.contextState === 'tenant_authenticated') {
+        return;
+      }
+      runSwitch(
+        switchToTenantContext({ locale: language }),
+        tenantSwitchFailureState,
+        setLegalEntitySwitchPending,
+        setLegalEntitySwitchFailed,
+      );
+    },
     legalEntitySwitchFailed,
     legalEntitySwitchPending,
     logoutFailed,

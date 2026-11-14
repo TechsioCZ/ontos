@@ -1,7 +1,8 @@
-import { and, desc, eq, inArray } from 'drizzle-orm';
-import { Context, Effect, Layer, Match, Option, Schema } from 'effect';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { Context, Effect, Layer, Match, Option, Ref, Schema } from 'effect';
 
 import { CoreDatabase } from '../../db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../db/database-identities.ts';
 import {
   accessAssignments,
   accessCatalogEntries,
@@ -12,6 +13,8 @@ import {
   accessRoles,
   accessScopes,
   accessTeamMembers,
+  principalCompanyMemberships,
+  principals,
 } from '../../db/schema.ts';
 import type { CoreTransaction } from '../../db/types.ts';
 import type { OperationalScope } from '../../operations/context.ts';
@@ -34,12 +37,14 @@ import {
   RoleRevisionSchema,
   RoleSchema,
 } from '../model.ts';
-import type { PeopleIntentWrite } from '../lifecycle/people-commands.ts';
+import type { PeopleCommandError, PeopleIntentWrite } from '../lifecycle/people-commands.ts';
+import { peopleRefusal } from '../lifecycle/people-commands.ts';
 import type { AccessIntentError } from './errors.ts';
 import { intentConflict } from './errors.ts';
 import { lockRoles, writeGrantIncarnations } from './grant-incarnations.ts';
 import type { AccessMembership } from './memberships.ts';
 import type { AccessIntentDatabase } from './persistence.ts';
+import { peopleRevisionOf } from './people-revision.ts';
 import { actorIssue, asDate, decodeStored, durable, holderColumns, runScoped, scopeIssue } from './persistence.ts';
 import type { AccessTeamMember } from './teams.ts';
 
@@ -286,6 +291,8 @@ const attributionIssue = (scope: OperationalScope, write: PeopleIntentWrite): st
     Match.tag('EndDelegation', () => null),
     Match.tag('EndMembership', () => null),
     Match.tag('RemoveTeamMember', () => null),
+    // A precondition writes nothing; it reads the installed tenant's directory only.
+    Match.tag('RequireDirectoryMember', () => null),
     Match.exhaustive,
   );
 
@@ -379,7 +386,11 @@ const writeMembership = (transaction: CoreTransaction, membership: AccessMembers
     })
     .pipe(durable(PEOPLE_UNIQUE_CONSTRAINTS), Effect.asVoid);
 
-/** A membership only ever moves forward; the row it moved from is the compare-and-set this checks. */
+/**
+ * A membership only ever moves forward; the row it moved from is the compare-and-set this checks. A
+ * revocation records who ended it, when and why, exactly once: the migration's guard admits the three
+ * columns only on the move to 'revoked' and never changes them afterwards.
+ */
 const endMembership = (
   transaction: CoreTransaction,
   scope: OperationalScope,
@@ -387,7 +398,16 @@ const endMembership = (
 ) =>
   transaction
     .update(accessMemberships)
-    .set({ status: write.status })
+    .set(
+      write.status === 'revoked'
+        ? {
+            endedAt: sql`transaction_timestamp()`,
+            endedBy: scope.principalId,
+            endedReason: write.reason ?? null,
+            status: write.status,
+          }
+        : { status: write.status },
+    )
     .where(
       and(
         eq(accessMemberships.tenantId, scope.tenantId),
@@ -647,10 +667,79 @@ const requireGrantorAssignments = (
           ),
         );
 
+/** The reason a refused precondition gives; the store's own conflict carries the same text. */
+const DIRECTORY_MEMBERSHIP_MISSING = (write: Extract<PeopleIntentWrite, { _tag: 'RequireDirectoryMember' }>) =>
+  `Principal ${write.principalId} is not an active ${write.principalKind} with an active directory membership of company ${write.legalEntityId}`;
+
+/**
+ * The company directory precondition of an admission, inside the change's own transaction (S2). The
+ * directory rows are company-scoped by row security, so the company is installed for these two reads
+ * the way invitation acceptance does, and the request's own company is installed again afterwards.
+ * Both rows are share-locked: a concurrent departure, disabling or principal deactivation waits for
+ * this commit, and one that committed first makes the admission refuse instead of landing.
+ */
+const requireDirectoryMember = Effect.fn('AccessPeopleStore.requireDirectoryMember')(
+  function* requireDirectoryMemberEffect(
+    transaction: CoreTransaction,
+    scope: OperationalScope,
+    write: Extract<PeopleIntentWrite, { _tag: 'RequireDirectoryMember' }>,
+    refused: Ref.Ref<Option.Option<PeopleCommandError>>,
+  ) {
+    yield* transaction
+      .execute(sql`select set_config('ontos.legal_entity_id', ${write.legalEntityId}, true)`, 'objects')
+      .pipe(durable(PEOPLE_UNIQUE_CONSTRAINTS));
+    // One statement: the active directory row joined to the active principal of the holder's kind, both share-locked.
+    const directory = yield* transaction
+      .select({ principalId: principalCompanyMemberships.principalId })
+      .from(principalCompanyMemberships)
+      .innerJoin(
+        principals,
+        and(
+          eq(principals.tenantId, principalCompanyMemberships.tenantId),
+          eq(principals.principalId, principalCompanyMemberships.principalId),
+        ),
+      )
+      .where(
+        and(
+          eq(principalCompanyMemberships.tenantId, scope.tenantId),
+          eq(principalCompanyMemberships.legalEntityId, write.legalEntityId),
+          eq(principalCompanyMemberships.principalId, write.principalId),
+          eq(principalCompanyMemberships.status, 'active'),
+          eq(principals.kind, write.principalKind),
+          // An agent's directory row carries no affiliation, exactly as the agent status Action requires.
+          write.principalKind === 'agent' ? isNull(principalCompanyMemberships.affiliation) : undefined,
+          eq(principals.status, 'active'),
+        ),
+      )
+      .for('share')
+      .pipe(durable(PEOPLE_UNIQUE_CONSTRAINTS));
+    yield* transaction
+      .execute(sql`select set_config('ontos.legal_entity_id', ${scope.legalEntityId ?? ''}, true)`, 'objects')
+      .pipe(durable(PEOPLE_UNIQUE_CONSTRAINTS));
+    if (directory.length === 1) {
+      return yield* Effect.void;
+    }
+    const reason = DIRECTORY_MEMBERSHIP_MISSING(write);
+    yield* Ref.set(refused, Option.some(peopleRefusal('people_directory_membership_missing', reason)));
+    // Failing the body rolls back every row the change wrote; the caller reports the refusal above.
+    return yield* intentConflict('access_intent_write_refused', reason);
+  },
+);
+
+/** The precondition refusal a rolled-back change recorded, or the conflict itself when there is none. */
+const refusalOr = (
+  refused: Ref.Ref<Option.Option<PeopleCommandError>>,
+  conflict: AccessIntentError,
+): Effect.Effect<never, AccessIntentError | PeopleCommandError> =>
+  Effect.flatMap(Ref.get(refused), (refusal) =>
+    Effect.fail(Option.getOrElse(refusal, (): AccessIntentError | PeopleCommandError => conflict)),
+  );
+
 const applyWrite = (
   transaction: CoreTransaction,
   scope: OperationalScope,
   write: PeopleIntentWrite,
+  refused: Ref.Ref<Option.Option<PeopleCommandError>>,
 ): Effect.Effect<void, AccessIntentError> =>
   Match.value(write).pipe(
     Match.tag('EndAssignment', (ending) => endAssignment(transaction, scope, ending)),
@@ -665,13 +754,40 @@ const applyWrite = (
     Match.tag('RecordMembership', ({ membership }) => writeMembership(transaction, membership)),
     Match.tag('RecordTeamMember', ({ member }) => writeTeamMember(transaction, member)),
     Match.tag('RemoveTeamMember', (removal) => removeTeamMember(transaction, scope, removal)),
+    Match.tag('RequireDirectoryMember', (required) => requireDirectoryMember(transaction, scope, required, refused)),
     Match.exhaustive,
   );
 
 /**
+ * Decoded published releases by identity: release id and digest. A published release never changes under that
+ * identity: its header and entries are append-only (the core triggers refuse every update, delete and truncate) and
+ * its digest, computed over its entries, is the release identity a publication is checked against. So this holds
+ * global catalogue content only, nothing of any tenant or person, and every read still resolves through the caller's
+ * scope which release it names. Releases are few; the oldest held one gives way past `KNOWN_RELEASE_LIMIT`.
+ */
+const knownReleases = Ref.makeUnsafe(new Map<string, CatalogSnapshot>());
+const KNOWN_RELEASE_LIMIT = 4;
+
+const releaseIdentity = (header: { readonly catalogSnapshotId: string; readonly digest: string }) =>
+  `${header.catalogSnapshotId}\u0000${header.digest}`;
+
+const rememberRelease = (snapshot: CatalogSnapshot) =>
+  Ref.update(knownReleases, (known) => {
+    const next = new Map([
+      ...known,
+      [releaseIdentity({ catalogSnapshotId: snapshot.id, digest: snapshot.digest }), snapshot] as const,
+    ]);
+    for (const identity of [...next.keys()].slice(0, Math.max(0, next.size - KNOWN_RELEASE_LIMIT))) {
+      next.delete(identity);
+    }
+    return next;
+  });
+
+/**
  * One release: the named one, or with no id the newest published one, which is the one a new envelope
  * names its capabilities from. Every release names the same capability keys again, so the entries are
- * read for the one release the header resolved to, never across releases.
+ * read for the one release the header resolved to, never across releases, and not at all when this
+ * process already decoded that release.
  */
 const readRelease = Effect.fn('AccessPeopleStore.readRelease')(function* readReleaseEffect(
   transaction: CoreTransaction,
@@ -690,11 +806,15 @@ const readRelease = Effect.fn('AccessPeopleStore.readRelease')(function* readRel
   if (header === undefined) {
     return Option.none();
   }
-  const entries = yield* transaction
-    .select({ entryJson: accessCatalogEntries.entryJson })
-    .from(accessCatalogEntries)
-    .where(eq(accessCatalogEntries.catalogSnapshotId, header.catalogSnapshotId));
-  return Option.some({ entries, snapshot: header });
+  const known = Option.fromUndefinedOr((yield* Ref.get(knownReleases)).get(releaseIdentity(header)));
+  // A release this process decoded already needs no entry rows.
+  const entries = Option.isSome(known)
+    ? []
+    : yield* transaction
+        .select({ entryJson: accessCatalogEntries.entryJson })
+        .from(accessCatalogEntries)
+        .where(eq(accessCatalogEntries.catalogSnapshotId, header.catalogSnapshotId));
+  return Option.some({ entries, known, snapshot: header });
 });
 
 /** The roles a change adds holders to: each is locked before its head is read (`lockRoles`). */
@@ -707,19 +827,111 @@ const assignedRoleIds = (writes: readonly PeopleIntentWrite[]): readonly string[
   );
 
 export interface ApplyPeopleChangeInput {
+  /**
+   * The people revision (`peopleRevisionOf`) of the view the change was planned on. When it is given,
+   * the store re-reads the tenant's people intent under the tenant's people lock and refuses the change
+   * if anything moved since, so no rule the plan checked is decided on a view another change overtook.
+   */
+  readonly expectedRevision?: string;
   readonly writes: readonly PeopleIntentWrite[];
 }
+
+/**
+ * The namespace of the transaction lock that serializes the people changes of one tenant. The second
+ * key is the tenant id, both hashed by `hashtext`, so one tenant never waits on another.
+ */
+export const PEOPLE_CHANGE_LOCK_NAMESPACE = 'ontos.access.people-change';
+
+/**
+ * Takes the tenant's people lock for the rest of the transaction. Every planned people change commits
+ * under it, so two plans read against the same view can never both commit: the second one waits here
+ * and then meets the first one's rows in its revision check.
+ */
+const lockTenantPeople = (transaction: CoreTransaction, scope: OperationalScope) =>
+  transaction
+    .execute(
+      sql`select pg_advisory_xact_lock(hashtext(${PEOPLE_CHANGE_LOCK_NAMESPACE}), hashtext(${scope.tenantId}))`,
+      'objects',
+    )
+    .pipe(durable(PEOPLE_UNIQUE_CONSTRAINTS), Effect.asVoid);
+
+/** The people revision of the tenant as this transaction reads it, after it took the people lock. */
+const currentPeopleRevision = (transaction: CoreTransaction, scope: OperationalScope) =>
+  Effect.all(
+    [
+      transaction
+        .select({
+          id: accessMemberships.membershipId,
+          kind: accessMemberships.kind,
+          status: accessMemberships.status,
+          validFrom: accessMemberships.validFrom,
+        })
+        .from(accessMemberships)
+        .where(eq(accessMemberships.tenantId, scope.tenantId)),
+      transaction
+        .select({
+          incarnationId: accessAssignments.incarnationId,
+          roleRevisionId: accessAssignments.roleRevisionId,
+          status: accessAssignments.status,
+        })
+        .from(accessAssignments)
+        .where(eq(accessAssignments.tenantId, scope.tenantId)),
+      transaction
+        .select({ id: accessDelegations.delegationId, status: accessDelegations.status })
+        .from(accessDelegations)
+        .where(eq(accessDelegations.tenantId, scope.tenantId)),
+      transaction
+        .select({ id: accessTeamMembers.teamMemberId, teamId: accessTeamMembers.teamId })
+        .from(accessTeamMembers)
+        .where(eq(accessTeamMembers.tenantId, scope.tenantId)),
+    ],
+    { concurrency: 1 },
+  ).pipe(
+    durable(PEOPLE_UNIQUE_CONSTRAINTS),
+    Effect.map(([memberships, assignments, delegations, teamMembers]) =>
+      peopleRevisionOf({
+        assignments,
+        delegations,
+        memberships: memberships.map((row) => ({ ...row, validFrom: asDate(row.validFrom) })),
+        teamMembers,
+      }),
+    ),
+  );
+
+/** Refuses the change when the tenant's people intent moved since the view it was planned on. */
+const requirePeopleRevision = (
+  transaction: CoreTransaction,
+  scope: OperationalScope,
+  expectedRevision: string | undefined,
+): Effect.Effect<void, AccessIntentError> =>
+  expectedRevision === undefined
+    ? Effect.void
+    : currentPeopleRevision(transaction, scope).pipe(
+        Effect.flatMap((current) =>
+          current === expectedRevision
+            ? Effect.void
+            : Effect.fail(
+                intentConflict(
+                  'access_intent_record_conflict',
+                  'the people of this tenant changed after this change was planned; read them again',
+                ),
+              ),
+        ),
+      );
 
 /**
  * The people intent port. Every call names the trusted request scope it runs in (O66), so the tenant
  * and the acting person are the request's and never the command body's.
  */
 export interface AccessPeopleStoreService {
-  /** Every row of one planned change, in one transaction, or nothing at all. */
+  /**
+   * Every row of one planned change, in one transaction, or nothing at all. A precondition the change
+   * names and the transaction refutes is a people refusal (`people_directory_membership_missing`).
+   */
   readonly applyPeopleChange: (
     scope: OperationalScope,
     input: ApplyPeopleChangeInput,
-  ) => Effect.Effect<void, AccessIntentError>;
+  ) => Effect.Effect<void, AccessIntentError | PeopleCommandError>;
   /**
    * The release a role revision pinned: the entries a cell must still exist in. A release is global
    * data, but it is read through the caller's scope so no command can consult one it was not given.
@@ -803,46 +1015,59 @@ const makeAccessPeopleDrizzleStore = (database: AccessIntentDatabase): AccessPeo
     if (Option.isNone(read)) {
       return Option.none<CatalogSnapshot>();
     }
-    const { entries, snapshot } = read.value;
-    return Option.some(
-      yield* decodeStored(
-        Schema.decodeResult(
-          CatalogSnapshotSchema,
-          ACCESS_MODEL_PARSE_OPTIONS,
-        )({
-          digest: snapshot.digest,
-          entries: entries.map((row) => row.entryJson),
-          id: snapshot.catalogSnapshotId,
-          publishedAt: asDate(snapshot.publishedAt),
-        }),
-        `catalog snapshot ${snapshot.catalogSnapshotId}`,
-      ),
+    const { entries, known, snapshot } = read.value;
+    if (Option.isSome(known)) {
+      return known;
+    }
+    const decoded = yield* decodeStored(
+      Schema.decodeResult(
+        CatalogSnapshotSchema,
+        ACCESS_MODEL_PARSE_OPTIONS,
+      )({
+        digest: snapshot.digest,
+        entries: entries.map((row) => row.entryJson),
+        id: snapshot.catalogSnapshotId,
+        publishedAt: asDate(snapshot.publishedAt),
+      }),
+      `catalog snapshot ${snapshot.catalogSnapshotId}`,
     );
+    // Remembered under the identity the stored header carried, which the decoded release repeats.
+    if (decoded.id === snapshot.catalogSnapshotId && decoded.digest === snapshot.digest) {
+      yield* rememberRelease(decoded);
+    }
+    return Option.some(decoded);
   });
 
   const applyPeopleChange: AccessPeopleStoreService['applyPeopleChange'] = Effect.fn(
     'AccessPeopleStore.applyPeopleChange',
-  )(function* applyPeopleChangeEffect(scope: OperationalScope, { writes }: ApplyPeopleChangeInput) {
+  )(function* applyPeopleChangeEffect(scope: OperationalScope, { expectedRevision, writes }: ApplyPeopleChangeInput) {
     const issue = writeIssue(scope, writes);
     if (issue !== null) {
       return yield* intentConflict('access_intent_scope_mismatch', issue);
     }
-    return yield* writes.length === 0
-      ? Effect.void
-      : runScoped(database, scope, PEOPLE_UNIQUE_CONSTRAINTS, (transaction) =>
+    if (writes.length === 0) {
+      return yield* Effect.void;
+    }
+    const refused = yield* Ref.make(Option.none<PeopleCommandError>());
+    // The tenant's people lock first, then the revision the plan was read at, then the role locks.
+    return yield* runScoped(database, scope, PEOPLE_UNIQUE_CONSTRAINTS, (transaction) =>
+      lockTenantPeople(transaction, scope).pipe(
+        Effect.andThen(requirePeopleRevision(transaction, scope, expectedRevision)),
+        Effect.andThen(
           lockRoles(transaction, {
             mode: 'share',
             roleIds: assignedRoleIds(writes),
             tenantId: scope.tenantId,
-          }).pipe(
-            Effect.andThen(
-              Effect.forEach(writes, (write) => applyWrite(transaction, scope, write), {
-                concurrency: 1,
-                discard: true,
-              }),
-            ),
-          ),
-        );
+          }),
+        ),
+        Effect.andThen(
+          Effect.forEach(writes, (write) => applyWrite(transaction, scope, write, refused), {
+            concurrency: 1,
+            discard: true,
+          }),
+        ),
+      ),
+    ).pipe(Effect.catchTag('AccessIntentConflictError', (conflict) => refusalOr(refused, conflict)));
   });
 
   return Object.freeze({ applyPeopleChange, loadCatalogSnapshot, loadTenantPeople });
@@ -856,6 +1081,7 @@ export const AccessPeopleStoreLive = Layer.effect(
   AccessPeopleStore,
   Effect.gen(function* accessPeopleStoreLayer() {
     const database = yield* CoreDatabase;
-    return makeAccessPeopleDrizzleStore(database);
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
+    return makeAccessPeopleDrizzleStore({ enrollment, executor: database.executor });
   }),
 );

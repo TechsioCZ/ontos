@@ -6,7 +6,7 @@ import { CommercePortalAuthAccountCreationUnavailable } from '../../../api/porta
 import { CommercePortalAuthAccountLookupService } from '../../../api/portal-auth/provider/account-lookup-service.ts';
 import type { CommercePortalAuthAccountLookup } from '../../../api/portal-auth/provider/account-lookup-service.ts';
 import { normalizeCommercePortalAuthEmail } from '../email-normalization.ts';
-import { CommercePortalAuthDatabase } from './portal-auth-database.ts';
+import { CommercePortalAuthDatabase } from './portal-auth-database-service.ts';
 import type { CommercePortalAuthDatabaseExecutor } from './portal-auth-database-types.ts';
 import { user } from './portal-auth-tables.ts';
 
@@ -51,6 +51,14 @@ const makeCommercePortalAuthAccountLookup = (
         email === undefined
           ? eq(user.id, providerSubjectId)
           : and(eq(user.id, providerSubjectId), eq(user.email, normalizeCommercePortalAuthEmail(email))),
+      ),
+    verifiedEmailForOwnerInvocation: ({ ownerInvocationId, providerSubjectId }) =>
+      existsWhere(
+        and(
+          eq(user.enrollmentOwnerInvocationId, ownerInvocationId),
+          eq(user.id, providerSubjectId),
+          eq(user.emailVerified, true),
+        ),
       ),
     // The correlation is keyed by the governed invocation alone: an address is never part of this
     // probe, so a lost provider answer is resolved from what the deployment itself dispatched

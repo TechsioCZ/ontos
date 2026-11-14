@@ -141,7 +141,13 @@ const EQUALITY_OPERATORS = new Set(['===', '!==', '==', '!=']);
 const CAUSE_KEY = 'cause';
 
 /** `/^(?:08|40|53)/u` and `/^08$/u` — SQLSTATE class prefix matchers. */
-const SQLSTATE_REGEX_PATTERNS = [/^\^\((?:\?:)?[0-9]{2}(?:\|[0-9]{2})*\)/u, /^\^[0-9]{2}\$?$/u, /^\^[0-9]\[[0-9-]+\]/u];
+// A class group followed by a quantifier (`^(?:00)?420…`, a phone country prefix) makes the class optional, which no
+// SQLSTATE class test does, so it is not a SQLSTATE class prefix.
+const SQLSTATE_REGEX_PATTERNS = [
+  /^\^\((?:\?:)?[0-9]{2}(?:\|[0-9]{2})*\)(?![?*{])/u,
+  /^\^[0-9]{2}\$?$/u,
+  /^\^[0-9]\[[0-9-]+\]/u,
+];
 
 const TWO_DIGIT = /^[0-9]{2}$/u;
 

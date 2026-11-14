@@ -28,6 +28,7 @@ export const paymentTermCatalogRegistration = defineVerticalRuntimeRegistration(
     api: {
       // <generated-module-registration-apis>
       'current-payment-terms': () => import('./src/api/current-payment-terms-client.ts'),
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'payment-term-history': () => import('./src/api/payment-term-history-client.ts'),
       'payment-term-source-record-history': () => import('./src/api/payment-term-source-record-history-client.ts'),
       'payment-term-source-statement': () => import('./src/api/payment-term-source-statement-client.ts'),

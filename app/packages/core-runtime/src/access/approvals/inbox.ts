@@ -1,6 +1,7 @@
 import { Context, Crypto, Effect, Layer } from 'effect';
 
 import { CoreDatabase } from '../../db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../db/database-identities.ts';
 import type { OperationalScope } from '../../operations/context.ts';
 import { AccessChangesStore } from '../changes/persistence/store.ts';
 import type { AccessScopeId, PrincipalId } from '../ids.ts';
@@ -55,17 +56,24 @@ export class AccessApprovalsInbox extends Context.Service<AccessApprovalsInbox, 
 export const AccessApprovalsInboxLive: Layer.Layer<
   AccessApprovalsInbox,
   never,
-  AccessChangesStore | ApprovalStore | CoreDatabase | Crypto.Crypto | FrozenCommands | TenantIntentLoader
+  | AccessChangesStore
+  | ApprovalStore
+  | CoreDatabase
+  | Crypto.Crypto
+  | DatabaseIdentityEnrollmentContext
+  | FrozenCommands
+  | TenantIntentLoader
 > = Layer.effect(
   AccessApprovalsInbox,
   Effect.gen(function* accessApprovalsInboxLayer() {
     const database = yield* CoreDatabase;
     const crypto = yield* Crypto.Crypto;
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
     const frozenCommands = yield* FrozenCommands;
     const records = yield* ApprovalStore;
     const changes = yield* AccessChangesStore;
     const intent = yield* TenantIntentLoader;
-    const transactions = requestTransactions(database);
+    const transactions = requestTransactions({ enrollment, executor: database.executor });
     // No `join`: the ports of this composition never answer a caller's transaction (see above).
     const services: LiveApprovalServices = {
       crypto,

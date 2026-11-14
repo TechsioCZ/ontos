@@ -1,6 +1,7 @@
 import { PgClient } from '@effect/sql-pg';
 // @rstest-environment happy-dom
 // @rstest-environment-options {"url":"https://party.ontos.test"}
+import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
 import { DatabaseConfig } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeGatewayScopeGrantRegistrar, makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
@@ -130,7 +131,10 @@ it.layer(nativeServices, { excludeTestServices: true })((suite) => {
         const native = yield* preparePartyReconciliationNative(isolated.connections);
         // The Party request identity serves every Action, Read and redemption in this owned clone.
         const connections = { ...isolated.connections, runtime: native.partyConfiguration };
-        const grantRegistrar = makeGatewayScopeGrantRegistrar(native.issuer);
+        const grantRegistrar = makeGatewayScopeGrantRegistrar(
+          native.issuer,
+          PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+        );
         const fixture = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
             access: 'allowed',
@@ -147,6 +151,8 @@ it.layer(nativeServices, { excludeTestServices: true })((suite) => {
             compositionRevision: compositionSnapshot.composition.revision,
             ownerRegistration: partyRegistryBackendRegistration,
             runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
+            bootstrapConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
+            databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
           }).pipe(Effect.orDie),
           (resource) => resource.close().pipe(Effect.orDie),
         );

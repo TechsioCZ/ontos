@@ -216,6 +216,7 @@ export const OrderFinalizationPricingCartLive = Layer.effect(
       const issued = yield* acquireDelegatedGatewayContext(
         {
           audience,
+          callingAppId: 'commerce-order',
           legalEntityScope: 'subject',
           requestCorrelation: scope.correlationId,
           subject: delegationSubject(scope.caller, {

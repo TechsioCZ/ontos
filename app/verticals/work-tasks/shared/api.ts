@@ -1,0 +1,66 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
+import {
+  MicroVerticalBuildMarkerSchema,
+  MicroVerticalReadinessSchema,
+  createMicroVerticalOperationContext,
+} from '@modern-js/bff-effect/microvertical-api';
+import type { MicroVerticalReadiness, MicroVerticalOperationContext } from '@modern-js/bff-effect/microvertical-api';
+import { identity } from 'effect';
+
+// <generated-governed-http-api-imports>
+import { AgentReviewApi } from './apis/agent-review.ts';
+import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
+import { RecordsApi } from './apis/records.ts';
+import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
+import { SubmitStorefrontInquiryActionApi } from './apis/submit-storefront-inquiry-action.ts';
+import { TasksSearchApi } from './apis/tasks-search.ts';
+// </generated-governed-http-api-imports>
+
+export type WorkTasksReadiness = MicroVerticalReadiness;
+export const workTasksMarkerSchema = Schema.Struct({
+  ...MicroVerticalBuildMarkerSchema.fields,
+  kind: Schema.Literal('microvertical-delivery-unit'),
+  schemaVersion: Schema.Literal(1),
+});
+export const workTasksReadinessSchema = Schema.Struct({
+  ...MicroVerticalReadinessSchema.fields,
+  marker: workTasksMarkerSchema,
+});
+
+export type OperationContext = MicroVerticalOperationContext;
+
+export const workTasksFoundationApi = HttpApi.make('WorkTasksApiFoundation').add(
+  HttpApiGroup.make('foundation').add(
+    HttpApiEndpoint.get('readiness', '/work-tasks/readiness', { success: workTasksReadinessSchema }),
+  ),
+);
+
+export const workTasksApi = HttpApi.make('WorkTasksApi')
+  .addHttpApi(workTasksFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
+  // <generated-governed-http-api-additions>
+  .addHttpApi(AgentReviewApi)
+  .addHttpApi(ApplyCommandActionApi)
+  .addHttpApi(RecordsApi)
+  .addHttpApi(RequestSearchRebuildActionApi)
+  .addHttpApi(SubmitStorefrontInquiryActionApi)
+  .addHttpApi(TasksSearchApi)
+  // </generated-governed-http-api-additions>
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
+  .pipe(identity);
+
+export const workTasksOperationContexts = {
+  readiness: createMicroVerticalOperationContext({
+    method: 'GET',
+    operationId: 'WorkTasksApi:foundation:readiness',
+    routePath: '/work-tasks/readiness',
+  }),
+} satisfies Record<string, OperationContext>;
+
+export const workTasksApiContract = {
+  apiPrefix: '/work-tasks-api',
+  basePath: '/work-tasks-api/work-tasks',
+  ownerId: 'work-tasks',
+  readinessPath: '/work-tasks-api/work-tasks/readiness',
+} as const;

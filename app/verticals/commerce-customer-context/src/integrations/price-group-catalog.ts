@@ -234,6 +234,7 @@ const authorizedExecutor =
         acquire(
           {
             audience: 'price-group-catalog',
+            callingAppId: 'commerce-customer-context',
             legalEntityScope: 'tenant',
             requestCorrelation: correlation,
             subject: scopedSubject,

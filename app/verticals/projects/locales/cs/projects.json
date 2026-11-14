@@ -39,6 +39,35 @@
         "idle": "Vyberte jednoho způsobilého uživatele z výsledků.",
         "uncertain": "Výsledek vytvoření není jistý. Před dalším pokusem ověřte Projekt.",
         "prefixLabel": "Prefix"
+      },
+      "projectDetail": {
+        "title": "Detail Projectu",
+        "seoTitle": "Detail Projectu",
+        "seoDescription": "Detail Projectu v aktuálním tenantu.",
+        "loading": "Načítání Projectu…",
+        "invalid": "Odkaz na Project není platný.",
+        "missing": "Project nebyl nalezen nebo k němu nemáte přístup.",
+        "forbidden": "K tomuto Projectu nemáte oprávnění.",
+        "unavailable": "Project se nepodařilo načíst. Zkuste to prosím znovu.",
+        "scopeUnavailable": "Project lze otevřít pouze z přihlášené aplikace.",
+        "retry": "Zkusit znovu",
+        "openCreate": "Přejít na vytvoření Projectu",
+        "archivedNotice": "Project je archivovaný a je dostupný pouze pro čtení.",
+        "fields": {
+          "prefix": "Prefix",
+          "shortText": "Krátký text",
+          "owner": "Vlastník (principal ID)",
+          "createdBy": "Vytvořil (principal ID)",
+          "createdAt": "Vytvořeno",
+          "parentProject": "Nadřazený Project",
+          "projectId": "ID Projectu"
+        },
+        "lifecycle": {
+          "active": "Aktivní",
+          "archived": "Archivovaný"
+        },
+        "notProvided": "Neuvedeno",
+        "noParent": "Žádný"
       }
     }
   }

@@ -1,20 +1,30 @@
+import { AccessDecisionGate } from '../access/enforcement/contract.ts';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Context, Deferred, Effect, Layer, Schema, Stream } from 'effect';
+import { Context, Deferred, Effect, Layer, Option, Schema, Stream } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import type { Connection } from 'effect/sql/SqlConnection';
 import type { SqlError } from 'effect/sql/SqlError';
 
-import { PARTY_REGISTRY_REQUEST_IDENTITY, SHARED_RUNTIME_IDENTITY } from '../db/database-identity-manifest.ts';
+import { readVerifiedGatewayScopeAssertion } from '../auth/system-principal-context-provenance.ts';
+import {
+  DatabaseIdentityEnrollmentContext,
+  defineDatabaseIdentityEnrollment,
+  gatewayScopeGrantRoleForAudience,
+  SHARED_RUNTIME_IDENTITY,
+} from '../db/database-identities.ts';
+import { CoreDatabase } from '../db/client.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
 import { coreRelations } from '../db/schema.ts';
 import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../modules/module-state-gate.ts';
-import { makeOperationalScopeResolver } from '../operations/context.ts';
+import { makeOperationalScopeResolver, OperationalScopeResolver } from '../operations/context.ts';
 import { makeScriptedBoundAccessGate, makeTestOperationalScopeAccess } from './access-gate.ts';
 import type { TestAccessOutcome } from './access-gate.ts';
 import type { OperationalScope } from '../operations/context.ts';
-import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
 import { ContextAccess } from '../permissions/context-access.ts';
+import type { TenantPermissionKey, LegalEntityPermissionKey } from '../permissions/context-permissions.ts';
+import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
 import type { OwnerAuthorizationDecision, OwnerAuthorizationInput } from '../access/enforcement/owner-overlay.ts';
 import type {
   OwnerPermissionAccessTarget,
@@ -24,6 +34,7 @@ import type {
 import { ReadRuntime, makeReadRuntime } from '../reads/runtime.ts';
 import type { ReadRuntimeOptions, ReadRuntimeStage } from '../reads/runtime.ts';
 import { scriptedPgClientLayer } from './scripted-pg-client.ts';
+import { guardPoolAcquisition } from '../db/transaction-io-guard.ts';
 
 export interface ReadTestOwnerQuery {
   readonly params: readonly unknown[];
@@ -31,14 +42,17 @@ export interface ReadTestOwnerQuery {
   readonly sql: string;
 }
 
-export interface ReadTestHarnessOptions {
+export interface ReadTestHarnessOptions extends Pick<
+  ReadRuntimeOptions,
+  'accessDecision' | 'applicationComposition' | 'expectedDeployment' | 'shellSystemReads'
+> {
   /** The access gate's scripted answer for every protected Read (a v2 carrier decides here). */
   readonly access?: TestAccessOutcome | Readonly<Record<string, TestAccessOutcome>>;
-  readonly applicationComposition?: ReadRuntimeOptions['applicationComposition'];
   readonly compositionRevision?: string;
+  readonly databaseIdentities?: DatabaseIdentityEnrollment;
   /** Explicit driver rows for owner SQL; unexpected statements must fail rather than supply empty. */
   readonly executeOwnerQuery: (query: ReadTestOwnerQuery) => Effect.Effect<readonly object[], SqlError>;
-  readonly expectedDeployment?: ReadRuntimeOptions['expectedDeployment'];
+  readonly legalEntityPermissionDecisions?: Readonly<Partial<Record<LegalEntityPermissionKey, ContextAccessDecision>>>;
   /** Observes the owner overlay input the runtime builds inside the transaction and answers it (O70). */
   readonly onOwnerAuthorization?: (input: OwnerAuthorizationInput) => OwnerAuthorizationDecision;
   readonly operationTime: Date;
@@ -54,9 +68,72 @@ export interface ReadTestHarnessOptions {
   readonly scope: OperationalScope;
   /** The scope admission answer on its own, for a test that scripts a gate answer *and* a refused scope. */
   readonly scopeAccess?: ContextAccessDecision;
+  readonly tenantPermissionDecisions?: Readonly<Partial<Record<TenantPermissionKey, ContextAccessDecision>>>;
 }
 
 const scopeValuesSchema = Schema.Tuple([Schema.String, Schema.String]);
+
+const SESSION_INSTALL_AND_READ_SCOPE_SQL =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
+const SESSION_INSTALL_SCOPE_SQL =
+  "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)";
+const SESSION_READ_SCOPE_SQL =
+  "select current_user::text as role, current_setting('ontos.tenant_id', true) as tenant_id, current_setting('ontos.legal_entity_id', true) as legal_entity_id";
+
+/**
+ * A session-setting role's scope statements, each matched by its exact text: installing records the scope from its
+ * parameters, and the one-statement install and the read-back answer the connected role with it. None for any other
+ * statement.
+ */
+const sessionScopeRows = Effect.fn('ReadTestHarness.sessionScopeRows')(function* sessionScopeRows(
+  text: string,
+  params: readonly unknown[],
+  scope: { legalEntityId: string; tenantId: string },
+  role: string,
+) {
+  if (text === SESSION_INSTALL_AND_READ_SCOPE_SQL || text === SESSION_INSTALL_SCOPE_SQL) {
+    [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(params).pipe(
+      Effect.orDie,
+    );
+  }
+  if (text === SESSION_INSTALL_SCOPE_SQL) {
+    return Option.some<readonly object[]>([]);
+  }
+  return text === SESSION_INSTALL_AND_READ_SCOPE_SQL || text === SESSION_READ_SCOPE_SQL
+    ? Option.some<readonly object[]>([{ legal_entity_id: scope.legalEntityId, role, tenant_id: scope.tenantId }])
+    : Option.none<readonly object[]>();
+});
+const readCommittedIsolation = 'read committed';
+const fencedScopeValuesSchema = Schema.Tuple([Schema.String, Schema.String, Schema.Literal(readCommittedIsolation)]);
+const installReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id, transaction_timestamp() as operation_at";
+const installFencedReadScopeSql = `${installReadScopeSql}, current_setting('transaction_isolation') as isolation, case when current_setting('transaction_isolation') = $3 then pg_advisory_xact_lock_shared(hashtextextended('ontos.application-composition-authority', 0)) end as publication_lock`;
+const readFenceValuesSchema = Schema.Tuple([Schema.Literal(readCommittedIsolation)]);
+
+const guardedPublicationLockSql =
+  "select current_setting('transaction_isolation') as isolation, case when current_setting('transaction_isolation') = $1 then pg_advisory_xact_lock_shared(hashtextextended('ontos.application-composition-authority', 0)) end as publication_lock";
+
+/** Composition-authority isolation and shared publication lock statements, including the guarded combined form. */
+const compositionPublicationLockRows = (
+  text: string,
+  params: readonly unknown[],
+): Option.Option<Effect.Effect<readonly object[]>> => {
+  if (text === "select current_setting('transaction_isolation') as isolation") {
+    return Option.some(Effect.succeed([{ isolation: readCommittedIsolation }]));
+  }
+  if (text === "select pg_advisory_xact_lock_shared(hashtextextended('ontos.application-composition-authority', 0))") {
+    return Option.some(Effect.succeed([]));
+  }
+  // The guarded shared publication lock taken before a Read's admitted evidence write (for example, a denial).
+  return text === guardedPublicationLockSql
+    ? Option.some(
+        Schema.decodeUnknownEffect(readFenceValuesSchema)(params).pipe(
+          Effect.orDie,
+          Effect.as([{ isolation: readCommittedIsolation, publication_lock: null }]),
+        ),
+      )
+    : Option.none();
+};
 
 /**
  * Scripted SQL transport for the real Core Read lifecycle and the registration's original owner
@@ -65,9 +142,23 @@ const scopeValuesSchema = Schema.Tuple([Schema.String, Schema.String]);
  * admission and evidence writes execute normally; this does not prove native PostgreSQL or RLS.
  * The caller owns its Effect scope. Permissions and owner authorization default to denied.
  */
+/** Read and write admissions select only the fence columns; matching also reads the approved subscriptions. */
+const COMPOSITION_FENCE_SUBSCRIPTIONS: ReadonlyMap<string, { readonly subscriptionsJson: readonly never[] | null }> =
+  new Map([
+    [
+      'select "phase", "revision", null, "valid_until" > clock_timestamp() from "core"."application_composition_authority" where "core"."application_composition_authority"."authority_key" = $1',
+      { subscriptionsJson: null },
+    ],
+    [
+      'select "phase", "revision", "subscriptions_json", "valid_until" > clock_timestamp() from "core"."application_composition_authority" where "core"."application_composition_authority"."authority_key" = $1',
+      { subscriptionsJson: [] },
+    ],
+  ]);
+
 export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* makeReadTestHarness(
   options: ReadTestHarnessOptions,
 ) {
+  const databaseIdentities = options.databaseIdentities ?? defineDatabaseIdentityEnrollment([]);
   const stages: ReadRuntimeStage[] = [];
   const statements: string[] = [];
   const ownerQueries: ReadTestOwnerQuery[] = [];
@@ -82,6 +173,15 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
     const scope = { legalEntityId: '', tenantId: '' };
     // The connected role: the shared runtime until a gateway scope is established.
     const connection = { role: SHARED_RUNTIME_IDENTITY.role };
+    const installedReadScopeRows = (fencedScope: boolean) => {
+      const installed = {
+        legal_entity_id: scope.legalEntityId,
+        operation_at: options.operationTime,
+        role: connection.role,
+        tenant_id: scope.tenantId,
+      };
+      return [fencedScope ? { ...installed, isolation: readCommittedIsolation } : installed];
+    };
     const execute = Effect.fn('ReadTestHarness.executeQuery')(function* executeReadTestQuery(
       sql: string,
       params: readonly unknown[],
@@ -94,40 +194,41 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       if (text === 'select current_user::text as role') {
         return [{ role: connection.role }];
       }
-      if (text === "select current_setting('transaction_isolation') as isolation") {
-        return [{ isolation: 'read committed' }];
+      const publicationLock = compositionPublicationLockRows(text, params);
+      if (Option.isSome(publicationLock)) {
+        return yield* publicationLock.value;
       }
-      if (
-        text === "select pg_advisory_xact_lock_shared(hashtextextended('ontos.application-composition-authority', 0))"
-      ) {
-        return [];
+      const fence = COMPOSITION_FENCE_SUBSCRIPTIONS.get(text);
+      if (fence !== undefined) {
+        return [
+          {
+            phase: 'active',
+            revision: options.compositionRevision,
+            subscriptionsJson: fence.subscriptionsJson,
+            unexpired: true,
+          },
+        ];
       }
-      if (
-        text ===
-        'select "phase", "revision", "subscriptions_json", "valid_until" > clock_timestamp() from "core"."application_composition_authority" where "core"."application_composition_authority"."authority_key" = $1'
-      ) {
-        return [{ phase: 'active', revision: options.compositionRevision, subscriptionsJson: [], unexpired: true }];
-      }
-      if (text === "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)") {
-        [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(params).pipe(
-          Effect.orDie,
-        );
-        return [];
-      }
-      if (
-        text ===
-        "select current_user::text as role, current_setting('ontos.tenant_id', true) as tenant_id, current_setting('ontos.legal_entity_id', true) as legal_entity_id"
-      ) {
-        return [{ legal_entity_id: scope.legalEntityId, role: connection.role, tenant_id: scope.tenantId }];
+      const sessionScope = yield* sessionScopeRows(text, params, scope, connection.role);
+      if (Option.isSome(sessionScope)) {
+        return sessionScope.value;
       }
       if (
         text ===
         "select established_tenant_id::text as tenant_id, coalesce(established_legal_entity_id::text, '') as legal_entity_id from trust.establish_gateway_scope($1)"
       ) {
         // Models a gateway grant that Shell registered for the harness scope.
+        const assertion = readVerifiedGatewayScopeAssertion(options.scope);
+        const role =
+          assertion === undefined
+            ? Option.none<string>()
+            : gatewayScopeGrantRoleForAudience(databaseIdentities, assertion.audience);
+        if (Option.isNone(role)) {
+          return yield* Effect.die('The Read test gateway audience has no enrolled database identity');
+        }
         scope.tenantId = options.scope.tenantId;
         scope.legalEntityId = options.scope.legalEntityId ?? '';
-        connection.role = PARTY_REGISTRY_REQUEST_IDENTITY.role;
+        connection.role = role.value;
         return [{ legal_entity_id: scope.legalEntityId, tenant_id: scope.tenantId }];
       }
       if (
@@ -135,6 +236,43 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
         "select current_user::text as role, coalesce(trust.current_tenant_id()::text, '') as tenant_id, coalesce(trust.current_legal_entity_id()::text, '') as legal_entity_id"
       ) {
         return [{ legal_entity_id: scope.legalEntityId, role: connection.role, tenant_id: scope.tenantId }];
+      }
+      // A gateway grant verified in the same statement as its transaction time (installOperationalScopeAt).
+      if (
+        text ===
+        "select current_user::text as role, coalesce(trust.current_tenant_id()::text, '') as tenant_id, coalesce(trust.current_legal_entity_id()::text, '') as legal_entity_id, transaction_timestamp() as operation_at"
+      ) {
+        return installedReadScopeRows(false);
+      }
+      if (
+        text ===
+        "select set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id, transaction_timestamp() as operation_at"
+      ) {
+        [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(params).pipe(
+          Effect.orDie,
+        );
+        return [
+          { legal_entity_id: scope.legalEntityId, operation_at: options.operationTime, tenant_id: scope.tenantId },
+        ];
+      }
+      // Owner factories return the connected role with the installed session so the runtime can
+      // distinguish the dedicated owner login from the legacy shared runtime.
+      // Match the complete infrastructure statement, never owner SQL that merely uses transaction time.
+      const fencedScope = text === installFencedReadScopeSql;
+      if (text === installReadScopeSql || fencedScope) {
+        [scope.tenantId, scope.legalEntityId] = yield* fencedScope
+          ? Schema.decodeUnknownEffect(fencedScopeValuesSchema)(params).pipe(Effect.orDie)
+          : Schema.decodeUnknownEffect(scopeValuesSchema)(params).pipe(Effect.orDie);
+        return installedReadScopeRows(fencedScope);
+      }
+      // The lock statement installs/verifies scope but cannot serve the authority read: admission
+      // must use a separate post-lock snapshot. Match both exact native scope-authority protocols.
+      if (
+        text ===
+        "select current_user::text as role, coalesce(trust.current_tenant_id()::text, '') as tenant_id, coalesce(trust.current_legal_entity_id()::text, '') as legal_entity_id, transaction_timestamp() as operation_at, current_setting('transaction_isolation') as isolation, case when current_setting('transaction_isolation') = $1 then pg_advisory_xact_lock_shared(hashtextextended('ontos.application-composition-authority', 0)) end as publication_lock"
+      ) {
+        yield* Schema.decodeUnknownEffect(readFenceValuesSchema)(params).pipe(Effect.orDie);
+        return installedReadScopeRows(true);
       }
       if (text === 'select transaction_timestamp() as operation_at') {
         return [{ operation_at: options.operationTime }];
@@ -162,7 +300,7 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
     scriptedPgClientLayer(acquireConnection).pipe(Layer.provide(Reactivity.layer)),
   );
   const executor = yield* makeWithDefaults({ relations: coreRelations }).pipe(
-    Effect.provideService(PgClient.PgClient, Context.get(clientContext, PgClient.PgClient)),
+    Effect.provideService(PgClient.PgClient, guardPoolAcquisition(Context.get(clientContext, PgClient.PgClient))),
   );
   /**
    * The scope admission answer (O28). It is the harness's own question, answered by the V2 SCRIPT, never
@@ -172,9 +310,18 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
    * the codemod's removal of that key can never turn a scope red; it disappears entirely in C03b step 3.
    */
   const decision: ContextAccessDecision =
-    options.scopeAccess ?? (options.access === undefined ? (options.permissionDecision ?? 'denied') : 'allowed');
+    options.scopeAccess ??
+    (options.access === undefined && options.accessDecision === undefined
+      ? (options.permissionDecision ?? 'denied')
+      : 'allowed');
   const contextAccess: ContextAccessService = {
-    legalEntities: ({ legalEntityIds }) => Effect.succeed(legalEntityIds.map((key) => ({ decision, key }))),
+    legalEntities: ({ legalEntityIds, permission = 'access' }) =>
+      Effect.succeed(
+        legalEntityIds.map((key) => ({
+          decision: options.legalEntityPermissionDecisions?.[permission] ?? decision,
+          key,
+        })),
+      ),
     modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision, key }))),
     ownerPermissions: ({ targets }) =>
       Effect.succeed(
@@ -190,7 +337,13 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
           key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
         })),
       ),
-    tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision, key }))),
+    tenants: ({ permission, tenantIds }) =>
+      Effect.succeed(
+        tenantIds.map((key) => ({
+          decision: options.tenantPermissionDecisions?.[permission] ?? decision,
+          key,
+        })),
+      ),
   };
   const scopeResolver = yield* makeOperationalScopeResolver(
     {
@@ -228,8 +381,11 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       ),
     recheckWrite: () => Effect.void,
   });
+  // The same scripted gate answers the runtime and any owner code that asks the gate itself (O62).
+  const scriptedGate = makeScriptedBoundAccessGate(options.access ?? options.permissionDecision ?? 'denied');
   let runtimeOptions: ReadRuntimeOptions = {
-    accessDecision: makeScriptedBoundAccessGate(options.access ?? options.permissionDecision ?? 'denied').bound,
+    accessDecision: options.accessDecision ?? scriptedGate.bound,
+    databaseIdentities,
     onStage: (stage) => {
       stages.push(stage);
     },
@@ -244,12 +400,35 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
   if (options.expectedDeployment !== undefined) {
     runtimeOptions = { ...runtimeOptions, expectedDeployment: options.expectedDeployment };
   }
-  if (options.ownerRegistration !== undefined) {
-    runtimeOptions = { ...runtimeOptions, ownerRegistration: options.ownerRegistration };
+  if (options.shellSystemReads !== undefined) {
+    runtimeOptions = { ...runtimeOptions, shellSystemReads: options.shellSystemReads };
   }
-  const runtime = makeReadRuntime({ executor }, gateway, scopeResolver, contextAccess, runtimeOptions);
+  const database = { executor };
+  const runtime = makeReadRuntime(
+    database,
+    gateway,
+    scopeResolver,
+    contextAccess,
+    options.ownerRegistration === undefined
+      ? runtimeOptions
+      : { ...runtimeOptions, ownerRegistration: options.ownerRegistration },
+  );
   return {
-    layer: Layer.mergeAll(Layer.succeed(ReadRuntime, runtime), Layer.succeed(ContextAccess, contextAccess)),
+    layer: Layer.mergeAll(
+      Layer.succeed(ReadRuntime, runtime),
+      Layer.succeed(ContextAccess, contextAccess),
+      // A default only: a gate the test supplies around this layer wins, so a test's own gate is never shadowed.
+      Layer.effect(
+        AccessDecisionGate,
+        Effect.serviceOption(AccessDecisionGate).pipe(Effect.map(Option.getOrElse(() => scriptedGate.accessDecision))),
+      ),
+    ),
+    ownerServices: Layer.mergeAll(
+      Layer.succeed(CoreDatabase, database),
+      Layer.succeed(DatabaseIdentityEnrollmentContext, databaseIdentities),
+      Layer.succeed(OperationalScopeResolver, scopeResolver),
+      Layer.succeed(ContextAccess, contextAccess),
+    ),
     runtime,
     snapshot: () => ({
       evidenceWrites,

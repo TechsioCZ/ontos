@@ -49,6 +49,6 @@ export const invoiceRecipientResolutionRead = defineRead(
     resultSchema: InvoiceRecipientResolutionResponseSchema,
     schemaVersion: '1',
   },
-  handleInvoiceRecipientResolution,
+  { load: handleInvoiceRecipientResolution },
   invoiceRecipientReadServiceFactory,
 );

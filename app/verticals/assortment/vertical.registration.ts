@@ -40,6 +40,7 @@ export const assortmentRegistration = defineVerticalRuntimeRegistration({
       // <generated-module-registration-apis>
       configuration: () => import('./src/api/configuration-client.ts'),
       'decision-explanation': () => import('./src/api/decision-explanation-client.ts'),
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       purchase: () => import('./src/api/purchase-client.ts'),
       visibility: () => import('./src/api/visibility-client.ts'),
       // </generated-module-registration-apis>

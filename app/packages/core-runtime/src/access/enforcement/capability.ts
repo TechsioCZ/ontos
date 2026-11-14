@@ -18,23 +18,28 @@ export const capabilityPolicyOf = (declaration: AccessDeclaration): DecisionCapa
   withOptional(
     withOptional(
       withOptional(
-        {
-          capabilityKey: CapabilityKeySchema.make(declaration.key),
-          kind: declaration.kind,
-          modes: declaration.modes,
-          risk: declaration.risk,
-          selectors: declaration.selectors,
-        },
-        'ephemeral',
-        declaration.ephemeral,
+        withOptional(
+          {
+            capabilityKey: CapabilityKeySchema.make(declaration.key),
+            kind: declaration.kind,
+            modes: declaration.modes,
+            risk: declaration.risk,
+            selectors: declaration.selectors,
+          },
+          'ephemeral',
+          declaration.ephemeral,
+        ),
+        'fieldClass',
+        declaration.fieldClass,
       ),
-      'fieldClass',
-      declaration.fieldClass,
+      // O88: the surface marker of a page reaches the engine only through the declaration, so no
+      // caller flag, key prefix or selected company can ever stand in for it.
+      'admitsAdminSurface',
+      declaration.admitsAdminSurface,
     ),
-    // O88: the surface marker of a page reaches the engine only through the declaration, so no
-    // caller flag, key prefix or selected company can ever stand in for it.
-    'admitsAdminSurface',
-    declaration.admitsAdminSurface,
+    // The Shell frame's baseline likewise reaches the engine only from its validated declaration.
+    'baseline',
+    declaration.baseline,
   );
 
 /** One scalar money value: minor units of one currency, as the amount caveat reads it (O18). */
@@ -93,6 +98,13 @@ export const gateAmountOf = <Payload>(declaration: AccessDeclaration, payload: P
  * scope: its own `selectors` and the entrypoint's `legalEntityScope` already say what it reaches.
  */
 export interface GateScope {
+  /**
+   * A company the request names while it is decided in the tenant context (`optional`, `forbidden`). It does
+   * not change the context, but it must be a company of the asked tenant: a company of another tenant is
+   * refused (`deny.scope_mismatch`), whatever the scope mode, so a scope can never pair a tenant with a
+   * company it does not own.
+   */
+  readonly checkedCompany?: LegalEntityId;
   readonly legalEntityId?: LegalEntityId;
   readonly refusal?: DecisionReason;
 }
@@ -104,6 +116,10 @@ export const gateScopeOf = (legalEntityScope: LegalEntityScope, scope: Operation
       ? { refusal: { code: 'deny.scope_mismatch' } }
       : { legalEntityId: LegalEntityIdSchema.make(legalEntityId) };
   }
-  // `optional` and `forbidden` run in the tenant context (O7, O12, O67-Q3).
-  return {};
+  // `optional` and `forbidden` run in the tenant context (O7, O12, O67-Q3); a named company is still checked.
+  return scope.legalEntityId === undefined ? {} : { checkedCompany: LegalEntityIdSchema.make(scope.legalEntityId) };
 };
+
+/** The key one scope read is shared under within a batch: the company context, or the tenant with its checked company. */
+export const gateScopeKeyOf = (gateScope: GateScope): string =>
+  gateScope.legalEntityId ?? (gateScope.checkedCompany === undefined ? '' : `tenant:${gateScope.checkedCompany}`);

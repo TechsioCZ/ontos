@@ -21,14 +21,7 @@ import {
   is,
   makeFilter,
 } from 'effect/Schema';
-import {
-  SHARED_RUNTIME_IDENTITY,
-  SHELL_GATEWAY_ISSUER_IDENTITY,
-} from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
-import {
-  CLOUDFLARE_WORKER_CPU_MS,
-  createWorkspaceModernConfig,
-} from '../../packages/shared-contracts/tooling/modern-config.ts';
+import { createWorkspaceModernConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
 
 const appId = 'shell-super-app';
 const shellBffPrefix = '/shell-super-app-api';
@@ -61,12 +54,6 @@ getResultOrThrow(
 
 const ontos = createWorkspaceModernConfig({
   appId,
-  // Shell reaches PostgreSQL as the shared runtime and, for gateway scope grants only, as the issuer.
-  cloudflareCpuMs: CLOUDFLARE_WORKER_CPU_MS.shell,
-  cloudflareHyperdrives: [
-    SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive,
-    SHELL_GATEWAY_ISSUER_IDENTITY.cloudflareHyperdrive,
-  ],
   moduleUrl: import.meta.url,
 });
 
@@ -84,8 +71,8 @@ export default defineConfig(
         runtimeFramework: 'effect',
       },
       builderPlugins: [pluginTailwindcss()],
-      deploy: { ...ontos.deploy, releaseEnvelopeRole: 'shell' },
-      dev: { ...ontos.dev, lazyCompilation: getBuildConfigEnvironment('CI') ? false : undefined },
+      deploy: { releaseEnvelopeRole: 'shell' },
+      dev: getBuildConfigEnvironment('CI') ? { ...ontos.dev, lazyCompilation: false } : ontos.dev,
       plugins: [
         bffPlugin(),
         tanstackRouterPlugin(),
@@ -102,6 +89,7 @@ export default defineConfig(
               '/@mf-types',
               '/assets',
               '/bundles',
+              '/favicon.ico',
               shellBffPrefix,
               paymentGatewayRelayPrefix,
               ...(internalSymmyIngress ? [SYMMY_REST_PREFIX] : []),
@@ -124,7 +112,21 @@ export default defineConfig(
           configPath: fileURLToPath(new URL('module-federation.config.ts', import.meta.url)),
         }),
       ],
-      server: { ...ontos.server, ssr: { mode: 'stream', moduleFederationAppSSR: true } },
+      server: {
+        ...ontos.server,
+        publicDir: ['./.dev-public', './locales', './assets'],
+        ssr: { mode: 'stream', moduleFederationAppSSR: true },
+      },
+      source: {
+        ...ontos.source,
+        globalVars: {
+          ...ontos.source.globalVars,
+          'globalThis.ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT':
+            getBuildConfigEnvironment('ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT') ?? 'http://localhost:3070',
+          'globalThis.ULTRAMODERN_PUBLIC_URL_SHOP_STOREFRONT':
+            getBuildConfigEnvironment('ULTRAMODERN_PUBLIC_URL_SHOP_STOREFRONT') ?? '',
+        },
+      },
       splitChunks: { chunks: 'async' },
     },
     {

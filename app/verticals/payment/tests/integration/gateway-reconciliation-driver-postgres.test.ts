@@ -6,6 +6,7 @@ import {
   CorePersistenceLive,
   DatabaseConfigLive,
   OntosModuleDeploymentContractSchema,
+  defineDatabaseIdentityEnrollment,
 } from '@app/core-runtime';
 import type { ActionRuntimeService, ActiveApplicationCompositionSnapshot, ReadRuntimeService } from '@app/core-runtime';
 import {
@@ -135,6 +136,7 @@ const makeRuntimes = Effect.fn('DriverNative.runtimes')(function* makeRuntimes(d
     evidenceContextAccess,
     {
       accessDecision,
+      databaseIdentities: defineDatabaseIdentityEnrollment([]),
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
     },
@@ -279,7 +281,7 @@ const unknownCollect = Effect.fn('DriverNative.unknownCollect')(function* unknow
     workerKey: 'payment.core.execute-gateway-operation',
   };
   yield* database.database.transaction((transaction) =>
-    installOperationalScope(transaction, operationalScopeOf(scope)).pipe(
+    installOperationalScope(transaction, operationalScopeOf(scope), defineDatabaseIdentityEnrollment([])).pipe(
       Effect.flatMap((invoker) =>
         pspPrepareDispatch(invoker, {
           bindingId,

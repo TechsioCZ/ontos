@@ -1,6 +1,7 @@
 // @rstest-environment happy-dom
 // @rstest-environment-options {"url":"https://party.ontos.test"}
 import { fileURLToPath } from 'node:url';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 
 import {
   IsolatedNativeDatabaseError,
@@ -15,6 +16,7 @@ import { assert, expect, it } from 'effect-rstest';
 import { makePartyDatabase } from '../../src/db/client.ts';
 import { partyContactPoints, partyOfficialIdentifiers } from '../../src/db/schema.ts';
 
+import { historicalContactsMigrationFolder } from '../fixtures/historical-contacts-migrations.ts';
 import { makeGovernedContactFixture } from '../support/governed-contact.fixture.ts';
 import {
   makePartyReconciliationGateway,
@@ -26,6 +28,10 @@ const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
 );
+/**
+ * The pinned folders are the Party chain stage applied from the demo trunk, in its order. The canonical
+ * owner migration then appends main's folders and the merge's convergence leaf, as the next deploy does.
+ */
 const baselineFolders = [
   '20260903174425_yummy_glorian',
   '20260904104109_nebulous_cardiac',
@@ -33,12 +39,15 @@ const baselineFolders = [
   '20261019115249_official_identifier_original_input',
   '20261020063911_party-gateway-scope-rls',
   '20261020113551_legal-entity-scope',
+  '20261027230000_party-migration-equivalence',
 ] as const;
 const structuredNamesFolder = '20261105082358_flashy_gravity';
 const forwardFolders = [
   '20261105154254_young_magik',
   '20261105154619_left_vin_gonzales',
   '20261106083603_aberrant_gauntlet',
+  '20261106120000_party-migration-convergence',
+  '20261109093237_party-fact-assertion-identities',
 ] as const;
 
 it.layer(nativeServices, { excludeTestServices: true })('verification removal upgrade', (suite) => {
@@ -68,7 +77,7 @@ it.layer(nativeServices, { excludeTestServices: true })('verification removal up
         const { executor: admin } = yield* makePartyDatabase(isolated.connections.admin);
         // Gateway redemption uses the separately journaled Contacts schema.
         yield* migrate(admin, {
-          migrationsFolder: fileURLToPath(new URL('../../drizzle-contacts/', import.meta.url)),
+          migrationsFolder: yield* historicalContactsMigrationFolder(),
           migrationsSchema: 'drizzle',
           migrationsTable: '__drizzle_migrations_contacts',
         });
@@ -299,9 +308,24 @@ it.layer(nativeServices, { excludeTestServices: true })('verification removal up
         yield* isolated.publishInitialComposition(composition);
         // The historical upgrade is pinned. Continue via the canonical CLI before invoking current code.
         const native = yield* preparePartyReconciliationNative(isolated.connections, 'migrate');
-        expect(native.partyConfiguration.database).toBe(isolated.connections.admin.database);
+        const pinned: readonly string[] = [...baselineFolders, structuredNamesFolder, ...forwardFolders];
+        const ledger = (yield* admin.execute<{ readonly name: string }>(
+          sql`select name from drizzle.__drizzle_migrations_party order by id`,
+          'objects',
+        )).map((row) => row.name);
+        // Main's folders follow the trunk chain even where they sort before its last folder.
+        expect(ledger.slice(0, pinned.length)).toEqual(pinned);
+        expect(ledger.slice(pinned.length).toSorted()).toEqual(ledger.slice(pinned.length));
+        expect(ledger.slice(pinned.length).every((folder) => folder > structuredNamesFolder)).toBe(true);
+        expect(ledger).toHaveLength(new Set(ledger).size);
+        expect(yield* readAssertion()).toEqual([before]);
+        expect(decodeURIComponent(new URL(native.partyConfiguration.connectionString).pathname.slice(1))).toBe(
+          isolated.connections.admin.database,
+        );
+        expect(native.partyConfiguration.expectedRole).toBe(PARTY_REGISTRY_REQUEST_IDENTITY.role);
         const governed = yield* makeGovernedContactFixture({
           adminConnectionString: isolated.connections.admin.connectionString,
+          bootstrapConnectionString: isolated.connections.runtime.connectionString,
           composition,
           gateway: yield* makePartyReconciliationGateway(native, composition),
           partyConfiguration: native.partyConfiguration,

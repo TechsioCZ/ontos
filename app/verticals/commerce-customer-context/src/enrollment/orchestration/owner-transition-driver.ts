@@ -36,6 +36,7 @@ import {
   EnrollmentTransitionKeySchema,
   ReconcileEnrollmentResolutionSchema,
   RecordEnrollmentOutcomeInputSchema,
+  isEnrollmentAttemptTerminal,
 } from '../../../shared/enrollment-contracts.ts';
 import type { AttemptClaimedResult, AttemptRecordResult } from '../attempts/attempt-persistence.ts';
 import { claimedOrIndeterminate } from '../attempts/attempt-persistence.ts';
@@ -593,7 +594,7 @@ export const commerceEnrollmentOwnerTransitionDriverFor = (
         () => invalid('The reconciliation does not match the durable Attempt Application Composition revision'),
       ),
     );
-    if (attempt.state === 'COMPLETE' || attempt.state === 'TERMINATED') {
+    if (isEnrollmentAttemptTerminal(attempt.state)) {
       return yield* new CommerceEnrollmentAttemptRejected({
         attemptId: requested.portalEnrollmentAttemptId,
         code: 'attempt_terminal',
@@ -719,7 +720,10 @@ type CoreFoundBindingResult = Extract<ReadPrincipalBindingResult, { readonly out
 
 export interface CommerceEnrollmentCoreIdentityOwnerEffectOptions {
   readonly client: ExternalIdentityClientPort;
-  readonly clientOptions: (input: CommerceEnrollmentOwnerTransition) => ExternalIdentityClientOptions;
+  /** The Core identity transport of the Attempt's Tenant; an unconfigured Tenant fails the transition closed. */
+  readonly clientOptions: (
+    input: CommerceEnrollmentOwnerTransition,
+  ) => Effect.Effect<ExternalIdentityClientOptions, CommerceEnrollmentOwnerEffectError>;
   /**
    * Interprets a Core read only after `readResultIsOriginal` has vouched for its provenance. The
    * callback must also establish the original request digest; the published Core read result
@@ -813,7 +817,7 @@ export const commerceEnrollmentCoreIdentityOwnerEffectFor = (
     input: CommerceEnrollmentOwnerTransition,
   ): Effect.fn.Return<CommerceEnrollmentOwnerEffectOutcome, CommerceEnrollmentOwnerEffectError> {
     const request = options.makeDispatchRequest(input);
-    const mutationOptions = { ...options.clientOptions(input), idempotencyKey: input.ownerInvocationId };
+    const mutationOptions = { ...(yield* options.clientOptions(input)), idempotencyKey: input.ownerInvocationId };
     if (request.operation === 'reserve') {
       const result = yield* options.client
         .reservePrincipalBinding(
@@ -855,8 +859,9 @@ export const commerceEnrollmentCoreIdentityOwnerEffectFor = (
   const reconcile = Effect.fn('CommerceEnrollmentCoreIdentityOwnerEffect.reconcile')(function* reconcileCoreIdentity(
     input: CommerceEnrollmentOwnerReconciliationInput,
   ): Effect.fn.Return<ReconcileEnrollmentResolution, CommerceEnrollmentOwnerEffectError> {
+    const clientOptions = yield* options.clientOptions(input);
     const result = yield* options.client
-      .readPrincipalBinding(options.makeReconciliationRequest(input), options.clientOptions(input))
+      .readPrincipalBinding(options.makeReconciliationRequest(input), clientOptions)
       .pipe(Effect.mapError(mapExternalIdentityError));
     if (
       result.outcome !== 'FOUND' ||

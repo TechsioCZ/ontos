@@ -42,6 +42,7 @@ import { addressBookReconciliationOwnerVerifierForTransaction } from './persiste
 import { paymentTermsReconciliationOwnerEvidenceVerifierForTransaction } from './persistence/payment-term-persistence.ts';
 import type {
   ProfilePersistenceServices,
+  ProfilePersistenceDependencies,
   ProfilePersistenceScope,
   ProfileScopedRoutineInvoker,
 } from './persistence/profile-persistence.ts';
@@ -75,10 +76,197 @@ const preserveOrganizationFallbackFailure =
 const COMMERCE_MODULE_KEY = 'commerce.customer-context';
 const ENROLLMENT_CONTINUATION_APP_ID = 'commerce-customer-context';
 
+/**
+ * The source-Profile owner dependencies: current source Privacy and the source Party admission, both read in the
+ * owner transaction through their declared evidence calls. The prepared Ensure factory builds them too, so a source
+ * Profile never depends on the actor-bound Retail Party read.
+ */
+const sourceProfileDependencies = (
+  scope: OperationalScope,
+  sourcePrivacy: Option.Option<typeof CommerceSourceProcessingEligibility.Service>,
+  sourceProof: Option.Option<typeof CommerceSourceProfileOwnerProof.Service>,
+): Pick<ProfilePersistenceDependencies, 'checkSourceProfile' | 'resolveSourceRetailParty'> => ({
+  checkSourceProfile: (
+    source: CustomerProfileSourceAssertion,
+    target: Readonly<{
+      kind: 'PARTY' | 'RETAIL_CUSTOMER_PROFILE' | 'COUNTERPARTY_PURCHASING_PROFILE';
+      resourceId: string;
+    }>,
+    profileKind: 'RETAIL' | 'COUNTERPARTY',
+    partySourceReference?: CustomerProfilePartySourceReference,
+  ) => {
+    if (Option.isNone(sourcePrivacy)) {
+      return Effect.fail(
+        new ProfilePersistenceDependencyFailure({ reason: 'Current source processing authority is unavailable' }),
+      );
+    }
+    const requirement =
+      profileKind === 'RETAIL'
+        ? 'commerce.customer-context.requirement.ensure-retail-profile-source-privacy'
+        : 'commerce.customer-context.requirement.create-counterparty-profile-source-privacy';
+    const profileCreate = profileKind === 'RETAIL' && target.kind === 'PARTY';
+    const baseRequest: CommerceSourceProcessingRequest = {
+      operation: profileCreate ? 'PROFILE_CREATE' : 'customer-profile-source.write',
+      source: {
+        issuer: source.issuer,
+        namespace: source.namespace,
+        occurrenceId: source.occurrenceId,
+        recordId: source.recordId,
+        recordType: source.recordType,
+        routeRef: source.route.id,
+      },
+      target,
+    };
+    let request = baseRequest;
+    if (profileCreate) {
+      if (partySourceReference === undefined) {
+        return Effect.fail(
+          new ProfilePersistenceDependencyFailure({ reason: 'Original Party source admission is unavailable' }),
+        );
+      }
+      request = { ...baseRequest, partySourceReference };
+    }
+    return requireModuleOperation(requirement).pipe(
+      Effect.flatMap(() => sourcePrivacy.value.check(scope, request, requirement)),
+      Effect.mapError(sourceDependencyFailure),
+    );
+  },
+  resolveSourceRetailParty: (
+    input: { readonly partyResourceId: string; readonly tenantId: string },
+    source: CustomerProfileSourceAssertion,
+    partySourceReference: CustomerProfilePartySourceReference,
+  ) => {
+    if (Option.isNone(sourceProof)) {
+      return Effect.fail(
+        new ProfilePersistenceDependencyFailure({ reason: 'Current source Party admission is unavailable' }),
+      );
+    }
+    return requireModuleOperation('commerce.customer-context.requirement.ensure-retail-profile-source-person').pipe(
+      Effect.mapError(sourceDependencyFailure),
+      Effect.flatMap(() =>
+        sourceProof.value.retail(
+          scope,
+          {
+            moduleId: 'party.registry',
+            resourceId: input.partyResourceId,
+            resourceType: 'party.registry.party',
+            tenantId: input.tenantId,
+          },
+          source,
+          partySourceReference,
+          'commerce.customer-context.requirement.ensure-retail-profile-source-person',
+        ),
+      ),
+    );
+  },
+});
+
+/**
+ * A registered source workload must name its exact admitted source; it never ensures an ordinary Profile. The scope
+ * is the factory's own verified scope object, which the workload admission seal is bound to.
+ */
+const ensureWithSourceCarrier = (
+  transaction: ProfileScopedRoutineInvoker,
+  scope: OperationalScope,
+  service: ProfilePersistenceServices['ensureRetailCustomerProfile'],
+): ProfilePersistenceServices['ensureRetailCustomerProfile'] => ({
+  ensure: Effect.fn('SourceProfile.ensureWithCarrier')(function* ensureWithCarrier(payload, context) {
+    if (payload.source === undefined) {
+      const sourceSelected = yield* readScopedAdmittedWorkload(
+        transaction,
+        scope,
+        'commerce.customer-context.source-write',
+      ).pipe(
+        Effect.mapError((cause) =>
+          Object.defineProperty(
+            new EnsureRetailCustomerProfileRejected({
+              code: 'DEPENDENCY_UNAVAILABLE',
+              reason: 'Current Profile carrier authority is unavailable',
+              retryable: true,
+            }),
+            'cause',
+            { value: cause },
+          ),
+        ),
+      );
+      if (sourceSelected) {
+        return yield* new EnsureRetailCustomerProfileRejected({
+          code: 'SOURCE_AUTHORITY_DENIED',
+          reason: 'Source workloads require an exact admitted source assertion',
+          retryable: false,
+        });
+      }
+    }
+    return yield* service.ensure(payload, context);
+  }),
+});
+
+/** The Counterparty Profile counterpart of {@link ensureWithSourceCarrier}, bound to the same verified scope object. */
+export const createWithSourceCarrier = (
+  carrier: Readonly<{ scope: OperationalScope; transaction: ProfileScopedRoutineInvoker }>,
+  service: ProfilePersistenceServices['createCounterpartyPurchasingProfile'],
+): ProfilePersistenceServices['createCounterpartyPurchasingProfile'] => ({
+  create: Effect.fn('SourceProfile.createWithCarrier')(function* createWithCarrier(payload, context) {
+    if (payload.source === undefined) {
+      const sourceSelected = yield* readScopedAdmittedWorkload(
+        carrier.transaction,
+        carrier.scope,
+        'commerce.customer-context.source-write',
+      ).pipe(
+        Effect.mapError((cause) =>
+          Object.defineProperty(
+            new CreateCounterpartyPurchasingProfileRejected({
+              code: 'DEPENDENCY_UNAVAILABLE',
+              reason: 'Current Profile carrier authority is unavailable',
+              retryable: true,
+            }),
+            'cause',
+            { value: cause },
+          ),
+        ),
+      );
+      if (sourceSelected) {
+        return yield* new CreateCounterpartyPurchasingProfileRejected({
+          code: 'SOURCE_AUTHORITY_DENIED',
+          reason: 'Source workloads require an exact admitted source assertion',
+          retryable: false,
+        });
+      }
+    }
+    return yield* service.create(payload, context);
+  }),
+});
+
+/**
+ * The Ensure services of one prepared invocation (D14): an ordinary Retail Profile consumes the Party evidence its
+ * preflight prepared for the Action's own actor; a source Profile proves its Party and Privacy through the source
+ * owner dependencies in this transaction, exactly as the unprepared factory does.
+ */
+export const preparedRetailProfileEnsureServices = (
+  transaction: ProfileScopedRoutineInvoker,
+  scope: OperationalScope,
+  legalEntityId: string,
+  resolveRetailParty: NonNullable<ProfilePersistenceDependencies['resolveRetailParty']>,
+  sourceOwners: Readonly<{
+    sourcePrivacy: Option.Option<typeof CommerceSourceProcessingEligibility.Service>;
+    sourceProof: Option.Option<typeof CommerceSourceProfileOwnerProof.Service>;
+  }>,
+): ProfilePersistenceServices['ensureRetailCustomerProfile'] =>
+  ensureWithSourceCarrier(
+    transaction,
+    scope,
+    profilePersistenceServicesForTransaction(
+      transaction,
+      { legalEntityId, principalId: scope.principalId, tenantId: scope.tenantId },
+      { ...sourceProfileDependencies(scope, sourceOwners.sourcePrivacy, sourceOwners.sourceProof), resolveRetailParty },
+    ).ensureRetailCustomerProfile,
+  );
+
 const profileServicesFor = (
   transaction: ProfileScopedRoutineInvoker,
   scope: OperationalScope,
   portalAccess?: AccessPortalWrites,
+  resolveEnrollmentTargetBinding?: ProfilePersistenceDependencies['resolveEnrollmentTargetBinding'],
 ): Effect.Effect<
   ProfilePersistenceServices,
   OperationContextUnavailable,
@@ -129,7 +317,12 @@ const profileServicesFor = (
       transaction,
     });
     const guestParty = guestResolverFactory.make({ crypto, scope });
-    const retailParty = retailPartyResolverFactory.make({ crypto, scope });
+    const retailParty = retailPartyResolverFactory.make({
+      legalEntityId: verifiedScope.legalEntityId,
+      principalId: verifiedScope.principalId,
+      requestCorrelation: scope.correlationId,
+      tenantId: verifiedScope.tenantId,
+    });
     const resolveGuestParty: typeof guestParty = (input) =>
       requireModuleOperation('commerce.customer-context.requirement.attribute-guest-retail-customer-party').pipe(
         Effect.mapError((cause) =>
@@ -166,7 +359,11 @@ const profileServicesFor = (
         return profileOwnerVerifier.verify(request, context);
       },
     };
-    const dependencies = {
+    const targetBinding =
+      readVerifiedGatewayActor(scope)?.appId === ENROLLMENT_CONTINUATION_APP_ID
+        ? resolveEnrollmentTargetBinding
+        : undefined;
+    let dependencies: ProfilePersistenceDependencies = {
       checkOrganizationSourceProfile: Effect.fn('ProfileSource.checkOrganizationProfile')(
         function* checkKnownOrganizationProfile(
           payload: CreateCounterpartyPurchasingProfilePayload,
@@ -218,51 +415,7 @@ const profileServicesFor = (
           return yield* Effect.void;
         },
       ),
-      checkSourceProfile: (
-        source: CustomerProfileSourceAssertion,
-        target: Readonly<{
-          kind: 'PARTY' | 'RETAIL_CUSTOMER_PROFILE' | 'COUNTERPARTY_PURCHASING_PROFILE';
-          resourceId: string;
-        }>,
-        profileKind: 'RETAIL' | 'COUNTERPARTY',
-        partySourceReference?: CustomerProfilePartySourceReference,
-      ) => {
-        if (Option.isNone(sourcePrivacy)) {
-          return Effect.fail(
-            new ProfilePersistenceDependencyFailure({ reason: 'Current source processing authority is unavailable' }),
-          );
-        }
-        const requirement =
-          profileKind === 'RETAIL'
-            ? 'commerce.customer-context.requirement.ensure-retail-profile-source-privacy'
-            : 'commerce.customer-context.requirement.create-counterparty-profile-source-privacy';
-        const profileCreate = profileKind === 'RETAIL' && target.kind === 'PARTY';
-        const baseRequest: CommerceSourceProcessingRequest = {
-          operation: profileCreate ? 'PROFILE_CREATE' : 'customer-profile-source.write',
-          source: {
-            issuer: source.issuer,
-            namespace: source.namespace,
-            occurrenceId: source.occurrenceId,
-            recordId: source.recordId,
-            recordType: source.recordType,
-            routeRef: source.route.id,
-          },
-          target,
-        };
-        let request = baseRequest;
-        if (profileCreate) {
-          if (partySourceReference === undefined) {
-            return Effect.fail(
-              new ProfilePersistenceDependencyFailure({ reason: 'Original Party source admission is unavailable' }),
-            );
-          }
-          request = { ...baseRequest, partySourceReference };
-        }
-        return requireModuleOperation(requirement).pipe(
-          Effect.flatMap(() => sourcePrivacy.value.check(scope, request, requirement)),
-          Effect.mapError(sourceDependencyFailure),
-        );
-      },
+      ...sourceProfileDependencies(scope, sourcePrivacy, sourceProof),
       evaluateReactivation,
       reconciliationOwnerVerifier,
       resolveCounterpartyRole,
@@ -400,35 +553,10 @@ const profileServicesFor = (
             }),
           );
       }),
-      resolveSourceRetailParty: (
-        input: { readonly partyResourceId: string; readonly tenantId: string },
-        source: CustomerProfileSourceAssertion,
-        partySourceReference: CustomerProfilePartySourceReference,
-      ) => {
-        if (Option.isNone(sourceProof)) {
-          return Effect.fail(
-            new ProfilePersistenceDependencyFailure({ reason: 'Current source Party admission is unavailable' }),
-          );
-        }
-        return requireModuleOperation('commerce.customer-context.requirement.ensure-retail-profile-source-person').pipe(
-          Effect.mapError(sourceDependencyFailure),
-          Effect.flatMap(() =>
-            sourceProof.value.retail(
-              scope,
-              {
-                moduleId: 'party.registry',
-                resourceId: input.partyResourceId,
-                resourceType: 'party.registry.party',
-                tenantId: input.tenantId,
-              },
-              source,
-              partySourceReference,
-              'commerce.customer-context.requirement.ensure-retail-profile-source-person',
-            ),
-          ),
-        );
-      },
     };
+    if (targetBinding !== undefined) {
+      dependencies = { ...dependencies, resolveEnrollmentTargetBinding: targetBinding };
+    }
     const services = profilePersistenceServicesForTransaction(
       transaction,
       verifiedScope,
@@ -436,68 +564,11 @@ const profileServicesFor = (
     );
     return {
       ...services,
-      createCounterpartyPurchasingProfile: {
-        create: Effect.fn('SourceProfile.createWithCarrier')(function* createWithCarrier(payload, context) {
-          if (payload.source === undefined) {
-            const sourceSelected = yield* readScopedAdmittedWorkload(
-              transaction,
-              scope,
-              'commerce.customer-context.source-write',
-            ).pipe(
-              Effect.mapError((cause) =>
-                Object.defineProperty(
-                  new CreateCounterpartyPurchasingProfileRejected({
-                    code: 'DEPENDENCY_UNAVAILABLE',
-                    reason: 'Current Profile carrier authority is unavailable',
-                    retryable: true,
-                  }),
-                  'cause',
-                  { value: cause },
-                ),
-              ),
-            );
-            if (sourceSelected) {
-              return yield* new CreateCounterpartyPurchasingProfileRejected({
-                code: 'SOURCE_AUTHORITY_DENIED',
-                reason: 'Source workloads require an exact admitted source assertion',
-                retryable: false,
-              });
-            }
-          }
-          return yield* services.createCounterpartyPurchasingProfile.create(payload, context);
-        }),
-      },
-      ensureRetailCustomerProfile: {
-        ensure: Effect.fn('SourceProfile.ensureWithCarrier')(function* ensureWithCarrier(payload, context) {
-          if (payload.source === undefined) {
-            const sourceSelected = yield* readScopedAdmittedWorkload(
-              transaction,
-              scope,
-              'commerce.customer-context.source-write',
-            ).pipe(
-              Effect.mapError((cause) =>
-                Object.defineProperty(
-                  new EnsureRetailCustomerProfileRejected({
-                    code: 'DEPENDENCY_UNAVAILABLE',
-                    reason: 'Current Profile carrier authority is unavailable',
-                    retryable: true,
-                  }),
-                  'cause',
-                  { value: cause },
-                ),
-              ),
-            );
-            if (sourceSelected) {
-              return yield* new EnsureRetailCustomerProfileRejected({
-                code: 'SOURCE_AUTHORITY_DENIED',
-                reason: 'Source workloads require an exact admitted source assertion',
-                retryable: false,
-              });
-            }
-          }
-          return yield* services.ensureRetailCustomerProfile.ensure(payload, context);
-        }),
-      },
+      createCounterpartyPurchasingProfile: createWithSourceCarrier(
+        { scope, transaction },
+        services.createCounterpartyPurchasingProfile,
+      ),
+      ensureRetailCustomerProfile: ensureWithSourceCarrier(transaction, scope, services.ensureRetailCustomerProfile),
     } satisfies ProfilePersistenceServices;
   });
 };
@@ -506,10 +577,67 @@ export const profileServicesForVerifiedScope = (transaction: ProfileScopedRoutin
   profileServicesFor(transaction, scope);
 
 /**
+ * Profile Reads need only the verified scope and the Counterparty role resolver. They never build the
+ * write-side Party, guest, reactivation or source-carrier dependencies of the Action factory above.
+ */
+const profileReadServicesFor = (
+  transaction: ProfileScopedRoutineInvoker,
+  scope: OperationalScope,
+): Effect.Effect<
+  ProfilePersistenceServices,
+  OperationContextUnavailable,
+  ProfileCounterpartyRoleEligibilityResolverFactory
+> => {
+  if (scope.legalEntityId === undefined) {
+    return Effect.fail(
+      new OperationContextUnavailable({
+        code: 'operation_context_unavailable',
+        reason: 'Customer Profile persistence requires a trusted Legal Entity scope',
+      }),
+    );
+  }
+  const baseScope = {
+    legalEntityId: scope.legalEntityId,
+    principalId: scope.principalId,
+    tenantId: scope.tenantId,
+  };
+  let verifiedScope: ProfilePersistenceScope = baseScope;
+  if (scope.authBindingId !== undefined) {
+    verifiedScope = { ...verifiedScope, authBindingId: scope.authBindingId };
+  }
+  if (readVerifiedGatewayActor(scope)?.appId === ENROLLMENT_CONTINUATION_APP_ID) {
+    verifiedScope = { ...verifiedScope, enrollmentContinuation: true };
+  }
+  return Effect.gen(function* profileReadServices() {
+    const roleResolverFactory = yield* ProfileCounterpartyRoleEligibilityResolverFactory;
+    const resolveCounterpartyRole = roleResolverFactory.make({
+      legalEntityId: verifiedScope.legalEntityId,
+      operationalScope: scope,
+      requestCorrelation: scope.correlationId,
+      tenantId: verifiedScope.tenantId,
+    });
+    const dependencies: ProfilePersistenceDependencies = { resolveCounterpartyRole };
+    return profilePersistenceServicesForTransaction(transaction, verifiedScope, dependencies);
+  });
+};
+
+export const profileReadServicesForVerifiedScope = (
+  transaction: ProfileScopedRoutineInvoker,
+  scope: OperationalScope,
+) => profileReadServicesFor(transaction, scope);
+
+/**
  * The profile services of a Retail Portal binding Action: a binding and the bound person's portal access
  * commit in the Action's one transaction, so the binding services carry Core's portal writes over it.
  */
 export const retailPortalBindingServicesForVerifiedScope = (
   transaction: ProfileScopedRoutineInvoker & AccessPortalTransaction,
   scope: OperationalScope,
-) => profileServicesFor(transaction, scope, accessPortalWritesForTransaction(transaction, scope));
+  resolveEnrollmentTargetBinding?: ProfilePersistenceDependencies['resolveEnrollmentTargetBinding'],
+) =>
+  profileServicesFor(
+    transaction,
+    scope,
+    accessPortalWritesForTransaction(transaction, scope),
+    resolveEnrollmentTargetBinding,
+  );

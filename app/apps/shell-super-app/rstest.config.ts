@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -13,6 +14,20 @@ const encodedSiteUrl = Result.getOrThrow(
   Schema.encodeResult(Schema.fromJsonString(Schema.String))('http://localhost:3020'),
 );
 
+// Better Auth's ESM graph uses top-level await; keep it native instead of lowering it into
+// the CommonJS unit bundle (Rspack otherwise emits invalid async dependency wrappers).
+const externalizeRuntimeDependencies = (
+  { request }: Rspack.ExternalItemFunctionData,
+  resolveExternal: (error?: Error, external?: string) => void,
+): void => {
+  resolveExternal(
+    undefined,
+    request !== undefined && /^(?:@better-auth\/|better-auth(?:\/|$))/u.test(request)
+      ? `module-import ${pathToFileURL(createRequire(import.meta.url).resolve(request)).href}`
+      : undefined,
+  );
+};
+
 const coreRuntimeRoot = fileURLToPath(new URL('../../packages/core-runtime/', import.meta.url));
 // Generated owner modules are imported natively from disk, so core-runtime must be one Node
 // instance shared by the test bundle and those modules (brand symbols, private fields).
@@ -25,7 +40,7 @@ const externalizeCoreRuntime = (
     return;
   }
   if (/^@app\/core-runtime(?:\/|$)/u.test(request)) {
-    resolveExternal(undefined, `module-import ${request}`);
+    resolveExternal(undefined, `module-import ${pathToFileURL(createRequire(import.meta.url).resolve(request)).href}`);
     return;
   }
   const resolved = request.startsWith('.') ? path.resolve(context, request) : undefined;
@@ -43,7 +58,23 @@ const swc = {
   jsc: { parser: { disallowAmbiguousJsxLike: false, syntax: 'typescript' } },
 } as const;
 
+// The person-invitation proof needs a migrated people_model_scratch_* database and a local SpiceDB whose schema it
+// rewrites; no gate provisions one. `pnpm test:operator` runs it (app/scripts/demo/README.md).
+const operatorTests = ['tests/integration/person-invitation-runtime.test.ts'];
+const integration = {
+  source: {
+    define: {
+      ULTRAMODERN_SITE_URL: encodedSiteUrl,
+    },
+  },
+  testEnvironment: 'node' as const,
+  testTimeout: 30_000,
+  tools: { rspack: { externals: [externalizeRuntimeDependencies, externalizeCoreRuntime] }, swc },
+};
+
 export default defineConfig({
+  output: { distPath: path.join(tmpdir(), `ontos-shell-rstest-${process.pid}`) },
+  performance: { buildCache: false },
   projects: [
     {
       clearMocks: true,
@@ -73,18 +104,18 @@ export default defineConfig({
         },
       },
       testEnvironment: 'happy-dom',
+      tools: { rspack: { externals: [externalizeRuntimeDependencies] } },
     },
     {
+      ...integration,
+      exclude: operatorTests,
       include: ['tests/integration/**/*.test.ts'],
       name: 'integration',
-      source: {
-        define: {
-          ULTRAMODERN_SITE_URL: encodedSiteUrl,
-        },
-      },
-      testEnvironment: 'node',
-      testTimeout: 30_000,
-      tools: { rspack: { externals: [externalizeCoreRuntime] }, swc },
+    },
+    {
+      ...integration,
+      include: operatorTests,
+      name: 'operator',
     },
   ],
 });

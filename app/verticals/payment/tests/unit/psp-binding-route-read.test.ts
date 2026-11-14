@@ -2,7 +2,7 @@ import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
 import type { AccessPrincipalKind } from '@app/core-runtime/access/enforcement';
-import { AccessScopeIdSchema } from '@app/core-runtime/access/ids';
+import { AccessScopeIdSchema, LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { inertAccessEnforcementPorts } from '@app/core-runtime/testing/access-gate';
 import { Effect, Option, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -134,6 +134,8 @@ describe('#1157 provider binding route Read handler', () => {
 /** An intent source that resolves every request to its Tenant scope and holds no grant cells. */
 const authorityFor: AccessEnforcementPorts['intent']['authorityFor'] = () => ({
   readCells: () => Effect.succeed([]),
+  // Every company these fixtures name is the fixture Tenant's own.
+  readCompanyOwnership: () => Effect.succeed(true),
   readConnection: () => Effect.succeed(Option.none()),
   readScope: (query) =>
     Effect.succeed(
@@ -154,7 +156,16 @@ const decide = (kind: AccessPrincipalKind, boundKeys: readonly string[]) => {
     ...inertAccessEnforcementPorts(),
     intent: { authorityFor },
     principalKinds: { readKind: () => Effect.succeed(Option.some(kind)) },
-    workloadBindings: { readActiveWorkloadKeys: () => Effect.succeed(new Set(boundKeys)) },
+    workloadBindings: {
+      // The workload is registered for the company the call runs in (D6).
+      readWorkloadAuthority: (query) =>
+        Effect.succeed({
+          activeCompanyIds: new Set(
+            query.scope.legalEntityId === undefined ? [] : [LegalEntityIdSchema.make(query.scope.legalEntityId)],
+          ),
+          workloadKeys: new Set(boundKeys),
+        }),
+    },
   };
   const gate = bindAccessGate(
     makeAccessDecisionService({

@@ -7,47 +7,71 @@ import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 
+import {
+  moduleReleaseServiceBinding,
+  moduleReleaseWorkerName,
+} from '../../packages/core-runtime/src/http/module-release-identity.ts';
+
 const unitServiceFetchModule = fileURLToPath(
   new URL('../../packages/core-runtime/src/http/unit-service-fetch.workerd.ts', import.meta.url),
 );
 
-const probeWorker = `
-import { unitRoutedFetch, unitServiceFetch } from ${JSON.stringify(unitServiceFetchModule)};
+const releaseIdentityModule = fileURLToPath(
+  new URL('../../packages/core-runtime/src/http/module-release-identity.ts', import.meta.url),
+);
 
-const commerceFetch = unitRoutedFetch([
-  { baseUrl: new URL('https://price-group-catalog.invalid/price-group-catalog-api'), serviceBinding: 'VERTICAL_PRICE_GROUP_CATALOG_WORKER' },
-]);
-const text = async (response) => (await response).text();
+const bindingProbeWorker = `
+import { Effect } from 'effect';
+import { moduleReleaseFetch } from ${JSON.stringify(unitServiceFetchModule)};
+import { moduleReleaseWorkerName } from ${JSON.stringify(releaseIdentityModule)};
+
+const releaseModule = async (appId) => {
+  const deployment = { appId, buildMarker: 'bound-worker-release' };
+  const workerName = await Effect.runPromise(moduleReleaseWorkerName(appId, deployment.buildMarker));
+  return {
+    backend: {
+      baseUrl: 'https://' + workerName + '.fixture.workers.dev/',
+      transport: 'cloudflare-worker',
+      versionId: '123e4567-e89b-42d3-a456-426614174000',
+      workerName,
+    },
+    deployment,
+  };
+};
+const forward = async (module, path) => {
+  const response = await Effect.runPromise(moduleReleaseFetch(
+    new Request('https://shell.invalid' + path, {
+      body: 'owner-body',
+      headers: { authorization: 'Bearer signed-owner-proof' },
+      method: 'POST',
+    }),
+    module,
+  ));
+  return response.status + ' ' + (await response.text());
+};
 
 export default {
   async fetch() {
-    let missingBinding;
-    try {
-      await unitServiceFetch('VERTICAL_ABSENT_WORKER')('https://absent.invalid/');
-    } catch (error) {
-      missingBinding = error._tag;
-    }
     return Response.json({
-      missingBinding,
-      otherHost: await text(commerceFetch('https://catalog.invalid/price-group-catalog-api/items')),
-      pathSibling: await text(commerceFetch('https://price-group-catalog.invalid/price-group-catalog-apis')),
-      underBaseUrl: await text(
-        commerceFetch(new Request('https://price-group-catalog.invalid/price-group-catalog-api/compatibility', { method: 'POST' })),
-      ),
+      bound: await forward(await releaseModule('catalog'), '/catalog-api/items?page=2'),
+      unbound: await forward(await releaseModule('pricing'), '/pricing-api/prices'),
     });
   },
 };
 `;
 
-const ProbeResultSchema = Schema.Struct({
-  missingBinding: Schema.String,
-  otherHost: Schema.String,
-  pathSibling: Schema.String,
-  underBaseUrl: Schema.String,
-});
+const echoTransport = (transport: string) => async (request: Request) => {
+  const url = new URL(request.url);
+  return new Response(
+    `${transport} ${request.method} ${url.host}${url.pathname}${url.search} ${request.headers.get('authorization')} ${await request.text()}`,
+    { status: 201 },
+  );
+};
 
-it.live('routes a Worker unit call under its base URL through the unit service binding and nothing else', () =>
-  Effect.gen(function* routesUnitCallsInWorkerd() {
+const BindingProbeResultSchema = Schema.Struct({ bound: Schema.String, unbound: Schema.String });
+
+it.live('reaches a Worker release through the binding declared for that exact release, else its HTTPS origin', () =>
+  Effect.gen(function* reachesBoundRelease() {
     const bundle = yield* Effect.promise(() =>
       build({
         bundle: true,
@@ -55,36 +79,34 @@ it.live('routes a Worker unit call under its base URL through the unit service b
         external: ['cloudflare:*'],
         format: 'esm',
         platform: 'neutral',
-        stdin: { contents: probeWorker, loader: 'js', resolveDir: import.meta.dirname },
+        stdin: { contents: bindingProbeWorker, loader: 'js', resolveDir: import.meta.dirname },
         write: false,
       }),
     );
+    const catalogRelease = yield* moduleReleaseWorkerName('catalog', 'bound-worker-release');
+    const pricingRelease = yield* moduleReleaseWorkerName('pricing', 'bound-worker-release');
     const worker = yield* Effect.acquireRelease(
       Effect.sync(
         () =>
           new Miniflare(
             convertV4MiniflareOptions({
               compatibilityDate: '2026-06-02',
-              compatibilityFlags: ['nodejs_compat'],
+              compatibilityFlags: ['nodejs_compat', 'global_fetch_strictly_public'],
               modules: true,
-              outboundService: (request: Request) => new Response(`global ${new URL(request.url).host}`),
+              outboundService: echoTransport('https'),
               script: bundle.outputFiles[0]?.text ?? '',
-              serviceBindings: {
-                VERTICAL_PRICE_GROUP_CATALOG_WORKER: (request: Request) =>
-                  new Response(`binding ${request.method} ${new URL(request.url).pathname}`),
-              },
+              serviceBindings: { [moduleReleaseServiceBinding(catalogRelease)]: echoTransport('binding') },
             }),
           ),
       ),
       (miniflare) => Effect.promise(() => miniflare.dispose()),
     );
     const response = yield* Effect.promise(() => worker.dispatchFetch('https://probe.invalid/'));
-    const result = Schema.decodeUnknownSync(ProbeResultSchema)(yield* Effect.promise(() => response.json()));
+    const result = Schema.decodeUnknownSync(BindingProbeResultSchema)(yield* Effect.promise(() => response.json()));
+    expect(moduleReleaseServiceBinding(catalogRelease)).toBe(`ONTOS_RELEASE_${catalogRelease.slice('ontos-'.length)}`);
     expect(result).toEqual({
-      missingBinding: 'UnitServiceBindingMissingError',
-      otherHost: 'global catalog.invalid',
-      pathSibling: 'global price-group-catalog.invalid',
-      underBaseUrl: 'binding POST /price-group-catalog-api/compatibility',
+      bound: `201 binding POST ${catalogRelease}.fixture.workers.dev/catalog-api/items?page=2 Bearer signed-owner-proof owner-body`,
+      unbound: `201 https POST ${pricingRelease}.fixture.workers.dev/pricing-api/prices Bearer signed-owner-proof owner-body`,
     });
   }).pipe(Effect.scoped),
 );
@@ -92,7 +114,7 @@ it.live('routes a Worker unit call under its base URL through the unit service b
 const moduleReleaseProbeWorker = `
 import { Effect, Predicate } from 'effect';
 import { moduleReleaseFetch } from ${JSON.stringify(unitServiceFetchModule)};
-import { moduleReleaseWorkerName } from ${JSON.stringify(fileURLToPath(new URL('../../packages/core-runtime/src/http/module-release-identity.ts', import.meta.url)))};
+import { moduleReleaseWorkerName } from ${JSON.stringify(releaseIdentityModule)};
 
 const deployment = { appId: 'catalog', buildMarker: 'ordinary-worker-release' };
 const reject = (module) => Effect.runPromise(

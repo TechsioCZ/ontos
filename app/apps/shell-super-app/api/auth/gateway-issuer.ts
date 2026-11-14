@@ -29,7 +29,12 @@ import {
   organizationGovernanceReadOperationContract,
   privacyDispatchOperationContract,
 } from '@app/shared-contracts';
-import type { GatewayActorClaim, GatewayContextResponse, GatewayTrustedPrincipalContext } from '@app/shared-contracts';
+import type {
+  GatewayActorClaim,
+  GatewayContextResponse,
+  GatewayRefusalReason,
+  GatewayTrustedPrincipalContext,
+} from '@app/shared-contracts';
 import {
   Cache,
   Clock,
@@ -52,6 +57,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { SignJWT, importJWK } from 'jose';
 
+import type { DocumentGatewayAssertion } from '../../shared/document-gateway-api.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import type { InstalledModuleCatalogError } from '../modules/installed-module-catalog.ts';
 import { loadGatewayIssuerConfig } from './gateway-issuer-config.ts';
@@ -72,6 +78,7 @@ const withOptionalProperty = <Base extends object, Key extends PropertyKey, Valu
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 const SIGNING_CONFIGURATION_REFRESH = Duration.seconds(30);
+const DOCUMENT_GATEWAY_SIGNING_CONCURRENCY = 8;
 export const SYMMY_INGRESS_AUDIENCE = 'symmy-integration';
 const symmyIngressIssuance = Symbol('Symmy ingress issuance');
 const routeScopedIssuance = Symbol('Verified route scoped issuance');
@@ -115,6 +122,12 @@ export interface IssueGatewayAssertionInput<Principal = GatewayTrustedPrincipalC
   readonly workload?: RegisteredGatewayWorkload;
 }
 
+interface IssueDocumentGatewayAssertionsInput<Principal> {
+  readonly audiences: readonly string[];
+  readonly compositionRevision: string;
+  readonly principal: Principal;
+}
+
 export interface GatewayIssuerLayerOptions {
   readonly currentTimeSeconds: Effect.Effect<number>;
   readonly generateJti: Effect.Effect<string, GatewayIssuerError>;
@@ -135,6 +148,9 @@ interface GatewayIssuerService {
   readonly issue: <Principal>(
     input: IssueGatewayAssertionInput<Principal>,
   ) => Effect.Effect<GatewayContextResponse, GatewayIssuerError>;
+  readonly issueDocument: <Principal>(
+    input: IssueDocumentGatewayAssertionsInput<Principal>,
+  ) => Effect.Effect<readonly DocumentGatewayAssertion[], GatewayIssuerError>;
 }
 
 export class GatewayIssuer extends Context.Service<GatewayIssuer, GatewayIssuerService>()(
@@ -159,6 +175,29 @@ const unavailable = (
           stage,
         },
   );
+
+/**
+ * The refusal code a caller logs for an issuer failure: a scope grant the database would not register is the scope's
+ * step, every other unavailable step is the issuer's.
+ */
+export const gatewayIssuerRefusalReason = (error: GatewayIssuerError): GatewayRefusalReason =>
+  error.stage === 'scope_grant' ? 'scope_unavailable' : 'issuer_unavailable';
+
+const decodeFailureCauseClass = Schema.decodeUnknownOption(
+  Schema.Struct({ _tag: Schema.String, sqlState: Schema.optionalKey(Schema.String) }),
+);
+
+/**
+ * The class of an issuer failure's cause for an operator log: its tag and, for a scope grant the database refused, the
+ * SQLSTATE (for example `GatewayScopeGrantUnavailableError[22023]`). Never a message, statement, parameter or token.
+ */
+export const gatewayIssuerFailureClass = (error: GatewayIssuerError): string =>
+  error.failureCause === undefined
+    ? 'none'
+    : Option.match(decodeFailureCauseClass(error.failureCause), {
+        onNone: () => 'untagged',
+        onSome: ({ _tag, sqlState }) => (sqlState === undefined ? _tag : `${_tag}[${sqlState}]`),
+      });
 
 const symmyAudienceForbidden = () =>
   new GatewayIssuerErrorConstructor({
@@ -388,12 +427,16 @@ const validateProcessingIssuance = Effect.fn('GatewayIssuer.validateProcessingIs
   return yield* Effect.void;
 });
 
+/** The exact trusted principal, rejected as a `principal` failure before any admission is read. */
+const decodeTrustedPrincipal = <Principal>(input: Pick<IssueGatewayAssertionInput<Principal>, 'principal'>) =>
+  Schema.decodeUnknownEffect(GatewayTrustedPrincipalContextSchema, { onExcessProperty: 'error' })(input.principal).pipe(
+    Effect.mapError((failureCause) => unavailable('principal', failureCause)),
+  );
+
 const decodeIssuanceIdentity = Effect.fn('GatewayIssuer.decodeIdentity')(function* decodeIdentity<Principal>(
   input: IssueGatewayAssertionInput<Principal>,
 ) {
-  const principal = yield* Schema.decodeUnknownEffect(GatewayTrustedPrincipalContextSchema, {
-    onExcessProperty: 'error',
-  })(input.principal).pipe(Effect.mapError((failureCause) => unavailable('principal', failureCause)));
+  const principal = yield* decodeTrustedPrincipal(input);
   if (deniesSymmyAudience(input, principal)) {
     return yield* symmyAudienceForbidden();
   }
@@ -464,7 +507,6 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
     readonly key: CryptoKey;
   } | null>(null);
   const gate = yield* Semaphore.make(1);
-
   const loadSigningKey = (
     privateJwk: GatewayIssuerConfigValue['privateJwk'],
   ): Effect.Effect<CryptoKey, GatewayIssuerError> => {
@@ -493,14 +535,12 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
     );
   };
 
-  const issue = Effect.fn('GatewayIssuer.issue')(function* issueGatewayAssertion<Principal>(
+  const issueAdmitted = Effect.fn('GatewayIssuer.issueAdmitted')(function* issueAdmittedGatewayAssertion<Principal>(
     input: IssueGatewayAssertionInput<Principal>,
+    identity: Effect.Success<ReturnType<typeof decodeIssuanceIdentity<Principal>>>,
+    admission: Effect.Success<GatewayIssuerLayerOptions['loadAdmission']>,
   ) {
-    const { actor, organizationGovernanceRead, principal, privacyDispatch, routeScope, workload } =
-      yield* decodeIssuanceIdentity(input);
-    const admission = yield* options.loadAdmission.pipe(
-      Effect.mapError((failureCause) => unavailable('audience', failureCause)),
-    );
+    const { actor, organizationGovernanceRead, principal, privacyDispatch, routeScope, workload } = identity;
     const targetBuildMarker = admission.audiences.get(input.audience);
     if (targetBuildMarker === undefined) {
       return yield* new GatewayIssuerErrorConstructor({
@@ -627,8 +667,50 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
     );
   });
 
+  const admission = options.loadAdmission.pipe(
+    Effect.mapError((failureCause) => unavailable('audience', failureCause)),
+  );
+  const issue = Effect.fn('GatewayIssuer.issue')(function* issueGatewayAssertion<Principal>(
+    input: IssueGatewayAssertionInput<Principal>,
+  ) {
+    const identity = yield* decodeIssuanceIdentity(input);
+    const approved = yield* admission;
+    return yield* issueAdmitted(input, identity, approved);
+  });
+  const issueDocument = Effect.fn('GatewayIssuer.issueDocument')(function* issueDocumentGatewayAssertions<Principal>(
+    input: IssueDocumentGatewayAssertionsInput<Principal>,
+  ) {
+    if (input.audiences.length === 0) {
+      return [];
+    }
+    // A malformed principal is refused before the document reads any admission.
+    yield* decodeTrustedPrincipal(input);
+    // One document is one issuance operation. Its audiences share this fresh admission; a later
+    // document or individual issuance always reads authority again, with fresh tokens. An audience named
+    // several times gets several assertions, each checked, signed and registered on its own.
+    const approved = yield* admission;
+    const issued = yield* Effect.forEach(
+      input.audiences,
+      (audience) => {
+        const audienceInput = { audience, compositionRevision: input.compositionRevision, principal: input.principal };
+        // Each audience decodes its own issuance identity, so an audience the subject may not hold is skipped.
+        return decodeIssuanceIdentity(audienceInput).pipe(
+          Effect.flatMap((identity) => issueAdmitted(audienceInput, identity, approved)),
+          Effect.map((assertion) => Option.some({ ...assertion, audience })),
+          Effect.catchIf(
+            (error) => error.code === 'gateway_audience_invalid',
+            () => Effect.succeedNone,
+          ),
+        );
+      },
+      { concurrency: DOCUMENT_GATEWAY_SIGNING_CONCURRENCY },
+    );
+    return issued.flatMap((assertion) => (Option.isSome(assertion) ? [assertion.value] : []));
+  });
+
   return {
     issue,
+    issueDocument,
   } satisfies GatewayIssuerService;
 });
 

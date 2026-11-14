@@ -118,7 +118,8 @@
           "owner": "You are the owner of this organization",
           "access_admin": "You administer access in this company",
           "delegation": "You hold a delegated access administration",
-          "access_admin_any": "You administer access in at least one company"
+          "access_admin_any": "You administer access in at least one company",
+          "member_baseline": "You are a member here, so you may open the application; everything else is decided by your roles"
         }
       },
       "role": {
@@ -260,7 +261,20 @@
         "confirmRemove": "Remove the role? Access ends immediately.",
         "assigned": "The role was assigned.",
         "removed": "The role was removed.",
-        "selfReduction": "Removing your own permission is always possible."
+        "selfReduction": "Removing your own permission is always possible.",
+        "admitSection": "Company people without access",
+        "admitHelp": "A company directory member gets company and tenant membership. Assign roles separately.",
+        "admitMember": "Add member",
+        "admitMemberNamed": "Add member: {{person}}",
+        "confirmAdmit": "Add this person as a company member?",
+        "admitEffect": "Gets company and tenant membership, with no roles yet.",
+        "noCandidates": "Nobody in the company directory is without access.",
+        "endMembership": "End membership",
+        "endMembershipNamed": "End membership: {{person}}, {{scope}}",
+        "confirmEndMembership": "End the membership? Access ends immediately.",
+        "endMembershipEnds": "Ending: roles {{roles}}, teams {{teams}}, delegations {{delegations}}.",
+        "endMembershipEffect": "Roles, teams and delegations in this scope end too. A new admission starts without them.",
+        "endMembershipReason": "Reason for ending"
       },
       "changes": {
         "title": "Permission changes",
@@ -435,12 +449,10 @@
       "agents": {
         "title": "Agents",
         "seo": {
-          "description": "Agents are not available in this release.",
+          "description": "Company AI agents: roles, operators and connections.",
           "title": "Agents – access administration"
         },
-        "unavailable": "Agent management is not available in this release.",
-        "executionUnavailable": "No agent execution is available in this release: an agent cannot run actions or approved commands.",
-        "readOnly": "An agent cannot be created or enabled in this release."
+        "companyRequired": "Select a company to manage its agents."
       },
       "accessible": {
         "navigation": "Access administration",
@@ -489,9 +501,27 @@
         "label": "Dashboard header"
       },
       "home": {
-        "title": "Home"
+        "title": "Home",
+        "welcomeKicker": "Workspace",
+        "welcomeTitle": "Welcome",
+        "welcomeCompany": "You are working in {{company}}",
+        "welcomeHint": "The areas you can access are listed in the menu on the left.",
+        "start": "Start: {{destination}}",
+        "areas": "Your areas",
+        "noAreas": "You have not been assigned a role yet — ask your company administrator.",
+        "groupHints": {
+          "realEstate": "Properties, leases and stays",
+          "facility": "Operations, assets and energy",
+          "finance": "Invoices and payments",
+          "sales": "Clients, deals and contracts",
+          "commerce": "Orders and products",
+          "team": "Tasks and people in the team",
+          "settings": "Company and access administration"
+        }
       },
       "legalEntity": {
+        "tenantContext": "No company selected",
+        "tenantContextActive": "No company is selected. Select a company from the menu on the left to work with its data.",
         "accessBlocked": "No legal entity is available for this account.",
         "accessibleLabel": "Current legal entity",
         "failed": "Legal-entity switching failed. Try again.",
@@ -502,7 +532,20 @@
       },
       "navigation": {
         "home": "Home",
-        "label": "Dashboard navigation"
+        "label": "Dashboard navigation",
+        "pending": "Loading page…",
+        "close": "Close navigation",
+        "toggle": "Toggle navigation",
+        "groups": {
+          "realEstate": "Real estate and leases",
+          "facility": "Facility operations",
+          "finance": "Finance",
+          "sales": "Sales and CRM",
+          "commerce": "E-commerce",
+          "team": "People and tasks",
+          "settings": "Settings",
+          "other": "Other modules"
+        }
       },
       "sidebar": {
         "label": "Dashboard sidebar"
@@ -513,7 +556,12 @@
         "pending": "Switching tenant…",
         "unavailable": "Tenant choices are temporarily unavailable. Reload the page to try again."
       },
-      "unavailable": "The authenticated Shell is temporarily unavailable. Reload the page to try again."
+      "unavailable": "The authenticated Shell is temporarily unavailable. Reload the page to try again.",
+      "workspace": "Sales and operations",
+      "breadcrumb": {
+        "label": "Breadcrumb",
+        "home": "Workspace home"
+      }
     },
     "hero": {
       "cardOne": "Add the first business vertical with create <domain> --vertical when the product needs one.",
@@ -532,11 +580,13 @@
       "switcher": "Language"
     },
     "login": {
+      "welcome": "One workspace for sales, CRM, estate management and online retail.",
+      "contextHint": "After signing in, you see only the companies and areas allowed by your role.",
       "back": "← Back to the home page",
       "error": {
         "forbidden": "This account is not permitted to access OntOS.",
         "internal": "Login failed. Try again.",
-        "invalid": "The email address or password is invalid.",
+        "invalid": "The login or password is invalid.",
         "title": "Unable to log in",
         "unavailable": "Authentication is temporarily unavailable. Try again."
       },
@@ -548,15 +598,135 @@
         "login": "Enter your login.",
         "password": "Enter your password."
       },
+      "opening": "Opening the app…",
       "pending": "Logging in…",
       "seo": {
         "description": "Sign in to the OntOS workspace."
+      },
+      "oauth": {
+        "continue": "Sign in to continue.",
+        "request": "({{host}}) is requesting access to your OntOS account.",
+        "requestNoHost": "is requesting access to your OntOS account.",
+        "unknownClient": "An application",
+        "unverified": "The application presents itself as {{client}}. Make sure you started this connection yourself.",
+        "cancelHint": "Close this window to cancel the connection.",
+        "error": {
+          "title": "The application cannot be connected",
+          "invalid_client": "The application requesting access could not be verified. The connection link is invalid or the application is unavailable.",
+          "invalid_redirect": "The application wanted to return to an address it has not registered. The connection was stopped for your security.",
+          "request_failed": "The connection request is invalid or has expired.",
+          "next": "Go back to the application (for example ChatGPT or Claude) and start the connection again. If the problem persists, contact your OntOS administrator.",
+          "signIn": "Sign in to OntOS"
+        }
       },
       "submit": "Login",
       "title": "Login",
       "toast": {
         "description": "Fill in both required fields.",
         "title": "Login details are incomplete"
+      },
+      "toaster": {
+        "close": "Close notification",
+        "label": "Notifications",
+        "loading": "Working…"
+      },
+      "notice": {
+        "account_forbidden": {
+          "title": "Account has no access",
+          "body": "This account was deactivated or no longer has access to any company. Sign in with another account or contact the administrator."
+        },
+        "session_ended": {
+          "title": "Session ended",
+          "body": "Your session is no longer valid. Please sign in again."
+        },
+        "sign_in_required": {
+          "title": "You are not signed in",
+          "body": "The page you are opening requires signing in. You will return to it after signing in."
+        }
+      }
+    },
+    "connect": {
+      "pageTitle": "Connect an application",
+      "seoDescription": "Connect an application to OntOS",
+      "title": "Connect {{client}} to OntOS",
+      "clientFallback": "the application",
+      "loading": "Loading connection options…",
+      "badge": {
+        "verified": "Verified application",
+        "loopback": "Runs on this computer"
+      },
+      "company": {
+        "title": "Company",
+        "question": "Which company will the application work in?",
+        "none": "You do not have access to any company."
+      },
+      "acting": {
+        "title": "On whose behalf it will act",
+        "me": "As me ({{name}})",
+        "meHint": "The application will see and do only what you may.",
+        "agent": "As agent {{name}}",
+        "agentHint": "Changes are logged as the agent, noting that you connected it."
+      },
+      "access": {
+        "title": "What it can access",
+        "allMe": "Everything I may use",
+        "allAgent": "Everything the agent may use",
+        "pick": "Choose modules",
+        "read": "Read",
+        "write": "Write",
+        "writeUnavailable": "You have no write permission here.",
+        "writeUnavailableAgent": "The agent has no write permission here.",
+        "pickRequired": "Choose at least one module."
+      },
+      "policy": {
+        "title": "How it will write",
+        "read_only": "Read only",
+        "approval": "Propose changes for approval (recommended)",
+        "approvalHint": "A person approves every change first in Administration › Approvals.",
+        "direct": "Make changes directly",
+        "directHint": "Changes take effect immediately, as if you made them.",
+        "directHintAgent": "Changes take effect immediately and are logged as changes by the agent.",
+        "agentApprovalOnly": "The agent may only propose changes (agent settings).",
+        "agentReadOnly": "The agent may only read (agent settings)."
+      },
+      "continue": "Continue",
+      "cancel": "Cancel",
+      "error": {
+        "expired": "The connection link has expired. Start connecting again in {{client}}.",
+        "signedOut": "Your sign-in has expired. Start connecting again in {{client}}.",
+        "forbidden": "This connection setting is not allowed.",
+        "agentGone": "The agent was deactivated or deleted in the meantime, or you may no longer connect it. No connection was created; start again in {{client}}.",
+        "connected": "The connection is done. You can close this window.",
+        "failed": "Connecting failed. Please try again."
+      },
+      "consent": {
+        "pageTitle": "Connection consent",
+        "seoDescription": "Consent to connect an application to OntOS",
+        "title": "Allow {{client}} access?",
+        "loading": "Loading the connection summary…",
+        "companyLabel": "Company",
+        "actingLabel": "Acts as",
+        "actingAgent": "(agent), connected by {{name}}",
+        "actingMe": "(you)",
+        "readLabel": "Read",
+        "writeModulesLabel": "Write to modules",
+        "allMe": "Everything you may use",
+        "allAgent": "Everything the agent may use",
+        "policyLabel": "Write mode",
+        "policyValue": {
+          "read_only": "read only",
+          "approval": "for approval",
+          "direct": "directly"
+        },
+        "policyHint": {
+          "read_only": "the application changes nothing",
+          "approval": "changes wait for approval in Administration › Approvals",
+          "direct": "changes take effect immediately"
+        },
+        "validity": "Access lasts until you disconnect it in My profile › Connected applications. The company administrator can disconnect it too.",
+        "redirectBefore": "After you allow access we will send you back to",
+        "allow": "Allow access",
+        "deny": "Deny"
       }
     },
     "modules": {
@@ -565,6 +735,7 @@
         "label": "Active MicroVerticals",
         "unavailable": "Active MicroVerticals are temporarily unavailable. Reload the page to try again."
       },
+      "deploymentEntry": "Unavailable agenda",
       "discovery": {
         "disabled": "The module is disabled.",
         "incompatible": "The deployed module contract is incompatible.",
@@ -579,6 +750,14 @@
       },
       "unavailable": "Module access is temporarily unavailable. Try again."
     },
+    "recovery": {
+      "missing": "Page not found",
+      "recordMissing": "Record not found",
+      "forbidden": "This area is not accessible",
+      "unavailable": "Workspace temporarily unavailable",
+      "home": "Back to home",
+      "retry": "Try again"
+    },
     "moduleTarget": {
       "forbidden": "You do not have permission to open this module.",
       "incompatible": "The deployed module entrypoint is incompatible.",
@@ -589,20 +768,51 @@
       "render_failed": "This module could not be displayed. Reload the page to try again.",
       "selection_required": "Select a legal entity before opening a module.",
       "seoDescription": "An authorized OntOS module workspace.",
+      "sign_in_required": "Sign in to open this module. Redirecting to sign-in…",
       "title": "Module",
       "timeout": "The module entrypoint timed out. Try again.",
       "unavailable": "The module is temporarily unavailable. Try again."
     },
     "search": {
+      "groups": {
+        "counterparty": "Customers and suppliers",
+        "party": "Contacts",
+        "person": "People",
+        "crmClient": "Clients",
+        "crmContact": "Contact people",
+        "opportunity": "Opportunities",
+        "product": "Products",
+        "sku": "Variants (SKU)",
+        "order": "Orders",
+        "task": "Tasks",
+        "invoice": "Invoices",
+        "financeDocument": "Finance documents",
+        "contract": "Contracts",
+        "legalDocument": "Legal documents",
+        "property": "Properties",
+        "unit": "Units",
+        "lease": "Leases",
+        "asset": "Assets",
+        "device": "Devices and meters",
+        "facilityDocument": "Operations documents",
+        "market": "Markets",
+        "resource": "Other records"
+      },
+      "suggestions": {
+        "all": "Show all results for “{{query}}”",
+        "empty": "Nothing found for “{{query}}”.",
+        "label": "Search suggestions",
+        "loading": "Searching…"
+      },
+      "agenda_title": "Search within an agenda",
+      "agenda_hint": "Search is unavailable right now. Try again shortly, or open an agenda and search there.",
       "alias_match": "Alias match",
       "archived": "Archived",
-      "counterparty": "Counterparty",
       "empty": "No authorized results found.",
-      "label": "Search this tenant and selected legal entity",
+      "label": "Search",
       "legal_entity": "Legal Entity",
       "name_hidden": "Name not visible",
       "partial": "Some search providers are temporarily unavailable. The available results are shown.",
-      "party": "Party",
       "reconciliation_required": "Reconciliation required",
       "roles": {
         "CUSTOMER": "Customer",
@@ -610,11 +820,17 @@
       },
       "selection_required": "Sign in and select a tenant before searching.",
       "seoDescription": "Search authorized resources in the selected OntOS context.",
-      "submit": "Search",
       "title": "Search results",
-      "unavailable": "Search is temporarily unavailable. Try again."
+      "unavailable": "Search is temporarily unavailable. Try again.",
+      "notGranted": "Search isn't part of your access. Ask your administrator for it.",
+      "clear": "Clear search",
+      "placeholder": "Search clients, tasks, invoices, contracts…"
     },
     "resource": {
+      "detail_not_supported": "This app has no record view for this type yet. Open the agenda it belongs to.",
+      "detail_not_supported_title": "Record details are not available here",
+      "found_in_agenda": "This record’s details are in the agenda it belongs to.",
+      "open_in_agenda": "Open in its agenda",
       "forbidden": "You do not have permission to view this resource.",
       "media": {
         "absent": "This resource does not support media attachments.",
@@ -637,7 +853,8 @@
         "title": "Timeline"
       },
       "title": "Resource",
-      "unavailable": "The resource is temporarily unavailable. Try again."
+      "unavailable": "The resource is temporarily unavailable. Try again.",
+      "open_record": "Open the record"
     },
     "remoteUnavailable": "Remote vertical unavailable",
     "remotes": {},
@@ -647,6 +864,357 @@
     "seo": {
       "description": "UltraModern shell SuperApp with localized SSR, Module Federation, and framework-owned public metadata."
     },
-    "title": "UltraModern Workspace"
+    "title": "UltraModern Workspace",
+    "profile": {
+      "title": "My profile",
+      "menu": "My profile",
+      "seoDescription": "Your signed-in account and connected apps (ChatGPT, Claude).",
+      "identity": "Signed-in account",
+      "loading": "Loading…",
+      "connections": {
+        "title": "Connected apps",
+        "acting": "Acting as",
+        "access": "Access",
+        "connected": "Connected",
+        "lastUsed": "Last used"
+      },
+      "href": "/en/profile"
+    },
+    "connectedAppsGuide": {
+      "title": "How to connect",
+      "intro": "Use this server URL and OAuth. Sign in only on the OntOS page, where you select the company, allowed modules and write policy. Never paste passwords, keys or tokens into the AI chat.",
+      "aiHelp": "Need help? Copy the prompt for your AI assistant and paste it into a chat. The AI guides you; it cannot add the connector for you. Choose read-only access in OntOS for the first check.",
+      "copyUrl": "Copy URL",
+      "copyCommand": "Copy configuration / command",
+      "copyPrompt": "Copy AI setup prompt",
+      "copied": "Copied",
+      "copyUrlFailed": "Could not copy. Select the URL and copy it manually.",
+      "copyCommandFailed": "Could not copy. Select the configuration or command and copy it manually.",
+      "copyPromptFailed": "Could not copy. Expand “Show prompt” and copy the text manually.",
+      "showPrompt": "Show prompt",
+      "officialDocs": "Official instructions",
+      "networkNote": "ChatGPT and remote Claude connectors (including Desktop) need a public HTTPS URL reachable from their cloud. They cannot connect to localhost. For the local demo, use Claude Code or VS Code on the same computer.",
+      "promptIntro": "Help me connect OntOS as a custom MCP server in {{- client}}. Exact URL: {{- mcpUrl}}. Use OAuth only. You cannot add the connector for me: guide me click by click and wait for confirmation after each step. First check my plan and feature access. If an option is missing, ask what I see; do not invent UI paths. Use these steps:",
+      "promptSafety": "Never ask for passwords, API keys or tokens, or put them in chat or configuration. I will sign in myself only on the OntOS page through OAuth, selecting a company and read-only access for the first check. After connection, actually call available read-only OntOS tools and report the connected company and available modules from their results. Do not change, create or delete anything. If the tools are unavailable, say so and help enable them; do not claim the connection is verified without a successful tool call.",
+      "clients": {
+        "chatgpt": {
+          "requirements": "Full custom MCP including writes: Business, Enterprise and Edu, subject to admin permissions. Pro has limited read/fetch access. If the desktop app does not show the option, open ChatGPT on the web and check your plan and permissions. Labels below follow the official English documentation. ChatGPT identifies itself to OntOS with its own client document, so you never enter a client ID or secret.",
+          "step1": "Open Plugins in ChatGPT, click +, then Add custom MCP server. This flow does not require enabling Developer Mode.",
+          "step2": "Enter the name OntOS, the server URL above and OAuth authentication. Review and acknowledge the security warning, then select Create as a plugin.",
+          "step3": "Sign in on the redirected OntOS page, select your company, modules and read-only access for the first check. Approve consent and return to ChatGPT.",
+          "step4": "In a new chat, select the connected OntOS plugin (for example via @OntOS) and ask it to verify the connected company and modules by actually calling read-only tools."
+        },
+        "claude": {
+          "requirements": "Remote custom connectors are available on Free, Pro, Max, Team and Enterprise; Free allows one custom connector. On Team/Enterprise an owner or authorized admin must first add the connector in Organization settings › Connectors. This also applies to Claude Desktop, not its local configuration file.",
+          "step1": "On claude.ai or Claude Desktop, open Customize › Connectors › + Add › Add custom connector. Team members instead select the admin-provided connector and click Connect.",
+          "step2": "When adding, enter the name OntOS and the URL above › Continue. Review detected authentication › Continue. For OAuth choose Sign in now and keep the recommended Claude identity; do not enter your own keys. Finish with Add.",
+          "step3": "Complete sign-in and OAuth consent on the OntOS page: select your company, modules and read-only access for the first check.",
+          "step4": "In a new chat, open + › Connectors and enable OntOS. Ask it to verify the company and modules with read-only tools; approve only matching calls."
+        },
+        "claude-code": {
+          "requirements": "Requires installed, signed-in Claude Code and network access to the server. Use HTTP with OAuth, not a manually copied token.",
+          "step1": "Run the command below in your terminal to add the ontos HTTP server.",
+          "step2": "In Claude Code, enter /mcp, select ontos and follow the browser sign-in prompt. In OntOS, select your company, modules and read-only access for the first check, then approve OAuth consent.",
+          "step3": "Back in Claude Code, check /mcp and ask it to actually read the connected company and available modules with OntOS tools."
+        },
+        "vscode": {
+          "requirements": "Requires current VS Code with AI features enabled, a local folder open and a supported agent mode. Organization policies may block MCP; check access to Copilot / your chosen agent.",
+          "step1": "Open the Command Palette (⌘⇧P / Ctrl+Shift+P) › MCP: Add Server › HTTP (HTTP or Server-Sent Events). Enter the URL above and ID ontos; choose the configuration destination (Global › Copilot Global for personal Copilot use, if available).",
+          "step2": "Review server trust and complete browser OAuth sign-in. In OntOS select your company, modules and read-only access for the first check; approve consent.",
+          "step3": "Enable ontos tools in agent chat and ask it to read the company and modules. Expand the tool result: an AI answer without a tool call does not verify the connection."
+        },
+        "cursor": {
+          "requirements": "Requires current Cursor with MCP support and access to Agent. Enterprise admins can restrict allowed servers. The remote HTTP server uses OAuth; no API keys are needed.",
+          "step1": "Open ~/.cursor/mcp.json for personal configuration (or .cursor/mcp.json in your project). Add the ontos entry below to mcpServers, preserving existing entries.",
+          "step2": "In Customize, review and enable the ontos server. Complete the offered browser OAuth sign-in and select your company, modules and read-only access for the first check in OntOS.",
+          "step3": "In a new Agent chat, ask it to verify the connected company and modules by calling read-only ontos tools. Inspect the actual tool result."
+        }
+      }
+    },
+    "agents": {
+      "connections": {
+        "policy": {
+          "read_only": "Read only",
+          "approval": "Needs approval",
+          "direct": "Direct"
+        },
+        "status": {
+          "active": "Active",
+          "disabled": "Deactivated",
+          "archived": "Archived"
+        },
+        "operators": {
+          "title": "Who may connect the agent",
+          "hint": "Only people of {{company}} can be chosen.",
+          "empty": "Nobody may connect this agent yet.",
+          "save": "Save",
+          "saving": "Saving…",
+          "saved": "People for {{name}} saved",
+          "revoked_one": "Disconnected connections: {{count}}",
+          "revoked_other": "Disconnected connections: {{count}}",
+          "confirmTitle": "Remove and disconnect?",
+          "confirmDescription_one": "People you are removing have the agent connected: {{names}}. Saving disconnects these connections ({{count}}) at once.",
+          "confirmDescription_other": "People you are removing have the agent connected: {{names}}. Saving disconnects these connections ({{count}}) at once.",
+          "confirm": "Save and disconnect",
+          "cancel": "Cancel"
+        },
+        "list": {
+          "title": "Agent connections",
+          "empty": "The agent is not connected to any app yet.",
+          "connectedBy": "connected by {{name}}",
+          "lastUsed": "Last used {{date}}",
+          "neverUsed": "Not used yet",
+          "revoke": "Disconnect",
+          "dialogTitle": "Disconnect {{client}}?",
+          "dialogDescription": "The app loses access as the agent on its next request. The reason is written to the audit log.",
+          "reason": "Reason",
+          "reasonRequired": "Enter a reason.",
+          "confirm": "Disconnect",
+          "cancel": "Cancel",
+          "revoked": "{{client}} disconnected"
+        }
+      },
+      "keys": {
+        "title": "API keys",
+        "description": "Native credentials for this agent in the selected company. Keys do not grant additional rights; the agent's audited profile and scoped roles still apply.",
+        "requiresProfile": "Save an audited profile and activate the agent before managing its keys.",
+        "retry": "Try again",
+        "issue": "Issue key",
+        "working": "Processing…",
+        "failed": "The key list could not be loaded or the result could not be confirmed. Try again. A one-time secret cannot be recovered.",
+        "conflict": "This request was already accepted or the key changed. The current list is shown; do not repeat the command.",
+        "cleanupPending": "Credential cleanup is pending. The previous key may still be usable; do not treat it as revoked yet.",
+        "updated": "The command was accepted and the current list confirmed the expected key state.",
+        "projectionPending": "The command was accepted, but the list has not confirmed the expected key state yet. The list keeps reloading; do not repeat the command.",
+        "refreshRequired": "Another command becomes available once the list confirms the current key state. No command will be retried automatically.",
+        "oneTime": "This secret is shown only once. Select and copy it to your secure credential manager, not a chat. Closing the panel or hiding it removes it from this view.",
+        "secret": "One-time secret",
+        "selectSecret": "Select secret",
+        "hideSecret": "I saved it — hide",
+        "empty": "This agent has no unrevoked API keys in this company.",
+        "unnamed": "Unnamed key",
+        "status": {
+          "active": "Active",
+          "disabled": "Disabled"
+        },
+        "noExpiry": "No expiry reported by the credential provider",
+        "expires": "Expires: {{date}}",
+        "rotate": "Rotate key",
+        "disable": "Disable key",
+        "enable": "Enable key",
+        "revoke": "Revoke key",
+        "more": "More keys",
+        "cancel": "Cancel",
+        "confirm": "Confirm once",
+        "confirmDescription": "This changes a real credential for this agent in the selected company. Rotation replaces the old key; revocation is permanent. The command is audited and is never retried automatically.",
+        "name": "Key name",
+        "reason": "Reason"
+      },
+      "editor": {
+        "createTitle": "New agent",
+        "editTitle": "Edit agent {{name}}",
+        "createDescription": "An agent acts only by the roles you assign to it. Only the people you choose may connect it.",
+        "name": "Agent name",
+        "description": "What the agent is for",
+        "owner": "Responsible person",
+        "policyTitle": "How the agent may write",
+        "policy": {
+          "read_only": {
+            "label": "Read only",
+            "description": "The agent changes nothing, it only reads."
+          },
+          "approval": {
+            "label": "Through approval",
+            "description": "The agent only proposes changes; a person carries them out in Settings › Approvals."
+          },
+          "direct": {
+            "label": "Directly",
+            "description": "The agent writes on its own in modules with write access. Every change is audited."
+          }
+        },
+        "operatorsTitle": "Who may connect the agent",
+        "operatorsHint": "These people can connect it to ChatGPT or Claude by choosing “As the agent”. No keys are copied.",
+        "errors": {
+          "nameRequired": "Enter the agent name.",
+          "nameTooLong": "The name can have at most 200 characters.",
+          "descriptionTooLong": "The description can have at most 500 characters.",
+          "ownerRequired": "Choose who is responsible for the agent."
+        },
+        "cancel": "Cancel",
+        "create": "Create agent",
+        "save": "Save changes",
+        "saving": "Saving…",
+        "toast": {
+          "created": "Agent {{name}} was created",
+          "saved": "Changes to agent {{name}} were saved"
+        },
+        "rightsFromRoles": "An agent gets rights only from the roles you assign on its card."
+      },
+      "section": {
+        "title": "Agent entities",
+        "description": "An agent is a separate identity of the company with its own permissions. It connects to ChatGPT or Claude through OntOS by choosing “As the agent”. API keys for automation are managed in the agent detail.",
+        "create": "New agent",
+        "loading": "Loading agents…",
+        "retry": "Try again",
+        "empty": "The company has no agent yet.",
+        "emptyHint": "Create an agent with New agent and set its permissions.",
+        "owner": "Responsible: {{name}}",
+        "noOwner": "Responsible: nobody",
+        "noProfile": "No profile",
+        "disabledNotice": "The agent is deactivated. Its connections were revoked; after activation it has to be connected again.",
+        "edit": "Edit",
+        "deactivate": "Deactivate",
+        "activate": "Activate",
+        "delete": "Delete",
+        "dialog": {
+          "deactivateTitle": "Deactivate agent {{name}}?",
+          "deactivateDescription": "The agent loses access immediately and all its connections are revoked. The reason is written to the audit trail.",
+          "deactivateReason": "Reason for deactivation",
+          "deactivateConfirm": "Deactivate",
+          "activateTitle": "Activate agent {{name}}?",
+          "activateDescription": "The agent gets its permissions back. It has to be connected again.",
+          "activateConfirm": "Activate",
+          "deleteTitle": "Delete agent {{name}}?",
+          "deleteDescription": "The agent loses all permissions, connections and the list of people who may connect it, and leaves the list. Audit records stay.",
+          "deleteReason": "Reason for deletion",
+          "deleteConfirm": "Delete agent",
+          "cancel": "Cancel",
+          "reasonRequired": "Enter a reason."
+        },
+        "toast": {
+          "deactivated": "Agent {{name}} was deactivated",
+          "activated": "Agent {{name}} is active again",
+          "deleted": "Agent {{name}} was deleted",
+          "revoked_one": "Revoked connections: {{count}}",
+          "revoked_other": "Revoked connections: {{count}}"
+        },
+        "audit": {
+          "title": "Agent change history",
+          "empty": "No changes yet.",
+          "created": "created agent {{target}}",
+          "configured": "edited agent {{target}}",
+          "deactivated": "deactivated agent {{target}}",
+          "activated": "activated agent {{target}}",
+          "deleted": "deleted agent {{target}}",
+          "operators": "changed who may connect agent {{target}}",
+          "denied": "tried to {{action}}, but only the company administrator manages agents",
+          "reason": "Reason: {{reason}}",
+          "system": "System",
+          "unknownAgent": "agent",
+          "operatorsRevoked_one": "changed who may connect agent {{target}} and so disconnected its connections: {{count}}",
+          "operatorsRevoked_other": "changed who may connect agent {{target}} and so disconnected its connections: {{count}}",
+          "operatorsCreated": "set who may connect agent {{target}}",
+          "deniedAction": {
+            "create": "create an agent",
+            "configure": "edit agent {{target}}",
+            "change-status": "change the status of agent {{target}}",
+            "delete": "delete agent {{target}}",
+            "other": "change agent {{target}}"
+          },
+          "succeeded": "Completed",
+          "deniedStatus": "Denied"
+        },
+        "loadError": "Agents are currently unavailable."
+      },
+      "errors": {
+        "forbidden": "Only the company administrator may do this. The attempt was audited.",
+        "conflict": "Conflict: the e-mail is taken or the account changed meanwhile. Refresh the list.",
+        "invalid": "The request cannot be performed (e.g. changing your own account).",
+        "error": "Saving failed. Try again.",
+        "signedOut": "Your session expired, sign in again."
+      },
+      "resize": "Resize panel. Drag or use the left and right arrows. Double-click or Home restores the default width.",
+      "selectPlaceholder": "Select…",
+      "roles": {
+        "title": "Roles and actual rights",
+        "none": "The agent has no role, so it may do nothing. Assign it a role.",
+        "badgeNone": "no roles",
+        "add": "Add a role",
+        "assign": "Assign",
+        "remove": "Remove",
+        "assigned": "Agent {{name}} has the role {{role}}",
+        "removed": "The role {{role}} was removed from agent {{name}}",
+        "usableTitle": "What the agent may actually do",
+        "usableHint": "An agent never administers access and never approves anything; sensitive changes it only proposes for a person to decide.",
+        "usableNone": "Nothing yet.",
+        "reads": "reads",
+        "writes": {
+          "direct": "writes directly",
+          "approval": "proposes for approval"
+        }
+      }
+    },
+    "invitation": {
+      "title": "Set your password",
+      "description": "Set your own password using your invitation.",
+      "newPassword": "New password",
+      "confirmPassword": "Repeat the new password"
+    },
+    "demoGuide": {
+      "title": "Demo guide",
+      "resize": "Resize the guide. Left and Right arrow keys change the width. Home restores the default.",
+      "close": "Close the guide",
+      "progress": "Demo progress",
+      "publicDemoSignInHint": "Password for all demo accounts: password1234. To use a different persona, use a separate browser profile, or sign out and sign in again."
+    },
+    "people": {
+      "invite": "Invite a person",
+      "fullName": "Full name",
+      "tabs": "People and agents",
+      "title": "People and roles",
+      "membershipTitle": "Company membership",
+      "roleEditorTitle": "Assign or remove a role",
+      "changeReason": "Reason for change",
+      "table": {
+        "actions": "Actions",
+        "allKinds": "All types",
+        "allRoles": "All roles",
+        "allStatuses": "All statuses",
+        "clearFilters": "Clear filters",
+        "companyScope": "Selected company",
+        "currentStatus": "Current",
+        "editMembership": "Edit membership",
+        "empty": "No one matches the filters.",
+        "invitation": {
+          "pending": "Invitation waiting to be sent",
+          "sent": "Invitation sent",
+          "undeliverable": "Invitation cannot be delivered",
+          "unknown": "Invitation delivery cannot be verified"
+        },
+        "kind": "Type",
+        "loading": "Loading people and roles…",
+        "manageRoles": "Manage roles",
+        "moreRoles": "and more roles: {{roles}}",
+        "name": "Name",
+        "noMatches": "No one matches the filters.",
+        "noMemberships": "There are no recorded memberships in this scope.",
+        "pageSize": "Per page",
+        "personActions": "Actions: {{name}}",
+        "range": "{{start}}–{{end}} of {{total}}",
+        "roles": "Roles",
+        "rolesHelp": "Each person and agent has their own login. Roles determine what they can do in the company. Work affiliation alone does not grant access.",
+        "rolesHelpLabel": "How roles work",
+        "scope": "Administration scope",
+        "searchLabel": "Search by name, type or role",
+        "searchPlaceholder": "Search name, type or role",
+        "status": "Status",
+        "tenantScope": "Whole organisation"
+      },
+      "detail": {
+        "invalidLink": "The person link is not valid. Select a person from the list.",
+        "foreignCompany": "The linked person belongs to another company. Switch to the company from the link; this page will not open the person here.",
+        "companyRequired": "Select a company before opening the person from the link."
+      }
+    },
+    "agentPlatform": {
+      "approvals": {
+        "note": "Decision note (optional)",
+        "notePlaceholder": "For example, verified with the salesperson",
+        "filters": "Batch view"
+      },
+      "activity": {
+        "table": "Agent activity"
+      }
+    }
   }
 }

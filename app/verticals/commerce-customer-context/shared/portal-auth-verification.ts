@@ -9,30 +9,50 @@ import {
 export const COMMERCE_PORTAL_AUTH_VERIFY_OPERATION =
   'commerce-portal-authentication.verify-external-authentication.v1' as const;
 
+/** Private verification route on this module's BFF, relative to `/commerce-customer-context-api`. */
+export const COMMERCE_PORTAL_AUTH_VERIFY_PATH = '/portal-auth/internal/verify' as const;
+
 const boundedReference = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 
 /**
  * The provider verification route is a private workload boundary.  The operation
  * and receiving audience are carried in the signed/composed request context rather
- * than inferred from a customer credential.
+ * than inferred from a customer credential.  It narrows Core's generic external
+ * identity verification request to this module's namespace, session and operation.
  */
+const verificationFields = VerifyExternalAuthenticationRequestSchema.fields;
+
 export const CommercePortalAuthVerificationRequestSchema = Schema.Struct({
-  ...VerifyExternalAuthenticationRequestSchema.fields,
   audience: boundedReference,
+  authenticationNamespaceId: verificationFields.authenticationNamespaceId,
+  authenticationOperation: verificationFields.authenticationOperation,
+  enrollmentAttemptId: verificationFields.enrollmentAttemptId,
+  nonce: verificationFields.nonce,
   operation: Schema.Literal(COMMERCE_PORTAL_AUTH_VERIFY_OPERATION),
   operationRef: boundedReference,
+  providerSubjectId: verificationFields.providerSubjectId,
+  sessionRef: verificationFields.sessionRef,
+  subjectType: verificationFields.subjectType,
+  tenantId: verificationFields.tenantId,
 });
 
 export type CommercePortalAuthVerificationRequest = typeof CommercePortalAuthVerificationRequestSchema.Type;
 
-export const CommercePortalAuthVerificationHeadersSchema = Schema.Struct({
-  authorization: Schema.optionalKey(
-    Schema.Redacted(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2000))),
-  ),
-  'x-correlation-id': Schema.optionalKey(boundedReference),
-});
-
-export type CommercePortalAuthVerificationHeaders = typeof CommercePortalAuthVerificationHeadersSchema.Type;
+/** HTTP metadata is open; the two authority headers retain their own codecs. */
+export const CommercePortalAuthVerificationHeadersSchema = Schema.StructWithRest(
+  Schema.Struct({
+    authorization: Schema.optionalKey(
+      Schema.Redacted(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2000))),
+    ),
+    'x-correlation-id': Schema.optionalKey(boundedReference),
+  }),
+  [
+    Schema.Record(
+      Schema.String.check(Schema.isPattern(/^(?!(?:authorization|x-correlation-id)$).+/u)),
+      Schema.Union([Schema.String, Schema.Redacted(Schema.String)]),
+    ),
+  ],
+);
 
 export const CommercePortalAuthVerificationInvalidProblemSchema = makeProblemDetailsSchema(
   'CommercePortalAuthVerificationInvalidProblem',
@@ -72,5 +92,3 @@ export const CommercePortalAuthVerificationApi = HttpApi.make('CommercePortalAut
     }),
   ),
 );
-
-export type { VerifyExternalAuthenticationResult } from './portal-auth-contracts.ts';

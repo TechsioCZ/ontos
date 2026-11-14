@@ -3,10 +3,22 @@ import type {
   ManageMarketRetirementAdmissionPayload,
   MarketRetirementCommittedResult,
 } from '../../shared/market-retirement-admission.ts';
-/* oxlint-disable perfectionist/sort-objects -- Drizzle declaration order is the physical database contract; expires: 2027-03-31. */
 import { tenantRlsPolicies } from '@app/core-runtime';
 import { defineRelations, sql } from 'drizzle-orm';
-import { check, foreignKey, index, integer, jsonb, pgSchema, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  check,
+  foreignKey,
+  index,
+  integer,
+  jsonb,
+  pgSchema,
+  text,
+  timestamp,
+  unique,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import type {
   MarketRetirementImpactAssessment,
   ReservedMarketRetirementImpactAssessment,
@@ -20,6 +32,7 @@ export const COMMERCE_MARKET_CATALOG_TABLE_INVENTORY = [
   'market_definition_revisions',
   'market_lifecycle_periods',
   'market_retirement_admissions',
+  'market_retirement_intents',
   'markets',
   'storefront_association_revisions',
   'storefront_associations',
@@ -270,6 +283,67 @@ export const marketCatalogCompletenessGenerations = commerceMarketCatalogSchema.
   ],
 );
 
+/** Retained retirement archive. The forward migration refuses pending intents and fences new requests;
+ * current retirement uses native admissions, not this table or a separate worker.
+ */
+export const marketRetirementIntents = commerceMarketCatalogSchema.table.withRLS(
+  'market_retirement_intents',
+  {
+    marketRetirementIntentId: uuid('market_retirement_intent_id').primaryKey(),
+    tenantId: uuid('tenant_id').notNull(),
+    marketId: uuid('market_id').notNull(),
+    sellingLegalEntityId: uuid('selling_legal_entity_id').notNull(),
+    expectedRevision: integer('expected_revision').notNull(),
+    expectedDefinitionRevisionId: uuid('expected_definition_revision_id').notNull(),
+    effectiveAt: timestamp('effective_at', { withTimezone: true }).notNull(),
+    reason: text('reason').notNull(),
+    stage: text('stage').notNull(),
+    failureReason: text('failure_reason'),
+    retirementImpactAssessment: jsonb('retirement_impact_assessment').$type<MarketRetirementImpactAssessment>(),
+    reservationRequest: jsonb('reservation_request'),
+    transitionChanged: boolean('transition_changed'),
+    retiredRevision: integer('retired_revision'),
+    retiredDefinitionRevisionId: uuid('retired_definition_revision_id'),
+    actionInvocationId: uuid('action_invocation_id').notNull(),
+    actingPrincipalId: uuid('acting_principal_id').notNull(),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique('commerce_market_catalog_retirement_intents_scope_id_uk').on(table.tenantId, table.marketRetirementIntentId),
+    unique('commerce_market_catalog_retirement_intents_invocation_uk').on(table.tenantId, table.actionInvocationId),
+    uniqueIndex('commerce_market_catalog_retirement_intents_open_market_uk')
+      .on(table.tenantId, table.marketId)
+      .where(sql`${table.stage} not in ('COMPLETED', 'FAILED')`),
+    foreignKey({
+      columns: [table.tenantId, table.marketId],
+      foreignColumns: [markets.tenantId, markets.marketId],
+      name: 'commerce_market_catalog_retirement_intents_market_fk',
+    }).onDelete('restrict'),
+    check(
+      'commerce_market_catalog_retirement_intents_stage_ck',
+      sql`${table.stage} in ('REQUESTED', 'RESERVATION_REQUESTED', 'RESERVED', 'COMMIT_PENDING', 'RELEASE_PENDING', 'COMPLETED', 'FAILED')`,
+    ),
+    check(
+      'commerce_market_catalog_retirement_intents_failure_ck',
+      sql`(${table.stage} in ('RELEASE_PENDING', 'FAILED')) = (${table.failureReason} is not null) and (${table.failureReason} is null or ${table.failureReason} in ('replacement_impact_unresolved', 'impact_assessment_stale', 'impact_assessment_rejected', 'impact_assessment_unavailable', 'revision_conflict', 'invalid_lifecycle_transition'))`,
+    ),
+    check(
+      'commerce_market_catalog_retirement_intents_reservation_ck',
+      sql`${table.stage} in ('REQUESTED', 'FAILED') or ${table.reservationRequest} is not null`,
+    ),
+    check(
+      'commerce_market_catalog_retirement_intents_revision_ck',
+      sql`${table.expectedRevision} > 0 and (${table.retiredRevision} is null or ${table.retiredRevision} > 0)`,
+    ),
+    check(
+      'commerce_market_catalog_retirement_intents_reason_ck',
+      sql`${table.reason} = btrim(${table.reason}) and length(${table.reason}) between 1 and 500`,
+    ),
+    ...tenantRlsPolicies('commerce_market_catalog_retirement_intents_tenant', table.tenantId),
+  ],
+);
+
 export const marketRetirementAdmissions = commerceMarketCatalogSchema.table.withRLS(
   'market_retirement_admissions',
   {
@@ -313,6 +387,7 @@ export const COMMERCE_MARKET_CATALOG_TABLES = [
   marketCatalogCompletenessGenerations,
   marketDefinitionRevisions,
   marketLifecyclePeriods,
+  marketRetirementIntents,
   marketRetirementAdmissions,
   markets,
   storefrontAssociationRevisions,
@@ -324,6 +399,7 @@ const commerceMarketCatalogDatabaseSchema = {
   marketDefinitionRevisions,
   marketLifecyclePeriods,
   marketRetirementAdmissions,
+  marketRetirementIntents,
   markets,
   storefrontAssociationRevisions,
   storefrontAssociations,

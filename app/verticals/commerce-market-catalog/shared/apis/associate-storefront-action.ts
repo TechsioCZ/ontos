@@ -2,11 +2,14 @@
 // @ontos-action-http-owner commerce.market-catalog
 // @ontos-action-http-slug associate-storefront
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { AssociateStorefrontPayloadSchema, AssociateStorefrontResultSchema } from '../actions/associate-storefront.ts';
 
 export { AssociateStorefrontPayloadSchema } from '../actions/associate-storefront.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const AssociateStorefrontActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AssociateStorefrontActionInvalidProblem',
@@ -27,6 +30,7 @@ export const AssociateStorefrontActionForbiddenProblemSchema = makeProblemDetail
       'operation_context_denied',
       'operation_context_invalid',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const AssociateStorefrontActionNotFoundProblemSchema = makeProblemDetailsSchema(
@@ -58,6 +62,7 @@ export const AssociateStorefrontActionIneligibleProblemSchema = makeProblemDetai
       'cross_tenant_reference',
       'inconsistent_seller_or_channel',
       'replacement_impact_unresolved',
+      'retirement_in_progress',
       'seller_identity_immutable',
       'storefront_application_not_current',
     ]),
@@ -157,7 +162,7 @@ export const associateStorefrontActionGroupDefinition = HttpApiGroup.make('assoc
     HttpApiEndpoint.post('execute', '/commerce-market-catalog/actions/associate-storefront', {
       error: actionErrors,
       payload: Schema.toEncoded(AssociateStorefrontPayloadSchema),
-      success: AssociateStorefrontResultSchema,
+      success: [ActionProposalAcceptedSchema, AssociateStorefrontResultSchema],
     }),
   )
   .middleware(AssociateStorefrontActionSchemaErrorMiddleware);

@@ -71,6 +71,12 @@
     },
     {
       "path": "../../packages/storefront-registry-contracts"
+    },
+    {
+      "path": "../../packages/consent-authority-contracts"
+    },
+    {
+      "path": "../privacy"
     }
   ],
   "files": [

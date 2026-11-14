@@ -22,6 +22,9 @@ import { resolveDuplicateCandidateCreate } from '../services/party-matching-pers
 import { createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage } from './create-party.party-registry-party-created-v1.outbox-message.ts';
 
 export type { ResolveDuplicateCandidateCreatePayload } from '../../shared/actions/resolve-duplicate-candidate-create.ts';
+
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const ErrorSchema = Schema.Union([
   ClaimOwnedByDifferentParty,
   DuplicateCandidateConflict,
@@ -48,8 +51,8 @@ const handle = Effect.fn('ResolveDuplicateCandidateCreateAction.handle')(functio
     accessKind: 'read',
     queryHash: Hex.encode(sha256(utf8ToBytes(`duplicate-case-invariants:${payload.caseRef.resourceId}`))),
     resultCount: 1,
-    servingModuleKey: 'party.registry',
-    targetModuleKey: 'party.registry',
+    servingModuleKey: PARTY_REGISTRY_MODULE_ID,
+    targetModuleKey: PARTY_REGISTRY_MODULE_ID,
     targetResourceId: result.caseRef.resourceId,
     targetResourceType: result.caseRef.resourceType,
   });
@@ -62,8 +65,8 @@ const handle = Effect.fn('ResolveDuplicateCandidateCreateAction.handle')(functio
   const event = yield* context.addDomainEvent({
     eventType: 'party.registry.party-created.v1',
     payloadJson: { partyRef: result.partyRef },
-    producerModuleKey: 'party.registry',
-    subjectModuleKey: 'party.registry',
+    producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+    subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
     subjectResourceId: result.partyRef.resourceId,
     subjectResourceType: result.partyRef.resourceType,
   });
@@ -77,6 +80,13 @@ const handle = Effect.fn('ResolveDuplicateCandidateCreateAction.handle')(functio
 });
 export const resolveDuplicateCandidateCreateAction = defineAction(
   {
+    accessActor: {
+      callers: ['crm'],
+      subject: 'rights',
+      subjectWorkloads: ['demo.crm.party-intake'],
+      reason:
+        'CRM reconciles owner-held client identities through native Party operations under its bound intake workload; humans retain existing rights.',
+    },
     accessDeclaration: {
       key: 'party.registry.duplicate-candidate.resolve-create',
       kind: 'action',
@@ -98,12 +108,12 @@ export const resolveDuplicateCandidateCreateAction = defineAction(
       access: 'write',
       authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.resolve-duplicate-candidate-create',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: ResolveDuplicateCandidateCreatePayloadSchema,
     policies: [],
     resultSchema: ResolveDuplicateCandidateCreateResultSchema,

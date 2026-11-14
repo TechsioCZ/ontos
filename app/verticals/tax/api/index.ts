@@ -1,6 +1,15 @@
+import { PgClient } from '@effect/sql-pg';
+import {
+  OwnerActionApprovalSchemaErrorLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
+} from '@app/core-runtime/access/approvals/owner-http';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { taxRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
@@ -27,13 +36,18 @@ import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
-import { Reactivity } from 'effect/reactivity';
 import { taxApi, taxOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
-import { TaxDatabaseLive, TaxPgClientLive } from '../src/database/client.ts';
 // <generated-governed-http-handler-support-imports>
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
-import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
+import {
+  ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive,
+  authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
+} from './auth/action-principal.ts';
+import {
+  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
+  GatewayAssertionRedemptionDatabaseLive,
+  gatewayAssertionRedemptionPgClient,
+} from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
@@ -53,7 +67,17 @@ import { taxEvaluationReadApiLive } from './tax-evaluation-read-server.ts';
 import { taxMaterialityComparisonReadApiLive } from './tax-materiality-comparison-read-server.ts';
 import { taxPrivacyOwnerCoverageReadApiLive } from './tax-privacy-owner-coverage-read-server.ts';
 import { taxRuleHistoryReadApiLive } from './tax-rule-history-read-server.ts';
+import { vatChangeRightsReadApiLive } from './vat-change-rights-read-server.ts';
 // </generated-governed-http-handler-imports>
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
+
+const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
+  Layer.provide(
+    GatewayAssertionRedemptionDatabaseLive.pipe(Layer.provide(PgClient.layerFrom(gatewayAssertionRedemptionPgClient))),
+  ),
+  Layer.provide(DatabaseConfigLive),
+);
 
 const taxReadinessLayer = HttpApiBuilder.group(taxApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
@@ -116,7 +140,7 @@ const readRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, taxRegistra
 
 /** Read runtime bound by generated governed HTTP handlers mounted in the slot below. */
 export const governedReadRuntimeLive = readRuntimeLive;
-const actionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, taxRegistration).pipe(
+const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, taxRegistration).pipe(
   Layer.provide(
     Layer.mergeAll(
       activeApplicationCompositionLive,
@@ -131,18 +155,40 @@ const actionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, taxRegi
     ),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
+);
+
+const actionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, taxRegistration).pipe(
+  Layer.provideMerge(ownerActionApprovalsLive),
+  Layer.provide(
+    Layer.mergeAll(
+      activeApplicationCompositionLive,
+      CorePersistenceLive,
+      ActionRepositoryLive,
+      ActionPermissionLive,
+      ContextAccessLive,
+      moduleStateGateLive,
+      moduleEntrypointGatewayLive,
+      operationalScopeResolverLive,
+      accessEnforcementLive,
+    ),
+  ),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 /** Action runtime bound by generated governed Action HTTP handlers mounted in the slot below. */
 export const governedActionRuntimeLive = actionRuntimeLive;
 
-const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
-  Layer.provide(TaxDatabaseLive),
-  Layer.provide(TaxPgClientLive),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, Reactivity.layer)),
-);
-
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   taxReadinessLayer,
+  HttpApiBuilder.group(taxApi, 'ownerActionApprovals', (handlers) =>
+    handlers
+      .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+      .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+  ).pipe(
+    GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+    GovernedReadLayer.provide(governedActionRuntimeLive),
+  ),
   // <generated-governed-http-handler-layers>
   applicableTaxRuleSetReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   correctTaxRuleRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -160,6 +206,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   taxMaterialityComparisonReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   taxPrivacyOwnerCoverageReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   taxRuleHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  vatChangeRightsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(
   // <generated-governed-http-handler-support-layers>
@@ -168,7 +215,12 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   ),
   // </generated-governed-http-handler-support-layers>
   Layer.provide(compositionSourceLive),
-  Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, nodeCryptoLayer)),
+  // ReadRuntime keeps its admission gate private: the VAT change rights read decides the reader's rights on Tax's own
+  // Actions with the owner's gate (as Market administration answers `canAdminister`).
+  Layer.provide(accessEnforcementLive),
+  Layer.provide(
+    Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, nodeCryptoLayer, databaseIdentitiesLive),
+  ),
 );
 const resolvedApiHandlersLive = governedReadApiHandlersLive.pipe(Layer.orDie);
 

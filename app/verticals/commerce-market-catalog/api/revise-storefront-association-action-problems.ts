@@ -41,6 +41,7 @@ type DomainProblemIdentity =
         | 'cross_tenant_reference'
         | 'inconsistent_seller_or_channel'
         | 'replacement_impact_unresolved'
+        | 'retirement_in_progress'
         | 'seller_identity_immutable'
         | 'storefront_application_not_current';
       readonly kind: 'ineligible';
@@ -71,6 +72,7 @@ const marketCommandRejectedProblemByCode = {
   market_code_conflict: { code: 'market_code_conflict', kind: 'conflict' },
   overlapping_association: { code: 'overlapping_association', kind: 'conflict' },
   replacement_impact_unresolved: { code: 'replacement_impact_unresolved', kind: 'ineligible' },
+  retirement_in_progress: { code: 'retirement_in_progress', kind: 'ineligible' },
   revision_conflict: { code: 'revision_conflict', kind: 'conflict' },
   seller_identity_immutable: { code: 'seller_identity_immutable', kind: 'ineligible' },
 } as const satisfies Record<
@@ -98,10 +100,12 @@ export const reviseStorefrontAssociationActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ReviseStorefrontAssociationActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ReviseStorefrontAssociationActionForbiddenProblem'> =>
     ReviseStorefrontAssociationActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -222,7 +226,8 @@ const mapCoreProblem = (error: ActionCoreError): ReviseStorefrontAssociationActi
       ActionInvocationStateError: (failure) => reviseStorefrontAssociationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: reviseStorefrontAssociationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => reviseStorefrontAssociationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => reviseStorefrontAssociationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        reviseStorefrontAssociationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => reviseStorefrontAssociationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => reviseStorefrontAssociationActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => reviseStorefrontAssociationActionProblem.conflict(failure.code),

@@ -8,7 +8,6 @@ import {
 } from '../../shared/domain/profile-contracts.ts';
 import type { RetailCustomerProfileRefSchema } from '../../shared/resources/retail-customer-profile.ts';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
 import { NodeHttpServer, NodeServices, NodeSocketServer } from '@effect/platform-node';
 import { ChildProcess } from 'effect/process';
 import {
@@ -20,7 +19,11 @@ import {
   canonicalizeApplicationComposition,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import {
+  makeApplicationCompositionSnapshotFixture,
+  makeOwnerApplicationCompositionFixture,
+} from '@app/core-runtime/testing/module-contract';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import {
@@ -50,6 +53,7 @@ import { Socket } from 'effect/socket';
 
 const commerceAppId = 'commerce-customer-context';
 const commerceModuleId = 'commerce.customer-context';
+const temporalBundleDirectory = 'target-price-group-temporal';
 export const priceGroupTemporalProtocol = 'ontos.customer-price-group-temporal.fixture.v1' as const;
 const CreatedCatalogResponseTypeSchema = Schema.Literals(['CREATED_G1', 'CREATED_G2', 'CREATED_INCOMPATIBLE']);
 const bounded = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000));
@@ -222,7 +226,7 @@ export const guardPriceGroupPreparedArtifact = Effect.fn('PriceGroupTemporal.gua
     const path = yield* Path.Path;
     const entry = createRequire(new URL('../../package.json', import.meta.url)).resolve(ownerSpecifiers[owner]);
     const directory = yield* fs.realPath(path.dirname(path.dirname(path.dirname(entry))));
-    const cache = yield* fs.realPath(path.join(directory, '.cache/ontos-1248'));
+    const cache = yield* fs.realPath(path.join(directory, temporalBundleDirectory));
     const actualPath = yield* fs.realPath(artifact.artifact);
     yield* requireCondition(
       path.dirname(actualPath) === cache && /^[a-f0-9-]{36}\.mjs$/u.test(path.basename(actualPath)),
@@ -548,40 +552,23 @@ export const makePriceGroupTemporalComposition = Effect.fn('TemporalNative.actua
       readonly marker: { readonly appId: string; readonly buildMarker: string };
     }[],
   ) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const appDirectory = fileURLToPath(new URL('../../../../', import.meta.url));
-    const shellDirectory = path.join(appDirectory, 'apps/shell-super-app');
-    const shellRuntimeDocument = yield* fs.readFileString(
-      path.join(shellDirectory, 'dist/public/.well-known/ontos-shell-runtime.json'),
+    // Core's public native-operation fixture supplies the TEST Shell capability contract. The
+    // owner contracts below are still derived from their real declarations, never empty stand-ins.
+    // No browser build or deployed Shell artifact is claimed by this private transport fixture.
+    const { snapshot: initial } = yield* makeOwnerApplicationCompositionFixture({
+      appId: commerceAppId,
+      ownerRegistration: commerceCustomerContextRegistration,
+    });
+    const shellRuntime = {
+      contributionAbi: initial.composition.shell.contributionAbi,
+      coreCapabilities: initial.composition.shell.coreCapabilities,
+      deployment: initial.composition.shell.deployment,
+      schemaVersion: '2' as const,
+    };
+    const shellRuntimeDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+      shellRuntime,
     );
-    const shellRuntime = yield* Schema.decodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
-      shellRuntimeDocument,
-    );
-    // The isolated fixture consumes the real compiled Shell output, without claiming a promotable release.
-    const shellFederationDocument = yield* fs.readFileString(path.join(shellDirectory, 'dist/mf-manifest.json'));
-    const shellFederation = yield* Schema.decodeEffect(
-      Schema.fromJsonString(
-        Schema.Struct({
-          shared: Schema.Array(
-            Schema.Struct({
-              name: Schema.NonEmptyString,
-              requiredVersion: Schema.optionalKey(Schema.NonEmptyString),
-              singleton: Schema.optionalKey(Schema.Boolean),
-            }),
-          ),
-        }),
-      ),
-    )(shellFederationDocument);
-    const shellSingletons = yield* Effect.forEach(
-      shellFederation.shared.filter(({ singleton }) => singleton === true),
-      Effect.fn(function* versionedPublishedSingleton(entry) {
-        if (entry.requiredVersion === undefined) {
-          return yield* failure('actual-shell-singleton-version');
-        }
-        return { packageName: entry.name, version: entry.requiredVersion };
-      }),
-    );
+    const shellFederationDocument = '{"name":"shell","shared":[]}';
     const documents = yield* Effect.forEach(
       owners,
       ({ contract, marker }) =>
@@ -624,8 +611,8 @@ export const makePriceGroupTemporalComposition = Effect.fn('TemporalNative.actua
           contract.deployment.appId === marker.appId && contract.deployment.buildMarker === marker.buildMarker,
           'actual-owner-build',
         );
-        const initial = yield* makeApplicationCompositionSnapshotFixture([marker.appId], marker.buildMarker);
-        const [module] = initial.composition.modules;
+        const ownerFixture = yield* makeApplicationCompositionSnapshotFixture([marker.appId], marker.buildMarker);
+        const [module] = ownerFixture.composition.modules;
         const document = documents.find(({ appId }) => appId === marker.appId);
         if (module === undefined || document === undefined) {
           return yield* failure('actual-owner-module');
@@ -664,7 +651,6 @@ export const makePriceGroupTemporalComposition = Effect.fn('TemporalNative.actua
       }),
       { concurrency: 1 },
     );
-    const initial = yield* makeApplicationCompositionSnapshotFixture([]);
     const composition = {
       ...initial.composition,
       modules,
@@ -681,7 +667,7 @@ export const makePriceGroupTemporalComposition = Effect.fn('TemporalNative.actua
           sha256: yield* temporalDigest(shellRuntimeDocument),
           url: `http://127.0.0.1:${address.port}/shell-super-app/ontos-shell-runtime.json`,
         },
-        sharedSingletons: shellSingletons,
+        sharedSingletons: initial.composition.shell.sharedSingletons,
       },
     };
     return yield* validateActiveApplicationCompositionSnapshot({
@@ -710,10 +696,15 @@ export const describePriceGroupTemporalOwner = Effect.fn('TemporalNative.describ
     const directory = path.dirname(path.dirname(path.dirname(entryPath)));
     const { buildIdentity, contract } = yield* temporalContract(directory, owner);
     const encode = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
-    const cache = path.join(directory, '.cache/ontos-1248');
+    const cache = path.join(directory, temporalBundleDirectory);
     yield* fs.makeDirectory(cache, { recursive: true });
     const artifact = path.join(cache, `${yield* nextId}.mjs`);
     yield* Effect.addFinalizer(() => Effect.orDie(fs.remove(artifact, { force: true })));
+    // The receiver holds its module key in the same credential store copy its owner code reads through the external
+    // `@app/core-runtime`: the store stays an external file, never a second inlined copy nobody reads.
+    const credentialStore = yield* fs.realPath(
+      path.resolve(directory, '../../packages/core-runtime/src/auth/hosted-module-credential-store.ts'),
+    );
     const bundle = yield* ChildProcess.make(
       '../../node_modules/esbuild/bin/esbuild',
       [
@@ -722,6 +713,7 @@ export const describePriceGroupTemporalOwner = Effect.fn('TemporalNative.describ
         '--platform=node',
         '--format=esm',
         '--packages=external',
+        `--external:${credentialStore}`,
         `--define:ULTRAMODERN_BUILD_MARKER=${yield* encode(buildIdentity.buildMarker)}`,
         `--define:ULTRAMODERN_SOURCE_REVISION=${yield* encode(buildIdentity.sourceRevision)}`,
         `--outfile=${artifact}`,

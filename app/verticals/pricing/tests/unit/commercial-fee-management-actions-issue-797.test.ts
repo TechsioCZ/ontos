@@ -748,8 +748,8 @@ describe('Commercial Fee management Actions issue #797', () => {
                 scope: verifiedTestScope({
                   correlationId: trusted.requestCorrelationId,
                   legalEntityId,
-                  principalId: trusted.actingPrincipalId,
-                  tenantId: trusted.tenantId,
+                  principalId,
+                  tenantId,
                 }),
               },
               execute: (payload, credential, requestCorrelation, options) =>
@@ -760,6 +760,7 @@ describe('Commercial Fee management Actions issue #797', () => {
                     payload,
                     requestCorrelation,
                   });
+                  // SAFETY: This fixture deliberately returns malformed owner evidence to verify rejection before persistence.
                   return response as CatalogSnapshotResponse;
                 }),
             }),

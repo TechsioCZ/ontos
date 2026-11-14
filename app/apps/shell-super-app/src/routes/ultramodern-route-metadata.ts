@@ -8,9 +8,13 @@ import { routeMeta as route5 } from './[lang]/access/roles/route.meta';
 import { routeMeta as route6 } from './[lang]/access/why/route.meta';
 import { routeMeta as route7 } from './[lang]/login/route.meta';
 import { routeMeta as route8 } from './[lang]/modules/[moduleId]/route.meta';
-import { routeMeta as route9 } from './[lang]/resources/[moduleId]/[resourceType]/[resourceId]/route.meta';
-import { routeMeta as route10 } from './[lang]/route.meta';
-import { routeMeta as route11 } from './[lang]/search/route.meta';
+import { routeMeta as route9 } from './[lang]/pripojit/route.meta';
+import { routeMeta as route10 } from './[lang]/pripojit/souhlas/route.meta';
+import { routeMeta as route11 } from './[lang]/profile/route.meta';
+import { routeMeta as route12 } from './[lang]/resources/[moduleId]/[resourceType]/[resourceId]/route.meta';
+import { routeMeta as route13 } from './[lang]/route.meta';
+import { routeMeta as route14 } from './[lang]/search/route.meta';
+import { routeMeta as route15 } from './[lang]/set-password/route.meta';
 
 export const ultramodernRouteNamespace = route0.namespace;
 export const ultramodernRouteMetadata = [
@@ -26,6 +30,10 @@ export const ultramodernRouteMetadata = [
   route9,
   route10,
   route11,
+  route12,
+  route13,
+  route14,
+  route15,
 ] as const;
 export const ultramodernLocalisedUrls = Object.fromEntries(
   ultramodernRouteMetadata

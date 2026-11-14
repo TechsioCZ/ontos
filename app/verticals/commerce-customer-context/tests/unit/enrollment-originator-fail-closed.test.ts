@@ -1,11 +1,12 @@
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
-import { DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ExternalIdentityClient } from '../../../../packages/shared-contracts/src/external-identity-client.ts';
 import type { ExternalIdentityClientPort } from '../../../../packages/shared-contracts/src/external-identity-client.ts';
 import { CommercePortalAuthAccountLookupService } from '../../api/portal-auth/provider/account-lookup-service.ts';
 import { CommercePortalAuthAccountCreationReconciliationService } from '../../api/portal-auth/provider/account-creation-reconciliation-service.ts';
+import { makeCommerceTenantWorkloadCredentials } from '../../api/tenant-workload-credentials.ts';
 import { CommerceCoreIdentityClientConfig } from '../../api/portal-auth/provider/core-identity-client-config.ts';
 import { CommerceEnrollmentAttemptRejected } from '../../src/enrollment/attempts/errors.ts';
 import {
@@ -113,13 +114,14 @@ const registryLive = CommerceEnrollmentOwnerEffectRegistryLive.pipe(
     Layer.mergeAll(
       Layer.succeed(ExternalIdentityClient, coreClient),
       Layer.succeed(CommerceCoreIdentityClientConfig, {
-        apiKey: Redacted.make('enrollment-originator-fail-closed'),
         baseUrl: 'https://core-identity.invalid',
+        credentials: makeCommerceTenantWorkloadCredentials({}),
       }),
       Layer.succeed(CommercePortalAuthAccountLookupService, {
         existsByEmail: unreachable('existsByEmail'),
         existsByProviderSubject: unreachable('existsByProviderSubject'),
         subjectForOwnerInvocation: unreachable('subjectForOwnerInvocation'),
+        verifiedEmailForOwnerInvocation: unreachable('verifiedEmailForOwnerInvocation'),
       }),
       Layer.succeed(CommercePortalAuthAccountCreationReconciliationService, {
         reissueVerificationEmail: unreachable('reissueVerificationEmail'),

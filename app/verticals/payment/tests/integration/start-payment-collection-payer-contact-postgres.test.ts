@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
@@ -84,7 +85,7 @@ const setup = Effect.fn('PayerContact.setup')(function* setup() {
   const scope = yield* makeTestScope;
   yield* seedCoreScope({ coreAdmin, database: coreDatabase, runtimeClient }, scope);
   yield* paymentDatabase.transaction((transaction) =>
-    installOperationalScope(transaction, operationalScopeOf(scope)).pipe(
+    installOperationalScope(transaction, operationalScopeOf(scope), defineDatabaseIdentityEnrollment([])).pipe(
       Effect.flatMap((scoped) =>
         paymentApplicabilityPersistenceForTransaction(scoped).configureEnablement({
           customerConfigurationId: CUSTOMER_CONFIGURATION,

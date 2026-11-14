@@ -22,6 +22,7 @@ import type { TaxOutcomeSuccessSchema } from '../../shared/domain/tax-kernel/tax
 export const TAX_SCHEMA_NAME = 'tax';
 
 export const TAX_TABLE_INVENTORY = [
+  'gateway_assertion_redemptions',
   'tax_rules',
   'tax_rule_revisions',
   'tax_rule_revision_end_facts',
@@ -32,7 +33,7 @@ export const TAX_TABLE_INVENTORY = [
 
 export const taxSchema = pgSchema(TAX_SCHEMA_NAME);
 
-/** One-use assertion replay evidence written before the authenticated Tenant scope is installed. */
+/** Global pre-authentication replay identities, independent of Tenant/SLE business rows. */
 export const gatewayAssertionRedemptions = taxSchema.table(
   'gateway_assertion_redemptions',
   {
@@ -351,6 +352,7 @@ const databaseSchema = {
 } as const;
 
 export const TAX_TABLES = [
+  gatewayAssertionRedemptions,
   taxRules,
   taxRuleRevisions,
   taxRuleRevisionEndFacts,

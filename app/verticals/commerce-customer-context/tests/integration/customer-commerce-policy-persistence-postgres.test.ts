@@ -1,3 +1,4 @@
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { randomUUID } from 'node:crypto';
@@ -31,6 +32,8 @@ import { createCounterpartyPurchasingProfileAction } from '../../src/actions/cre
 import { suspendCustomerProfileAction } from '../../src/actions/suspend-customer-profile.action.ts';
 import { archiveCustomerProfileAction } from '../../src/actions/archive-customer-profile.action.ts';
 import { PartyRegistryRetailPartyResolverFactory } from '../../src/integrations/party-registry-retail-party-resolver.ts';
+import { RetailPartyDetailExecutor } from '../../src/integrations/retail-party-detail-executor.ts';
+import { PartyDetailResponseSchema } from '@app/party-registry/api/client';
 import { ProfileCounterpartyRoleEligibilityResolverFactory } from '../../src/profile-counterparty-role-eligibility.ts';
 import { partyRegistryGuestResolverFactoryLive } from '../../src/integrations/party-registry-guest-resolver.ts';
 import {
@@ -52,6 +55,7 @@ import { Reactivity } from 'effect/reactivity';
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
 import type { CommerceCustomerContextTransaction } from '../../src/database/types.ts';
 import { customerCommercePolicyRepositoryForScope } from '../../src/persistence/customer-commerce-policy-persistence.ts';
+import { observedEligibleCounterpartyRole } from '../support/observed-counterparty-role.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -113,37 +117,55 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
   // Unknown input fails closed. CCC identities are produced by the registered Actions below;
   // this fixture makes no claim about Party producer correctness or transport availability.
   const owners = Layer.mergeAll(
-    Layer.succeed(PartyRegistryRetailPartyResolverFactory, {
-      make:
-        ({ scope }) =>
-        (request) =>
-          Effect.succeed(
-            scope.tenantId === fixture.tenantId &&
-              request.tenantId === fixture.tenantId &&
-              partyIds.has(request.partyResourceId)
-              ? {
-                  outcome: 'CURRENT_PARTY_RESOLVED' as const,
-                  partyResourceId: request.partyResourceId,
-                  partyResourceRevision: '1',
-                }
-              : { outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' as const },
-          ),
+    Layer.succeed(RetailPartyDetailExecutor, {
+      execute: ({ partyRef }) =>
+        Effect.succeed(
+          Schema.decodeUnknownSync(PartyDetailResponseSchema)({
+            currentFactAssertions: [],
+            factHistory: [],
+            party: {
+              archivedAt:
+                partyRef.tenantId === fixture.tenantId && partyIds.has(partyRef.resourceId)
+                  ? null
+                  : '2020-01-01T00:00:00.000Z',
+              createdAt: '2020-01-01T00:00:00.000Z',
+              displayName: 'Retail fixture',
+              partyRef,
+              partyType: 'PERSON',
+              revision: 1,
+              updatedAt: '2020-01-01T00:00:00.000Z',
+            },
+            resolution: { aliasChain: [], canonicalPartyRef: partyRef, kind: 'DIRECT', requestedPartyRef: partyRef },
+          }),
+        ),
     }),
-    Layer.succeed(ProfileCounterpartyRoleEligibilityResolverFactory, {
+    Layer.succeed(PartyRegistryRetailPartyResolverFactory, {
       make: (scope) => (request) =>
         Effect.succeed(
-          request.tenantId === fixture.tenantId &&
-            scope.tenantId === fixture.tenantId &&
-            request.counterpartyResourceId === counterpartyId &&
-            [fixture.legalEntityId, secondary.legalEntityId].includes(scope.legalEntityId)
+          scope.tenantId === fixture.tenantId &&
+            request.tenantId === fixture.tenantId &&
+            partyIds.has(request.partyResourceId)
             ? {
-                managedLegalEntityId: scope.legalEntityId,
-                outcome: 'ELIGIBLE' as const,
-                roleResourceId: roleId,
-                roleResourceRevision: '2026-01-01T00:00:00.000Z',
+                outcome: 'CURRENT_PARTY_RESOLVED' as const,
+                partyResourceId: request.partyResourceId,
+                partyResourceRevision: '1',
               }
-            : { outcome: 'INDETERMINATE' as const },
+            : { outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' as const },
         ),
+    }),
+    Layer.succeed(ProfileCounterpartyRoleEligibilityResolverFactory, {
+      // Observed like the production resolver: an ELIGIBLE answer is usable for at most 30 seconds.
+      make: (scope) => (request) =>
+        request.tenantId === fixture.tenantId &&
+        scope.tenantId === fixture.tenantId &&
+        request.counterpartyResourceId === counterpartyId &&
+        [fixture.legalEntityId, secondary.legalEntityId].includes(scope.legalEntityId)
+          ? observedEligibleCounterpartyRole({
+              managedLegalEntityId: scope.legalEntityId,
+              roleResourceId: roleId,
+              roleResourceRevision: '2026-01-01T00:00:00.000Z',
+            })
+          : Effect.succeed({ outcome: 'INDETERMINATE' as const }),
     }),
     partyRegistryGuestResolverFactoryLive,
     profileReactivationEligibilityEvaluatorFactoryLive.pipe(Layer.provide(profileReconfirmationPolicyUnavailableLive)),
@@ -1130,7 +1152,7 @@ const runOwnedPolicyAcceptance = Effect.fn('QuantityProfileAdmissionTests.ownedP
     // The one gate answers the scope questions now (CUTOVER-PLAN §3.1): the retired ContextAccess
     // port is gone, so the suite scripts the allowed scope decision directly.
     const replacementScope = yield* makeOperationalScopeResolver(
-      makeOperationalScopeRepository({ executor: coreRuntime }),
+      makeOperationalScopeRepository({ executor: coreRuntime }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
       makeTestOperationalScopeAccess(),
     ).pipe(
       Effect.flatMap((resolver) =>

@@ -1,0 +1,10 @@
+zdroj;id_objednavky;cislo_objednavky;datum_objednavky;id_zakaznika;nazev_zakaznika;ico_zakaznika;email_zakaznika;castka;mena;stav;cas_udalosti;id_udalosti;polozky
+E-shop;100266;;;;;;;;;dorucena;2026-10-18T10:05:00+02:00;e100266-3;
+E-shop;100270;;;;;;;;;odeslana;2026-10-15T13:00:00+02:00;e100270-3;
+E-shop;100281;;;;;;;;;odeslana;2026-10-14T08:00:00+02:00;e100281-3;
+E-shop;100288;;;;;;;;;stornovana;2026-10-17T16:20:00+02:00;e100288-2;
+E-shop;100290;;;;;;;;;zaplacena;2026-10-18T09:00:00+02:00;e100290-2;
+Účetní systém;UO-26-0125;;;;;;;;;Vyřízená;2026-10-10T12:00:00+02:00;u125-2;
+E-shop;100285;;;;;;;;;nova;2026-10-14T07:00:00+02:00;e100285-1;
+E-shop;100281;OBJ-2026-0281;2026-10-12;ESH-1006;Zámecká restaurace;90000108;kuchyne@zamecka-restaurace.demo;6720.00;CZK;zaplacena;2026-10-12T18:30:00+02:00;e100281-2;
+E-shop;100293;OBJ-2026-0293;2026-10-19;ESH-1003;Hotel Podhradí a.s.;90000104;recepce@hotel-podhradi.demo;12640.00;CZK;nova;2026-10-19T10:15:00+02:00;e100293-1;MAS-5:Máslo 82 % 5 kg:4:5800.00|OLE-10:Olej řepkový 10 l:6:2940.00|MOU-T650:Mouka pšeničná hladká T650 25 kg:8:3900.00

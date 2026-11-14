@@ -1,8 +1,18 @@
 import { randomUUID } from 'node:crypto';
 
-import { ContextAccess, ContextAccessLive, DatabaseConfigLive, PrincipalResolver } from '@app/core-runtime';
-import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
-import { ResendEmailDeliveryConfig } from '@app/email-delivery/resend';
+import {
+  ContextAccessLive,
+  CorePersistenceLive,
+  DatabaseConfig,
+  DatabaseConfigLive,
+  OAuthAuthenticationAuditLive,
+  OAuthGrantRegistryLive,
+  PrincipalResolver,
+  SHARED_RUNTIME_IDENTITY,
+} from '@app/core-runtime';
+import { AccessDecisionGate } from '../../../../packages/core-runtime/src/access/enforcement/contract.ts';
+import { makeScriptedBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
+import { localEmailDeliveryLive } from '../support/local-email-delivery.ts';
 import { eq } from 'drizzle-orm';
 import { Config, Effect, Layer, Redacted } from 'effect';
 import type { Scope } from 'effect';
@@ -21,11 +31,23 @@ import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/co
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import { session as portalSession, user as portalUser } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import { AuthConfig, loadAuthConfig } from '../../../../apps/shell-super-app/api/auth/config.ts';
-import { AuthDatabase, makeAuthDatabase } from '../../../../apps/shell-super-app/api/auth/db/client.ts';
+import {
+  AuthDatabase,
+  BetterAuthNativeAdapterLive,
+  makeAuthDatabase,
+} from '../../../../apps/shell-super-app/api/auth/db/client.ts';
 import { session as staffSession, user as staffUser } from '../../../../apps/shell-super-app/api/auth/db/schema.ts';
+import { OAuthCredentialsLive } from '../../../../apps/shell-super-app/api/auth/db/oauth-credentials-live.ts';
+import { BetterAuthFrameworkLive } from '../../../../apps/shell-super-app/api/auth/better-auth-framework.ts';
+import { BetterAuthRuntimeLive } from '../../../../apps/shell-super-app/api/auth/better-auth-runtime.ts';
+import { ShellCryptoLive } from '../../../../apps/shell-super-app/api/auth/gateway-issuer.ts';
+import { OAuthEndpointGuardsLive } from '../../../../apps/shell-super-app/api/auth/oauth-server/endpoint-guards.ts';
 import { makeAuthenticationService } from '../../../../apps/shell-super-app/api/auth/service.ts';
 import type { AuthenticationService } from '../../../../apps/shell-super-app/api/auth/service.ts';
+import { OAuthConnectionHooksLive } from '../../../../apps/shell-super-app/api/oauth-connections/better-auth-hooks.ts';
+import { OAuthEndpointGuardDataLive } from '../../../../apps/shell-super-app/api/oauth-connections/grant-store.ts';
 import { makePrincipalResolverDouble } from '../../../../apps/shell-super-app/tests/support/identity-service-doubles.ts';
+import { testAgentConnectionStoreLive } from '../../../../apps/shell-super-app/tests/support/shell-authentication.ts';
 import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 /**
@@ -54,30 +76,6 @@ const portalConfiguration = Effect.gen(function* portalConfiguration() {
   });
 });
 
-const emailDeliveryConfiguration = Layer.succeed(ResendEmailDeliveryConfig, {
-  apiKey: Redacted.make('re_commerce_portal_auth_cross_realm_test'),
-  endpoint: 'https://api.resend.com/emails',
-  from: 'no-reply@commerce.example.test',
-});
-
-const allowedContextResults = (keys: readonly string[]) =>
-  Effect.succeed(keys.map((key) => ({ decision: 'allowed' as const, key })));
-
-const openContextAccess = Layer.mergeAll(
-  Layer.succeed(ContextAccess, {
-    legalEntities: ({ legalEntityIds }) => allowedContextResults(legalEntityIds),
-    modules: ({ moduleIds }) => allowedContextResults(moduleIds),
-    resources: ({ resources }) =>
-      allowedContextResults(
-        resources.map(({ moduleId, resourceId, resourceType }) => `${moduleId}:${resourceType}:${resourceId}`),
-      ),
-    tenants: ({ tenantIds }) => allowedContextResults(tenantIds),
-  }),
-  // The staff realm's authentication service asks the one v2 gate (CUTOVER-PLAN §3.1); the
-  // cross-realm admission under test is decided by the token's own realm, not by this answer.
-  Layer.succeed(AccessDecisionGate, makeTestAccessDecision({ defaultAnswer: { outcome: 'ALLOWED' } })),
-);
-
 const cookieHeader = (setCookieHeaders: readonly string[]): string =>
   setCookieHeaders.map((header) => header.split(';')[0]).join('; ');
 
@@ -91,7 +89,11 @@ const portalRuntime = Effect.acquireRelease(
       configuredGatewayAssertionRedemptionLive,
       commercePortalAuthRealmLive.pipe(
         Layer.provideMerge(
-          Layer.mergeAll(Layer.succeed(CommercePortalAuthConfig, configuration), emailDeliveryConfiguration),
+          Layer.mergeAll(
+            Layer.succeed(CommercePortalAuthConfig, configuration),
+            // Provider mail stays local: the realm sends with the context it captured, never the real API.
+            localEmailDeliveryLive([]),
+          ),
         ),
       ),
       Layer.empty,
@@ -198,25 +200,49 @@ const makeStaffSession = Effect.fnUntraced(function* makeStaffSession(
 });
 
 const shellAuthentication = Effect.fnUntraced(function* shellAuthentication() {
-  const configuration = yield* loadAuthConfig();
-  const database = yield* acquireOutlivingCleanup(makeAuthDatabase(configuration));
-  const authentication = yield* makeAuthenticationService({ allowFixtureSignUp: true }).pipe(
-    Effect.provideService(AuthConfig, configuration),
-    Effect.provideService(AuthDatabase, database),
-    Effect.provideService(
-      PrincipalResolver,
-      makePrincipalResolverDouble({
-        resolveDefaultBetterAuthUser: () =>
-          Effect.succeed({
-            authBindingId: randomUUID(),
-            displayName: 'Cross-realm staff',
-            principalId: randomUUID(),
-            principalKind: 'human' as const,
-            tenantId: randomUUID(),
+  const configuration = yield* loadAuthConfig({ envPath: '/dev/null' });
+  const databaseConfiguration = {
+    connectionString: configuration.connectionString,
+    expectedRole: SHARED_RUNTIME_IDENTITY.role,
+  };
+  const database = yield* acquireOutlivingCleanup(makeAuthDatabase(databaseConfiguration));
+  const authenticationDependencies = Layer.mergeAll(
+    BetterAuthRuntimeLive,
+    BetterAuthNativeAdapterLive,
+    OAuthAuthenticationAuditLive,
+    OAuthEndpointGuardDataLive,
+    OAuthConnectionHooksLive.pipe(Layer.provide(OAuthGrantRegistryLive)),
+  ).pipe(
+    Layer.provide(Layer.mergeAll(OAuthGrantRegistryLive, OAuthCredentialsLive, testAgentConnectionStoreLive)),
+    Layer.provide(CorePersistenceLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, databaseConfiguration)))),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        ShellCryptoLive,
+        Layer.succeed(AuthConfig, configuration),
+        Layer.succeed(AuthDatabase, database),
+        Layer.succeed(
+          PrincipalResolver,
+          makePrincipalResolverDouble({
+            resolveDefaultBetterAuthUser: () =>
+              Effect.succeed({
+                authBindingId: randomUUID(),
+                displayName: 'Cross-realm staff',
+                principalId: randomUUID(),
+                principalKind: 'human' as const,
+                tenantId: randomUUID(),
+              }),
           }),
-      }),
+        ),
+      ),
     ),
   );
+  const framework = BetterAuthFrameworkLive({ allowFixtureSignUp: true }).pipe(
+    Layer.provideMerge(authenticationDependencies),
+  );
+  const guards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(framework));
+  // Retained service callbacks must keep the real framework, guards and pools alive for the test scope.
+  const context = yield* Layer.build(guards);
+  const authentication = yield* makeAuthenticationService().pipe(Effect.provideContext(context));
   return { authentication, database };
 });
 
@@ -255,12 +281,15 @@ it.live('refuses a Commerce portal session presented to the staff Shell realm', 
       const shell = yield* shellAuthentication();
       const customer = yield* makePortalSession(runtime);
 
+      const deniedGate = makeScriptedBoundAccessGate('denied');
       const current = yield* shell.authentication
         .currentSession(new Headers({ cookie: customer.cookie, origin: SHELL_ORIGIN }))
-        .pipe(Effect.provide(openContextAccess));
+        .pipe(Effect.provideService(AccessDecisionGate, deniedGate.accessDecision));
 
       // The staff realm does not know this token: it resolves no identity and grants no admission.
       expect(current.identity).toBeNull();
+      expect(deniedGate.accessDecision.askedDecisions).toEqual([]);
+      expect(deniedGate.accessDecision.askedLists).toEqual([]);
     }),
   ),
 );

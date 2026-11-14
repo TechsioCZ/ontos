@@ -68,6 +68,7 @@ export const bootstrapInternalC14PriceInputFacts = Effect.fn('InternalC14PriceIn
       input.market.options,
     ).pipe(Effect.mapError(unavailable));
     if (
+      !('marketRef' in market) ||
       market.marketRef.moduleId !== 'commerce.market-catalog' ||
       market.marketRef.resourceType !== 'commerce.market-catalog.market' ||
       market.marketRef.resourceId !== input.market.payload.marketId ||

@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import { Context, Effect, Layer, Option, Schema } from 'effect';
 
 import { CoreDatabase } from '../../db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../db/database-identities.ts';
 import { accessMemberships } from '../../db/schema.ts';
 import type { CoreTransaction } from '../../db/types.ts';
 import type { OperationalScope } from '../../operations/context.ts';
@@ -203,8 +204,13 @@ const insertValues = (membership: AccessMembership) => ({
   validUntil: membership.validUntil ?? null,
 });
 
-const writeMemberships = (
-  transaction: CoreTransaction,
+/**
+ * The canonical insert inside a transaction Core already owns and has scoped. Verified identity
+ * acceptance uses this same writer without manufacturing an OperationalScope or opening another
+ * connection; its caller proves attribution and plans the memberships before entering this seam.
+ */
+export const writeAccessMembershipsFromTransaction = (
+  transaction: Pick<CoreTransaction, 'insert'>,
   memberships: readonly AccessMembership[],
 ): Effect.Effect<void, AccessIntentError> =>
   memberships.length === 0
@@ -259,7 +265,7 @@ export const makeAccessMembershipDrizzleStore = (database: AccessIntentDatabase)
     const issue = commandIssue(scope, memberships);
     return issue === null
       ? runScoped(database, scope, OWNER_UNIQUE_CONSTRAINTS, (transaction) =>
-          writeMemberships(transaction, memberships),
+          writeAccessMembershipsFromTransaction(transaction, memberships),
         )
       : Effect.fail(intentConflict(issue.code, issue.reason));
   };
@@ -349,6 +355,7 @@ export const AccessMembershipStoreLive = Layer.effect(
   AccessMembershipStore,
   Effect.gen(function* accessMembershipStoreLayer() {
     const database = yield* CoreDatabase;
-    return makeAccessMembershipDrizzleStore(database);
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
+    return makeAccessMembershipDrizzleStore({ enrollment, executor: database.executor });
   }),
 );

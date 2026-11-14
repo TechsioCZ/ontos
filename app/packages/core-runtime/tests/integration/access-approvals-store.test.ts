@@ -36,6 +36,7 @@ import {
   replacedDatabase,
 } from '../support/access-scenarios/database.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 /*
  * The approvals store is the only writer of a proposal's lifecycle, of the approval record that makes
@@ -145,7 +146,7 @@ const seedFixtures = (admin: PgClient.PgClient): Effect.Effect<Fixtures> =>
  * it. Dropping it is the cleanup: no other suite shares a row with this one.
  */
 const approvalsDatabase = Effect.gen(function* approvalsDatabaseEffect() {
-  const connections = yield* loadDatabaseConnectionPair();
+  const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
   const crypto = yield* Crypto.Crypto;
   // Two connections per client: the suite creates one database per test, so the pools stay small
   // enough that every test can hold its own fixture without starving the server's connection budget.
@@ -163,7 +164,10 @@ const approvalsDatabase = Effect.gen(function* approvalsDatabaseEffect() {
     maxConnections: 2,
   });
   const database = yield* makeTestDatabaseFromClient(runtime, coreRelations);
-  const store = makeDrizzleApprovalStore({ executor: database }, crypto);
+  const store = makeDrizzleApprovalStore(
+    { enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT, executor: database },
+    crypto,
+  );
   return { admin, store };
 });
 

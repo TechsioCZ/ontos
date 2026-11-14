@@ -1,88 +1,150 @@
 import {
+  startGatewayAssertionRedemptionCleanup,
   recoverSqlTransactionError,
   DatabaseConfig,
   GatewayAssertionRedemptionService,
   GatewayAssertionRedemptionUnavailableError,
   GatewayAssertionReplayError,
   configureDatabasePool,
+  openDatabaseClient,
 } from '@app/core-runtime';
-import type { GatewayAssertionRedemption, GatewayAssertionRedemptionInput } from '@app/core-runtime';
+import type {
+  DatabasePoolDeadlines,
+  GatewayAssertionRedemption,
+  GatewayAssertionRedemptionInput,
+} from '@app/core-runtime';
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
-import { PgClient } from '@effect/sql-pg';
+import type { PgClient } from '@effect/sql-pg';
 import { defineRelations, lt } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
+import type { Scope } from 'effect';
 import { Clock, Context, DateTime, Duration, Effect, Layer, Redacted } from 'effect';
-import { inventoryGatewayAssertionRedemptions as gatewayAssertionRedemptions } from '../persistence/gateway-assertion-redemption-table.ts';
+import type { Reactivity } from 'effect/reactivity';
 
-const relations = defineRelations({ gatewayAssertionRedemptions });
-export type InventoryRedemptionExecutor = EffectPgDatabase<typeof relations>;
-class InventoryRedemptionDatabase extends Context.Service<
-  InventoryRedemptionDatabase,
-  { readonly executor: InventoryRedemptionExecutor }
->()('@app/inventory/auth/gateway-assertion-redemption-runtime/InventoryRedemptionDatabase') {}
-const replay = () => new GatewayAssertionReplayError({ reason: 'The Bearer assertion is no longer usable' });
-const unavailable = (cause?: unknown) =>
-  Object.defineProperty(
-    new GatewayAssertionRedemptionUnavailableError({ reason: 'Bearer assertion redemption is unavailable' }),
-    'cause',
-    { value: Redacted.make(cause) },
-  );
-/** Signature/audience verification precedes this atomic owner-local replay gate. */
-export const makeGatewayAssertionRedemption = (executor: InventoryRedemptionExecutor): GatewayAssertionRedemption => ({
-  consume: Effect.fn('InventoryGatewayAssertionRedemption.consume')(function* consume(
+import { inventoryGatewayAssertionRedemptions as gatewayAssertionRedemptions } from '../database/schema.ts';
+
+const inventoryGatewayAssertionRedemptionRelations = defineRelations({ gatewayAssertionRedemptions });
+
+export type InventoryGatewayAssertionRedemptionDatabaseExecutor = EffectPgDatabase<
+  typeof inventoryGatewayAssertionRedemptionRelations
+>;
+
+class InventoryGatewayAssertionRedemptionDatabase extends Context.Service<
+  InventoryGatewayAssertionRedemptionDatabase,
+  { readonly executor: InventoryGatewayAssertionRedemptionDatabaseExecutor }
+>()('@app/inventory/auth/gateway-assertion-redemption-runtime/InventoryGatewayAssertionRedemptionDatabase') {}
+
+const replayError = () =>
+  new GatewayAssertionReplayError({
+    reason: 'The Bearer assertion is no longer usable',
+  });
+
+const unavailableError = (cause?: unknown) => {
+  const error = new GatewayAssertionRedemptionUnavailableError({
+    reason: 'Bearer assertion redemption is unavailable',
+  });
+  return cause === undefined
+    ? error
+    : Object.defineProperty(error, 'cause', {
+        configurable: false,
+        enumerable: false,
+        value: cause,
+        writable: false,
+      });
+};
+
+const REDEMPTION_TIMEOUT = Duration.seconds(5);
+
+const redeemAssertion = (
+  executor: InventoryGatewayAssertionRedemptionDatabaseExecutor,
+  input: GatewayAssertionRedemptionInput,
+  expiresAt: Date,
+) =>
+  executor
+    .insert(gatewayAssertionRedemptions)
+    .values({
+      audience: input.audience,
+      expiresAt,
+      issuer: input.issuer,
+      jti: input.jti,
+    })
+    .onConflictDoNothing()
+    .returning({ jti: gatewayAssertionRedemptions.jti });
+
+const makeGatewayAssertionRedemption = (
+  executor: InventoryGatewayAssertionRedemptionDatabaseExecutor,
+): GatewayAssertionRedemption => ({
+  consume: Effect.fn('InventoryGatewayAssertionRedemption.consume')(function* consumeGatewayAssertionEffect(
     input: GatewayAssertionRedemptionInput,
   ) {
-    const now = yield* Clock.currentTimeMillis;
-    if (
-      input.audience !== 'inventory' ||
-      input.expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS <= Math.floor(now / 1000)
-    ) {
-      return yield* replay();
+    const nowEpochMs = yield* Clock.currentTimeMillis;
+    // Verification can finish after its captured clock passes the assertion's skew window.
+    // Reject without modifying the durable replay evidence.
+    if (input.expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS <= Math.floor(nowEpochMs / 1000)) {
+      return yield* replayError();
     }
-    const expiredBefore = DateTime.toDateUtc(DateTime.makeUnsafe(now - GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS * 1000));
     const expiresAt = DateTime.toDateUtc(DateTime.makeUnsafe(input.expiresAtEpochSeconds * 1000));
-    const inserted = yield* executor
-      .transaction(
-        Effect.fn('InventoryGatewayAssertionRedemption.redeem')(function* redeem(transaction) {
-          yield* transaction
-            .delete(gatewayAssertionRedemptions)
-            .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore));
-          return yield* transaction
-            .insert(gatewayAssertionRedemptions)
-            .values({
-              audience: input.audience,
-              expiresAt,
-              issuer: input.issuer,
-              jti: input.jti,
-            })
-            .onConflictDoNothing()
-            .returning({ jti: gatewayAssertionRedemptions.jti });
-        }),
-      )
-      .pipe(
-        recoverSqlTransactionError,
-        Effect.mapError(unavailable),
-        Effect.timeoutOrElse({ duration: Duration.seconds(5), orElse: () => Effect.fail(unavailable()) }),
-      );
+    const inserted = yield* redeemAssertion(executor, input, expiresAt).pipe(
+      recoverSqlTransactionError,
+      Effect.mapError(unavailableError),
+      Effect.timeoutOrElse({
+        duration: REDEMPTION_TIMEOUT,
+        orElse: () => Effect.fail(unavailableError()),
+      }),
+    );
     if (inserted.length !== 1) {
-      return yield* replay();
+      return yield* replayError();
     }
     return yield* Effect.void;
   }),
 });
-export const gatewayAssertionRedemptionPgClient = Effect.gen(function* client() {
-  const configuration = yield* DatabaseConfig;
-  const pool = yield* configureDatabasePool(Redacted.make(configuration.connectionString)).pipe(
-    Effect.mapError(unavailable),
-  );
-  return yield* PgClient.make(pool).pipe(Effect.mapError(unavailable));
-});
-export const GatewayAssertionRedemptionDatabaseLive = Layer.effect(
-  InventoryRedemptionDatabase,
-  makeWithDefaults({ relations }).pipe(Effect.map((executor) => ({ executor }))),
+
+type ContextServiceContract<Service> =
+  Service extends Context.Key<infer _Identifier, infer Contract> ? Contract : never;
+
+const makeGatewayAssertionRedemptionPgClient = Effect.fn('InventoryGatewayAssertionRedemptionDatabase.client')(
+  function* makeGatewayAssertionRedemptionPgClientEffect(
+    configuration: ContextServiceContract<typeof DatabaseConfig> & {
+      readonly maxConnections?: number;
+      readonly poolDeadlines?: Partial<DatabasePoolDeadlines>;
+    },
+  ): Effect.fn.Return<
+    PgClient.PgClient,
+    GatewayAssertionRedemptionUnavailableError,
+    Scope.Scope | Reactivity.Reactivity
+  > {
+    const poolConfiguration = yield* configureDatabasePool(
+      Redacted.make(configuration.connectionString),
+      configuration.poolDeadlines,
+      configuration.maxConnections,
+    ).pipe(Effect.mapError((error) => unavailableError(error)));
+    return yield* openDatabaseClient(poolConfiguration).pipe(Effect.mapError(unavailableError));
+  },
 );
+
+/** The redemption store's own configured pool; the composition root binds it as the store's PgClient. */
+export const gatewayAssertionRedemptionPgClient = DatabaseConfig.pipe(
+  Effect.flatMap((configuration) => makeGatewayAssertionRedemptionPgClient(configuration)),
+);
+
+export const GatewayAssertionRedemptionDatabaseLive = Layer.effect(
+  InventoryGatewayAssertionRedemptionDatabase,
+  makeWithDefaults({ relations: inventoryGatewayAssertionRedemptionRelations }).pipe(
+    Effect.map((executor) => ({ executor })),
+  ),
+);
+
 export const GatewayAssertionRedemptionLive = Layer.effect(
   GatewayAssertionRedemptionService,
-  InventoryRedemptionDatabase.pipe(Effect.map(({ executor }) => makeGatewayAssertionRedemption(executor))),
+  Effect.gen(function* makeRedemptionWithCleanup() {
+    const { executor } = yield* InventoryGatewayAssertionRedemptionDatabase;
+    yield* startGatewayAssertionRedemptionCleanup('inventory', GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS, (expiredBefore) =>
+      executor
+        .delete(gatewayAssertionRedemptions)
+        .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore))
+        .pipe(Effect.asVoid, Effect.mapError(unavailableError)),
+    );
+    return makeGatewayAssertionRedemption(executor);
+  }),
 );

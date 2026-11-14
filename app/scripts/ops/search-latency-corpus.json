@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "mode": "offline-fixture",
+  "origin": "http://127.0.0.1:3020",
+  "variantPolicy": "case-and-whitespace",
+  "provenance": "Deterministic scripted-transport fixtures only. NOT an observation of demo data. Root must supply a separately admitted corpus with actual counts, full ordered authorized responses, scope/grants/release/data/network pins and an explicit bounded P20 window before --run. Comparison cases are baseline-compatible fixture semantics; expanded cases are feature expectations, not baseline regressions.",
+  "pins": {
+    "releaseSha": "0334c1024a2026a880afdb66fe892ffc7306caec",
+    "compositionRevision": "0000000000000000000000000000000000000000000000000000000000000000",
+    "dataFingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
+    "tenantId": "11111111-1111-4111-8111-111111111111",
+    "legalEntityId": "22222222-2222-4222-8222-222222222222",
+    "principalProfile": "offline-scripted-authorized-principal",
+    "grantProfile": "offline-scripted-company-reader",
+    "networkPath": "in-memory HttpClient transport; no sockets or live calls"
+  },
+  "countsByResourceType": {
+    "projects.core.project": 1
+  },
+  "cases": [
+    {
+      "id": "fixture-selective",
+      "lane": "comparison",
+      "category": "selective",
+      "queries": ["Žluťoučký", "zlutoucky"],
+      "includeArchived": false,
+      "expected": { "partial": false, "results": [{ "kind": "resource", "title": "Žluťoučký projekt ALFA-42", "selectedLegalEntityId": "22222222-2222-4222-8222-222222222222", "ref": { "moduleId": "projects.core", "resourceType": "projects.core.project", "resourceId": "33333333-3333-4333-8333-333333333333", "tenantId": "11111111-1111-4111-8111-111111111111" } }] }
+    },
+    {
+      "id": "fixture-broad",
+      "lane": "comparison",
+      "category": "broad",
+      "queries": ["projekt"],
+      "includeArchived": false,
+      "expected": { "partial": false, "results": [{ "kind": "resource", "title": "Žluťoučký projekt ALFA-42", "selectedLegalEntityId": "22222222-2222-4222-8222-222222222222", "ref": { "moduleId": "projects.core", "resourceType": "projects.core.project", "resourceId": "33333333-3333-4333-8333-333333333333", "tenantId": "11111111-1111-4111-8111-111111111111" } }] }
+    },
+    {
+      "id": "fixture-exact",
+      "lane": "expanded",
+      "category": "exact",
+      "queries": ["ALFA-42"],
+      "includeArchived": false,
+      "expected": { "partial": false, "results": [{ "kind": "resource", "title": "Žluťoučký projekt ALFA-42", "selectedLegalEntityId": "22222222-2222-4222-8222-222222222222", "ref": { "moduleId": "projects.core", "resourceType": "projects.core.project", "resourceId": "33333333-3333-4333-8333-333333333333", "tenantId": "11111111-1111-4111-8111-111111111111" } }] }
+    },
+    {
+      "id": "fixture-multiword",
+      "lane": "expanded",
+      "category": "multiword",
+      "queries": ["projekt žluťoučký", "zlutoucky projekt"],
+      "includeArchived": false,
+      "expected": { "partial": false, "results": [{ "kind": "resource", "title": "Žluťoučký projekt ALFA-42", "selectedLegalEntityId": "22222222-2222-4222-8222-222222222222", "ref": { "moduleId": "projects.core", "resourceType": "projects.core.project", "resourceId": "33333333-3333-4333-8333-333333333333", "tenantId": "11111111-1111-4111-8111-111111111111" } }] }
+    },
+    {
+      "id": "fixture-alias",
+      "lane": "comparison",
+      "category": "alias",
+      "queries": ["Původní Alfa", "puvodni alfa"],
+      "includeArchived": false,
+      "expected": { "partial": false, "results": [{ "kind": "resource", "title": "Žluťoučký projekt ALFA-42", "selectedLegalEntityId": "22222222-2222-4222-8222-222222222222", "ref": { "moduleId": "projects.core", "resourceType": "projects.core.project", "resourceId": "33333333-3333-4333-8333-333333333333", "tenantId": "11111111-1111-4111-8111-111111111111" } }] }
+    },
+    {
+      "id": "fixture-temporal",
+      "lane": "comparison",
+      "category": "temporal",
+      "queries": ["Platná Alfa", "platna alfa"],
+      "includeArchived": false,
+      "expected": { "partial": false, "results": [{ "kind": "resource", "title": "Žluťoučký projekt ALFA-42", "selectedLegalEntityId": "22222222-2222-4222-8222-222222222222", "ref": { "moduleId": "projects.core", "resourceType": "projects.core.project", "resourceId": "33333333-3333-4333-8333-333333333333", "tenantId": "11111111-1111-4111-8111-111111111111" } }] }
+    },
+    {
+      "id": "fixture-empty",
+      "lane": "comparison",
+      "category": "empty-hit",
+      "queries": ["nenalezitelný záznam xyz", "nenalezitelny zaznam xyz"],
+      "includeArchived": false,
+      "expected": { "partial": false, "results": [] }
+    }
+  ]
+}

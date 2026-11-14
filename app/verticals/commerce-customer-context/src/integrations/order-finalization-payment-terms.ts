@@ -2,12 +2,15 @@ import { OperationContextUnavailable, ReadHandlerUnavailable } from '@app/core-r
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import type { FinalCartCandidate } from '@app/commerce-cart-finalization-contracts/final-candidate';
 import { DateTime, Effect, Schema, Predicate } from 'effect';
-import type { Crypto } from 'effect';
 import { PaymentTermsResolutionRequestSchema } from '../../shared/apis/payment-terms-resolution.ts';
-import type { PaymentTermsResolutionResponse } from '../../shared/apis/payment-terms-resolution.ts';
 import type { PurchaseApprovalRequest } from '../../shared/domain/purchasing-approval.ts';
-import { paymentTermsPersistenceForTransaction } from '../persistence/payment-term-persistence.ts';
-import { customerCommercePolicyAdministrationServiceFactory } from '../services/customer-commerce-policy-administration.service.ts';
+import {
+  loadPaymentTermsResolutionState,
+  finishPaymentTermsResolution,
+} from '../persistence/payment-term-persistence.ts';
+import { customerCommercePolicyRepositoryForScope } from '../persistence/customer-commerce-policy-persistence.ts';
+import { currentPaymentTermPolicySet } from '../../shared/domain/customer-commerce-policy-administration.ts';
+import { stableRevision } from '../stable-revision.ts';
 import { customerCommercePaymentTermsPolicyResolver } from './customer-commerce-payment-terms-policy.ts';
 import { paymentTermCatalogPortFromEnvironment } from './payment-term-catalog.ts';
 
@@ -74,18 +77,13 @@ const approvedPurchaseMatchesCart = ({
 /** Called only after the public owner read authorizes the Order service and verifies the actual Cart candidate.
  * The candidate supplies business buyer/Storefront identity. The invoking service's Core scope stays unchanged.
  */
-export const resolveOrderFinalizationPaymentTerms = Effect.fn('OrderFinalizationPaymentTerms.resolve')(
-  function* resolveOrderFinalizationPaymentTerms(
+export const loadOrderFinalizationPaymentTermsSnapshot = Effect.fn('OrderFinalizationPaymentTerms.loadSnapshot')(
+  function* loadSnapshot(
     transaction: ScopedTransactionExecutor,
     actualScope: OperationalScope,
     approvedRequest: PurchaseApprovalRequest,
     candidate: FinalCartCandidate,
-    compositionRevision: string,
-  ): Effect.fn.Return<
-    PaymentTermsResolutionResponse,
-    ReadHandlerUnavailable | OperationContextUnavailable,
-    Crypto.Crypto
-  > {
+  ) {
     const { legalEntityId } = actualScope;
     if (legalEntityId === undefined) {
       return yield* new OperationContextUnavailable({
@@ -115,32 +113,48 @@ export const resolveOrderFinalizationPaymentTerms = Effect.fn('OrderFinalization
         storefrontId: candidate.storefrontId,
       },
     }).pipe(Effect.mapError(unavailable));
-    const { catalog, policyService } = yield* Effect.all(
-      {
-        catalog: paymentTermCatalogPortFromEnvironment({
-          legalEntityId,
-          requestCorrelation: actualScope.correlationId,
-          subject: { _tag: 'Assertion', scope: actualScope },
-        }),
-        policyService: customerCommercePolicyAdministrationServiceFactory(
-          transaction,
-          actualScope,
-          compositionRevision,
-        ).pipe(Effect.mapError(unavailable)),
-      },
-      { concurrency: 2 },
+    const repository = yield* customerCommercePolicyRepositoryForScope(transaction, actualScope);
+    const policyState = yield* repository.loadPaymentTermPolicyState.pipe(Effect.mapError(unavailable));
+    const state = yield* loadPaymentTermsResolutionState(
+      { invoker: transaction, scope: { ...actualScope, legalEntityId } },
+      input,
     );
-    // This is an independently verified business subject, not an authentication or OperationalScope override.
+    return { binding: stableRevision({ actualScope, approvedRequest }), input, policyState, state };
+  },
+);
+
+/** The original requester obtains Catalog evidence only after the owner snapshot commits. */
+export const finishOrderFinalizationPaymentTerms = Effect.fn('OrderFinalizationPaymentTerms.finishSnapshot')(
+  function* finishSnapshot(
+    actualScope: OperationalScope,
+    approvedRequest: PurchaseApprovalRequest,
+    snapshot: Effect.Success<ReturnType<typeof loadOrderFinalizationPaymentTermsSnapshot>>,
+    compositionRevision: string,
+  ) {
+    const { legalEntityId } = actualScope;
+    if (
+      legalEntityId === undefined ||
+      snapshot.binding !== stableRevision({ actualScope, approvedRequest }) ||
+      snapshot.input.purchasingContext.sellingLegalEntityId !== legalEntityId
+    ) {
+      return yield* unavailable('The prepared Payment Terms scope changed');
+    }
+    const { proposal } = approvedRequest;
+    const catalog = yield* paymentTermCatalogPortFromEnvironment({
+      compositionRevision,
+      legalEntityId,
+      requestCorrelation: actualScope.correlationId,
+      subject: { _tag: 'Assertion', scope: actualScope },
+    });
     const policy = customerCommercePaymentTermsPolicyResolver(
       'PROFILE',
-      { tenantId: actualScope.tenantId, trustedStorefrontId: candidate.storefrontId },
-      policyService,
+      {
+        tenantId: actualScope.tenantId,
+        trustedStorefrontId: snapshot.input.purchasingContext.storefrontId,
+      },
+      { readCurrentPaymentTermPolicy: (at) => Effect.succeed(currentPaymentTermPolicySet(snapshot.policyState, at)) },
     );
-    const { resolution } = paymentTermsPersistenceForTransaction(
-      { invoker: transaction, scope: { ...actualScope, legalEntityId } },
-      { catalog, policy },
-    );
-    const result = yield* resolution.resolve(input);
+    const result = yield* finishPaymentTermsResolution(snapshot.input, snapshot.state, policy, catalog);
     if (
       (Predicate.isTagged(result, 'EXPLICIT_CHOICE') ||
         Predicate.isTagged(result, 'PREFERRED_ENTITLEMENT') ||

@@ -29,6 +29,7 @@ export const taxRegistration = defineVerticalRuntimeRegistration({
       // <generated-module-registration-apis>
       'applicable-tax-rule-set': () => import('./src/api/applicable-tax-rule-set-client.ts'),
       'final-order-tax': () => import('./src/api/final-order-tax-client.ts'),
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'seller-vat-regime-at-instant': () => import('./src/api/seller-vat-regime-at-instant-client.ts'),
       'seller-vat-regime-history': () => import('./src/api/seller-vat-regime-history-client.ts'),
       'tax-correction-preview': () => import('./src/api/tax-correction-preview-client.ts'),
@@ -36,6 +37,7 @@ export const taxRegistration = defineVerticalRuntimeRegistration({
       'tax-materiality-comparison': () => import('./src/api/tax-materiality-comparison-client.ts'),
       'tax-privacy-owner-coverage': () => import('./src/api/tax-privacy-owner-coverage-client.ts'),
       'tax-rule-history': () => import('./src/api/tax-rule-history-client.ts'),
+      'vat-change-rights': () => import('./src/api/vat-change-rights-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {

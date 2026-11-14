@@ -1,11 +1,15 @@
 import { inventoryRegistration } from '../../vertical.registration.ts';
 import {
   ActionRuntime,
+  ActiveApplicationCompositionService,
+  bindLiveAccessGate,
   GatewayAssertionRedemptionService,
   ReadHandlerUnavailable,
   ReadRuntime,
 } from '@app/core-runtime';
 import type { ActionRuntimeService } from '@app/core-runtime';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
+import { makeTestAccessGateLayers, testAccessSpecOf } from '@app/core-runtime/testing/access-gate';
 import { makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -48,6 +52,7 @@ import {
 const broadRequest = { mode: 'POTENTIALLY_RELEVANT_POSITIONS', scope: request.scope } as const;
 const unusedActionRuntime: ActionRuntimeService = {
   resolveActionCommit: () => Effect.die('Action runtime is outside the Position-set Read proof'),
+  resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
   runAction: () => Effect.die('Action runtime is outside the Position-set Read proof'),
 };
 
@@ -100,9 +105,11 @@ const makeRegisteredPositionSetRuntime = Effect.fn('PositionSetTest.makeRegister
         .setJti(jti)
         .sign(privateKey),
     );
+    const accessServices = yield* Layer.build(makeTestAccessGateLayers({ spec: testAccessSpecOf(options.access) }));
+    const accessDecision = yield* bindLiveAccessGate.pipe(Effect.provideContext(accessServices));
     const harness = yield* makeReadTestHarness({
-      // The one access gate decides the Read's own capability (CUTOVER-PLAN §3.1).
-      access: options.access,
+      // The original Read and the unused approval provider share this exact gate and its ports.
+      accessDecision,
       compositionRevision: composition.composition.revision,
       executeOwnerQuery: (query) => {
         expect(query.sql).toContain('from "inventory"."stock_items"');
@@ -121,8 +128,21 @@ const makeRegisteredPositionSetRuntime = Effect.fn('PositionSetTest.makeRegister
       ownerRegistration: inventoryRegistration,
       scope,
     });
+    const ownerApprovals = yield* Layer.build(
+      makeOwnerActionApprovalsLive(ultramodernApiMarker, inventoryRegistration).pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            harness.ownerServices,
+            Layer.succeedContext(accessServices),
+            Layer.succeed(Crypto.Crypto, yield* Crypto.Crypto),
+            Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(composition) }),
+          ),
+        ),
+      ),
+    );
     let redemptions = 0;
     const serverConfiguration = Layer.mergeAll(
+      Layer.succeedContext(ownerApprovals),
       Layer.succeed(ActionRuntime, unusedActionRuntime),
       Layer.succeed(ActiveApplicationCompositionSource, { load: Effect.succeed(compositionDocument) }),
       ConfigProvider.layer(
@@ -177,6 +197,26 @@ const problems = makeGovernedReadProblems({
   unavailable: CurrentRelevantStockPositionSetUnavailableProblemSchema,
 });
 
+const expectCommittedEvidenceAfterOwner = (statements: readonly string[]) => {
+  const ownerQueryIndex = statements.findIndex((statement) => statement.includes('from "inventory"."stock_items"'));
+  const ownerCommitIndex = statements.indexOf('COMMIT', ownerQueryIndex + 1);
+  const evidenceBeginIndex = statements.indexOf('BEGIN', ownerCommitIndex + 1);
+  const evidenceIndex = statements.findIndex((statement) =>
+    statement.startsWith('insert into "core"."data_access_events"'),
+  );
+  expect(ownerQueryIndex).toBeGreaterThan(-1);
+  expect(ownerCommitIndex).toBeGreaterThan(ownerQueryIndex);
+  expect(evidenceBeginIndex).toBeGreaterThan(ownerCommitIndex);
+  expect(evidenceIndex).toBeGreaterThan(evidenceBeginIndex);
+  expect(
+    statements.slice(evidenceBeginIndex + 1, evidenceIndex).some((statement) => statement.includes('set_config')),
+  ).toBe(true);
+  expect(statements.filter((statement) => statement === 'COMMIT')).toHaveLength(3);
+  expect(statements).not.toContain('ROLLBACK');
+  expect(statements.at(-2)).toContain('insert into "core"."data_access_events"');
+  expect(statements.at(-1)).toBe('COMMIT');
+};
+
 describe('Current relevant StockPosition set HTTP request contract', () => {
   it.live('registered runtime and published client return the real broader owner-complete candidate set', () =>
     Effect.gen(function* registeredBroaderSet() {
@@ -194,7 +234,8 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
       expect(runtime.snapshot().ownerQueries).toHaveLength(1);
       expect(runtime.snapshot().evidenceWrites).toBe(1);
       expect(runtime.snapshot().stages).toContain('evidence_persisted');
-      expect(runtime.snapshot().statements.at(-1)).toBe('COMMIT');
+      // Evidence commits in its own scoped transaction after the owner observation commits.
+      expectCommittedEvidenceAfterOwner(runtime.snapshot().statements);
     }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
   );
 
@@ -221,12 +262,12 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
       expect(Schema.is(CurrentRelevantStockPositionSetForbiddenProblemSchema)(failure)).toBe(true);
       expect(runtime.snapshot().statuses).toEqual([403]);
       expect(runtime.snapshot().redemptions).toBe(1);
-      // The gate decides before any owner work: no Position query, no savepoint, no result evidence.
       expect(runtime.snapshot().ownerQueries).toEqual([]);
+      // The canonical capability gate refuses the request before any owner observation.
       expect(runtime.snapshot().stages).not.toContain('handler_executed');
-      expect(runtime.snapshot().statements.some((statement) => statement.startsWith('ROLLBACK TO SAVEPOINT'))).toBe(
-        false,
-      );
+      expect(runtime.snapshot().stages).not.toContain('result_decoded');
+      expect(runtime.snapshot().statements.at(-1)).toBe('COMMIT');
+      expect(runtime.snapshot().evidenceWrites).toBe(1);
     }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
   );
 

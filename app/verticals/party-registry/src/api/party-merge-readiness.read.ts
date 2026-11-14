@@ -43,16 +43,18 @@ export const partyMergeReadinessRead = defineRead(
     resultSchema: PartyMergeReadinessResponseSchema,
     schemaVersion: '1',
   },
-  (input) =>
-    Effect.succeed({
-      evidence: {
-        metadata: {
-          evaluatedPartyCount: input.partyRefs.length,
-          mergeExecutionEnabled: false,
+  {
+    load: (input) =>
+      Effect.succeed({
+        evidence: {
+          metadata: {
+            evaluatedPartyCount: input.partyRefs.length,
+            mergeExecutionEnabled: false,
+          },
+          resultCount: 1,
         },
-        resultCount: 1,
-      },
-      result: evaluateDisabledMergeReadiness(input.partyRefs),
-    }),
+        result: evaluateDisabledMergeReadiness(input.partyRefs),
+      }),
+  },
   () => Effect.succeed({}),
 );

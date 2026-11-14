@@ -11,12 +11,23 @@ import { Context, Deferred, Effect, Fiber, Option, Predicate, Schema } from 'eff
 import { expect, it } from 'effect-rstest';
 
 import { defineAction } from '../../src/actions/definition.ts';
+import { agentProposalQueueRead } from '../../src/auth/agent-proposal-queue-read.ts';
+import { agentActivityRead } from '../../src/auth/agent-activity-read.ts';
+import { agentActivityActorsRead } from '../../src/auth/agent-activity-actors-read.ts';
+import { agentProfilesRead } from '../../src/auth/agent-profiles-read.ts';
+import { peopleDirectoryRead } from '../../src/auth/people-directory-read.ts';
+import { companyAgentDirectoryRead } from '../../src/auth/company-agent-directory-read.ts';
+import { identityAdministrationAuditRead } from '../../src/auth/identity-administration-audit-read.ts';
+import { staffRoleTemplateBindingsRead } from '../../src/auth/staff-role-template-bindings-read.ts';
+import { oauthConnectionRevocationNotesRead } from '../../src/auth/oauth-connection-revocation-notes-read.ts';
+import { companyManagedPrincipalsRead } from '../../src/auth/principal-administration-reads.ts';
+import { peopleSearchRead } from '../../src/people/people-search.ts';
 import type { InstalledModuleCatalog } from '../../src/modules/catalog.ts';
 import { OntosModuleRequirementsSchema } from '../../src/modules/module-dependency-contracts.ts';
 import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
 import { defineOntosModuleManifest, OntosModuleDeploymentContractSchema } from '../../src/modules/manifest.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
-import { withModuleOperationExecution } from '../../src/modules/module-operation-execution.ts';
+import { isGenuineCoreOperation, withModuleOperationExecution } from '../../src/modules/module-operation-execution.ts';
 import {
   requireModuleOperation,
   readModuleOperationRequirement,
@@ -26,6 +37,34 @@ import { makeModuleContractFixture } from '../../src/testing/module-contract.ts'
 import { makeInstalledCatalogFixture } from '../support/installed-catalog.ts';
 
 const revision = 'a'.repeat(64);
+
+it('recognizes the exact retained Core read registrations, never copied keys or descriptors', () => {
+  for (const read of [
+    agentProposalQueueRead,
+    agentActivityRead,
+    agentActivityActorsRead,
+    agentProfilesRead,
+    peopleDirectoryRead,
+    companyAgentDirectoryRead,
+    identityAdministrationAuditRead,
+    staffRoleTemplateBindingsRead,
+    oauthConnectionRevocationNotesRead,
+    peopleSearchRead,
+    companyManagedPrincipalsRead,
+  ]) {
+    expect(isGenuineCoreOperation(read), read.descriptor.readKey).toBe(true);
+  }
+  const recreated = defineRead(
+    companyManagedPrincipalsRead.descriptor,
+    { load: () => Effect.die('A recreated Core read must never execute') },
+    () => Effect.succeed({}),
+  );
+  expect(isGenuineCoreOperation(recreated)).toBe(false);
+  const copiedStaffRoles = { descriptor: staffRoleTemplateBindingsRead.descriptor };
+  expect(isGenuineCoreOperation(Object.assign(copiedStaffRoles, staffRoleTemplateBindingsRead))).toBe(false);
+  const copied = { descriptor: companyManagedPrincipalsRead.descriptor };
+  expect(isGenuineCoreOperation(Object.assign(copied, companyManagedPrincipalsRead))).toBe(false);
+});
 const privateContextKey = '@app/core-runtime/modules/module-operation-execution/ModuleOperationExecution';
 const providerModule = 'provider.required';
 const decodeContract = Schema.decodeUnknownSync(OntosModuleDeploymentContractSchema);

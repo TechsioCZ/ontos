@@ -24,6 +24,7 @@ import type { DatabaseConfigValue } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 /*
  * The decision intent reader is the seam between Core's intent rows and the engine's ports
@@ -264,11 +265,13 @@ const enforcementDatabase = Effect.gen(function* enforcementDatabaseEffect() {
   yield* seedFixtures(admin);
   const runtime = yield* makeTestPgClient(replaceDatabase(connections.runtime, name), { maxConnections: 2 });
   const database = yield* makeTestDatabaseFromClient(runtime, coreRelations);
-  const loader = makeTenantIntentLoader({ executor: database });
+  const loader = makeTenantIntentLoader({ enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT, executor: database });
   // `TestClock` starts at the epoch, so only the loader's own read of "now" is taken live — exactly
   // as the intent loader suite does it (C02a).
   const reads: AccessIntentReads = {
     loadAuthorityCells: (scope, query) => TestClock.withLive(loader.loadAuthorityCells(scope, query)),
+    loadAuthorityCellsMany: (scope, queries) => TestClock.withLive(loader.loadAuthorityCellsMany(scope, queries)),
+    loadCompanyOwnership: (scope, query) => TestClock.withLive(loader.loadCompanyOwnership(scope, query)),
     loadConfigureBases: (scope, query) => TestClock.withLive(loader.loadConfigureBases(scope, query)),
     loadConnection: (scope, query) => TestClock.withLive(loader.loadConnection(scope, query)),
     loadScope: (scope, query) => TestClock.withLive(loader.loadScope(scope, query)),

@@ -58,6 +58,9 @@ import {
   priceGroupSourceOperationReceipts,
   priceGroups,
 } from '../../src/database/schema.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = randomUUID();
 const accessScopeId = randomUUID();
@@ -218,6 +221,8 @@ it.live('commits a scheduled retirement with server-trusted acceptance chronolog
           ...openActionRuntimeOptions,
           accessDecision: makeScriptedBoundAccessGate('allowed').bound,
           contextAccess,
+          databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+
           ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
           ownerRegistration: priceGroupCatalogRegistration,
         },

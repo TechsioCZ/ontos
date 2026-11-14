@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import {
   OutboxWorkerDeferred,
   OutboxWorkerLegalEntityScopeError,
@@ -326,7 +327,7 @@ const fanoutOf = (database: PaymentTestDatabase, scope: PaymentTestScope, option
     forEachScope: (_context, observe) =>
       database
         .transaction((transaction) =>
-          installOperationalScope(transaction, operationalScopeOf(scope)).pipe(
+          installOperationalScope(transaction, operationalScopeOf(scope), defineDatabaseIdentityEnrollment([])).pipe(
             Effect.mapError(scopeUnavailable),
             Effect.flatMap((routineInvoker) =>
               observe({
@@ -754,7 +755,11 @@ const confirmRefund = (harness: Harness, refund: OutboxPayload, rowId: number) =
       sourceRevision: 0,
     });
     return yield* harness.database.transaction((transaction) =>
-      installOperationalScope(transaction, operationalScopeOf(harness.scope)).pipe(
+      installOperationalScope(
+        transaction,
+        operationalScopeOf(harness.scope),
+        defineDatabaseIdentityEnrollment([]),
+      ).pipe(
         Effect.flatMap((routineInvoker) =>
           store.append({
             bindingId,

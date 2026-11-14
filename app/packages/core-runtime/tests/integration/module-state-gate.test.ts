@@ -27,6 +27,7 @@ import {
   makeTenantModuleStateService,
   persistTenantModuleStateChange,
 } from '../../src/modules/tenant-module-state-service.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 type DatabaseService = (typeof CoreDatabase)['Service'];
 
@@ -253,16 +254,21 @@ const concurrentGateFixture = Effect.gen(function* concurrentGateFixtureEffect()
     role: 'action',
   });
   const disable = (transaction: Parameters<Parameters<DatabaseService['executor']['transaction']>[0]>[0]) =>
-    installOperationalScope(transaction, {
-      authContextRef: 'better-auth-session:gate',
-      authMethod: 'session',
-      correlationId: 'gate-concurrency',
-      principalId,
-      tenantId,
-    }).pipe(
+    installOperationalScope(
+      transaction,
+      {
+        authContextRef: 'better-auth-session:gate',
+        authMethod: 'session',
+        correlationId: 'gate-concurrency',
+        principalId,
+        tenantId,
+      },
+      FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+    ).pipe(
       Effect.flatMap((scoped) =>
         persistTenantModuleStateChange(scoped, {
           actionInvocationId,
+          actor: { authContextRef: 'better-auth-session:gate' },
           authMethod: 'session',
           catalog: makeInstalledCatalogFixture(
             makeModuleContractFixture({
@@ -271,6 +277,7 @@ const concurrentGateFixture = Effect.gen(function* concurrentGateFixtureEffect()
               supportedStates: ['inactive', 'active', 'read_only'],
             }),
           ),
+          compositionRevision: 'gate-fixture',
           expectedState: 'active',
           moduleKey,
           newState: 'read_only',

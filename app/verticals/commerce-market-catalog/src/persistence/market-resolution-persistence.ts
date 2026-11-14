@@ -1,8 +1,7 @@
 /* oxlint-disable effect-native/no-string-timestamp-schema -- The owner routine returns encoded PostgreSQL timestamps; this adapter decodes them into the public DateTime contract immediately; expires: 2027-03-31. */
-/* oxlint-disable effect-native/no-nullable-schema-field -- The scoped-routine boundary receives PostgreSQL's raw nullable wire value under Schema.toType and converts it explicitly; expires: 2027-03-31. */
 import type { OperationalScope, ReadServiceFactory, ScopedRoutineInvocationError } from '@app/core-runtime';
 import { defineScopedRoutine } from '@app/core-runtime';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 
 import type { EligibleMarketTuplesRequest } from '../../shared/apis/eligible-market-tuples.ts';
 import { EligibleMarketTupleSchema, MarketLifecycleSchema } from '../../shared/market-contracts.ts';
@@ -33,7 +32,7 @@ const StoredFactSchema = Schema.Struct({
 const SnapshotPayloadSchema = Schema.Struct({
   facts: Schema.Array(StoredFactSchema),
   generation: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  nextApplicabilityBoundary: Schema.NullOr(nonEmpty),
+  nextApplicabilityBoundary: Schema.OptionFromNullOr(nonEmpty),
   observedAt: nonEmpty,
   predicateRevision: nonEmpty,
 });
@@ -177,10 +176,11 @@ const decodeSnapshotRow = Effect.fn('MarketResolutionPersistence.decodeSnapshotR
     concurrency: 1,
   });
   const observedAt = yield* decodeInstant(row.payload.observedAt);
-  const nextApplicabilityBoundary =
-    row.payload.nextApplicabilityBoundary === null
-      ? undefined
-      : yield* decodeInstant(row.payload.nextApplicabilityBoundary);
+  const nextApplicabilityBoundary = yield* row.payload.nextApplicabilityBoundary.pipe(
+    Option.map(decodeInstant),
+    Effect.transposeOption,
+    Effect.map(Option.getOrUndefined),
+  );
   const evidenceBase = {
     observedAt,
     ownerRevision: `market-eligibility:v1:${row.payload.predicateRevision}`,

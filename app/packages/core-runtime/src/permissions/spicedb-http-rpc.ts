@@ -128,6 +128,9 @@ export const spiceDbHttpRpc = (endpoint: SpiceDbHttpEndpoint): SpiceDbHttpRpc =>
     HttpClient.execute(
       HttpClientRequest.post(new URL(path, endpoint.origin)).pipe(
         HttpClientRequest.bearerToken(endpoint.preSharedKey),
+        // The gateway turns `Grpc-Timeout` into the call's deadline, so SpiceDB itself ends a request the client gave
+        // up on, as the gRPC client's deadline does; the abort below only ends this side of the exchange.
+        HttpClientRequest.setHeader('Grpc-Timeout', `${String(endpoint.timeoutMilliseconds)}m`),
         HttpClientRequest.acceptJson,
         HttpClientRequest.bodyText(type.toJsonString(request), 'application/json'),
       ),
@@ -155,11 +158,13 @@ export const spiceDbHttpRpc = (endpoint: SpiceDbHttpEndpoint): SpiceDbHttpRpc =>
         Effect.flatMap(readBulkResponse),
       ),
     checkPermission: unary('/v1/permissions/check', v1.CheckPermissionRequest, v1.CheckPermissionResponse),
+    diffSchema: unary('/v1/schema/diffschema', v1.DiffSchemaRequest, v1.DiffSchemaResponse),
     // A failed stream fails the whole read, as a failed gRPC stream rejects `readRelationships`.
     readRelationships: (request) =>
       post('/v1/relationships/read', v1.ReadRelationshipsRequest, request, decodeStreamErrorCode).pipe(
         Effect.flatMap(readFrames),
       ),
+    readSchema: unary('/v1/schema/read', v1.ReadSchemaRequest, v1.ReadSchemaResponse),
     writeRelationships: unary('/v1/relationships/write', v1.WriteRelationshipsRequest, v1.WriteRelationshipsResponse),
     writeSchema: unary('/v1/schema/write', v1.WriteSchemaRequest, v1.WriteSchemaResponse),
   };

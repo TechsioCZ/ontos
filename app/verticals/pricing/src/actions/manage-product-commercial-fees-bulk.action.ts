@@ -17,6 +17,7 @@ import type {
 import {
   ProductCommercialFeeBulkRejected,
   productCommercialFeeBulkServiceForScope,
+  prepareProductCommercialFeeBulkServices,
 } from '../services/product-commercial-fee-bulk.service.ts';
 import type {
   ProductCommercialFeeBulkActionServices,
@@ -180,6 +181,7 @@ export const manageProductCommercialFeesBulkAction = defineAction(
   },
   handleManageProductCommercialFeesBulk,
   productCommercialFeeBulkServiceForScope,
+  { prepareServices: prepareProductCommercialFeeBulkServices },
 );
 
 // <generated-outbox-message-exports>

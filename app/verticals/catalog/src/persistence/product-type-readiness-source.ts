@@ -866,7 +866,7 @@ export const productSelectionTypeValueAxisBasisForScope = (
       if (readiness.reason !== null) {
         return { basis, reason: readiness.reason, status: readiness.status };
       }
-      if (!('decisionRevision' in readiness)) {
+      if (!('decisionRevision' in readiness) || readiness.decisionRevision === undefined) {
         return unknown('Current untyped decision revision is unavailable');
       }
       basis.push({

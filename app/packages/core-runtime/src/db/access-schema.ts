@@ -3,6 +3,7 @@ import {
   boolean,
   check,
   foreignKey,
+  index,
   integer,
   jsonb,
   pgPolicy,
@@ -17,6 +18,7 @@ import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { CapabilitySlot } from '../access/compiler/object-id.ts';
 import type { MembershipKind, MembershipStatus } from '../access/intent/memberships.ts';
 import type { WorkloadBindingStatus } from '../access/workloads/store.ts';
+import type { ActionAuthorityProofV2 } from '../access/approvals/action-authority-v2-schema.ts';
 import type {
   AccessChangeDecisionKind,
   AccessChangeItemStatus,
@@ -518,6 +520,7 @@ export const defineAccessTables = ({ legalEntities, principals, requestRoles, te
       ...commandColumns(),
       rejectedBy: uuid('rejected_by'),
       requesterAuthorityJson: jsonb('requester_authority_json').$type<readonly AuthorityWitness[]>().notNull(),
+      requesterActionAuthorityJson: jsonb('requester_action_authority_json').$type<ActionAuthorityProofV2>(),
       target: text('target'),
     },
     (t) => [
@@ -554,7 +557,14 @@ export const defineAccessTables = ({ legalEntities, principals, requestRoles, te
       ),
       check(
         'access_proposals_requester_ck',
-        sql`jsonb_typeof(${t.requesterJson}) = 'object' and ${t.requesterJson}->>'principalId' is not distinct from ${t.requesterPrincipalId}::text and jsonb_typeof(${t.requesterAuthorityJson}) = 'array' and jsonb_array_length(${t.requesterAuthorityJson}) > 0`,
+        sql`jsonb_typeof(${t.requesterJson}) = 'object' and ${t.requesterJson}->>'principalId' is not distinct from ${t.requesterPrincipalId}::text and jsonb_typeof(${t.requesterAuthorityJson}) = 'array' and (
+          (${t.requesterActionAuthorityJson} is null and jsonb_array_length(${t.requesterAuthorityJson}) > 0)
+          or (${t.requesterActionAuthorityJson} is not null and jsonb_array_length(${t.requesterAuthorityJson}) = 0 and ${t.target} is null
+            and ${t.requesterActionAuthorityJson}->>'format' is not distinct from 'core.action-authority/2'
+            and ${t.requesterActionAuthorityJson}->>'phase' is not distinct from 'requester'
+            and ${t.requesterActionAuthorityJson}->>'principalId' is not distinct from ${t.requesterPrincipalId}::text
+            and ${t.requesterActionAuthorityJson}->>'scopeId' is not distinct from ${t.scopeId}::text
+            and ${t.requesterActionAuthorityJson}->>'commandDigest' is not distinct from ${t.commandDigest}))`,
       ),
       ...tenantRlsPolicies('access_proposals', t.tenantId),
     ],
@@ -603,12 +613,13 @@ export const defineAccessTables = ({ legalEntities, principals, requestRoles, te
     'access_mandates',
     {
       approvalExpiresAt: timestamp('approval_expires_at', { withTimezone: true }).notNull(),
+      actionAuthorityJson: jsonb('action_authority_json').$type<ActionAuthorityProofV2>(),
       approvedAt: timestamp('approved_at', { withTimezone: true }).notNull(),
-      approverAssignmentIncarnationId: uuid('approver_assignment_incarnation_id').notNull(),
+      approverAssignmentIncarnationId: uuid('approver_assignment_incarnation_id'),
       approverId: uuid('approver_id').notNull(),
       capabilityKey: text('capability_key').notNull(),
       commandDigest: text('command_digest').notNull(),
-      executionAssignmentIncarnationId: uuid('execution_assignment_incarnation_id').notNull(),
+      executionAssignmentIncarnationId: uuid('execution_assignment_incarnation_id'),
       mandateId: uuid('mandate_id').primaryKey(),
       proposalId: uuid('proposal_id').notNull(),
       scopeId: scopeId(),
@@ -649,6 +660,16 @@ export const defineAccessTables = ({ legalEntities, principals, requestRoles, te
       personFk('access_mandates_approver_fk', t.tenantId, t.approverId),
       digest('access_mandates_digest_ck', t.commandDigest),
       check('access_mandates_ttl_ck', sql`${t.approvedAt} < ${t.approvalExpiresAt}`),
+      check(
+        'access_mandates_authority_format_ck',
+        sql`(${t.actionAuthorityJson} is null and ${t.approverAssignmentIncarnationId} is not null and ${t.executionAssignmentIncarnationId} is not null)
+          or (${t.actionAuthorityJson} is not null and ${t.approverAssignmentIncarnationId} is null and ${t.executionAssignmentIncarnationId} is null
+            and ${t.actionAuthorityJson}->>'format' is not distinct from 'core.action-authority/2'
+            and ${t.actionAuthorityJson}->>'phase' is not distinct from 'approver'
+            and ${t.actionAuthorityJson}->>'principalId' is not distinct from ${t.approverId}::text
+            and ${t.actionAuthorityJson}->>'scopeId' is not distinct from ${t.scopeId}::text
+            and ${t.actionAuthorityJson}->>'commandDigest' is not distinct from ${t.commandDigest})`,
+      ),
       ...tenantRlsPolicies('access_mandates', t.tenantId),
     ],
   );
@@ -723,6 +744,12 @@ export const defineAccessTables = ({ legalEntities, principals, requestRoles, te
     {
       agentId: uuid('agent_id'),
       createdAt: createdAt(),
+      /** When the revocation that ended the row was recorded; null for every other row and writer. */
+      endedAt: timestamp('ended_at', { withTimezone: true }),
+      /** The person who ended the row through the people commands; null when another writer revoked it. */
+      endedBy: uuid('ended_by'),
+      /** Why the people commands ended the row, as the ending person stated it. */
+      endedReason: text('ended_reason'),
       kind: text('kind').$type<MembershipKind>().notNull(),
       membershipId: uuid('membership_id').primaryKey(),
       principalId: uuid('principal_id'),
@@ -745,6 +772,17 @@ export const defineAccessTables = ({ legalEntities, principals, requestRoles, te
       personFk('access_memberships_principal_fk', t.tenantId, t.principalId),
       personFk('access_memberships_agent_fk', t.tenantId, t.agentId),
       personFk('access_memberships_recorder_fk', t.tenantId, t.recordedBy),
+      personFk('access_memberships_ender_fk', t.tenantId, t.endedBy),
+      // An end is recorded only on a revoked row, by a person and at an instant together; the
+      // migration's guard sets it once, on the move to 'revoked', and never changes it afterwards.
+      check(
+        'access_memberships_end_ck',
+        sql`(${t.endedBy} is null and ${t.endedAt} is null and ${t.endedReason} is null) or (${t.status} = 'revoked' and ${t.endedBy} is not null and ${t.endedAt} is not null)`,
+      ),
+      check(
+        'access_memberships_end_reason_ck',
+        sql`${t.endedReason} is null or length(${t.endedReason}) between 1 and 500`,
+      ),
       check('access_memberships_holder_xor_ck', sql`(${t.principalId} is null) <> (${t.agentId} is null)`),
       check('access_memberships_kind_ck', sql`${t.kind} in ('member', 'owner', 'access_admin')`),
       check('access_memberships_status_ck', sql`${t.status} in ('active', 'suspended', 'revoked')`),
@@ -842,6 +880,12 @@ export const defineAccessTables = ({ legalEntities, principals, requestRoles, te
   const accessScopeFences = core.table.withRLS(
     'access_scope_fences',
     {
+      /**
+       * Until when the owning operation's hold is live. The holder sets it when it takes the fence and renews it
+       * while it works; once it lapses, a later projection of the tenant may take the fence over (and must finish
+       * a full reconcile before it releases it). A `Ready` fence has none.
+       */
+      leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
       owningOperationId: uuid('owning_operation_id'),
       revision: integer('revision').notNull(),
       scopeId: uuid('scope_id').primaryKey(),
@@ -865,7 +909,13 @@ export const defineAccessTables = ({ legalEntities, principals, requestRoles, te
         sql`(${t.state} = 'Ready' and ${t.owningOperationId} is null) or (${t.state} <> 'Ready' and ${t.owningOperationId} is not null)`,
       ),
       check('access_scope_fences_revision_ck', sql`${t.revision} > 0`),
+      check('access_scope_fences_lease_ck', sql`${t.state} <> 'Ready' or ${t.leaseExpiresAt} is null`),
+      // The fence sweeper's one statement a minute reads only held fences, which are few and short-lived.
+      index('access_scope_fences_held_ix')
+        .on(t.leaseExpiresAt)
+        .where(sql`${t.state} = 'Changing'`),
       ...tenantRlsPolicies('access_scope_fences', t.tenantId),
+      ...gatewayRequestReadPolicies('access_scope_fences', t.tenantId),
     ],
   );
   const accessDecisionLogs = core.table.withRLS(
@@ -964,6 +1014,59 @@ export const defineAccessTables = ({ legalEntities, principals, requestRoles, te
     ],
   );
 
+  /**
+   * The one company an active workload binding is explicitly registered for (D6). A binding is
+   * tenant-wide, so a standalone workload that holds no verified module actor selects no company at
+   * all unless its owner declared one here: at most one live registration per binding, written only
+   * by the install/bootstrap path. Like the bindings, a registration is identity, not a grant, and a
+   * revoked one is never reopened, so a re-registration is a new row with a new incarnation (D27).
+   */
+  const accessWorkloadCompanyBindings = core.table.withRLS(
+    'access_workload_company_bindings',
+    {
+      companyBindingId: uuid('company_binding_id').primaryKey(),
+      createdAt: createdAt(),
+      incarnation: uuid('incarnation').notNull(),
+      legalEntityId: uuid('legal_entity_id').notNull(),
+      revokedAt: timestamp('revoked_at', { withTimezone: true }),
+      status: text('status').$type<WorkloadBindingStatus>().notNull(),
+      tenantId: tenantId(),
+      workloadBindingId: uuid('workload_binding_id').notNull(),
+    },
+    (t) => [
+      uniqueIndex('access_workload_company_bindings_tenant_id_uk').on(t.tenantId, t.companyBindingId),
+      // The incarnation is the registration's identity a later reference may point at, never reused.
+      uniqueIndex('access_workload_company_bindings_incarnation_uk').on(t.tenantId, t.incarnation),
+      // At most one live company per binding: a workload selects exactly the company its owner declared.
+      uniqueIndex('access_workload_company_bindings_active_uk')
+        .on(t.tenantId, t.workloadBindingId)
+        .where(sql`${t.status} = 'active'`),
+      // The registration names an active-or-revoked binding of this tenant, never another tenant's.
+      sameTenant(
+        'access_workload_company_bindings_binding_fk',
+        t.tenantId,
+        t.workloadBindingId,
+        accessWorkloadBindings.tenantId,
+        accessWorkloadBindings.bindingId,
+      ),
+      // The registered company is a company of this tenant, so a cross-tenant company is impossible.
+      sameTenant(
+        'access_workload_company_bindings_company_fk',
+        t.tenantId,
+        t.legalEntityId,
+        legalEntities.tenantId,
+        legalEntities.legalEntityId,
+      ),
+      check('access_workload_company_bindings_status_ck', sql`${t.status} in ('active', 'revoked')`),
+      check(
+        'access_workload_company_bindings_revoked_ck',
+        sql`(${t.status} = 'revoked') = (${t.revokedAt} is not null)`,
+      ),
+      ...tenantRlsPolicies('access_workload_company_bindings', t.tenantId),
+      ...gatewayRequestReadPolicies('access_workload_company_bindings', t.tenantId),
+    ],
+  );
+
   const accessDatabaseSchema = {
     accessAgentConnections,
     accessAssignments,
@@ -988,6 +1091,7 @@ export const defineAccessTables = ({ legalEntities, principals, requestRoles, te
     accessTeamMembers,
     accessTeams,
     accessWorkloadBindings,
+    accessWorkloadCompanyBindings,
   } as const;
   const ACCESS_TABLES = Object.values(accessDatabaseSchema);
   const ACCESS_TABLE_INVENTORY = [
@@ -1014,6 +1118,7 @@ export const defineAccessTables = ({ legalEntities, principals, requestRoles, te
     'access_teams',
     'access_team_members',
     'access_workload_bindings',
+    'access_workload_company_bindings',
   ] as const;
   return { all: ACCESS_TABLES, inventory: ACCESS_TABLE_INVENTORY, tables: accessDatabaseSchema };
 };

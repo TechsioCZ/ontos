@@ -1,0 +1,44 @@
+{
+  "name": "n1-storefront",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "theme:generate": "node scripts/render-figma-theme.mts",
+    "theme:check": "node scripts/render-figma-theme.mts --check",
+    "dev": "next dev --webpack --hostname 127.0.0.1 --port 3071",
+    "build": "next build --webpack",
+    "start": "next start --hostname 127.0.0.1 --port 3071",
+    "typecheck": "tsc --noEmit",
+    "test": "rstest --config rstest.config.ts --pool.maxWorkers 1",
+    "lint": "pnpm --dir .. exec effect-tsgo --tsrs-lint oxlint --react-plugin --jsx-a11y-plugin --nextjs-plugin --vitest-plugin n1-storefront/src n1-storefront/tests",
+    "format:check": "oxfmt --check ."
+  },
+  "dependencies": {
+    "@app/commerce-customer-context": "catalog:",
+    "@app/merchandise": "workspace:*",
+    "@app/shared-contracts": "catalog:",
+    "@app/work-tasks": "catalog:",
+    "@modern-js/bff-effect": "catalog:ultramodern",
+    "@techsio/ui-kit": "catalog:",
+    "@zag-js/dom-query": "1.47.0",
+    "effect": "4.0.7",
+    "next": "16.3.8",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "server-only": "0.0.1"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "4.0.7",
+    "@rstest/core": "0.11.12",
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "26.4.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
+    "oxfmt": "0.66.0",
+    "oxlint": "1.81.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3"
+  }
+}

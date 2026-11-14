@@ -41,6 +41,8 @@ export class PrivacySubjectPartyOwner extends Context.Service<
       canonicalWrite: boolean,
       sourceReference?: PrivacySourcePersonReference,
       operationRequirementKey?: PrivacyPartyOwnerRequirement,
+      /** A prepared caller pins the owner release its later transaction expects. */
+      compositionRevision?: string,
     ) => Effect.Effect<PrivacySubjectOwnerEvidence, PrivacyOperationPersistenceError>;
   }
 >()('@app/privacy/persistence/privacy-subject-party-owner/PrivacySubjectPartyOwner') {}
@@ -137,6 +139,32 @@ export const resolveSourcePersonOwnerEvidence = (
     Effect.map(({ evidence }) => evidence),
   );
 
+const validPersonResolution = (
+  detail: typeof PartyDetailResponseSchema.Type,
+  request: { readonly canonicalWrite: boolean; readonly partyRef: PartyRef; readonly tenantId: string },
+): boolean => {
+  const { party, resolution } = detail;
+  const { canonicalWrite, partyRef, tenantId } = request;
+  const canonical = resolution.canonicalPartyRef;
+  const direct = resolution.kind === 'DIRECT' && resolution.aliasChain.length === 0 && sameRef(canonical, partyRef);
+  const firstAlias = resolution.aliasChain.at(0);
+  const alias =
+    resolution.kind === 'ALIAS' &&
+    resolution.aliasChain.length > 0 &&
+    firstAlias !== undefined &&
+    sameRef(firstAlias, partyRef) &&
+    resolution.aliasChain.every((ref) => ref.tenantId === tenantId) &&
+    !resolution.aliasChain.some((ref) => sameRef(ref, canonical));
+  return (
+    sameRef(resolution.requestedPartyRef, partyRef) &&
+    canonical.tenantId === tenantId &&
+    sameRef(party.partyRef, canonical) &&
+    (direct || (alias && !canonicalWrite)) &&
+    party.partyType === 'PERSON' &&
+    Option.isNone(party.archivedAt)
+  );
+};
+
 /** Uses the published generated owner client; ordinary detail requires no privileged fact history. */
 export const PrivacySubjectPartyOwnerLive = Layer.effect(
   PrivacySubjectPartyOwner,
@@ -147,6 +175,7 @@ export const PrivacySubjectPartyOwnerLive = Layer.effect(
       scope: OperationalScope,
       sourceReference: PrivacySourcePersonReference,
       operationRequirementKey: PrivacyPartyOwnerRequirement | undefined,
+      compositionRevision: string | undefined,
     ) {
       const sourceRequest = yield* Schema.decodeUnknownEffect(SourcePersonAdmissionRequestSchema, {
         onExcessProperty: 'error',
@@ -159,22 +188,41 @@ export const PrivacySubjectPartyOwnerLive = Layer.effect(
         operationRequirementKey,
         requestHash,
       );
+      if (compositionRevision !== undefined && transport.compositionRevision !== compositionRevision) {
+        return yield* unavailable();
+      }
       return yield* resolveSourcePersonOwnerEvidence(partyRef, scope, sourceRequest.sourceReference, transport);
     });
     return PrivacySubjectPartyOwner.of({
       resolve: Effect.fn('PrivacySubjectPartyOwner.resolve')(
-        function* resolvePartyOwner(partyRef, scope, canonicalWrite, sourceReference, operationRequirementKey) {
+        function* resolvePartyOwner(
+          partyRef,
+          scope,
+          canonicalWrite,
+          sourceReference,
+          operationRequirementKey,
+          compositionRevision,
+        ) {
           if (partyRef.tenantId !== scope.tenantId) {
             return yield* unavailable();
           }
           if (sourceReference !== undefined) {
-            return yield* sourceEvidence(partyRef, scope, sourceReference, operationRequirementKey);
+            return yield* sourceEvidence(
+              partyRef,
+              scope,
+              sourceReference,
+              operationRequirementKey,
+              compositionRevision,
+            );
           }
           const transport = yield* credentials.acquire(
             scope,
             partyOwnerDeclaration(sourceReference),
             operationRequirementKey,
           );
+          if (compositionRevision !== undefined && transport.compositionRevision !== compositionRevision) {
+            return yield* unavailable();
+          }
           const detail = yield* executePartyDetailWithAuthorization(
             { partyRef },
             Redacted.value(transport.authorization),
@@ -189,24 +237,7 @@ export const PrivacySubjectPartyOwnerLive = Layer.effect(
           }
           const { party, resolution } = detail;
           const canonical = resolution.canonicalPartyRef;
-          const direct =
-            resolution.kind === 'DIRECT' && resolution.aliasChain.length === 0 && sameRef(canonical, partyRef);
-          const firstAlias = resolution.aliasChain.at(0);
-          const alias =
-            resolution.kind === 'ALIAS' &&
-            resolution.aliasChain.length > 0 &&
-            firstAlias !== undefined &&
-            sameRef(firstAlias, partyRef) &&
-            resolution.aliasChain.every((ref) => ref.tenantId === scope.tenantId) &&
-            !resolution.aliasChain.some((ref) => sameRef(ref, canonical));
-          if (
-            !sameRef(resolution.requestedPartyRef, partyRef) ||
-            canonical.tenantId !== scope.tenantId ||
-            !sameRef(party.partyRef, canonical) ||
-            (!direct && !(alias && !canonicalWrite)) ||
-            party.partyType !== 'PERSON' ||
-            Option.isSome(party.archivedAt)
-          ) {
+          if (!validPersonResolution(detail, { canonicalWrite, partyRef, tenantId: scope.tenantId })) {
             return yield* unavailable();
           }
           const now = yield* DateTime.now;

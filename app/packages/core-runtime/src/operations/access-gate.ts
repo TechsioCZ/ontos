@@ -27,6 +27,19 @@ import type { AccessDecisionUnavailable } from '../access/decision/errors.ts';
 import type { LegalEntityId } from '../access/ids.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import type { OperationalScope } from './context.ts';
+import { AccessAuthorityCurrentnessLive, sameAuthorityRevision } from '../access/enforcement/currentness.ts';
+import type { AccessAuthorityCurrentness } from '../access/enforcement/currentness.ts';
+import { prepareEngineEvidence } from '../access/enforcement/prepared-check.ts';
+import { accessDecisionUnavailable } from '../access/decision/errors.ts';
+
+export interface PreparedAccessDecision {
+  readonly decision: AccessDecision;
+  /** Re-plans current joined intent under the persisted revision fence, using exact remote evidence. */
+  readonly recheck: (
+    now: Date,
+    transaction: CoreTransaction,
+  ) => Effect.Effect<AccessDecision, AccessDecisionUnavailable>;
+}
 
 /**
  * The gate as a runtime asks it: the five enforcement ports are bound once, when the runtime is
@@ -43,7 +56,11 @@ export interface BoundAccessGate {
    * transaction leaves it out and the decision reads in a transaction of the request scope.
    */
   readonly decide: (input: GateInput, transaction?: CoreTransaction) => Effect.Effect<AccessDecision>;
-  /** Batched decisions for a composition that supplies a gate with batch support. */
+  /**
+   * Many decisions of one request in ONE engine snapshot, one answer and one evidence row each, exactly
+   * as `decide` would give them one at a time. `transaction` joins a transaction the caller already
+   * owns, exactly as for `decide`; without it the batch reads in a transaction of the request scope.
+   */
   readonly decideMany?: (
     input: readonly GateInput[],
     transaction?: CoreTransaction,
@@ -53,6 +70,7 @@ export interface BoundAccessGate {
    * `transaction` joins a transaction the caller already owns, exactly as for `decide`.
    */
   readonly list: (input: ListGateInput, transaction?: CoreTransaction) => Effect.Effect<ListAccessResolution>;
+  readonly prepare?: (input: GateInput) => Effect.Effect<PreparedAccessDecision, AccessDecisionUnavailable>;
   /**
    * The companies whose context this actor may select (O28). An unreadable authority stays a typed
    * failure, so the caller answers a retryable 503 and never "none".
@@ -94,6 +112,7 @@ export type AccessDecisionRequirements =
 export interface AccessEnforcementPorts {
   readonly candidates: AccessLegalEntityCandidates;
   readonly check: DecisionCheckPort;
+  readonly currentness?: AccessAuthorityCurrentness;
   readonly decisionLog: AccessDecisionLogWriter;
   /**
    * The intent source, not a resolved authority: the gate asks it for one port per request scope
@@ -179,8 +198,8 @@ export const joinAccessEnforcementPorts = (
       : {
           ...withLiveness,
           workloadBindings: Object.freeze({
-            readActiveWorkloadKeys: (query: WorkloadBindingQuery) =>
-              workloadBindings.readActiveWorkloadKeys(query, transaction),
+            readWorkloadAuthority: (query: WorkloadBindingQuery) =>
+              workloadBindings.readWorkloadAuthority(query, transaction),
           }),
         },
   );
@@ -222,7 +241,7 @@ const decisionPortsOf = (ports: AccessEnforcementPorts): AccessDecisionPorts =>
  * The gate bound to these ports. The gate itself is the seam's own service (`AccessDecisionLive` in
  * a deployment, a scripted double in a suite); the ports are what this composition provides.
  */
-export const bindAccessGate = (gate: UnboundAccessGate, ports: AccessEnforcementPorts) => {
+export const bindAccessGate = (gate: UnboundAccessGate, ports: AccessEnforcementPorts): BoundAccessGate => {
   const context = contextOf(ports);
   // The request read isolation is the default: only a caller that hands its own transaction gets the
   // joined ports, so a preflight or a standalone decision keeps opening its own scoped read.
@@ -235,26 +254,82 @@ export const bindAccessGate = (gate: UnboundAccessGate, ports: AccessEnforcement
     // keeps answering itself, because it reads no ports at all.
     return { context: contextOf(joinedPorts), seam: gate.rebind?.(decisionPortsOf(joinedPorts)) ?? gate };
   };
-  return Object.freeze({
+  const prepare = Effect.fn('AccessGate.prepare')(function* prepareAccessDecision(input: GateInput) {
+    const { currentness } = ports;
+    if (currentness === undefined || gate.rebind === undefined || ports.intent.joined === undefined) {
+      return yield* accessDecisionUnavailable('The gate cannot prepare and join current persisted authority');
+    }
+    const administrative = input.carrier.accessDeclaration?.kind === 'admin';
+    const before = yield* currentness.read(input.scope, input.legalEntityScope, administrative);
+    const evidence = prepareEngineEvidence(ports.check);
+    const capturePorts = { ...ports, check: evidence.capture };
+    const capturing = gate.rebind(decisionPortsOf(capturePorts));
+    const decision = yield* capturing.decide(input).pipe(
+      Effect.provideContext(contextOf(capturePorts)),
+      // This second revision read MUST follow the remote answer. Parallelizing it would allow
+      // a complete writer revision to pass between the read and the engine response.
+      Effect.tap(() =>
+        currentness
+          .read(input.scope, input.legalEntityScope, administrative)
+          .pipe(
+            Effect.flatMap((after) =>
+              sameAuthorityRevision(before, after)
+                ? Effect.void
+                : Effect.fail(accessDecisionUnavailable('Persisted authority changed while the engine answered')),
+            ),
+          ),
+      ),
+    );
+    evidence.seal();
+    return Object.freeze({
+      decision,
+      recheck: Effect.fn('AccessGate.recheckPrepared')(function* recheckPreparedAccessDecision(
+        now: Date,
+        transaction: CoreTransaction,
+      ) {
+        const current = yield* currentness.read(input.scope, input.legalEntityScope, administrative, transaction);
+        if (!sameAuthorityRevision(before, current)) {
+          return yield* accessDecisionUnavailable('The prepared authority revision is no longer current');
+        }
+        const joined = joinAccessEnforcementPorts({ ...ports, check: evidence.replay }, transaction);
+        const rebound = gate.rebind?.(decisionPortsOf(joined));
+        if (rebound === undefined) {
+          return yield* accessDecisionUnavailable('The prepared gate lost its transaction-bound intent');
+        }
+        return yield* rebound.decide({ ...input, now }).pipe(Effect.provideContext(contextOf(joined)));
+      }),
+    });
+  });
+  const bound = {
     decide: (input: GateInput, transaction?: CoreTransaction) => {
-      const bound = boundTo(transaction);
-      return bound.seam.decide(input).pipe(Effect.provideContext(bound.context));
+      const active = boundTo(transaction);
+      return active.seam.decide(input).pipe(Effect.provideContext(active.context));
     },
     decideMany: (input: readonly GateInput[], transaction?: CoreTransaction) => {
-      const bound = boundTo(transaction);
-      return bound.seam.decideMany(input).pipe(Effect.provideContext(bound.context));
+      const active = boundTo(transaction);
+      return active.seam.decideMany(input).pipe(Effect.provideContext(active.context));
     },
     list: (input: ListGateInput, transaction?: CoreTransaction) => {
-      const bound = boundTo(transaction);
-      return bound.seam.list(input).pipe(Effect.provideContext(bound.context));
+      const active = boundTo(transaction);
+      return active.seam.list(input).pipe(Effect.provideContext(active.context));
     },
     selectableLegalEntities: (input: SelectableLegalEntitiesInput) =>
       gate.selectableLegalEntities(input).pipe(Effect.provideContext(context)),
-  });
+  };
+  return Object.freeze(ports.currentness === undefined ? bound : { ...bound, prepare });
 };
 
 /** The runtime's own wiring: the seam from the tag, the ports from the layers it is built with. */
 export const bindLiveAccessGate = Effect.gen(function* bindAccessGateFromLayers() {
   const [gate, ports] = yield* Effect.all([AccessDecisionGate, AccessEnforcementPortsLive], { concurrency: 2 });
   return bindAccessGate(gate, ports);
+});
+
+/** Action execution additionally needs persisted currentness; Read and inspection gates do not. */
+export const bindLiveActionAccessGate = Effect.gen(function* bindActionAccessGateFromLayers() {
+  const [gate, ports, currentness] = yield* Effect.all(
+    [AccessDecisionGate, AccessEnforcementPortsLive, AccessAuthorityCurrentnessLive],
+    { concurrency: 3 },
+  );
+  return bindAccessGate(gate, { ...ports, currentness });
 });

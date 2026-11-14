@@ -14,7 +14,7 @@ import {
   makePublishedApplicationCompositionSnapshotFixture,
 } from '@app/core-runtime/testing/module-contract';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
-import { Array as EffectArray, Crypto, DateTime, Effect, FileSystem, Layer, Schema } from 'effect';
+import { Array as EffectArray, Crypto, DateTime, Effect, FileSystem, Layer, Schema, Semaphore } from 'effect';
 import { Hex } from 'effect/encoding';
 import { HttpApi } from 'effect/http-api';
 import {
@@ -22,6 +22,7 @@ import {
   CoreDatabaseLive,
   publishTestApplicationCompositionAuthority,
 } from '@app/core-runtime/testing/owner-evidence';
+import { partySourceComponentContracts } from '../fixtures/party-source-components.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { partyRegistryManifest } from '../../vertical.manifest.ts';
 import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
@@ -72,9 +73,7 @@ const sourceComposition = Effect.scoped(
           verticals: Schema.Array(
             Schema.Struct({
               id: fixtureAppId,
-              moduleFederation: Schema.optionalKey(
-                Schema.Struct({ name: Schema.NonEmptyString, exposes: Schema.Array(Schema.NonEmptyString) }),
-              ),
+              moduleFederation: Schema.optionalKey(Schema.Struct({ name: Schema.NonEmptyString })),
             }),
           ),
         }),
@@ -84,16 +83,9 @@ const sourceComposition = Effect.scoped(
     if (federation === undefined) {
       return yield* unavailable();
     }
-    const components = yield* Effect.forEach(Object.keys(manifest.publicSurface.components), (key) => {
-      const componentKey = `${owner.moduleId}.${key}`;
-      const binding = [...owner.shellContributions.pages, ...owner.shellContributions.publicComponents].find(
-        (entry) => entry.componentKey === componentKey,
-      );
-      if (binding === undefined || !federation.exposes.includes(binding.expose)) {
-        return Effect.fail(unavailable());
-      }
-      return Effect.succeed({ expose: binding.expose, key: componentKey, mfBoundaryId: federation.name });
-    });
+    // Owner page bindings plus the module federation config's declared exposures are the SOURCE
+    // component metadata; the topology placement only names the Federation boundary.
+    const components = yield* partySourceComponentContracts().pipe(Effect.mapError(() => unavailable()));
     const events = yield* Effect.all(
       manifest.publicSurface.events.map((event) =>
         Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))(
@@ -274,22 +266,9 @@ const sourceComposition = Effect.scoped(
   }),
 );
 
-// Only immutable validated metadata is retained after the owning setup has published it.
+// Only immutable validated metadata is retained after a test has published it.
 let preparedComposition: ApplicationComposition | undefined;
-
-// Each explicit fixture observation uses its caller's clock, as the previous fixture did.
-export const partyCompositionSnapshot = Effect.gen(function* observePartyCompositionSnapshot() {
-  const composition = preparedComposition;
-  if (composition === undefined) {
-    return yield* unavailable();
-  }
-  const observedAt = yield* DateTime.now;
-  return yield* validateActiveApplicationCompositionSnapshot({
-    composition,
-    observedAt,
-    validUntil: DateTime.add(observedAt, { hours: 1 }),
-  });
-});
+const preparation = Semaphore.makeUnsafe(1);
 
 const adminDatabaseLive = CoreDatabaseLive.pipe(
   Layer.provide(
@@ -316,4 +295,26 @@ const partyAuthorityBootstrap = Layer.effectDiscard(
     preparedComposition = snapshot.composition;
   }),
 ).pipe(Layer.provide(Layer.mergeAll(adminDatabaseLive, NodeServices.layer, NodeCrypto.layer)));
-await Effect.runPromise(Effect.scoped(Layer.build(partyAuthorityBootstrap)));
+// Importing setup never opens a database. The first test observation owns bootstrap and cleanup.
+const preparePartyAuthority = preparation.withPermits(1)(
+  Effect.suspend(() =>
+    preparedComposition === undefined
+      ? Effect.scoped(Layer.build(partyAuthorityBootstrap)).pipe(Effect.asVoid)
+      : Effect.void,
+  ),
+);
+
+// Every explicit observation, including publication, uses the calling test's clock and cancellation.
+export const partyCompositionSnapshot = Effect.gen(function* observePartyCompositionSnapshot() {
+  yield* preparePartyAuthority;
+  const composition = preparedComposition;
+  if (composition === undefined) {
+    return yield* unavailable();
+  }
+  const observedAt = yield* DateTime.now;
+  return yield* validateActiveApplicationCompositionSnapshot({
+    composition,
+    observedAt,
+    validUntil: DateTime.add(observedAt, { hours: 1 }),
+  });
+});

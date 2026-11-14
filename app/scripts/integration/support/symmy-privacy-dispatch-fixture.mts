@@ -35,18 +35,6 @@ const humanCapabilities = [
   'privacy.core.measure-execution-eligibility.read',
   'privacy.core.owner-execution-outcome.record',
 ];
-const relayRules = [
-  {
-    audience: 'catalog',
-    declarationKey: 'commerce.catalog.product.create',
-    entrypointKey: 'commerce.catalog.create-product',
-    jobKey: workerKey,
-    legalEntityScope: 'forbidden' as const,
-    schemaVersion: '2',
-    workerKey,
-    workloadKey: importWorkload,
-  },
-];
 const receiptSchema = Schema.Struct({
   jobId: SymmyJobStatusResponseSchema.members[0].fields.jobId,
   status: Schema.Literal('admitted'),
@@ -80,7 +68,7 @@ export const observePrivacyDispatchUntil = <A, E, R>(
 const seedPrincipal = Effect.fn('PrivacyDispatchNative.principal')(function* seedPrincipal(
   admin: PgClient.PgClient,
   tenantId: string,
-  kind: 'human' | 'integration' | 'service' | 'system',
+  kind: 'human' | 'integration' | 'system',
   providerUserId?: string,
 ) {
   const principalId = randomUUID();
@@ -131,14 +119,10 @@ export const makePrivacyDispatchNativeFixture = Effect.fn('PrivacyDispatchNative
   });
   const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
   const shell = yield* makeApiKeyGatewayNativeFixture({
-    additionalRelaySources: [
-      { registeredWorkloads: [], sourceAppId: 'privacy' },
-      { registeredWorkloads: [], sourceAppId: 'catalog' },
-      { registeredWorkloads: [], sourceAppId: marketApp },
-    ],
+    additionalRelaySources: [{ sourceAppId: 'privacy' }, { sourceAppId: 'catalog' }, { sourceAppId: marketApp }],
     ownedDatabase: isolated,
     productionGate: true,
-    relaySource: { registeredWorkloads: relayRules, sourceAppId: symmyApp },
+    relaySource: { sourceAppId: symmyApp },
     snapshotJson: yield* encodeProductComposition(snapshot),
   });
   const tenantId = randomUUID();
@@ -157,7 +141,6 @@ export const makePrivacyDispatchNativeFixture = Effect.fn('PrivacyDispatchNative
   const spiceDb = yield* loadSpiceDbConfig({ envPath: '/dev/null' });
   const grantHuman = (includeRetention: boolean) =>
     grantTestTenantRoleAccess({
-      adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       holders: [
         {
           capabilityKeys: includeRetention ? [receiptCapability, retentionCapability] : [receiptCapability],
@@ -167,14 +150,15 @@ export const makePrivacyDispatchNativeFixture = Effect.fn('PrivacyDispatchNative
       legalEntityIds: [legalEntityId],
       spiceDb,
       tenantId,
+      writerConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     });
   yield* grantTestTenantRoleAccess({
-    adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
     assignmentScope: 'companies',
     holders: [{ capabilityKeys: [...humanCapabilities, retentionCapability], principalId: human.principalId }],
     legalEntityIds: [legalEntityId],
     spiceDb,
     tenantId,
+    writerConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
   });
   const [companyOnlyAssignments] = yield* fixtureAssignmentCounts(admin, tenantId, human.principalId, legalEntityId);
   yield* grantHuman(false);
@@ -185,35 +169,20 @@ export const makePrivacyDispatchNativeFixture = Effect.fn('PrivacyDispatchNative
     [system.principalId, workerKey],
     [system.principalId, importWorkload],
   ]) {
+    const bindingId = randomUUID();
     yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status)
-      values(${randomUUID()},${randomUUID()},${tenantId},${principalId},${workload},'active')`;
+      values(${bindingId},${randomUUID()},${tenantId},${principalId},${workload},'active')`;
+    yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+      values(${randomUUID()},${randomUUID()},${tenantId},${bindingId},${legalEntityId},'active')`;
   }
   const sourceKey = yield* shell.issueFixtureProviderKey({ ...integration, issuerPrincipalId: human.principalId });
   yield* bindKey(admin, integration, sourceKey.providerKeyId);
   yield* sourceKey.acknowledgeBinding;
-  if (shell.relaySourceProviderUserId === undefined) {
-    return yield* new PrivacyDispatchNativeFailure({ reason: 'The real Symmy module issuer was not provisioned' });
-  }
-  const symmyIssuer = yield* seedPrincipal(admin, tenantId, 'human', shell.relaySourceProviderUserId);
-  const symmyPrincipal = yield* seedPrincipal(admin, tenantId, 'service');
-  const symmyKey = yield* shell.issueFixtureRelaySourceProviderKey({
-    ...symmyPrincipal,
-    issuerPrincipalId: symmyIssuer.principalId,
-  });
-  yield* bindKey(admin, symmyPrincipal, symmyKey.providerKeyId);
-  yield* symmyKey.acknowledgeBinding;
-  const keys = new Map<string, string>([[symmyApp, Redacted.value(symmyKey.secret)]]);
-  for (const provider of shell.additionalRelaySourceProviderUsers) {
-    const issuer = yield* seedPrincipal(admin, tenantId, 'human', provider.providerUserId);
-    const principal = yield* seedPrincipal(admin, tenantId, 'service');
-    const key = yield* shell.issueFixtureModuleProviderKey({
-      ...principal,
-      issuerPrincipalId: issuer.principalId,
-      sourceAppId: provider.sourceAppId,
-    });
-    yield* bindKey(admin, principal, key.providerKeyId);
-    yield* key.acknowledgeBinding;
-    keys.set(provider.sourceAppId, Redacted.value(key.secret));
+  // Each owner's own module key, provisioned by the platform for its module principal as on every environment.
+  const symmyKey = yield* shell.provisionRelaySource();
+  const keys = new Map<string, Redacted.Redacted>([[symmyApp, symmyKey.secret]]);
+  for (const appId of ['privacy', 'catalog', marketApp] as const) {
+    keys.set(appId, (yield* shell.provisionModuleSource(appId)).secret);
   }
   const routeId = randomUUID();
   const sourceRouteId = randomUUID();
@@ -295,7 +264,8 @@ export const makePrivacyDispatchNativeFixture = Effect.fn('PrivacyDispatchNative
     const receiver = yield* startProductOwner({
       artifacts: yield* buildProductOwner(contract),
       contract,
-      environment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: moduleKey },
+      environment,
+      moduleKey,
       port,
       prefix: prefixes[appId],
     });
@@ -305,11 +275,11 @@ export const makePrivacyDispatchNativeFixture = Effect.fn('PrivacyDispatchNative
   if (symmyContract === undefined) {
     return yield* new PrivacyDispatchNativeFailure({ reason: 'The actual Symmy worker deployment is missing' });
   }
-  const worker = yield* startProductWorker(yield* buildProductWorker(symmyContract), {
-    ...environment,
-    ONTOS_C14_WORKER_CLAIM_OWNER: `INTERNAL_PRIVACY_DISPATCH_${randomUUID()}`,
-    ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(symmyKey.secret),
-  });
+  const worker = yield* startProductWorker(
+    yield* buildProductWorker(symmyContract),
+    { ...environment, ONTOS_C14_WORKER_CLAIM_OWNER: `INTERNAL_PRIVACY_DISPATCH_${randomUUID()}` },
+    symmyKey.secret,
+  );
   const client = yield* HttpClient.HttpClient;
   const submit = Effect.fn('PrivacyDispatchNative.submit')(function* submit(key: string) {
     const plan = yield* planFor(key);
@@ -337,7 +307,6 @@ export const makePrivacyDispatchNativeFixture = Effect.fn('PrivacyDispatchNative
     grantHuman,
     human,
     isolated,
-    keys,
     legalEntityId,
     ports,
     shell,

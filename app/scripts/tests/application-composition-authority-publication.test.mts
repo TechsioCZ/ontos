@@ -1,22 +1,18 @@
-import { NodeServices } from '@effect/platform-node';
-import { ConfigProvider, Effect, Layer, Schema } from 'effect';
+import { ConfigProvider, Deferred, Effect, Fiber, Layer, Logger, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
 import { ApplicationCompositionAuthorityError } from '../../packages/core-runtime/src/modules/application-composition-authority.ts';
-import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
-import {
-  LegacyCompletionPublication,
-  LegacyCompletionPublicationError,
-} from '../../packages/core-runtime/src/modules/legacy-completion-publication.ts';
-import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
 import {
   ApplicationCompositionAuthorityAdminDatabaseLive,
-  runApplicationCompositionMigration,
-  withApplicationCompositionPublicationLock,
+  withApplicationCompositionPublicationProgress,
+  withApplicationCompositionReadinessDeadline,
 } from '../application-composition-authority-publication.mts';
 
 const runtimeUrl = 'postgresql://ontos_runtime:runtime-test-secret@127.0.0.1:5432/publication';
 const adminUrl = 'postgresql://ontos_admin:admin-test-secret@127.0.0.1:5432/publication';
+const DURABLE_DRAIN_PHASE = 'drain durable workflows';
+const DRAIN_IDENTIFIERS_MESSAGE = 'drain identifiers';
 
 it.effect('requires explicit distinct valid runtime and admin identities without leaking credentials', () =>
   Effect.gen(function* requiresNativeAdminConfiguration() {
@@ -46,186 +42,72 @@ it.effect('requires explicit distinct valid runtime and admin identities without
   }),
 );
 
-it.effect(
-  'guards verify-only callbacks under the existing lock without changing authority or initializing owners',
-  () =>
-    Effect.gen(function* guardedVerificationCallback() {
-      const baselineRevision = 'a'.repeat(64);
-      const unrelatedRevision = 'b'.repeat(64);
-      const targetRevision = 'c'.repeat(64);
-      const scenarios = [
-        { allowed: true, current: null, target: targetRevision },
-        { allowed: true, baseline: null, current: null, target: targetRevision },
-        {
-          allowed: false,
-          baseline: null,
-          current: { phase: 'active', revision: baselineRevision },
-          target: targetRevision,
-        },
-        { allowed: false, baseline: baselineRevision, current: null, target: targetRevision },
-        {
-          allowed: false,
-          baseline: unrelatedRevision,
-          current: { phase: 'active', revision: baselineRevision },
-          target: targetRevision,
-        },
-        {
-          allowed: true,
-          baseline: unrelatedRevision,
-          current: { phase: 'active', revision: targetRevision },
-          target: targetRevision,
-        },
-        {
-          allowed: false,
-          baseline: unrelatedRevision,
-          current: { phase: 'draining', revision: targetRevision },
-          target: targetRevision,
-        },
-        ...['active', 'draining', 'sealed', 'migrated'].map((phase) => ({
-          allowed: true,
-          baseline: baselineRevision,
-          current: { phase, revision: baselineRevision },
-          target: baselineRevision,
-        })),
-      ];
-      for (const scenario of scenarios) {
-        const events: string[] = [];
-        const statements: string[] = [];
-        let calls = 0;
-        const executor = yield* makeTestDatabase((statement) =>
-          Effect.sync(() => {
-            statements.push(statement);
-            const query = statement.toLowerCase();
-            if (query.includes('pg_advisory_unlock(')) {
-              events.push('unlock');
-              return [{ unlocked: true }];
-            }
-            if (query.includes('pg_advisory_lock(')) {
-              events.push('lock');
-            } else if (query.includes('from "core"."application_composition_authority"')) {
-              expect(events).toEqual(['lock']);
-              events.push('read');
-              return scenario.current === null ? [] : [scenario.current];
-            }
-            return [];
-          }),
-        );
-        const precondition =
-          scenario.baseline === undefined
-            ? undefined
-            : { baselineRevision: scenario.baseline, targetRevision: scenario.target };
-        const verification = withApplicationCompositionPublicationLock(
-          Effect.sync(() => {
-            calls += 1;
-            events.push('callback');
-            return 'verified';
-          }),
-          precondition,
-        ).pipe(Effect.provideService(CoreDatabase, { executor }));
-        if (scenario.allowed) {
-          expect(yield* verification).toBe('verified');
-          expect(calls).toBe(1);
-        } else {
-          const failure = yield* verification.pipe(Effect.flip);
-          expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
-          expect(failure).toMatchObject({
-            reason: 'The native publication authority no longer matches the captured baseline or active target',
-          });
-          expect(calls).toBe(0);
-        }
-        expect(events).toEqual([
-          'lock',
-          ...(precondition === undefined ? [] : ['read']),
-          ...(scenario.allowed ? ['callback'] : []),
-          'unlock',
-        ]);
-        expect(statements.some((statement) => /^(?:begin|insert|update|delete|alter|create)\b/iu.test(statement))).toBe(
-          false,
-        );
-      }
-    }),
+it.effect('reports the exact waiting phase and blockers every 30 seconds, then stops after success', () =>
+  Effect.gen(function* publicationHeartbeatLifecycle() {
+    const messages: unknown[] = [];
+    const logger = Logger.layer([Logger.make(({ message }) => messages.push(message))]);
+    const finished = yield* Deferred.make<string>();
+    const fiber = yield* withApplicationCompositionPublicationProgress(
+      DURABLE_DRAIN_PHASE,
+      Deferred.await(finished),
+      Effect.logInfo(DRAIN_IDENTIFIERS_MESSAGE, { workId: 'test-work-id' }),
+    ).pipe(Effect.provide(logger), Effect.forkChild);
+    yield* TestClock.adjust('29 seconds');
+    expect(messages).toEqual([['Application Composition publication started', { phase: DURABLE_DRAIN_PHASE }]]);
+    yield* TestClock.adjust('1 second');
+    expect(messages).toContainEqual(['Application Composition publication waiting', { phase: DURABLE_DRAIN_PHASE }]);
+    expect(messages).toContainEqual([DRAIN_IDENTIFIERS_MESSAGE, { workId: 'test-work-id' }]);
+    yield* TestClock.adjust('30 seconds');
+    expect(
+      messages.filter((message) => Array.isArray(message) && message[0] === DRAIN_IDENTIFIERS_MESSAGE),
+    ).toHaveLength(2);
+    yield* Deferred.succeed(finished, 'published');
+    expect(yield* Fiber.join(fiber)).toBe('published');
+    expect(messages.at(-1)).toEqual(['Application Composition publication completed', { phase: DURABLE_DRAIN_PHASE }]);
+    const count = messages.length;
+    yield* TestClock.adjust('60 seconds');
+    expect(messages).toHaveLength(count);
+  }),
 );
 
-it.live(
-  'failed owner lease acquisition settles Core before returning the original failure without publishing authority',
-  () =>
-    Effect.gen(function* failedOwnerAcquisition() {
-      const statements: string[] = [];
-      const events: string[] = [];
-      let transactionOpen = false;
-      let authorityLocked = false;
-      let sessionLocked = false;
-      let migrationExecuted = false;
-      const original = new LegacyCompletionPublicationError({ reason: 'Scripted owner lease acquisition failed' });
-      const executor = yield* makeTestDatabase((statement) =>
-        Effect.sync(() => {
-          statements.push(statement);
-          const query = statement.toLowerCase();
-          if (query === 'begin') {
-            transactionOpen = true;
-          } else if (query === 'rollback' || query === 'commit') {
-            transactionOpen = false;
-            authorityLocked = false;
-            events.push(query);
-          } else if (query.includes('pg_advisory_unlock(')) {
-            sessionLocked = false;
-            events.push('session unlocked');
-            return [{ unlocked: true }];
-          } else if (query.includes('pg_advisory_lock(')) {
-            sessionLocked = true;
-          } else if (query.includes('pg_advisory_xact_lock(')) {
-            authorityLocked = true;
-          } else if (query.includes('as initialized')) {
-            return [{ initialized: true }];
-          } else if (query.includes('completionschemainstalled')) {
-            return [{ completionSchemaInstalled: true }];
-          } else if (query.includes('from "core"."application_composition_authority"')) {
-            return [
-              { phase: 'sealed', revision: 'sealed-fixture-revision', validUntil: new Date('2027-01-01T00:00:00Z') },
-            ];
-          } else if (query.includes('as blocked')) {
-            return [{ blocked: false }];
-          } else if (query.includes('as isolation')) {
-            return [{ isolation: 'read committed' }];
-          }
-          return [];
-        }),
-      );
-      const failure = yield* runApplicationCompositionMigration(
-        Effect.sync(() => {
-          migrationExecuted = true;
-        }),
-        Effect.void,
-      ).pipe(
-        Effect.provideService(CoreDatabase, { executor }),
-        Effect.provideService(LegacyCompletionPublication, {
-          owners: [
-            {
-              producerModuleKey: 'scripted.owner',
-              topic: 'scripted.topic',
-              withLease: () =>
-                Effect.sync(() => {
-                  expect(transactionOpen).toBe(true);
-                  expect(authorityLocked).toBe(true);
-                  events.push('owner acquisition failed');
-                }).pipe(Effect.andThen(Effect.fail(original))),
-            },
-          ],
-          retainEvidence: () => Effect.void,
-          runtimeTarget: { databaseName: 'publication_test', host: '127.0.0.1', port: 5432, user: 'ontos_runtime' },
-          runtimeUser: 'ontos_runtime',
-        }),
-        Effect.flip,
-        Effect.timeout('2 seconds'),
-      );
-      expect(failure).toBe(original);
-      expect({ authorityLocked, migrationExecuted, sessionLocked, transactionOpen }).toEqual({
-        authorityLocked: false,
-        migrationExecuted: false,
-        sessionLocked: false,
-        transactionOpen: false,
-      });
-      expect(events).toEqual(['owner acquisition failed', 'rollback', 'session unlocked']);
-      expect(statements.some((statement) => /^(?:insert|update|delete) /iu.test(statement))).toBe(false);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+it.effect('preserves publication failures and cancels heartbeats without claiming completion', () =>
+  Effect.gen(function* failedPublicationHeartbeat() {
+    const messages: unknown[] = [];
+    const logger = Logger.layer([Logger.make(({ message }) => messages.push(message))]);
+    const failure = new ApplicationCompositionAuthorityError({
+      code: 'application_composition_authority_unavailable',
+      reason: 'publication failed',
+    });
+    const result = yield* withApplicationCompositionPublicationProgress('provider write', Effect.fail(failure)).pipe(
+      Effect.provide(logger),
+      Effect.flip,
+    );
+    expect(result).toBe(failure);
+    const fiber = yield* withApplicationCompositionPublicationProgress('publication lock', Effect.never).pipe(
+      Effect.provide(logger),
+      Effect.forkChild,
+    );
+    yield* TestClock.adjust('30 seconds');
+    expect(messages).toContainEqual(['Application Composition publication waiting', { phase: 'publication lock' }]);
+    yield* Fiber.interrupt(fiber);
+    const count = messages.length;
+    yield* TestClock.adjust('60 seconds');
+    expect(messages).toHaveLength(count);
+    expect(
+      messages.some(
+        (message) => Array.isArray(message) && message[0] === 'Application Composition publication completed',
+      ),
+    ).toBe(false);
+  }),
+);
+
+it.effect('returns only sanitized unknown evidence when a readiness dependency fails', () =>
+  Effect.gen(function* unavailableReadinessDoesNotLeak() {
+    const failure = new ApplicationCompositionAuthorityError({
+      code: 'application_composition_authority_unavailable',
+      reason: 'synthetic credential-like diagnostic that must not escape',
+    });
+    const result = yield* withApplicationCompositionReadinessDeadline(Effect.fail(failure));
+    expect(result).toEqual({ advisoryOnly: true, reason: 'diagnostic-unavailable', status: 'unknown' });
+  }),
 );

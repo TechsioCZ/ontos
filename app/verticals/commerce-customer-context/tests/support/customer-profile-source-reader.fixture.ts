@@ -13,6 +13,9 @@ import {
   withVerifiedCustomerContextFixture,
 } from './customer-context-owned-fixture.ts';
 import type { CustomerContextOwnedFixtureInput } from './customer-context-owned-fixture.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 export interface CustomerProfileSourceReaderFixtureInput extends CustomerContextOwnedFixtureInput {
   readonly authority: typeof Authority.Type;
@@ -30,23 +33,29 @@ export const enrollCustomerProfileSourceReaderNativeFixture = Effect.fn('Custome
     })(input.authority);
     const tenantId = yield* Schema.decodeUnknownEffect(TenantIdSchema)(input.tenantId);
     const readerId = yield* Schema.decodeUnknownEffect(PrincipalIdSchema)(input.readerPrincipalId);
-    return yield* withVerifiedCustomerContextFixture(input, (transaction, database, operatorScope) =>
+    return yield* withVerifiedCustomerContextFixture(input, (transaction, database, operatorScope, inspection) =>
       Effect.gen(function* enrollReader() {
         const readerScope = yield* stageScopeOf({
           legalEntityId: input.legalEntityId,
           principalId: readerId,
           tenantId: input.tenantId,
         });
-        const reader = yield* makeOperationalScopeRepository({ executor: transaction }).load(readerScope);
-        const kind = yield* makeDrizzleAccessPrincipalKinds({ executor: database }).readKind(
+        const reader = yield* makeOperationalScopeRepository(
+          { executor: inspection },
+          FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+        ).load(readerScope);
+        const kind = yield* makeDrizzleAccessPrincipalKinds({
+          enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          executor: database,
+        }).readKind(
           {
             principalId: readerId,
             scope: readerScope,
             tenantId,
           },
-          transaction,
+          inspection,
         );
-        yield* installOperationalScope(transaction, operatorScope);
+        yield* installOperationalScope(inspection, operatorScope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
         if (
           Option.isNone(kind) ||
           kind.value !== 'integration' ||

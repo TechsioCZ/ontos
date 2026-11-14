@@ -1,39 +1,25 @@
-import type { OperationalScope } from '@app/core-runtime';
-import type { Crypto } from 'effect';
-import type { executePartyDetail } from '@app/party-registry/api/client';
-import type { GatewayContextClientError } from '@app/shared-contracts';
-import type { GatewayDelegationSourceError } from '@app/shared-contracts/gateway-context-server';
-import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { PartyDetailResponseSchema, executePartyDetailWithAuthorization } from '@app/party-registry/api/client';
-import { Effect, Layer, Option, Schema, Context } from 'effect';
+import { PartyDetailResponseSchema } from '@app/party-registry/api/client';
+import { Context, Effect, Layer, Option, Schema } from 'effect';
 
 import type { ProfilePersistenceDependencies } from '../persistence/profile-persistence.ts';
 import { ProfilePersistenceDependencyFailure } from '../persistence/profile-persistence.ts';
+import type { RetailPartyResolutionExecutor } from './retail-party-detail-executor.ts';
 
 type RetailPartyResolver = NonNullable<ProfilePersistenceDependencies['resolveRetailParty']>;
-type RetailPartyResolutionExecutor = (
-  payload: Parameters<typeof executePartyDetail>[0],
-  correlation: string,
-) => Effect.Effect<
-  Effect.Success<ReturnType<typeof executePartyDetail>>,
-  Effect.Error<ReturnType<typeof executePartyDetail>> | GatewayDelegationSourceError | GatewayContextClientError
->;
-
-type RetailPartyResolution =
-  | {
-      readonly outcome: 'CURRENT_PARTY_RESOLVED';
-      readonly partyResourceId: string;
-      readonly partyResourceRevision: string;
-    }
-  | { readonly outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' };
+type RetailPartyResolution = Effect.Success<ReturnType<RetailPartyResolver>>;
 
 export interface PartyRegistryRetailPartyResolverFactoryInput {
+  readonly legalEntityId: string;
+  readonly principalId: string;
   readonly requestCorrelation: string;
   readonly tenantId: string;
 }
 
 export interface PartyRegistryRetailPartyResolverFactoryService {
-  readonly make: (input: { readonly crypto: Crypto.Crypto; readonly scope: OperationalScope }) => RetailPartyResolver;
+  readonly make: (
+    input: PartyRegistryRetailPartyResolverFactoryInput,
+    execute?: RetailPartyResolutionExecutor,
+  ) => RetailPartyResolver;
 }
 
 export class PartyRegistryRetailPartyResolverFactory extends Context.Service<
@@ -70,40 +56,32 @@ const samePartyRef = (
   left.resourceType === right.resourceType &&
   left.tenantId === right.tenantId;
 
-/**
- * Resolves an authenticated Retail subject through Party Registry's public governed Party Detail
- * read. A direct, non-archived canonical Party is the only successful result. Alias responses,
- * cross-Tenant responses, malformed owner payloads, and archived Parties fail closed as invalid
- * owner evidence; transport/owner failures remain retryable dependency failures.
- */
+/** Server-only owner read. The native preflight, never transactional persistence, calls this. */
 export const makePartyRegistryRetailPartyResolver =
   (input: PartyRegistryRetailPartyResolverFactoryInput, execute: RetailPartyResolutionExecutor): RetailPartyResolver =>
   (request): ReturnType<RetailPartyResolver> => {
     if (
       request.tenantId !== input.tenantId ||
+      request.actionInvocationId.trim().length === 0 ||
+      !/^[a-f0-9]{64}$/u.test(request.compositionRevision) ||
       input.requestCorrelation.trim().length === 0 ||
       request.partyResourceId.trim().length === 0 ||
       request.partyResourceId !== request.partyResourceId.trim()
     ) {
       return Effect.fail(dependencyFailure('Retail Party resolution scope is not trusted'));
     }
-
     const requestedPartyRef = {
       moduleId: 'party.registry' as const,
       resourceId: request.partyResourceId,
       resourceType: 'party.registry.party' as const,
       tenantId: input.tenantId,
     };
-
     return execute({ partyRef: requestedPartyRef }, input.requestCorrelation).pipe(
       Effect.mapError((cause) => dependencyFailure('The Party Registry Party Detail operation is unavailable', cause)),
       Effect.flatMap((response): Effect.Effect<RetailPartyResolution, ProfilePersistenceDependencyFailure> => {
         if (!Schema.is(PartyDetailResponseSchema)(response)) {
           return Effect.fail(dependencyFailure('The Party Registry returned an invalid Party Detail outcome'));
         }
-
-        // A direct resolution is deliberately required. Accepting an alias here would make the
-        // authenticated caller's subject differ from the canonical owner identity at ensure time.
         const directCanonical =
           response.resolution.kind === 'DIRECT' &&
           samePartyRef(response.resolution.requestedPartyRef, requestedPartyRef) &&
@@ -111,7 +89,6 @@ export const makePartyRegistryRetailPartyResolver =
           samePartyRef(response.party.partyRef, requestedPartyRef) &&
           response.resolution.aliasChain.length === 0 &&
           Option.isNone(response.party.archivedAt);
-
         return directCanonical
           ? Effect.succeed({
               outcome: 'CURRENT_PARTY_RESOLVED' as const,
@@ -123,29 +100,22 @@ export const makePartyRegistryRetailPartyResolver =
     );
   };
 
-export const partyRegistryRetailPartyResolverFactoryLive = Layer.succeed(
-  PartyRegistryRetailPartyResolverFactory,
-  Object.freeze({
-    make: ({ crypto, scope }: { readonly crypto: Crypto.Crypto; readonly scope: OperationalScope }) =>
-      makePartyRegistryRetailPartyResolver(
-        { requestCorrelation: scope.correlationId, tenantId: scope.tenantId },
-        (payload) =>
-          acquireDelegatedGatewayContext(
-            {
-              audience: 'party-registry',
-              legalEntityScope: 'subject',
-              requestCorrelation: scope.correlationId,
-              subject: { _tag: 'Assertion', scope },
-            },
-            crypto,
-          ).pipe(
-            Effect.flatMap((issued) =>
-              executePartyDetailWithAuthorization(payload, issued.authorization, scope.correlationId, {
-                baseUrl: new URL(issued.apiBaseUrl),
-                compositionRevision: issued.compositionRevision,
-              }),
-            ),
-          ),
-      ),
-  }),
-);
+/** Party is read only for the Action's own actor; a composition without that transport fails closed. */
+export const missingPartyTransport = () =>
+  Effect.fail(dependencyFailure('The actor-bound Party Registry Party Detail transport is not composed'));
+
+/** The failure every resolver reports when no matching invocation-scoped owner evidence was prepared. */
+export const missingPreparedResolution = () =>
+  dependencyFailure('No matching invocation-scoped Retail Party resolution is prepared');
+
+/**
+ * No default production path may acquire a remote credential while an Action transaction is open: without an
+ * actor-bound executor (the in-transaction persistence path) it fails closed. Given the executor of the Action's own
+ * actor, it reads Party once through it.
+ */
+export const partyRegistryRetailPartyResolverFactoryLive = Layer.succeed(PartyRegistryRetailPartyResolverFactory, {
+  make: (input, execute) =>
+    execute === undefined
+      ? () => Effect.fail(missingPreparedResolution())
+      : makePartyRegistryRetailPartyResolver(input, execute),
+});

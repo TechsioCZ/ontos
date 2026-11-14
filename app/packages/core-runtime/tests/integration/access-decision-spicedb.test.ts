@@ -1,6 +1,6 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { AccessTeamId, AuthorityCell, ResolvedAgentConnection } from '../../src/access/decision/authority.ts';
@@ -10,7 +10,7 @@ import type { DecisionCheckPort } from '../../src/access/decision/engine.ts';
 import { evaluateListAccessPredicate } from '../../src/access/decision/list-access.ts';
 import { withOptional } from '../../src/access/decision/optional.ts';
 import { holderIdOf } from '../../src/access/decision/selector.ts';
-import { makeSpiceDbDecisionCheckPort } from '../../src/access/decision/spicedb-check-port.ts';
+import { makeSpiceDbDecisionCheckPort, toCheckBulkRequest } from '../../src/access/decision/spicedb-check-port.ts';
 import {
   capabilityObjectId,
   grantObjectId,
@@ -394,6 +394,8 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('access decision eng
       const authorityFor = (cellsForActor: readonly AuthorityCell[]) => ({
         readCells: (query: { readonly capabilityKey: string; readonly holder: Holder; readonly mode: AccessMode }) =>
           Effect.succeed(cellsForActor.filter(cellMatchesQuery(query))),
+        readCompanyOwnership: (query: { readonly legalEntityId: string }) =>
+          Effect.succeed(query.legalEntityId === ids.legalEntityId),
         readConnection: () => Effect.succeed(Option.some(connection)),
         readScope: () => {
           const membership = [{ source: 'membership' as const, until: later }];
@@ -577,6 +579,29 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('access decision eng
       expect(page.calls.count).toBe(1);
       expect(batched[0]).toEqual([allowed, targeted, outside, within, over, agentRead]);
       expect(batched[1]).toEqual([mine, theirs, unowned]);
+    }).pipe(Effect.scoped),
+  );
+
+  suite.effect("answers a batch three times the server's own check maximum, in order, from one snapshot", () =>
+    Effect.gen(function* overServerMaximum() {
+      const configuration = yield* loadSpiceDbConfig();
+      const rpc = yield* Effect.acquireRelease(
+        Effect.sync(() => openSpiceDbGrpcRpc(configuration, 30_000)),
+        (current) => Effect.sync(() => current.close()),
+      );
+      // No relationship names these objects: every check is a definite NO, answered at one pinned snapshot.
+      const count = 30_000;
+      const batch = Array.from({ length: count }, (_, index) => ({
+        permission: 'configure',
+        resource: { id: `bulk-limit-${index}`, type: 'access_capability' },
+        subject: { id: 'bulk-limit-principal', type: 'principal' as const },
+      }));
+      const answers = yield* makeSpiceDbDecisionCheckPort(rpc).checkBulk(batch);
+      expect(answers).toHaveLength(count);
+      expect(answers.every(({ permissionship }) => permissionship === 'none')).toBe(true);
+      // The same batch in one request is what SpiceDB refuses (more than 10,000 checks).
+      const whole = yield* rpc.checkBulkPermissions(toCheckBulkRequest(batch)).pipe(Effect.flip);
+      expect(Predicate.isTagged(whole, 'SpiceDbRpcError')).toBe(true);
     }).pipe(Effect.scoped),
   );
 });

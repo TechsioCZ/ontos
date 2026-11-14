@@ -5,6 +5,8 @@ import { expect, it } from 'effect-rstest';
 
 import { makeCommercePortalAuthTransactionalEmail } from '../../api/portal-auth/provider/transactional-email.ts';
 import type { CommercePortalAuthEmailDelivery } from '../../api/portal-auth/provider/auth.ts';
+import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
+import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
 
 const owner = {
   createdAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -42,7 +44,18 @@ const makeRecordingDelivery = (messages: EmailDeliveryMessage[]): EmailDeliveryS
 });
 
 const makeCallbacks = (delivery: EmailDeliveryServiceContract) =>
-  makeCommercePortalAuthTransactionalEmail().pipe(Effect.provideService(EmailDeliveryService, delivery));
+  parseCommercePortalAuthConfig({
+    COMMERCE_PORTAL_AUTH_DATABASE_URL: 'postgresql://commerce:secret@example.test/commerce_auth',
+    COMMERCE_PORTAL_AUTH_SECRET: 's'.repeat(64),
+    COMMERCE_PORTAL_AUTH_URL: 'https://portal.example.test',
+  }).pipe(
+    Effect.flatMap((configuration) =>
+      makeCommercePortalAuthTransactionalEmail().pipe(
+        Effect.provideService(EmailDeliveryService, delivery),
+        Effect.provideService(CommercePortalAuthConfig, configuration),
+      ),
+    ),
+  );
 
 it.effect('routes Better Auth email and OTP content through the injected delivery service', () =>
   Effect.gen(function* transactionalEmailMapping() {

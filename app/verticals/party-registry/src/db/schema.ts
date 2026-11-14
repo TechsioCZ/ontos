@@ -1,9 +1,11 @@
 import type { Schema } from 'effect';
 import {
-  gatewayScopedTenantLegalEntityRlsPolicies,
-  gatewayScopedTenantRlsPolicies,
   PARTY_REGISTRY_REQUEST_IDENTITY,
   PARTY_REGISTRY_WORKER_IDENTITY,
+} from '@app/party-registry-identity-contracts';
+import {
+  gatewayScopedTenantLegalEntityRlsPolicies,
+  gatewayScopedTenantRlsPolicies,
   sessionScopedTenantLegalEntityReadRlsPolicy,
   sessionScopedTenantReadRlsPolicy,
 } from '@app/core-runtime';
@@ -53,7 +55,9 @@ export const PARTY_TABLE_INVENTORY = [
   'party_contact_points',
   'party_corrections',
   'party_create_source_receipts',
+  'party_fact_assertion_identities',
   'party_fact_assertions',
+  'party_historical_name_assertions',
   'party_ico_correlation_epochs',
   'party_legacy_ico_authority_fences',
   'party_match_decisions',
@@ -239,6 +243,76 @@ export const parties = enableGovernedRls(
   ),
 );
 
+/**
+ * Stable identity of every Party fact assertion the tenant has ever recorded, current or archived.
+ * Corrections and assertion supersede/retract references point here rather than at the current store,
+ * so a lossless historical-name transition can retire legacy rows without losing identity, evidence or
+ * the correction graph. Rows are appended by the native invoker trigger on `party_fact_assertions` and
+ * by the owner preparation that seeds every pre-existing assertion.
+ */
+export const partyFactAssertionIdentities = enableGovernedRls(
+  partySchema.table(
+    'party_fact_assertion_identities',
+    {
+      assertionId: uuid('assertion_id').primaryKey(),
+      tenantId: uuid('tenant_id').notNull(),
+      partyId: uuid('party_id').notNull(),
+    },
+    (table) => [
+      unique('party_fact_assertion_identities_tenant_assertion_uk').on(table.tenantId, table.assertionId),
+      foreignKey({
+        columns: [table.tenantId, table.partyId],
+        foreignColumns: [parties.tenantId, parties.partyId],
+        name: 'party_fact_assertion_identities_tenant_party_fk',
+      }).onDelete('restrict'),
+      ...gatewayScopedTenantRlsPolicies(
+        'party_fact_assertion_identities_tenant',
+        table.tenantId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
+    ],
+  ),
+);
+
+/**
+ * Lossless archive of legacy name assertions the current store can no longer hold. `original_assertion`
+ * is the exact `to_jsonb` image of the retired current-store row: its original `fact_kind`, state,
+ * currency flags, every timestamp, evidence, acceptance, provenance and supersede/retract references.
+ * Archiving means "no longer current", never "evidence altered", so the owner preparation only removes a
+ * current-store copy whose bytes it has conserved here, and the table is append-only for every role.
+ */
+export const partyHistoricalNameAssertions = enableGovernedRls(
+  partySchema.table(
+    'party_historical_name_assertions',
+    {
+      assertionId: uuid('assertion_id').primaryKey(),
+      tenantId: uuid('tenant_id').notNull(),
+      partyId: uuid('party_id').notNull(),
+      originalAssertion: jsonb('original_assertion')
+        .$type<{
+          readonly assertion_id: typeof partyFactAssertionIdentities.$inferSelect.assertionId;
+          readonly tenant_id: typeof partyFactAssertionIdentities.$inferSelect.tenantId;
+          readonly party_id: typeof partyFactAssertionIdentities.$inferSelect.partyId;
+          readonly fact_kind: 'DISPLAY_NAME';
+        }>()
+        .notNull(),
+      archivedAt: timestamp('archived_at', { withTimezone: true }).defaultNow().notNull(),
+    },
+    (table) => [
+      foreignKey({
+        columns: [table.tenantId, table.assertionId],
+        foreignColumns: [partyFactAssertionIdentities.tenantId, partyFactAssertionIdentities.assertionId],
+        name: 'party_historical_name_assertions_tenant_assertion_fk',
+      }).onDelete('restrict'),
+      ...gatewayScopedTenantRlsPolicies(
+        'party_historical_name_assertions_tenant',
+        table.tenantId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
+    ],
+  ),
+);
+
 export const partyFactAssertions = enableGovernedRls(
   partySchema.table(
     'party_fact_assertions',
@@ -264,12 +338,12 @@ export const partyFactAssertions = enableGovernedRls(
       }).onDelete('restrict'),
       foreignKey({
         columns: [table.tenantId, table.supersedesAssertionId],
-        foreignColumns: [table.tenantId, table.assertionId],
+        foreignColumns: [partyFactAssertionIdentities.tenantId, partyFactAssertionIdentities.assertionId],
         name: 'party_fact_assertions_tenant_supersedes_fk',
       }).onDelete('restrict'),
       foreignKey({
         columns: [table.tenantId, table.retractsAssertionId],
-        foreignColumns: [table.tenantId, table.assertionId],
+        foreignColumns: [partyFactAssertionIdentities.tenantId, partyFactAssertionIdentities.assertionId],
         name: 'party_fact_assertions_tenant_retracts_fk',
       }).onDelete('restrict'),
       index('party_fact_assertions_current_idx')
@@ -1241,7 +1315,7 @@ export const partyCorrections = enableGovernedRls(
       }).onDelete('restrict'),
       foreignKey({
         columns: [table.tenantId, table.partyFactAssertionId],
-        foreignColumns: [partyFactAssertions.tenantId, partyFactAssertions.assertionId],
+        foreignColumns: [partyFactAssertionIdentities.tenantId, partyFactAssertionIdentities.assertionId],
         name: 'party_corrections_tenant_fact_fk',
       }).onDelete('restrict'),
       foreignKey({
@@ -1261,7 +1335,7 @@ export const partyCorrections = enableGovernedRls(
       }).onDelete('restrict'),
       foreignKey({
         columns: [table.tenantId, table.replacementPartyFactAssertionId],
-        foreignColumns: [partyFactAssertions.tenantId, partyFactAssertions.assertionId],
+        foreignColumns: [partyFactAssertionIdentities.tenantId, partyFactAssertionIdentities.assertionId],
         name: 'party_corrections_tenant_replacement_fact_fk',
       }).onDelete('restrict'),
       foreignKey({
@@ -1365,11 +1439,13 @@ export const partyDatabaseSchema = {
   partyContactPointPurposes,
   partyContactPoints,
   partyCorrections,
+  partyFactAssertionIdentities,
   partyCreateSourceReceipts,
   partySourceEffectReceipts,
   partyIcoCorrelationEpochs,
   partyLegacyIcoAuthorityFences,
   partyFactAssertions,
+  partyHistoricalNameAssertions,
   partyMatchDecisions,
   partyMerges,
   partyOfficialIdentifiers,
@@ -1389,11 +1465,13 @@ export const PARTY_TABLES = [
   partyContactPointPurposes,
   partyContactPoints,
   partyCorrections,
+  partyFactAssertionIdentities,
   partyCreateSourceReceipts,
   partySourceEffectReceipts,
   partyIcoCorrelationEpochs,
   partyLegacyIcoAuthorityFences,
   partyFactAssertions,
+  partyHistoricalNameAssertions,
   partyMatchDecisions,
   partyMerges,
   partyOfficialIdentifiers,
@@ -1405,6 +1483,10 @@ export type PartyRecord = typeof parties.$inferSelect;
 export type NewPartyRecord = typeof parties.$inferInsert;
 export type PartyFactAssertionRecord = typeof partyFactAssertions.$inferSelect;
 export type NewPartyFactAssertionRecord = typeof partyFactAssertions.$inferInsert;
+export type PartyFactAssertionIdentityRecord = typeof partyFactAssertionIdentities.$inferSelect;
+export type NewPartyFactAssertionIdentityRecord = typeof partyFactAssertionIdentities.$inferInsert;
+export type PartyHistoricalNameAssertionRecord = typeof partyHistoricalNameAssertions.$inferSelect;
+export type NewPartyHistoricalNameAssertionRecord = typeof partyHistoricalNameAssertions.$inferInsert;
 export type PartyOfficialIdentifierRecord = typeof partyOfficialIdentifiers.$inferSelect;
 export type NewPartyOfficialIdentifierRecord = typeof partyOfficialIdentifiers.$inferInsert;
 export type PartyContactPointRecord = typeof partyContactPoints.$inferSelect;

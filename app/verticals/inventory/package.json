@@ -57,10 +57,6 @@
   },
   "scripts": {
     "build": "cross-env JITI_NATIVE_MODULES='[\"effect\"]' modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical inventory --target dist && ultramodern-create ultramodern public-surface --app inventory --target dist && cross-env MODERNJS_DEPLOY=node JITI_NATIVE_MODULES='[\"effect\"]' modern deploy --skip-build",
-    "cloudflare:build": "cross-env MODERNJS_DEPLOY=cloudflare JITI_NATIVE_MODULES='[\"effect\"]' modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical inventory --target cloudflare-dist && ultramodern-create ultramodern public-surface --app inventory --target cloudflare-dist && cross-env MODERNJS_DEPLOY=cloudflare JITI_NATIVE_MODULES='[\"effect\"]' modern deploy --skip-build && ultramodern-create ultramodern cloudflare-output-verify --app inventory",
-    "cloudflare:deploy": "node ../../scripts/immutable-application-release.mts deploy --app-directory .",
-    "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
-    "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app inventory",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
@@ -123,7 +119,6 @@
     "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
     "tailwindcss": "^4.3.3",
     "typescript": "7.0.2",
-    "wrangler": "4.137.0",
     "zephyr-rspack-plugin": "1.2.4",
     "tsrs": "0.21.0-ts7.1.0-beta"
   },

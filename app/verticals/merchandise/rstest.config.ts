@@ -1,0 +1,26 @@
+import { defineConfig } from '@rstest/core';
+
+const swc = {
+  jsc: { parser: { syntax: 'typescript', tsx: true }, transform: { react: { runtime: 'automatic' } } },
+} as const;
+
+export default defineConfig({
+  projects: [
+    {
+      include: ['tests/integration/**/*.test.ts'],
+      name: 'integration',
+      root: new URL('.', import.meta.url).pathname,
+      testEnvironment: 'node',
+      testTimeout: 30_000,
+      tools: { swc },
+    },
+    {
+      include: ['tests/unit/**/*.test.{ts,tsx}'],
+      name: 'unit',
+      root: new URL('.', import.meta.url).pathname,
+      testEnvironment: 'node',
+      tools: { swc },
+    },
+  ],
+  root: new URL('.', import.meta.url).pathname,
+});

@@ -1,0 +1,191 @@
+import type { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { Hex } from 'effect/encoding';
+
+import {
+  ActionRuntime,
+  companyAgentDirectoryRead,
+  OperationalScopeResolver,
+  ReadRuntime,
+  replaceAgentOperatorsAction,
+} from '@app/core-runtime';
+import type { CompanyAgentDirectoryResultSchema } from '@app/core-runtime';
+import { AccessProjectionWriter } from '@app/core-runtime/access/intent/projection-writer';
+import { AgentModuleKeySchema, AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
+import { Effect, Layer, Match, Schema } from 'effect';
+
+import { CompanyDirectory } from './company-directory.ts';
+import type { CompanyDirectoryPort, CompanyDirectoryRequest } from './company-directory.ts';
+import { ConnectionsForbidden } from './connections-forbidden.ts';
+import { ConnectionsGone } from './connections-gone.ts';
+import { ConnectionsInvalid } from './connections-invalid.ts';
+import { ConnectionsNotFound } from './connections-not-found.ts';
+import { ConnectionsUnavailable } from './connections-unavailable.ts';
+import type { CompanyDirectorySnapshot } from './ports.ts';
+
+const unavailable = (cause: unknown) => new ConnectionsUnavailable({ cause });
+const fromRuntimeError = (error: { readonly _tag: string }) =>
+  Match.value(error._tag).pipe(
+    Match.when(
+      Match.is('IdentityLifecycleConflictError', 'ActionRequestHashConflict'),
+      () => new ConnectionsGone({ reason: 'Agent se mezitím změnil. Obnovte seznam a zkuste to znovu.' }),
+    ),
+    Match.when(
+      Match.is('IdentityTargetInvalidError', 'ActionPayloadValidationError'),
+      () => new ConnectionsInvalid({ cause: error, reason: 'Tuto změnu agenta nelze provést.' }),
+    ),
+    Match.when(
+      Match.is('ActionPermissionDenied', 'ActionPolicyDenied', 'ReadPermissionDenied', 'ReadPolicyDenied'),
+      () => new ConnectionsForbidden({ reason: 'K této operaci nemáte oprávnění.' }),
+    ),
+    Match.orElse(() => unavailable(error)),
+  );
+
+const sameSet = (left: readonly string[], right: readonly string[]) => {
+  const rightIds = new Set(right);
+  return left.length === rightIds.size && left.every((id) => rightIds.has(id));
+};
+
+const directorySnapshot = (snapshot: typeof CompanyAgentDirectoryResultSchema.Type): CompanyDirectorySnapshot => ({
+  ...snapshot,
+  agents: snapshot.agents.map((agent) => ({
+    ...agent,
+    modules: agent.modules.map((module) => ({
+      ...module,
+      moduleId: AgentModuleKeySchema.make(module.moduleId),
+    })),
+  })),
+  people: snapshot.people.map((person) => ({
+    ...person,
+    principalId: AgentPrincipalIdSchema.make(person.principalId),
+  })),
+});
+
+/** Bind the original authenticated carrier once; the Layer owns its runtime dependencies. */
+export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
+  Layer.effect(
+    CompanyDirectory,
+    Effect.gen(function* companyDirectoryService() {
+      const reads = yield* ReadRuntime;
+      // The directory read asks the agent administration right in its `prepare`, through this composition's gate.
+      const gateContext = yield* Effect.context<AccessDecisionGate>();
+      const actions = yield* ActionRuntime;
+      const projectionWriter = yield* AccessProjectionWriter;
+      const scopeResolver = yield* OperationalScopeResolver;
+
+      const loadSnapshot = Effect.suspend(() =>
+        reads.runRead({
+          input: {},
+          principal: request.principal,
+          registration: companyAgentDirectoryRead,
+          transport: { correlationId: request.transport.correlationId },
+        }),
+      ).pipe(
+        Effect.provideContext(gateContext),
+        Effect.map(directorySnapshot),
+        Effect.mapError(fromRuntimeError),
+        Effect.withSpan('CompanyDirectory.snapshot'),
+      );
+
+      // Authorization v2 retired the per-principal Action lifecycle: the one writer of the engine is the access
+      // projection writer, which brings the whole tenant's projection in line with its intent. The reconcile is
+      // idempotent, so a retry that already converged resumes instead of writing a second graph.
+      const reconcile = Effect.fn('CompanyDirectory.reconcile')(function* reconcileProjection() {
+        const scope = yield* scopeResolver.resolve({
+          correlationId: request.transport.correlationId,
+          legalEntityScope: 'required',
+          principal: request.principal,
+        });
+        yield* projectionWriter.reconcileTenant({ scope });
+      }, Effect.mapError(unavailable));
+
+      const replaceOperators = Effect.fn('CompanyDirectory.replaceOperators')(function* replaceOperatorsEffect(
+        input: Parameters<CompanyDirectoryPort<never>['replaceOperators']>[0],
+      ) {
+        const agent = input.snapshot.agents.find((candidate) => candidate.principalId === input.agentPrincipalId);
+        if (agent === undefined) {
+          return yield* new ConnectionsNotFound({ reason: 'Agent v této firmě neexistuje.' });
+        }
+        if (agent.status !== 'active') {
+          return yield* new ConnectionsInvalid({ reason: 'Operátory lze nastavit jen aktivnímu agentovi.' });
+        }
+        const wanted = [...new Set(input.operatorPrincipalIds)].toSorted();
+        const eligible = new Set<string>(input.snapshot.people.map((person) => person.principalId));
+        if (wanted.some((id) => !eligible.has(id))) {
+          return yield* new ConnectionsInvalid({ reason: 'Agenta mohou připojit jen aktivní lidé z firmy.' });
+        }
+        const commandMatches =
+          agent.operatorCommand !== null && sameSet(agent.operatorCommand.desiredOperatorPrincipalIds, wanted);
+        // An older, contrary pending command must not silently undo this apparent graph no-op later.
+        if (sameSet(agent.operatorPrincipalIds, wanted) && (agent.operatorCommand === null || commandMatches)) {
+          return yield* Effect.void;
+        }
+        let revision = agent.operatorCommand?.revision ?? 0;
+        if (!commandMatches) {
+          // The form was read before someone else's change: refuse instead of overwriting it. The Action gets this
+          // same revision as `expectedRevision`, so a change committed after this snapshot is refused under its lock.
+          if (input.expectedRevision !== undefined && input.expectedRevision !== revision) {
+            return yield* new ConnectionsGone({
+              reason: 'Operátory agenta se mezitím změnily. Načtěte aktuální verzi a zkuste to znovu.',
+            });
+          }
+          const payload = {
+            agentPrincipalId: agent.principalId,
+            context: input.context,
+            expectedRevision: revision,
+            operatorPrincipalIds: wanted,
+            revokedConnections: input.revokedConnections,
+          };
+          const encoded = yield* Schema.encodeEffect(
+            Schema.fromJsonString(replaceAgentOperatorsAction.descriptor.payloadSchema),
+          )(payload).pipe(
+            Effect.mapError(
+              (cause) => new ConnectionsInvalid({ cause, reason: 'Tuto změnu operátorů nelze provést.' }),
+            ),
+          );
+          const idempotencyKey = Hex.encode(
+            sha256(utf8ToBytes(`${request.transport.idempotencyKey ?? ''}\0${encoded}`)),
+          );
+          yield* actions
+            .runAction({
+              payload,
+              principal: request.principal,
+              registration: replaceAgentOperatorsAction,
+              transport: { correlationId: request.transport.correlationId, idempotencyKey },
+            })
+            .pipe(
+              Effect.catchTag('ActionAlreadyCommitted', () => Effect.void),
+              Effect.mapError(fromRuntimeError),
+            );
+          revision += 1;
+        }
+        // A matching committed command is resumed rather than written/audited again.
+        yield* reconcile();
+        const confirmed = (yield* loadSnapshot).agents.find((candidate) => candidate.principalId === agent.principalId);
+        if (
+          confirmed?.status !== 'active' ||
+          confirmed.operatorCommand?.revision !== revision ||
+          !sameSet(confirmed.operatorCommand.desiredOperatorPrincipalIds, wanted) ||
+          !sameSet(confirmed.operatorPrincipalIds, wanted)
+        ) {
+          return yield* unavailable('Operator projection has not converged; reload and retry');
+        }
+        return yield* Effect.void;
+      });
+
+      const confirmArchived = Effect.fn('CompanyDirectory.confirmArchived')(function* confirmArchivedEffect(
+        agentPrincipalId: string,
+      ) {
+        yield* reconcile();
+        // Archive takes the agent out of the company's directory. Confirm it there without emitting a second command.
+        const remaining = (yield* loadSnapshot).agents.find((agent) => agent.principalId === agentPrincipalId);
+        if (remaining !== undefined && remaining.status !== 'archived') {
+          return yield* unavailable('Archived agent cleanup has not converged; reload and retry');
+        }
+        return yield* Effect.void;
+      });
+
+      return { confirmArchived, replaceOperators, snapshot: loadSnapshot } satisfies CompanyDirectoryPort<never>;
+    }),
+  );

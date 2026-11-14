@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import { and, eq, isNull } from 'drizzle-orm';
 import { DateTime, Effect, Match, Schema } from 'effect';
 
@@ -185,7 +186,7 @@ export const configuredRefundExecutionRouteFor = (
 ) =>
   database
     .transaction((transaction) =>
-      installOperationalScope(transaction, operationalScopeOf(scope)).pipe(
+      installOperationalScope(transaction, operationalScopeOf(scope), defineDatabaseIdentityEnrollment([])).pipe(
         Effect.flatMap((scoped) => findOrConfigureExecutor(scoped, scope, refundExecutorFor(binding))),
       ),
     )

@@ -1,0 +1,1 @@
+ALTER TABLE "demo_merchandise"."catalog_heads" ADD COLUMN "bootstrap_checkpoint" jsonb;

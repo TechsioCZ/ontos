@@ -16,10 +16,13 @@ export const nativeShellAccessGateLive = Layer.effect(
   Effect.gen(function* nativeShellAccessGate() {
     const legalEntityContext = yield* LegalEntityContext;
     const scripted = makeTestAccessDecision({ defaultAnswer: { outcome: 'ALLOWED' } });
+    // A prepared Action authority requires `rebind`; the scripted gate reads no ports, so it rebinds to itself.
     const gate: AccessDecisionService = {
       decide: scripted.decide,
       decideMany: scripted.decideMany,
       list: scripted.list,
+      listMany: scripted.listMany,
+      rebind: () => gate,
       selectableLegalEntities: ({ scope }) =>
         legalEntityContext.listActiveForTenant(scope.tenantId).pipe(
           Effect.map((entities) => entities.map((entity) => LegalEntityIdSchema.make(entity.legalEntityId))),

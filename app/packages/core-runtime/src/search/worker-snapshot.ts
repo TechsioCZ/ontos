@@ -11,7 +11,8 @@ import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import { lockApplicationCompositionAuthority } from '../modules/application-composition-authority.ts';
 import type { OutboxWorkerHandlerContext } from '../outbox/definition.ts';
 import { isVerifiedOutboxWorkerHandlerContext } from '../outbox/definition.ts';
-import { CORE_SEARCH_INGESTION_REGISTRATIONS } from './ingestion.ts';
+import { CoreSearchIngestionRegistry, isCoreSearchIngestionRegistered } from './ingestion-registry.ts';
+import type { CoreSearchIngestionRegistration } from './ingestion-registry.ts';
 import type { CoreSearchProjectionUnavailableError } from './projection.ts';
 import { CoreSearchProjectionInvalid, CoreSearchProjectionUnavailable } from './projection.ts';
 
@@ -133,7 +134,10 @@ const viewForSnapshot = (
   };
 };
 
-export const makeCoreSearchWorkerSnapshot = (backend: CoreSearchSnapshotBackend): CoreSearchWorkerSnapshotService => ({
+export const makeCoreSearchWorkerSnapshot = (
+  backend: CoreSearchSnapshotBackend,
+  registrations: readonly CoreSearchIngestionRegistration[],
+): CoreSearchWorkerSnapshotService => ({
   read: <Value, Error>(
     context: OutboxWorkerHandlerContext,
     read: (snapshot: CoreSearchWorkerSnapshotView) => Effect.Effect<Value, Error>,
@@ -141,12 +145,11 @@ export const makeCoreSearchWorkerSnapshot = (backend: CoreSearchSnapshotBackend)
     if (
       !isVerifiedOutboxWorkerHandlerContext(context) ||
       !/^[a-f0-9]{64}$/u.test(context.compositionRevision) ||
-      !CORE_SEARCH_INGESTION_REGISTRATIONS.some(
-        (registration) =>
-          registration.producerModuleKey === context.producerModuleKey &&
-          registration.topic === context.topic &&
-          registration.workerKey === context.workerKey,
-      )
+      !isCoreSearchIngestionRegistered(registrations, {
+        producerModuleKey: context.producerModuleKey,
+        topic: context.topic,
+        workerKey: context.workerKey,
+      })
     ) {
       return Effect.fail(invalid());
     }
@@ -204,6 +207,10 @@ export const makePostgresCoreSearchSnapshotBackend = (
         install: (legalEntityId?: string) => Effect.Effect<void, CoreSearchProjectionUnavailableError>,
       ) => Effect.Effect<Value, Error>,
     ) {
+      // A foreign-source label event still refreshes the consuming owner's projection. Its
+      // generation must never advance the producer's namespace. Legacy self-consuming contexts
+      // may omit consumerModuleKey; verified refresh calls may not.
+      const snapshotModuleKey = context.consumerModuleKey ?? context.producerModuleKey;
       const transactionProgram = Effect.fn('CoreSearchSnapshotBackend.transaction')(
         function* runCoreSearchSnapshotTransaction(transaction: CoreTransaction) {
           const installScope = Effect.fn('CoreSearchSnapshotBackend.installScope')(
@@ -239,7 +246,7 @@ export const makePostgresCoreSearchSnapshotBackend = (
             .where(
               and(
                 eq(searchProjectionGenerations.tenantId, context.tenantId),
-                eq(searchProjectionGenerations.sourceModuleKey, context.producerModuleKey),
+                eq(searchProjectionGenerations.sourceModuleKey, snapshotModuleKey),
               ),
             )
             .pipe(Effect.mapError(snapshotDriverError));
@@ -302,7 +309,7 @@ export const makePostgresCoreSearchSnapshotBackend = (
             );
             yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${context.tenantId}, true)`, 'objects');
             // The advisory lock also serializes the first generation, before a row exists.
-            const key = `ontos.search-generation:${context.tenantId}:${context.producerModuleKey}`;
+            const key = `ontos.search-generation:${context.tenantId}:${snapshotModuleKey}`;
             yield* transaction.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`, 'objects');
             const [current] = yield* transaction
               .select({ version: searchProjectionGenerations.generation })
@@ -310,7 +317,7 @@ export const makePostgresCoreSearchSnapshotBackend = (
               .where(
                 and(
                   eq(searchProjectionGenerations.tenantId, context.tenantId),
-                  eq(searchProjectionGenerations.sourceModuleKey, context.producerModuleKey),
+                  eq(searchProjectionGenerations.sourceModuleKey, snapshotModuleKey),
                 ),
               )
               .for('update');
@@ -322,7 +329,7 @@ export const makePostgresCoreSearchSnapshotBackend = (
               .values({
                 eventWatermark: observed.watermark,
                 generation: observed.observedGeneration + 1n,
-                sourceModuleKey: context.producerModuleKey,
+                sourceModuleKey: snapshotModuleKey,
                 tenantId: context.tenantId,
               })
               .onConflictDoUpdate({
@@ -355,6 +362,7 @@ export const CoreSearchWorkerSnapshotLive = Layer.effect(
   CoreSearchWorkerSnapshot,
   Effect.gen(function* makeCoreSearchWorkerSnapshotLive() {
     const database = yield* CoreDatabase;
-    return makeCoreSearchWorkerSnapshot(makePostgresCoreSearchSnapshotBackend(database));
+    const registrations = yield* CoreSearchIngestionRegistry;
+    return makeCoreSearchWorkerSnapshot(makePostgresCoreSearchSnapshotBackend(database), registrations);
   }),
 );

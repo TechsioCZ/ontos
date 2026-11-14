@@ -30,6 +30,12 @@ import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
 import {
+  collectFixtureDiagnostics,
+  describeFixtureDiagnostics,
+  encodeFixtureOwnerDiagnostics,
+  fixtureDiagnosticTail,
+} from './support/fixture-diagnostics.mts';
+import {
   bindCustomerFixtureProviderKey as bindProviderKey,
   customerFixtureUuid as uuid,
   seedCustomerFixtureProviderPrincipal as seedPrincipal,
@@ -43,10 +49,7 @@ import { makeSymmyC14CustomerRevisionPlan } from './support/symmy-c14-customer-r
 import {
   customerFixtureWorkloads,
   customerIntakeContext,
-  customerOwnerRelaySources,
-  customerRecoveryRules,
   customerWorkerKey,
-  customerWorkerRules,
 } from './support/symmy-c14-customer-rules.mts';
 import {
   SymmyC14ProductFixtureUnavailable,
@@ -58,6 +61,7 @@ import {
   startProductOwner,
   startProductWorker,
 } from './support/symmy-c14-product-runtime.mts';
+import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
 
 const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -125,7 +129,8 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* actualCustomerConformance() {
-        const appIds = ['party-registry', 'commerce-customer-context', 'privacy', symmyAppId] as const;
+        const ownerAppIds = ['party-registry', 'commerce-customer-context', 'privacy'] as const;
+        const appIds = [...ownerAppIds, symmyAppId] as const;
         const ports = new Map<string, number>();
         for (const appId of appIds) {
           let port = yield* nativePort;
@@ -139,18 +144,16 @@ it.live(
         );
         const isolated = yield* makeIsolatedNativeDatabaseFixture({
           compositionSnapshot: snapshot,
+          databaseIdentities: APP_DATABASE_IDENTITY_ENROLLMENT,
           mode: 'schema-only',
           purpose: 'implementation-1096-registered-workload-gateway',
         });
         const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
         const shell = yield* makeApiKeyGatewayNativeFixture({
-          additionalRelaySources: customerOwnerRelaySources,
+          additionalRelaySources: ownerAppIds.map((sourceAppId) => ({ sourceAppId })),
           ownedDatabase: isolated,
           productionGate: true,
-          relaySource: {
-            registeredWorkloads: [...customerWorkerRules, ...customerRecoveryRules],
-            sourceAppId: symmyAppId,
-          },
+          relaySource: { sourceAppId: symmyAppId },
           snapshotJson: yield* encodeProductComposition(snapshot),
         });
         const tenantId = yield* uuid;
@@ -161,8 +164,6 @@ it.live(
         yield* admin`insert into core.legal_entities(legal_entity_id,tenant_id,legal_name,registration_country,registration_number,status)
           values(${legalEntityId},${tenantId},'INTERNAL_C14 selling legal entity','CZ','INTERNAL_C14_ONLY','active')`;
         const integration = yield* seedPrincipal(admin, tenantId, 'integration', shell.providerUserId);
-        assert.isOk(shell.relaySourceProviderUserId);
-        const symmyPrincipal = yield* seedPrincipal(admin, tenantId, 'service', shell.relaySourceProviderUserId);
         const systemId = yield* uuid;
         const governancePrincipalId = yield* uuid;
         yield* admin`insert into core.principals(principal_id,tenant_id,kind,status,display_name)
@@ -183,24 +184,19 @@ it.live(
             const incarnation = yield* uuid;
             yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status)
               values(${bindingId},${incarnation},${tenantId},${principalId},${workload},'active')`;
+            yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+              values(${yield* uuid},${yield* uuid},${tenantId},${bindingId},${legalEntityId},'active')`;
           }
         }
         const key = yield* shell.issueFixtureProviderKey(integration);
         yield* bindProviderKey(admin, integration, key.providerKeyId);
         yield* key.acknowledgeBinding;
-        const symmyKey = yield* shell.issueFixtureRelaySourceProviderKey(symmyPrincipal);
-        yield* bindProviderKey(admin, symmyPrincipal, symmyKey.providerKeyId);
-        yield* symmyKey.acknowledgeBinding;
-        const moduleKeys = new Map<string, string>([[symmyAppId, Redacted.value(symmyKey.secret)]]);
-        for (const provider of shell.additionalRelaySourceProviderUsers) {
-          const principal = yield* seedPrincipal(admin, tenantId, 'service', provider.providerUserId);
-          const moduleKey = yield* shell.issueFixtureModuleProviderKey({
-            ...principal,
-            sourceAppId: provider.sourceAppId,
-          });
-          yield* bindProviderKey(admin, principal, moduleKey.providerKeyId);
-          yield* moduleKey.acknowledgeBinding;
-          moduleKeys.set(provider.sourceAppId, Redacted.value(moduleKey.secret));
+        // Each owner's own module key, provisioned by the platform for its module principal as on every environment.
+        const moduleKeys = new Map<string, Redacted.Redacted>([
+          [symmyAppId, (yield* shell.provisionRelaySource()).secret],
+        ]);
+        for (const appId of ownerAppIds) {
+          moduleKeys.set(appId, (yield* shell.provisionModuleSource(appId)).secret);
         }
 
         const sourceRouteId = yield* uuid;
@@ -434,7 +430,7 @@ it.live(
           {
             artifacts: Effect.Success<ReturnType<typeof buildProductOwner>>;
             contract: (typeof contracts)[number];
-            moduleKey: string;
+            moduleKey: Redacted.Redacted;
             port: number;
             receiver: Effect.Success<ReturnType<typeof startProductOwner>>;
           }
@@ -455,7 +451,8 @@ it.live(
           const receiver = yield* startProductOwner({
             artifacts,
             contract,
-            environment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: moduleKey },
+            environment,
+            moduleKey,
             port,
             prefix: prefixes[appId],
           });
@@ -474,8 +471,13 @@ it.live(
               headers: { ...headers, 'idempotency-key': idempotencyKey },
             });
             if (response.status !== 202) {
+              const problem = fixtureDiagnosticTail(yield* response.text);
+              const owners = yield* collectFixtureDiagnostics(ownerDiagnostics).pipe(
+                Effect.flatMap(encodeFixtureOwnerDiagnostics),
+              );
+              const gateway = yield* describeFixtureDiagnostics(shell.gatewayDiagnostics());
               return yield* unavailable(
-                `Actual customer admission returned ${response.status}: ${yield* response.text}`,
+                `Actual customer admission returned ${response.status}: ${problem}; owners: ${owners}; gateway: ${gateway}`,
               );
             }
             return yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema)));
@@ -490,11 +492,14 @@ it.live(
           return yield* unavailable('The actual independent module credential is missing');
         }
         const workerArtifact = yield* buildProductWorker(symmy);
-        const worker = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_NATIVE_WORKER',
-          ONTOS_GATEWAY_MODULE_API_KEY: moduleKey,
-        });
+        const worker = yield* startProductWorker(
+          workerArtifact,
+          {
+            ...environment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_NATIVE_WORKER',
+          },
+          moduleKey,
+        );
         const ledger =
           admin`select effect_id,effect_key,owner_invocation_id,owner_receipt,state from symmy_integration.job_effects where job_id=${accepted.jobId}`.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),
@@ -510,25 +515,28 @@ it.live(
           (rows) => rows.length === 2 && rows.every(({ state }) => state === 'settled'),
         ).pipe(
           Effect.tapError(() =>
-            Effect.all([
-              worker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
-              shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-              shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-              ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
-                diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
-              ),
-              admin`select effect_key,state,outcome->>'status' as outcome_status from symmy_integration.job_effects where job_id=${accepted.jobId}`.pipe(
-                Effect.flatMap(Effect.logError),
-              ),
-              admin`select
+            Effect.all(
+              [
+                worker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
+                shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+                shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+                ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
+                  diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
+                ),
+                admin`select effect_key,state,outcome->>'status' as outcome_status from symmy_integration.job_effects where job_id=${accepted.jobId}`.pipe(
+                  Effect.flatMap(Effect.logError),
+                ),
+                admin`select
                 (select count(*)::integer from party.parties where tenant_id=${tenantId}) as parties,
                 (select count(*)::integer from commerce_customer_context.customer_profiles where tenant_id=${tenantId}) as profiles`.pipe(
-                Effect.flatMap(Effect.logError),
-              ),
-              admin`select action_key,status,count(*)::integer as count from core.action_invocations
+                  Effect.flatMap(Effect.logError),
+                ),
+                admin`select action_key,status,count(*)::integer as count from core.action_invocations
                 where tenant_id=${tenantId} and action_key in ('party.registry.create-party','commerce.customer-context.ensure-retail-customer-profile')
                 group by action_key,status`.pipe(Effect.flatMap(Effect.logError)),
-            ]),
+              ],
+              { concurrency: 1 },
+            ),
           ),
         );
         expect(completed.map(({ effect_key }) => effect_key)).toContain('party-create');
@@ -609,7 +617,7 @@ it.live(
             deliveryId,
             expectedReadPrincipalId: systemId,
             legalEntityId,
-            moduleApiKey: Redacted.make(moduleKey),
+            moduleApiKey: moduleKey,
             nativeAction: nativeProfile,
             operationRequirementKey: profileRecoveryRequirement.key,
             request: {
@@ -754,13 +762,16 @@ it.live(
           tenantId,
         }).pipe(
           Effect.tapError(() =>
-            Effect.all([
-              shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-              shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-              ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
-                diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
-              ),
-            ]),
+            Effect.all(
+              [
+                shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+                shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+                ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
+                  diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
+                ),
+              ],
+              { concurrency: 1 },
+            ),
           ),
         );
         expect(dataPrivacy.personAdmission.partyRef).toEqual(partyReceipt.partyRef);
@@ -801,11 +812,11 @@ it.live(
           contract: privacyRuntime.contract,
           environment: {
             ...environment,
-            ONTOS_GATEWAY_MODULE_API_KEY: privacyRuntime.moduleKey,
             ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: yield* Schema.encodeEffect(
               Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
             )([...privacy.contexts, ...dataPrivacy.contexts]),
           },
+          moduleKey: privacyRuntime.moduleKey,
           port: privacyRuntime.port,
           prefix: '/privacy-api',
         });
@@ -826,11 +837,14 @@ it.live(
           tenantId,
         });
         const revisionJob = yield* submitFor('INTERNAL_C14_CUSTOMER_REVISION_2', revisionPlan);
-        const revisionWorker = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_REVISION_2',
-          ONTOS_GATEWAY_MODULE_API_KEY: moduleKey,
-        });
+        const revisionWorker = yield* startProductWorker(
+          workerArtifact,
+          {
+            ...environment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_REVISION_2',
+          },
+          moduleKey,
+        );
         const revisionEffects = yield* observeUntil(
           admin`select effect_id,effect_key,owner_invocation_id,owner_receipt,state from symmy_integration.job_effects where job_id=${revisionJob.jobId}`.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),
@@ -838,14 +852,17 @@ it.live(
           (rows) => rows.length === 2 && rows.every(({ state }) => state === 'settled'),
         ).pipe(
           Effect.tapError(() =>
-            Effect.all([
-              revisionWorker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
-              shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-              shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-              ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
-                diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
-              ),
-            ]),
+            Effect.all(
+              [
+                revisionWorker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
+                shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+                shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+                ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
+                  diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
+                ),
+              ],
+              { concurrency: 1 },
+            ),
           ),
         );
         expect(revisionEffects.every(({ owner_invocation_id }) => Option.isSome(owner_invocation_id))).toBe(true);
@@ -896,13 +913,16 @@ it.live(
             Effect.tap((response) =>
               response.status === 200
                 ? Effect.void
-                : Effect.all([
-                    shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-                    shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-                    ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
-                      diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
-                    ),
-                  ]),
+                : Effect.all(
+                    [
+                      shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+                      shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+                      ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
+                        diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
+                      ),
+                    ],
+                    { concurrency: 1 },
+                  ),
             ),
           );
         expect(customerReadbackResponse.status).toBe(200);
@@ -941,6 +961,7 @@ it.live(
             },
           ],
           (wrongRoute) => Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)(wrongRoute),
+          { concurrency: 1 },
         );
         yield* Effect.forEach(
           wrongReadRoutes,
@@ -989,11 +1010,14 @@ it.live(
           tenantId,
         });
         const roundTripJob = yield* submitFor('INTERNAL_C14_CUSTOMER_GET_POST', roundTripPlan);
-        const roundTripWorker = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_GET_POST',
-          ONTOS_GATEWAY_MODULE_API_KEY: moduleKey,
-        });
+        const roundTripWorker = yield* startProductWorker(
+          workerArtifact,
+          {
+            ...environment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_GET_POST',
+          },
+          moduleKey,
+        );
         const roundTripEffects = yield* observeUntil(
           admin`select effect_id,effect_key,owner_invocation_id,owner_receipt,state from symmy_integration.job_effects where job_id=${roundTripJob.jobId}`.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),
@@ -1001,14 +1025,17 @@ it.live(
           (rows) => rows.length === 2 && rows.every(({ state }) => state === 'settled'),
         ).pipe(
           Effect.tapError(() =>
-            Effect.all([
-              roundTripWorker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
-              shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-              shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-              ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
-                diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
-              ),
-            ]),
+            Effect.all(
+              [
+                roundTripWorker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
+                shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+                shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+                ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
+                  diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
+                ),
+              ],
+              { concurrency: 1 },
+            ),
           ),
         );
         expect(roundTripEffects.every(({ owner_invocation_id }) => Option.isSome(owner_invocation_id))).toBe(true);
@@ -1052,11 +1079,14 @@ it.live(
         const admittedBeforeDisable = yield* submitFor('INTERNAL_C14_CUSTOMER_BEFORE_DISABLE');
         expect(admittedBeforeDisable.jobId).not.toBe(accepted.jobId);
         yield* admin`update core.principals set status='disabled',disabled_at=current_timestamp where principal_id=${integration.principalId} and tenant_id=${tenantId}`;
-        const disabledWorker = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_DISABLED_ORIGIN',
-          ONTOS_GATEWAY_MODULE_API_KEY: moduleKey,
-        });
+        const disabledWorker = yield* startProductWorker(
+          workerArtifact,
+          {
+            ...environment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_DISABLED_ORIGIN',
+          },
+          moduleKey,
+        );
         yield* observeUntil(
           admin`select effect_id,effect_key,owner_invocation_id,owner_receipt,state from symmy_integration.job_effects where job_id=${admittedBeforeDisable.jobId}`.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),

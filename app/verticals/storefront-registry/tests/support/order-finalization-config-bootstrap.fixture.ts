@@ -7,7 +7,9 @@ import {
   DatabaseConfig,
   GatewayAssertionRedemptionService,
   TenantModuleStateServiceLive,
+  defineDatabaseIdentityEnrollment,
   makeActionRuntimeLive,
+  makeDatabaseIdentityEnrollmentLive,
   parseDatabaseConfig,
 } from '@app/core-runtime';
 import {
@@ -37,7 +39,7 @@ import { registerStorefrontApplicationAction } from '../../src/actions/register-
 import {
   RegisterStorefrontApplicationPayloadSchema,
   RegisterStorefrontApplicationResultSchema,
-} from '../../shared/action-contracts.ts';
+} from '../../shared/actions/register-storefront-application.ts';
 
 const bounded = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200));
 const requestContext = {
@@ -120,6 +122,7 @@ const main = Effect.scoped(
         ),
       ),
       Layer.provide(NodeCrypto.layer),
+      Layer.provide(makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]))),
     );
     const context = yield* Layer.build(live);
     const line = yield* Effect.gen(function* invokeActualOwnerAction() {
@@ -156,7 +159,7 @@ const main = Effect.scoped(
       )({ operation: request.operation, result });
     }).pipe(Effect.provideContext(context));
     // Secret-bearing input and all child output use dedicated private parent IPC, never logs/stdout.
-    yield* Effect.sync(() => writeSync(3, `${line}\n`));
+    yield* Effect.sync(() => writeSync(5, `${line}\n`));
     return yield* Effect.void;
   }),
 ).pipe(

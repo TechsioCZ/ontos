@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import { randomUUID } from 'node:crypto';
 
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
@@ -82,6 +83,7 @@ const makeRuntimes = Effect.fn('RecoveryOverdue.makeRuntimes')(function* makeRun
     evidenceContextAccess,
     {
       accessDecision,
+      databaseIdentities: defineDatabaseIdentityEnrollment([]),
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
     },
@@ -97,7 +99,11 @@ const setup = Effect.fn('RecoveryOverdue.setup')(function* setup() {
   yield* seedCoreScope(database, scope);
   yield* database.database.transaction((transaction) =>
     Effect.gen(function* enableGateway() {
-      const scoped = yield* installOperationalScope(transaction, operationalScopeOf(scope));
+      const scoped = yield* installOperationalScope(
+        transaction,
+        operationalScopeOf(scope),
+        defineDatabaseIdentityEnrollment([]),
+      );
       yield* paymentApplicabilityPersistenceForTransaction(scoped).configureEnablement({
         customerConfigurationId: CUSTOMER_CONFIGURATION,
         enabled: true,

@@ -21,6 +21,12 @@ import {
 
 import { ActionCommitIndeterminate, ActionTransactionError } from '../actions/errors.ts';
 import { AccessPortalProjection } from '../access/portal/portal-projection.ts';
+import { AccessIntent } from '../access/decision/authority.ts';
+import { DecisionCheck } from '../access/decision/engine.ts';
+import { AccessPrincipalKindSource } from '../access/enforcement/actor.ts';
+import { AccessDecisionGate } from '../access/enforcement/contract.ts';
+import { AccessDecisionLog } from '../access/enforcement/decision-log.ts';
+import { LegalEntityCandidates } from '../access/enforcement/legal-entities.ts';
 import { bootstrapScopesOf, writeBootstrapScopes } from '../access/bootstrap/persistence.ts';
 import { AccessWorkloadBindingIdSchema } from '../access/workloads/store.ts';
 import { makeAccessWorkloadBindingDrizzleStore } from '../access/workloads/binding-store.ts';
@@ -48,6 +54,8 @@ import {
 } from '../auth/external-identity/verifier.ts';
 import { CoreDatabase, makeCoreDatabase } from '../db/client.ts';
 import { parseDatabaseConfig } from '../db/config.ts';
+import { DatabaseIdentityEnrollmentContext, defineDatabaseIdentityEnrollment } from '../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
 import {
   actionInvocations,
   auditEvents,
@@ -67,9 +75,14 @@ import { OntosDeploymentIdentitySchema } from '../modules/manifest.ts';
 import { extractVerticalRuntimeSafeDescriptors } from '../modules/runtime-registration.ts';
 import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
 import { makeTenantModuleStateService, TenantModuleStateSchema } from '../modules/tenant-module-state-service.ts';
-import { makeOperationalScopeRepository, makeOperationalScopeResolver } from '../operations/context.ts';
+import {
+  OperationalScopeResolver,
+  makeOperationalScopeRepository,
+  makeOperationalScopeResolver,
+} from '../operations/context.ts';
 import { loadSpiceDbConfig } from '../permissions/config.ts';
 import {
+  ContextAccess,
   makeContextAccessLive,
   toContextPermissionAccessObjectId,
   toIdentityNamespaceAccessObjectId,
@@ -82,7 +95,13 @@ import { makeActionPermissionLive } from '../permissions/service.ts';
 import { fullyConsistent } from '../permissions/client.ts';
 import { OwnerAuthorizationOverlay, failClosedOwnerAuthorizationOverlay } from '../access/enforcement/owner-overlay.ts';
 import { newSpiceDbGrpcClient } from '../permissions/spicedb-grpc-rpc.ts';
-import { makeScriptedBoundAccessGate, makeTestOperationalScopeAccess, TEST_ACCESS_OUTCOMES } from './access-gate.ts';
+import {
+  inertAccessEnforcementPorts,
+  makeTestBoundAccessGate,
+  makeTestOperationalScopeAccess,
+  testAccessSpecOf,
+  TEST_ACCESS_OUTCOMES,
+} from './access-gate.ts';
 import { ReadRuntime, makeReadRuntime } from '../reads/runtime.ts';
 import type { ReadRuntimeOptions } from '../reads/runtime.ts';
 
@@ -131,6 +150,10 @@ const fixtureConfigurationFields = {
   ),
   actionExecutor: Schema.optionalKey(Schema.Literals([managerOnlyExecution, tenantMembershipExecution])),
   actionKeys: Schema.optional(Schema.Array(ActionKeySchema)),
+  /** Exact subset of actionKeys granted only to the Legal Entity-only actor in its company scope. */
+  legalEntityOnlyActionKeys: Schema.optionalKey(Schema.Array(ActionKeySchema)),
+  /** Defaults to true; false lets tests require an explicit Counterparty resource read grant. */
+  legalEntityOnlyCounterpartyRead: Schema.optionalKey(Schema.Boolean),
   /**
    * Seeds Core tenancy rows. Defaults to the configured `DATABASE_ADMIN_URL`: dedicated runtime roles
    * cannot insert tenants, Legal Entities or principals.
@@ -167,6 +190,15 @@ const RuntimeFixtureConfigurationSchema = Schema.Struct(fixtureConfigurationFiel
 const LiveOperationFixtureConfigurationSchema = Schema.Struct({
   ...fixtureConfigurationFields,
   adminConnectionString: Schema.optional(Schema.Redacted(Schema.String)),
+  /**
+   * Creation-only, never part of the serial creator/attachment handoff. A session-setting credential on
+   * the exact disposable local target of `runtimeConnectionString`, used only by the scoped native
+   * writers (access bootstrap and workload bindings). A dedicated gateway-grant actor role cannot install
+   * scope, so such callers supply the shared runtime credential here while the actor runtime keeps its
+   * own dedicated role and connection. Absent means the runtime executor is reused; the fixture never
+   * falls back to admin or another ambient credential.
+   */
+  bootstrapConnectionString: Schema.optional(Schema.Redacted(Schema.String)),
   runtimeConnectionString: Schema.Redacted(Schema.String),
 });
 
@@ -178,7 +210,10 @@ interface LiveOperationFixtureRuntimeBindings {
 }
 
 export type LiveOperationFixtureConfiguration = typeof LiveOperationFixtureConfigurationSchema.Encoded &
-  LiveOperationFixtureRuntimeBindings;
+  LiveOperationFixtureRuntimeBindings & {
+    /** Dedicated database identities the fixture's runtimes install; Core-only fixtures enroll none. */
+    readonly databaseIdentities?: DatabaseIdentityEnrollment;
+  };
 
 /** Exact grants for a real service created through the fixture's public identity owner. */
 export interface ExistingServiceFixtureGrant {
@@ -444,10 +479,15 @@ const fixtureAuthorizationRelationships = (input: {
   readonly actionKeys: readonly string[];
   readonly actors: readonly FixtureActor[];
   readonly entityObject: string;
+  readonly legalEntityId: string;
   readonly legalEntityOnly: FixtureActor;
+  readonly legalEntityOnlyActionKeys: readonly string[];
+  readonly legalEntityOnlyCounterpartyRead: boolean;
   readonly manager: FixtureActor;
+  readonly moduleKeys: readonly string[];
   readonly moduleObject: string;
   readonly reader: FixtureActor;
+  readonly secondaryLegalEntityId: string | undefined;
   readonly tenantId: string;
 }) => [
   ...input.actors.map((principal) =>
@@ -459,9 +499,16 @@ const fixtureAuthorizationRelationships = (input: {
   relationship('tenant', input.tenantId, 'party_identity_reader', 'principal', input.reader.principalId),
   relationship('legal_entity', input.entityObject, 'tenant', 'tenant', input.tenantId),
   ...[input.manager, input.legalEntityOnly].flatMap((principal) =>
-    ['member', 'counterparty_manager', 'counterparty_reader'].map((relation) =>
-      relationship('legal_entity', input.entityObject, relation, 'principal', principal.principalId),
-    ),
+    ['member', 'counterparty_manager', 'counterparty_reader']
+      .filter(
+        (relation) =>
+          relation !== 'counterparty_reader' ||
+          principal.principalId !== input.legalEntityOnly.principalId ||
+          input.legalEntityOnlyCounterpartyRead,
+      )
+      .map((relation) =>
+        relationship('legal_entity', input.entityObject, relation, 'principal', principal.principalId),
+      ),
   ),
   relationship('module_access', input.moduleObject, 'legal_entity', 'legal_entity', input.entityObject),
   ...[input.manager, input.legalEntityOnly].map((principal) =>
@@ -535,9 +582,12 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
     readonly actionKeys: readonly string[];
     readonly actors: readonly FixtureActor[];
     readonly authenticationNamespaceId: string;
+    readonly databaseIdentities: DatabaseIdentityEnrollment;
     readonly executor: FixtureExecutor;
     readonly legalEntityId: string;
     readonly legalEntityOnly: FixtureActor;
+    readonly legalEntityOnlyActionKeys: readonly string[];
+    readonly legalEntityOnlyCounterpartyRead: boolean;
     readonly manager: FixtureActor;
     readonly managerIdentityAdmin: boolean | undefined;
     readonly managerProviderSubjectId: string | undefined;
@@ -547,6 +597,7 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
     readonly namespaceRelationships: readonly ReturnType<typeof relationship>[];
     readonly reader: FixtureActor;
     readonly readerProviderSubjectId: string | undefined;
+    readonly scopedExecutor: FixtureExecutor;
     readonly secondaryLegalEntityId: string | undefined;
     readonly spice: FixtureSpiceClient;
     readonly tenantId: string;
@@ -624,14 +675,17 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
       ...(input.secondaryLegalEntityId === undefined ? [] : [input.secondaryLegalEntityId]),
     ].map((legalEntityId) => LegalEntityIdSchema.make(legalEntityId));
     yield* writeBootstrapScopes(
-      { executor: input.executor },
+      { enrollment: input.databaseIdentities, executor: input.scopedExecutor },
       { ...input.manager, correlationId: 'live-fixture-access-bootstrap' },
       { scopes: bootstrapScopesOf(accessTenantId, accessCompanies), tenantId: accessTenantId },
     ).pipe(Effect.mapError((cause) => fixtureFailure('Unable to seed the live fixture access fences', cause)));
     if (input.workloads.length > 0) {
       // The fixture registers each named workload through the production store, so a live suite binds
       // exactly the keys it stated and a request for any other workload is refused (O73).
-      const workloadStore = makeAccessWorkloadBindingDrizzleStore({ executor: input.executor });
+      const workloadStore = makeAccessWorkloadBindingDrizzleStore({
+        enrollment: input.databaseIdentities,
+        executor: input.scopedExecutor,
+      });
       yield* workloadStore
         .registerBindings(
           { ...input.manager, correlationId: 'live-fixture-workload-bindings' },
@@ -664,10 +718,15 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
       actionKeys: input.actionKeys,
       actors: input.actors,
       entityObject,
+      legalEntityId: input.legalEntityId,
       legalEntityOnly: input.legalEntityOnly,
+      legalEntityOnlyActionKeys: input.legalEntityOnlyActionKeys,
+      legalEntityOnlyCounterpartyRead: input.legalEntityOnlyCounterpartyRead,
       manager: input.manager,
+      moduleKeys: input.moduleKeys,
       moduleObject,
       reader: input.reader,
+      secondaryLegalEntityId: input.secondaryLegalEntityId,
       tenantId: input.tenantId,
     });
     relations.push(...configuredModuleRelations, ...input.namespaceRelationships);
@@ -993,6 +1052,36 @@ const parseFixtureDatabaseConfig = (connectionString: Redacted.Redacted) =>
   parseDatabaseConfig({ DATABASE_URL: Redacted.value(connectionString) }).pipe(
     Effect.mapError((cause) => fixtureFailure('Invalid database configuration', cause)),
   );
+
+/**
+ * Validates and resolves the creation-only bootstrap credential before any pool is opened. A dedicated
+ * gateway-grant actor role can never install scope, so a caller may name a session-setting credential that
+ * must be a local address on the runtime's exact disposable database. Absent means the runtime executor is
+ * reused; the fixture never falls back to admin, an ambient URL or a rewritten user.
+ */
+const validateFixtureBootstrapConfiguration = Effect.fn('LiveOperations.validateBootstrapConfiguration')(
+  function* validateFixtureBootstrapConfiguration(
+    bootstrapConnectionString: Redacted.Redacted | undefined,
+    runtimeConfiguration: Effect.Success<ReturnType<typeof parseFixtureDatabaseConfig>>,
+  ) {
+    if (bootstrapConnectionString === undefined) {
+      return Option.none<Effect.Success<ReturnType<typeof parseFixtureDatabaseConfig>>>();
+    }
+    const address = yield* decodeDatabaseAddress(bootstrapConnectionString);
+    if (!LOCAL_DATABASE_HOSTS.has(address.hostname)) {
+      return yield* fixtureFailure('Live test fixtures require disposable localhost services');
+    }
+    const configuration = yield* parseFixtureDatabaseConfig(bootstrapConnectionString);
+    if (
+      configuration.host !== runtimeConfiguration.host ||
+      configuration.port !== runtimeConfiguration.port ||
+      configuration.database !== runtimeConfiguration.database
+    ) {
+      return yield* fixtureFailure('Fixture bootstrap credential must target the runtime disposable local database');
+    }
+    return Option.some(configuration);
+  },
+);
 const revokeFixtureResourceAccess = Effect.fn('LiveOperations.revokeResourceAccess')(
   function* revokeFixtureResourceAccessEffect(
     spice: FixtureSpiceClient,
@@ -1160,6 +1249,7 @@ const grantExistingFixtureService = Effect.fn('LiveOperations.grantExistingServi
 /** Real Core persistence and SpiceDB. Call only against a disposable local database. */
 const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(function* makeLiveOperationRuntime(input: {
   readonly closeResources: Effect.Effect<void, LiveOperationFixtureError>;
+  readonly databaseIdentities: DatabaseIdentityEnrollment;
   readonly executor: FixtureExecutor;
   readonly runtimeBindings: LiveOperationFixtureRuntimeBindings;
   readonly runtimeHandoff: LiveOperationFixtureRuntimeHandoff;
@@ -1167,7 +1257,7 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
   readonly spice: FixtureSpiceClient;
   readonly spiceDb: Effect.Success<ReturnType<typeof loadSpiceDbConfig>>;
 }) {
-  const { closeResources, executor, runtimeHandoff, spice, spiceDb } = input;
+  const { closeResources, databaseIdentities, executor, runtimeHandoff, spice, spiceDb } = input;
   const { configuration, denied, legalEntityId, legalEntityOnly, manager, reader, secondaryLegalEntityId, tenantId } =
     runtimeHandoff;
   const crypto = yield* Crypto.Crypto;
@@ -1222,15 +1312,9 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
     if (role === undefined || role.superuser || role.bypassRls) {
       return yield* fixtureFailure('Owner fixtures require a runtime role without RLS bypass');
     }
-    const { resolver } = yield* Effect.all(
-      {
-        // The fixture's owner producers read their own state; the scope's company question is the gate's.
-        resolver: makeOperationalScopeResolver(
-          makeOperationalScopeRepository(actionDatabase),
-          makeTestOperationalScopeAccess(),
-        ),
-      },
-      { concurrency: 1 },
+    const resolver = yield* makeOperationalScopeResolver(
+      makeOperationalScopeRepository(actionDatabase, databaseIdentities),
+      makeTestOperationalScopeAccess(),
     );
     const principal = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)(
       legalEntityScope === 'required' ? { ...manager, legalEntityId } : manager,
@@ -1242,14 +1326,15 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
     });
     return yield* executor.transaction(
       Effect.fn('LiveOperations.produceOwner')(function* produceOwner(transaction) {
-        const scoped = yield* installOperationalScope(transaction, scope);
+        const scoped = yield* installOperationalScope(transaction, scope, databaseIdentities);
         return yield* producer(scoped, scope);
       }),
     );
   });
   // The gate answers only what the suite scripted: a fixture that names no outcome denies every
   // entrypoint, so a live suite never inherits an allow it did not state (fail closed).
-  const liveAccessGate = makeScriptedBoundAccessGate(configuration.access ?? 'denied');
+  const accessPorts = inertAccessEnforcementPorts();
+  const liveAccessGate = makeTestBoundAccessGate(testAccessSpecOf(configuration.access ?? 'denied'), accessPorts);
   const layer = Layer.effectContext(
     Effect.gen(function* makeLiveOperationRuntimeContext() {
       const ownerAuthorization = yield* Effect.serviceOption(OwnerAuthorizationOverlay);
@@ -1262,30 +1347,27 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
       );
       const actionModuleStateGate = makeModuleStateGate(makeTenantModuleStateService(actionDatabase));
       const actionModuleEntrypointGateway = makeModuleEntrypointGateway(actionModuleStateGate);
+      const actionScopeResolver = yield* makeOperationalScopeResolver(
+        makeOperationalScopeRepository(actionDatabase, databaseIdentities),
+        makeTestOperationalScopeAccess(),
+      );
       const readModuleStateGate = makeModuleStateGate(makeTenantModuleStateService(readDatabase));
       const readModuleEntrypointGateway = makeModuleEntrypointGateway(readModuleStateGate);
-      const { actionScopeResolver, readScopeResolver } = yield* Effect.all(
-        {
-          actionScopeResolver: makeOperationalScopeResolver(
-            makeOperationalScopeRepository(actionDatabase),
-            makeTestOperationalScopeAccess(),
-          ),
-          readScopeResolver: makeOperationalScopeResolver(
-            makeOperationalScopeRepository(readDatabase),
-            makeTestOperationalScopeAccess(),
-          ),
-        },
-        { concurrency: 2 },
+      const readScopeResolver = yield* makeOperationalScopeResolver(
+        makeOperationalScopeRepository(readDatabase, databaseIdentities),
+        makeTestOperationalScopeAccess(),
       );
       let actionOptions: ActionRuntimeOptions = {
         accessDecision: liveAccessGate.bound,
         contextAccess,
+        databaseIdentities,
         moduleEntrypointGateway: actionModuleEntrypointGateway,
         moduleStateGate: actionModuleStateGate,
         ownerAuthorizationOverlay: Option.getOrElse(ownerAuthorization, () => failClosedOwnerAuthorizationOverlay),
       };
       let readOptions: ReadRuntimeOptions = {
         accessDecision: liveAccessGate.bound,
+        databaseIdentities,
         ownerAuthorizationOverlay: Option.getOrElse(ownerAuthorization, () => failClosedOwnerAuthorizationOverlay),
       };
       const { applicationComposition, expectedDeployment, ownerRegistration } = input.runtimeBindings;
@@ -1349,10 +1431,19 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
       );
       return Context.empty().pipe(
         Context.add(ActionRuntime, actionRuntime),
+        Context.add(AccessDecisionGate, liveAccessGate.accessDecision),
+        Context.add(AccessDecisionLog, accessPorts.decisionLog),
+        Context.add(AccessIntent, accessPorts.intent),
+        Context.add(AccessPrincipalKindSource, accessPorts.principalKinds),
+        Context.add(DecisionCheck, accessPorts.check),
+        Context.add(LegalEntityCandidates, accessPorts.candidates),
         // The scripted gate reads no projection, so what an owner Action committed has nothing to reconcile.
         Context.add(AccessPortalProjection, { project: () => Effect.void }),
         Context.add(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
         Context.add(CoreDatabase, readDatabase),
+        Context.add(ContextAccess, contextAccess),
+        Context.add(DatabaseIdentityEnrollmentContext, databaseIdentities),
+        Context.add(OperationalScopeResolver, actionScopeResolver),
         Context.add(ReadRuntime, readRuntime),
       );
     }),
@@ -1481,10 +1572,16 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
     ) {
       return yield* fixtureFailure(INVALID_FIXTURE_CONFIGURATION);
     }
+    const actionKeys = configuration.actionKeys ?? [];
+    const legalEntityOnlyActionKeys = configuration.legalEntityOnlyActionKeys ?? [];
+    if (legalEntityOnlyActionKeys.some((actionKey) => !actionKeys.includes(actionKey))) {
+      return yield* fixtureFailure('Legal Entity-only fixture Action keys must be included in actionKeys');
+    }
+    const databaseIdentities = input.databaseIdentities ?? defineDatabaseIdentityEnrollment([]);
     const spiceDb = yield* loadSpiceDbConfig({ envPath: '/dev/null' }).pipe(
       Effect.mapError((cause) => fixtureFailure('Unable to load the SpiceDB configuration', cause)),
     );
-    const { runtimeConnectionString } = configuration;
+    const { bootstrapConnectionString, runtimeConnectionString } = configuration;
     const adminConnectionString =
       configuration.adminConnectionString ??
       (yield* Config.schema(Schema.Redacted(Schema.String), 'DATABASE_ADMIN_URL').pipe(
@@ -1507,10 +1604,23 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
       [parseFixtureDatabaseConfig(runtimeConnectionString), parseFixtureDatabaseConfig(adminConnectionString)],
       { concurrency: 1 },
     );
+    const bootstrapDatabaseConfiguration = Option.getOrUndefined(
+      yield* validateFixtureBootstrapConfiguration(bootstrapConnectionString, databaseConfiguration),
+    );
     const { executor } = yield* makeCoreDatabase({ ...databaseConfiguration, maxConnections: 8 }).pipe(
       Scope.provide(databaseScope),
       Effect.mapError((cause) => fixtureFailure('Unable to initialize fixture database', cause)),
     );
+    // The scoped native writers install scope through the session-setting bootstrap credential. Without an
+    // explicit one they reuse the runtime executor, exactly as an ordinary shared-runtime fixture does.
+    const scopedExecutor =
+      bootstrapDatabaseConfiguration === undefined
+        ? executor
+        : (yield* Effect.suspend(() => makeCoreDatabase({ ...bootstrapDatabaseConfiguration, maxConnections: 2 })).pipe(
+            Scope.provide(databaseScope),
+            Effect.mapError((cause) => fixtureFailure('Unable to initialize the fixture bootstrap database', cause)),
+            Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(databaseScope, exit) : Effect.void)),
+          )).executor;
     const spice = newSpiceDbGrpcClient(spiceDb);
     const [tenantId, legalEntityId] = yield* Effect.all([makeFixtureId(), makeFixtureId()], {
       concurrency: 2,
@@ -1538,7 +1648,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
       Effect.ensuring(Effect.sync(spice.close.bind(spice)).pipe(Effect.andThen(Scope.close(databaseScope, Exit.void)))),
     );
 
-    // Seed through a short-lived admin pool; the runtimes keep the runtime role's connection.
+    // Provision identities through admin; scoped writers must use the enrolled runtime role.
     yield* Effect.scoped(
       Effect.gen(function* seedLiveOperationFixture() {
         const admin = yield* makeCoreDatabase({ ...adminDatabaseConfiguration, maxConnections: 2 }).pipe(
@@ -1546,12 +1656,15 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
         );
         yield* setupLiveOperationFixture({
           actionExecutor: configuration.actionExecutor ?? tenantMembershipExecution,
-          actionKeys: configuration.actionKeys ?? [],
+          actionKeys,
           actors,
           authenticationNamespaceId: configuration.authenticationNamespaceId,
+          databaseIdentities,
           executor: admin.executor,
           legalEntityId,
           legalEntityOnly,
+          legalEntityOnlyActionKeys,
+          legalEntityOnlyCounterpartyRead: configuration.legalEntityOnlyCounterpartyRead ?? true,
           manager,
           managerIdentityAdmin: configuration.managerIdentityAdmin,
           managerProviderSubjectId: configuration.managerProviderSubjectId,
@@ -1561,6 +1674,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
           namespaceRelationships,
           reader,
           readerProviderSubjectId: configuration.readerProviderSubjectId,
+          scopedExecutor,
           secondaryLegalEntityId,
           spice,
           tenantId,
@@ -1590,6 +1704,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
     const runtimeHandoff = yield* Schema.decodeUnknownEffect(LiveOperationFixtureRuntimeHandoffSchema)(handoffInput);
     return yield* makeLiveOperationRuntime({
       closeResources,
+      databaseIdentities,
       executor,
       runtimeBindings,
       runtimeHandoff,
@@ -1701,6 +1816,7 @@ export const makeLiveOperationFixtureRuntime = Effect.fn('LiveOperations.attachR
   function* makeLiveOperationFixtureRuntime(
     input: LiveOperationFixtureRuntimeBindings & {
       readonly configuration: typeof RuntimeFixtureConfigurationSchema.Encoded;
+      readonly databaseIdentities?: DatabaseIdentityEnrollment;
       readonly handoff: typeof LiveOperationFixtureRuntimeHandoffSchema.Encoded;
       readonly runtimeConnectionString: Redacted.Redacted;
     },
@@ -1770,6 +1886,7 @@ export const makeLiveOperationFixtureRuntime = Effect.fn('LiveOperations.attachR
     const closeResources = Scope.close(databaseScope, Exit.void);
     return yield* makeLiveOperationRuntime({
       closeResources,
+      databaseIdentities: input.databaseIdentities ?? defineDatabaseIdentityEnrollment([]),
       executor,
       runtimeBindings,
       runtimeHandoff,

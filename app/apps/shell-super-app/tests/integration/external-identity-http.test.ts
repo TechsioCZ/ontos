@@ -38,6 +38,8 @@ import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/ef
 import { Clock, Context, Crypto, DateTime, Effect, Layer, Predicate, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { enrolledModuleCredentials, noInternalWorkloadPrincipals } from '../support/module-credential-enrolment.ts';
+
 import { GatewayIssuer } from '../../api/auth/gateway-issuer.ts';
 import { makeInstalledModuleCatalogLayer } from '../../api/modules/installed-module-catalog.ts';
 import { ApiKeyService } from '../../api/auth/api-key-service.ts';
@@ -380,6 +382,7 @@ const makeServer = (
           token: 'fixture-gateway-token',
         });
       },
+      issueDocument: () => Effect.die('Unexpected document issuance in the provider fixture'),
     };
     const dependencies = Layer.mergeAll(
       Layer.succeed(ActionRuntime, scopedActionRuntime),
@@ -407,7 +410,8 @@ const makeServer = (
       server: HttpRouter.toWebHandler(
         HttpApiBuilder.layer(ExternalIdentityApi).pipe(
           Layer.provide(externalIdentityStandaloneGroupLive),
-          Layer.provide(externalIdentityWorkloadAuthorizationLive),
+          Layer.provide(externalIdentityWorkloadAuthorizationLive.pipe(Layer.provide(enrolledModuleCredentials([])))),
+          Layer.provide(noInternalWorkloadPrincipals),
           Layer.provide(dependencies),
           Layer.provide(HttpServer.layerServices),
         ),

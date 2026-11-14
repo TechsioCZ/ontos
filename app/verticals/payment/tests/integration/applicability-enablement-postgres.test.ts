@@ -1,6 +1,10 @@
 import { NodeCrypto } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { readVerifiedGatewayCompositionRevision, trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
+import {
+  defineDatabaseIdentityEnrollment,
+  readVerifiedGatewayCompositionRevision,
+  trustVerifiedGatewayPrincipalContext,
+} from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import type { ReadTestHarnessOptions } from '@app/core-runtime/testing/reads';
@@ -74,7 +78,11 @@ const withApplicability = <Value, Failure>(
 ) =>
   database.transaction((transaction: PaymentTestTransaction) =>
     Effect.gen(function* scopedApplicabilityPersistence() {
-      const scoped = yield* installOperationalScope(transaction, operationalScopeOf(scope));
+      const scoped = yield* installOperationalScope(
+        transaction,
+        operationalScopeOf(scope),
+        defineDatabaseIdentityEnrollment([]),
+      );
       return yield* operation(paymentApplicabilityPersistenceForTransaction(scoped));
     }),
   );

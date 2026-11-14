@@ -296,6 +296,7 @@ it.effect('uses the Payment Term production adapter with the exact owner referen
   return Effect.gen(function* paymentTermOwnerAdapter() {
     const port = yield* paymentTermCatalogPortFromEnvironment(
       {
+        compositionRevision: 'a'.repeat(64),
         legalEntityId: fixtureScope.sellingLegalEntityId,
         requestCorrelation: 'czech-launch-payment-term',
         subject: originatorSubject('a'.repeat(64), fixtureScope.tenantId),
@@ -336,6 +337,7 @@ it.effect('uses the Payment Term production adapter with the exact owner referen
     expect(gatewayRequests).toEqual([
       {
         audience: 'payment-term-catalog',
+        callingAppId: 'commerce-customer-context',
         legalEntityScope: 'subject',
         requestCorrelation: 'czech-launch-payment-term',
         subject: originatorSubject('a'.repeat(64), fixtureScope.tenantId),
@@ -397,6 +399,7 @@ it.effect('uses the Pricing production adapter with the exact purchasing context
     expect(gatewayRequests).toEqual([
       {
         audience: 'pricing',
+        callingAppId: 'commerce-customer-context',
         legalEntityScope: 'tenant',
         requestCorrelation: 'czech-launch-pricing',
         subject: originatorSubject('a'.repeat(64), purchasingContext.tenantId),

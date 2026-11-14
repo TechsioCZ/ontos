@@ -147,8 +147,7 @@ export const administerPaymentTermPolicyAction = defineAction(
     schemaVersion: '1',
   },
   handleAdministerPaymentTermPolicy,
-  (transaction, scope, compositionRevision) =>
-    customerCommercePolicyAdministrationServiceFactory(transaction, scope, compositionRevision),
+  (transaction, scope) => customerCommercePolicyAdministrationServiceFactory(transaction, scope),
 );
 
 // <generated-outbox-message-exports>

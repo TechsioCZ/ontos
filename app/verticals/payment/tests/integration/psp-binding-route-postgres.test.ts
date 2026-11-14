@@ -1,4 +1,4 @@
-import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { TrustedPrincipalContextSchema, defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -57,7 +57,7 @@ const inScope = <Value, Failure>(
   operation: (transaction: Effect.Success<ReturnType<typeof installOperationalScope>>) => Effect.Effect<Value, Failure>,
 ) =>
   database.transaction((transaction: PaymentTestTransaction) =>
-    installOperationalScope(transaction, scope).pipe(Effect.flatMap(operation)),
+    installOperationalScope(transaction, scope, defineDatabaseIdentityEnrollment([])).pipe(Effect.flatMap(operation)),
   );
 
 const resolveKey = (database: PaymentTestDatabase, scope: OperationalScope, routeKey: string) =>

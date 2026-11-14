@@ -2,19 +2,16 @@ import { isBuiltin } from 'node:module';
 
 import { NodeServices } from '@effect/platform-node';
 import {
+  createUltramodernReleaseBuildMarker,
   resolveUltramodernReleaseIdentity,
   resolveUltramodernSourceRevision,
 } from '@modern-js/app-tools-extensions/release-identity';
-import { Array as EffectArray, Effect, FileSystem, ManagedRuntime, Option, Order, Path, Schema } from 'effect';
+import { Effect, FileSystem, ManagedRuntime, Option, Path, Schema } from 'effect';
 import { build, transform } from 'esbuild';
 import { parseSync } from 'oxc-parser';
 
-import {
-  readOutboxWorkerHost,
-  readOutboxWorkerHostRelease,
-  renderOutboxWorkerHostEntry,
-} from './generate-outbox-worker-deployment.mjs';
-import { OUTBOX_WORKER_BUNDLE, OUTBOX_WORKER_HOST, outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
+import { readOutboxWorkerHost, renderOutboxWorkerHostEntry } from './generate-outbox-worker-deployment.mjs';
+import { OUTBOX_WORKER_BUNDLE, OUTBOX_WORKER_HOST } from './outbox-worker-delivery.mjs';
 
 const TOPOLOGY_PATH = 'topology/reference-topology.json';
 const UnitIdSchema = Schema.String.pipe(Schema.brand('UnitId'));
@@ -22,6 +19,17 @@ const BuildConstantSchema = Schema.fromJsonString(Schema.String);
 
 const TopologySchema = Schema.fromJsonString(
   Schema.Struct({
+    shell: Schema.Struct({
+      deliveryUnit: Schema.Struct({
+        buildMarker: Schema.String,
+        packageName: Schema.String,
+        sourceRevision: Schema.String,
+        unitId: UnitIdSchema,
+      }),
+      id: Schema.String,
+      package: Schema.String,
+      path: Schema.String,
+    }),
     verticals: Schema.Array(
       Schema.Struct({
         deliveryUnit: Schema.optionalKey(
@@ -50,14 +58,6 @@ const PackageManifestSchema = Schema.fromJsonString(
 const MetafileInputsSchema = Schema.Struct({
   inputs: Schema.Record(Schema.String, Schema.Unknown),
 });
-
-/**
- * @param {Record<string, unknown>} inputs Compiler inputs.
- * @param {string | null} intentPath Reviewed host projection input, absent for dedicated workers.
- * @returns {string[]} Exact compiler and projection input paths.
- */
-const workerSourceInputs = (inputs, intentPath) =>
-  EffectArray.sort([...new Set([...Object.keys(inputs), ...(intentPath === null ? [] : [intentPath])])], Order.String);
 
 const WORKER_ENTRY = OUTBOX_WORKER_BUNDLE;
 const CORE_WORKER_ENTRYPOINT = 'packages/core-runtime/src/outbox/worker-entrypoint.ts';
@@ -105,12 +105,20 @@ const OwnerBuildIdentitySchema = Schema.Struct({
   unitId: UnitIdSchema,
 });
 
+/** A promotable Git object id: the only revision a kept owner's build identity can name. */
+const PROMOTABLE_REVISION = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
+/**
+ * The plan's identity revision of every hosted owner, by owner id (JSON). The host's own build revision means the
+ * owner is built here; any other revision names a kept release.
+ */
+const OwnerRevisionsSchema = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
+
 const WorkerArtifactSchema = Schema.fromJsonString(
   Schema.Struct({
     appId: AppIdSchema,
     entry: Schema.Literal(WORKER_ENTRY),
     ownerBuildIdentities: Schema.Array(OwnerBuildIdentitySchema),
-    schemaVersion: Schema.Literal(2),
+    schemaVersion: Schema.Literal(4),
     serviceId: ServiceIdSchema,
     sourceInputs: Schema.Array(Schema.String),
     sourceRevision: Schema.OptionFromNullOr(Schema.String),
@@ -129,6 +137,38 @@ class OutboxWorkerMaterializationError extends Error {
 
 /** @param {string} message Error detail. */
 const failure = (message) => new OutboxWorkerMaterializationError(message);
+
+/**
+ * One bundle, one module credential store: the host program's claim (`holdOwnStoreCopy`) and every worker's reader must
+ * resolve to the same store module, or the workers would read a copy nobody claimed and every delegated call of the
+ * Outbox host would fail closed. The bundler's own input map decides it exactly; the output is checked to carry that one
+ * copy and the host's claim of it.
+ *
+ * @param {{ readonly inputs: Readonly<Record<string, unknown>> }} metafile The worker build's input map.
+ * @param {string} bundledWorker The built worker.
+ * @returns {Effect.Effect<void, OutboxWorkerMaterializationError>} Fails when it carries a store other than one claimed copy.
+ */
+const assertOneClaimedStore = (metafile, bundledWorker) => {
+  const inputs = Object.keys(metafile.inputs);
+  const storeInputs = inputs.filter((input) =>
+    input.endsWith('packages/core-runtime/src/auth/hosted-module-credential-store.ts'),
+  );
+  const hostClaims = inputs.some((input) => input.endsWith('scripts/zerops/module-credentials.mts'));
+  const storeCopies = [...bundledWorker.matchAll(/["']HostedModuleCredentials\.claim["']/gu)].length;
+  // A worker that bundles no store at all reads no module credential; any that does must carry exactly one, claimed.
+  const noStore = storeInputs.length === 0 && storeCopies === 0;
+  return noStore ||
+    (storeInputs.length === 1 &&
+      hostClaims &&
+      storeCopies === 1 &&
+      bundledWorker.includes('ModuleCredentials.holdOwnCopy'))
+    ? Effect.void
+    : Effect.fail(
+        failure(
+          `The Outbox Worker must carry exactly one module credential store, claimed by its host: ${String(storeInputs.length)} store module(s), ${String(storeCopies)} copy(ies), host claim ${hostClaims ? 'present' : 'missing'}`,
+        ),
+      );
+};
 
 const nodeRuntime = ManagedRuntime.make(NodeServices.layer);
 
@@ -201,22 +241,85 @@ const makeOwnerBuildIdentityPlugin = ({ compiledMarkers, markers, path }) => ({
 });
 
 /**
- * Compile only the reviewed host entries without rewriting the source-owned delivery inventory.
- * @param {{ entryPoint: string, hostEntrySource: string | null }} delivery Resolved worker.
- * @param {string} hostEntryPath Canonical path of the exact reviewed host entry.
- * @param {string} workspaceRoot Workspace root.
- * @returns {import('esbuild').Plugin} Reviewed membership projection.
+ * The plan's owner identity revisions, which only the Outbox Worker host takes: the host compiles each owner under
+ * the revision of the release the composition keeps for it, the build revision for an owner built here.
+ * @param {{ ownerRevisions: string | undefined, owners: readonly string[] }} input
+ *   The JSON from ONTOS_OUTBOX_HOST_OWNER_REVISIONS and the hosted owner ids.
  */
-const makeHostReleaseEntryPlugin = (delivery, hostEntryPath, workspaceRoot) => ({
-  name: 'worker-host-reviewed-membership',
-  setup(builder) {
-    builder.onLoad({ filter: esbuildFilter(/[/\\]outbox-worker-host\.generated\.mts$/u) }, (args) =>
-      delivery.hostEntrySource === null || args.path !== hostEntryPath
-        ? null
-        : { contents: delivery.hostEntrySource, loader: 'ts', resolveDir: workspaceRoot },
+const resolveOwnerRevisions = ({ ownerRevisions, owners }) =>
+  Effect.gen(function* resolveOwnerRevisionsEffect() {
+    if (ownerRevisions === undefined) {
+      return Option.none();
+    }
+    const revisions = yield* Schema.decodeUnknownEffect(OwnerRevisionsSchema)(ownerRevisions).pipe(
+      Effect.mapError(() => failure('The owner identity revisions must map owner ids to source revisions')),
     );
-  },
-});
+    if (Object.keys(revisions).length !== owners.length || !owners.every((owner) => Object.hasOwn(revisions, owner))) {
+      return yield* Effect.fail(failure('The owner identity revisions must name exactly the hosted owners'));
+    }
+    return Option.some(revisions);
+  });
+
+/**
+ * Records the revision of an owner built here; a kept owner names another release's revision.
+ * @param {Set<string>} builtRevisions Revisions of the owners built here.
+ * @param {Option.Option<string>} keptRevision The owner's kept revision, if any.
+ * @param {string} revision The owner's resolved identity revision.
+ */
+const recordBuiltRevision = (builtRevisions, keptRevision, revision) => {
+  if (Option.isNone(keptRevision)) {
+    builtRevisions.add(revision);
+  }
+};
+
+/**
+ * The revision the artifact is built from: the one revision every owner built here resolved, or this checkout's
+ * when every owner is kept.
+ * @param {ReadonlySet<string>} builtRevisions Revisions of the owners built here.
+ * @param {string} sourceRevision This checkout's resolved revision.
+ */
+const artifactBuildRevision = (builtRevisions, sourceRevision) =>
+  builtRevisions.size > 1
+    ? Effect.fail(failure('The Outbox Worker owners built here do not share one source revision'))
+    : Effect.succeed([...builtRevisions][0] ?? sourceRevision);
+
+/**
+ * One hosted owner's release identity: resolved from this checkout when the owner is built here, or named by the kept
+ * release's revision. A kept owner's sources are byte-equal at HEAD (its unit digest is unchanged), so only its
+ * identity names the kept release; that claim needs a promotable revision and the clean HEAD the host compiles.
+ * @param {{
+ *   declared: { buildMarker: string, sourceRevision: string, unitId: string },
+ *   keptRevision: Option.Option<string>,
+ *   ownerId: string,
+ *   sourceRevision: string,
+ *   workspaceRoot: string,
+ * }} input The owner's declared delivery unit, its kept revision, and this checkout's build revision.
+ */
+const resolveOwnerReleaseIdentity = ({ declared, keptRevision, ownerId, sourceRevision, workspaceRoot }) =>
+  Option.match(keptRevision, {
+    onNone: () =>
+      Effect.try({
+        catch: () => failure(`Unable to resolve the ${ownerId} Outbox Worker release identity`),
+        try: () =>
+          resolveUltramodernReleaseIdentity({
+            generationBuildMarker: declared.buildMarker,
+            sourceRevision: declared.sourceRevision,
+            unitId: declared.unitId,
+            workspaceRoot,
+          }),
+      }),
+    onSome: (revision) =>
+      sourceRevision === 'workspace' || !PROMOTABLE_REVISION.test(revision)
+        ? Effect.fail(failure(`A kept ${ownerId} identity requires a promotable revision and a clean Git HEAD`))
+        : Effect.succeed({
+            buildMarker: createUltramodernReleaseBuildMarker({
+              generationBuildMarker: declared.buildMarker,
+              sourceRevision: revision,
+              unitId: declared.unitId,
+            }),
+            sourceRevision: revision,
+          }),
+  });
 
 /**
  * @param {{
@@ -226,7 +329,7 @@ const makeHostReleaseEntryPlugin = (delivery, hostEntryPath, workspaceRoot) => (
  * }} context Plugin dependencies.
  * @returns {import('esbuild').Plugin} Production dependency externalization plugin.
  */
-const makeProductionDependenciesPlugin = ({ packages, path, workspaceRoot }) => ({
+export const makeProductionDependenciesPlugin = ({ packages, path, workspaceRoot }) => ({
   name: 'worker-production-dependencies',
   setup(builder) {
     builder.onResolve({ filter: esbuildFilter(/^@effect\/platform-node$/u) }, () => ({
@@ -305,9 +408,11 @@ const collectProductionDependency = (importedPath, packages, dependencies) =>
 /**
  * @typedef {{
  *   appId: string,
+ *   ownerRevisions?: string | undefined,
  *   packageDir: string,
  *   packageName: string,
  *   runtimeDir: string,
+ *   servedUnits?: readonly string[] | undefined,
  *   workspaceRoot: string,
  * }} MaterializeOptions
  */
@@ -317,73 +422,67 @@ const collectProductionDependency = (importedPath, packages, dependencies) =>
  *   appId: string,
  *   packageDir: string,
  *   packageName: string,
+ *   servedUnits?: readonly string[] | undefined,
  *   workspaceRoot: string,
  * }} WorkerIdentity
  */
 
 /**
- * The deployable worker an identity names: one topology owner's dedicated worker, or the Outbox Worker
- * host that runs every owner's entry. Its service id names the runtime directory and the artifact.
+ * The deployable worker an identity names: the Outbox Worker host, which runs every hosted owner's entry in
+ * one process. Its service id names the runtime directory and the artifact. A deployment that serves only some
+ * units (`servedUnits`, which must include the Shell) hosts only their workers: a worker whose owner the
+ * deployment does not publish is never admitted by its Application Composition. Its entry is then the committed
+ * host entry rendered for those owners.
  * @param {WorkerIdentity} identity Materialization identity.
  */
-const resolveOutboxWorkerEffect = ({ appId, packageDir, packageName, workspaceRoot }) =>
+const resolveOutboxWorkerEffect = ({ appId, packageDir, packageName, servedUnits, workspaceRoot }) =>
   Effect.gen(function* resolveWorker() {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    if (appId === OUTBOX_WORKER_HOST.id) {
-      const rootPackage = yield* Schema.decodeUnknownEffect(PackageManifestSchema)(
-        yield* fs.readFileString(path.join(workspaceRoot, 'package.json')),
+    if (appId !== OUTBOX_WORKER_HOST.id) {
+      return yield* Effect.fail(failure('Worker identity must be the generated Outbox Worker host'));
+    }
+    const rootPackage = yield* Schema.decodeUnknownEffect(PackageManifestSchema)(
+      yield* fs.readFileString(path.join(workspaceRoot, 'package.json')),
+    );
+    if (packageDir !== '.' || packageName !== rootPackage.name) {
+      return yield* Effect.fail(failure('Worker identity must match the generated Outbox Worker host'));
+    }
+    const host = yield* readOutboxWorkerHost(workspaceRoot);
+    if (host === undefined) {
+      return yield* Effect.fail(failure('No MicroVertical has a generated Outbox Worker entry'));
+    }
+    const hostEntryPath = path.join(workspaceRoot, host.entry);
+    const hostEntry = (yield* fs.exists(hostEntryPath)) ? yield* fs.readFileString(hostEntryPath) : null;
+    if (hostEntry !== renderOutboxWorkerHostEntry(host)) {
+      return yield* Effect.fail(
+        failure('Outbox Worker host entry drift: run node scripts/generate-outbox-worker-deployment.mjs --write'),
       );
-      if (packageDir !== '.' || packageName !== rootPackage.name) {
-        return yield* Effect.fail(failure('Worker identity must match the generated Outbox Worker host'));
-      }
-      const host = yield* readOutboxWorkerHost(workspaceRoot);
-      if (host === undefined) {
-        return yield* Effect.fail(failure('No MicroVertical has a generated Outbox Worker entry'));
-      }
-      const hostEntryPath = path.join(workspaceRoot, host.entry);
-      const hostEntry = (yield* fs.exists(hostEntryPath)) ? yield* fs.readFileString(hostEntryPath) : null;
-      if (hostEntry !== renderOutboxWorkerHostEntry(host)) {
-        return yield* Effect.fail(
-          failure('Outbox Worker host entry drift: run node scripts/generate-outbox-worker-deployment.mjs --write'),
-        );
-      }
-      const release = yield* readOutboxWorkerHostRelease(workspaceRoot);
-      if (release.host === undefined || release.host.owners.length === 0) {
-        return yield* Effect.fail(failure('The reviewed release has no Outbox Worker host owners'));
-      }
+    }
+    if (servedUnits === undefined) {
       return {
         entryPoint: host.entry,
-        hostEntrySource: renderOutboxWorkerHostEntry(release.host),
-        intentPath: release.intentPath,
-        owners: release.host.owners,
-        serviceId: host.id,
+        entrySource: null,
+        owners: [host.coreOwner, ...host.owners],
+        serviceId: appId,
       };
     }
-    const topologySource = yield* fs.readFileString(path.join(workspaceRoot, TOPOLOGY_PATH));
-    const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(topologySource);
-    const vertical = topology.verticals.find((candidate) => candidate.id === appId);
-    if (vertical === undefined || vertical.package !== packageName || vertical.path !== packageDir) {
-      return yield* Effect.fail(failure('Worker identity must match its topology owner'));
+    const served = new Set(servedUnits);
+    if (!served.has(host.coreOwner.ownerId)) {
+      return yield* Effect.fail(failure('The served units must include the Shell that owns the Core system worker'));
     }
-    const delivery = yield* outboxWorkerDelivery(workspaceRoot, vertical).pipe(
-      Effect.mapError(() => failure(`Invalid generated worker delivery for ${appId}`)),
-    );
-    if (delivery === undefined) {
-      return yield* Effect.fail(failure(`${appId} has no generated Outbox Worker host`));
-    }
+    const owners = host.owners.filter(({ ownerId }) => served.has(ownerId));
     return {
-      entryPoint: path.join(packageDir, delivery.entry),
-      hostEntrySource: null,
-      intentPath: null,
-      owners: [delivery],
-      serviceId: delivery.id,
+      entryPoint: host.entry,
+      entrySource: owners.length === host.owners.length ? null : renderOutboxWorkerHostEntry({ ...host, owners }),
+      owners: [host.coreOwner, ...owners],
+      serviceId: appId,
     };
   });
 
 /**
  * @param {WorkerIdentity} identity Materialization identity.
- * @returns {PromiseLike<{ entryPoint: string, owners: readonly import('./outbox-worker-delivery.mjs').OutboxWorkerDelivery[], serviceId: string }>} The worker's bundle entry, hosted owners, and service id.
+ * @returns {PromiseLike<{ entryPoint: string, entrySource: string | null, owners: readonly import('./outbox-worker-delivery.mjs').OutboxWorkerHostedOwner[], serviceId: string }>} The host's bundle entry (and its rendered source for a partial deployment), hosted owners, and service id.
  */
 export const resolveOutboxWorker = (identity) => nodeRuntime.runPromise(resolveOutboxWorkerEffect(identity));
 
@@ -391,13 +490,23 @@ export const resolveOutboxWorker = (identity) => nodeRuntime.runPromise(resolveO
  * Bundle owner + Core code; retain exact production dependencies, never workspace links.
  * @param {MaterializeOptions} options Materialization identity and paths.
  */
-const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtimeDir, workspaceRoot }) =>
+const materializeOutboxWorkerEffect = ({
+  appId,
+  ownerRevisions,
+  packageDir,
+  packageName,
+  runtimeDir,
+  servedUnits,
+  workspaceRoot,
+}) =>
   Effect.gen(function* materializeWorker() {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const delivery = yield* resolveOutboxWorkerEffect({ appId, packageDir, packageName, workspaceRoot });
-    const hostEntryPath =
-      delivery.hostEntrySource === null ? null : yield* fs.realPath(path.resolve(workspaceRoot, delivery.entryPoint));
+    const delivery = yield* resolveOutboxWorkerEffect({ appId, packageDir, packageName, servedUnits, workspaceRoot });
+    const revisions = yield* resolveOwnerRevisions({
+      ownerRevisions,
+      owners: delivery.owners.map(({ ownerId }) => ownerId),
+    });
     const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(
       yield* fs.readFileString(path.join(workspaceRoot, TOPOLOGY_PATH)),
     );
@@ -407,8 +516,10 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
     });
     /** @type {Map<string, { identity: Schema.Schema.Type<typeof OwnerBuildIdentitySchema>, source: string }>} */
     const markers = new Map();
+    /** @type {Set<string>} */
+    const builtRevisions = new Set();
     for (const owner of delivery.owners) {
-      const vertical = topology.verticals.find((candidate) => candidate.id === owner.ownerId);
+      const vertical = [topology.shell, ...topology.verticals].find((candidate) => candidate.id === owner.ownerId);
       const declared = vertical?.deliveryUnit;
       const declaredMarkerPath = path.resolve(workspaceRoot, owner.path, 'shared/ultramodern-build.ts');
       if (!(yield* fs.exists(declaredMarkerPath))) {
@@ -426,16 +537,18 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
       ) {
         return yield* Effect.fail(failure(`Missing delivery-unit build identity for ${owner.ownerId}`));
       }
-      const releaseIdentity = yield* Effect.try({
-        catch: () => failure(`Unable to resolve the ${owner.ownerId} Outbox Worker release identity`),
-        try: () =>
-          resolveUltramodernReleaseIdentity({
-            generationBuildMarker: declared.buildMarker,
-            sourceRevision: declared.sourceRevision,
-            unitId: declared.unitId,
-            workspaceRoot,
-          }),
+      const keptRevision = revisions.pipe(
+        Option.flatMap((byOwner) => Option.fromUndefinedOr(byOwner[owner.ownerId])),
+        Option.filter((revision) => revision !== sourceRevision),
+      );
+      const releaseIdentity = yield* resolveOwnerReleaseIdentity({
+        declared,
+        keptRevision,
+        ownerId: owner.ownerId,
+        sourceRevision,
+        workspaceRoot,
       });
+      recordBuiltRevision(builtRevisions, keptRevision, releaseIdentity.sourceRevision);
       markers.set(markerPath, {
         identity: {
           appId: yield* Schema.decodeUnknownEffect(AppIdSchema)(owner.ownerId),
@@ -445,11 +558,7 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
         source: yield* fs.readFileString(markerPath),
       });
     }
-    const ownerSourceRevisions = [...new Set([...markers.values()].map(({ identity }) => identity.sourceRevision))];
-    if (ownerSourceRevisions.length > 1) {
-      return yield* Effect.fail(failure('The Outbox Worker owner identities do not share one source revision'));
-    }
-    const artifactSourceRevision = ownerSourceRevisions[0] ?? sourceRevision;
+    const artifactSourceRevision = yield* artifactBuildRevision(builtRevisions, sourceRevision);
     /** @type {Set<string>} */
     const compiledMarkers = new Set();
     /** @type {Record<string, string>} */
@@ -485,13 +594,22 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
               js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
             },
             bundle: true,
-            entryPoints: [delivery.entryPoint],
+            // A partial deployment bundles the rendered entry in place of the committed one, under the same path.
+            ...(delivery.entrySource === null
+              ? { entryPoints: [delivery.entryPoint] }
+              : {
+                  stdin: {
+                    contents: delivery.entrySource,
+                    loader: 'ts',
+                    resolveDir: path.dirname(path.join(workspaceRoot, delivery.entryPoint)),
+                    sourcefile: path.basename(delivery.entryPoint),
+                  },
+                }),
             format: 'esm',
             metafile: true,
             outfile: path.join(runtimeDir, WORKER_ENTRY),
             platform: 'node',
             plugins: [
-              ...(hostEntryPath === null ? [] : [makeHostReleaseEntryPlugin(delivery, hostEntryPath, workspaceRoot)]),
               makeOwnerBuildIdentityPlugin({ compiledMarkers, markers, path }),
               makeProductionDependenciesPlugin({
                 packages,
@@ -533,6 +651,7 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
         failure(`The Outbox Worker Core entrypoint does not export: ${missingReExports.join('; ')}`),
       );
     }
+    yield* assertOneClaimedStore(metafile, yield* fs.readFileString(path.join(runtimeDir, WORKER_ENTRY)));
     const externalImports = Object.values(metafile.outputs).flatMap((output) =>
       output.imports.filter((item) => item.external === true),
     );
@@ -543,12 +662,19 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
     const artifactAppId = yield* Schema.decodeUnknownEffect(AppIdSchema)(appId);
     const artifactServiceId = yield* Schema.decodeUnknownEffect(ServiceIdSchema)(delivery.serviceId);
     const { inputs: sourceInputMetadata } = yield* Schema.decodeUnknownEffect(MetafileInputsSchema)(metafile);
-    const sourceInputs = workerSourceInputs(sourceInputMetadata, delivery.intentPath);
+    /** @type {string[]} */
+    const sourceInputs = [];
+    for (const sourceInput in sourceInputMetadata) {
+      if (Object.hasOwn(sourceInputMetadata, sourceInput)) {
+        sourceInputs.push(sourceInput);
+      }
+    }
+    sourceInputs.sort();
     const artifactSource = yield* Schema.encodeEffect(WorkerArtifactSchema)({
       appId: artifactAppId,
       entry: WORKER_ENTRY,
       ownerBuildIdentities: [...markers.values()].map(({ identity }) => identity),
-      schemaVersion: 2,
+      schemaVersion: 4,
       serviceId: artifactServiceId,
       sourceInputs,
       sourceRevision: Option.some(artifactSourceRevision),

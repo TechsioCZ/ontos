@@ -57,6 +57,7 @@ const makeServices = (aliases: readonly PartyAliasLookupRow[], party: Party | nu
           party?.partyRef.resourceId === partyId ? { _tag: 'found', value: party } : { _tag: 'not_found' },
         );
       },
+      historicalNames: () => Effect.succeed([]),
       resolve: (partyId: string) => resolver.resolvePartyAlias(tenantId, partyId),
     },
   };

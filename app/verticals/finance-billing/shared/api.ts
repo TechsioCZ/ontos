@@ -1,0 +1,72 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
+import { identity } from 'effect';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
+import {
+  MicroVerticalBuildMarkerSchema,
+  MicroVerticalReadinessSchema,
+  createMicroVerticalOperationContext,
+} from '@modern-js/bff-effect/microvertical-api';
+import type { MicroVerticalBuildMarker, MicroVerticalOperationContext } from '@modern-js/bff-effect/microvertical-api';
+
+// <generated-governed-http-api-imports>
+import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
+import { DocumentsSearchApi } from './apis/documents-search.ts';
+import { InvoicesSearchApi } from './apis/invoices-search.ts';
+import { LeaseInvoicesApi } from './apis/lease-invoices.ts';
+import { RecordsApi } from './apis/records.ts';
+import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
+import { VatChoicesApi } from './apis/vat-choices.ts';
+// </generated-governed-http-api-imports>
+
+export type FinanceBillingMarker = MicroVerticalBuildMarker;
+
+export const financeBillingMarkerSchema = Schema.Struct({
+  ...MicroVerticalBuildMarkerSchema.fields,
+  kind: Schema.Literal('microvertical-delivery-unit'),
+  schemaVersion: Schema.Literal(1),
+});
+export const financeBillingReadinessSchema = Schema.Struct({
+  ...MicroVerticalReadinessSchema.fields,
+  marker: financeBillingMarkerSchema,
+});
+export type FinanceBillingReadiness = typeof financeBillingReadinessSchema.Type;
+
+export type OperationContext = MicroVerticalOperationContext;
+
+export const financeBillingFoundationApi = HttpApi.make('FinanceBillingApiFoundation').add(
+  HttpApiGroup.make('foundation').add(
+    HttpApiEndpoint.get('readiness', '/finance-billing/readiness', {
+      success: financeBillingReadinessSchema,
+    }),
+  ),
+);
+
+export const financeBillingApi = HttpApi.make('FinanceBillingApi')
+  .addHttpApi(financeBillingFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
+  // <generated-governed-http-api-additions>
+  .addHttpApi(ApplyCommandActionApi)
+  .addHttpApi(DocumentsSearchApi)
+  .addHttpApi(InvoicesSearchApi)
+  .addHttpApi(LeaseInvoicesApi)
+  .addHttpApi(RecordsApi)
+  .addHttpApi(RequestSearchRebuildActionApi)
+  .addHttpApi(VatChoicesApi)
+  // </generated-governed-http-api-additions>
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
+  .pipe(identity);
+
+export const financeBillingOperationContexts = {
+  readiness: createMicroVerticalOperationContext({
+    method: 'GET',
+    operationId: 'FinanceBillingApi:financeBilling:readiness',
+    routePath: '/finance-billing/readiness',
+  }),
+} satisfies Record<string, OperationContext>;
+
+export const financeBillingApiContract = {
+  apiPrefix: '/finance-billing-api',
+  basePath: '/finance-billing-api/finance-billing',
+  ownerId: 'finance-billing',
+  readinessPath: '/finance-billing-api/finance-billing/readiness',
+} as const;

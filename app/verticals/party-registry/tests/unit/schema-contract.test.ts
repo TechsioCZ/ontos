@@ -22,7 +22,9 @@ import {
   partyContactPointPurposes,
   partyContactPoints,
   partyCorrections,
+  partyFactAssertionIdentities,
   partyFactAssertions,
+  partyHistoricalNameAssertions,
   partyMatchDecisions,
   partyMerges,
   partyOfficialIdentifiers,
@@ -50,6 +52,16 @@ const configuredTables = [
 ] as const;
 
 const configOf = (table: (typeof configuredTables)[number]) => getTableConfig(table);
+
+/** The referenced table of a named foreign key, for tables outside the blanket operational shape. */
+const referencedTable = (config: ReturnType<typeof getTableConfig>, name: string) => {
+  const result = config.foreignKeys.find((candidate) => candidate.getName() === name);
+  expect(result, `Expected foreign key ${name}`).toBeTruthy();
+  if (result === undefined) {
+    throw new Error(`Expected foreign key ${name}`);
+  }
+  return result.reference().foreignTable;
+};
 
 const uniqueColumns = (table: (typeof configuredTables)[number], name: string) => {
   const config = configOf(table);
@@ -92,7 +104,9 @@ it('owns the complete Party Registry operational catalog in the party schema', (
     'party_contact_points',
     'party_corrections',
     'party_create_source_receipts',
+    'party_fact_assertion_identities',
     'party_fact_assertions',
+    'party_historical_name_assertions',
     'party_ico_correlation_epochs',
     'party_legacy_ico_authority_fences',
     'party_match_decisions',
@@ -201,6 +215,56 @@ it('gives every tenant-owned record a tenant-qualified identity and forced-RLS p
     expect(tenantIdentity, `${config.name} needs a tenant-qualified unique key`).toBeTruthy();
     if (tenantIdentity === undefined) {
       throw new Error(`${config.name} needs a tenant-qualified unique key`);
+    }
+  }
+});
+
+it('keeps the assertion identity registry and its archive outside the blanket operational shape', () => {
+  const identityConfig = getTableConfig(partyFactAssertionIdentities);
+  expect(identityConfig.enableRLS).toBe(true);
+  expect(identityConfig.columns.map((column) => column.name).toSorted()).toEqual([
+    'assertion_id',
+    'party_id',
+    'tenant_id',
+  ]);
+  expect(
+    identityConfig.uniqueConstraints
+      .find((candidate) => candidate.name === 'party_fact_assertion_identities_tenant_assertion_uk')
+      ?.columns.map((column) => column.name),
+  ).toEqual(['tenant_id', 'assertion_id']);
+  expect(getTableName(referencedTable(identityConfig, 'party_fact_assertion_identities_tenant_party_fk'))).toBe(
+    getTableName(parties),
+  );
+
+  const archiveConfig = getTableConfig(partyHistoricalNameAssertions);
+  expect(archiveConfig.enableRLS).toBe(true);
+  expect(archiveConfig.columns.map((column) => column.name).toSorted()).toEqual([
+    'archived_at',
+    'assertion_id',
+    'original_assertion',
+    'party_id',
+    'tenant_id',
+  ]);
+  // The archive stores the whole retired row, so the payload is required and never nullable.
+  expect(archiveConfig.columns.find((column) => column.name === 'original_assertion')?.notNull).toBe(true);
+  expect(getTableName(referencedTable(archiveConfig, 'party_historical_name_assertions_tenant_assertion_fk'))).toBe(
+    getTableName(partyFactAssertionIdentities),
+  );
+
+  for (const config of [identityConfig, archiveConfig]) {
+    const requestPolicies = config.policies.filter((policy) => policy.to === 'party_registry_runtime');
+    expect(
+      requestPolicies.map((policy) => policy.for),
+      config.name,
+    ).toEqual(['select', 'insert', 'update', 'delete']);
+    expect(config.policies.length, config.name).toBe(requestPolicies.length);
+    for (const expression of requestPolicies.flatMap((policy) => [policy.using, policy.withCheck])) {
+      if (expression === undefined) {
+        continue;
+      }
+      const predicate = dialect.sqlToQuery(expression).sql;
+      expect(predicate, config.name).toContain('trust.current_tenant_id()');
+      expect(predicate, config.name).not.toContain('current_setting');
     }
   }
 });
@@ -662,7 +726,37 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
           fileURLToPath(new URL('../../../../scripts/verify-application-db-schema.mts', import.meta.url)),
         ),
       );
-      expect(bootstrap).toMatch(/\['core', 'auth', 'catalog', 'inventory', 'tax', 'privacy', 'projects'\]/u);
+      // The legacy shared role keeps blanket access to the platform schemas, and the demo branch
+      // appends its vertical schemas after them; contacts and party move to dedicated identities.
+      const sharedRuntimeSchemas = /const SHARED_RUNTIME_SCHEMAS = \[(?<schemas>[^\]]*)\]/u.exec(bootstrap)?.groups?.[
+        'schemas'
+      ];
+      expect(sharedRuntimeSchemas).toBeDefined();
+      for (const schema of [
+        'core',
+        'auth',
+        'catalog',
+        'inventory',
+        'tax',
+        'privacy',
+        'projects',
+        'property_portfolio',
+        'property_leasing',
+        'legal_agreements',
+        'work_tasks',
+        'demo_workforce',
+        'demo_tagging',
+        'demo_crm',
+        'demo_sales_pipeline',
+        'demo_merchandise',
+        'demo_email',
+        'facility_operations',
+        'demo_sales_insights',
+        'finance_billing',
+        'crm_activities',
+      ]) {
+        expect(sharedRuntimeSchemas).toContain(`'${schema}'`);
+      }
       expect(bootstrap).toMatch(/revoke all on all tables in schema/u);
       expect(verifier).toContain('loadApplicationMigrationInventory');
       expect(verifier).toContain('for (const path of stream.verifierPaths)');

@@ -22,6 +22,7 @@ import {
 } from '../../src/actions/update-contact-point.action.ts';
 import { partyContactPointDetailRead } from '../../src/api/party-contact-point-detail.read.ts';
 import { partyContactPointsRead } from '../../src/api/party-contact-points.read.ts';
+import { normalizeContactPhone } from '../../shared/domain/contact-phone-normalization.ts';
 
 const partyRef = {
   moduleId: 'party.registry',
@@ -34,6 +35,29 @@ const provenance = {
   method: 'MANUAL_CONFIRMATION',
   source: 'USER_ASSERTION',
 } as const;
+it('uses the same canonical phone protocol for public ingress and durable contacts', () => {
+  for (const [phone, country, extension] of [
+    ['+420 (777) 123-456', undefined, '42'],
+    ['777 123 456', ' cz ', undefined],
+    ['+44 20 7946 0123', 'GB', undefined],
+  ] as const) {
+    expect(normalizeContactPhone(phone, country, extension)).toEqual({
+      normalized: normalizePhone(phone, country, extension),
+      ok: true,
+    });
+  }
+  for (const [phone, country, extension] of [
+    ['777123456', undefined, undefined],
+    ['777123456', 'GB', undefined],
+    ['+012345678', undefined, undefined],
+    ['+1234567890123456', undefined, undefined],
+    ['+420777123456', 'CZ', 'ext42'],
+    ['+420777123456<script>', undefined, undefined],
+  ] as const) {
+    expect(normalizeContactPhone(phone, country, extension).ok).toBe(false);
+    expect(() => normalizePhone(phone, country, extension)).toThrow();
+  }
+});
 it('normalizes EMAIL without provider-specific identity heuristics', () => {
   expect(normalizeEmail('  Qa.Test+case@EXAMPLE.COM  ')).toEqual({
     displayValue: 'Qa.Test+case@EXAMPLE.COM',

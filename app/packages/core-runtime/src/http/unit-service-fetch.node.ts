@@ -6,15 +6,10 @@ import { ApplicationCompositionBackendSchema } from '../modules/application-comp
 import type { ApplicationCompositionModule } from '../modules/application-composition.ts';
 import { moduleReleaseWorkerName } from './module-release-identity.ts';
 import { ModuleReleaseTransportError } from './module-release-transport-error.ts';
-import type { UnitRoutedFetch, UnitServiceFetch } from './unit-service-fetch.ts';
-
-/** Node reaches every unit at its configured URL. */
-export const unitServiceFetch: UnitServiceFetch = () => globalThis.fetch;
-
-export const unitRoutedFetch: UnitRoutedFetch = () => globalThis.fetch;
+import type { ModuleReleaseFetch } from './unit-service-fetch.ts';
 
 /** Node sends bytes to an independently executing, explicitly approved owner release. */
-export const moduleReleaseFetch = Effect.fn('ModuleRelease.fetchNode')(function* fetchNodeRelease(
+export const moduleReleaseFetch: ModuleReleaseFetch = Effect.fn('ModuleRelease.fetchNode')(function* fetchNodeRelease(
   request: Request,
   module: ApplicationCompositionModule,
 ) {

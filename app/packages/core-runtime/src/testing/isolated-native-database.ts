@@ -1,5 +1,6 @@
 import { asc, eq, sql } from 'drizzle-orm';
 import {
+  Array as EffectArray,
   Config,
   Crypto,
   DateTime,
@@ -18,7 +19,8 @@ import type { PlatformError } from 'effect';
 
 import type { CoreTransaction } from '../db/types.ts';
 import { makeCoreDatabase } from '../db/client.ts';
-import { DATABASE_IDENTITIES, SHARED_RUNTIME_IDENTITY, TRUST_ROUTINES } from '../db/database-identities.ts';
+import { defineDatabaseIdentityEnrollment, SHARED_RUNTIME_IDENTITY } from '../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
 import { loadDatabaseConnectionPair, parseDatabaseConnectionPair } from '../db/config.ts';
 import type { DatabaseConnectionPair, DatabaseConfigValue } from '../db/config.ts';
 import { validateActiveApplicationCompositionSnapshot } from '../modules/active-application-composition.ts';
@@ -44,6 +46,7 @@ const unavailable = (reason = 'The isolated native test database is unavailable'
 const dumpFailed = (cause?: unknown) => unavailable('Schema-only dump failed', cause);
 const restoreFailed = (cause?: unknown) => unavailable('Schema-only restore failed', cause);
 const prefix = 'ontos_test_party_gateway_';
+const emptyCloneRowsSchema = Schema.Array(Schema.Struct({ populated: Schema.Literal(false) }));
 
 /**
  * The container that serves the local test PostgreSQL. The shared development Compose service is
@@ -112,6 +115,8 @@ const exactDeadlinePurpose = 'stabilization-1271-exact-obligation-deadline';
 const shellAuthPurpose = 'stabilization-1287-shell-auth';
 const assortmentAuthorizationPurpose = 'implementation-1290-assortment-authorization';
 const retainedPrivacyPurpose = 'stabilization-1258-privacy-drain';
+/** The core-system Outbox claim and publication-drain suite (`scripts/integration/core-system-outbox-drain`). */
+const coreSystemDrainPurpose = 'publication-drain-core-system';
 type IsolatedNativeDatabaseInput = (
   | {
       readonly compositionSnapshot?: never;
@@ -192,9 +197,14 @@ type IsolatedNativeDatabaseInput = (
         | 'stabilization-1248-price-group-effective-period'
         | 'stabilization-1281-party-legacy'
         | 'party-verification-removal'
+        | 'merchandise-tax-classification'
+        | 'finance-won-opportunity-settlement'
+        | typeof coreSystemDrainPurpose
         | typeof exactDeadlinePurpose;
     }
 ) & {
+  /** Enrollment whose gateway audiences the isolated trust catalog mirrors; Core-only fixtures enroll none. */
+  readonly databaseIdentities?: DatabaseIdentityEnrollment;
   /** Explicit test-runner configuration; validated again and still restricted to local isolated databases. */
   readonly sourceConnections?: DatabaseConnectionPair;
 };
@@ -283,6 +293,7 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
         'stabilization-1235-inventory-release',
         'stabilization-1237-protection-intent',
         'stabilization-1260-privacy-legacy',
+        coreSystemDrainPurpose,
         'stabilization-1264-terminal-protection-health',
         retainedPrivacyPurpose,
         'stabilization-1257-approval-fresh-proof',
@@ -292,6 +303,8 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
         'stabilization-1248-price-group-effective-period',
         'stabilization-1281-party-legacy',
         'party-verification-removal',
+        'merchandise-tax-classification',
+        'finance-won-opportunity-settlement',
         exactDeadlinePurpose,
       ].includes(input.purpose);
 
@@ -331,6 +344,12 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
     }
     const crypto = yield* Crypto.Crypto;
     const databaseName = `${prefix}${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+    /**
+     * The enrollment the clone's roles and trust routines are matched against. A suite with dedicated
+     * database identities supplies its own; a Core-only suite enrolls none, exactly as a deployment
+     * that composes no owner identity would.
+     */
+    const enrollment = input.databaseIdentities ?? defineDatabaseIdentityEnrollment([]);
     const connections = yield* parseDatabaseConnectionPair({
       DATABASE_ADMIN_URL: replaceDatabase(source.admin, databaseName),
       DATABASE_URL: replaceDatabase(source.runtime, databaseName),
@@ -433,16 +452,24 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
         'objects',
       )
       .pipe(Effect.mapError((cause) => unavailable(undefined, cause)));
+    // Keep the exact per-table emptiness proof, but avoid hundreds of serial driver round trips.
+    // Bounded UNION batches also keep PostgreSQL's planner stack independent of the schema's total size.
     yield* Effect.forEach(
-      tables,
-      Effect.fn('IsolatedNativeDatabase.assertEmpty')(function* assertEmpty(table) {
-        const [row] = yield* clone.executor
+      EffectArray.chunksOf(tables, 64),
+      Effect.fn('IsolatedNativeDatabase.assertEmpty')(function* assertEmpty(batch) {
+        const rows = yield* clone.executor
           .execute<{ readonly populated: boolean }>(
-            sql`select exists(select 1 from ${sql.identifier(table.schemaname)}.${sql.identifier(table.tablename)} limit 1) as populated`,
+            sql.join(
+              batch.map(
+                (table) =>
+                  sql`select exists(select 1 from ${sql.identifier(table.schemaname)}.${sql.identifier(table.tablename)} limit 1) as populated`,
+              ),
+              sql` union all `,
+            ),
             'objects',
           )
           .pipe(Effect.mapError((cause) => unavailable(undefined, cause)));
-        if (row?.populated !== false) {
+        if (rows.length !== batch.length || !Schema.is(emptyCloneRowsSchema)(rows)) {
           return yield* unavailable('Schema-only clone contains source data');
         }
         return yield* Effect.void;
@@ -482,11 +509,11 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
               'objects',
             );
             // Match runtime-role bootstrap's canonical enrollment, never source table contents.
-            const audienceRoles = DATABASE_IDENTITIES.filter(
-              ({ scopeAuthority }) => scopeAuthority === 'gateway_grant',
-            ).flatMap(({ gatewayScopeAudiences, role: audienceRole }) =>
-              gatewayScopeAudiences.map((audience) => ({ audience, audienceRole })),
-            );
+            const audienceRoles = enrollment.identities
+              .filter(({ scopeAuthority }) => scopeAuthority === 'gateway_grant')
+              .flatMap(({ gatewayScopeAudiences, role: audienceRole }) =>
+                gatewayScopeAudiences.map((audience) => ({ audience, audienceRole })),
+              );
             yield* Effect.forEach(
               audienceRoles,
               ({ audience, audienceRole }) =>
@@ -570,9 +597,11 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       if (input.mode !== 'empty') {
         return yield* unavailable('Core schema bootstrap requires the empty test database mode');
       }
+      // Core's own `db:migrate`: its main and demo migration lineages converge through the reviewed equivalence
+      // plan, which a plain `drizzle-kit migrate` would replay twice.
       const migration = yield* ChildProcess.make(
-        new URL('../../node_modules/.bin/drizzle-kit', import.meta.url).pathname,
-        ['migrate', '--config', 'drizzle.config.ts'],
+        process.execPath,
+        ['../../scripts/migration-convergence-cli.mts', 'core'],
         {
           cwd: new URL('../../', import.meta.url).pathname,
           env: {
@@ -652,8 +681,9 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
               sql`revoke all on function core.track_application_composition_durable_work(text,text,text,boolean) from public,${roleIdentifier}`,
               'objects',
             );
-            // The shared runtime identity's trust routines, such as the Action access-fence lock (TRUST_ROUTINES).
-            const trustRoutines = TRUST_ROUTINES.filter(({ executableBy }) =>
+            // The enrolled identities' trust routines, such as the Action access-fence lock the shared
+            // runtime (and every enrolled Action runner) executes.
+            const trustRoutines = enrollment.trustRoutines.filter(({ executableBy }) =>
               executableBy.includes(SHARED_RUNTIME_IDENTITY.role),
             );
             if (trustRoutines.length > 0) {

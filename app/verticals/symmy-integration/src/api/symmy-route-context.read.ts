@@ -5,12 +5,16 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
+import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 import { symmyJobOperationFactory } from '../auth/symmy-job-operation-factory.ts';
 import {
   SymmyRouteContextRequestSchema,
   SymmyRouteContextResponseSchema,
 } from '../../shared/apis/symmy-route-context.ts';
+import type { SymmyRouteContextRequest } from '../../shared/apis/symmy-route-context.ts';
+
+type Services = Effect.Success<ReturnType<typeof symmyJobOperationFactory>>;
 
 const symmyRouteContextEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
@@ -59,7 +63,10 @@ export const symmyRouteContextRead = defineRead(
     resultSchema: SymmyRouteContextResponseSchema,
     schemaVersion: '1',
   },
-  Effect.fn('SymmyRouteContext.read')(function* readRouteContext(input, context) {
+  Effect.fn('SymmyRouteContext.read')(function* readRouteContext(
+    input: SymmyRouteContextRequest,
+    context: ReadHandlerContext<Services>,
+  ) {
     if (context.scope.authMethod !== 'api_key') {
       return yield* denied();
     }

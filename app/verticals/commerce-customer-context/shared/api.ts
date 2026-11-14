@@ -1,3 +1,6 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
+import { CustomerOwnConsentReadApi, CustomerOwnConsentUpdateApi } from './portal-auth/consent-api.ts';
+import { CustomerOwnPasswordChangeApi } from './portal-auth/password-change-api.ts';
 import { identity } from 'effect';
 import {
   MicroVerticalBuildMarkerSchema,
@@ -6,11 +9,14 @@ import {
 } from '@modern-js/bff-effect/microvertical-api';
 import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microvertical-api';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
+import { CommercePortalAuthVerificationApi } from './portal-auth-verification.ts';
+import { EnrollmentCommandRecoveryApi } from './enrollment-command-recovery-api.ts';
 import { CommercePortalAuthEnrollmentApi } from './portal-auth/enrollment-api.ts';
 import { CommercePortalAuthMfaApi } from './portal-auth/mfa-api.ts';
 import { CommercePortalAuthRecoveryApi } from './portal-auth/recovery-api.ts';
 import { CommercePortalAuthSessionApi } from './portal-auth/session-api.ts';
 import { CommercePortalAuthStepUpApi } from './portal-auth/step-up-api.ts';
+import { CustomerOwnProfileReadApi, CustomerOwnProfileUpdateApi } from './portal-auth/profile-api.ts';
 
 // <generated-governed-http-api-imports>
 import { AddSavedAddressActionApi } from './apis/add-saved-address-action.ts';
@@ -46,6 +52,7 @@ import { CounterpartyAllOrderHistoryDetailApi } from './apis/counterparty-all-or
 import { CounterpartyCommerceAccessCheckApi } from './apis/counterparty-commerce-access-check.ts';
 import { CounterpartyCommerceAccessDetailApi } from './apis/counterparty-commerce-access-detail.ts';
 import { CounterpartyCommerceAccessListApi } from './apis/counterparty-commerce-access-list.ts';
+import { CounterpartyCustomerGroupMembershipsApi } from './apis/counterparty-customer-group-memberships.ts';
 import { CounterpartyOrderHistoryApi } from './apis/counterparty-order-history.ts';
 import { CounterpartyOrderHistoryDetailApi } from './apis/counterparty-order-history-detail.ts';
 import { CreateApprovalHierarchyActionApi } from './apis/create-approval-hierarchy-action.ts';
@@ -173,15 +180,175 @@ export const commerceCustomerContextFoundationApi = HttpApi.make('CommerceCustom
     }),
   ),
 );
-export * from './apis/payment-term-affected-use-assessment.ts';
-export * from './apis/market-affected-use-assessment.ts';
-export * from './apis/commerce-quantity-policy-current.ts';
-export * from './apis/commerce-quantity-resolution.ts';
-export * from './apis/market-bootstrap-policy-current.ts';
-export * from './apis/market-bootstrap-resolution.ts';
-export * from './apis/market-subject-restrictions-current.ts';
-export * from './apis/payment-terms-resolution.ts';
-export * from './apis/purchase-currency-resolution.ts';
+export {
+  PaymentTermAffectedUseAssessmentRequestSchema,
+  PaymentTermAffectedUseAssessmentResponseSchema,
+  PaymentTermAffectedUseAssessmentAuthenticationProblemSchema,
+  PaymentTermAffectedUseAssessmentInvalidProblemSchema,
+  PaymentTermAffectedUseAssessmentUnavailableProblemSchema,
+  PaymentTermAffectedUseAssessmentForbiddenProblemSchema,
+  PaymentTermAffectedUseAssessmentNotFoundProblemSchema,
+  PaymentTermAffectedUseAssessmentPolicyProblemSchema,
+  PaymentTermAffectedUseAssessmentPolicyConflictProblemSchema,
+  PaymentTermAffectedUseAssessmentInternalProblemSchema,
+  PaymentTermAffectedUseAssessmentApi,
+  PaymentTermAffectedUseAssessmentSchema,
+  PaymentTermAffectedUseDispositionSchema,
+} from './apis/payment-term-affected-use-assessment.ts';
+export type {
+  PaymentTermAffectedUseAssessmentRequest,
+  PaymentTermAffectedUseAssessmentResponse,
+  PaymentTermAffectedUseAssessment,
+  PaymentTermAffectedUseDisposition,
+} from './apis/payment-term-affected-use-assessment.ts';
+export {
+  MarketRetirementInstantSchema,
+  MarketRevisionSchema,
+  MarketAffectedUseAssessmentRequestSchema,
+  MarketBootstrapReferenceSchema,
+  MarketCurrentProposalReferenceSchema,
+  MarketRetainedHistoryReferenceSchema,
+  MarketAffectedUseSourceEvidenceSchema,
+  MarketAffectedUseAssessmentResponseSchema,
+  MarketAffectedUseAssessmentAuthenticationProblemSchema,
+  MarketAffectedUseAssessmentInvalidProblemSchema,
+  MarketAffectedUseAssessmentForbiddenProblemSchema,
+  MarketAffectedUseAssessmentNotFoundProblemSchema,
+  MarketAffectedUseAssessmentPolicyConflictProblemSchema,
+  MarketAffectedUseAssessmentPolicyProblemSchema,
+  MarketAffectedUseAssessmentUnavailableProblemSchema,
+  MarketAffectedUseAssessmentInternalProblemSchema,
+  MarketAffectedUseAssessmentApi,
+} from './apis/market-affected-use-assessment.ts';
+export type {
+  MarketAffectedUseAssessmentRequest,
+  MarketAffectedUseSourceEvidence,
+  MarketAffectedUseAssessmentResponse,
+} from './apis/market-affected-use-assessment.ts';
+export {
+  CommerceQuantityPolicyCurrentRequestSchema,
+  CommerceQuantityPolicyCurrentResponseSchema,
+  CommerceQuantityPolicyCurrentAuthenticationProblemSchema,
+  CommerceQuantityPolicyCurrentInvalidProblemSchema,
+  CommerceQuantityPolicyCurrentUnavailableProblemSchema,
+  CommerceQuantityPolicyCurrentForbiddenProblemSchema,
+  CommerceQuantityPolicyCurrentNotFoundProblemSchema,
+  CommerceQuantityPolicyCurrentPolicyProblemSchema,
+  CommerceQuantityPolicyCurrentPolicyConflictProblemSchema,
+  CommerceQuantityPolicyCurrentInternalProblemSchema,
+  CommerceQuantityPolicyCurrentApi,
+} from './apis/commerce-quantity-policy-current.ts';
+export type { CommerceQuantityPolicyCurrentRequest } from './apis/commerce-quantity-policy-current.ts';
+export {
+  CommerceQuantityResolutionRequestSchema,
+  CommerceQuantityResolutionResponseSchema,
+  CommerceQuantityResolutionAuthenticationProblemSchema,
+  CommerceQuantityResolutionInvalidProblemSchema,
+  CommerceQuantityResolutionUnavailableProblemSchema,
+  CommerceQuantityResolutionForbiddenProblemSchema,
+  CommerceQuantityResolutionNotFoundProblemSchema,
+  CommerceQuantityResolutionPolicyProblemSchema,
+  CommerceQuantityResolutionPolicyConflictProblemSchema,
+  CommerceQuantityResolutionInternalProblemSchema,
+  CommerceQuantityResolutionApi,
+} from './apis/commerce-quantity-resolution.ts';
+export type {
+  CommerceQuantityResolutionRequest,
+  CommerceQuantityResolutionResponse,
+} from './apis/commerce-quantity-resolution.ts';
+export {
+  MarketBootstrapPolicyCurrentRequestSchema,
+  MarketBootstrapPolicyCurrentResponseSchema,
+  MarketBootstrapPolicyCurrentAuthenticationProblemSchema,
+  MarketBootstrapPolicyCurrentInvalidProblemSchema,
+  MarketBootstrapPolicyCurrentUnavailableProblemSchema,
+  MarketBootstrapPolicyCurrentForbiddenProblemSchema,
+  MarketBootstrapPolicyCurrentNotFoundProblemSchema,
+  MarketBootstrapPolicyCurrentPolicyProblemSchema,
+  MarketBootstrapPolicyCurrentPolicyConflictProblemSchema,
+  MarketBootstrapPolicyCurrentInternalProblemSchema,
+  MarketBootstrapPolicyCurrentApi,
+} from './apis/market-bootstrap-policy-current.ts';
+export type {
+  MarketBootstrapPolicyCurrentRequest,
+  MarketBootstrapPolicyCurrentResponse,
+} from './apis/market-bootstrap-policy-current.ts';
+export {
+  MarketBootstrapResolutionRequestSchema,
+  MarketBootstrapResolutionResponseSchema,
+  MarketBootstrapResolutionAuthenticationProblemSchema,
+  MarketBootstrapResolutionInvalidProblemSchema,
+  MarketBootstrapResolutionUnavailableProblemSchema,
+  MarketBootstrapResolutionForbiddenProblemSchema,
+  MarketBootstrapResolutionNotFoundProblemSchema,
+  MarketBootstrapResolutionPolicyProblemSchema,
+  MarketBootstrapResolutionPolicyConflictProblemSchema,
+  MarketBootstrapResolutionInternalProblemSchema,
+  MarketBootstrapResolutionApi,
+} from './apis/market-bootstrap-resolution.ts';
+export type {
+  MarketBootstrapResolutionRequest,
+  MarketBootstrapResolutionResponse,
+} from './apis/market-bootstrap-resolution.ts';
+export {
+  MarketRestrictionSubjectSchema,
+  MarketSubjectRestrictionsCurrentRequestSchema,
+  MarketSubjectSellerConstraintSchema,
+  MarketSubjectMarketConstraintSchema,
+  MarketSubjectChannelConstraintSchema,
+  MarketSubjectRestrictionsCurrentResponseSchema,
+  MarketSubjectRestrictionsCurrentAuthenticationProblemSchema,
+  MarketSubjectRestrictionsCurrentInvalidProblemSchema,
+  MarketSubjectRestrictionsCurrentUnavailableProblemSchema,
+  MarketSubjectRestrictionsCurrentForbiddenProblemSchema,
+  MarketSubjectRestrictionsCurrentNotFoundProblemSchema,
+  MarketSubjectRestrictionsCurrentPolicyProblemSchema,
+  MarketSubjectRestrictionsCurrentPolicyConflictProblemSchema,
+  MarketSubjectRestrictionsCurrentInternalProblemSchema,
+  MarketSubjectRestrictionsCurrentApi,
+} from './apis/market-subject-restrictions-current.ts';
+export type {
+  MarketRestrictionSubject,
+  MarketSubjectRestrictionsCurrentRequest,
+  MarketSubjectRestrictionsCurrentResponse,
+} from './apis/market-subject-restrictions-current.ts';
+export {
+  PaymentTermsResolutionRequestSchema,
+  PaymentTermsResolutionResponseSchema,
+  PaymentTermsResolutionAuthenticationProblemSchema,
+  PaymentTermsResolutionInvalidProblemSchema,
+  PaymentTermsResolutionUnavailableProblemSchema,
+  PaymentTermsResolutionForbiddenProblemSchema,
+  PaymentTermsResolutionNotFoundProblemSchema,
+  PaymentTermsResolutionPolicyProblemSchema,
+  PaymentTermsResolutionPolicyConflictProblemSchema,
+  PaymentTermsResolutionInternalProblemSchema,
+  PaymentTermsResolutionApi,
+} from './apis/payment-terms-resolution.ts';
+export type { PaymentTermsResolutionRequest, PaymentTermsResolutionResponse } from './apis/payment-terms-resolution.ts';
+export {
+  PurchaseCurrencyResolutionRequestSchema,
+  PurchaseCurrencyResolutionResponseSchema,
+  PurchaseCurrencyResolutionAuthenticationProblemSchema,
+  PurchaseCurrencyResolutionInvalidProblemSchema,
+  PurchaseCurrencyResolutionUnavailableProblemSchema,
+  PurchaseCurrencyResolutionForbiddenProblemSchema,
+  PurchaseCurrencyResolutionNotFoundProblemSchema,
+  PurchaseCurrencyResolutionPolicyProblemSchema,
+  PurchaseCurrencyResolutionPolicyConflictProblemSchema,
+  PurchaseCurrencyResolutionInternalProblemSchema,
+  PurchaseCurrencyResolutionApi,
+  PurchaseCurrencyResolutionDomainConflictProblemSchema,
+  PurchaseCurrencyResolutionDomainPolicyProblemSchema,
+  PurchaseCurrencyResolutionDomainUnavailableProblemSchema,
+} from './apis/purchase-currency-resolution.ts';
+export type {
+  PurchaseCurrencyResolutionRequest,
+  PurchaseCurrencyResolutionResponse,
+  PurchaseCurrencyResolutionDomainConflictProblem,
+  PurchaseCurrencyResolutionDomainPolicyProblem,
+  PurchaseCurrencyResolutionDomainUnavailableProblem,
+} from './apis/purchase-currency-resolution.ts';
 
 type GroupsOf<Api> = Api extends HttpApi.HttpApi<string, infer Groups> ? Groups : never;
 
@@ -328,6 +495,15 @@ type CommerceCustomerContextApiGroups = GroupsOf<
   | typeof UpdateSavedAddressActionApi
   | typeof VerifyEffectiveCustomerGroupMembershipSetV1Api
   | typeof VerifyRetailPurchasingSubjectCurrentV1Api
+  | typeof EnrollmentCommandRecoveryApi
+  | typeof CommercePortalAuthVerificationApi
+  | typeof CustomerOwnConsentReadApi
+  | typeof CustomerOwnConsentUpdateApi
+  | typeof CustomerOwnPasswordChangeApi
+  | typeof CustomerOwnProfileReadApi
+  | typeof CustomerOwnProfileUpdateApi
+  | typeof OwnerActionApprovalApi
+  | typeof CounterpartyCustomerGroupMembershipsApi
 >;
 type CommerceCustomerContextHttpApi = HttpApi.HttpApi<'CommerceCustomerContextApi', CommerceCustomerContextApiGroups>;
 
@@ -338,6 +514,14 @@ export const commerceCustomerContextApi: CommerceCustomerContextHttpApi = HttpAp
   .addHttpApi(CommercePortalAuthRecoveryApi)
   .addHttpApi(CommercePortalAuthStepUpApi)
   .addHttpApi(CommercePortalAuthEnrollmentApi)
+  .addHttpApi(EnrollmentCommandRecoveryApi)
+  .addHttpApi(CommercePortalAuthVerificationApi)
+  .addHttpApi(CustomerOwnConsentReadApi)
+  .addHttpApi(CustomerOwnConsentUpdateApi)
+  .addHttpApi(CustomerOwnPasswordChangeApi)
+  .addHttpApi(CustomerOwnProfileReadApi)
+  .addHttpApi(CustomerOwnProfileUpdateApi)
+  .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(AddSavedAddressActionApi)
   .addHttpApi(AdmitCustomerGroupMembershipSnapshotActionApi)
@@ -372,6 +556,7 @@ export const commerceCustomerContextApi: CommerceCustomerContextHttpApi = HttpAp
   .addHttpApi(CounterpartyCommerceAccessCheckApi)
   .addHttpApi(CounterpartyCommerceAccessDetailApi)
   .addHttpApi(CounterpartyCommerceAccessListApi)
+  .addHttpApi(CounterpartyCustomerGroupMembershipsApi)
   .addHttpApi(CounterpartyOrderHistoryApi)
   .addHttpApi(CounterpartyOrderHistoryDetailApi)
   .addHttpApi(CreateApprovalHierarchyActionApi)
@@ -492,3 +677,6 @@ export const commerceCustomerContextApiContract = {
   ownerId: 'commerce-customer-context',
   readinessPath: '/commerce-customer-context-api/commerce-customer-context/readiness',
 } as const;
+
+export { CustomerOwnAddressBookSchema } from './portal-auth/session-api.ts';
+export type { CustomerOwnAddressBook } from './portal-auth/session-api.ts';

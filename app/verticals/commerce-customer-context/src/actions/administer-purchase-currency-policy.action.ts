@@ -150,8 +150,7 @@ export const administerPurchaseCurrencyPolicyAction = defineAction(
     schemaVersion: '1',
   },
   handleAdministerPurchaseCurrencyPolicy,
-  (transaction, scope, compositionRevision) =>
-    customerCommercePolicyAdministrationServiceFactory(transaction, scope, compositionRevision),
+  (transaction, scope) => customerCommercePolicyAdministrationServiceFactory(transaction, scope),
 );
 
 // <generated-outbox-message-exports>

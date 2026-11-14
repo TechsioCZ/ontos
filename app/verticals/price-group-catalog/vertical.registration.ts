@@ -24,6 +24,7 @@ export const priceGroupCatalogRegistration = defineVerticalRuntimeRegistration({
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'price-group-definition': () => import('./src/api/price-group-definition-client.ts'),
       'price-group-result-lookup': () => import('./src/api/price-group-result-lookup-client.ts'),
       'price-group-source-associations': () => import('./src/api/price-group-source-associations-client.ts'),

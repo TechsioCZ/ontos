@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext, OutboxWorkerLegalEntityScope } from '@app/core-runtime/outbox/worker';
 import type { PgClient } from '@effect/sql-pg';
@@ -128,7 +129,7 @@ const inWorker = <Value, Failure>(
       { concurrency: 1 },
     );
     return yield* database.transaction((transaction: PaymentTestTransaction) =>
-      installOperationalScope(transaction, operationalScopeOf(scope)).pipe(
+      installOperationalScope(transaction, operationalScopeOf(scope), defineDatabaseIdentityEnrollment([])).pipe(
         Effect.flatMap((invoker) =>
           call({
             evidence,
@@ -154,7 +155,9 @@ const inTransaction = <Value, Failure>(
   operation: (transaction: ScopedTransactionExecutor) => Effect.Effect<Value, Failure>,
 ) =>
   database.transaction((transaction: PaymentTestTransaction) =>
-    installOperationalScope(transaction, operationalScopeOf(scope)).pipe(Effect.flatMap(operation)),
+    installOperationalScope(transaction, operationalScopeOf(scope), defineDatabaseIdentityEnrollment([])).pipe(
+      Effect.flatMap(operation),
+    ),
   );
 
 const providerRef = (input: typeof ProviderObjectRefSchema.Encoded) =>

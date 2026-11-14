@@ -21,6 +21,10 @@ import {
 } from '../../src/testing/gateway-scope-grant.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient, testDatabaseClients } from '../support/database.ts';
 import { installSearchTestAuthority } from '../support/search-authority.ts';
+import {
+  FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+  testDatabaseIdentityConnection,
+} from '../support/database-identities.ts';
 
 const queryEffect = <Row extends object>(
   client: PgClient.PgClient,
@@ -94,12 +98,16 @@ const partyRequestScope = Effect.fn('SearchPersistenceTest.partyRequestScope')(f
   legalEntityId?: string,
 ) {
   const legalEntity = legalEntityId === undefined ? {} : { legalEntityId };
-  const grant = yield* registerTestGatewayScopeGrant(issuer, {
-    audience: 'party-registry',
-    principalId,
-    tenantId,
-    ...legalEntity,
-  });
+  const grant = yield* registerTestGatewayScopeGrant(
+    issuer,
+    {
+      audience: 'party-registry',
+      principalId,
+      tenantId,
+      ...legalEntity,
+    },
+    FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+  );
   const context = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
     authBindingId: '40000000-0000-4000-8000-000000000009',
     authContextRef: 'better-auth-session:core-search-persistence',
@@ -123,10 +131,16 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('search persistence', 
       const { admin, runtime } = yield* testDatabaseClients;
       // Party rows are hidden from the shared runtime: the Party worker writes them and the Party
       // request role reads them only under a registered gateway grant.
-      const identities = yield* loadDatabaseIdentityConnections();
-      const worker = yield* makeTestPgClient(identities.runtime.party_registry_worker.connectionString);
-      const partyRequest = yield* makeTestPgClient(identities.runtime.party_registry_request.connectionString);
-      const issuer = yield* makeTestPgClient(identities.runtime.shell_gateway_issuer.connectionString);
+      const identities = yield* loadDatabaseIdentityConnections({ enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT });
+      const worker = yield* makeTestPgClient(
+        testDatabaseIdentityConnection(identities, 'party_registry_worker').connectionString,
+      );
+      const partyRequest = yield* makeTestPgClient(
+        testDatabaseIdentityConnection(identities, 'party_registry_request').connectionString,
+      );
+      const issuer = yield* makeTestPgClient(
+        testDatabaseIdentityConnection(identities, 'shell_gateway_issuer').connectionString,
+      );
       yield* installSearchTestAuthority();
       const crypto = yield* Crypto.Crypto;
       const tenantId = yield* crypto.randomUUIDv4();
@@ -160,12 +174,18 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('search persistence', 
         resourceType: 'party.registry.party',
         tenantId,
       };
-      const store = makePostgresCoreSearchProjectionStore({
-        executor: yield* makeTestDatabaseFromClient(worker, coreRelations),
-      });
-      const queryStore = makePostgresCoreSearchProjectionStore({
-        executor: yield* makeTestDatabaseFromClient(partyRequest, coreRelations),
-      });
+      const store = makePostgresCoreSearchProjectionStore(
+        {
+          executor: yield* makeTestDatabaseFromClient(worker, coreRelations),
+        },
+        FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      );
+      const queryStore = makePostgresCoreSearchProjectionStore(
+        {
+          executor: yield* makeTestDatabaseFromClient(partyRequest, coreRelations),
+        },
+        FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      );
       const search = yield* createCoreSearchQueryRuntime.pipe(
         Effect.provideService(CoreSearchProjectionStore, queryStore),
       );
@@ -341,15 +361,21 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('search persistence', 
       };
       yield* store.replace(emptyRebuild, context);
       // A fresh service instance must observe the durable floor, not process-local state.
-      const restarted = makePostgresCoreSearchProjectionStore({
-        executor: yield* makeTestDatabaseFromClient(worker, coreRelations),
-      });
+      const restarted = makePostgresCoreSearchProjectionStore(
+        {
+          executor: yield* makeTestDatabaseFromClient(worker, coreRelations),
+        },
+        FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      );
       const restartedSearch = yield* createCoreSearchQueryRuntime.pipe(
         Effect.provideService(
           CoreSearchProjectionStore,
-          makePostgresCoreSearchProjectionStore({
-            executor: yield* makeTestDatabaseFromClient(partyRequest, coreRelations),
-          }),
+          makePostgresCoreSearchProjectionStore(
+            {
+              executor: yield* makeTestDatabaseFromClient(partyRequest, coreRelations),
+            },
+            FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          ),
         ),
       );
       const floorSearch = () =>
@@ -525,7 +551,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('search persistence', 
       expect(yield* visibleIds(teamMemberOf(teamId))).toEqual([]);
       expect(yield* visibleIds(agentAssignedTo(yield* crypto.randomUUIDv4()))).toEqual([]);
 
-      // 10,001 further rows match the text and the scope but none of them is assigned to the caller.
+      // 10,001 further rows match the text and the scope but none of them is assigned to the caller. They are written
+      // in the current (v2) document shape, the only one the index accepts since the v2 cutover migration.
       yield* queryEffect(
         admin,
         `
@@ -534,7 +561,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('search persistence', 
            title, body_text, deleted, facets_json, projection_version)
         select $1, 'party.registry', 'party.registry.party', gen_random_uuid()::text,
           'AAA invisible needle', 'visible needle', false,
-          '{"schemaVersion":"1","archived":false,"facets":[],"metadata":[]}'::jsonb, 1
+          '{"schemaVersion":"2","archived":false,"facets":[],"metadata":[],"searchableText":["visible needle"]}'::jsonb, 1
         from generate_series(1, 10001)
       `,
         [tenantId],

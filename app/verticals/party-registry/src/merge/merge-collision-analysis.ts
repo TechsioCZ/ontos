@@ -1,5 +1,7 @@
 import type { PartyRef } from '../../shared/resources/party.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 type PartyOwnedReference = Readonly<{ partyRef: PartyRef }>;
 export interface MergeCollisionInput {
   readonly absorbedPartyRefs: readonly PartyRef[];
@@ -90,31 +92,36 @@ export const analyzeMergeCollisions = (input: MergeCollisionInput): readonly Mer
       ({ active, authoritative, strongClaim }) => active && (authoritative || strongClaim),
     ),
     ({ identifierTypeKey, namespace }) => `${identifierTypeKey}:${namespace}`,
-  )
-    .filter(([, rows]) => new Set(rows.map(({ normalizedValue }) => normalizedValue)).size > 1)
-    .map(([claimKey, rows]) => ({
-      code: 'STRONG_IDENTIFIER_CONFLICT' as const,
-      ownerKey: `party.registry:${claimKey}`,
-      recordIds: rows.map(({ identifierId }) => identifierId).toSorted(),
-      resolution: 'CORRECTION_REQUIRED' as const,
-    }));
+  ).flatMap(([claimKey, rows]) =>
+    new Set(rows.map(({ normalizedValue }) => normalizedValue)).size > 1
+      ? [
+          {
+            code: 'STRONG_IDENTIFIER_CONFLICT' as const,
+            ownerKey: `party.registry:${claimKey}`,
+            recordIds: rows.map(({ identifierId }) => identifierId).toSorted(),
+            resolution: 'CORRECTION_REQUIRED' as const,
+          },
+        ]
+      : [],
+  );
 
   const relationshipCollisions: MergeCollision[] = [];
-  const relationships = input.relationships
-    .filter(
-      ({ fromPartyRef, toPartyRef }) =>
-        mergePartyKeys.has(partyKey(fromPartyRef)) || mergePartyKeys.has(partyKey(toPartyRef)),
-    )
-    .map((relationship) => ({
-      ...relationship,
-      canonicalFromPartyId: canonicalPartyId(relationship.fromPartyRef),
-      canonicalToPartyId: canonicalPartyId(relationship.toPartyRef),
-    }));
+  const relationships = input.relationships.flatMap((relationship) =>
+    mergePartyKeys.has(partyKey(relationship.fromPartyRef)) || mergePartyKeys.has(partyKey(relationship.toPartyRef))
+      ? [
+          {
+            ...relationship,
+            canonicalFromPartyId: canonicalPartyId(relationship.fromPartyRef),
+            canonicalToPartyId: canonicalPartyId(relationship.toPartyRef),
+          },
+        ]
+      : [],
+  );
   for (const relationship of relationships) {
     if (relationship.forbidsOverlap && relationship.canonicalFromPartyId === relationship.canonicalToPartyId) {
       relationshipCollisions.push({
         code: 'RELATIONSHIP_SELF_REFERENCE',
-        ownerKey: 'party.registry',
+        ownerKey: PARTY_REGISTRY_MODULE_ID,
         recordIds: [relationship.relationshipId],
         resolution: 'RECONCILIATION_REQUIRED',
       });
@@ -128,7 +135,7 @@ export const analyzeMergeCollisions = (input: MergeCollisionInput): readonly Mer
     if (rows.some((left, index) => rows.slice(index + 1).some((right) => periodsOverlap(left, right)))) {
       relationshipCollisions.push({
         code: 'RELATIONSHIP_PERIOD_COLLISION',
-        ownerKey: 'party.registry',
+        ownerKey: PARTY_REGISTRY_MODULE_ID,
         recordIds: rows.map(({ relationshipId }) => relationshipId).toSorted(),
         resolution: 'RECONCILIATION_REQUIRED',
       });
@@ -138,23 +145,25 @@ export const analyzeMergeCollisions = (input: MergeCollisionInput): readonly Mer
   const roleCollisions = groupsWithCollisions(
     inMergeSet(input.counterpartyRoles),
     ({ legalEntityId, roleType }) => `${legalEntityId}:${roleType}`,
-  )
-    .filter(([, rows]) =>
-      rows.some((left, index) => rows.slice(index + 1).some((right) => periodsOverlap(left, right))),
-    )
-    .map(([, rows]) => ({
-      code: 'COUNTERPARTY_ROLE_PERIOD_COLLISION' as const,
-      ownerKey: 'party.registry',
-      recordIds: rows.map(({ rolePeriodId }) => rolePeriodId).toSorted(),
-      resolution: 'RECONCILIATION_REQUIRED' as const,
-    }));
+  ).flatMap(([, rows]) =>
+    rows.some((left, index) => rows.slice(index + 1).some((right) => periodsOverlap(left, right)))
+      ? [
+          {
+            code: 'COUNTERPARTY_ROLE_PERIOD_COLLISION' as const,
+            ownerKey: PARTY_REGISTRY_MODULE_ID,
+            recordIds: rows.map(({ rolePeriodId }) => rolePeriodId).toSorted(),
+            resolution: 'RECONCILIATION_REQUIRED' as const,
+          },
+        ]
+      : [],
+  );
 
   const counterpartyCollisions = groupsWithCollisions(
     inMergeSet(input.counterparties),
     ({ legalEntityId }) => legalEntityId,
   ).map(([, rows]) => ({
     code: 'COUNTERPARTY_COLLISION' as const,
-    ownerKey: 'party.registry',
+    ownerKey: PARTY_REGISTRY_MODULE_ID,
     recordIds: rows.map(({ counterpartyId }) => counterpartyId).toSorted(),
     resolution: 'RECONCILIATION_REQUIRED' as const,
   }));

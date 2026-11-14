@@ -82,6 +82,7 @@ export const inventoryRegistration = defineVerticalRuntimeRegistration({
       'inventory-reservation-detail': () => import('./src/api/inventory-reservation-detail-client.ts'),
       'inventory-source-conflict-detail': () => import('./src/api/inventory-source-conflict-detail-client.ts'),
       'inventory-source-import-receipt': () => import('./src/api/inventory-source-import-receipt-client.ts'),
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'reservation-confirmation-verification': () =>
         import('./src/api/reservation-confirmation-verification-client.ts'),
       'stock-sharing-eligibility-resolution': () => import('./src/api/stock-sharing-eligibility-resolution-client.ts'),

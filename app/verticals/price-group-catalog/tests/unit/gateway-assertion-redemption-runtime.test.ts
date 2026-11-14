@@ -20,7 +20,7 @@ const assertion = {
 };
 const expiryWithSkewMs = (assertion.expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS) * 1000;
 
-// Native Drizzle and SqlClient own transaction settlement; only the wire connection is replaced.
+// Native Drizzle and SqlClient run the single redemption statement; only the wire connection is replaced.
 const makeRedemptionFixture = (
   execute: (sql: string, params: readonly unknown[]) => Effect.Effect<readonly object[], SqlError>,
 ) =>
@@ -59,8 +59,9 @@ it.effect('atomically accepts first use and rejects a repeated durable identity'
       .pipe(Effect.provideService(Clock.Clock, fixture.clock), Effect.flip);
 
     expect(Schema.is(GatewayAssertionReplayError)(failure)).toBe(true);
-    expect(statements.filter((statement) => statement === 'BEGIN')).toHaveLength(2);
-    expect(statements.filter((statement) => statement === 'COMMIT')).toHaveLength(2);
+    // One autocommit statement per redemption: no BEGIN/COMMIT round trips.
+    expect(statements).toHaveLength(2);
+    expect(statements.every((statement) => statement.startsWith('insert into '))).toBe(true);
   }),
 );
 
@@ -90,7 +91,7 @@ it.effect('keys redemption by issuer, audience, and jti rather than jti alone', 
   }),
 );
 
-it.effect('rejects expiry before cleanup and uses the skew-adjusted cleanup boundary', () =>
+it.effect('accepts the last millisecond of skew with one insert and rejects expired input without SQL', () =>
   Effect.gen(function* preserveExpiredReplayEvidence() {
     const statementParameters: { readonly params: readonly unknown[]; readonly sql: string }[] = [];
     const fixture = yield* makeRedemptionFixture((sql, params) => {
@@ -99,10 +100,8 @@ it.effect('rejects expiry before cleanup and uses the skew-adjusted cleanup boun
     });
 
     yield* fixture.redemption.consume(assertion).pipe(Effect.provideService(Clock.Clock, fixture.clock));
-    const cleanup = statementParameters.find(({ sql }) => sql.startsWith('delete'));
-    expect(cleanup?.params).toContain(
-      new Date(expiryWithSkewMs - 1 - GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS * 1000).toISOString(),
-    );
+    expect(statementParameters).toHaveLength(1);
+    expect(statementParameters[0]?.sql.startsWith('insert into ')).toBe(true);
     statementParameters.length = 0;
 
     yield* fixture.clock.setTime(expiryWithSkewMs);
@@ -133,40 +132,11 @@ it.effect('maps SQL failures to a sanitized redemption-unavailable error', () =>
   }),
 );
 
-for (const settlement of ['COMMIT', 'ROLLBACK']) {
-  it.effect(`maps native ${settlement} SQL defects to redemption unavailability`, () =>
-    Effect.gen(function* rejectSqlSettlementFailure() {
-      const sqlFailure = new SqlError({
-        reason: new ConnectionError({
-          cause: new Error('private fixture database details'),
-          message: 'private fixture connection details',
-          operation: settlement,
-        }),
-      });
-      const statements: string[] = [];
-      const fixture = yield* makeRedemptionFixture((sql) => {
-        statements.push(sql);
-        if (sql === settlement || (settlement === 'ROLLBACK' && sql.startsWith('insert'))) {
-          return Effect.fail(sqlFailure);
-        }
-        return Effect.succeed(sql.startsWith('insert') ? [{ jti: assertion.jti }] : []);
-      });
-      const failure = yield* fixture.redemption
-        .consume(assertion)
-        .pipe(Effect.provideService(Clock.Clock, fixture.clock), Effect.flip);
-      expect(Schema.is(GatewayAssertionRedemptionUnavailableError)(failure)).toBe(true);
-      const serializedFailure = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(failure);
-      expect(serializedFailure).not.toMatch(/private fixture/u);
-      expect(statements.includes(settlement)).toBe(true);
-    }),
-  );
-}
-
-it.effect('preserves unrelated transaction defects', () =>
+it.effect('preserves unrelated redemption statement defects', () =>
   Effect.gen(function* preserveProgrammingDefect() {
     const defect = new Error('fixture programming defect');
     const fixture = yield* makeRedemptionFixture((sql) =>
-      sql === 'COMMIT' ? Effect.die(defect) : Effect.succeed(sql.startsWith('insert') ? [{ jti: assertion.jti }] : []),
+      sql.startsWith('insert') ? Effect.die(defect) : Effect.succeed([]),
     );
     const exit = yield* fixture.redemption
       .consume(assertion)
@@ -179,7 +149,7 @@ it.effect('preserves unrelated transaction defects', () =>
 it.effect('fails with sanitized unavailability after five seconds', () =>
   Effect.gen(function* enforceRedemptionDeadline() {
     const fixture = yield* makeRedemptionFixture((sql) =>
-      sql.startsWith('delete') ? Effect.never : Effect.succeed([]),
+      sql.startsWith('insert') ? Effect.never : Effect.succeed([]),
     );
     const fiber = yield* fixture.redemption
       .consume(assertion)

@@ -5,6 +5,7 @@ import {
   createMicroVerticalOperationContext,
 } from '@modern-js/bff-effect/microvertical-api';
 import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microvertical-api';
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { identity } from 'effect';
 
 // <generated-governed-http-api-imports>
@@ -45,6 +46,7 @@ export const promotionFoundationApi = HttpApi.make('PromotionApiFoundation').add
 
 export const promotionApi = HttpApi.make('PromotionApi')
   .addHttpApi(promotionFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(CreatePromotionDraftActionApi)
   .addHttpApi(CreatePromotionSuccessorActionApi)

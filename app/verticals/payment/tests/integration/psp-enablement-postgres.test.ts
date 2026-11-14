@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import type { PgClient } from '@effect/sql-pg';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { Effect, Match, Option, Predicate, Schema } from 'effect';
@@ -65,7 +66,9 @@ const inTransaction = <Value, Failure>(
   operation: (transaction: ScopedTransaction) => Effect.Effect<Value, Failure>,
 ) =>
   database.transaction((transaction: PaymentTestTransaction) =>
-    installOperationalScope(transaction, operationalScopeOf(scope)).pipe(Effect.flatMap(operation)),
+    installOperationalScope(transaction, operationalScopeOf(scope), defineDatabaseIdentityEnrollment([])).pipe(
+      Effect.flatMap(operation),
+    ),
   );
 
 const isOwnerFailure = Schema.is(Schema.Union([GatewayEnablementRejected, PaymentUnavailable]));

@@ -95,6 +95,9 @@ import {
   buildInventoryOwnerAcceptanceBindingCorrectionLineage,
   inventoryOwnerAcceptanceBindingCorrectionFixture,
 } from '../support/inventory-owner-acceptance-binding-correction.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const compositionRevision = 'a'.repeat(64);
 
@@ -476,6 +479,8 @@ it.live(
             ...openActionRuntimeOptions,
             accessDecision: makeScriptedBoundAccessGate('allowed').bound,
             contextAccess,
+            databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+
             ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
             ownerRegistration: inventoryRegistration,
           },

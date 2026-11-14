@@ -5,6 +5,8 @@ import type {
   ScopedRoutineInvocationError,
   ScopedRoutineParameter,
 } from '@app/core-runtime';
+import { readRetailEnrollmentRestartContext, RETAIL_RESTART_PREFIX } from '../journeys/retail-enrollment-restart.ts';
+import { writeEnrollmentStorefrontOrigin, writeRetailEnrollmentRegistration } from './registration-persistence.ts';
 import { sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
@@ -15,6 +17,7 @@ import {
   CommerceEnrollmentAttemptNotFound,
   CommerceEnrollmentAttemptRejected,
   CommerceEnrollmentAttemptUnavailable,
+  attemptUnavailable,
 } from './errors.ts';
 import type { CommerceEnrollmentAttemptError } from './errors.ts';
 import type {
@@ -275,6 +278,16 @@ const reconcileOutcomeRoutine = defineScopedRoutine({
   ],
   resultSchema: AttemptRoutineRowSchema,
   routineKey: 'portal-enrollment-attempt.reconcile-outcome',
+  schema: 'commerce_customer_context',
+});
+
+/** Re-admit only parked work; native admission preserves origin, outcomes and all sweep/lease fences. */
+const admitAttemptRoutine = defineScopedRoutine({
+  name: 'admit_portal_enrollment_attempt',
+  ownerModuleKey: MODULE_KEY,
+  parameters: [{ source: 'tenantId', type: 'uuid' }, uuid(), text()],
+  resultSchema: Schema.Struct({ admitted: Schema.Boolean }),
+  routineKey: 'portal-enrollment-attempt.admit',
   schema: 'commerce_customer_context',
 });
 
@@ -1198,6 +1211,20 @@ const authorizeRowsForInput =
   (input: typeof AuthorizeAccountCreationInputSchema.Type) => (rows: readonly AuthorizeAccountCreationRow[]) =>
     authorizeAccountCreationRows(input.portalEnrollmentAttemptId, input.ownerInvocationId, rows);
 
+const validateRestartPredecessor = (
+  transaction: EnrollmentAttemptScopedRoutineInvoker,
+  attempt: EnrollmentAttemptSnapshot,
+) =>
+  attempt.intentKey.startsWith(RETAIL_RESTART_PREFIX)
+    ? readRetailEnrollmentRestartContext(transaction, attempt.portalEnrollmentAttemptId, false).pipe(
+        Effect.flatMap((proof) =>
+          Option.isSome(proof)
+            ? Effect.void
+            : Effect.fail(attemptUnavailable('The immutable existing-account predecessor proof is invalid')),
+        ),
+      )
+    : Effect.void;
+
 export const commerceEnrollmentAttemptPersistenceForTransaction = (
   transaction: EnrollmentAttemptScopedRoutineInvoker,
   scope: CommerceEnrollmentOwnerScope,
@@ -1210,6 +1237,10 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
         const originator = rows[0]?.originator_action_invocation_id ?? undefined;
         return originator === undefined ? attempt : { ...attempt, originatorActionInvocationId: originator };
       }),
+    );
+  const withResultOriginator = <Reply extends { readonly attempt: EnrollmentAttemptSnapshot }>(reply: Reply) =>
+    withOriginator(reply.attempt, reply.attempt.portalEnrollmentAttemptId).pipe(
+      Effect.map((attempt) => ({ ...reply, attempt })),
     );
   const invokeAttempt = <Parameters extends readonly ScopedRoutineParameter[]>(
     routine: ScopedRoutineDefinition<typeof AttemptRoutineRowSchema, Parameters>,
@@ -1251,6 +1282,7 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
               requireAttemptRow(rows, 'claim_portal_enrollment_transition', input.portalEnrollmentAttemptId),
             ),
             Effect.flatMap((row) => mapClaimRow(input, row)),
+            Effect.flatMap(withResultOriginator),
           ),
         ),
       ),
@@ -1270,6 +1302,27 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
           ]).pipe(
             Effect.flatMap((rows) => requireAttemptRow(rows, 'create_portal_enrollment_attempt')),
             Effect.flatMap(mapCreateRow),
+            Effect.flatMap(withResultOriginator),
+            Effect.tap((result) => validateRestartPredecessor(transaction, result.attempt)),
+            Effect.tap((result) =>
+              input.retailRegistration === undefined
+                ? Effect.void
+                : writeRetailEnrollmentRegistration(
+                    transaction,
+                    result.attempt.portalEnrollmentAttemptId,
+                    input.retailRegistration,
+                  ),
+            ),
+            // Recorded with the new Attempt only: an existing one keeps the storefront it started on.
+            Effect.tap((result) =>
+              input.storefrontOrigin === undefined || result.outcome !== 'CREATED'
+                ? Effect.void
+                : writeEnrollmentStorefrontOrigin(
+                    transaction,
+                    result.attempt.portalEnrollmentAttemptId,
+                    input.storefrontOrigin,
+                  ),
+            ),
           ),
         ),
       ),
@@ -1347,6 +1400,7 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
               requireAttemptRow(rows, 'reconcile_portal_enrollment_outcome', input.portalEnrollmentAttemptId),
             ),
             Effect.flatMap((row) => mapReconcileRow(input, row)),
+            Effect.flatMap(withResultOriginator),
           ),
         ),
       ),
@@ -1376,11 +1430,25 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
               requireAttemptRow(rows, 'record_portal_enrollment_outcome', input.portalEnrollmentAttemptId),
             ),
             Effect.flatMap((row) => mapRecordRow(input, row)),
+            Effect.flatMap(withResultOriginator),
           ),
         ),
       ),
     terminate: (input) =>
       ensureTenant(scope, input.tenantId).pipe(
+        // Parked work admitted under an earlier release is re-admitted to this one first. Work already admitted here,
+        // terminal Attempts and unknown ids go straight to the native terminate answer; unresolved owner work still
+        // refuses re-admission through the composition fence.
+        Effect.flatMap(() => invokeAttempt(readAttemptRoutine, [input.portalEnrollmentAttemptId])),
+        Effect.flatMap(([current]) =>
+          current === undefined ||
+          current.composition_revision === input.compositionRevision ||
+          ['COMPLETE', 'TERMINATED', 'FAILED'].includes(current.state)
+            ? Effect.void
+            : transaction
+                .invoke(admitAttemptRoutine, [input.portalEnrollmentAttemptId, input.compositionRevision])
+                .pipe(Effect.mapError(mapRoutineError)),
+        ),
         Effect.flatMap(() =>
           invokeAttempt(terminateAttemptRoutine, [
             input.portalEnrollmentAttemptId,
@@ -1393,6 +1461,7 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
               requireAttemptRow(rows, 'terminate_portal_enrollment', input.portalEnrollmentAttemptId),
             ),
             Effect.flatMap((row) => mapTerminateRow(input, row)),
+            Effect.flatMap(withResultOriginator),
           ),
         ),
       ),
@@ -1462,3 +1531,71 @@ export const commerceEnrollmentDueWorkForExecution = (
       Effect.flatMap((rows) => Effect.forEach(rows, mapDueAttempt, { concurrency: 1 })),
     ),
 });
+
+/** A native state transition derived solely from a final required owner rejection. */
+const failAttemptRoutine = defineScopedRoutine({
+  name: 'fail_portal_enrollment',
+  ownerModuleKey: MODULE_KEY,
+  parameters: [{ source: 'tenantId', type: 'uuid' }, uuid(), text(), text()],
+  resultSchema: Schema.Struct({ failed: Schema.Boolean }),
+  routineKey: 'portal-enrollment-attempt.fail',
+  schema: 'commerce_customer_context',
+});
+
+export const failRejectedEnrollmentAttempt = (
+  transaction: EnrollmentAttemptScopedRoutineInvoker,
+  attemptId: EnrollmentAttemptId,
+  transition: { readonly ownerModuleKey: string; readonly transitionKey: string },
+): Effect.Effect<boolean, CommerceEnrollmentAttemptError> =>
+  transaction.invoke(failAttemptRoutine, [attemptId, transition.ownerModuleKey, transition.transitionKey]).pipe(
+    Effect.mapError((cause) => unavailable(cause)),
+    Effect.map((rows) => rows[0]?.failed === true),
+  );
+
+/** A verified provider read may park/wake only lease-free Retail work at the observed revision. */
+const verificationStateRoutine = defineScopedRoutine({
+  name: 'set_portal_enrollment_verification_state',
+  ownerModuleKey: MODULE_KEY,
+  parameters: [{ source: 'tenantId', type: 'uuid' }, uuid(), integer(), boolean()],
+  resultSchema: Schema.Struct({ updated: Schema.Boolean }),
+  routineKey: 'portal-enrollment-attempt.verification-state',
+  schema: 'commerce_customer_context',
+});
+
+export const setEnrollmentVerificationState = (
+  transaction: EnrollmentAttemptScopedRoutineInvoker,
+  attempt: EnrollmentAttemptSnapshot,
+  verificationRequired: boolean,
+): Effect.Effect<void, CommerceEnrollmentAttemptError> =>
+  transaction
+    .invoke(verificationStateRoutine, [attempt.portalEnrollmentAttemptId, attempt.revision, verificationRequired])
+    .pipe(
+      Effect.mapError((cause) => unavailable(cause)),
+      Effect.filterOrFail(
+        (rows) => rows[0]?.updated === true,
+        () =>
+          attemptUnavailable(
+            'The Enrollment Attempt changed before its verification wait could settle',
+            attempt.portalEnrollmentAttemptId,
+          ),
+      ),
+      Effect.asVoid,
+    );
+
+export const admitEnrollmentAttempt = (
+  transaction: EnrollmentAttemptScopedRoutineInvoker,
+  input: ReadEnrollmentAttemptInput,
+  compositionRevision: string,
+): Effect.Effect<void, CommerceEnrollmentAttemptError> =>
+  transaction.invoke(admitAttemptRoutine, [input.portalEnrollmentAttemptId, compositionRevision]).pipe(
+    Effect.mapError((cause) => unavailable(cause)),
+    Effect.filterOrFail(
+      (rows) => rows[0]?.admitted === true,
+      () =>
+        attemptUnavailable(
+          'The parked Enrollment Attempt was not admitted under the current composition',
+          input.portalEnrollmentAttemptId,
+        ),
+    ),
+    Effect.asVoid,
+  );

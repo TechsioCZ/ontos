@@ -1,10 +1,12 @@
 import { LegalEntityContext, LegalEntityContextUnavailableError, classifyActiveLegalEntities } from '@app/core-runtime';
 import type { LegalEntityContextService, SafeLegalEntity } from '@app/core-runtime';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Layer, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
+  canSelectTenantContext,
   resolveAuthorizedLegalEntities,
   validateAuthorizedLegalEntity,
 } from '../../api/auth/legal-entity-selection.ts';
@@ -25,6 +27,47 @@ const gamma = {
   legalEntityId: '30000000-0000-4000-8000-000000000003',
   legalName: 'Gamma',
 };
+
+it.layer(NodeCrypto.layer)('native tenant context selection', (suite) => {
+  suite.effect('asks the published administration surface with the original identity in tenant context', () =>
+    Effect.gen(function* nativeTenantContext() {
+      const principal = shellTestScope({ legalEntityId: alpha.legalEntityId, principalId, tenantId });
+      const gate = makeShellTestAccessGate({ defaultAnswer: 'allowed' });
+      expect(yield* canSelectTenantContext(principal).pipe(Effect.provideService(AccessDecisionGate, gate))).toBe(true);
+      expect(gate.singleDecisions).toHaveLength(1);
+      const [question] = gate.singleDecisions;
+      expect(question).toMatchObject({
+        carrier: {
+          accessDeclaration: { admitsAdminSurface: true, key: 'shell-super-app.access-admin.people', kind: 'admin' },
+        },
+        legalEntityScope: 'forbidden',
+        scope: {
+          authBindingId: principal.authBindingId,
+          authContextRef: principal.authContextRef,
+          authMethod: principal.authMethod,
+          principalId,
+          tenantId,
+        },
+      });
+      expect(question?.scope).not.toHaveProperty('legalEntityId');
+    }),
+  );
+
+  suite.effect('refuses denied or approval-only administration and preserves an unavailable decision', () =>
+    Effect.gen(function* tenantContextRefusals() {
+      for (const defaultAnswer of ['denied', 'needs_approval'] as const) {
+        const gate = makeShellTestAccessGate({ defaultAnswer });
+        expect(yield* canSelectTenantContext(scope).pipe(Effect.provideService(AccessDecisionGate, gate))).toBe(false);
+      }
+      const failure = yield* Effect.flip(
+        canSelectTenantContext(scope).pipe(
+          Effect.provideService(AccessDecisionGate, makeShellTestAccessGate({ defaultAnswer: 'unavailable' })),
+        ),
+      );
+      expect(Predicate.isTagged(failure, 'LegalEntitySelectionUnavailableError')).toBe(true);
+    }),
+  );
+});
 
 const context = (entities: readonly SafeLegalEntity[] = [alpha, beta]): LegalEntityContextService => ({
   listActiveForTenant: () => Effect.succeed(entities),

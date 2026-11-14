@@ -1,5 +1,6 @@
 import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
+import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { Effect, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -46,6 +47,7 @@ it.effect('authorized rebuild commits one linked request without reading identit
   Effect.gen(function* authorizedRebuildRequest() {
     const harness = yield* makeActionTestHarness({
       access: 'allowed',
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       ownerRegistration: partyRegistryBackendRegistration,
     });
     const result = yield* harness.runtime.runAction(request);
@@ -82,6 +84,7 @@ it.effect('a denied gate cannot queue a rebuild even for an otherwise valid requ
   Effect.gen(function* deniedRebuildRequest() {
     const harness = yield* makeActionTestHarness({
       access: 'denied',
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       ownerRegistration: partyRegistryBackendRegistration,
     });
     const error = yield* harness.runtime.runAction(request).pipe(Effect.flip);
@@ -97,6 +100,7 @@ it.effect('replaying the same authorized rebuild request queues only once', () =
   Effect.gen(function* replayRebuildRequest() {
     const harness = yield* makeActionTestHarness({
       access: 'allowed',
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       ownerRegistration: partyRegistryBackendRegistration,
     });
     yield* harness.runtime.runAction(request);

@@ -13,6 +13,16 @@ import type {
   CoreSearchSnapshotReadExecutor,
   CoreSearchWorkerSnapshotView,
 } from '../../src/search/worker-snapshot.ts';
+import { defineCoreSearchIngestionRegistrations } from '../../src/search/ingestion-registry.ts';
+
+const registrations = defineCoreSearchIngestionRegistrations(
+  ['party-updated', 'official-identifier-updated'].map((event) => ({
+    consumerModuleKey: 'party.registry',
+    producerModuleKey: 'party.registry',
+    topic: `party.registry.${event}.v1`,
+    workerKey: `party.registry.project-${event}-to-search`,
+  })),
+);
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -64,7 +74,7 @@ it.effect('worker snapshot rejects caller-created and unregistered contexts befo
       return Effect.die(new Error('unreachable'));
     },
   };
-  const snapshot = makeCoreSearchWorkerSnapshot(backend);
+  const snapshot = makeCoreSearchWorkerSnapshot(backend, registrations);
   return Effect.gen(function* rejectInvalidWorkerContexts() {
     const failures = yield* Effect.forEach(
       [
@@ -90,19 +100,22 @@ it.effect('worker snapshot rejects caller-created and unregistered contexts befo
 });
 
 it.effect('identifier-update worker receives the verified Core snapshot capability', () => {
-  const reader = makeCoreSearchWorkerSnapshot({
-    run: (_context, readSnapshot) =>
-      readSnapshot(
-        {
-          eventWatermark: '3',
-          legalEntityIds: [],
-          projectionVersion: '1',
-          tenantId,
-        },
-        executor,
-        () => Effect.void,
-      ),
-  });
+  const reader = makeCoreSearchWorkerSnapshot(
+    {
+      run: (_context, readSnapshot) =>
+        readSnapshot(
+          {
+            eventWatermark: '3',
+            legalEntityIds: [],
+            projectionVersion: '1',
+            tenantId,
+          },
+          executor,
+          () => Effect.void,
+        ),
+    },
+    registrations,
+  );
   return Effect.gen(function* readVerifiedWorkerSnapshot() {
     const version = yield* reader.read(
       attestOutboxWorkerHandlerContext({
@@ -134,7 +147,7 @@ it.effect('worker snapshot exposes select-only owner reads at one current waterm
         },
       ),
   };
-  const snapshot = makeCoreSearchWorkerSnapshot(backend);
+  const snapshot = makeCoreSearchWorkerSnapshot(backend, registrations);
   return Effect.gen(function* readCurrentOwnerSnapshot() {
     const result = yield* snapshot.read(attestOutboxWorkerHandlerContext(context), (view) =>
       Effect.gen(function* readOwnerProjection() {
@@ -178,7 +191,7 @@ it.effect('worker snapshot rejects a Legal Entity outside its tenant enumeration
         },
       ),
   };
-  const snapshot = makeCoreSearchWorkerSnapshot(backend);
+  const snapshot = makeCoreSearchWorkerSnapshot(backend, registrations);
   const verified = attestOutboxWorkerHandlerContext(context);
   return Effect.gen(function* rejectInvalidAndPreserveOwnerFailure() {
     const invalidScope = yield* Effect.flip(
@@ -197,16 +210,19 @@ it.effect('worker snapshot rejects a Legal Entity outside its tenant enumeration
 });
 
 it.effect('worker snapshot maps persistence failure to a sanitized unavailable error', () => {
-  const snapshot = makeCoreSearchWorkerSnapshot({
-    run: () =>
-      Effect.fail(
-        new CoreSearchProjectionUnavailable({
-          cause: new Error('private database details'),
-          code: 'core_search_projection_unavailable',
-          reason: 'Core Search worker snapshot is temporarily unavailable',
-        }),
-      ),
-  });
+  const snapshot = makeCoreSearchWorkerSnapshot(
+    {
+      run: () =>
+        Effect.fail(
+          new CoreSearchProjectionUnavailable({
+            cause: new Error('private database details'),
+            code: 'core_search_projection_unavailable',
+            reason: 'Core Search worker snapshot is temporarily unavailable',
+          }),
+        ),
+    },
+    registrations,
+  );
   return Effect.gen(function* mapPersistenceFailure() {
     const failure = yield* Effect.flip(
       snapshot.read(attestOutboxWorkerHandlerContext(context), () => Effect.succeed('no')),
@@ -278,19 +294,22 @@ it.effect('a lost generation claim retries the complete coherent snapshot within
 });
 
 it.effect('snapshot revokes escaped scope capabilities when the owner callback finishes', () => {
-  const reader = makeCoreSearchWorkerSnapshot({
-    run: (_context, readSnapshot) =>
-      readSnapshot(
-        {
-          eventWatermark: '3',
-          legalEntityIds: [legalEntityId],
-          projectionVersion: '1',
-          tenantId,
-        },
-        executor,
-        () => Effect.void,
-      ),
-  });
+  const reader = makeCoreSearchWorkerSnapshot(
+    {
+      run: (_context, readSnapshot) =>
+        readSnapshot(
+          {
+            eventWatermark: '3',
+            legalEntityIds: [legalEntityId],
+            projectionVersion: '1',
+            tenantId,
+          },
+          executor,
+          () => Effect.void,
+        ),
+    },
+    registrations,
+  );
   return Effect.gen(function* rejectEscapedCapability() {
     const escaped: CoreSearchWorkerSnapshotView = yield* reader.read(
       attestOutboxWorkerHandlerContext(context),
@@ -302,19 +321,22 @@ it.effect('snapshot revokes escaped scope capabilities when the owner callback f
 });
 
 it.effect('nested scope rejection does not unlock the active owner read', () => {
-  const reader = makeCoreSearchWorkerSnapshot({
-    run: (_context, readSnapshot) =>
-      readSnapshot(
-        {
-          eventWatermark: '3',
-          legalEntityIds: [legalEntityId],
-          projectionVersion: '1',
-          tenantId,
-        },
-        executor,
-        () => Effect.void,
-      ),
-  });
+  const reader = makeCoreSearchWorkerSnapshot(
+    {
+      run: (_context, readSnapshot) =>
+        readSnapshot(
+          {
+            eventWatermark: '3',
+            legalEntityIds: [legalEntityId],
+            projectionVersion: '1',
+            tenantId,
+          },
+          executor,
+          () => Effect.void,
+        ),
+    },
+    registrations,
+  );
   return reader.read(attestOutboxWorkerHandlerContext(context), (snapshot) =>
     snapshot.tenant(() =>
       Effect.gen(function* nestedReads() {

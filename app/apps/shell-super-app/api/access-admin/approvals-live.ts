@@ -20,6 +20,9 @@ import { Context, Effect, Layer, Match, Option, Predicate, Schema } from 'effect
 import { AccessApprovalsAuthoritySource } from './approvals-authority.ts';
 import type { AccessApprovalsAuthority } from './approvals-authority.ts';
 import { AccessApprovalsCommands } from './approvals-commands.ts';
+import { ApprovalOwnerTransport } from './approval-owner-transport.ts';
+import { approvalOwnerUnavailable } from './approval-owner-errors.ts';
+import { approvalRecordRevision } from './approvals-contract.ts';
 import type { AccessApprovalsCommandsService } from './approvals-commands.ts';
 import type {
   ApprovalCommandFailure,
@@ -105,6 +108,7 @@ const refused = (code: string, reason: string, retryable = false): ApprovalComma
   reason,
   retryable,
 });
+const proposalNotFound = () => refused('proposal_not_found', 'No open proposal with this id exists in this tenant');
 
 /** A storage failure is a retry; Core's own refusal keeps its code, so the BFF maps the rule once. */
 const commandFailureOf = (failure: ApprovalsFailure): ApprovalCommandFailure =>
@@ -175,6 +179,7 @@ const decodePayloadFields = Schema.decodeUnknownOption(Schema.Record(Schema.Stri
  * ---------------------------------------------------------------------------------------------- */
 
 const liveCommands = Effect.gen(function* liveApprovalsCommands() {
+  const ownerTransport = yield* ApprovalOwnerTransport;
   const actions = yield* AccessApprovalActions;
   const directory = yield* AccessPeopleDirectory;
   const inbox = yield* AccessApprovalsInbox;
@@ -217,7 +222,7 @@ const liveCommands = Effect.gen(function* liveApprovalsCommands() {
   ) {
     const proposal = yield* openProposal(scope, proposalId);
     if (Option.isNone(proposal)) {
-      return yield* Effect.fail(refused('proposal_not_found', 'No open proposal with this id exists in this tenant'));
+      return yield* Effect.fail(proposalNotFound());
     }
     const kind = yield* actorKind(scope);
     return {
@@ -231,25 +236,83 @@ const liveCommands = Effect.gen(function* liveApprovalsCommands() {
 
   const approve: AccessApprovalsCommandsService['approve'] = Effect.fn('AccessApprovalsLive.approve')(
     function* approveProposal(scope, input) {
-      const facts = yield* decisionFacts(scope, input.proposalId);
-      const approved = yield* inbox
-        .approvals(scope)
-        .approve({
-          approver: facts.actor,
-          approverKind: facts.kind,
-          authority: {
-            approval: boundOf(input.approval),
-            execution: boundOf(input.execution),
-            parentRecordRead: input.parentRecordRead.map(boundOf),
-          },
-          // A command is confirmed by somebody else; the BFF refuses a self-approval before it asks.
-          policy: { selfApproval: 'forbidden' },
-          proposalId: facts.proposalId,
-          scopeId: facts.scopeId,
-          tenantId: facts.tenantId,
+      const original = yield* openProposal(scope, input.proposalId);
+      if (Option.isNone(original)) {
+        return yield* Effect.fail(proposalNotFound());
+      }
+      const proposal = original.value;
+      if (proposal.status !== 'pending' || input.revision !== approvalRecordRevision(recordOf(proposal))) {
+        return yield* Effect.fail(refused('revision_stale', 'The proposal changed before owner approval'));
+      }
+      const frozen = yield* inbox
+        .frozenCommand(scope, { proposalId: proposal.id, scopeId: proposal.scopeId })
+        .pipe(Effect.mapError(approvalOwnerUnavailable));
+      if (Option.isNone(frozen)) {
+        return yield* Effect.fail(portUnavailable('The original frozen command is unavailable'));
+      }
+      yield* ownerTransport.approve(scope, {
+        frozen: frozen.value,
+        headers: input.headers,
+        proposal: recordOf(proposal),
+      });
+      // The safe owner acknowledgement is not a replacement for persisted state.
+      const current = yield* openProposal(scope, proposal.id);
+      if (
+        Option.isNone(current) ||
+        current.value.status !== 'approved' ||
+        current.value.commandDigest !== proposal.commandDigest ||
+        current.value.scopeId !== proposal.scopeId ||
+        current.value.tenantId !== proposal.tenantId ||
+        current.value.approval?.approverId !== scope.principalId
+      ) {
+        return yield* Effect.fail(
+          portUnavailable('The original owner approval could not be confirmed from persisted state'),
+        );
+      }
+      return recordOf(current.value);
+    },
+  );
+
+  const inspect: AccessApprovalsCommandsService['inspect'] = Effect.fn('AccessApprovalsLive.inspect')(
+    function* inspectProposal(scope, input) {
+      const original = yield* openProposal(scope, input.proposalId);
+      if (Option.isNone(original)) {
+        return yield* Effect.fail(proposalNotFound());
+      }
+      const proposal = original.value;
+      if (proposal.status !== 'pending' || input.revision !== approvalRecordRevision(recordOf(proposal))) {
+        return yield* Effect.fail(refused('revision_stale', 'The proposal changed before owner inspection'));
+      }
+      const frozen = yield* inbox
+        .frozenCommand(scope, { proposalId: proposal.id, scopeId: proposal.scopeId })
+        .pipe(Effect.mapError(approvalOwnerUnavailable));
+      if (Option.isNone(frozen)) {
+        return yield* Effect.fail(portUnavailable('The original frozen command is unavailable'));
+      }
+      const { canApprove, current } = yield* ownerTransport
+        .inspect(scope, {
+          frozen: frozen.value,
+          headers: input.headers,
+          proposal: recordOf(proposal),
         })
-        .pipe(Effect.mapError(commandFailureOf));
-      return recordOf(approved);
+        .pipe(
+          Effect.flatMap((admitted) =>
+            openProposal(scope, proposal.id).pipe(
+              Effect.map((reloaded) => ({ canApprove: admitted, current: reloaded })),
+            ),
+          ),
+        );
+      if (
+        Option.isNone(current) ||
+        current.value.status !== 'pending' ||
+        current.value.commandDigest !== proposal.commandDigest ||
+        current.value.scopeId !== proposal.scopeId ||
+        current.value.tenantId !== proposal.tenantId ||
+        input.revision !== approvalRecordRevision(recordOf(current.value))
+      ) {
+        return yield* Effect.fail(refused('revision_stale', 'The proposal changed during owner inspection'));
+      }
+      return canApprove;
     },
   );
 
@@ -347,7 +410,16 @@ const liveCommands = Effect.gen(function* liveApprovalsCommands() {
     );
   });
 
-  const commands: AccessApprovalsCommandsService = { approve, governedAmount, load, open, preview, reject, withdraw };
+  const commands: AccessApprovalsCommandsService = {
+    approve,
+    governedAmount,
+    inspect,
+    load,
+    open,
+    preview,
+    reject,
+    withdraw,
+  };
   return Object.freeze(commands);
 });
 
@@ -412,7 +484,7 @@ const liveAuthority = Effect.gen(function* liveApprovalsAuthority() {
 export const AccessApprovalsLive: Layer.Layer<
   AccessApprovalsAuthoritySource | AccessApprovalsCommands,
   never,
-  AccessApprovalActions | AccessApprovalsInbox | AccessChangesCommands | AccessPeopleDirectory
+  AccessApprovalActions | AccessApprovalsInbox | AccessChangesCommands | AccessPeopleDirectory | ApprovalOwnerTransport
 > = Layer.mergeAll(
   Layer.effect(AccessApprovalsCommands, liveCommands),
   Layer.effect(AccessApprovalsAuthoritySource, liveAuthority),

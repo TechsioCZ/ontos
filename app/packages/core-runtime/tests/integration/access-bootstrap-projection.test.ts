@@ -32,6 +32,7 @@ import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-d
 import type { AccessCatalogModule, AccessDeclarationInput } from '../../src/authorization/access-declaration.ts';
 import type { AccessDecision } from '../../src/access/decision/contract.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../src/db/database-identities.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';
 import type { CoreDatabaseExecutor } from '../../src/db/types.ts';
@@ -47,6 +48,7 @@ import {
   replacedDatabase,
 } from '../support/access-scenarios/database.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 /*
  * The one Core writer, end to end (CUTOVER-PLAN §3.4-3.5, O67-Q6/Q7). A tenant is created from nothing but
@@ -187,9 +189,9 @@ interface Tenant {
  */
 const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value, Failure>) =>
   Effect.gen(function* tenantScenario() {
-    const connections = yield* loadDatabaseConnectionPair();
+    const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
     const crypto = yield* Crypto.Crypto;
-    const configuration = yield* loadSpiceDbConfig();
+    const configuration = yield* loadSpiceDbConfig({ envPath: '/dev/null' });
     const bootstrapConnection = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
     const database = `access_bootstrap_projection_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
     yield* bootstrapConnection.unsafe(`create database "${database}"`).pipe(Effect.orDie);
@@ -217,7 +219,10 @@ const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value
       (client) => Effect.sync(() => client.close()),
     );
     const compiler = makeAccessProjectionCompiler(makeAccessProjectionTransport(configuration));
-    const core = Layer.succeed(CoreDatabase, { executor });
+    const core = Layer.mergeAll(
+      Layer.succeed(CoreDatabase, { executor }),
+      Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+    );
     const engine = Layer.succeed(AccessProjectionCompiler, compiler);
     const platforms = Layer.mergeAll(core, engine, NodeServices.layer);
     const intent = TenantIntentLoaderLive.pipe(Layer.provide(platforms));

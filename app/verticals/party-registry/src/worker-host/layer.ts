@@ -4,10 +4,11 @@ import {
   CoreSearchIngestionLive,
   CoreSearchProjectionStoreLive,
   CoreSearchWorkerSnapshotLive,
-  PARTY_REGISTRY_WORKER_IDENTITY,
+  DatabaseIdentityEnrollmentContext,
 } from '@app/core-runtime';
 import type {
   CoreSearchIngestion,
+  CoreSearchIngestionRegistry,
   CoreSearchProjectionStore,
   CoreSearchWorkerSnapshot,
   OutboxRuntime,
@@ -16,6 +17,11 @@ import { makeDatabaseConfigLive, OutboxWorkerInfrastructureLive } from '@app/cor
 import { Layer } from 'effect';
 import type { Crypto } from 'effect';
 
+import {
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+  PARTY_REGISTRY_WORKER_IDENTITY,
+} from '@app/party-registry-identity-contracts';
+import { PartySearchIngestionRegistryLive } from './search-ingestion-registrations.ts';
 import { PartySearchProjectionSourceLive } from '../services/party-search-projection-source.service.ts';
 import type { PartySearchProjectionSource } from '../services/party-search-projection-source.service.ts';
 import { PartySearchProjectorLive } from '../services/party-search-projection.service.ts';
@@ -29,6 +35,10 @@ export {
 } from '@app/core-runtime/outbox/worker';
 
 export const outboxWorkerDatabaseConfigLive = makeDatabaseConfigLive(PARTY_REGISTRY_WORKER_IDENTITY);
+export const outboxWorkerDatabaseIdentityEnrollmentLive = Layer.succeed(
+  DatabaseIdentityEnrollmentContext,
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+);
 
 const outboxWorkerInfrastructureLayer: Layer.Layer<
   OutboxRuntime,
@@ -43,7 +53,8 @@ type OutboxWorkerHandlerLayers = Readonly<{
     CoreSearchIngestion | CoreSearchProjectionStore | PartySearchProjectionSource
   >;
   projectionSource: Layer.Layer<PartySearchProjectionSource, never, CoreSearchWorkerSnapshot>;
-  searchIngestion: Layer.Layer<CoreSearchIngestion, never, CoreSearchProjectionStore>;
+  searchIngestion: Layer.Layer<CoreSearchIngestion, never, CoreSearchIngestionRegistry | CoreSearchProjectionStore>;
+  searchIngestionRegistry: Layer.Layer<CoreSearchIngestionRegistry>;
   searchProjectionStore: Layer.Layer<
     CoreSearchProjectionStore,
     never,
@@ -61,6 +72,7 @@ export const outboxWorkerHandlerLayers: OutboxWorkerHandlerLayers = Object.freez
   projector: PartySearchProjectorLive,
   projectionSource: PartySearchProjectionSourceLive,
   searchIngestion: CoreSearchIngestionLive,
+  searchIngestionRegistry: PartySearchIngestionRegistryLive,
   searchProjectionStore: CoreSearchProjectionStoreLive,
   searchWorkerSnapshot: CoreSearchWorkerSnapshotLive,
 });

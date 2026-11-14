@@ -24,6 +24,7 @@
     "scripts/legacy-completion-publication.ts",
     "scripts/legacy-completion-connections.ts",
     "scripts/legacy-completion-runtime-pair.ts",
+    "vertical.runtime-declaration.ts",
     "tests/support/source-processing-native.ts",
     "tests/support/organization-ico-native.ts",
     "tests/support/source-processing-governance-native.ts",
@@ -44,6 +45,9 @@
     },
     {
       "path": "../../packages/shared-design-tokens"
+    },
+    {
+      "path": "../../packages/consent-authority-contracts"
     }
   ]
 }

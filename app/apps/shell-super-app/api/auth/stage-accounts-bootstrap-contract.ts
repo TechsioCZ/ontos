@@ -150,12 +150,16 @@ const readAccountsFile = (reader: StageAccountsFileReader, path: string) =>
 
 const parseStageAccountsBootstrapConfigFromProvider = Effect.fn(
   'StageAccountsBootstrapContract.parseStageAccountsBootstrapConfigFromProvider',
-)(function* parseConfiguration(provider: ConfigProvider.ConfigProvider, reader: StageAccountsFileReader) {
+)(function* parseConfiguration(
+  provider: ConfigProvider.ConfigProvider,
+  reader: StageAccountsFileReader,
+  declaredWorkloadKeys: ReadonlySet<string>,
+) {
   const source = yield* stageAccountsBootstrapSource
     .parse(provider)
     .pipe(Effect.catchTag('ConfigError', (error) => Effect.fail(configurationFailureFromConfigError(error))));
   const accountsFile = yield* readAccountsFile(reader, source.accountsFilePath).pipe(
-    Effect.flatMap(parseStageAccountsFile),
+    Effect.flatMap((contents) => parseStageAccountsFile(contents, declaredWorkloadKeys)),
     Effect.catchTag('StageAccountsFileError', (error) => Effect.fail(configurationFailure(error.reason))),
   );
   return {
@@ -169,8 +173,9 @@ const parseStageAccountsBootstrapConfigFromProvider = Effect.fn(
 export const parseStageAccountsBootstrapConfig = (
   environment: StageAccountsEnvironment,
   reader: StageAccountsFileReader,
+  declaredWorkloadKeys: ReadonlySet<string>,
 ): Effect.Effect<StageAccountsBootstrapConfig, StageAccountsBootstrapError> =>
-  parseStageAccountsBootstrapConfigFromProvider(environmentProvider(environment), reader);
+  parseStageAccountsBootstrapConfigFromProvider(environmentProvider(environment), reader, declaredWorkloadKeys);
 
 export const classifyExactStageAccountsRecord = <Expected extends ExactRecord>(
   label: string,

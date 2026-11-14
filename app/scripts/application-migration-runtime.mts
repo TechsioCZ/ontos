@@ -52,9 +52,9 @@ export const readApplicationMigrationRequirements = Effect.fn('ApplicationMigrat
     let requirements: ApplicationMigrationRequirements = { mode: 'all', owners: [] };
     if (file !== undefined) {
       const fs = yield* FileSystem.FileSystem;
-      const decoded = yield* Schema.decodeEffect(requirementsDocument)(yield* fs.readFileString(file)).pipe(
-        Effect.mapError(() => invalid('Invalid reviewed migration requirements document')),
-      );
+      const decoded = yield* Schema.decodeEffect(requirementsDocument, { onExcessProperty: 'error' })(
+        yield* fs.readFileString(file),
+      ).pipe(Effect.mapError(() => invalid('Invalid reviewed migration requirements document')));
       requirements = Schema.is(ApplicationMigrationRequirementsSchema)(decoded)
         ? decoded
         : (decoded.migrationRequirements ?? { mode: 'all', owners: [] });
@@ -227,6 +227,7 @@ export const observeApplicationMigrationState = Effect.fn('ApplicationMigrationR
         connection = {
           ...configured.value.admin,
           connectionString: Redacted.value(configured.value.admin.connectionString),
+          expectedRole: configured.value.admin.user,
         };
       }
       const observed = yield* Effect.gen(function* observeDatabase() {

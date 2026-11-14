@@ -14,6 +14,24 @@ interface PresentationLabels {
 export const peopleScopeKey = (scope: Scope): string => (scope.kind === 'tenant' ? 'tenant' : scope.legalEntityId);
 const scopeMatches = (left: Scope, right: Scope) => peopleScopeKey(left) === peopleScopeKey(right);
 
+const ordered = (earlier: string, later: string, strict: boolean): boolean =>
+  Option.getOrElse(
+    Option.zipWith(DateTime.make(earlier), DateTime.make(later), (left, right) =>
+      strict ? DateTime.isLessThan(left, right) : DateTime.isLessThanOrEqualTo(left, right),
+    ),
+    () => false,
+  );
+
+/**
+ * A member row Core's end-membership ends for good: active or suspended, inside its validity period
+ * when the list was read. Revoked, expired and not-yet-valid rows are not ended.
+ */
+export const isEndableMembership = (membership: Person['memberships'][number], readAt: string): boolean =>
+  membership.kind === 'member' &&
+  membership.status !== 'revoked' &&
+  ordered(membership.validFrom, readAt, false) &&
+  (membership.validUntil === null || ordered(readAt, membership.validUntil, true));
+
 const presentationLookups = (snapshot: PeopleSnapshot, labels: PresentationLabels) => {
   const scopes = new Map(snapshot.options.scopes.map((item) => [peopleScopeKey(item.scope), item.label]));
   const people = new Map(
@@ -36,6 +54,22 @@ const presentationLookups = (snapshot: PeopleSnapshot, labels: PresentationLabel
 
 const amountLabel = (ceiling: Person['delegations'][number]['amountCeiling'], locale: string): string | null =>
   ceiling === undefined ? null : `${ceiling.limitMinor.toLocaleString(locale)} ${ceiling.currency}`;
+
+/**
+ * What ending a member row also ends, mirroring Core's closed scopes: a company row closes that
+ * company, the tenant row closes every scope. Only managed delegations end; granted ones refuse.
+ */
+const endedWithMembership = (person: Person, scope: Scope): PeoplePersonView['memberships'][number]['ends'] => {
+  const closed = (other: Scope) => scope.kind === 'tenant' || scopeMatches(other, scope);
+  return {
+    delegations: person.delegations.filter(
+      (delegation) =>
+        delegation.status === 'active' && delegation.managerId === person.principalId && closed(delegation.scope),
+    ).length,
+    roles: person.assignments.filter((assignment) => assignment.status === 'active' && closed(assignment.scope)).length,
+    teams: person.teams.filter((team) => closed(team.scope)).length,
+  };
+};
 
 const personView = (
   person: Person,
@@ -76,10 +110,14 @@ const personView = (
     id: person.principalId,
     label: person.displayName,
     memberships: person.memberships.map((membership, index) => ({
+      canEnd: writeAvailability.canEndMembership && isEndableMembership(membership, snapshot.readAt),
+      endable: isEndableMembership(membership, snapshot.readAt),
+      ends: endedWithMembership(person, membership.scope),
       expiryLabel: membership.validUntil === null ? null : lookup.date(membership.validUntil),
       id: `${peopleScopeKey(membership.scope)}-${index}`,
       kind: membership.kind,
       scope: lookup.scope(membership.scope),
+      scopeId: peopleScopeKey(membership.scope),
       status: membership.status,
     })),
     soleOwnerScopes: person.ownership.soleAdministratorScopes.map(lookup.scope),
@@ -97,6 +135,9 @@ const scopeChoices = (
   { label, scope }: PeopleSnapshot['options']['scopes'][number],
   options: PeopleSnapshot['options'],
 ): PeopleScopeChoices => ({
+  candidates: options.admissionCandidates.flatMap((candidate) =>
+    scopeMatches(candidate.scope, scope) ? [{ id: candidate.principalId, label: candidate.displayName }] : [],
+  ),
   capabilities: options.capabilities.flatMap((capability) =>
     capability.withinGrantorAuthority ? [{ id: capability.capabilityKey, label: capability.capabilityKey }] : [],
   ),
@@ -129,8 +170,10 @@ export const toPeopleViewModel = (snapshot: PeopleSnapshot, labels: Presentation
     revision: snapshot.people.revision,
     scopes: snapshot.options.scopes.map((scope) => scopeChoices(scope, snapshot.options)),
     writes: {
+      admit: writeAvailability.canAdmitMember,
       assign: writeAvailability.canAssign,
       delegate: writeAvailability.canDelegate,
+      endMembership: writeAvailability.canEndMembership,
       team: writeAvailability.canManageTeams,
     },
   };

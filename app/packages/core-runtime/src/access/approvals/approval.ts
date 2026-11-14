@@ -84,6 +84,9 @@ export const approve = (
   input: ApproveInput,
 ): Result.Result<Proposal, ApprovalRefusedError | ProposalIntegrityError> => {
   const { capability, proposal } = input;
+  if (proposal.actionAuthority !== undefined) {
+    return refusal('authority_witness_mismatch', 'A forward Action requires its complete approve-mode authority proof');
+  }
   if (proposal.status !== 'pending') {
     return refusal('proposal_not_pending', 'Only a pending proposal can be approved');
   }

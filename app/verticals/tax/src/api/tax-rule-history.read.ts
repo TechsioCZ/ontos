@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext, ReadHandlerResult } from '@app/core-runtime';
+import type { ReadLoadContext, ReadHandlerResult } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
 import { TaxRuleHistoryRequestSchema, TaxRuleHistoryResponseSchema } from '../../shared/apis/tax-rule-history.ts';
 import type { TaxRuleHistoryRequest, TaxRuleHistoryResponse } from '../../shared/apis/tax-rule-history.ts';
@@ -28,7 +28,7 @@ const taxRuleHistoryEntrypoint = defineTenantModuleEntrypoint({
 
 export const readTaxRuleHistory = (
   input: TaxRuleHistoryRequest,
-  context: ReadHandlerContext<TaxRuleHistoryServices>,
+  context: ReadLoadContext<TaxRuleHistoryServices>,
 ): Effect.Effect<ReadHandlerResult<TaxRuleHistoryResponse>, ReadHandlerNotFound | ReadHandlerUnavailable> =>
   context.services.governed.taxRuleHistory(input).pipe(
     Effect.catchTag('TaxGovernancePersistenceUnavailable', () =>
@@ -52,6 +52,15 @@ export const readTaxRuleHistory = (
 
 export const taxRuleHistoryRead = defineRead(
   {
+    accessActor: {
+      callers: ['merchandise', 'finance-billing'],
+      reason:
+        'Merchandise (and Finance for its clerks) reads the dated revisions of an applicable Tax rule for the staff member or registered Storefront it already admitted, so the rate at any instant is known.',
+      subject: 'identity',
+      // Only Merchandise acts for a registered Storefront; Finance acts only for its staff.
+      subjectWorkloadCallers: ['merchandise'],
+      subjectWorkloads: ['demo.storefront-client'],
+    },
     accessDeclaration: {
       key: 'commerce.tax.tax-rule.read-history',
       kind: 'read',
@@ -74,6 +83,6 @@ export const taxRuleHistoryRead = defineRead(
     resultSchema: TaxRuleHistoryResponseSchema,
     schemaVersion: '1',
   },
-  readTaxRuleHistory,
+  { load: readTaxRuleHistory },
   (transaction, scope) => Effect.succeed({ governed: taxGovernedReadsForScope(transaction, scope) }),
 );

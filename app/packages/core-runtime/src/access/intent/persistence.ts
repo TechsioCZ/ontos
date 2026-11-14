@@ -5,6 +5,7 @@ import type { SqlError } from 'effect/sql/SqlError';
 
 import { isDatabaseIntegrityRefusal, isDatabaseUnavailableFailure } from '../../database/driver-failure.ts';
 import { isPostgresUniqueViolation } from '../../database/postgres-failure.ts';
+import type { DatabaseIdentityEnrollment } from '../../db/database-identities.ts';
 import { installOperationalScope } from '../../db/scoped-transaction.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../../db/types.ts';
 import type { OperationalScope } from '../../operations/context.ts';
@@ -21,6 +22,12 @@ import { intentConflict, intentUnavailable } from './errors.ts';
 
 /** The Core executor the intent stores are built over; the caller owns the pool and its deadlines. */
 export interface AccessIntentDatabase {
+  /**
+   * The enrolled database identities the installed scope is verified against. Core is owner-neutral,
+   * so the roles and gateway audiences a connection may present come from the composition's declared
+   * enrollment, never from a registry compiled into Core.
+   */
+  readonly enrollment: DatabaseIdentityEnrollment;
   readonly executor: CoreDatabaseExecutor;
 }
 
@@ -149,9 +156,10 @@ export const durable =
 const scopeInstalledIn = <Value>(
   transaction: CoreTransaction,
   scope: OperationalScope,
+  enrollment: DatabaseIdentityEnrollment,
   body: ScopedTransactionBody<Value>,
 ): Effect.Effect<Value, AccessIntentStoreFailure> =>
-  installOperationalScope(transaction, scope).pipe(
+  installOperationalScope(transaction, scope, enrollment).pipe(
     Effect.mapError((failure) => intentUnavailable('The tenant scope could not be installed', failure)),
     Effect.andThen(() => body(transaction)),
   );
@@ -168,7 +176,7 @@ export const requestTransactions = (database: AccessIntentDatabase): AccessTrans
     body: ScopedTransactionBody<Value>,
   ): Effect.Effect<Value, AccessIntentError> =>
     database.executor
-      .transaction((transaction) => scopeInstalledIn(transaction, scope, body), config)
+      .transaction((transaction) => scopeInstalledIn(transaction, scope, database.enrollment, body), config)
       .pipe(durable(constraints));
   return {
     readIsolation: 'request-repeatable-read',
@@ -199,12 +207,16 @@ export const requestTransactions = (database: AccessIntentDatabase): AccessTrans
  * is the caller's own; a reader that needs several statements on one snapshot must be handed a
  * transaction the caller opened at that level.
  */
-export const callerTransactions = (transaction: CoreTransaction): AccessTransactions => {
+export const callerTransactions = (
+  transaction: CoreTransaction,
+  enrollment: DatabaseIdentityEnrollment,
+): AccessTransactions => {
   const joined = <Value>(
     scope: OperationalScope,
     constraints: ReadonlySet<string>,
     body: ScopedTransactionBody<Value>,
-  ): Effect.Effect<Value, AccessIntentError> => scopeInstalledIn(transaction, scope, body).pipe(durable(constraints));
+  ): Effect.Effect<Value, AccessIntentError> =>
+    scopeInstalledIn(transaction, scope, enrollment, body).pipe(durable(constraints));
   return { readIsolation: 'caller-transaction', scoped: joined, scopedRead: joined };
 };
 

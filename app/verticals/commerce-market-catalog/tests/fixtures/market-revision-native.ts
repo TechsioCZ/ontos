@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices, NodeSocketServer } from '@effect/platform-node';
-import { Deferred, Duration, Effect, FileSystem, Layer, Path, Queue, Ref, Schema, Stream } from 'effect';
+import { Deferred, Duration, Effect, Exit, FileSystem, Layer, Path, Queue, Ref, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { Socket } from 'effect/socket';
 import { FetchHttpClient } from 'effect/http';
@@ -23,7 +23,10 @@ import type { CreateMarketResultSchema } from '../../shared/action-contracts.ts'
 
 class MarketRevisionNativeLauncherError extends Schema.TaggedError<MarketRevisionNativeLauncherError>()(
   'MarketRevisionNativeLauncherError',
-  { stage: Schema.optionalKey(MarketRevisionNativeIssueFailureStageSchema) },
+  {
+    message: Schema.optionalKey(Schema.String),
+    stage: Schema.optionalKey(MarketRevisionNativeIssueFailureStageSchema),
+  },
 ) {}
 const unavailable = () => new MarketRevisionNativeLauncherError({});
 export const marketRevisionNativeServices = NodeChildProcessSpawner.layer.pipe(
@@ -151,6 +154,7 @@ export const bundleMarketRevisionNativeChild = Effect.fn('MarketRevisionNativeLa
     yield* fs.makeDirectory(cache, { recursive: true });
     const temporary = yield* fs.makeTempDirectoryScoped({ directory: cache, prefix: 'market-' });
     const aliases: string[] = [];
+    const publishedOwners: { readonly artifact: string; readonly specifier: string }[] = [];
     const runBundle = Effect.fn('MarketRevisionNativeLauncher.bundleEntry')(function* runBundle(
       args: readonly string[],
     ) {
@@ -159,12 +163,14 @@ export const bundleMarketRevisionNativeChild = Effect.fn('MarketRevisionNativeLa
         stderr: 'pipe',
         stdout: 'pipe',
       });
-      const [code] = yield* Effect.all(
-        [bundle.exitCode, Stream.runDrain(bundle.stderr), Stream.runDrain(bundle.stdout)],
+      const [code, diagnostics] = yield* Effect.all(
+        [bundle.exitCode, Stream.mkString(bundle.stderr.pipe(Stream.decodeText())), Stream.runDrain(bundle.stdout)],
         { concurrency: 3 },
       );
       if (code !== 0) {
-        return yield* unavailable();
+        return yield* new MarketRevisionNativeLauncherError({
+          message: `Native test bundle failed for ${args[0]}: ${diagnostics}`,
+        });
       }
       return yield* Effect.void;
     });
@@ -196,21 +202,28 @@ export const bundleMarketRevisionNativeChild = Effect.fn('MarketRevisionNativeLa
         `--outfile=${output}`,
       ]);
       aliases.push(`--alias:${specifier}=${output}`, `--external:${output}`);
+      publishedOwners.push({ artifact: output, specifier });
     }
     const artifact = `${temporary}/owner.mjs`;
     const identity = yield* resolveOwnerBuildIdentity(directory);
+    // The child holds Market's key in the same credential store copy its owner code reads through the external
+    // `@app/core-runtime`: the store stays an external file, never a second inlined copy nobody reads.
+    const credentialStore = yield* fs.realPath(
+      path.join(workspaceRoot, 'packages/core-runtime/src/auth/hosted-module-credential-store.ts'),
+    );
     yield* runBundle([
       'tests/support/market-revision-native-child.ts',
       '--bundle',
       '--platform=node',
       '--format=esm',
       '--packages=external',
+      `--external:${credentialStore}`,
       ...aliases,
       `--define:ULTRAMODERN_BUILD_MARKER=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(identity.buildMarker)}`,
       `--define:ULTRAMODERN_SOURCE_REVISION=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(identity.sourceRevision)}`,
       `--outfile=${artifact}`,
     ]);
-    return { artifact, directory };
+    return { artifact, directory, publishedOwners };
   },
 );
 
@@ -233,8 +246,23 @@ export const makeMarketRevisionNativeFixture = Effect.fn('MarketRevisionNativeLa
       stdout: 'pipe',
     });
     yield* Effect.addFinalizer(() => channel.beginClose);
-    yield* Stream.runDrain(child.stderr).pipe(Effect.forkScoped);
-    yield* Stream.runDrain(child.stdout).pipe(Effect.forkScoped);
+    const diagnostics = yield* Ref.make('');
+    const retainDiagnostics = Stream.runForEach((chunk: string) =>
+      Ref.update(diagnostics, (previous) => `${previous}${chunk}`.slice(-16_384)),
+    );
+    yield* child.stderr.pipe(Stream.decodeText(), retainDiagnostics, Effect.forkScoped);
+    yield* child.stdout.pipe(Stream.decodeText(), retainDiagnostics, Effect.forkScoped);
+    yield* Effect.addFinalizer((exit) =>
+      Exit.isFailure(exit)
+        ? Ref.get(diagnostics).pipe(
+            Effect.flatMap((tail) =>
+              tail.length > 0
+                ? Effect.logError({ diagnostics: tail, event: 'market-native-child-failure' })
+                : Effect.void,
+            ),
+          )
+        : Effect.void,
+    );
     const responseTimeout = Effect.timeoutOrElse({
       duration: Duration.seconds(60),
       orElse: () => Effect.fail(unavailable()),

@@ -28,6 +28,9 @@
   ],
   "references": [
     {
+      "path": "../../packages/party-registry-identity-contracts"
+    },
+    {
       "path": "../../packages/shared-contracts"
     },
     {

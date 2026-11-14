@@ -1,6 +1,7 @@
 import { Effect, FileSystem, Match, Option, Predicate, Schema } from 'effect';
 
 import { createCodesmithGenerator } from '../generator-adapter.mts';
+import { planCorePeopleSearchWorker } from '../core-people/scaffold.mts';
 import {
   MODULE_REGISTRATION_IMPORT_SLOT_END,
   MODULE_REGISTRATION_IMPORT_SLOT_START,
@@ -613,4 +614,10 @@ const planOutboxWorkerScaffoldEffect = (
     return { mutations, result: { registryPath, workerPath } };
   });
 
-export default createCodesmithGenerator(planOutboxWorkerScaffoldEffect);
+/** Demo-only exception: the reviewed Core people-search worker (no main concept) keeps its exact plan. */
+const planOutboxWorker: typeof planOutboxWorkerScaffoldEffect = (workspaceRoot, config) =>
+  config.vertical === 'core'
+    ? planCorePeopleSearchWorker(workspaceRoot, config)
+    : planOutboxWorkerScaffoldEffect(workspaceRoot, config);
+
+export default createCodesmithGenerator(planOutboxWorker);

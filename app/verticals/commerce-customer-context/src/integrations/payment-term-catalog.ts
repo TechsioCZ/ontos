@@ -144,6 +144,7 @@ export const paymentTermCatalogPort = (
 export const paymentTermCatalogPortFromEnvironment = Effect.fn('PaymentTermCatalog.portFromEnvironment')(
   function* paymentTermCatalogPortFromEnvironment(
     context: {
+      readonly compositionRevision: string;
       readonly legalEntityId: string;
       readonly requestCorrelation: string;
       readonly subject: GatewayDelegationSubject;
@@ -156,6 +157,7 @@ export const paymentTermCatalogPortFromEnvironment = Effect.fn('PaymentTermCatal
       acquire(
         {
           audience: 'payment-term-catalog',
+          callingAppId: 'commerce-customer-context',
           legalEntityScope: 'subject',
           requestCorrelation: correlation,
           subject: context.subject,
@@ -164,10 +166,12 @@ export const paymentTermCatalogPortFromEnvironment = Effect.fn('PaymentTermCatal
       ).pipe(
         Effect.mapError(unavailable),
         Effect.flatMap((issued) =>
-          execute(payload, Redacted.make(issued.authorization), correlation, {
-            baseUrl: new URL(issued.apiBaseUrl),
-            compositionRevision: issued.compositionRevision,
-          }),
+          issued.compositionRevision === context.compositionRevision
+            ? execute(payload, Redacted.make(issued.authorization), correlation, {
+                baseUrl: new URL(issued.apiBaseUrl),
+                compositionRevision: issued.compositionRevision,
+              })
+            : Effect.fail(unavailable('The Payment Term Catalog credential belongs to another composition')),
         ),
       ),
     );

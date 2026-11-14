@@ -15,7 +15,8 @@ import { ORGANIZATION_PROFILE_ICO_FIELDS } from '@app/commerce-customer-context/
 import { executeRecordPrivacyApplicabilityWithAuthorization } from '@app/privacy/api/client';
 import { makeApiKeyGatewayNativeFixture } from '@app/shell-super-app/testing/api-key-gateway-native';
 import { PgClient } from '@effect/sql-pg';
-import { Config, Effect, FileSystem, Option, Redacted, Schema } from 'effect';
+import { Config, Effect, Option, Redacted, Schema } from 'effect';
+import { describeFixtureDiagnostics, logFixtureDiagnostics } from './fixture-diagnostics.mts';
 import {
   bindCustomerFixtureProviderKey,
   seedCustomerFixtureProviderPrincipal,
@@ -28,6 +29,7 @@ import {
   startProductOwner,
   SymmyC14ProductFixtureUnavailable,
 } from './symmy-c14-product-runtime.mts';
+import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../../database/identity-enrollment.ts';
 
 export interface CompanyGovernorInitialization {
   readonly issuer: string;
@@ -75,17 +77,16 @@ export const makeOrganizationProfileIcoOwnerFixture = Effect.fn('OrganizationPro
     );
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: snapshot,
+      databaseIdentities: APP_DATABASE_IDENTITY_ENROLLMENT,
       mode: 'schema-only',
       purpose,
     });
     const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
     const shell = yield* makeApiKeyGatewayNativeFixture({
-      additionalRelaySources: appIds
-        .filter((appId) => appId !== commerceApp)
-        .map((sourceAppId) => ({ registeredWorkloads: [], sourceAppId })),
+      additionalRelaySources: appIds.filter((appId) => appId !== commerceApp).map((sourceAppId) => ({ sourceAppId })),
       ownedDatabase: isolated,
       productionGate: true,
-      relaySource: { registeredWorkloads: [], sourceAppId: commerceApp },
+      relaySource: { sourceAppId: commerceApp },
       snapshotJson: yield* encodeProductComposition(snapshot),
     });
     const tenantId = randomUUID();
@@ -106,40 +107,23 @@ export const makeOrganizationProfileIcoOwnerFixture = Effect.fn('OrganizationPro
       yield* admin`insert into core.tenant_module_states(tenant_id,module_key,state) values(${tenantId},${module.moduleId},'active')`;
     }
     yield* grantTestTenantRoleAccess({
-      adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       holders: [{ capabilityKeys: humanCapabilities, principalId: human.principalId }],
       legalEntityIds: [legalEntityId],
       spiceDb: yield* loadSpiceDbConfig({ envPath: '/dev/null' }),
       tenantId,
+      writerConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     });
     const key = yield* shell.issueFixtureProviderKey(integration);
     yield* bindCustomerFixtureProviderKey(admin, integration, key.providerKeyId);
     yield* key.acknowledgeBinding;
-    const moduleKeys = new Map<string, string>();
-    if (shell.relaySourceProviderUserId === undefined) {
-      return yield* unavailable('The company module issuer is missing');
-    }
-    const commercePrincipal = yield* seedCustomerFixtureProviderPrincipal(
-      admin,
-      tenantId,
-      'service',
-      shell.relaySourceProviderUserId,
-    );
-    const commerceKey = yield* shell.issueFixtureRelaySourceProviderKey(commercePrincipal);
-    yield* bindCustomerFixtureProviderKey(admin, commercePrincipal, commerceKey.providerKeyId);
-    yield* commerceKey.acknowledgeBinding;
-    moduleKeys.set(commerceApp, Redacted.value(commerceKey.secret));
-    for (const provider of shell.additionalRelaySourceProviderUsers) {
-      const principal = yield* seedCustomerFixtureProviderPrincipal(
-        admin,
-        tenantId,
-        'service',
-        provider.providerUserId,
-      );
-      const moduleKey = yield* shell.issueFixtureModuleProviderKey({ ...principal, sourceAppId: provider.sourceAppId });
-      yield* bindCustomerFixtureProviderKey(admin, principal, moduleKey.providerKeyId);
-      yield* moduleKey.acknowledgeBinding;
-      moduleKeys.set(provider.sourceAppId, Redacted.value(moduleKey.secret));
+    // Each owner's own module key, provisioned by the platform for its module principal as on every environment.
+    const moduleKeys = new Map<string, Redacted.Redacted>([
+      [commerceApp, (yield* shell.provisionRelaySource()).secret],
+    ]);
+    for (const appId of appIds) {
+      if (appId !== commerceApp) {
+        moduleKeys.set(appId, (yield* shell.provisionModuleSource(appId)).secret);
+      }
     }
     const gateway = yield* shell.issueFixtureSetupGateway({ audience: 'privacy', legalEntityId });
     const principal = yield* initializeGovernor({
@@ -258,7 +242,8 @@ export const makeOrganizationProfileIcoOwnerFixture = Effect.fn('OrganizationPro
       const owner = yield* startProductOwner({
         artifacts: yield* buildProductOwner(contract),
         contract,
-        environment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: moduleKey },
+        environment,
+        moduleKey,
         port,
         prefix: prefixes[appId],
       });
@@ -287,16 +272,18 @@ export const makeOrganizationProfileIcoOwnerFixture = Effect.fn('OrganizationPro
           Effect.flatMap(Schema.decodeUnknownEffect(PrivacyApplicabilityDecisionSchema)),
           Effect.tapError(() =>
             Effect.gen(function* recordFailureDiagnostics() {
-              for (const [appId, diagnostic] of diagnostics) {
-                const fs = yield* FileSystem.FileSystem;
-                yield* fs.writeFileString(`/tmp/commerce-org-http-${appId}.diag.log`, yield* diagnostic);
-                yield* Effect.logError({ appId, diagnosticFile: `/tmp/commerce-org-http-${appId}.diag.log` });
-              }
-              yield* Effect.logError({ gateway: yield* shell.gatewayDiagnostics() });
+              yield* logFixtureDiagnostics(diagnostics);
+              yield* Effect.logError({
+                gateway: yield* describeFixtureDiagnostics(shell.gatewayDiagnostics()),
+              });
             }),
           ),
-          Effect.mapError(() =>
-            unavailable('Actual public RecordPrivacyApplicability failed with current owner facts'),
+          Effect.mapError(
+            (cause) =>
+              new SymmyC14ProductFixtureUnavailable({
+                cause: Redacted.make(cause),
+                message: 'Actual public RecordPrivacyApplicability failed with current owner facts',
+              }),
           ),
         );
         decisions.push(decision);

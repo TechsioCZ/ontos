@@ -1,0 +1,65 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
+import { identity } from 'effect';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
+import {
+  MicroVerticalBuildMarkerSchema,
+  MicroVerticalReadinessSchema,
+  createMicroVerticalOperationContext,
+} from '@modern-js/bff-effect/microvertical-api';
+import type {
+  MicroVerticalBuildMarker,
+  MicroVerticalReadiness,
+  MicroVerticalOperationContext,
+} from '@modern-js/bff-effect/microvertical-api';
+
+// <generated-governed-http-api-imports>
+import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
+import { ContractsSearchApi } from './apis/contracts-search.ts';
+import { DocumentsSearchApi } from './apis/documents-search.ts';
+import { RecordsApi } from './apis/records.ts';
+import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
+// </generated-governed-http-api-imports>
+
+export type LegalAgreementsMarker = MicroVerticalBuildMarker;
+export type LegalAgreementsReadiness = MicroVerticalReadiness;
+export type OperationContext = MicroVerticalOperationContext;
+export const legalAgreementsMarkerSchema = Schema.Struct({
+  ...MicroVerticalBuildMarkerSchema.fields,
+  kind: Schema.Literal('microvertical-delivery-unit'),
+  schemaVersion: Schema.Literal(1),
+});
+export const legalAgreementsReadinessSchema = Schema.Struct({
+  ...MicroVerticalReadinessSchema.fields,
+  marker: legalAgreementsMarkerSchema,
+});
+export const legalAgreementsFoundationApi = HttpApi.make('LegalAgreementsApiFoundation').add(
+  HttpApiGroup.make('foundation').add(
+    HttpApiEndpoint.get('readiness', '/legal-agreements/readiness', { success: legalAgreementsReadinessSchema }),
+  ),
+);
+
+export const legalAgreementsApi = HttpApi.make('LegalAgreementsApi')
+  .addHttpApi(legalAgreementsFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
+  // <generated-governed-http-api-additions>
+  .addHttpApi(ApplyCommandActionApi)
+  .addHttpApi(ContractsSearchApi)
+  .addHttpApi(DocumentsSearchApi)
+  .addHttpApi(RecordsApi)
+  .addHttpApi(RequestSearchRebuildActionApi)
+  // </generated-governed-http-api-additions>
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
+  .pipe(identity);
+export const legalAgreementsOperationContexts = {
+  readiness: createMicroVerticalOperationContext({
+    method: 'GET',
+    operationId: 'LegalAgreementsApi:foundation:readiness',
+    routePath: '/legal-agreements/readiness',
+  }),
+} satisfies Record<string, OperationContext>;
+export const legalAgreementsApiContract = {
+  apiPrefix: '/legal-agreements-api',
+  basePath: '/legal-agreements-api/legal-agreements',
+  ownerId: 'legal-agreements',
+  readinessPath: '/legal-agreements-api/legal-agreements/readiness',
+} as const;

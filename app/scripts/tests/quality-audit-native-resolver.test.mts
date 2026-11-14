@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
+import { createModuleGraph } from '@modern-js/code-tools/microvertical-api-boundary';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -12,6 +13,10 @@ import { runQualityAudit } from '../quality-audit.mts';
 const indexModule = 'src/index.ts';
 const rootSources = 'src/**/*.ts';
 const reporterModule = 'quality-audit/knip-reporter.mts';
+const scopeFile = 'quality-audit/scope.json';
+const configFile = 'quality-audit/knip.json';
+const nodeModulesPattern = '**/node_modules/**';
+const nativeReportFile = 'report.ndjson';
 const summaryFile = 'summary.json';
 const wireAliasKind = 'api-schema-alias';
 const appRoot = path.resolve(import.meta.dirname, '../..');
@@ -381,13 +386,13 @@ it.live(
     write(root, `${unboundOwner}/tests/support/receiver.fixture.ts`, 'export const unrelated = 1;');
     write(
       root,
-      'quality-audit/scope.json',
+      scopeFile,
       JSON.stringify({
-        exclude: ['**/node_modules/**'],
+        exclude: [nodeModulesPattern],
         patterns: [rootSources, 'verticals/**/*.ts'],
       }),
     );
-    write(root, 'quality-audit/knip.json', JSON.stringify(config));
+    write(root, configFile, JSON.stringify(config));
     write(root, reporterModule, readFileSync(path.join(appRoot, reporterModule), 'utf-8'));
     const output = path.join(root, '.reports');
     yield* runQualityAudit(root, output, 'knip').pipe(Effect.provide(NodeServices.layer));
@@ -434,7 +439,7 @@ it.live(
     expect(
       usages.every((usage) => usage.category === 'devDependencies' && usage.file === `${owner}/package.json`),
     ).toBe(true);
-    const native = readFileSync(path.join(knip.directory, 'report.ndjson'), 'utf-8');
+    const native = readFileSync(path.join(knip.directory, nativeReportFile), 'utf-8');
     expect(native).toContain(used);
     expect(native).toContain(unused);
     // The unused neighbor and other workspace declarations stay native when the
@@ -467,6 +472,230 @@ const aliasConsumer = [
   "import type { Basis } from './wire-contract.ts';",
   aliasPresentation,
 ].join('\n');
+
+const actionAliasGroups = [
+  ['MarketLifecycleResultSchema', 'ActivateMarketResultSchema', 'SuspendMarketResultSchema'],
+  [
+    'StorefrontAssociationResultSchema',
+    'AssociateStorefrontResultSchema',
+    'ReviseStorefrontAssociationResultSchema',
+    'RemoveStorefrontAssociationResultSchema',
+  ],
+] as const;
+const actionAliasSource = (names: readonly string[]) => {
+  const [canonical, ...aliases] = names;
+  return [
+    "import { Schema } from 'effect';",
+    "import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';",
+    `export const ${canonical} = Schema.Struct({ value: Schema.String });`,
+    ...aliases.map((name) => `export const ${name} = ${canonical};`),
+    `${apiExport} = HttpApi.make('Api').add(HttpApiGroup.make('group').add(`,
+    ...aliases.map((name) => `HttpApiEndpoint.post('${name}', '/${name}', { success: ${name} }),`),
+    '));',
+  ].join('\n');
+};
+const actionResultSource = (canonical: string, contract = './wire-contract.ts') =>
+  [
+    "import { defineAction as registerAction } from '@app/core-runtime';",
+    `import { ${canonical} as Result } from '${contract}';`,
+    'export const action = registerAction({ resultSchema: Result }, (value: unknown) => value);',
+  ].join('\n');
+const actionResultFile = 'src/action-result.ts';
+const actionDefinition = 'export const action = registerAction';
+const resultSchemaProperty = 'resultSchema: Result';
+
+it.live(
+  'Action resultSchema consumers resolve renamed imports for both exact commerce alias group shapes',
+  Effect.fn(function* actionAliasProof() {
+    const root = yield* fixture();
+    for (const names of actionAliasGroups) {
+      write(root, aliasFile, actionAliasSource(names));
+      write(root, actionResultFile, actionResultSource(names[0]));
+      for (const alias of names.slice(1)) {
+        write(root, `src/zz-action-${alias}.ts`, actionResultSource(alias));
+      }
+      write(
+        root,
+        indexModule,
+        "export { Api } from './wire-contract.ts'; export { action } from './action-result.ts';",
+      );
+      const result = yield* model(root);
+      const aliases = result.evidence.filter((fact) => fact.kind === wireAliasKind);
+      expect(aliases).toHaveLength(1);
+      expect(aliases[0]?.aliasMembers?.map((member) => member.name)).toEqual([...names]);
+      expect(aliases[0]?.reason).toContain('defineAction resultSchema consumer');
+      expect(aliases[0]?.reason).toContain('endpoint success');
+      expect(result.config.workspaces['.']?.ignoreIssues ?? {}).toEqual({});
+    }
+  }),
+);
+
+it.live(
+  'Action resultSchema proof rejects fake or shadowed factories, arbitrary properties and unconsumed aliases',
+  Effect.fn(function* actionAliasControls() {
+    const root = yield* fixture();
+    for (const names of actionAliasGroups) {
+      const source = actionResultSource(names[0]);
+      write(root, aliasFile, actionAliasSource(names));
+      write(
+        root,
+        indexModule,
+        "export { Api } from './wire-contract.ts'; export { action } from './action-result.ts';",
+      );
+      const controls = [
+        source.replace("'@app/core-runtime'", "'./counterfeit.ts'"),
+        source.replace('import { defineAction', 'import type { defineAction'),
+        source.replace(`import { ${names[0]}`, `import type { ${names[0]}`),
+        source.replace('registerAction({', 'registerAction?.({'),
+        source.replace(resultSchemaProperty, 'payloadSchema: Result'),
+        source.replace(resultSchemaProperty, 'other: { resultSchema: Result }'),
+        source.replace(resultSchemaProperty, '...unknownDescriptor, resultSchema: Result'),
+        `${source.replace(actionDefinition, 'function hidden(registerAction: unknown) { return registerAction')}\n}`,
+        `${source.replace(actionDefinition, 'for (const registerAction of factories) { const action = registerAction')}\n}`,
+        `${source.replace(actionDefinition, 'function hidden(Result: unknown) { return registerAction')}\n}`,
+        source.replace(
+          'registerAction({ resultSchema: Result }, (value: unknown) => value)',
+          '({ resultSchema: Result })',
+        ),
+        source.replace(
+          'registerAction({ resultSchema: Result }, (value: unknown) => value)',
+          'registerAction({ resultSchema: Other }, (value: unknown) => value)',
+        ),
+        source.replace(
+          'export const action = registerAction({ resultSchema: Result }, (value: unknown) => value);',
+          [
+            'export namespace Local {',
+            "  export function fake(value: unknown) { return 'not a Core action'; }",
+            '  export import registerAction = Local.fake;',
+            '  export const action = registerAction({ resultSchema: Result });',
+            '}',
+          ].join('\n'),
+        ),
+      ];
+      for (const [index, invalid] of controls.entries()) {
+        write(root, actionResultFile, invalid);
+        const result = yield* model(root);
+        expect(
+          result.evidence.filter((fact) => fact.kind === wireAliasKind),
+          `${names[0]} Action control ${index}`,
+        ).toEqual([]);
+      }
+      write(root, actionResultFile, source);
+      write(root, aliasFile, `${actionAliasSource(names)}\nexport const UnconsumedResultSchema = ${names[0]};`);
+      const unconsumed = yield* model(root);
+      expect(unconsumed.evidence.filter((fact) => fact.kind === wireAliasKind)).toEqual([]);
+    }
+  }),
+);
+
+it.live(
+  'actual commerce public Action results resolve to canonical schemas without unused alias calibration',
+  Effect.fn(function* actualCommerceResultProof() {
+    const root = yield* fixture();
+    const marketOwner = 'verticals/commerce-market-catalog';
+    const lifecycleResult = 'MarketLifecycleResultSchema';
+    const associationResult = 'StorefrontAssociationResultSchema';
+    const contracts = [
+      ['activate-market', 'ActivateMarketResultSchema', lifecycleResult],
+      ['suspend-market', 'SuspendMarketResultSchema', lifecycleResult],
+      ['retire-market', 'RetireMarketResultSchema', lifecycleResult],
+      ['associate-storefront', 'AssociateStorefrontResultSchema', associationResult],
+      ['revise-storefront-association', 'ReviseStorefrontAssociationResultSchema', associationResult],
+      ['remove-storefront-association', 'RemoveStorefrontAssociationResultSchema', associationResult],
+    ] as const;
+    write(root, `${marketOwner}/package.json`, '{"name":"@app/commerce-market-catalog","type":"module"}');
+    const files = [
+      'shared/action-contracts.ts',
+      ...contracts.flatMap(([slug]) => [
+        `src/actions/${slug}.action.ts`,
+        `shared/actions/${slug}.ts`,
+        `shared/apis/${slug}-action.ts`,
+      ]),
+    ];
+    for (const file of files) {
+      write(root, `${marketOwner}/${file}`, readFileSync(path.join(appRoot, marketOwner, file), 'utf-8'));
+    }
+    const graph = createModuleGraph();
+    const canonicalModule = graph.module(path.join(root, marketOwner, 'shared/action-contracts.ts'));
+    for (const [slug, exported, canonical] of contracts) {
+      const publicModule = graph.module(path.join(root, marketOwner, 'shared/actions', `${slug}.ts`));
+      const result = graph.resolve(publicModule, exported, 'export');
+      const original = graph.resolve(canonicalModule, canonical, 'export');
+      if (result?.kind !== 'declaration' || original?.kind !== 'declaration') {
+        expect.unreachable('Expected the original canonical Action result binding');
+      }
+      expect(result.module.path).toBe(original.module.path);
+      expect(result.expression).toBe(original.expression);
+      expect(graph.resolve(canonicalModule, exported, 'export')).toBeUndefined();
+    }
+    const result = yield* model(root);
+    expect(
+      result.evidence.filter(
+        (fact) => fact.kind === wireAliasKind && fact.source === `${marketOwner}/shared/action-contracts.ts`,
+      ),
+    ).toEqual([]);
+  }),
+);
+
+it.live(
+  'Action alias calibration removes only the two exact proven groups and retains an unused neighbor',
+  Effect.fn(function* actionAliasCalibration() {
+    const root = yield* fixture();
+    for (const [index, names] of actionAliasGroups.entries()) {
+      write(root, `src/group-${index}.ts`, actionAliasSource(names));
+      write(root, `src/action-${index}.ts`, actionResultSource(names[0], `./group-${index}.ts`));
+    }
+    write(
+      root,
+      indexModule,
+      [
+        ...actionAliasGroups.map(
+          (_, index) =>
+            `export { Api as Api${index} } from './group-${index}.ts'; export { action as action${index} } from './action-${index}.ts';`,
+        ),
+        'export const UnusedSchema = 1; export const UnusedAliasSchema = UnusedSchema;',
+      ].join('\n'),
+    );
+    write(root, scopeFile, JSON.stringify({ exclude: [nodeModulesPattern], patterns: [rootSources] }));
+    write(root, configFile, JSON.stringify(config));
+    write(root, reporterModule, readFileSync(path.join(appRoot, reporterModule), 'utf-8'));
+    const output = path.join(root, '.reports');
+    const decode = Schema.decodeUnknownSync(
+      Schema.fromJsonString(
+        Schema.Struct({
+          results: Schema.Array(
+            Schema.Struct({
+              coverage: Schema.Struct({
+                findingCounts: Schema.Record(Schema.String, Schema.Number),
+                modeledFindingCounts: Schema.Record(Schema.String, Schema.Number),
+                nativeFindingCounts: Schema.Record(Schema.String, Schema.Number),
+              }),
+              directory: Schema.String,
+            }),
+          ),
+        }),
+      ),
+    );
+    yield* runQualityAudit(root, output, 'knip').pipe(Effect.provide(NodeServices.layer));
+    const [report] = decode(readFileSync(path.join(output, summaryFile), 'utf-8')).results;
+    expect(report?.coverage.nativeFindingCounts.duplicates).toBe(3);
+    expect(report?.coverage.findingCounts.duplicates).toBe(1);
+    expect(report?.coverage.modeledFindingCounts.duplicates).toBe(2);
+    if (report === undefined) {
+      throw new Error('Expected Action alias report');
+    }
+    expect(readFileSync(path.join(report.directory, nativeReportFile), 'utf-8')).toContain('UnusedAliasSchema');
+    write(
+      root,
+      'src/group-0.ts',
+      `${actionAliasSource(actionAliasGroups[0])}\nexport const ExtraSchema = ${actionAliasGroups[0][0]};`,
+    );
+    yield* runQualityAudit(root, output, 'knip').pipe(Effect.provide(NodeServices.layer));
+    const [extraAlias] = decode(readFileSync(path.join(output, summaryFile), 'utf-8')).results;
+    expect(extraAlias?.coverage.findingCounts.duplicates).toBe(2);
+    expect(extraAlias?.coverage.modeledFindingCounts.duplicates).toBe(1);
+  }),
+);
 
 it.live(
   'generated endpoint groups require a const path into an exported genuine API',
@@ -580,13 +809,13 @@ it.live(
     write(root, indexModule, aliasConsumer);
     write(
       root,
-      'quality-audit/scope.json',
+      scopeFile,
       JSON.stringify({
-        exclude: ['**/node_modules/**'],
+        exclude: [nodeModulesPattern],
         patterns: [rootSources, 'verticals/**/*.ts'],
       }),
     );
-    write(root, 'quality-audit/knip.json', JSON.stringify(config));
+    write(root, configFile, JSON.stringify(config));
     write(root, reporterModule, readFileSync(path.join(appRoot, reporterModule), 'utf-8'));
     const output = path.join(root, '.reports');
     yield* runQualityAudit(root, output, 'knip').pipe(Effect.provide(NodeServices.layer));
@@ -613,7 +842,7 @@ it.live(
     if (report === undefined) {
       throw new Error('Expected Knip report');
     }
-    expect(readFileSync(path.join(report.directory, 'report.ndjson'), 'utf-8')).toContain('UnusedAliasSchema');
+    expect(readFileSync(path.join(report.directory, nativeReportFile), 'utf-8')).toContain('UnusedAliasSchema');
     write(root, aliasFile, registeredAlias.replace('success: ResponseSchema', 'success: BasisSchema'));
     yield* runQualityAudit(root, output, 'knip').pipe(Effect.provide(NodeServices.layer));
     const [invalid] = decode(readFileSync(path.join(output, summaryFile), 'utf-8')).results;

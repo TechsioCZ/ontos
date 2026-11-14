@@ -33,6 +33,8 @@ import { createEndContactPointPartyRegistryContactPointEndedV1OutboxMessage } fr
 export { EndContactPointPayloadSchema } from '../../shared/actions/end-contact-point.ts';
 export type { EndContactPointPayload } from '../../shared/actions/end-contact-point.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const EndContactPointErrorSchema = Schema.Union([
   PartyEvidenceInsufficient,
   PartyPersistenceUnavailable,
@@ -108,8 +110,8 @@ const handleEndContactPoint = Effect.fn('EndContactPointAction.handleEndContactP
       partyRef: contactPoint.partyRef,
       revision: contactPoint.revision,
     },
-    producerModuleKey: 'party.registry',
-    subjectModuleKey: 'party.registry',
+    producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+    subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
     subjectResourceId: contactPoint.contactPointRef.resourceId,
     subjectResourceType: contactPoint.contactPointRef.resourceType,
   });
@@ -152,12 +154,12 @@ export const endContactPointAction = defineAction(
       access: 'write',
       authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.end-contact-point',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: EndContactPointPayloadSchema,
     policies: [],
     resultSchema: EndContactPointResultSchema,

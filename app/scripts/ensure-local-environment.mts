@@ -4,7 +4,6 @@ import { Cause, Config, Effect, Exit, FileSystem, Option, Path, Redacted, Schema
 import { APP_ENV_PATH } from '../packages/core-runtime/src/environment/workspace-environment.ts';
 import {
   localDatabaseIdentityValues,
-  localModuleValues,
   localPublicClientValues,
   localSpiceDbValues,
 } from './local-environment-values.mts';
@@ -86,7 +85,6 @@ const main = Effect.gen(function* ensureLocalEnvironment() {
     Object.entries({
       // Only missing identity URLs are returned, so the replacement below never rewrites one.
       ...(yield* localDatabaseIdentityValues(lines)),
-      ...localModuleValues(lines),
       ...localPublicClientValues(lines, publicClientTopology),
       ...localSpiceDbValues(
         lines,

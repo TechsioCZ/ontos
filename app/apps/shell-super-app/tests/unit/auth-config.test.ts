@@ -1,3 +1,4 @@
+import { mcpResourceUrlOf } from '../../shared/mcp-resource.ts';
 import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -49,3 +50,8 @@ it.effect('keeps gateway signing configuration independent from Better Auth conf
     expect(Schema.is(GatewayIssuerConfigError)(gatewayError)).toBe(true);
   }),
 );
+
+it('derives the MCP resource from the Shell origin', () => {
+  expect(mcpResourceUrlOf('http://localhost:3020')).toBe('http://localhost:3020/mcp');
+  expect(mcpResourceUrlOf('https://ontos-stage.example/cs')).toBe('https://ontos-stage.example/mcp');
+});

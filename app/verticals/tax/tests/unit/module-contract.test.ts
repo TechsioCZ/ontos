@@ -1,4 +1,5 @@
 import { decideModuleStateAccess } from '@app/core-runtime';
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { getReadPermissionTargetResolver } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import { describe, expect, it } from 'effect-rstest';
 import { taxApi } from '../../shared/api.ts';
@@ -16,6 +17,8 @@ import { finalizeOrderTaxAction } from '../../src/actions/finalize-order-tax.act
 import { importSellerVatRegimeDeclarationsAction } from '../../src/actions/import-seller-vat-regime-declarations.action.ts';
 import { applicableTaxRuleSetRead } from '../../src/api/applicable-tax-rule-set.read.ts';
 import { finalOrderTaxRead } from '../../src/api/final-order-tax.read.ts';
+import { sellerVatRegimeAtInstantRead } from '../../src/api/seller-vat-regime-at-instant.read.ts';
+import { taxRuleHistoryRead } from '../../src/api/tax-rule-history.read.ts';
 import { taxEvaluationRead } from '../../src/api/tax-evaluation.read.ts';
 import { taxManifest } from '../../vertical.manifest.ts';
 import { taxRegistration } from '../../vertical.registration.ts';
@@ -91,6 +94,20 @@ describe('Tax module contract', () => {
     });
   });
 
+  it('lets Merchandise and Finance read VAT rates and the regime only as callers, a Storefront only through Merchandise', () => {
+    for (const { descriptor } of [applicableTaxRuleSetRead, sellerVatRegimeAtInstantRead, taxRuleHistoryRead]) {
+      // The caller module is admitted by name; the person it acts for still needs company membership (`identity`).
+      expect(descriptor.accessActor).toEqual({
+        callers: ['merchandise', 'finance-billing'],
+        reason: expect.any(String),
+        subject: 'identity',
+        subjectWorkloadCallers: ['merchandise'],
+        subjectWorkloads: ['demo.storefront-client'],
+      });
+      expect(descriptor.legalEntityScope).toBe('required');
+    }
+  });
+
   it('#949 E29 historical final Order Tax lookup remains denied for quarantined or missing module state', () => {
     const { access } = finalOrderTaxRead.descriptor.entrypoint;
     expect(decideModuleStateAccess('quarantined', access)).toBe('deny');
@@ -103,6 +120,7 @@ describe('Tax module contract', () => {
       'applicable-tax-rule-set',
       'final-order-tax',
       'import-seller-vat-regime-declarations-action',
+      'owner-action-approvals',
       'seller-vat-regime-at-instant',
       'seller-vat-regime-history',
       'tax-correction-preview',
@@ -110,7 +128,9 @@ describe('Tax module contract', () => {
       'tax-materiality-comparison',
       'tax-privacy-owner-coverage',
       'tax-rule-history',
+      'vat-change-rights',
     ]);
+    expect(taxManifest.publicSurface.api['owner-action-approvals']).toBe(OwnerActionApprovalApi);
     expect(taxManifest.publicSurface.actions.map(({ descriptor }) => descriptor.actionKey).toSorted()).toEqual(
       governanceActionKeys,
     );

@@ -158,6 +158,13 @@ export interface ActionCollector<DomainEvents extends DomainEventContractMap> {
   readonly snapshot: () => ActionEvidenceSnapshot;
 }
 
+const decodeDomainEventPayloadJson = <Payload>(payload: Payload) =>
+  Schema.decodeUnknownEffect(Schema.Json)(payload).pipe(
+    Effect.catchTag('SchemaError', () =>
+      Effect.fail(invalidCollectorInput('The decoded Domain Event payload is not JSON')),
+    ),
+  );
+
 export const createActionCollector = <DomainEvents extends DomainEventContractMap>(
   ...[
     domainEventContracts,
@@ -179,6 +186,12 @@ export const createActionCollector = <DomainEvents extends DomainEventContractMa
   const domainEvents: DomainEvent[] = [];
   const outboxMessages: CollectedOutboxMessage[] = [];
   const references = new Map<DomainEventReference, number>();
+
+  const commitAuditEvidence = (decoded: typeof JsonObjectSchema.Type) =>
+    Effect.sync(() => {
+      auditEvidence = cloneAndFreeze(decoded);
+      hasAuditEvidence = true;
+    });
 
   const recordAuditEvidenceInput = <Input>(evidence: Input): Effect.Effect<void, ActionCollectorError> =>
     Schema.decodeUnknownEffect(UnknownRecordSchema)(evidence).pipe(
@@ -228,10 +241,7 @@ export const createActionCollector = <DomainEvents extends DomainEventContractMa
             if (Buffer.byteLength(encoded, 'utf-8') > 4096) {
               return Effect.fail(invalidCollectorInput('Action audit evidence exceeds its size limit'));
             }
-            return Effect.sync(() => {
-              auditEvidence = cloneAndFreeze(decoded);
-              hasAuditEvidence = true;
-            });
+            return commitAuditEvidence(decoded);
           }),
         );
       }),
@@ -295,13 +305,7 @@ export const createActionCollector = <DomainEvents extends DomainEventContractMa
           Effect.catchTag('SchemaError', () =>
             Effect.fail(invalidCollectorInput('The Domain Event payload violates its declared contract')),
           ),
-          Effect.flatMap((payload) =>
-            Schema.decodeUnknownEffect(Schema.Json)(payload).pipe(
-              Effect.catchTag('SchemaError', () =>
-                Effect.fail(invalidCollectorInput('The decoded Domain Event payload is not JSON')),
-              ),
-            ),
-          ),
+          Effect.flatMap(decodeDomainEventPayloadJson),
           Effect.map((payloadJson) => ({ ...decoded, payloadJson })),
         );
       }),

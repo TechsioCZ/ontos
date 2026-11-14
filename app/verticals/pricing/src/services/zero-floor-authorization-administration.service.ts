@@ -371,6 +371,34 @@ const unchangedScheduleMatchesExpected = (
   return false;
 };
 
+const verifyApprovalOutcome = (
+  command: Extract<ManageZeroFloorAuthorizationPersistenceCommand, { readonly intent: 'APPROVE' }>,
+  outcome: Exclude<
+    ManageZeroFloorAuthorizationPersistenceOutcome,
+    { readonly outcome: 'ZERO_FLOOR_AUTHORIZATION_CONFLICT' }
+  >,
+): Effect.Effect<ManageZeroFloorAuthorizationPersistenceOutcome, ZeroFloorAuthorizationPersistenceUnavailable> => {
+  if (
+    outcome.outcome !== 'ZERO_FLOOR_GOVERNANCE_APPROVAL_RECORDED' &&
+    outcome.outcome !== 'ZERO_FLOOR_GOVERNANCE_APPROVAL_REUSED'
+  ) {
+    return Effect.fail(unavailable('ZERO_FLOOR approval returned an unrelated management outcome'));
+  }
+  const { approvalEvidence } = outcome;
+  const expectedGeneration =
+    outcome.outcome === 'ZERO_FLOOR_GOVERNANCE_APPROVAL_RECORDED'
+      ? command.expectedSetGeneration + 1
+      : command.expectedSetGeneration;
+  return outcome.setGeneration === expectedGeneration &&
+    sameAuthorization(approvalEvidence.authorization, command.authorization) &&
+    approvalEvidence.approvalRevision === command.approvalRevision &&
+    approvalEvidence.approvedByPrincipalRef === command.actingPrincipalId &&
+    approvalEvidence.validityPeriod.startsAt === command.validityPeriod.startsAt &&
+    approvalEvidence.validityPeriod.endsAt === command.validityPeriod.endsAt
+    ? Effect.succeed(outcome)
+    : Effect.fail(unavailable('ZERO_FLOOR approval evidence did not bind the trusted approval request'));
+};
+
 const verifyManageOutcome = (
   command: ManageZeroFloorAuthorizationPersistenceCommand,
   outcome: ManageZeroFloorAuthorizationPersistenceOutcome,
@@ -381,25 +409,7 @@ const verifyManageOutcome = (
       : Effect.fail(unavailable('ZERO_FLOOR management conflict did not bind the requested Authorization'));
   }
   if (command.intent === 'APPROVE') {
-    if (
-      outcome.outcome !== 'ZERO_FLOOR_GOVERNANCE_APPROVAL_RECORDED' &&
-      outcome.outcome !== 'ZERO_FLOOR_GOVERNANCE_APPROVAL_REUSED'
-    ) {
-      return Effect.fail(unavailable('ZERO_FLOOR approval returned an unrelated management outcome'));
-    }
-    const { approvalEvidence } = outcome;
-    const expectedGeneration =
-      outcome.outcome === 'ZERO_FLOOR_GOVERNANCE_APPROVAL_RECORDED'
-        ? command.expectedSetGeneration + 1
-        : command.expectedSetGeneration;
-    return outcome.setGeneration === expectedGeneration &&
-      sameAuthorization(approvalEvidence.authorization, command.authorization) &&
-      approvalEvidence.approvalRevision === command.approvalRevision &&
-      approvalEvidence.approvedByPrincipalRef === command.actingPrincipalId &&
-      approvalEvidence.validityPeriod.startsAt === command.validityPeriod.startsAt &&
-      approvalEvidence.validityPeriod.endsAt === command.validityPeriod.endsAt
-      ? Effect.succeed(outcome)
-      : Effect.fail(unavailable('ZERO_FLOOR approval evidence did not bind the trusted approval request'));
+    return verifyApprovalOutcome(command, outcome);
   }
   if (
     outcome.outcome === 'ZERO_FLOOR_GOVERNANCE_APPROVAL_RECORDED' ||

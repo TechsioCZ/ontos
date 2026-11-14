@@ -20,8 +20,11 @@ import { currentSupportedCurrenciesRead } from '../../src/api/current-supported-
 import { exactPriceResolutionRead } from '../../src/api/exact-price-resolution.read.ts';
 import { priceDefinitionRead } from '../../src/api/price-definition.read.ts';
 import { priceScheduleRead } from '../../src/api/price-schedule.read.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 
 import { pricingRegistration } from '../../vertical.registration.ts';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const foreignTenantId = '10000000-0000-4000-8000-000000000002';
@@ -29,6 +32,8 @@ const principalId = '30000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const effectiveAt = '2026-09-22T12:00:00.000Z';
 const observedAt = '2026-09-22T12:00:02.000Z';
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 const scope: OperationalScope = {
   authBindingId: '40000000-0000-4000-8000-000000000001',
   authContextRef: 'session:pricing-read-access-boundary',
@@ -61,14 +66,23 @@ const makeHarness = Effect.fn(function* makePricingReadAccessHarness(options: Ha
   const stages: string[] = [];
   const operationalScope = options.operationalScope ?? scope;
   const database = {
-    executor: yield* makeTestDatabase((text) => {
+    executor: yield* makeTestDatabase((text, params) => {
       if (text.includes('transaction_timestamp')) {
-        return Effect.succeed([{ operation_at: DateTime.toDateUtc(DateTime.makeUnsafe(observedAt)) }]);
+        return Effect.succeed([
+          {
+            legal_entity_id: operationalScope.legalEntityId ?? '',
+            operation_at: DateTime.toDateUtc(DateTime.makeUnsafe(observedAt)),
+            role: 'ontos_runtime',
+            tenant_id: operationalScope.tenantId,
+          },
+        ]);
       }
       if (text.includes('data_access_events')) {
         return Effect.succeed([]);
       }
-      if (text.includes('current_setting')) {
+      // A session-setting role installs its scope and reads back the connected role in one statement.
+      if (text === installAndReadScopeSql) {
+        expect(params).toEqual([operationalScope.tenantId, operationalScope.legalEntityId ?? '']);
         return Effect.succeed([
           {
             legal_entity_id: operationalScope.legalEntityId ?? '',
@@ -135,6 +149,8 @@ const makeHarness = Effect.fn(function* makePricingReadAccessHarness(options: Ha
     contextAccess,
     {
       accessDecision: gate.bound,
+      databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+
       onStage: (stage) => {
         stages.push(stage);
       },

@@ -1,0 +1,15 @@
+{
+  "properties": "Nemovitosti",
+  "emptyProperties": "Zatím tu není žádná nemovitost.",
+  "addProperty": "Přidat nemovitost",
+  "unitCount_one": "{{count}} jednotka",
+  "unitCount_few": "{{count}} jednotky",
+  "unitCount_many": "{{count}} jednotek",
+  "unitCount_other": "{{count}} jednotek",
+  "backToPortfolio": "Zpět na portfolio",
+  "propertyHierarchy": "Nemovitosti a jednotky",
+  "units": "Jednotky",
+  "noUnits": "Tato nemovitost zatím nemá žádné jednotky.",
+  "addUnit": "Přidat jednotku",
+  "archived": "Archivováno"
+}

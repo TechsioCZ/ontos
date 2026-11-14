@@ -2,7 +2,7 @@ import { Predicate, Schema } from 'effect';
 import type { Effect } from 'effect';
 
 import type { OwnerLocalBackgroundAuthorization } from '../authorization/entrypoint-classification.ts';
-import type { TenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
+import type { SystemModuleEntrypoint, TenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
 import { OutboxWorkerDescriptorError } from './errors.ts';
 
 const outboxWorkerRegistration: unique symbol = Symbol('@app/core-runtime/outbox/worker-registration');
@@ -15,7 +15,7 @@ export interface OutboxWorkerRetryPolicy {
 }
 
 export interface OutboxWorkerHandlerContext extends Readonly<
-  Partial<Record<'actorPrincipalId' | 'correlationId' | 'originatorInvocationId', string>>
+  Partial<Record<'actorPrincipalId' | 'correlationId' | 'originatorInvocationId' | 'originatorLegalEntityId', string>>
 > {
   readonly attemptNumber: number;
   readonly claimId: string;
@@ -44,7 +44,9 @@ export interface OutboxWorkerDescriptor<
   /** Owner-local background work is not a user capability and cannot declare catalog access. */
   readonly accessDeclaration?: never;
   readonly consumerModuleKey: Consumer;
-  readonly entrypoint: TenantModuleEntrypoint<'worker', 'background', Consumer, OwnerLocalBackgroundAuthorization>;
+  readonly entrypoint:
+    | SystemModuleEntrypoint<'worker', 'background', Consumer, OwnerLocalBackgroundAuthorization>
+    | TenantModuleEntrypoint<'worker', 'background', Consumer, OwnerLocalBackgroundAuthorization>;
   readonly leaseDurationMs: number;
   /** Defaults to required so existing Legal Entity workers cannot silently broaden their scope. */
   readonly legalEntityScope?: 'forbidden' | 'required';
@@ -64,12 +66,12 @@ export type OutboxWorkerSubscription = Readonly<
   >
 >;
 
-export type OutboxWorkerHandler<Payload, Error, Requirements = never> = (
+export type OutboxWorkerHandler<Payload, Failure, Requirements = never> = (
   payload: Payload,
   context: OutboxWorkerHandlerContext,
-) => Effect.Effect<void, Error, Requirements>;
+) => Effect.Effect<void, Failure, Requirements>;
 
-type BivariantOutboxWorkerHandler<Payload, Error, Requirements> = OutboxWorkerHandler<Payload, Error, Requirements>;
+type BivariantOutboxWorkerHandler<Payload, Failure, Requirements> = OutboxWorkerHandler<Payload, Failure, Requirements>;
 
 export interface OutboxWorkerRegistration<
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
@@ -178,9 +180,16 @@ const assertFiniteInteger = (value: number, minimum: number, maximum: number, la
   }
 };
 
+/** Core background work is independent of tenant module installation, never a vertical escape hatch. */
+export const isCoreSystemOutboxSubscription = (descriptor: OutboxWorkerSubscription): boolean =>
+  descriptor.entrypoint.scope === 'system' &&
+  descriptor.consumerModuleKey.startsWith('core.') &&
+  descriptor.producerModuleKey.startsWith('core.');
+
 const assertWorkerEntrypoint = (descriptor: OutboxWorkerSubscription, reason: string): void => {
   if (
-    descriptor.entrypoint.scope !== 'tenant' ||
+    (descriptor.entrypoint.scope !== 'tenant' && !isCoreSystemOutboxSubscription(descriptor)) ||
+    descriptor.entrypoint.authorization.kind !== 'owner_local_background' ||
     descriptor.entrypoint.role !== 'worker' ||
     descriptor.entrypoint.access !== 'background' ||
     descriptor.entrypoint.moduleKey !== descriptor.consumerModuleKey ||
@@ -224,8 +233,11 @@ export const defineOutboxWorker = <
 ): OutboxWorkerRegistration<PayloadSchema, Consumer, Producer, HandlerError, HandlerRequirements> => {
   assertWorkerSubscription(
     descriptor,
-    'Worker entrypoint must be an immutable tenant worker/background descriptor owned by consumerModuleKey',
+    'Worker entrypoint must be an immutable owner-local worker/background descriptor; system workers require Core owners',
   );
+  if (descriptor.entrypoint.scope === 'system' && descriptor.legalEntityScope !== 'forbidden') {
+    throw descriptorError('Core system workers must explicitly use tenant-wide owner database scope');
+  }
   assertFiniteInteger(descriptor.leaseDurationMs, 1000, 3_600_000, 'leaseDurationMs');
   if (descriptor.maxDeferralMs !== undefined) {
     assertFiniteInteger(descriptor.maxDeferralMs, 1, 90_000_000, 'maxDeferralMs');

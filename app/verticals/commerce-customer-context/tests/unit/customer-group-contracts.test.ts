@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'effect-rstest';
-import { Schema } from 'effect';
+import { Exit, Schema } from 'effect';
+import { CounterpartyCustomerGroupMembershipsRequestSchema } from '../../shared/apis/counterparty-customer-group-memberships.ts';
 import { ApplyCustomerGroupMembershipSourcePayloadSchema } from '../../shared/actions/apply-customer-group-membership-source.ts';
 import { CustomerGroupHistoryRequestSchema } from '../../shared/apis/customer-group-history.ts';
 import { CustomerGroupMembersRequestSchema } from '../../shared/apis/customer-group-members.ts';
@@ -21,6 +22,7 @@ import {
   UpdateCustomerGroupPayloadSchema,
   updateCustomerGroupAction,
 } from '../../src/actions/update-customer-group.action.ts';
+import { counterpartyCustomerGroupMembershipsRead } from '../../src/api/counterparty-customer-group-memberships.read.ts';
 import { customerGroupDetailRead } from '../../src/api/customer-group-detail.read.ts';
 import { customerGroupHistoryRead } from '../../src/api/customer-group-history.read.ts';
 import { customerGroupMembersRead } from '../../src/api/customer-group-members.read.ts';
@@ -207,6 +209,28 @@ describe('Commerce Customer Group contracts', () => {
 
     expect(customerGroupDetailRead.descriptor.accessKind).toBe('detail');
     expect(customerGroupMembersRead.descriptor.accessDeclaration?.selectors).toEqual([]);
+  });
+
+  it('reads counterparty memberships under its published scope-wide capability', () => {
+    const { descriptor } = counterpartyCustomerGroupMembershipsRead;
+    expect(descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(descriptor.owningModuleKey).toBe('commerce.customer-context');
+    expect(descriptor.legalEntityScope).toBe('required');
+    expect(descriptor.accessKind).toBe('list');
+    expect(descriptor.accessDeclaration).toEqual({
+      key: 'commerce.customer-context.counterparty.list-customer-group-memberships',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'customer-groups', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    });
+    expect(descriptor.permissionTarget).toBeUndefined();
+    expect(descriptor.policies).toEqual([]);
+    const decode = Schema.decodeUnknownExit(CounterpartyCustomerGroupMembershipsRequestSchema);
+    expect(Exit.isSuccess(decode({ businessCodes: ['DEALERS'], counterpartyRefs: [] }))).toBe(true);
+    expect(Exit.isFailure(decode({ businessCodes: [], counterpartyRefs: [] }))).toBe(true);
+    expect(Exit.isFailure(decode({ businessCodes: ['dealers'], counterpartyRefs: [] }))).toBe(true);
   });
 
   it('accepts caller-selected time only through the authorized history contract', () => {

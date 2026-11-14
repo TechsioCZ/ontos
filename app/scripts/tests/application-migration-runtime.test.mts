@@ -1,6 +1,8 @@
+import { tmpdir } from 'node:os';
+
 import { NodeServices } from '@effect/platform-node';
 import { Reactivity } from 'effect/reactivity';
-import { Array as EffectArray, ConfigProvider, Effect, Order } from 'effect';
+import { Array as EffectArray, Config, ConfigProvider, Effect, FileSystem, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { selectApplicationMigrationPlan } from '../application-migration-plan.mts';
@@ -9,6 +11,7 @@ import {
   migrationRuntimeIdentityIds,
   pendingMigrationRuntimeIdentityIds,
   loadApplicationMigrationInventory,
+  ApplicationMigrationInventoryError,
 } from '../application-migration-inventory.mts';
 import type { ApplicationMigrationPlan } from '../application-migration-plan.mts';
 import type { ApplicationMigrationStream } from '../application-migration-inventory.mts';
@@ -16,6 +19,7 @@ import {
   assertMigrationVerificationOnly,
   assertNativeMigrationBounds,
   prepareApplicationMigrationPlan,
+  readApplicationMigrationRequirements,
 } from '../application-migration-runtime.mts';
 
 const coreOwner = 'core-runtime';
@@ -60,6 +64,48 @@ const plan: ApplicationMigrationPlan = {
   ],
   schemaVersion: 1,
 };
+const readRequirementsDocument = (document: Schema.Json) =>
+  readApplicationMigrationRequirements('reviewed-requirements.json').pipe(
+    Effect.provide(FileSystem.layerNoop({ readFileString: () => Effect.succeed(JSON.stringify(document)) })),
+    Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}))),
+  );
+
+it.effect('preserves exact bounded and none requirements from both supported document shapes', () =>
+  Effect.gen(function* preservesRequirementsDocuments() {
+    for (const requirements of [
+      { mode: 'none', owners: [] },
+      {
+        mode: 'selected',
+        owners: [{ migrate: true, ownerId: 'example', throughMigration: first.name, verify: true }],
+      },
+    ]) {
+      expect(yield* readRequirementsDocument(requirements)).toEqual(requirements);
+      expect(yield* readRequirementsDocument({ migrationRequirements: requirements, modules: [] })).toEqual(
+        requirements,
+      );
+    }
+  }),
+);
+
+it.effect('rejects ambiguous or misspelled migration instructions before configuration or native execution', () =>
+  Effect.gen(function* rejectsUnknownRequirementsFields() {
+    const boundedTypo = {
+      mode: 'selected',
+      owners: [{ migrate: true, ownerId: 'example', throughMigraton: first.name, verify: true }],
+    };
+    const documents: readonly Schema.Json[] = [
+      { mode: 'none', modules: [], owners: [] },
+      boundedTypo,
+      { migrationRequirement: { mode: 'none', owners: [] }, modules: [] },
+      { migrationRequirements: boundedTypo, modules: [] },
+    ];
+    for (const document of documents) {
+      const failure = yield* readRequirementsDocument(document).pipe(Effect.flip);
+      expect(failure.reason).toBe('Invalid reviewed migration requirements document');
+    }
+  }),
+);
+
 it.effect('rejects a native whole-folder migration beyond the reviewed bound before execution', () =>
   Effect.gen(function* rejectsBound() {
     const failure = yield* assertNativeMigrationBounds(plan, [stream]).pipe(Effect.flip);
@@ -177,6 +223,19 @@ it.effect(
         'storefront-registry',
         'symmy-integration',
         'tax',
+        'property-portfolio',
+        'property-leasing',
+        'legal-agreements',
+        'work-tasks',
+        'workforce',
+        'tagging',
+        'crm',
+        'sales-pipeline',
+        'merchandise',
+        'facility-operations',
+        'sales-insights',
+        'finance-billing',
+        'crm-activities',
         'projects',
         'commerce-cart',
         'commerce-order',
@@ -199,7 +258,18 @@ it.effect(
         'commerce_order',
         'contacts',
         'core',
+        'crm_activities',
+        'demo_crm',
+        'demo_email',
+        'demo_merchandise',
+        'demo_sales_insights',
+        'demo_sales_pipeline',
+        'demo_tagging',
+        'demo_workforce',
+        'facility_operations',
+        'finance_billing',
         'inventory',
+        'legal_agreements',
         'party',
         'payment',
         'payment_term_catalog',
@@ -208,12 +278,22 @@ it.effect(
         'privacy',
         'projects',
         'promotion',
+        'property_leasing',
+        'property_portfolio',
         'storefront_registry',
         'symmy_integration',
         'tax',
         'trust',
+        'work_tasks',
       ]);
       for (const expected of [
+        {
+          journalName: '__drizzle_migrations_core',
+          ownerId: coreOwner,
+          runtimeIdentityIds: ['shared_runtime', 'shell_gateway_issuer'],
+          schemas: ['core', 'trust', 'demo_email'],
+          verifierPaths: ['scripts/verify-core-db-schema.mts'],
+        },
         {
           journalName: '__drizzle_migrations_assortment',
           ownerId: 'assortment',
@@ -270,6 +350,20 @@ it.effect(
           schemas: ['storefront_registry'],
           verifierPaths: ['verticals/storefront-registry/scripts/verify-db-schema.mts'],
         },
+        ...[
+          ['workforce', 'demo_workforce'],
+          ['tagging', 'demo_tagging'],
+          ['crm', 'demo_crm'],
+          ['sales-pipeline', 'demo_sales_pipeline'],
+          ['merchandise', 'demo_merchandise'],
+          ['sales-insights', 'demo_sales_insights'],
+        ].map(([ownerId, schema]) => ({
+          journalName: `__drizzle_migrations_${schema}`,
+          ownerId,
+          runtimeIdentityIds: ['shared_runtime'],
+          schemas: [schema],
+          verifierPaths: [`verticals/${ownerId}/scripts/verify-db-schema.mts`],
+        })),
         {
           journalName: '__drizzle_migrations_symmy_integration',
           ownerId: 'symmy-integration',
@@ -308,4 +402,27 @@ it.effect(
         expect(pendingMigrationRuntimeIdentityIds(core, [])).toEqual([]);
       }
     }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('refuses an unreviewed topology migration owner instead of guessing its schema or verifier', () =>
+  Effect.gen(function* unreviewedMigrationOwner() {
+    const fs = yield* FileSystem.FileSystem;
+    // The CI shard provisions no OWNED_TEMP_DIR; that directory only narrows where this disposable
+    // fixture lives, so an absent value falls back to the system temp root like the sibling tests.
+    const owned = yield* Config.String('OWNED_TEMP_DIR').pipe(Config.withDefault(tmpdir()));
+    const root = yield* fs.makeTempDirectoryScoped({ directory: owned });
+    yield* fs.makeDirectory(`${root}/topology`, { recursive: true });
+    yield* fs.makeDirectory(`${root}/verticals/unreviewed`, { recursive: true });
+    yield* fs.writeFileString(
+      `${root}/topology/reference-topology.json`,
+      '{"verticals":[{"id":"unreviewed","path":"verticals/unreviewed"}]}',
+    );
+    yield* fs.writeFileString(`${root}/verticals/unreviewed/drizzle.config.ts`, '// must not be imported or guessed');
+    const failure = yield* loadApplicationMigrationInventory(root).pipe(Effect.flip);
+    if (Schema.is(ApplicationMigrationInventoryError)(failure)) {
+      expect(failure.reason).toBe('Missing reviewed source migration metadata for unreviewed');
+    } else {
+      yield* Effect.die(failure);
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

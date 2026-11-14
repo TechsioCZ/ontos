@@ -7,8 +7,10 @@ import { PgClient } from '@effect/sql-pg';
 import { Array as EffectArray, Console, Effect, Layer, Option, Order, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { Command, Flag } from 'effect/cli';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { loadAdministrativeDatabaseConnection } from '../packages/core-runtime/src/db/config.ts';
+import { assertDatabaseRoleManifestComplete } from './postgres/runtime-role-bootstrap.mts';
 import { loadApplicationMigrationInventory } from './application-migration-inventory.mts';
 import type { ApplicationMigrationStream } from './application-migration-inventory.mts';
 import { resolveApplicationMigrationRequirements } from './application-migration-plan.mts';
@@ -169,32 +171,50 @@ const verifyApplicationCatalog = (client: PgClient.PgClient, expected: Applicati
     return yield* Effect.void;
   });
 
-/** Source-owned script gateways run once in isolation and report their real process exit status. */
-const verifyOwnerSchema = (path: string) =>
-  Effect.callback<boolean, ApplicationDatabaseVerificationError>((resume) => {
-    const { spawn } = process.getBuiltinModule('node:child_process');
-    const child = spawn(process.execPath, [fileURLToPath(new URL(`../${path}`, import.meta.url))], {
-      stdio: 'inherit',
-    });
-    const onError = (cause: Error) =>
-      resume(Effect.fail(verificationFailure(`Owner database verifier ${path} failed`, cause)));
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-      const outcome = signal ?? `code ${String(code)}`;
-      resume(
-        code === 0
-          ? Effect.succeed(true)
-          : Effect.fail(verificationFailure(`Owner database verifier ${path} exited with ${outcome}`)),
-      );
-    };
-    child.once('error', onError);
-    child.once('exit', onExit);
-    return Effect.sync(() => {
-      child.off('error', onError);
-      child.off('exit', onExit);
-    });
-  }).pipe(Effect.asVoid);
+/** Owner CLIs may start asynchronous runtimes and report failure only through their exit code. */
+export const verifyOwnerSchema = Effect.fn('ApplicationDatabase.verifyOwnerSchema')(function* verifyOwnerSchema(
+  ownerVerifierPath: string,
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const code = yield* spawner
+    .exitCode(
+      ChildProcess.make(
+        process.execPath,
+        [fileURLToPath(new URL(ownerVerifierPath, new URL('../', import.meta.url)))],
+        {
+          stderr: 'inherit',
+          stdout: 'inherit',
+        },
+      ),
+    )
+    .pipe(
+      Effect.mapError((cause) => verificationFailure(`Owner database verifier ${ownerVerifierPath} failed`, cause)),
+    );
+  if (code !== 0) {
+    return yield* verificationFailure(`Owner database verifier ${ownerVerifierPath} exited with code ${code}`);
+  }
+  return yield* Effect.void;
+});
 
-const verifyApplicationDatabase = (ownersOption: Option.Option<string>, requirementsOption: Option.Option<string>) =>
+export const validateVerifierConcurrency = (
+  value: number,
+): Effect.Effect<number, ApplicationDatabaseVerificationError> =>
+  Number.isInteger(value) && value >= 1 && value <= 4
+    ? Effect.succeed(value)
+    : Effect.fail(verificationFailure('Expected --concurrency with an integer between 1 and 4'));
+
+/** Preserve canonical source order while joining every isolated child, including on cancellation. */
+export const verifyOwnerSchemas = (paths: readonly string[], concurrency = 4) =>
+  Effect.forEach(paths, verifyOwnerSchema, { concurrency, discard: true });
+
+const verifyRoleManifest = (client: PgClient.PgClient) =>
+  assertDatabaseRoleManifestComplete(client).pipe(Effect.mapError((failure) => verificationFailure(failure.reason)));
+
+const verifyApplicationDatabase = (
+  ownersOption: Option.Option<string>,
+  requirementsOption: Option.Option<string>,
+  concurrency: number,
+) =>
   Effect.gen(function* verifyApplicationDatabaseEffect() {
     const inventory = yield* loadApplicationMigrationInventory().pipe(
       Effect.mapError((cause) => verificationFailure('Unable to load application migration inventory', cause)),
@@ -247,32 +267,45 @@ const verifyApplicationDatabase = (ownersOption: Option.Option<string>, requirem
         Effect.mapError((cause) =>
           verificationFailure('Unable to connect to the administrative PostgreSQL database', cause),
         ),
-        Effect.flatMap((client) => verifyApplicationCatalog(client, expected)),
+        Effect.flatMap((client) =>
+          Effect.gen(function* verifySelectedCatalog() {
+            yield* verifyApplicationCatalog(client, expected);
+            if (selection.mode === 'all') {
+              yield* verifyRoleManifest(client);
+            }
+          }),
+        ),
         Effect.scoped,
       );
       yield* Console.log('Verified application schemas and migration journals for the selected owner closure');
     }
+    const paths: string[] = [];
     for (const stream of selection.streams) {
       for (const path of stream.verifierPaths) {
-        yield* verifyOwnerSchema(path);
+        paths.push(path);
       }
     }
+    yield* verifyOwnerSchemas(paths, concurrency);
     return yield* Effect.void;
   }).pipe(Effect.tapError((failure) => Console.error(failure.reason)));
 
 export const verifyApplicationDatabaseCommand = Command.make(
   'verify-application-db-schema',
   {
+    concurrency: Flag.Int('concurrency').pipe(Flag.withDefault(4)),
     owners: Flag.String('owners').pipe(Flag.optional),
     requirements: Flag.String('requirements').pipe(Flag.optional),
   },
-  ({ owners, requirements }) => verifyApplicationDatabase(owners, requirements),
+  ({ concurrency, owners, requirements }) =>
+    validateVerifierConcurrency(concurrency).pipe(
+      Effect.flatMap((bounded) => verifyApplicationDatabase(owners, requirements, bounded)),
+    ),
 );
 export const main = Command.run(verifyApplicationDatabaseCommand, { version: '1.0.0' });
 
 if (import.meta.main) {
   NodeRuntime.runMain(
-    Layer.build(Layer.effectDiscard(main).pipe(Layer.provide(Layer.merge(NodeServices.layer, Reactivity.layer)))).pipe(
+    Layer.build(Layer.effectDiscard(main).pipe(Layer.provide(Layer.merge(Reactivity.layer, NodeServices.layer)))).pipe(
       Effect.scoped,
     ),
   );

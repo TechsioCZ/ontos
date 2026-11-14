@@ -1,0 +1,234 @@
+.sf-auth-page {
+  display: grid;
+  min-height: 560px;
+  place-items: center;
+}
+
+.sf-auth-card,
+.sf-registration-card,
+.sf-benefit-card {
+  border-radius: var(--dimension-12);
+  background: var(--color-base);
+}
+
+.sf-auth-card {
+  display: grid;
+  width: min(100%, 450px);
+  gap: var(--dimension-24);
+  padding: var(--dimension-48);
+  box-shadow: 0 10px 15px rgb(0 0 0 / 10%);
+  text-align: center;
+}
+
+.sf-auth-card header,
+.sf-registration-card header {
+  display: grid;
+  gap: var(--dimension-8);
+}
+
+.sf-auth-card h1,
+.sf-registration-card h1 {
+  font-size: 26px;
+  font-weight: var(--font-weight-extrabold);
+  line-height: 1.2;
+}
+
+.sf-auth-card header p,
+.sf-registration-card header p,
+.sf-registration-card > p {
+  color: var(--color-fg-secondary);
+  font-size: 14px;
+}
+
+.sf-auth-card a,
+.sf-registration-card a {
+  text-underline-offset: 3px;
+}
+
+.sf-auth-form {
+  display: grid;
+  gap: var(--dimension-16);
+  text-align: left;
+}
+
+.sf-auth-form__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dimension-16);
+  font-size: 13px;
+}
+
+.sf-auth-divider {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: var(--dimension-12);
+  color: var(--color-fg-secondary);
+  font-size: 13px;
+}
+
+.sf-auth-divider::before,
+.sf-auth-divider::after {
+  height: 1px;
+  background: var(--color-border-primary);
+  content: "";
+}
+
+.sf-registration-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.75fr);
+  gap: var(--dimension-48);
+  align-items: start;
+  padding-block: var(--dimension-40);
+}
+
+.sf-registration-card {
+  display: grid;
+  gap: var(--dimension-24);
+  padding: var(--dimension-48);
+  box-shadow: 0 10px 15px rgb(0 0 0 / 10%);
+}
+
+.sf-benefit-card {
+  display: grid;
+  gap: var(--dimension-20);
+  padding: var(--dimension-32);
+}
+
+.sf-benefit-card h2 {
+  color: var(--color-link);
+  font-size: var(--dimension-20);
+}
+
+.sf-benefit-card ul {
+  display: grid;
+  gap: var(--dimension-20);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sf-benefit-card li {
+  position: relative;
+  display: grid;
+  gap: var(--dimension-4);
+  padding-inline-start: var(--dimension-28);
+}
+
+.sf-benefit-card li::before {
+  position: absolute;
+  left: 0;
+  color: var(--color-fg-accent-success);
+  content: "✓";
+}
+
+.sf-benefit-card span {
+  color: var(--color-fg-secondary);
+}
+
+@media (max-width: 960px) {
+  .sf-registration-page {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .sf-auth-card,
+  .sf-registration-card,
+  .sf-benefit-card {
+    padding: var(--dimension-24);
+  }
+}
+.sf-order-actions,
+.sf-reorder-action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dimension-16);
+  min-width: 0;
+}
+
+.sf-reorder-action > button {
+  max-width: 100%;
+  white-space: normal;
+}
+
+.sf-account-notice {
+  margin-block: var(--dimension-16) var(--dimension-24);
+  color: var(--sf-account-muted);
+  font-size: var(--dimension-16);
+}
+
+.sf-password-change {
+  display: grid;
+  min-width: 0;
+  gap: var(--dimension-24);
+}
+
+.sf-password-change > h3 {
+  font-weight: var(--font-weight-bold);
+}
+
+.sf-password-change .sf-account-notice {
+  margin: 0;
+}
+
+/* Variant identity must remain readable in account cards, including long SKUs. */
+[data-account-products] .sf-catalog-product-card__name,
+[data-account-products] .sf-product-card__description {
+  display: block;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: unset;
+}
+.sf-cart-weight {
+  margin-block: var(--dimension-24);
+}
+
+.sf-cart-weight dl > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--dimension-12);
+}
+
+.sf-cart-weight dd {
+  font-weight: var(--font-weight-bold);
+}
+
+.sf-cart-weight > p {
+  margin-block-start: var(--dimension-8);
+  font-size: var(--text-sm);
+  color: var(--color-fg-secondary);
+}
+.sf-address-autocomplete {
+  min-width: 0;
+}
+
+/* The kit exposes no positioner slot prop; keep its popup above the sticky header. */
+.sf-address-autocomplete [data-part="positioner"] {
+  z-index: var(--z-popup);
+}
+
+/* Combobox has no popup-height prop/token; retain its viewport limit and scrolling list. */
+.sf-address-autocomplete [data-part="content"] {
+  max-height: min(var(--sf-address-popup-max-height), var(--available-height, 100dvh));
+}
+
+.sf-address-autocomplete [data-part="item"] {
+  min-height: var(--dimension-44);
+}
+
+.sf-address-option-label {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.sf-address-status {
+  display: block;
+  margin-top: var(--dimension-8);
+  font-size: var(--text-sm);
+  color: var(--color-fg-secondary);
+}

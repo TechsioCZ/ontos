@@ -20,7 +20,11 @@ declare module '@modern-js/plugin-i18n/runtime' {
     '/access/why': Record<string, never>;
     '/login': Record<string, never>;
     '/modules/$moduleId': { "moduleId": string };
+    '/pripojit': Record<string, never>;
+    '/pripojit/souhlas': Record<string, never>;
+    '/profile': Record<string, never>;
     '/resources/$moduleId/$resourceType/$resourceId': { "moduleId": string; "resourceType": string; "resourceId": string };
     '/search': Record<string, never>;
+    '/set-password': Record<string, never>;
   }
 }

@@ -1,24 +1,28 @@
 #!/usr/bin/env node
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { NodeServices, NodeRuntime } from '@effect/platform-node';
-import { Effect, Equal, FileSystem, Layer, Schema } from 'effect';
-import { parseSync } from 'oxc-parser';
-import type { Expression } from 'oxc-parser';
+import { Effect, Equal, FileSystem, Layer, Predicate, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
+import { parseSync, Visitor } from 'oxc-parser';
+import type { Argument, Expression } from 'oxc-parser';
 
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
   ONTOS_MODULE_CONTRACT_PATH,
   OntosDeploymentAppIdSchema,
   OntosModuleDeploymentContractSchema,
+  OntosMcpToolCatalogJsonSchema,
   OntosModuleIdSchema,
   buildInstalledModuleCatalog,
+  registeredWorkloadCallReceiverIssue,
 } from '../packages/core-runtime/src/index.ts';
 import type {
   InstalledDeploymentContractInput,
   OntosModuleDeploymentContract,
+  RegisteredWorkloadCallReceiver,
 } from '../packages/core-runtime/src/index.ts';
 import { deriveOntosModuleDeploymentContract } from './generate-ontos-module-contract.mts';
 import {
@@ -96,10 +100,13 @@ const ModulePackageSchema = Schema.Struct({
 
 export class OntosModuleContractCheckError extends Schema.TaggedError<OntosModuleContractCheckError>()(
   'OntosModuleContractCheckError',
-  { reason: Schema.String },
+  { cause: Schema.optional(Schema.Defect()), message: Schema.String, reason: Schema.String },
 ) {}
 
-const failure = (reason: string): OntosModuleContractCheckError => new OntosModuleContractCheckError({ reason });
+// `message` carries the full `${filePath} ${reason}` diagnostic; `reason` exposes the same text for
+// callers that match on the failure cause alone.
+const failure = (message: string, cause?: unknown): OntosModuleContractCheckError =>
+  new OntosModuleContractCheckError({ cause, message, reason: message });
 
 const sourceExtensions = new Set(['.cjs', '.cts', '.js', '.jsx', '.mjs', '.mts', '.ts', '.tsx']);
 
@@ -115,7 +122,9 @@ const walkSourceFiles = (directory: string): Effect.Effect<readonly string[], Pl
     const files = yield* Effect.all(
       entries.map((entry) =>
         Effect.gen(function* inspectSourceEntry() {
-          if (entry === 'node_modules' || entry.startsWith('dist')) {
+          // Build output is not authored source: `.output` holds each unit's bundled server build
+          // (~400 MiB of minified JS on a built tree), and parsing it exhausted an 8 GiB heap.
+          if (entry === 'node_modules' || entry === '.output' || entry.startsWith('dist')) {
             return [];
           }
           const target = path.join(directory, entry);
@@ -133,47 +142,146 @@ const walkSourceFiles = (directory: string): Effect.Effect<readonly string[], Pl
     return files.flat();
   });
 
-const checkSharedSourceFile = (fileSystem: FileSystem.FileSystem, filePath: string) =>
-  Effect.gen(function* checkSharedSource() {
-    const content = yield* fileSystem.readFileString(filePath);
-    if (
-      /(?:from\s+|import\s*\(|require\s*\()\s*['"][^'"]*(?:vertical\.manifest|vertical\.registration|vertical\.runtime-declaration)(?:\.ts)?['"]/u.test(
-        content,
-      )
-    ) {
-      yield* failure(`${filePath} imports a private deployment manifest or registration`);
+const staticModuleSource = (node: Expression | Argument | undefined): string | undefined => {
+  if (node?.type === 'Literal' && Predicate.isString(node.value)) {
+    return node.value;
+  }
+  if (node?.type === 'TemplateLiteral' && node.expressions.length === 0) {
+    return node.quasis[0]?.value.cooked ?? undefined;
+  }
+  if (node?.type === 'BinaryExpression' && node.operator === '+') {
+    const left = staticModuleSource(node.left);
+    const right = staticModuleSource(node.right);
+    return left === undefined || right === undefined ? undefined : left + right;
+  }
+  return undefined;
+};
+
+// Keep known path prefixes in computed sources too. The previous checker rejected, for example,
+// require('../verticals/crm/src/' + name); changing discovery must not lose that enforcement.
+const moduleSourceCandidates = (node: Expression | Argument | undefined): readonly string[] => {
+  const resolved = staticModuleSource(node);
+  const candidates = resolved === undefined ? [] : [resolved];
+  if (node?.type === 'BinaryExpression' && node.operator === '+') {
+    // Only the leading path is a standalone prefix. Treating a right-hand filename fragment as
+    // its own import would incorrectly reject an owner's '../' + 'vertical.manifest.ts'.
+    return [...candidates, ...moduleSourceCandidates(node.left)];
+  }
+  if (node?.type === 'ConditionalExpression') {
+    return [...moduleSourceCandidates(node.consequent), ...moduleSourceCandidates(node.alternate)];
+  }
+  if (
+    node?.type === 'TSAsExpression' ||
+    node?.type === 'TSTypeAssertion' ||
+    node?.type === 'TSNonNullExpression' ||
+    node?.type === 'TSSatisfiesExpression' ||
+    node?.type === 'ParenthesizedExpression'
+  ) {
+    return moduleSourceCandidates(node.expression);
+  }
+  return candidates;
+};
+
+export const moduleImportSources = (filePath: string, content: string) => {
+  const parseFailure = () => failure(`${filePath} could not be parsed for module-boundary import checks`);
+  return Effect.gen(function* discoverModuleImports() {
+    const parsed = yield* Effect.try({
+      catch: parseFailure,
+      try: () => parseSync(filePath, content, { astType: 'ts', sourceType: 'unambiguous' }),
+    });
+    if (parsed.errors.length > 0) {
+      return yield* parseFailure();
+    }
+    return yield* Effect.try({
+      catch: parseFailure,
+      try: () => {
+        const sources: string[] = [];
+        new Visitor({
+          CallExpression: (node) => {
+            const { callee } = node;
+            const isRequire =
+              (callee.type === 'Identifier' && callee.name === 'require') ||
+              (callee.type === 'MemberExpression' &&
+                ((!callee.computed && callee.property.type === 'Identifier' && callee.property.name === 'require') ||
+                  (callee.computed && staticModuleSource(callee.property) === 'require')));
+            if (isRequire) {
+              sources.push(...moduleSourceCandidates(node.arguments[0]));
+            }
+          },
+          ExportAllDeclaration: (node) => {
+            sources.push(node.source.value);
+          },
+          ExportNamedDeclaration: (node) => {
+            if (node.source !== null) {
+              sources.push(node.source.value);
+            }
+          },
+          ImportDeclaration: (node) => {
+            sources.push(node.source.value);
+          },
+          ImportExpression: (node) => {
+            sources.push(...moduleSourceCandidates(node.source));
+          },
+          TSImportEqualsDeclaration: (node) => {
+            if (node.moduleReference.type === 'TSExternalModuleReference') {
+              sources.push(node.moduleReference.expression.value);
+            }
+          },
+          TSImportType: (node) => {
+            sources.push(node.source.value);
+          },
+        }).visit(parsed.program);
+        return [...new Set(sources)];
+      },
+    });
+  });
+};
+
+/** Inspect executable/type import syntax, never strings or comments containing fixture source. */
+export const checkModuleContractSourceImports = (filePath: string, content: string, ownerRoot?: string) =>
+  Effect.gen(function* checkModuleContractImports() {
+    const sources = yield* moduleImportSources(filePath, content);
+    const privateOwnerFile = /vertical\.(?:manifest|registration|runtime-declaration)(?:\.ts)?$/u;
+    if (ownerRoot !== undefined) {
+      const hasPrivateOwnerImportViolation = sources.some((specifier) => {
+        if (!privateOwnerFile.test(specifier)) {
+          return false;
+        }
+        if (!specifier.startsWith('.')) {
+          return true;
+        }
+        const resolved = path.resolve(path.dirname(filePath), specifier);
+        return !resolved.startsWith(`${ownerRoot}${path.sep}`);
+      });
+      if (hasPrivateOwnerImportViolation) {
+        return yield* failure(`${filePath} imports another deployment's private owner file`);
+      }
+      return yield* Effect.void;
+    }
+    if (sources.some((specifier) => privateOwnerFile.test(specifier))) {
+      return yield* failure(`${filePath} imports a private deployment manifest or registration`);
     }
     if (
-      /(?:from\s+|import\s*\(|require\s*\()\s*['"][^'"]*(?:verticals\/|@app\/(?!core-runtime(?:\/|['"])))[^'"]*\/(?:src|routes|providers|handlers|repositories|db|vertical\.registration)(?:\/|['"])/u.test(
-        content,
+      sources.some((specifier) =>
+        /(?:verticals\/|@app\/(?!core-runtime(?:\/|$)))[\s\S]*\/(?:src|routes|providers|handlers|repositories|db|vertical\.registration)(?:\/|$)/u.test(
+          specifier,
+        ),
       )
     ) {
-      yield* failure(`${filePath} imports production vertical private source`);
+      return yield* failure(`${filePath} imports production vertical private source`);
     }
+    return yield* Effect.void;
   });
 
+const checkSharedSourceFile = (fileSystem: FileSystem.FileSystem, filePath: string) =>
+  fileSystem
+    .readFileString(filePath)
+    .pipe(Effect.flatMap((content) => checkModuleContractSourceImports(filePath, content)));
+
 const checkOwnerSourceFile = (fileSystem: FileSystem.FileSystem, ownerRoot: string, filePath: string) =>
-  Effect.gen(function* checkOwnerSource() {
-    const content = yield* fileSystem.readFileString(filePath);
-    const imports = [...content.matchAll(/(?:from\s+|import\s*\(|require\s*\()\s*['"](?<specifier>[^'"]+)['"]/gu)];
-    const hasPrivateOwnerImportViolation = imports.some((match) => {
-      const specifier = match.groups?.specifier;
-      if (
-        specifier === undefined ||
-        !/vertical\.(?:manifest|registration|runtime-declaration)(?:\.ts)?$/u.test(specifier)
-      ) {
-        return false;
-      }
-      if (!specifier.startsWith('.')) {
-        return true;
-      }
-      const resolved = path.resolve(path.dirname(filePath), specifier);
-      return !resolved.startsWith(`${ownerRoot}${path.sep}`);
-    });
-    if (hasPrivateOwnerImportViolation) {
-      yield* failure(`${filePath} imports another deployment's private owner file`);
-    }
-  });
+  fileSystem
+    .readFileString(filePath)
+    .pipe(Effect.flatMap((content) => checkModuleContractSourceImports(filePath, content, ownerRoot)));
 
 const checkOwnerDirectory = (fileSystem: FileSystem.FileSystem, ownerRoot: string) =>
   walkSourceFiles(ownerRoot).pipe(
@@ -238,7 +346,7 @@ const validateEmittedContract = (verticalDirectory: string, target: string, expe
     const serialized = new TextDecoder().decode(content);
     const contract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema), {
       onExcessProperty: 'error',
-    })(serialized);
+    })(serialized).pipe(Effect.mapError((cause) => failure(`${contractPath} has an invalid module contract`, cause)));
     if (
       contract.deployment.appId !== expected.deployment.appId ||
       contract.manifest.module.id !== expected.manifest.module.id
@@ -250,6 +358,23 @@ const validateEmittedContract = (verticalDirectory: string, target: string, expe
     }
     if (/sourcePath|importPath|exportPath|registrationPath|handlerPath|migrationPath/u.test(serialized)) {
       yield* failure(`${contractPath} contains forbidden private path metadata`);
+    }
+    const toolCatalogReference = contract.manifest.publicSurface.mcp?.toolCatalog;
+    if (toolCatalogReference !== undefined) {
+      const toolCatalogPath = path.join(publicDirectory, toolCatalogReference.path.slice(1));
+      if (!(yield* fileSystem.exists(toolCatalogPath))) {
+        yield* failure(`${target} output is missing ${toolCatalogReference.path}`);
+      }
+      const toolCatalog = yield* fileSystem.readFile(toolCatalogPath);
+      if (createHash('sha256').update(toolCatalog).digest('hex') !== toolCatalogReference.sha256) {
+        yield* failure(`${toolCatalogPath} does not match the digest its contract pins`);
+      }
+      const tools = yield* Schema.decodeUnknownEffect(OntosMcpToolCatalogJsonSchema, { onExcessProperty: 'error' })(
+        new TextDecoder().decode(toolCatalog),
+      );
+      if (tools.tools.length !== toolCatalogReference.toolCount) {
+        yield* failure(`${toolCatalogPath} does not hold the tool count its contract declares`);
+      }
     }
     const validateResponseHeaders = Effect.gen(function* validateResponseHeadersEffect() {
       const headersPath = path.join(publicDirectory, '_headers');
@@ -480,11 +605,8 @@ const checkVertical = (workspaceRoot: string, vertical: TopologyVertical, contra
       return yield* failure(`${appId} package, manifest, registration, and topology identities disagree`);
     }
     const verticalName = path.basename(relativePath);
-    if (
-      !packageJson.scripts.build?.includes(`--vertical ${verticalName} --target dist`) ||
-      !packageJson.scripts['cloudflare:build']?.includes(`--vertical ${verticalName} --target cloudflare-dist`)
-    ) {
-      return yield* failure(`${appId} build scripts do not emit both module-contract deployment targets`);
+    if (!packageJson.scripts.build?.includes(`--vertical ${verticalName} --target dist`)) {
+      return yield* failure(`${appId} build script does not emit its module-contract deployment target`);
     }
     if (!contractUrl.endsWith(ONTOS_MODULE_CONTRACT_PATH)) {
       return yield* failure(`${appId} development module-contract URL is invalid`);
@@ -492,7 +614,7 @@ const checkVertical = (workspaceRoot: string, vertical: TopologyVertical, contra
     const derived = yield* deriveOntosModuleDeploymentContract({
       vertical: verticalName,
       workspaceRoot,
-    }).pipe(Effect.mapError(() => failure(`${appId} authored module contract could not be derived`)));
+    }).pipe(Effect.mapError((cause) => failure(`${appId} authored module contract could not be derived`, cause)));
     if (declaration !== undefined) {
       yield* validateSplitContributionMarkers(declaration.content, verticalName, derived);
     }
@@ -508,6 +630,111 @@ const checkVertical = (workspaceRoot: string, vertical: TopologyVertical, contra
       expectedAppId: derived.deployment.appId,
     } satisfies InstalledDeploymentContractInput;
   });
+
+/**
+ * Every registered-workload call a module declares must reach a deployment whose published operation version declares
+ * that declaration for that workload (demo divergence exception 8). The Shell drops any other call at runtime too.
+ */
+export const assertRegisteredWorkloadCallsReceived = (
+  contracts: readonly (RegisteredWorkloadCallReceiver & {
+    readonly manifest: {
+      readonly registeredWorkloadCalls?: readonly Parameters<typeof registeredWorkloadCallReceiverIssue>[0][];
+    };
+  })[],
+) =>
+  Effect.forEach(
+    contracts,
+    (caller) =>
+      Effect.forEach(
+        caller.manifest.registeredWorkloadCalls ?? [],
+        (call) => {
+          const issue = registeredWorkloadCallReceiverIssue(
+            call,
+            contracts.find((candidate) => candidate.deployment.appId === call.audience),
+          );
+          return issue === undefined ? Effect.void : Effect.fail(failure(`${caller.deployment.appId} ${issue}`));
+        },
+        { discard: true },
+      ),
+    { discard: true },
+  );
+
+const symmyIntegration = 'symmy-integration';
+const customerContext = 'commerce-customer-context';
+/**
+ * The reviewed callers of each registered workload (demo divergence exception 8). A receiver admits a registered
+ * workload, not a calling module, so without this table any module could declare a call as another module's workload
+ * and act as its principal wherever a tenant registered that workload (for example as Symmy's
+ * `commerce.customer-context.source-write`, which lets Customer Context's owner overlay skip its Counterparty grant
+ * check). Derived from the declarations in `verticals/*\/src/registered-workload-calls.ts`; a new workload, or a new
+ * caller of an existing one, needs a reviewed entry here. Every write workload has exactly one caller; the five shared
+ * workloads are read or check workloads that main's fixtures give to several source modules.
+ */
+export const REVIEWED_REGISTERED_WORKLOAD_CALLERS: ReadonlyMap<string, readonly [string, ...string[]]> = new Map<
+  string,
+  readonly [string, ...string[]]
+>([
+  ['commerce.assortment.symmy-fixture-currentness', ['assortment']],
+  ['commerce.assortment.symmy-fixture-rule-import', [symmyIntegration]],
+  ['commerce.catalog.symmy-product-import', [symmyIntegration]],
+  ['commerce.catalog.symmy-product-read', ['pricing', symmyIntegration]],
+  ['commerce.catalog.symmy-variant-localized-facts', [symmyIntegration]],
+  ['commerce.catalog.symmy-variant-localized-facts-recovery', [symmyIntegration]],
+  ['commerce.customer-context.organization-ico-facts.read', ['privacy']],
+  ['commerce.customer-context.source-read', [symmyIntegration]],
+  ['commerce.customer-context.source-write', [symmyIntegration]],
+  ['commerce.inventory.source-read', [symmyIntegration]],
+  ['commerce.inventory.source-write', [symmyIntegration]],
+  ['commerce.market-catalog.source-read', ['pricing']],
+  ['commerce.pricing.source-read', [symmyIntegration]],
+  ['commerce.pricing.source-write', [symmyIntegration]],
+  ['commerce.tax.symmy-seller-vat-fixture-import', [symmyIntegration]],
+  ['integration.symmy.source-organization-facts.read', ['privacy']],
+  ['party.registry.source-read', [customerContext, 'privacy']],
+  ['party.registry.source-write', [symmyIntegration]],
+  ['payment.source-ingress', ['payment']],
+  ['pricing.price-group-catalog.source-read', [customerContext, symmyIntegration]],
+  ['pricing.price-group-catalog.source-write', [symmyIntegration]],
+  ['privacy.core.organization-business-check', [customerContext, 'party-registry']],
+  ['privacy.core.organization-profile-ico-check', [customerContext]],
+  ['privacy.core.source-processing-check', [customerContext, 'party-registry', symmyIntegration]],
+]);
+
+/**
+ * Every registered-workload call is declared by a reviewed caller of its workload: a workload without a reviewed
+ * entry, or a module the entry does not name (a second declarer of a one-caller workload included), is refused.
+ */
+export const assertRegisteredWorkloadCallers = (
+  contracts: readonly {
+    readonly deployment: { readonly appId: string };
+    readonly manifest: { readonly registeredWorkloadCalls?: readonly { readonly workloadKey: string }[] };
+  }[],
+  reviewedCallers: ReadonlyMap<string, readonly string[]> = REVIEWED_REGISTERED_WORKLOAD_CALLERS,
+) =>
+  Effect.forEach(
+    contracts,
+    ({ deployment: { appId }, manifest }) =>
+      Effect.forEach(
+        manifest.registeredWorkloadCalls ?? [],
+        ({ workloadKey }) => {
+          const callers = reviewedCallers.get(workloadKey);
+          if (callers === undefined) {
+            return Effect.fail(
+              failure(`${appId} declares a call as registered workload ${workloadKey}, which has no reviewed caller`),
+            );
+          }
+          return callers.includes(appId)
+            ? Effect.void
+            : Effect.fail(
+                failure(
+                  `${appId} declares a call as registered workload ${workloadKey}, whose reviewed callers are ${callers.join(', ')}`,
+                ),
+              );
+        },
+        { discard: true },
+      ),
+    { discard: true },
+  );
 
 const checkOntosModuleContractsEffect = (workspaceRoot: string) =>
   Effect.gen(function* checkWorkspaceContracts() {
@@ -539,6 +766,8 @@ const checkOntosModuleContractsEffect = (workspaceRoot: string) =>
     if (duplicateModuleId !== undefined) {
       yield* failure(`duplicate OntOS module ID ${duplicateModuleId}`);
     }
+    yield* assertRegisteredWorkloadCallers(contracts.map(({ contract }) => contract));
+    yield* assertRegisteredWorkloadCallsReceived(contracts.map(({ contract }) => contract));
     buildInstalledModuleCatalog(contracts);
   });
 

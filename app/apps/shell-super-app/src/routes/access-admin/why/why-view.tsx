@@ -2,7 +2,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { FormInput } from '@app/admin-ui/form-controls';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import { DateTime, Option, Schema } from 'effect';
 import { useState } from 'react';
@@ -167,21 +167,6 @@ export const WhyResult = ({ onRetry, result }: { readonly onRetry: () => void; r
   );
 };
 
-export const AgentsUnavailable = () => {
-  const { t } = useModernI18n();
-  return (
-    <section aria-label={t('shell.accessAdmin.agents.title')} className="shell:grid shell:gap-3">
-      <h2 className="shell:text-title-lg">{t('shell.accessAdmin.agents.title')}</h2>
-      <Badge variant="outline">{t('shell.accessAdmin.common.notAvailable')}</Badge>
-      <StatusText showIcon status="default">
-        {t('shell.accessAdmin.agents.unavailable')}
-      </StatusText>
-      <p>{t('shell.accessAdmin.agents.executionUnavailable')}</p>
-      <p>{t('shell.accessAdmin.agents.readOnly')}</p>
-    </section>
-  );
-};
-
 export const WhyView = ({
   draft: initialDraft,
   onCheck,
@@ -301,7 +286,6 @@ export const WhyView = ({
         </Button>
         <p id="why-request-unavailable">{t('shell.accessAdmin.why.requestAccessUnavailable')}</p>
       </div>
-      <AgentsUnavailable />
     </section>
   );
 };

@@ -99,6 +99,14 @@ export interface CounterpartyInvitationRealm {
   readonly tenantId: string;
 }
 
+/** The real v2 grant input used by this fixture, scoped only to its invitation administrator. */
+export const invitationAdministratorRoleInput = (realm: CounterpartyInvitationRealm) =>
+  ({
+    holders: [{ capabilityKeys: ADMINISTRATOR_CAPABILITY_KEYS, principalId: realm.inviterPrincipalId }],
+    legalEntityIds: [realm.legalEntityId],
+    tenantId: realm.tenantId,
+  }) satisfies Pick<Parameters<typeof grantTestTenantRoleAccess>[0], 'holders' | 'legalEntityIds' | 'tenantId'>;
+
 /** The platform services the v2 access writers read the catalog and mint their ids with. */
 const tenantAccessServices = Layer.mergeAll(nodeServicesLayer, nodeCryptoLayer);
 
@@ -111,7 +119,7 @@ const recipientAccessWriters = Effect.fnUntraced(function* recipientAccessWriter
   const database = Context.make(
     CoreDatabase,
     yield* makeCoreDatabase(
-      yield* parseDatabaseConfig({ DATABASE_URL: Redacted.value(target.adminConnectionString) }).pipe(Effect.orDie),
+      yield* parseDatabaseConfig({ DATABASE_URL: Redacted.value(target.writerConnectionString) }).pipe(Effect.orDie),
     ),
   );
   const transport = yield* Effect.acquireRelease(
@@ -254,9 +262,7 @@ export const makeCounterpartyInvitationRealm = Effect.fnUntraced(function* makeC
   // exactly that authority; writing it also publishes the release every portal role is pinned to.
   yield* grantTestTenantRoleAccess({
     ...(yield* environmentTestAccessTarget),
-    holders: [{ capabilityKeys: ADMINISTRATOR_CAPABILITY_KEYS, principalId: realm.inviterPrincipalId }],
-    legalEntityIds: [realm.legalEntityId],
-    tenantId: realm.tenantId,
+    ...invitationAdministratorRoleInput(realm),
   }).pipe(Effect.provide(tenantAccessServices));
   return realm;
 });
@@ -597,7 +603,11 @@ const claimAnswerLoss = function* claimAnswerLoss(droppedAnswers: string[]) {
         return Effect.succeed(result);
       }),
     );
-  return { resolveActionCommit: runtime.resolveActionCommit, runAction };
+  return {
+    resolveActionCommit: runtime.resolveActionCommit,
+    resolveActionExecution: runtime.resolveActionExecution,
+    runAction,
+  };
 };
 
 /**

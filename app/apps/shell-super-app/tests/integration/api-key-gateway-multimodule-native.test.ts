@@ -17,13 +17,14 @@ import {
 } from '@app/shared-contracts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { assert, expect, it } from 'effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { Config, Effect, Layer, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { createLocalJWKSet, jwtVerify } from 'jose';
 
 import { createShellRuntimeContract } from '../../../../scripts/ontos-shell-runtime-contract.ts';
+import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
 import {
   ApiKeyGatewayNativeFixtureError,
   ShellNativeGatewayProblemSchema,
@@ -43,17 +44,13 @@ const bindUser = Effect.fn('ShellNativeMultiModule.bindUser')(function* bindUser
   admin: PgClient.PgClient,
   tenantId: string,
   providerUserId: string,
-  kind: 'integration' | 'service',
-  existingIssuerPrincipalId?: string,
 ) {
-  const issuerPrincipalId = existingIssuerPrincipalId ?? randomUUID();
+  const issuerPrincipalId = randomUUID();
   const principalId = randomUUID();
-  if (existingIssuerPrincipalId === undefined) {
-    yield* admin`insert into core.principals(principal_id,tenant_id,kind,status,display_name)
-    values(${issuerPrincipalId},${tenantId},'human','active','Native provider credential issuer')`;
-  }
   yield* admin`insert into core.principals(principal_id,tenant_id,kind,status,display_name)
-    values(${principalId},${tenantId},${kind},'active','Native independent credential fixture')`;
+    values(${issuerPrincipalId},${tenantId},'human','active','Native provider credential issuer')`;
+  yield* admin`insert into core.principals(principal_id,tenant_id,kind,status,display_name)
+    values(${principalId},${tenantId},'integration','active','Native independent credential fixture')`;
   yield* admin`insert into core.principal_auth_bindings(principal_auth_binding_id,tenant_id,principal_id,authentication_namespace_id,provider,subject_type,provider_subject_id,status)
     values(${randomUUID()},${tenantId},${issuerPrincipalId},${STAFF_AUTHENTICATION_NAMESPACE_ID},'better_auth','user',${providerUserId},'active')`;
   return { issuerPrincipalId, principalId, tenantId };
@@ -90,6 +87,8 @@ it.live(
         );
         const ownedDatabase = yield* makeIsolatedNativeDatabaseFixture({
           compositionSnapshot: snapshot,
+          // The production Shell enrolls Party Registry for gateway scope grants; the clone's trust catalog must too.
+          databaseIdentities: SHELL_DATABASE_IDENTITY_ENROLLMENT,
           mode: 'schema-only',
           purpose: 'implementation-1096-registered-workload-gateway',
         });
@@ -109,7 +108,11 @@ it.live(
               },
             ).pipe(Effect.flip);
             expect(Schema.is(GatewayAuthenticationRequiredProblemSchema)(denied)).toBe(true);
-            expect(legacy.additionalRelaySourceProviderUsers).toEqual([]);
+            // A fixture with no relay or module sources has no module credential to provision.
+            const noSource = yield* legacy.provisionRelaySource().pipe(Effect.flip);
+            expect(Schema.is(ApiKeyGatewayNativeFixtureError)(noSource)).toBe(true);
+            const noModule = yield* legacy.provisionModuleSource('privacy').pipe(Effect.flip);
+            expect(Schema.is(ApiKeyGatewayNativeFixtureError)(noModule)).toBe(true);
           }),
         );
         const shell = yield* makeApiKeyGatewayNativeFixture({
@@ -123,7 +126,7 @@ it.live(
         const tenantSlug = `native-keys-${tenantId}`;
         yield* admin`insert into core.tenants(tenant_id,name,slug,status,default_locale)
       values(${tenantId},'Native credential fixture',${tenantSlug},'active','en')`;
-        const actor = yield* bindUser(admin, tenantId, shell.providerUserId, 'integration');
+        const actor = yield* bindUser(admin, tenantId, shell.providerUserId);
         const actorKey = yield* shell.issueFixtureProviderKey(actor);
         yield* bindKey(admin, actor, actorKey.providerKeyId);
         yield* actorKey.acknowledgeBinding;
@@ -134,22 +137,14 @@ it.live(
           })
           .pipe(Effect.flip);
         expect(Schema.is(ApiKeyGatewayNativeFixtureError)(pending)).toBe(true);
-        assert.isOk(shell.relaySourceProviderUserId);
-        const primary = yield* bindUser(admin, tenantId, shell.relaySourceProviderUserId, 'service');
-        const primaryKey = yield* shell.issueFixtureRelaySourceProviderKey(primary);
-        yield* bindKey(admin, primary, primaryKey.providerKeyId);
-        yield* primaryKey.acknowledgeBinding;
-        const credentials = [primaryKey];
-        const principals = [primary.principalId];
-        for (const source of shell.additionalRelaySourceProviderUsers) {
-          const principal = yield* bindUser(admin, tenantId, source.providerUserId, 'service');
-          const key = yield* shell.issueFixtureModuleProviderKey({ ...principal, sourceAppId: source.sourceAppId });
-          yield* bindKey(admin, principal, key.providerKeyId);
-          yield* key.acknowledgeBinding;
-          credentials.push(key);
-          principals.push(principal.principalId);
-        }
-        expect(shell.additionalRelaySourceProviderUsers.length).toBe(2);
+        // Each module's credential is provisioned by the platform, as on every environment: its own service principal.
+        const primaryKey = yield* shell.provisionRelaySource();
+        const credentials = [
+          primaryKey,
+          yield* shell.provisionModuleSource('party-registry'),
+          yield* shell.provisionModuleSource('privacy'),
+        ];
+        const principals = credentials.map(({ principalId }) => principalId);
         expect(new Set(principals).size).toBe(3);
         expect(new Set(credentials.map(({ providerKeyId }) => providerKeyId)).size).toBe(3);
         const issue = (apiKey: Redacted.Redacted) =>
@@ -223,7 +218,6 @@ it.live(
           SPICEDB_PRESHARED_KEY: Config.Redacted('SPICEDB_PRESHARED_KEY'),
         });
         yield* grantTestTenantRoleAccess({
-          adminConnectionString: Redacted.make(ownedDatabase.connections.admin.connectionString),
           holders: [
             {
               capabilityKeys: ['party.registry.party.read', 'commerce.customer-context.customer-profile.read'],
@@ -233,6 +227,7 @@ it.live(
           legalEntityIds: [governanceLegalEntityId],
           spiceDb: yield* liveFixtureSpiceDb(spiceEnvironment),
           tenantId,
+          writerConnectionString: Redacted.make(ownedDatabase.connections.runtime.connectionString),
         });
         for (const audience of ['party-registry', 'commerce-customer-context'] as const) {
           const scopedSetup = yield* shell.issueFixtureSetupGateway({
@@ -272,56 +267,14 @@ it.live(
         ).pipe(Effect.flip);
         const problem = yield* Schema.decodeUnknownEffect(ShellNativeGatewayProblemSchema)(declined);
         expect(yield* shell.gatewayDiagnostics()).toEqual([{ problem: problem._tag, status: problem.status }]);
-        for (const duplicate of ['primary', 'additional']) {
-          yield* Effect.scoped(
-            Effect.gen(function* rejectReusedHumanIssuer() {
-              const refused = yield* makeApiKeyGatewayNativeFixture({
-                additionalRelaySources: duplicate === 'additional' ? [{ sourceAppId: 'privacy' }] : [],
-                ownedDatabase,
-                productionGate: true,
-                relaySource: { sourceAppId: 'symmy-integration' },
-                snapshotJson,
-              });
-              const original = yield* bindUser(admin, tenantId, refused.providerUserId, 'integration');
-              const originalKey = yield* refused.issueFixtureProviderKey(original);
-              yield* bindKey(admin, original, originalKey.providerKeyId);
-              yield* originalKey.acknowledgeBinding;
-              assert.isOk(refused.relaySourceProviderUserId);
-              const primaryTarget = yield* bindUser(
-                admin,
-                tenantId,
-                refused.relaySourceProviderUserId,
-                'service',
-                duplicate === 'primary' ? original.issuerPrincipalId : undefined,
-              );
-              const issuePrimary = refused.issueFixtureRelaySourceProviderKey(primaryTarget);
-              let attempted = issuePrimary;
-              if (duplicate === 'additional') {
-                const primaryCredential = yield* issuePrimary;
-                yield* bindKey(admin, primaryTarget, primaryCredential.providerKeyId);
-                yield* primaryCredential.acknowledgeBinding;
-                const [additional] = refused.additionalRelaySourceProviderUsers;
-                assert.isOk(additional);
-                const additionalTarget = yield* bindUser(
-                  admin,
-                  tenantId,
-                  additional.providerUserId,
-                  'service',
-                  primaryTarget.issuerPrincipalId,
-                );
-                attempted = refused.issueFixtureModuleProviderKey({
-                  ...additionalTarget,
-                  sourceAppId: additional.sourceAppId,
-                });
-              }
-              const before = yield* admin`select count(*)::integer as count from auth.apikey`;
-              const failure = yield* attempted.pipe(Effect.flip);
-              expect(Schema.is(ApiKeyGatewayNativeFixtureError)(failure)).toBe(true);
-              const after = yield* admin`select count(*)::integer as count from auth.apikey`;
-              expect(after).toEqual(before);
-            }),
-          );
+        // A module's credential is provisioned once: asking again mints no second key.
+        const before = yield* admin`select count(*)::integer as count from auth.apikey`;
+        for (const again of [shell.provisionRelaySource(), shell.provisionModuleSource('privacy')]) {
+          const failure = yield* again.pipe(Effect.flip);
+          expect(Schema.is(ApiKeyGatewayNativeFixtureError)(failure)).toBe(true);
         }
+        const after = yield* admin`select count(*)::integer as count from auth.apikey`;
+        expect(after).toEqual(before);
       }),
     ).pipe(Effect.provide(services)),
   120_000,

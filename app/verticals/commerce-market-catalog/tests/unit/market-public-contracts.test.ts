@@ -352,10 +352,13 @@ describe('Commerce Market public contracts', () => {
       'create-market-action',
       'current-market-catalog',
       'eligible-market-tuples',
+      'market-administration',
       'market-history',
       'market-retirement-effect-recovery',
+      'owner-action-approvals',
       'pricing-current-market-evidence',
       'remove-storefront-association-action',
+      'request-search-rebuild-action',
       'resolve-commerce-market',
       'retire-market-action',
       'revise-market-definition-action',
@@ -378,6 +381,7 @@ describe('Commerce Market public contracts', () => {
         authorizationKind: 'protected',
       },
       { actionKey: 'commerce.market-catalog.remove-storefront-association', authorizationKind: 'protected' },
+      { actionKey: 'commerce.market-catalog.request-search-rebuild', authorizationKind: 'protected' },
       { actionKey: 'commerce.market-catalog.retire-market', authorizationKind: 'protected' },
       { actionKey: 'commerce.market-catalog.revise-market-definition', authorizationKind: 'protected' },
       { actionKey: 'commerce.market-catalog.revise-storefront-association', authorizationKind: 'protected' },
@@ -415,6 +419,12 @@ describe('Commerce Market public contracts', () => {
         method: 'POST',
         operation: 'execute',
         path: '/commerce-market-catalog/actions/remove-storefront-association',
+      },
+      {
+        group: 'requestSearchRebuildAction',
+        method: 'POST',
+        operation: 'execute',
+        path: '/commerce-market-catalog/actions/request-search-rebuild',
       },
       {
         group: 'retireMarketAction',
@@ -651,7 +661,10 @@ describe('Commerce Market public contracts', () => {
     expect(commerceMarketCatalogApiContract.ownerId).toBe('commerce-market-catalog');
     expect(commerceMarketCatalogManifest.module.id).toBe('commerce.market-catalog');
     expect(commerceMarketCatalogRegistration.moduleId).toBe(commerceMarketCatalogManifest.module.id);
-    expect(Object.keys(commerceMarketCatalogManifest.publicSurface.components)).toEqual([]);
+    expect(Object.keys(commerceMarketCatalogManifest.publicSurface.components)).toEqual([
+      'page-eshops',
+      'page-market-detail',
+    ]);
     expect(commerceMarketCatalogManifest.publicSurface.shellContributions.publicComponents).toEqual([]);
     for (const action of commerceMarketCatalogManifest.publicSurface.actions) {
       expect('handler' in action).toBe(false);

@@ -1,12 +1,16 @@
 import {
   loadDatabaseIdentityConnections,
   makeActiveApplicationCompositionLayer,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
+  SHARED_RUNTIME_IDENTITY,
   ReadRuntime,
   runAction,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
+import {
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '@app/party-registry-identity-contracts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeGatewayScopeGrantRegistrar, makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makePartyDeniedAccess } from '../support/live-access-authority.ts';
@@ -18,7 +22,7 @@ import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { Context, Crypto, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
@@ -35,13 +39,20 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     'tenant Party detail checks independent native tenant and module grants without selected Legal Entity',
     () =>
       Effect.gen(function* tenantPartyRead() {
-        const connections = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
+        const connections = yield* loadDatabaseIdentityConnections({
+          enrollment: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+          envPath: '/dev/null',
+        });
         const snapshot = yield* partyCompositionSnapshot;
         const partyConfiguration = connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id];
+        const issuerConfiguration = connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id];
+        const bootstrapConfiguration = connections.runtime[SHARED_RUNTIME_IDENTITY.id];
+        assert.isOk(partyConfiguration !== undefined && issuerConfiguration !== undefined);
+        assert.isOk(bootstrapConfiguration !== undefined);
         const issuerContext = yield* Layer.build(
           PgClient.layer({
             maxConnections: 1,
-            url: Redacted.make(connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id].connectionString),
+            url: Redacted.make(issuerConfiguration.connectionString),
           }).pipe(Layer.provideMerge(Reactivity.layer)),
         );
         const adminContext = yield* Layer.build(
@@ -51,6 +62,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         );
         const fixture = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
+            databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
             // Every declaration this suite reads is granted except the Party identity *field class*
             // (O58): the suite proves the record read stays allowed while the runtime projects the
             // identity fields the caller may not read out of the response (O17).
@@ -63,6 +75,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             actionKeys: [createPartyAction.descriptor.actionKey],
             adminConnectionString: Redacted.make(connections.admin.connectionString),
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+            // The dedicated request role cannot install scope; the scoped native writers take the same
+            // target's shared runtime credential while the actor keeps its own role.
+            bootstrapConnectionString: Redacted.make(bootstrapConfiguration.connectionString),
             compositionRevision: snapshot.composition.revision,
             ownerRegistration: partyRegistryBackendRegistration,
             runtimeConnectionString: Redacted.make(partyConfiguration.connectionString),
@@ -74,7 +89,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         yield* addTestGatewayScopeGrantCleanup(adminClient, [fixture.tenantId]);
         const partyDatabase = yield* makePartyDatabase(partyConfiguration);
         const redemption = makeGatewayAssertionRedemption(partyDatabase.executor);
-        const registrar = makeGatewayScopeGrantRegistrar(Context.get(issuerContext, PgClient.PgClient));
+        const registrar = makeGatewayScopeGrantRegistrar(
+          Context.get(issuerContext, PgClient.PgClient),
+          PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+        );
         const compositionContext = yield* Layer.build(makeActiveApplicationCompositionLayer(Effect.succeed(snapshot)));
         const pair = yield* Effect.tryPromise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
         const publicJwk = yield* Effect.tryPromise(() => exportJWK(pair.publicKey));

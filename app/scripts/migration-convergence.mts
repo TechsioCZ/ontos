@@ -1,0 +1,302 @@
+import { PgClient } from '@effect/sql-pg';
+import { sql } from 'drizzle-orm';
+import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
+import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
+import { readMigrationFiles } from 'drizzle-orm/migrator';
+import type { MigrationMeta } from 'drizzle-orm/migrator';
+import { migrate } from 'drizzle-orm/pg-core/effect/session';
+import { Cause, Config, Crypto, Duration, Effect, FileSystem, Layer, Option, Predicate, Schema } from 'effect';
+
+import {
+  MigrationEquivalenceError,
+  MigrationLedgerRowSchema,
+  planEquivalentMigrations,
+} from './migration-equivalence.mts';
+import type { MigrationHistory } from './migration-equivalence.mts';
+
+/** Code-owned owner entrypoints supply these paths and pins, never runtime input. */
+export interface MigrationConvergenceManifest {
+  readonly folder: string;
+  readonly history: MigrationHistory;
+  readonly snapshots: readonly (readonly [name: string, sha256: string])[];
+}
+
+export interface ConvergentMigrationSource {
+  readonly manifest: MigrationConvergenceManifest;
+  readonly migrations: readonly MigrationMeta[];
+}
+
+/** Native Drizzle captures SQL in memory; historical snapshot bytes are independently pinned. */
+export const loadConvergentMigrationSource = Effect.fn('MigrationConvergence.loadSource')(function* load(
+  manifest: MigrationConvergenceManifest,
+) {
+  const { history } = manifest;
+  const fs = yield* FileSystem.FileSystem;
+  const crypto = yield* Crypto.Crypto;
+  for (const [name, expected] of manifest.snapshots) {
+    const bytes = yield* fs
+      .readFile(`${manifest.folder}/${name}/snapshot.json`)
+      .pipe(
+        Effect.mapError(() => new MigrationEquivalenceError({ history, reason: 'Pinned snapshot is unavailable' })),
+      );
+    const digest = yield* crypto
+      .digest('SHA-256', bytes)
+      .pipe(Effect.mapError(() => new MigrationEquivalenceError({ history, reason: 'Snapshot hashing failed' })));
+    const actual = Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    if (actual !== expected) {
+      return yield* new MigrationEquivalenceError({ history, reason: 'Pinned snapshot bytes changed' });
+    }
+  }
+  const migrations = yield* Effect.try({
+    catch: () => new MigrationEquivalenceError({ history, reason: 'Unable to read native migration history' }),
+    try: () => readMigrationFiles({ migrationsFolder: manifest.folder }),
+  });
+  yield* planEquivalentMigrations(history, migrations, []);
+  return { manifest, migrations } satisfies ConvergentMigrationSource;
+});
+
+const journal = (history: MigrationHistory) => `__drizzle_migrations_${history}`;
+const qualifiedJournal = (history: MigrationHistory) =>
+  sql`${sql.identifier('drizzle')}.${sql.identifier(journal(history))}`;
+
+interface RawMigrationLedgerRow extends Readonly<Record<string, string | number | bigint | null>> {
+  readonly created_at: string | number | bigint | null;
+  readonly hash: string;
+  readonly id: number | string;
+  readonly name: string | null;
+}
+
+const readPlan = Effect.fn('MigrationConvergence.readPlan')(function* readMigrationPlan(
+  database: EffectPgDatabase,
+  source: ConvergentMigrationSource,
+) {
+  const { history } = source.manifest;
+  const relation = `drizzle.${journal(history)}`;
+  const exists = yield* database.execute<{ exists: boolean }>(
+    sql`select to_regclass(${relation}) is not null as exists`,
+    'objects',
+  );
+  const existence = yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ exists: Schema.Boolean })]))(
+    exists,
+  ).pipe(Effect.mapError(() => new MigrationEquivalenceError({ history, reason: 'Journal existence is unknown' })));
+  if (!existence[0].exists) {
+    return yield* planEquivalentMigrations(history, source.migrations, []);
+  }
+  const columns = yield* database.execute<{ column_name: string }>(
+    sql`select column_name from information_schema.columns
+        where table_schema = 'drizzle' and table_name = ${journal(history)}`,
+    'objects',
+  );
+  const columnNames = new Set(columns.map((row) => row.column_name));
+  if (!['id', 'name', 'hash', 'created_at', 'applied_at'].every((name) => columnNames.has(name))) {
+    return yield* new MigrationEquivalenceError({
+      history,
+      reason: 'Existing journal requires a separate version upgrade',
+    });
+  }
+  yield* database.execute(sql`lock table ${qualifiedJournal(history)} in access exclusive mode`, 'objects');
+  const rows = yield* database.execute<RawMigrationLedgerRow>(
+    sql`select id, name, hash, created_at from ${qualifiedJournal(history)} order by id`,
+    'objects',
+  );
+  const ledger = yield* Schema.decodeUnknownEffect(Schema.Array(MigrationLedgerRowSchema))(rows).pipe(
+    Effect.mapError(() => new MigrationEquivalenceError({ history, reason: 'Applied journal rows are malformed' })),
+  );
+  return yield* planEquivalentMigrations(history, source.migrations, ledger);
+});
+
+export const NativeMigrationFailureSchema = Schema.Struct({
+  cause: Schema.optionalKey(Schema.Unknown),
+  code: Schema.optionalKey(Schema.String),
+  constraint: Schema.optionalKey(Schema.String),
+  query: Schema.optionalKey(Schema.String),
+  reason: Schema.optionalKey(Schema.Unknown),
+});
+const SqlStateSchema = Schema.String.pipe(Schema.check(Schema.isPattern(/^[0-9A-Z]{5}$/u)));
+
+const knownMigrationName = (migrations: readonly MigrationMeta[], query: string | undefined): string | undefined => {
+  const matches =
+    query === undefined
+      ? []
+      : migrations.filter((migration) => migration.sql.some((statement) => statement.trim() === query.trim()));
+  return matches.length === 1 ? matches[0]?.name : undefined;
+};
+
+const knownConstraintLabel = (
+  query: string | undefined,
+  migration: string | undefined,
+  constraint: string | undefined,
+): string =>
+  migration !== undefined && constraint !== undefined && query?.includes(`CONSTRAINT "${constraint}"`) === true
+    ? `; constraint ${constraint}`
+    : '';
+
+/** Identify the owner and known migration without exposing SQL, parameters, credentials or database row data. */
+export const describeMigrationFailure = (
+  history: MigrationHistory,
+  migrations: readonly MigrationMeta[],
+  error: typeof NativeMigrationFailureSchema.Type | MigrationEquivalenceError,
+): MigrationEquivalenceError => {
+  if (Schema.is(MigrationEquivalenceError)(error)) {
+    return error;
+  }
+  const initial = Option.getOrUndefined(Schema.decodeUnknownOption(NativeMigrationFailureSchema)(error));
+  let current = initial?.cause ?? initial?.reason;
+  let code = Option.getOrUndefined(Schema.decodeUnknownOption(SqlStateSchema)(initial?.code));
+  let query = initial?.query;
+  let constraint = initial?.constraint;
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (Cause.isCause(current)) {
+      current = Option.getOrUndefined(Cause.findErrorOption(current));
+    } else {
+      if (Schema.is(MigrationEquivalenceError)(current)) {
+        return current;
+      }
+      const failure = Option.getOrUndefined(Schema.decodeUnknownOption(NativeMigrationFailureSchema)(current));
+      if (failure === undefined) {
+        break;
+      }
+      code ??= Option.getOrUndefined(Schema.decodeUnknownOption(SqlStateSchema)(failure.code));
+      query ??= failure.query;
+      constraint ??= failure.constraint;
+      current = failure.cause ?? failure.reason;
+    }
+  }
+  const migration = knownMigrationName(migrations, query);
+  const status = code === undefined ? '' : ` (SQLSTATE ${code})`;
+  const details = {
+    history,
+    reason: `Native migration convergence failed${status}${knownConstraintLabel(query, migration, constraint)}; transaction rolled back or outcome is unknown`,
+  };
+  return new MigrationEquivalenceError(migration === undefined ? details : { ...details, migration });
+};
+
+/**
+ * Native Drizzle owns DDL, savepoints and real journal inserts; convergence itself never rewrites rows,
+ * though an owner preparation may additively extend them inside the same transaction before any plan runs.
+ */
+/**
+ * The effect driver sends each statement as one prepared statement, which PostgreSQL refuses for a chunk
+ * holding several commands (SQLSTATE 42601), while `drizzle-kit migrate` sends chunks as simple queries.
+ * Split every chunk into its top-level commands so one migration file applies identically through both;
+ * the file and its recorded hash are unchanged. Dollar-quoted bodies, quoted text and comments are kept whole.
+ */
+export const topLevelCommands = (chunk: string): readonly string[] => {
+  const commands: string[] = [];
+  let start = 0;
+  let index = 0;
+  while (index < chunk.length) {
+    const rest = chunk.slice(index);
+    const dollar = /^\$[A-Za-z_]*\$/u.exec(rest);
+    if (dollar !== null) {
+      const close = chunk.indexOf(dollar[0], index + dollar[0].length);
+      index = close === -1 ? chunk.length : close + dollar[0].length;
+    } else if (rest.startsWith('--')) {
+      const end = chunk.indexOf('\n', index);
+      index = end === -1 ? chunk.length : end + 1;
+    } else if (rest.startsWith('/*')) {
+      const end = chunk.indexOf('*/', index + 2);
+      index = end === -1 ? chunk.length : end + 2;
+    } else if (rest.startsWith("'") || rest.startsWith('"')) {
+      const quote = rest.charAt(0);
+      let cursor = index + 1;
+      while (cursor < chunk.length && !(chunk.charAt(cursor) === quote && chunk.charAt(cursor + 1) !== quote)) {
+        cursor += chunk.charAt(cursor) === quote ? 2 : 1;
+      }
+      index = cursor + 1;
+    } else if (rest.startsWith(';')) {
+      commands.push(chunk.slice(start, index + 1));
+      index += 1;
+      start = index;
+    } else {
+      index += 1;
+    }
+  }
+  commands.push(chunk.slice(start));
+  return commands.filter((command) => command.replaceAll(/--[^\n]*|\/\*[^]*?\*\/|;/gu, '').trim().length > 0);
+};
+
+const singleCommandChunks = (migration: MigrationMeta): MigrationMeta => ({
+  ...migration,
+  sql: migration.sql.flatMap(topLevelCommands),
+});
+
+export const convergeMigrationHistories = Effect.fn('MigrationConvergence.run')(function* converge(
+  sources: readonly ConvergentMigrationSource[],
+  preparation: Effect.Effect<void, MigrationEquivalenceError, PgClient.PgClient> = Effect.void,
+) {
+  const client = yield* PgClient.PgClient;
+  const database = yield* makeWithDefaults();
+  const [first] = sources;
+  if (first === undefined || new Set(sources.map((source) => source.manifest.history)).size !== sources.length) {
+    return yield* new MigrationEquivalenceError({
+      history: 'core',
+      reason: 'Owner migration histories are missing or repeated',
+    });
+  }
+  return yield* client
+    .withTransaction(
+      Effect.gen(function* convergenceTransaction() {
+        // Also serializes fresh journals, where LOCK TABLE cannot yet be used.
+        yield* database.execute(
+          sql`select pg_advisory_xact_lock(hashtext('ontos.exact-migration-equivalence'), 1)`,
+          'objects',
+        );
+        yield* preparation;
+        const plans = yield* Effect.forEach(
+          sources,
+          (source) => readPlan(database, source).pipe(Effect.map((plan) => ({ manifest: source.manifest, plan }))),
+          { concurrency: 1 },
+        );
+        for (const { manifest, plan } of plans) {
+          yield* migrate(plan.migrations.map(singleCommandChunks), database._.session, {
+            migrationsFolder: manifest.folder,
+            migrationsSchema: 'drizzle',
+            migrationsTable: journal(plan.history),
+          }).pipe(
+            Effect.mapError((error) =>
+              describeMigrationFailure(
+                plan.history,
+                plan.migrations,
+                Option.getOrElse(Schema.decodeUnknownOption(NativeMigrationFailureSchema)(error), () => ({})),
+              ),
+            ),
+          );
+        }
+      }),
+    )
+    .pipe(
+      Effect.mapError((error) =>
+        Predicate.isTagged(error, 'MigrationEquivalenceError')
+          ? error
+          : describeMigrationFailure(
+              first.manifest.history,
+              [],
+              Option.getOrElse(Schema.decodeUnknownOption(NativeMigrationFailureSchema)(error), () => ({})),
+            ),
+      ),
+    );
+});
+
+/**
+ * No dotenv files or owner runtime credentials are loaded.
+ * Preserve server/role statement and lock budgets; the deployment runner owns the overall deadline.
+ */
+export const migrationDatabaseLayer = (history: MigrationHistory) =>
+  Layer.effect(
+    PgClient.PgClient,
+    Effect.gen(function* migrationDatabase() {
+      const url = yield* Config.schema(
+        Schema.Redacted(Schema.Trim.pipe(Schema.check(Schema.isMinLength(1)))),
+        'DATABASE_ADMIN_URL',
+      );
+      return yield* PgClient.makeClient({
+        connectTimeout: Duration.seconds(30),
+        url,
+      }).pipe(
+        Effect.mapError(
+          () => new MigrationEquivalenceError({ history, reason: 'Migration database connection failed' }),
+        ),
+      );
+    }),
+  );

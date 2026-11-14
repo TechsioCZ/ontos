@@ -1,11 +1,13 @@
-import { and, asc, eq, or } from 'drizzle-orm';
+import { and, asc, eq, isNull, or, sql } from 'drizzle-orm';
 import { Cause, DateTime, Effect, Schema } from 'effect';
 
-import { principalAuthBindings, principals } from '../db/schema.ts';
+import { auditEvents, principalAuthBindings, principals } from '../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
+import type { OperationalScope } from '../operations/context.ts';
 import { defineRead } from '../reads/definition.ts';
+import { validateManagedApiKeyTarget } from './managed-api-key-scope.ts';
 import { ReadHandlerUnavailable } from '../reads/errors.ts';
 import { isTrustedSystemPrincipalContext } from './system-principal-context-provenance.ts';
 
@@ -25,6 +27,22 @@ const bindingMetadata = Schema.Struct({
   status: Schema.optionalKey(BindingStatusSchema),
 });
 const PaginationInput = Schema.Struct(paginationInput);
+/**
+ * The tenant-managed key list names no company: it runs in the tenant context and is decided by the
+ * tenant's own identity administration (O7, O12). A company administrator has no tenant context, so
+ * this input is deliberately a separate carrier from the company-agent one below.
+ */
+const TenantManagedInput = Schema.Struct({ ...paginationInput, scope: Schema.Literal('tenant-managed') });
+/**
+ * The company-agent key list names exactly one agent inside exactly one company (O28): it runs in that
+ * company's context, where its own access administrator holds the power, and never in the tenant's.
+ */
+const CompanyAgentInput = Schema.Struct({
+  ...paginationInput,
+  principalId: PrincipalIdSchema,
+  scope: Schema.Literal('company-agent'),
+});
+const ManagedInput = Schema.Union([TenantManagedInput, CompanyAgentInput]);
 const SelfResult = Schema.Struct({
   items: Schema.Array(bindingMetadata),
   nextOffset: Schema.OptionFromNullOr(Schema.Finite),
@@ -35,7 +53,7 @@ const ManagedItem = Schema.Struct({
   bindingRevokedAt: Schema.optionalKey(Schema.OptionFromNullOr(Schema.DateTimeUtc)),
   bindingStatus: Schema.optionalKey(Schema.OptionFromNullOr(BindingStatusSchema)),
   displayName: Schema.optionalKey(Schema.String),
-  kind: Schema.Literals(['service', 'integration']),
+  kind: Schema.Literals(['service', 'integration', 'agent']),
   principalId: PrincipalIdSchema,
   principalStatus: Schema.Literals(['active', 'disabled', 'archived']),
 });
@@ -56,10 +74,9 @@ const readUnavailable = (reason: string, cause: unknown): ReadHandlerUnavailable
 };
 
 interface IdentityReadServices {
-  readonly listManaged: (input: {
-    readonly limit: number;
-    readonly offset: number;
-  }) => Effect.Effect<Schema.Schema.Type<typeof ManagedResult>, ReadHandlerUnavailable>;
+  readonly listManaged: (
+    input: typeof ManagedInput.Type,
+  ) => Effect.Effect<Schema.Schema.Type<typeof ManagedResult>, ReadHandlerUnavailable>;
   readonly listSelf: (input: {
     readonly limit: number;
     readonly offset: number;
@@ -71,9 +88,16 @@ const services = (
   tenantId: string,
   principalId: string,
   authenticationNamespaceId?: string,
+  legalEntityId?: string,
 ): IdentityReadServices => ({
-  listManaged: ({ limit, offset }) =>
-    transaction
+  listManaged: Effect.fn('ManagedPrincipalsRead.listManaged')(function* listManaged(input: typeof ManagedInput.Type) {
+    const { limit, offset } = input;
+    if (input.scope === 'company-agent') {
+      yield* validateManagedApiKeyTarget(transaction, { ...input, legalEntityId, tenantId }).pipe(
+        Effect.mapError((cause) => readUnavailable('The company agent key target is unavailable', cause)),
+      );
+    }
+    return yield* transaction
       .select({
         authBindingId: principalAuthBindings.principalAuthBindingId,
         bindingCreatedAt: principalAuthBindings.createdAt,
@@ -94,10 +118,28 @@ const services = (
             ? []
             : [eq(principalAuthBindings.authenticationNamespaceId, authenticationNamespaceId)]),
           eq(principalAuthBindings.subjectType, 'api_key'),
+          or(eq(principalAuthBindings.status, 'active'), eq(principalAuthBindings.status, 'disabled')),
+          ...(input.scope === 'company-agent'
+            ? [
+                sql`exists (select 1 from ${auditEvents} where
+            ${auditEvents.tenantId} = ${principalAuthBindings.tenantId}
+            and ${auditEvents.actionInvocationId} = ${principalAuthBindings.createdByInvocationId}
+            and ${auditEvents.legalEntityId} = ${legalEntityId}
+            and ${auditEvents.eventType} = 'action.executed' and ${auditEvents.outcome} = 'succeeded'
+            and ${auditEvents.evidenceJson}->>'actionKey' = 'core.identity.bind-managed-api-key')`,
+              ]
+            : []),
         ),
       )
       .where(
-        and(eq(principals.tenantId, tenantId), or(eq(principals.kind, 'service'), eq(principals.kind, 'integration'))),
+        and(
+          eq(principals.tenantId, tenantId),
+          input.scope === 'company-agent'
+            ? and(eq(principals.kind, 'agent'), eq(principals.principalId, input.principalId))
+            : or(eq(principals.kind, 'service'), eq(principals.kind, 'integration')),
+          // The platform's own principals and their keys are the platform's to manage, not a tenant administrator's.
+          isNull(principals.platformRole),
+        ),
       )
       .orderBy(asc(principals.displayName), asc(principals.principalId), asc(principalAuthBindings.createdAt))
       .limit(limit + 1)
@@ -119,8 +161,8 @@ const services = (
             (
               row,
             ): row is typeof row & {
-              readonly kind: 'integration' | 'service';
-            } => row.kind === 'service' || row.kind === 'integration',
+              readonly kind: 'agent' | 'integration' | 'service';
+            } => row.kind === 'service' || row.kind === 'integration' || row.kind === 'agent',
           );
           return {
             items: eligible.slice(0, limit).map((row) => ({
@@ -143,7 +185,8 @@ const services = (
             Effect.mapError((cause) => readUnavailable('Managed identities are temporarily unavailable', cause)),
           ),
         ),
-      ),
+      );
+  }),
   listSelf: ({ limit, offset }) =>
     authenticationNamespaceId === undefined
       ? Effect.fail(
@@ -250,13 +293,15 @@ export const selfApiKeyBindingsRead = defineRead<
     resultSchema: SelfResult,
     schemaVersion: '1',
   },
-  (input, context) =>
-    context.services.listSelf(input).pipe(
-      Effect.map((result) => ({
-        evidence: { resultCount: result.items.length },
-        result,
-      })),
-    ),
+  {
+    load: (input, context) =>
+      context.services.listSelf(input).pipe(
+        Effect.map((result) => ({
+          evidence: { resultCount: result.items.length },
+          result,
+        })),
+      ),
+  },
   (transaction, scope) =>
     scope.authenticationNamespaceId === undefined
       ? Effect.fail(
@@ -268,8 +313,42 @@ export const selfApiKeyBindingsRead = defineRead<
       : Effect.succeed(services(transaction, scope.tenantId, scope.principalId, scope.authenticationNamespaceId)),
 );
 
+/**
+ * The one owner-side service factory both managed-key reads share. `scope.authMethod === 'system'`
+ * runs under the trusted system identity with no authentication namespace; every other caller must
+ * carry the namespace of the session or key that authenticated it.
+ */
+const managedReadServices = (transaction: ScopedTransactionExecutor, scope: OperationalScope) => {
+  if (scope.authMethod === 'system') {
+    return isTrustedSystemPrincipalContext(scope)
+      ? Effect.succeed(services(transaction, scope.tenantId, scope.principalId, undefined, scope.legalEntityId))
+      : Effect.fail(
+          new OperationContextUnavailable({
+            code: 'operation_context_unavailable',
+            reason: 'The trusted system identity context is unavailable',
+          }),
+        );
+  }
+  if (scope.authenticationNamespaceId === undefined) {
+    return Effect.fail(
+      new OperationContextUnavailable({
+        code: 'operation_context_unavailable',
+        reason: 'The authenticated identity namespace is unavailable',
+      }),
+    );
+  }
+  return Effect.succeed(
+    services(transaction, scope.tenantId, scope.principalId, scope.authenticationNamespaceId, scope.legalEntityId),
+  );
+};
+
+/** The field groups both managed-key lists declare, with the exact keys their own declaration owns. */
+/**
+ * Tenant-managed keys: `legalEntityScope: 'optional'` means the gate decides in the tenant context
+ * (O7, O12), so only the tenant's own identity administration may read this list.
+ */
 export const managedPrincipalsRead = defineRead<
-  typeof PaginationInput,
+  typeof TenantManagedInput,
   typeof ManagedResult,
   'core.identity',
   IdentityReadServices,
@@ -321,7 +400,7 @@ export const managedPrincipalsRead = defineRead<
       captureMode: 'metadata_only',
       policyKey: 'core.identity.managed-principals.access.v1',
     },
-    inputSchema: PaginationInput,
+    inputSchema: TenantManagedInput,
     legalEntityScope: 'optional',
     owningModuleKey: 'core.identity',
     policies: [],
@@ -329,32 +408,91 @@ export const managedPrincipalsRead = defineRead<
     resultSchema: ManagedResult,
     schemaVersion: '1',
   },
-  (input, context) =>
-    context.services.listManaged(input).pipe(
-      Effect.map((result) => ({
-        evidence: { resultCount: result.items.length },
-        result,
-      })),
-    ),
-  (transaction, scope) => {
-    if (scope.authMethod === 'system') {
-      return isTrustedSystemPrincipalContext(scope)
-        ? Effect.succeed(services(transaction, scope.tenantId, scope.principalId))
-        : Effect.fail(
-            new OperationContextUnavailable({
-              code: 'operation_context_unavailable',
-              reason: 'The trusted system identity context is unavailable',
-            }),
-          );
-    }
-    if (scope.authenticationNamespaceId === undefined) {
-      return Effect.fail(
-        new OperationContextUnavailable({
-          code: 'operation_context_unavailable',
-          reason: 'The authenticated identity namespace is unavailable',
-        }),
-      );
-    }
-    return Effect.succeed(services(transaction, scope.tenantId, scope.principalId, scope.authenticationNamespaceId));
+  {
+    load: (input, context) =>
+      context.services.listManaged(input).pipe(
+        Effect.map((result) => ({
+          evidence: { resultCount: result.items.length },
+          result,
+        })),
+      ),
   },
+  managedReadServices,
+);
+
+/**
+ * Company-agent keys: `legalEntityScope: 'required'` means the gate decides in the exact named
+ * company (O28), so that company's own access administrator may read its agent's keys while a
+ * different company's administrator and the tenant-only path may not. The owner implementation is
+ * the same one; only the declared carrier and its scope differ.
+ */
+export const companyManagedPrincipalsRead = defineRead<
+  typeof CompanyAgentInput,
+  typeof ManagedResult,
+  'core.identity',
+  IdentityReadServices,
+  ReadHandlerUnavailable,
+  never
+>(
+  {
+    accessDeclaration: {
+      key: 'core.identity.company-agent-key.list-managed',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    accessFieldGroups: [
+      {
+        fieldClass: 'personal_data',
+        fields: ['items.displayName'],
+        key: 'core.identity.company-agent-key.read-personal-data',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'identity', level: 'manage' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+      {
+        fieldClass: 'authentication_metadata',
+        fields: ['items.authBindingId', 'items.bindingCreatedAt', 'items.bindingRevokedAt', 'items.bindingStatus'],
+        key: 'core.identity.company-agent-key.read-authentication-metadata',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'identity', level: 'manage' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
+    accessKind: 'list',
+    entrypoint: defineSystemModuleEntrypoint({
+      access: 'read',
+      authorization: { kind: 'protected' },
+      entrypointKey: 'core.identity.company-managed-principals',
+      moduleKey: 'core.identity',
+      role: 'api',
+    }),
+    evidencePolicy: {
+      captureMode: 'metadata_only',
+      policyKey: 'core.identity.company-managed-principals.access.v1',
+    },
+    inputSchema: CompanyAgentInput,
+    legalEntityScope: 'required',
+    owningModuleKey: 'core.identity',
+    policies: [],
+    readKey: 'core.identity.company-managed-principals',
+    resultSchema: ManagedResult,
+    schemaVersion: '1',
+  },
+  {
+    load: (input, context) =>
+      context.services.listManaged(input).pipe(
+        Effect.map((result) => ({
+          evidence: { resultCount: result.items.length },
+          result,
+        })),
+      ),
+  },
+  managedReadServices,
 );

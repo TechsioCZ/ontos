@@ -15,6 +15,8 @@ import {
 } from '../../db/schema.ts';
 import { installOperationalScope } from '../../db/scoped-transaction.ts';
 import { CoreDatabase } from '../../db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../../db/database-identities.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../../db/types.ts';
 import type { OperationalScope } from '../../operations/context.ts';
 import { ProposalIdSchema } from '../ids.ts';
@@ -73,6 +75,8 @@ import type { EncodedWitness, MandateRow, ProposalRow } from './persistence/reco
  * transaction whose lock and receipt it is part of (O75).
  */
 export interface ApprovalStoreDatabase {
+  /** The enrolled database identities the installed scope is verified against. */
+  readonly enrollment: DatabaseIdentityEnrollment;
   readonly executor: CoreDatabaseExecutor;
   /** Optional until the append-only repository is installed; proposals then fail closed. */
   readonly frozenCommands?: FrozenCommandStore;
@@ -80,6 +84,8 @@ export interface ApprovalStoreDatabase {
 
 /** The store an owner Action builds over the transaction it already owns (O75). */
 export interface JoinedApprovalStoreDatabase {
+  /** The enrolled database identities the installed scope is verified against. */
+  readonly enrollment: DatabaseIdentityEnrollment;
   readonly frozenCommands?: FrozenCommandStore;
   /** The caller's transaction: the store reads and writes in it and never ends it. */
   readonly transaction: CoreTransaction;
@@ -357,6 +363,9 @@ const readBoundApprovals = Effect.fn('approvals.persistence.readBoundApprovals')
     return byProposal;
   }
   const mandateOf = new Map(mandates.map((mandate) => [mandate.mandateId, mandate]));
+  for (const mandate of mandates) {
+    byProposal.set(mandate.proposalId, { mandate, witnesses: [] });
+  }
   const grants = yield* transaction
     .select(mandateGrantColumns)
     .from(accessMandateGrants)
@@ -522,9 +531,10 @@ type ScopedRunner = <Value>(scope: OperationalScope, body: ScopedBody<Value>) =>
 const scopeInstalledIn = <Value>(
   transaction: CoreTransaction,
   scope: OperationalScope,
+  enrollment: DatabaseIdentityEnrollment,
   body: ScopedBody<Value>,
 ): Effect.Effect<Value, StoreFailure> =>
-  installOperationalScope(transaction, scope).pipe(
+  installOperationalScope(transaction, scope, enrollment).pipe(
     Effect.catchTag('OperationContextUnavailable', () =>
       Effect.fail(storageUnavailable('The tenant scope of this approvals write could not be installed')),
     ),
@@ -533,9 +543,9 @@ const scopeInstalledIn = <Value>(
 
 /** The store's ordinary source: one transaction per operation on the pool, which owns the boundary. */
 const requestScoped =
-  (executor: CoreDatabaseExecutor): ScopedRunner =>
+  (executor: CoreDatabaseExecutor, enrollment: DatabaseIdentityEnrollment): ScopedRunner =>
   <Value>(scope: OperationalScope, body: ScopedBody<Value>) =>
-    durable(executor.transaction((transaction) => scopeInstalledIn(transaction, scope, body)));
+    durable(executor.transaction((transaction) => scopeInstalledIn(transaction, scope, enrollment, body)));
 
 /**
  * The transaction a caller opened and still owns (O75). It opens nothing, applies no option and starts
@@ -545,16 +555,18 @@ const requestScoped =
  * together.
  */
 const callerScoped =
-  (transaction: CoreTransaction): ScopedRunner =>
+  (transaction: CoreTransaction, enrollment: DatabaseIdentityEnrollment): ScopedRunner =>
   <Value>(scope: OperationalScope, body: ScopedBody<Value>) =>
-    durable(scopeInstalledIn(transaction, scope, body));
+    durable(scopeInstalledIn(transaction, scope, enrollment, body));
 
 const buildApprovalStore = ({
   crypto,
+  enrollment,
   frozenCommands,
   runInScope,
 }: {
   readonly crypto: Crypto.Crypto;
+  readonly enrollment: DatabaseIdentityEnrollment;
   readonly frozenCommands: FrozenCommandStore | undefined;
   readonly runInScope: ScopedRunner;
 }): ApprovalStoreService => {
@@ -818,7 +830,7 @@ const buildApprovalStore = ({
     return yield* ownerTransaction === undefined
       ? runInScope(scope, persist)
       : durable(
-          installOperationalScope(ownerTransaction, scope).pipe(
+          installOperationalScope(ownerTransaction, scope, enrollment).pipe(
             Effect.catchTag('OperationContextUnavailable', () =>
               Effect.fail(storageUnavailable('The owner Action scope could not be installed for its proposal')),
             ),
@@ -918,7 +930,7 @@ const buildApprovalStore = ({
       return yield* storageConflict('Execution requires a completed proposal with an Action invocation receipt');
     }
     return yield* durable(
-      installOperationalScope(transaction, scope).pipe(
+      installOperationalScope(transaction, scope, enrollment).pipe(
         Effect.catchTag('OperationContextUnavailable', () =>
           Effect.fail(storageUnavailable('The tenant scope of this execution could not be installed')),
         ),
@@ -965,8 +977,9 @@ export const makeDrizzleApprovalStore = (
 ): ApprovalStoreService =>
   buildApprovalStore({
     crypto,
+    enrollment: database.enrollment,
     frozenCommands: database.frozenCommands,
-    runInScope: requestScoped(database.executor),
+    runInScope: requestScoped(database.executor, database.enrollment),
   });
 
 /**
@@ -980,8 +993,9 @@ export const makeJoinedDrizzleApprovalStore = (
 ): ApprovalStoreService =>
   buildApprovalStore({
     crypto,
+    enrollment: database.enrollment,
     frozenCommands: database.frozenCommands,
-    runInScope: callerScoped(database.transaction),
+    runInScope: callerScoped(database.transaction, database.enrollment),
   });
 
 /**
@@ -993,12 +1007,16 @@ export class ApprovalStore extends Context.Service<ApprovalStore, ApprovalStoreS
   '@app/core-runtime/access/approvals/drizzle-store/ApprovalStore',
 ) {}
 
-export const ApprovalStoreLive: Layer.Layer<ApprovalStore, never, CoreDatabase | Crypto.Crypto | FrozenCommands> =
-  Layer.effect(
-    ApprovalStore,
-    Effect.gen(function* makeApprovalStoreLive() {
-      const { executor } = yield* CoreDatabase;
-      const frozenCommands = yield* FrozenCommands;
-      return makeDrizzleApprovalStore({ executor, frozenCommands }, yield* Crypto.Crypto);
-    }),
-  );
+export const ApprovalStoreLive: Layer.Layer<
+  ApprovalStore,
+  never,
+  CoreDatabase | Crypto.Crypto | DatabaseIdentityEnrollmentContext | FrozenCommands
+> = Layer.effect(
+  ApprovalStore,
+  Effect.gen(function* makeApprovalStoreLive() {
+    const { executor } = yield* CoreDatabase;
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
+    const frozenCommands = yield* FrozenCommands;
+    return makeDrizzleApprovalStore({ enrollment, executor, frozenCommands }, yield* Crypto.Crypto);
+  }),
+);

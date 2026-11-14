@@ -1,6 +1,16 @@
+import { PgClient } from '@effect/sql-pg';
+import {
+  OwnerActionApprovalSchemaErrorLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
+} from '@app/core-runtime/access/approvals/owner-http';
+import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { inventoryRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   makeActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
@@ -26,17 +36,18 @@ import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import type { EffectBffRuntimeAssembly } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime, HttpRouter } from '@modern-js/bff-effect/effect-edge';
-import { PgClient } from '@effect/sql-pg';
-import { Reactivity } from 'effect/reactivity';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 
 // <generated-governed-http-handler-support-imports>
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import {
+  ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive,
+  authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
+} from './auth/action-principal.ts';
+import {
+  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
   GatewayAssertionRedemptionDatabaseLive,
   gatewayAssertionRedemptionPgClient,
-  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
 } from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 
@@ -79,6 +90,8 @@ import { microVerticalOperationAttributes } from '@app/shared-contracts';
 import { inventoryApi, inventoryOperationContexts } from '../shared/api.ts';
 import { importSourceAssertionOwnerAuthorizationOverlayLive } from '../src/persistence/import-source-assertion-owner-authorization.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const inventoryReadinessLayer = HttpApiBuilder.group(inventoryApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
@@ -143,11 +156,12 @@ const inventoryReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, in
     ),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
   Layer.provide(nodeCryptoLayer),
   Layer.provide(activeApplicationCompositionLive),
 );
 
-const inventoryActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, inventoryRegistration).pipe(
+const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, inventoryRegistration).pipe(
   Layer.provide(
     Layer.mergeAll(
       activeApplicationCompositionLive,
@@ -163,24 +177,44 @@ const inventoryActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit
     ),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
   Layer.provide(nodeCryptoLayer),
 );
 
-const redemptionDatabaseLive = GatewayAssertionRedemptionDatabaseLive.pipe(
-  Layer.provide(PgClient.layerFrom(gatewayAssertionRedemptionPgClient)),
-  Layer.provide(Reactivity.layer),
+const inventoryActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, inventoryRegistration).pipe(
+  Layer.provideMerge(ownerActionApprovalsLive),
+  Layer.provide(
+    Layer.mergeAll(
+      activeApplicationCompositionLive,
+      CorePersistenceLive,
+      ActionRepositoryLive,
+      ActionPermissionLive,
+      importSourceAssertionOwnerAuthorizationOverlayLive,
+      ContextAccessLive,
+      moduleStateGateLive,
+      moduleEntrypointGatewayLive,
+      operationalScopeResolverLive,
+      accessEnforcementLive,
+    ),
+  ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
+  Layer.provide(nodeCryptoLayer),
 );
-const configuredGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
-  Layer.provide(redemptionDatabaseLive),
+
+const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
+  Layer.provide(
+    GatewayAssertionRedemptionDatabaseLive.pipe(Layer.provide(PgClient.layerFrom(gatewayAssertionRedemptionPgClient))),
+  ),
+  Layer.provide(DatabaseConfigLive),
 );
 
 type InventoryApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof inventoryReadRuntimeLive>>,
-  actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof inventoryActionRuntimeLive>>,
+  actionRuntime: Layer.Layer<ActionRuntime | OwnerActionApprovals, Layer.Error<typeof inventoryActionRuntimeLive>>,
   gatewayAssertionRedemption: Layer.Layer<
     GatewayAssertionRedemptionService,
-    Layer.Error<typeof configuredGatewayAssertionRedemptionLive>
+    Layer.Error<typeof productionGatewayAssertionRedemptionLive>
   >,
 ];
 
@@ -195,6 +229,14 @@ export const makeInventoryApiRuntime = (
   );
   const apiHandlersLive = Layer.mergeAll(
     inventoryReadinessLayer,
+    HttpApiBuilder.group(inventoryApi, 'ownerActionApprovals', (handlers) =>
+      handlers
+        .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+        .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+    ).pipe(
+      GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+    ),
     // <generated-governed-http-handler-layers>
     catalogToStockBindingResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     changeStockSharingEligibilityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -243,7 +285,9 @@ export const makeInventoryApiRuntime = (
     InventoryApiGroups,
     InventoryHandlerRequirements
   >['handlers'] = apiHandlersLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, nodeCryptoLayer)),
+    Layer.provide(
+      Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, nodeCryptoLayer, databaseIdentitiesLive),
+    ),
     Layer.orDie,
   );
 
@@ -257,7 +301,7 @@ const apiRuntime: EffectBffDefinition<typeof inventoryApi> & EffectBffRuntime<ty
   makeInventoryApiRuntime(
     inventoryReadRuntimeLive,
     inventoryActionRuntimeLive,
-    configuredGatewayAssertionRedemptionLive,
+    productionGatewayAssertionRedemptionLive,
   );
 
 export default apiRuntime;

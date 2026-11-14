@@ -665,10 +665,11 @@ it.live(
           count: number;
         }>`select count(*)::integer as count from pricing.prices where tenant_id=${fixture.tenantId}`;
         expect(afterLostAck?.count).toBe(1);
-        const restarted = yield* startProductWorker(fixture.workerArtifact, {
-          ...fixture.environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_PRICING_RESTARTED_PROCESS',
-        });
+        const restarted = yield* startProductWorker(
+          fixture.workerArtifact,
+          { ...fixture.environment, ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_PRICING_RESTARTED_PROCESS' },
+          fixture.moduleKey.secret,
+        );
         const defined = yield* Effect.raceFirst(
           observe(
             'The restarted worker did not recover the committed Price receipt',
@@ -974,6 +975,8 @@ it.live(
         const denied = yield* get(firstPageQuery, 403);
         expect(denied.status).toBe(403);
         const rebound = yield* reader.rebind();
+        yield* fixture.admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+          values(${randomUUID()},${randomUUID()},${fixture.tenantId},${rebound.bindingId},${fixture.legalEntityId},'active')`;
         expect(rebound.bindingId).not.toBe(reader.originalBinding.bindingId);
         expect(rebound.incarnation).not.toBe(reader.originalBinding.incarnation);
         const enrollments = yield* fixture.admin<{

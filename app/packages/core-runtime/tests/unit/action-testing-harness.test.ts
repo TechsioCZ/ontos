@@ -139,11 +139,12 @@ it.effect(
 );
 
 it.effect(
-  'substitutes typed owner services without replacing the private handler',
+  'substitutes only transaction services after the real registered preparation',
   Effect.fn(function* testProgram3() {
     interface CounterServices {
       readonly increment: (amount: number) => Effect.Effect<number>;
     }
+    let preparations = 0;
     const serviceAction = defineAction(
       {
         accessDeclaration: fixtureActionAccess('test.service'),
@@ -175,6 +176,13 @@ it.effect(
       },
       (payload, context) => context.services.increment(payload.amount),
       (): Effect.Effect<CounterServices> => Effect.die('production owner services must not run in this test'),
+      {
+        prepareServices: () =>
+          Effect.sync(() => {
+            preparations += 1;
+            return () => Effect.die('The fixture replaces prepared transaction-service acquisition only');
+          }),
+      },
     );
     let calls = 0;
     const harness = yield* makeActionTestHarness({
@@ -202,7 +210,35 @@ it.effect(
     });
 
     expect(result).toBe(5);
+    expect(preparations).toBe(1);
     expect(calls).toBe(1);
+    expect(harness.snapshot().committed.length).toBe(1);
+  }),
+);
+
+it.effect('executes real preparation for registrations without an explicit test service binding', () =>
+  Effect.gen(function* preserveUnboundPreparation() {
+    let preparations = 0;
+    const registration = defineAction(
+      lifecycleAction.descriptor,
+      (_payload, context) => Effect.succeed({ total: context.services.total }),
+      (): Effect.Effect<{ readonly total: number }> =>
+        Effect.die('The prepared factory must replace ordinary acquisition'),
+      {
+        prepareServices: (payload) =>
+          Effect.sync(() => {
+            preparations += 1;
+            return () => Effect.succeed({ total: payload.amount + 1 });
+          }),
+      },
+    );
+    const harness = yield* makeActionTestHarness({
+      actionPermission: 'allowed',
+      ownerRegistration: fixtureOwner(registration),
+      tenantPermission: 'allowed',
+    });
+    expect(yield* harness.runtime.runAction({ ...request, registration })).toEqual({ total: 3 });
+    expect(preparations).toBe(1);
     expect(harness.snapshot().committed.length).toBe(1);
   }),
 );

@@ -16,8 +16,8 @@ import type { ConsentSelfServiceAuthorityPorts } from '../../../shared/domain/pr
 import { ConsentScopeSchema } from '../../../shared/domain/privacy-consent-scope.ts';
 import type { ConsentScope } from '../../../shared/domain/privacy-consent-scope.ts';
 import type { PrivacySubjectOwnerEvidence, PrivacySubjectRecord } from '../../../shared/domain/privacy-subject.ts';
-import { consentSelfServiceAuthorityUnavailable } from '../../actions/consent-self-service.action.ts';
-import type { ConsentSelfServiceAuthorityScope } from '../../actions/consent-self-service.action.ts';
+import { consentSelfServiceAuthorityUnavailable } from '../../actions/consent-self-service-authority.ts';
+import type { ConsentSelfServiceAuthorityScope } from '../../actions/consent-self-service-authority.ts';
 import { PrivacySubjectPartyOwner } from '../../persistence/privacy-subject-party-owner.ts';
 
 type ProfileResponse = Effect.Success<ReturnType<typeof executeCustomerProfileReadWithAuthorization>>;
@@ -278,11 +278,19 @@ const makeCommerceCustomerContextConsentWithdrawalService = Effect.fn('ConsentPr
     return CommerceCustomerContextConsentWithdrawalService.of({
       forScope: (input) => {
         const { scope } = input;
+        // Each owner call acquires a fresh transport; a prepared revision must still be the one it targets.
+        const acquireTransport = Effect.gen(function* acquireCurrentTransport() {
+          const transport = yield* acquire(scope);
+          if (input.compositionRevision !== undefined && transport.compositionRevision !== input.compositionRevision) {
+            return yield* unavailable();
+          }
+          return transport;
+        });
         const observeProfile = Effect.fn('ConsentProfileAuthority.profile')(function* observeProfile(
           subject: Subject,
           profileId: string,
         ) {
-          const transport = yield* acquire(scope);
+          const transport = yield* acquireTransport;
           const response = yield* executeCustomerProfileReadWithAuthorization(
             {
               authorizationSubject: {
@@ -306,7 +314,7 @@ const makeCommerceCustomerContextConsentWithdrawalService = Effect.fn('ConsentPr
         const observePrincipal = Effect.fn('ConsentProfileAuthority.principal')(function* observePrincipal(
           profile: AvailableProfile,
         ) {
-          const transport = yield* acquire(scope);
+          const transport = yield* acquireTransport;
           const response = yield* executeRetailPrincipalResolutionWithAuthorization(
             { profileRef: profile.profile.profileRef },
             Redacted.value(transport.authorization),
@@ -318,7 +326,7 @@ const makeCommerceCustomerContextConsentWithdrawalService = Effect.fn('ConsentPr
         const observeBinding = Effect.fn('ConsentProfileAuthority.binding')(function* observeBinding(
           principal: BoundPrincipal,
         ) {
-          const transport = yield* acquire(scope);
+          const transport = yield* acquireTransport;
           const response = yield* executeRetailPortalProfileBindingReadWithAuthorization(
             { bindingRef: principal.bindingRef, profileRef: principal.profileRef },
             Redacted.value(transport.authorization),
@@ -330,7 +338,7 @@ const makeCommerceCustomerContextConsentWithdrawalService = Effect.fn('ConsentPr
         const observeAccess = Effect.fn('ConsentProfileAuthority.access')(function* observeAccess(
           binding: AvailableBinding,
         ) {
-          const transport = yield* acquire(scope);
+          const transport = yield* acquireTransport;
           const response = yield* executeRetailAccessDecisionWithAuthorization(
             { profileRef: binding.binding.profileRef, requiredPermission: consentPermission },
             Redacted.value(transport.authorization),
@@ -341,7 +349,9 @@ const makeCommerceCustomerContextConsentWithdrawalService = Effect.fn('ConsentPr
         });
         const observeInitialSources = Effect.fn('ConsentProfileAuthority.initialSources')(
           function* observeInitialSources(subject: Subject, profileId: string) {
-            const party = yield* partyOwner.resolve(subject.partyRef, scope, false).pipe(Effect.mapError(unavailable));
+            const party = yield* partyOwner
+              .resolve(subject.partyRef, scope, false, undefined, undefined, input.compositionRevision)
+              .pipe(Effect.mapError(unavailable));
             return yield* observeProfile(subject, profileId).pipe(Effect.map((profile) => ({ party, profile })));
           },
         );
@@ -351,10 +361,12 @@ const makeCommerceCustomerContextConsentWithdrawalService = Effect.fn('ConsentPr
           requested: ConsentScope,
         ) {
           const binding = yield* observeBinding(principal);
-          const current = yield* partyOwner.resolve(subject.partyRef, scope, false).pipe(
-            Effect.mapError(unavailable),
-            Effect.map((party) => ({ binding, party })),
-          );
+          const current = yield* partyOwner
+            .resolve(subject.partyRef, scope, false, undefined, undefined, input.compositionRevision)
+            .pipe(
+              Effect.mapError(unavailable),
+              Effect.map((party) => ({ binding, party })),
+            );
           return yield* resolveStored(input, requested).pipe(Effect.map((retained) => ({ ...current, retained })));
         });
         return {
@@ -410,6 +422,7 @@ const makeCommerceCustomerContextConsentWithdrawalService = Effect.fn('ConsentPr
             if (bindingFreshness === undefined || permissionFreshness === undefined) {
               return yield* unavailable();
             }
+            input.observePartyEvidence?.(final.party);
             return yield* Schema.decodeUnknownEffect(TrustedPortalConsentAuthorityFactSchema)({
               actorPrincipalRef: principalRef,
               authorizedScope: retained.decision.scope,

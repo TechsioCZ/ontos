@@ -14,10 +14,9 @@
  * acting-person-kind reads to `input.transaction` — and this adapter stays off until an owner binds
  * it and the runner's own proposal lock is proved against them.
  */
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { Context, DateTime, Effect, Option, Result, Schema } from 'effect';
 
-import { freezeCommand, FrozenCommandSchema } from './command.ts';
 import type { FrozenCommand } from './command.ts';
 import { ActionKeySchema, verifyFrozenCommand } from './frozen-command.ts';
 import type { FrozenCommandRecord, FrozenCommandStore } from './frozen-command.ts';
@@ -26,18 +25,17 @@ import type { AccessDecision } from '../decision/contract.ts';
 import {
   AccessScopeIdSchema,
   CommandDigestSchema,
+  CapabilityKeySchema,
   PrincipalIdSchema,
   ProposalIdSchema,
   TenantIdSchema,
 } from '../ids.ts';
-import type { CapabilityKey, CommandDigest, ProposalId, RecordKey, AccessScopeId } from '../ids.ts';
-import type { AuthorityWitness } from '../model.ts';
-import { withOptional } from '../decision/optional.ts';
+import type { CapabilityKey, CommandDigest, ProposalId, RecordKey } from '../ids.ts';
 import { ApprovalAuthorityUnavailableError, ApprovalStorageUnavailableError } from './errors.ts';
-import { uniqueBoundWitnesses } from './proposal.ts';
-import type { BoundWitness } from './proposal.ts';
 import { ActionInvocationRefSchema } from './execution.ts';
 import type { ApprovalsService } from './service.ts';
+import { liveApprovalsService } from './service.ts';
+import type { OwnerActionApprovalConfiguration } from './owner-native-services.ts';
 import type { ActionTransportMetadata } from '../../actions/context.ts';
 import {
   ActionPermissionDenied as ActionPermissionDeniedError,
@@ -51,15 +49,32 @@ import {
   actionInvocations,
 } from '../../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../../db/types.ts';
+import type { DatabaseIdentityEnrollment } from '../../db/database-identities.ts';
 import { installOperationalScope } from '../../db/scoped-transaction.ts';
 import type { OperationalScope } from '../../operations/context.ts';
 import type { LegalEntityScope } from '../../operations/legal-entity-scope.ts';
+import type { AnyActionRegistration } from '../../actions/definition.ts';
+import { computeCanonicalValueHash } from '../../actions/repository.ts';
+import { decodeActionCommandV2, rebindRegisteredActionCommandV2 } from './action-command-v2.ts';
+import type { ActionCommandV2 } from './action-command-v2.ts';
+import {
+  actionProposalBindingV2,
+  makeOwnerActionApprovalLifecycleV2,
+  preparedActionExecutionV2,
+  preparedActionProposalV2,
+} from './action-lifecycle-v2.ts';
+import type {
+  ActionApprovalLifecycleV2,
+  PreparedActionExecutionV2,
+  PreparedActionProposalV2,
+} from './action-lifecycle-v2.ts';
 
 /** Trusted command loaded from the proposal's append-only record; never an execute-request body. */
 export interface MandatePrepared {
   readonly approverId: string;
   readonly command: FrozenCommand;
   readonly commandDigest: string;
+  readonly executionPreparation?: PreparedActionExecutionV2;
   readonly mandateId: NonNullable<ActionTransportMetadata['mandateId']>;
   readonly proposalId: string;
   readonly scopeId: string;
@@ -77,6 +92,12 @@ export interface MandatePrepared {
  * `loadParkedProposal` answers a retried propose request with the receipt it already stored.
  */
 export interface ActionMandateDispatch {
+  /** Acquires bound authority after invocation identity exists, outside the owner writer. */
+  readonly authorizeExecution?: (input: {
+    readonly prepared: MandatePrepared;
+    readonly registration: AnyActionRegistration;
+    readonly scope: OperationalScope;
+  }) => Effect.Effect<MandatePrepared, ActionPermissionDeniedError | ActionPermissionCheckError>;
   readonly claim: (
     input: MandateTransactionInput,
   ) => Effect.Effect<void, ActionPermissionDeniedError | ActionPermissionCheckError>;
@@ -98,9 +119,16 @@ export interface ActionMandateDispatch {
     readonly capabilityKey: string;
     readonly legalEntityScope?: LegalEntityScope;
     readonly mandateId: NonNullable<ActionTransportMetadata['mandateId']>;
+    readonly registration?: AnyActionRegistration;
     readonly requestPayload: unknown;
     readonly scope: OperationalScope;
   }) => Effect.Effect<MandatePrepared, ActionPermissionDeniedError | ActionPermissionCheckError>;
+  readonly prepareProposal?: (input: {
+    readonly actionInvocationId: string;
+    readonly command: ActionCommandV2;
+    readonly registration: AnyActionRegistration;
+    readonly scope: OperationalScope;
+  }) => Effect.Effect<PreparedActionProposalV2, ActionPermissionDeniedError | ActionPermissionCheckError>;
 }
 
 /** The parked proposal the runner answers 202 with; it never carries a handler result (O85). */
@@ -122,6 +150,7 @@ export interface ActionProposalParkInput {
   readonly now: Date;
   /** The encoded wire form of the decoded request payload; anything not JSON is refused. */
   readonly payload: unknown;
+  readonly preparation?: PreparedActionProposalV2;
   readonly scope: OperationalScope;
   readonly target?: RecordKey;
   readonly transaction: CoreTransaction;
@@ -146,74 +175,7 @@ const fenceUnavailable = (cause?: unknown) => {
   return failure;
 };
 
-/** The one access scope of a tenant context (no company) or of one company; anything else is the typed 503. */
-const scopeFenceOf = Effect.fn('ActionMandateDispatch.scopeFenceOf')(function* scopeFenceOfEffect(
-  transaction: CoreTransaction,
-  tenantId: OperationalScope['tenantId'],
-  legalEntityId?: OperationalScope['legalEntityId'],
-) {
-  const scopes = yield* transaction
-    .select({ scopeId: accessScopes.scopeId })
-    .from(accessScopes)
-    .where(
-      and(
-        eq(accessScopes.tenantId, tenantId),
-        legalEntityId === undefined
-          ? isNull(accessScopes.legalEntityId)
-          : eq(accessScopes.legalEntityId, legalEntityId),
-      ),
-    )
-    .pipe(Effect.mapError((cause) => fenceUnavailable(cause)));
-  const [resolved] = scopes;
-  return scopes.length === 1 && resolved !== undefined ? resolved.scopeId : yield* fenceUnavailable();
-});
-
-/** Holds one scope's fence to commit; only a Ready fence admits, so a Changing writer is a 503. */
-const lockScopeFence = Effect.fn('ActionMandateDispatch.lockScopeFence')(function* lockScopeFenceEffect(
-  transaction: CoreTransaction,
-  tenantId: OperationalScope['tenantId'],
-  scopeId: string,
-) {
-  const fences = yield* transaction
-    .execute<{ readonly state: string | null }>(
-      sql`select trust.lock_access_scope_fence(${tenantId}::uuid, ${scopeId}::uuid) as state`,
-      'objects',
-    )
-    .pipe(Effect.mapError((cause) => fenceUnavailable(cause)));
-  return fences.length === 1 && fences[0]?.state === 'Ready' ? yield* Effect.void : yield* fenceUnavailable();
-});
-
-/**
- * The same scope fence the intent/projection writer changes from Ready to Changing. A shared row
- * lock is held to commit: an exclusive writer cannot acquire the fence between the second gate
- * decision and the owner write. Missing/Changing/Unavailable is 503, never an implicit grant.
- * This is not a replacement for the one gate: the runner re-decides while holding this lock.
- *
- * Request identities hold no grant on `core.access_scope_fences`. The lock is taken by the
- * `trust.lock_access_scope_fence` routine, which only reaches a fence of the tenant the transaction's
- * established scope allows. Any SQL failure of either read is the typed 503, never a defect.
- */
-export const lockActionAccessFence = Effect.fn('ActionMandateDispatch.lockAccessFence')(
-  function* lockActionAccessFenceEffect(
-    transaction: CoreTransaction,
-    scope: OperationalScope,
-    legalEntityScope: LegalEntityScope,
-    administrative: boolean,
-  ) {
-    if (!administrative && legalEntityScope === 'required' && scope.legalEntityId === undefined) {
-      return yield* fenceUnavailable();
-    }
-    const company = !administrative && legalEntityScope === 'required' ? scope.legalEntityId : undefined;
-    // The projection writer turns the tenant context's fence to Changing for the whole tenant and projects
-    // every company under it, so that is the fence a decision must hold. A company Action also holds its
-    // own company's fence, taken second in the writer's order, so neither scope can change under it.
-    const tenantFence = yield* scopeFenceOf(transaction, scope.tenantId);
-    yield* lockScopeFence(transaction, scope.tenantId, tenantFence);
-    return company === undefined
-      ? yield* Effect.void
-      : yield* lockScopeFence(transaction, scope.tenantId, yield* scopeFenceOf(transaction, scope.tenantId, company));
-  },
-);
+export { lockActionAccessFence } from './action-access-fence.ts';
 
 const refused = (reason: string) => new ActionPermissionDeniedError({ code: 'action_permission_denied', reason });
 
@@ -234,9 +196,12 @@ const proposalFailure = (error: {
 
 /** A missing/foreign/ended mandate is never authority; storage/identity outages remain retryable. */
 export interface MandateDispatchDependencies {
+  readonly actionCommands?: ActionApprovalLifecycleV2;
   /** Binds the existing approvals service to the caller's own scoped store and authority inspector. */
   readonly approvalsFor: (scope: OperationalScope) => ApprovalsService;
   readonly database: { readonly executor: CoreDatabaseExecutor };
+  /** The enrolled database identities the installed scope is verified against. */
+  readonly enrollment: DatabaseIdentityEnrollment;
   readonly frozenCommands: FrozenCommandStore;
   readonly principalKinds: AccessPrincipalKinds;
 }
@@ -380,42 +345,76 @@ const settleProposedReceipt = Effect.fn('ActionMandateDispatch.settleProposedRec
   },
 );
 
-/** The propose-mode witnesses the gate resolved for this command, and the one scope they share. */
-const requesterAuthorityOf = (
-  decision: AccessDecision,
-  capabilityKey: CapabilityKey,
-): Result.Result<{ readonly requesterAuthority: readonly BoundWitness[]; readonly scopeId: AccessScopeId }, string> => {
-  const witnesses: AuthorityWitness[] = [];
-  for (const { witness } of decision.evidence) {
-    if (witness.capabilityKey === capabilityKey) {
-      witnesses.push(witness);
-    }
-  }
-  const [firstWitness] = witnesses;
-  if (firstWitness === undefined || witnesses.some((witness) => witness.scopeId !== firstWitness.scopeId)) {
-    return Result.fail('The gate resolved no single propose scope for this command');
-  }
-  return Result.succeed({
-    requesterAuthority: uniqueBoundWitnesses(
-      witnesses.map((witness) => ({
-        assignmentIncarnationId: witness.assignmentIncarnationId,
-        capabilityKey: witness.capabilityKey,
-        grantIncarnationId: witness.grantIncarnationId,
-        holderId: witness.holderId,
-        scopeId: witness.scopeId,
-      })),
-    ),
-    scopeId: firstWitness.scopeId,
-  });
-};
-
 export class MandateDispatchPorts extends Context.Service<MandateDispatchPorts, MandateDispatchDependencies>()(
   '@app/core-runtime/access/approvals/action-mandate-dispatch/MandateDispatchPorts',
 ) {}
 
-export const makeDrizzleActionMandateDispatch = Effect.fn('ActionMandateDispatch.makeDrizzle')(
-  function* makeDrizzleActionMandateDispatchEffect() {
-    const ports = yield* MandateDispatchPorts;
+type OwnerActionLifecycleConstruction = Effect.Success<ReturnType<typeof makeOwnerActionApprovalLifecycleV2>>;
+interface ActionMandateConstruction {
+  readonly dispatcher: ActionMandateDispatch;
+  readonly owner: OwnerActionLifecycleConstruction | undefined;
+}
+const constructDrizzleActionMandateDispatchEffect = Effect.fn('ActionMandateDispatch.constructDrizzle')(
+  function* buildDrizzleActionMandateDispatch(
+    configuration?: OwnerActionApprovalConfiguration,
+  ): Effect.fn.Return<
+    ActionMandateConstruction,
+    never,
+    MandateDispatchPorts | Effect.Services<ReturnType<typeof makeOwnerActionApprovalLifecycleV2>>
+  > {
+    const owner = configuration === undefined ? undefined : yield* makeOwnerActionApprovalLifecycleV2(configuration);
+    const ports =
+      owner === undefined
+        ? yield* MandateDispatchPorts
+        : {
+            actionCommands: owner.lifecycle,
+            approvalsFor: (scope: OperationalScope) =>
+              liveApprovalsService({ ...owner.ports.live, actionCommands: owner.lifecycle }, scope),
+            database: owner.ports.database,
+            enrollment: owner.ports.database.enrollment,
+            frozenCommands: owner.ports.frozenCommands,
+            principalKinds: owner.ports.enforcement.principalKinds,
+          };
+    const bindForwardCommand = Effect.fn('ActionMandateDispatch.bindForwardCommand')(function* bindForwardCommand(
+      input: PrepareInput,
+      record: FrozenCommandRecord,
+    ) {
+      if (ports.actionCommands === undefined || input.registration === undefined) {
+        return yield* fenceUnavailable();
+      }
+      const command = yield* decodeActionCommandV2(record.command.payload).pipe(
+        Effect.mapError((cause) =>
+          Object.defineProperty(
+            refused('A historical scalar command cannot enter the forward Action dispatcher'),
+            'cause',
+            { value: cause },
+          ),
+        ),
+      );
+      return yield* rebindRegisteredActionCommandV2({ command, registration: input.registration, scope: input.scope });
+    });
+    const authorizeExecution: NonNullable<ActionMandateDispatch['authorizeExecution']> = Effect.fn(
+      'ActionMandateDispatch.authorizeExecution',
+    )(function* authorizeExecution(input) {
+      if (ports.actionCommands === undefined) {
+        return yield* fenceUnavailable();
+      }
+      const executionPreparation = yield* ports.actionCommands
+        .prepareExecution({
+          proposalId: ProposalIdSchema.make(input.prepared.proposalId),
+          registration: input.registration,
+          scope: input.scope,
+          scopeId: AccessScopeIdSchema.make(input.prepared.scopeId),
+        })
+        .pipe(
+          Effect.mapError((failure) =>
+            Schema.is(ApprovalAuthorityUnavailableError)(failure) || Schema.is(ApprovalStorageUnavailableError)(failure)
+              ? fenceUnavailable(failure)
+              : refused(failure.reason),
+          ),
+        );
+      return { ...input.prepared, executionPreparation };
+    });
     const prepare: ActionMandateDispatch['prepare'] = Effect.fn('ActionMandateDispatch.prepare')(
       function* prepareMandate(input) {
         if (input.requestPayload !== undefined && input.requestPayload !== null) {
@@ -433,7 +432,7 @@ export const makeDrizzleActionMandateDispatch = Effect.fn('ActionMandateDispatch
         }
         const rows = yield* ports.database.executor
           .transaction((transaction) =>
-            installOperationalScope(transaction, input.scope).pipe(
+            installOperationalScope(transaction, input.scope, ports.enrollment).pipe(
               Effect.andThen(() =>
                 transaction
                   .select({
@@ -502,12 +501,13 @@ export const makeDrizzleActionMandateDispatch = Effect.fn('ActionMandateDispatch
         if (!matchingFrozenCommand(input, row, record)) {
           return yield* refused('The owner Action or payload differs from the approved frozen command');
         }
+        yield* bindForwardCommand(input, record);
         // An executed retry must first prove the SAME succeeded invocation/receipt. The runner then
         // returns ActionAlreadyCommitted for that deterministic request hash, without rerunning it.
         if (row.status === 'executed') {
           const receipts = yield* ports.database.executor
             .transaction((transaction) =>
-              installOperationalScope(transaction, input.scope).pipe(
+              installOperationalScope(transaction, input.scope, ports.enrollment).pipe(
                 Effect.andThen(() =>
                   transaction
                     .select({ invocationId: actionInvocations.actionInvocationId, status: actionInvocations.status })
@@ -600,6 +600,9 @@ export const makeDrizzleActionMandateDispatch = Effect.fn('ActionMandateDispatch
          * cells, membership path, role bindings — in `input.transaction`, and without it the call is
          * unavailable instead of being proved by a second connection (O75).
          */
+        if (input.prepared.executionPreparation === undefined) {
+          return yield* fenceUnavailable();
+        }
         const executed = yield* ports
           .approvalsFor(input.scope)
           .execute(
@@ -611,7 +614,7 @@ export const makeDrizzleActionMandateDispatch = Effect.fn('ActionMandateDispatch
               scopeId: AccessScopeIdSchema.make(row.scopeId),
               tenantId: TenantIdSchema.make(input.scope.tenantId),
             },
-            { transaction: input.transaction },
+            { [preparedActionExecutionV2]: input.prepared.executionPreparation, transaction: input.transaction },
           )
           .pipe(
             Effect.mapError((error) =>
@@ -659,7 +662,7 @@ export const makeDrizzleActionMandateDispatch = Effect.fn('ActionMandateDispatch
     )(function* loadParkedProposalEffect(input) {
       const rows = yield* ports.database.executor
         .transaction((transaction) =>
-          installOperationalScope(transaction, input.scope).pipe(
+          installOperationalScope(transaction, input.scope, ports.enrollment).pipe(
             Effect.andThen(() => proposedReceiptRow(transaction, input.scope, input.actionInvocationId)),
           ),
         )
@@ -683,73 +686,102 @@ export const makeDrizzleActionMandateDispatch = Effect.fn('ActionMandateDispatch
      */
     const parkProposal: ActionMandateDispatch['parkProposal'] = Effect.fn('ActionMandateDispatch.parkProposal')(
       function* parkProposalEffect(input) {
-        const decodedCommand = Schema.decodeUnknownResult(FrozenCommandSchema)(
-          withOptional({ capabilityKey: input.capabilityKey, payload: input.payload }, 'target', input.target),
-        );
-        if (Result.isFailure(decodedCommand)) {
-          return yield* refusedProposal('The owner command is not canonical JSON');
+        const { actionCommands } = ports;
+        const { preparation } = input;
+        if (actionCommands === undefined || preparation === undefined) {
+          return yield* fenceUnavailable();
         }
-        const command = decodedCommand.success;
-        const digest = freezeCommand(command);
-        if (Result.isFailure(digest)) {
-          return yield* refusedProposal('The owner command cannot be frozen canonically');
+        const binding = yield* actionProposalBindingV2(preparation).pipe(Effect.mapError(proposalFailure));
+        if (
+          binding.command.actionKey !== input.actionKey ||
+          CapabilityKeySchema.make(binding.command.declaration.key) !== input.capabilityKey ||
+          computeCanonicalValueHash(input.payload) !== computeCanonicalValueHash(binding.command.payload) ||
+          input.target !== undefined
+        ) {
+          return yield* refusedProposal('The proposal is not the exact forward registered command');
         }
-        const commandDigest = CommandDigestSchema.make(digest.success);
-        const requester = requesterAuthorityOf(input.decision, input.capabilityKey);
-        if (Result.isFailure(requester)) {
-          return yield* refusedProposal(requester.failure);
-        }
-        /*
-         * The acting person's kind is read in the SAME transaction the proposal, its frozen command and
-         * its receipt are written in (O75): a kind read through the pool would be a second connection's
-         * answer about another instant, and on one connection PostgreSQL refuses the inner transaction.
-         */
-        const kind = yield* ports.principalKinds
-          .readKind(
-            {
-              principalId: PrincipalIdSchema.make(input.scope.principalId),
-              scope: input.scope,
-              tenantId: TenantIdSchema.make(input.scope.tenantId),
-            },
-            input.transaction,
-          )
-          .pipe(Effect.mapError((cause) => fenceUnavailable(cause)));
-        // An agent never parks an administrative command, and this wave admits no agent Action at all
-        // (O67-Q5, O14): the proposal is always the requesting person's own.
-        if (Option.isNone(kind) || kind.value !== 'human') {
-          return yield* refusedProposal('Only a person can request an approval for this Action');
-        }
+        const command = { capabilityKey: input.capabilityKey, payload: binding.command };
         const parked = yield* ports
           .approvalsFor(input.scope)
           .propose(
-            withOptional(
-              {
-                actionInvocationId: ActionInvocationRefSchema.make(input.actionInvocationId),
-                actionKey: ActionKeySchema.make(input.actionKey),
-                actor: { _tag: 'Principal', principalId: PrincipalIdSchema.make(input.scope.principalId) },
-                capabilityKey: input.capabilityKey,
-                command,
-                commandDigest,
-                requesterAuthority: requester.success.requesterAuthority,
-                requesterKind: 'human' as const,
-                scopeId: requester.success.scopeId,
-                tenantId: TenantIdSchema.make(input.scope.tenantId),
-              },
-              'target',
-              input.target,
-            ),
-            { transaction: input.transaction },
+            {
+              actionInvocationId: ActionInvocationRefSchema.make(input.actionInvocationId),
+              actionKey: ActionKeySchema.make(input.actionKey),
+              actor: { _tag: 'Principal', principalId: PrincipalIdSchema.make(input.scope.principalId) },
+              capabilityKey: input.capabilityKey,
+              command,
+              commandDigest: binding.commandDigest,
+              requesterAuthority: [],
+              requesterKind: 'human',
+              scopeId: binding.scopeId,
+              tenantId: TenantIdSchema.make(input.scope.tenantId),
+            },
+            { [preparedActionProposalV2]: preparation, transaction: input.transaction },
           )
           .pipe(
             Effect.map((proposal): ActionProposalParked => ({
               expiresAt: proposal.expiresAt,
               proposalId: proposal.id,
             })),
-            Effect.mapError((error) => (Schema.is(ActionPermissionCheckError)(error) ? error : proposalFailure(error))),
+            Effect.mapError(proposalFailure),
           );
-        return yield* settleProposedReceipt(input, parked, commandDigest);
+        return yield* settleProposedReceipt(input, parked, binding.commandDigest);
       },
     );
-    return Object.freeze({ claim, commit, loadParkedProposal, parkProposal, prepare });
+    const prepareProposal: NonNullable<ActionMandateDispatch['prepareProposal']> = (input) =>
+      ports.actionCommands === undefined
+        ? Effect.fail(fenceUnavailable())
+        : ports.actionCommands.prepareProposal(input).pipe(Effect.mapError(proposalFailure));
+    return {
+      dispatcher: Object.freeze({
+        authorizeExecution,
+        claim,
+        commit,
+        loadParkedProposal,
+        parkProposal,
+        prepare,
+        prepareProposal,
+      }),
+      owner,
+    };
+  },
+);
+
+function constructDrizzleActionMandateDispatch(): Effect.Effect<ActionMandateConstruction, never, MandateDispatchPorts>;
+function constructDrizzleActionMandateDispatch(
+  configuration: OwnerActionApprovalConfiguration,
+): Effect.Effect<
+  ActionMandateConstruction,
+  never,
+  Effect.Services<ReturnType<typeof makeOwnerActionApprovalLifecycleV2>>
+>;
+function constructDrizzleActionMandateDispatch(
+  configuration?: OwnerActionApprovalConfiguration,
+): Effect.Effect<
+  ActionMandateConstruction,
+  never,
+  MandateDispatchPorts | Effect.Services<ReturnType<typeof makeOwnerActionApprovalLifecycleV2>>
+> {
+  return constructDrizzleActionMandateDispatchEffect(configuration);
+}
+
+export const makeDrizzleActionMandateDispatch = Effect.fn('ActionMandateDispatch.makeDrizzle')(
+  function* makeDrizzleActionMandateDispatchEffect(): Effect.fn.Return<
+    ActionMandateDispatch,
+    never,
+    MandateDispatchPorts
+  > {
+    return (yield* constructDrizzleActionMandateDispatch()).dispatcher;
+  },
+);
+
+/** Same native dispatcher and stores; receiving-owner data is the only constructor input. */
+export const makeOwnerActionMandateDispatch = Effect.fn('ActionMandateDispatch.makeOwner')(
+  function* makeOwnerActionMandateDispatch(configuration: OwnerActionApprovalConfiguration) {
+    const constructed = yield* constructDrizzleActionMandateDispatch(configuration);
+    if (constructed.owner === undefined) {
+      return yield* Effect.die('The native owner constructor did not retain its lifecycle and stores');
+    }
+    return { ...constructed.owner, dispatcher: constructed.dispatcher };
   },
 );

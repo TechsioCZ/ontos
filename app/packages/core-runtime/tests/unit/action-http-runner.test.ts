@@ -1,5 +1,5 @@
 import { Effect, Redacted, Schema } from 'effect';
-import { Headers } from 'effect/http';
+import { FetchHttpClient, Headers, HttpServerResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { ProposalIdSchema } from '../../src/access/ids.ts';
@@ -18,6 +18,7 @@ import {
   decodeActionEndpointHeaders,
   runGovernedActionHttp,
 } from '../../src/http/http-instrumentation-seam.ts';
+import { servedResponse } from '../support/served-response.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 
 const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
@@ -76,6 +77,7 @@ const registration = defineAction(
 
 const unusedRuntime = (onRun: () => void): ActionRuntimeService => ({
   resolveActionCommit: () => Effect.die('Action commit recovery is outside the runner fixture'),
+  resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
   runAction: () => {
     onRun();
     return Effect.die('The Action runtime must not be reached');
@@ -88,6 +90,7 @@ const authorization = (value?: string) => Redacted.make(value);
 
 const alreadyCommittedRuntime = (failure: ActionAlreadyCommitted): ActionRuntimeService => ({
   resolveActionCommit: () => Effect.die('Action commit recovery is outside the runner fixture'),
+  resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
   runAction: () => Effect.fail(failure),
 });
 
@@ -103,6 +106,7 @@ const acceptedProposalRuntime = (
   seen: ActionTransportMetadata[],
 ): ActionRuntimeService => ({
   resolveActionCommit: () => Effect.die('Action commit recovery is outside the runner fixture'),
+  resolveActionExecution: () => Effect.die('Action execution recovery is outside the runner fixture'),
   runAction: (input) => {
     seen.push(Schema.decodeUnknownSync(ActionTransportMetadataSchema)(input.transport));
     return Effect.succeed(accepted);
@@ -235,6 +239,7 @@ it.effect('takes the admission audience only from receiver configuration', () =>
     const audiences: (string | undefined)[] = [];
     const runtime: ActionRuntimeService = {
       resolveActionCommit: () => Effect.die('Not exercised'),
+      resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
       runAction: (input) => {
         audiences.push(input.audience);
         return Effect.die('Stop after observing the trusted boundary');
@@ -398,6 +403,7 @@ it.effect('carries the proposal intent only for the runtime to refuse on a resul
     }).pipe(
       Effect.provideService(ActionRuntime, {
         resolveActionCommit: () => Effect.die('Action commit recovery is outside the runner fixture'),
+        resolveActionExecution: () => Effect.die('Action execution recovery is outside the runner fixture'),
         runAction: (input) => {
           seen.push([Schema.decodeUnknownSync(ActionTransportMetadataSchema)(input.transport), input.successContract]);
           return Effect.fail(denied);
@@ -455,3 +461,33 @@ it.effect('decodes only the Action transport headers among open browser headers'
     }
   }),
 );
+
+it.layer(FetchHttpClient.layer)((suite) => {
+  suite.effect("answers an Action over HTTP with the owner's phases in server-timing", () =>
+    Effect.gen(function* servedActionTiming() {
+      // One statement span inside the Action, as the real runtime's would be.
+      const runtime: ActionRuntimeService = {
+        resolveActionCommit: () => Effect.die('Not exercised'),
+        resolveActionExecution: () => Effect.die('Not exercised'),
+        runAction: () => Effect.succeed(acceptedProposal).pipe(Effect.withSpan('postgres')),
+      };
+      const response = yield* servedResponse(
+        runGovernedActionHttp({
+          endpointHeaders: { idempotencyKey: 'timed-invocation', traceId: 'timed-trace' },
+          internalProblem: () => internalProblem,
+          invalidCorrelationProblem: () => invalidProblem,
+          mapError: () => internalProblem,
+          payload: {},
+          principal: { authenticate: () => Effect.succeed(principal) },
+          registration,
+          requestHeaders: { authorization: authorization(), 'x-correlation-id': 'timed-action' },
+        }).pipe(
+          Effect.provideService(ActionRuntime, runtime),
+          Effect.map(() => HttpServerResponse.text('ok')),
+        ),
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers['server-timing']).toContain('owner-sql-count;dur=1');
+    }),
+  );
+});

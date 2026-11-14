@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 
-import { Array as EffectArray, Order, Schema } from 'effect';
+import { Array as EffectArray, Option, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parseSync } from 'oxc-parser';
 
@@ -42,13 +42,49 @@ const compare = (actual: readonly string[]): boolean =>
   );
 const sqlOrdered = EffectArray.sort(expected, Order.String);
 
+// Independently account for the shipped explicit GRANT/DROP signatures. This is a source contract
+// check, not execution of migrations or a substitute for the native verifier's privilege checks.
+const shippedRuntimeRoutines = () => {
+  const directory = new URL('../../drizzle/', import.meta.url);
+  const signatures = new Map<string, string>();
+  const migrations = EffectArray.sort(
+    readdirSync(directory, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map(({ name }) => name),
+    Order.String,
+  );
+  for (const migration of migrations) {
+    const sql = readFileSync(new URL(`${migration}/migration.sql`, directory), 'utf-8');
+    const declarations =
+      /(?<operation>GRANT\s+EXECUTE\s+ON\s+FUNCTION|DROP\s+FUNCTION(?:\s+IF\s+EXISTS)?)\s+"?commerce_customer_context"?\."?(?<name>[a-z0-9_]+)"?\((?<parameters>[^)]*)\)(?:\s+TO\s+"?(?<role>[a-z_]+)"?)?/giu;
+    for (const match of sql.matchAll(declarations)) {
+      const { name, operation, parameters, role } = Schema.decodeUnknownSync(
+        Schema.Struct({
+          name: Schema.String,
+          operation: Schema.String,
+          parameters: Schema.String,
+          role: Schema.OptionFromUndefinedOr(Schema.String),
+        }),
+      )(match.groups);
+      const signature = `${name}(${parameters.toLowerCase().replaceAll(/\s+/gu, '')})`;
+      if (operation.startsWith('DROP')) {
+        signatures.delete(signature);
+      } else if (Option.getOrUndefined(role) === 'ontos_runtime') {
+        signatures.set(signature, name);
+      }
+    }
+  }
+  return EffectArray.sort([...signatures.values()], Order.String);
+};
+
 it('accepts the complete SQL-ordered runtime routine set through the verifier comparator', () => {
   expect(parsed.errors).toEqual([]);
   expect(source).toContain('array_agg(routine.proname::text order by routine.proname)');
   expect(source).toContain('!sameStrings(row.runtime_routines, EXPECTED_RUNTIME_ROUTINES)');
   expect(source).toContain('row.routine_count !== EXPECTED_RUNTIME_ROUTINES.length');
-  expect(expected).toHaveLength(132);
-  expect(new Set(expected).size).toBe(132);
+  expect(expected).toHaveLength(149);
+  expect(new Set(expected).size).toBe(149);
+  expect(shippedRuntimeRoutines()).toEqual(sqlOrdered);
   expect(expected).toContain('apply_customer_group_membership_source');
   expect(expected).toContain('lock_profile_ico_correlation');
   expect(expected).toContain('recover_market_retirement_reservation');

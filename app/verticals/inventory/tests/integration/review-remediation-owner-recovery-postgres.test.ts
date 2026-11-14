@@ -83,6 +83,9 @@ import {
   buildInventoryOwnerAcceptanceBindingCorrectionLineage,
   inventoryOwnerAcceptanceBindingCorrectionFixture,
 } from '../support/inventory-owner-acceptance-binding-correction.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const InventoryEffectRecoveryAuthorityRequirement = Context.Service<
   InventoryEffectRecoveryAuthority,
@@ -455,7 +458,7 @@ it.live('repairs physical and reservation owner state before terminal recovery w
             principalId,
             tenantId,
           } as const;
-          const scoped = yield* installOperationalScope(transaction, scope);
+          const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
           const ledger = makeInventoryEffectLedgerService(
             inventoryEffectLedgerPersistenceForScope(scoped, scope),
             Effect.succeed('2026-09-25T10:32:00.000Z'),
@@ -550,6 +553,8 @@ it.live('repairs physical and reservation owner state before terminal recovery w
           ...openActionRuntimeOptions,
           accessDecision: makeScriptedBoundAccessGate('allowed').bound,
           contextAccess,
+          databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+
           ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
           ownerRegistration: inventoryRegistration,
         },

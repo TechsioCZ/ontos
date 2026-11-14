@@ -8,6 +8,17 @@ import {
   makePostgresCoreSearchSnapshotBackend,
 } from '../../src/search/worker-snapshot.ts';
 import { makeTestDatabase } from '../support/database.ts';
+import { defineCoreSearchIngestionRegistrations } from '../../src/search/ingestion-registry.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
+
+const registrations = defineCoreSearchIngestionRegistrations(
+  ['party-updated', 'official-identifier-updated'].map((event) => ({
+    consumerModuleKey: 'party.registry',
+    producerModuleKey: 'party.registry',
+    topic: `party.registry.${event}.v1`,
+    workerKey: `party.registry.project-${event}-to-search`,
+  })),
+);
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const revision = 'a'.repeat(64);
@@ -58,7 +69,7 @@ it.effect('native projection writes retain the worker release fence through each
       }
       return Effect.succeed([]);
     });
-    const store = makePostgresCoreSearchProjectionStore({ executor });
+    const store = makePostgresCoreSearchProjectionStore({ executor }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
     yield* store.apply({ document, kind: 'upsert' }, context);
     yield* store.replace(
       {
@@ -126,7 +137,7 @@ it.effect('the native generation CAS rereads owner data after a competing genera
       }
       return Effect.succeed([]);
     });
-    const reader = makeCoreSearchWorkerSnapshot(makePostgresCoreSearchSnapshotBackend({ executor }));
+    const reader = makeCoreSearchWorkerSnapshot(makePostgresCoreSearchSnapshotBackend({ executor }), registrations);
     const result = yield* reader.read(context, (snapshot) => {
       reads += 1;
       if (reads === 1) {
@@ -160,7 +171,7 @@ it.effect('a coherent read remains read-only and its generation cannot commit af
       }
       return Effect.succeed([]);
     });
-    const reader = makeCoreSearchWorkerSnapshot(makePostgresCoreSearchSnapshotBackend({ executor }));
+    const reader = makeCoreSearchWorkerSnapshot(makePostgresCoreSearchSnapshotBackend({ executor }), registrations);
     const failure = yield* Effect.flip(
       reader.read(context, (snapshot) => {
         expect(snapshot.projectionVersion).toBe('1');

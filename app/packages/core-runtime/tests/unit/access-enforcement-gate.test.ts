@@ -2,6 +2,7 @@ import { organizationProcessingReadPrincipal } from '../support/organization-pro
 import { organizationGovernanceReadPrincipal } from '../support/organization-governance-read-principal.ts';
 import { privacyDispatchPrincipal } from '../support/privacy-dispatch-principal.ts';
 import { preserveSystemPrincipalContextTrust } from '../../src/auth/system-principal-context-provenance.ts';
+import { ActorContextSchema } from '../../src/access/model.ts';
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -20,16 +21,30 @@ import type { AccessPrincipalKinds, AccessPrincipalKind } from '../../src/access
 import { accessDecisionUnavailable } from '../../src/access/decision/errors.ts';
 import type { AccessDecision } from '../../src/access/decision/contract.ts';
 import type { DecisionCheckPort } from '../../src/access/decision/engine.ts';
-import type { DecisionAuthorityPort, ScopeQuery } from '../../src/access/decision/authority.ts';
+import type { CompanyOwnershipQuery, DecisionAuthorityPort, ScopeQuery } from '../../src/access/decision/authority.ts';
 import type { GateInput, ListGateInput } from '../../src/access/enforcement/contract.ts';
 import { makeAccessDecisionService } from '../../src/access/enforcement/service.ts';
 import type { AccessDecisionLogEntry, AccessDecisionLogWriter } from '../../src/access/enforcement/decision-log.ts';
+import { makeActionAuthorityService } from '../../src/permissions/action-authority.ts';
+import type { DeclaredActionAuthority } from '../../src/permissions/action-authority.ts';
 import type { AccessLegalEntityCandidates } from '../../src/access/enforcement/legal-entities.ts';
 import type { AccessWorkloadBindings } from '../../src/access/enforcement/workload-port.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { LegalEntityIdSchema, PrincipalIdSchema } from '../../src/access/ids.ts';
 import type { LegalEntityId, PrincipalId } from '../../src/access/ids.ts';
-import { at, cell, makeAuthority, makeCheck, person, recordTarget, tenant, agent } from './access-decision-support.ts';
+import {
+  agent,
+  agentHolder,
+  at,
+  cell,
+  connect,
+  connectionId,
+  makeAuthority,
+  makeCheck,
+  person,
+  recordTarget,
+  tenant,
+} from './access-decision-support.ts';
 import type { AuthoritySpec } from './access-decision-support.ts';
 
 const now = at('2026-11-03T12:00:00Z');
@@ -134,11 +149,23 @@ const workloadCarrier = (
 
 interface RunOptions {
   readonly authority?: AuthoritySpec;
+  /** A batch evidence writer: each call's rows are kept, or the whole call fails. */
+  readonly batchLog?: 'fails' | 'writes';
   /** A scripted engine port, for the suites that answer `select` themselves. */
   readonly check?: DecisionCheckPort;
+  /** The declaration cannot be read: the gate must answer UNAVAILABLE, never "no declaration" (O48, D6). */
+  readonly companyDeclarationReadFails?: boolean;
+  /** The companies this workload is pinned to; absent means its owner declared none (D6). */
+  readonly declaredCompanies?: readonly LegalEntityId[];
+  /** The owner declared a company and then revoked it: the workload is pinned to none (D6). */
+  readonly declaredCompaniesRevoked?: boolean;
   readonly engineFailure?: boolean;
+  /** Companies the asked tenant does not own: their scope read finds nothing. */
+  readonly foreignCompanies?: readonly LegalEntityId[];
   readonly kinds?: AccessPrincipalKinds;
   readonly logFails?: boolean;
+  /** Company ownership cannot be read: every company-naming request is UNAVAILABLE, never decided. */
+  readonly ownershipFails?: boolean;
   readonly privacyDispatchLive?: boolean;
   readonly scopeMissing?: boolean;
   readonly selectableLegalEntities?: readonly LegalEntityId[];
@@ -158,21 +185,38 @@ const harness = (options: RunOptions = {}) => {
     options.engineFailure === true ? { authority: authoritySpec, failure: true } : { authority: authoritySpec };
   const check = makeCheck(checkSpec);
   const scopes: ScopeQuery[] = [];
+  const ownership: CompanyOwnershipQuery[] = [];
   const port: DecisionAuthorityPort = {
     ...authority.port,
+    readCompanyOwnership: (query) => {
+      ownership.push(query);
+      return options.ownershipFails === true
+        ? Effect.fail(accessDecisionUnavailable('company ownership is unreadable'))
+        : Effect.succeed(options.foreignCompanies?.includes(query.legalEntityId) !== true);
+    },
     readScope: (query) => {
       scopes.push(query);
-      return options.scopeMissing === true ? Effect.succeed(Option.none()) : authority.port.readScope(query);
+      // As the loader answers: a company the tenant does not own resolves no scope, whether the request selects it or
+      // names it in the tenant context.
+      const named = query.legalEntityId ?? query.checkedCompany;
+      const foreign = named !== undefined && options.foreignCompanies?.includes(named);
+      return options.scopeMissing === true || foreign === true
+        ? Effect.succeed(Option.none())
+        : authority.port.readScope(query);
     },
   };
   const { log, state } = logWriter(options.logFails === true);
   const workloadBindings: AccessWorkloadBindings = {
-    readActiveWorkloadKeys: () =>
+    readWorkloadAuthority: () =>
       options.workloadReadFails === true
         ? Effect.fail(accessDecisionUnavailable('the workload registry is unavailable'))
-        : Effect.succeed(new Set(options.workloadKeys)),
+        : Effect.succeed({
+            activeCompanyIds: new Set(options.declaredCompanies),
+            workloadKeys: new Set(options.workloadKeys),
+          }),
   };
-  const gate = makeAccessDecisionService({
+  const batches: (readonly AccessDecisionLogEntry[])[] = [];
+  const ports = {
     authorityFor: () => port,
     check: options.check ?? check.port,
     decisionLog: log,
@@ -180,8 +224,23 @@ const harness = (options: RunOptions = {}) => {
     principalKinds: options.kinds ?? kindSource('human'),
     privacyDispatchLiveness: { read: () => Effect.succeed(options.privacyDispatchLive === true) },
     workloadBindings,
-  });
-  return { authority, gate, scopes, state };
+  };
+  const gate = makeAccessDecisionService(
+    options.batchLog === undefined
+      ? ports
+      : {
+          ...ports,
+          decisionLogBatch: {
+            recordAll: (entries: readonly AccessDecisionLogEntry[]) =>
+              options.batchLog === 'fails'
+                ? Effect.fail(accessDecisionUnavailable('the evidence batch could not be written'))
+                : Effect.sync(() => {
+                    batches.push(entries);
+                  }),
+          },
+        },
+  );
+  return { authority, batches, check, gate, ownership, scopes, state };
 };
 
 const gateOf = (overrides: Partial<GateInput> = {}): GateInput => ({
@@ -220,6 +279,112 @@ it.effect('leaves the asker unset when the evaluated actor asked for itself (O86
     const { gate, state } = harness();
     yield* gate.decide(gateOf());
     expect(state.entries[0]?.onBehalfOfPrincipalId).toBeUndefined();
+  }),
+);
+
+/** The trusted scope of an agent's OAuth connection: the agent acts, the operator delegated it, the credential binds it. */
+const agentConnectionScope = (carried?: { readonly connectionId: string; readonly revision: number }) => {
+  const base = {
+    authBindingId: uid(71),
+    authContextRef: `oauth-grant:${uid(72)}`,
+    authMethod: 'oauth_connection',
+    connection: {
+      clientId: 'https://client.example/metadata.json',
+      clientName: 'Client',
+      grantId: uid(72),
+      modules: 'all',
+      writePolicy: 'direct',
+    },
+    delegatedByPrincipalId: person,
+    legalEntityId: uid(73),
+    principalId: agent,
+    tenantId: tenant,
+  };
+  const trusted = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(
+    carried === undefined ? base : { ...base, connection: { ...base.connection, agentConnection: carried } },
+  );
+  return { ...trusted, correlationId: 'access-enforcement-gate' } satisfies OperationalScope;
+};
+
+it.effect('decides an agent on its credential-bound connection as the agent, on both sides', () =>
+  Effect.gen(function* decidesAgentOnConnection() {
+    const agentCell = cell({ capability: 'finance.invoice.void', holder: agentHolder(), mode: 'propose' });
+    const operatorCell = cell({ capability: 'finance.invoice.void', mode: 'propose' });
+    const ceiling = {
+      cells: [{ capabilityKey: agentCell.capabilityKey, mode: 'propose' as const, selector: { _tag: 'all' as const } }],
+    };
+    const { gate, state } = harness({
+      authority: { cells: [agentCell, operatorCell], connection: connect({ ceiling }) },
+      kinds: kindSource('agent'),
+    });
+    const scope = agentConnectionScope({ connectionId, revision: 1 });
+    // A sensitive run by an agent is a proposal a person decides: the engine answers NEEDS_APPROVAL, never ALLOWED.
+    const decision = yield* gate.decide(gateOf({ legalEntityScope: 'required', scope }));
+    expect(decision.outcome).toBe('NEEDS_APPROVAL');
+    // The evidence names the agent, the operator and the connection: the gate decided AS the agent (O46).
+    expect(state.entries[0]?.actor).toEqual(
+      ActorContextSchema.make({
+        _tag: 'Agent',
+        agentId: agent,
+        connectionId,
+        consentRevision: 1,
+        principalId: person,
+      }),
+    );
+  }),
+);
+
+it.effect('refuses an agent whose connection the engine cannot find, or whose consent revision is stale', () =>
+  Effect.gen(function* refusesDeadConnection() {
+    const agentCell = cell({ capability: 'finance.invoice.void', holder: agentHolder(), mode: 'propose' });
+    const missing = yield* harness({ authority: { cells: [agentCell] }, kinds: kindSource('agent') }).gate.decide(
+      gateOf({ legalEntityScope: 'required', scope: agentConnectionScope({ connectionId, revision: 1 }) }),
+    );
+    expect(missing.reasons.map(({ code }) => code)).toEqual(['deny.connection_inactive']);
+    const revoked = yield* harness({
+      authority: { cells: [agentCell], connection: connect({ status: 'revoked' }) },
+      kinds: kindSource('agent'),
+    }).gate.decide(
+      gateOf({ legalEntityScope: 'required', scope: agentConnectionScope({ connectionId, revision: 1 }) }),
+    );
+    expect(revoked.reasons.map(({ code }) => code)).toEqual(['deny.connection_inactive']);
+    const stale = yield* harness({
+      authority: { cells: [agentCell], connection: connect({ consentRevision: 2 }) },
+      kinds: kindSource('agent'),
+    }).gate.decide(
+      gateOf({ legalEntityScope: 'required', scope: agentConnectionScope({ connectionId, revision: 1 }) }),
+    );
+    expect(stale.reasons.map(({ code }) => code)).toEqual(['deny.consent_stale']);
+  }),
+);
+
+it.effect('refuses an agent on an OAuth connection that carries no credential-bound connection', () =>
+  Effect.gen(function* refusesUnboundAgent() {
+    const { gate } = harness({ kinds: kindSource('agent') });
+    const decision = yield* gate.decide(gateOf({ legalEntityScope: 'required', scope: agentConnectionScope() }));
+    expect(decision.reasons.map(({ code }) => code)).toEqual(['deny.agent_forbidden']);
+  }),
+);
+
+it.effect('never admits an agent on an administration declaration, even on a live connection', () =>
+  Effect.gen(function* refusesAgentAdministration() {
+    const adminCell = cell({ capability: 'core.identity.support.impersonate', holder: agentHolder() });
+    const { gate } = harness({
+      authority: {
+        cells: [adminCell, cell({ capability: 'core.identity.support.impersonate' })],
+        connection: connect(),
+      },
+      kinds: kindSource('agent'),
+    });
+    const decision = yield* gate.decide(
+      gateOf({
+        carrier: { accessDeclaration: adminDeclarationOf() },
+        legalEntityScope: 'required',
+        scope: agentConnectionScope({ connectionId, revision: 1 }),
+      }),
+    );
+    expect(decision.outcome).toBe('DENIED');
+    expect(decision.reasons.map(({ code }) => code)).toContain('deny.agent_forbidden');
   }),
 );
 
@@ -508,7 +673,7 @@ it.effect('refuses a request whose scope does not exist rather than inventing on
 it.effect('decides an admin capability in its declared scope: tenant context when company-independent', () =>
   Effect.gen(function* adminInTenantContext() {
     const legalEntityId = LegalEntityIdSchema.make(uid(20));
-    const { gate, scopes } = harness({
+    const { gate, ownership, scopes } = harness({
       authority: { cells: [cell({ capability: 'core.identity.support.impersonate' })] },
     });
     // O81: structural admission follows the declaration's own scope. A company-independent admin key
@@ -521,7 +686,76 @@ it.effect('decides an admin capability in its declared scope: tenant context whe
       }),
     );
     expect(decision.outcome).toBe('ALLOWED');
-    expect(scopes[0]?.legalEntityId).toBeUndefined();
+    // The named company is checked by the tenant scope read itself: no ownership read, no holder-less read.
+    expect(ownership).toEqual([]);
+    expect(scopes.every((query) => query.legalEntityId === undefined && query.holders.length > 0)).toBe(true);
+    expect(scopes[0]).toMatchObject({ checkedCompany: legalEntityId });
+  }),
+);
+
+for (const legalEntityScope of ['optional', 'forbidden', 'required'] as const) {
+  it.effect(`refuses a company the asked tenant does not own in ${legalEntityScope} scope`, () =>
+    Effect.gen(function* refusesForeignCompany() {
+      const foreignCompany = LegalEntityIdSchema.make(uid(22));
+      const { gate } = harness({ foreignCompanies: [foreignCompany] });
+      const single = yield* gate.decide(gateOf({ legalEntityScope, scope: scopeFor(person, foreignCompany) }));
+      const [batched] = yield* gate.decideMany([gateOf({ legalEntityScope, scope: scopeFor(person, foreignCompany) })]);
+      for (const decision of [single, batched]) {
+        expect(decision?.outcome).toBe('DENIED');
+        expect(decision?.reasons.map(({ code }) => code)).toEqual(['deny.scope_mismatch']);
+      }
+    }),
+  );
+}
+
+it.effect('refuses a workload in a company its tenant does not own, even one its registration names', () =>
+  Effect.gen(function* refusesForeignWorkloadCompany() {
+    const ours = LegalEntityIdSchema.make(uid(23));
+    const foreignCompany = LegalEntityIdSchema.make(uid(24));
+    // The registration names both companies: only the company-of-tenant rule can refuse the foreign one.
+    const { gate } = harness({
+      declaredCompanies: [ours, foreignCompany],
+      engineFailure: true,
+      foreignCompanies: [foreignCompany],
+      kinds: kindSource('service'),
+      workloadKeys: [BOUND_WORKLOAD],
+    });
+    const carrier = workloadCarrier('the storefront client runs the Action');
+    const ask = (company: LegalEntityId) =>
+      gateOf({ carrier, legalEntityScope: 'required', scope: scopeFor(person, company) });
+    const single = yield* gate.decide(ask(foreignCompany));
+    expect(single.outcome).toBe('DENIED');
+    expect(single.reasons.map(({ code }) => code)).toEqual(['deny.scope_mismatch']);
+    // In one batch, the foreign row is refused, and the rows of the owned company around it are not affected.
+    const batched = yield* gate.decideMany([ask(ours), ask(foreignCompany), ask(ours)]);
+    expect(batched.map(({ outcome }) => outcome)).toEqual(['ALLOWED', 'DENIED', 'ALLOWED']);
+    expect(batched[1]?.reasons.map(({ code }) => code)).toEqual(['deny.scope_mismatch']);
+    const listed = yield* gate.listMany([
+      { ...workloadList, legalEntityScope: 'required', scope: scopeFor(person, foreignCompany) },
+      { ...workloadList, legalEntityScope: 'required', scope: scopeFor(person, ours) },
+    ]);
+    expect(listed.map(({ decision }) => decision.outcome)).toEqual(['DENIED', 'ALLOWED']);
+    expect(listed[0]?.predicate).toBeUndefined();
+  }),
+);
+
+it.effect("answers UNAVAILABLE, never a decision, when a named company cannot be checked to be the tenant's", () =>
+  Effect.gen(function* unreadableOwnership() {
+    const company = LegalEntityIdSchema.make(uid(25));
+    const machine = yield* harness({
+      declaredCompanies: [company],
+      engineFailure: true,
+      kinds: kindSource('service'),
+      ownershipFails: true,
+      workloadKeys: [BOUND_WORKLOAD],
+    }).gate.decide(
+      gateOf({
+        carrier: workloadCarrier('machine provisioning'),
+        legalEntityScope: 'required',
+        scope: scopeFor(person, company),
+      }),
+    );
+    expect(machine.outcome).toBe('UNAVAILABLE');
   }),
 );
 
@@ -619,7 +853,9 @@ it.effect('answers a 20-entry navigation from one engine snapshot, identically t
       decisionLog: log,
       legalEntities: legalEntityCandidates([]),
       principalKinds: countingKinds,
-      workloadBindings: { readActiveWorkloadKeys: () => Effect.succeed(new Set()) },
+      workloadBindings: {
+        readWorkloadAuthority: () => Effect.succeed({ activeCompanyIds: new Set(), workloadKeys: new Set() }),
+      },
     });
     const inputs = navigationKeys.map((key) => gateOf({ carrier: { accessDeclaration: navigationDeclaration(key) } }));
     const measure = () => {
@@ -692,6 +928,45 @@ it.effect('answers a batch UNAVAILABLE when the engine fails, and records no evi
     const decisions = yield* gate.decideMany([gateOf(), gateOf()]);
     expect(decisions.map(({ outcome }) => outcome)).toEqual(['UNAVAILABLE', 'UNAVAILABLE']);
     expect(state.entries.length).toBe(0);
+  }),
+);
+
+it.effect('writes the evidence rows of a batch in one batch write, with the rows the single writer gets', () =>
+  Effect.gen(function* writesBatchEvidenceOnce() {
+    // One request scope, as the Action authority and the caller's module authority ask in.
+    const scope = scopeFor(person);
+    const inputs = [
+      gateOf({ scope }),
+      gateOf({ carrier: workloadCarrier('machine provisioning'), scope }),
+      gateOf({ scope }),
+    ];
+    // One authority for both runs, so both decide over the very same cells.
+    const authority: AuthoritySpec = { cells: [cell({ capability: 'finance.invoice.void' })] };
+    const single = harness({ authority });
+    const alone = yield* single.gate.decideMany(inputs);
+    const batched = harness({ authority, batchLog: 'writes' });
+    const decisions = yield* batched.gate.decideMany(inputs);
+    expect(decisions).toEqual(alone);
+    expect(decisions.map(({ outcome }) => outcome)).toEqual(['ALLOWED', 'DENIED', 'ALLOWED']);
+    // No row through the single writer; one batch write holding exactly the rows it would have written.
+    expect(batched.state.entries).toEqual([]);
+    expect(batched.batches).toHaveLength(1);
+    expect(batched.batches[0]).toEqual(single.state.entries);
+  }),
+);
+
+it.effect('answers UNAVAILABLE for every decision whose evidence batch was not kept', () =>
+  Effect.gen(function* unkeptBatchEvidence() {
+    const { batches, gate, state } = harness({ batchLog: 'fails' });
+    const decisions = yield* gate.decideMany([
+      gateOf(),
+      gateOf({ carrier: workloadCarrier('machine provisioning') }),
+      gateOf(),
+    ]);
+    // The two sensitive allows needed rows; the refusal before the engine needed none and stays a denial.
+    expect(decisions.map(({ outcome }) => outcome)).toEqual(['UNAVAILABLE', 'DENIED', 'UNAVAILABLE']);
+    expect(batches).toEqual([]);
+    expect(state.entries).toEqual([]);
   }),
 );
 
@@ -774,9 +1049,70 @@ it.effect('fails the company list when the engine cannot answer for every compan
   }),
 );
 
-it.effect('records delegated finite Privacy refusals for current source-claim and governance permission denials', () =>
-  Effect.gen(function* privacyDispatchRefusalEvidence() {
-    const governance = LegalEntityIdSchema.make(uid(71));
+it.effect(
+  'answers an Action batch through the real gate exactly as one decision per Action, for every company rule',
+  () =>
+    Effect.gen(function* realGateActionBatch() {
+      const company = LegalEntityIdSchema.make(uid(60));
+      const authority: AuthoritySpec = {
+        cells: [cell({ capability: 'finance.invoice.void' })],
+        legalEntityScope: { _tag: 'LegalEntity', legalEntityId: company, tenantId: tenant },
+      };
+      const voiding = { accessDeclaration: declarationOf() };
+      const archiving = { accessDeclaration: declarationOf({ key: 'finance.invoice.archive' }) };
+      const declared = new Map<string, DeclaredActionAuthority>(
+        (
+          [
+            ['finance.void-in-company', voiding, 'required'],
+            ['finance.void-anywhere', voiding, 'optional'],
+            ['finance.void-tenant', voiding, 'forbidden'],
+            ['finance.archive-in-company', archiving, 'required'],
+          ] as const
+        ).map(([actionKey, carrier, legalEntityScope]) => [actionKey, { actionKey, carrier, legalEntityScope }]),
+      );
+      const actionKeys = [...declared.keys(), 'unpublished.action'];
+      const outcomes: string[][] = [];
+      for (const scope of [scopeFor(person, company), scopeFor(person)]) {
+        const single = harness({ authority });
+        const alone = yield* Effect.forEach(
+          actionKeys,
+          (actionKey) =>
+            single.gate.decide({
+              carrier: declared.get(actionKey)?.carrier ?? {},
+              legalEntityScope: declared.get(actionKey)?.legalEntityScope ?? 'optional',
+              now,
+              scope,
+            }),
+          { concurrency: 1 },
+        );
+        const batched = harness({ authority });
+        const answers = yield* makeActionAuthorityService({ declared, gate: batched.gate, now }).checkActionAuthorities(
+          {
+            actionKeys,
+            scope,
+          },
+        );
+        expect(answers.map(({ execute, propose }) => [execute, propose])).toEqual(
+          alone.map(({ outcome }) => [
+            outcome === 'ALLOWED' ? 'allowed' : 'denied',
+            outcome === 'DENIED' ? 'denied' : 'allowed',
+          ]),
+        );
+        expect(batched.state.entries).toEqual(single.state.entries);
+        outcomes.push(alone.map(({ outcome }) => outcome));
+      }
+      // The company rules really differ: a company-required Action needs a selected company, the others run in
+      // either context, and an ungranted or unpublished Action is denied in both.
+      expect(outcomes).toEqual([
+        ['ALLOWED', 'ALLOWED', 'ALLOWED', 'DENIED', 'DENIED'],
+        ['DENIED', 'ALLOWED', 'ALLOWED', 'DENIED', 'DENIED'],
+      ]);
+    }),
+);
+
+/** A finite Privacy dispatch: the Symmy retention Action a human's governance company delegates to Privacy. */
+const privacyDispatchGate = (governance: LegalEntityId) =>
+  Effect.gen(function* privacyDispatchInput() {
     const principal = privacyDispatchPrincipal(scopeFor(person, governance), 'SymmyRetention', 'c'.repeat(64));
     const scope = preserveSystemPrincipalContextTrust(principal, {
       ...principal,
@@ -798,19 +1134,27 @@ it.effect('records delegated finite Privacy refusals for current source-claim an
       },
       { access: 'write', authorization: { kind: 'protected' }, moduleKey: 'integration.symmy', role: 'action' },
     );
+    const input: GateInput = {
+      carrier: {
+        accessActor,
+        accessDeclaration: declaration,
+        entrypoint: { entrypointKey: 'integration.symmy.execute-symmy-retention' },
+        schemaVersion: '1',
+      },
+      legalEntityScope: 'optional',
+      now,
+      scope,
+    };
+    return input;
+  });
+
+it.effect('records delegated finite Privacy refusals for current source-claim and governance permission denials', () =>
+  Effect.gen(function* privacyDispatchRefusalEvidence() {
+    const governance = LegalEntityIdSchema.make(uid(71));
+    const input = yield* privacyDispatchGate(governance);
     for (const privacyDispatchLive of [false, true]) {
       const { gate, state } = harness({ privacyDispatchLive });
-      const decision = yield* gate.decide({
-        carrier: {
-          accessActor,
-          accessDeclaration: declaration,
-          entrypoint: { entrypointKey: 'integration.symmy.execute-symmy-retention' },
-          schemaVersion: '1',
-        },
-        legalEntityScope: 'optional',
-        now,
-        scope,
-      });
+      const decision = yield* gate.decide(input);
       expect(decision.outcome).toBe('DENIED');
       expect(state.entries).toHaveLength(1);
       expect(state.entries[0]?.delegation?.appId).toBe('symmy-integration');
@@ -821,9 +1165,9 @@ it.effect('records delegated finite Privacy refusals for current source-claim an
   }),
 );
 
-it.effect('requires the original human Organization facts Read grant despite an identity-only module carrier', () =>
-  Effect.gen(function* organizationGovernanceUsesHumanRights() {
-    const governance = LegalEntityIdSchema.make(uid(72));
+/** A finite gateway read: Privacy reads Organization facts for the human it acts for, in the governance company. */
+const organizationGovernanceGate = (governance: LegalEntityId) =>
+  Effect.gen(function* organizationGovernanceInput() {
     const nativeHuman = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
       ...scopeFor(person, governance),
       authenticationNamespaceId: 'core-identity',
@@ -857,6 +1201,13 @@ it.effect('requires the original human Organization facts Read grant despite an 
       now,
       scope,
     };
+    return { declaration, input };
+  });
+
+it.effect('requires the original human Organization facts Read grant despite an identity-only module carrier', () =>
+  Effect.gen(function* organizationGovernanceUsesHumanRights() {
+    const governance = LegalEntityIdSchema.make(uid(72));
+    const { declaration, input } = yield* organizationGovernanceGate(governance);
     for (const granted of [false, true]) {
       const { gate, state } = harness({
         authority: {
@@ -897,7 +1248,12 @@ it.effect(
           correlationId: 'processing-marker-gate',
           legalEntityId: uid(2),
         });
-        const { gate } = harness({ kinds: kindSource('system'), workloadKeys: [workloadKey] });
+        // The merged gate pins a standalone workload to the companies its binding declares (D6).
+        const { gate } = harness({
+          declaredCompanies: [LegalEntityIdSchema.make(uid(2))],
+          kinds: kindSource('system'),
+          workloadKeys: [workloadKey],
+        });
         const decision = yield* gate.decide({
           carrier: {
             accessDeclaration: declaration,
@@ -916,4 +1272,192 @@ it.effect(
         expect(decision.outcome).toBe(restricted ? 'ALLOWED' : 'DENIED');
       }
     }),
+);
+
+/*
+ * A page of LISTs answered together: every LIST exactly as `list` answers it alone (decision, predicate, evidence
+ * row), its seam answers untouched, and every LIST that reaches the engine in one cell read and one snapshot.
+ */
+const listPage: readonly ListGateInput[] = [
+  { carrier: { accessDeclaration: declarationOf() }, legalEntityScope: 'forbidden', now, scope: scopeFor(person) },
+  {
+    carrier: {
+      accessDeclaration: decodeAccessDeclarationOrThrow(
+        {
+          key: 'finance.invoice.read',
+          kind: 'read',
+          modes: ['run'],
+          placement: { group: 'finance', level: 'extended' },
+          risk: 'routine',
+          selectors: ['assigned'],
+        },
+        { access: 'read', authorization: { kind: 'protected' }, moduleKey: 'finance', role: 'api' },
+      ),
+    },
+    legalEntityScope: 'forbidden',
+    now,
+    scope: scopeFor(person),
+  },
+  {
+    carrier: { accessDeclaration: declarationOf({ key: 'finance.invoice.archive' }) },
+    legalEntityScope: 'forbidden',
+    now,
+    scope: scopeFor(person),
+  },
+  workloadList,
+  { carrier: {}, legalEntityScope: 'forbidden', now, scope: scopeFor(person) },
+  { carrier: { accessDeclaration: declarationOf() }, legalEntityScope: 'required', now, scope: scopeFor(person) },
+];
+
+for (const options of [
+  {},
+  { batchLog: 'writes' },
+  { batchLog: 'fails' },
+  { logFails: true },
+  { engineFailure: true },
+  { kinds: kindSource('integration'), workloadKeys: [BOUND_WORKLOAD] },
+  {
+    authority: {
+      cells: [
+        cell({ capability: 'finance.invoice.void' }),
+        cell({ capability: 'finance.invoice.read', selector: { _tag: 'assigned' } }),
+      ],
+    },
+  },
+] as const satisfies readonly RunOptions[]) {
+  it.effect(`answers a page of LISTs exactly as one list at a time (${JSON.stringify(options)})`, () =>
+    Effect.gen(function* listPageTogether() {
+      // One authority for both runs (each `cell()` is a new grant), so their answers are comparable.
+      const shared = {
+        ...options,
+        authority: options.authority ?? { cells: [cell({ capability: 'finance.invoice.void' })] },
+      };
+      // A single list never writes through the batch writer: its failing counterpart is the failing single writer.
+      const alone = harness(
+        'batchLog' in shared && shared.batchLog === 'fails' ? { authority: shared.authority, logFails: true } : shared,
+      );
+      const one = yield* Effect.forEach(listPage, (input) => alone.gate.list(input), { concurrency: 1 });
+      const together = harness(shared);
+      const many = yield* together.gate.listMany(listPage);
+      expect(many).toEqual(one);
+      // The same evidence rows, row for row (the batch writer keeps them per scope, the single writer one by one).
+      const rowsOf = (run: ReturnType<typeof harness>) => [...run.state.entries, ...run.batches.flat()];
+      expect(rowsOf(together)).toEqual(rowsOf(alone));
+      // One engine snapshot for the whole page, however many LISTs reach the engine.
+      expect(together.check.calls.checkBulk).toBeLessThanOrEqual(1);
+      expect(together.check.calls.checkBulk).toBeLessThanOrEqual(alone.check.calls.checkBulk);
+    }),
+  );
+}
+
+it.effect("reads one subject's kind and scope once for a page of LISTs, never once per LIST", () =>
+  Effect.gen(function* sharedPreamble() {
+    const kindReads = { count: 0 };
+    const human = kindSource('human');
+    const counting: AccessPrincipalKinds = {
+      ...human,
+      readKind: (query, transaction) =>
+        Effect.suspend(() => {
+          kindReads.count += 1;
+          return human.readKind(query, transaction);
+        }),
+    };
+    const page = Array.from({ length: 5 }, () => listPage[0]).filter((one) => one !== undefined);
+    const shared = { authority: { cells: [cell({ capability: 'finance.invoice.void' })] }, kinds: counting };
+    const alone = harness(shared);
+    const one = yield* Effect.forEach(page, (input) => alone.gate.list(input), { concurrency: 1 });
+    const aloneKinds = kindReads.count;
+    kindReads.count = 0;
+    const together = harness(shared);
+    expect(yield* together.gate.listMany(page)).toEqual(one);
+    expect({ kinds: aloneKinds, scopes: alone.scopes.length }).toEqual({ kinds: 5, scopes: 10 });
+    expect({ kinds: kindReads.count, scopes: together.scopes.length }).toEqual({ kinds: 1, scopes: 1 });
+  }),
+);
+
+it.effect('a page of LISTs with a company selected reads its scope once: the engine takes the checked read', () =>
+  Effect.gen(function* checkedScopeShared() {
+    const company = LegalEntityIdSchema.make(uid(26));
+    // Tenant-context declarations asked with a company selected: the gate checks the company in its scope read.
+    const page = listPage.map((input) => ({ ...input, scope: scopeFor(person, company) }));
+    const shared = { authority: { cells: [cell({ capability: 'finance.invoice.void' })] } };
+    const alone = harness(shared);
+    const one = yield* Effect.forEach(page, (input) => alone.gate.list(input), { concurrency: 1 });
+    const together = harness(shared);
+    expect(yield* together.gate.listMany(page)).toEqual(one);
+    // The tenant-context LISTs: one checked read, the engine's company-less read of the same holders answered by it.
+    // The one `required` LIST reads its company. Two reads, as on trunk; before this, the engine's read was a third.
+    expect(together.scopes.map((query) => [query.legalEntityId, query.checkedCompany])).toEqual([
+      [undefined, company],
+      [company, undefined],
+    ]);
+  }),
+);
+
+it.effect('answers a page holding a finite gateway read or Privacy dispatch LIST by LIST, exactly as list alone', () =>
+  Effect.gen(function* finiteReadsListedAlone() {
+    const governance = LegalEntityIdSchema.make(uid(73));
+    const { declaration, input: organizationRead } = yield* organizationGovernanceGate(governance);
+    const privacyDispatch = yield* privacyDispatchGate(governance);
+    const [ordinary] = listPage;
+    const allowed: string[] = [];
+    for (const granted of [false, true]) {
+      for (const privacyDispatchLive of [false, true]) {
+        const options: RunOptions = {
+          authority: {
+            cells: [cell({ capability: 'finance.invoice.void' }), cell({ capability: declaration.key })].slice(
+              0,
+              granted ? 2 : 1,
+            ),
+            legalEntityScope: { _tag: 'LegalEntity', legalEntityId: governance, tenantId: tenant },
+          },
+          privacyDispatchLive,
+        };
+        for (const page of [
+          [organizationRead],
+          [privacyDispatch],
+          [ordinary, organizationRead, privacyDispatch, organizationRead].filter((one) => one !== undefined),
+        ]) {
+          const alone = harness(options);
+          const one = yield* Effect.forEach(page, (input) => alone.gate.list(input), { concurrency: 1 });
+          const together = harness(options);
+          expect(yield* together.gate.listMany(page)).toEqual(one);
+          expect(together.state.entries).toEqual(alone.state.entries);
+          allowed.push(...one.flatMap(({ decision }) => (decision.outcome === 'ALLOWED' ? [decision.outcome] : [])));
+        }
+      }
+    }
+    // The comparison is not vacuous: a granted human's governance read is allowed, the rest refused.
+    expect(allowed.length).toBeGreaterThan(0);
+  }),
+);
+
+it.effect("never shares a scope read through a caller's transaction across a page of LISTs", () =>
+  Effect.gen(function* joinedScopeNotShared() {
+    const spec = { cells: [cell({ capability: 'finance.invoice.void' })] };
+    const authority = makeAuthority(spec);
+    const scopeReads = { count: 0 };
+    // A port that reads through a caller's transaction: every read is that caller's own.
+    const joined: DecisionAuthorityPort = {
+      ...authority.port,
+      readScope: (query) =>
+        Effect.suspend(() => {
+          scopeReads.count += 1;
+          return authority.port.readScope(query);
+        }),
+      readsThroughCallerTransaction: true,
+    };
+    const { log } = logWriter();
+    const gate = makeAccessDecisionService({
+      authorityFor: () => joined,
+      check: makeCheck({ authority: spec }).port,
+      decisionLog: log,
+      legalEntities: legalEntityCandidates([]),
+      principalKinds: kindSource('human'),
+    });
+    const page = Array.from({ length: 3 }, () => listPage[0]).filter((one) => one !== undefined);
+    yield* gate.listMany(page);
+    // Each LIST reads its scope itself (the gate's check and the engine's resolution), as `list` would.
+    expect(scopeReads.count).toBe(6);
+  }),
 );

@@ -37,6 +37,7 @@ import { accessScopeFences, accessScopes, coreRelations, legalEntities, tenants 
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { makeTestDatabaseFromClient, testDatabaseClients } from '../support/database.ts';
 import type { TestDatabaseFromClient } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 /*
  * The scope fence and the operation journal are the only lock every access writer shares (D15, D24),
@@ -63,7 +64,10 @@ const databaseFixture = Effect.gen(function* accessJournalDatabases() {
 
 /** One store for the whole process: it binds no tenant, so every call names its own scope. */
 const storeOf = (runtimeDatabase: CoreTestDatabase) =>
-  makeAccessWriteJournalStore({ executor: runtimeDatabase } satisfies AccessJournalStoreDatabase);
+  makeAccessWriteJournalStore({
+    enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+    executor: runtimeDatabase,
+  } satisfies AccessJournalStoreDatabase);
 
 /** The caller's operational scope: the verified session principal acting in one context. */
 const operationalScope = (context: {

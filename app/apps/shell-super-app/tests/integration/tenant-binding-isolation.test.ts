@@ -46,6 +46,7 @@ import type {
   TenantBindingIsolationOwnerHttp,
   TenantBindingIsolationProviderState,
 } from '../support/tenant-binding-isolation-fixture.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const namespaceId = 'test.tenant-binding-isolation.provider';
 const audience = 'shell-super-app.tenant-binding-isolation';
@@ -198,7 +199,10 @@ it.live('revokes only T1 through the governed Core action and keeps T2 admitted 
       providerSnapshots,
       () => currentOperation,
     );
-    const canonicalRepository = makeOperationalScopeRepository({ executor: database });
+    const canonicalRepository = makeOperationalScopeRepository(
+      { executor: database },
+      FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+    );
     const canonicalLoads: { readonly operation: string; readonly tenantId: string }[] = [];
     const scopeResolver = yield* makeOperationalScopeResolver(
       {
@@ -215,7 +219,11 @@ it.live('revokes only T1 through the governed Core action and keeps T2 admitted 
       makeActionRepository(yield* Crypto.Crypto),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       scopeResolver,
-      { ...openActionRuntimeOptions, accessDecision: accessGate.bound },
+      {
+        ...openActionRuntimeOptions,
+        accessDecision: accessGate.bound,
+        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      },
     );
     const cleanup = Effect.fnUntraced(function* cleanupTenantBindingIsolation() {
       yield* admin.delete(outboxMessages).where(inArray(outboxMessages.tenantId, [tenantOneId, tenantTwoId]));
@@ -286,7 +294,12 @@ it.live('revokes only T1 through the governed Core action and keeps T2 admitted 
       },
     ]);
     // The governed revoke runs under T1's real access fence, so T1 carries the scope production bootstrap writes.
-    yield* writeTestTenantScopes(admin, { principalId: principalOneId, tenantId: tenantOneId });
+    // Scopes are installed as the enrolled runtime login, as bootstrap does; the admin login only seeds rows.
+    yield* writeTestTenantScopes(database, {
+      databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      principalId: principalOneId,
+      tenantId: tenantOneId,
+    });
 
     const resolveCurrent = (principal: typeof tenantOne, operation: string) =>
       Effect.suspend(() => {

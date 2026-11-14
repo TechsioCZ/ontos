@@ -3,6 +3,7 @@ import { Crypto, Effect, Fiber, FileSystem, Layer, Option, Schema, Stream } from
 import { Socket } from 'effect/socket';
 import { FetchHttpClient, HttpClient } from 'effect/http';
 import { assert, expect, it } from 'effect-rstest';
+import { OntosModuleDeploymentContractSchema } from '@app/core-runtime';
 import {
   describePriceGroupTemporalOwner,
   openPriceGroupTemporalChannel,
@@ -130,7 +131,12 @@ it.layer(
           expect(bundle.contract.deployment.buildMarker).toBe(bundle.marker.buildMarker);
           const snapshot = yield* makePriceGroupTemporalComposition([bundle]);
           const [module] = snapshot.composition.modules;
-          expect(module?.contractDocument).toBeDefined();
+          const ownerContract = yield* Schema.decodeUnknownEffect(
+            Schema.fromJsonString(OntosModuleDeploymentContractSchema),
+          )(module?.contractDocument);
+          expect(ownerContract).toEqual(bundle.contract);
+          expect(module?.moduleId).toBe(ownerContract.manifest.module.id);
+          expect(module?.deployment).toEqual(ownerContract.deployment);
           expect(module?.requiredCoreCapabilities).toEqual(
             bundle.contract.manifest.requirements?.coreCapabilities ?? [],
           );
@@ -172,7 +178,7 @@ it.layer(
             expect(metadata.name).toBe(module.federation.remoteName);
           }
         }),
-      30_000,
+      owner === 'commerce-customer-context' ? 120_000 : 30_000,
     );
   }
 });

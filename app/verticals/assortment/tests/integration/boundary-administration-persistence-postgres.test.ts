@@ -32,6 +32,10 @@ import {
   boundaryAdministrationPersistenceForScope,
   boundaryRef,
 } from '../../src/services/boundary-administration.service.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+import { grantRuntimeOwnerTableAccess } from '../support/runtime-owner-access.ts';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 type OwnerDatabase = TestDatabaseFromClient<typeof coreRelations>;
 interface PersistedBoundaryLifecycleFixture {
@@ -54,7 +58,7 @@ const runScoped = <Value>(
 ) =>
   fixture.database.transaction((transaction) =>
     Effect.gen(function* runBoundaryOperation() {
-      const scoped = yield* installOperationalScope(transaction, fixture.scope);
+      const scoped = yield* installOperationalScope(transaction, fixture.scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
       return yield* operation(scoped);
     }),
   );
@@ -74,9 +78,11 @@ const cleanupFixture = (admin: TestDatabaseFromClient<typeof assortmentRelations
 const withFixture = <Value>(run: (fixture: BoundaryFixture) => Effect.Effect<Value, unknown>) =>
   Effect.scoped(
     Effect.gen(function* boundaryFixture() {
-      const { admin: client } = yield* testDatabaseClients;
-      const database = yield* makeTestDatabaseFromClient(client, coreRelations);
-      const admin = yield* makeTestDatabaseFromClient(client, assortmentRelations);
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      // Owner operations run as the enrolled runtime role, under its row-level security.
+      const database = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
+      const admin = yield* makeTestDatabaseFromClient(adminClient, assortmentRelations);
+      yield* grantRuntimeOwnerTableAccess(admin);
       const scope = {
         authContextRef: `better-auth-session:${randomUUID()}`,
         authMethod: 'session' as const,

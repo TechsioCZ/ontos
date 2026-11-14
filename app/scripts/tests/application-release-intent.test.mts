@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { canonicalizeApplicationComposition, validateActiveApplicationCompositionSnapshot } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -20,10 +22,46 @@ const unit = (id: string): ApplicationReleaseDeploymentUnit => ({
   id,
   packageName: `@app/${id}`,
   path: id === SHELL ? `apps/${id}` : `verticals/${id}`,
-  workerName: `ontos-${id}`,
 });
 const available = [unit(CATALOG), unit(INVENTORY), unit(PARTY), unit(SHELL)];
 const membership = [{ appId: INVENTORY }, { appId: CATALOG }];
+
+const makeZeropsBaseline = (ids: readonly string[]) =>
+  makeApplicationCompositionSnapshotFixture(ids).pipe(
+    Effect.flatMap((snapshot) => {
+      const composition = {
+        ...snapshot.composition,
+        modules: snapshot.composition.modules.map((module) => ({
+          ...module,
+          backend: {
+            baseUrl: `https://${module.deployment.appId}.zerops-fixture.example/`,
+            transport: 'node-http' as const,
+          },
+        })),
+        revision: '0'.repeat(64),
+      };
+      return validateActiveApplicationCompositionSnapshot({
+        ...snapshot,
+        composition: {
+          ...composition,
+          revision: createHash('sha256').update(canonicalizeApplicationComposition(composition)).digest('hex'),
+        },
+      });
+    }),
+  );
+
+it.effect('rejects an unsupported deployment target before selecting or writing release output', () =>
+  Effect.gen(function* refusesUnsupportedTarget() {
+    const failure = yield* selectApplicationReleaseUnits(
+      { modules: membership },
+      available,
+      [],
+      undefined,
+      'cloudflare',
+    ).pipe(Effect.flip);
+    expect(Schema.isSchemaError(failure)).toBe(true);
+  }),
+);
 
 it.effect('first release builds every desired slot and the separate Shell without assuming retained evidence', () =>
   Effect.gen(function* firstRelease() {
@@ -41,7 +79,7 @@ it.effect('first release builds every desired slot and the separate Shell withou
 
 it.effect('zero impact keeps the complete reviewed membership and partitions all existing slots as retained', () =>
   Effect.gen(function* zeroImpact() {
-    const baseline = yield* makeApplicationCompositionSnapshotFixture([CATALOG, INVENTORY]);
+    const baseline = yield* makeZeropsBaseline([CATALOG, INVENTORY]);
     const selected = yield* selectApplicationReleaseUnits({ modules: membership }, available, [], baseline);
     expect(selected.complete).toEqual([unit(INVENTORY), unit(CATALOG)]);
     expect(selected.fresh).toEqual([]);
@@ -52,7 +90,7 @@ it.effect('zero impact keeps the complete reviewed membership and partitions all
 
 it.effect('one impacted owner is fresh while the other complete slot retains its existing baseline membership', () =>
   Effect.gen(function* oneOwnerImpact() {
-    const baseline = yield* makeApplicationCompositionSnapshotFixture([CATALOG, INVENTORY]);
+    const baseline = yield* makeZeropsBaseline([CATALOG, INVENTORY]);
     const selected = yield* selectApplicationReleaseUnits(
       { modules: membership },
       available,
@@ -78,14 +116,8 @@ it.effect('a provider placement change builds the desired owners and Shell even 
 
 it.effect('unchanged provider placement retains exact membership without manufacturing source impact', () =>
   Effect.gen(function* unchangedProviderPlacement() {
-    const baseline = yield* makeApplicationCompositionSnapshotFixture([CATALOG, INVENTORY]);
-    const selected = yield* selectApplicationReleaseUnits(
-      { modules: membership },
-      available,
-      [],
-      baseline,
-      'cloudflare',
-    );
+    const baseline = yield* makeZeropsBaseline([CATALOG, INVENTORY]);
+    const selected = yield* selectApplicationReleaseUnits({ modules: membership }, available, [], baseline, 'zerops');
     expect(selected.fresh).toEqual([]);
     expect(selected.retained).toEqual(selected.complete);
     expect(selected.shell.mode).toBe(RETAINED);
@@ -94,7 +126,7 @@ it.effect('unchanged provider placement retains exact membership without manufac
 
 it.effect('consumes the already-computed shared and transitive impact closure without narrowing it', () =>
   Effect.gen(function* sharedImpactClosure() {
-    const baseline = yield* makeApplicationCompositionSnapshotFixture([PARTY, CATALOG, INVENTORY]);
+    const baseline = yield* makeZeropsBaseline([PARTY, CATALOG, INVENTORY]);
     const selected = yield* selectApplicationReleaseUnits(
       { modules: [...membership, { appId: PARTY }] },
       available,
@@ -109,7 +141,7 @@ it.effect('consumes the already-computed shared and transitive impact closure wi
 
 it.effect('new desired membership builds its new slot even when source impact is empty', () =>
   Effect.gen(function* addedOwner() {
-    const baseline = yield* makeApplicationCompositionSnapshotFixture([INVENTORY]);
+    const baseline = yield* makeZeropsBaseline([INVENTORY]);
     const selected = yield* selectApplicationReleaseUnits({ modules: membership }, available, [], baseline);
     expect(selected.fresh).toEqual([unit(CATALOG)]);
     expect(selected.retained).toEqual([unit(INVENTORY)]);
@@ -118,7 +150,7 @@ it.effect('new desired membership builds its new slot even when source impact is
 
 it.effect('records removed baseline slots without requiring their old execution placement or keeping them in N', () =>
   Effect.gen(function* removedOwner() {
-    const baseline = yield* makeApplicationCompositionSnapshotFixture([PARTY, INVENTORY]);
+    const baseline = yield* makeZeropsBaseline([PARTY, INVENTORY]);
     const selected = yield* selectApplicationReleaseUnits(
       { modules: [{ appId: INVENTORY }] },
       available.filter(({ id }) => id !== PARTY),
@@ -133,7 +165,7 @@ it.effect('records removed baseline slots without requiring their old execution 
 
 it.effect('known impacted owners outside desired membership never become installed slots', () =>
   Effect.gen(function* explicitMembershipOnly() {
-    const baseline = yield* makeApplicationCompositionSnapshotFixture([INVENTORY]);
+    const baseline = yield* makeZeropsBaseline([INVENTORY]);
     const selected = yield* selectApplicationReleaseUnits(
       { modules: [{ appId: INVENTORY }] },
       available,
@@ -148,7 +180,7 @@ it.effect('known impacted owners outside desired membership never become install
 
 it.effect('an explicitly empty business membership remains empty and records all previous business removals', () =>
   Effect.gen(function* noBusinessMembership() {
-    const baseline = yield* makeApplicationCompositionSnapshotFixture([PARTY, INVENTORY]);
+    const baseline = yield* makeZeropsBaseline([PARTY, INVENTORY]);
     const selected = yield* selectApplicationReleaseUnits({ modules: [] }, available, [{ id: CATALOG }], baseline);
     expect(selected.complete).toEqual([]);
     expect(selected.fresh).toEqual([]);
@@ -160,7 +192,7 @@ it.effect('an explicitly empty business membership remains empty and records all
 
 it.effect('a Shell-only impact builds Shell separately and keeps business slots retained', () =>
   Effect.gen(function* changedShellOnly() {
-    const baseline = yield* makeApplicationCompositionSnapshotFixture([INVENTORY]);
+    const baseline = yield* makeZeropsBaseline([INVENTORY]);
     const selected = yield* selectApplicationReleaseUnits(
       { modules: [{ appId: INVENTORY }] },
       available,
@@ -219,7 +251,7 @@ it.effect('rejects duplicate or unknown impacted deployments including duplicate
 
 it.effect('rejects duplicate baseline deployment slots without manufacturing retained membership', () =>
   Effect.gen(function* duplicateBaseline() {
-    const baseline = yield* makeApplicationCompositionSnapshotFixture([INVENTORY]);
+    const baseline = yield* makeZeropsBaseline([INVENTORY]);
     const duplicate = {
       ...baseline,
       composition: {
@@ -236,7 +268,7 @@ it.effect('rejects duplicate baseline deployment slots without manufacturing ret
 
 it.effect('rejects a malformed baseline rather than treating it as an approved first release', () =>
   Effect.gen(function* invalidBaseline() {
-    const baseline = yield* makeApplicationCompositionSnapshotFixture([INVENTORY]);
+    const baseline = yield* makeZeropsBaseline([INVENTORY]);
     const malformed = { ...baseline, validUntil: baseline.observedAt };
     const failure = yield* selectApplicationReleaseUnits({ modules: membership }, available, [], malformed).pipe(
       Effect.flip,
@@ -251,7 +283,7 @@ it.effect('preserves reviewed migration requirements independently of zero fresh
       migrationRequirements: { mode: 'selected', owners: [{ migrate: false, ownerId: 'core-runtime', verify: true }] },
       modules: [{ appId: INVENTORY }],
     });
-    const baseline = yield* makeApplicationCompositionSnapshotFixture([INVENTORY]);
+    const baseline = yield* makeZeropsBaseline([INVENTORY]);
     const selected = yield* selectApplicationReleaseUnits(intent, available, [], baseline);
     expect(selected.fresh).toEqual([]);
     expect(selected.complete).toEqual([unit(INVENTORY)]);

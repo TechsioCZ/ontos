@@ -1,4 +1,8 @@
-import { findPostgresFailure, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import {
+  defineDatabaseIdentityEnrollment,
+  findPostgresFailure,
+  TrustedPrincipalContextSchema,
+} from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import type { PaymentTermDefinitionSnapshot } from '@app/payment-term-catalog-contracts/payment-term';
 import { PaymentTermDefinitionSnapshotSchema } from '@app/payment-term-catalog-contracts/payment-term';
@@ -63,7 +67,11 @@ export const withPersistence = <Value, Failure>(
 ) =>
   database.transaction((transaction: PaymentTestTransaction) =>
     Effect.gen(function* scopedPaymentPersistence() {
-      const scoped = yield* installOperationalScope(transaction, operationalScopeOf(scope));
+      const scoped = yield* installOperationalScope(
+        transaction,
+        operationalScopeOf(scope),
+        defineDatabaseIdentityEnrollment([]),
+      );
       return yield* operation(paymentAggregatePersistenceForTransaction(scoped));
     }),
   );

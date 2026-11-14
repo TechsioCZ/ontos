@@ -12,6 +12,14 @@ const shared = {
   tools: { swc },
 } as const;
 
+// Operator acceptance needs an environment no gate provisions: the reset Nájempark stack serving on
+// localhost:3020, and the reviewed agent-profile replay input against a people_model_scratch_* database.
+// `pnpm test:operator` runs them; scripts/demo/README.md describes their preparation.
+const operatorTests = [
+  'scripts/integration/agent-profile-replay.test.mts',
+  'scripts/integration/siampark-demo-http.test.mts',
+];
+
 export default defineConfig({
   projects: [
     {
@@ -22,8 +30,14 @@ export default defineConfig({
     },
     {
       ...shared,
+      exclude: operatorTests,
       include: ['scripts/integration/**/*.test.mts'],
       name: 'integration',
+    },
+    {
+      ...shared,
+      include: operatorTests,
+      name: 'operator',
     },
     {
       ...shared,

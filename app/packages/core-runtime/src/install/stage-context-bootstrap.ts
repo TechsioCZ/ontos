@@ -12,9 +12,11 @@ import { writeWorkloadBindings } from '../access/workloads/binding-store.ts';
 import { WorkloadKeySchema } from '../authorization/access-declaration.ts';
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
 import type { AccessCatalogModule } from '../authorization/access-declaration.ts';
-// This installer reads the privileged database only for stage initialization.
+// The installation run owns the runtime connection: every scope it installs is a session-setting one.
 import { CoreDatabase } from '../db/client.ts';
 import { parseDatabaseConfig } from '../db/config.ts';
+import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
 import {
   accessAssignments,
   accessMemberships,
@@ -65,9 +67,6 @@ import type { StageAccountRole, StageAccountsFile, StageRetiredTenant } from './
 
 export { installedModuleKeysOf } from './installation-runtime.ts';
 export type { InstallationRuntime } from './installation-runtime.ts';
-
-/** The one module a stage tenant has always installed; its declarations come from the composition. */
-const STAGE_MODULE_KEY = 'party.registry';
 
 /** The identity rows one stage tenant needs before its access can be bootstrapped. */
 export interface StageTenantIdentity {
@@ -152,22 +151,27 @@ const bootstrapFailureFromCause = (cause: unknown): StageContextBootstrapError =
   );
 };
 
-/** What a stage run needs before it writes anything: its privileged database and its private engine. */
+/** What a stage run needs before it writes anything: its runtime database and its private engine. */
 export interface StageContextBootstrapConfiguration {
-  readonly databaseAdminUrl: string;
-  readonly spiceDb: SpiceDbConfigValue;
+  readonly databaseUrl: Redacted.Redacted;
+  readonly spiceDb: Redacted.Redacted<SpiceDbConfigValue>;
 }
 
 /**
  * Reads and validates the stage bootstrap's configuration. It is an operator action: it refuses to run
  * anywhere but stage, and only against stage-private SpiceDB (ADR-0028).
+ *
+ * The installation run connects with the runtime identity (`DATABASE_URL`), not the administrative one:
+ * every scope it installs is a session-setting scope, which the enrollment it is handed must name, and
+ * the identity rows it writes are the shared runtime's own. The administrative connection stays with the
+ * migrator and the Better Auth store, which need privileges the access runtime never holds.
  */
 export const loadStageContextBootstrapConfiguration = Effect.fn('StageContextBootstrap.loadConfiguration')(
   function* loadStageContextBootstrapConfiguration() {
     const source = yield* Effect.all(
       {
-        databaseAdminUrl: Config.schema(Schema.Redacted(TrimmedNonEmptyString), 'DATABASE_ADMIN_URL').pipe(
-          Effect.mapError((cause) => failure('DATABASE_ADMIN_URL is required', cause)),
+        databaseUrl: Config.schema(Schema.Redacted(TrimmedNonEmptyString), 'DATABASE_URL').pipe(
+          Effect.mapError((cause) => failure('DATABASE_URL is required', cause)),
         ),
         deploymentEnvironment: Config.schema(StageEnvironmentSchema, 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
           Effect.mapError((cause) => failure('The Core installation bootstrap can run only in stage', cause)),
@@ -185,7 +189,7 @@ export const loadStageContextBootstrapConfiguration = Effect.fn('StageContextBoo
       { concurrency: 5 },
     );
     yield* parseDatabaseConfig({
-      DATABASE_URL: Redacted.value(source.databaseAdminUrl),
+      DATABASE_URL: Redacted.value(source.databaseUrl),
     }).pipe(Effect.mapError((error) => failure(error.reason, error)));
     const spiceDb = yield* parseSpiceDbConfig({
       SPICEDB_CA_CERT: source.spiceDbCaCertificate,
@@ -196,7 +200,7 @@ export const loadStageContextBootstrapConfiguration = Effect.fn('StageContextBoo
     if (spiceDb.endpoint !== 'spicedb:50051') {
       return yield* failure('The Core installation bootstrap requires stage-private SpiceDB');
     }
-    return { databaseAdminUrl: Redacted.value(source.databaseAdminUrl), spiceDb };
+    return { databaseUrl: source.databaseUrl, spiceDb: Redacted.make(spiceDb) };
   },
 );
 
@@ -225,12 +229,31 @@ export const stageScopeOf = (input: {
   );
 };
 
+/** An operator may install only a base module that the trusted composition actually declares. */
+export const stageModuleIntentRefusal = (
+  moduleKeys: readonly string[],
+  modules: readonly AccessCatalogModule[],
+): StageContextBootstrapError | undefined => {
+  const declared = new Set(modules.map(({ moduleId }) => moduleId));
+  return moduleKeys.some((moduleKey) => !declared.has(moduleKey))
+    ? failure('Every stage base module must be explicitly declared by the running composition')
+    : undefined;
+};
+
 /** The stage tenants of one operator accounts file, each account paired with its Better Auth user. */
 export const stageTenantsFromAccountsFile = Effect.fn('StageContextBootstrap.stageTenantsFromAccountsFile')(
   function* stageTenantsFromAccountsFileEffect(
     file: StageAccountsFile,
     providerUserIds: ReadonlyMap<string, string>,
+    modules: readonly AccessCatalogModule[],
   ): Effect.fn.Return<readonly StageTenantBootstrap[], StageContextBootstrapError> {
+    const refusal = stageModuleIntentRefusal(
+      file.tenants.map(({ moduleKey }) => moduleKey),
+      modules,
+    );
+    if (refusal !== undefined) {
+      return yield* refusal;
+    }
     const accounts = file.tenants.flatMap(({ accounts: tenantAccounts }) => tenantAccounts);
     const missingUser = accounts.some(({ principalId }) => !providerUserIds.has(principalId));
     if (missingUser) {
@@ -246,7 +269,7 @@ export const stageTenantsFromAccountsFile = Effect.fn('StageContextBootstrap.sta
           registrationCountry: tenant.legalEntity.registrationCountry,
           registrationNumber: tenant.legalEntity.registrationNumber,
         },
-        moduleKey: STAGE_MODULE_KEY,
+        moduleKey: tenant.moduleKey,
         moduleStateId: tenant.moduleStateId,
         slug: tenant.slug,
         tenantId: tenant.tenantId,
@@ -479,10 +502,11 @@ const retireTenant = Effect.fn('StageContextBootstrap.retireTenant')(function* r
   retired: StageRetiredTenant,
   retiredAt: Date,
   scope: OperationalScope,
+  enrollment: DatabaseIdentityEnrollment,
 ): Effect.fn.Return<void, StageContextBootstrapError> {
   // The review tables are tenant-guarded: without the tenant's own scope installed the retirement would
   // silently match no row and leave a graph that still answers.
-  yield* installOperationalScope(transaction, scope).pipe(Effect.mapError(bootstrapFailureFromCause));
+  yield* installOperationalScope(transaction, scope, enrollment).pipe(Effect.mapError(bootstrapFailureFromCause));
   yield* transaction
     .update(principalAuthBindings)
     .set({ revokedAt: retiredAt, status: 'revoked' })
@@ -501,6 +525,12 @@ const retireTenant = Effect.fn('StageContextBootstrap.retireTenant')(function* r
     .pipe(Effect.mapError(bootstrapFailureFromCause));
   yield* Effect.forEach(
     [
+      // The tenant ends first: a platform system principal (the release actor) may only change status once its
+      // tenant is no longer active, which the database enforces (core.keep_system_principals).
+      transaction
+        .update(tenants)
+        .set({ status: 'archived' })
+        .where(and(eq(tenants.tenantId, retired.tenantId), ne(tenants.status, 'archived'))),
       transaction
         .update(principals)
         .set({ status: 'archived' })
@@ -513,10 +543,6 @@ const retireTenant = Effect.fn('StageContextBootstrap.retireTenant')(function* r
         .update(legalEntities)
         .set({ status: 'archived' })
         .where(and(eq(legalEntities.tenantId, retired.tenantId), ne(legalEntities.status, 'archived'))),
-      transaction
-        .update(tenants)
-        .set({ status: 'archived' })
-        .where(and(eq(tenants.tenantId, retired.tenantId), ne(tenants.status, 'archived'))),
     ],
     (statement) => statement.pipe(Effect.mapError(bootstrapFailureFromCause)),
     { concurrency: 1, discard: true },
@@ -547,6 +573,13 @@ export const stageBootstrapRefusal = (
     // A composition that declares nothing would publish an empty release and deny the owner everything.
     return failure('The stage bootstrap needs the declarations of the running composition');
   }
+  const moduleRefusal = stageModuleIntentRefusal(
+    input.tenants.map(({ tenant }) => tenant.moduleKey),
+    options.modules,
+  );
+  if (moduleRefusal !== undefined) {
+    return moduleRefusal;
+  }
   const withoutExactlyOneOwner = input.tenants.some(
     (tenant) => tenant.accounts.filter(({ owner }) => owner).length !== 1,
   );
@@ -569,6 +602,7 @@ const reconcileTenant = Effect.fn('StageContextBootstrap.reconcileTenant')(funct
   input: { readonly installedModuleKeys: readonly string[]; readonly tenant: StageTenantBootstrap },
   options: StageContextBootstrapOptions,
   at: Date,
+  enrollment: DatabaseIdentityEnrollment,
 ): Effect.fn.Return<readonly StageContextBootstrapResult[], StageContextBootstrapError, InstallationRuntime> {
   const { tenant } = input;
   const bootstrap = yield* TenantAccessBootstrap;
@@ -601,7 +635,7 @@ const reconcileTenant = Effect.fn('StageContextBootstrap.reconcileTenant')(funct
   // registers none, and the gate refuses every workload on its carriers.
   const declaredWorkloads = tenant.tenant.workloads ?? [];
   if (declaredWorkloads.length > 0) {
-    yield* writeWorkloadBindings({ executor }, ownerScope, {
+    yield* writeWorkloadBindings({ enrollment, executor }, ownerScope, {
       bindings: declaredWorkloads.map(({ principalId, workloadKey }) => ({
         bindingId: AccessWorkloadBindingIdSchema.make(
           stableUuid(
@@ -643,9 +677,10 @@ const reconcileTenant = Effect.fn('StageContextBootstrap.reconcileTenant')(funct
         }).pipe(Effect.mapError((cause) => failure(`${cause.code}: ${cause.reason}`, cause))),
       { concurrency: 1, discard: true },
     );
-    yield* writeStageAssignments({ executor }, ownerScope, { assignedBy: bootstrapped.ownerPrincipalId, holders }).pipe(
-      Effect.mapError((cause) => failure(`${cause.code}: ${cause.reason}`, cause)),
-    );
+    yield* writeStageAssignments({ enrollment, executor }, ownerScope, {
+      assignedBy: bootstrapped.ownerPrincipalId,
+      holders,
+    }).pipe(Effect.mapError((cause) => failure(`${cause.code}: ${cause.reason}`, cause)));
     // The further holders are intent the first reconcile could not see: project them once.
     yield* writer
       .reconcileTenant({ scope: ownerScope })
@@ -672,13 +707,20 @@ export const reconcileStageContextBootstraps = Effect.fn('StageContextBootstrap.
       readonly tenants: readonly StageTenantBootstrap[];
     },
     options: StageContextBootstrapOptions,
-  ): Effect.fn.Return<readonly StageContextBootstrapResult[], StageContextBootstrapError, InstallationRuntime> {
+  ): Effect.fn.Return<
+    readonly StageContextBootstrapResult[],
+    StageContextBootstrapError,
+    InstallationRuntime | DatabaseIdentityEnrollmentContext
+  > {
     const refusal = stageBootstrapRefusal(input, options);
     if (refusal !== undefined) {
       return yield* refusal;
     }
     const { executor } = yield* CoreDatabase;
     const writer = yield* AccessProjectionWriter;
+    // The identity the run connects as: its enrollment names the session-setting role that installs the
+    // scope of every tenant-guarded read and write below, and it is read, never assumed.
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
     const at = yield* DateTime.nowAsDate;
     const results = yield* Effect.forEach(
       input.tenants,
@@ -691,6 +733,7 @@ export const reconcileStageContextBootstraps = Effect.fn('StageContextBootstrap.
           },
           options,
           at,
+          enrollment,
         ),
       { concurrency: 1 },
     );
@@ -702,7 +745,9 @@ export const reconcileStageContextBootstraps = Effect.fn('StageContextBootstrap.
         return yield* failure('A retired stage Tenant needs the Principal that leaves it');
       }
       const retiredScope = yield* stageScopeOf({ principalId, tenantId: retired.tenantId });
-      yield* runTenantTransaction(executor, (transaction) => retireTenant(transaction, retired, at, retiredScope));
+      yield* runTenantTransaction(executor, (transaction) =>
+        retireTenant(transaction, retired, at, retiredScope, enrollment),
+      );
       // The graph is the projection of the intent that just ended, so the reconcile is the deletion.
       yield* writer
         .reconcileTenant({ scope: retiredScope })

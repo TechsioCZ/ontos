@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { retailEnrollmentVerificationRequired } from '../../src/enrollment/orchestration/owner-effect-registry.ts';
+import type { CommercePortalAuthAccountLookup } from '../../api/portal-auth/provider/account-lookup-service.ts';
 
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -30,6 +32,7 @@ import {
   PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
   PARTY_REGISTRY_OWNER_MODULE_KEY,
   RETAIL_CUSTOMER_PROFILE_ENSURED_OUTCOME_CODE,
+  RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY,
   RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE,
   RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE,
   retailPartyCandidateDigest,
@@ -126,7 +129,7 @@ const succeeded = (outcomeCode: string, resultReference: string): EnrollmentAcce
   resultReference,
 });
 
-/** The three continuation-dispatched owner answers of a journey that runs clean end to end. */
+/** The four continuation-dispatched owner answers of a journey that runs clean end to end. */
 const happyAnswers: Readonly<Record<string, EnrollmentAcceptanceOwnerAnswer>> = Object.freeze({
   [BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY]: succeeded(RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE, BINDING_RESOURCE_ID),
   [ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY]: succeeded(
@@ -134,6 +137,7 @@ const happyAnswers: Readonly<Record<string, EnrollmentAcceptanceOwnerAnswer>> = 
     PROFILE_RESOURCE_ID,
   ),
   [PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY]: succeeded(PARTY_CANDIDATE_CREATED_OUTCOME_CODE, PARTY_RESOURCE_ID),
+  [RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY]: succeeded('retail_customer_directory_enrolled', PARTY_RESOURCE_ID),
 });
 
 const withAnswer = (transitionKey: string, answer: EnrollmentAcceptanceOwnerAnswer) => ({
@@ -157,6 +161,7 @@ const seedPortalAccountTransition = Effect.fnUntraced(function* seedPortalAccoun
   identities: ScenarioIdentities,
   portalEnrollmentAttemptId: string,
   expectedRevision: number,
+  initialState: 'IN_PROGRESS' | 'VERIFICATION_REQUIRED' = 'IN_PROGRESS',
 ) {
   const ownerInvocationId = randomUUID();
   const claimed = yield* fixture.ownerStore.claimTransition(
@@ -183,6 +188,7 @@ const seedPortalAccountTransition = Effect.fnUntraced(function* seedPortalAccoun
       actorPrincipalId: identities.actorPrincipalId,
       expectedRevision: claimed.attempt.revision,
       leaseToken: claimed.operation.lease.leaseToken,
+      nextState: initialState,
       outcomeCode: PORTAL_ACCOUNT_CREATED_OUTCOME_CODE,
       ownerInvocationId,
       ownerModuleKey: 'commerce.portal-auth',
@@ -224,6 +230,82 @@ const subjectWithParty = (identities: ScenarioIdentities): RetailSelfEnrollmentP
   partyRef: Option.some(retailPartyRefFor(identities.tenantId, PARTY_RESOURCE_ID)),
 });
 
+it.live('parks signup without a Party claim, then immediately completes on one verified resume', () =>
+  Effect.scoped(
+    Effect.gen(function* verifiedResumeWithoutWaitingForALease() {
+      const identities = makeScenarioIdentities();
+      const compositionRevision = yield* enrollmentApplicationCompositionRevision;
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId: identities.tenantId }, compositionRevision);
+      const started = yield* startEnrollmentAcceptanceAttempt(fixture, {
+        ...identities.startInput,
+        compositionRevision,
+      });
+      const identity = { portalEnrollmentAttemptId: started.portalEnrollmentAttemptId, tenantId: identities.tenantId };
+      yield* seedPortalAccountTransition(
+        fixture,
+        identities,
+        started.portalEnrollmentAttemptId,
+        started.revision,
+        'VERIFICATION_REQUIRED',
+      );
+      let verified = false;
+      const lookups: { ownerInvocationId: string; providerSubjectId: string }[] = [];
+      const lookup: CommercePortalAuthAccountLookup = {
+        existsByEmail: () => Effect.die('Verification must not use email continuity'),
+        existsByProviderSubject: () => Effect.die('Verification must name the provider invocation'),
+        subjectForOwnerInvocation: () => Effect.die('The durable Attempt already knows its subject'),
+        verifiedEmailForOwnerInvocation: (input) =>
+          Effect.sync(() => {
+            lookups.push(input);
+            return verified;
+          }),
+      };
+      const harness = yield* makeEnrollmentContinuationHarness(fixture.run, fixture.runWorker, {
+        actorPrincipalId: identities.actorPrincipalId,
+        answers: happyAnswers,
+        subject: subjectWithParty(identities),
+        verificationRequired: (context) => retailEnrollmentVerificationRequired(context, lookup),
+      });
+      const before = yield* fixture.ownerStore.read(identity);
+      expect(before.state).toBe('VERIFICATION_REQUIRED');
+      expect(before.lease).toBeUndefined();
+      const parked = yield* harness.continuation.advance(identity);
+      expect(parked.outcome).toBe('HALTED');
+      if (parked.outcome === 'HALTED') {
+        expect(parked.halt.reason).toBe('VERIFICATION_REQUIRED');
+      }
+      expect(harness.owner.log.dispatched).toEqual([]);
+      expect(
+        (yield* readEnrollmentAcceptanceOperations(fixture, identity.portalEnrollmentAttemptId)).map(
+          (operation) => operation.transition_key,
+        ),
+      ).toEqual([PORTAL_ACCOUNT_CREATION_TRANSITION_KEY]);
+      expect((yield* fixture.ownerStore.read(identity)).revision).toBe(before.revision);
+      // No sleep, clock advance or second resume: current verification wakes the Attempt before
+      // Core/Party preparation, then the same request drives the finite native journey to completion.
+      verified = true;
+      expect((yield* harness.continuation.advance(identity)).outcome).toBe('COMPLETE');
+      const complete = yield* fixture.ownerStore.read(identity);
+      expect(complete.state).toBe('COMPLETE');
+      expect(complete.lease).toBeUndefined();
+      expect(harness.owner.log.dispatched).toEqual([
+        PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
+        RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY,
+        ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY,
+        BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY,
+      ]);
+      expect(new Set(lookups.map((input) => input.ownerInvocationId)).size).toBe(1);
+      expect(new Set(lookups.map((input) => input.providerSubjectId))).toEqual(
+        new Set([accountSubject.providerSubjectId]),
+      );
+      expect((yield* harness.continuation.advance(identity)).outcome).toBe('COMPLETE');
+      expect(
+        harness.owner.log.dispatched.filter((key) => key === PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY),
+      ).toHaveLength(1);
+    }),
+  ),
+);
+
 it.live('advances a started Attempt to derived COMPLETE through every declared transition', () =>
   Effect.scoped(
     Effect.gen(function* advancesToComplete() {
@@ -239,10 +321,11 @@ it.live('advances a started Attempt to derived COMPLETE through every declared t
       expect(result.outcome).toBe('COMPLETE');
       expect(harness.owner.log.dispatched).toStrictEqual([
         PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
+        RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY,
         ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY,
         BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY,
       ]);
-      // Removing the derived-completion gate leaves this Attempt IN_PROGRESS with four SUCCEEDED
+      // Removing the derived-completion gate leaves this Attempt IN_PROGRESS with five SUCCEEDED
       // owner rows, and this assertion fails.
       const attempt = yield* readEnrollmentAcceptanceAttempt(fixture, portalEnrollmentAttemptId);
       expect(attempt.state).toBe('COMPLETE');
@@ -251,6 +334,7 @@ it.live('advances a started Attempt to derived COMPLETE through every declared t
       ).toStrictEqual([
         [PORTAL_ACCOUNT_CREATION_TRANSITION_KEY, 'SUCCEEDED', PORTAL_ACCOUNT_CREATED_OUTCOME_CODE],
         [PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY, 'SUCCEEDED', PARTY_CANDIDATE_CREATED_OUTCOME_CODE],
+        [RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY, 'SUCCEEDED', 'retail_customer_directory_enrolled'],
         [ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY, 'SUCCEEDED', RETAIL_CUSTOMER_PROFILE_ENSURED_OUTCOME_CODE],
         [BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY, 'SUCCEEDED', RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE],
       ]);
@@ -309,7 +393,7 @@ it.live('a crash after the Party step re-runs onto the same Party without duplic
       // One row per transition, and the Party still names the very same resource. Removing the
       // derived owner-invocation identity mints a fresh one on the re-run, the claim no longer
       // replays, and this length assertion fails with a duplicated Party row.
-      expect(operations).toHaveLength(4);
+      expect(operations).toHaveLength(5);
       const party = operations.find((row) => row.transition_key === PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY);
       expect(party?.result_reference).toBe(PARTY_RESOURCE_ID);
       expect(party?.status).toBe('SUCCEEDED');
@@ -373,7 +457,7 @@ it.live('an owner answer that never arrives is reconciled once, never dispatched
       expect(recovery.owner.log.dispatched).not.toContain(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY);
       expect(recovery.owner.log.reconciled).toStrictEqual([PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY]);
       const operations = yield* readEnrollmentAcceptanceOperations(fixture, portalEnrollmentAttemptId);
-      expect(operations).toHaveLength(4);
+      expect(operations).toHaveLength(5);
       const party = operations.find((row) => row.transition_key === PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY);
       expect(party?.result_reference).toBe(PARTY_RESOURCE_ID);
       expect(party?.reconciliation_ref).not.toBeNull();
@@ -445,7 +529,7 @@ it.live('a Party created before a failing profile ensure keeps its committed par
 
       expect(result.outcome).toBe('HALTED');
       if (result.outcome === 'HALTED') {
-        expect(result.halt.reason).toBe('OWNER_REJECTED');
+        expect(result.halt.reason).toBe('ATTEMPT_TERMINAL');
       }
       const operations = yield* readEnrollmentAcceptanceOperations(fixture, portalEnrollmentAttemptId);
       const party = operations.find((row) => row.transition_key === PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY);
@@ -492,6 +576,7 @@ it.live('a retail binding that commits without its grant baseline halts as RECON
       ).toStrictEqual([
         [PORTAL_ACCOUNT_CREATION_TRANSITION_KEY, 'SUCCEEDED', PORTAL_ACCOUNT_CREATED_OUTCOME_CODE],
         [PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY, 'SUCCEEDED', PARTY_CANDIDATE_CREATED_OUTCOME_CODE],
+        [RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY, 'SUCCEEDED', 'retail_customer_directory_enrolled'],
         [ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY, 'SUCCEEDED', RETAIL_CUSTOMER_PROFILE_ENSURED_OUTCOME_CODE],
         [BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY, 'FAILED', RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE],
       ]);
@@ -524,13 +609,13 @@ it.live('authority revoked mid-flight is a typed halt, never a completed journey
 
       expect(result.outcome).toBe('HALTED');
       if (result.outcome === 'HALTED') {
-        expect(result.halt.reason).toBe('OWNER_REJECTED');
+        expect(result.halt.reason).toBe('ATTEMPT_TERMINAL');
       }
       const operations = yield* readEnrollmentAcceptanceOperations(fixture, portalEnrollmentAttemptId);
       const binding = operations.find((row) => row.transition_key === BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY);
       expect(binding?.outcome_code).toBe('principal_binding_revoked');
       const attempt = yield* readEnrollmentAcceptanceAttempt(fixture, portalEnrollmentAttemptId);
-      expect(attempt.state).not.toBe('COMPLETE');
+      expect(attempt.state).toBe('FAILED');
     }),
   ),
 );

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 933 260" width="933" height="260" role="img">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f3f4f6" />
+      <stop offset="1" stop-color="#d1d5db" />
+    </linearGradient>
+  </defs>
+  <rect width="933" height="260" fill="url(#bg)" />
+  <g fill="#9ca3af" opacity="0.45">
+    <path d="M760 40 815 72v64l-55 32-55-32V72Z" />
+    <circle cx="760" cy="104" r="24" fill="#e5e7eb" />
+    <path d="M850 150 880 167v35l-30 17-30-17v-35Z" />
+  </g>
+  <text x="40" y="58" font-family="Inter, Arial, Helvetica, sans-serif" font-size="22" font-weight="800" fill="#111827">ŠroubShop <tspan font-weight="400" fill="#4b5563">· DEMO</tspan></text>
+  <rect x="40" y="86" width="560" height="96" fill="#111827" />
+  <rect x="40" y="182" width="560" height="6" fill="#fdc530" />
+  <text x="60" y="126" font-family="Inter, Arial, Helvetica, sans-serif" font-size="30" font-weight="800" fill="#ffffff">NEREZOVÝ SPOJOVACÍ MATERIÁL</text>
+  <text x="60" y="164" font-family="Inter, Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#fdc530">ŠROUBY, MATICE A PODLOŽKY SKLADEM</text>
+  <text x="40" y="224" font-family="Inter, Arial, Helvetica, sans-serif" font-size="16" fill="#374151">Ukázkový e-shop fiktivní firmy Šroubárna Vysočina s.r.o.</text>
+</svg>

@@ -1,0 +1,414 @@
+/* App-wide shell composition: Header/Footer have no tone prop in kit 0.57.0.
+ * Bind existing slots to canonical N1 roles; do not redefine the primitive
+ * palette/dimension scale or per-instance appearance here.
+ * Source: N1 storefront Header 33:635 / Footer 33:1100.
+ */
+[data-theme="n1"] {
+  /* Kit0.59 ProductCard/Gallery reserve media through ImageWithFallback.
+   * N1 photos sit on the canonical page surface, including contain letterboxing. */
+  --color-image-placeholder: var(--color-base);
+  /* PDP39:2187/2547 owns description and panels; Account uses Tabs sm. */
+  --spacing-tabs-content-padding-md: var(--dimension-0);
+  /* Account54:1545/1682: the native sm panel owns x8 / top0 / bottom8. */
+  --spacing-tabs-content-padding-sm: var(--dimension-0) var(--dimension-8) var(--dimension-8);
+  /* Desktop PDP parameter rows219:2885/2892 use the existing striped roles. */
+  --color-data-table-row-bg-striped-primary: var(--color-neutral-300);
+  --color-data-table-row-bg-striped-secondary: var(--color-fill-hover);
+  /* Category navigation214:3169: preserve canonical text/md16/24.
+   * A 32px layout row surrounds the native controls; it is not file-picker UI. */
+  --color-tree-view-bg: var(--color-fill-hover);
+  --font-weight-tree-view-label: var(--font-weight-bold);
+  --spacing-tree-view-node-padding: var(--dimension-0);
+  /* Checkout shipping319:1756/319:1977 is a neutral exclusive choice.
+   * RadioCard has no tone prop: bind only its outline role to existing N1
+   * semantics; primary actions and the brand palette keep their own roles. */
+  --color-radio-card-item-border: var(--color-border-secondary);
+  --color-radio-card-item-border-outline-checked: var(--color-fg-secondary);
+  --color-radio-card-item-border-outline-checked-hover: var(--color-fg-secondary);
+  --color-radio-card-item-bg-outline-checked: var(--color-fill-overlay);
+  /* Shipping319:1756/1977: control p12, content gap8, StatusText sm. */
+  --padding-radio-card-item-control-sm: var(--dimension-12);
+  --spacing-radio-card-item-content-sm: var(--dimension-8);
+  --text-radio-card-item-description-sm: var(--text-sm);
+  --color-numeric-input-compact-border: var(--color-border-secondary);
+  --font-weight-price-block-amount: var(--font-weight-bold);
+  /* Homepage31:636/31:637, card33:1018: installed component
+   * defaults are not the N1 screen roles. Keep canonical primitive aliases. */
+  --spacing-product-card-featured-padding: var(--dimension-4);
+  --spacing-product-card-featured-col-layout: var(--dimension-8);
+  --border-width-product-card-featured: var(--dimension-0);
+  --radius-product-card-featured: var(--radius-none);
+  --radius-product-card-featured-image: var(--radius-none);
+  --color-product-card-featured-bg: var(--color-base);
+  --font-weight-product-card-featured-name: var(--font-weight-bold);
+  --font-weight-product-card-featured-stock: var(--font-weight-bold);
+  --text-product-card-featured-name-size: var(--dimension-18);
+  --text-product-card-featured-stock-size: var(--dimension-18);
+  --color-header-bg: var(--color-base-dark);
+  --color-header-nav-fg: var(--color-fg-reverse);
+  /* Desktop nav170:2077: resolved text/md16 and bold, independent of
+   * the compact utility/action row and the global Button typography. */
+  --font-weight-header-nav: var(--font-weight-bold);
+  --font-weight-header-nav-active: var(--font-weight-bold);
+  --color-header-nav-fg-hover: var(--color-primary);
+  --color-header-nav-fg-active: var(--color-primary);
+  --color-header-actions-fg: var(--color-fg-reverse);
+  --color-header-actions-fg-hover: var(--color-primary);
+  /* Header208:2267: four native actions use gap12, preserving the mobile logo.
+   * Bind the existing composition role; individual control sizes stay native. */
+  --spacing-header-actions-sm: var(--dimension-12);
+  --color-footer-bg: var(--color-highlight);
+  --color-footer-container-bg: var(--color-highlight);
+  --color-footer-section-bg: var(--color-highlight);
+  --color-footer-list-bg: var(--color-highlight);
+  --color-footer-bottom-bg: var(--color-base-dark);
+  --color-footer-link-fg: var(--color-fg-reverse);
+  --color-footer-title-fg: var(--color-fg-reverse);
+  --color-footer-text-fg: var(--color-fg-reverse);
+  /* Full-bleed Footer.Bottom; section spacing is owned by the layout wrapper. */
+  --padding-footer-md: var(--dimension-0);
+  /* Footer33:1100/34:1255: native md parts consume these N1 screen roles.
+   * AUTO typography follows the installed font metrics, not fixed Inter boxes. */
+  --spacing-footer-container-md: var(--dimension-16);
+  --spacing-footer-section-md: var(--dimension-12);
+  --spacing-footer-md: var(--dimension-8);
+  --spacing-footer-list: var(--dimension-4);
+  --text-footer-title-md: var(--dimension-18);
+  --font-weight-footer-title: var(--font-weight-bold);
+  --text-footer-link-md: var(--text-sm);
+  --padding-footer-bottom: var(--dimension-12);
+  --padding-footer-bottom-md: var(--dimension-12);
+  --border-footer-width: var(--dimension-0);
+  /* Shared compact header popup role: current frames 311:2331 / 311:2164 /
+   * 311:2451 / 333:7435. The kit has no density prop for padding10; bind
+   * existing roles to canonical dimensions, never a per-instance palette.
+   */
+  --padding-popover-sm: var(--dimension-10);
+  --padding-popover-trigger: var(--dimension-0);
+  --spacing-popover-title: var(--dimension-0);
+  --font-weight-popover-title: var(--font-weight-medium);
+  /* Current Dialog role is the mobile navigation drawer (418:2484).
+   * Existing kit roles express its unpadded surface; canonical palette intact.
+   */
+  --padding-dialog-content: var(--dimension-0);
+  --spacing-dialog-content: var(--dimension-0);
+  --color-dialog-content-bg: var(--color-fill-hover);
+}
+
+/* Footer logo/contact remains12px apart; its legal group uses8px. */
+@utility n1-footer-navigation {
+  --spacing-footer-section-md: var(--dimension-8);
+}
+
+/* Address and copyright are12px, independently of14px contact information. */
+@utility n1-footer-address {
+  --text-footer-md: var(--dimension-12);
+}
+
+@utility n1-footer-bottom {
+  --text-footer-md: var(--dimension-12);
+  --text-footer-md--line-height: var(--leading-n1-copy);
+}
+
+/* Home33:882/34:1032 and desktop category214:3249 reserve square photos.
+ * Mobile ListingCards deliberately retains the kit's4:3 media geometry. */
+@utility n1-catalog-cards {
+  --aspect-product-card-image: var(--aspect-square);
+  /* Mobile names occupy one or two actual lines (34:1090/34:1034).
+   * The desktop layout wrapper reserves54px independently. */
+  --spacing-product-card-name: var(--dimension-0);
+}
+
+/* Mobile home34:1031 uses py8/px7; desktop33:881 uses p4. */
+@utility n1-featured-cards {
+  --spacing-product-card-featured-padding: var(--dimension-8)
+    calc(var(--dimension-8) - var(--dimension-1));
+
+  @variant md {
+    --spacing-product-card-featured-padding: var(--dimension-4);
+  }
+}
+
+/* Desktop category214:3246 differs from homepage: p7/gap6. */
+@utility n1-listing-cards {
+  --spacing-product-card-featured-padding: calc(var(--dimension-8) - var(--dimension-1));
+  --spacing-product-card-featured-col-layout: var(--dimension-6);
+}
+
+/* PDP desktop219:2762/2763 uses4px Gallery gaps; mobile39:2455 keeps kit defaults. */
+@media (width >= 48rem) {
+  [data-theme="n1"] {
+    --spacing-footer-container-md: var(--dimension-40);
+    --spacing-gallery-root: var(--dimension-4);
+    --spacing-gallery-sm: var(--dimension-4);
+  }
+}
+
+/* Rebind existing semantic kit glyph roles, without custom SVG masks or
+ * appearance classes on TreeView. Expanded state remains owned by Zag. */
+@utility token-icon-tree-indicator {
+  @apply token-icon-plus;
+}
+
+@utility token-icon-tree-indicator-open {
+  @apply token-icon-minus;
+}
+
+/* Desktop category214:3175: the shipped indicator uses the shared icon size role.
+ * Scope it to this tree; mobile and other controls keep their native sizes. */
+@utility n1-category-tree {
+  --text-icon-control-md: var(--dimension-14);
+}
+
+/* Contact43:1645/371:3089: labels explicitly use Theme/N1 text/sm.
+ * Keep the native md inputs and mobile 16px control text unchanged. */
+@utility n1-contact-form {
+  --text-label-md: var(--text-sm);
+}
+
+/* Auth333:4673/5344 and profile54:1547: Label md uses an AUTO line box.
+ * Keep native font metrics and44px inputs; do not shrink labels tosm. */
+@utility n1-auth-form {
+  --text-label-md--line-height: normal;
+}
+
+/* Mobile menu418:2491: transparent Accordion slots reveal the native drawer
+ * surface; title padding/weight follow the explicit N1 bindings. */
+@utility n1-mobile-navigation {
+  --color-accordion-bg: var(--color-transparent);
+  --color-accordion-title-bg: var(--color-transparent);
+  --color-accordion-content-bg: var(--color-transparent);
+  --color-dialog-content-border: var(--color-border-secondary);
+  --padding-accordion-title-md: var(--dimension-8) var(--dimension-16);
+  --padding-accordion-panel-md: var(--dimension-0);
+  --padding-accordion-icon-right: var(--dimension-8);
+  --padding-vertical-navigation-item-x-md: var(--dimension-24);
+  --spacing-vertical-navigation-list: var(--dimension-0);
+  --font-weight-button: var(--font-weight-normal);
+}
+
+/* Accordion.Header composes Button, whose weight wins the shipped cascade. */
+@utility n1-mobile-category-heading {
+  --font-weight-button: var(--font-weight-semibold);
+}
+
+/* Search438:1943: the footer separator uses the canonical foreground role. */
+@utility n1-search-suggestions {
+  --color-popup-border: var(--color-fg-primary);
+  --color-combobox-footer-border: var(--color-fg-primary);
+}
+
+/* Search438:1920: 48px media plus native 6px row padding. Navigation has no
+ * checked indicator; preserve native status spacing outside result rows. */
+@utility n1-search-results {
+  --padding-popup-viewport: var(--dimension-0);
+  --padding-popup-item-y-sm: var(--dimension-6);
+  --size-popup-indicator: var(--dimension-0);
+}
+
+/* PDP39:2543/223:2174 uses a dark active underline on both viewports.
+ * Scope the existing indicator role to product information; account Tabs
+ * retain their canonical primary indicator. No primitive N1 token changes. */
+@utility n1-product-information {
+  --color-tabs-indicator-bg: var(--color-fg-primary);
+}
+
+/* Header cart count: supplied N1 UX reference uses a round primary Badge.
+ * Only this composition changes Badge radius/padding; colours stay canonical. */
+@utility n1-cart-count {
+  --radius-badge: var(--radius-full);
+  --padding-badge-sm: var(--dimension-0);
+}
+
+/* The unavailable header favorite stays transparent on the dark N1 header.
+ * Borderless disabled treatment consumes this same supported surface role. */
+@utility n1-header-favorite {
+  --color-button-bg-borderless-base: var(--color-transparent);
+}
+
+/* Desktop PDP39:2022: only the availability label changes; mobile stays native. */
+@utility n1-product-stock-desktop {
+  --text-availability-status-label-size: var(--dimension-18);
+  --font-weight-availability-status-label: var(--font-weight-bold);
+}
+
+/* Kit0.59 steppers are transparent. The native control surface supplies the
+ * N1 neutral stepper fill; NumericInput.Input keeps its own white field role. */
+@utility n1-product-quantity-desktop {
+  --color-form-control-bg: var(--color-neutral-300);
+  --color-numeric-input-input-bg: var(--color-base);
+  --color-button-bg-borderless-base: var(--color-transparent);
+}
+
+/* Account54:1668: compact native navigation without changing PDP or other buttons. */
+@utility n1-account-navigation {
+  --padding-tabs-trigger-sm: var(--padding-tabs-trigger-y-sm) var(--dimension-6);
+  --padding-button-sm: var(--padding-button-y-sm) var(--dimension-8);
+}
+
+/* Order history333:4496/4502: native Table md uses14px and p12 here;
+ * other storefront tables retain their existing density and typography. */
+@utility n1-order-history {
+  --text-table-md: var(--text-sm);
+  --padding-table-cell-md: var(--dimension-12);
+  --font-weight-table-header: var(--font-weight-medium);
+}
+
+/* Order item333:4990/4997: natural names and14px/medium unit prices.
+ * The stored order has no photo, product slug or authoritative line total;
+ * do not invent those fields to fill the reference card. */
+@utility n1-order-items {
+  --spacing-product-card-padding: var(--dimension-8);
+  --spacing-product-card-col-layout: var(--dimension-8);
+  --spacing-product-card-name: var(--dimension-0);
+  --font-weight-product-card-name: var(--font-weight-normal);
+  --text-product-card-price-size: var(--text-sm);
+  --color-product-card-border: var(--color-border-secondary);
+  --radius-product-card: var(--dimension-2);
+}
+
+/* Payment summary333:5004/5013:14px rows/total with8px flow.
+ * Native TotalsSummary shares one weight for total label and value; preserve
+ * its600 role instead of painting an unsupported separate700 value. */
+@utility n1-order-totals {
+  --text-totals-summary-total-size: var(--text-sm);
+  --gap-totals-summary-rows: var(--dimension-8);
+  --gap-totals-summary-columns: var(--dimension-8);
+  --padding-totals-summary-total: var(--dimension-8);
+}
+
+/* OrdersError333:7505/7506 is16px. Preserve native status-error foreground:
+ * the authored generic danger400 has only2.77:1 contrast on this white page,
+ * while N1's status-error role uses the accessible danger700 foreground. */
+@utility n1-order-error {
+  --text-status-text-md: var(--text-md);
+}
+
+/* Confirmation372:3245/3256:8px summary rows and20px/28px bold total.
+ * Other totals keep their existing native or context-specific roles. */
+@utility n1-confirmation-totals {
+  --gap-totals-summary-rows: var(--dimension-8);
+  --gap-totals-summary-columns: var(--dimension-8);
+  --padding-totals-summary-total: var(--dimension-16);
+  --font-weight-totals-summary-total: var(--font-weight-bold);
+  --text-totals-summary-total-size--line-height: var(--leading-n1-copy);
+}
+
+/* Desktop PDP219:2876 uses a neutral strip and compact controls. */
+@utility n1-product-tabs {
+  --color-tabs-list-bg: var(--color-neutral-200);
+  /* Kit0.57 Tabs uses the shared height role inside this list only. */
+  --height-form-control-md: var(--dimension-36);
+  --padding-tabs-trigger-md: var(--padding-tabs-trigger-sm);
+  --border-width-tabs: var(--dimension-0);
+}
+
+/* Desktop PDP219:2885 uses text/md with compact Table cell spacing.
+ * DataTable delegates cell typography to Table in installed kit0.57. */
+@utility n1-product-parameters {
+  --text-table-sm: var(--text-md);
+}
+
+/* Mini line59:1330 uses14px/medium; card/PDP amounts retain their own roles. */
+@utility n1-mini-cart-price {
+  --text-price-block-amount-size: var(--text-sm);
+  --font-weight-price-block-amount: var(--font-weight-medium);
+}
+
+/* Mini total311:2200/2487 is14px/semibold; its native weight already matches. */
+@utility n1-mini-cart-totals {
+  --text-totals-summary-total-size: var(--text-sm);
+}
+
+/* Figma311:2190:28px steppers flank a36px native field; no enclosing frame.
+ * Coarse-pointer minimum remains owned by the kit's separate touch role. */
+@utility n1-mini-cart-quantity {
+  /* The shared0.59 foundation expands sm to36px. This compact field keeps
+   * its32px N1 slot:24px line +2px padding per side +2px border per side. */
+  --height-form-control-sm: var(--dimension-32);
+  --padding-input-sm: var(--dimension-2) var(--dimension-4);
+  --spacing-numeric-input-trigger-min: var(--dimension-28);
+  --padding-numeric-input-trigger-x: var(--dimension-4);
+}
+
+/* Ready checkout319:1800 is16px/bold. Only its existing summary section
+ * owns this scope; the shared receipt component keeps its own presentation. */
+@utility n1-checkout-totals {
+  --text-totals-summary-total-size: var(--text-md);
+  --font-weight-totals-summary-total: var(--font-weight-bold);
+}
+
+/* Header panels311:2331/2164 and333:7435 explicitly bind Theme/N1
+ * white/base, rather than the generic Popover fill-overlay default. */
+@utility n1-header-popover {
+  --color-popover-bg: var(--color-base);
+  --color-popover-arrow: var(--color-base);
+  /* Re-evaluate the shipped Zag alias here; its inherited root value has
+   * already resolved to fill-overlay before these local role bindings. */
+  --arrow-background: var(--color-popover-arrow);
+}
+
+/* Desktop subcategories214:3208/3214: md/secondary/outlined with a
+ * light surface, 1px stroke and bold14px labels. Mobile38:2150/2156
+ * keeps native transparent/2px/16px; this scope is responsive at its caller. */
+@utility n1-subcategories {
+  --color-button-bg-outlined: var(--color-fill-hover);
+  --color-button-border-secondary: var(--color-border-secondary);
+  --border-width-button-md: var(--dimension-1);
+  --radius-button-md: var(--radius-none);
+  --text-button-md: var(--text-sm);
+  --font-weight-button: var(--font-weight-bold);
+}
+
+/* Card preview214:3276/3283/3290: native tertiary/outlined/compact/sm,
+ * 12/18 regular labels and neutral surface/stroke. Both existing layout
+ * groups carry this scope because expanded content is portalled. */
+@utility n1-card-variants {
+  --text-button-sm: var(--text-xs);
+  --font-weight-button: var(--font-weight-normal);
+  --color-button-bg-outlined: var(--color-fill-hover);
+  --color-button-border-tertiary: var(--color-border-primary);
+}
+
+/* Desktop variant chips219:2780/2790/2800: native secondary/outlined/sm,
+ * regular16/24 labels and neutral unselected surfaces. Mobile keeps its
+ * native selected primary/solid/md through the responsive composition scope. */
+@utility n1-product-variants {
+  --color-button-bg-outlined: var(--color-fill-hover);
+  --color-button-border-secondary: var(--color-neutral-300);
+  --border-width-button-sm: var(--dimension-1);
+  --font-weight-button: var(--font-weight-normal);
+  --text-button-sm: var(--text-md);
+}
+
+/* Selected chip219:2780 consumes existing Button width/bg/stroke roles. */
+@utility n1-product-variant-selected {
+  --color-button-bg-outlined: var(--color-base);
+  --color-button-border-secondary: var(--color-bg-secondary-base);
+  --border-width-button-sm: var(--dimension-2);
+}
+
+/* Desktop menu418:2368. Existing Popover roles, scoped away from the compact
+ * cart/login popups and the mobile Dialog. All values are canonical aliases. */
+@utility n1-category-menu {
+  /* sameWidth sizes the positioner;0.59 also caps Content independently.
+   * Only this full-width navigation surface opts out of the compact popup cap. */
+  --width-popover-max: 100vw;
+  --spacing-popover-viewport: var(--dimension-0);
+  --color-popover-bg: var(--color-white);
+  --color-popover-border: var(--color-border-secondary);
+  --padding-popover-md: var(--dimension-18);
+  /* Figma419:3253 fills the60px navigation row; native text line is24px.
+   * Keep horizontal padding10 and apply the same height before activation. */
+  --padding-header-item-md: var(--dimension-18) var(--dimension-10);
+}
+
+/* Active desktop branch419:3253: the installed Header already exposes base
+ * and hover surface roles. Scope them on the native NavItem, preserving
+ * native active semantics and every other Header instance. */
+@utility n1-category-menu-active {
+  --color-header-nav-item-bg: var(--color-button-bg-primary-base);
+  --color-header-nav-item-bg-hover: var(--color-button-bg-primary-base);
+  --color-header-nav-fg-active: var(--color-button-fg-primary);
+  --color-header-nav-fg-hover: var(--color-button-fg-primary);
+}

@@ -123,6 +123,7 @@ it.effect('refuses the manual Group path for a source workload before any owner 
     const services: CustomerGroupPersistence = {
       archive: unavailable,
       assign: unavailable,
+      counterpartyMemberships: unavailable,
       create: unavailable,
       detail: unavailable,
       effectiveMemberships: unavailable,

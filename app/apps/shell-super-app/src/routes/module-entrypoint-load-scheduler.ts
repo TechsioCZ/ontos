@@ -1,7 +1,7 @@
 import type { InstalledDeploymentFailureReason } from '@app/core-runtime';
 import { Cause, Clock, Deferred, Duration, Effect, Schema } from 'effect';
 
-type SettledModuleEntrypointLoad<Value> =
+export type SettledModuleEntrypointLoad<Value> =
   | {
       readonly reason: InstalledDeploymentFailureReason;
       readonly state: 'unavailable';

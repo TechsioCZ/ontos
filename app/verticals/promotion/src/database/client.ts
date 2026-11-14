@@ -1,4 +1,4 @@
-import { DatabaseConfig, configureDatabasePool } from '@app/core-runtime';
+import { DatabaseConfig, configureDatabasePool, openDatabaseClient } from '@app/core-runtime';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
@@ -25,7 +25,7 @@ export const PromotionPgClientLive = Layer.effect(
     const pool = yield* configureDatabasePool(Redacted.make(configuration.connectionString)).pipe(
       Effect.mapError(unavailable),
     );
-    return yield* PgClient.make(pool).pipe(Effect.mapError(unavailable));
+    return yield* openDatabaseClient(pool).pipe(Effect.mapError(unavailable));
   }),
 );
 export const PromotionDatabaseLive = Layer.effect(

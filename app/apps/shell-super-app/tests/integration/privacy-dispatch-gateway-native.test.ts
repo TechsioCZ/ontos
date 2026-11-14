@@ -24,6 +24,7 @@ import {
   OntosModuleRequirementsSchema,
   ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY,
   ONTOS_SHELL_CONTRIBUTION_ABI,
+  makeDatabaseIdentityEnrollmentLive,
 } from '@app/core-runtime';
 import type { GatewayAssertionRedemptionInput, OperationalScope } from '@app/core-runtime';
 import { defineOutboxWorkerEntry } from '@app/core-runtime/outbox/worker';
@@ -106,7 +107,7 @@ import { GatewayModuleBindingSchema } from '../../api/auth/gateway-delegation-po
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import { makeAuthDatabase, AuthDatabase } from '../../api/auth/db/client.ts';
 import { issueDelegatedGatewayContextAssertion } from '../../api/auth/gateway-delegation-issuer.ts';
-import { GatewayDelegationVerificationLive } from '../../api/auth/gateway-delegation-verification.ts';
+import { makeGatewayDelegationVerificationLayer } from '../../api/auth/gateway-delegation-verification.ts';
 import { GatewayOriginatorEvidenceLive } from '../../api/auth/gateway-originator-evidence.service.ts';
 import {
   GatewayDelegationExchangeLedger,
@@ -117,7 +118,10 @@ import {
   ShellInstalledModuleCatalog,
 } from '../../api/modules/installed-module-catalog.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { enrolledModuleCredentials } from '../support/module-credential-enrolment.ts';
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
 
 const dispatchAction = 'privacy.core.dispatch-privacy-measure';
 const dispatchCapability = 'privacy.core.privacy-measure.dispatch';
@@ -500,7 +504,7 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
         );
       }
       const spiceDb = yield* loadSpiceDbConfig();
-      const target = { adminConnectionString: Redacted.make(fixture.connections.admin.connectionString), spiceDb };
+      const target = { spiceDb, writerConnectionString: Redacted.make(fixture.connections.runtime.connectionString) };
       for (const holder of holders) {
         yield* grantTestTenantRoleAccess({
           ...target,
@@ -553,7 +557,14 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
           revision: snapshot.composition.revision,
         }),
         loadConfig: Effect.succeed(signing),
-      }).pipe(Layer.provide(Layer.succeed(GatewayScopeGrantRegistrar, makeGatewayScopeGrantRegistrar(issuerClient))));
+      }).pipe(
+        Layer.provide(
+          Layer.succeed(
+            GatewayScopeGrantRegistrar,
+            makeGatewayScopeGrantRegistrar(issuerClient, SHELL_DATABASE_IDENTITY_ENROLLMENT),
+          ),
+        ),
+      );
       const issuerServices = yield* Layer.build(signer);
       const issuerService = Context.get(issuerServices, GatewayIssuer);
       const gateServices = yield* Layer.build(
@@ -564,7 +575,10 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
         ),
       );
       const gate = Context.get(gateServices, AccessDecisionGate);
-      const scopes = yield* makeOperationalScopeResolver(makeOperationalScopeRepository(runtime), gate);
+      const scopes = yield* makeOperationalScopeResolver(
+        makeOperationalScopeRepository(runtime, SHELL_DATABASE_IDENTITY_ENROLLMENT),
+        gate,
+      );
       const namespace = yield* Schema.decodeUnknownEffect(AuthenticationNamespaceRegistrationSchema)({
         allowedAudiences: ['privacy', 'symmy-integration'],
         authenticationNamespaceId: 'privacy.native.staff',
@@ -576,23 +590,12 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
       });
       const namespaceRegistry = makeAuthenticationNamespaceRegistry([namespace]);
       const installed = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
-      const auth = yield* makeAuthDatabase({ connectionString: fixture.connections.runtime.connectionString });
+      const auth = yield* makeAuthDatabase({
+        connectionString: fixture.connections.runtime.connectionString,
+        expectedRole: fixture.connections.runtime.expectedRole,
+      });
       const configuration = ConfigProvider.fromUnknown({
         ONTOS_GATEWAY_ISSUER: issuer,
-        ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-          {
-            compositionRevision: snapshot.composition.revision,
-            providerKeyId: privacyProviderKey,
-            sourceAppId: 'privacy',
-            sourceBuildMarker: 'privacy-build',
-          },
-          {
-            compositionRevision: snapshot.composition.revision,
-            providerKeyId: symmyProviderKey,
-            sourceAppId: 'symmy-integration',
-            sourceBuildMarker: 'symmy-integration-build',
-          },
-        ]),
         ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
           keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'native-privacy', use: 'sig' }],
         }),
@@ -610,6 +613,19 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
         Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
         Layer.succeed(OperationalScopeResolver, scopes),
         Layer.succeed(AccessDecisionGate, gate),
+        // Both module keys were issued by a host of exactly this release; the Shell derives their bindings from that.
+        enrolledModuleCredentials([
+          {
+            appId: 'privacy',
+            providerKeyId: privacyProviderKey,
+            release: { buildMarker: 'privacy-build', compositionRevision: snapshot.composition.revision },
+          },
+          {
+            appId: 'symmy-integration',
+            providerKeyId: symmyProviderKey,
+            release: { buildMarker: 'symmy-integration-build', compositionRevision: snapshot.composition.revision },
+          },
+        ]),
       );
       const issue = (
         subject: (typeof GatewayDelegatedContextRequestSchema.Encoded)['subject'],
@@ -631,7 +647,7 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
           });
         }).pipe(
           Effect.provide(signer),
-          Effect.provide(GatewayDelegationVerificationLive),
+          Effect.provide(makeGatewayDelegationVerificationLayer(Effect.succeed(signing))),
           Effect.provide(GatewayOriginatorEvidenceLive),
           Effect.provide(services),
           Effect.provideService(ConfigProvider.ConfigProvider, configuration),
@@ -867,12 +883,19 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
         );
       };
       const wireConfiguration = ConfigProvider.fromUnknown({
-        ONTOS_GATEWAY_MODULE_API_KEY: symmyProviderKey,
         ONTOS_SHELL_GATEWAY_BASE_URL: 'https://native-privacy-shell.example/shell-super-app-api',
       });
+      // The Symmy worker's own module key, handed over the way the host does.
+      yield* holdTestModuleCredentials({ 'symmy-integration': symmyProviderKey });
       const acquireWire = (subject: GatewayDelegationSubject, audience = 'symmy-integration') =>
         acquireDelegatedGatewayContext(
-          { audience, legalEntityScope: 'subject', requestCorrelation: 'native-shared-privacy-wire', subject },
+          {
+            audience,
+            callingAppId: 'symmy-integration',
+            legalEntityScope: 'subject',
+            requestCorrelation: 'native-shared-privacy-wire',
+            subject,
+          },
           crypto,
         ).pipe(
           Effect.provideService(ConfigProvider.ConfigProvider, wireConfiguration),
@@ -964,7 +987,7 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
           installed,
           subject: opaqueSubject,
         }).pipe(
-          Effect.provide(GatewayDelegationVerificationLive),
+          Effect.provide(makeGatewayDelegationVerificationLayer(Effect.succeed(signing))),
           Effect.provide(GatewayOriginatorEvidenceLive),
           Effect.provide(services),
           Effect.provideService(ConfigProvider.ConfigProvider, configuration),
@@ -1422,5 +1445,8 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
       expect(wireRequests).toHaveLength(beforeClosed);
       return yield* Effect.void;
     }),
-  ).pipe(Effect.provide(NodeServices.layer)),
+  ).pipe(
+    Effect.provide(makeDatabaseIdentityEnrollmentLive(SHELL_DATABASE_IDENTITY_ENROLLMENT)),
+    Effect.provide(NodeServices.layer),
+  ),
 );

@@ -1218,7 +1218,7 @@ it('registers the exact owner schema, journal, verifier, and runtime grants', ()
   );
   expect(rootVerifier).toContain('loadApplicationMigrationInventory');
   expect(rootVerifier).toContain('for (const path of stream.verifierPaths)');
-  expect(runtimeBootstrap).toMatch(/'catalog', 'inventory'/u);
+  expect(runtimeBootstrap).toMatch(/'catalog',\s+'inventory'/u);
 });
 
 it('exact Inventory catalog comparison rejects missing and unexpected tables', () => {
@@ -1232,4 +1232,31 @@ it('exact Inventory catalog comparison rejects missing and unexpected tables', (
     missing: [],
     unexpected: ['inventory.unowned'],
   });
+});
+
+it('keeps gateway assertion replay identities global, unique and expiry-indexed', () => {
+  const table = INVENTORY_TABLES.find(
+    (candidate) => getTableConfig(candidate).name === 'gateway_assertion_redemptions',
+  );
+  expect(table).toBeDefined();
+  if (table === undefined) {
+    throw new Error('Missing gateway assertion redemption table');
+  }
+  const config = getTableConfig(table);
+  expect(config.schema).toBe('inventory');
+  expect(config.enableRLS).toBe(false);
+  expect(config.policies).toEqual([]);
+  expect(config.columns.some((column) => column.name === 'tenant_id')).toBe(false);
+  expect(config.columns.map(({ name, notNull }) => [name, notNull])).toEqual([
+    ['audience', true],
+    ['expires_at', true],
+    ['issuer', true],
+    ['jti', true],
+    ['redeemed_at', true],
+  ]);
+  expect(config.primaryKeys).toEqual([]);
+  expect(config.uniqueConstraints.map((key) => [key.name, key.columns.map(({ name }) => name)])).toEqual([
+    ['inventory_gateway_redemptions_identity_uk', ['issuer', 'audience', 'jti']],
+  ]);
+  expect(config.indexes.map(({ config: index }) => index.name)).toEqual(['inventory_gateway_redemptions_expiry_idx']);
 });

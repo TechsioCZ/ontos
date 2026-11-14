@@ -36,7 +36,6 @@ import {
 } from './support/symmy-c14-policy-fixture.mts';
 
 const workloadKey = 'commerce.assortment.symmy-fixture-rule-import';
-const declarationKey = 'commerce.assortment.symmy-fixture-rule.import';
 const routeKey = 'assortmentRulesFixtureBatch';
 const mappingVersion = 'INTERNAL_C14_ASSORTMENT_RULE_V1';
 const operation = {
@@ -166,11 +165,9 @@ it.live(
     Effect.scoped(
       Effect.gen(function* nativeAssortmentConformance() {
         const runtime = yield* makeSymmyC14PolicyFixture({
-          declarationKey,
           initializeScopes: (scope) =>
-            initializePolicyFixtureScopes(scope).pipe(Effect.provideService(PgClient.PgClient, scope.admin)),
+            initializePolicyFixtureScopes(scope).pipe(Effect.provideService(PgClient.PgClient, scope.runtime)),
           lifecyclePolicy,
-          operation,
           owner: 'assortment',
           workloadKey,
         });
@@ -180,11 +177,12 @@ it.live(
           environment,
           integration,
           ownerContract,
-          ownerEnvironment,
+          ownerModuleKey,
           ownerPort,
           routeId,
           sellerId,
           symmy,
+          symmyModuleKey,
           symmyPort,
           system,
           tenantId,
@@ -214,11 +212,12 @@ it.live(
           artifacts: yield* buildProductOwner(ownerContract),
           contract: ownerContract,
           environment: {
-            ...ownerEnvironment,
+            ...environment,
             ONTOS_ASSORTMENT_SYMMY_RULE_FIXTURES: permits,
             ONTOS_C14_RESPONSE_LOSS_MARKER: faultMarker,
             ONTOS_C14_RESPONSE_LOSS_OPERATION: 'assortment-import',
           },
+          moduleKey: ownerModuleKey,
           port: ownerPort,
           prefix: '/assortment-api',
         });
@@ -226,6 +225,7 @@ it.live(
           artifacts: yield* buildProductOwner(symmy),
           contract: symmy,
           environment,
+          moduleKey: symmyModuleKey,
           port: symmyPort,
           prefix: '/symmy-integration-api',
         });
@@ -238,6 +238,7 @@ it.live(
               artifacts: yield* buildProductOwner(receiver.contract),
               contract: receiver.contract,
               environment: { ...environment, ONTOS_C14_TRACE_ASSORTMENT_FACTS: 'true' },
+              moduleKey: receiver.moduleKey,
               port: receiver.port,
               prefix: `/${receiver.audience}-api`,
             });
@@ -292,10 +293,14 @@ it.live(
           set lifecycle_state='RETIRED',retired_effective_at=clock_timestamp(),retired_reason='C14 native stale Product proof'
           where tenant_id=${tenantId} and product_id=${fixture.databaseCommand.product}`;
         const workerArtifact = yield* buildProductWorker(symmy);
-        const worker = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_ASSORTMENT_CURRENTNESS_PROCESS',
-        });
+        const worker = yield* startProductWorker(
+          workerArtifact,
+          {
+            ...environment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_ASSORTMENT_CURRENTNESS_PROCESS',
+          },
+          symmyModuleKey,
+        );
         const waitForOwnerRefusal = Effect.gen(function* waitForOwnerRefusal() {
           for (;;) {
             const event = Schema.decodeUnknownOption(ownerProblemSchema)(yield* Queue.take(assortmentReceiver.output));
@@ -420,10 +425,14 @@ it.live(
           yield* rotateEnrollment(scenario.audience);
           yield* submit(`internal-assortment-stale-${scenario.audience}`);
           expect((yield* scenario.invalidate)?.outcome).toBe(scenario.invalidation);
-          const staleWorker = yield* startProductWorker(workerArtifact, {
-            ...environment,
-            ONTOS_C14_WORKER_CLAIM_OWNER: `INTERNAL_C14_STALE_${scenario.audience}`,
-          });
+          const staleWorker = yield* startProductWorker(
+            workerArtifact,
+            {
+              ...environment,
+              ONTOS_C14_WORKER_CLAIM_OWNER: `INTERNAL_C14_STALE_${scenario.audience}`,
+            },
+            symmyModuleKey,
+          );
           const ownerReader = ownerReaders.find(({ audience }) => audience === scenario.audience);
           assert.isOk(ownerReader);
           const staleFact = yield* Effect.gen(function* waitForStaleOwnerFact() {
@@ -446,10 +455,14 @@ it.live(
         const sellerJob = yield* submit('internal-assortment-stale-seller');
         const sellerBefore = yield* runtime.shell.issuerDiagnostics();
         yield* admin`update core.legal_entities set status='suspended' where tenant_id=${tenantId} and legal_entity_id=${sellerId}`;
-        const sellerWorker = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_STALE_SELLER',
-        });
+        const sellerWorker = yield* startProductWorker(
+          workerArtifact,
+          {
+            ...environment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_STALE_SELLER',
+          },
+          symmyModuleKey,
+        );
         const sellerOutcome = yield* observePolicyFixtureUntil(
           admin<{ owner_request_hash: string | null; state: string }>`select owner_request_hash,state
             from symmy_integration.job_effects where tenant_id=${tenantId} and job_id=${sellerJob.jobId}`,
@@ -473,10 +486,14 @@ it.live(
         yield* rotateEnrollment('current');
         yield* fs.writeFileString(faultMarker, 'INTERNAL_C14 transport fault after native owner commit');
         const current = yield* submit('internal-assortment-current');
-        const currentWorker = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_ASSORTMENT_POSITIVE_PROCESS',
-        });
+        const currentWorker = yield* startProductWorker(
+          workerArtifact,
+          {
+            ...environment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_ASSORTMENT_POSITIVE_PROCESS',
+          },
+          symmyModuleKey,
+        );
         const failure = (reason: string, workerDiagnostic: Effect.Effect<string>) =>
           Effect.all([
             assortmentReceiver.diagnostic,
@@ -542,10 +559,14 @@ it.live(
           where tenant_id=${tenantId} and principal_id=${integration.principalId}
             and workload_key in ('integration.symmy-admit','commerce.assortment.symmy-fixture-currentness')`;
         yield* fs.remove(faultMarker);
-        const restarted = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_ASSORTMENT_RESTARTED_PROCESS',
-        });
+        const restarted = yield* startProductWorker(
+          workerArtifact,
+          {
+            ...environment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_ASSORTMENT_RESTARTED_PROCESS',
+          },
+          symmyModuleKey,
+        );
         const completed = yield* observePolicyFixtureUntil(
           poll(current.jobId),
           (job) => job.status === 'completed_all',

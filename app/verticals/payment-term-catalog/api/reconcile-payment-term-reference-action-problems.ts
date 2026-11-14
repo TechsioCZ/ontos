@@ -61,10 +61,12 @@ export const reconcilePaymentTermReferenceActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ReconcilePaymentTermReferenceActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ReconcilePaymentTermReferenceActionForbiddenProblem'> =>
     ReconcilePaymentTermReferenceActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -172,7 +174,8 @@ const mapCoreProblem = (error: ActionCoreError): ReconcilePaymentTermReferenceAc
       ActionInvocationStateError: (failure) => reconcilePaymentTermReferenceActionProblem.conflict(failure.code),
       ActionPayloadValidationError: reconcilePaymentTermReferenceActionProblem.invalid,
       ActionPermissionCheckError: (failure) => reconcilePaymentTermReferenceActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => reconcilePaymentTermReferenceActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        reconcilePaymentTermReferenceActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => reconcilePaymentTermReferenceActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => reconcilePaymentTermReferenceActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => reconcilePaymentTermReferenceActionProblem.conflict(failure.code),

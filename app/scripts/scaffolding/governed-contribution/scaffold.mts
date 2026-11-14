@@ -81,6 +81,7 @@ import {
   governedRedemptionRuntimeTarget,
   hasValidGovernedHttpCompositionRoot,
 } from '../../generated-governed-http-boundary.mts';
+import { OWNER_APPROVAL_AUTHENTICATION_SUPPORT_IMPORT } from '../microvertical-action-boundary/owner-approval-publication.mts';
 import { planActionBoundaryScaffold, renderActionGatewayClient } from '../microvertical-action-boundary/scaffold.mts';
 import {
   hasGeneratedOperationGatewayContract,
@@ -186,8 +187,14 @@ const governedRedemptionImport =
 const governedRedemptionDatabaseImport =
   "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive, GatewayAssertionRedemptionDatabaseLive } from './auth/gateway-assertion-redemption.ts';";
 const normalizeSupportImport = (candidate: string) => candidate.replaceAll(/\s+/gu, ' ').replaceAll(/,\s*\}/gu, ' }');
+// Demo-only exception 1 (owner-action approvals): an owner that publishes the approval API keeps main's principal
+// verifier import and adds only the approval authenticator binding to it. It stands in for the principal import.
+const ownerApprovalPrincipalImport = OWNER_APPROVAL_AUTHENTICATION_SUPPORT_IMPORT;
+const isGovernedPrincipalImport = (entry: string) =>
+  entry === governedPrincipalImport || entry === ownerApprovalPrincipalImport;
 const supportedGovernedImports = new Set([
   governedPrincipalImport,
+  ownerApprovalPrincipalImport,
   governedRedemptionImport,
   governedRedemptionDatabaseImport,
 ]);
@@ -993,7 +1000,7 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
         ).map(normalizeSupportImport);
         if (
           supportEntries.some((entry) => !supportedGovernedImports.has(entry)) ||
-          supportEntries.filter((entry) => entry === governedPrincipalImport).length > 1 ||
+          supportEntries.filter(isGovernedPrincipalImport).length > 1 ||
           supportEntries.filter(
             (entry) => entry === governedRedemptionImport || entry === governedRedemptionDatabaseImport,
           ).length > 1
@@ -1005,6 +1012,7 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
         for (const supportImport of [governedPrincipalImport, governedRedemptionImport]) {
           if (
             supportEntries.includes(supportImport) ||
+            (supportImport === governedPrincipalImport && supportEntries.includes(ownerApprovalPrincipalImport)) ||
             (supportImport === governedRedemptionImport && supportEntries.includes(governedRedemptionDatabaseImport))
           ) {
             continue;

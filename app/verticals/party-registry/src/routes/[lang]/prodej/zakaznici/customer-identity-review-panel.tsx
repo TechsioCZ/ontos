@@ -1,0 +1,297 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { DetailList, SidePanel } from '@app/admin-ui';
+import { Button } from '@techsio/ui-kit/atoms/button';
+import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { FormInput } from '@app/admin-ui/form-controls';
+import { Option } from 'effect';
+import { derivePartyDisplayName } from '../../../../../shared/domain/identity-contracts.ts';
+import type { useCustomerIdentityReview } from './customers-data.ts';
+
+type ReviewModel = ReturnType<typeof useCustomerIdentityReview>;
+type ReviewDetail = Extract<ReviewModel['detail'], { readonly status: 'ready' }>['value'];
+const reviewKey = 'party-registry.pages.customers.identityReview';
+
+const ReviewParty = ({
+  party,
+  review,
+}: {
+  readonly party: ReviewDetail['parties'][number];
+  readonly review: ReviewModel;
+}) => {
+  const { t } = useModernI18n();
+  const { contacts, identity, partyRef } = party;
+  return (
+    <div className="flex flex-col gap-150" key={partyRef.resourceId}>
+      <Button
+        aria-pressed={review.selectedPartyId === partyRef.resourceId}
+        disabled={
+          !review.canResolve ||
+          identity.status !== 'ready' ||
+          identity.value.resolution.kind !== 'DIRECT' ||
+          Option.isSome(identity.value.party.archivedAt)
+        }
+        onClick={() => review.setSelectedPartyId(partyRef.resourceId)}
+        size="sm"
+        theme="outlined"
+        variant="secondary"
+      >
+        {t(`${reviewKey}.selectParty`, {
+          name:
+            identity.status === 'ready'
+              ? Option.getOrElse(identity.value.party.displayName ?? Option.none<string>(), () =>
+                  t(`${reviewKey}.unnamed`),
+                )
+              : t(`${reviewKey}.unnamed`),
+        })}
+      </Button>
+      {identity.status === 'ready' ? (
+        <>
+          <p className="text-sm">{t(`${reviewKey}.types.${identity.value.party.partyType}`)}</p>
+          {(identity.value.resolution.kind !== 'DIRECT' || Option.isSome(identity.value.party.archivedAt)) && (
+            <p className="text-sm">{t(`${reviewKey}.unselectable`)}</p>
+          )}
+        </>
+      ) : (
+        <StatusText status="error">{t(`${reviewKey}.${identity.status}`)}</StatusText>
+      )}
+      {contacts.status === 'ready' ? (
+        contacts.value.items.map((contact) =>
+          // A withheld contact value is not shown.
+          !contact.current || contact.value === undefined || contact.value.type === 'ADDRESS' ? null : (
+            <p className="text-sm" key={contact.contactPointRef.resourceId}>
+              {contact.value.displayValue}
+            </p>
+          ),
+        )
+      ) : (
+        <StatusText status="error">{t(`${reviewKey}.${contacts.status}`)}</StatusText>
+      )}
+    </div>
+  );
+};
+
+const ReviewCaseDetail = ({
+  duplicate,
+  review,
+}: {
+  readonly duplicate: ReviewDetail;
+  readonly review: ReviewModel;
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <>
+      <DetailList
+        items={[
+          {
+            label: t(`${reviewKey}.candidateName`),
+            value: derivePartyDisplayName(duplicate.candidateCase.candidate) ?? t(`${reviewKey}.unnamed`),
+          },
+          {
+            label: t(`${reviewKey}.partyType`),
+            value: t(`${reviewKey}.types.${duplicate.candidateCase.candidate.partyType}`),
+          },
+          {
+            label: t(`${reviewKey}.state`),
+            value: t(`${reviewKey}.states.${duplicate.candidateCase.lifecycleState}`),
+          },
+          {
+            label: t(`${reviewKey}.resolution`),
+            value:
+              duplicate.candidateCase.resolutionOutcome === null
+                ? '—'
+                : t(`${reviewKey}.outcomes.${duplicate.candidateCase.resolutionOutcome}`),
+          },
+          { label: t(`${reviewKey}.reason`), value: duplicate.candidateCase.resolutionReason ?? '—' },
+        ]}
+      />
+      {/* Withheld identifier and evidence lists are absent and render nothing. */}
+      {(duplicate.candidateCase.candidate.officialIdentifiers ?? []).map((identifier) => (
+        <p className="text-sm" key={`${identifier.identifierType}:${identifier.value}`}>
+          {t(`${reviewKey}.identifier`, { type: identifier.identifierType, value: identifier.value })}
+        </p>
+      ))}
+      <h3 className="font-medium">{t(`${reviewKey}.evidence`)}</h3>
+      {/* A client source assertion carries no reviewed statement; only attested and declared evidence renders here. */}
+      {(duplicate.candidateCase.candidate.subjectEvidence ?? []).flatMap((evidence) =>
+        evidence.kind === 'CLIENT_SOURCE_ASSERTION'
+          ? []
+          : [
+              <p className="break-words text-sm" key={evidence.evidenceRef}>
+                {evidence.statement}
+              </p>,
+            ],
+      )}
+      {(duplicate.candidateCase.evaluatedEvidence ?? []).map((evidence) => (
+        <p
+          className="break-words text-sm"
+          key={`${evidence.ruleKey}:${evidence.identifierType ?? ''}:${evidence.namespace ?? ''}:${evidence.normalizedValue ?? ''}:${evidence.officialIdentifierRef?.resourceId ?? ''}:${evidence.reason}`}
+        >
+          {evidence.reason}
+        </p>
+      ))}
+      <h3 className="font-medium">{t(`${reviewKey}.candidates`)}</h3>
+      {duplicate.parties.length === 0 && <p className="text-sm">{t(`${reviewKey}.noCandidates`)}</p>}
+      {duplicate.parties.map((party) => (
+        <ReviewParty key={party.partyRef.resourceId} party={party} review={review} />
+      ))}
+      <FormInput
+        disabled={!review.canResolve}
+        id="customer-duplicate-reason"
+        label={t(`${reviewKey}.reason`)}
+        maxLength={1000}
+        onChange={(event) => review.setReason(event.target.value)}
+        required
+        value={review.reason}
+      />
+      <p className="text-fg-secondary text-sm">{t(`${reviewKey}.createWarning`)}</p>
+      <div className="flex flex-wrap gap-150">
+        <Button
+          disabled={!review.canResolve || review.selectedPartyId === '' || review.reason.trim() === ''}
+          onClick={() => review.resolve('MATCH_EXISTING')}
+          size="sm"
+          variant="primary"
+        >
+          {t(`${reviewKey}.match`)}
+        </Button>
+        <Button
+          disabled={!review.canResolve || review.reason.trim() === ''}
+          onClick={() => review.resolve('CREATE_NEW')}
+          size="sm"
+          theme="outlined"
+          variant="secondary"
+        >
+          {t(`${reviewKey}.createNew`)}
+        </Button>
+        <Button
+          disabled={!review.canResolve || review.reason.trim() === ''}
+          onClick={() => review.resolve('NEEDS_EVIDENCE')}
+          size="sm"
+          theme="outlined"
+          variant="secondary"
+        >
+          {t(`${reviewKey}.needsEvidence`)}
+        </Button>
+        <Button
+          disabled={!review.canResolve || review.reason.trim() === ''}
+          onClick={() => review.resolve('DISMISSED_AS_NON_SUBJECT')}
+          size="sm"
+          theme="outlined"
+          variant="secondary"
+        >
+          {t(`${reviewKey}.dismiss`)}
+        </Button>
+      </div>
+    </>
+  );
+};
+
+export const CustomerIdentityReviewPanel = ({ review }: { readonly review: ReviewModel }) => {
+  const { t } = useModernI18n();
+  const duplicate = review.detail.status === 'ready' ? review.detail.value : undefined;
+  return (
+    <SidePanel
+      actions={
+        <Button disabled={review.busy} onClick={() => review.closeReview(false)} theme="outlined" variant="secondary">
+          {t(`${reviewKey}.close`)}
+        </Button>
+      }
+      onOpenChange={(next) => review.closeReview(next)}
+      open={review.open}
+      resizeLabel={t('party-registry.sidePanel.resize')}
+      size="xl"
+      title={t(`${reviewKey}.title`)}
+    >
+      <div aria-busy={review.busy || review.loading} className="flex flex-col gap-250 py-200">
+        <p className="text-fg-secondary text-sm">{t(`${reviewKey}.description`)}</p>
+        {review.notice !== undefined && (
+          <StatusText aria-live="polite" status={review.notice.success ? 'success' : 'error'}>
+            {t(`${reviewKey}.${review.notice.key}`)}
+          </StatusText>
+        )}
+        {review.queue.status === 'ready' && review.queue.value.nextCaseRef !== null && (
+          <div className="flex flex-wrap gap-150">
+            <Button
+              disabled={review.busy || review.uncertain}
+              onClick={() => {
+                if (review.queue.status === 'ready' && review.queue.value.nextCaseRef !== null) {
+                  review.loadQueue(review.queue.value.nextCaseRef);
+                }
+              }}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
+              {t(`${reviewKey}.next`)}
+            </Button>
+          </div>
+        )}
+        {review.queue.status === 'loading' && <StatusText aria-live="polite">{t(`${reviewKey}.loading`)}</StatusText>}
+        {review.queue.status === 'failed' && (
+          <div className="flex flex-wrap items-center gap-150">
+            <StatusText status="error">{t(`${reviewKey}.${review.queue.failure}`)}</StatusText>
+            <Button
+              disabled={review.busy || review.uncertain}
+              onClick={() => review.retryQueue()}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
+              {t(`${reviewKey}.retryQueue`)}
+            </Button>
+          </div>
+        )}
+        {review.queue.status === 'ready' && (
+          <>
+            {review.queue.value.items.length === 0 && <p>{t(`${reviewKey}.empty`)}</p>}
+            {review.queue.value.items.map((item) => (
+              <Button
+                aria-pressed={duplicate?.candidateCase.caseRef.resourceId === item.caseRef.resourceId}
+                disabled={review.busy || review.uncertain}
+                key={item.caseRef.resourceId}
+                onClick={() => review.selectCase(item.caseRef)}
+                size="sm"
+                theme="outlined"
+                variant="secondary"
+              >
+                {t(`${reviewKey}.caseLabel`, {
+                  name: item.displayName ?? t(`${reviewKey}.unnamed`),
+                  state: t(`${reviewKey}.states.${item.lifecycleState}`),
+                })}
+              </Button>
+            ))}
+          </>
+        )}
+        {review.detail.status === 'loading' && (
+          <StatusText aria-live="polite">{t(`${reviewKey}.loadingDetail`)}</StatusText>
+        )}
+        {review.detail.status === 'failed' && (
+          <div className="flex flex-wrap items-center gap-150">
+            <StatusText status="error">{t(`${reviewKey}.${review.detail.failure}`)}</StatusText>
+            <Button
+              disabled={review.busy || review.uncertain}
+              onClick={() => review.retryDetail()}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
+              {t(`${reviewKey}.retryDetail`)}
+            </Button>
+          </div>
+        )}
+        {duplicate !== undefined && <ReviewCaseDetail duplicate={duplicate} review={review} />}
+        {review.busy && <StatusText aria-live="polite">{t(`${reviewKey}.saving`)}</StatusText>}
+        {review.uncertain && (
+          <Button
+            disabled={review.busy}
+            onClick={() => review.checkStatus()}
+            size="sm"
+            theme="outlined"
+            variant="secondary"
+          >
+            {t(`${reviewKey}.checkStatus`)}
+          </Button>
+        )}
+      </div>
+    </SidePanel>
+  );
+};

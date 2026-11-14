@@ -6,6 +6,7 @@ import {
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
 import type { OutboxMessage, OutboxWorkerHandlerContext } from '@app/core-runtime';
+import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import { DateTime, Effect, Option, Schema } from 'effect';
@@ -31,6 +32,7 @@ import {
   handleProjectOfficialIdentifierUpdatedToSearch,
   projectOfficialIdentifierUpdatedToSearchWorker,
 } from '../../src/workers/project-official-identifier-updated-to-search.worker.ts';
+import { partySearchIngestionRegistrations } from '../../src/worker-host/search-ingestion-registrations.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const partyRef = {
@@ -112,7 +114,7 @@ const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
           return canonical;
         }),
     },
-    makeCoreSearchIngestion(store),
+    makeCoreSearchIngestion(store, partySearchIngestionRegistrations),
     store,
   );
   const replaceIdentifiers = (values: readonly PartySearchSourceValue[]) =>
@@ -227,6 +229,7 @@ it.effect('CreateParty MATCHED_EXISTING publishes an attached identifier and ind
     yield* search.seed;
     const harness = yield* makeActionTestHarness({
       access: 'allowed',
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       ownerRegistration: partyRegistryBackendRegistration,
       services: [
         bindActionTestServices(createPartyAction, {
@@ -280,6 +283,7 @@ it.effect('reviewed MATCH_EXISTING publishes an attached identifier and indexes 
     yield* search.seed;
     const harness = yield* makeActionTestHarness({
       access: 'allowed',
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       ownerRegistration: partyRegistryBackendRegistration,
       services: [
         bindActionTestServices(resolveDuplicateCandidateMatchAction, {
@@ -334,6 +338,7 @@ it.effect('END_VALIDITY refreshes search only after its committed identifier mes
     const after = { ...before, state: 'ENDED', validTo } as const;
     const harness = yield* makeActionTestHarness({
       access: 'allowed',
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       ownerRegistration: partyRegistryBackendRegistration,
       services: [
         bindActionTestServices(updatePartyOfficialIdentifierAction, {
@@ -393,6 +398,7 @@ it.effect('a structured-name Update publishes only its reference and refreshes c
       updatedAt: '2026-09-03T00:00:00.000Z',
     });
     const harness = yield* makeActionTestHarness({
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       ownerRegistration: partyRegistryBackendRegistration,
       actionPermission: 'allowed',
       services: [

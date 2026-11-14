@@ -1681,13 +1681,21 @@ export const validRuntimeDeclarationViews = (
     ownerImport(backend, 'VerticalRuntimeRegistrationInput', CORE_RUNTIME_PACKAGE, true),
     ownerAnnotation(backend, manifestName, "VerticalRuntimeRegistrationInput['manifest']"),
     ownerAnnotation(backend, declarationName, 'VerticalRuntimeRegistrationInput'),
-    ownerObjectView(fullManifest, manifest, manifestName, ['activation', 'publicSurface'], ['originatorActions']),
+    ownerObjectView(
+      fullManifest,
+      manifest,
+      manifestName,
+      ['activation', 'publicSurface'],
+      // `registeredWorkloadCalls` is demo divergence exception 8 (upstream main has no production source for them).
+      ['originatorActions', 'registeredWorkloadCalls'],
+    ),
     ownerObjectView(
       fullPublicSurface,
       manifest,
       `${manifestName}.publicSurface`,
       ['components', 'events', 'reports', 'resourceTypes', 'search'],
-      ['businessPermissions'],
+      // `mcp` is the demo-only agent tool contribution (no main concept); it stays on the full manifest view.
+      ['businessPermissions', 'mcp'],
     ),
     ownerObjectView(fullRegistration, registration, declarationName, ['entrypoints', 'manifest']),
     ownerReference(ownerProperty(fullRegistration, 'manifest'), registration, `${prefix}Manifest`),
@@ -2392,4 +2400,40 @@ export const insertSortedSlot = (
     generatedSlotSortKey(left).localeCompare(generatedSlotSortKey(right)),
   );
   return renderGeneratedSlotEntries(content, startMarker, endMarker, entries);
+};
+
+// ---------------------------------------------------------------------------------------------------------------
+// Demo-only exception 3 support: code-position masking used by the ported staged-read proof.
+// ---------------------------------------------------------------------------------------------------------------
+/**
+ * `isCodePosition(content, target)` for every target in one pass. Index `target` is 1 for a
+ * code position; targets past the end share the value at `content.length`.
+ */
+export const codePositions = (content: string): Uint8Array => {
+  const positions = new Uint8Array(content.length + 1);
+  let state: NonCodeState | null = null;
+  let escaped = false;
+  let regexCharacterClass = false;
+  for (let index = 0; index < content.length; index += 1) {
+    positions[index] = Number(state === null);
+    const character = content[index] ?? '';
+    const next = content[index + 1] ?? null;
+    if (state === null) {
+      state = nonCodeStateAt(content, index, character, next);
+      if (state === LINE_COMMENT_STATE || state === BLOCK_COMMENT_STATE) {
+        index += 1;
+        positions[index] = 0;
+      }
+      continue;
+    }
+    const transition = advanceNonCodeState(state, character, next, escaped, regexCharacterClass);
+    const closesBlockComment = state === BLOCK_COMMENT_STATE && transition.state === null;
+    ({ escaped, regexCharacterClass, state } = transition);
+    if (closesBlockComment) {
+      index += 1;
+      positions[index] = 1;
+    }
+  }
+  positions[content.length] = Number(state === null);
+  return positions;
 };

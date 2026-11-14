@@ -1,4 +1,4 @@
-import { DateTime, Effect, Result } from 'effect';
+import { DateTime, Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -27,6 +27,11 @@ import {
 } from '../../src/access/ids.ts';
 import { cellSlotKey } from '../../src/access/model.ts';
 import type { AccessMode, CatalogSnapshot, CatalogSnapshotEntry, RecordSelector } from '../../src/access/model.ts';
+import { defineAction } from '../../src/actions/definition.ts';
+import { defineRead } from '../../src/reads/definition.ts';
+import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { buildAccessCatalogRelease } from '../../src/access/catalog/release.ts';
+import { collectAccessCatalog } from '../../src/authorization/access-declaration.ts';
 
 /*
  * "Plný přístup" is a tenant's first role (O67-Q6), so it has to be exactly as wide as the release it is
@@ -71,6 +76,111 @@ const entries = [
   entry({ key: 'test.access.contact.read', modes: ['run'], risk: 'routine', selectors: ['entrusted', 'assigned'] }),
   entry({ key: 'test.access.contact.note', modes: ['run', 'propose'], risk: 'sensitive', selectors: ['team'] }),
 ] as const;
+
+it('omits workload-only module purposes from the catalog and full-access owner without narrowing human capabilities', () => {
+  const accessActor = {
+    callers: ['operations-client'],
+    reason: 'A registered client workload uses this purpose only through a verified module call',
+    subject: 'workload',
+    subjectWorkloads: ['operations.client-intake'],
+  } as const;
+  const action = defineAction(
+    {
+      accessActor,
+      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'test.access.intake.create.evidence' },
+      actionKey: 'test.access.intake.create',
+      auditProfile: 'standard',
+      domainErrorSchema: Schema.Never,
+      domainEvents: {},
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'write',
+        authorization: { kind: 'protected' },
+        entrypointKey: 'test.access.intake.create',
+        moduleKey: 'test.access',
+        role: 'action',
+      }),
+      idempotency: 'required',
+      legalEntityScope: 'required',
+      owningModuleKey: 'test.access',
+      payloadSchema: Schema.Struct({}),
+      policies: [],
+      resultSchema: Schema.Struct({}),
+      schemaVersion: '1',
+    },
+    () => Effect.die('Catalog collection never executes an owner Action'),
+  );
+  const read = defineRead(
+    {
+      accessActor,
+      accessKind: 'detail',
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'read',
+        authorization: { kind: 'protected' },
+        entrypointKey: 'test.access.intake.review',
+        moduleKey: 'test.access',
+        role: 'api',
+      }),
+      evidencePolicy: { captureMode: 'metadata_only', policyKey: 'test.access.intake.review.evidence' },
+      inputSchema: Schema.Struct({}),
+      legalEntityScope: 'required',
+      owningModuleKey: 'test.access',
+      policies: [],
+      readKey: 'test.access.intake.review',
+      resultSchema: Schema.Struct({}),
+      schemaVersion: '1',
+    },
+    () => Effect.die('Catalog collection never executes an owner Read'),
+    () => Effect.succeed({}),
+  );
+  const human = {
+    accessDeclaration: {
+      key: 'test.access.invoice.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'invoices', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
+    entrypoint: defineTenantModuleEntrypoint({
+      access: 'read',
+      authorization: { kind: 'protected' },
+      entrypointKey: 'test.access.invoice.read',
+      moduleKey: 'test.access',
+      role: 'api',
+    }),
+  } as const;
+  const modules = [{ descriptors: [action.descriptor, read.descriptor, human], moduleId: 'test.access' }];
+  const catalog = Result.getOrThrow(collectAccessCatalog(modules));
+  expect(catalog.entries.map(({ accessDeclaration }) => accessDeclaration.key)).toEqual(['test.access.invoice.read']);
+  const release = Result.getOrThrow(
+    buildAccessCatalogRelease({
+      installedModuleKeys: [ModuleKeySchema.make('test.access')],
+      modules,
+      publishedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-07T00:00:00Z')),
+    }),
+  );
+  expect(fullAccessRoleIntent(release).switches.map(({ capabilityKey }) => capabilityKey)).toEqual([
+    'test.access.invoice.read',
+  ]);
+  expect(Result.getOrThrow(compileFullAccessRole(release)).cells.map(({ capabilityKey }) => capabilityKey)).toEqual([
+    'test.access.invoice.read',
+  ]);
+  // Even raw catalog metadata cannot add a human permission beside the exclusive module workload.
+  const mixed = {
+    ...read.descriptor,
+    accessDeclaration: { ...human.accessDeclaration, key: 'test.access.intake.review' },
+  };
+  expect(Result.isFailure(collectAccessCatalog([{ descriptors: [mixed], moduleId: 'test.access' }]))).toBe(true);
+  expect(
+    Result.isFailure(
+      buildAccessCatalogRelease({
+        installedModuleKeys: [ModuleKeySchema.make('test.access')],
+        modules: [{ descriptors: [mixed], moduleId: 'test.access' }],
+        publishedAt: release.publishedAt,
+      }),
+    ),
+  ).toBe(true);
+});
 
 it.effect('names every capability of the release as its own switch at the widest declared selector', () =>
   Effect.sync(() => {

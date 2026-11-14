@@ -9,7 +9,7 @@ type Controls = ReturnType<typeof useShellControls>;
 type Shell = NonNullable<Parameters<typeof useShellControls>[0]>;
 type PageProps = Pick<
   ComponentProps<typeof AuthenticatedDashboardLayout>,
-  'children' | 'currentAccessPage' | 'currentModuleId' | 'title'
+  'children' | 'currentAccessPage' | 'currentEntrypointKey' | 'currentModuleId' | 'title'
 >;
 
 export const ShellContentLayout = ({
@@ -29,7 +29,11 @@ export const ShellContentLayout = ({
       {...pageProps}
       currentTenantId={shell.identity.tenantId}
       homeCurrent={false}
-      identity={{ displayName: shell.identity.displayName }}
+      identity={{
+        displayName: shell.identity.displayName,
+        email: shell.identity.email,
+        principalId: shell.identity.principalId,
+      }}
       legalEntityChoices={shell.legalEntities.items}
       legalEntityState={shell.legalEntities.state}
       legalEntitySwitchFailed={controls.legalEntitySwitchFailed}
@@ -40,7 +44,12 @@ export const ShellContentLayout = ({
       onLogout={controls.handleLogout}
       onSearch={controls.handleSearch}
       onTenantChange={controls.handleTenantChange}
+      onTenantContextChange={controls.handleTenantContextChange}
       tenantChoices={shell.tenants.items}
+      tenantContextActive={shell.contextState === 'tenant_authenticated'}
+      tenantContextAvailable={
+        shell.legalEntities.state === 'available' && shell.legalEntities.tenantContextAvailable === true
+      }
       tenantState={shell.tenants.state}
       tenantSwitchFailed={controls.tenantSwitchFailed}
       tenantSwitchPending={controls.tenantSwitchPending}

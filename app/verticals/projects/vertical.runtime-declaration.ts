@@ -2,10 +2,12 @@
 // @ontos-deployment-app-id projects
 // @ontos-module-id projects.core
 // Projects shares one owner-authored backend declaration across its API and full UI view.
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import {
   defineVerticalRuntimeRegistration,
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
+  ShellSearchContributionSchema,
 } from '@app/core-runtime';
 import type { VerticalRuntimeRegistrationInput } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
@@ -15,11 +17,18 @@ import { createProjectAction } from './src/actions/create-project.action.ts';
 import { moveProjectAction } from './src/actions/move-project.action.ts';
 import { ProjectOwnerCandidatesApi } from './shared/apis/project-owner-candidates.ts';
 import { ReadProjectApi } from './shared/apis/read-project.ts';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 import { unarchiveProjectAction } from './src/actions/unarchive-project.action.ts';
 import { updateProjectAction } from './src/actions/update-project.action.ts';
 // </generated-module-manifest-imports>
 // <generated-module-registration-imports>
+import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
+import { refreshSearchWorker } from './src/workers/refresh-search.worker.ts';
 // </generated-module-registration-imports>
+
+type SearchContributionInput = typeof ShellSearchContributionSchema.Encoded;
+const searchContribution = (value: SearchContributionInput) =>
+  Result.getOrThrow(Schema.decodeUnknownResult(ShellSearchContributionSchema)(value));
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -31,6 +40,20 @@ const pageContribution = (value: PageContributionInput) =>
 
 const projectModuleKey = 'projects.core';
 const createProjectPageKey = 'projects.core.page.create-project';
+const workFamily = {
+  icon: 'icon-[mdi--account-multiple-check-outline]',
+  key: 'work',
+  label: { cs: 'Lidé a úkoly', en: 'People and tasks' },
+  order: 60,
+} as const;
+
+const projectGroup = {
+  icon: 'icon-[mdi--folder-outline]',
+  key: 'project',
+  label: { cs: 'Projekty', en: 'Projects' },
+  order: 240,
+} as const;
+
 export const projectsRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'] = {
   module: {
     description: 'Projects business capability.',
@@ -45,12 +68,14 @@ export const projectsRuntimeManifest: VerticalRuntimeRegistrationInput['manifest
       archiveProjectAction,
       createProjectAction,
       moveProjectAction,
+      requestSearchRebuildAction,
       unarchiveProjectAction,
       updateProjectAction,
       // </generated-module-manifest-actions>
     ],
     api: {
       // <generated-module-manifest-apis>
+      'owner-action-approvals': OwnerActionApprovalApi,
       'project-owner-candidates': ProjectOwnerCandidatesApi,
       'read-project': ReadProjectApi,
       // </generated-module-manifest-apis>
@@ -70,6 +95,8 @@ export const projectsRuntimeManifest: VerticalRuntimeRegistrationInput['manifest
             scope: 'tenant',
           },
           groupKey: 'shell.navigation.modules',
+          icon: 'icon-[mdi--folder-plus-outline]',
+          label: { cs: 'Vytvořit Project', en: 'Create Project' },
           order: 100,
           pageKey: createProjectPageKey,
         }),
@@ -89,6 +116,7 @@ export const projectsRuntimeManifest: VerticalRuntimeRegistrationInput['manifest
             scope: 'tenant',
           },
           expose: './PageCreateProject',
+          legalEntityScope: 'optional',
           routePath: '/projects/create-project',
         }),
         // </generated-module-shell-pages>
@@ -104,6 +132,35 @@ export const projectsRuntimeManifest: VerticalRuntimeRegistrationInput['manifest
       resourceDetails: [],
       search: [
         // <generated-module-shell-search>
+        searchContribution({
+          accessDeclaration: {
+            key: 'projects.core.project.search',
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'projects', level: 'basic' },
+            risk: 'sensitive',
+            selectors: [],
+          },
+          contributionKey: 'projects.core.search.projects',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'protected' },
+            entrypointKey: 'projects.core.search.projects',
+            moduleKey: projectModuleKey,
+            role: 'search',
+            scope: 'tenant',
+          },
+          presentation: {
+            family: workFamily,
+            group: projectGroup,
+            record: {
+              pageKey: createProjectPageKey,
+              selector: { idEncoding: 'native', idFormat: 'uuid', kind: 'query', parameterName: 'projectId' },
+            },
+            scope: 'tenant',
+          },
+          searchKey: 'projects.core.projects',
+        }),
         // </generated-module-shell-search>
       ],
       timelines: [],
@@ -116,6 +173,8 @@ export const projectsRuntimeDeclaration: VerticalRuntimeRegistrationInput = {
   manifest: projectsRuntimeManifest,
   outboxWorkers: [
     // <generated-module-registration-workers>
+    rebuildSearchWorker,
+    refreshSearchWorker,
     // </generated-module-registration-workers>
   ],
 };

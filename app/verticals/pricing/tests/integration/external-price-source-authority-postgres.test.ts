@@ -16,6 +16,9 @@ import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/t
 import { externalPriceSourceAuthorityForScope } from '../../src/persistence/external-price-source-authority-persistence.ts';
 import type { ExternalPriceSourceAuthorityPersistence } from '../../src/persistence/external-price-source-authority-persistence.ts';
 import type { ExternalPriceSourceAuthorityGrant } from '../../src/services/external-price-input-boundary.service.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = 'e8030000-0000-4000-8000-000000000001';
 const legalEntityId = 'e8030000-0000-4000-8000-000000000002';
@@ -134,7 +137,11 @@ const withAuthority = <Value, Failure>(
                    set_config('ontos.legal_entity_id', ${selectedScope.legalEntityId ?? ''}, true)`,
         'objects',
       );
-      const ownerTransaction = yield* installOperationalScope(transaction, selectedScope);
+      const ownerTransaction = yield* installOperationalScope(
+        transaction,
+        selectedScope,
+        FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      );
       const authority = yield* externalPriceSourceAuthorityForScope(ownerTransaction, selectedScope);
       return yield* operation(authority);
     }),

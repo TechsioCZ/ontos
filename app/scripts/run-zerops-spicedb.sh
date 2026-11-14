@@ -7,10 +7,9 @@ set -eu
 SPICEDB_DATASTORE_CONN_URI="$(sh "$(dirname "$0")/spicedb-datastore-uri.sh")"
 export SPICEDB_DATASTORE_CONN_URI
 
-# Both listeners serve TLS. The certificates are this service's secrets, written by the `spicedb-tls`
-# step of `scripts/ops/cloudflare-stage-cutover.mts` (stage) or `scripts/ops/production-environment.mts`
-# (production): gRPC uses a self-signed certificate the runtimes pin through SPICEDB_CA_CERT, and the
-# HTTP gateway uses a Cloudflare Origin CA certificate that Workers VPC verifies.
+# Both listeners serve TLS. The certificates are this service's secrets, which an operator creates:
+# gRPC uses a self-signed certificate the runtimes pin through SPICEDB_CA_CERT (the shape
+# `generateGrpcMaterial` in scripts/ops/spicedb-tls.mts produces); the HTTP gateway has its own pair.
 for name in SPICEDB_GRPC_TLS_CERT SPICEDB_GRPC_TLS_KEY SPICEDB_HTTP_TLS_CERT SPICEDB_HTTP_TLS_KEY; do
   eval "value=\${$name:-}"
   if [ -z "$value" ]; then
@@ -52,6 +51,8 @@ fi
 # The health checks run grpc_health_probe inside this named container.
 docker rm --force spicedb > /dev/null 2>&1 || true
 
+# The datastore pool stays small (12 connections at most) so db18 keeps headroom for Hyperdrive and the
+# outbox host; SpiceDB checks are cheap index lookups and never needed the 20 read + 10 write defaults.
 exec docker run --rm --name spicedb --network=host \
   -e SPICEDB_DATASTORE_ENGINE \
   -e SPICEDB_DATASTORE_CONN_URI \
@@ -64,4 +65,8 @@ exec docker run --rm --name spicedb --network=host \
   --grpc-tls-key-path=/tls/grpc-key.pem \
   --http-enabled \
   --http-tls-cert-path=/tls/http-cert.pem \
-  --http-tls-key-path=/tls/http-key.pem
+  --http-tls-key-path=/tls/http-key.pem \
+  --datastore-conn-pool-read-max-open=8 \
+  --datastore-conn-pool-read-min-open=2 \
+  --datastore-conn-pool-write-max-open=4 \
+  --datastore-conn-pool-write-min-open=1

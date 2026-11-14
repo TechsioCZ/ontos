@@ -1,0 +1,606 @@
+import { CzVatClassificationCodeSchema } from '@app/shared-contracts/cz-vat-classifications';
+import { MediaImageUploadSchema } from '@app/core-runtime/media/image-contract';
+import { Schema } from 'effect';
+import {
+  AiBatchIdSchema,
+  AiChangeIdSchema,
+  AiRunIdSchema as OwnerAiRunIdSchema,
+} from '@app/shared-contracts/ai-approvals';
+import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { PartyRefSchema } from '@app/party-registry/resources/party';
+import { MerchandiseScopeMismatch } from '../errors/merchandise-scope-mismatch.ts';
+import { MerchandiseNotFound } from '../errors/merchandise-not-found.ts';
+import { MerchandiseLifecycleConflict } from '../errors/merchandise-lifecycle-conflict.ts';
+import { MerchandiseRevisionConflict } from '../errors/merchandise-revision-conflict.ts';
+import { MerchandisePersistenceUnavailable } from '../errors/merchandise-persistence-unavailable.ts';
+import { MerchandiseReferenceUnavailable } from '../errors/merchandise-reference-unavailable.ts';
+import { MerchandiseReferenceIneligible } from '../errors/merchandise-reference-ineligible.ts';
+import { MerchandisePermissionDenied } from '../errors/merchandise-permission-denied.ts';
+import { MerchandiseNotImplemented } from '../errors/merchandise-not-implemented.ts';
+import {
+  AvailabilitySchema,
+  CatalogCategoryIdSchema,
+  ClientRequestIdSchema,
+  CustomerAccountIdSchema,
+  ProductIdReferenceSchema,
+  VariantIdReferenceSchema,
+  OrderIdReferenceSchema,
+  EntityIdSchema,
+  ImageRefSchema,
+  MinorAmountSchema,
+  OpportunityIdSchema,
+  OrderAddressSchema,
+  OrderContactSchema,
+  OrderDeliveryRecipientSchema,
+  OrderIdSchema,
+  OrderStatusSchema,
+  PartyIdSchema,
+  ProductIdSchema,
+  ProductMetadataSchema,
+  ProductUnitSchema,
+  ShippingMethodSchema,
+  VariantIdSchema,
+} from '../domain/merchandise-model.ts';
+import {
+  ExchangeRateSchema,
+  MarketCodeSchema,
+  MarketCurrencySchema,
+  MarketIdSchema,
+  MarketOfferModeSchema,
+  RoundingMinorSchema,
+  StorefrontMarketSchema,
+} from '../domain/market-offers.ts';
+
+export const ProductPatchSchema = Schema.Struct({
+  ...ProductMetadataSchema.fields,
+  active: Schema.optionalKey(Schema.Boolean),
+  category: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120))),
+  lowStockThreshold: Schema.optionalKey(MinorAmountSchema),
+  name: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+  taxClassificationCode: Schema.optionalKey(CzVatClassificationCodeSchema),
+  unit: Schema.optionalKey(ProductUnitSchema),
+});
+export type ProductPatch = typeof ProductPatchSchema.Type;
+
+/**
+ * One change of a product's gallery: an uploaded picture (stored in Core Media), the whole gallery in a new order, a
+ * removal, or the undo of a removal. Each of these applies to the current gallery, not to a revision.
+ *
+ * The admin's gallery draft uses the other two: `Stage` stores a picture for the product without putting it into the
+ * public gallery, and `Set` saves the whole gallery the draft shows (staged pictures in, removed ones out, order and
+ * main picture) against the catalog revision the draft was read at, so a save over someone else's change is refused.
+ */
+export const ProductImageChangeSchema = Schema.Union([
+  Schema.TaggedStruct('Upload', { image: MediaImageUploadSchema }),
+  Schema.TaggedStruct('Stage', { image: MediaImageUploadSchema }),
+  Schema.TaggedStruct('Set', { images: Schema.Array(ImageRefSchema).check(Schema.isMaxLength(20)) }),
+  Schema.TaggedStruct('Reorder', { images: Schema.Array(ImageRefSchema).check(Schema.isMaxLength(20)) }),
+  Schema.TaggedStruct('Remove', { image: ImageRefSchema }),
+  Schema.TaggedStruct('Restore', {
+    image: ImageRefSchema,
+    position: Schema.Int.check(Schema.isBetween({ maximum: 19, minimum: 0 })),
+  }),
+]);
+export type ProductImageChange = typeof ProductImageChangeSchema.Type;
+
+export const BulkProductPatchSchema = Schema.Struct({
+  active: Schema.optionalKey(Schema.Boolean),
+  /** Native category assignment is distinct from the legacy display-only `category` patch. */
+  additionalCategoryIds: ProductMetadataSchema.fields.additionalCategoryIds,
+  category: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120))),
+  categoryId: ProductMetadataSchema.fields.categoryId,
+  /** Whole-percent change applied to currentPriceMinor; each changed product appends a priceHistory entry. */
+  priceChangePercent: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ maximum: 1000, minimum: -90 }))),
+});
+export type BulkProductPatch = typeof BulkProductPatchSchema.Type;
+
+/** Editable storefront category content. Slug and parent stay fixed (they are public URLs / the tree). */
+export const CategoryPatchSchema = Schema.Struct({
+  description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(5000))),
+  heading: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(300))),
+  imageAlt: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(300))),
+  imageSrc: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
+  longDescription: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(50_000))),
+  name: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+  position: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  published: Schema.optionalKey(Schema.Boolean),
+});
+export type CategoryPatch = typeof CategoryPatchSchema.Type;
+
+export const OrderLineRequestSchema = Schema.Struct({
+  productId: ProductIdSchema,
+  quantity: Schema.Finite.check(Schema.isGreaterThan(0)),
+  variantId: Schema.optionalKey(VariantIdSchema),
+});
+
+const QuantitySchema = Schema.Finite.check(Schema.isBetween({ maximum: 1_000_000, minimum: 0.001 }));
+
+/** One storefront cart line: the gross unit price the customer saw is re-validated on the server. */
+export const StorefrontOrderLineRequestSchema = Schema.Struct({
+  expectedUnitPriceMinor: MinorAmountSchema,
+  productId: ProductIdSchema,
+  quantity: QuantitySchema,
+  variantId: Schema.optionalKey(VariantIdSchema),
+});
+
+/**
+ * One edited order line (admin). An existing line is matched by product+variant and keeps its snapshot unless
+ * `unitPriceMinor` overrides it; a new line snapshots the current product/variant. The unit price is in the
+ * order's price mode (gross for storefront orders, net for staff orders).
+ */
+export const EditOrderLineSchema = Schema.Struct({
+  /**
+   * Marks a line this edit adds (also one removed and added again in the same edit): the unit price the editor offered
+   * it at. The server prices the line as a new one and refuses the edit when that price is no longer the offered one;
+   * `unitPriceMinor`, when sent, is the price staff typed instead.
+   */
+  offeredUnitPriceMinor: Schema.optionalKey(MinorAmountSchema),
+  productId: ProductIdSchema,
+  quantity: QuantitySchema,
+  unitPriceMinor: Schema.optionalKey(MinorAmountSchema),
+  variantId: Schema.optionalKey(VariantIdSchema),
+});
+
+/** Owner schema for order edits, shared by ingress and optimistic version checks. */
+export const EditOrderCommandSchema = Schema.TaggedStruct('EditOrder', {
+  contact: Schema.optionalKey(OrderContactSchema),
+  deliveryAddress: Schema.optionalKey(OrderAddressSchema),
+  id: OrderIdSchema,
+  lines: Schema.optionalKey(Schema.Array(EditOrderLineSchema).check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+  note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(1000))),
+  reason: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
+  shipping: Schema.optionalKey(Schema.Struct({ method: ShippingMethodSchema, priceMinor: MinorAmountSchema })),
+});
+
+/**
+ * Commands. Server-assigned identities: CreateProduct and RecordStockMovement take the invocation id.
+ * CreateOrder carries a caller-supplied id so seeds and retries can reference it deterministically.
+ * The server snapshots name, SKU, unit price and VAT onto each order line at creation (req. 7d).
+ * ORDER stock movements are written only by CreateOrder, so RecordStockMovement accepts manual reasons only.
+ */
+/** AI level C: the only order operations an agent may PROPOSE. A person approves each one in the app. */
+export const MerchandiseAiOperationSchema = Schema.Union([
+  Schema.TaggedStruct('ChangeOrderStatus', {
+    id: OrderIdSchema,
+    reason: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
+    status: OrderStatusSchema,
+  }),
+  EditOrderCommandSchema,
+]);
+export type MerchandiseAiOperation = typeof MerchandiseAiOperationSchema.Type;
+
+const AiReasonSchema = Schema.Trim.check(Schema.isMinLength(3), Schema.isMaxLength(2000));
+const AiRunIdSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)).pipe(
+  Schema.decodeTo(OwnerAiRunIdSchema),
+);
+
+/** AI approval commands (shared engine `@app/shared-contracts/ai-approvals`). Decide and revert are human-only. */
+const ApplyAiProposeChangesCommandSchema = Schema.TaggedStruct('AiProposeChanges', {
+  agentLabel: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+  changes: Schema.Array(Schema.Struct({ operation: MerchandiseAiOperationSchema, reason: AiReasonSchema })).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(20),
+  ),
+  instruction: AiReasonSchema,
+  runId: Schema.optionalKey(AiRunIdSchema),
+});
+
+const ApplyAiDecideChangesCommandSchema = Schema.TaggedStruct('AiDecideChanges', {
+  changeIds: Schema.Array(Schema.NonEmptyString.pipe(Schema.decodeTo(AiChangeIdSchema))).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(50),
+  ),
+  decision: Schema.Literals(['approve', 'reject']),
+  note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
+});
+
+const ApplyAiRevertBatchCommandSchema = Schema.TaggedStruct('AiRevertBatch', {
+  batchId: Schema.NonEmptyString.pipe(Schema.decodeTo(AiBatchIdSchema)),
+  note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
+});
+
+export const merchandiseAiCommandSchemas = [
+  ApplyAiProposeChangesCommandSchema,
+  ApplyAiDecideChangesCommandSchema,
+  ApplyAiRevertBatchCommandSchema,
+] as const;
+
+/**
+ * Market offer and price list commands (owner-local stand-in for Assortment/Pricing per commerce market). They ignore
+ * the payload's catalog `expectedRevision` and never advance it: ConfigureMarket guards the market's own revision,
+ * SetProductMarketOffer guards the product's offer it replaces (`expectedOffered`), offer changes are idempotent set
+ * operations.
+ */
+const ApplyConfigureMarketCommandSchema = Schema.TaggedStruct('ConfigureMarket', {
+  currency: MarketCurrencySchema,
+  exchangeRate: ExchangeRateSchema,
+  expectedRevision: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  marketCode: MarketCodeSchema,
+  marketId: MarketIdSchema,
+  offerMode: MarketOfferModeSchema,
+  roundingMinor: RoundingMinorSchema,
+});
+
+const ApplySetProductMarketOfferCommandSchema = Schema.TaggedStruct('SetProductMarketOffer', {
+  /**
+   * The offer the caller read before this change (the market's offer mode with the product's exception). When given
+   * and the market now offers something else, the save is refused as a revision conflict; omitted = not checked.
+   */
+  expectedOffered: Schema.optionalKey(Schema.Boolean),
+  marketId: MarketIdSchema,
+  offered: Schema.Boolean,
+  productId: ProductIdSchema,
+});
+
+const ApplySetMarketProductOffersCommandSchema = Schema.TaggedStruct('SetMarketProductOffers', {
+  marketId: MarketIdSchema,
+  offered: Schema.Boolean,
+  productIds: Schema.Array(ProductIdSchema).check(Schema.isMinLength(1), Schema.isMaxLength(250)),
+});
+
+const ApplyRemoveMarketCommandSchema = Schema.TaggedStruct('RemoveMarket', { marketId: MarketIdSchema });
+
+export const merchandiseMarketCommandSchemas = [
+  /** Creates or replaces the market's offer mode and price list. `expectedRevision`: 0 = must not exist yet. */
+  ApplyConfigureMarketCommandSchema,
+  /** Offers or withdraws one product in a market; stored only when it differs from the market's offer mode. */
+  ApplySetProductMarketOfferCommandSchema,
+  ApplySetMarketProductOffersCommandSchema,
+  /** Deletes the market's settings and every product exception of it. */
+  ApplyRemoveMarketCommandSchema,
+] as const;
+
+export const VersionedEditOrderCommandSchema = Schema.Struct({
+  ...EditOrderCommandSchema.fields,
+  expectedUpdatedAt: Schema.DateTimeUtcFromString,
+});
+export type VersionedEditOrderCommand = typeof VersionedEditOrderCommandSchema.Type;
+
+const ApplyCreateProductCommandSchema = Schema.TaggedStruct('CreateProduct', {
+  ...ProductMetadataSchema.fields,
+  active: Schema.Boolean,
+  category: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120)),
+  lowStockThreshold: MinorAmountSchema,
+  name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  priceMinor: MinorAmountSchema,
+  sku: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+  taxClassificationCode: CzVatClassificationCodeSchema,
+  unit: ProductUnitSchema,
+});
+
+const ApplyUpdateCategoryCommandSchema = Schema.TaggedStruct('UpdateCategory', {
+  id: CatalogCategoryIdSchema.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+  patch: CategoryPatchSchema,
+});
+
+const ApplyCreateCategoryCommandSchema = Schema.TaggedStruct('CreateCategory', {
+  heading: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(300))),
+  id: CatalogCategoryIdSchema.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+  name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  parentId: Schema.OptionFromNullOr(CatalogCategoryIdSchema.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
+  position: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  published: Schema.optionalKey(Schema.Boolean),
+  slug: Schema.Trim.check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(200),
+    Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u),
+  ),
+});
+
+const ApplyUpdateProductCommandSchema = Schema.TaggedStruct('UpdateProduct', {
+  id: ProductIdSchema,
+  patch: ProductPatchSchema,
+});
+
+const ApplyChangeProductImagesCommandSchema = Schema.TaggedStruct('ChangeProductImages', {
+  change: ProductImageChangeSchema,
+  id: ProductIdSchema,
+});
+
+const ApplyChangePriceCommandSchema = Schema.TaggedStruct('ChangePrice', {
+  id: ProductIdSchema,
+  priceMinor: MinorAmountSchema,
+  /** When set, reprices only this variant (net price) and appends to the variant price history. */
+  variantId: Schema.optionalKey(VariantIdSchema),
+});
+
+const ApplyBulkUpdateProductsCommandSchema = Schema.TaggedStruct('BulkUpdateProducts', {
+  ids: Schema.Array(ProductIdSchema).check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+  patch: BulkProductPatchSchema,
+});
+
+const ApplyRecordStockMovementCommandSchema = Schema.TaggedStruct('RecordStockMovement', {
+  delta: Schema.Int,
+  note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
+  productId: ProductIdSchema,
+  reason: Schema.Literals(['RECEIPT', 'ISSUE', 'ADJUSTMENT']),
+  variantId: Schema.optionalKey(VariantIdSchema),
+});
+
+const ApplyCreateOrderCommandSchema = Schema.TaggedStruct('CreateOrder', {
+  id: OrderIdSchema,
+  lines: Schema.Array(OrderLineRequestSchema).check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  opportunityId: Schema.optionalKey(OpportunityIdSchema),
+  partyId: PartyIdSchema,
+});
+
+const ApplyArchiveDemoProductCommandSchema = Schema.TaggedStruct('ArchiveDemoProduct', {
+  id: ProductIdSchema,
+  reason: Schema.Trim.check(Schema.isMinLength(5), Schema.isMaxLength(500)),
+});
+
+/** Reads the company's VAT rates from Tax now and reprices stored gross prices when they changed. */
+const ApplySyncTaxRatesCommandSchema = Schema.TaggedStruct('SyncTaxRates', {});
+
+const ApplyResetDemoDataCommandSchema = Schema.TaggedStruct('ResetDemoData', {
+  confirmation: Schema.Literal('OBNOVIT'),
+  reason: Schema.Trim.check(Schema.isMinLength(5), Schema.isMaxLength(500)),
+});
+
+const ApplyRemoveDemoOrderCommandSchema = Schema.TaggedStruct('RemoveDemoOrder', {
+  id: OrderIdSchema,
+  /** Explicit legacy repair only; ordinary cleanup replay never credits previously compensated records. */
+  reason: Schema.Trim.check(Schema.isMinLength(5), Schema.isMaxLength(500)),
+  repairStock: Schema.optionalKey(Schema.Boolean),
+});
+
+const ApplyChangeOrderStatusCommandSchema = Schema.TaggedStruct('ChangeOrderStatus', {
+  id: OrderIdSchema,
+  reason: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
+  status: OrderStatusSchema,
+});
+
+const ApplyPlaceStorefrontOrderCommandSchema = Schema.TaggedStruct('PlaceStorefrontOrder', {
+  billingAddress: Schema.optionalKey(OrderAddressSchema),
+  clientRequestId: Schema.Trim.pipe(
+    Schema.decodeTo(ClientRequestIdSchema.check(Schema.isMinLength(8), Schema.isMaxLength(120))),
+  ),
+  contact: Schema.optionalKey(OrderContactSchema),
+  customerAccountId: Schema.optionalKey(CustomerAccountIdSchema.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
+  deliveryAddress: Schema.optionalKey(OrderAddressSchema),
+  deliveryRecipient: Schema.optionalKey(OrderDeliveryRecipientSchema),
+  dryRun: Schema.optionalKey(Schema.Boolean),
+  expectedShippingPriceMinor: Schema.optionalKey(MinorAmountSchema),
+  lines: Schema.Array(StorefrontOrderLineRequestSchema).check(Schema.isMinLength(1), Schema.isMaxLength(50)),
+  /**
+   * Storefront market: only products offered there are accepted, every expected price (lines, shipping) is in the
+   * market currency and the order is repriced and stored in it (see `market` on the order).
+   */
+  marketId: Schema.optionalKey(MarketIdSchema),
+  note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(1000))),
+  partyId: Schema.optionalKey(PartyIdSchema),
+  shippingMethod: ShippingMethodSchema,
+});
+
+const ApplyLinkOrderCustomerCommandSchema = Schema.TaggedStruct('LinkOrderCustomer', {
+  counterpartyRef: CounterpartyRefSchema,
+  expectedPartyId: PartyIdSchema,
+  id: OrderIdSchema,
+  partyRef: PartyRefSchema,
+});
+
+const ApplyEditOrderCommandSchema = Schema.TaggedStruct('EditOrder', {
+  contact: Schema.optionalKey(OrderContactSchema),
+  deliveryAddress: Schema.optionalKey(OrderAddressSchema),
+  /**
+   * The order's `updatedAt` the editor saw. When present the edit conflicts only if this order changed meanwhile,
+   * not when any other part of the catalog (e.g. a storefront order) bumped the aggregate revision.
+   */
+  expectedUpdatedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+  id: OrderIdSchema,
+  lines: Schema.optionalKey(Schema.Array(EditOrderLineSchema).check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+  note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(1000))),
+  reason: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
+  shipping: Schema.optionalKey(Schema.Struct({ method: ShippingMethodSchema, priceMinor: MinorAmountSchema })),
+});
+
+export const MerchandiseCommandSchema = Schema.Union([
+  ApplyCreateProductCommandSchema,
+  /** Edits one storefront category; appends a history entry. A renamed category also renames its products' `category`. */
+  ApplyUpdateCategoryCommandSchema,
+  /**
+   * Adds one storefront category under an existing parent (or at the root). The company may grow its tree at any time,
+   * including after it has products. Products join a category through UpdateProduct `categoryId`.
+   */
+  ApplyCreateCategoryCommandSchema,
+  ApplyUpdateProductCommandSchema,
+  ApplyChangeProductImagesCommandSchema,
+  ApplyChangePriceCommandSchema,
+  ApplyBulkUpdateProductsCommandSchema,
+  ApplyRecordStockMovementCommandSchema,
+  ApplyCreateOrderCommandSchema,
+  ApplyArchiveDemoProductCommandSchema,
+  /**
+   * AKROS administrators only: replaces this company's catalog, stock and orders with the predictable demo baseline
+   * (the same state `demo:seed:akros --reset` writes). Scoped to the caller's tenant and legal entity.
+   */
+  ApplyResetDemoDataCommandSchema,
+  /**
+   * Re-reads the company's VAT rates and VAT regime from Tax and reprices the stored gross prices of every
+   * classification whose rate changed. Every other write does the same on its way; this one does only that.
+   */
+  ApplySyncTaxRatesCommandSchema,
+  ApplyRemoveDemoOrderCommandSchema,
+  ApplyChangeOrderStatusCommandSchema,
+  /**
+   * Order from the storefront. Idempotent by `clientRequestId`: a repeated id returns the stored order
+   * (outcome REPLAYED) and saves nothing. Prices and availability are re-validated on the server; any mismatch
+   * returns outcome REJECTED with readable issues and the current prices, and saves nothing. A PLACED order writes one
+   * negative ORDER stock movement per line (reference = order number) in the same save; cancelling returns it.
+   */
+  ApplyPlaceStorefrontOrderCommandSchema,
+  /** Staff-confirmed customer conversion; the server re-reads the native CUSTOMER before linking. */
+  ApplyLinkOrderCustomerCommandSchema,
+  /** Admin edit of an open order; each changed aspect appends a before/after history entry. */
+  ApplyEditOrderCommandSchema,
+  ...merchandiseMarketCommandSchemas,
+  ...merchandiseAiCommandSchemas,
+]);
+export type MerchandiseCommand = typeof MerchandiseCommandSchema.Type;
+export const MerchandiseCommandPayloadSchema = Schema.Struct({
+  command: MerchandiseCommandSchema,
+  expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type MerchandiseCommandPayload = typeof MerchandiseCommandPayloadSchema.Type;
+export type MerchandiseCommandPayloadEncoded = typeof MerchandiseCommandPayloadSchema.Encoded;
+export const StorefrontIssueCodeSchema = Schema.Literals([
+  'NOT_FOUND',
+  'NOT_AVAILABLE',
+  'VARIANT_REQUIRED',
+  'OUT_OF_STOCK',
+  'INSUFFICIENT_STOCK',
+  'AVAILABILITY_UNKNOWN',
+  'MINIMUM_QUANTITY',
+  'PACKAGE_QUANTITY',
+  'PRICE_CHANGED',
+  'PRICE_UNAVAILABLE',
+  'SHIPPING_PRICE_CHANGED',
+  /** The order names a market that has no offer/price list configured (no product is offered there). */
+  'MARKET_UNAVAILABLE',
+  /** The product (or variant) is not offered in the order's market. */
+  'NOT_OFFERED_IN_MARKET',
+]);
+export type StorefrontIssueCode = typeof StorefrontIssueCodeSchema.Type;
+
+export const StorefrontIssueSchema = Schema.Struct({
+  availability: Schema.optionalKey(AvailabilitySchema),
+  availableQuantity: Schema.optionalKey(Schema.Finite),
+  code: StorefrontIssueCodeSchema,
+  currentUnitPriceMinor: Schema.optionalKey(MinorAmountSchema),
+  expectedUnitPriceMinor: Schema.optionalKey(MinorAmountSchema),
+  message: Schema.String,
+  productId: Schema.optionalKey(ProductIdReferenceSchema),
+  variantId: Schema.optionalKey(VariantIdReferenceSchema),
+});
+export type StorefrontIssue = typeof StorefrontIssueSchema.Type;
+
+export const StorefrontOrderLineResultSchema = Schema.Struct({
+  lineTotalMinor: MinorAmountSchema,
+  name: Schema.String,
+  productId: ProductIdReferenceSchema,
+  quantity: Schema.Finite,
+  sku: Schema.String,
+  unitPriceMinor: MinorAmountSchema,
+  variantId: Schema.optionalKey(VariantIdReferenceSchema),
+  variantName: Schema.optionalKey(Schema.String),
+});
+
+export const StorefrontOrderResultSchema = Schema.Struct({
+  issues: Schema.Array(StorefrontIssueSchema),
+  lines: Schema.Array(StorefrontOrderLineResultSchema),
+  /** With `marketId`: the market every amount of this result is in. */
+  market: Schema.optionalKey(StorefrontMarketSchema),
+  orderId: Schema.optionalKey(OrderIdReferenceSchema),
+  orderNumber: Schema.optionalKey(Schema.String),
+  outcome: Schema.Literals(['PLACED', 'REPLAYED', 'REJECTED', 'VALID']),
+  shippingPriceMinor: Schema.optionalKey(MinorAmountSchema),
+  status: Schema.optionalKey(OrderStatusSchema),
+  totalMinor: Schema.optionalKey(MinorAmountSchema),
+  totalVatMinor: Schema.optionalKey(MinorAmountSchema),
+});
+export type StorefrontOrderResult = typeof StorefrontOrderResultSchema.Type;
+
+/** Identifiers of the entities the command created or changed, in command order. */
+export const ApplyCommandResultSchema = Schema.Struct({
+  entityIds: Schema.Array(EntityIdSchema),
+  /** The gallery reference of an image a ChangeProductImages upload stored. */
+  image: Schema.optionalKey(ImageRefSchema),
+  /** ConfigureMarket: the market's revision after the change. */
+  marketRevision: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
+  revision: Schema.Int,
+  storefrontOrder: Schema.optionalKey(StorefrontOrderResultSchema),
+});
+export type ApplyCommandResult = typeof ApplyCommandResultSchema.Type;
+export const MerchandiseErrorSchema = Schema.Union([
+  MerchandiseScopeMismatch,
+  MerchandiseNotFound,
+  MerchandiseLifecycleConflict,
+  MerchandiseRevisionConflict,
+  MerchandisePersistenceUnavailable,
+  MerchandiseReferenceUnavailable,
+  MerchandiseReferenceIneligible,
+  MerchandisePermissionDenied,
+  MerchandiseNotImplemented,
+]);
+export type MerchandiseError = typeof MerchandiseErrorSchema.Type;
+export { MerchandiseScopeMismatch } from '../errors/merchandise-scope-mismatch.ts';
+export { MerchandiseNotFound } from '../errors/merchandise-not-found.ts';
+export { MerchandiseLifecycleConflict } from '../errors/merchandise-lifecycle-conflict.ts';
+export { MerchandiseRevisionConflict } from '../errors/merchandise-revision-conflict.ts';
+export { MerchandisePersistenceUnavailable } from '../errors/merchandise-persistence-unavailable.ts';
+export { MerchandiseReferenceUnavailable } from '../errors/merchandise-reference-unavailable.ts';
+export { MerchandiseReferenceIneligible } from '../errors/merchandise-reference-ineligible.ts';
+export { MerchandisePermissionDenied } from '../errors/merchandise-permission-denied.ts';
+export { MerchandiseNotImplemented } from '../errors/merchandise-not-implemented.ts';
+
+export const ApplyCommandPayloadSchema = Schema.Struct({
+  command: ApplyCreateProductCommandSchema,
+  expectedRevision: MerchandiseCommandPayloadSchema.fields.expectedRevision,
+});
+
+export const ManageCatalogPayloadSchema = Schema.Struct({
+  command: Schema.Union([
+    ApplyUpdateProductCommandSchema,
+    ApplyChangePriceCommandSchema,
+    ApplyBulkUpdateProductsCommandSchema,
+    ApplyCreateCategoryCommandSchema,
+    ApplyUpdateCategoryCommandSchema,
+    ApplyCreateOrderCommandSchema,
+    ApplyEditOrderCommandSchema,
+    ApplyLinkOrderCustomerCommandSchema,
+    ApplySyncTaxRatesCommandSchema,
+  ]),
+  expectedRevision: MerchandiseCommandPayloadSchema.fields.expectedRevision,
+});
+
+export const ManageMarketsPayloadSchema = Schema.Struct({
+  command: Schema.Union([
+    ApplyConfigureMarketCommandSchema,
+    ApplySetProductMarketOfferCommandSchema,
+    ApplySetMarketProductOffersCommandSchema,
+    ApplyRemoveMarketCommandSchema,
+  ]),
+  expectedRevision: MerchandiseCommandPayloadSchema.fields.expectedRevision,
+});
+
+export const CleanupDemoPayloadSchema = Schema.Struct({
+  command: Schema.Union([
+    ApplyArchiveDemoProductCommandSchema,
+    ApplyRemoveDemoOrderCommandSchema,
+    ApplyResetDemoDataCommandSchema,
+  ]),
+  expectedRevision: MerchandiseCommandPayloadSchema.fields.expectedRevision,
+});
+
+export const ChangeProductImagesPayloadSchema = Schema.Struct({
+  command: ApplyChangeProductImagesCommandSchema,
+  expectedRevision: MerchandiseCommandPayloadSchema.fields.expectedRevision,
+});
+
+export const RecordStockMovementPayloadSchema = Schema.Struct({
+  command: ApplyRecordStockMovementCommandSchema,
+  expectedRevision: MerchandiseCommandPayloadSchema.fields.expectedRevision,
+});
+
+export const ChangeOrderStatusPayloadSchema = Schema.Struct({
+  command: ApplyChangeOrderStatusCommandSchema,
+  expectedRevision: MerchandiseCommandPayloadSchema.fields.expectedRevision,
+});
+
+export const PlaceStorefrontOrderPayloadSchema = Schema.Struct({
+  command: ApplyPlaceStorefrontOrderCommandSchema,
+  expectedRevision: MerchandiseCommandPayloadSchema.fields.expectedRevision,
+});
+
+export const ProposeOrderChangesPayloadSchema = Schema.Struct({
+  command: ApplyAiProposeChangesCommandSchema,
+  expectedRevision: MerchandiseCommandPayloadSchema.fields.expectedRevision,
+});
+
+export const ReviewOrderChangesPayloadSchema = Schema.Struct({
+  command: Schema.Union([ApplyAiDecideChangesCommandSchema, ApplyAiRevertBatchCommandSchema]),
+  expectedRevision: MerchandiseCommandPayloadSchema.fields.expectedRevision,
+});
+
+export type ApplyCommandPayload = typeof ApplyCommandPayloadSchema.Type;
+export type ApplyCommandPayloadEncoded = typeof ApplyCommandPayloadSchema.Encoded;

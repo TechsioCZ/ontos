@@ -1,0 +1,611 @@
+import { OperationContextUnavailable, TrustedPrincipalContextSchema, requireModuleOperation } from '@app/core-runtime';
+import type {
+  ActionServiceFactory,
+  ActionServicePreparationContext,
+  OperationalScope,
+  ScopedTransactionExecutor,
+} from '@app/core-runtime';
+import { DateTime, Effect, Match, Option, Predicate, Result, Schema } from 'effect';
+import { AssignCustomerPriceGroupPayloadSchema } from '../../shared/actions/assign-customer-price-group.ts';
+import { AssignCounterpartyPriceGroupPayloadSchema } from '../../shared/actions/assign-counterparty-price-group.ts';
+import { MigrateCustomerPriceGroupPayloadSchema } from '../../shared/actions/migrate-customer-price-group.ts';
+import { MigrateCounterpartyPriceGroupPayloadSchema } from '../../shared/actions/migrate-counterparty-price-group.ts';
+import { CounterpartyRefSchema } from '../../shared/domain/access-contract.ts';
+import { OrganizationPriceGroupAssignmentPayloadSchema } from '../../shared/domain/organization-price-assignment.ts';
+import {
+  CommerceCustomerProfileTargetSchema,
+  PriceGroupCompatibilityEvidenceSchema,
+  PriceGroupInstantJsonSchema,
+  PriceGroupReasonSchema,
+  PriceGroupRefSchema,
+  PriceGroupRevisionSchema,
+  samePriceGroupRef,
+} from '../../shared/domain/price-group-contracts.ts';
+import type {
+  PriceGroupCatalogOutcome,
+  PriceGroupCompatibilityEvidence,
+} from '../../shared/domain/price-group-contracts.ts';
+import {
+  CustomerPriceGroupCatalogUnavailable,
+  CustomerPriceGroupPersistenceUnavailable,
+} from '../../shared/domain/price-group-errors.ts';
+import type { CustomerPriceGroupProfileUnavailable } from '../../shared/domain/price-group-errors.ts';
+import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
+import type {
+  AssignCustomerPriceGroupStoreInput,
+  CustomerPriceGroupProfileValidation,
+  CustomerPriceGroupProfileValidationPort,
+  MigrateCustomerPriceGroupStoreInput,
+  PriceGroupCatalogPort,
+} from '../../shared/domain/price-group-ports.ts';
+import { priceGroupCatalogPortFromEnvironment } from '../integrations/price-group-catalog.ts';
+import { customerPriceGroupProfileValidationForTransaction } from '../persistence/price-group-persistence.ts';
+import { priceGroupActionServicesForTransaction } from './price-group-action-services.ts';
+import type { PriceGroupActionServices, PriceGroupAssignmentActionServices } from './price-group-action-services.ts';
+import { customerPriceGroupAssignmentReceiptCapture } from '../services/customer-price-group-assignment-receipt.service.ts';
+
+const AssignmentPayloadSchema = Schema.Union([
+  AssignCustomerPriceGroupPayloadSchema,
+  AssignCounterpartyPriceGroupPayloadSchema,
+]);
+const CounterpartyPayloadSchema = Schema.Union([
+  AssignCounterpartyPriceGroupPayloadSchema,
+  MigrateCounterpartyPriceGroupPayloadSchema,
+]);
+const MutationPayloadSchema = Schema.Union([
+  AssignCustomerPriceGroupPayloadSchema,
+  AssignCounterpartyPriceGroupPayloadSchema,
+  MigrateCustomerPriceGroupPayloadSchema,
+  MigrateCounterpartyPriceGroupPayloadSchema,
+]);
+type MutationPayload = typeof MutationPayloadSchema.Type;
+type AssignmentPayload = typeof AssignmentPayloadSchema.Type;
+/**
+ * What an assignment's owner write carries: its period, revision, target, reason and processing route. A source
+ * assertion or Organization intent is proven by the handler inside the owner transaction against the same payload,
+ * exactly as on main; the store receives only this projection, so the prepared Catalog evidence binds to it.
+ */
+const AssignmentWriteSchema = Schema.Struct({
+  counterpartyRef: Schema.optionalKey(CounterpartyRefSchema),
+  effectiveFrom: PriceGroupInstantJsonSchema,
+  effectiveTo: Schema.optionalKey(PriceGroupInstantJsonSchema),
+  expectedProfileRevision: PriceGroupRevisionSchema,
+  organizationBusiness: Schema.Boolean,
+  priceGroupRef: PriceGroupRefSchema,
+  profile: CommerceCustomerProfileTargetSchema,
+  reason: Schema.optionalKey(PriceGroupReasonSchema),
+});
+const isAssignmentWrite = Schema.is(AssignmentWriteSchema);
+const sameAssignmentWrite = Schema.toEquivalence(AssignmentWriteSchema);
+type UsableCatalogOutcome = Extract<PriceGroupCatalogOutcome, { readonly _tag: 'USABLE' }>;
+type MutationInput = AssignCustomerPriceGroupStoreInput | MigrateCustomerPriceGroupStoreInput;
+type AssignmentCandidate = Pick<
+  AssignCustomerPriceGroupStoreInput,
+  'counterpartyRef' | 'effectiveFrom' | 'expectedProfileRevision' | 'priceGroupRef' | 'profile' | 'reason'
+> & {
+  readonly effectiveTo?: string;
+};
+type MigrationCandidate = Pick<
+  MigrateCustomerPriceGroupStoreInput,
+  'counterpartyRef' | 'effectiveFrom' | 'reason' | 'sourcePriceGroupRef' | 'targetPriceGroupRef' | 'targets'
+>;
+type MutationCandidate = AssignmentCandidate | MigrationCandidate;
+
+interface PreparedPriceGroupMutation {
+  readonly actionInvocationId: string;
+  /** A Catalog failure is kept for the handler, so the in-transaction owner decision still answers first. */
+  readonly catalogFailure: CustomerPriceGroupCatalogUnavailable | undefined;
+  readonly compositionRevision: string;
+  readonly intent: MutationPayload;
+  readonly outcome: PriceGroupCatalogOutcome | undefined;
+  readonly scope: OperationalScope;
+  readonly snapshot: readonly CustomerPriceGroupProfileValidation[];
+  readonly trustedOperationAt: PriceGroupCompatibilityEvidence['trustedOperationAt'];
+}
+
+const catalogUnavailable = () =>
+  new CustomerPriceGroupCatalogUnavailable({
+    code: 'customer_price_group_catalog_unavailable',
+    reason: 'Prepared PriceGroup evidence is unavailable, expired, or belongs to a different mutation',
+  });
+const contextUnavailable = () =>
+  new OperationContextUnavailable({
+    code: 'operation_context_unavailable',
+    reason: 'The prepared PriceGroup owner snapshot or operation scope changed',
+  });
+const profileContextUnavailable = (cause: CustomerPriceGroupProfileUnavailable) =>
+  Object.defineProperty(contextUnavailable(), 'cause', { configurable: true, value: cause });
+const persistenceUnavailable = () =>
+  new CustomerPriceGroupPersistenceUnavailable({
+    code: 'customer_price_group_persistence_unavailable',
+    reason: 'Prepared PriceGroup evidence does not authorize this exact current mutation',
+  });
+const instantMillis = (instant: string) => DateTime.toEpochMillis(DateTime.makeUnsafe(instant));
+const usableOutcome = (outcome: PriceGroupCatalogOutcome | undefined) =>
+  outcome === undefined
+    ? undefined
+    : Match.value(outcome).pipe(
+        Match.tag('USABLE', (usable) => usable),
+        Match.option,
+        Option.getOrUndefined,
+      );
+const counterpartyForMutation = (payload: MutationPayload) =>
+  Schema.is(CounterpartyPayloadSchema)(payload) ? payload.counterpartyRef : undefined;
+const catalogRefForMutation = (payload: MutationPayload) =>
+  Schema.is(AssignmentPayloadSchema)(payload) ? payload.priceGroupRef : payload.targetPriceGroupRef;
+
+/** A freshness cap can shorten the owner's End, never replace a missing period. */
+export const preparedPriceGroupWindowOpen = (
+  evidence: PriceGroupCompatibilityEvidence,
+  trustedOperationAt: string,
+  now: number,
+): boolean => {
+  if (!Schema.is(PriceGroupCompatibilityEvidenceSchema)(evidence)) {
+    return false;
+  }
+  const trustedAt = instantMillis(trustedOperationAt);
+  const verifiedAt = instantMillis(evidence.verifiedAt);
+  const ownerEnd = evidence.definitionEffectivePeriod.effectiveTo;
+  return (
+    evidence.trustedOperationAt === trustedOperationAt &&
+    Number.isFinite(now) &&
+    trustedAt <= verifiedAt &&
+    verifiedAt <= now &&
+    now < trustedAt + 30_000 &&
+    (ownerEnd === null || now < instantMillis(ownerEnd))
+  );
+};
+
+export const preparedPriceGroupScopeMatches = (
+  expected: OperationalScope,
+  actual: OperationalScope,
+  expectedRevision: string,
+  actualRevision: string,
+): boolean =>
+  expectedRevision === actualRevision &&
+  expected.legalEntityId !== undefined &&
+  expected.legalEntityId === actual.legalEntityId &&
+  expected.trustedStorefrontId === actual.trustedStorefrontId &&
+  expected.audience === actual.audience &&
+  expected.correlationId === actual.correlationId &&
+  expected.traceId === actual.traceId &&
+  Schema.toEquivalence(TrustedPrincipalContextSchema)(expected, actual);
+
+export const preparedPriceGroupPayloadMatches = (expected: MutationPayload, actual: MutationCandidate): boolean =>
+  Schema.is(MutationPayloadSchema)(actual) &&
+  (counterpartyForMutation(expected) === undefined) === (actual.counterpartyRef === undefined) &&
+  Schema.is(AssignmentPayloadSchema)(expected) === Schema.is(AssignmentPayloadSchema)(actual) &&
+  Schema.toEquivalence(MutationPayloadSchema)(expected, actual);
+
+export const samePreparedPriceGroupProfile = (
+  expected: CustomerPriceGroupProfileValidation,
+  actual: CustomerPriceGroupProfileValidation,
+): boolean =>
+  Match.value(expected).pipe(
+    Match.tagsExhaustive({
+      CURRENT: (previous) =>
+        Match.value(actual).pipe(
+          Match.tagsExhaustive({
+            CURRENT: (current) =>
+              previous.revision === current.revision &&
+              previous.state === current.state &&
+              (previous.counterpartyRef === null || current.counterpartyRef === null
+                ? previous.counterpartyRef === current.counterpartyRef
+                : samePriceGroupRef(previous.counterpartyRef, current.counterpartyRef)),
+            NOT_FOUND: () => false,
+          }),
+        ),
+      NOT_FOUND: () => Match.value(actual).pipe(Match.tagsExhaustive({ CURRENT: () => false, NOT_FOUND: () => true })),
+    }),
+  );
+
+const profilesForMutation = (payload: MutationPayload) =>
+  Schema.is(AssignmentPayloadSchema)(payload)
+    ? [{ expectedProfileRevision: payload.expectedProfileRevision, profile: payload.profile }]
+    : payload.targets;
+const inspectMutationProfiles = (payload: MutationPayload, profiles: CustomerPriceGroupProfileValidationPort) =>
+  Effect.forEach(
+    profilesForMutation(payload),
+    ({ profile }) => profiles.inspect(profile, payload.effectiveFrom, counterpartyForMutation(payload)),
+    { concurrency: 1 },
+  );
+export const priceGroupMutationCanReachCatalog = (
+  payload: MutationPayload,
+  profiles: readonly CustomerPriceGroupProfileValidation[],
+  now: number,
+): boolean => {
+  const targets = profilesForMutation(payload);
+  const counterparty = counterpartyForMutation(payload);
+  return (
+    instantMillis(payload.effectiveFrom) >= now &&
+    (Schema.is(AssignmentPayloadSchema)(payload) ||
+      !samePriceGroupRef(payload.sourcePriceGroupRef, payload.targetPriceGroupRef)) &&
+    profiles.length === targets.length &&
+    profiles.every((profile, index) =>
+      Match.value(profile).pipe(
+        Match.tagsExhaustive({
+          CURRENT: (current) =>
+            current.state === 'ACTIVE' &&
+            current.revision === targets[index]?.expectedProfileRevision &&
+            (counterparty === undefined ||
+              (current.counterpartyRef !== null && samePriceGroupRef(current.counterpartyRef, counterparty))),
+          NOT_FOUND: () => false,
+        }),
+      ),
+    )
+  );
+};
+/** The owner write an assignment handler issues for this exact prepared intent. */
+const assignmentWriteOfIntent = (payload: AssignmentPayload) => {
+  const base = {
+    effectiveFrom: payload.effectiveFrom,
+    expectedProfileRevision: payload.expectedProfileRevision,
+    organizationBusiness: Schema.is(OrganizationPriceGroupAssignmentPayloadSchema)(payload),
+    priceGroupRef: payload.priceGroupRef,
+    profile: payload.profile,
+  };
+  const reasoned = Predicate.isNullish(payload.reason) ? base : { ...base, reason: payload.reason };
+  const period = payload.effectiveTo === undefined ? reasoned : { ...reasoned, effectiveTo: payload.effectiveTo };
+  const counterpartyRef = counterpartyForMutation(payload);
+  return counterpartyRef === undefined ? period : { ...period, counterpartyRef };
+};
+const assignmentWriteOfInput = (input: AssignCustomerPriceGroupStoreInput) => {
+  const base = {
+    effectiveFrom: input.effectiveFrom,
+    expectedProfileRevision: input.expectedProfileRevision,
+    organizationBusiness: input.organizationBusiness === true,
+    priceGroupRef: input.priceGroupRef,
+    profile: input.profile,
+  };
+  const reasoned = Predicate.isNullish(input.reason) ? base : { ...base, reason: input.reason };
+  const period = input.effectiveTo === null ? reasoned : { ...reasoned, effectiveTo: input.effectiveTo };
+  return input.counterpartyRef === undefined ? period : { ...period, counterpartyRef: input.counterpartyRef };
+};
+const migrationPayload = (input: MigrateCustomerPriceGroupStoreInput): MigrationCandidate => {
+  const base = {
+    effectiveFrom: input.effectiveFrom,
+    reason: input.reason,
+    sourcePriceGroupRef: input.sourcePriceGroupRef,
+    targetPriceGroupRef: input.targetPriceGroupRef,
+    targets: input.targets,
+  };
+  return input.counterpartyRef === undefined ? base : { ...base, counterpartyRef: input.counterpartyRef };
+};
+const invocationMatches = (
+  actionInvocationId: string,
+  scope: OperationalScope,
+  compatibility: PriceGroupCompatibilityEvidence,
+  input: MutationInput,
+): boolean =>
+  input.actionInvocationId === actionInvocationId &&
+  input.principalId === scope.principalId &&
+  input.tenantId === scope.tenantId &&
+  Schema.is(PriceGroupCompatibilityEvidenceSchema)(input.compatibility) &&
+  Schema.toEquivalence(PriceGroupCompatibilityEvidenceSchema)(compatibility, input.compatibility);
+export const preparedPriceGroupAssignmentMatches = (
+  payload: MutationPayload,
+  invocation: string,
+  scope: OperationalScope,
+  compatibility: PriceGroupCompatibilityEvidence,
+  input: AssignCustomerPriceGroupStoreInput,
+): boolean => {
+  if (!Schema.is(AssignmentPayloadSchema)(payload)) {
+    return false;
+  }
+  const expected = assignmentWriteOfIntent(payload);
+  const actual = assignmentWriteOfInput(input);
+  return (
+    invocationMatches(invocation, scope, compatibility, input) &&
+    isAssignmentWrite(expected) &&
+    isAssignmentWrite(actual) &&
+    sameAssignmentWrite(expected, actual)
+  );
+};
+export const preparedPriceGroupMigrationMatches = (
+  payload: MutationPayload,
+  invocation: string,
+  scope: OperationalScope,
+  compatibility: PriceGroupCompatibilityEvidence,
+  input: MigrateCustomerPriceGroupStoreInput,
+): boolean =>
+  invocationMatches(invocation, scope, compatibility, input) &&
+  preparedPriceGroupPayloadMatches(payload, migrationPayload(input));
+const exactCatalogEvidence = (
+  outcome: UsableCatalogOutcome,
+  payload: MutationPayload,
+  trustedOperationAt: string,
+  now: number,
+) => {
+  const ref = catalogRefForMutation(payload);
+  return (
+    samePriceGroupRef(outcome.priceGroupRef, ref) &&
+    samePriceGroupRef(outcome.compatibility.priceGroupRef, ref) &&
+    outcome.compatibility.requiredContract.contractId === CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT &&
+    outcome.compatibility.requiredContract.version === 1 &&
+    preparedPriceGroupWindowOpen(outcome.compatibility, trustedOperationAt, now)
+  );
+};
+const windowOpen = (prepared: PreparedPriceGroupMutation, now: number) => {
+  const usable = usableOutcome(prepared.outcome);
+  return usable !== undefined && exactCatalogEvidence(usable, prepared.intent, prepared.trustedOperationAt, now);
+};
+const resolvePreparedCatalog = Effect.fn('PriceGroupAction.preparedCatalogRead')(function* resolve(
+  prepared: PreparedPriceGroupMutation,
+  requestedRef: Parameters<PriceGroupCatalogPort['resolveCurrent']>[0],
+  contract: Parameters<PriceGroupCatalogPort['resolveCurrent']>[1],
+  operationAt: string,
+  expected: PriceGroupCompatibilityEvidence | undefined,
+) {
+  const now = DateTime.toEpochMillis(yield* DateTime.now);
+  const sameRequest =
+    samePriceGroupRef(requestedRef, catalogRefForMutation(prepared.intent)) &&
+    contract === CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT &&
+    expected === undefined &&
+    Schema.is(PriceGroupInstantJsonSchema)(operationAt) &&
+    instantMillis(operationAt) >= instantMillis(prepared.trustedOperationAt) &&
+    instantMillis(operationAt) <= now;
+  if (sameRequest && prepared.catalogFailure !== undefined) {
+    return yield* prepared.catalogFailure;
+  }
+  if (
+    !sameRequest ||
+    prepared.outcome === undefined ||
+    (usableOutcome(prepared.outcome) !== undefined && !windowOpen(prepared, now))
+  ) {
+    return yield* catalogUnavailable();
+  }
+  // Preserve the owner's trustedOperationAt and actual exclusive definition End.
+  return prepared.outcome;
+});
+const assignPrepared = Effect.fn('PriceGroupAction.assignPrepared')(function* assign(
+  prepared: PreparedPriceGroupMutation,
+  services: Omit<PriceGroupActionServices, 'catalog'>,
+  input: AssignCustomerPriceGroupStoreInput,
+) {
+  const now = yield* DateTime.now;
+  const usable = usableOutcome(prepared.outcome);
+  if (
+    usable === undefined ||
+    !windowOpen(prepared, DateTime.toEpochMillis(now)) ||
+    !preparedPriceGroupAssignmentMatches(
+      prepared.intent,
+      prepared.actionInvocationId,
+      prepared.scope,
+      usable.compatibility,
+      input,
+    )
+  ) {
+    return yield* persistenceUnavailable();
+  }
+  if (instantMillis(input.effectiveFrom) < DateTime.toEpochMillis(now)) {
+    return { _tag: 'retroactive_schedule' } as const;
+  }
+  const result = yield* services.store.assign({ ...input, recordedAt: DateTime.formatIso(now) });
+  const settledAt = DateTime.toEpochMillis(yield* DateTime.now);
+  if (!windowOpen(prepared, settledAt)) {
+    return yield* persistenceUnavailable();
+  }
+  if (instantMillis(input.effectiveFrom) < settledAt) {
+    return { _tag: 'retroactive_schedule' } as const;
+  }
+  return result;
+});
+const migratePrepared = Effect.fn('PriceGroupAction.migratePrepared')(function* migrate(
+  prepared: PreparedPriceGroupMutation,
+  services: Omit<PriceGroupActionServices, 'catalog'>,
+  input: MigrateCustomerPriceGroupStoreInput,
+) {
+  const now = yield* DateTime.now;
+  const usable = usableOutcome(prepared.outcome);
+  if (
+    usable === undefined ||
+    !windowOpen(prepared, DateTime.toEpochMillis(now)) ||
+    !preparedPriceGroupMigrationMatches(
+      prepared.intent,
+      prepared.actionInvocationId,
+      prepared.scope,
+      usable.compatibility,
+      input,
+    )
+  ) {
+    return yield* persistenceUnavailable();
+  }
+  if (instantMillis(input.effectiveFrom) < DateTime.toEpochMillis(now)) {
+    return { _tag: 'retroactive_schedule' } as const;
+  }
+  const result = yield* services.store.migrate({ ...input, recordedAt: DateTime.formatIso(now) });
+  const settledAt = DateTime.toEpochMillis(yield* DateTime.now);
+  if (!windowOpen(prepared, settledAt)) {
+    return yield* persistenceUnavailable();
+  }
+  if (instantMillis(input.effectiveFrom) < settledAt) {
+    return { _tag: 'retroactive_schedule' } as const;
+  }
+  return result;
+});
+const preparedServicesForTransaction = Effect.fn('PriceGroupAction.finalOwnerServices')(function* finalOwnerServices(
+  prepared: PreparedPriceGroupMutation,
+  transaction: ScopedTransactionExecutor,
+  scope: OperationalScope,
+  revision: string,
+) {
+  if (!preparedPriceGroupScopeMatches(prepared.scope, scope, prepared.compositionRevision, revision)) {
+    return yield* contextUnavailable();
+  }
+  const services = yield* priceGroupActionServicesForTransaction(transaction, scope);
+  const current = yield* inspectMutationProfiles(prepared.intent, services.profileValidation).pipe(
+    Effect.mapError(profileContextUnavailable),
+  );
+  if (
+    current.length !== prepared.snapshot.length ||
+    current.some((profile, index) => {
+      const previous = prepared.snapshot[index];
+      return previous === undefined || !samePreparedPriceGroupProfile(previous, profile);
+    })
+  ) {
+    return yield* contextUnavailable();
+  }
+  const owner: PriceGroupActionServices = {
+    ...services,
+    catalog: {
+      resolveCurrent: (ref, contract, at, expected) => resolvePreparedCatalog(prepared, ref, contract, at, expected),
+    },
+    store: {
+      ...services.store,
+      assign: (input) => assignPrepared(prepared, services, input),
+      migrate: (input) => migratePrepared(prepared, services, input),
+    },
+  };
+  return owner;
+});
+
+const PriceGroupCatalogRequirementSchema = Schema.Literals([
+  'commerce.customer-context.requirement.assign-counterparty-price-group-catalog',
+  'commerce.customer-context.requirement.assign-customer-price-group-catalog',
+  'commerce.customer-context.requirement.migrate-counterparty-price-group-catalog',
+  'commerce.customer-context.requirement.migrate-customer-price-group-catalog',
+]);
+type PriceGroupCatalogRequirement = typeof PriceGroupCatalogRequirementSchema.Type;
+
+/** The Action's declared Catalog operation must be admitted before any delegated context is acquired. */
+const withRequiredCatalogOperation = (
+  catalog: PriceGroupCatalogPort,
+  requirement: PriceGroupCatalogRequirement,
+): PriceGroupCatalogPort => ({
+  resolveCurrent: (...args) =>
+    requireModuleOperation(requirement).pipe(
+      Effect.mapError((cause) =>
+        Object.defineProperty(
+          new CustomerPriceGroupCatalogUnavailable({
+            code: 'customer_price_group_catalog_unavailable',
+            reason: 'Required Price Group Catalog operation is unavailable',
+          }),
+          'cause',
+          { configurable: true, value: cause },
+        ),
+      ),
+      Effect.flatMap(() => catalog.resolveCurrent(...args)),
+    ),
+});
+
+/** Snapshot SQL releases before Catalog HTTP. Final owner rechecks and native CAS still run in SQL. */
+const preparePriceGroupMutation = (requirement: PriceGroupCatalogRequirement) =>
+  Effect.fn('PriceGroupAction.prepareServices')(function* prepareServices(
+    payload: MutationPayload,
+    context: ActionServicePreparationContext,
+  ) {
+    const intent = structuredClone(payload);
+    // The verified scope keeps its gateway provenance for the delegated Catalog call; the clone is only compared.
+    const scope = structuredClone(context.scope);
+    const { actionInvocationId, compositionRevision } = context;
+    const { legalEntityId } = scope;
+    if (legalEntityId === undefined) {
+      return yield* contextUnavailable();
+    }
+    const assignment = Schema.is(AssignmentPayloadSchema)(intent);
+    const counterparty = counterpartyForMutation(intent);
+    const refs = [...profilesForMutation(intent).map(({ profile }) => profile), catalogRefForMutation(intent)];
+    if (!assignment) {
+      refs.push(intent.sourcePriceGroupRef, ...intent.targets.map((target) => target.assignmentRef));
+    }
+    if (counterparty !== undefined) {
+      refs.push(counterparty);
+    }
+    // A foreign reference reaches no Catalog; the handler rejects it after the owner decision.
+    const tenantScoped = refs.every((ref) => ref.tenantId === scope.tenantId);
+    const trustedOperationAt = DateTime.formatIso(yield* DateTime.now);
+    const { catalog, snapshot } = yield* Effect.all(
+      {
+        catalog: priceGroupCatalogPortFromEnvironment({
+          operationRequirementKey: requirement,
+          requestCorrelation: scope.correlationId,
+          subject: { _tag: 'Assertion', scope: context.scope },
+        }),
+        snapshot: context.transaction((transaction) =>
+          inspectMutationProfiles(
+            intent,
+            customerPriceGroupProfileValidationForTransaction(transaction, { ...scope, legalEntityId }),
+          ),
+        ),
+      },
+      { concurrency: 1 },
+    );
+    // Adapter construction above issues no credential. HTTP starts only after the snapshot releases.
+    // Already-retroactive intent reaches no Catalog: the handler's fresh-time check rejects it in SQL.
+    const reachable =
+      tenantScoped && priceGroupMutationCanReachCatalog(intent, snapshot, DateTime.toEpochMillis(yield* DateTime.now));
+    const resolved = reachable
+      ? yield* withRequiredCatalogOperation(catalog, requirement)
+          .resolveCurrent(
+            catalogRefForMutation(intent),
+            CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT,
+            trustedOperationAt,
+          )
+          .pipe(
+            Effect.flatMap((outcome) =>
+              DateTime.now.pipe(
+                Effect.flatMap((now) => {
+                  const usable = usableOutcome(outcome);
+                  return usable === undefined ||
+                    exactCatalogEvidence(usable, intent, trustedOperationAt, DateTime.toEpochMillis(now))
+                    ? Effect.succeed(outcome)
+                    : Effect.fail(catalogUnavailable());
+                }),
+              ),
+            ),
+            Effect.result,
+          )
+      : undefined;
+    // Denied stays denied and unavailable stays unavailable: the handler meets the same failure in SQL,
+    // after the runtime's owner decision, exactly where an in-transaction Catalog read would have failed.
+    const outcome = resolved !== undefined && Result.isSuccess(resolved) ? resolved.success : undefined;
+    const catalogFailure = resolved !== undefined && Result.isFailure(resolved) ? resolved.failure : undefined;
+    const prepared = {
+      actionInvocationId,
+      catalogFailure,
+      compositionRevision,
+      intent,
+      outcome,
+      scope,
+      snapshot,
+      trustedOperationAt,
+    };
+    const factory: ActionServiceFactory<PriceGroupActionServices> = (transaction, actualScope, revision) =>
+      preparedServicesForTransaction(prepared, transaction, actualScope, revision);
+    return factory;
+  });
+
+/** An assignment also captures its exact original-command receipt in the same owner transaction. */
+const preparePriceGroupAssignment = (
+  requirement: PriceGroupCatalogRequirement,
+  actionKey: Parameters<typeof customerPriceGroupAssignmentReceiptCapture>[2],
+) =>
+  Effect.fn('PriceGroupAction.prepareAssignmentServices')(function* prepareAssignmentServices(
+    payload: MutationPayload,
+    context: ActionServicePreparationContext,
+  ) {
+    const factory = yield* preparePriceGroupMutation(requirement)(payload, context);
+    const assignment: ActionServiceFactory<PriceGroupAssignmentActionServices> = (transaction, actualScope, revision) =>
+      factory(transaction, actualScope, revision).pipe(
+        Effect.map((services) => ({
+          ...services,
+          ...customerPriceGroupAssignmentReceiptCapture(transaction, actualScope, actionKey),
+        })),
+      );
+    return assignment;
+  });
+
+export const prepareAssignCustomerPriceGroupServices = preparePriceGroupAssignment(
+  'commerce.customer-context.requirement.assign-customer-price-group-catalog',
+  'commerce.customer-context.assign-customer-price-group',
+);
+export const prepareAssignCounterpartyPriceGroupServices = preparePriceGroupAssignment(
+  'commerce.customer-context.requirement.assign-counterparty-price-group-catalog',
+  'commerce.customer-context.assign-counterparty-price-group',
+);
+export const prepareMigrateCustomerPriceGroupServices = preparePriceGroupMutation(
+  'commerce.customer-context.requirement.migrate-customer-price-group-catalog',
+);
+export const prepareMigrateCounterpartyPriceGroupServices = preparePriceGroupMutation(
+  'commerce.customer-context.requirement.migrate-counterparty-price-group-catalog',
+);

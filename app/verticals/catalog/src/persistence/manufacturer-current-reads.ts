@@ -9,8 +9,7 @@ import { ManufacturerPersistenceUnavailable } from './manufacturer-persistence.t
 import type { ManufacturerTargetAbsent } from './manufacturer-target-absent.ts';
 import type { ManufacturerTargetForbidden } from './manufacturer-target-forbidden.ts';
 import type { ManufacturerTargetInvalid } from './manufacturer-target-invalid.ts';
-import { manufacturerTargetResolver } from './manufacturer-target-resolver.ts';
-import type { ResolvedManufacturerTarget } from './manufacturer-target-resolver.ts';
+import type { ResolvedManufacturerTarget, manufacturerTargetResolver } from './manufacturer-target-resolver.ts';
 import type { ManufacturerTargetUnavailable } from './manufacturer-target-unavailable.ts';
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
@@ -18,13 +17,13 @@ type RelationRow = typeof manufacturerRelations.$inferSelect;
 type RevisionRow = typeof manufacturerRelationRevisions.$inferSelect;
 type TargetResolver = typeof manufacturerTargetResolver;
 
-interface ManufacturerCurrentClaim {
+/** The current Catalog assertion as its transaction reads it: the owner is resolved after commit. */
+interface ManufacturerStoredClaim {
   readonly actingPrincipalId: string;
   readonly actionInvocationId: string;
   readonly effectiveFrom: string | undefined;
   readonly effectiveTo: string | undefined;
   readonly evidenceRefs: readonly string[];
-  readonly owner: ResolvedManufacturerTarget;
   readonly reason: string;
   readonly recordedAt: Date;
   readonly relationId: string;
@@ -34,23 +33,44 @@ interface ManufacturerCurrentClaim {
   readonly target: ManufacturerTarget;
 }
 
+interface ManufacturerCurrentClaim extends ManufacturerStoredClaim {
+  readonly owner: ResolvedManufacturerTarget;
+}
+
+export type ManufacturerStoredResult =
+  | { readonly kind: 'ABSENT' }
+  | { readonly claim: ManufacturerStoredClaim; readonly kind: 'CURRENT' };
+
 type ManufacturerCurrentResult =
   | { readonly kind: 'ABSENT' }
   | { readonly claim: ManufacturerCurrentClaim; readonly kind: 'CURRENT' };
 
 export interface ManufacturerCurrentReads {
+  /** Database only: the one current assertion and its revision evidence, in one transaction. */
   readonly effective: (
     subject: ManufacturerSubject,
     at: string,
-  ) => Effect.Effect<
-    ManufacturerCurrentResult,
-    | ManufacturerPersistenceUnavailable
-    | ManufacturerTargetAbsent
-    | ManufacturerTargetForbidden
-    | ManufacturerTargetInvalid
-    | ManufacturerTargetUnavailable
-  >;
+  ) => Effect.Effect<ManufacturerStoredResult, ManufacturerPersistenceUnavailable>;
 }
+
+/**
+ * After the Catalog transaction: the authoritative owner of the asserted target (a governed Legal Entity read
+ * or a Party Registry read), so no owner round trip holds Catalog's connection.
+ */
+export const resolveManufacturerCurrentOwner = (
+  // oxlint-disable-next-line effect-native/no-dependency-parameters -- Owner-read port is bound by the governed read's finish step.
+  resolver: TargetResolver,
+  scope: Pick<OperationalScope, 'correlationId' | 'tenantId'>,
+  stored: ManufacturerStoredResult,
+): Effect.Effect<
+  ManufacturerCurrentResult,
+  ManufacturerTargetAbsent | ManufacturerTargetForbidden | ManufacturerTargetInvalid | ManufacturerTargetUnavailable
+> =>
+  stored.kind === 'ABSENT'
+    ? Effect.succeed(stored)
+    : resolver
+        .resolve(stored.claim.target, { requestId: scope.correlationId, tenantId: scope.tenantId })
+        .pipe(Effect.map((owner) => ({ claim: { ...stored.claim, owner }, kind: 'CURRENT' as const })));
 
 const unavailable = (cause?: unknown) => {
   const failure = new ManufacturerPersistenceUnavailable({
@@ -104,15 +124,12 @@ const matchingRevision = (head: RelationRow, row: RevisionRow) =>
   head.reason === row.reason &&
   Equal.equals(head.evidenceRefs, row.evidenceRefs);
 
-/** Uses only Catalog's tenant-scoped transaction and an injected authoritative owner resolver. */
+/** Uses only Catalog's tenant-scoped transaction. */
 export const manufacturerCurrentReadsForScope = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
-  // oxlint-disable-next-line effect-native/no-dependency-parameters -- Owner-read port is injected by the governed read service factory.
-  configured?: { readonly targetResolver: TargetResolver },
 ): ManufacturerCurrentReads => {
   const { tenantId } = scope;
-  const resolver = configured?.targetResolver ?? manufacturerTargetResolver;
   const effective: ManufacturerCurrentReads['effective'] = Effect.fn('ManufacturerCurrentReads.effective')(
     // oxlint-disable-next-line eslint/complexity -- One fail-closed read transaction validates subject, competing heads, revision evidence, and owner status together.
     function* effective(subject, at) {
@@ -197,7 +214,6 @@ export const manufacturerCurrentReadsForScope = (
         return yield* unavailable();
       }
       const target = targetOf(head);
-      const owner = yield* resolver.resolve(target, { requestId: scope.correlationId, tenantId });
       return {
         claim: {
           actingPrincipalId: latest.actingPrincipalId,
@@ -205,7 +221,6 @@ export const manufacturerCurrentReadsForScope = (
           effectiveFrom: latest.effectiveFrom?.toISOString(),
           effectiveTo: latest.effectiveTo?.toISOString(),
           evidenceRefs: latest.evidenceRefs,
-          owner,
           reason: latest.reason,
           recordedAt: latest.recordedAt,
           relationId: head.relationId,

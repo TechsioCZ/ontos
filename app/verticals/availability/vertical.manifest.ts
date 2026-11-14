@@ -4,6 +4,7 @@
 import { defineOntosModuleManifest } from '@app/core-runtime';
 // <generated-module-manifest-imports>
 // </generated-module-manifest-imports>
+import { availabilityMcpContribution } from './shared/mcp/contribution.ts';
 
 export const availabilityManifest = defineOntosModuleManifest({
   activation: {
@@ -37,6 +38,7 @@ export const availabilityManifest = defineOntosModuleManifest({
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: availabilityMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>

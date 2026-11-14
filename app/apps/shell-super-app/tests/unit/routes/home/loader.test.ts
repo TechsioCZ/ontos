@@ -1,22 +1,42 @@
+import { createRequire } from 'node:module';
+
+import { pinDocumentCompositionRevision } from '@app/shared-contracts';
 import { ConfigProvider, Effect } from 'effect';
 import { beforeEach, expect, rstest, it } from 'effect-rstest';
 
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
   rstest: 'importActual',
 };
-import { loadHomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
+import {
+  loadHomePageModel,
+  loadServerModuleDocument,
+  primeBrowserReads,
+  resetBrowserSessionCache,
+} from '../../../../src/routes/[lang]/home-page-model.ts';
+import type { HomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
+import { endBrowserSession } from '../../../../src/routes/session-scope.ts';
 
 const {
   availableLegalEntitiesMock,
   availableTenantsMock,
   browserConfigValuesMock,
+  canManageDemoAccountsMock,
   currentSessionMock,
+  documentContextMock,
+  executeLegalEntityDetailMock,
+  issueDocumentGatewayContextsMock,
+  resolveModuleTargetMock,
   shellCompositionMock,
 } = rstest.hoisted(() => ({
   availableLegalEntitiesMock: rstest.fn(),
   availableTenantsMock: rstest.fn(),
   browserConfigValuesMock: rstest.fn<() => { readonly BETTER_AUTH_URL?: string }>(),
+  canManageDemoAccountsMock: rstest.fn(),
   currentSessionMock: rstest.fn(),
+  documentContextMock: rstest.fn(),
+  executeLegalEntityDetailMock: rstest.fn(),
+  issueDocumentGatewayContextsMock: rstest.fn(),
+  resolveModuleTargetMock: rstest.fn(),
   shellCompositionMock: rstest.fn(),
 }));
 
@@ -24,7 +44,12 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
   ...actualAuthClient,
   availableLegalEntities: availableLegalEntitiesMock,
   availableTenants: availableTenantsMock,
+  canManageDemoAccounts: canManageDemoAccountsMock,
   currentSession: currentSessionMock,
+  documentContext: documentContextMock,
+  executeLegalEntityDetail: executeLegalEntityDetailMock,
+  issueDocumentGatewayContexts: issueDocumentGatewayContextsMock,
+  resolveModuleTarget: resolveModuleTargetMock,
   shellComposition: shellCompositionMock,
 }));
 
@@ -41,9 +66,11 @@ const navigation = [
   {
     appId: 'future-generated',
     enabled: true,
-    groupKey: 'shell.navigation.modules',
+    entrypointKey: 'future.generated.page.records',
+    groupKey: 'shell.navigation.unlisted',
     href: '/modules/future.generated',
-    label: 'Future generated',
+    icon: 'icon-[mdi--view-grid-outline]',
+    label: { cs: 'Budoucí modul', en: 'Future generated' },
     moduleId: 'future.generated',
     order: 10,
     state: 'active' as const,
@@ -56,9 +83,11 @@ const request = () =>
     headers: { cookie: 'session=test-session' },
   });
 
+// Each case starts without the browser session memo, so it sees its own session mock.
 const loadModel = ({ request: input }: { readonly request: Request }) =>
   Effect.suspend(() =>
-    loadHomePageModel(input).pipe(
+    resetBrowserSessionCache.pipe(
+      Effect.andThen(loadHomePageModel(input)),
       Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(browserConfigValuesMock())),
     ),
   );
@@ -70,17 +99,24 @@ const withBetterAuthUrl = <Value, Failure>(baseUrl: string, operation: () => Eff
 
 beforeEach(() => {
   browserConfigValuesMock.mockReturnValue({});
+  canManageDemoAccountsMock.mockReturnValue(Effect.succeed(false));
+  resolveModuleTargetMock.mockReturnValue(Effect.fail({ _tag: 'ShellTargetForbiddenProblem' }));
+  executeLegalEntityDetailMock.mockReturnValue(Effect.fail({ _tag: 'ShellTargetNotFoundProblem' }));
   currentSessionMock.mockReturnValue(Effect.succeed({ identity, state: 'authenticated' as const }));
   availableLegalEntitiesMock.mockReturnValue(
     Effect.succeed({
       legalEntities: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
       selectedLegalEntityId: 'legal-1',
       state: 'authenticated',
+      tenantContextAvailable: false,
     }),
   );
   shellCompositionMock.mockReturnValue(
     Effect.succeed({
       compositionRevision,
+      deniedAppIds: [],
+      gatewayAudiences: [],
+      homeComponents: [],
       navigation,
       state: 'available' as const,
       unavailableDeployments: [],
@@ -101,13 +137,18 @@ it.effect('resolves trusted context before returning one serializable compositio
     expect(yield* loadModel({ request: request() })).toEqual({
       compositionRevision,
       contextState: 'authenticated',
+      gatewayAudiences: [],
+      homeContribution: { state: 'forbidden' },
       identity,
       legalEntities: {
         items: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
         state: 'available',
+        tenantContextAvailable: false,
       },
       navigation: {
+        deniedAppIds: [],
         items: navigation,
+        moduleIds: [...new Set(navigation.map(({ moduleId }) => moduleId))],
         state: 'available',
         unavailableDeployments: [],
       },
@@ -124,12 +165,11 @@ it.effect('resolves trusted context before returning one serializable compositio
     expect(currentSessionMock.mock.invocationCallOrder[0]).toBeLessThan(
       shellCompositionMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
-    expect(shellCompositionMock.mock.invocationCallOrder[0]).toBeLessThan(
-      availableLegalEntitiesMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
-    );
-    expect(shellCompositionMock.mock.invocationCallOrder[0]).toBeLessThan(
-      availableTenantsMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
-    );
+    for (const read of [canManageDemoAccountsMock, availableLegalEntitiesMock, availableTenantsMock]) {
+      expect(currentSessionMock.mock.invocationCallOrder[0]).toBeLessThan(
+        read.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+      );
+    }
   }),
 );
 
@@ -141,6 +181,31 @@ it.effect('does not request composition for an anonymous session', () =>
     });
     expect(shellCompositionMock).not.toHaveBeenCalled();
     expect(availableTenantsMock).not.toHaveBeenCalled();
+  }),
+);
+
+it.effect('retains company admission when no role exposes navigation or a module Home', () =>
+  Effect.gen(function* admittedWithoutRoles() {
+    shellCompositionMock.mockReturnValueOnce(
+      Effect.succeed({
+        compositionRevision,
+        deniedAppIds: [],
+        gatewayAudiences: [],
+        homeComponents: [],
+        navigation: [],
+        state: 'available' as const,
+        unavailableDeployments: [],
+      }),
+    );
+    const model = yield* loadModel({ request: request() });
+    expect(model).toMatchObject({
+      contextState: 'authenticated',
+      homeContribution: { state: 'forbidden' },
+      legalEntities: { items: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }], state: 'available' },
+      navigation: { items: [], state: 'available' },
+      selectedLegalEntityId: 'legal-1',
+      state: 'authenticated',
+    });
   }),
 );
 
@@ -166,12 +231,13 @@ it.effect('does not invent a selected legal entity while a tenant session requir
       legalEntities: {
         items: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
         state: 'available',
+        tenantContextAvailable: false,
       },
       state: 'authenticated',
     });
     expect(model).not.toHaveProperty('selectedLegalEntityId');
     expect(shellCompositionMock).not.toHaveBeenCalled();
-    expect(availableLegalEntitiesMock).not.toHaveBeenCalled();
+    expect(availableLegalEntitiesMock).toHaveBeenCalledTimes(1);
   }),
 );
 
@@ -211,21 +277,23 @@ it.effect('keeps the configured local HTTP origin for the server-side session re
   }),
 );
 
-it.effect('stops before legal-entity and tenant reads when composition is unavailable', () =>
+it.effect('keeps composition failure authoritative after starting independent company reads', () =>
   Effect.gen(function* verifyCase8() {
     shellCompositionMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellCapabilityUnavailableProblem' }));
     expect(yield* loadModel({ request: request() })).toEqual({ state: 'unavailable' });
-    expect(availableLegalEntitiesMock).not.toHaveBeenCalled();
-    expect(availableTenantsMock).not.toHaveBeenCalled();
+    expect(canManageDemoAccountsMock).toHaveBeenCalledTimes(1);
+    expect(availableLegalEntitiesMock).toHaveBeenCalledTimes(1);
+    expect(availableTenantsMock).toHaveBeenCalledTimes(1);
   }),
 );
 
-it.effect('requires a document reload before legal-entity and tenant reads for a stale release', () =>
+it.effect('requires a document reload despite speculative company reads for a stale release', () =>
   Effect.gen(function* staleCompositionStopsOwnerReads() {
     shellCompositionMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellReloadRequiredProblem' }));
     expect(yield* loadModel({ request: request() })).toEqual({ state: 'reload_required' });
-    expect(availableLegalEntitiesMock).not.toHaveBeenCalled();
-    expect(availableTenantsMock).not.toHaveBeenCalled();
+    expect(canManageDemoAccountsMock).toHaveBeenCalledTimes(1);
+    expect(availableLegalEntitiesMock).toHaveBeenCalledTimes(1);
+    expect(availableTenantsMock).toHaveBeenCalledTimes(1);
   }),
 );
 
@@ -265,7 +333,734 @@ it.effect('tears down stale authenticated data when tenant context requires auth
   Effect.gen(function* verifyCase12() {
     availableTenantsMock.mockReturnValueOnce(Effect.fail({ _tag: 'TenantAuthenticationRequiredProblem' }));
     expect(yield* loadModel({ request: request() })).toEqual({
+      reason: 'session_ended',
       state: 'anonymous',
     });
+  }),
+);
+
+it.effect('sends a disabled account to sign-in instead of the unavailable state (S00)', () =>
+  Effect.gen(function* verifyDisabledAccount() {
+    currentSessionMock.mockReturnValueOnce(Effect.fail({ _tag: 'OntosIdentityForbiddenProblem' }));
+    expect(yield* loadModel({ request: request() })).toEqual({ reason: 'account_forbidden', state: 'anonymous' });
+  }),
+);
+
+it.effect('reuses one authenticated browser session across loaders and rereads after an anonymous answer', () =>
+  Effect.gen(function* verifySessionMemo() {
+    yield* resetBrowserSessionCache;
+    const load = loadHomePageModel(new Request('https://shell.example.test/en')).pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
+    );
+    yield* Effect.all([load, load, load], { concurrency: 'unbounded' });
+    expect(currentSessionMock).toHaveBeenCalledTimes(1);
+
+    yield* resetBrowserSessionCache;
+    currentSessionMock.mockReturnValue(Effect.succeed({ state: 'anonymous' as const }));
+    yield* load;
+    yield* load;
+    expect(currentSessionMock).toHaveBeenCalledTimes(3);
+  }),
+);
+
+it.effect('answers the next load with the current person after a session boundary', () =>
+  Effect.gen(function* verifyBoundaryDropsPreviousPerson() {
+    yield* resetBrowserSessionCache;
+    const load = loadHomePageModel(new Request('https://shell.example.test/en')).pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
+    );
+    expect(yield* load).toMatchObject({ identity: { displayName: 'Ada Lovelace' }, state: 'authenticated' });
+
+    currentSessionMock.mockReturnValue(
+      Effect.succeed({
+        identity: { ...identity, displayName: 'Grace Hopper', principalId: 'principal-2' },
+        state: 'authenticated' as const,
+      }),
+    );
+    yield* endBrowserSession;
+
+    expect(yield* load).toMatchObject({
+      identity: { displayName: 'Grace Hopper', principalId: 'principal-2' },
+      state: 'authenticated',
+    });
+  }),
+);
+
+it.effect('shares one composition, tenant and legal-entity read across concurrent browser loaders', () =>
+  Effect.gen(function* verifyContextMemo() {
+    yield* resetBrowserSessionCache;
+    const load = loadHomePageModel(new Request('https://shell.example.test/en')).pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
+    );
+    yield* Effect.all([load, load, load], { concurrency: 'unbounded' });
+    expect(shellCompositionMock).toHaveBeenCalledTimes(1);
+    expect(availableTenantsMock).toHaveBeenCalledTimes(1);
+    expect(availableLegalEntitiesMock).toHaveBeenCalledTimes(1);
+
+    yield* resetBrowserSessionCache;
+    availableTenantsMock.mockReturnValueOnce(Effect.fail({ _tag: 'TenantInternalProblem' }));
+    yield* load;
+    yield* load;
+    expect(availableTenantsMock).toHaveBeenCalledTimes(3);
+  }),
+);
+
+/** A new browser document: it has not pinned a release yet, like the page right after sign-in. */
+const inNewDocument = <Value, Failure>(operation: Effect.Effect<Value, Failure>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
+      Object.defineProperty(globalThis, 'document', {
+        configurable: true,
+        value: document.implementation.createHTMLDocument(),
+      });
+      return descriptor;
+    }),
+    () => operation,
+    (descriptor) =>
+      Effect.sync(() => {
+        if (descriptor !== undefined) {
+          Object.defineProperty(globalThis, 'document', descriptor);
+        }
+      }),
+  );
+
+it.effect('reuses the current-release composition for loaders that ask with its pinned revision', () =>
+  Effect.gen(function* verifyRevisionAlias() {
+    yield* resetBrowserSessionCache;
+    const load = loadHomePageModel(new Request('https://shell.example.test/en')).pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
+    );
+    const [first, second] = yield* inNewDocument(Effect.all([load, load], { concurrency: 1 }));
+    expect(first).toMatchObject({ compositionRevision, state: 'authenticated' });
+    expect(second).toMatchObject({ compositionRevision, state: 'authenticated' });
+    expect(shellCompositionMock).toHaveBeenCalledTimes(1);
+    expect(shellCompositionMock.mock.calls[0]?.[0]).toEqual({});
+  }),
+);
+
+it.effect('rechecks Home contribution permissions on every visit even when navigation composition is reused', () =>
+  Effect.gen(function* freshHomeContributionPermission() {
+    shellCompositionMock.mockReturnValue(
+      Effect.succeed({
+        compositionRevision,
+        deniedAppIds: [],
+        gatewayAudiences: [],
+        homeComponents: [
+          {
+            entrypointKey: 'fixture.summary.component.home',
+            moduleId: 'fixture.summary',
+            order: 100,
+            requiresModules: ['fixture.summary', 'fixture.unlisted'],
+          },
+          {
+            entrypointKey: 'fixture.dashboard.component.home',
+            moduleId: 'fixture.dashboard',
+            order: 200,
+            requiresModules: ['fixture.dashboard', 'fixture.sales', 'fixture.tasks'],
+          },
+        ],
+        navigation: ['fixture.dashboard', 'fixture.sales', 'fixture.tasks'].map((moduleId) => ({
+          ...navigation[0],
+          moduleId,
+        })),
+        state: 'available',
+        unavailableDeployments: [],
+      }),
+    );
+    yield* loadModel({ request: request() });
+    yield* loadHomePageModel(request());
+    expect(resolveModuleTargetMock).toHaveBeenCalledTimes(2);
+    expect(resolveModuleTargetMock.mock.calls[0]?.[0]).toEqual({
+      compositionRevision,
+      entrypointKey: 'fixture.dashboard.component.home',
+      moduleId: 'fixture.dashboard',
+    });
+    resolveModuleTargetMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellCapabilityUnavailableProblem' }));
+    expect(yield* loadHomePageModel(request())).toMatchObject({ homeContribution: { state: 'unavailable' } });
+  }),
+);
+
+it.effect('does not resolve the Home component from anonymous, selection-required or non-Home routes', () =>
+  Effect.gen(function* homeContributionContextGate() {
+    yield* loadModel({ request: new Request('https://shell.example.test/en/ukoly') });
+    expect(resolveModuleTargetMock).not.toHaveBeenCalled();
+    currentSessionMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' }));
+    yield* loadModel({ request: request() });
+    expect(resolveModuleTargetMock).not.toHaveBeenCalled();
+  }),
+);
+
+it.effect.each([false, true])(
+  'offers people administration only after a successful server capability check (%s)',
+  (allowed) =>
+    Effect.gen(function* peopleNavigationCapability() {
+      shellCompositionMock.mockReturnValue(
+        Effect.succeed({
+          compositionRevision,
+          deniedAppIds: [],
+          gatewayAudiences: [],
+          homeComponents: [],
+          navigation: [
+            { ...navigation[0], href: '/fixture/people', requiresCapability: 'people_administration' },
+            { ...navigation[0], href: '/fixture/clients' },
+          ],
+          state: 'available',
+          unavailableDeployments: [],
+        }),
+      );
+      canManageDemoAccountsMock.mockReturnValue(Effect.succeed(allowed));
+      const model = yield* loadModel({ request: request() });
+      expect(model).toMatchObject({
+        navigation: {
+          deniedAppIds: [],
+          items: allowed
+            ? [
+                expect.objectContaining({ href: '/fixture/clients' }),
+                expect.objectContaining({ href: '/sprava/lide-a-role' }),
+                expect.objectContaining({ href: '/sprava/ke-schvaleni' }),
+                expect.objectContaining({ href: '/sprava/aktivita-agentu' }),
+                expect.objectContaining({ href: '/sprava/pripojene-aplikace' }),
+              ]
+            : [expect.objectContaining({ href: '/fixture/clients' })],
+        },
+      });
+      expect(canManageDemoAccountsMock).toHaveBeenCalledTimes(1);
+    }),
+);
+
+it.effect('shows the welcome text the selected company provides on the Shell welcome page', () =>
+  Effect.gen(function* companyWelcome() {
+    executeLegalEntityDetailMock.mockReturnValueOnce(
+      Effect.succeed({ legalName: 'Alpha company', status: 'active', welcome: 'Bread and pastry for the whole town.' }),
+    );
+    expect(yield* loadModel({ request: request() })).toMatchObject({
+      companyWelcome: 'Bread and pastry for the whole town.',
+      homeContribution: { state: 'forbidden' },
+    });
+    expect(executeLegalEntityDetailMock.mock.calls.at(-1)?.[0]).toEqual({
+      legalEntityRef: {
+        moduleId: 'core.identity',
+        resourceId: 'legal-1',
+        resourceType: 'core.identity.legal-entity',
+        tenantId: 'tenant-1',
+      },
+    });
+  }),
+);
+
+/** Server rendering: no browser document, like the SSR loader on Node and Workers. */
+const asServerRender = <Value, Failure>(operation: Effect.Effect<Value, Failure>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
+      Reflect.deleteProperty(globalThis, 'document');
+      return descriptor;
+    }),
+    () => operation,
+    (descriptor) =>
+      Effect.sync(() => {
+        if (descriptor !== undefined) {
+          Object.defineProperty(globalThis, 'document', descriptor);
+        }
+      }),
+  );
+// happy-dom's Request drops the cookie header (a browser-forbidden name); the server's request carries it.
+const serverRequest = (url = 'https://shell.example.test/en') => {
+  const cookie = 'better-auth.session_token=test-session';
+  const headers = Object.assign(new Headers(), {
+    get: (name: string) => (name.toLowerCase() === 'cookie' ? cookie : null),
+  });
+  return Object.defineProperty(new Request(url), 'headers', { value: headers });
+};
+
+const availableComposition = <Overrides extends object>(overrides: Overrides) => ({
+  compositionRevision,
+  deniedAppIds: [],
+  gatewayAudiences: [],
+  homeComponents: [],
+  navigation,
+  state: 'available' as const,
+  unavailableDeployments: [],
+  ...overrides,
+});
+
+const documentContextOf = <Overrides extends object>(overrides: Overrides) => ({
+  canManagePeople: false,
+  composition: availableComposition({}),
+  home: { contribution: { state: 'forbidden' as const } },
+  legalEntities: {
+    legalEntities: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
+    selectedLegalEntityId: 'legal-1',
+    state: 'authenticated',
+    tenantContextAvailable: false,
+  },
+  session: { identity, state: 'authenticated' as const },
+  tenants: { state: 'available', tenants: [{ name: 'Alpha tenant', tenantId: 'tenant-1' }] },
+  ...overrides,
+});
+
+const withoutLegalEntities = <Context extends { readonly legalEntities: unknown }>({
+  legalEntities: _legalEntities,
+  ...rest
+}: Context) => rest;
+
+const serverModel = (url?: string) => asServerRender(loadModel({ request: serverRequest(url) }));
+
+/** The serializer TanStack's server rendering embeds every loader's data with, as its router core loads it. */
+interface EmbeddingSerializer {
+  readonly crossSerialize: (value: HomePageModel) => string;
+  readonly deserialize: (source: string) => HomePageModel;
+  readonly serialize: (value: HomePageModel) => string;
+}
+const embeddingSerializer = (): EmbeddingSerializer => {
+  const fromShell = createRequire(`${process.cwd()}/package.json`);
+  const fromRouter = createRequire(fromShell.resolve('@tanstack/react-router'));
+  return createRequire(fromRouter.resolve('@tanstack/router-core'))('seroval');
+};
+
+/** Names a person controls (their company, their name, a role) written to escape the document's script. */
+const HOSTILE = '</script><script>alert(1)</script><!-- \u2028\u2029 ]]> "\'`';
+
+it.effect('the server model cannot break out of the document script, whatever the names it carries', () =>
+  Effect.gen(function* hostileNames() {
+    const hostileIdentity = { ...identity, displayName: HOSTILE, legalName: HOSTILE };
+    documentContextMock.mockReturnValue(
+      Effect.succeed(
+        documentContextOf({
+          legalEntities: {
+            legalEntities: [{ legalEntityId: 'legal-1', legalName: HOSTILE }],
+            selectedLegalEntityId: 'legal-1',
+            state: 'authenticated',
+            tenantContextAvailable: false,
+          },
+          session: { identity: hostileIdentity, state: 'authenticated' as const },
+          tenants: { state: 'available', tenants: [{ name: HOSTILE, tenantId: 'tenant-1' }] },
+        }),
+      ),
+    );
+    const model = yield* serverModel();
+    const serializer = embeddingSerializer();
+    const embedded = serializer.crossSerialize(model);
+    expect(embedded).toContain('alert(1)');
+    expect(embedded).not.toMatch(/<\/script/iu);
+    expect(embedded).not.toContain('<!--');
+    expect(embedded).not.toMatch(/[\u2028\u2029]/u);
+    expect(embedded).not.toContain('<');
+    // The browser reads back exactly the names the server rendered, the hostile ones included.
+    expect(serializer.deserialize(serializer.serialize(model))).toEqual(model);
+  }),
+);
+
+it.effect('server rendering reads the whole document context in one request', () =>
+  Effect.gen(function* serverReadsOnce() {
+    documentContextMock.mockReturnValue(Effect.succeed(documentContextOf({})));
+    expect(yield* serverModel()).toEqual({
+      compositionRevision,
+      contextState: 'authenticated',
+      gatewayAudiences: [],
+      homeContribution: { state: 'forbidden' },
+      identity,
+      legalEntities: {
+        items: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
+        state: 'available',
+        tenantContextAvailable: false,
+      },
+      navigation: {
+        deniedAppIds: [],
+        items: navigation,
+        moduleIds: ['future.generated'],
+        state: 'available',
+        unavailableDeployments: [],
+      },
+      selectedLegalEntityId: 'legal-1',
+      state: 'authenticated',
+      tenants: { items: [{ name: 'Alpha tenant', tenantId: 'tenant-1' }], state: 'available' },
+      // Exactly the separate endpoints' answers to this person here, and nothing else (no token, no assertion).
+      browserReads: {
+        canManagePeople: false,
+        composition: availableComposition({}),
+        legalEntities: {
+          legalEntities: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
+          selectedLegalEntityId: 'legal-1',
+          state: 'authenticated',
+          tenantContextAvailable: false,
+        },
+        tenants: { tenants: [{ name: 'Alpha tenant', tenantId: 'tenant-1' }] },
+      },
+    });
+    expect(documentContextMock).toHaveBeenCalledTimes(1);
+    expect(documentContextMock.mock.calls[0]?.[0]).toEqual({ home: true });
+    for (const separateRead of [
+      currentSessionMock,
+      shellCompositionMock,
+      availableTenantsMock,
+      availableLegalEntitiesMock,
+      canManageDemoAccountsMock,
+      issueDocumentGatewayContextsMock,
+      resolveModuleTargetMock,
+    ]) {
+      expect(separateRead).not.toHaveBeenCalled();
+    }
+  }),
+);
+
+it.effect('a document whose hint checks could not answer primes nothing, so the browser asks again', () =>
+  Effect.gen(function* unansweredHints() {
+    const { canManagePeople: _unanswered, ...withoutPeopleHint } = documentContextOf({});
+    for (const context of [withoutPeopleHint, documentContextOf({ tenantContextUnavailable: true })]) {
+      documentContextMock.mockReturnValueOnce(Effect.succeed(context));
+      const model = yield* serverModel();
+      // The page still shows the hint as "no"; only nothing is kept as an answer.
+      expect(model).toMatchObject({ state: 'authenticated' });
+      expect(model).not.toHaveProperty('browserReads');
+    }
+  }),
+);
+
+/** The server-rendered model's own reads, primed in the browser as hydration does. */
+const hydrateServerModel = Effect.gen(function* hydrate() {
+  documentContextMock.mockReturnValue(Effect.succeed(documentContextOf({})));
+  const model = yield* serverModel();
+  if (model.state !== 'authenticated' || model.browserReads === undefined) {
+    throw new Error('Expected a server-rendered model with its browser reads');
+  }
+  yield* resetBrowserSessionCache;
+  yield* primeBrowserReads(model.identity, model.browserReads, 'https://shell.example.test/en');
+  return model;
+});
+
+/** The reads the server-rendered model answers; the session is always read fresh. */
+const primedShellReads = () => [
+  shellCompositionMock,
+  availableTenantsMock,
+  availableLegalEntitiesMock,
+  canManageDemoAccountsMock,
+];
+
+const separateShellReads = () => [
+  currentSessionMock,
+  shellCompositionMock,
+  availableTenantsMock,
+  availableLegalEntitiesMock,
+  canManageDemoAccountsMock,
+];
+
+it.effect('the first browser loader after hydration reuses the server-rendered Shell reads', () =>
+  inNewDocument(
+    Effect.gen(function* hydratedReads() {
+      const server = yield* hydrateServerModel;
+      if (server.state !== 'authenticated' || server.compositionRevision === undefined) {
+        throw new Error('Expected an authenticated server model');
+      }
+      yield* pinDocumentCompositionRevision(server.compositionRevision, globalThis.document);
+      const browser = yield* loadHomePageModel(new Request('https://shell.example.test/en/ukoly'));
+      expect(browser).toMatchObject({
+        compositionRevision,
+        legalEntities: server.legalEntities,
+        navigation: server.navigation,
+        tenants: server.tenants,
+      });
+      // The session is read fresh, so the person and company the browser holds now choose the primed answers.
+      expect(currentSessionMock).toHaveBeenCalledTimes(1);
+      for (const primedRead of primedShellReads()) {
+        expect(primedRead).not.toHaveBeenCalled();
+      }
+    }),
+  ),
+);
+
+/** Who the browser's session names after the render, through each way the identity can change under a document. */
+const changedIdentities = [
+  ['another company of the same person (company switch)', { ...identity, legalEntityId: 'legal-2', legalName: 'Beta' }],
+  ['another tenant (tenant switch)', { ...identity, tenantId: 'tenant-2' }],
+  ['another person signed in in this browser', { ...identity, displayName: 'Grace', principalId: 'principal-2' }],
+  ['a support session acting as another person', { ...identity, displayName: 'Support', principalId: 'principal-3' }],
+] as const;
+
+for (const [change, nowSignedIn] of changedIdentities) {
+  it.effect(`never answers primed reads after the identity changed: ${change}`, () =>
+    inNewDocument(
+      Effect.gen(function* changedIdentity() {
+        const server = yield* hydrateServerModel;
+        if (server.state !== 'authenticated' || server.compositionRevision === undefined) {
+          throw new Error('Expected an authenticated server model');
+        }
+        yield* pinDocumentCompositionRevision(server.compositionRevision, globalThis.document);
+        currentSessionMock.mockReturnValue(Effect.succeed({ identity: nowSignedIn, state: 'authenticated' as const }));
+        const browser = yield* loadHomePageModel(new Request('https://shell.example.test/en/ukoly'));
+        expect(browser).toMatchObject({ identity: nowSignedIn, state: 'authenticated' });
+        // Every read the render primed is asked again, for the identity the session names now.
+        for (const primedRead of primedShellReads()) {
+          expect(primedRead).toHaveBeenCalledTimes(1);
+        }
+      }),
+    ),
+  );
+}
+
+it.effect('primes a document model once: a session boundary is never undone by a later render', () =>
+  inNewDocument(
+    Effect.gen(function* primedOnce() {
+      const server = yield* hydrateServerModel;
+      if (server.state !== 'authenticated' || server.browserReads === undefined) {
+        throw new Error('Expected a server-rendered model with its browser reads');
+      }
+      if (server.compositionRevision !== undefined) {
+        yield* pinDocumentCompositionRevision(server.compositionRevision, globalThis.document);
+      }
+      yield* endBrowserSession;
+      // The Shell renders again from the same server model after the boundary.
+      yield* primeBrowserReads(server.identity, server.browserReads, 'https://shell.example.test/en');
+      yield* loadHomePageModel(new Request('https://shell.example.test/en/ukoly'));
+      for (const primedRead of primedShellReads()) {
+        expect(primedRead).toHaveBeenCalledTimes(1);
+      }
+    }),
+  ),
+);
+
+it.effect('a session boundary drops the primed reads, so the next loader asks the Shell again', () =>
+  inNewDocument(
+    Effect.gen(function* primedReadsEndWithSession() {
+      const server = yield* hydrateServerModel;
+      if (server.state !== 'authenticated' || server.compositionRevision === undefined) {
+        throw new Error('Expected an authenticated server model');
+      }
+      yield* pinDocumentCompositionRevision(server.compositionRevision, globalThis.document);
+      yield* endBrowserSession;
+      yield* loadHomePageModel(new Request('https://shell.example.test/en/ukoly'));
+      for (const separateRead of separateShellReads()) {
+        expect(separateRead).toHaveBeenCalled();
+      }
+    }),
+  ),
+);
+
+it.effect('a module page document reads its target in the same document-context request', () =>
+  Effect.gen(function* moduleDocument() {
+    const target = { state: 'selection_required' as const };
+    documentContextMock.mockReturnValue(Effect.succeed(documentContextOf({ target })));
+    const document = yield* asServerRender(
+      loadServerModuleDocument(serverRequest('https://shell.example.test/en/contacts'), {
+        canonicalPath: '/contacts',
+      }).pipe(Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({}))),
+    );
+    expect(document.target).toEqual(target);
+    expect(document.shell).toMatchObject({ compositionRevision, state: 'authenticated' });
+    expect(documentContextMock).toHaveBeenCalledTimes(1);
+    expect(documentContextMock.mock.calls[0]?.[0]).toEqual({ target: { canonicalPath: '/contacts' } });
+    expect(documentContextMock.mock.calls[0]?.[1]).toMatchObject({ targetSource: 'server_render' });
+    expect(resolveModuleTargetMock).not.toHaveBeenCalled();
+  }),
+);
+
+it.effect('server rendering maps each document-context part to the same models as the separate reads', () =>
+  Effect.gen(function* serverPartOutcomes() {
+    documentContextMock.mockReturnValueOnce(Effect.succeed({ session: { state: 'anonymous' } }));
+    expect(yield* serverModel()).toEqual({ state: 'anonymous' });
+    documentContextMock.mockReturnValueOnce(
+      Effect.succeed(documentContextOf({ composition: { state: 'reload_required' } })),
+    );
+    expect(yield* serverModel()).toEqual({ state: 'reload_required' });
+    documentContextMock.mockReturnValueOnce(
+      Effect.succeed(documentContextOf({ composition: { state: 'unavailable' } })),
+    );
+    expect(yield* serverModel()).toEqual({ state: 'unavailable' });
+    documentContextMock.mockReturnValueOnce(
+      Effect.succeed(documentContextOf({ tenants: { state: 'authentication_required' } })),
+    );
+    expect(yield* serverModel()).toEqual({ reason: 'session_ended', state: 'anonymous' });
+    documentContextMock.mockReturnValueOnce(
+      Effect.succeed(withoutLegalEntities(documentContextOf({ tenants: { state: 'unavailable' } }))),
+    );
+    expect(yield* serverModel()).toMatchObject({
+      legalEntities: { items: [], state: 'unavailable' },
+      tenants: { items: [{ name: 'tenant-1', tenantId: 'tenant-1' }], state: 'unavailable' },
+    });
+    documentContextMock.mockReturnValueOnce(Effect.fail({ _tag: 'OntosIdentityForbiddenProblem' }));
+    expect(yield* serverModel()).toEqual({ reason: 'account_forbidden', state: 'anonymous' });
+  }),
+);
+
+it.effect('server rendering keeps a context without a selected legal entity free of composition data', () =>
+  Effect.gen(function* serverSelectionRequired() {
+    documentContextMock.mockReturnValueOnce(
+      Effect.succeed({
+        composition: { navigation: [], state: 'selection_required' },
+        legalEntities: {
+          legalEntities: [{ legalEntityId: 'legal-2', legalName: 'Beta company' }],
+          state: 'selection_required',
+          tenantContextAvailable: true,
+        },
+        session: {
+          availableLegalEntities: [{ legalEntityId: 'legal-2', legalName: 'Beta company' }],
+          identity: {
+            displayName: 'Ada Lovelace',
+            email: 'ada@example.test',
+            principalId: 'principal-1',
+            tenantId: 'tenant-1',
+          },
+          state: 'selection_required',
+        },
+        tenants: { state: 'available', tenants: [{ name: 'Alpha tenant', tenantId: 'tenant-1' }] },
+      }),
+    );
+    const model = yield* serverModel();
+    expect(model).toMatchObject({
+      contextState: 'selection_required',
+      legalEntities: { items: [{ legalEntityId: 'legal-2', legalName: 'Beta company' }], state: 'available' },
+      navigation: { items: [], state: 'available' },
+    });
+    expect(model).not.toHaveProperty('compositionRevision');
+  }),
+);
+
+it.effect('server rendering offers people administration from the context capability', () =>
+  Effect.gen(function* serverPeopleCapability() {
+    const peopleNavigation = [
+      { ...navigation[0], href: '/fixture/people', requiresCapability: 'people_administration' },
+      { ...navigation[0], href: '/fixture/clients' },
+    ];
+    for (const canManagePeople of [false, true]) {
+      documentContextMock.mockReturnValueOnce(
+        Effect.succeed(
+          documentContextOf({ canManagePeople, composition: availableComposition({ navigation: peopleNavigation }) }),
+        ),
+      );
+      const model = yield* serverModel();
+      expect(model).toMatchObject({
+        navigation: {
+          items: canManagePeople
+            ? [
+                expect.objectContaining({ href: '/fixture/clients' }),
+                expect.objectContaining({ href: '/sprava/lide-a-role' }),
+                expect.objectContaining({ href: '/sprava/ke-schvaleni' }),
+                expect.objectContaining({ href: '/sprava/aktivita-agentu' }),
+                expect.objectContaining({ href: '/sprava/pripojene-aplikace' }),
+              ]
+            : [expect.objectContaining({ href: '/fixture/clients' })],
+        },
+      });
+    }
+  }),
+);
+
+it.effect('server rendering embeds the admitted Home target without a separate request', () =>
+  Effect.gen(function* serverAdmitsHome() {
+    const contribution = {
+      state: 'ready' as const,
+      target: { compositionRevision, moduleId: 'fixture.dashboard' },
+    };
+    documentContextMock.mockReturnValue(Effect.succeed(documentContextOf({ home: { contribution } })));
+    expect(yield* serverModel()).toMatchObject({ homeContribution: contribution, state: 'authenticated' });
+    expect(resolveModuleTargetMock).not.toHaveBeenCalled();
+    expect(executeLegalEntityDetailMock).not.toHaveBeenCalled();
+    yield* serverModel('https://shell.example.test/en/ukoly');
+    expect(documentContextMock.mock.calls.at(-1)?.[0]).toEqual({});
+  }),
+);
+
+it.effect('server rendering preserves the company welcome and unavailable Home outcomes', () =>
+  Effect.gen(function* serverHomeOutcomes() {
+    documentContextMock.mockReturnValueOnce(
+      Effect.succeed(
+        documentContextOf({
+          home: { contribution: { state: 'forbidden' }, welcome: 'Firemní přivítání' },
+        }),
+      ),
+    );
+    expect(yield* serverModel()).toMatchObject({
+      companyWelcome: 'Firemní přivítání',
+      homeContribution: { state: 'forbidden' },
+    });
+    documentContextMock.mockReturnValueOnce(
+      Effect.succeed(
+        documentContextOf({
+          home: { contribution: { state: 'unavailable' } },
+        }),
+      ),
+    );
+    expect(yield* serverModel()).toMatchObject({ homeContribution: { state: 'unavailable' } });
+    expect(executeLegalEntityDetailMock).not.toHaveBeenCalled();
+  }),
+);
+
+const audienceComposition = () => availableComposition({ gatewayAudiences: ['future-generated'] });
+
+it.effect('server rendering embeds no gateway assertions and leaves them to the browser batch', () =>
+  Effect.gen(function* serverWithoutAssertions() {
+    documentContextMock.mockReturnValue(Effect.succeed(documentContextOf({ composition: audienceComposition() })));
+    const model = yield* serverModel('https://shell.example.test/en/ukoly');
+    expect(model).toMatchObject({ gatewayAudiences: ['future-generated'], state: 'authenticated' });
+    expect(model).not.toHaveProperty('gatewayAssertions');
+    expect(documentContextMock).toHaveBeenCalledTimes(1);
+    expect(issueDocumentGatewayContextsMock).not.toHaveBeenCalled();
+  }),
+);
+it.effect('reconstructs explicit tenant scope on browser reload without company navigation', () =>
+  Effect.gen(function* browserTenantScope() {
+    const { legalEntityId, legalName, ...tenantIdentity } = identity;
+    void legalEntityId;
+    void legalName;
+    currentSessionMock.mockReturnValueOnce(
+      Effect.succeed({
+        availableLegalEntities: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
+        identity: tenantIdentity,
+        state: 'tenant_authenticated',
+      }),
+    );
+    availableLegalEntitiesMock.mockReturnValueOnce(
+      Effect.succeed({
+        legalEntities: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
+        state: 'tenant_authenticated',
+        tenantContextAvailable: true,
+      }),
+    );
+    documentContextMock.mockReturnValueOnce(
+      Effect.succeed(
+        documentContextOf({
+          composition: { navigation: [], state: 'selection_required' },
+          compositionRevision,
+          session: { availableLegalEntities: [], identity: tenantIdentity, state: 'tenant_authenticated' },
+        }),
+      ),
+    );
+    const model = yield* loadModel({ request: request() });
+    expect(model).toMatchObject({
+      compositionRevision,
+      contextState: 'tenant_authenticated',
+      legalEntities: { tenantContextAvailable: true },
+      navigation: { items: [] },
+    });
+    expect(model).not.toHaveProperty('selectedLegalEntityId');
+    expect(shellCompositionMock).not.toHaveBeenCalled();
+    expect(documentContextMock).toHaveBeenCalledTimes(1);
+  }),
+);
+
+it.effect('reconstructs explicit tenant scope from the server document context', () =>
+  Effect.gen(function* serverTenantScope() {
+    const { legalEntityId, legalName, ...tenantIdentity } = identity;
+    void legalEntityId;
+    void legalName;
+    documentContextMock.mockReturnValueOnce(
+      Effect.succeed(
+        documentContextOf({
+          composition: { navigation: [], state: 'selection_required' },
+          compositionRevision,
+          legalEntities: { legalEntities: [], state: 'tenant_authenticated', tenantContextAvailable: true },
+          session: { availableLegalEntities: [], identity: tenantIdentity, state: 'tenant_authenticated' },
+        }),
+      ),
+    );
+    const model = yield* serverModel();
+    expect(model).toMatchObject({
+      compositionRevision,
+      contextState: 'tenant_authenticated',
+      legalEntities: { tenantContextAvailable: true },
+      navigation: { items: [] },
+    });
+    expect(model).not.toHaveProperty('selectedLegalEntityId');
   }),
 );

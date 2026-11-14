@@ -1,4 +1,6 @@
+import type { DatabaseIdentity, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { createRequire } from 'node:module';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../support/database-identities.ts';
 import {
   classifyPriceGroupReadDiagnostic,
   classifyPriceGroupReadResultDiagnostic,
@@ -25,14 +27,12 @@ import {
   priceGroupDedicatedUrlMatches,
 } from '../support/price-group-temporal-protocol.ts';
 
-import type { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import {
   defineScopedRoutine,
   ReadResultValidationError,
   ReadEvidenceValidationError,
   ReadHandlerExecutionError,
   loadDatabaseConfig,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
 } from '@app/core-runtime';
 import {
@@ -979,7 +979,7 @@ const makeTemporalNative = Effect.fn('TemporalNative.make')(function* makeTempor
     onSome: (certificate) => ({ ...fixedSpice, caCertificate: certificate }),
   });
   const dedicatedUrl = Effect.fn('TemporalNative.retargetDedicatedUrl')(function* retargetDedicatedUrl(
-    identity: typeof PARTY_REGISTRY_REQUEST_IDENTITY,
+    identity: DatabaseIdentity,
   ) {
     const configured = yield* loadDatabaseConfig({ envPath: '/dev/null', identity });
     const address = new URL(configured.connectionString);

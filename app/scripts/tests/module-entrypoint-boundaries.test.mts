@@ -16,11 +16,12 @@ import { gatewayContextAuthorizationEntrypoints } from '../../packages/shared-co
 import {
   hasCompleteGeneratedModuleApiSeam,
   hasValidGovernedHttpCompositionRoot,
+  hasValidGovernedHttpCompositionRootStaged,
   hasGeneratedActionRegistrationBinding,
   hasGeneratedActionHttpRunnerBinding,
   hasGeneratedActionClientPublication,
   hasOwnerLocalReadServiceFactory,
-  hasOwnerLocalReadServiceFactoryResult,
+  hasOwnerLocalReadRequirementsStaged,
   hasNativeHttpActionMount,
   ownerActionClientPublication,
   hasPublishedGeneratedContractShim,
@@ -667,7 +668,7 @@ import { routeMeta as route1 } from './[lang]/$/route.meta';`,
     root,
     'apps/shell-super-app/shared/api.ts',
     `import { GatewayContextApiGroup } from '@app/shared-contracts';
-export const ShellAuthenticationApi = HttpApi.make('shell').add(GatewayContextApiGroup);
+export const ShellAuthenticationApi = HttpApi.make('shell').add(GatewayContextApiGroup).add(ShellBrowserApi.groups.apiKeyGatewayRead).add(ShellBrowserApi.groups.documentGateway).add(ShellBrowserApi.groups.documentContext);
 export const paths = ['/shell-super-app-api/auth/gateway-context', '/shell-super-app-api/auth/api-key/gateway-context', '/shell-super-app-api/auth/delegated/gateway-context'];`,
   );
   yield* write(
@@ -676,7 +677,21 @@ export const paths = ['/shell-super-app-api/auth/gateway-context', '/shell-super
     `export const gatewayContextLive = HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) => handlers
   .handle('issueGatewayContext', () => Effect.void)
   .handle('issueApiKeyGatewayContext', () => Effect.void)
-  .handle('issueDelegatedGatewayContext', () => Effect.void));`,
+  .handle('issueDelegatedGatewayContext', () => Effect.void));
+// Demo exception 6: the demo's capability issuers are mounted in their own handler groups.
+const apiKeyGatewayReadLive = HttpApiBuilder.group(ShellAuthenticationApi, 'apiKeyGatewayRead', (handlers) => handlers.handle('readWithApiKeyGatewayContext', () => Effect.void));
+const documentGatewayLive = HttpApiBuilder.group(ShellAuthenticationApi, 'documentGateway', (handlers) => handlers.handle('issueDocumentGatewayContexts', () => Effect.void));
+const documentContextLive = HttpApiBuilder.group(ShellAuthenticationApi, 'documentContext', (handlers) => handlers.handle('documentContext', () => Effect.void));`,
+  );
+  yield* write(
+    root,
+    'apps/shell-super-app/shared/document-gateway-api.ts',
+    `export const DocumentGatewayApiGroup = HttpApiGroup.make('documentGateway').add(HttpApiEndpoint.post('issueDocumentGatewayContexts', '/auth/gateway-contexts', {}));`,
+  );
+  yield* write(
+    root,
+    'apps/shell-super-app/shared/browser-api.ts',
+    `export const ShellDocumentContextApiGroup = HttpApiGroup.make('documentContext').add(HttpApiEndpoint.post('documentContext', '/shell/document-context', {}));`,
   );
   yield* write(
     root,
@@ -700,6 +715,7 @@ export const routeMeta = { moduleId: 'inventory.stock', ownerAppId: 'inventory-s
   .add(HttpApiEndpoint.post('issueGatewayContext', '/auth/gateway-context', {}))
   .add(HttpApiEndpoint.post('issueApiKeyGatewayContext', '/auth/api-key/gateway-context', {}))
   .add(HttpApiEndpoint.post('issueDelegatedGatewayContext', '/auth/delegated/gateway-context', {}));
+export const ApiKeyGatewayReadApiGroup = HttpApiGroup.make('apiKeyGatewayRead').add(HttpApiEndpoint.post('readWithApiKeyGatewayContext', '/auth/api-key/gateway-read', {}));
 export const shellGatewayContextContract = { issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context', issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context', issueDelegatedGatewayContextPath: '/shell-super-app-api/auth/delegated/gateway-context' };`,
   );
   yield* write(root, 'packages/core-runtime/src/index.ts', `export const core = true;`);
@@ -3997,7 +4013,13 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
         ].map((folder) => Effect.promise(() => readPricingSourceTree(root, folder))),
       ),
       Effect.all(
-        [`${owner}/package.json`, `${owner}/vertical.manifest.ts`, `${owner}/vertical.registration.ts`].map((file) =>
+        [
+          `${owner}/package.json`,
+          `${owner}/vertical.manifest.ts`,
+          `${owner}/vertical.registration.ts`,
+          SHARED_CONTRACTS_PACKAGE_JSON_PATH,
+          'packages/shared-contracts/src/external-identity-client.ts',
+        ].map((file) =>
           Effect.promise(() => readFile(path.join(root, file), 'utf-8')).pipe(
             Effect.map((source) => [file, source] as const),
           ),
@@ -4128,18 +4150,33 @@ for (const owner of [CATALOG_VERTICAL_PATH, CUSTOMER_CONTEXT_VERTICAL_PATH]) {
           Effect.promise(() => readPricingSourceTree(root, folder)),
         ),
       );
+      const runtimeDeclarationFile = `${owner}/vertical.runtime-declaration.ts`;
+      const hasRuntimeDeclaration = yield* Effect.promise(() =>
+        readFile(path.join(root, runtimeDeclarationFile), 'utf-8').then(
+          () => true,
+          () => false,
+        ),
+      );
       const metadata = yield* Effect.all(
-        [`${owner}/package.json`, `${owner}/vertical.manifest.ts`, `${owner}/vertical.registration.ts`].map((file) =>
+        [
+          `${owner}/package.json`,
+          `${owner}/vertical.manifest.ts`,
+          `${owner}/vertical.registration.ts`,
+          ...(hasRuntimeDeclaration ? [runtimeDeclarationFile] : []),
+        ].map((file) =>
           Effect.promise(() => readFile(path.join(root, file), 'utf-8')).pipe(
             Effect.map((source) => [file, source] as const),
           ),
         ),
       );
       const sources = new Map([...trees.flat(), ...metadata]);
-      const manifestFile = `${owner}/vertical.manifest.ts`;
-      const manifest = sources.get(manifestFile) ?? '';
       const start = '// <generated-module-manifest-operation-contracts>';
       const end = '// </generated-module-manifest-operation-contracts>';
+      // A runtime declaration split (as in main's Party Registry) carries the operation contracts instead of the manifest.
+      const manifestFile = (sources.get(`${owner}/vertical.manifest.ts`) ?? '').includes(start)
+        ? `${owner}/vertical.manifest.ts`
+        : runtimeDeclarationFile;
+      const manifest = sources.get(manifestFile) ?? '';
       const begin = manifest.indexOf(start);
       const finish = manifest.indexOf(end);
       expect(begin).toBeGreaterThan(0);
@@ -4147,13 +4184,15 @@ for (const owner of [CATALOG_VERTICAL_PATH, CUSTOMER_CONTEXT_VERTICAL_PATH]) {
       const claims = manifest.slice(begin + start.length, finish);
       const outside = `${manifest.slice(0, begin)}${claims}${start}\n${manifest.slice(finish)}`;
       const deployment = path.posix.basename(owner);
-      const accepts = (source: string) =>
+      const diagnostics: string[] = [];
+      const accepts = (source: string, sink?: string[]) =>
         hasCompleteGeneratedModuleApiSeam(
           new Map([...sources, [manifestFile, source]]),
           `${owner}/shared/api.ts`,
           deployment,
+          sink,
         );
-      expect(accepts(manifest)).toBe(true);
+      expect(accepts(manifest, diagnostics), diagnostics.join('\n')).toBe(true);
       expect(accepts(outside)).toBe(true);
       const detached = manifest.slice(0, begin + start.length) + manifest.slice(finish);
       expect(accepts(`${detached}\nconst detachedContracts = [${claims}];`)).toBe(false);
@@ -4163,7 +4202,11 @@ for (const owner of [CATALOG_VERTICAL_PATH, CUSTOMER_CONTEXT_VERTICAL_PATH]) {
         false,
       );
       expect(accepts(manifest.replaceAll(CORE_RUNTIME_SOURCE_IMPORT, "from './counterfeit-core.ts'"))).toBe(false);
-      const duplicateRoot = `${manifest}\nexport const detachedManifest = defineOntosModuleManifest({ publicSurface: { operationContracts: [] } });`;
+      const runtimeManifestName = `${deployment.replaceAll(/-(?<letter>[a-z])/gu, (_match, letter: string) => letter.toUpperCase())}RuntimeManifest`;
+      const duplicateRoot =
+        manifestFile === runtimeDeclarationFile
+          ? `${manifest}\nexport const ${runtimeManifestName} = { publicSurface: { operationContracts: [] } };`
+          : `${manifest}\nexport const detachedManifest = defineOntosModuleManifest({ publicSurface: { operationContracts: [] } });`;
       expect(accepts(duplicateRoot)).toBe(false);
     }),
   );
@@ -4260,16 +4303,16 @@ it.live('rejects unbound Core Read layers in generated owner HTTP roots', () =>
   Layer.provide(readRuntimeDependenciesLive),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(activeApplicationCompositionLive),
+  Layer.provide(databaseIdentitiesLive),
   // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
   Layer.provideMerge(nodeCryptoLayer),
 );`;
     expect(handler).toContain(ownerRuntime);
-    const direct = handler
-      .replace('  makeReadRuntimeLive,', '  ReadRuntimeLive,')
-      .replace(
-        ownerRuntime,
-        'const readRuntimeLive = ReadRuntimeLive.pipe(Layer.provide(readRuntimeDependenciesLive));',
-      );
+    const directReadImport = handler.replace('  makeReadRuntimeLive,', '  ReadRuntimeLive,');
+    const direct = directReadImport.replace(
+      ownerRuntime,
+      'const readRuntimeLive = ReadRuntimeLive.pipe(Layer.provide(readRuntimeDependenciesLive));',
+    );
     const aliased = handler
       .replace('  makeReadRuntimeLive,', '  ReadRuntimeLive as GovernedReadRuntimeLive,')
       .replace(ownerRuntime, '')
@@ -4278,9 +4321,112 @@ it.live('rejects unbound Core Read layers in generated owner HTTP roots', () =>
         'const governedReadRuntimeLive = readRuntimeLive;',
         'const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(GovernedReadLayer.provide(governedReadRuntimeDependenciesLive));',
       );
-    for (const invalid of [direct, aliased]) {
+    // Demo identity enrolment (the owner's databaseIdentitiesLive) is not a Core Read layer binding: providing it
+    // beside a direct Core Read layer never makes that layer owner-bound.
+    const directWithEnrollment = directReadImport.replace(
+      ownerRuntime,
+      'const readRuntimeLive = ReadRuntimeLive.pipe(Layer.provide(readRuntimeDependenciesLive), Layer.provide(databaseIdentitiesLive));',
+    );
+    for (const invalid of [direct, aliased, directWithEnrollment]) {
       expect(invalid).not.toBe(handler);
       expect(hasValidGovernedHttpCompositionRoot(shared, invalid)).toBe(false);
+    }
+  }),
+);
+
+it.live('pins the database identity enrolment provided to an owner Read runtime to its exact Core form', () =>
+  Effect.gen(function* pinnedDatabaseIdentityEnrollment() {
+    const root = path.resolve(import.meta.dirname, '../..');
+    const [shared, handler] = yield* Effect.all(
+      [PRICING_SHARED_API_PATH, PRICING_HANDLER_PATH].map((file) =>
+        Effect.promise(() => readFile(path.join(root, file), 'utf-8')),
+      ),
+    );
+    const accepts = (source: string) =>
+      hasValidGovernedHttpCompositionRoot(shared, source) && hasValidGovernedHttpCompositionRootStaged(shared, source);
+    const enrollment =
+      'const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));';
+    const coreImport = '  makeDatabaseIdentityEnrollmentLive,\n';
+    const ownerImport = "import { pricingRegistration } from '../vertical.registration.ts';";
+    expect(handler).toContain(enrollment);
+    expect(handler).toContain(coreImport);
+    expect(accepts(handler)).toBe(true);
+    const withEnrollment = (source: string, value: string) => source.replace(enrollment, value);
+    const ownerDescriptor = withEnrollment(
+      handler.replace(
+        ownerImport,
+        `${ownerImport}\nimport { PRICING_DATABASE_IDENTITY_DESCRIPTOR } from '../src/database-identity.ts';`,
+      ),
+      'const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(\n  defineDatabaseIdentityEnrollment([PRICING_DATABASE_IDENTITY_DESCRIPTOR]),\n);',
+    );
+    expect(accepts(ownerDescriptor)).toBe(true);
+    const coreRead = withEnrollment(
+      handler.replace(coreImport, `${coreImport}  ReadRuntimeLive,\n`),
+      'const databaseIdentitiesLive = ReadRuntimeLive.pipe(Layer.provide(DatabaseConfigLive));',
+    );
+    const foreignFactory = handler
+      .replace(coreImport, '')
+      .replace(
+        ownerImport,
+        `${ownerImport}\nimport { makeDatabaseIdentityEnrollmentLive } from './foreign-enrollment.ts';`,
+      );
+    const localLookAlike = handler
+      .replace(coreImport, '')
+      .replace(
+        enrollment,
+        `const makeDatabaseIdentityEnrollmentLive = (_: unknown) => ReadRuntimeLive;\n${enrollment}`,
+      );
+    for (const [name, invalid] of [
+      ['Core Read layer under the enrolment name', coreRead],
+      ['foreign look-alike enrolment factory', foreignFactory],
+      ['local look-alike enrolment factory', localLookAlike],
+      [
+        'extra pipe on the enrolment',
+        withEnrollment(
+          handler,
+          'const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([])).pipe(Layer.provideMerge(DatabaseConfigLive));',
+        ),
+      ],
+      ['reassigned enrolment', `${handler}\ndatabaseIdentitiesLive = DatabaseConfigLive;`],
+      [
+        'mutable enrolment',
+        withEnrollment(
+          handler,
+          'let databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));',
+        ),
+      ],
+      [
+        'shadowing enrolment',
+        `${handler}\nfunction decoy() { const databaseIdentitiesLive = DatabaseConfigLive; return databaseIdentitiesLive; }`,
+      ],
+      [
+        'foreign descriptor',
+        withEnrollment(
+          handler.replace(
+            ownerImport,
+            `${ownerImport}\nimport { CRM_DATABASE_IDENTITY_DESCRIPTOR } from '../../crm/src/database-identity.ts';`,
+          ),
+          'const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([CRM_DATABASE_IDENTITY_DESCRIPTOR]));',
+        ),
+      ],
+      [
+        'computed descriptor',
+        withEnrollment(
+          handler,
+          'const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([...descriptors]));',
+        ),
+      ],
+      [
+        'enrolment through a variable',
+        withEnrollment(
+          handler,
+          'const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(enrollment);\nconst enrollment = defineDatabaseIdentityEnrollment([]);',
+        ),
+      ],
+    ] as const) {
+      expect(invalid, name).not.toBe(handler);
+      expect(hasValidGovernedHttpCompositionRoot(shared, invalid), name).toBe(false);
+      expect(hasValidGovernedHttpCompositionRootStaged(shared, invalid), name).toBe(false);
     }
   }),
 );
@@ -4396,39 +4542,23 @@ it.live('counts the actual published Pricing read shim in exact owner inventory 
     const requirementsFile = 'verticals/pricing/src/integrations/pricing-operation-requirements.ts';
     const pricingRead = sources.get(pricingReadFile) ?? '';
     const requirements = sources.get(requirementsFile) ?? '';
-    const option = '{ requirements: currentPricingDecisionRequirements }';
+    // Exception 3: Current Pricing Decision is a staged Read without a service factory, so its phases bind the
+    // owner requirements record directly instead of passing it as main's factory option.
+    const requirementsBinding = 'currentPricingDecisionRequirements';
     const acceptsFactory = (changed: ReadonlyMap<string, string>) =>
-      hasOwnerLocalReadServiceFactoryResult(
-        changed,
-        pricingReadFile,
-        'verticals/pricing',
-        'currentPricingDecisionReadServiceFactory',
-      );
+      hasOwnerLocalReadRequirementsStaged(changed, pricingReadFile, 'verticals/pricing', requirementsBinding);
     expect(acceptsFactory(sources)).toBe(true);
     const invalidOptions: readonly (readonly [string, string])[] = [
-      [
-        pricingReadFile,
-        pricingRead.replace(option, '{ ...suppliedOptions, requirements: currentPricingDecisionRequirements }'),
-      ],
-      [pricingReadFile, pricingRead.replace(option, '{ [optionKey]: currentPricingDecisionRequirements }')],
-      [
-        pricingReadFile,
-        pricingRead.replace(option, '{ requirements: currentPricingDecisionRequirements, extra: capability }'),
-      ],
+      [pricingReadFile, `${pricingRead}\n${requirementsBinding} = suppliedRequirements;`],
+      [pricingReadFile, `${pricingRead}\nconst { ${requirementsBinding} } = supplied;`],
       [
         pricingReadFile,
         pricingRead.replace(
-          option,
-          '{ pricingOwnerFinalFenceForScope: pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope }',
+          `  ${requirementsBinding},\n  requirePricingSubjectOperation,`,
+          `  ${requirementsBinding} as requirements,\n  requirePricingSubjectOperation,`,
         ),
       ],
-      [
-        pricingReadFile,
-        pricingRead.replace(
-          'readonly requirements?: PricingWholeEvaluationRequirements',
-          'requirements: PricingWholeEvaluationRequirements',
-        ),
-      ],
+      [pricingReadFile, pricingRead.replace('  () => Effect.succeed({}),\n);', '  foreignServices,\n);')],
       [
         pricingReadFile,
         pricingRead.replace(
@@ -6282,6 +6412,12 @@ for (const [subpath, publicBinding] of [
 const makeActualCustomerContextAggregateFixture = Effect.fn(function* actualCustomerContextAggregateFixture() {
   const root = yield* makePortalPublicRoleFixture();
   const workspace = path.resolve(import.meta.dirname, '../..');
+  const identityClient = 'packages/shared-contracts/src/external-identity-client.ts';
+  yield* write(
+    root,
+    identityClient,
+    yield* Effect.promise(() => readFile(path.join(workspace, identityClient), 'utf-8')),
+  );
   for (const folder of [
     CUSTOMER_CONTEXT_VERTICAL_PATH,
     'packages/customer-market-retirement-contracts',

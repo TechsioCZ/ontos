@@ -1,10 +1,13 @@
-import { DateTime, Effect, Option, Redacted } from 'effect';
+import { DateTime, Effect, Option, Predicate, Redacted } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 
 import { executeCreateMarketWithAuthorization } from '../../src/api/create-market-action-client.ts';
 import { executeCurrentMarketCatalogWithAuthorization } from '../../src/api/current-market-catalog-client.ts';
 import { executeRetireMarketWithAuthorization } from '../../src/api/retire-market-action-client.ts';
 import { makeMarketRevisionNativeFixture, marketRevisionNativeServices } from '../fixtures/market-revision-native.ts';
+
+const actionProposalAcceptedTag = 'ActionProposalAccepted';
+const committedActionRequired = 'Expected a committed Action result, not a proposal receipt';
 
 // Genuine issuer, registered owner clients and real Core/Market/CCC persistence replace the old
 // scripted gateway and direct-runtime fixture, which bypassed required retirement preparation.
@@ -48,6 +51,7 @@ it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
         creation.requestCorrelation,
         creation.options,
       );
+      assert(!Predicate.isTagged(created, actionProposalAcceptedTag), committedActionRequired);
       const effectiveAt = DateTime.makeUnsafe(DateTime.toEpochMillis(owner.now) + 1);
       const retirement = yield* admit('reservation-audit-retire');
       const retired = yield* executeRetireMarketWithAuthorization(
@@ -62,6 +66,7 @@ it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
         retirement.requestCorrelation,
         retirement.options,
       );
+      assert(!Predicate.isTagged(retired, actionProposalAcceptedTag), committedActionRequired);
       expect(retired).toMatchObject({ changed: true, lifecycle: 'RETIRED', marketRef: owner.marketRef });
       const readback = yield* admit('reservation-audit-current');
       const current = yield* executeCurrentMarketCatalogWithAuthorization(

@@ -1,0 +1,199 @@
+// Documents lane (ops-documents): shared presentation helpers for documents, files and comments.
+// Other lanes may import these, but the components to embed are CommentThread and LinkedDocuments.
+import { formatDateTime } from '@app/admin-ui';
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Effect, Schema, DateTime as DateTimeModule } from 'effect';
+import { FileIdSchema } from '../../shared/domain/common.ts';
+import type { DocumentRecord, SubjectRef } from '../../shared/domain/documents.ts';
+import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { recordsRead } from './use-agenda.ts';
+
+const k = 'facility-operations.documents';
+
+export const isoOf = (value: DateTimeModule.Utc) => DateTimeModule.formatIso(value);
+
+/** Localised date + time of a UTC instant. */
+export const formatWhen = (value: DateTimeModule.Utc) => {
+  const iso = DateTimeModule.formatIso(value);
+  return formatDateTime(iso);
+};
+
+export const formatBytes = (size: number) => {
+  if (size < 1024) {
+    return `${size} B`;
+  }
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toLocaleString('cs-CZ', { maximumFractionDigits: 0 })} kB`;
+  }
+  return `${(size / 1024 / 1024).toLocaleString('cs-CZ', { maximumFractionDigits: 1 })} MB`;
+};
+
+export const FileKindSchema = Schema.Literals(['pdf', 'image', 'word', 'sheet', 'text', 'other']);
+export type FileKind = typeof FileKindSchema.Type;
+
+export const fileKindOf = (mime: string, name: string): FileKind => {
+  const lower = name.toLowerCase();
+  if (mime === 'application/pdf' || lower.endsWith('.pdf')) {
+    return 'pdf';
+  }
+  if (mime.startsWith('image/')) {
+    return 'image';
+  }
+  if (mime.includes('word') || lower.endsWith('.docx') || lower.endsWith('.doc')) {
+    return 'word';
+  }
+  if (mime.includes('sheet') || mime.includes('excel') || lower.endsWith('.xlsx') || lower.endsWith('.csv')) {
+    return 'sheet';
+  }
+  if (mime.startsWith('text/')) {
+    return 'text';
+  }
+  return 'other';
+};
+
+const fileBadge = {
+  image: { label: 'IMG', tone: 'bg-info-light text-fg-primary' },
+  other: { label: 'FILE', tone: 'bg-highlight text-fg-secondary' },
+  pdf: { label: 'PDF', tone: 'bg-danger-light text-fg-primary' },
+  sheet: { label: 'XLS', tone: 'bg-success-light text-fg-primary' },
+  text: { label: 'TXT', tone: 'bg-highlight text-fg-secondary' },
+  word: { label: 'DOC', tone: 'bg-primary-light text-fg-primary' },
+} satisfies Readonly<Record<FileKind, { readonly label: string; readonly tone: string }>>;
+
+/** Small file-type tile used in lists. */
+export const FileTypeIcon = ({ mime, name }: { readonly mime: string; readonly name: string }) => {
+  const badge = fileBadge[fileKindOf(mime, name)];
+  return (
+    <span
+      aria-hidden="true"
+      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md font-bold text-xs tracking-wide ${badge.tone}`}
+    >
+      {badge.label}
+    </span>
+  );
+};
+
+export const documentCategories = [
+  'contract',
+  'amendment',
+  'annex',
+  'protocol',
+  'revision',
+  'invoice',
+  'photo',
+  'plan',
+  'other',
+] as const;
+
+/** Category label, tolerating free-text categories from older records. */
+export const useCategoryLabel = () => {
+  const { t } = useModernI18n();
+  return (category: string) =>
+    documentCategories.some((entry) => entry === category) ? t(`${k}.categories.${category}`) : category;
+};
+
+/** Subject kind label, tolerating kinds introduced by other lanes. */
+export const useKindLabel = () => {
+  const { t } = useModernI18n();
+  return (kind: string) => t(`${k}.kinds.${kind}`, { defaultValue: t(`${k}.kinds.other`) });
+};
+
+export const categoryVariant = (category: string) => {
+  if (category === 'contract') {
+    return 'primary' as const;
+  }
+  if (category === 'amendment' || category === 'annex') {
+    return 'info' as const;
+  }
+  if (category === 'revision' || category === 'protocol') {
+    return 'warning' as const;
+  }
+  return 'outline' as const;
+};
+
+export const CategoryBadge = ({ category }: { readonly category: string }) => {
+  const label = useCategoryLabel();
+  return (
+    <Badge size="sm" variant={categoryVariant(category)}>
+      {label(category)}
+    </Badge>
+  );
+};
+
+/** Compact chip for a linked record. */
+export const SubjectChip = ({
+  onRemove,
+  removeLabel,
+  subject,
+}: {
+  readonly onRemove?: () => void;
+  readonly removeLabel?: string;
+  readonly subject: SubjectRef;
+}) => {
+  const kindLabel = useKindLabel();
+  return (
+    <span className="inline-flex max-w-full items-center gap-50 rounded-full bg-surface px-150 py-50 text-xs">
+      <span className="text-fg-secondary">{kindLabel(subject.kind)}</span>
+      <span className="truncate font-medium">{subject.label}</span>
+      {onRemove !== undefined && (
+        <button
+          aria-label={removeLabel}
+          className="ml-50 rounded-full px-50 text-fg-secondary hover:text-fg-primary"
+          onClick={onRemove}
+          type="button"
+        >
+          ×
+        </button>
+      )}
+    </span>
+  );
+};
+
+export const currentVersion = (document: DocumentRecord) => document.versions.at(-1);
+
+const decodeBase64 = (value: string) => {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.codePointAt(index) ?? 0;
+  }
+  return bytes;
+};
+
+class FilePreviewUnavailable extends Schema.TaggedError<FilePreviewUnavailable>()('FilePreviewUnavailable', {
+  cause: Schema.optionalKey(Schema.Defect()),
+  fileId: FileIdSchema,
+  reason: Schema.Literals(['not_found', 'invalid_file']),
+}) {}
+
+/** Loads a stored file through the governed records read (server checks documents read access). */
+export const fetchFileObjectUrl = Effect.fn('FacilityOperations.fetchFileObjectUrl')(function* fetchFileObjectUrl(
+  fileId: string,
+) {
+  const id = yield* Schema.decodeEffect(FileIdSchema)(fileId);
+  const outcome = yield* recordsRead({ agendas: [], fileId: id });
+  const stored = outcome.file;
+  if (stored === undefined) {
+    return yield* new FilePreviewUnavailable({ fileId: id, reason: 'not_found' });
+  }
+  return yield* Effect.try({
+    catch: (cause) => new FilePreviewUnavailable({ cause, fileId: id, reason: 'invalid_file' }),
+    try: () => {
+      const url = URL.createObjectURL(new Blob([decodeBase64(stored.contentBase64)], { type: stored.mime }));
+      return { mime: stored.mime, name: stored.name, ok: true as const, url };
+    },
+  });
+});
+
+/** Today's business date in Prague as `YYYY-MM-DD`. */
+const pragueDateFormat = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Prague' });
+export const todayInPrague = () => pragueDateFormat.format(browserRuntime.runSync(DateTimeModule.nowAsDate));
+
+/** `d. M. yyyy` for an ISO calendar date. */
+export const formatIsoDate = (isoDate: string | undefined, fallback: string) => {
+  if (isoDate === undefined) {
+    return fallback;
+  }
+  return `${Number(isoDate.slice(8, 10))}. ${Number(isoDate.slice(5, 7))}. ${isoDate.slice(0, 4)}`;
+};

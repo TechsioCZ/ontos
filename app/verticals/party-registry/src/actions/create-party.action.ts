@@ -6,7 +6,7 @@ import {
 // @ontos-action-owner party.registry
 // @ontos-action-slug create-party
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import type { ActionHandlerContext } from '@app/core-runtime';
+import type { ActionHandlerContext, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
 import { AddPartyOfficialIdentifierResultSchema } from '../../shared/actions/add-party-official-identifier.ts';
@@ -29,14 +29,17 @@ import { publishAttachedOfficialIdentifiers } from './attached-official-identifi
 import { createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage } from './create-party.party-registry-party-created-v1.outbox-message.ts';
 
 export type { CreatePartyPayload } from '../../shared/actions/create-party.ts';
-const CreatePartyErrorSchema = Schema.Union([
+
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
+export const CreatePartyErrorSchema = Schema.Union([
   ClaimOwnedByDifferentParty,
   DuplicateCandidateConflict,
   PartyEvidenceInsufficient,
   PartyPersistenceUnavailable,
 ]);
 const PartyCreatedEventSchema = Schema.Struct({ partyRef: PartyRefSchema });
-const domainEvents = {
+export const createPartyDomainEvents = {
   'party.registry.official-identifier-added.v1': AddPartyOfficialIdentifierResultSchema,
   'party.registry.party-created.v1': PartyCreatedEventSchema,
 } as const;
@@ -48,9 +51,9 @@ interface Services {
   ) => ReturnType<typeof createOrMatchParty>;
 }
 
-const handleCreateParty = Effect.fn('CreatePartyAction.handleCreateParty')(function* createParty(
+export const handleCreateParty = Effect.fn('CreatePartyAction.handleCreateParty')(function* createParty(
   payload: CreatePartyPayload,
-  context: ActionHandlerContext<typeof domainEvents, Services>,
+  context: ActionHandlerContext<typeof createPartyDomainEvents, Services>,
 ) {
   const {
     addedOfficialIdentifierRefs = [],
@@ -62,8 +65,8 @@ const handleCreateParty = Effect.fn('CreatePartyAction.handleCreateParty')(funct
     accessKind: 'read',
     queryHash: candidateFingerprint(payload.candidate),
     resultCount: result.outcome === 'CREATED' && !replayed ? 0 : 1,
-    servingModuleKey: 'party.registry',
-    targetModuleKey: 'party.registry',
+    servingModuleKey: PARTY_REGISTRY_MODULE_ID,
+    targetModuleKey: PARTY_REGISTRY_MODULE_ID,
     targetResourceId: target.resourceId,
     targetResourceType: target.resourceType,
   });
@@ -71,8 +74,8 @@ const handleCreateParty = Effect.fn('CreatePartyAction.handleCreateParty')(funct
     const event = yield* context.addDomainEvent({
       eventType: 'party.registry.party-created.v1',
       payloadJson: { partyRef: result.partyRef },
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
+      producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+      subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
       subjectResourceId: result.partyRef.resourceId,
       subjectResourceType: result.partyRef.resourceType,
     });
@@ -88,6 +91,36 @@ const handleCreateParty = Effect.fn('CreatePartyAction.handleCreateParty')(funct
   }
   return result;
 });
+
+export const createPartyServices = (transaction: ScopedTransactionExecutor, scope: OperationalScope) =>
+  Effect.succeed({
+    createOrMatch: (candidate: PartyCandidate, actionInvocationId: string) => {
+      const input: Parameters<typeof createOrMatchParty>[1] = {
+        actionInvocationId,
+        candidate,
+        principalId: scope.principalId,
+        sourceScope: scope,
+        tenantId: scope.tenantId,
+      };
+      if (scope.legalEntityId !== undefined) {
+        Object.assign(input, { legalEntityId: scope.legalEntityId });
+      }
+      return requireAdmittedPartySourceReference(
+        transaction,
+        scope,
+        clientSourceAssertion(candidate.subjectEvidence),
+      ).pipe(
+        Effect.andThen(createOrMatchParty(transaction, input)),
+        Effect.tap(({ decisionRef }) =>
+          clientSourceAssertion(candidate.subjectEvidence) === undefined
+            ? Effect.void
+            : recordSourceCreateReceipt(transaction, scope, actionInvocationId, decisionRef.resourceId),
+        ),
+        withPartyClientSourceActionPayload(transaction, scope, 'CREATE', CreatePartyPayloadSchema, { candidate }),
+        withPartyClientSourcePrivacyRequirement('party.registry.create-party'),
+      );
+    },
+  });
 
 export const createPartyAction = defineAction(
   {
@@ -117,17 +150,17 @@ export const createPartyAction = defineAction(
     actionKey: 'party.registry.create-party',
     auditProfile: 'standard',
     domainErrorSchema: CreatePartyErrorSchema,
-    domainEvents,
+    domainEvents: createPartyDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.create-party',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: CreatePartyPayloadSchema,
     // No pre-handler Policy: no-strong eligibility belongs to the canonical transaction so an
     // eligible review-required Candidate can commit AMBIGUOUS decision/case state atomically.
@@ -136,33 +169,5 @@ export const createPartyAction = defineAction(
     schemaVersion: '1',
   },
   handleCreateParty,
-  (transaction, scope) =>
-    Effect.succeed({
-      createOrMatch: (candidate: PartyCandidate, actionInvocationId: string) => {
-        const input: Parameters<typeof createOrMatchParty>[1] = {
-          actionInvocationId,
-          candidate,
-          principalId: scope.principalId,
-          sourceScope: scope,
-          tenantId: scope.tenantId,
-        };
-        if (scope.legalEntityId !== undefined) {
-          Object.assign(input, { legalEntityId: scope.legalEntityId });
-        }
-        return requireAdmittedPartySourceReference(
-          transaction,
-          scope,
-          clientSourceAssertion(candidate.subjectEvidence),
-        ).pipe(
-          Effect.andThen(createOrMatchParty(transaction, input)),
-          Effect.tap(({ decisionRef }) =>
-            clientSourceAssertion(candidate.subjectEvidence) === undefined
-              ? Effect.void
-              : recordSourceCreateReceipt(transaction, scope, actionInvocationId, decisionRef.resourceId),
-          ),
-          withPartyClientSourceActionPayload(transaction, scope, 'CREATE', CreatePartyPayloadSchema, { candidate }),
-          withPartyClientSourcePrivacyRequirement('party.registry.create-party'),
-        );
-      },
-    }),
+  createPartyServices,
 );

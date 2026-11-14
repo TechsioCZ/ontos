@@ -1,18 +1,20 @@
 import {
+  ApiKeyGatewayContextRequestSchema,
   GatewayContextApi,
-  GatewayContextRequestSchema,
   GatewayDelegatedContextRequestSchema,
   shellGatewayContextContract,
 } from './gateway-context.ts';
 import type {
+  ApiKeyGatewayContextRequest,
   GatewayContextClientError,
-  GatewayContextRequest,
   GatewayContextResponse,
   GatewayDelegatedContextRequest,
 } from './gateway-context.ts';
 import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { Context, Effect, Option, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
+
+import { refuseRedirects, withoutFollowingRedirects } from './key-transport.ts';
 
 export interface ApiKeyGatewayContextClientOptions {
   readonly apiKey: Redacted.Redacted;
@@ -32,22 +34,24 @@ const ApiKeyGatewayContextTransport = Context.Reference<Option.Option<ApiKeyGate
   },
 );
 
-const apiKeyGatewayContextClient = makeEffectHttpApiClient(GatewayContextApi, {
-  transformClient: HttpClient.mapRequestEffect((request) =>
-    ApiKeyGatewayContextTransport.pipe(
-      Effect.map(
-        Option.match({
-          onNone: () => request,
-          onSome: (options) =>
-            HttpClientRequest.setHeader(
-              HttpClientRequest.prependUrl(request, options.baseUrl.toString()),
-              'x-correlation-id',
-              options.requestCorrelation,
-            ),
-        }),
-      ),
+const attachTransport = HttpClient.mapRequestEffect((request) =>
+  ApiKeyGatewayContextTransport.pipe(
+    Effect.map(
+      Option.match({
+        onNone: () => request,
+        onSome: (options) =>
+          HttpClientRequest.setHeader(
+            HttpClientRequest.prependUrl(request, options.baseUrl.toString()),
+            'x-correlation-id',
+            options.requestCorrelation,
+          ),
+      }),
     ),
   ),
+);
+
+const apiKeyGatewayContextClient = makeEffectHttpApiClient(GatewayContextApi, {
+  transformClient: (client) => client.pipe(attachTransport, refuseRedirects),
 });
 
 /** One request-scoped transport seam shared by the two API-key-authenticated issuer operations. */
@@ -55,8 +59,8 @@ const withApiKeyGatewayContextTransport =
   (options: ApiKeyGatewayContextTransportOptions) =>
   <Success, Failure, Requirements>(effect: Effect.Effect<Success, Failure, Requirements>) =>
     effect.pipe(
-      // oxlint-disable-next-line effect-native/no-effect-provide-in-library -- Request-scoped server transport options must remain private to this server-only client and must not become a caller-visible application service. expires: 2027-03-31.
-      Effect.provideService(ApiKeyGatewayContextTransport, Option.some(options)),
+      withoutFollowingRedirects,
+      Effect.updateService(ApiKeyGatewayContextTransport, () => Option.some(options)),
     );
 
 /**
@@ -66,10 +70,10 @@ const withApiKeyGatewayContextTransport =
  * and Tenant, validates the requested Legal Entity, and issues a fresh audience-scoped assertion.
  */
 export const issueApiKeyGatewayContext = (
-  payload: GatewayContextRequest,
+  payload: ApiKeyGatewayContextRequest,
   options: ApiKeyGatewayContextClientOptions,
 ): Effect.Effect<GatewayContextResponse, GatewayContextClientError> =>
-  Schema.decodeEffect(GatewayContextRequestSchema)(payload).pipe(
+  Schema.decodeEffect(ApiKeyGatewayContextRequestSchema)(payload).pipe(
     Effect.flatMap((decodedPayload) =>
       apiKeyGatewayContextClient.pipe(
         Effect.flatMap((client) =>

@@ -2,7 +2,11 @@ import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { projectReadResultFields } from '../../../../packages/core-runtime/src/reads/definition.ts';
-import { PartyDetailResponseSchema, PartyFactAssertionSchema } from '../../shared/apis/party-detail.ts';
+import {
+  PartyDetailResponseSchema,
+  PartyFactAssertionSchema,
+  PartyHistoricalNameAssertionSchema,
+} from '../../shared/apis/party-detail.ts';
 import { PartySchema } from '../../shared/domain/identity-contracts.ts';
 import { partyDetailRead, readPartyDetailFromServices } from '../../src/api/party-detail.read.ts';
 
@@ -42,6 +46,20 @@ const previousFact = Schema.decodeSync(PartyFactAssertionSchema)({
   validTo: '2026-09-03T10:00:00.000Z',
   value: 'Original name',
 });
+const archivedNameId = '66666666-6666-4666-8666-666666666666';
+const archivedName = Schema.decodeSync(PartyHistoricalNameAssertionSchema)({
+  assertionId: archivedNameId,
+  factKind: 'DISPLAY_NAME',
+  isCurrent: false,
+  partyRef,
+  recordedAt: '2026-08-01T10:00:00.000Z',
+  retractsAssertionId: null,
+  state: 'SUPERSEDED',
+  supersedesAssertionId: null,
+  validFrom: '2026-08-01T10:00:00.000Z',
+  validTo: '2026-09-01T10:00:00.000Z',
+  value: 'Archived name',
+});
 const party = Schema.decodeSync(PartySchema)({
   archivedAt: null,
   businessName: 'Corrected name',
@@ -61,6 +79,7 @@ const services = {
       factHistory: includeFactHistory ? Option.some([previousFact]) : Option.none(),
     }),
   find: () => Effect.succeed({ _tag: 'found' as const, value: party }),
+  historicalNames: (_partyId: string) => Effect.succeed([archivedName]),
   resolve: () =>
     Effect.succeed({
       canonicalPartyId: partyId,
@@ -88,6 +107,10 @@ it.effect('a caller without identity read gets 200 with the identity fields abse
     expect(wire.currentFactAssertions[0]?.assertionId).toBe(assertionId);
     expect(wire.factHistory?.[0]).not.toHaveProperty('value');
     expect(wire.factHistory?.[0]?.assertionId).toBe(previousId);
+    // The archived name is redacted by the same field grant, so its own value goes too.
+    expect(wire.historicalNameEvidence?.[0]).not.toHaveProperty('value');
+    expect(wire.historicalNameEvidence?.[0]?.assertionId).toBe(archivedNameId);
+    expect(wire.historicalNameEvidence?.[0]?.factKind).toBe('DISPLAY_NAME');
     expect(wire.resolution.kind).toBe('DIRECT');
   }),
 );
@@ -101,5 +124,6 @@ it.effect('a caller holding every field group still gets the identity fields and
     expect(wire.party.businessName).toBe('Corrected name');
     expect(wire.currentFactAssertions[0]?.value).toBe('Corrected name');
     expect(wire.factHistory?.[0]?.value).toBe('Original name');
+    expect(wire.historicalNameEvidence?.[0]?.value).toBe('Archived name');
   }),
 );

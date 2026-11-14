@@ -113,9 +113,9 @@ export const readableCompanies = Effect.fn('AccessAdminRoleReadScope.companies')
   if (companies.length === 0) {
     return NO_COMPANIES;
   }
-  // One question per candidate company, each in that company's own required scope. They are
-  // independent, so they run as one batch: a refusal drops that company, an unreadable answer refuses
-  // the whole read rather than hiding roles this person may still hold.
+  // One question per candidate company, each in that company's own required scope, asked one at a time
+  // through the caller's `decide` port: a refusal drops that company, an unreadable answer refuses the
+  // whole read rather than hiding roles this person may still hold.
   const answers: readonly AccessDecision[] = yield* Effect.all(
     companies.map((company) =>
       decide(questionOf(companyScopeOf(input.scope, company), input.declaration, input.now, COMPANY_SCOPE)),
@@ -128,22 +128,67 @@ export const readableCompanies = Effect.fn('AccessAdminRoleReadScope.companies')
   return new Set<string>(companies.filter((_, index) => answers[index]?.outcome === 'ALLOWED'));
 });
 
+/** Several declarations of one request, asked in the same contexts at the same Core instant. */
+interface ReadScopesRequest {
+  readonly companies: readonly string[];
+  readonly declarations: readonly AccessDeclaration[];
+  readonly now: Date;
+  readonly scope: OperationalScope;
+}
+
+/**
+ * The contexts each of several declarations may cover, exactly as `roleReadScope` answers each one, asked
+ * as ONE `decideMany`: the gate then reads the actor, each context's scope and its structural basis once
+ * per context instead of once per question, and writes the evidence of a context in one transaction. Every
+ * question is the one `roleReadScope` asks (the tenant context, then each candidate company in its own
+ * required scope), and an unreadable answer for any of them is UNAVAILABLE, never a smaller answer.
+ */
+export const roleReadScopes = Effect.fn('AccessAdminRoleReadScope.resolveMany')(function* resolveRoleReadScopes(
+  input: ReadScopesRequest,
+) {
+  const gate = yield* AccessDecisionGate;
+  const companies = askedCompanies(input.companies);
+  // One scope object per company, shared by every declaration: the gate groups a batch's evidence by scope
+  // identity, so a fresh object per question would write each answer in its own transaction.
+  const companyScopes = companies.map((company) => companyScopeOf(input.scope, company));
+  const questions = input.declarations.flatMap((declaration) => [
+    questionOf(input.scope, declaration, input.now, ADMIN_SURFACE_SCOPE),
+    ...companyScopes.map((companyScope) => questionOf(companyScope, declaration, input.now, COMPANY_SCOPE)),
+  ]);
+  const answers: readonly AccessDecision[] = questions.length === 0 ? [] : yield* gate.decideMany(questions);
+  if (answers.length !== questions.length || answers.some(({ outcome }) => outcome === 'UNAVAILABLE')) {
+    return yield* Effect.fail(accessAdminUnavailableProblem());
+  }
+  // The answers come back in question order: one tenant answer, then one per company, per declaration.
+  const stride = companies.length + 1;
+  return input.declarations.map((_, index): RoleReadScope => {
+    const block = answers.slice(index * stride, (index + 1) * stride);
+    return {
+      companies:
+        companies.length === 0
+          ? NO_COMPANIES
+          : new Set<string>(companies.filter((_company, position) => block[position + 1]?.outcome === 'ALLOWED')),
+      tenant: block[0]?.outcome === 'ALLOWED',
+    };
+  });
+});
+
 /**
  * The contexts one Role read may show, decided by the gate in the tenant context and in the exact
  * scope of every company declared by the tenant's intent (O88). The companies are candidates only: each
- * one still has to admit this operation's own declaration in its own scope.
+ * one still has to admit this operation's own declaration in its own scope. The tenant question and every
+ * company question travel in one gate batch (`roleReadScopes`); one unreadable answer refuses the read.
  */
 export const roleReadScope = Effect.fn('AccessAdminRoleReadScope.resolve')(function* resolveRoleReadScope(
   input: ReadScopeRequest,
 ) {
-  const gate = yield* AccessDecisionGate;
-  const tenantDecision = yield* gate.decide(questionOf(input.scope, input.declaration, input.now, ADMIN_SURFACE_SCOPE));
-  if (tenantDecision.outcome === 'UNAVAILABLE') {
-    // An unreadable authority is a retry, never a smaller answer (O48).
-    return yield* Effect.fail(accessAdminUnavailableProblem());
-  }
-  const companies: ReadonlySet<string> = yield* readableCompanies(gate.decide, input);
-  return { companies, tenant: tenantDecision.outcome === 'ALLOWED' };
+  const [readable] = yield* roleReadScopes({
+    companies: input.companies,
+    declarations: [input.declaration],
+    now: input.now,
+    scope: input.scope,
+  });
+  return readable ?? (yield* Effect.fail(accessAdminUnavailableProblem()));
 });
 
 /** The same answer, with the one refusal every Role read gives when it covers no role at all. */

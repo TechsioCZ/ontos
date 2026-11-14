@@ -1,15 +1,17 @@
-import { Effect, FileSystem, Path, Redacted, Result, Schema } from 'effect';
+import { Array as EffectArray, Effect, FileSystem, Order, Path, Redacted, Result, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 
 import {
   collectAccessCatalog,
   decodeAccessDeclaration,
   decodeAccessFieldGroups,
+  decodeAccessWorkload,
 } from '../packages/core-runtime/src/authorization/access-declaration.ts';
 import type {
   AccessActor,
   AccessCatalogDescriptor,
   AccessCatalogModule,
+  WorkloadKey,
 } from '../packages/core-runtime/src/authorization/access-declaration.ts';
 import { ModuleEntrypointSchema } from '../packages/core-runtime/src/modules/module-entrypoint.ts';
 import {
@@ -46,6 +48,8 @@ const refusal = (code: StageAccessCatalogError['code'], reason: string): StageAc
   new StageAccessCatalogError({ code, reason });
 
 export interface StageAccessCatalog {
+  /** Validated machine purposes from every carrier, including carriers excluded from human rights. */
+  readonly declaredWorkloadKeys: readonly WorkloadKey[];
   /**
    * The composition's modules in module-key order, each module's descriptors in entrypoint order.
    * They leave this module as data: the caller decodes them through Core's
@@ -104,19 +108,29 @@ const carrierRef = (carrier: ScannedCarrier): string => `${carrier.file}: ${carr
 /** The module caller of a descriptor, as the pinned artifact records it (D5): callers and subject only. */
 export interface StageAccessActor {
   readonly callers: readonly string[];
-  readonly subject: 'identity' | 'rights';
+  readonly subject: AccessActor['subject'];
+  /** The callers that may bring such a workload subject, when narrower than every caller. */
+  readonly subjectWorkloadCallers?: readonly string[];
   /** The workload keys that may stand as the subject of an identity call (workload subject), when declared. */
   readonly subjectWorkloads?: readonly string[];
 }
 
 /** The module caller of a descriptor as the pinned artifact records it: the decoded carrier, minus its reason. */
-const stageActorOf = (actor: AccessActor): StageAccessActor =>
-  actor.subjectWorkloads === undefined
-    ? { callers: actor.callers, subject: actor.subject }
-    : { callers: actor.callers, subject: actor.subject, subjectWorkloads: actor.subjectWorkloads };
+const stageActorOf = (actor: AccessActor): StageAccessActor => {
+  if (actor.subjectWorkloads === undefined) {
+    return { callers: actor.callers, subject: actor.subject };
+  }
+  const withWorkloads = { callers: actor.callers, subject: actor.subject, subjectWorkloads: actor.subjectWorkloads };
+  return actor.subjectWorkloadCallers === undefined
+    ? withWorkloads
+    : { ...withWorkloads, subjectWorkloadCallers: actor.subjectWorkloadCallers };
+};
 
 /** A catalog descriptor, plus the module caller a call to it declares when it carries one. */
-export type StageAccessDescriptor = AccessCatalogDescriptor & { readonly actor?: StageAccessActor };
+export type StageAccessDescriptor = AccessCatalogDescriptor & {
+  readonly accessDeclaration: NonNullable<AccessCatalogDescriptor['accessDeclaration']>;
+  readonly actor?: StageAccessActor;
+};
 
 /**
  * One carrier as a catalog descriptor, or `null` when it is deliberately not a catalog entry: the
@@ -128,7 +142,11 @@ const descriptorOf = (
   carrier: ScannedCarrier,
   callerAppIds: ReadonlySet<string>,
 ): Result.Result<
-  { readonly descriptor: StageAccessDescriptor; readonly moduleId: string } | null,
+  {
+    readonly declaredWorkloadKeys: readonly WorkloadKey[];
+    readonly descriptor: StageAccessDescriptor | null;
+    readonly moduleId: string;
+  },
   StageAccessCatalogError
 > =>
   Result.gen(function* descriptorGen() {
@@ -153,11 +171,19 @@ const descriptorOf = (
               ),
             ),
           );
-    // The `rights` rule reads the carrier's own declaration, so the actor is decoded beside it.
+    const workload =
+      carrier.accessWorkload === null
+        ? undefined
+        : yield* decodeAccessWorkload(carrier.accessWorkload, entrypoint).pipe(
+            Result.mapError((error) =>
+              refusal('stage_access_catalog_scan_refused', `${carrierRef(carrier)}: ${error.reason}`),
+            ),
+          );
+    // The `rights` rule needs its own declaration; a workload-only actor must carry neither it nor a workload marker.
     const actor =
       carrier.accessActor === null
         ? undefined
-        : yield* decodeCarrierActor(carrier.accessActor, entrypoint, accessDeclaration, callerAppIds).pipe(
+        : yield* decodeCarrierActor(carrier.accessActor, entrypoint, accessDeclaration, callerAppIds, workload).pipe(
             Result.mapError((reason) =>
               refusal(
                 'stage_access_catalog_scan_refused',
@@ -165,9 +191,18 @@ const descriptorOf = (
               ),
             ),
           );
+    const declaredWorkloadKeys = [...(workload?.workloads ?? []), ...(actor?.subjectWorkloads ?? [])];
     if (accessDeclaration === undefined) {
-      // Not a catalog entry here; an undeclared `protected` entrypoint is settled after the whole scan.
-      return null;
+      if ((carrier.accessFieldGroups?.length ?? 0) > 0) {
+        return yield* Result.fail(
+          refusal(
+            'stage_access_catalog_scan_refused',
+            `${carrierRef(carrier)}: accessFieldGroups require the descriptor to declare its own accessDeclaration`,
+          ),
+        );
+      }
+      // A validated actor-only or workload-only carrier grants no catalog cells.
+      return { declaredWorkloadKeys, descriptor: null, moduleId: entrypoint.moduleKey };
     }
     const groups = yield* decodeAccessFieldGroups(
       carrier.accessFieldGroups ?? [],
@@ -186,6 +221,7 @@ const descriptorOf = (
         ? { accessDeclaration, entrypoint }
         : { accessDeclaration, accessFieldGroups: groups, entrypoint };
     return {
+      declaredWorkloadKeys,
       descriptor: actor === undefined ? withGroups : { ...withGroups, actor: stageActorOf(actor) },
       moduleId: entrypoint.moduleKey,
     };
@@ -220,13 +256,14 @@ export const stageAccessModulesFromSources = (
     const moduleOrder: string[] = [];
     const descriptorsByModule = new Map<string, StageAccessDescriptor[]>();
     const seen = new Set<string>();
+    const declaredWorkloadKeys = new Set<WorkloadKey>();
     for (const carrier of carriers) {
       const declared = descriptorOf(carrier, callerAppIds);
       if (Result.isFailure(declared)) {
         return yield* declared.failure;
       }
-      if (declared.success === null) {
-        continue;
+      for (const key of declared.success.declaredWorkloadKeys) {
+        declaredWorkloadKeys.add(key);
       }
       // A protected entrypoint that no copy of it declares is a gap in the composition, not a gap to skip:
       // releasing nothing for it would deny the tenant's owner a capability the composition serves (O62.5).
@@ -241,9 +278,14 @@ export const stageAccessModulesFromSources = (
           `${carrierRef(carrier)}: a protected entrypoint carries neither accessDeclaration, accessWorkload nor accessActor`,
         );
       }
-      if (!seen.has(entrypointIdOf(carrier))) {
-        seen.add(entrypointIdOf(carrier));
-        const { descriptor, moduleId } = declared.success;
+      const { descriptor, moduleId } = declared.success;
+      if (descriptor === null) {
+        continue;
+      }
+      // Navigation and its destination page may share an entrypoint but declare distinct cells.
+      const declarationId = `${entrypointIdOf(carrier)}:${descriptor.accessDeclaration.key}`;
+      if (!seen.has(declarationId)) {
+        seen.add(declarationId);
         const descriptors = descriptorsByModule.get(moduleId);
         if (descriptors === undefined) {
           moduleOrder.push(moduleId);
@@ -265,7 +307,11 @@ export const stageAccessModulesFromSources = (
         `${collected.failure.code}: ${collected.failure.reason}`,
       );
     }
-    return { modules, scannedFiles: sources.length };
+    return {
+      declaredWorkloadKeys: EffectArray.sort(declaredWorkloadKeys, Order.String),
+      modules,
+      scannedFiles: sources.length,
+    };
   });
 
 /** Every source under one root the catalog scan reads: the same walk the report makes. */
@@ -324,7 +370,8 @@ export const withOwnerLocalImportSources = (
     const path = yield* Path.Path;
     const known = new Set(sources.map(({ file }) => file));
     const support: AccessCatalogSource[] = [];
-    for (const { file, source } of sources) {
+    const pending = [...sources];
+    for (const { file, source } of pending) {
       for (const target of ownerLocalImportTargets(source, file)) {
         if (known.has(target)) {
           continue;
@@ -332,7 +379,9 @@ export const withOwnerLocalImportSources = (
         known.add(target);
         const absolute = path.join(root, target);
         if (yield* fileSystem.exists(absolute)) {
-          support.push({ file: target, source: yield* fileSystem.readFileString(absolute, 'utf-8') });
+          const dependency = { file: target, source: yield* fileSystem.readFileString(absolute, 'utf-8') };
+          support.push(dependency);
+          pending.push(dependency);
         }
       }
     }

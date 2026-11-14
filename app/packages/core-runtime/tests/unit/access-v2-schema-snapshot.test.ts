@@ -128,6 +128,19 @@ it('declares exactly the reference v2 vocabulary, keyed by the access_ prefix', 
   }
 });
 
+it('keeps resource reads conjunctive with module access and excludes retired People permissions', () => {
+  const resource = /^definition resource \{\n(?<body>[^}]+)\n\}/mu.exec(schema)?.groups?.['body'];
+  expect(resource).toBeDefined();
+  expect(resource?.split('\n').map((line) => line.trim())).toEqual([
+    'relation module: module_access',
+    'relation reader: principal',
+    'relation writer: principal',
+    'permission read = reader & module->access',
+    'permission write = writer & module->access',
+  ]);
+  expect(schema).not.toMatch(/\b(?:read_all|write_all|read_people|people_company|people_tenant)\b/u);
+});
+
 it('pins every v2 relation to the human or agent types the reference allows', () => {
   const ALLOWED = new Set([
     'access_assignment',

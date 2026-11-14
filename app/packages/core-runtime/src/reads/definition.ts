@@ -1,28 +1,25 @@
+/* oxlint-disable anti-slop/no-unknown-parameters, anti-slop/no-chained-type-assertions, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion -- Opaque declarations validate and freeze finite keys at their authoring boundary; expires: 2027-03-31. */
 import {
   isOwnerPermissionAccessTargetMetadataValid,
   isOwnerPermissionContract,
 } from '../permissions/owner-permission-contract.ts';
-import { ReadPermissionUnavailable } from './errors.ts';
-/* oxlint-disable anti-slop/no-chained-type-assertions, anti-slop/require-safety-comment-for-type-assertion, anti-slop/no-unknown-parameters, typescript/no-unsafe-type-assertion -- Opaque declarations validate and freeze finite keys before their one private representation cast; expires: 2027-03-31. */
-import { Option, Predicate, Schema } from 'effect';
-import type { Effect } from 'effect';
-
 import { declaredAccessCarrier } from '../authorization/access-declaration.ts';
 import { fieldReadGroupSchemaIssue } from '../authorization/field-group-paths.ts';
 import type {
+  AccessActor,
+  AccessActorInput,
   AccessDeclaration,
   AccessDeclarationInput,
   AccessFieldGroup,
   AccessFieldGroupInput,
   AccessTarget,
-  AccessActor,
-  AccessActorInput,
   AccessWorkload,
   AccessWorkloadInput,
 } from '../authorization/access-declaration.ts';
+import { withOptional } from '../access/decision/optional.ts';
 import type { ListAccessPredicate } from '../access/decision/list-access.ts';
-import type { AccessDecisionService } from '../access/enforcement/contract.ts';
 import type { OwnerAccessFacts } from '../access/enforcement/owner-overlay.ts';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import type { ActionPolicy } from '../actions/policy.ts';
 import { isActionPolicy } from '../actions/policy.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
@@ -34,7 +31,15 @@ import type { OperationContextUnavailable } from '../operations/errors.ts';
 import type { ResourceAccessTarget } from '../permissions/context-access.ts';
 import type { OwnerPermissionAccessTarget, OwnerPermissionContract } from '../permissions/owner-permission-contract.ts';
 import type { LegalEntityPermissionKey, TenantPermissionKey } from '../permissions/context-permissions.ts';
-import type { ReadHandlerContext, ReadHandlerResult } from './context.ts';
+import { ReadPermissionUnavailable } from './errors.ts';
+import type {
+  ReadFinishContext,
+  ReadHandlerContext,
+  ReadHandlerResult,
+  ReadLoadContext,
+  ReadOwnerTransaction,
+  ReadPrepareContext,
+} from './context.ts';
 
 const registrationMarker: unique symbol = Symbol('@app/core-runtime/reads/registration');
 const resourcePermissionDeclarationMarker: unique symbol = Symbol('@app/core-runtime/reads/resource-permission');
@@ -274,6 +279,7 @@ export type ReadResultPermissionTargetResolver<Result> = (
   result: Result,
   scope: OperationalScope,
 ) => readonly ResourceAccessTarget[];
+
 export interface ReadResourcePermissionTarget {
   readonly permission: 'read';
   readonly resource: ResourceAccessTarget;
@@ -378,16 +384,25 @@ const hasValidConditionalBranch = (branch: {
   branch.requiredKinds.every((kind) => READ_CONDITIONAL_PERMISSION_REQUIREMENTS.includes(kind)) &&
   Predicate.isFunction(branch.resolve);
 
+const hasConditionalBranch = <Input, Selected extends Readonly<{ readonly kind: string }>>(
+  branches: ReadConditionalPermissionBranches<Input, Selected>,
+  key: string,
+): key is Selected['kind'] =>
+  Schema.is(Schema.String.check(Schema.makeFilter((value: string) => Object.hasOwn(branches, value))))(key);
+
 const validateConditionalBranches = <Input, Selected extends Readonly<{ readonly kind: string }>>(
   branches: ReadConditionalPermissionBranches<Input, Selected>,
-): readonly string[] => {
-  const branchTags = Object.keys(branches);
+): readonly [string, string, ...string[]] => {
+  const [firstTag, secondTag, ...remainingTags] = Object.keys(branches);
+  if (firstTag === undefined || secondTag === undefined) {
+    return failReadDefinition('Conditional Read permission branches must be finite and explicit');
+  }
+  const branchTags = [firstTag, secondTag, ...remainingTags] as const;
   if (!hasValidConditionalBranchTags(branchTags)) {
     return failReadDefinition('Conditional Read permission branches must be finite and explicit');
   }
-  for (const branchTag of branchTags) {
-    const branch = branches[branchTag as Selected['kind']];
-    if (!hasValidConditionalBranch(branch)) {
+  for (const branchTag in branches) {
+    if (hasConditionalBranch(branches, branchTag) && !hasValidConditionalBranch(branches[branchTag])) {
       return failReadDefinition('Conditional Read permission branches must declare exact bounded requirements');
     }
   }
@@ -433,7 +448,7 @@ export const defineReadConditionalPermission = <Input, Selected extends Readonly
       ? { branches, select: input.select }
       : { branches, ownerContract: input.ownerContract, select: input.select };
   return ReadPrivateStorage.create(Object.freeze(privatePlan), {
-    branchTags: Object.freeze([...branchTags]) as readonly [string, string, ...string[]],
+    branchTags: Object.freeze([...branchTags]),
     [conditionalPermissionDeclarationMarker]: true as const,
     kind: 'conditional' as const,
     permissionKey: input.permissionKey,
@@ -538,20 +553,178 @@ export type ReadServiceFactory<Services, Requirements = never> = (
    * and an owner factory that both an Action and a read build simply declares no fourth parameter.
    */
   listAccess?: ListAccessPredicate,
-  /** The transaction-bound access gate is supplied only to registered Shell system reads. */
-  shellAccess?: Pick<AccessDecisionService, 'decide' | 'decideMany' | 'list'>,
 ) => Effect.Effect<Services, OperationContextUnavailable, Requirements>;
 
+/**
+ * Owner work before the transaction opens: SpiceDB grants and other remote calls. It has no database access,
+ * so a slow authorization round trip never holds a pooled connection.
+ */
+export type ReadPrepare<Input, Prepared, Failure = never, Requirements = never> = (
+  input: Input,
+  context: ReadPrepareContext,
+) => Effect.Effect<Prepared, Failure, Requirements>;
+
+/** Owner work inside the scoped transaction: database reads only. */
+/** A Read whose owner work is one scoped database step; equivalent to the pipeline `{ load: handler }`. */
 export type ReadHandler<
   InputSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Services,
-  Error,
+  Failure,
   Requirements = never,
 > = (
   input: InputSchema['Type'],
   context: ReadHandlerContext<Services>,
-) => Effect.Effect<ReadHandlerResult<ResultSchema['Type']>, Error, Requirements>;
+) => Effect.Effect<ReadHandlerResult<ResultSchema['Type']>, Failure, Requirements>;
+
+export type ReadLoad<Input, Services, Prepared, Loaded, Failure = never, Requirements = never> = (
+  input: Input,
+  context: ReadLoadContext<Services, Prepared>,
+) => Effect.Effect<Loaded, Failure, Requirements>;
+
+/**
+ * Owner work after commit: decoding, row filtering through SpiceDB, remote owner calls, and shaping the result.
+ * An evaluation that must read owner state between remote calls opens a short `context.transaction` per read.
+ */
+export type ReadFinish<Input, Prepared, Loaded, Result, Failure = never, Requirements = never> = (
+  input: Input,
+  context: ReadFinishContext<Prepared, Loaded>,
+) => Effect.Effect<ReadHandlerResult<Result>, Failure, Requirements>;
+
+/** A Read whose transaction step already produces the result. */
+interface PreparedReadLoadPipeline<
+  Input,
+  Result,
+  Services,
+  Prepared,
+  Failure,
+  Requirements,
+  PrepareError = never,
+  PrepareRequirements = never,
+> {
+  readonly finish?: undefined;
+  readonly load: ReadLoad<Input, Services, Prepared, ReadHandlerResult<Result>, Failure, Requirements>;
+  readonly prepare: ReadPrepare<Input, Prepared, PrepareError, PrepareRequirements>;
+}
+
+interface UnpreparedReadLoadPipeline<Input, Result, Services, Failure, Requirements> {
+  readonly finish?: undefined;
+  readonly load: ReadLoad<Input, Services, undefined, ReadHandlerResult<Result>, Failure, Requirements>;
+  readonly prepare?: undefined;
+}
+
+export type ReadLoadPipeline<
+  Input,
+  Result,
+  Services,
+  Prepared,
+  Failure,
+  Requirements,
+  PrepareError = never,
+  PrepareRequirements = never,
+> =
+  | PreparedReadLoadPipeline<
+      Input,
+      Result,
+      Services,
+      Prepared,
+      Failure,
+      Requirements,
+      PrepareError,
+      PrepareRequirements
+    >
+  | UnpreparedReadLoadPipeline<Input, Result, Services, Failure, Requirements>;
+
+/** A Read that decodes and filters its loaded rows after the transaction commits. */
+interface PreparedReadFinishPipeline<
+  Input,
+  Result,
+  Services,
+  Prepared,
+  Loaded,
+  Failure,
+  Requirements,
+  PrepareError = never,
+  PrepareRequirements = never,
+  FinishError = never,
+  FinishRequirements = never,
+> {
+  readonly finish: ReadFinish<Input, Prepared, Loaded, Result, FinishError, FinishRequirements>;
+  readonly load: ReadLoad<Input, Services, Prepared, Loaded, Failure, Requirements>;
+  readonly prepare: ReadPrepare<Input, Prepared, PrepareError, PrepareRequirements>;
+}
+
+interface UnpreparedReadFinishPipeline<
+  Input,
+  Result,
+  Services,
+  Loaded,
+  Failure,
+  Requirements,
+  FinishError,
+  FinishRequirements,
+> {
+  readonly finish: ReadFinish<Input, undefined, Loaded, Result, FinishError, FinishRequirements>;
+  readonly load: ReadLoad<Input, Services, undefined, Loaded, Failure, Requirements>;
+  readonly prepare?: undefined;
+}
+
+export type ReadFinishPipeline<
+  Input,
+  Result,
+  Services,
+  Prepared,
+  Loaded,
+  Failure,
+  Requirements,
+  PrepareError = never,
+  PrepareRequirements = never,
+  FinishError = never,
+  FinishRequirements = never,
+> =
+  | PreparedReadFinishPipeline<
+      Input,
+      Result,
+      Services,
+      Prepared,
+      Loaded,
+      Failure,
+      Requirements,
+      PrepareError,
+      PrepareRequirements,
+      FinishError,
+      FinishRequirements
+    >
+  | UnpreparedReadFinishPipeline<
+      Input,
+      Result,
+      Services,
+      Loaded,
+      Failure,
+      Requirements,
+      FinishError,
+      FinishRequirements
+    >;
+
+/** What Core hands the owner pipeline: the prepare context plus the after-commit owner transaction. */
+export interface ReadOwnerStepsContext extends ReadPrepareContext {
+  readonly transaction: ReadOwnerTransaction;
+}
+
+/**
+ * The owner pipeline as Core runs it, with the owner's intermediate types closed over: `prepare` runs before
+ * the transaction and yields the transaction step; that yields the after-commit step.
+ */
+export type ReadOwnerStages<Input, Result, Services, Failure, Requirements> = (
+  input: Input,
+  context: ReadOwnerStepsContext,
+) => Effect.Effect<
+  (
+    services: Services,
+  ) => Effect.Effect<Effect.Effect<ReadHandlerResult<Result>, Failure, Requirements>, Failure, Requirements>,
+  Failure,
+  Requirements
+>;
 
 export interface ReadDescriptorValidationInput {
   readonly accessActor?: AccessActorInput;
@@ -615,8 +788,9 @@ const validateReadAccessBinding = (
 };
 
 /**
- * Owner facts serve the capability a descriptor declares (O70): a resolver without a declaration
- * would hand the overlay records for a surface no gate decided, so it is an authoring mistake.
+ * Owner facts serve the carrier a descriptor declares (O70): its capability, or its own workload. A resolver without
+ * either would hand the overlay records for a surface no gate decided, so it is an authoring mistake. The overlay they
+ * feed can only refuse, so a workload's owner rule (an end customer's session, say) narrows and never widens.
  */
 const validateReadOwnerFactsBinding = (
   descriptor: ReadDescriptorValidationInput,
@@ -629,8 +803,10 @@ const validateReadOwnerFactsBinding = (
   if (!Predicate.isFunction(accessOwnerFacts)) {
     return failReadDefinition('Read access owner facts must be a resolver function');
   }
-  if (declaration === undefined) {
-    return failReadDefinition('Read accessOwnerFacts requires the descriptor to declare its own accessDeclaration');
+  if (declaration === undefined && descriptor.accessWorkload === undefined) {
+    return failReadDefinition(
+      'Read accessOwnerFacts requires the descriptor to declare its own accessDeclaration or accessWorkload',
+    );
   }
 };
 
@@ -738,15 +914,16 @@ type ReadRegistrationPrivateValue<
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
-  Error,
+  Failure,
   Requirements = never,
 > = Readonly<{
-  readonly handler: ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>;
+  readonly handler: ReadHandler<InputSchema, ResultSchema, Services, Failure, Requirements>;
   /** Absent for a v2 `protected` read, which resolves its record through `accessTarget` (O62). */
   readonly permissionTargetResolver: ReadPermissionTargetDeclaration<InputSchema['Type']> | undefined;
   readonly policies: readonly ActionPolicy<InputSchema['Type'], Owner>[];
   readonly resultPermissionTargetResolver?: ReadResultPermissionTargetResolver<ResultSchema['Type']>;
   readonly serviceFactory: ReadServiceFactory<Services, Requirements>;
+  readonly stages: ReadOwnerStages<InputSchema['Type'], ResultSchema['Type'], Services, Failure, Requirements>;
 }>;
 
 export type ReadRegistration<
@@ -754,16 +931,16 @@ export type ReadRegistration<
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
-  Error,
+  Failure,
   Requirements = never,
   DomainErrorSchema extends Schema.ConstraintDecoder<{
     readonly _tag: string;
   }> = typeof Schema.Never,
 > = ReadPrivateStorage<
-  ReadRegistrationPrivateValue<InputSchema, ResultSchema, Owner, Services, Error, Requirements>
+  ReadRegistrationPrivateValue<InputSchema, ResultSchema, Owner, Services, Failure, Requirements>
 > & {
   readonly _domainError?: DomainErrorSchema['Type'];
-  readonly _error?: Error;
+  readonly _error?: Failure;
   readonly _requirements?: Requirements;
   readonly _services?: Services;
   readonly descriptor: Readonly<DeclaredReadDescriptor<InputSchema, ResultSchema, Owner, DomainErrorSchema>>;
@@ -894,6 +1071,7 @@ const validateReadVocabulary = <
       v2Protected,
     ) ||
     (descriptor.accessKind === 'search' && !v2Protected && !Predicate.isFunction(resultPermissionTargetResolver)) ||
+    Object.hasOwn(descriptor, 'resultAuthorization') ||
     !hasValidReadPermissionResolvers(
       conditional,
       permissionTargetResolver,
@@ -907,12 +1085,248 @@ const validateReadVocabulary = <
   }
 };
 
-export const defineRead = <
+type ReadDefinitionTail<
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  Owner extends string,
+  Services,
+  Requirements,
+> = readonly [
+  serviceFactory: ReadServiceFactory<Services, Requirements>,
+  /**
+   * The legacy positional permission-target resolver. A v2 `protected` read omits it and declares
+   * `accessTarget` instead (O62). The parameter disappears with the legacy kinds (C03b).
+   */
+  permissionTargetResolver?:
+    | ReadPermissionTargetDeclaration<InputSchema['Type']>
+    | ReadOwnerPermissionDeclaration<InputSchema['Type']>
+    | undefined,
+  resultPermissionTargetResolver?: ReadResultPermissionTargetResolver<ResultSchema['Type']>,
+  executablePolicies?: readonly ActionPolicy<InputSchema['Type'], NoInfer<Owner>>[],
+];
+
+/** The transaction step of a prepared pipeline: owner `load`, then whatever runs after commit. */
+const transactionStep =
+  <Input, Services, Prepared, Loaded, Failure, Requirements, Next>(step: {
+    readonly context: ReadPrepareContext;
+    readonly input: Input;
+    readonly load: ReadLoad<Input, Services, Prepared, Loaded, Failure, Requirements>;
+    readonly next: (loaded: Loaded) => Next;
+    readonly prepared: Prepared;
+  }) =>
+  (services: Services) =>
+    Effect.suspend(() => step.load(step.input, { ...step.context, prepared: step.prepared, services })).pipe(
+      Effect.map(step.next),
+    );
+
+/** One channel (failures or requirements) of all three owner steps. */
+type StepChannels<Load, Prepare, Finish> = Finish | Load | Prepare;
+
+/** The step after commit: owner `finish` over what `prepare` established and what `load` read. */
+const afterCommitStep =
+  <Input, Prepared, Loaded, Result, Failure, Requirements>(step: {
+    readonly context: ReadPrepareContext;
+    readonly finish: ReadFinish<Input, Prepared, Loaded, Result, Failure, Requirements>;
+    readonly input: Input;
+    readonly prepared: Prepared;
+    readonly transaction: ReadOwnerTransaction;
+  }) =>
+  (loaded: Loaded) =>
+    Effect.suspend(() =>
+      step.finish(step.input, { ...step.context, loaded, prepared: step.prepared, transaction: step.transaction }),
+    );
+
+/** Owner `prepare` and `load` see only the prepare context; the owner transaction belongs to `finish`. */
+const prepareContextOf = ({ transaction: _transaction, ...context }: ReadOwnerStepsContext): ReadPrepareContext =>
+  context;
+
+const loadPipelineStages =
+  <Input, Result, Services, Prepared, Failure, Requirements, PrepareError, PrepareRequirements>(
+    pipeline: ReadLoadPipeline<
+      Input,
+      Result,
+      Services,
+      Prepared,
+      Failure,
+      Requirements,
+      PrepareError,
+      PrepareRequirements
+    >,
+  ): ReadOwnerStages<Input, Result, Services, Failure | PrepareError, Requirements | PrepareRequirements> =>
+  (input, stepsContext) => {
+    const context = prepareContextOf(stepsContext);
+    if (pipeline.prepare === undefined) {
+      const prepared = pipeline.prepare;
+      return Effect.succeed(transactionStep({ context, input, load: pipeline.load, next: Effect.succeed, prepared }));
+    }
+    const { prepare } = pipeline;
+    return Effect.suspend(() => prepare(input, context)).pipe(
+      Effect.map((prepared) =>
+        transactionStep({ context, input, load: pipeline.load, next: Effect.succeed, prepared }),
+      ),
+    );
+  };
+
+const finishPipelineStages =
+  <
+    Input,
+    Result,
+    Services,
+    Prepared,
+    Loaded,
+    Failure,
+    Requirements,
+    PrepareError,
+    PrepareRequirements,
+    FinishError,
+    FinishRequirements,
+  >(
+    pipeline: ReadFinishPipeline<
+      Input,
+      Result,
+      Services,
+      Prepared,
+      Loaded,
+      Failure,
+      Requirements,
+      PrepareError,
+      PrepareRequirements,
+      FinishError,
+      FinishRequirements
+    >,
+  ): ReadOwnerStages<
+    Input,
+    Result,
+    Services,
+    StepChannels<Failure, PrepareError, FinishError>,
+    StepChannels<Requirements, PrepareRequirements, FinishRequirements>
+  > =>
+  (input, stepsContext) => {
+    const context = prepareContextOf(stepsContext);
+    if (pipeline.prepare === undefined) {
+      const prepared = pipeline.prepare;
+      return Effect.succeed(
+        transactionStep({
+          context,
+          input,
+          load: pipeline.load,
+          next: afterCommitStep({
+            context,
+            finish: pipeline.finish,
+            input,
+            prepared,
+            transaction: stepsContext.transaction,
+          }),
+          prepared,
+        }),
+      );
+    }
+    const { prepare } = pipeline;
+    return Effect.suspend(() => prepare(input, context)).pipe(
+      Effect.map((prepared) =>
+        transactionStep({
+          context,
+          input,
+          load: pipeline.load,
+          next: afterCommitStep({
+            context,
+            finish: pipeline.finish,
+            input,
+            prepared,
+            transaction: stepsContext.transaction,
+          }),
+          prepared,
+        }),
+      ),
+    );
+  };
+
+type ReadPipelineFailure<Failure, PrepareError, FinishError> = Failure | PrepareError | FinishError;
+type ReadPipelineRequirements<Requirements, PrepareRequirements, FinishRequirements> =
+  | Requirements
+  | PrepareRequirements
+  | FinishRequirements;
+
+const noOwnerTransaction: ReadOwnerTransaction = () =>
+  Effect.die('These owner steps run without Core; pass `transaction` to give finish its owner transaction');
+
+type AnyReadPipeline<
+  Input,
+  Result,
+  Services,
+  Prepared,
+  Loaded,
+  Failure,
+  Requirements,
+  PrepareError,
+  PrepareRequirements,
+  FinishError,
+  FinishRequirements,
+> =
+  | ReadFinishPipeline<
+      Input,
+      Result,
+      Services,
+      Prepared,
+      Loaded,
+      Failure,
+      Requirements,
+      PrepareError,
+      PrepareRequirements,
+      FinishError,
+      FinishRequirements
+    >
+  | ReadLoadPipeline<Input, Result, Services, Prepared, Failure, Requirements, PrepareError, PrepareRequirements>;
+
+/**
+ * Defines a governed Read. Its owner pipeline runs in three steps around one short transaction:
+ * `prepare` (SpiceDB and other remote calls, no database), `load` (scoped database reads only), and
+ * `finish` (decoding and SpiceDB row filtering after commit). Without `finish`, `load` yields the result.
+ * Write the steps in that order: TypeScript infers each step's context from the step before it.
+ */
+export function defineRead<
   InputSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   const Owner extends string,
   Services,
-  Error,
+  Failure,
+  Requirements,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{
+    readonly _tag: string;
+  }> = typeof Schema.Never,
+  Prepared = undefined,
+  PrepareError = never,
+  PrepareRequirements = never,
+>(
+  descriptor: ReadDescriptor<InputSchema, ResultSchema, Owner, DomainErrorSchema>,
+  ...definition: readonly [
+    pipeline: PreparedReadLoadPipeline<
+      InputSchema['Type'],
+      ResultSchema['Type'],
+      Services,
+      Prepared,
+      Failure,
+      Requirements,
+      PrepareError,
+      PrepareRequirements
+    >,
+    ...ReadDefinitionTail<InputSchema, ResultSchema, Owner, Services, Requirements>,
+  ]
+): ReadRegistration<
+  InputSchema,
+  ResultSchema,
+  Owner,
+  Services,
+  Failure | PrepareError,
+  Requirements | PrepareRequirements,
+  DomainErrorSchema
+>;
+export function defineRead<
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  const Owner extends string,
+  Services,
+  Failure,
   Requirements,
   DomainErrorSchema extends Schema.ConstraintDecoder<{
     readonly _tag: string;
@@ -920,23 +1334,160 @@ export const defineRead = <
 >(
   descriptor: ReadDescriptor<InputSchema, ResultSchema, Owner, DomainErrorSchema>,
   ...definition: readonly [
-    handler: ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>,
-    serviceFactory: ReadServiceFactory<Services, Requirements>,
-    /**
-     * The legacy positional permission-target resolver. A v2 `protected` read omits it and declares
-     * `accessTarget` instead (O62). The parameter disappears with the legacy kinds (C03b).
-     */
-    permissionTargetResolver?:
-      | ReadConditionalPermissionDeclaration<InputSchema['Type']>
-      | ReadOwnerPermissionDeclaration<InputSchema['Type']>
-      | ReadPermissionTargetResolver<InputSchema['Type']>
-      | undefined,
-    resultPermissionTargetResolver?: ReadResultPermissionTargetResolver<ResultSchema['Type']>,
-    executablePolicies?: readonly ActionPolicy<InputSchema['Type'], NoInfer<Owner>>[],
+    pipeline: UnpreparedReadLoadPipeline<InputSchema['Type'], ResultSchema['Type'], Services, Failure, Requirements>,
+    ...ReadDefinitionTail<InputSchema, ResultSchema, Owner, Services, Requirements>,
   ]
-): ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema> => {
-  const [handler, serviceFactory, declaredPermissionResolver, resultPermissionTargetResolver, executablePolicies = []] =
-    definition;
+): ReadRegistration<InputSchema, ResultSchema, Owner, Services, Failure, Requirements, DomainErrorSchema>;
+export function defineRead<
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  const Owner extends string,
+  Services,
+  Failure,
+  Requirements,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{
+    readonly _tag: string;
+  }> = typeof Schema.Never,
+  Prepared = undefined,
+  Loaded = unknown,
+  PrepareError = never,
+  PrepareRequirements = never,
+  FinishError = never,
+  FinishRequirements = never,
+>(
+  descriptor: ReadDescriptor<InputSchema, ResultSchema, Owner, DomainErrorSchema>,
+  ...definition: readonly [
+    pipeline: PreparedReadFinishPipeline<
+      InputSchema['Type'],
+      ResultSchema['Type'],
+      Services,
+      Prepared,
+      Loaded,
+      Failure,
+      Requirements,
+      PrepareError,
+      PrepareRequirements,
+      FinishError,
+      FinishRequirements
+    >,
+    ...ReadDefinitionTail<InputSchema, ResultSchema, Owner, Services, Requirements>,
+  ]
+): ReadRegistration<
+  InputSchema,
+  ResultSchema,
+  Owner,
+  Services,
+  ReadPipelineFailure<Failure, PrepareError, FinishError>,
+  ReadPipelineRequirements<Requirements, PrepareRequirements, FinishRequirements>,
+  DomainErrorSchema
+>;
+export function defineRead<
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  const Owner extends string,
+  Services,
+  Failure,
+  Requirements,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{
+    readonly _tag: string;
+  }> = typeof Schema.Never,
+  Loaded = unknown,
+  FinishError = never,
+  FinishRequirements = never,
+>(
+  descriptor: ReadDescriptor<InputSchema, ResultSchema, Owner, DomainErrorSchema>,
+  ...definition: readonly [
+    pipeline: UnpreparedReadFinishPipeline<
+      InputSchema['Type'],
+      ResultSchema['Type'],
+      Services,
+      Loaded,
+      Failure,
+      Requirements,
+      FinishError,
+      FinishRequirements
+    >,
+    ...ReadDefinitionTail<InputSchema, ResultSchema, Owner, Services, Requirements>,
+  ]
+): ReadRegistration<
+  InputSchema,
+  ResultSchema,
+  Owner,
+  Services,
+  Failure | FinishError,
+  Requirements | FinishRequirements,
+  DomainErrorSchema
+>;
+/** Defines a governed Read whose owner work is one handler inside the Read's short scoped transaction. */
+export function defineRead<
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  const Owner extends string,
+  Services,
+  Failure,
+  Requirements,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{
+    readonly _tag: string;
+  }> = typeof Schema.Never,
+>(
+  descriptor: ReadDescriptor<InputSchema, ResultSchema, Owner, DomainErrorSchema>,
+  ...definition: readonly [
+    handler: ReadHandler<InputSchema, ResultSchema, Services, Failure, Requirements>,
+    ...ReadDefinitionTail<InputSchema, ResultSchema, Owner, Services, Requirements>,
+  ]
+): ReadRegistration<InputSchema, ResultSchema, Owner, Services, Failure, Requirements, DomainErrorSchema>;
+export function defineRead<
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  const Owner extends string,
+  Services,
+  Failure,
+  Requirements,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{
+    readonly _tag: string;
+  }>,
+  Prepared,
+  Loaded,
+  PrepareError,
+  PrepareRequirements,
+  FinishError,
+  FinishRequirements,
+>(
+  descriptor: ReadDescriptor<InputSchema, ResultSchema, Owner, DomainErrorSchema>,
+  ...definition: readonly [
+    pipeline:
+      | AnyReadPipeline<
+          InputSchema['Type'],
+          ResultSchema['Type'],
+          Services,
+          Prepared,
+          Loaded,
+          Failure,
+          Requirements,
+          PrepareError,
+          PrepareRequirements,
+          FinishError,
+          FinishRequirements
+        >
+      | ReadHandler<InputSchema, ResultSchema, Services, Failure, Requirements>,
+    ...ReadDefinitionTail<InputSchema, ResultSchema, Owner, Services, Requirements>,
+  ]
+): ReadRegistration<
+  InputSchema,
+  ResultSchema,
+  Owner,
+  Services,
+  ReadPipelineFailure<Failure, PrepareError, FinishError>,
+  ReadPipelineRequirements<Requirements, PrepareRequirements, FinishRequirements>,
+  DomainErrorSchema
+> {
+  const [
+    ownerWork,
+    serviceFactory,
+    declaredPermissionResolver,
+    resultPermissionTargetResolver,
+    executablePolicies = [],
+  ] = definition;
   const {
     accessActor: _authoredActor,
     accessDeclaration: _authoredDeclaration,
@@ -966,6 +1517,56 @@ export const defineRead = <
   ) {
     return failReadDefinition('Read policies must be an explicit array of Policy references');
   }
+  const pipeline: AnyReadPipeline<
+    InputSchema['Type'],
+    ResultSchema['Type'],
+    Services,
+    Prepared,
+    Loaded,
+    Failure,
+    Requirements,
+    PrepareError,
+    PrepareRequirements,
+    FinishError,
+    FinishRequirements
+  > = Predicate.isFunction(ownerWork) ? { load: ownerWork } : ownerWork;
+  if (
+    !Predicate.isFunction(pipeline.load) ||
+    !(pipeline.prepare === undefined || Predicate.isFunction(pipeline.prepare))
+  ) {
+    return failReadDefinition('Read pipeline steps must be functions');
+  }
+  const stages = pipeline.finish === undefined ? loadPipelineStages(pipeline) : finishPipelineStages(pipeline);
+  // The composed owner steps of a staged Read, and the single-step handler of a Read whose owner work is
+  // one scoped database step. A staged Read keeps `prepare`/`finish` around the transaction (D14).
+  const handler: ReadHandler<
+    InputSchema,
+    ResultSchema,
+    Services,
+    ReadPipelineFailure<Failure, PrepareError, FinishError>,
+    ReadPipelineRequirements<Requirements, PrepareRequirements, FinishRequirements>
+  > = (input, context) =>
+    Effect.suspend(() =>
+      stages(
+        input,
+        withOptional(
+          withOptional(
+            {
+              readKey: context.readKey,
+              scope: context.scope,
+              transaction: noOwnerTransaction,
+            },
+            'deniedFieldPaths',
+            context.deniedFieldPaths,
+          ),
+          'listAccess',
+          context.listAccess,
+        ),
+      ),
+    ).pipe(
+      Effect.flatMap((load) => load(context.services)),
+      Effect.flatten,
+    );
   const carriers = declaredAccessCarrier(descriptor);
   const fieldGroupIssue = fieldReadGroupSchemaIssue(carriers.accessFieldGroups ?? [], descriptor.resultSchema);
   if (fieldGroupIssue !== undefined) {
@@ -979,11 +1580,19 @@ export const defineRead = <
     evidencePolicy: Object.freeze({ ...descriptor.evidencePolicy }),
     policies: Object.freeze(descriptor.policies.map((reference) => Object.freeze({ ...reference }))),
   });
-  const privateValue = {
+  const privateValue: ReadRegistrationPrivateValue<
+    InputSchema,
+    ResultSchema,
+    Owner,
+    Services,
+    ReadPipelineFailure<Failure, PrepareError, FinishError>,
+    ReadPipelineRequirements<Requirements, PrepareRequirements, FinishRequirements>
+  > = {
     handler,
     permissionTargetResolver,
     policies: Object.freeze([...executablePolicies]),
     serviceFactory,
+    stages,
   };
   const publicFields = {
     descriptor: frozenDescriptor,
@@ -993,18 +1602,18 @@ export const defineRead = <
     return ReadPrivateStorage.create(Object.freeze(privateValue), publicFields);
   }
   return ReadPrivateStorage.create(Object.freeze({ ...privateValue, resultPermissionTargetResolver }), publicFields);
-};
+}
 
 export const getReadPolicyImplementations = <
   InputSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
-  Error,
+  Failure,
   Requirements,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
 >(
-  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema>,
+  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Failure, Requirements, DomainErrorSchema>,
 ): readonly ActionPolicy<InputSchema['Type'], Owner>[] => ReadPrivateStorage.getValue(registration).policies;
 
 export const getReadResultPermissionTargetResolver = <
@@ -1012,11 +1621,11 @@ export const getReadResultPermissionTargetResolver = <
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
-  Error,
+  Failure,
   Requirements,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
 >(
-  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema>,
+  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Failure, Requirements, DomainErrorSchema>,
 ): ReadResultPermissionTargetResolver<ResultSchema['Type']> | undefined =>
   ReadPrivateStorage.getValue(registration).resultPermissionTargetResolver;
 
@@ -1025,11 +1634,11 @@ export const getReadPermissionTargetResolver = <
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
-  Error,
+  Failure,
   Requirements,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
 >(
-  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema>,
+  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Failure, Requirements, DomainErrorSchema>,
 ): ReadPermissionTargetDeclaration<InputSchema['Type']> | undefined =>
   ReadPrivateStorage.getValue(registration).permissionTargetResolver;
 
@@ -1042,11 +1651,11 @@ export const getReadDomainErrorSchema = <
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
-  Error,
+  Failure,
   Requirements,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
 >(
-  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema>,
+  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Failure, Requirements, DomainErrorSchema>,
 ): DomainErrorSchema | undefined => registration.descriptor.domainErrorSchema;
 
 export const getReadResourcePermissionTargetResolver = <
@@ -1054,15 +1663,28 @@ export const getReadResourcePermissionTargetResolver = <
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
-  Error,
+  Failure,
   Requirements,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
 >(
-  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema>,
+  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Failure, Requirements, DomainErrorSchema>,
 ): ReadResourcePermissionTargetResolver<InputSchema['Type']> | undefined =>
   registration.descriptor.resourcePermission === undefined
     ? undefined
     : ReadPrivateStorage.getValue(registration.descriptor.resourcePermission);
+
+export const getReadStages = <
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  Owner extends string,
+  Services,
+  Failure,
+  Requirements,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+>(
+  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Failure, Requirements, DomainErrorSchema>,
+): ReadOwnerStages<InputSchema['Type'], ResultSchema['Type'], Services, Failure, Requirements> =>
+  ReadPrivateStorage.getValue(registration).stages;
 
 /** The record target resolver of a record-scoped read, or undefined for a scope-wide read (O9, Q2). */
 export const getReadAccessTargetResolver = <
@@ -1070,11 +1692,11 @@ export const getReadAccessTargetResolver = <
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
-  Error,
+  Failure,
   Requirements,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
 >(
-  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema>,
+  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Failure, Requirements, DomainErrorSchema>,
 ): ReadAccessTargetResolver<InputSchema['Type']> | undefined => registration.descriptor.accessTarget;
 
 /** The owner-local facts resolver of a read handed to the owner overlay, when declared (O70). */
@@ -1083,11 +1705,11 @@ export const getReadOwnerFactsResolver = <
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
-  Error,
+  Failure,
   Requirements,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
 >(
-  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema>,
+  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Failure, Requirements, DomainErrorSchema>,
 ): ReadAccessOwnerFactsResolver<InputSchema['Type']> | undefined => registration.descriptor.accessOwnerFacts;
 
 export const getReadHandler = <
@@ -1095,24 +1717,62 @@ export const getReadHandler = <
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
-  Error,
+  Failure,
   Requirements,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
 >(
-  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema>,
-): ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements> =>
+  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Failure, Requirements, DomainErrorSchema>,
+): ReadHandler<InputSchema, ResultSchema, Services, Failure, Requirements> =>
   ReadPrivateStorage.getValue(registration).handler;
+
+/** Runs a Read's owner steps in order (prepare, load, finish) without Core's runtime: unit tests of owner code. */
+export const runReadOwnerSteps = <
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  Owner extends string,
+  Services,
+  Failure,
+  Requirements,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+>(
+  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Failure, Requirements, DomainErrorSchema>,
+  input: InputSchema['Type'],
+  context: ReadPrepareContext & { readonly services: Services; readonly transaction?: ReadOwnerTransaction },
+) =>
+  getReadStages(registration)(
+    input,
+    withOptional(
+      withOptional(
+        withOptional(
+          {
+            readKey: context.readKey,
+            scope: context.scope,
+            transaction: context.transaction ?? noOwnerTransaction,
+          },
+          'compositionRevision',
+          context.compositionRevision,
+        ),
+        'deniedFieldPaths',
+        context.deniedFieldPaths,
+      ),
+      'listAccess',
+      context.listAccess,
+    ),
+  ).pipe(
+    Effect.flatMap((load) => load(context.services)),
+    Effect.flatten,
+  );
 
 export const getReadServiceFactory = <
   InputSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
-  Error,
+  Failure,
   Requirements,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
 >(
-  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema>,
+  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Failure, Requirements, DomainErrorSchema>,
 ): ReadServiceFactory<Services, Requirements> => ReadPrivateStorage.getValue(registration).serviceFactory;
 
 const asJsonResult = Schema.decodeUnknownOption(Schema.Json);

@@ -19,7 +19,7 @@ The runner verifies each installed analyzer and invokes its package's JavaScript
 
 The default output is `.codex/reports/quality-audit/`. Use `--output <path>` to select another directory outside the configured source roots. An output such as `scripts/reports`, including a symlink that resolves there, fails before analyzer snapshots are written, so reports cannot become source inputs. Read `summary.md` for the result, `summary.json` for structured status, and the raw analyzer reports and stderr for evidence. Reports are generated artifacts and should not be committed as an accepted baseline. Local run artifacts remain available until the user removes them; this deliberately retains review evidence. The runner does not automatically delete an arbitrary directory supplied through `--output`.
 
-The separate **Quality Audit** workflow runs the full audit, enforces calibrated guardrails, and publishes reports on pull requests and pushes to `main` and `stage`; it can also be run manually. It is not added to branch-required checks or stage deployment prerequisites in this rollout. Existing formatting, lint, type, architecture, and behavioral gates retain their current behavior. The audit does not install or activate local Git hooks. CI installs dependencies with `--ignore-scripts` to avoid lifecycle-script mutations while collecting reports. Summary publication and artifact upload run even when the audit or gate fails.
+The separate **Quality Audit** workflow runs the full audit, validates report integrity, and publishes reports on pull requests and pushes to `main` and `stage`; it can also be run manually. It is not added to branch-required checks or stage deployment prerequisites in this rollout. Existing formatting, lint, type, architecture, and behavioral gates retain their current behavior. The audit does not install or activate local Git hooks. CI installs dependencies with `--ignore-scripts` to avoid lifecycle-script mutations while collecting reports. Summary publication and artifact upload run even when the audit or gate fails.
 
 ## Enforced guardrails
 
@@ -27,18 +27,17 @@ The separate **Quality Audit** workflow runs the full audit, enforces calibrated
 
 | Result                                                             | Disposition |
 | ------------------------------------------------------------------ | ----------- |
-| Calibrated Knip findings                                           | Blocking    |
+| Calibrated Knip findings                                           | Advisory    |
 | Fallow file discovery and integrity of every report                | Blocking    |
 | JSCPD token clones and Fallow strict clones                        | Advisory    |
 | Fallow normalized control-flow complexity                          | Advisory    |
 | Fallow semantic similarity and UI-only weighted cognitive findings | Advisory    |
 
-The gate prints positive clone/complexity/similarity counts as advisories and exits successfully
+The gate prints positive unused-code, dependency, clone, complexity, and similarity counts as advisories and exits successfully
 when blocking checks pass. It does not hide, zero, or exclude these findings. The report's existing
 `advisory` field distinguishes analyzer categories, not gate severity; the explicit disposition map
 owns blocking behavior. The gate consumes the runner's normalization and does not recompute findings
-or treat native Knip modeled usages as debt. No upstream Effect TSGo diagnostic, Ultracite preset,
-custom Oxlint rule, or `denyWarnings` setting is changed by this policy. In particular,
+or treat native Knip modeled usages as debt. No upstream Effect TSGo diagnostic, Ultracite preset, or `denyWarnings` setting is changed by the reporting policy. In particular,
 `preferSucceedSomeOrNone` and `preferTypedSchemaDecoder` belong to upstream Effect TSGo, not OntOS.
 
 The gate requires all six unique expected analyzer results, reported statuses, empty error diagnostics, valid nonnegative integer counts, nonempty analysis coverage, and consistent normalized totals. Missing, duplicate, unknown, malformed, failed, or partial `--tool` summaries cannot pass. The preceding full audit establishes freshness; no timestamp, hash receipt, or accepted-debt baseline is involved. For a custom audit output, pass `quality:audit:gate --summary <output>/summary.json`.
@@ -90,6 +89,10 @@ removed finding, add overlapping analyzer counts, or force a global zero. Record
 reason for significant intentional duplication or complexity in the PR; track material deferred
 work in an issue. Existing hard architectural and behavioral contracts still apply.
 
+`pnpm check` runs correctness checks only; `pnpm quality:check` and the separate Quality Audit workflow own the slower repository-wide analysis. Suppression totals are no longer tracked in a committed baseline. Adding or removing a justified suppression must not require an unrelated counter update. Unused suppression-comment bookkeeping no longer blocks lint either; obsolete comments can be removed when their code changes. Enabled correctness rules still report their diagnostics.
+
+The production lint configuration no longer loads the factory-import purity heuristic or bans nullable schema fields. Source-shape inference cannot reliably distinguish a data builder from a service constructor, and null may be a required wire value. Type checking, generated API validation, database-access checks, and explicit owner boundaries remain blocking. Analyzer unit fixtures remain tests of the optional tooling, but tests demanding that current application source be proven pure by the retired heuristic are removed. Production-option tests cover enabled policies, not every available analysis rule. Effect tag-dispatch style applies to application code, not assertions in tests. Next.js storefront Promise/UI boundaries retain native Error discrimination.
+
 Confirmed first-party model defects need a valid reproducer and a nearby invalid regression
 control. Repair the detector rather than reshape valid application code. Temporary exceptions
 must identify their exact scope, evidence, owner, tracking issue, and removal condition. Do not
@@ -101,7 +104,7 @@ Rollout measurements, calibration evidence, and follow-up scope belong to [PR #4
 ## Tests that block merges
 
 A blocking test checks observable behavior or an explicit, important restriction: auth, tenant
-isolation, database identity, API contracts, release-asset safety, or a real Node/Cloudflare build.
+isolation, database identity, API contracts, release-asset safety, or a real Node build.
 It must pass after a harmless refactor and after an intended app policy change, such as new browser
 targets or checker settings.
 

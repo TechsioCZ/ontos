@@ -1,3 +1,4 @@
+import { pricingRegistration } from '../../vertical.registration.ts';
 import { NodeCrypto } from '@effect/platform-node';
 import { ActionAlreadyCommitted, ActionCommitIndeterminate } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
@@ -8,7 +9,7 @@ import {
   PriceSourceProvenanceSchema,
 } from '@app/pricing-contracts/domain/price-source-provenance';
 import { DateTime, Effect, Predicate, Schema } from 'effect';
-import { describe, expect, it } from 'effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 
 import { PriceResultLookupRequestSchema } from '../../shared/apis/price-result-lookup.ts';
@@ -30,7 +31,8 @@ import {
   setSupportedCurrenciesAction,
 } from '../../src/actions/set-supported-currencies.action.ts';
 import { executePriceScheduleWithAuthorization } from '../../src/api/price-schedule-client.ts';
-import { readPriceResult } from '../../src/api/price-result-lookup.read.ts';
+import { readPriceResult, resolvePriceResultCommit } from '../../src/api/price-result-lookup.read.ts';
+import type { PriceActionCommitResolution } from '../../src/api/price-result-lookup.read.ts';
 import type { SetCurrencySupportCommand } from '../../src/persistence/currency-support-persistence.ts';
 import type {
   DefinePricePersistenceOutcome,
@@ -43,7 +45,17 @@ import {
 } from '../../src/services/external-price-input-boundary.service.ts';
 import { preparePriceSourceEvidence } from '../../src/services/price-source-provenance.service.ts';
 
-import { pricingRegistration } from '../../vertical.registration.ts';
+/** prepare (Core commit state) then load (the owner result), as the governed Read runs them. */
+const lookupPriceResult = (
+  input: Parameters<typeof readPriceResult>[0],
+  trustedScope: Parameters<typeof resolvePriceResultCommit>[1],
+  services: Parameters<typeof readPriceResult>[2] & {
+    readonly resolveCommit: (actionInvocationId: string) => Effect.Effect<PriceActionCommitResolution>;
+  },
+) =>
+  resolvePriceResultCommit(input, trustedScope, services.resolveCommit).pipe(
+    Effect.flatMap((resolution) => readPriceResult(input, resolution, services)),
+  );
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
@@ -358,8 +370,8 @@ const defineServices = (define: DefinePriceActionServices['define']): DefinePric
   loadCurrencySupport: () => Effect.succeed({ _tag: 'current', current: defineCurrencySupport }),
 });
 
-describe('Pricing management Actions acceptance', () => {
-  it('publishes the exact Price and Currency generated Actions with their trusted scope rules', () => {
+it.layer(NodeCrypto.layer)('Pricing management Actions acceptance', (suite) => {
+  suite('publishes the exact Price and Currency generated Actions with their trusted scope rules', () => {
     expect(
       [definePriceAction, revisePriceAction, setSupportedCurrenciesAction].map(({ descriptor }) => ({
         actionKey: descriptor.actionKey,
@@ -393,43 +405,46 @@ describe('Pricing management Actions acceptance', () => {
     ]);
   });
 
-  it('requires an exact Variant and Commerce Market while excluding Product-only and Storefront Price writes', () => {
-    const exact = {
-      effectiveFrom: operationAt,
-      identityKey,
-      monetaryAmount: { amount: '100', currencyCode: 'CZK' },
-      priceRef,
-      reason: 'Create one exact Variant Price',
-      sourceAssertion,
-    };
-    const decode = Schema.decodeUnknownSync(DefinePricePayloadSchema, { onExcessProperty: 'error' });
+  suite(
+    'requires an exact Variant and Commerce Market while excluding Product-only and Storefront Price writes',
+    () => {
+      const exact = {
+        effectiveFrom: operationAt,
+        identityKey,
+        monetaryAmount: { amount: '100', currencyCode: 'CZK' },
+        priceRef,
+        reason: 'Create one exact Variant Price',
+        sourceAssertion,
+      };
+      const decode = Schema.decodeUnknownSync(DefinePricePayloadSchema, { onExcessProperty: 'error' });
 
-    expect(decode(exact).identityKey).toEqual(identityKey);
-    expect(() =>
-      decode({
-        ...exact,
-        identityKey: {
-          ...identityKey,
-          catalogSelection: { productRef },
-        },
-      }),
-    ).toThrow();
-    expect(() =>
-      decode({
-        ...exact,
-        identityKey: {
-          ...identityKey,
-          commercialScope: {
-            channelId: identityKey.commercialScope.channelId,
-            sellingLegalEntityId: legalEntityId,
+      expect(decode(exact).identityKey).toEqual(identityKey);
+      expect(() =>
+        decode({
+          ...exact,
+          identityKey: {
+            ...identityKey,
+            catalogSelection: { productRef },
           },
-        },
-      }),
-    ).toThrow();
-    expect(() => decode({ ...exact, storefrontId: 'storefront-cz' })).toThrow();
-  });
+        }),
+      ).toThrow();
+      expect(() =>
+        decode({
+          ...exact,
+          identityKey: {
+            ...identityKey,
+            commercialScope: {
+              channelId: identityKey.commercialScope.channelId,
+              sellingLegalEntityId: legalEntityId,
+            },
+          },
+        }),
+      ).toThrow();
+      expect(() => decode({ ...exact, storefrontId: 'storefront-cz' })).toThrow();
+    },
+  );
 
-  it.effect('checks stale expected Current state before treating a same-value edit as unchanged', () =>
+  suite.effect('checks stale expected Current state before treating a same-value edit as unchanged', () =>
     Effect.gen(function* staleBeforeNoOp() {
       const failure = yield* applyPriceRevision(
         revisePayload,
@@ -452,7 +467,7 @@ describe('Pricing management Actions acceptance', () => {
     }),
   );
 
-  it.effect(
+  suite.effect(
     'preserves the finite Current end, schedule gap, and exact future revision in the blocking acknowledgement',
     () =>
       Effect.gen(function* preservePresentedSchedule() {
@@ -485,7 +500,7 @@ describe('Pricing management Actions acceptance', () => {
       }),
   );
 
-  it.effect('publishes the exact schedule gap and future evidence needed to construct an acknowledgement', () =>
+  suite.effect('publishes the exact schedule gap and future evidence needed to construct an acknowledgement', () =>
     Effect.gen(function* publicScheduleRead() {
       const schedule = {
         outcome: 'PRICE_SCHEDULE_GAP' as const,
@@ -520,7 +535,7 @@ describe('Pricing management Actions acceptance', () => {
     }),
   );
 
-  it('keeps the exact schedule acknowledgement in the public blocking warning', () => {
+  suite('keeps the exact schedule acknowledgement in the public blocking warning', () => {
     const problem = mapRevisePriceActionProblem(
       new RevisePriceAcknowledgementRequired({
         acknowledgement,
@@ -536,7 +551,7 @@ describe('Pricing management Actions acceptance', () => {
     });
   });
 
-  it.effect('keeps Currency Support Tenant-only and accepts only the Launch set {CZK}', () =>
+  suite.effect('keeps Currency Support Tenant-only and accepts only the Launch set {CZK}', () =>
     Effect.gen(function* tenantCurrencySupport() {
       const commands: unknown[] = [];
       const accepted = yield* applySupportedCurrencies(establishSupport(['CZK']), supportTrusted, (command) => {
@@ -556,7 +571,7 @@ describe('Pricing management Actions acceptance', () => {
     }),
   );
 
-  it.effect('preserves fresh trusted operation time when the same Currency Support invocation is retried', () =>
+  suite.effect('preserves fresh trusted operation time when the same Currency Support invocation is retried', () =>
     Effect.gen(function* freshRetryTime() {
       const commands: SetCurrencySupportCommand[] = [];
       const payload = establishSupport(['CZK']);
@@ -588,7 +603,7 @@ describe('Pricing management Actions acceptance', () => {
     }),
   );
 
-  it.effect('serializes a concurrent first create to one generated Action execution', () =>
+  suite.effect('serializes a concurrent first create to one generated Action execution', () =>
     Effect.gen(function* serializeFirstCreate() {
       let writes = 0;
       const harness = yield* makeActionTestHarness({
@@ -630,7 +645,7 @@ describe('Pricing management Actions acceptance', () => {
     }),
   );
 
-  it.effect('resolves a lost first-create response by the original invocation without rerunning the write', () =>
+  suite.effect('resolves a lost first-create response by the original invocation without rerunning the write', () =>
     Effect.gen(function* resolveLostResponse() {
       let writes = 0;
       const harness = yield* makeActionTestHarness({
@@ -669,257 +684,255 @@ describe('Pricing management Actions acceptance', () => {
     }),
   );
 
-  it.layer(NodeCrypto.layer)(
-    'reconciles indeterminate Define and Revise writes before permitting any retry',
-    (suite) => {
-      suite.effect('reconciles indeterminate Define and Revise writes before permitting any retry', () =>
-        Effect.gen(function* reconcilePriceUnknownWrites() {
-          let defineOwnerResult: DefinePricePersistenceOutcome | undefined;
-          let defineWrites = 0;
-          const defineHarness = yield* makeActionTestHarness({
-            access: 'allowed',
-            commitAcknowledgement: 'indeterminate-once',
-            ownerRegistration: pricingRegistration,
-            services: [
-              bindActionTestServices(
-                definePriceAction,
-                defineServices((command) => {
-                  defineWrites += 1;
-                  const definition = {
-                    identityKey: command.identityKey,
-                    priceRef: command.priceRef,
-                    revision: {
-                      effectiveFrom: command.effectiveFrom,
-                      monetaryAmount: command.monetaryAmount,
-                      monetaryBoundary: 'PRE_TAX' as const,
-                      revision: 1,
-                      revisionId: 'adadadad-adad-4dad-8dad-adadadadadad',
-                    },
-                  };
-                  const provenance = Schema.decodeSync(PriceSourceProvenanceSchema)({
-                    canonicalLink: {
-                      effectiveFrom: definition.revision.effectiveFrom,
-                      identityKey: definition.identityKey,
-                      monetaryAmount: definition.revision.monetaryAmount,
-                      monetaryBoundary: definition.revision.monetaryBoundary,
-                      priceRef: definition.priceRef,
-                      revision: definition.revision.revision,
-                      revisionId: definition.revision.revisionId,
-                    },
-                    evidence: command.sourceEvidence,
-                    provenanceRef: 'aeaeaeae-aeae-4eae-8eae-aeaeaeaeaeae',
-                  });
-                  defineOwnerResult = { definition, outcome: 'CREATED', provenance };
-                  return Effect.succeed(defineOwnerResult);
+  suite.effect('reconciles indeterminate Define and Revise writes before permitting any retry', () =>
+    Effect.gen(function* reconcilePriceUnknownWrites() {
+      let defineOwnerResult: DefinePricePersistenceOutcome | undefined;
+      let defineWrites = 0;
+      const defineHarness = yield* makeActionTestHarness({
+        access: 'allowed',
+        commitAcknowledgement: 'indeterminate-once',
+        ownerRegistration: pricingRegistration,
+        services: [
+          bindActionTestServices(
+            definePriceAction,
+            defineServices((command) => {
+              defineWrites += 1;
+              const definition = {
+                identityKey: command.identityKey,
+                priceRef: command.priceRef,
+                revision: {
+                  effectiveFrom: command.effectiveFrom,
+                  monetaryAmount: command.monetaryAmount,
+                  monetaryBoundary: 'PRE_TAX' as const,
+                  revision: 1,
+                  revisionId: 'adadadad-adad-4dad-8dad-adadadadadad',
+                },
+              };
+              const provenance = Schema.decodeSync(PriceSourceProvenanceSchema)({
+                canonicalLink: {
+                  effectiveFrom: definition.revision.effectiveFrom,
+                  identityKey: definition.identityKey,
+                  monetaryAmount: definition.revision.monetaryAmount,
+                  monetaryBoundary: definition.revision.monetaryBoundary,
+                  priceRef: definition.priceRef,
+                  revision: definition.revision.revision,
+                  revisionId: definition.revision.revisionId,
+                },
+                evidence: command.sourceEvidence,
+                provenanceRef: 'aeaeaeae-aeae-4eae-8eae-aeaeaeaeaeae',
+              });
+              defineOwnerResult = { definition, outcome: 'CREATED', provenance };
+              return Effect.succeed(defineOwnerResult);
+            }),
+          ),
+        ],
+      });
+      const defineRequest = {
+        payload: definePayload,
+        principal: priceActionPrincipal,
+        registration: definePriceAction,
+        transport: { correlationId: 'define-price-lost-response', idempotencyKey: 'define-price:lost' },
+      } as const;
+      const defineFailure = yield* defineHarness.runtime.runAction(defineRequest).pipe(Effect.flip);
+      expect(Predicate.isTagged(defineFailure, 'ActionCommitIndeterminate')).toBe(true);
+      if (!Predicate.isTagged(defineFailure, 'ActionCommitIndeterminate')) {
+        throw new Error('Expected Define Price commit acknowledgement to be indeterminate');
+      }
+      expect(mapDefinePriceActionProblem(defineFailure)).toMatchObject({
+        invocationId: defineFailure.invocationId,
+        resolution: 'RESOLVE_COMMIT',
+        retryCommand: false,
+        status: 503,
+      });
+      const defineLookup = yield* lookupPriceResult(
+        yield* Schema.decodeEffect(PriceResultLookupRequestSchema)({
+          actionInvocationId: defineFailure.invocationId,
+        }),
+        { legalEntityId },
+        {
+          lookupResult: ({ actionInvocationId }) => {
+            if (defineOwnerResult === undefined) {
+              return Effect.die('Define Price owner result was not captured');
+            }
+            return Effect.succeed({
+              actionInvocationId,
+              outcome: 'PRICE_ACTION_RESULT_FOUND' as const,
+              result: defineOwnerResult,
+            });
+          },
+          resolveCommit: () =>
+            defineHarness.runtime
+              .resolveActionCommit({ invocationId: defineFailure.invocationId, principal: priceActionPrincipal })
+              .pipe(
+                Effect.match({
+                  onFailure: (failure) =>
+                    Predicate.isTagged(failure, 'ActionAlreadyCommitted')
+                      ? ('COMMITTED' as const)
+                      : ('UNAVAILABLE' as const),
+                  onSuccess: () => 'OPEN' as const,
                 }),
               ),
-            ],
-          });
-          const defineRequest = {
-            payload: definePayload,
-            principal: priceActionPrincipal,
-            registration: definePriceAction,
-            transport: { correlationId: 'define-price-lost-response', idempotencyKey: 'define-price:lost' },
-          } as const;
-          const defineFailure = yield* defineHarness.runtime.runAction(defineRequest).pipe(Effect.flip);
-          expect(Predicate.isTagged(defineFailure, 'ActionCommitIndeterminate')).toBe(true);
-          if (!Predicate.isTagged(defineFailure, 'ActionCommitIndeterminate')) {
-            throw new Error('Expected Define Price commit acknowledgement to be indeterminate');
-          }
-          expect(mapDefinePriceActionProblem(defineFailure)).toMatchObject({
-            invocationId: defineFailure.invocationId,
-            resolution: 'RESOLVE_COMMIT',
-            retryCommand: false,
-            status: 503,
-          });
-          const defineLookup = yield* readPriceResult(
-            yield* Schema.decodeEffect(PriceResultLookupRequestSchema)({
-              actionInvocationId: defineFailure.invocationId,
-            }),
-            { legalEntityId },
-            {
-              lookupResult: ({ actionInvocationId }) => {
-                if (defineOwnerResult === undefined) {
-                  return Effect.die('Define Price owner result was not captured');
-                }
-                return Effect.succeed({
-                  actionInvocationId,
-                  outcome: 'PRICE_ACTION_RESULT_FOUND' as const,
-                  result: defineOwnerResult,
-                });
-              },
-              resolveCommit: () =>
-                defineHarness.runtime
-                  .resolveActionCommit({ invocationId: defineFailure.invocationId, principal: priceActionPrincipal })
-                  .pipe(
-                    Effect.match({
-                      onFailure: (failure) =>
-                        Predicate.isTagged(failure, 'ActionAlreadyCommitted')
-                          ? ('COMMITTED' as const)
-                          : ('UNAVAILABLE' as const),
-                      onSuccess: () => 'OPEN' as const,
-                    }),
-                  ),
-            },
-          );
-          expect(defineLookup).toMatchObject({
-            actionInvocationId: defineFailure.invocationId,
-            outcome: 'PRICE_ACTION_RESULT_FOUND',
-            result: { outcome: 'CREATED' },
-          });
-          expect(defineWrites).toBe(1);
-          expect(defineHarness.snapshot().committed).toHaveLength(1);
-
-          let reviseOwnerResult: RevisePricePersistenceOutcome | undefined;
-          let reviseWrites = 0;
-          const reviseHarness = yield* makeActionTestHarness({
-            access: 'allowed',
-            commitAcknowledgement: 'indeterminate-once',
-            ownerRegistration: pricingRegistration,
-            services: [
-              bindActionTestServices(revisePriceAction, {
-                ...reviseServices((command) => {
-                  if (!('sourceEvidence' in command)) {
-                    return Effect.die('Value-only revision must carry source evidence');
-                  }
-                  reviseWrites += 1;
-                  const provenance = Schema.decodeSync(PriceSourceProvenanceSchema)({
-                    canonicalLink: {
-                      effectiveFrom: revisedRevision.definition.revision.effectiveFrom,
-                      identityKey: revisedRevision.definition.identityKey,
-                      monetaryAmount: revisedRevision.definition.revision.monetaryAmount,
-                      monetaryBoundary: revisedRevision.definition.revision.monetaryBoundary,
-                      priceRef: revisedRevision.definition.priceRef,
-                      revision: revisedRevision.definition.revision.revision,
-                      revisionId: revisedRevision.definition.revision.revisionId,
-                    },
-                    evidence: command.sourceEvidence,
-                    provenanceRef: 'afafafaf-afaf-4faf-8faf-afafafafafaf',
-                  });
-                  reviseOwnerResult = { outcome: 'REVISED', provenance, revision: revisedRevision };
-                  return Effect.succeed(reviseOwnerResult);
-                }),
-                assessExternalPriceInput: (request) =>
-                  Effect.succeed(
-                    preparePriceSourceEvidence({
-                      actingPrincipalId: request.actingPrincipalId,
-                      identityKey: request.identityKey,
-                      monetaryAmount: request.monetaryAmount,
-                      sourceAssertion: request.sourceAssertion,
-                      tenantId: request.tenantId,
-                      trustedOperationAt: request.trustedOperationAt,
-                    }),
-                  ),
-              }),
-            ],
-          });
-          const reviseRequest = {
-            payload: revisePayload,
-            principal: priceActionPrincipal,
-            registration: revisePriceAction,
-            transport: { correlationId: 'revise-price-lost-response', idempotencyKey: 'revise-price:lost' },
-          } as const;
-          const reviseFailure = yield* reviseHarness.runtime.runAction(reviseRequest).pipe(Effect.flip);
-          expect(Predicate.isTagged(reviseFailure, 'ActionCommitIndeterminate')).toBe(true);
-          if (!Predicate.isTagged(reviseFailure, 'ActionCommitIndeterminate')) {
-            throw new Error('Expected Revise Price commit acknowledgement to be indeterminate');
-          }
-          expect(mapRevisePriceActionProblem(reviseFailure)).toMatchObject({
-            invocationId: reviseFailure.invocationId,
-            resolution: 'RESOLVE_COMMIT',
-            retryCommand: false,
-            status: 503,
-          });
-          const reviseLookup = yield* readPriceResult(
-            yield* Schema.decodeEffect(PriceResultLookupRequestSchema)({
-              actionInvocationId: reviseFailure.invocationId,
-            }),
-            { legalEntityId },
-            {
-              lookupResult: ({ actionInvocationId }) => {
-                if (reviseOwnerResult === undefined) {
-                  return Effect.die('Revise Price owner result was not captured');
-                }
-                return Effect.succeed({
-                  actionInvocationId,
-                  outcome: 'PRICE_ACTION_RESULT_FOUND' as const,
-                  result: reviseOwnerResult,
-                });
-              },
-              resolveCommit: () =>
-                reviseHarness.runtime
-                  .resolveActionCommit({ invocationId: reviseFailure.invocationId, principal: priceActionPrincipal })
-                  .pipe(
-                    Effect.match({
-                      onFailure: (failure) =>
-                        Predicate.isTagged(failure, 'ActionAlreadyCommitted')
-                          ? ('COMMITTED' as const)
-                          : ('UNAVAILABLE' as const),
-                      onSuccess: () => 'OPEN' as const,
-                    }),
-                  ),
-            },
-          );
-          expect(reviseLookup).toMatchObject({
-            actionInvocationId: reviseFailure.invocationId,
-            outcome: 'PRICE_ACTION_RESULT_FOUND',
-            result: { outcome: 'REVISED' },
-          });
-          expect(reviseWrites).toBe(1);
-          expect(reviseHarness.snapshot().committed).toHaveLength(1);
-
-          for (const actionKind of ['DEFINE_PRICE', 'REVISE_PRICE'] as const) {
-            for (const resolution of ['ABSENT', 'OPEN'] as const) {
-              const retryDecision = yield* readPriceResult(
-                yield* Schema.decodeEffect(PriceResultLookupRequestSchema)({
-                  actionInvocationId: trusted.actionInvocationId,
-                }),
-                { legalEntityId },
-                {
-                  lookupResult: ({ actionInvocationId }) =>
-                    Effect.succeed({ actionInvocationId, outcome: 'PRICE_ACTION_RESULT_ABSENT' as const }),
-                  resolveCommit: () => Effect.succeed(resolution),
-                },
-              );
-              expect(retryDecision, `${actionKind} may retry only after Core and owner absence`).toEqual({
-                actionInvocationId: trusted.actionInvocationId,
-                outcome: 'PRICE_ACTION_RESULT_ABSENT',
-              });
-            }
-          }
-        }).pipe(Effect.provideService(ExternalPriceInputBoundaryFactory, { make: makeExternalPriceInputBoundary })),
+        },
       );
-    },
+      expect(defineLookup).toMatchObject({
+        actionInvocationId: defineFailure.invocationId,
+        outcome: 'PRICE_ACTION_RESULT_FOUND',
+        result: { outcome: 'CREATED' },
+      });
+      expect(defineWrites).toBe(1);
+      expect(defineHarness.snapshot().committed).toHaveLength(1);
+
+      let reviseOwnerResult: RevisePricePersistenceOutcome | undefined;
+      let reviseWrites = 0;
+      const reviseHarness = yield* makeActionTestHarness({
+        access: 'allowed',
+        commitAcknowledgement: 'indeterminate-once',
+        ownerRegistration: pricingRegistration,
+        services: [
+          bindActionTestServices(revisePriceAction, {
+            ...reviseServices((command) => {
+              if (!('sourceEvidence' in command)) {
+                return Effect.die('Value-only revision must carry source evidence');
+              }
+              reviseWrites += 1;
+              const provenance = Schema.decodeSync(PriceSourceProvenanceSchema)({
+                canonicalLink: {
+                  effectiveFrom: revisedRevision.definition.revision.effectiveFrom,
+                  identityKey: revisedRevision.definition.identityKey,
+                  monetaryAmount: revisedRevision.definition.revision.monetaryAmount,
+                  monetaryBoundary: revisedRevision.definition.revision.monetaryBoundary,
+                  priceRef: revisedRevision.definition.priceRef,
+                  revision: revisedRevision.definition.revision.revision,
+                  revisionId: revisedRevision.definition.revision.revisionId,
+                },
+                evidence: command.sourceEvidence,
+                provenanceRef: 'afafafaf-afaf-4faf-8faf-afafafafafaf',
+              });
+              reviseOwnerResult = { outcome: 'REVISED', provenance, revision: revisedRevision };
+              return Effect.succeed(reviseOwnerResult);
+            }),
+            assessExternalPriceInput: (request) =>
+              Effect.succeed(
+                preparePriceSourceEvidence({
+                  actingPrincipalId: request.actingPrincipalId,
+                  identityKey: request.identityKey,
+                  monetaryAmount: request.monetaryAmount,
+                  sourceAssertion: request.sourceAssertion,
+                  tenantId: request.tenantId,
+                  trustedOperationAt: request.trustedOperationAt,
+                }),
+              ),
+          }),
+        ],
+      });
+      const reviseRequest = {
+        payload: revisePayload,
+        principal: priceActionPrincipal,
+        registration: revisePriceAction,
+        transport: { correlationId: 'revise-price-lost-response', idempotencyKey: 'revise-price:lost' },
+      } as const;
+      const reviseFailure = yield* reviseHarness.runtime.runAction(reviseRequest).pipe(Effect.flip);
+      expect(Predicate.isTagged(reviseFailure, 'ActionCommitIndeterminate')).toBe(true);
+      if (!Predicate.isTagged(reviseFailure, 'ActionCommitIndeterminate')) {
+        throw new Error('Expected Revise Price commit acknowledgement to be indeterminate');
+      }
+      expect(mapRevisePriceActionProblem(reviseFailure)).toMatchObject({
+        invocationId: reviseFailure.invocationId,
+        resolution: 'RESOLVE_COMMIT',
+        retryCommand: false,
+        status: 503,
+      });
+      const reviseLookup = yield* lookupPriceResult(
+        yield* Schema.decodeEffect(PriceResultLookupRequestSchema)({
+          actionInvocationId: reviseFailure.invocationId,
+        }),
+        { legalEntityId },
+        {
+          lookupResult: ({ actionInvocationId }) => {
+            if (reviseOwnerResult === undefined) {
+              return Effect.die('Revise Price owner result was not captured');
+            }
+            return Effect.succeed({
+              actionInvocationId,
+              outcome: 'PRICE_ACTION_RESULT_FOUND' as const,
+              result: reviseOwnerResult,
+            });
+          },
+          resolveCommit: () =>
+            reviseHarness.runtime
+              .resolveActionCommit({ invocationId: reviseFailure.invocationId, principal: priceActionPrincipal })
+              .pipe(
+                Effect.match({
+                  onFailure: (failure) =>
+                    Predicate.isTagged(failure, 'ActionAlreadyCommitted')
+                      ? ('COMMITTED' as const)
+                      : ('UNAVAILABLE' as const),
+                  onSuccess: () => 'OPEN' as const,
+                }),
+              ),
+        },
+      );
+      expect(reviseLookup).toMatchObject({
+        actionInvocationId: reviseFailure.invocationId,
+        outcome: 'PRICE_ACTION_RESULT_FOUND',
+        result: { outcome: 'REVISED' },
+      });
+      expect(reviseWrites).toBe(1);
+      expect(reviseHarness.snapshot().committed).toHaveLength(1);
+
+      for (const actionKind of ['DEFINE_PRICE', 'REVISE_PRICE'] as const) {
+        for (const resolution of ['ABSENT', 'OPEN'] as const) {
+          const retryDecision = yield* lookupPriceResult(
+            yield* Schema.decodeEffect(PriceResultLookupRequestSchema)({
+              actionInvocationId: trusted.actionInvocationId,
+            }),
+            { legalEntityId },
+            {
+              lookupResult: ({ actionInvocationId }) =>
+                Effect.succeed({ actionInvocationId, outcome: 'PRICE_ACTION_RESULT_ABSENT' as const }),
+              resolveCommit: () => Effect.succeed(resolution),
+            },
+          );
+          expect(retryDecision, `${actionKind} may retry only after Core and owner absence`).toEqual({
+            actionInvocationId: trusted.actionInvocationId,
+            outcome: 'PRICE_ACTION_RESULT_ABSENT',
+          });
+        }
+      }
+    }).pipe(Effect.provideService(ExternalPriceInputBoundaryFactory, { make: makeExternalPriceInputBoundary })),
   );
 
-  it('directs committed retries to governed reads and uncertain commits to result lookup without retrying the command', () => {
-    expect(
-      mapDefinePriceActionProblem(
-        new ActionAlreadyCommitted({
-          code: 'action_already_committed',
-          invocationId: trusted.actionInvocationId,
-          reason: 'The exact intent is already committed',
-        }),
-      ),
-    ).toMatchObject({
-      invocationId: trusted.actionInvocationId,
-      resolution: 'REFRESH_GOVERNED_READS',
-      retryCommand: false,
-      status: 409,
-    });
-    expect(
-      mapDefinePriceActionProblem(
-        new ActionCommitIndeterminate({
-          code: 'action_commit_indeterminate',
-          invocationId: trusted.actionInvocationId,
-          reason: 'Commit acknowledgement was lost',
-        }),
-      ),
-    ).toMatchObject({
-      invocationId: trusted.actionInvocationId,
-      resolution: 'RESOLVE_COMMIT',
-      retryCommand: false,
-      status: 503,
-    });
-  });
+  suite(
+    'directs committed retries to governed reads and uncertain commits to result lookup without retrying the command',
+    () => {
+      expect(
+        mapDefinePriceActionProblem(
+          new ActionAlreadyCommitted({
+            code: 'action_already_committed',
+            invocationId: trusted.actionInvocationId,
+            reason: 'The exact intent is already committed',
+          }),
+        ),
+      ).toMatchObject({
+        invocationId: trusted.actionInvocationId,
+        resolution: 'REFRESH_GOVERNED_READS',
+        retryCommand: false,
+        status: 409,
+      });
+      expect(
+        mapDefinePriceActionProblem(
+          new ActionCommitIndeterminate({
+            code: 'action_commit_indeterminate',
+            invocationId: trusted.actionInvocationId,
+            reason: 'Commit acknowledgement was lost',
+          }),
+        ),
+      ).toMatchObject({
+        invocationId: trusted.actionInvocationId,
+        resolution: 'RESOLVE_COMMIT',
+        retryCommand: false,
+        status: 503,
+      });
+    },
+  );
 });

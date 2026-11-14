@@ -562,6 +562,8 @@ const loaderService = (
   } = {},
 ): TenantIntentLoaderService => ({
   loadAuthorityCells: unusedCall,
+  loadAuthorityCellsMany: unusedCall,
+  loadCompanyOwnership: unusedCall,
   loadConfigureBases: () => Effect.succeed(input.bases ?? [ownerBasis()]),
   loadConnection: unusedCall,
   loadProjection: () =>

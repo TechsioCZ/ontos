@@ -215,6 +215,7 @@ const makeGovernedPaymentTermEvidence = Effect.fn('PaymentTermEvidence.makeGover
     const issued = yield* acquire(
       {
         audience: 'commerce-customer-context',
+        callingAppId: 'payment',
         legalEntityScope: 'subject',
         requestCorrelation: operationScope.correlationId,
         subject: { _tag: 'Assertion', scope: operationScope },

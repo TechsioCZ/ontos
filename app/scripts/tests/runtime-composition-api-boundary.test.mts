@@ -110,6 +110,41 @@ const makeFixture = Effect.fn(function* makeRuntimeCompositionBoundaryFixture() 
 });
 
 describe('runtime composition API boundaries', () => {
+  for (const source of [
+    `import { schema } from '@app/party-registry/src/db/schema.ts';`,
+    `export * from '@app/party-registry/src/db/schema.ts';`,
+    `const schema = import('@app/party-registry/src/db/schema.ts');`,
+    `const schema = require('@app/party-registry/src/db/schema.ts');`,
+    `const schema = import('@app/party-registry/src/' + name);`,
+    `const fixture = "from '@app/core-runtime/public'"; import { schema } from '@app/party-registry/src/db/schema.ts';`,
+  ]) {
+    it.live(
+      `rejects actual private module syntax: ${source}`,
+      Effect.fn(function* rejectsPrivateModuleSyntax() {
+        const fixture = yield* makeFixture();
+        yield* writeText(fixture.root, `${shellRoot}/src/private-owner.ts`, source);
+        const result = fixture.check();
+        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
+        expect(result.stderr).toContain('cross-MicroVertical imports must use generated API clients');
+      }),
+    );
+  }
+
+  it.live(
+    'fails closed on malformed source that names a private owner path',
+    Effect.fn(function* rejectsUnparseableImports() {
+      const fixture = yield* makeFixture();
+      yield* writeText(
+        fixture.root,
+        `${shellRoot}/src/broken.ts`,
+        `const example = "from '@app/party-registry/src/db/schema.ts'"; const broken = ;`,
+      );
+      const result = fixture.check();
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
+      expect(result.stderr).toContain('cross-MicroVertical imports must use generated API clients');
+    }),
+  );
+
   it.live(
     'accepts foundation schema and client exports without business endpoints or a compiled Shell client registry',
     Effect.fn(function* acceptsNativeOwnerClients() {

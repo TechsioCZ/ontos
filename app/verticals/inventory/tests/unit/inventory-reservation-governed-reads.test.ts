@@ -1,6 +1,11 @@
 import { inventoryRegistration } from '../../vertical.registration.ts';
 import type { OperationalScope } from '@app/core-runtime';
-import { ReadHandlerNotFound, ReadPermissionDenied, allowOwnerAuthorizationOverlay } from '@app/core-runtime';
+import {
+  ReadHandlerNotFound,
+  ReadPermissionDenied,
+  allowOwnerAuthorizationOverlay,
+  defineDatabaseIdentityEnrollment,
+} from '@app/core-runtime';
 import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
 import { expect, it } from 'effect-rstest';
 import { Effect, Option, Schema } from 'effect';
@@ -56,6 +61,8 @@ const bindingId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const attemptId = 'attempt-checkout-1';
 const issuedAt = '2026-09-24T10:00:00.000Z';
 const expiresAt = '2026-09-24T10:15:00.000Z';
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 const scope = {
   authBindingId: '44444444-4444-4444-8444-444444444444',
   authContextRef: 'better-auth-session:inventory-reservation-governed-reads',
@@ -263,16 +270,15 @@ it.effect('reads the exact Reservation with bounded evidence and returns typed n
 
 it.effect('denies the exact Inventory Resource before opening owner persistence or producing evidence', () =>
   Effect.gen(function* denyBeforeOwnerPersistence() {
-    let databaseCalls = 0;
+    const statements: string[] = [];
     const stages: string[] = [];
     const database = {
-      executor: yield* makeTestDatabase((text) => {
-        if (text.includes('current_setting')) {
+      executor: yield* makeTestDatabase((statement, params) => {
+        statements.push(statement);
+        // A session-setting role installs its scope and reads back the connected role in one statement.
+        if (statement === installAndReadScopeSql) {
+          expect(params).toEqual([tenantId, scope.legalEntityId]);
           return Effect.succeed([{ legal_entity_id: scope.legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
-        }
-        // Count persistence calls, not transaction controls or scope installation for denial evidence.
-        if (!/^(?:BEGIN|COMMIT|ROLLBACK)$/iu.test(text) && !text.includes('set_config')) {
-          databaseCalls += 1;
         }
         return Effect.succeed([]);
       }),
@@ -293,9 +299,11 @@ it.effect('denies the exact Inventory Resource before opening owner persistence 
       },
       {
         accessDecision: gate.bound,
+        databaseIdentities: defineDatabaseIdentityEnrollment([]),
         onStage: (stage) => {
           stages.push(stage);
         },
+
         ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
         ownerRegistration: inventoryRegistration,
       },
@@ -314,7 +322,7 @@ it.effect('denies the exact Inventory Resource before opening owner persistence 
     expect(gate.accessDecision.askedDecisions[0]?.carrier.accessDeclaration?.key).toBe(
       'commerce.inventory.inventory-reservation.read',
     );
-    expect(databaseCalls).toBe(1);
+    expect(statements.some((statement) => statement.includes('"inventory".'))).toBe(false);
     expect(stages).toEqual(['input_decoded', 'scope_validated', 'module_state_checked', 'permission_checked']);
   }),
 );

@@ -1,6 +1,10 @@
+import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
+import { CoreDatabase } from '@app/core-runtime/db/client';
+import { shellTestAuthentication } from '../support/shell-authentication.ts';
 import { randomUUID } from 'node:crypto';
 
 import {
+  SHARED_RUNTIME_IDENTITY,
   ActionRuntime,
   PrincipalResolver,
   SupportRecoveryPrincipalContextResolver,
@@ -58,7 +62,7 @@ import {
   SupportImpersonationCorrelationId,
   SupportImpersonationStoreService,
 } from '../../api/auth/impersonation-service.ts';
-import { AuthenticationService, makeAuthenticationService } from '../../api/auth/service.ts';
+import { AuthenticationService } from '../../api/auth/service.ts';
 import { makeShellTestAccessGate, shellTestAnswers } from '../support/access-decision-double.ts';
 import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
 
@@ -103,7 +107,10 @@ it.live.each([
   Effect.fnUntraced(function* runIntegration1({ pendingCleanupOnly }) {
     const baseConfiguration = yield* loadAuthConfig();
     const coreClient = yield* makeTestPgClient(baseConfiguration.connectionString);
-    const authPersistence = yield* makeAuthDatabase(baseConfiguration);
+    const authPersistence = yield* makeAuthDatabase({
+      ...baseConfiguration,
+      expectedRole: SHARED_RUNTIME_IDENTITY.role,
+    });
     const authDatabase = authPersistence.executor;
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
     const principalManagementRepository = principalManagementRepositoryFromTransaction(
@@ -139,7 +146,7 @@ it.live.each([
     const provideAccessGate = <Success, Failure, Requirements>(effect: Effect.Effect<Success, Failure, Requirements>) =>
       provideAuthenticationNamespaceRegistry(effect.pipe(Effect.provideService(AccessDecisionGate, accessGate)));
     const operationalScope = yield* makeOperationalScopeResolver(
-      makeOperationalScopeRepository({ executor: coreDatabase }),
+      makeOperationalScopeRepository({ executor: coreDatabase }, SHELL_DATABASE_IDENTITY_ENROLLMENT),
       accessGate,
     );
     const actionRuntime = makeActionRuntime(
@@ -149,11 +156,12 @@ it.live.each([
       operationalScope,
       { ...openActionRuntimeOptions, accessDecision: accessGate.bound },
     );
-    const fixtureAuthentication = yield* makeAuthenticationService({
+    const fixtureAuthentication = yield* shellTestAuthentication({
       allowFixtureSignUp: true,
     }).pipe(
       Effect.provideService(AuthConfig, baseConfiguration),
       Effect.provideService(AuthDatabase, authPersistence),
+      Effect.provideService(CoreDatabase, { executor: coreDatabase }),
       Effect.provideService(PrincipalResolver, resolver),
     );
     let originalUserId = '';
@@ -260,9 +268,10 @@ it.live.each([
       ...baseConfiguration,
       supportUserIds: [originalUserId],
     };
-    const authentication = yield* makeAuthenticationService({}).pipe(
+    const authentication = yield* shellTestAuthentication({}).pipe(
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
+      Effect.provideService(CoreDatabase, { executor: coreDatabase }),
       Effect.provideService(PrincipalResolver, resolver),
     );
     const signedIn = yield* authentication.signIn(
@@ -277,6 +286,7 @@ it.live.each([
     const keys = yield* makeApiKeyService().pipe(
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
+      Effect.provideService(CoreDatabase, { executor: coreDatabase }),
     );
     const resolvedOriginal = yield* provideAccessGate(authentication.resolveTenantContext(originalHeaders));
     expect(resolvedOriginal.state).toBe('authenticated');
@@ -438,6 +448,7 @@ it.live.each([
         correlationId: randomUUID(),
         idempotencyKey: randomUUID(),
         managedPrincipalId: managedPrincipal.principalId,
+        managedScope: 'tenant-managed',
         name: 'Cross-admin key',
         principal: resolvedOriginal.principal,
         requestHeaders: originalHeaders,
@@ -467,6 +478,7 @@ it.live.each([
         expectedStatus: 'active',
         idempotencyKey: randomUUID(),
         managedPrincipalId: managedPrincipal.principalId,
+        managedScope: 'tenant-managed',
         newStatus: 'disabled',
         principal: secondAdministratorContext.principal,
         reason: 'Cross-admin lifecycle integration proof',

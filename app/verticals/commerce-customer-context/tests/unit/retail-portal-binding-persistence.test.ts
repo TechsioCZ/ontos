@@ -285,7 +285,7 @@ describe('Retail Portal binding persistence', () => {
     }),
   );
 
-  it.effect('binds the enrolled person for the continuation of an open Retail self-enrollment in this company', () =>
+  it.effect('uses the separately revalidated target binding and retains the continuation requester for audit', () =>
     Effect.gen(function* bindsForEnrollment() {
       const { calls, transaction } = transactionWith({
         mutate_retail_portal_binding: [bindingRow('BINDING_ACTIVATED', 1)],
@@ -294,9 +294,17 @@ describe('Retail Portal binding persistence', () => {
       const portal = recordingPortalAccess();
       const result = yield* profilePersistenceServicesForTransaction(transaction, continuationScope, {
         portalAccess: portal.portalAccess,
+        resolveEnrollmentTargetBinding: (candidate, actionInvocationId) => {
+          expect(candidate).toEqual(payloadOf());
+          expect(actionInvocationId).toBe(invocationId);
+          return Effect.succeed({ authBindingId, principalId: customer });
+        },
       }).bindRetailPortalProfile.bind(payloadOf(), context);
       expect(result.state).toBe('ACTIVE');
-      expect(calls.map(({ name }) => name)).toContain('read_portal_enrollment_attempt');
+      expect(calls.map(({ name }) => name)).toEqual(['mutate_retail_portal_binding']);
+      expect(calls[0]?.values[2]).toBe(authBindingId);
+      expect(calls[0]?.values[2]).not.toBe(continuationScope.authBindingId);
+      expect(calls[0]?.values.at(-1)).toBe(storefront);
       expect(portal.calls).toEqual([`grant:${activation(1)}`]);
     }),
   );
@@ -310,7 +318,7 @@ describe('Retail Portal binding persistence', () => {
     ['an enrollment of another person', enrollmentRows(attemptRow(), somebodyElse)],
     ['an enrollment that resolved nobody yet', [attemptRow()]],
   ] as const) {
-    it.effect(`refuses an enrollment bind whose evidence is ${label}`, () =>
+    it.effect(`does not accept unprepared journal data as target authority: ${label}`, () =>
       Effect.gen(function* refusesEvidence() {
         const { calls, transaction } = transactionWith({
           mutate_retail_portal_binding: [bindingRow('BINDING_ACTIVATED', 1)],
@@ -322,7 +330,7 @@ describe('Retail Portal binding persistence', () => {
             portalAccess: portal.portalAccess,
           }).bindRetailPortalProfile.bind(payloadOf(), context),
         );
-        expect(failure.code).toBe('ENROLLMENT_EVIDENCE_INSUFFICIENT');
+        expect(failure.code).toBe('BINDING_CONFLICT');
         expect(calls.map(({ name }) => name)).not.toContain('mutate_retail_portal_binding');
         expect(portal.calls).toEqual([]);
       }),

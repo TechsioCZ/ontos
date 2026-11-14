@@ -41,6 +41,19 @@ import type { BoundWitness } from './proposal.ts';
 import type { LiveApprovalServices } from './live-composition.ts';
 import { liveApprovalsPorts } from './live-composition.ts';
 import type { OperationalScope } from '../../operations/context.ts';
+import { preparedActionExecutionV2, preparedActionProposalV2 } from './action-lifecycle-v2.ts';
+import type {
+  ActionApprovalLifecycleV2,
+  PreparedActionExecutionV2,
+  PreparedActionProposalV2,
+} from './action-lifecycle-v2.ts';
+
+/** Core-private prepared continuations, carried only by the existing transaction-joining API. */
+export interface ApprovalExecutionContext {
+  readonly [preparedActionExecutionV2]?: PreparedActionExecutionV2;
+  readonly [preparedActionProposalV2]?: PreparedActionProposalV2;
+  readonly transaction: CoreTransaction;
+}
 
 /** Every approval operation runs inside one trusted tenant and one exact access scope (O7). */
 export interface ProposalScope {
@@ -173,6 +186,10 @@ export interface ApprovalIdentifiers {
 }
 
 export interface ApprovalsPorts {
+  readonly actionCommands?: {
+    readonly lifecycle: ActionApprovalLifecycleV2;
+    readonly scope: OperationalScope;
+  };
   readonly administrators: ApprovalScopeAdministration;
   readonly authority: ApprovalAuthorityInspector;
   readonly catalog: ApprovalCapabilityCatalog;
@@ -212,7 +229,8 @@ export interface ProposeCommand extends ProposalScope {
 export interface ApproveCommand extends ProposalScope {
   readonly approver: ActorContext;
   readonly approverKind: ResolvedPrincipalKind;
-  readonly authority: MandateAuthority;
+  /** Historical scalar callers require this. Forward Actions acquire their full canonical proof. */
+  readonly authority?: MandateAuthority;
   readonly policy: ApprovalPolicy;
   readonly proposalId: ProposalId;
 }
@@ -251,13 +269,13 @@ export interface ApprovalsService {
   readonly approve: (command: ApproveCommand) => Effect.Effect<Proposal, ApprovalsError>;
   readonly execute: (
     command: ExecuteCommand,
-    execution?: { readonly transaction: CoreTransaction },
+    execution?: ApprovalExecutionContext,
   ) => Effect.Effect<Proposal, ApprovalsError>;
   /** Ends every proposal and mandate of the scope whose deadline passed. */
   readonly expireDue: (input: ProposalScope) => Effect.Effect<readonly Proposal[], ApprovalsError>;
   readonly propose: (
     command: ProposeCommand,
-    execution?: { readonly transaction: CoreTransaction },
+    execution?: ApprovalExecutionContext,
   ) => Effect.Effect<Proposal, ApprovalsError>;
   /** Re-reads bound witnesses after a role edit; an equal-or-broader edit keeps the mandate (D1). */
   readonly recheckAuthority: (
@@ -329,6 +347,17 @@ const storedProposalMatches = (input: {
   input.stored.capabilityKey === input.capabilityKey &&
   input.stored.commandDigest === input.commandDigest;
 
+const canonicalProposedCommand = (command: ProposeCommand): boolean => {
+  const digest = freezeCommand(command.command);
+  return (
+    Result.isSuccess(digest) &&
+    digest.success === command.commandDigest &&
+    command.command.capabilityKey === command.capabilityKey &&
+    command.command.target === command.target &&
+    command.actionKey.length > 0
+  );
+};
+
 /** Every record leaves this service through the model's own integrity gate (R2-M5). */
 const produced = (
   from: ProposalStatus | undefined,
@@ -393,6 +422,9 @@ export const makeApprovalsService = (ports: ApprovalsPorts): ApprovalsService =>
       authority: ApprovalAuthorityInspector,
     ): Effect.fn.Return<WitnessAuthorityMap, ApprovalAuthorityUnavailableError> {
       const { proposal } = input;
+      if (proposal.actionAuthority !== undefined) {
+        return yield* authorityUnavailable('A forward Action requires complete per-question authority currentness');
+      }
       const group = { scopeId: input.scopeId, tenantId: input.tenantId };
       const requesterAuthority = yield* inspectAuthority(
         withOptional(
@@ -509,7 +541,7 @@ export const makeApprovalsService = (ports: ApprovalsPorts): ApprovalsService =>
 
   const proposeCommand = Effect.fn('Approvals.propose')(function* proposeEffect(
     command: ProposeCommand,
-    execution?: { readonly transaction: CoreTransaction },
+    execution?: ApprovalExecutionContext,
   ) {
     /*
      * A proposal parked inside an owner Action is recorded in that Action's transaction (O90), so the
@@ -520,6 +552,18 @@ export const makeApprovalsService = (ports: ApprovalsPorts): ApprovalsService =>
     const active = yield* Effect.fromOption(stepPorts(ports, execution), () =>
       authorityUnavailable('The authority behind this proposal cannot be read inside its own owner transaction'),
     );
+    const preparedCommand = execution?.[preparedActionProposalV2];
+    if (preparedCommand !== undefined) {
+      if (execution === undefined || active.actionCommands === undefined) {
+        return yield* authorityUnavailable('The forward registered Action proposal lifecycle is unavailable');
+      }
+      return yield* active.actionCommands.lifecycle.propose({
+        command,
+        preparation: preparedCommand,
+        scope: active.actionCommands.scope,
+        transaction: execution.transaction,
+      });
+    }
     if (!isConsistentSubject(command.actor, command.requesterKind)) {
       return yield* new ProposalRefusedError({
         code: 'requester_not_v2_subject',
@@ -559,14 +603,7 @@ export const makeApprovalsService = (ports: ApprovalsPorts): ApprovalsService =>
         reason: 'The requester no longer holds the authority this proposal needs',
       });
     }
-    const digest = freezeCommand(command.command);
-    if (
-      Result.isFailure(digest) ||
-      digest.success !== command.commandDigest ||
-      command.command.capabilityKey !== command.capabilityKey ||
-      command.command.target !== command.target ||
-      command.actionKey.length === 0
-    ) {
+    if (!canonicalProposedCommand(command)) {
       return yield* new CommandNotCanonicalError({
         code: 'command_not_canonical',
         reason: 'The stored owner command must match the proposed capability, target and digest',
@@ -655,6 +692,22 @@ export const makeApprovalsService = (ports: ApprovalsPorts): ApprovalsService =>
       return yield* notFound();
     }
     const proposal = stored.value;
+    if (proposal.actionAuthority !== undefined) {
+      if (ports.actionCommands === undefined) {
+        return yield* authorityUnavailable('The original full-target Action approval lifecycle is unavailable');
+      }
+      return yield* ports.actionCommands.lifecycle.approve({
+        command,
+        proposal,
+        scope: ports.actionCommands.scope,
+      });
+    }
+    if (command.authority === undefined) {
+      return yield* new ApprovalRefusedError({
+        code: 'approval_authority_missing',
+        reason: 'A historical scalar approval requires its original explicit authority contract',
+      });
+    }
     const capability = yield* lookupCapability(proposal.capabilityKey, ports.catalog);
     if (capability === undefined) {
       return yield* new ApprovalRefusedError({
@@ -847,7 +900,7 @@ export const makeApprovalsService = (ports: ApprovalsPorts): ApprovalsService =>
 
   const executeCommand = Effect.fn('Approvals.execute')(function* executeEffect(
     command: ExecuteCommand,
-    execution?: { readonly transaction: CoreTransaction },
+    execution?: ApprovalExecutionContext,
   ) {
     /*
      * A mandate is consumed in the owner Action's transaction, under the proposal lock that transaction
@@ -862,6 +915,18 @@ export const makeApprovalsService = (ports: ApprovalsPorts): ApprovalsService =>
     const active = yield* Effect.fromOption(stepPorts(ports, execution), () =>
       authorityUnavailable('The authority behind this mandate cannot be read inside the transaction that executes it'),
     );
+    const preparation = execution[preparedActionExecutionV2];
+    if (preparation !== undefined) {
+      if (active.actionCommands === undefined) {
+        return yield* authorityUnavailable('The prepared full-target Action execution lifecycle is unavailable');
+      }
+      return yield* active.actionCommands.lifecycle.execute({
+        command,
+        preparation,
+        scope: active.actionCommands.scope,
+        transaction: execution.transaction,
+      });
+    }
     if (active.store.executeInTransaction === undefined) {
       return yield* authorityUnavailable(
         'The approvals store of this mandate cannot write its receipt inside the owner transaction',
@@ -1024,6 +1089,18 @@ export const makeApprovalsService = (ports: ApprovalsPorts): ApprovalsService =>
       return yield* notFound();
     }
     const proposal = stored.value;
+    if (proposal.actionAuthority !== undefined) {
+      if (ports.actionCommands === undefined) {
+        return yield* authorityUnavailable('The full-target Action authority recheck lifecycle is unavailable');
+      }
+      const state = yield* ports.actionCommands.lifecycle.recheckAuthority({
+        proposal,
+        scope: ports.actionCommands.scope,
+      });
+      return state === 'live'
+        ? proposal
+        : yield* persistLapse({ authorityLoss: 'role_lost', now: yield* ports.clock.now, proposal });
+    }
     const authority = yield* inspectProposalAuthority(
       {
         proposal,

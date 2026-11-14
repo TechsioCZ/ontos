@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.node-tooling.json",
+  "include": [
+    "**/*.ts",
+    "**/*.mts"
+  ],
+  "exclude": [
+    "scaffolding",
+    "demo/email-dispatcher",
+    "integration/tests/*.old-release.mts"
+  ]
+}

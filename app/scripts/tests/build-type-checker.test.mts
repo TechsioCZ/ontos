@@ -22,9 +22,17 @@ const modernConfigs = ['apps', 'verticals'].flatMap((group) =>
 // Autoprefixer starts from the preset's ['defaults']; an object config merges into it like Modern's
 // config merge, so only a replacing function yields the app's own CSS targets.
 const probe = `
+import { createRequire } from 'node:module';
+import path from 'node:path';
+const require = createRequire(import.meta.url);
+const appToolsRequire = createRequire(require.resolve('@modern-js/app-tools'));
+const pluginRequire = createRequire(appToolsRequire.resolve('@modern-js/plugin'));
+const { createJiti } = pluginRequire('jiti');
+const jiti = createJiti(import.meta.url, { fsCache: false, requireCache: false, interopDefault: true });
 const result = {};
 for (const config of JSON.parse(process.argv[1])) {
-  const resolved = (await import(new URL(config, 'file://' + process.cwd() + '/').href)).default;
+  const loaded = await jiti.import(path.resolve(config));
+  const resolved = loaded.default ?? loaded;
   let autoprefixer = { overrideBrowserslist: ['defaults'] };
   for (const configure of [resolved.tools?.autoprefixer].flat()) {
     if (typeof configure === 'function') {
@@ -55,14 +63,14 @@ const BuildOutputsSchema = Schema.Record(
   }),
 );
 
-const resolveBuildOutputs = Effect.fn(function* resolveBuildOutputs(nodeEnvironment: string) {
+const resolveBuildOutputs = Effect.fn(function* resolveBuildOutputs(environment: Readonly<Record<string, string>>) {
   const result = yield* collectToolingProcess(
     ChildProcess.make(
       process.execPath,
       ['--no-warnings', '--input-type=module', '--eval', probe, JSON.stringify(modernConfigs)],
       {
         cwd: workspaceRoot,
-        env: { NODE_ENV: nodeEnvironment },
+        env: { ULTRAMODERN_DISABLE_BUILD_TS_CHECKER: '', ...environment },
         extendEnv: true,
         stderr: 'pipe',
         stdin: 'ignore',
@@ -93,7 +101,7 @@ it.live(
   'every application build uses the browser baseline and keeps the published workspace preset TypeScript checker',
   Effect.fn(function* testEffect() {
     expect(modernConfigs.length).toBeGreaterThan(0);
-    const outputs = yield* resolveBuildOutputs('production');
+    const outputs = yield* resolveBuildOutputs({ NODE_ENV: 'production' });
     expectSharedBrowserTargets(outputs);
     for (const [config, output] of Object.entries(outputs)) {
       expect(output.disableTsChecker, `${config} must keep output.disableTsChecker: false`).toBe(false);
@@ -105,10 +113,25 @@ it.live(
 it.live(
   'every application dev server uses the browser baseline and leaves type diagnostics to pnpm typecheck',
   Effect.fn(function* testEffect() {
-    const outputs = yield* resolveBuildOutputs('development');
+    const outputs = yield* resolveBuildOutputs({ NODE_ENV: 'development' });
     expectSharedBrowserTargets(outputs);
     for (const [config, output] of Object.entries(outputs)) {
       expect(output.disableTsChecker, `${config} must set output.disableTsChecker in modern dev`).toBe(true);
+    }
+  }),
+);
+
+// The unit build runs its own TS-Go reference build first, which
+// fails on a transitive type error (typecheck-project-references.test.mts), so its bundler skips the second check.
+it.live(
+  'every application build skips the bundler checker after the unit TS-Go reference build',
+  Effect.fn(function* testEffect() {
+    const outputs = yield* resolveBuildOutputs({
+      NODE_ENV: 'production',
+      ULTRAMODERN_DISABLE_BUILD_TS_CHECKER: '1',
+    });
+    for (const [config, output] of Object.entries(outputs)) {
+      expect(output.disableTsChecker, `${config} must honor ULTRAMODERN_DISABLE_BUILD_TS_CHECKER=1`).toBe(true);
     }
   }),
 );

@@ -14,6 +14,9 @@ import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-e
 import { symmyImportJobs, symmyIntegrationRelations, symmyJobEffects, symmyJobRoutes } from '../../src/db/schema.ts';
 import { symmyJobExecutionStore } from '../../src/persistence/symmy-job-execution-store.ts';
 import { symmyJobStoreFactory } from '../../src/persistence/symmy-job-store.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const openDatabase = (connectionString: string) =>
   PgClient.makeClient({ url: Redacted.make(connectionString) }).pipe(
@@ -50,7 +53,7 @@ const withScopedStores = <A, E>(
     Effect.flatMap((database) =>
       database.transaction((transaction) =>
         Effect.gen(function* transactionStores() {
-          const executor = yield* installOperationalScope(transaction, caller);
+          const executor = yield* installOperationalScope(transaction, caller, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
           const admission = yield* symmyJobStoreFactory(executor, caller);
           return yield* run(admission, symmyJobExecutionStore(executor));
         }),

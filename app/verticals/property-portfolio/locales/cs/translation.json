@@ -1,0 +1,21 @@
+{
+  "property-portfolio": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Remote vertical je nedostupný",
+    "role": "property-portfolio",
+    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
+    "title": "Nemovitosti",
+    "widgetBody": "Vlastní routovanou plochu verticalu."
+  }
+}

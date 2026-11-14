@@ -19,12 +19,13 @@ import { MigrateOrganizationCustomerProfileIcoResultSchema } from '@app/commerce
 import { executeFenceLegacyIcoAuthorityWithAuthorization } from '@app/party-registry/actions/fence-legacy-ico-authority/client';
 import { executeLegacyIcoInventoryWithAuthorization } from '@app/party-registry/apis/legacy-ico-inventory/client';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
-import { Context, DateTime, Effect, Exit, FileSystem, Layer, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect, it } from 'effect-rstest';
 import { SymmyC14ProductFixtureUnavailable } from './support/symmy-c14-product-runtime.mts';
 import { makeOrganizationProfileIcoOwnerFixture } from './support/organization-profile-ico-owner-fixture.mts';
+import { logFixtureDiagnostics } from './support/fixture-diagnostics.mts';
 
 import type { CompanyGovernorInitialization } from './support/organization-profile-ico-owner-fixture.mts';
 
@@ -48,6 +49,13 @@ const publicJwksSchema = Schema.Struct({
 const [MigrationRequiredSchema, PresentSchema] = OrganizationCustomerProfileIcoResponseSchema.members;
 const isPresent = Schema.is(PresentSchema);
 const isMigrationRequired = Schema.is(MigrationRequiredSchema);
+const encodePublicResponse = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Json));
+const failureSummarySchema = Schema.Struct({
+  _tag: Schema.optionalKey(Schema.String),
+  code: Schema.optionalKey(Schema.String),
+  status: Schema.optionalKey(Schema.Number),
+});
+const encodeFailureSummary = Schema.encodeSync(Schema.fromJsonString(failureSummarySchema));
 const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
@@ -240,7 +248,7 @@ it.live(
           );
           expect(new Set(forms)).toEqual(new Set(['KNOWN', 'UNKNOWN']));
           for (const value of [initial, second, report, cutover]) {
-            const encoded = JSON.stringify(value);
+            const encoded = yield* encodePublicResponse(value);
             expect(encoded).not.toContain('actorPrincipalId');
             expect(encoded).not.toContain('acceptedByPrincipalId');
             expect(encoded).not.toContain('"reason"');
@@ -303,24 +311,12 @@ it.live(
             assertStoredClassification(prepared, yield* prepared.observe());
           }
         }).pipe(
-          Effect.tapError(() =>
-            Effect.gen(function* protocolDiagnostics() {
-              const fs = yield* FileSystem.FileSystem;
-              for (const [appId, diagnostic] of fixture.diagnostics) {
-                yield* fs.writeFileString(`/tmp/commerce-org-http-${appId}.diag.log`, yield* diagnostic);
-              }
-            }),
-          ),
+          Effect.tapError(() => logFixtureDiagnostics(fixture.diagnostics)),
           Effect.mapError((cause) => {
-            const problem = Schema.decodeUnknownOption(
-              Schema.Struct({
-                _tag: Schema.optionalKey(Schema.String),
-                code: Schema.optionalKey(Schema.String),
-                status: Schema.optionalKey(Schema.Number),
-              }),
-            )(cause);
-            const classification = Option.isSome(problem) ? JSON.stringify(problem.value) : 'typed-failure';
+            const problem = Schema.decodeUnknownOption(failureSummarySchema)(cause);
+            const classification = Option.isSome(problem) ? encodeFailureSummary(problem.value) : 'typed-failure';
             return new SymmyC14ProductFixtureUnavailable({
+              cause: Redacted.make(cause),
               message: `Company ICO HTTP phase ${phase}: ${classification}`,
             });
           }),

@@ -10,6 +10,7 @@ export const projectsRegistration = defineVerticalRuntimeRegistration({
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'project-owner-candidates': () => import('./src/api/project-owner-candidates-client.ts'),
       'read-project': () => import('./src/api/read-project-client.ts'),
       // </generated-module-registration-apis>
@@ -29,6 +30,7 @@ export const projectsRegistration = defineVerticalRuntimeRegistration({
     },
     search: {
       // <generated-module-registration-search>
+      projects: () => import('./src/api/projects-search-client.ts'),
       // </generated-module-registration-search>
     },
   },

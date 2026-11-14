@@ -1,4 +1,6 @@
 import {
+  DatabaseIdentityEnrollmentContext,
+  defineDatabaseIdentityEnrollment,
   ActiveApplicationCompositionService,
   ContextAccessLive,
   CorePersistenceLive,
@@ -186,6 +188,7 @@ export const makeMarketRetirementNativeReceiver = Effect.fn('MarketRetirementNat
           Layer.provide(NodeCrypto.layer),
         );
         const resolver = OperationalScopeResolverLive.pipe(
+          Layer.provide(Layer.succeed(DatabaseIdentityEnrollmentContext, defineDatabaseIdentityEnrollment([]))),
           Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, accessEnforcement)),
         );
         const namespace = staffAuthenticationNamespaceRegistryLayer(['commerce-customer-context']);
@@ -199,6 +202,7 @@ export const makeMarketRetirementNativeReceiver = Effect.fn('MarketRetirementNat
         );
         const overlay = commerceCustomerContextOwnerAuthorizationOverlayLive;
         const common = Layer.mergeAll(
+          Layer.succeed(DatabaseIdentityEnrollmentContext, defineDatabaseIdentityEnrollment([])),
           persistence,
           ContextAccessLive,
           accessEnforcement,
@@ -243,6 +247,8 @@ export const makeMarketRetirementNativeReceiver = Effect.fn('MarketRetirementNat
           marketRetirementReservationRecoveryReadApiLive,
         ).pipe(
           Layer.provide(services),
+          Layer.provide(database),
+          Layer.provide(Layer.succeed(DatabaseIdentityEnrollmentContext, defineDatabaseIdentityEnrollment([]))),
           Layer.provide(NodeCrypto.layer),
           Layer.provide(NodeServices.layer),
           Layer.provide(FetchHttpClient.layer),

@@ -7,11 +7,13 @@ import {
   isApplicationCompositionDurableWorkDrained,
   loadDatabaseConnectionPair,
   scopedRoutineInvokerFromTransaction,
+  resumeApplicationCompositionDurableAdmission,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { eq, sql } from 'drizzle-orm';
 import { Effect, Exit, Fiber, Option, Schema } from 'effect';
+import { readEnrollmentStorefrontOrigin } from '../../src/enrollment/attempts/registration-persistence.ts';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -42,6 +44,7 @@ import {
   EnrollmentPrincipalIdSchema,
   EnrollmentProviderSubjectIdSchema,
   EnrollmentResourceIdSchema,
+  EnrollmentStorefrontOriginSchema,
   EnrollmentTenantIdSchema,
   EnrollmentTransitionKeySchema,
 } from '../../shared/enrollment-contracts.ts';
@@ -269,11 +272,30 @@ it.live('proves durable Attempt CAS, expiry fencing, governed recovery, and RLS 
       yield* Effect.addFinalizer(() => cleanup().pipe(Effect.orDie));
 
       const created = yield* inScope((persistence) =>
-        persistence.create(startInput('durable-enrollment-live', 'd6100000-0000-4000-8000-000000000001')),
+        persistence.create({
+          ...startInput('durable-enrollment-live', 'd6100000-0000-4000-8000-000000000001'),
+          storefrontOrigin: Schema.decodeSync(EnrollmentStorefrontOriginSchema)(
+            'https://ontos-stage-shop.web-revolution.cz',
+          ),
+        }),
       );
       const replayedCreate = yield* inScope((persistence) =>
-        persistence.create(startInput('durable-enrollment-live', 'd6100000-0000-4000-8000-000000000002')),
+        persistence.create({
+          ...startInput('durable-enrollment-live', 'd6100000-0000-4000-8000-000000000002'),
+          storefrontOrigin: Schema.decodeSync(EnrollmentStorefrontOriginSchema)(
+            'https://ontos-stage-akros.web-revolution.cz',
+          ),
+        }),
       );
+      // The storefront the Attempt started on is recorded once; a replay from another storefront never moves it.
+      const storedOrigin = yield* runtime.transaction((transaction) =>
+        Effect.gen(function* readStoredStorefront() {
+          yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantId}, true)`, 'objects');
+          const invoker = scopedRoutineInvokerFromTransaction(makeTransactionExecutor(transaction), scope);
+          return yield* readEnrollmentStorefrontOrigin(invoker, created.attempt.portalEnrollmentAttemptId);
+        }),
+      );
+      expect(storedOrigin).toStrictEqual(Option.some('https://ontos-stage-shop.web-revolution.cz'));
       expect(created.outcome).toBe('CREATED');
       expect(created.attempt.compositionRevision).toBe(ENROLLMENT_TEST_COMPOSITION_REVISION);
       expect(replayedCreate.attempt.compositionRevision).toBe(ENROLLMENT_TEST_COMPOSITION_REVISION);
@@ -883,18 +905,11 @@ it.live(
           revision: created.revision,
           tenantId,
         };
-        expect(yield* store.claimSweep({ ...sweep, compositionRevision: 'b'.repeat(64) })).toStrictEqual(Option.none());
+        expect(
+          Exit.isFailure(yield* store.claimSweep({ ...sweep, compositionRevision: 'b'.repeat(64) }).pipe(Effect.exit)),
+        ).toBe(true);
         expect(yield* store.claimSweep(sweep)).toStrictEqual(Option.some(1));
 
-        yield* core.transaction((transaction) =>
-          closeApplicationCompositionDurableAdmission(transaction, ENROLLMENT_TEST_COMPOSITION_REVISION),
-        );
-        const deniedDrain = yield* core
-          .transaction((transaction) =>
-            drainApplicationCompositionAuthority(transaction, ENROLLMENT_TEST_COMPOSITION_REVISION),
-          )
-          .pipe(Effect.exit);
-        expect(Exit.isFailure(deniedDrain)).toBe(true);
         const claimed = yield* fixture.run(fixture.scope, (transaction) =>
           commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope).claim({
             ...claimInput(
@@ -914,6 +929,7 @@ it.live(
         const terminateInput = {
           actionInvocationId: actionInvocationId('d6990000-0000-4000-8000-000000000004'),
           actorPrincipalId: principalId,
+          compositionRevision: ENROLLMENT_TEST_COMPOSITION_REVISION,
           expectedRevision: successful.attempt.revision,
           portalEnrollmentAttemptId: created.portalEnrollmentAttemptId,
           reason: 'owner_finished',
@@ -951,6 +967,15 @@ it.live(
             transitionKey: optionalTransition,
           }),
         );
+        yield* core.transaction((transaction) =>
+          closeApplicationCompositionDurableAdmission(transaction, ENROLLMENT_TEST_COMPOSITION_REVISION),
+        );
+        const deniedDrain = yield* core
+          .transaction((transaction) =>
+            drainApplicationCompositionAuthority(transaction, ENROLLMENT_TEST_COMPOSITION_REVISION),
+          )
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(deniedDrain)).toBe(true);
         const requiredOutcome = {
           accountSubject: subject,
           actorPrincipalId: principalId,
@@ -1050,7 +1075,7 @@ it.live(
     ),
 );
 
-it.live('closes new admission while existing child work remains covered by one serialized Attempt marker', () =>
+it.live('closes owner admission while already claimed effects retain operation-scoped markers', () =>
   Effect.scoped(
     Effect.gen(function* existingAttemptFinishesAfterAdmissionCloses() {
       const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId }, ENROLLMENT_TEST_COMPOSITION_REVISION);
@@ -1061,7 +1086,7 @@ it.live('closes new admission while existing child work remains covered by one s
         fixture,
         startInput('closed-admission-existing-attempt', 'd69b0000-0000-4000-8000-000000000001'),
       );
-      const marker = `enrollment-attempt:${tenantId}:${created.portalEnrollmentAttemptId}`;
+      const marker = `enrollment-operation:${tenantId}:${created.portalEnrollmentAttemptId}:d69b0000-0000-4000-8000-000000000003`;
       const ownedMarkers = coreClient.unsafe<{ work_id: string }>(
         "select work_id from core.application_composition_durable_work where owner_module_key = 'commerce.customer-context' and original_revision = $1 and (work_id like $2 or work_id like $3) order by work_id",
         [
@@ -1070,6 +1095,20 @@ it.live('closes new admission while existing child work remains covered by one s
           `enrollment-operation:${tenantId}:%`,
         ],
       );
+      expect(yield* ownedMarkers).toStrictEqual([]);
+      const claimed = yield* fixture.run(fixture.scope, (transaction) =>
+        commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope).claim({
+          ...claimInput(
+            created.portalEnrollmentAttemptId,
+            created.revision,
+            'd69b0000-0000-4000-8000-000000000003',
+            'provider.account.create',
+            'closed-admission-worker',
+          ),
+          leaseDurationMs: 60_000,
+        }),
+      );
+      const successful = yield* requireClaimed(claimed);
       expect((yield* ownedMarkers).map((row) => row.work_id)).toStrictEqual([marker]);
       yield* core.transaction((transaction) =>
         closeApplicationCompositionDurableAdmission(transaction, ENROLLMENT_TEST_COMPOSITION_REVISION),
@@ -1087,20 +1126,6 @@ it.live('closes new admission while existing child work remains covered by one s
         )
         .pipe(Effect.exit);
       expect(Exit.isFailure(deniedStart)).toBe(true);
-      const claimed = yield* fixture.run(fixture.scope, (transaction) =>
-        commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope).claim({
-          ...claimInput(
-            created.portalEnrollmentAttemptId,
-            created.revision,
-            'd69b0000-0000-4000-8000-000000000003',
-            'provider.account.create',
-            'closed-admission-worker',
-          ),
-          leaseDurationMs: 60_000,
-        }),
-      );
-      const successful = yield* requireClaimed(claimed);
-      expect((yield* ownedMarkers).map((row) => row.work_id)).toStrictEqual([marker]);
       const prematureTerminal = yield* fixture.admin
         .transaction((transaction) =>
           transaction
@@ -1130,7 +1155,10 @@ it.live('closes new admission while existing child work remains covered by one s
           'IN_PROGRESS',
         ),
       );
-      expect((yield* ownedMarkers).map((row) => row.work_id)).toStrictEqual([marker]);
+      expect(yield* ownedMarkers).toStrictEqual([]);
+      yield* core.transaction((transaction) =>
+        resumeApplicationCompositionDurableAdmission(transaction, ENROLLMENT_TEST_COMPOSITION_REVISION),
+      );
 
       // The child admission holds the same parent row lock as terminal completion. The terminal
       // routine must observe that child after its lock wait, rather than clear its only marker.
@@ -1155,6 +1183,7 @@ it.live('closes new admission while existing child work remains covered by one s
       const terminateInput = {
         actionInvocationId: actionInvocationId('d69b0000-0000-4000-8000-000000000006'),
         actorPrincipalId: principalId,
+        compositionRevision: ENROLLMENT_TEST_COMPOSITION_REVISION,
         expectedRevision: finished.attempt.revision,
         portalEnrollmentAttemptId: created.portalEnrollmentAttemptId,
         reason: 'owner_finished',
@@ -1193,7 +1222,12 @@ it.live('closes new admission while existing child work remains covered by one s
       expect(refusedTerminal?.attempt_outcome).toBe('INDETERMINATE');
       expect(refusedTerminal?.composition_revision).toBe(ENROLLMENT_TEST_COMPOSITION_REVISION);
       yield* terminalSession.unsafe('COMMIT');
-      expect((yield* ownedMarkers).map((row) => row.work_id)).toStrictEqual([marker]);
+      yield* core.transaction((transaction) =>
+        closeApplicationCompositionDurableAdmission(transaction, ENROLLMENT_TEST_COMPOSITION_REVISION),
+      );
+      expect((yield* ownedMarkers).map((row) => row.work_id)).toStrictEqual([
+        `enrollment-operation:${tenantId}:${created.portalEnrollmentAttemptId}:${racedInvocation}`,
+      ]);
       yield* fixture.admin.transaction((transaction) =>
         transaction
           .update(portalEnrollmentOwnerOperations)
@@ -1211,7 +1245,7 @@ it.live('closes new admission while existing child work remains covered by one s
         yield* core.transaction((transaction) =>
           isApplicationCompositionDurableWorkDrained(transaction, ENROLLMENT_TEST_COMPOSITION_REVISION),
         ),
-      ).toBe(false);
+      ).toBe(true);
       yield* fixture.run(fixture.scope, (transaction) =>
         commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope).terminate(terminateInput),
       );

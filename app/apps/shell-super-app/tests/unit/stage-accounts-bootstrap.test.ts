@@ -1,4 +1,4 @@
-import { Effect, Redacted } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -7,6 +7,7 @@ import {
   classifyExactStageAccountsRecord,
   parseStageAccountsBootstrapConfig,
 } from '../../api/auth/stage-accounts-bootstrap-contract.ts';
+import { loadStageAccountsConfiguration } from '../../api/auth/stage-accounts-bootstrap-runtime-infrastructure.ts';
 
 const ACCOUNTS_FILE_PATH = '/operator/stage-accounts.json';
 
@@ -42,6 +43,7 @@ const validAccountsFile = {
         registrationCountry: 'CZ',
         registrationNumber: 'FIXTURE-A',
       },
+      moduleKey: 'party.registry',
       moduleStateId: '40000000-0000-4000-8000-0000000000a0',
       slug: 'tenant-a',
       tenantId: '10000000-0000-4000-8000-0000000000a0',
@@ -50,6 +52,8 @@ const validAccountsFile = {
 } as const;
 
 const VALID_SOURCE = JSON.stringify(validAccountsFile);
+const declaredWorkloadKeys: ReadonlySet<string> = new Set(['fixture.stage-provisioning']);
+const encodeFile = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const readerFor =
   (source: string, mode = 0o600) =>
@@ -65,7 +69,11 @@ const readerFor =
 
 it.effect('builds the stage configuration from the operator accounts file', () =>
   Effect.gen(function* buildsTheStageConfiguration() {
-    const configuration = yield* parseStageAccountsBootstrapConfig(validEnvironment, readerFor(VALID_SOURCE));
+    const configuration = yield* parseStageAccountsBootstrapConfig(
+      validEnvironment,
+      readerFor(VALID_SOURCE),
+      declaredWorkloadKeys,
+    );
     expect(configuration).toMatchObject({
       accountsFile: { retiredAccountEmails: validAccountsFile.retiredAccountEmails, schemaVersion: 2 },
       authBaseUrl: 'https://shell.stage.example.test',
@@ -88,6 +96,7 @@ it.effect('refuses to run outside stage or without the accounts file', () =>
         parseStageAccountsBootstrapConfig(
           { ...validEnvironment, ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'production' },
           readerFor(VALID_SOURCE),
+          declaredWorkloadKeys,
         ),
       ),
     ).toMatchObject({ reason: expect.stringMatching(/stage environment/u) });
@@ -96,6 +105,7 @@ it.effect('refuses to run outside stage or without the accounts file', () =>
         parseStageAccountsBootstrapConfig(
           { ...validEnvironment, [STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY]: undefined },
           readerFor(VALID_SOURCE),
+          declaredWorkloadKeys,
         ),
       ),
     ).toMatchObject({ reason: `${STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY} is required` });
@@ -104,6 +114,7 @@ it.effect('refuses to run outside stage or without the accounts file', () =>
         parseStageAccountsBootstrapConfig(
           { ...validEnvironment, [STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY]: '/operator/missing.json' },
           readerFor(VALID_SOURCE),
+          declaredWorkloadKeys,
         ),
       ),
     ).toMatchObject({ reason: expect.stringMatching(/could not be read/u) });
@@ -113,7 +124,7 @@ it.effect('refuses to run outside stage or without the accounts file', () =>
 it.effect('reports accounts file validation failures as configuration errors without values', () =>
   Effect.gen(function* reportsInvalidFiles() {
     const loose = yield* Effect.flip(
-      parseStageAccountsBootstrapConfig(validEnvironment, readerFor(VALID_SOURCE, 0o644)),
+      parseStageAccountsBootstrapConfig(validEnvironment, readerFor(VALID_SOURCE, 0o644), declaredWorkloadKeys),
     );
     expect(loose).toMatchObject({
       code: 'stage_accounts_configuration_invalid',
@@ -123,10 +134,57 @@ it.effect('reports accounts file validation failures as configuration errors wit
       parseStageAccountsBootstrapConfig(
         validEnvironment,
         readerFor(JSON.stringify({ ...validAccountsFile, schemaVersion: 1 })),
+        declaredWorkloadKeys,
       ),
     );
     expect(malformed.reason).toMatch(/documented schema/u);
     expect(malformed.reason).not.toMatch(/fixture-|example\.invalid/u);
+  }),
+);
+
+it.effect('threads only the explicitly supplied workload declarations through the infrastructure loader', () =>
+  Effect.gen(function* threadsReviewedWorkloads() {
+    const [tenant] = validAccountsFile.tenants;
+    const [account] = tenant.accounts;
+    const workloadKey = 'fixture.stage-provisioning';
+    const source = yield* encodeFile({
+      ...validAccountsFile,
+      tenants: [{ ...tenant, workloads: [{ principalId: account.principalId, workloadKey }] }],
+    });
+    const reader = readerFor(source);
+    const configuration = yield* loadStageAccountsConfiguration(reader, declaredWorkloadKeys, validEnvironment);
+    expect(configuration.accountsFile.tenants[0].workloads).toEqual([
+      { principalId: account.principalId, workloadKey },
+    ]);
+    const failure = yield* loadStageAccountsConfiguration(reader, new Set(), validEnvironment).pipe(Effect.flip);
+    expect(failure.code).toBe('stage_accounts_configuration_invalid');
+    expect(failure.reason).toMatch(/declared by the composition/u);
+    expect(failure.reason).not.toContain(workloadKey);
+    expect(failure.reason).not.toContain(account.principalId);
+    expect(failure.reason).not.toContain(account.email);
+    expect(failure.reason).not.toContain(account.password);
+  }),
+);
+
+it.effect('rejects malformed workloads even when a caller includes them in its supplied set', () =>
+  Effect.gen(function* refusesMalformedWorkloads() {
+    const [tenant] = validAccountsFile.tenants;
+    const [account] = tenant.accounts;
+    const workloadKey = 'invalid workload';
+    const failure = yield* parseStageAccountsBootstrapConfig(
+      validEnvironment,
+      readerFor(
+        yield* encodeFile({
+          ...validAccountsFile,
+          tenants: [{ ...tenant, workloads: [{ principalId: account.principalId, workloadKey }] }],
+        }),
+      ),
+      new Set([workloadKey]),
+    ).pipe(Effect.flip);
+    expect(failure.code).toBe('stage_accounts_configuration_invalid');
+    expect(failure.reason).toMatch(/documented schema/u);
+    expect(failure.reason).not.toContain(workloadKey);
+    expect(failure.reason).not.toContain(account.password);
   }),
 );
 

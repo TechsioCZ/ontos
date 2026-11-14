@@ -36,6 +36,7 @@ export const commerceOrderRegistration = defineVerticalRuntimeRegistration({
       'committed-order-approval-evidence': () => import('./src/api/committed-order-approval-evidence-client.ts'),
       'order-commitment-state': () => import('./src/api/order-commitment-state-client.ts'),
       'order-finalization-work': () => import('./src/api/order-finalization-work-client.ts'),
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'prepared-order-approval-binding': () => import('./src/api/prepared-order-approval-binding-client.ts'),
       'prepared-order-pricing-binding': () => import('./src/api/prepared-order-pricing-binding-client.ts'),
       'verify-order-commitment-binding': () => import('./src/api/verify-order-commitment-binding-client.ts'),

@@ -39,6 +39,7 @@ import type {
 } from '../../shared/domain/price-group-ports.ts';
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
 import { createAssignCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupAssignedV1OutboxMessage } from './assign-counterparty-price-group.commerce-customer-context-counterparty-price-group-assigned-v1.outbox-message.ts';
+import { prepareAssignCounterpartyPriceGroupServices } from './price-group-action-preparation.ts';
 import { assignCounterpartyPriceGroupServicesForTransaction } from './price-group-action-services.ts';
 import { counterpartyOwnerFacts } from './owner-access-facts.ts';
 import type { CustomerPriceGroupAssignmentReceiptCapture } from '../services/customer-price-group-assignment-receipt.service.ts';
@@ -462,6 +463,7 @@ export const assignCounterpartyPriceGroupAction = defineAction(
   },
   handleAssignCounterpartyPriceGroup,
   assignCounterpartyPriceGroupServicesForTransaction,
+  { prepareServices: prepareAssignCounterpartyPriceGroupServices },
 );
 
 // <generated-outbox-message-exports>

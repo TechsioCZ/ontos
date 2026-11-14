@@ -29,6 +29,9 @@ import { symmyJobStoreFactory } from '../../src/persistence/symmy-job-store.ts';
 import { symmyJobPrivacyExecutionStore } from '../../src/services/symmy-job-privacy-execution-store.ts';
 import type { SymmyJobPrivacyExecutionRecord } from '../../src/services/symmy-job-privacy-execution-store.ts';
 import { symmyJobRetentionStore } from '../../src/services/symmy-job-retention-store.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const fixture = Effect.gen(function* nativeReceiptFixture() {
   const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
@@ -104,7 +107,7 @@ const fixture = Effect.gen(function* nativeReceiptFixture() {
     tenantId,
   });
   const admitted = yield* firstDb.transaction((tx) =>
-    installOperationalScope(tx, scope).pipe(
+    installOperationalScope(tx, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
       Effect.flatMap((executor) => symmyJobStoreFactory(executor, scope)),
       Effect.flatMap((store) =>
         store.admit({
@@ -197,7 +200,7 @@ it.effect(
       const blocked = receiptFor(state, 1, 'BLOCKED');
       const run = <A, E>(operation: (store: ReturnType<typeof symmyJobPrivacyExecutionStore>) => Effect.Effect<A, E>) =>
         state.firstDb.transaction((tx) =>
-          installOperationalScope(tx, state.governanceScope).pipe(
+          installOperationalScope(tx, state.governanceScope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
             Effect.flatMap((executor) => operation(symmyJobPrivacyExecutionStore(executor))),
           ),
         );
@@ -212,7 +215,7 @@ it.effect(
       expect(yield* run((store) => store.record(digest, receiptFor(state, 3, 'BLOCKED')))).toBe(false);
       expect(
         yield* state.firstDb.transaction((tx) =>
-          installOperationalScope(tx, state.governanceScope).pipe(
+          installOperationalScope(tx, state.governanceScope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
             Effect.flatMap((executor) => symmyJobRetentionStore(executor).purge(state.purgeInput)),
           ),
         ),
@@ -243,7 +246,7 @@ it.effect('isolates receipt lookup and recording by the actual Tenant and Govern
     const blocked = receiptFor(state, 1, 'BLOCKED');
     expect(
       yield* state.firstDb.transaction((tx) =>
-        installOperationalScope(tx, state.governanceScope).pipe(
+        installOperationalScope(tx, state.governanceScope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
           Effect.flatMap((executor) => symmyJobPrivacyExecutionStore(executor).record(digest, blocked)),
         ),
       ),
@@ -255,7 +258,7 @@ it.effect('isolates receipt lookup and recording by the actual Tenant and Govern
     expect(
       Option.isNone(
         yield* state.firstDb.transaction((tx) =>
-          installOperationalScope(tx, otherCompany).pipe(
+          installOperationalScope(tx, otherCompany, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
             Effect.flatMap((executor) => symmyJobPrivacyExecutionStore(executor).load(digest)),
           ),
         ),
@@ -263,7 +266,7 @@ it.effect('isolates receipt lookup and recording by the actual Tenant and Govern
     ).toBe(true);
     const wrongCompany = yield* state.firstDb
       .transaction((tx) =>
-        installOperationalScope(tx, otherCompany).pipe(
+        installOperationalScope(tx, otherCompany, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
           Effect.flatMap((executor) => symmyJobPrivacyExecutionStore(executor).record(digest, blocked)),
         ),
       )
@@ -282,7 +285,7 @@ it.effect('isolates receipt lookup and recording by the actual Tenant and Govern
     expect(
       Option.isNone(
         yield* state.firstDb.transaction((tx) =>
-          installOperationalScope(tx, otherTenant).pipe(
+          installOperationalScope(tx, otherTenant, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
             Effect.flatMap((executor) => symmyJobPrivacyExecutionStore(executor).load(digest)),
           ),
         ),
@@ -290,7 +293,7 @@ it.effect('isolates receipt lookup and recording by the actual Tenant and Govern
     ).toBe(true);
     expect(
       yield* state.firstDb.transaction((tx) =>
-        installOperationalScope(tx, otherTenant).pipe(
+        installOperationalScope(tx, otherTenant, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
           Effect.flatMap((executor) => symmyJobPrivacyExecutionStore(executor).record(digest, blocked)),
         ),
       ),
@@ -309,7 +312,11 @@ it.effect('serializes an absent first receipt across two actual transactions bef
     const firstFiber = yield* Effect.forkChild(
       state.firstDb.transaction((tx) =>
         Effect.gen(function* holdMissingReceipt() {
-          const executor = yield* installOperationalScope(tx, state.governanceScope);
+          const executor = yield* installOperationalScope(
+            tx,
+            state.governanceScope,
+            FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          );
           const rows = yield* state.first<{ pid: number }>`select pg_backend_pid() as pid`;
           expect(Option.isNone(yield* symmyJobPrivacyExecutionStore(executor).lock(digest))).toBe(true);
           const pid = rows[0]?.pid;
@@ -326,7 +333,11 @@ it.effect('serializes an absent first receipt across two actual transactions bef
     const secondFiber = yield* Effect.forkChild(
       state.secondDb.transaction((tx) =>
         Effect.gen(function* observeCommittedReceipt() {
-          const executor = yield* installOperationalScope(tx, state.governanceScope);
+          const executor = yield* installOperationalScope(
+            tx,
+            state.governanceScope,
+            FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          );
           const rows = yield* state.second<{ pid: number }>`select pg_backend_pid() as pid`;
           const pid = rows[0]?.pid;
           if (pid === undefined) {

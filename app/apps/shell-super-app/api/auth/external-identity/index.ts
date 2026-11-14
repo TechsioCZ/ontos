@@ -305,6 +305,15 @@ const mapWorkloadError = (
 
 const mapAdmissionError = (error: ExternalIdentityFailure): ExternalIdentityProblem => mapIdentityCode(error.code);
 
+/** Records why an admission was refused. Reasons are fixed internal strings, never request data or credentials. */
+const logAdmissionRefusal = (failure: ExternalIdentityFailure) =>
+  Effect.logWarning('External identity admission refused').pipe(
+    Effect.annotateLogs({ code: failure.code, reason: failure.reason }),
+  );
+
+const refuseAdmission = <Value, Requirements>(admission: Effect.Effect<Value, ExternalIdentityFailure, Requirements>) =>
+  admission.pipe(Effect.tapError(logAdmissionRefusal), Effect.mapError(mapAdmissionError));
+
 const requiredHeader = (
   headers: ExternalIdentityHttpHeaders,
   name: string,
@@ -378,6 +387,11 @@ const runResolveRead = (
       }),
     ),
     Effect.provideContext(Context.make(ExternalIdentityAdmission, admission)),
+    Effect.tapError((refusal) =>
+      Predicate.isTagged(refusal, 'ExternalIdentityError')
+        ? Effect.void
+        : Effect.logWarning('External identity resolve read refused').pipe(Effect.annotateLogs({ tag: refusal._tag })),
+    ),
     Effect.mapError(mapReadError),
   );
 
@@ -754,7 +768,7 @@ const reservePrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.reservePr
                 authenticationRef: payload.authenticationRef,
                 subject: payload.reservation,
                 tenantId: principal.tenantId,
-              }).pipe(Effect.mapError(mapAdmissionError)),
+              }).pipe(refuseAdmission),
             );
             return yield* runReserveAction(
               principal,
@@ -808,7 +822,7 @@ const activatePrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.activate
                 authenticationRef: payload.authenticationRef,
                 subject,
                 tenantId: principal.tenantId,
-              }).pipe(Effect.mapError(mapAdmissionError)),
+              }).pipe(refuseAdmission),
             );
             return yield* runActivateAction(
               principal,
@@ -869,7 +883,7 @@ const changePrincipalBindingStatusHandler = Effect.fn('ExternalIdentityHttp.chan
                   authenticationRef,
                   subject,
                   tenantId: principal.tenantId,
-                }).pipe(Effect.mapError(mapAdmissionError)),
+                }).pipe(refuseAdmission),
               );
             }
             return yield* runStatusAction(principal, payload, idempotencyKey, ultramodernDeliveryUnit.appId, admission);
@@ -949,7 +963,7 @@ const resolveExternalSubjectHandler = Effect.fn('ExternalIdentityHttp.resolveExt
                 binding,
                 subject,
                 tenantId: principal.tenantId,
-              }).pipe(Effect.mapError(mapAdmissionError)),
+              }).pipe(refuseAdmission),
             );
             return yield* runResolveRead(principal, subject, admission, ultramodernDeliveryUnit.appId);
           }),
@@ -996,7 +1010,7 @@ const issueExternalGatewayContextHandler = Effect.fn('ExternalIdentityHttp.issue
                 binding,
                 subject,
                 tenantId: principal.tenantId,
-              }).pipe(Effect.mapError(mapAdmissionError)),
+              }).pipe(refuseAdmission),
             );
             const resolved = yield* runResolveRead(principal, subject, admission, ultramodernDeliveryUnit.appId);
             let legalEntityId: typeof principal.legalEntityId;

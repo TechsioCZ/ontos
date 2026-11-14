@@ -40,6 +40,7 @@ import {
 import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
 import type { AccessCatalogModule, AccessDeclarationInput } from '../../src/authorization/access-declaration.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../src/db/database-identities.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';
 import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
@@ -55,6 +56,7 @@ import {
   replacedDatabase,
 } from '../support/access-scenarios/database.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 /*
  * A portal person's access, written by Core alone (`access/portal`). A tenant is bootstrapped by its owner; a
@@ -209,6 +211,7 @@ const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value
     const compiler = makeAccessProjectionCompiler(makeAccessProjectionTransport(configuration));
     const platforms = Layer.mergeAll(
       Layer.succeed(CoreDatabase, { executor }),
+      Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
       Layer.succeed(AccessProjectionCompiler, compiler),
       NodeServices.layer,
     );
@@ -271,7 +274,7 @@ const inOwnerTransaction = <Value>(
   Effect.flatMap(scopeFor(tenant.tenantId, actor, company), (scope) =>
     tenant.executor
       .transaction((transaction) =>
-        installOperationalScope(transaction, scope).pipe(
+        installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
           Effect.orDie,
           Effect.flatMap((scoped) => write(accessPortalWritesForTransaction(scoped, scope))),
         ),

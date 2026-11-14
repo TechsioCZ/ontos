@@ -35,6 +35,9 @@ import type { SymmyJobNotificationStoreService } from '../../src/services/symmy-
 import { SymmyJobLifecycleStoreError } from '../../src/services/symmy-job-notification-store-error.ts';
 import { makeSymmyJobNotificationService } from '../../src/services/symmy-job-notification.service.ts';
 import { symmyJobRetentionStore } from '../../src/services/symmy-job-retention-store.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const openDatabase = (connectionString: string) =>
   PgClient.makeClient({ url: Redacted.make(connectionString) }).pipe(
@@ -118,7 +121,11 @@ it.effect(
       ) =>
         openDatabase(connections.runtime.connectionString).pipe(
           Effect.flatMap((database) =>
-            database.transaction((tx) => installOperationalScope(tx, invocationScope).pipe(Effect.flatMap(run))),
+            database.transaction((tx) =>
+              installOperationalScope(tx, invocationScope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
+                Effect.flatMap(run),
+              ),
+            ),
           ),
           Effect.scoped,
           Effect.provideService(Reactivity.Reactivity, reactivity),

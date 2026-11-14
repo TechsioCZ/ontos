@@ -6,6 +6,8 @@
 // @ontos-action-http-domain-problem MarketRetirementImpactAssessmentRejected=shared/market-retirement-admission.ts#MarketRetirementImpactRejectedProblemSchema#mapMarketRetirementImpactRejectedProblem
 // @ontos-action-http-domain-problem MarketRetirementImpactAssessmentStale=shared/market-retirement-admission.ts#MarketRetirementImpactStaleProblemSchema#mapMarketRetirementImpactStaleProblem
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -17,6 +19,7 @@ import {
 import { RetireMarketPayloadSchema, RetireMarketResultSchema } from '../actions/retire-market.ts';
 
 export { RetireMarketPayloadSchema } from '../actions/retire-market.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const RetireMarketActionInvalidProblemSchema = makeProblemDetailsSchema('RetireMarketActionInvalidProblem', 400);
 export const RetireMarketActionAuthenticationProblemSchema = makeProblemDetailsSchema(
@@ -34,6 +37,7 @@ export const RetireMarketActionForbiddenProblemSchema = makeProblemDetailsSchema
       'operation_context_denied',
       'operation_context_invalid',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const RetireMarketActionNotFoundProblemSchema = makeProblemDetailsSchema(
@@ -153,7 +157,7 @@ export const retireMarketActionGroupDefinition = HttpApiGroup.make('retireMarket
     HttpApiEndpoint.post('execute', '/commerce-market-catalog/actions/retire-market', {
       error: actionErrors,
       payload: Schema.toEncoded(RetireMarketPayloadSchema),
-      success: RetireMarketResultSchema,
+      success: [ActionProposalAcceptedSchema, RetireMarketResultSchema],
     }),
   )
   .middleware(RetireMarketActionSchemaErrorMiddleware);

@@ -25,6 +25,7 @@ import { DateTime, Effect, Redacted, Schema } from 'effect';
 import type { HttpApi, HttpApiGroup } from 'effect/http-api';
 import type { HttpClient } from 'effect/http';
 
+import { assortmentEvidenceCall } from '../declared-evidence-calls.ts';
 import { findEnrolledSymmyRuleFixture, importSymmyRuleActionKey } from '../services/symmy-rule-fixture-enrollment.ts';
 
 const ownerReads = {
@@ -76,9 +77,11 @@ const ownerClient = <ApiId extends string, Groups extends HttpApiGroup.Constrain
   scope: OperationalScope,
   crypto: Crypto.Crypto,
 ) =>
+  // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
   acquireDelegatedGatewayContext(
     {
       audience: owner.appId,
+      callingAppId: 'assortment',
       legalEntityScope: owner.scope,
       requestCorrelation: scope.correlationId,
       subject: {
@@ -90,6 +93,7 @@ const ownerClient = <ApiId extends string, Groups extends HttpApiGroup.Constrain
     },
     crypto,
   ).pipe(
+    assortmentEvidenceCall.symmyRuleFixtureOwnerCurrentness,
     Effect.tapError((failure) =>
       Effect.logWarning('Assortment fixture owner delegation failed', {
         owner: owner.moduleId,
@@ -148,7 +152,9 @@ export const checkAssortmentFixtureOwnerCurrentness = (
       tenantId: storefrontRef.tenantId,
     });
     const product = yield* ownerClient(AssortmentProductClassificationV1Api, ownerReads.product, scope, crypto);
-    const classification = yield* product.assortmentProductClassificationV1.execute({ payload: productRequest });
+    const classification = yield* product.assortmentProductClassificationV1
+      .execute({ payload: productRequest })
+      .pipe(assortmentEvidenceCall.symmyRuleFixtureOwnerCurrentness);
     if (
       classification.operation !== 'OBSERVE' ||
       classification.observation.productRef.resourceId !== command.rule.selector.productRef.resourceId ||
@@ -158,7 +164,9 @@ export const checkAssortmentFixtureOwnerCurrentness = (
       return 'unavailable' as const;
     }
     const commerce = yield* ownerClient(CustomerGroupDetailApi, ownerReads.group, scope, crypto);
-    const { group } = yield* commerce.customerGroupDetail.execute({ payload: groupRequest });
+    const { group } = yield* commerce.customerGroupDetail
+      .execute({ payload: groupRequest })
+      .pipe(assortmentEvidenceCall.symmyRuleFixtureOwnerCurrentness);
     if (
       group.groupRef.resourceId !== groupRequest.groupRef.resourceId ||
       group.groupRef.tenantId !== scope.tenantId ||
@@ -168,12 +176,16 @@ export const checkAssortmentFixtureOwnerCurrentness = (
       return 'unavailable' as const;
     }
     const market = yield* ownerClient(AssortmentFixtureMarketAssociationApi, ownerReads.market, scope, crypto);
-    const association = yield* market.assortmentFixtureMarketAssociation.execute({ payload: marketRequest });
+    const association = yield* market.assortmentFixtureMarketAssociation
+      .execute({ payload: marketRequest })
+      .pipe(assortmentEvidenceCall.symmyRuleFixtureOwnerCurrentness);
     if (association.state !== 'CURRENT') {
       return 'unavailable' as const;
     }
     const storefront = yield* ownerClient(CurrentStorefrontApplicationApi, ownerReads.storefront, scope, crypto);
-    const current = yield* storefront.currentStorefrontApplication.execute({ payload: storefrontRequest });
+    const current = yield* storefront.currentStorefrontApplication
+      .execute({ payload: storefrontRequest })
+      .pipe(assortmentEvidenceCall.symmyRuleFixtureOwnerCurrentness);
     return current.outcome === 'CURRENT' &&
       current.tenantId === scope.tenantId &&
       current.effectiveAt === effectiveAt &&

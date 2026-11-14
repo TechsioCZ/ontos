@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import { NodeCrypto } from '@effect/platform-node';
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -185,7 +186,7 @@ const createBinding = Effect.fn('PspCaptureNative.createBinding')(function* crea
   const provenance = yield* provenanceFor(scope);
   const merchantIdentity = yield* Schema.decodeUnknownEffect(GatewayMerchantIdentitySchema)(merchantIdentityDocument);
   const created = yield* database.database.transaction((transaction) =>
-    installOperationalScope(transaction, operationalScopeOf(scope)).pipe(
+    installOperationalScope(transaction, operationalScopeOf(scope), defineDatabaseIdentityEnrollment([])).pipe(
       Effect.flatMap((scoped) =>
         pspBindingPersistenceForTransaction(scoped).createBinding({
           environment: 'SANDBOX',
@@ -328,7 +329,11 @@ const readAsWorker = (database: EvidenceNativeDatabase, scope: PaymentTestScope,
   database.database
     .transaction((transaction) =>
       Effect.gen(function* readNotificationAsWorker() {
-        const scoped = yield* installOperationalScope(transaction, operationalScopeOf(scope));
+        const scoped = yield* installOperationalScope(
+          transaction,
+          operationalScopeOf(scope),
+          defineDatabaseIdentityEnrollment([]),
+        );
         const store = yield* ProviderNotificationStore;
         return yield* store.read({
           notificationId: yield* Schema.decodeUnknownEffect(ProviderNotificationIdSchema)(notificationId),

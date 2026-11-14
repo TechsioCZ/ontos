@@ -24,7 +24,6 @@ const DeploymentUnitSchema = Schema.Struct({
   id: OntosDeploymentAppIdSchema,
   packageName: Schema.NonEmptyString,
   path: Schema.NonEmptyString,
-  workerName: Schema.NonEmptyString,
 });
 export type ApplicationReleaseDeploymentUnit = typeof DeploymentUnitSchema.Type;
 export const ApplicationReleaseSelectionSchema = Schema.Struct({
@@ -101,8 +100,9 @@ export const selectApplicationReleaseUnits = Effect.fn('ApplicationReleaseIntent
   available: readonly ApplicationReleaseDeploymentUnit[],
   impacted: readonly { readonly id: string }[],
   baseline?: ActiveApplicationCompositionSnapshot,
-  target?: 'cloudflare' | 'zerops',
+  target = 'zerops',
 ) {
+  yield* Schema.decodeUnknownEffect(Schema.Literal('zerops'))(target);
   yield* Schema.decodeUnknownEffect(ApplicationReleaseIntentSchema, { onExcessProperty: 'error' })(intent);
   yield* Schema.decodeUnknownEffect(Schema.Array(DeploymentUnitSchema), { onExcessProperty: 'error' })(available);
   yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ id: OntosDeploymentAppIdSchema })), {
@@ -132,12 +132,7 @@ export const selectApplicationReleaseUnits = Effect.fn('ApplicationReleaseIntent
   const desiredIds = new Set(intent.modules.map(({ appId }) => appId));
   const changedPlacements = new Set(
     baseline?.composition.modules
-      .filter(
-        (module) =>
-          target !== undefined &&
-          desiredIds.has(module.deployment.appId) &&
-          module.backend.transport !== (target === 'cloudflare' ? 'cloudflare-worker' : 'node-http'),
-      )
+      .filter((module) => desiredIds.has(module.deployment.appId) && module.backend.transport !== 'node-http')
       .map(({ deployment }) => deployment.appId),
   );
   const complete: ApplicationReleaseDeploymentUnit[] = [];
@@ -176,13 +171,11 @@ export const selectApplicationReleaseUnits = Effect.fn('ApplicationReleaseIntent
 });
 
 const TopologyUnitSchema = Schema.Struct({
-  cloudflare: Schema.Struct({ workerName: Schema.NonEmptyString }),
   id: OntosDeploymentAppIdSchema,
   package: Schema.NonEmptyString,
   path: Schema.NonEmptyString,
 });
 const TopologySchema = Schema.Struct({ shell: TopologyUnitSchema, verticals: Schema.Array(TopologyUnitSchema) });
-const PlacementSchema = Schema.Struct({ units: Schema.Array(OntosDeploymentAppIdSchema) });
 
 export const applicationReleaseSelectCommand = Command.make(
   'select',
@@ -191,7 +184,7 @@ export const applicationReleaseSelectCommand = Command.make(
     impactedUnitsFile: Flag.String('impacted-units-file'),
     intentFile: Flag.String('intent-file'),
     selectionFile: Flag.String('selection-file'),
-    target: Flag.Literals('target', ['cloudflare', 'zerops']).pipe(Flag.withDefault('cloudflare')),
+    target: Flag.Literals('target', ['zerops']).pipe(Flag.withDefault('zerops')),
   },
   ({ baselineFile, impactedUnitsFile, intentFile, selectionFile, target }) =>
     Effect.gen(function* selectCommandEffect() {
@@ -201,31 +194,17 @@ export const applicationReleaseSelectCommand = Command.make(
         yield* fileSystem.readFileString('topology/reference-topology.json'),
       );
       const topologyUnits = [topology.shell, ...topology.verticals];
-      const placement =
-        target === 'cloudflare'
-          ? yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PlacementSchema))(
-              yield* fileSystem.readFileString('topology/cloudflare-placement.json'),
-            )
-          : { units: topologyUnits.map(({ id }) => id) };
       const topologyIds = new Set(topologyUnits.map(({ id }) => id));
-      if (
-        topology.shell.id !== SHELL_APP_ID ||
-        topologyIds.size !== topologyUnits.length ||
-        new Set(placement.units).size !== placement.units.length ||
-        placement.units.some((id) => !topologyIds.has(id))
-      ) {
+      if (topology.shell.id !== SHELL_APP_ID || topologyIds.size !== topologyUnits.length) {
         return yield* new ApplicationReleaseIntentError({
           message: 'topology and execution placement must contain unique known deployments',
         });
       }
-      const available = topologyUnits
-        .filter((unit) => placement.units.includes(unit.id))
-        .map((unit) => ({
-          id: unit.id,
-          packageName: unit.package,
-          path: unit.path,
-          workerName: unit.cloudflare.workerName,
-        }));
+      const available = topologyUnits.map((unit) => ({
+        id: unit.id,
+        packageName: unit.package,
+        path: unit.path,
+      }));
       const impacted = yield* Schema.decodeUnknownEffect(
         Schema.fromJsonString(
           Schema.Array(

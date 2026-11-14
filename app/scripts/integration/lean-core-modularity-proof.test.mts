@@ -1,3 +1,6 @@
+import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
+import { makeDatabaseIdentityEnrollmentLive } from '../../packages/core-runtime/src/db/database-identities.ts';
+import { shellAuthenticationFrameworkLive } from '../../apps/shell-super-app/tests/support/shell-authentication.ts';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import nodePath from 'node:path';
@@ -70,7 +73,7 @@ import { LegalEntityIdSchema } from '../../packages/core-runtime/src/access/ids.
 import { AccessWriteJournalStoreLive } from '../../packages/core-runtime/src/access/lifecycle/persistence/journal-store.ts';
 import { loadSpiceDbConfig } from '../../packages/core-runtime/src/access/spicedb-config.ts';
 import { TrustedPrincipalContextSchema } from '../../packages/core-runtime/src/actions/principal-context.ts';
-import { CoreDatabaseLive } from '../../packages/core-runtime/src/db/client.ts';
+import { CoreDatabase, CoreDatabaseLive } from '../../packages/core-runtime/src/db/client.ts';
 import { AccessDecisionGate } from '../../packages/core-runtime/src/access/enforcement/contract.ts';
 import { ActionRuntime, makeActionRuntime } from '../../packages/core-runtime/src/actions/runtime.ts';
 import { AuthenticationNamespaceRegistrationSchema } from '../../packages/core-runtime/src/auth/external-identity-contracts.ts';
@@ -145,6 +148,10 @@ import { AuthenticationService, makeAuthenticationService } from '../../apps/she
 import { makeShellTestAccessGate } from '../../apps/shell-super-app/tests/support/access-decision-double.ts';
 
 const gatewayAudience = 'party-registry';
+const nativeFixturePlatform = Layer.merge(
+  NodeServices.layer,
+  makeDatabaseIdentityEnrollmentLive(APP_DATABASE_IDENTITY_ENROLLMENT),
+);
 
 class LeanCoreCompositionFixtureError extends Schema.TaggedError<LeanCoreCompositionFixtureError>()(
   'LeanCoreCompositionFixtureError',
@@ -385,11 +392,10 @@ const acquireLeanCoreComposition = Effect.fn('LeanCoreProof.acquireComposition')
   expect(approved.composition.modules[0]?.federation.execution).toBe('server');
   return {
     adminDatabase,
-    adminUrl: connections.admin.connectionString,
+    runtimeUrl: connections.runtime.connectionString,
     // The lean composition enrolls no module deployment credential, so every verified key is a subject's key.
     configuration: ConfigProvider.fromUnknown({
       ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: `${origin}/active`,
-      ONTOS_GATEWAY_MODULE_BINDINGS: '[]',
     }).pipe(ConfigProvider.orElse(ConfigProvider.fromEnv())),
     revision: approved.composition.revision,
     targetBuildMarker: moduleContract.deployment.buildMarker,
@@ -433,12 +439,13 @@ const authorizationCatalogJson = Schema.fromJsonString(Schema.Struct({ modules: 
 /**
  * The tenant's first authority, written the way a tenant gets it: the bootstrap makes the staff principal
  * the owner, a member of the tenant and of its company holding "Plný přístup" in both scopes, and reconciles
- * that intent into SpiceDB through the single projection writer over the administrative pool.
+ * that intent into SpiceDB through the single projection writer over the shared runtime login Core writes
+ * a tenant's access intent through, never an administrative one.
  */
 const bootstrapFixtureTenantAccess = Effect.fn('LeanCoreProof.bootstrapTenantAccess')(
   function* bootstrapTenantAccess(input: {
-    readonly adminUrl: string;
     readonly legalEntityId: string;
+    readonly runtimeUrl: string;
     readonly scope: OperationalScope;
   }) {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -446,7 +453,7 @@ const bootstrapFixtureTenantAccess = Effect.fn('LeanCoreProof.bootstrapTenantAcc
       yield* fileSystem.readFileString(catalogArtifactPath),
     );
     const spiceDb = yield* loadSpiceDbConfig();
-    const databaseConfiguration = yield* parseDatabaseConfig({ DATABASE_URL: input.adminUrl });
+    const databaseConfiguration = yield* parseDatabaseConfig({ DATABASE_URL: input.runtimeUrl });
     const database = CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, databaseConfiguration)));
     const engine = Layer.effect(
       AccessProjectionCompiler,
@@ -549,15 +556,19 @@ it.live(
     const configuration = yield* loadAuthConfig();
     const coreClient = yield* makeTestPgClient(configuration.connectionString);
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
-    const authPersistence = yield* makeAuthDatabase(configuration);
+    const authPersistence = yield* makeAuthDatabase(
+      yield* parseDatabaseConfig({ DATABASE_URL: configuration.connectionString }),
+    );
     const authDatabase = authPersistence.executor;
     const resolver = makePrincipalResolver(
       { executor: coreDatabase },
       { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
     );
-    const authentication = yield* makeAuthenticationService({ allowFixtureSignUp: true }).pipe(
+    const authentication = yield* makeAuthenticationService().pipe(
+      Effect.provide(shellAuthenticationFrameworkLive({ allowFixtureSignUp: true })),
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
+      Effect.provideService(CoreDatabase, { executor: coreDatabase }),
       Effect.provideService(PrincipalResolver, resolver),
     );
 
@@ -638,8 +649,8 @@ it.live(
     });
     yield* coreDatabase.insert(tenantModuleStates).values({ moduleKey: 'core.identity', state: 'active', tenantId });
     yield* bootstrapFixtureTenantAccess({
-      adminUrl: composition.adminUrl,
       legalEntityId,
+      runtimeUrl: composition.runtimeUrl,
       scope: {
         ...(yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
           authBindingId,
@@ -838,7 +849,7 @@ it.live(
     const provideAccessGate = <Success, Failure, Requirements>(effect: Effect.Effect<Success, Failure, Requirements>) =>
       provideAuthenticationNamespaceRegistry(effect.pipe(Effect.provideService(AccessDecisionGate, accessGate)));
     const operationalScope = yield* makeOperationalScopeResolver(
-      makeOperationalScopeRepository({ executor: coreDatabase }),
+      makeOperationalScopeRepository({ executor: coreDatabase }, APP_DATABASE_IDENTITY_ENROLLMENT),
       accessGate,
     );
     const supportActionRuntime = makeActionRuntime(
@@ -853,9 +864,11 @@ it.live(
       { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
     );
     const supportConfiguration = { ...configuration, supportUserIds: [betterAuthUserId] };
-    const supportAuthentication = yield* makeAuthenticationService({}).pipe(
+    const supportAuthentication = yield* makeAuthenticationService().pipe(
+      Effect.provide(shellAuthenticationFrameworkLive({ allowFixtureSignUp: false })),
       Effect.provideService(AuthConfig, supportConfiguration),
       Effect.provideService(AuthDatabase, authPersistence),
+      Effect.provideService(CoreDatabase, { executor: coreDatabase }),
       Effect.provideService(PrincipalResolver, resolver),
     );
     const support = makeSupportImpersonationService(
@@ -906,5 +919,5 @@ it.live(
     expect(stopped.checkpointPending).toBe(false);
 
     return yield* Effect.void;
-  }, Effect.provide(NodeServices.layer)),
+  }, Effect.provide(nativeFixturePlatform)),
 );

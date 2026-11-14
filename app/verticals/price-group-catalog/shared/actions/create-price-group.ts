@@ -8,7 +8,6 @@ import {
   PriceGroupCodeSchema,
   PriceGroupCompatibilityContractSchema,
   PriceGroupDescriptionSchema,
-  PriceGroupEffectivePeriodSchema,
   PriceGroupInstantSchema,
   PriceGroupNameSchema,
   PriceGroupPurposeSchema,
@@ -41,8 +40,6 @@ const compatibilityContractsSchema = Schema.Array(PriceGroupCompatibilityContrac
       : undefined;
   }),
 );
-const isEffectivePeriod = Schema.is(PriceGroupEffectivePeriodSchema);
-
 export const CreatePriceGroupPayloadSchema = Schema.Struct({
   businessCode: PriceGroupCodeSchema,
   classificationPurpose: PriceGroupPurposeSchema,
@@ -50,21 +47,11 @@ export const CreatePriceGroupPayloadSchema = Schema.Struct({
   description: PriceGroupDescriptionSchema,
   displayName: PriceGroupNameSchema,
   effectiveFrom: PriceGroupInstantSchema,
-  // oxlint-disable-next-line effect-native/no-nullable-schema-field -- null is the stable wire sentinel for an open-ended definition period; expires: 2027-03-31.
-  effectiveTo: Schema.NullOr(PriceGroupInstantSchema),
+  effectiveTo: Schema.Null,
   expectedCatalogRevision: CatalogFenceRevisionSchema,
   reason: PriceGroupReasonSchema,
   sourceCorrelation: Schema.optionalKey(PriceGroupSourceCorrelationSchema),
-}).check(
-  Schema.makeFilter((payload) => {
-    if (!isEffectivePeriod({ effectiveFrom: payload.effectiveFrom, effectiveTo: payload.effectiveTo })) {
-      return 'Price Group effective period must be a non-empty half-open interval';
-    }
-    return payload.effectiveTo === null
-      ? undefined
-      : 'An ACTIVE Price Group initial definition must remain open-ended until retirement is accepted';
-  }),
-);
+});
 export type CreatePriceGroupPayload = typeof CreatePriceGroupPayloadSchema.Type;
 
 const PriceGroupAuthorizationTopologyMutationIdSchema = Schema.String.check(Schema.isUUID()).pipe(

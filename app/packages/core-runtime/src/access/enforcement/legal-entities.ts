@@ -3,6 +3,8 @@ import { Context, Effect, Layer } from 'effect';
 
 import { recoverSqlTransactionError } from '../../actions/repository.ts';
 import { CoreDatabase } from '../../db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../../db/database-identities.ts';
 import { installOperationalScope } from '../../db/scoped-transaction.ts';
 import { legalEntities } from '../../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../../db/types.ts';
@@ -34,6 +36,8 @@ export class LegalEntityCandidates extends Context.Service<LegalEntityCandidates
 ) {}
 
 export interface AccessLegalEntityCandidateDatabase {
+  /** The enrolled database identities whose scope authority the installed scope is verified against. */
+  readonly enrollment: DatabaseIdentityEnrollment;
   readonly executor: CoreDatabaseExecutor;
 }
 
@@ -43,7 +47,7 @@ const listCandidateIdsEffect = Effect.fn('AccessLegalEntityCandidates.listCandid
   transaction?: CoreTransaction,
 ) {
   const read = (opened: CoreTransaction) =>
-    installOperationalScope(opened, scope).pipe(
+    installOperationalScope(opened, scope, database.enrollment).pipe(
       Effect.andThen(() =>
         opened
           .select({ legalEntityId: legalEntities.legalEntityId })
@@ -65,10 +69,15 @@ export const makeDrizzleLegalEntityCandidates = (
     ),
 });
 
-export const LegalEntityCandidatesLive: Layer.Layer<LegalEntityCandidates, never, CoreDatabase> = Layer.effect(
+export const LegalEntityCandidatesLive: Layer.Layer<
+  LegalEntityCandidates,
+  never,
+  CoreDatabase | DatabaseIdentityEnrollmentContext
+> = Layer.effect(
   LegalEntityCandidates,
   Effect.gen(function* legalEntityCandidatesLive() {
     const database = yield* CoreDatabase;
-    return makeDrizzleLegalEntityCandidates(database);
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
+    return makeDrizzleLegalEntityCandidates({ enrollment, executor: database.executor });
   }),
 );

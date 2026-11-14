@@ -164,10 +164,10 @@ it.effect('rejects Better Auth user bindings to non-human principals', () =>
     ),
   ),
 );
-it.effect('resolves exactly one API-key subject for human, service, or integration principals', () =>
+it.effect('resolves exactly one API-key subject for human, service, integration or agent principals', () =>
   Effect.gen(function* resolvesApiKeySubject() {
     yield* Effect.all(
-      (['human', 'service', 'integration'] as const).map((principalKind) =>
+      (['human', 'service', 'integration', 'agent'] as const).map((principalKind) =>
         Effect.gen(function* resolvesPrincipalKind() {
           const resolved = yield* classifyApiKeyPrincipal([{ ...activeRecord, principalKind }]);
           expect(resolved.principalKind).toBe(principalKind);
@@ -181,6 +181,15 @@ it.effect('resolves exactly one API-key subject for human, service, or integrati
         'PrincipalBindingAmbiguousError',
       ),
     ).toBe(true);
+  }),
+);
+it.effect('never resolves an API key of a system principal, whatever binding it holds', () =>
+  // Every Shell API-key path (agent key caller, MCP, external-identity workloads, gateway delegation and its issuer,
+  // identity lifecycle) resolves a verified key through `resolveBetterAuthApiKey`, which classifies it here: the
+  // platform's own system principals (the release actor) act through Core's writers, never with a key.
+  Effect.gen(function* refusesSystemPrincipalKey() {
+    const refused = yield* Effect.flip(classifyApiKeyPrincipal([{ ...activeRecord, principalKind: 'system' }]));
+    expect(Predicate.isTagged(refused, 'PrincipalInactiveError')).toBe(true);
   }),
 );
 it.effect('fails closed for empty, inactive, and duplicate eligible resolver states', () =>
@@ -260,12 +269,16 @@ it.effect('types database failures as resolver unavailability', () =>
   }),
 );
 
-it.effect('resolves a current human through a select-only database port', () =>
+it.effect('resolves a current human through a transaction-bound database port', () =>
   Effect.gen(function* resolvesThroughReadOnlyPort() {
     const database = yield* makeTestDatabase(() => Effect.succeed([activeRecord]));
     const resolved = yield* database.transaction(
       Effect.fn('PrincipalResolverReadPortTest.read')(function* read(transaction) {
-        const selectOnly = { select: transaction.select.bind(transaction) };
+        // Resolution may audit an inactive principal's denial, so the port also carries the transaction's insert.
+        const selectOnly = {
+          insert: transaction.insert.bind(transaction),
+          select: transaction.select.bind(transaction),
+        };
         return yield* makePrincipalResolver(
           { executor: selectOnly },
           { authenticationNamespaceId: 'test.staff.better-auth.v1' },

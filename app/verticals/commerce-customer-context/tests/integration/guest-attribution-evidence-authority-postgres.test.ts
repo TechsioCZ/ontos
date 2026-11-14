@@ -1,10 +1,12 @@
 import { fileURLToPath } from 'node:url';
 
 import {
+  FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '../support/database-identities.ts';
+import {
   ActionRuntime,
   loadDatabaseConnectionPair,
-  loadDatabaseConfig,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
   ActiveApplicationCompositionSnapshotSchema,
   OntosModuleDeploymentContractSchema,
@@ -33,16 +35,19 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import {
   Brand,
   Config,
+  ConfigProvider,
   Context,
   Crypto,
   DateTime,
   Deferred,
   Effect,
+  Exit,
   Fiber,
   Layer,
   Option,
   Predicate,
   Redacted,
+  Ref,
   Result,
   Schema,
   Stream,
@@ -176,7 +181,9 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
     )(physicalIdentity);
     const identityUrls: Record<string, string> = {};
     for (const databaseIdentity of [SHELL_GATEWAY_ISSUER_IDENTITY, PARTY_REGISTRY_REQUEST_IDENTITY]) {
-      const canonical = yield* loadDatabaseConfig({ envPath: '/dev/null', identity: databaseIdentity });
+      const canonical = yield* loadDatabaseConnectionPair({ envPath: '/dev/null', identity: databaseIdentity }).pipe(
+        Effect.map(({ runtime }) => runtime),
+      );
       const address = new URL(canonical.connectionString);
       const exactSourceAndOwnedTarget = [
         canonical.database === sourceConnections.runtime.database,
@@ -302,7 +309,10 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
     const issuerContext = yield* Layer.build(
       PgClient.layer({ maxConnections: 2, url: Redacted.make(issuerUrl) }).pipe(Layer.provide(Reactivity.layer)),
     );
-    const scopeGrantRegistrar = makeGatewayScopeGrantRegistrar(Context.get(issuerContext, PgClient.PgClient));
+    const scopeGrantRegistrar = makeGatewayScopeGrantRegistrar(
+      Context.get(issuerContext, PgClient.PgClient),
+      FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+    );
     const fixture = yield* Effect.acquireRelease(
       makeLiveOperationFixture({
         access: 'allowed',
@@ -360,7 +370,24 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
       stderr: 'pipe',
       stdout: 'pipe',
     });
-    yield* Stream.runDrain(child.stderr).pipe(Effect.forkScoped);
+    // The Party fixture redacts credentials before writing its private diagnostic channel.
+    const diagnostics = yield* Ref.make('');
+    yield* child.stderr.pipe(
+      Stream.decodeText(),
+      Stream.runForEach((chunk) => Ref.update(diagnostics, (previous) => `${previous}${chunk}`.slice(-16_384))),
+      Effect.forkScoped,
+    );
+    yield* Effect.addFinalizer((exit) =>
+      Exit.isFailure(exit)
+        ? Ref.get(diagnostics).pipe(
+            Effect.flatMap((tail) =>
+              tail.length > 0
+                ? Effect.logError({ diagnostics: tail, event: 'guest-party-receiver-failure' })
+                : Effect.void,
+            ),
+          )
+        : Effect.void,
+    );
     const first = yield* child.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runHead);
     assert.isOk(Option.isSome(first));
     const ready = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReadySchema))(first.value);
@@ -538,7 +565,16 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
             registration: attributeGuestRetailCustomerAction,
             transport: { correlationId: yield* nextId, idempotencyKey, targetModuleKey: 'commerce.customer-context' },
           })
-          .pipe(Effect.provideContext(ownerContext));
+          .pipe(
+            Effect.provideService(
+              ConfigProvider.ConfigProvider,
+              ConfigProvider.orElse(
+                ConfigProvider.fromUnknown({ ONTOS_ACTION_TRANSACTION_IO_GUARD: true }),
+                ConfigProvider.fromEnv(),
+              ),
+            ),
+            Effect.provideContext(ownerContext),
+          );
       });
     const attributions = Effect.fn('GuestAuthorityTest.attributionRows')(function* attributionRows(
       root: string,

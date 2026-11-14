@@ -1,4 +1,16 @@
 import {
+  OwnerActionApprovalSchemaErrorLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
+} from '@app/core-runtime/access/approvals/owner-http';
+import {
+  ActionMandateDispatcher,
+  OwnerActionApprovals,
+  makeOwnerActionApprovalsLive,
+} from '@app/core-runtime/access/approvals/owner-runtime';
+import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ActionCoreErrorSchema,
   ActionPayloadValidationError,
   ActionTransportMetadataSchema,
@@ -12,14 +24,17 @@ import {
   makeActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
+  CoreSearchQueryRuntimeLive,
+  CoreSearchProjectionStoreLive,
   DatabaseConfigLive,
-  GatewayAssertionRedemptionService,
   ReadRuntime,
   makeReadRuntimeLive,
   TenantModuleStateServiceLive,
+  CoreSearchQueryRuntime,
+  GatewayAssertionRedemptionService,
 } from '@app/core-runtime';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import type {
-  AccessDecisionGate,
   AccessDecisionLog,
   AccessIntent,
   AccessPrincipalKindSource,
@@ -75,8 +90,11 @@ import { FetchHttpClient } from 'effect/http';
 
 import { commerceMarketCatalogApi, commerceMarketCatalogOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
-import { commerceMarketCatalogRegistration } from '../vertical.registration.ts';
-import { ActionPrincipalVerifierLive } from './auth/action-principal.ts';
+import { commerceMarketCatalogBackendRegistration } from '../vertical.runtime-declaration.ts';
+import {
+  ActionPrincipalVerifierLive,
+  authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
+} from './auth/action-principal.ts';
 import { retirementUnavailable, retirementPreflightUnavailable } from './market-retirement-runtime.ts';
 import {
   GatewayAssertionRedemptionLive,
@@ -89,10 +107,13 @@ import { assortmentFixtureMarketAssociationReadApiLive } from './assortment-fixt
 import { createMarketActionApiLive } from './create-market-action-server.ts';
 import { currentMarketCatalogReadApiLive } from './current-market-catalog-read-server.ts';
 import { eligibleMarketTuplesReadApiLive } from './eligible-market-tuples-read-server.ts';
+import { marketAdministrationReadApiLive } from './market-administration-read-server.ts';
 import { marketHistoryReadApiLive } from './market-history-read-server.ts';
 import { marketRetirementEffectRecoveryReadApiLive } from './market-retirement-effect-recovery-read-server.ts';
+import { marketsReadApiLive } from './markets-search-server.ts';
 import { pricingCurrentMarketEvidenceReadApiLive } from './pricing-current-market-evidence-read-server.ts';
 import { removeStorefrontAssociationActionApiLive } from './remove-storefront-association-action-server.ts';
+import { requestSearchRebuildActionApiLive } from './request-search-rebuild-action-server.ts';
 import { resolveCommerceMarketReadApiLive } from './resolve-commerce-market-read-server.ts';
 import { retireMarketActionApiLive } from './retire-market-action-server.ts';
 import { reviseMarketDefinitionActionApiLive } from './revise-market-definition-action-server.ts';
@@ -106,6 +127,8 @@ import {
   commerceMarketCatalogCorsAllowedOrigins,
   resolveCommerceMarketCatalogShellOrigin,
 } from './runtime-support.ts';
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const commerceMarketCatalogReadinessLayer = HttpApiBuilder.group(commerceMarketCatalogApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
@@ -165,6 +188,7 @@ const accessEnforcementLive: Layer.Layer<
   Layer.provide(CorePersistenceLive),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(nodeCryptoLayer),
+  Layer.provide(databaseIdentitiesLive),
 );
 const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
   Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessEnforcementLive)),
@@ -208,15 +232,32 @@ export const commerceMarketCatalogActionRuntimeDependenciesLive: Layer.Layer<
   moduleEntrypointGatewayLive,
   operationalScopeResolverLive,
   activeApplicationCompositionLive,
-);
+).pipe(Layer.provide(databaseIdentitiesLive));
 const actionRuntimeDependenciesLive = commerceMarketCatalogActionRuntimeDependenciesLive.pipe(
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(databaseIdentitiesLive),
 );
+const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(
+  ultramodernDeliveryUnit,
+  commerceMarketCatalogBackendRegistration,
+).pipe(
+  Layer.provide(Layer.mergeAll(accessEnforcementLive, actionRuntimeDependenciesLive)),
+  Layer.provide(databaseIdentitiesLive),
+  Layer.provide(nodeCryptoLayer),
+);
+
 const baseProductionActionRuntimeLive = makeActionRuntimeLive(
   ultramodernDeliveryUnit,
-  commerceMarketCatalogRegistration,
-).pipe(Layer.provide(Layer.mergeAll(accessEnforcementLive, actionRuntimeDependenciesLive)));
-const productionReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogRegistration).pipe(
+  commerceMarketCatalogBackendRegistration,
+).pipe(
+  Layer.provideMerge(ownerActionApprovalsLive),
+  Layer.provide(Layer.mergeAll(accessEnforcementLive, actionRuntimeDependenciesLive)),
+  Layer.provide(databaseIdentitiesLive),
+);
+const productionReadRuntimeLive = makeReadRuntimeLive(
+  ultramodernDeliveryUnit,
+  commerceMarketCatalogBackendRegistration,
+).pipe(
   Layer.provide(
     Layer.mergeAll(
       CorePersistenceLive,
@@ -228,6 +269,14 @@ const productionReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, c
     ),
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(databaseIdentitiesLive),
+);
+
+const productionMarketSearchQueryRuntimeLive = CoreSearchQueryRuntimeLive.pipe(
+  Layer.provide(CoreSearchProjectionStoreLive),
+  Layer.provide(CorePersistenceLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 
 const MARKET_RUNTIME_AUDIENCE = 'commerce-market-catalog' as const;
@@ -446,6 +495,7 @@ export const MarketRetirementActionRuntimeLive = Layer.effect(
     });
     const runtime: ActionRuntimeService = {
       resolveActionCommit: base.resolveActionCommit,
+      resolveActionExecution: base.resolveActionExecution,
       runAction: (input) => {
         if (input.registration.descriptor.actionKey !== retireMarketAction.descriptor.actionKey) {
           return base.runAction(input);
@@ -515,11 +565,14 @@ const nativeRetirementBindingsLive = Layer.effect(
     const readRuntime = yield* ReadRuntime;
     const crypto = yield* Crypto.Crypto;
     const scopeResolver = yield* OperationalScopeResolver;
+    const dispatcher = yield* ActionMandateDispatcher;
     const dependencies = yield* Effect.context<Layer.Success<typeof actionRuntimeDependenciesLive>>();
     return {
       base,
-      coreFactory: makeActionRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogRegistration).pipe(
+      coreFactory: makeActionRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogBackendRegistration).pipe(
+        Layer.provide(Layer.succeed(ActionMandateDispatcher, dispatcher)),
         Layer.provide(Layer.mergeAll(accessEnforcementLive, Layer.succeedContext(dependencies))),
+        Layer.provide(databaseIdentitiesLive),
       ),
       crypto,
       readRuntime,
@@ -528,15 +581,13 @@ const nativeRetirementBindingsLive = Layer.effect(
   }),
 ).pipe(
   Layer.provide(
-    Layer.mergeAll(
-      baseProductionActionRuntimeLive,
-      productionReadRuntimeLive,
-      actionRuntimeDependenciesLive,
-      nodeCryptoLayer,
+    Layer.mergeAll(baseProductionActionRuntimeLive, productionReadRuntimeLive, actionRuntimeDependenciesLive).pipe(
+      Layer.provideMerge(nodeCryptoLayer),
     ),
   ),
 );
 const productionActionRuntimeLive = MarketRetirementActionRuntimeLive.pipe(
+  Layer.provideMerge(ownerActionApprovalsLive),
   Layer.provide(
     Layer.mergeAll(
       nativeRetirementBindingsLive,
@@ -552,20 +603,39 @@ const productionGatewayAssertionRedemptionLive = GatewayAssertionRedemptionLive.
 
 type CommerceMarketCatalogApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,
-  actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof productionActionRuntimeLive>>,
+  actionRuntime: Layer.Layer<ActionRuntime | OwnerActionApprovals, Layer.Error<typeof productionActionRuntimeLive>>,
   gatewayAssertionRedemption: Layer.Layer<
     GatewayAssertionRedemptionService,
     Layer.Error<typeof productionGatewayAssertionRedemptionLive>
   >,
+  administrationAuthority: Layer.Layer<AccessDecisionGate, Layer.Error<typeof accessEnforcementLive>>,
+  marketSearchRuntime: Layer.Layer<CoreSearchQueryRuntime, Layer.Error<typeof productionMarketSearchQueryRuntimeLive>>,
 ];
 
 export const makeCommerceMarketCatalogApiRuntime = (
   ...args: CommerceMarketCatalogApiRuntimeArguments
 ): EffectBffDefinition<typeof commerceMarketCatalogApi> & EffectBffRuntime<typeof commerceMarketCatalogApi> => {
-  const [governedReadRuntimeLive, governedActionRuntimeLive, gatewayAssertionRedemption] = args;
+  const [
+    readRuntime,
+    governedActionRuntimeLive,
+    gatewayAssertionRedemption,
+    administrationAuthority,
+    marketSearchQueryRuntimeLive,
+  ] = args;
+  // The generated Read handlers need both the runtime and the original caller-owned authority.
+  // ReadRuntime captures its admission gate privately; it does not export that service to owner callbacks.
+  const governedReadRuntimeLive = Layer.mergeAll(readRuntime, administrationAuthority);
   const actionPrincipalVerifierLive = ActionPrincipalVerifierLive.pipe(Layer.provide(governedActionRuntimeLive));
   const apiHandlersLive = Layer.mergeAll(
     commerceMarketCatalogReadinessLayer,
+    HttpApiBuilder.group(commerceMarketCatalogApi, 'ownerActionApprovals', (handlers) =>
+      handlers
+        .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+        .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+    ).pipe(
+      GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+    ),
     // <generated-governed-http-handler-layers>
     activateMarketActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     associateStorefrontActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -573,10 +643,16 @@ export const makeCommerceMarketCatalogApiRuntime = (
     createMarketActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     currentMarketCatalogReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     eligibleMarketTuplesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    marketAdministrationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     marketHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     marketRetirementEffectRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    marketsReadApiLive.pipe(
+      GovernedReadLayer.provide(governedReadRuntimeLive),
+      GovernedReadLayer.provide(marketSearchQueryRuntimeLive),
+    ),
     pricingCurrentMarketEvidenceReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     removeStorefrontAssociationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    requestSearchRebuildActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     resolveCommerceMarketReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     retireMarketActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     reviseMarketDefinitionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -616,16 +692,32 @@ export const makeCommerceMarketCatalogApiRuntime = (
   });
 };
 
-/** Assemble this owner's unchanged HTTP runtime from caller-owned scoped services. */
+/**
+ * Assemble this owner's unchanged HTTP runtime from caller-owned scoped services. Market retirement keeps its own
+ * Action runtime over the caller's bindings, so every per-invocation retirement service stays on the path.
+ */
 export const commerceMarketCatalogApiRuntimeFromContext = Effect.gen(
   function* commerceMarketCatalogApiRuntimeFromContext() {
     const readRuntime = yield* ReadRuntime;
-    const actionRuntime = yield* ActionRuntime;
+    const retirementBindings = yield* MarketRetirementRuntimeBindings;
+    const ownerApprovals = yield* OwnerActionApprovals;
     const redemption = yield* GatewayAssertionRedemptionService;
+    const administrationAuthority = yield* AccessDecisionGate;
+    const searchRuntime = yield* CoreSearchQueryRuntime;
     return makeCommerceMarketCatalogApiRuntime(
       Layer.succeed(ReadRuntime, readRuntime),
-      Layer.succeed(ActionRuntime, actionRuntime),
+      MarketRetirementActionRuntimeLive.pipe(
+        Layer.provideMerge(Layer.succeed(OwnerActionApprovals, ownerApprovals)),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(MarketRetirementRuntimeBindings, retirementBindings),
+            MarketRetirementImpactAuthorityLive.pipe(Layer.provide(nodeCryptoLayer)),
+          ),
+        ),
+      ),
       Layer.succeed(GatewayAssertionRedemptionService, redemption),
+      Layer.succeed(AccessDecisionGate, administrationAuthority),
+      Layer.succeed(CoreSearchQueryRuntime, searchRuntime),
     );
   },
 );
@@ -634,6 +726,8 @@ const apiRuntime = makeCommerceMarketCatalogApiRuntime(
   productionReadRuntimeLive,
   productionActionRuntimeLive,
   productionGatewayAssertionRedemptionLive,
+  accessEnforcementLive,
+  productionMarketSearchQueryRuntimeLive,
 );
 
 export default apiRuntime;

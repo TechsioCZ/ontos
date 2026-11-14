@@ -16,6 +16,18 @@ import type { OperationContext, StorefrontRegistryReadiness } from '../../shared
 
 // oxlint-disable-next-line effect-native/no-scattered-browser-effect-run -- This generated public compatibility surface remains until the vertical adds a centralized browser runtime.
 export { Effect, runEffectRequest } from '@modern-js/bff-effect/effect-client';
+// <generated-action-http-client-exports>
+export {
+  executeRegisterStorefrontApplication,
+  executeRegisterStorefrontApplicationWithAuthorization,
+} from './register-storefront-application-action-client.ts';
+export type { RegisterStorefrontApplicationActionClientOptions } from './register-storefront-application-action-client.ts';
+export {
+  executeReviseStorefrontApplication,
+  executeReviseStorefrontApplicationWithAuthorization,
+} from './revise-storefront-application-action-client.ts';
+export type { ReviseStorefrontApplicationActionClientOptions } from './revise-storefront-application-action-client.ts';
+// </generated-action-http-client-exports>
 export {
   executeCurrentStorefrontApplication,
   executeCurrentStorefrontApplicationWithAuthorization,

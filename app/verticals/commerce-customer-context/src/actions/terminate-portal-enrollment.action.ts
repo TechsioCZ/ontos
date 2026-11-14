@@ -43,6 +43,7 @@ const handleTerminatePortalEnrollment = Effect.fn('TerminatePortalEnrollmentActi
     const request = yield* Schema.decodeEffect(TerminateEnrollmentAttemptInputSchema)({
       actionInvocationId,
       actorPrincipalId: context.scope.principalId,
+      compositionRevision: context.compositionRevision,
       expectedRevision: payload.expectedRevision,
       portalEnrollmentAttemptId: payload.portalEnrollmentAttemptId,
       reason: payload.reason,

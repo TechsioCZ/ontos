@@ -39,6 +39,8 @@ import { createAddContactPointPartyRegistryContactPointAddedV1OutboxMessage } fr
 export { AddContactPointPayloadSchema } from '../../shared/actions/add-contact-point.ts';
 export type { AddContactPointPayload } from '../../shared/actions/add-contact-point.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const AddContactPointErrorSchema = Schema.Union([
   PartyEvidenceInsufficient,
   PartyPersistenceUnavailable,
@@ -122,8 +124,8 @@ const handleAddContactPoint = Effect.fn('AddContactPointAction.handleAddContactP
     accessKind: 'read',
     queryHash: `party-contact-point-add:${contactPoint.partyRef.resourceId}`,
     resultCount: 1,
-    servingModuleKey: 'party.registry',
-    targetModuleKey: 'party.registry',
+    servingModuleKey: PARTY_REGISTRY_MODULE_ID,
+    targetModuleKey: PARTY_REGISTRY_MODULE_ID,
     targetResourceId: contactPoint.partyRef.resourceId,
     targetResourceType: contactPoint.partyRef.resourceType,
   });
@@ -137,8 +139,8 @@ const handleAddContactPoint = Effect.fn('AddContactPointAction.handleAddContactP
       partyRef: contactPoint.partyRef,
       revision: contactPoint.revision,
     },
-    producerModuleKey: 'party.registry',
-    subjectModuleKey: 'party.registry',
+    producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+    subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
     subjectResourceId: contactPoint.contactPointRef.resourceId,
     subjectResourceType: contactPoint.contactPointRef.resourceType,
   });
@@ -154,6 +156,13 @@ const handleAddContactPoint = Effect.fn('AddContactPointAction.handleAddContactP
 
 export const addContactPointAction = defineAction(
   {
+    accessActor: {
+      callers: ['crm'],
+      subject: 'rights',
+      subjectWorkloads: ['demo.crm.party-intake'],
+      reason:
+        'CRM reconciles owner-held client identities through native Party operations under its bound intake workload; humans retain existing rights.',
+    },
     accessWorkload: {
       workloads: ['party.registry.source-write'],
       reason: 'Execute the enrolled client source occurrence through the native Contact Point lifecycle.',
@@ -181,12 +190,12 @@ export const addContactPointAction = defineAction(
       access: 'write',
       authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.add-contact-point',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: AddContactPointPayloadSchema,
     policies: [],
     resultSchema: AddContactPointResultSchema,

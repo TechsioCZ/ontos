@@ -21,6 +21,7 @@ import type { AccessApprovalsAuthority } from './approvals-authority.ts';
 import { AccessApprovalsAuthoritySource } from './approvals-authority.ts';
 import type { AccessApprovalsCommandsService } from './approvals-commands.ts';
 import { AccessApprovalsCommands } from './approvals-commands.ts';
+import { approvalRecordRevision } from './approvals-contract.ts';
 import type {
   ApprovalCommandFailure,
   ApprovalEligibility,
@@ -173,9 +174,6 @@ export const accessApprovalsExecutionDisabledProblem = (): AccessAdminProblem =>
  * revision or a lost compare-and-set is a 409 the caller repairs by re-reading. An unusable request
  * is 422. An unreachable port is the retryable 503 — never a denial (O48).
  */
-/** The inbox reason for a record proposal no release can approve yet (D30). */
-const RECORD_APPROVAL_UNPUBLISHED = 'approval_record_read_unpublished';
-
 export const accessApprovalsFailureProblem = (failure: {
   readonly code: string;
   readonly reason: string;
@@ -216,12 +214,7 @@ export const accessApprovalsFailureProblem = (failure: {
 };
 
 /** The revision a caller last saw; a display and stale-token aid, never the authoritative race. */
-export const accessApprovalRevision = (record: ApprovalRecord): string =>
-  [
-    record.status,
-    record.endedAt === undefined ? 0 : DateTime.toEpochMillis(DateTime.makeUnsafe(record.endedAt)),
-    record.execution === undefined ? 0 : DateTime.toEpochMillis(DateTime.makeUnsafe(record.execution.executedAt)),
-  ].join('.');
+export const accessApprovalRevision = approvalRecordRevision;
 
 /** The witnesses one decision carries, taken from this person's own side of the evidence (O63). */
 export const accessApprovalWitnesses = (
@@ -258,19 +251,6 @@ const withDisplayName = <Base extends object>(
 
 const allowed = (): ApprovalEligibility => ({ allowed: true });
 const notAllowed = (reason: string): ApprovalEligibility => ({ allowed: false, reason });
-
-/**
- * Whether the inbox may offer approval. A proposal that changes one record is approved only with
- * the approver's read of that record (D30), and no published release names that read yet, so Core
- * refuses every such approval: the inbox says so instead of offering a button that always fails.
- * Rejection and withdrawal need no read and stay available.
- */
-const approvalEligibility = (record: ApprovalRecord, approver: boolean): ApprovalEligibility => {
-  if (record.target !== undefined) {
-    return notAllowed(RECORD_APPROVAL_UNPUBLISHED);
-  }
-  return approver ? allowed() : notAllowed('approve_authority_missing');
-};
 
 const commandFailureProblem = (failure: ApprovalCommandFailure): AccessAdminProblem =>
   Predicate.isTagged(failure, 'ApprovalPortUnavailable')
@@ -499,6 +479,7 @@ export const makeAccessApprovalsBff = (context: AccessApprovalsContext): AccessA
   const eligibilityOf = Effect.fn('AccessApprovalsBff.eligibilityOf')(function* eligibilityOfEffect(input: {
     readonly context: ProposalContext;
     readonly entry: { readonly declaration: AccessDeclaration; readonly moduleKey: string };
+    readonly headers: Headers;
     readonly principalId: string;
     readonly record: ApprovalRecord;
     readonly scope: OperationalScope;
@@ -515,20 +496,41 @@ export const makeAccessApprovalsBff = (context: AccessApprovalsContext): AccessA
         withdrawal: allowed(),
       };
     }
-    const administrator = yield* authority
-      .isAdministrator({
-        principalId: input.principalId,
-        scope: input.scope,
-        scopeId: record.scopeId,
-        tenantId: record.tenantId,
-      })
-      .pipe(Effect.mapError(portFailure));
+    const [administrator, inspection] = yield* Effect.all(
+      [
+        authority
+          .isAdministrator({
+            principalId: input.principalId,
+            scope: input.scope,
+            scopeId: record.scopeId,
+            tenantId: record.tenantId,
+          })
+          .pipe(Effect.mapError(portFailure)),
+        commands
+          .inspect(input.scope, {
+            headers: input.headers,
+            proposalId: record.id,
+            revision: accessApprovalRevision(record),
+          })
+          .pipe(Effect.result),
+      ],
+      { concurrency: 1 },
+    );
+    const approval = (() => {
+      if (Result.isSuccess(inspection)) {
+        return inspection.success ? allowed() : notAllowed('approval_not_permitted');
+      }
+      if (Predicate.isTagged(inspection.failure, 'ApprovalPortUnavailable') || inspection.failure.retryable) {
+        return notAllowed('owner_approval_inspection_unavailable');
+      }
+      return notAllowed(inspection.failure.code);
+    })();
     // A proposal whose governed amount cannot be resolved now cannot be approved now, but it stays one
     // row of the inbox: its unreadable amount never hides every other proposal behind a 503.
     const amount = yield* Effect.result(governedAmountOf(input.scope, record));
     if (Result.isFailure(amount)) {
       return {
-        approval: notAllowed('approval_amount_unavailable'),
+        approval,
         rejection: administrator ? allowed() : notAllowed('rejection_not_permitted'),
         withdrawal: administrator ? allowed() : notAllowed('withdrawal_not_permitted'),
       };
@@ -544,7 +546,8 @@ export const makeAccessApprovalsBff = (context: AccessApprovalsContext): AccessA
     const approver = decision.outcome === 'ALLOWED';
     const decider = approver || administrator;
     return {
-      approval: approvalEligibility(record, approver),
+      // Only the original owner can inspect the complete command and its original governing Read.
+      approval,
       rejection: decider ? allowed() : notAllowed('rejection_not_permitted'),
       withdrawal: decider ? allowed() : notAllowed('withdrawal_not_permitted'),
     };
@@ -552,6 +555,7 @@ export const makeAccessApprovalsBff = (context: AccessApprovalsContext): AccessA
 
   /** One stored proposal as the inbox shows it: labels and eligibility resolved, nothing invented. */
   const viewOf = Effect.fn('AccessApprovalsBff.viewOf')(function* viewOfEffect(input: {
+    readonly headers: Headers;
     readonly principalId: string;
     readonly record: ApprovalRecord;
     readonly scope: OperationalScope;
@@ -574,6 +578,7 @@ export const makeAccessApprovalsBff = (context: AccessApprovalsContext): AccessA
         eligibilityOf({
           context: proposalContextOf(input.scope, input.scopeView),
           entry: entry.value,
+          headers: input.headers,
           principalId: input.principalId,
           record,
           scope: input.scope,
@@ -657,7 +662,7 @@ export const makeAccessApprovalsBff = (context: AccessApprovalsContext): AccessA
     const next = parsed + payload.limit;
     const items = yield* Effect.forEach(
       visible.slice(parsed, next),
-      (one) => viewOf({ principalId: scope.principalId, record: one.record, scope, scopeView: one.scope }),
+      (one) => viewOf({ headers, principalId: scope.principalId, record: one.record, scope, scopeView: one.scope }),
       { concurrency: 1 },
     );
     return { items, nextCursor: next < visible.length ? String(next) : null };
@@ -694,7 +699,7 @@ export const makeAccessApprovalsBff = (context: AccessApprovalsContext): AccessA
       const withdrawn = yield* commands
         .withdraw(scope, { approveAuthority: [], proposalId: record.id })
         .pipe(Effect.mapError(commandFailureProblem));
-      return yield* viewOf({ principalId: scope.principalId, record: withdrawn, scope, scopeView });
+      return yield* viewOf({ headers, principalId: scope.principalId, record: withdrawn, scope, scopeView });
     }
     const entry = yield* authority.capability(record.capabilityKey).pipe(Effect.mapError(portFailure));
     if (Option.isNone(entry)) {
@@ -705,9 +710,6 @@ export const makeAccessApprovalsBff = (context: AccessApprovalsContext): AccessA
         }),
       );
     }
-    const proposalContext = proposalContextOf(scope, scopeView);
-    // The approve, run and rejecting questions are all about the command as frozen, at its own amount.
-    const governed = yield* Effect.result(governedAmountOf(scope, record));
     if (payload.decision === 'approve') {
       if (ownRequest) {
         return yield* Effect.fail(
@@ -717,62 +719,19 @@ export const makeAccessApprovalsBff = (context: AccessApprovalsContext): AccessA
           }),
         );
       }
-      if (record.target !== undefined) {
-        return yield* Effect.fail(
-          accessApprovalsFailureProblem({
-            code: 'access_approvals_record_read_unpublished',
-            reason: 'a proposal that changes one record needs the read of that record, which no release names yet',
-          }),
-        );
-      }
-      if (Result.isFailure(governed)) {
-        return yield* Effect.fail(governed.failure);
-      }
-      const amount = governed.success;
-      const [approvalDecision, executionDecision] = yield* Effect.all(
-        [
-          askOwnDecision({
-            amount,
-            context: proposalContext,
-            declaration: entry.value.declaration,
-            mode: 'approve',
-            moduleKey: entry.value.moduleKey,
-            target: record.target,
-          }),
-          askOwnDecision({
-            amount,
-            context: proposalContext,
-            declaration: entry.value.declaration,
-            mode: 'run',
-            moduleKey: entry.value.moduleKey,
-            target: record.target,
-          }),
-        ],
-        { concurrency: 1 },
-      );
-      const [approval] = accessApprovalWitnesses(approvalDecision);
-      const [execution] = accessApprovalWitnesses(executionDecision);
-      if (approval === undefined || execution === undefined) {
-        return yield* Effect.fail(
-          accessApprovalsFailureProblem({
-            code: 'access_approvals_approval_authority_missing',
-            reason: 'the acting person holds no live approve and run authority for this command',
-          }),
-        );
-      }
       const approved = yield* commands
         .approve(scope, {
-          approval,
-          execution,
-          parentRecordRead: [],
+          headers,
           proposalId: record.id,
           revision: accessApprovalRevision(record),
         })
         .pipe(Effect.mapError(commandFailureProblem));
-      return yield* viewOf({ principalId: scope.principalId, record: approved, scope, scopeView });
+      return yield* viewOf({ headers, principalId: scope.principalId, record: approved, scope, scopeView });
     }
     // Without a resolvable amount nobody can prove approve authority, but a scope administrator still
     // rejects or withdraws on their own authority, which Core checks without approval witnesses.
+    const proposalContext = proposalContextOf(scope, scopeView);
+    const governed = yield* Effect.result(governedAmountOf(scope, record));
     const approveAuthority = Result.isFailure(governed)
       ? []
       : accessApprovalWitnesses(
@@ -792,7 +751,7 @@ export const makeAccessApprovalsBff = (context: AccessApprovalsContext): AccessA
       : commands
           .withdraw(scope, { approveAuthority, proposalId: record.id })
           .pipe(Effect.mapError(commandFailureProblem));
-    return yield* viewOf({ principalId: scope.principalId, record: settled, scope, scopeView });
+    return yield* viewOf({ headers, principalId: scope.principalId, record: settled, scope, scopeView });
   });
 
   /**

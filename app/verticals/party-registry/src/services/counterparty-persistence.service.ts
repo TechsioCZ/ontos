@@ -36,6 +36,8 @@ import {
 import type { PartyTransaction } from '../db/types.ts';
 import { requireCanonicalPartyWriteTarget, resolvePartyAlias } from '../merge/party-alias-resolution.service.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 type CounterpartyTransaction = Pick<PartyTransaction, 'insert' | 'select' | 'update'>;
 type CounterpartyRow = typeof counterparties.$inferSelect;
 type RolePeriodRow = typeof counterpartyRolePeriods.$inferSelect;
@@ -190,21 +192,21 @@ const dieInvariant = (reason: string): never => {
 };
 
 const partyRef = (tenantId: string, resourceId: string): PartyRef => ({
-  moduleId: 'party.registry',
+  moduleId: PARTY_REGISTRY_MODULE_ID,
   resourceId,
   resourceType: 'party.registry.party',
   tenantId,
 });
 
 const counterpartyRef = (tenantId: string, resourceId: string): CounterpartyRef => ({
-  moduleId: 'party.registry',
+  moduleId: PARTY_REGISTRY_MODULE_ID,
   resourceId,
   resourceType: 'party.registry.counterparty',
   tenantId,
 });
 
 const rolePeriodRef = (tenantId: string, resourceId: string): CounterpartyRolePeriodRef => ({
-  moduleId: 'party.registry',
+  moduleId: PARTY_REGISTRY_MODULE_ID,
   resourceId,
   resourceType: 'party.registry.counterparty-role-period',
   tenantId,
@@ -658,10 +660,17 @@ const onboardCustomerRole = Effect.fn('CounterpartyPersistenceService.onboardCus
     )
     .orderBy(asc(counterpartyRolePeriods.validFrom), asc(counterpartyRolePeriods.rolePeriodId))
     .pipe(Effect.mapError(unavailable));
-  // Empty intervals are valid but do not overlap, so equivalence must be checked first.
-  const equivalent = existingRoles.find(
-    (row) => row.validFrom.toISOString() === input.validFrom && (row.validTo?.toISOString() ?? null) === input.validTo,
-  );
+  // Empty intervals are valid but do not overlap, so equivalence must be checked first. An open-ended
+  // request is also satisfied by a current open-ended period: the Counterparty already is the
+  // customer it asks to become, whichever date that period began on.
+  const equivalent =
+    existingRoles.find(
+      (row) =>
+        row.validFrom.toISOString() === input.validFrom && (row.validTo?.toISOString() ?? null) === input.validTo,
+    ) ??
+    (input.validTo === null
+      ? existingRoles.find((row) => row.state === 'ACTIVE' && row.isCurrent && row.validTo === null)
+      : undefined);
   if (equivalent !== undefined) {
     return CustomerOnboardFoundSchema.make({
       counterpartyCreated: context.created,

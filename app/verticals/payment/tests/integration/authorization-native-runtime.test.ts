@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import type { PaymentTermDefinitionSnapshot } from '@app/payment-term-catalog-contracts/payment-term';
 import { NodeCrypto } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
@@ -227,6 +228,7 @@ const makeHarness = Effect.fn('AuthorizationNativeTests.makeHarness')(function* 
     );
   const readRuntime = makeReadRuntime({ executor: database }, gateway, testOperationalScopeResolver, contextAccess, {
     accessDecision,
+    databaseIdentities: defineDatabaseIdentityEnrollment([]),
     ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
     ownerRegistration: paymentRegistration,
   });
@@ -303,7 +305,11 @@ const configureEnablement = (
   provenanceFor(harness.scope).pipe(
     Effect.flatMap((provenance) =>
       harness.database.transaction((transaction) =>
-        installOperationalScope(transaction, operationalScopeOf(harness.scope)).pipe(
+        installOperationalScope(
+          transaction,
+          operationalScopeOf(harness.scope),
+          defineDatabaseIdentityEnrollment([]),
+        ).pipe(
           Effect.flatMap((scoped) =>
             paymentApplicabilityPersistenceForTransaction(scoped).configureEnablement({
               customerConfigurationId: input.customerConfigurationId,

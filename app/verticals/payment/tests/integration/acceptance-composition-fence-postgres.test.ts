@@ -1,6 +1,7 @@
+import { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
+import { defineDatabaseIdentityEnrollment, ActionRuntime, ReadRuntime } from '@app/core-runtime';
 import { randomUUID } from 'node:crypto';
 
-import { ActionRuntime, ReadRuntime } from '@app/core-runtime';
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
@@ -181,6 +182,7 @@ const isolatedPayment = Effect.fn('AcceptanceCompositionFence.isolated')(functio
     evidenceContextAccess,
     {
       accessDecision,
+      databaseIdentities: defineDatabaseIdentityEnrollment([]),
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
     },
@@ -254,6 +256,10 @@ const mountPaymentTransport = Effect.fn('AcceptanceCompositionFence.mount')(func
     Layer.succeed(ReadRuntime, payment.reads).pipe(Layer.provideMerge(paymentUnavailableOwnerPortsLive)),
     Layer.mergeAll(
       Layer.succeed(ActionRuntime, payment.actions),
+      Layer.succeed(OwnerActionApprovals, {
+        approve: () => Effect.die('owner action approvals are outside this proof'),
+        inspect: () => Effect.die('owner action approvals are outside this proof'),
+      }),
       Layer.succeed(ActiveApplicationCompositionSource, { load: Effect.succeed(compositionDocument) }),
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({

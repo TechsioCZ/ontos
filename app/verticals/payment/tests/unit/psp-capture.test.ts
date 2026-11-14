@@ -1,8 +1,9 @@
 import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
 import type { AccessPrincipalKind } from '@app/core-runtime/access/enforcement';
-import { AccessScopeIdSchema } from '@app/core-runtime/access/ids';
+import { AccessScopeIdSchema, LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { inertAccessEnforcementPorts } from '@app/core-runtime/testing/access-gate';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionTestHarnessOptions } from '@app/core-runtime/testing/actions';
 import { Cause, DateTime, Effect, Exit, Layer, Match, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
@@ -226,16 +227,27 @@ const relayPayload = (smuggled: SmuggledFields = {}) => ({
 
 type CaptureHarnessOptions = Omit<ActionTestHarnessOptions, 'services'> & {
   readonly owner: CaptureProviderNotificationServices;
-  /** The invoking context; the relay principal with the binding's route scope unless given. */
-  readonly principal?: ReturnType<typeof routedPrincipal>;
+  /**
+   * The invoking context for the composition revision the harness installs; the relay principal with the binding's
+   * route scope unless given.
+   */
+  readonly principal?: (compositionRevision: string) => ReturnType<typeof routedPrincipal>;
 };
 
 const capture = Effect.fn('PspCaptureTest.capture')(function* capture(
-  { owner, principal = routedPrincipal(), ...options }: CaptureHarnessOptions,
+  {
+    owner,
+    principal = (compositionRevision) => routedPrincipal({ compositionRevision }),
+    ...options
+  }: CaptureHarnessOptions,
   payload: ReturnType<typeof relayPayload> = relayPayload(),
 ) {
+  // The route scope is signed for the revision of the composition that installs this Payment release.
+  const composition = yield* makeOwnerApplicationCompositionFixture({ ownerRegistration: paymentRegistration });
   const harness = yield* makeActionTestHarness({
     access: 'allowed',
+    applicationComposition: composition.applicationComposition,
+    expectedDeployment: composition.expectedDeployment,
     ownerRegistration: paymentRegistration,
     ...options,
     services: [bindActionTestServices(captureProviderNotificationAction, owner)],
@@ -243,7 +255,7 @@ const capture = Effect.fn('PspCaptureTest.capture')(function* capture(
   const exit = yield* harness.runtime
     .runAction({
       payload,
-      principal,
+      principal: principal(composition.snapshot.composition.revision),
       registration: captureProviderNotificationAction,
       transport: { correlationId: 'payment-psp-capture-unit', idempotencyKey: 'capture-unit-1' },
     })
@@ -275,6 +287,8 @@ const failureTagsOf = (outcome: CaptureOutcome) =>
 /** An intent source that resolves every request to its Tenant scope and holds no grant cells. */
 const authorityFor: AccessEnforcementPorts['intent']['authorityFor'] = () => ({
   readCells: () => Effect.succeed([]),
+  // Every company these fixtures name is the fixture Tenant's own.
+  readCompanyOwnership: () => Effect.succeed(true),
   readConnection: () => Effect.succeed(Option.none()),
   readScope: (query) =>
     Effect.succeed(
@@ -294,7 +308,16 @@ const workloadGate = (kind: AccessPrincipalKind, boundKeys: readonly string[]) =
     ...inertAccessEnforcementPorts(),
     intent: { authorityFor },
     principalKinds: { readKind: () => Effect.succeed(Option.some(kind)) },
-    workloadBindings: { readActiveWorkloadKeys: () => Effect.succeed(new Set(boundKeys)) },
+    workloadBindings: {
+      // The workload is registered for the company the call runs in (D6).
+      readWorkloadAuthority: (query) =>
+        Effect.succeed({
+          activeCompanyIds: new Set(
+            query.scope.legalEntityId === undefined ? [] : [LegalEntityIdSchema.make(query.scope.legalEntityId)],
+          ),
+          workloadKeys: new Set(boundKeys),
+        }),
+    },
   };
   const gate = makeAccessDecisionService({
     authorityFor,
@@ -420,7 +443,7 @@ describe('#1157 / #1153 owner recheck of the provider binding route', () => {
       const recorder = newRecorder();
       const outcome = yield* capture({
         owner: fakeServices(authentic(true), recorder),
-        principal: apiKeyPrincipalOf(RELAY),
+        principal: () => apiKeyPrincipalOf(RELAY),
       });
       expect(failureTagsOf(outcome)).toEqual(['PaymentUnavailable']);
       expect(outcome.snapshot.committed).toEqual([]);
@@ -448,13 +471,21 @@ describe('#1157 / #1153 owner recheck of the provider binding route', () => {
         // The route of another merchant's binding, with this binding's account ref in the payload.
         {
           owner: { routes: { [OTHER_BINDING_ID]: otherRoute } },
-          principal: routedPrincipal({ bindingId: OTHER_BINDING_ID }),
+          principal: (compositionRevision: string) =>
+            routedPrincipal({ bindingId: OTHER_BINDING_ID, compositionRevision }),
         },
         // A signed binding that has no route in this scope.
-        { owner: { routes: {} }, principal: routedPrincipal() },
+        { owner: { routes: {} }, principal: (compositionRevision: string) => routedPrincipal({ compositionRevision }) },
         // A stale or foreign route revision, and a route scope of another route key.
-        { owner: {}, principal: routedPrincipal({ routeRevision: 2 }) },
-        { owner: {}, principal: routedPrincipal({ overrides: { routeKey: 'symmy-route' } }) },
+        {
+          owner: {},
+          principal: (compositionRevision: string) => routedPrincipal({ compositionRevision, routeRevision: 2 }),
+        },
+        {
+          owner: {},
+          principal: (compositionRevision: string) =>
+            routedPrincipal({ compositionRevision, overrides: { routeKey: 'symmy-route' } }),
+        },
         // The routed binding is found, but the resolver answers a different binding.
         {
           owner: {
@@ -463,7 +494,7 @@ describe('#1157 / #1153 owner recheck of the provider binding route', () => {
               bindingId: OTHER_BINDING_ID,
             }),
           },
-          principal: routedPrincipal(),
+          principal: (compositionRevision: string) => routedPrincipal({ compositionRevision }),
         },
       ] as const;
       for (const row of cases) {

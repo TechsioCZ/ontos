@@ -2,11 +2,14 @@
 // @ontos-action-http-owner commerce.market-catalog
 // @ontos-action-http-slug activate-market
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { ActivateMarketPayloadSchema, ActivateMarketResultSchema } from '../actions/activate-market.ts';
 
 export { ActivateMarketPayloadSchema } from '../actions/activate-market.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ActivateMarketActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ActivateMarketActionInvalidProblem',
@@ -27,6 +30,7 @@ export const ActivateMarketActionForbiddenProblemSchema = makeProblemDetailsSche
       'operation_context_denied',
       'operation_context_invalid',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ActivateMarketActionNotFoundProblemSchema = makeProblemDetailsSchema(
@@ -57,6 +61,7 @@ export const ActivateMarketActionIneligibleProblemSchema = makeProblemDetailsSch
       'cross_tenant_reference',
       'inconsistent_seller_or_channel',
       'replacement_impact_unresolved',
+      'retirement_in_progress',
       'seller_identity_immutable',
     ]),
   },
@@ -154,7 +159,7 @@ export const activateMarketActionGroupDefinition = HttpApiGroup.make('activateMa
     HttpApiEndpoint.post('execute', '/commerce-market-catalog/actions/activate-market', {
       error: actionErrors,
       payload: Schema.toEncoded(ActivateMarketPayloadSchema),
-      success: ActivateMarketResultSchema,
+      success: [ActionProposalAcceptedSchema, ActivateMarketResultSchema],
     }),
   )
   .middleware(ActivateMarketActionSchemaErrorMiddleware);

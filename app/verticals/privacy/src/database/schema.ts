@@ -1441,6 +1441,7 @@ const privacyDatabaseSchema = {
   dsrVerifications,
   eligibilityEvidence,
   externalObligations,
+  gatewayAssertionRedemptions,
   legalBasisAssignments,
   legalHolds,
   noticeAcknowledgements,

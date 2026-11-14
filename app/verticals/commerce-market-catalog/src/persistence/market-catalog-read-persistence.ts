@@ -1,6 +1,7 @@
 import type { ReadServiceFactory, ScopedRoutineInvocationError } from '@app/core-runtime';
 import { OperationContextUnavailable, defineScopedRoutine } from '@app/core-runtime';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
+import type { Option } from 'effect';
 
 import type {
   CurrentMarketCatalogRequest,
@@ -8,10 +9,10 @@ import type {
 } from '../../shared/apis/current-market-catalog.ts';
 import { CurrentMarketCatalogResponseSchema } from '../../shared/apis/current-market-catalog.ts';
 import type { MarketHistoryResponse } from '../../shared/apis/market-history.ts';
-import { MarketHistoryResponseSchema } from '../../shared/apis/market-history.ts';
+import type { MarketCatalogReadPersistenceUnavailable } from './market-history-routine.ts';
+import { marketCatalogReadUnavailable as unavailable, readMarketHistoryWithInvoker } from './market-history-routine.ts';
 
 const CurrentCatalogRowSchema = Schema.Struct({ payload: Schema.Unknown });
-const MarketHistoryRowSchema = Schema.Struct({ payload: Schema.Unknown });
 const ownerModuleKey = 'commerce.market-catalog';
 const schema = 'commerce_market_catalog';
 const parameters = [
@@ -29,23 +30,6 @@ const readCurrentMarketCatalogRoutine = defineScopedRoutine({
   schema,
 });
 
-const readMarketHistoryRoutine = defineScopedRoutine({
-  name: 'read_market_history',
-  ownerModuleKey,
-  parameters,
-  resultSchema: MarketHistoryRowSchema,
-  routineKey: 'market-catalog-read.history',
-  schema,
-});
-
-export class MarketCatalogReadPersistenceUnavailable extends Schema.TaggedError<MarketCatalogReadPersistenceUnavailable>()(
-  'MarketCatalogReadPersistenceUnavailable',
-  {
-    code: Schema.Literal('market_catalog_read_persistence_unavailable'),
-    reason: Schema.String,
-  },
-) {}
-
 export interface MarketCatalogReadPersistence {
   readonly current: (
     input: CurrentMarketCatalogRequest,
@@ -54,17 +38,6 @@ export interface MarketCatalogReadPersistence {
     marketId: string,
   ) => Effect.Effect<Option.Option<MarketHistoryResponse>, MarketCatalogReadPersistenceUnavailable>;
 }
-
-const unavailable = (cause?: unknown) => {
-  const failure = new MarketCatalogReadPersistenceUnavailable({
-    code: 'market_catalog_read_persistence_unavailable',
-    reason: 'Commerce Market Catalog owner state is temporarily unavailable',
-  });
-  if (cause !== undefined) {
-    Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
-  }
-  return failure;
-};
 
 export const marketCatalogReadPersistenceForScope: ReadServiceFactory<MarketCatalogReadPersistence> = (
   transaction,
@@ -93,21 +66,8 @@ export const marketCatalogReadPersistenceForScope: ReadServiceFactory<MarketCata
     },
   );
 
-  const history: MarketCatalogReadPersistence['history'] = Effect.fn('MarketCatalogReadPersistence.history')(
-    function* marketHistory(marketId) {
-      const rows = yield* transaction
-        .invoke(readMarketHistoryRoutine, [{ marketId }])
-        .pipe(Effect.mapError((cause: ScopedRoutineInvocationError) => unavailable(cause)));
-      const [row] = rows;
-      if (row === undefined) {
-        return Option.none();
-      }
-      const decoded = yield* Schema.decodeUnknownEffect(MarketHistoryResponseSchema)(row.payload).pipe(
-        Effect.mapError(unavailable),
-      );
-      return Option.some(decoded);
-    },
-  );
+  const history: MarketCatalogReadPersistence['history'] = (marketId) =>
+    readMarketHistoryWithInvoker(transaction, marketId);
 
   return Effect.succeed(Object.freeze({ current, history }));
 };

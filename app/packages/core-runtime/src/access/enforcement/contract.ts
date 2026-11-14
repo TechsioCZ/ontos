@@ -12,6 +12,7 @@ import type { AccessDecisionUnavailable } from '../decision/errors.ts';
 import type { LegalEntityId, PrincipalId } from '../ids.ts';
 import type { AccessPrincipalKinds } from './actor.ts';
 import type { AccessDecisionLogWriter } from './decision-log.ts';
+import type { AccessDecisionLogBatchWriter } from './decision-log-batch.ts';
 import type { AccessLegalEntityCandidates } from './legal-entities.ts';
 import type { AccessWorkloadBindings } from './workload-port.ts';
 
@@ -23,7 +24,7 @@ import type { AccessWorkloadBindings } from './workload-port.ts';
  */
 
 /** `approve` exists only for executing a mandate; every other path runs (O56, O63). */
-export const GATE_MODES = ['approve', 'run'] as const;
+export const GATE_MODES = ['approve', 'propose', 'run'] as const;
 export type GateMode = (typeof GATE_MODES)[number];
 
 /**
@@ -71,7 +72,7 @@ export interface GateInput {
   readonly carrier: GateCarrier;
   /** The entrypoint's own declared scope, used to pick the v2 scope (O7, O12, O28). */
   readonly legalEntityScope: LegalEntityScope;
-  /** Defaults to `run`; `approve` only when a mandate is executed. */
+  /** Defaults to `run`; explicit proposal proofs use `propose`, approved execution uses `approve`. */
   readonly mode?: GateMode;
   /** Core-minted transaction time; no decision path reads the clock on its own (D6). */
   readonly now: Date;
@@ -113,6 +114,11 @@ export interface AccessDecisionPorts {
   readonly check: DecisionCheckPort;
   /** "Proč?" evidence for denials, approvals and allowed sensitive or critical work. */
   readonly decisionLog: AccessDecisionLogWriter;
+  /**
+   * The same evidence rows of one `decideMany`, written in one transaction per request scope. A composition that
+   * omits it, such as a binding that writes into a caller's own transaction, writes each row through `decisionLog`.
+   */
+  readonly decisionLogBatch?: AccessDecisionLogBatchWriter;
   /** The tenant's companies, before the `select` check narrows them. */
   readonly legalEntities: AccessLegalEntityCandidates;
   /** The acting principal's `core.principals.kind`. */
@@ -135,6 +141,8 @@ export interface AccessDecisionService {
   readonly decide: (input: GateInput) => Effect.Effect<AccessDecision>;
   readonly decideMany: (input: readonly GateInput[]) => Effect.Effect<readonly AccessDecision[]>;
   readonly list: (input: ListGateInput) => Effect.Effect<ListAccessResolution>;
+  /** Many LISTs, one answer each, each exactly as `list` answers it alone, from one engine snapshot per scope. */
+  readonly listMany: (input: readonly ListGateInput[]) => Effect.Effect<readonly ListAccessResolution[]>;
   /**
    * The same seam over other ports (O75): a transaction-aware binding rebinds the gate to ports that
    * join the caller's transaction instead of opening a second connection. A gate that carries no ports

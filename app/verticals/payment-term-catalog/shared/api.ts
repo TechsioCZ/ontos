@@ -1,3 +1,4 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { identity } from 'effect';
 import {
   MicroVerticalBuildMarkerSchema,
@@ -48,6 +49,7 @@ export * from './apis/payment-term-history.ts';
 
 export const paymentTermCatalogApi = HttpApi.make('PaymentTermCatalogApi')
   .addHttpApi(paymentTermCatalogFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(AcceptPaymentTermSourceStatementActionApi)
   .addHttpApi(ConfigurePaymentTermSourceAuthorityActionApi)

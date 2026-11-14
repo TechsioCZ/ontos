@@ -10,6 +10,7 @@ import type { Crypto } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import {
   SymmyCatalogPricingInventoryIntentSchema,
   SymmyCatalogPricingInventoryReceiptSchema,
@@ -489,7 +490,6 @@ const originalProof = Effect.fn('CpiAdapterFixture.originalProof')(function* pro
 });
 
 const configuration = ConfigProvider.fromEnvRecord({
-  ONTOS_GATEWAY_MODULE_API_KEY: 'internal-module-key',
   ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
 });
 
@@ -700,7 +700,9 @@ const harness = (
     }),
   );
   const provide = <A, E>(program: Effect.Effect<A, E, Crypto.Crypto>) =>
-    program.pipe(
+    // The Symmy integration holds its own module key, handed over the way the host does.
+    holdTestModuleCredentials({ 'symmy-integration': 'internal-module-key' }).pipe(
+      Effect.andThen(program),
       Effect.provide(NodeCrypto.layer),
       Effect.provideService(ConfigProvider.ConfigProvider, configuration),
       Effect.provideService(FetchHttpClient.Fetch, fetch),

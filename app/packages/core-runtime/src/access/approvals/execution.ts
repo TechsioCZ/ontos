@@ -246,6 +246,9 @@ export const execute = (
   input: ExecuteInput,
 ): Result.Result<Proposal, MandateRefusedError | ApprovalAuthorityUnavailableError> => {
   const { proposal } = input;
+  if (proposal.actionAuthority !== undefined) {
+    return unavailable('A forward Action requires its complete prepared bound-authority writer fence');
+  }
   const refused = STATUS_REFUSALS[proposal.status];
   if (refused !== null) {
     return refused();

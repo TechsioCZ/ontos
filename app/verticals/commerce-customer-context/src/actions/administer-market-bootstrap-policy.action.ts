@@ -151,8 +151,7 @@ export const administerMarketBootstrapPolicyAction = defineAction(
     schemaVersion: '1',
   },
   handleAdministerMarketBootstrapPolicy,
-  (transaction, scope, compositionRevision) =>
-    customerCommercePolicyAdministrationServiceFactory(transaction, scope, compositionRevision),
+  (transaction, scope) => customerCommercePolicyAdministrationServiceFactory(transaction, scope),
 );
 
 // <generated-outbox-message-exports>

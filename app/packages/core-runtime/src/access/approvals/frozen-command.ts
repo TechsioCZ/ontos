@@ -2,6 +2,8 @@ import type { Option } from 'effect';
 import { Context, Effect, Layer, Result, Schema } from 'effect';
 
 import { CoreDatabase } from '../../db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../../db/database-identities.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../../db/types.ts';
 import type { OperationalScope } from '../../operations/context.ts';
 import type { AccessScopeId, CommandDigest, ProposalId, TenantId } from '../ids.ts';
@@ -152,17 +154,20 @@ export class FrozenCommands extends Context.Service<FrozenCommands, FrozenComman
 
 /** What a store builder needs from the deployment's client; a store never holds a transaction. */
 export interface FrozenCommandDatabase {
+  /** The enrolled database identities the installed scope is verified against. */
+  readonly enrollment: DatabaseIdentityEnrollment;
   readonly executor: CoreDatabaseExecutor;
 }
 
 /** The layer the deployment binds; the drizzle implementation lives beside the approvals store. */
 export const makeFrozenCommandsLayer = (
   build: (database: FrozenCommandDatabase) => FrozenCommandStore,
-): Layer.Layer<FrozenCommands, never, CoreDatabase> =>
+): Layer.Layer<FrozenCommands, never, CoreDatabase | DatabaseIdentityEnrollmentContext> =>
   Layer.effect(
     FrozenCommands,
     Effect.gen(function* frozenCommandsLayer() {
       const database = yield* CoreDatabase;
-      return build(database);
+      const enrollment = yield* DatabaseIdentityEnrollmentContext;
+      return build({ enrollment, executor: database.executor });
     }),
   );

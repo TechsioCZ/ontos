@@ -3,6 +3,8 @@ import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { Clock, Context, DateTime, Effect, Layer, Match, Option, Result, Schema } from 'effect';
 
 import { CoreDatabase } from '../../db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../../db/database-identities.ts';
 import {
   accessAgentConnections,
   accessAssignments,
@@ -20,7 +22,7 @@ import {
   tenantModuleStates,
 } from '../../db/schema.ts';
 import type { CoreTransaction } from '../../db/types.ts';
-import { tenantStatesAllowingAccess } from '../../modules/module-state-gate.ts';
+import { INSTALLED_TENANT_MODULE_STATES } from '../../modules/module-state-gate.ts';
 import { configureBasesOf } from '../changes/authority.ts';
 import type { AccessConfigureBasis } from '../changes/authority.ts';
 import type { OperationalScope } from '../../operations/context.ts';
@@ -39,6 +41,7 @@ import type {
   AuthorityCell,
   AuthorityCellQuery,
   AuthorityDeadline,
+  CompanyOwnershipQuery,
   ConnectionQuery,
   HolderMembershipDeadlines,
   ResolvedAccessScope,
@@ -47,6 +50,7 @@ import type {
   TeamMembershipQuery,
 } from '../decision/authority.ts';
 import { earliestDeadline } from '../decision/contract.ts';
+import { holderIdOf } from '../decision/selector.ts';
 import {
   AccessScopeIdSchema,
   AgentConnectionIdSchema,
@@ -123,6 +127,22 @@ export interface TenantIntentLoaderService {
     scope: OperationalScope,
     query: AuthorityCellQuery,
   ) => Effect.Effect<readonly AuthorityCell[], AccessIntentError>;
+  /**
+   * `loadAuthorityCells` for many queries in ONE transaction, answered in the asked order: each answer is exactly
+   * what that query alone would read at the same instant.
+   */
+  readonly loadAuthorityCellsMany: (
+    scope: OperationalScope,
+    queries: readonly AuthorityCellQuery[],
+  ) => Effect.Effect<readonly (readonly AuthorityCell[])[], AccessIntentError>;
+  /**
+   * Whether the named company is one of the tenant's own scopes. It reads that one scope row and nothing about
+   * anyone's membership: it is the company-of-tenant check every gate path asks before a decision (O66, O88).
+   */
+  readonly loadCompanyOwnership: (
+    scope: OperationalScope,
+    query: CompanyOwnershipQuery,
+  ) => Effect.Effect<boolean, AccessIntentError>;
   /** Same owner, scope-admin and delegated bases used by change commands (O81). */
   readonly loadConfigureBases: (
     scope: OperationalScope,
@@ -208,9 +228,6 @@ const decodeDelegatedEnvelope = Schema.decodeUnknownResult(
   ACCESS_MODEL_PARSE_OPTIONS,
 );
 
-/** Module states that still offer the module's data; anything narrower stops the installation (O7). */
-const INSTALLED_MODULE_STATES = tenantStatesAllowingAccess('read');
-
 /** The transaction's instant: the clock the caller runs under, so a test can pin it. */
 const now = Effect.fn('TenantIntentLoader.now')(function* nowEffect() {
   const millis = yield* Clock.currentTimeMillis;
@@ -274,6 +291,19 @@ const revisionColumns = {
   templateKey: accessRoleRevisions.templateKey,
   tenantId: accessRoleRevisions.tenantId,
 } as const;
+
+/**
+ * The revision columns with only the cells of the asked capabilities and modes, in their stored order: a cell read
+ * transfers what it asks about, not a whole preset of every capability the role holds.
+ */
+const askedRevisionColumns = (capabilityKeys: readonly string[], modes: readonly string[]) => ({
+  ...revisionColumns,
+  cellsJson: sql<readonly Cell[]>`coalesce(
+      (select jsonb_agg(asked.cell order by asked.position)
+         from jsonb_array_elements(${accessRoleRevisions.cellsJson}) with ordinality as asked(cell, position)
+        where asked.cell->>'capabilityKey' in ${capabilityKeys} and asked.cell->>'mode' in ${modes}),
+      '[]'::jsonb)`.mapWith(accessRoleRevisions.cellsJson),
+});
 
 const delegationColumns = {
   amountCeilingJson: accessDelegations.amountCeilingJson,
@@ -740,7 +770,10 @@ const newestEntryByKey = (
   return [...newest.values()];
 };
 
-const makeIntentLoaderOver = (transactions: AccessTransactions): TenantIntentLoaderService => {
+const makeIntentLoaderOver = (
+  transactions: AccessTransactions,
+  enrollment: DatabaseIdentityEnrollment,
+): TenantIntentLoaderService => {
   /**
    * Every read of this loader runs in one transaction under the caller's scope (O66, D13), and that
    * transaction is REPEATABLE READ when the source opens it: the loader never answers a request from
@@ -784,6 +817,11 @@ const makeIntentLoaderOver = (transactions: AccessTransactions): TenantIntentLoa
       [readScopeRows(transaction, query.tenantId), readMemberships(transaction, query.tenantId)],
       { concurrency: 1 },
     );
+    const { checkedCompany } = query;
+    if (checkedCompany !== undefined && !scopeRows.some((candidate) => candidate.legalEntityId === checkedCompany)) {
+      // The request pairs the tenant with a company it does not own: nothing here is decided (O66, O88).
+      return Option.none<ResolvedAccessScope>();
+    }
     const row = scopeRows.find((candidate) =>
       query.legalEntityId === undefined
         ? candidate.legalEntityId === null
@@ -825,13 +863,13 @@ const makeIntentLoaderOver = (transactions: AccessTransactions): TenantIntentLoa
   });
 
   /**
-   * The catalog entries the pinned revisions reference, newest release first per key (O1); with a
-   * capability key, only that capability's entry.
+   * The catalog entries the pinned revisions reference, newest release first per key (O1); with
+   * capability keys, only those capabilities' entries.
    */
   const readCatalogEntries = Effect.fn('TenantIntentLoader.readCatalogEntries')(function* readCatalogEntriesEffect(
     transaction: CoreTransaction,
     snapshotIds: readonly string[],
-    capabilityKey?: string,
+    capabilityKeys?: readonly string[],
   ) {
     const ids = [...new Set(snapshotIds)];
     if (ids.length === 0) {
@@ -857,7 +895,9 @@ const makeIntentLoaderOver = (transactions: AccessTransactions): TenantIntentLoa
           .where(
             and(
               inArray(accessCatalogEntries.catalogSnapshotId, ids),
-              capabilityKey === undefined ? undefined : eq(accessCatalogEntries.capabilityKey, capabilityKey),
+              capabilityKeys === undefined
+                ? undefined
+                : inArray(accessCatalogEntries.capabilityKey, [...new Set(capabilityKeys)]),
             ),
           ),
       ],
@@ -894,21 +934,22 @@ const makeIntentLoaderOver = (transactions: AccessTransactions): TenantIntentLoa
     } satisfies AuthorityCell;
   });
 
-  /** The exact cells one holder holds for one capability and mode, each with its own end (D6). */
-  const readAuthorityCells = Effect.fn('TenantIntentLoader.readAuthorityCells')(function* readAuthorityCellsEffect(
+  /** One holder's cells in one scope, for each of `queries` (all of that tenant, scope and holder). */
+  const readHolderCells = Effect.fn('TenantIntentLoader.readHolderCells')(function* readHolderCellsEffect(
     transaction: CoreTransaction,
-    query: AuthorityCellQuery,
+    queries: readonly [AuthorityCellQuery, ...AuthorityCellQuery[]],
     at: Date,
   ) {
+    const [holderQuery] = queries;
     const rows = yield* transaction
       .select(assignmentColumns)
       .from(accessAssignments)
       .where(
         and(
-          eq(accessAssignments.tenantId, query.tenantId),
-          eq(accessAssignments.scopeId, query.scopeId),
+          eq(accessAssignments.tenantId, holderQuery.tenantId),
+          eq(accessAssignments.scopeId, holderQuery.scopeId),
           eq(accessAssignments.status, 'active'),
-          holderMatch(accessAssignments.principalId, accessAssignments.agentId, query.holder),
+          holderMatch(accessAssignments.principalId, accessAssignments.agentId, holderQuery.holder),
           lte(accessAssignments.validFrom, at),
           // A cell is usable from its start to its end, both compared with the transaction time the
           // decision itself will use, so intent and answer can never disagree (D6).
@@ -916,33 +957,40 @@ const makeIntentLoaderOver = (transactions: AccessTransactions): TenantIntentLoa
         ),
       );
     if (rows.length === 0) {
-      return [];
+      return queries.map((): readonly AuthorityCell[] => []);
     }
     const [revisions, grants, delegationRows] = yield* Effect.all(
       [
         transaction
-          .select(revisionColumns)
+          .select(
+            askedRevisionColumns(
+              [...new Set(queries.map((query) => query.capabilityKey))],
+              [...new Set(queries.map((query) => query.mode))],
+            ),
+          )
           .from(accessRoleRevisions)
           .where(
             and(
-              eq(accessRoleRevisions.tenantId, query.tenantId),
+              eq(accessRoleRevisions.tenantId, holderQuery.tenantId),
               inArray(accessRoleRevisions.roleRevisionId, [...new Set(rows.map((row) => row.roleRevisionId))]),
             ),
           ),
         transaction
           .select({
+            capabilityKey: accessGrantIncarnations.capabilityKey,
             grantIncarnationId: accessGrantIncarnations.grantIncarnationId,
+            mode: accessGrantIncarnations.mode,
             roleId: accessGrantIncarnations.roleId,
             slot: accessGrantIncarnations.slot,
           })
           .from(accessGrantIncarnations)
           .where(
             and(
-              eq(accessGrantIncarnations.tenantId, query.tenantId),
-              eq(accessGrantIncarnations.scopeId, query.scopeId),
+              eq(accessGrantIncarnations.tenantId, holderQuery.tenantId),
+              eq(accessGrantIncarnations.scopeId, holderQuery.scopeId),
               eq(accessGrantIncarnations.status, 'active'),
-              eq(accessGrantIncarnations.capabilityKey, query.capabilityKey),
-              eq(accessGrantIncarnations.mode, query.mode),
+              inArray(accessGrantIncarnations.capabilityKey, [...new Set(queries.map((query) => query.capabilityKey))]),
+              inArray(accessGrantIncarnations.mode, [...new Set(queries.map((query) => query.mode))]),
               inArray(accessGrantIncarnations.roleId, [...new Set(rows.map((row) => row.roleId))]),
             ),
           ),
@@ -951,7 +999,7 @@ const makeIntentLoaderOver = (transactions: AccessTransactions): TenantIntentLoa
           .from(accessDelegations)
           .where(
             and(
-              eq(accessDelegations.tenantId, query.tenantId),
+              eq(accessDelegations.tenantId, holderQuery.tenantId),
               inArray(accessDelegations.delegationId, [
                 ...new Set(rows.flatMap((row) => (row.delegatedBy === null ? [] : [row.delegatedBy]))),
               ]),
@@ -970,7 +1018,7 @@ const makeIntentLoaderOver = (transactions: AccessTransactions): TenantIntentLoa
     );
     const liveDelegations = yield* Effect.forEach(delegationRows, (row) => delegationOf(row), { concurrency: 1 });
     // Whether a delegation's money limit applies is the catalog's to say (D10b), so a delegated read
-    // loads the asked capability's entry from the releases its held revisions pin.
+    // loads the asked capabilities' entries from the releases its held revisions pin.
     const delegatedRevisionIds = new Set(delegatedRows.map((row) => row.roleRevisionId));
     const entries =
       delegatedRows.length === 0
@@ -980,24 +1028,101 @@ const makeIntentLoaderOver = (transactions: AccessTransactions): TenantIntentLoa
             revisions.flatMap((revision) =>
               delegatedRevisionIds.has(revision.roleRevisionId) ? [revision.catalogSnapshotId] : [],
             ),
-            query.capabilityKey,
+            queries.map((query) => query.capabilityKey),
           );
-    const candidates = cellCandidates({
-      amountGoverned: Option.map(
-        Option.fromUndefinedOr(entries.find((entry) => entry.key === query.capabilityKey)),
-        (entry) => entry.amountInput !== undefined,
-      ),
-      capabilityKey: query.capabilityKey,
-      delegationById: new Map(liveDelegations.map((delegation) => [delegation.id, delegation] as const)),
-      envelopeByAssignment: new Map(envelopes.flat()),
-      grantOfCell: new Map(grants.map((grant) => [`${grant.roleId}|${grant.slot}`, grant.grantIncarnationId])),
-      holder: query.holder,
-      mode: query.mode,
-      revisionById: new Map(revisions.map((revision) => [revision.roleRevisionId, revision])),
-      rows,
-    });
-    return yield* Effect.forEach(candidates, (candidate) => decodeAuthorityCell(candidate), { concurrency: 1 });
+    const delegationById = new Map(liveDelegations.map((delegation) => [delegation.id, delegation] as const));
+    const envelopeByAssignment = new Map(envelopes.flat());
+    // Each revision's cells by capability and mode, so a query reads only its own cells, not the whole revision.
+    const revisionsByCapability = new Map<string, Map<string, RevisionRow>>();
+    for (const revision of revisions) {
+      const cellsByCapability = new Map<string, Cell[]>();
+      for (const cell of revision.cellsJson) {
+        const key = `${cell.capabilityKey}\u0000${cell.mode}`;
+        const known = cellsByCapability.get(key);
+        if (known === undefined) {
+          cellsByCapability.set(key, [cell]);
+        } else {
+          known.push(cell);
+        }
+      }
+      for (const [key, cells] of cellsByCapability) {
+        const narrowed = revisionsByCapability.get(key) ?? new Map<string, RevisionRow>();
+        narrowed.set(revision.roleRevisionId, { ...revision, cellsJson: cells });
+        revisionsByCapability.set(key, narrowed);
+      }
+    }
+    // A revision without a cell of the asked capability and mode still stands: it simply offers no cell.
+    const revisionsOf = (key: string): ReadonlyMap<string, RevisionRow> =>
+      new Map(
+        revisions.map((revision) => [
+          revision.roleRevisionId,
+          revisionsByCapability.get(key)?.get(revision.roleRevisionId) ?? { ...revision, cellsJson: [] },
+        ]),
+      );
+    const grantsByCapability = new Map<string, Map<string, string>>();
+    for (const grant of grants) {
+      const key = `${grant.capabilityKey}\u0000${grant.mode}`;
+      const known = grantsByCapability.get(key) ?? new Map<string, string>();
+      known.set(`${grant.roleId}|${grant.slot}`, grant.grantIncarnationId);
+      grantsByCapability.set(key, known);
+    }
+    return yield* Effect.forEach(
+      queries,
+      (query) => {
+        const candidates = cellCandidates({
+          amountGoverned: Option.map(
+            Option.fromUndefinedOr(entries.find((entry) => entry.key === query.capabilityKey)),
+            (entry) => entry.amountInput !== undefined,
+          ),
+          capabilityKey: query.capabilityKey,
+          delegationById,
+          envelopeByAssignment,
+          grantOfCell: grantsByCapability.get(`${query.capabilityKey}\u0000${query.mode}`) ?? new Map<string, string>(),
+          holder: query.holder,
+          mode: query.mode,
+          revisionById: revisionsOf(`${query.capabilityKey}\u0000${query.mode}`),
+          rows,
+        });
+        return Effect.forEach(candidates, (candidate) => decodeAuthorityCell(candidate), { concurrency: 1 });
+      },
+      { concurrency: 1 },
+    );
   });
+
+  /**
+   * The exact cells one holder holds for each asked capability and mode, each with its own end (D6), answered in
+   * the asked order. Every query of one tenant, scope and holder shares its assignment, revision, grant, delegation
+   * and catalog reads, so a batch costs a fixed number of statements however many capabilities it names.
+   */
+  const readAuthorityCellsMany = Effect.fn('TenantIntentLoader.readAuthorityCellsMany')(
+    function* readAuthorityCellsManyEffect(
+      transaction: CoreTransaction,
+      queries: readonly AuthorityCellQuery[],
+      at: Date,
+    ) {
+      const groups = new Map<string, [AuthorityCellQuery, ...AuthorityCellQuery[]]>();
+      for (const query of queries) {
+        const key = [query.tenantId, query.scopeId, holderIdOf(query.holder)].join('\u0000');
+        const group = groups.get(key);
+        if (group === undefined) {
+          groups.set(key, [query]);
+        } else {
+          group.push(query);
+        }
+      }
+      // One holder after another inside this one transaction, each with its fixed set of statements.
+      const groupList = [...groups.values()];
+      const answers = yield* Effect.forEach(groupList, (group) => readHolderCells(transaction, group, at), {
+        concurrency: 1,
+      });
+      const answered = new Map<AuthorityCellQuery, readonly AuthorityCell[]>(
+        groupList.flatMap((group, groupIndex) =>
+          group.map((query, index) => [query, answers[groupIndex]?.[index] ?? []] as const),
+        ),
+      );
+      return queries.map((query) => answered.get(query) ?? []);
+    },
+  );
 
   /** The agent's fresh connection: its consented ceiling comes from the revision it is at (D13). */
   const readAgentConnection = Effect.fn('TenantIntentLoader.readConnection')(function* readAgentConnectionEffect(
@@ -1192,7 +1317,10 @@ const makeIntentLoaderOver = (transactions: AccessTransactions): TenantIntentLoa
       .select({ moduleKey: tenantModuleStates.moduleKey })
       .from(tenantModuleStates)
       .where(
-        and(eq(tenantModuleStates.tenantId, tenantId), inArray(tenantModuleStates.state, [...INSTALLED_MODULE_STATES])),
+        and(
+          eq(tenantModuleStates.tenantId, tenantId),
+          inArray(tenantModuleStates.state, [...INSTALLED_TENANT_MODULE_STATES]),
+        ),
       );
     return yield* Effect.forEach(
       rows,
@@ -1273,6 +1401,20 @@ const makeIntentLoaderOver = (transactions: AccessTransactions): TenantIntentLoa
     },
   );
 
+  const loadCompanyOwnership: TenantIntentLoaderService['loadCompanyOwnership'] = Effect.fn(
+    'TenantIntentLoader.loadCompanyOwnership',
+  )(function* loadCompanyOwnershipEffect(scope: OperationalScope, query: CompanyOwnershipQuery) {
+    yield* assertScope(scope, query.tenantId);
+    return yield* readScoped<boolean>(scope, (transaction) =>
+      transaction
+        .select({ scopeId: accessScopes.scopeId })
+        .from(accessScopes)
+        .where(and(eq(accessScopes.tenantId, query.tenantId), eq(accessScopes.legalEntityId, query.legalEntityId)))
+        .limit(1)
+        .pipe(Effect.map((rows) => rows.length === 1)),
+    );
+  });
+
   const loadTenantContextScopeId: TenantIntentLoaderService['loadTenantContextScopeId'] = Effect.fn(
     'TenantIntentLoader.loadTenantContextScopeId',
   )(function* loadTenantContextScopeIdEffect(scope: OperationalScope) {
@@ -1286,7 +1428,22 @@ const makeIntentLoaderOver = (transactions: AccessTransactions): TenantIntentLoa
   )(function* loadAuthorityCellsEffect(scope: OperationalScope, query: AuthorityCellQuery) {
     yield* assertScope(scope, query.tenantId);
     return yield* readScoped<readonly AuthorityCell[]>(scope, (transaction, at) =>
-      readAuthorityCells(transaction, query, at),
+      readAuthorityCellsMany(transaction, [query], at).pipe(Effect.map(([cells = []]) => cells)),
+    );
+  });
+
+  const loadAuthorityCellsMany: TenantIntentLoaderService['loadAuthorityCellsMany'] = Effect.fn(
+    'TenantIntentLoader.loadAuthorityCellsMany',
+  )(function* loadAuthorityCellsManyEffect(scope: OperationalScope, queries: readonly AuthorityCellQuery[]) {
+    yield* Effect.forEach(new Set(queries.map((query) => query.tenantId)), (tenantId) => assertScope(scope, tenantId), {
+      concurrency: 1,
+      discard: true,
+    });
+    if (queries.length === 0) {
+      return [];
+    }
+    return yield* readScoped<readonly (readonly AuthorityCell[])[]>(scope, (transaction, at) =>
+      readAuthorityCellsMany(transaction, queries, at),
     );
   });
 
@@ -1346,8 +1503,11 @@ const makeIntentLoaderOver = (transactions: AccessTransactions): TenantIntentLoa
   );
 
   return Object.freeze({
-    joined: (transaction: CoreTransaction) => makeIntentLoaderOver(callerTransactions(transaction)),
+    joined: (transaction: CoreTransaction) =>
+      makeIntentLoaderOver(callerTransactions(transaction, enrollment), enrollment),
     loadAuthorityCells,
+    loadAuthorityCellsMany,
+    loadCompanyOwnership,
     loadConfigureBases,
     loadConnection,
     loadProjection,
@@ -1362,7 +1522,7 @@ const makeIntentLoaderOver = (transactions: AccessTransactions): TenantIntentLoa
  * scope at REPEATABLE READ (O66, D13).
  */
 export const makeTenantIntentLoader = (database: AccessIntentDatabase): TenantIntentLoaderService =>
-  makeIntentLoaderOver(requestTransactions(database));
+  makeIntentLoaderOver(requestTransactions(database), database.enrollment);
 
 /**
  * The same reader over a transaction the caller already opened and still owns (O75): every read of a
@@ -1370,8 +1530,10 @@ export const makeTenantIntentLoader = (database: AccessIntentDatabase): TenantIn
  * and memberships its own transaction sees — including changes that transaction has not committed. It
  * opens nothing of its own, and its snapshot is the caller's (`AccessTransactions`).
  */
-export const makeJoinedTenantIntentLoader = (transaction: CoreTransaction): TenantIntentLoaderService =>
-  makeIntentLoaderOver(callerTransactions(transaction));
+export const makeJoinedTenantIntentLoader = (
+  transaction: CoreTransaction,
+  enrollment: DatabaseIdentityEnrollment,
+): TenantIntentLoaderService => makeIntentLoaderOver(callerTransactions(transaction, enrollment), enrollment);
 
 export class TenantIntentLoader extends Context.Service<TenantIntentLoader, TenantIntentLoaderService>()(
   '@app/core-runtime/access/intent/tenant-intent-loader/TenantIntentLoader',
@@ -1381,6 +1543,7 @@ export const TenantIntentLoaderLive = Layer.effect(
   TenantIntentLoader,
   Effect.gen(function* tenantIntentLoaderLayer() {
     const database = yield* CoreDatabase;
-    return makeTenantIntentLoader(database);
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
+    return makeTenantIntentLoader({ enrollment, executor: database.executor });
   }),
 );

@@ -1,4 +1,3 @@
-/* oxlint-disable perfectionist/sort-objects -- Drizzle declaration order is the physical owner contract; expires: 2027-03-31. */
 import { tenantRlsPolicies } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { check, foreignKey, index, integer, jsonb, primaryKey, text, timestamp, uuid } from 'drizzle-orm/pg-core';
@@ -78,5 +77,3 @@ export const inventorySourceConflictRevisions = inventorySchema.table.withRLS(
     ...tenantRlsPolicies('inventory_source_conflict_revisions_tenant', table.tenantId),
   ],
 );
-
-/* oxlint-enable perfectionist/sort-objects */

@@ -1,3 +1,5 @@
+import { makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
+import { SHARED_RUNTIME_IDENTITY } from '@app/core-runtime/db/database-identity-manifest';
 import { TenantAccessBootstrap, TenantAccessBootstrapLive } from '@app/core-runtime/access/bootstrap';
 import { AccessCatalogModulesSchema } from '@app/core-runtime/access/catalog';
 import { AccessChangesStoreLive } from '@app/core-runtime/access/changes/persistence/drizzle-store';
@@ -52,6 +54,7 @@ import {
   makeTestDatabaseFromClient,
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
 import { loadAuthConfig } from '../../api/auth/config.ts';
 import { makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { account, session, user } from '../../api/auth/db/schema.ts';
@@ -92,7 +95,11 @@ const accessRuntime = (executor: CoreDatabaseExecutor, configuration: SpiceDbCon
       (transport) => Effect.sync(() => transport.close()),
     ).pipe(Effect.map((transport) => makeAccessProjectionCompiler(transport))),
   );
-  const platform = Layer.mergeAll(Layer.succeed(CoreDatabase, { executor }), engine);
+  const platform = Layer.mergeAll(
+    Layer.succeed(CoreDatabase, { executor }),
+    engine,
+    makeDatabaseIdentityEnrollmentLive(SHELL_DATABASE_IDENTITY_ENROLLMENT),
+  );
   const stores = Layer.mergeAll(
     TenantIntentLoaderLive,
     AccessWriteJournalStoreLive,
@@ -132,7 +139,7 @@ const retireTenant = Effect.fn('retireE2eTenant')(function* retireE2eTenantEffec
   yield* executor.transaction((transaction) =>
     Effect.gen(function* retireInTenantScope() {
       // The access tables are tenant-guarded: without the tenant's scope no row would match.
-      yield* installOperationalScope(transaction, scope);
+      yield* installOperationalScope(transaction, scope, SHELL_DATABASE_IDENTITY_ENROLLMENT);
       yield* transaction
         .update(principalAuthBindings)
         .set({ revokedAt: retiredAt, status: 'revoked' })
@@ -248,7 +255,9 @@ export const createAuthenticationFixture = Effect.fn('createAuthenticationFixtur
     }
     const catalog = yield* loadAccessCatalog();
     const access = yield* Layer.build(accessRuntime(coreDatabase, spiceDb));
-    const { adapter, executor: authDatabase } = yield* acquireOutlivingCleanup(makeAuthDatabase({ connectionString }));
+    const { adapter, executor: authDatabase } = yield* acquireOutlivingCleanup(
+      makeAuthDatabase({ connectionString, expectedRole: SHARED_RUNTIME_IDENTITY.role }),
+    );
     const authentication = betterAuth({
       baseURL,
       database: adapter,
@@ -402,7 +411,9 @@ export const createAuthenticationFixture = Effect.fn('createAuthenticationFixtur
       Effect.gen(function* runInFirstTenantScope() {
         const scope = yield* ownerScopeOf(firstTenant);
         return yield* coreDatabase.transaction((transaction) =>
-          installOperationalScope(transaction, scope).pipe(Effect.andThen(body(transaction))),
+          installOperationalScope(transaction, scope, SHELL_DATABASE_IDENTITY_ENROLLMENT).pipe(
+            Effect.andThen(body(transaction)),
+          ),
         );
       });
     const reconcileFirstTenant = Effect.gen(function* reconcileFirstE2eTenant() {

@@ -5,18 +5,21 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import { Effect, Match, Option } from 'effect';
 
 import { PartyDetailRequestSchema, PartyDetailResponseSchema } from '../../shared/apis/party-detail.ts';
-import type { PartyDetailResponse } from '../../shared/apis/party-detail.ts';
+import type { PartyDetailResponse, PartyHistoricalNameAssertion } from '../../shared/apis/party-detail.ts';
 import { makePartyRef } from '../../shared/domain/identity-contracts.ts';
 import type { PartyPersistenceUnavailableError } from '../../shared/domain/identity-contracts.ts';
 import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-resolution.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import { resolvePartyAlias } from '../merge/party-alias-resolution.service.ts';
 import type { ResolvedPartyAlias } from '../merge/party-alias-resolution.service.ts';
-import { findPartyDetailAssertions } from '../services/party-detail-persistence.service.ts';
+import {
+  findPartyDetailAssertions,
+  findPartyHistoricalNameAssertions,
+} from '../services/party-detail-persistence.service.ts';
 import type { PartyDetailAssertions } from '../services/party-detail-persistence.service.ts';
 import { findPartyRecord } from '../services/party-identity-persistence.service.ts';
 import type { PartyLookup } from '../services/party-identity-persistence.service.ts';
@@ -27,6 +30,9 @@ interface Services {
     includeFactHistory: boolean,
   ) => Effect.Effect<PartyDetailAssertions, PartyPersistenceUnavailableError, never>;
   readonly find: (partyId: string) => Effect.Effect<PartyLookup, PartyPersistenceUnavailableError, never>;
+  readonly historicalNames: (
+    partyId: string,
+  ) => Effect.Effect<readonly PartyHistoricalNameAssertion[], PartyPersistenceUnavailableError, never>;
   readonly resolve: (partyId: string) => Effect.Effect<ResolvedPartyAlias, PartyAliasResolutionError, never>;
 }
 
@@ -86,8 +92,15 @@ export const readPartyDetailFromServices = Effect.fn('PartyDetailRead.readPartyD
     const assertions = yield* services
       .facts(resolved.canonicalPartyId, includeFactHistory)
       .pipe(Effect.mapError(unavailable));
+    // Archived names are history-only evidence: an ordinary read never asks for them, and the archive
+    // is read under the same identity field grant that decides the current facts' own values.
+    const historicalNameEvidence = includeFactHistory
+      ? yield* services
+          .historicalNames(resolved.canonicalPartyId)
+          .pipe(Effect.map(Option.some), Effect.mapError(unavailable))
+      : Option.none<readonly PartyHistoricalNameAssertion[]>();
 
-    const response: Omit<PartyDetailResponse, 'factHistory'> = {
+    const response: Omit<PartyDetailResponse, 'factHistory' | 'historicalNameEvidence'> = {
       currentFactAssertions: assertions.currentFactAssertions,
       party: party.value,
       resolution: {
@@ -98,9 +111,12 @@ export const readPartyDetailFromServices = Effect.fn('PartyDetailRead.readPartyD
       },
     };
     // History is only part of the shape when the caller asked for it.
-    return Option.isSome(assertions.factHistory)
+    const withFactHistory = Option.isSome(assertions.factHistory)
       ? { ...response, factHistory: assertions.factHistory.value }
       : response;
+    return Option.isSome(historicalNameEvidence)
+      ? { ...withFactHistory, historicalNameEvidence: historicalNameEvidence.value }
+      : withFactHistory;
   },
 );
 
@@ -140,6 +156,7 @@ export const partyDetailRead = defineRead(
           'party.lastName',
           'currentFactAssertions.value',
           'factHistory.value',
+          'historicalNameEvidence.value',
         ],
         key: 'party.registry.party-identity.read',
         kind: 'field_read',
@@ -163,18 +180,21 @@ export const partyDetailRead = defineRead(
     resultSchema: PartyDetailResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<Services>) =>
-    readPartyDetailFromServices(
-      input.partyRef,
-      context.scope.tenantId,
-      context.services,
-      input.includeFactHistory,
-    ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
+  {
+    load: (input, context: ReadLoadContext<Services>) =>
+      readPartyDetailFromServices(
+        input.partyRef,
+        context.scope.tenantId,
+        context.services,
+        input.includeFactHistory,
+      ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
+  },
   (transaction, scope) =>
     Effect.succeed({
       facts: (partyId: string, includeFactHistory: boolean) =>
         findPartyDetailAssertions(transaction, scope.tenantId, partyId, includeFactHistory),
       find: (partyId: string) => findPartyRecord(transaction, scope.tenantId, partyId),
+      historicalNames: (partyId: string) => findPartyHistoricalNameAssertions(transaction, scope.tenantId, partyId),
       resolve: (partyId: string) => resolvePartyAlias(transaction, scope.tenantId, partyId),
     }),
 );

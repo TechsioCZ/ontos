@@ -1,0 +1,7 @@
+absolute
+collapse
+fixed
+ordinal
+rounded
+table
+transition

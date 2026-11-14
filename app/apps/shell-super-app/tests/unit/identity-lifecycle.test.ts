@@ -1,4 +1,6 @@
 import {
+  ActionAlreadyCommitted,
+  ActionPermissionDenied,
   ActionTransactionError,
   IdentityTargetInvalidError,
   PrincipalBindingMissingError,
@@ -124,6 +126,74 @@ it.effect('preserves resolver lifecycle failures instead of rewriting them as an
   }),
 );
 
+it.effect('refuses a managed key for an ineligible target before the provider issues anything', () =>
+  Effect.gen(function* refusesBeforeIssue() {
+    let issuedKeys = 0;
+    const actions = makeActionRuntimeDouble([]);
+    const refused = new IdentityTargetInvalidError({
+      code: 'identity_target_invalid',
+      reason: 'The platform issues, rotates and retires the keys of its own principals',
+    });
+    const service = makeIdentityLifecycleService(
+      actions.runtime,
+      makeApiKeyServiceDouble({
+        issue: () => {
+          issuedKeys += 1;
+          return Effect.succeed(issued);
+        },
+        pendingCleanup: () => Effect.succeed({ hasMore: false, providerKeyIds: [] }),
+      }),
+      resolver,
+      { check: () => Effect.fail(refused) },
+    );
+    const failure = yield* Effect.flip(
+      service.issue({
+        correlationId: 'correlation-ineligible',
+        idempotencyKey: 'issue-ineligible',
+        managedPrincipalId: '00000000-0000-4000-8000-000000000009',
+        managedScope: 'tenant-managed',
+        principal,
+        requestHeaders: new Headers(),
+      }),
+    );
+    expect(failure).toBe(refused);
+    // No provider key exists for a refused target, so none has to be disabled.
+    expect(issuedKeys).toBe(0);
+  }),
+);
+it.effect('refuses a managed key status change in Core before the provider key is disabled', () =>
+  Effect.gen(function* refusesManagedStatusBeforeProvider() {
+    const refused = new IdentityTargetInvalidError({
+      code: 'identity_target_invalid',
+      reason: 'The platform issues, rotates and retires the keys of its own principals',
+    });
+    let providerCalls = 0;
+    const service = makeIdentityLifecycleService(
+      makeActionRuntimeDouble([actionDomainFailure(refused)]).runtime,
+      makeApiKeyServiceDouble({
+        setEnabled: () => {
+          providerCalls += 1;
+          return Effect.succeed(issued);
+        },
+      }),
+      resolver,
+    );
+    const failure = yield* Effect.flip(
+      service.setStatus({
+        authBindingId: '00000000-0000-4000-8000-000000000005',
+        correlationId: 'correlation-managed-status',
+        expectedStatus: 'active',
+        idempotencyKey: 'status-managed',
+        managedPrincipalId: '00000000-0000-4000-8000-000000000009',
+        managedScope: 'tenant-managed',
+        newStatus: 'disabled',
+        principal,
+      }),
+    );
+    expect(failure).toBe(refused);
+    expect(providerCalls).toBe(0);
+  }),
+);
 it.effect('preserves a typed Core status-transition failure before touching provider state', () =>
   Effect.gen(function* testProgram3() {
     const actionFailure = new IdentityTargetInvalidError({
@@ -471,9 +541,17 @@ it.effect('cleans one bounded pending batch and requires a retry before issuing 
   }),
 );
 
-it.effect('retries provider cleanup without repeating an already committed Core transition', () =>
+it.effect('reauthorizes provider cleanup through the already committed native Action', () =>
   Effect.gen(function* testProgram10() {
-    const actionRuntime = makeActionRuntimeDouble([actionDefect(new Error('must not run'))]);
+    const actionRuntime = makeActionRuntimeDouble([
+      actionCoreFailure(
+        new ActionAlreadyCommitted({
+          code: 'action_already_committed',
+          invocationId: '00000000-0000-4000-8000-000000000006',
+          reason: 'Already committed',
+        }),
+      ),
+    ]);
     const service = makeIdentityLifecycleService(
       actionRuntime.runtime,
       makeApiKeyServiceDouble({
@@ -499,7 +577,45 @@ it.effect('retries provider cleanup without repeating an already committed Core 
       reason: 'Retry provider cleanup',
     });
     expect(result.cleanupPending).toBe(false);
-    expect(actionRuntime.invocationCount()).toBe(0);
+    expect(actionRuntime.invocationCount()).toBe(1);
+  }),
+);
+
+it.effect('denies matching-state provider reconciliation before touching the provider', () =>
+  Effect.gen(function* deniedReconciliation() {
+    const denied = new ActionPermissionDenied({
+      code: 'action_permission_denied',
+      reason: 'The caller no longer has company administration rights',
+    });
+    const actionRuntime = makeActionRuntimeDouble([actionCoreFailure(denied)]);
+    let providerCalls = 0;
+    const service = makeIdentityLifecycleService(
+      actionRuntime.runtime,
+      makeApiKeyServiceDouble({
+        metadata: () => {
+          providerCalls += 1;
+          return Effect.succeed(issued);
+        },
+        setEnabled: () => {
+          providerCalls += 1;
+          return Effect.succeed(issued);
+        },
+      }),
+      resolver,
+    );
+    const failure = yield* Effect.flip(
+      service.setStatus({
+        authBindingId: '00000000-0000-4000-8000-000000000005',
+        correlationId: 'denied-reconciliation',
+        expectedStatus: 'active',
+        idempotencyKey: 'denied-reconciliation',
+        newStatus: 'active',
+        principal,
+      }),
+    );
+    expect(failure).toBe(denied);
+    expect(actionRuntime.invocationCount()).toBe(1);
+    expect(providerCalls).toBe(0);
   }),
 );
 

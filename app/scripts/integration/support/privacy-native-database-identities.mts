@@ -10,9 +10,11 @@ import { Reactivity } from 'effect/reactivity';
 import { pathToFileURL } from 'node:url';
 import { loadDatabaseConnectionPair, loadDatabaseConfig } from '../../../packages/core-runtime/src/db/config.ts';
 import {
-  SHELL_GATEWAY_ISSUER_IDENTITY,
   PARTY_REGISTRY_REQUEST_IDENTITY,
   PARTY_REGISTRY_WORKER_IDENTITY,
+} from '@app/party-registry-identity-contracts';
+import {
+  SHELL_GATEWAY_ISSUER_IDENTITY,
   SHARED_RUNTIME_IDENTITY,
 } from '../../../packages/core-runtime/src/db/database-identities.ts';
 import { quoteIdentifier } from '../../postgres/database-login-roles.mts';
@@ -171,7 +173,7 @@ const prepare = Effect.fn('PrivacyNativeIdentities.prepare')(function* prepare(
     if (
       row === undefined ||
       row.databaseOid !== request.databaseOid ||
-      !restrictedNativeIdentityMatches(row, request.databaseName, config.user)
+      !restrictedNativeIdentityMatches(row, request.databaseName, config.expectedRole)
     ) {
       return yield* Effect.fail(refused());
     }

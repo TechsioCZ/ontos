@@ -1,7 +1,8 @@
 import { v1 } from '@authzed/authzed-node';
-import { Context, Effect, Layer, Result, Schema } from 'effect';
+import { Cause, Context, Effect, Layer, Result, Schema } from 'effect';
 import type { Scope } from 'effect';
 
+import { logUnavailableMapping } from '../observability/unavailable-mapping.ts';
 import {
   SPICEDB_CHECK_TIMEOUT_MS,
   acquireSpiceDbClientResource,
@@ -289,7 +290,15 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
             ? decisions
             : unavailable(keys);
         }),
-        Effect.catchTag('SpiceDbPermissionClientError', () => Effect.succeed(unavailable(keys))),
+        Effect.catchTag('SpiceDbPermissionClientError', ({ cause, rpcCode }) => {
+          const timeout = Cause.isTimeoutError(cause) || rpcCode === 4;
+          return logUnavailableMapping(
+            'spicedb-permission-check',
+            'read-permission',
+            timeout ? 'TimeoutError' : 'SpiceDbPermissionClientError',
+            { failureKind: timeout ? 'timeout' : 'client-error' },
+          ).pipe(Effect.as(unavailable(keys)));
+        }),
       );
   };
 

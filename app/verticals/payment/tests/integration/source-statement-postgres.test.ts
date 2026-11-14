@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 import { Clock, Deferred, Effect, Fiber, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
@@ -120,7 +121,7 @@ const inActionTransaction = <A, E>(
   database.transaction((transaction) =>
     Effect.gen(function* scopedAction() {
       const operational = operationalScopeOf(scope);
-      const scoped = yield* installOperationalScope(transaction, operational);
+      const scoped = yield* installOperationalScope(transaction, operational, defineDatabaseIdentityEnrollment([]));
       const services = yield* paymentSourceServicesForTransaction(scoped, operational, compositionRevision);
       const actionInvocationId = yield* randomUuid;
       return yield* body(services, { actionInvocationId, compositionRevision, scope: operational });
@@ -214,7 +215,11 @@ const startCollect = Effect.fn('SourceTest.startCollect')(function* startCollect
   const input = yield* collectInput(scope, { amountMinor: 100_000, paymentId: payment.paymentId }, 'collect-1');
   const created = yield* database.transaction((transaction) =>
     Effect.gen(function* seedCollection() {
-      const scoped = yield* installOperationalScope(transaction, operationalScopeOf(scope));
+      const scoped = yield* installOperationalScope(
+        transaction,
+        operationalScopeOf(scope),
+        defineDatabaseIdentityEnrollment([]),
+      );
       const { executionBinding, method } = payment;
       const candidates =
         method === 'BANK_TRANSFER_ADVANCE' || method === 'DEFERRED_INVOICE'

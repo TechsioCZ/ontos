@@ -45,6 +45,7 @@ export default defineConfig({
       include: ['tests/integration/**/*.test.ts'],
       exclude: [workerCycleIntegrationTest],
       testTimeout: 30_000,
+      tools: { swc },
     },
     {
       // Party worker cycles claim outbox work across every tenant, so this file
@@ -54,6 +55,7 @@ export default defineConfig({
       setupFiles: ['./tests/integration/application-composition.setup.ts'],
       include: [workerCycleIntegrationTest],
       testTimeout: 30_000,
+      tools: { swc },
     },
     {
       name: 'unit',

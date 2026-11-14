@@ -11,7 +11,7 @@ const ContactsContent = () => {
 
   return (
     <>
-      <UltramodernRouteHead />
+      <UltramodernRouteHead titleKey="party-registry.pages.contacts.title" />
       <section
         aria-labelledby={headingId}
         className="partyregistry:mx-auto partyregistry:w-full partyregistry:max-w-5xl partyregistry:px-4 partyregistry:py-8 partyregistry:sm:px-8 partyregistry:lg:px-12"

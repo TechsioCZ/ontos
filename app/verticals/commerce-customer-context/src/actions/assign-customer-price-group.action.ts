@@ -38,6 +38,7 @@ import type {
 } from '../../shared/domain/price-group-ports.ts';
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
 import { createAssignCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupAssignedV1OutboxMessage } from './assign-customer-price-group.commerce-customer-context-customer-price-group-assigned-v1.outbox-message.ts';
+import { prepareAssignCustomerPriceGroupServices } from './price-group-action-preparation.ts';
 import { assignCustomerPriceGroupServicesForTransaction } from './price-group-action-services.ts';
 import type { CustomerPriceGroupAssignmentReceiptCapture } from '../services/customer-price-group-assignment-receipt.service.ts';
 
@@ -368,4 +369,5 @@ export const assignCustomerPriceGroupAction = defineAction(
   },
   handleAssignCustomerPriceGroup,
   assignCustomerPriceGroupServicesForTransaction,
+  { prepareServices: prepareAssignCustomerPriceGroupServices },
 );

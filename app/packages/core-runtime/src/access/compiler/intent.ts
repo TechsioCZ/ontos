@@ -48,7 +48,7 @@ export interface ProjectionPrincipalIntent {
  * One pinned catalog entry of the snapshot the projected role revisions were saved against (O1).
  *
  * The planner validates every projected cell against its entry and takes the owning module key from
- * the entry, never from the capability key text: real module keys are dotted (`party.registry`), so
+ * the entry, never from the capability key text: module keys may be dotted (`example.registry`), so
  * splitting a key at the first dot both hides every real module and links an uninstalled one whose
  * single-segment prefix happens to be installed (O27, guarantee 8).
  *

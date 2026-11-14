@@ -80,10 +80,12 @@ export const applyCustomerGroupMembershipSourceActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ApplyCustomerGroupMembershipSourceActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ApplyCustomerGroupMembershipSourceActionForbiddenProblem'> =>
     ApplyCustomerGroupMembershipSourceActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -205,7 +207,8 @@ const mapCoreProblem = (error: ActionCoreError): ApplyCustomerGroupMembershipSou
       ActionPayloadValidationError: applyCustomerGroupMembershipSourceActionProblem.invalid,
       ActionPermissionCheckError: (failure) =>
         applyCustomerGroupMembershipSourceActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => applyCustomerGroupMembershipSourceActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        applyCustomerGroupMembershipSourceActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => applyCustomerGroupMembershipSourceActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         applyCustomerGroupMembershipSourceActionProblem.unavailable(failure.code),

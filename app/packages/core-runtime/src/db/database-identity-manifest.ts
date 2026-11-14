@@ -1,66 +1,54 @@
-/** Canonical database identity facts, safe to load in build-tool CJS configuration loaders. */
+import { Option, Result, Schema } from 'effect';
+
+import { freezeIdentity, SHARED_RUNTIME_IDENTITY, SHELL_GATEWAY_ISSUER_IDENTITY } from './database-identity-data.ts';
+
+export {
+  BEARER_ASSERTION_ROLE_SETTINGS,
+  SHARED_RUNTIME_IDENTITY,
+  SHELL_GATEWAY_ISSUER_IDENTITY,
+} from './database-identity-data.ts';
+
+/** Owner-neutral identity contracts and enrollment validation. */
 const DATABASE_SCOPE_AUTHORITIES = ['gateway_grant', 'session_setting', 'none'] as const;
 export type DatabaseScopeAuthority = (typeof DATABASE_SCOPE_AUTHORITIES)[number];
-
 const DATABASE_TABLE_PRIVILEGES = ['select', 'insert', 'update', 'delete'] as const;
 export type DatabaseTablePrivilege = (typeof DATABASE_TABLE_PRIVILEGES)[number];
-
-const DATABASE_IDENTITY_IDS = [
-  'shared_runtime',
-  'shell_gateway_issuer',
-  'party_registry_request',
-  'party_registry_worker',
-] as const;
-export type DatabaseIdentityId = (typeof DATABASE_IDENTITY_IDS)[number];
-
-const DATABASE_URL_KEYS = [
-  'DATABASE_URL',
-  'SHELL_GATEWAY_ISSUER_DATABASE_URL',
-  'PARTY_REGISTRY_DATABASE_URL',
-  'PARTY_REGISTRY_WORKER_DATABASE_URL',
-] as const;
-export type DatabaseUrlKey = (typeof DATABASE_URL_KEYS)[number];
+export type DatabaseIdentityId = DatabaseIdentity['id'];
+export type DatabaseUrlKey = DatabaseIdentity['urlKey'];
 
 export interface CloudflareHyperdriveBinding {
   readonly binding: string;
   readonly idVariable: string;
 }
-
 export interface DatabaseIdentity {
   readonly cloudflareHyperdrive: CloudflareHyperdriveBinding | null;
   readonly gatewayScopeAudiences: readonly string[];
   readonly handlesBearerAssertions: boolean;
-  readonly id: DatabaseIdentityId;
+  readonly id: string;
   readonly ownerModuleKey: string | null;
   readonly registersGatewayScopeGrants: boolean;
   readonly role: string;
   /** The identity runs protected Actions, so it locks their access scope fence. */
   readonly runsActions: boolean;
   readonly scopeAuthority: DatabaseScopeAuthority;
-  readonly urlKey: DatabaseUrlKey;
+  readonly urlKey: string;
 }
-
 export interface DatabaseTableGrant {
-  /** A privilege listed here is granted on exactly these columns; otherwise on the table. */
   readonly columns?: Readonly<Partial<Record<'select' | 'insert' | 'update', readonly string[]>>>;
   readonly privileges: readonly DatabaseTablePrivilege[];
   readonly reason: string;
-  /** Qualified `schema.table` name. */
   readonly table: string;
 }
-
 export interface DatabaseSequenceGrant {
   readonly privileges: readonly ('usage' | 'select')[];
   readonly reason: string;
   readonly sequence: string;
 }
-
 export interface DatabaseAcceptedFinding {
   readonly code: string;
   readonly objects: readonly string[] | 'all';
   readonly reason: string;
 }
-
 export interface DatabaseRoleGrants {
   readonly acceptedFindings: readonly DatabaseAcceptedFinding[];
   readonly routines: readonly string[];
@@ -69,89 +57,14 @@ export interface DatabaseRoleGrants {
   readonly tables: readonly DatabaseTableGrant[];
 }
 
-const freezeIdentity = (identity: DatabaseIdentity): DatabaseIdentity =>
-  Object.freeze({
-    ...identity,
-    cloudflareHyperdrive:
-      identity.cloudflareHyperdrive === null ? null : Object.freeze({ ...identity.cloudflareHyperdrive }),
-    gatewayScopeAudiences: Object.freeze([...identity.gatewayScopeAudiences]),
-  });
-
-export const SHARED_RUNTIME_IDENTITY: DatabaseIdentity = freezeIdentity({
-  cloudflareHyperdrive: { binding: 'HYPERDRIVE', idVariable: 'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID' },
-  gatewayScopeAudiences: [],
-  handlesBearerAssertions: false,
-  id: 'shared_runtime',
-  ownerModuleKey: null,
-  registersGatewayScopeGrants: false,
-  role: 'ontos_runtime',
-  runsActions: true,
-  scopeAuthority: 'session_setting',
-  urlKey: 'DATABASE_URL',
-});
-
-export const SHELL_GATEWAY_ISSUER_IDENTITY: DatabaseIdentity = freezeIdentity({
-  cloudflareHyperdrive: {
-    binding: 'GATEWAY_ISSUER_HYPERDRIVE',
-    idVariable: 'ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID',
-  },
-  gatewayScopeAudiences: [],
-  handlesBearerAssertions: true,
-  id: 'shell_gateway_issuer',
-  ownerModuleKey: null,
-  registersGatewayScopeGrants: true,
-  role: 'shell_gateway_issuer',
-  runsActions: false,
-  scopeAuthority: 'none',
-  urlKey: 'SHELL_GATEWAY_ISSUER_DATABASE_URL',
-});
-
-export const PARTY_REGISTRY_REQUEST_IDENTITY: DatabaseIdentity = freezeIdentity({
-  cloudflareHyperdrive: {
-    binding: 'PARTY_REGISTRY_HYPERDRIVE',
-    idVariable: 'ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID',
-  },
-  gatewayScopeAudiences: ['party-registry'],
-  handlesBearerAssertions: true,
-  id: 'party_registry_request',
-  ownerModuleKey: 'party.registry',
-  registersGatewayScopeGrants: false,
-  role: 'party_registry_runtime',
-  runsActions: true,
-  scopeAuthority: 'gateway_grant',
-  urlKey: 'PARTY_REGISTRY_DATABASE_URL',
-});
-
-export const PARTY_REGISTRY_WORKER_IDENTITY: DatabaseIdentity = freezeIdentity({
-  cloudflareHyperdrive: null,
-  gatewayScopeAudiences: [],
-  handlesBearerAssertions: false,
-  id: 'party_registry_worker',
-  ownerModuleKey: 'party.registry',
-  registersGatewayScopeGrants: false,
-  role: 'party_registry_worker',
-  runsActions: false,
-  scopeAuthority: 'session_setting',
-  urlKey: 'PARTY_REGISTRY_WORKER_DATABASE_URL',
-});
-
-export const DATABASE_IDENTITIES: readonly DatabaseIdentity[] = Object.freeze([
-  SHARED_RUNTIME_IDENTITY,
-  SHELL_GATEWAY_ISSUER_IDENTITY,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
-  PARTY_REGISTRY_WORKER_IDENTITY,
-]);
-
-export const DEDICATED_IDENTITY_MODULE_KEYS: readonly string[] = Object.freeze([
-  ...new Set(
-    DATABASE_IDENTITIES.flatMap((identity) => (identity.ownerModuleKey === null ? [] : [identity.ownerModuleKey])),
-  ),
-]);
-
-export const BEARER_ASSERTION_ROLE_SETTINGS = Object.freeze([
-  'log_parameter_max_length=0',
-  'log_parameter_max_length_on_error=0',
-] as const);
+/** Complete owner-authored enrollment facts. No executable registration or foreign schema is imported. */
+export interface DatabaseOwnerIdentityDescriptor {
+  readonly moduleKey: string;
+  readonly policyPrefix: string;
+  readonly request: DatabaseIdentity;
+  readonly schemas: readonly string[];
+  readonly worker: DatabaseIdentity;
+}
 
 /**
  * What one access decision reads and writes in `core`, as the least-privilege request identity sees it.
@@ -168,15 +81,23 @@ export const BEARER_ASSERTION_ROLE_SETTINGS = Object.freeze([
  */
 export const ACCESS_DECISION_REQUEST_GRANTS: readonly DatabaseTableGrant[] = Object.freeze([
   {
+    columns: { select: ['revision', 'scope_id', 'state', 'tenant_id'] },
+    privileges: ['select'],
+    reason:
+      'Core prepared Action authority compares persisted projection revisions before external I/O and under its writer fence',
+    table: 'core.access_scope_fences',
+  },
+  {
     columns: { select: ['kind', 'principal_id', 'tenant_id'] },
     privileges: ['select'],
     reason: 'Core access/enforcement/actor.ts reads the acting principal kind before the engine is asked',
     table: 'core.principals',
   },
   {
-    columns: { select: ['legal_entity_id', 'tenant_id'] },
+    columns: { select: ['legal_entity_id', 'status', 'tenant_id'] },
     privileges: ['select'],
-    reason: 'Core access/enforcement/legal-entities.ts lists the companies the engine may then narrow',
+    reason:
+      'Core access/enforcement/legal-entities.ts lists the companies the engine may then narrow, and a workload registration read joins the active ones (D6)',
     table: 'core.legal_entities',
   },
   {
@@ -335,6 +256,13 @@ export const ACCESS_DECISION_REQUEST_GRANTS: readonly DatabaseTableGrant[] = Obj
     table: 'core.access_workload_bindings',
   },
   {
+    columns: { select: ['legal_entity_id', 'status', 'tenant_id', 'workload_binding_id'] },
+    privileges: ['select'],
+    reason:
+      'Core access/workloads/bindings.ts reads the companies a standalone workload is explicitly registered for (D6)',
+    table: 'core.access_workload_company_bindings',
+  },
+  {
     columns: {
       insert: [
         'actor_json',
@@ -371,68 +299,208 @@ export interface TrustRoutine {
   readonly signature: string;
 }
 
-const REGISTER_GATEWAY_SCOPE_GRANT_SIGNATURE =
-  'trust.register_gateway_scope_grant(text,text,uuid,uuid,uuid,uuid,timestamptz)';
+const enrollmentBrand: unique symbol = Symbol('@app/core-runtime/db/DatabaseIdentityEnrollment');
+export interface DatabaseIdentityEnrollment {
+  readonly dedicatedModuleKeys: readonly string[];
+  readonly [enrollmentBrand]: true;
+  readonly identities: readonly DatabaseIdentity[];
+  readonly owners: readonly DatabaseOwnerIdentityDescriptor[];
+  readonly trustRoutines: readonly TrustRoutine[];
+}
 
-/**
- * Locks one access scope fence for the Action transaction (`lockActionAccessFence`). Request
- * identities hold no grant on `core.access_scope_fences`; the routine reaches only a fence of the
- * tenant the transaction's established scope allows.
- */
-const LOCK_ACCESS_SCOPE_FENCE_SIGNATURE = 'trust.lock_access_scope_fence(uuid,uuid)';
+export class DatabaseIdentityEnrollmentError extends Schema.TaggedError<DatabaseIdentityEnrollmentError>()(
+  'DatabaseIdentityEnrollmentError',
+  { cause: Schema.optionalKey(Schema.Unknown), reason: Schema.String },
+) {}
 
-const gatewayScopeGrantRegistrarRoles = DATABASE_IDENTITIES.flatMap((identity) =>
-  identity.registersGatewayScopeGrants ? [identity.role] : [],
+/** Routine vocabulary is Core-owned; executor membership comes only from the supplied enrollment. */
+export const trustRoutinesForIdentities = (identities: readonly DatabaseIdentity[]): readonly TrustRoutine[] => {
+  const registrars = identities.flatMap((identity) => (identity.registersGatewayScopeGrants ? [identity.role] : []));
+  const requests = identities.flatMap((identity) =>
+    identity.scopeAuthority === 'gateway_grant' ? [identity.role] : [],
+  );
+  const actionRunners = identities.flatMap((identity) => (identity.runsActions ? [identity.role] : []));
+  const sharedRuntime = identities.flatMap((identity) =>
+    identity.id === SHARED_RUNTIME_IDENTITY.id ? [identity.role] : [],
+  );
+  return Object.freeze([
+    ...[
+      { executableBy: sharedRuntime, signature: 'trust.open_source_execution_fence(uuid,uuid)' },
+      { executableBy: sharedRuntime, signature: 'trust.open_source_execution_fence(uuid,uuid,uuid,text,text)' },
+      { executableBy: [], signature: 'trust.register_source_execution_gated_action(text,text)' },
+      {
+        executableBy: [],
+        signature: 'trust.publish_source_execution_gate(uuid,uuid,text,uuid,uuid,text,text,boolean,boolean)',
+      },
+      { executableBy: sharedRuntime, signature: 'trust.cancel_source_execution_fence(uuid,uuid)' },
+      { executableBy: actionRunners, signature: 'trust.lock_source_execution_fence(uuid,uuid)' },
+      { executableBy: actionRunners, signature: 'trust.read_source_execution_fence(uuid,uuid)' },
+      {
+        executableBy: [...sharedRuntime, ...requests],
+        signature: 'trust.registered_workload_delivery_is_active(uuid,text,text,text,uuid)',
+      },
+      {
+        executableBy: registrars,
+        signature: 'trust.register_gateway_scope_grant(text,text,uuid,uuid,uuid,uuid,timestamptz)',
+      },
+      ...[
+        'trust.establish_gateway_scope(text)',
+        'trust.current_tenant_id()',
+        'trust.current_legal_entity_id()',
+        'trust.auth_binding_issuing_legal_entity(uuid,uuid)',
+      ].map((signature) => ({ executableBy: requests, signature })),
+      {
+        executableBy: actionRunners,
+        signature: 'trust.lock_access_scope_fence(uuid,uuid)',
+      },
+    ].map(({ executableBy, signature }) =>
+      Object.freeze({ executableBy: Object.freeze([...executableBy]), securityDefiner: true, signature }),
+    ),
+    ...['trust.verified_scope()', 'trust.scope_payload(xid8,timestamptz,uuid,uuid)', 'trust.scope_mac(text)'].map(
+      (signature) => Object.freeze({ executableBy: Object.freeze([]), securityDefiner: false, signature }),
+    ),
+  ]);
+};
+
+const IdentifierSchema = Schema.String.pipe(Schema.check(Schema.isPattern(/^[a-z][a-z0-9_]{0,62}$/u)));
+const VariableSchema = Schema.String.pipe(Schema.check(Schema.isPattern(/^[A-Z][A-Z0-9_]*$/u)));
+const ModuleKeySchema = Schema.String.pipe(
+  Schema.check(Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u)),
+  Schema.brand('DatabaseOwnerModuleKey'),
 );
-const gatewayGrantRoles = DATABASE_IDENTITIES.flatMap((identity) =>
-  identity.scopeAuthority === 'gateway_grant' ? [identity.role] : [],
-);
-const actionRunnerRoles = DATABASE_IDENTITIES.flatMap((identity) => (identity.runsActions ? [identity.role] : []));
+const AudienceSchema = Schema.String.pipe(Schema.check(Schema.isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u)));
+const IdentitySchema = Schema.Struct({
+  cloudflareHyperdrive: Schema.OptionFromNullOr(Schema.Struct({ binding: VariableSchema, idVariable: VariableSchema })),
+  gatewayScopeAudiences: Schema.Array(AudienceSchema),
+  handlesBearerAssertions: Schema.Boolean,
+  id: IdentifierSchema,
+  ownerModuleKey: Schema.OptionFromNullOr(ModuleKeySchema),
+  registersGatewayScopeGrants: Schema.Boolean,
+  role: IdentifierSchema,
+  runsActions: Schema.Boolean,
+  scopeAuthority: Schema.Literals(DATABASE_SCOPE_AUTHORITIES),
+  urlKey: VariableSchema.pipe(Schema.brand('DatabaseUrlKey')),
+});
+const DescriptorSchema = Schema.Struct({
+  moduleKey: ModuleKeySchema,
+  policyPrefix: IdentifierSchema,
+  request: IdentitySchema,
+  schemas: Schema.Array(IdentifierSchema),
+  worker: IdentitySchema,
+});
+const decodeDescriptors = Schema.decodeUnknownResult(Schema.Array(DescriptorSchema), { onExcessProperty: 'error' });
+const freezeDecodedIdentity = (identity: typeof IdentitySchema.Type): DatabaseIdentity =>
+  freezeIdentity({
+    ...identity,
+    cloudflareHyperdrive: Option.getOrNull(identity.cloudflareHyperdrive),
+    ownerModuleKey: Option.getOrNull(identity.ownerModuleKey),
+  });
+const invalidEnrollment = (reason: string): never => {
+  throw new DatabaseIdentityEnrollmentError({ reason });
+};
+const assertUnique = (values: readonly string[], label: string): void => {
+  if (new Set(values).size !== values.length) {
+    invalidEnrollment(`Database identity enrollment has duplicate ${label}`);
+  }
+};
+const reservedRole = (role: string): boolean => role === 'public' || role === 'postgres' || role.startsWith('pg_');
+const PLATFORM_SCHEMAS = new Set(['auth', 'core', 'drizzle', 'email', 'information_schema', 'public', 'trust']);
 
-/** Every routine in schema trust with its hardening contract and the only roles allowed to execute it. */
-export const TRUST_ROUTINES: readonly TrustRoutine[] = [
-  {
-    executableBy: [SHARED_RUNTIME_IDENTITY.role],
-    securityDefiner: true,
-    signature: 'trust.open_source_execution_fence(uuid,uuid)',
-  },
-  {
-    executableBy: [SHARED_RUNTIME_IDENTITY.role],
-    securityDefiner: true,
-    signature: 'trust.open_source_execution_fence(uuid,uuid,uuid,text,text)',
-  },
-  { executableBy: [], securityDefiner: true, signature: 'trust.register_source_execution_gated_action(text,text)' },
-  {
-    executableBy: [],
-    securityDefiner: true,
-    signature: 'trust.publish_source_execution_gate(uuid,uuid,text,uuid,uuid,text,text,boolean,boolean)',
-  },
-  {
-    executableBy: [SHARED_RUNTIME_IDENTITY.role],
-    securityDefiner: true,
-    signature: 'trust.cancel_source_execution_fence(uuid,uuid)',
-  },
-  { executableBy: actionRunnerRoles, securityDefiner: true, signature: 'trust.lock_source_execution_fence(uuid,uuid)' },
-  { executableBy: actionRunnerRoles, securityDefiner: true, signature: 'trust.read_source_execution_fence(uuid,uuid)' },
-  {
-    executableBy: [SHARED_RUNTIME_IDENTITY.role, ...gatewayGrantRoles],
-    securityDefiner: true,
-    signature: 'trust.registered_workload_delivery_is_active(uuid,text,text,text,uuid)',
-  },
-  {
-    executableBy: gatewayScopeGrantRegistrarRoles,
-    securityDefiner: true,
-    signature: REGISTER_GATEWAY_SCOPE_GRANT_SIGNATURE,
-  },
-  { executableBy: gatewayGrantRoles, securityDefiner: true, signature: 'trust.establish_gateway_scope(text)' },
-  { executableBy: gatewayGrantRoles, securityDefiner: true, signature: 'trust.current_tenant_id()' },
-  { executableBy: gatewayGrantRoles, securityDefiner: true, signature: 'trust.current_legal_entity_id()' },
-  {
-    executableBy: actionRunnerRoles,
-    securityDefiner: true,
-    signature: LOCK_ACCESS_SCOPE_FENCE_SIGNATURE,
-  },
-  { executableBy: [], securityDefiner: false, signature: 'trust.verified_scope()' },
-  { executableBy: [], securityDefiner: false, signature: 'trust.scope_payload(xid8,timestamptz,uuid,uuid)' },
-  { executableBy: [], securityDefiner: false, signature: 'trust.scope_mac(text)' },
-];
+/** Each application explicitly validates and freezes its complete owner graph. There is no global registry. */
+export const defineDatabaseIdentityEnrollment = (
+  descriptors: readonly DatabaseOwnerIdentityDescriptor[],
+): DatabaseIdentityEnrollment => {
+  const decoded = Result.getOrThrow(
+    decodeDescriptors(descriptors).pipe(
+      Result.mapError(
+        (cause) =>
+          new DatabaseIdentityEnrollmentError({
+            cause,
+            reason: 'Database identity enrollment descriptors are invalid',
+          }),
+      ),
+    ),
+  );
+  const owners = decoded.map((owner) => {
+    const request = freezeDecodedIdentity(owner.request);
+    const worker = freezeDecodedIdentity(owner.worker);
+    if (
+      request.ownerModuleKey !== owner.moduleKey ||
+      worker.ownerModuleKey !== owner.moduleKey ||
+      request.scopeAuthority !== 'gateway_grant' ||
+      !request.handlesBearerAssertions ||
+      request.registersGatewayScopeGrants ||
+      request.gatewayScopeAudiences.length === 0 ||
+      worker.scopeAuthority !== 'session_setting' ||
+      worker.handlesBearerAssertions ||
+      worker.registersGatewayScopeGrants ||
+      worker.gatewayScopeAudiences.length !== 0 ||
+      worker.cloudflareHyperdrive !== null ||
+      reservedRole(request.role) ||
+      reservedRole(worker.role) ||
+      owner.schemas.length === 0 ||
+      owner.schemas.some((schema) => PLATFORM_SCHEMAS.has(schema) || schema.startsWith('pg_'))
+    ) {
+      invalidEnrollment('An owner descriptor has inconsistent identity authority or schema ownership');
+    }
+    return Object.freeze({
+      moduleKey: owner.moduleKey,
+      policyPrefix: owner.policyPrefix,
+      request,
+      schemas: Object.freeze([...owner.schemas]),
+      worker,
+    });
+  });
+  const identities = Object.freeze([
+    SHARED_RUNTIME_IDENTITY,
+    SHELL_GATEWAY_ISSUER_IDENTITY,
+    ...owners.flatMap(({ request, worker }) => [request, worker]),
+  ]);
+  assertUnique(
+    owners.map(({ moduleKey }) => moduleKey),
+    'module keys',
+  );
+  assertUnique(
+    owners.map(({ policyPrefix }) => policyPrefix),
+    'policy prefixes',
+  );
+  assertUnique(
+    owners.flatMap(({ schemas }) => schemas),
+    'schema owners',
+  );
+  assertUnique(
+    identities.map(({ id }) => id),
+    'identity ids',
+  );
+  assertUnique(
+    identities.map(({ role }) => role),
+    'roles',
+  );
+  assertUnique(
+    identities.map(({ urlKey }) => urlKey),
+    'URL keys',
+  );
+  assertUnique(
+    identities.flatMap(({ gatewayScopeAudiences }) => gatewayScopeAudiences),
+    'gateway audiences',
+  );
+  assertUnique(
+    identities.flatMap(({ cloudflareHyperdrive }) =>
+      cloudflareHyperdrive === null ? [] : [cloudflareHyperdrive.binding],
+    ),
+    'Hyperdrive bindings',
+  );
+  assertUnique(
+    identities.flatMap(({ cloudflareHyperdrive }) =>
+      cloudflareHyperdrive === null ? [] : [cloudflareHyperdrive.idVariable],
+    ),
+    'Hyperdrive variables',
+  );
+  return Object.freeze({
+    dedicatedModuleKeys: Object.freeze(owners.map(({ moduleKey }) => moduleKey)),
+    [enrollmentBrand]: true as const,
+    identities,
+    owners: Object.freeze(owners),
+    trustRoutines: trustRoutinesForIdentities(identities),
+  });
+};

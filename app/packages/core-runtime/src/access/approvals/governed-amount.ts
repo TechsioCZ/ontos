@@ -1,6 +1,6 @@
 import { Effect, Option, Schema } from 'effect';
 
-import { decodeActionPayload } from '../../actions/definition.ts';
+import { decodeActionPayload } from '../../actions/payload-codec.ts';
 import { ActionPermissionCheckError } from '../../actions/errors.ts';
 import type { ActionPayloadValidationError } from '../../actions/errors.ts';
 import type { AccessDeclaration } from '../../authorization/access-declaration.ts';

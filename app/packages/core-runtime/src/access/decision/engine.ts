@@ -1,4 +1,4 @@
-import { Context, DateTime, Effect, Match, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Exit, Match, Option, Schema, Semaphore } from 'effect';
 import type { Array as Arr } from 'effect';
 
 import type { AccessScopeId, CapabilityKey, LegalEntityId, PrincipalId, RecordKey } from '../ids.ts';
@@ -25,8 +25,12 @@ import type {
   ActorResolution,
   AuthorityCell,
   AuthorityCellQuery,
+  CompanyOwnershipQuery,
+  ConnectionQuery,
   DecisionAuthorityPort,
   ResolvedActor,
+  ScopeQuery,
+  TeamMembershipQuery,
 } from './authority.ts';
 import { decisionReason, earliestDeadline, sameRecord } from './contract.ts';
 import type {
@@ -44,7 +48,7 @@ import type { AccessDecisionUnavailable } from './errors.ts';
 import { buildListAccessPredicate } from './list-access.ts';
 import type { ListAccessPredicate, ListAuthorityCell, ListAuthoritySide } from './list-access.ts';
 import { withOptional } from './optional.ts';
-import { capabilitySlotRelation } from '../compiler/object-id.ts';
+import { capabilitySlotRelation, scopeObjectId } from '../compiler/object-id.ts';
 import {
   assignmentObjectIdOf,
   capabilityObjectIdOf,
@@ -656,7 +660,12 @@ const unavailableDecision = (): AccessDecision =>
 
 const SENSITIVE_READ_KINDS: ReadonlySet<AccessKind> = new Set(['export', 'field_read', 'read'] as const);
 
-const agentTier = (
+/**
+ * What an agent may do with one capability in one requested mode: never administration, never approval, never a
+ * sensitive read, and a non-routine run only as a proposal a person decides. Exported so a surface that SHOWS an
+ * agent's usable rights applies this very rule instead of restating it; the decision itself is still `decideAccess`.
+ */
+export const agentTier = (
   policy: DecisionCapabilityPolicy,
   requestedMode: AccessMode,
 ): { readonly approvalRequired: boolean } | { readonly reason: DecisionReason } => {
@@ -736,7 +745,8 @@ const readRequestCells = (
           Effect.map((cells): SideCells => ({ cells, holder: holderFor(resolved, side), side })),
         ),
       ),
-      { concurrency: 2 },
+      // A port reading through a caller's transaction serves one read at a time on its one connection.
+      { concurrency: authority.readsThroughCallerTransaction === true ? 1 : 2 },
     ),
   );
 
@@ -744,15 +754,17 @@ const readParentCells = (
   authority: DecisionAuthorityPort,
   resolved: ResolvedActor,
   parentRead: NonNullable<AccessDecisionRequest['parentRead']>,
+  mode: AccessMode,
 ): Effect.Effect<Option.Option<readonly SideCells[]>> =>
   Effect.option(
     Effect.all(
       sidesOf(resolved).map((side) =>
-        readParentReadCells(authority, resolved, parentRead.capability.capabilityKey, side).pipe(
+        readParentReadCells(authority, resolved, parentRead.capability.capabilityKey, side, mode).pipe(
           Effect.map((cells): SideCells => ({ cells, holder: holderFor(resolved, side), side })),
         ),
       ),
-      { concurrency: 2 },
+      // A port reading through a caller's transaction serves one read at a time on its one connection.
+      { concurrency: authority.readsThroughCallerTransaction === true ? 1 : 2 },
     ),
   );
 
@@ -926,6 +938,80 @@ const adminSurfaceAnyDecision = (
   );
 };
 
+/**
+ * A baseline capability as the decision sees it: the flag AND the only shape a baseline may have, the Shell frame's
+ * routine, unselected read. The declaration decoder already refuses anything else; this holds even for a release row
+ * that carries the flag on another capability.
+ */
+const isFrameBaseline = (capability: DecisionCapabilityPolicy): boolean =>
+  capability.baseline === true &&
+  capability.capabilityKey.startsWith('core.shell.') &&
+  capability.kind === 'read' &&
+  capability.risk === 'routine' &&
+  capability.selectors.length === 0 &&
+  capability.modes.length === 1 &&
+  capability.modes[0] === RUN_MODE;
+
+/**
+ * Baseline access (the Shell frame): a person whose Roles do not grant a baseline capability is still a member of the
+ * company or tenant they ask in, and a member may load the product. It is a fallback after the Roles answered, so a
+ * holder of the cell never pays for it, and it applies only to a person (never an agent or workload) refused for want
+ * of a grant. The graph proves the membership itself (`access_scope#access`) in its own snapshot; an engine failure is
+ * UNAVAILABLE, never an admission. Every page, contribution and record stays decided by its own right.
+ */
+const needsMemberBaseline = (
+  resolved: ResolvedActor,
+  request: Pick<AccessDecisionRequest, 'capability'>,
+  decided: AccessDecision,
+): boolean =>
+  isFrameBaseline(request.capability) &&
+  decided.outcome === 'DENIED' &&
+  decided.reasons.every(({ code }) => code === INSUFFICIENT_GRANT.code) &&
+  Option.isSome(principalIdOf(resolved.actor));
+
+const memberBaselineItem = (resolved: ResolvedActor): AccessCheckItem => ({
+  permission: 'access',
+  resource: { id: scopeObjectId(resolved.scope.tenantId, resolved.scope.scopeId), type: 'access_scope' },
+  subject: subjectOf(resolved.principalHolder),
+});
+
+const memberBaselineDecision = (resolved: ResolvedActor): AccessDecision =>
+  makeDecision({
+    admissionDeadline: earliestDeadline(actorDeadlines(resolved)),
+    evidence: [],
+    outcome: 'ALLOWED',
+    reasons: [decisionReason('structural.member_baseline')],
+    structuralEvidence: { basis: 'member_baseline', scopeId: resolved.scope.scopeId },
+  });
+
+/** The member's answer for one membership check result: admitted, refused as the Roles said, or unavailable. */
+const memberBaselineVerdict = (
+  resolved: ResolvedActor,
+  decided: AccessDecision,
+  result: AccessCheckResult | undefined,
+): AccessDecision => {
+  if (result?.permissionship === 'has') {
+    return memberBaselineDecision(resolved);
+  }
+  return result?.permissionship === 'none' ? decided : unavailableDecision();
+};
+
+const withMemberBaseline = Effect.fn('AccessDecision.memberBaseline')(function* withMemberBaselineProgram(
+  check: DecisionCheckPort,
+  resolved: ResolvedActor,
+  request: AccessDecisionRequest,
+  decided: AccessDecision,
+) {
+  if (!needsMemberBaseline(resolved, request, decided)) {
+    return decided;
+  }
+  const answer = yield* check.checkBulk([memberBaselineItem(resolved)]).pipe(Effect.option);
+  return Option.match(answer, {
+    onNone: () => unavailableDecision(),
+    onSome: ([result]) => memberBaselineVerdict(resolved, decided, result),
+  });
+});
+
 /** A structural admin path is an independent branch of this same gate, never a role cell (O81). */
 const structuralAdminDecision = Effect.fn('AccessDecision.structuralAdmin')(function* structuralAdminProgram(
   authority: DecisionAuthorityPort,
@@ -987,6 +1073,10 @@ interface DecisionGuard {
 const needsParentRead = (capability: DecisionCapabilityPolicy): boolean =>
   capability.fieldClass !== undefined || capability.kind === 'field_read' || capability.kind === 'field_write';
 
+/** A written field is part of the owning command in its effective mode, never a second RUN. */
+const parentModeOf = (request: AccessDecisionRequest, modes: EvaluationModes): AccessMode =>
+  request.capability.kind === 'field_write' ? modes.effectiveMode : RUN_MODE;
+
 const guardRequest = (resolved: ResolvedActor, request: AccessDecisionRequest): DecisionGuard => {
   const modes = evaluationModes(resolved, request.capability, request.mode);
   if ('reason' in modes) {
@@ -1013,11 +1103,12 @@ const guardRequest = (resolved: ResolvedActor, request: AccessDecisionRequest): 
   if (parentRead === undefined) {
     return { modes };
   }
-  if (!parentRead.capability.modes.includes(RUN_MODE)) {
+  const parentMode = parentModeOf(request, modes);
+  if (!parentRead.capability.modes.includes(parentMode)) {
     return { decision: deniedDecision([MODE_UNSUPPORTED]) };
   }
   if (sideOfHolder(resolved.actor) === AGENT_SIDE) {
-    const parentTier = agentTier(parentRead.capability, RUN_MODE);
+    const parentTier = agentTier(parentRead.capability, parentMode);
     if ('reason' in parentTier) {
       return { decision: deniedDecision([parentTier.reason]) };
     }
@@ -1051,7 +1142,9 @@ const readInputs: (
     return Option.none<ReadInputs>();
   }
   const parentSides =
-    parentRead === undefined ? [] : Option.getOrUndefined(yield* readParentCells(authority, resolved, parentRead));
+    parentRead === undefined
+      ? []
+      : Option.getOrUndefined(yield* readParentCells(authority, resolved, parentRead, parentModeOf(request, modes)));
   if (parentSides === undefined) {
     return Option.none<ReadInputs>();
   }
@@ -1103,7 +1196,7 @@ const plansOf = (params: {
           ...withOptional({}, 'amount', parentRead.amount),
           ...withOptional(withOptional({}, 'ceiling', resolved.consentCeiling), 'target', parentRead.target),
           capabilityKey: parentRead.capability.capabilityKey,
-          mode: RUN_MODE,
+          mode: parentModeOf(request, modes),
           now,
           policy: parentRead.capability,
           purpose: PURPOSE_PARENT,
@@ -1222,7 +1315,12 @@ const decideAccessEffect: (
   if (engineFailed || evaluation === undefined) {
     return unavailableDecision();
   }
-  return decisionFromSnapshot({ evaluation, modes: guard.modes, plans, request, resolved });
+  return yield* withMemberBaseline(
+    check,
+    resolved,
+    request,
+    decisionFromSnapshot({ evaluation, modes: guard.modes, plans, request, resolved }),
+  );
 });
 
 /**
@@ -1298,9 +1396,12 @@ const cellQueryOf = (params: {
       };
 };
 
-/** One cell set per holder, capability and mode, whatever request or side asked for it. */
+/**
+ * One cell set per tenant, access scope, holder, capability and mode, whatever request or side asked for it. One batch
+ * can ask the same holder and capability in two companies, and each company's scope has cells of its own.
+ */
 const cellQueryKey = (query: AuthorityCellQuery): string =>
-  [holderIdOf(query.holder), query.capabilityKey, query.mode].join('\u0000');
+  [query.tenantId, query.scopeId, holderIdOf(query.holder), query.capabilityKey, query.mode].join('\u0000');
 
 /** The cell sets one request needs, so the whole batch reads each of them exactly once. */
 const requiredCellQueries = (params: {
@@ -1335,7 +1436,7 @@ const requiredCellQueries = (params: {
     if (parentRead !== undefined) {
       const parent = cellQueryOf({
         capabilityKey: parentRead.capability.capabilityKey,
-        mode: RUN_MODE,
+        mode: parentModeOf(request, modes),
         resolved,
         side,
       });
@@ -1347,8 +1448,48 @@ const requiredCellQueries = (params: {
   return queries;
 };
 
+/** The same port, every read taking one of the batch's permits while it runs. */
+const permittedReads = (authority: DecisionAuthorityPort, permits: Semaphore.Semaphore): DecisionAuthorityPort => {
+  const { readCellsMany, readConfigureBases } = authority;
+  return withOptional(
+    withOptional(
+      {
+        readCells: (query: AuthorityCellQuery) => permits.withPermit(authority.readCells(query)),
+        readCompanyOwnership: (query: CompanyOwnershipQuery) =>
+          permits.withPermit(authority.readCompanyOwnership(query)),
+        readConnection: (query: ConnectionQuery) => permits.withPermit(authority.readConnection(query)),
+        readScope: (query: ScopeQuery) => permits.withPermit(authority.readScope(query)),
+        readTeamIds: (query: TeamMembershipQuery) => permits.withPermit(authority.readTeamIds(query)),
+      },
+      'readCellsMany',
+      readCellsMany === undefined
+        ? undefined
+        : (queries: readonly AuthorityCellQuery[]) => permits.withPermit(readCellsMany(queries)),
+    ),
+    'readConfigureBases',
+    readConfigureBases === undefined
+      ? undefined
+      : (query: Parameters<typeof readConfigureBases>[0]) => permits.withPermit(readConfigureBases(query)),
+  );
+};
+
+/** The cell sets one guarded request needs. */
+const cellQueriesOf = (entry: GuardedRequest): readonly AuthorityCellQuery[] =>
+  requiredCellQueries({
+    modes: entry.modes,
+    parentRead: entry.parentRead,
+    request: entry.request,
+    resolved: entry.resolved,
+  });
+
+/** Pooled reads one batch runs at once; each holds one connection of the request's shared pool. */
+const BATCH_READ_CONCURRENCY = 2;
+
 /** A read cell set, or an intent read that failed: the latter is UNAVAILABLE, never empty intent. */
 type CellRead = { readonly cells: readonly AuthorityCell[] } | { readonly unreadable: true };
+
+/** Whether a read cell set is there and readable. */
+const isReadable = (read: CellRead | undefined): boolean => read !== undefined && 'cells' in read;
 
 const readCellSets = Effect.fn('AccessDecision.readCellSets')(function* readCellSetsProgram(
   authority: DecisionAuthorityPort,
@@ -1359,9 +1500,20 @@ const readCellSets = Effect.fn('AccessDecision.readCellSets')(function* readCell
     distinct.set(cellQueryKey(query), query);
   }
   const entries = [...distinct.entries()];
-  const reads = yield* Effect.forEach(entries, ([, query]) => Effect.option(authority.readCells(query)), {
-    concurrency: 8,
-  });
+  const readMany = authority.readCellsMany;
+  // One read for the whole batch when the port offers it; otherwise each read is one pooled transaction, two at a
+  // time, so one batch never holds more of a small shared pool. A failed read leaves its sets unreadable.
+  let reads: readonly (Option.Option<readonly AuthorityCell[]> | undefined)[] = [];
+  if (readMany === undefined) {
+    reads = yield* Effect.forEach(entries, ([, query]) => Effect.option(authority.readCells(query)), {
+      concurrency: BATCH_READ_CONCURRENCY,
+    });
+  } else if (entries.length > 0) {
+    reads = yield* readMany(entries.map(([, query]) => query)).pipe(
+      Effect.map((answers) => (answers.length === entries.length ? answers.map((cells) => Option.some(cells)) : [])),
+      Effect.orElseSucceed(() => []),
+    );
+  }
   const cells = new Map<string, CellRead>();
   for (const [index, [key]] of entries.entries()) {
     const read = reads[index];
@@ -1369,6 +1521,38 @@ const readCellSets = Effect.fn('AccessDecision.readCellSets')(function* readCell
   }
   return cells;
 });
+
+/** Keeps a batch's one configure-bases answer for the rest of that batch, then answers with it. */
+const rememberedAnswer = <Answer>(answered: Map<string, Answer>, key: string, once: Answer): Answer => {
+  answered.set(key, once);
+  return once;
+};
+
+/**
+ * The same port, answering one configure-bases question once per batch: every `admin` entry of one actor asks the
+ * same actor, tenant and instant, so the first read is shared with the rest of this batch and never with another.
+ */
+const sharedConfigureBases = (authority: DecisionAuthorityPort): DecisionAuthorityPort => {
+  const read = authority.readConfigureBases;
+  if (read === undefined) {
+    return authority;
+  }
+  const answered = new Map<string, ReturnType<typeof read>>();
+  return {
+    ...authority,
+    readConfigureBases: (query) =>
+      Effect.suspend(() => {
+        const key = [query.tenantId, query.actor, String(DateTime.toEpochMillis(DateTime.makeUnsafe(query.at)))].join(
+          '\u0000',
+        );
+        const known = answered.get(key);
+        if (known !== undefined) {
+          return known;
+        }
+        return Effect.cached(read(query)).pipe(Effect.flatMap((once) => rememberedAnswer(answered, key, once)));
+      }),
+  };
+};
 
 /** The same port with every needed cell set already in hand: planning performs no read. */
 const preloadedAuthority = (
@@ -1384,10 +1568,12 @@ const preloadedAuthority = (
       ? Effect.succeed(read.cells)
       : Effect.fail(accessDecisionUnavailable('The access intent of this request could not be read'));
   },
+  readCompanyOwnership: authority.readCompanyOwnership,
   readConnection: authority.readConnection,
   readScope: authority.readScope,
   readTeamIds: authority.readTeamIds,
   ...withOptional({}, 'readConfigureBases', authority.readConfigureBases),
+  ...withOptional({}, 'readsThroughCallerTransaction', authority.readsThroughCallerTransaction),
 });
 
 interface GuardedRequest {
@@ -1486,7 +1672,7 @@ const planGroup = Effect.fn('AccessDecision.planGroup')(function* planGroupProgr
   const resolutions = yield* Effect.forEach(
     actorEntries,
     ([, { actor, now }]) => resolveActorContext(authority, actor, now),
-    { concurrency: 4 },
+    { concurrency: BATCH_READ_CONCURRENCY },
   );
   const resolutionByKey = new Map<string, ActorResolution>();
   for (const [index, [key]] of actorEntries.entries()) {
@@ -1499,10 +1685,21 @@ const planGroup = Effect.fn('AccessDecision.planGroup')(function* planGroupProgr
     guardEntry({ index, input, resolution: resolutionByKey.get(actorResolutionKey(input)) }),
   );
   const guarded = prepared.flatMap(({ guarded: entry }) => (entry === undefined ? [] : [entry]));
-  const structural = yield* Effect.forEach(
-    guarded,
-    (entry) => structuralAdminDecision(authority, entry.resolved, entry.request, entry.now),
-    { concurrency: 4 },
+  // One after another over a shared answer: only the first `admin` entry of an actor reads its configure bases.
+  const structuralAuthority = sharedConfigureBases(authority);
+  // The structural answers and the cell sets are independent reads, so they overlap. Cell sets are read ahead for
+  // every guarded request; a request the structural check decides simply leaves its sets unused (no decision, no
+  // row). That read ahead is speculative: its failure or defect is kept, never raised, and decides nothing below.
+  const [structural, ahead] = yield* Effect.all(
+    [
+      Effect.forEach(
+        guarded,
+        (entry) => structuralAdminDecision(structuralAuthority, entry.resolved, entry.request, entry.now),
+        { concurrency: 1 },
+      ),
+      readCellSets(authority, guarded.flatMap(cellQueriesOf)).pipe(Effect.exit),
+    ],
+    { concurrency: BATCH_READ_CONCURRENCY },
   );
   const structuralByIndex = new Map<number, AccessDecision>(
     guarded.flatMap((entry, index) =>
@@ -1513,16 +1710,19 @@ const planGroup = Effect.fn('AccessDecision.planGroup')(function* planGroupProgr
     ),
   );
   const roleGuarded = guarded.filter((entry) => !structuralByIndex.has(entry.index));
-  const queries = roleGuarded.flatMap((entry) =>
-    requiredCellQueries({
-      modes: entry.modes,
-      parentRead: entry.parentRead,
-      request: entry.request,
-      resolved: entry.resolved,
-    }),
+  // The structural answers are authoritative. The cell sets the remaining requests need come from the read ahead
+  // where it read them; exactly the sets it could not read (all of them after a defect) are read now, and a failure
+  // or defect of that read decides as when nothing was read ahead.
+  const readAhead = Exit.isSuccess(ahead) ? ahead.value : new Map<string, CellRead>();
+  const missing = roleGuarded.flatMap((entry) =>
+    cellQueriesOf(entry).filter((query) => !isReadable(readAhead.get(cellQueryKey(query)))),
   );
-  const preloaded = preloadedAuthority(authority, yield* readCellSets(authority, queries));
-  const planned = yield* Effect.forEach(roleGuarded, (entry) => planRequest(preloaded, entry), { concurrency: 4 });
+  const cellSets =
+    missing.length === 0 ? readAhead : new Map([...readAhead, ...(yield* readCellSets(authority, missing))]);
+  const preloaded = preloadedAuthority(authority, cellSets);
+  const planned = yield* Effect.forEach(roleGuarded, (entry) => planRequest(preloaded, entry), {
+    concurrency: BATCH_READ_CONCURRENCY,
+  });
   const plannedByIndex = new Map<number, PlannedRequest>();
   for (const result of planned) {
     plannedByIndex.set(result.index, result);
@@ -1546,27 +1746,58 @@ const decideAccessManyEffect: (
   groups: readonly DecisionBatchGroup[],
 ) => Effect.Effect<readonly (readonly AccessDecision[])[]> = Effect.fn('AccessDecision.decideMany')(
   function* decideAccessManyProgram(check: DecisionCheckPort, groups: readonly DecisionBatchGroup[]) {
-    const plannedGroups = yield* Effect.forEach(groups, (group) => planGroup(group), { concurrency: 4 });
+    // However its groups and reads overlap, one batch holds at most BATCH_READ_CONCURRENCY pooled reads at once,
+    // and one read at a time when any of its ports reads through a caller's transaction: each such read installs
+    // its scope with its own statement on that one connection, so two must never interleave.
+    const permits = yield* Semaphore.make(
+      groups.some(({ authority }) => authority.readsThroughCallerTransaction === true) ? 1 : BATCH_READ_CONCURRENCY,
+    );
+    const plannedGroups = yield* Effect.forEach(
+      groups,
+      (group) => planGroup({ ...group, authority: permittedReads(group.authority, permits) }),
+      { concurrency: BATCH_READ_CONCURRENCY },
+    );
     // ONE snapshot for every request's items: a batch can never be answered from two views.
     const { engineFailed, evaluation } = yield* runSnapshot(
       check,
       plannedGroups.flatMap(({ plans }) => plans),
     );
-    return plannedGroups.map(({ entries }) =>
-      entries.map((entry): AccessDecision => {
+    const decided = plannedGroups.map(({ entries }) =>
+      entries.map((entry) => {
         if (entry.decision !== undefined) {
-          return entry.decision;
+          return { decision: entry.decision };
         }
         if (engineFailed || evaluation === undefined || entry.snapshot === undefined) {
-          return unavailableDecision();
+          return { decision: unavailableDecision() };
         }
-        return decisionFromSnapshot({
+        const { snapshot } = entry;
+        const decision = decisionFromSnapshot({
           evaluation,
-          modes: entry.snapshot.modes,
-          plans: entry.snapshot.plans,
-          request: entry.snapshot.request,
-          resolved: entry.snapshot.resolved,
+          modes: snapshot.modes,
+          plans: snapshot.plans,
+          request: snapshot.request,
+          resolved: snapshot.resolved,
         });
+        return needsMemberBaseline(snapshot.resolved, snapshot.request, decision)
+          ? { baseline: snapshot.resolved, decision }
+          : { decision };
+      }),
+    );
+    // The baseline fallback of every answer that needs it, proven together in one more snapshot (none when none does).
+    const fallbacks = decided.flat().flatMap(({ baseline }) => (baseline === undefined ? [] : [baseline]));
+    const answers =
+      fallbacks.length === 0
+        ? Option.some<readonly AccessCheckResult[]>([])
+        : yield* check.checkBulk(fallbacks.map(memberBaselineItem)).pipe(Effect.option);
+    let next = 0;
+    return decided.map((group) =>
+      group.map(({ baseline, decision }): AccessDecision => {
+        if (baseline === undefined) {
+          return decision;
+        }
+        const result = Option.isSome(answers) ? answers.value[next] : undefined;
+        next += 1;
+        return Option.isNone(answers) ? unavailableDecision() : memberBaselineVerdict(baseline, decision, result);
       }),
     );
   },
@@ -1799,9 +2030,10 @@ const readListSides: (
     capability: DecisionCapabilityPolicy,
     modes: EvaluationModes,
   ) {
+    // The sides overlap on pooled reads, but never through a caller's one transaction (see DecisionAuthorityPort).
     const reads = yield* Effect.all(
       sidesOf(resolved).map((side) => readSideWithTeams(authority, resolved, capability, modes.effectiveMode, side)),
-      { concurrency: 2 },
+      { concurrency: authority.readsThroughCallerTransaction === true ? 1 : 2 },
     );
     const readSides: ReadSide[] = [];
     for (const read of reads) {
@@ -1842,35 +2074,49 @@ interface ListSnapshot {
   readonly resolvedCells: ReadonlyMap<HolderSide, ListAuthorityCell[]>;
 }
 
-const listSnapshot: (
-  check: DecisionCheckPort,
-  plannedSides: readonly ListSidePlan[],
-  scope: ProjectionScope,
-) => Effect.Effect<ListSnapshot> = Effect.fn('AccessDecision.listSnapshot')(function* listSnapshotProgram(
-  check: DecisionCheckPort,
-  plannedSides: readonly ListSidePlan[],
-  scope: ProjectionScope,
-) {
+interface ListSnapshotPlan {
+  readonly listItems: readonly AccessCheckItem[];
+  readonly plannedCells: readonly {
+    readonly listCell: ListAuthorityCell;
+    readonly side: HolderSide;
+    readonly variants: readonly ListCellVariant[];
+  }[];
+}
+
+/** Every check one LIST's planned sides need, in the order its evaluation reads the answers. */
+const listSnapshotPlanOf = (plannedSides: readonly ListSidePlan[], scope: ProjectionScope): ListSnapshotPlan => {
   const plannedCells = plannedSides.flatMap(({ cells, side }) =>
     cells.map((listCell) => ({ listCell, side, variants: listCellVariants(listCell, side, scope) })),
   );
-  const listItems = plannedCells.flatMap(({ variants }) => variants.flatMap(({ planned }) => planned.items));
-  const resultsOption =
-    listItems.length === 0
-      ? Option.some<readonly AccessCheckResult[]>([])
-      : yield* Effect.option(check.checkBulk(listItems));
+  return {
+    listItems: plannedCells.flatMap(({ variants }) => variants.flatMap(({ planned }) => planned.items)),
+    plannedCells,
+  };
+};
+
+const ENGINE_FAILED_LIST: ListSnapshot = {
+  engineFailed: true,
+  indeterminateSides: new Set(),
+  resolvedCells: new Map(),
+};
+
+/** One LIST's snapshot from the engine's answers to exactly its own checks (none: the engine was unavailable). */
+const listSnapshotFrom = (
+  plan: ListSnapshotPlan,
+  resultsOption: Option.Option<readonly AccessCheckResult[]>,
+): ListSnapshot => {
   if (Option.isNone(resultsOption)) {
-    return { engineFailed: true, indeterminateSides: new Set(), resolvedCells: new Map() };
+    return ENGINE_FAILED_LIST;
   }
   const results = resultsOption.value;
-  if (results.length !== listItems.length) {
+  if (results.length !== plan.listItems.length) {
     // Same rule as the single decision: a missing answer is an unavailable engine, never a denial.
-    return { engineFailed: true, indeterminateSides: new Set(), resolvedCells: new Map() };
+    return ENGINE_FAILED_LIST;
   }
   const resolvedCells = new Map<HolderSide, ListAuthorityCell[]>();
   const indeterminateSides = new Set<HolderSide>();
   let cursor = 0;
-  for (const { listCell, side, variants } of plannedCells) {
+  for (const { listCell, side, variants } of plan.plannedCells) {
     const resolvedKeys: RecordKey[] = [];
     let hasAny = false;
     let indeterminate = false;
@@ -1878,7 +2124,7 @@ const listSnapshot: (
       const verdict = cellVerdict(results, cursor, variant.planned.items.length);
       cursor += variant.planned.items.length;
       if (verdict === 'error') {
-        return { engineFailed: true, indeterminateSides: new Set(), resolvedCells: new Map() };
+        return ENGINE_FAILED_LIST;
       }
       if (verdict === 'has') {
         hasAny = true;
@@ -1912,6 +2158,23 @@ const listSnapshot: (
     resolvedCells.set(side, current);
   }
   return { engineFailed: false, indeterminateSides, resolvedCells };
+};
+
+const listSnapshot: (
+  check: DecisionCheckPort,
+  plannedSides: readonly ListSidePlan[],
+  scope: ProjectionScope,
+) => Effect.Effect<ListSnapshot> = Effect.fn('AccessDecision.listSnapshot')(function* listSnapshotProgram(
+  check: DecisionCheckPort,
+  plannedSides: readonly ListSidePlan[],
+  scope: ProjectionScope,
+) {
+  const plan = listSnapshotPlanOf(plannedSides, scope);
+  const resultsOption =
+    plan.listItems.length === 0
+      ? Option.some<readonly AccessCheckResult[]>([])
+      : yield* Effect.option(check.checkBulk(plan.listItems));
+  return listSnapshotFrom(plan, resultsOption);
 });
 
 const listResolutionFrom = (params: {
@@ -1963,38 +2226,52 @@ const listResolutionFrom = (params: {
   };
 };
 
-const resolveListAccessEffect: (
-  authority: DecisionAuthorityPort,
-  check: DecisionCheckPort,
-  input: ListDecisionInput,
-) => Effect.Effect<ListAccessResolution> = Effect.fn('AccessDecision.list')(function* resolveListAccessProgram(
-  authority: DecisionAuthorityPort,
-  check: DecisionCheckPort,
-  input: ListDecisionInput,
-) {
-  const { actor, capability, mode, now } = input;
-  const resolution = yield* resolveActorContext(authority, actor, now);
-  if (resolution.unavailable !== undefined || resolution.resolved === undefined) {
-    if (resolution.refusal !== undefined) {
-      return { decision: deniedDecision(resolution.refusal) };
+/** A LIST ready to read its cells: the actor it resolved and the modes it is asked in. */
+interface ReadyList {
+  readonly input: ListDecisionInput;
+  readonly modes: EvaluationModes;
+  readonly resolved: ResolvedActor;
+}
+
+/** A LIST answered before its cells are read (refused or unavailable), or ready to read them. */
+type PreparedList = { readonly decision: AccessDecision } | ReadyList;
+
+const prepareList: (authority: DecisionAuthorityPort, input: ListDecisionInput) => Effect.Effect<PreparedList> =
+  Effect.fn('AccessDecision.prepareList')(function* prepareListProgram(
+    authority: DecisionAuthorityPort,
+    input: ListDecisionInput,
+  ) {
+    const { actor, capability, mode, now } = input;
+    const resolution = yield* resolveActorContext(authority, actor, now);
+    if (resolution.unavailable !== undefined || resolution.resolved === undefined) {
+      if (resolution.refusal !== undefined) {
+        return { decision: deniedDecision(resolution.refusal) };
+      }
+      return { decision: unavailableIntentDecision() };
     }
-    return { decision: unavailableIntentDecision() };
-  }
-  const { resolved } = resolution;
-  const modes = evaluationModes(resolved, capability, mode);
-  if ('reason' in modes) {
-    return { decision: deniedDecision([modes.reason]) };
-  }
-  const readSides = Option.getOrUndefined(yield* readListSides(authority, resolved, capability, modes));
-  if (readSides === undefined) {
-    return { decision: unavailableIntentDecision() };
-  }
-  const plannedSides = planListSides(readSides, resolved, input);
-  const { engineFailed, indeterminateSides, resolvedCells } = yield* listSnapshot(
-    check,
-    plannedSides,
-    projectionScopeOf(resolved.scope),
+    const { resolved } = resolution;
+    const modes = evaluationModes(resolved, capability, mode);
+    if ('reason' in modes) {
+      return { decision: deniedDecision([modes.reason]) };
+    }
+    return { input, modes, resolved };
+  });
+
+/** One LIST's planned sides, read through `authority`; none when an intent read failed (UNAVAILABLE). */
+const plannedListSides = (
+  authority: DecisionAuthorityPort,
+  ready: ReadyList,
+): Effect.Effect<Option.Option<readonly ListSidePlan[]>> =>
+  readListSides(authority, ready.resolved, ready.input.capability, ready.modes).pipe(
+    Effect.map(Option.map((sides) => planListSides(sides, ready.resolved, ready.input))),
   );
+
+const finishList = (
+  ready: ReadyList,
+  plannedSides: readonly ListSidePlan[],
+  snapshot: ListSnapshot,
+): ListAccessResolution => {
+  const { engineFailed, indeterminateSides, resolvedCells } = snapshot;
   if (engineFailed) {
     return { decision: unavailableDecision() };
   }
@@ -2006,12 +2283,148 @@ const resolveListAccessEffect: (
   if (indeterminate) {
     return { decision: deniedDecision([CAVEAT_INDETERMINATE]) };
   }
-  return listResolutionFrom({ modes, plannedSides, resolved, resolvedCells });
-});
+  return listResolutionFrom({ modes: ready.modes, plannedSides, resolved: ready.resolved, resolvedCells });
+};
 
 /**
- * List path (D16): the same authority question, answered as selectors, then handed to the owner as
- * a SQL predicate. It is not a second decision system: it runs one engine snapshot over the same
- * candidate cells, and a record is visible exactly when `decideAccess` would allow it.
+ * The baseline fallback of LISTs (the Shell frame): a member refused for want of a grant reads the whole scope of a
+ * baseline capability, which has no record selectors. All of a batch's fallbacks are proven in one more snapshot.
  */
+const withListMemberBaseline = Effect.fn('AccessDecision.listMemberBaseline')(function* withListMemberBaselineProgram(
+  check: DecisionCheckPort,
+  lists: readonly { readonly ready: ReadyList | null; readonly resolution: ListAccessResolution }[],
+) {
+  const needing = lists.flatMap(({ ready, resolution }, index) =>
+    ready !== null && needsMemberBaseline(ready.resolved, ready.input, resolution.decision) ? [{ index, ready }] : [],
+  );
+  if (needing.length === 0) {
+    return lists.map(({ resolution }) => resolution);
+  }
+  const answers = yield* check
+    .checkBulk(needing.map(({ ready }) => memberBaselineItem(ready.resolved)))
+    .pipe(Effect.option);
+  const verdicts = new Map(
+    needing.map(({ index, ready }, position): readonly [number, ListAccessResolution] => {
+      const decided = lists[index]?.resolution.decision ?? unavailableDecision();
+      const verdict = Option.isNone(answers)
+        ? unavailableDecision()
+        : memberBaselineVerdict(ready.resolved, decided, answers.value[position]);
+      return [
+        index,
+        verdict.outcome === 'ALLOWED' ? { decision: verdict, predicate: { groups: [] } } : { decision: verdict },
+      ];
+    }),
+  );
+  return lists.map(({ resolution }, index) => verdicts.get(index) ?? resolution);
+});
+
+const resolveListAccessEffect: (
+  authority: DecisionAuthorityPort,
+  check: DecisionCheckPort,
+  input: ListDecisionInput,
+) => Effect.Effect<ListAccessResolution> = Effect.fn('AccessDecision.list')(function* resolveListAccessProgram(
+  authority: DecisionAuthorityPort,
+  check: DecisionCheckPort,
+  input: ListDecisionInput,
+) {
+  const prepared = yield* prepareList(authority, input);
+  if ('decision' in prepared) {
+    return { decision: prepared.decision };
+  }
+  const plannedSides = Option.getOrUndefined(yield* plannedListSides(authority, prepared));
+  if (plannedSides === undefined) {
+    return { decision: unavailableIntentDecision() };
+  }
+  const snapshot = yield* listSnapshot(check, plannedSides, projectionScopeOf(prepared.resolved.scope));
+  const [answered] = yield* withListMemberBaseline(check, [
+    { ready: prepared, resolution: finishList(prepared, plannedSides, snapshot) },
+  ]);
+  return answered ?? { decision: unavailableDecision() };
+});
+
+/** One LIST of a batch: answered early, unreadable, or planned with its sides and its checks. */
+type PlannedList =
+  | { readonly decision: AccessDecision; readonly kind: 'answered' }
+  | {
+      readonly kind: 'planned';
+      readonly plan: ListSnapshotPlan;
+      readonly plannedSides: readonly ListSidePlan[];
+      readonly ready: ReadyList;
+    };
+
+const planListOf = (preloaded: DecisionAuthorityPort, list: PreparedList): Effect.Effect<PlannedList> =>
+  'decision' in list
+    ? Effect.succeed({ decision: list.decision, kind: 'answered' })
+    : plannedListSides(preloaded, list).pipe(
+        Effect.map(
+          Option.match({
+            onNone: (): PlannedList => ({ decision: unavailableIntentDecision(), kind: 'answered' }),
+            onSome: (plannedSides): PlannedList => ({
+              kind: 'planned',
+              plan: listSnapshotPlanOf(plannedSides, projectionScopeOf(list.resolved.scope)),
+              plannedSides,
+              ready: list,
+            }),
+          }),
+        ),
+      );
+
+/** The cell set queries a ready LIST reads, one per holder side. */
+const listCellQueries = (list: PreparedList): readonly AuthorityCellQuery[] =>
+  'decision' in list
+    ? []
+    : sidesOf(list.resolved).flatMap((side) => {
+        const query = cellQueryOf({
+          capabilityKey: list.input.capability.capabilityKey,
+          mode: list.modes.effectiveMode,
+          resolved: list.resolved,
+          side,
+        });
+        return query === undefined ? [] : [query];
+      });
+
+/**
+ * Several LISTs answered together, each exactly as `resolveListAccess` answers it alone: one read of every LIST's
+ * cell sets and one engine snapshot over all their checks, instead of one cell read and one snapshot per LIST. A
+ * cell set that cannot be read leaves only the LISTs that need it UNAVAILABLE (with a batched cell read, every set
+ * of that read); an unavailable engine leaves every LIST that asked it something UNAVAILABLE, as each would be alone.
+ */
+export const resolveListAccessMany: (
+  authority: DecisionAuthorityPort,
+  check: DecisionCheckPort,
+  inputs: readonly ListDecisionInput[],
+) => Effect.Effect<readonly ListAccessResolution[]> = Effect.fn('AccessDecision.listMany')(
+  function* resolveListAccessManyProgram(
+    authority: DecisionAuthorityPort,
+    check: DecisionCheckPort,
+    inputs: readonly ListDecisionInput[],
+  ) {
+    const prepared = yield* Effect.forEach(inputs, (input) => prepareList(authority, input), { concurrency: 1 });
+    const preloaded = preloadedAuthority(authority, yield* readCellSets(authority, prepared.flatMap(listCellQueries)));
+    const planned = yield* Effect.forEach(prepared, (list) => planListOf(preloaded, list), { concurrency: 1 });
+    const items = planned.flatMap((list) => (list.kind === 'planned' ? list.plan.listItems : []));
+    const answers =
+      items.length === 0 ? Option.some<readonly AccessCheckResult[]>([]) : yield* Effect.option(check.checkBulk(items));
+    const complete = answers.pipe(Option.filter((results) => results.length === items.length));
+    let offset = 0;
+    const resolutions = planned.map((list) => {
+      if (list.kind === 'answered') {
+        return { ready: null, resolution: { decision: list.decision } };
+      }
+      const from = offset;
+      offset += list.plan.listItems.length;
+      // A LIST that asked the engine nothing never depends on whether the engine answered.
+      const own =
+        list.plan.listItems.length === 0
+          ? Option.some<readonly AccessCheckResult[]>([])
+          : complete.pipe(Option.map((results) => results.slice(from, offset)));
+      return {
+        ready: list.ready,
+        resolution: finishList(list.ready, list.plannedSides, listSnapshotFrom(list.plan, own)),
+      };
+    });
+    return yield* withListMemberBaseline(check, resolutions);
+  },
+);
+
 export const resolveListAccess = resolveListAccessEffect;

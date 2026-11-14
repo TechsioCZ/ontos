@@ -7,7 +7,16 @@ import {
   CommercePortalAuthSessionMfaMethodSchema,
   CommercePortalAuthSignInInputSchema,
 } from '../../api/portal-auth/session/contracts.ts';
+import { EnrollmentPartyResourceIdSchema, EnrollmentTenantIdSchema } from '../enrollment-contracts.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID, CommerceSessionReferenceSchema } from '../portal-auth-contracts.ts';
+import { ActiveSavedAddressSchema, SavedAddressDefaultsSchema } from '../domain/address-book.ts';
+
+/** Subject selection stays inside the owner; callers provide no profile or account identifier. */
+export const CustomerOwnAddressBookSchema = Schema.Struct({
+  addresses: Schema.Array(ActiveSavedAddressSchema),
+  defaults: SavedAddressDefaultsSchema,
+});
+export type CustomerOwnAddressBook = typeof CustomerOwnAddressBookSchema.Type;
 
 /**
  * The declared endpoint paths mirror the owner route allowlist
@@ -166,10 +175,35 @@ const commercePortalAuthSessionGroupDefinition = HttpApiGroup.make('portalAuthSe
       success: Schema.Union([
         Schema.Struct({ state: Schema.Literal('anonymous') }),
         Schema.Struct({
+          account: Schema.Struct({ email: Schema.String, name: Schema.String }),
           session: CommercePortalAuthSessionSnapshotSchema,
           state: Schema.Literal('authenticated'),
         }),
       ]),
+    }),
+  )
+  .add(
+    HttpApiEndpoint.get('getCustomerAccount', '/api/portal-auth/customer-account', {
+      error: getSessionErrors,
+      success: Schema.Union([
+        Schema.Struct({ state: Schema.Literal('anonymous') }),
+        Schema.Struct({
+          account: Schema.Struct({
+            email: Schema.String,
+            id: CommercePortalAuthProviderSubjectIdSchema,
+            name: Schema.String,
+            partyId: EnrollmentPartyResourceIdSchema,
+            tenantId: EnrollmentTenantIdSchema,
+          }),
+          state: Schema.Literal('authenticated'),
+        }),
+      ]),
+    }),
+  )
+  .add(
+    HttpApiEndpoint.get('getCustomerAddressBook', '/api/portal-auth/customer-address-book', {
+      error: getSessionErrors,
+      success: CustomerOwnAddressBookSchema,
     }),
   )
   .middleware(CommercePortalAuthSessionSchemaErrorMiddleware);

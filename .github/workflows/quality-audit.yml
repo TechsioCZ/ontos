@@ -33,7 +33,7 @@ concurrency:
 
 jobs:
   quality-audit:
-    name: Quality Audit Guardrails
+    name: Quality Audit Reports
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -71,7 +71,7 @@ jobs:
         id: audit
         run: mise exec -- pnpm quality:audit --output .codex/reports/quality-audit
 
-      - name: Enforce calibrated quality guardrails
+      - name: Validate report integrity
         run: mise exec -- pnpm quality:audit:gate --summary .codex/reports/quality-audit/summary.json
 
       - name: Publish job summary

@@ -15,6 +15,7 @@ import {
 } from '../../shared/domain/saved-address-source.ts';
 import { partyBackedAddressSourceValidatorForScope } from '../integrations/party-address-source.ts';
 import { addressActionPersistenceForTransaction } from '../persistence/address-persistence.ts';
+import { prepareAddressPartyServices } from './address-party-preflight.ts';
 import { savedAddressSourceService } from '../services/saved-address-source.service.ts';
 import {
   UpdateSavedAddressCommerceCustomerContextSavedAddressUpdatedV1OutboxPayloadSchema,
@@ -157,4 +158,5 @@ export const updateSavedAddressAction = defineAction(
       );
     },
   ),
+  { prepareServices: prepareAddressPartyServices },
 );

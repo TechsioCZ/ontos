@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
 /**
  * #1159 level-3 native gateway fixture. The executor and the notification processor run against the native
  * Payment database: the real scoped routines of the binding resolver, dispatch ledger, evidence and notification
@@ -162,7 +163,11 @@ export const nativeConfigureEnablement = Effect.fn('PspNativeGateway.configureEn
   function* nativeConfigureEnablement(harness: NativeHarness, binding: NativeBinding, change: NativeEnablementChange) {
     const provenance = yield* provenanceFor(harness.scope);
     return yield* harness.database.transaction((transaction: PaymentTestTransaction) =>
-      installOperationalScope(transaction, operationalScopeOf(harness.scope)).pipe(
+      installOperationalScope(
+        transaction,
+        operationalScopeOf(harness.scope),
+        defineDatabaseIdentityEnrollment([]),
+      ).pipe(
         Effect.flatMap((scoped) => {
           const persistence = pspEnablementPersistenceForTransaction(scoped);
           // Every native fixture binding is a SANDBOX binding (`nativeAccountFor`).
@@ -355,7 +360,11 @@ const fanoutOf = (harness: NativeHarness) =>
     forEachScope: (_context, observe) =>
       harness.database
         .transaction((transaction) =>
-          installOperationalScope(transaction, operationalScopeOf(harness.scope)).pipe(
+          installOperationalScope(
+            transaction,
+            operationalScopeOf(harness.scope),
+            defineDatabaseIdentityEnrollment([]),
+          ).pipe(
             Effect.mapError(scopeUnavailable),
             Effect.flatMap((routineInvoker) => observe(workerScopeOf(harness.scope, routineInvoker))),
           ),
@@ -433,7 +442,9 @@ const withRoutines = <Value, Failure>(
   operation: (invoker: ScopedRoutineInvoker) => Effect.Effect<Value, Failure>,
 ) =>
   harness.database.transaction((transaction: PaymentTestTransaction) =>
-    installOperationalScope(transaction, operationalScopeOf(harness.scope)).pipe(Effect.flatMap(operation)),
+    installOperationalScope(transaction, operationalScopeOf(harness.scope), defineDatabaseIdentityEnrollment([])).pipe(
+      Effect.flatMap(operation),
+    ),
   );
 
 /** The stored dispatch row of `operationId`, read through the ledger's own read routine. */
@@ -615,7 +626,11 @@ const recordAcceptedObservation = (harness: NativeHarness, payload: AcceptPaymen
   harness.database.transaction((transaction: PaymentTestTransaction) =>
     Effect.gen(function* acceptObservation() {
       const { scope } = harness;
-      const scoped = yield* installOperationalScope(transaction, operationalScopeOf(scope));
+      const scoped = yield* installOperationalScope(
+        transaction,
+        operationalScopeOf(scope),
+        defineDatabaseIdentityEnrollment([]),
+      );
       const sources = paymentSourcePersistenceForTransaction(
         scoped,
         scope,
@@ -712,7 +727,11 @@ export const processNotification = (
     );
     const result = yield* harness.database
       .transaction((transaction: PaymentTestTransaction) =>
-        installOperationalScope(transaction, operationalScopeOf(harness.scope)).pipe(
+        installOperationalScope(
+          transaction,
+          operationalScopeOf(harness.scope),
+          defineDatabaseIdentityEnrollment([]),
+        ).pipe(
           Effect.flatMap((invoker) =>
             processProviderNotification({
               notificationId,

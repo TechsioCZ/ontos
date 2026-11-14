@@ -23,6 +23,7 @@ import {
 import type { HttpClientError } from '@modern-js/bff-effect/effect-client';
 import { Context } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
+import { BadRequestNoContent } from 'effect/http-api/HttpApiError';
 
 import { problemDetailsContentType, problemDetailsFields } from './problem-details.ts';
 
@@ -59,7 +60,11 @@ const GatewayClaimIdSchema = nonEmptyString.pipe(Schema.brand('GatewayClaimId'),
 const GatewayDeliveryIdSchema = uuid.pipe(Schema.brand('GatewayDeliveryId'), Schema.decodeTo(Schema.String));
 const GatewayWorkerKeySchema = nonEmptyString.pipe(Schema.brand('GatewayWorkerKey'), Schema.decodeTo(Schema.String));
 const SUBJECT_IS_PRINCIPAL_ISSUE = 'sub must equal principal.principalId';
+/** The longest audience a request may name; the longest topology app id today has 25 characters. */
+export const GATEWAY_AUDIENCE_MAX_LENGTH = 200;
+
 export const GatewayAudienceSchema = nonEmptyString.check(
+  Schema.isMaxLength(GATEWAY_AUDIENCE_MAX_LENGTH),
   Schema.makeFilter((value) =>
     /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u.test(value) ? undefined : 'audience must be a stable topology app ID',
   ),
@@ -460,6 +465,29 @@ export const GatewayContextRequestSchema = Schema.Struct({
 });
 export type GatewayContextRequest = typeof GatewayContextRequestSchema.Encoded;
 
+/** Server credentials may bind to the active release without first downloading its composition. */
+export const ApiKeyGatewayContextRequestSchema = Schema.Struct({
+  ...GatewayContextRequestSchema.fields,
+  compositionRevision: Schema.optionalKey(compositionRevision),
+});
+export type ApiKeyGatewayContextRequest = typeof ApiKeyGatewayContextRequestSchema.Encoded;
+
+/**
+ * Whole HTTP JSON body for the credential-authenticated owner proxy. Typed clients send bytes, not a
+ * shared owner DTO. Shell decodes routing metadata privately; the receiving owner validates its query.
+ */
+export const ApiKeyGatewayReadRequestSchema = Schema.Uint8Array.pipe(
+  HttpApiSchema.asUint8Array({ contentType: 'application/json' }),
+);
+
+/** Owner response bytes, without a shared JSON wrapper or a second JSON serialization. */
+const ApiKeyGatewayReadResponseSchema = Schema.Uint8Array.pipe(
+  HttpApiSchema.asUint8Array({ contentType: 'application/json' }),
+);
+
+/** Server-only response metadata; never exposed through CORS or persisted by an intermediary. */
+export const API_KEY_GATEWAY_CONTEXT_HEADER = 'x-ontos-gateway-context';
+
 /**
  * Whom a module call is done for. `Assertion` carries the verified incoming token of a live request;
  * `Originator` names the action invocation of asynchronous work whose requester the call acts for, and may
@@ -511,6 +539,11 @@ export const GatewayAssertionSubjectSchema = Schema.TaggedStruct('Assertion', {
 export const GatewayOriginatorSubjectSchema = Schema.TaggedStruct('Originator', {
   actionInvocationId: ActionInvocationIdSchema,
   legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+  /**
+   * The company of the Outbox message the work handles, as Core recorded it on the invocation's domain event. The
+   * Shell checks it against that record and binds the context to exactly that company.
+   */
+  messageLegalEntityId: Schema.optionalKey(LegalEntityIdSchema),
   tenantId: TenantIdSchema,
 });
 const privacyDispatchAttempt = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1));
@@ -624,8 +657,87 @@ export const GatewayContextResponseSchema = Schema.Struct({
 });
 export type GatewayContextResponse = Schema.Schema.Type<typeof GatewayContextResponseSchema>;
 
+/**
+ * Why the Shell refused to issue a gateway context, as a stable code a caller logs and an operator searches for. It
+ * names the failing step only: never a key, a token, a subject or anything the caller did not already send.
+ */
+export const GatewayRefusalReasonSchema = Schema.Literals([
+  // The caller and its key.
+  'key_provider_unavailable',
+  'key_state_inconsistent',
+  'module_enrolment_unavailable',
+  'module_credential_unbound',
+  'module_credential_not_admitted',
+  'caller_principal_unavailable',
+  'caller_principal_unresolved',
+  'caller_not_service',
+  'caller_build_not_installed',
+  'workload_key_not_platform_issued',
+  'workload_admission_unavailable',
+  // The release.
+  'installed_release_unavailable',
+  'release_changed',
+  'audience_not_installed',
+  // The subject the context is for.
+  'verification_keys_unavailable',
+  'subject_assertion_unverified',
+  'subject_assertion_malformed',
+  'subject_assertion_not_attested',
+  'subject_verification_timeout',
+  'subject_authentication_unavailable',
+  'subject_authentication_ended',
+  'originator_evidence_unavailable',
+  'originator_not_admitted',
+  'originator_company_not_recorded',
+  'originator_company_mismatch',
+  'subject_not_delegable',
+  // A verified source assertion of another kind than its subject names: a workload's or a person's in the wrong
+  // subject, or a finite Privacy dispatch or governance Read, which never delegates onward.
+  'subject_assertion_kind_mismatch',
+  'subject_assertion_finite',
+  // Registered workloads and their recovery: the binding's rule, the published contracts, the durable source.
+  'registered_workload_unmatched',
+  'registered_operation_refused',
+  'conditional_requirement_refused',
+  'source_evidence_unavailable',
+  'source_evidence_malformed',
+  'workload_source_not_admitted',
+  'workload_binding_not_active',
+  'recovery_original_unmatched',
+  'processing_read_refused',
+  'legal_entity_scope_mismatch',
+  'legal_entity_not_active',
+  // Finite Privacy dispatch and Organization governance Reads.
+  'finite_target_mismatch',
+  'privacy_dispatch_not_admitted',
+  'organization_governance_not_admitted',
+  'access_decision_unavailable',
+  'access_decision_refused',
+  // Symmy ingress route scope.
+  'symmy_route_not_admitted',
+  'symmy_route_unavailable',
+  // The scope, the modules and the issuance.
+  'scope_unavailable',
+  'scope_refused',
+  'module_states_unavailable',
+  'module_not_active',
+  // The module the call is for is absent for the subject's tenant, switched off (`inactive`) or retired with it
+  // (`archived`): lasting states, the only refusal a caller may read as "not installed" (403 with
+  // GATEWAY_MODULE_NOT_INSTALLED_TYPE).
+  'audience_module_not_installed',
+  // It is stopped for now (`suspended`, `quarantined`): a plain refusal, never "not installed", so a caller treats it
+  // as an outage, not as an answer.
+  'audience_module_not_active',
+  'exchange_ledger_unavailable',
+  'exchange_replayed',
+  'issuer_unavailable',
+]);
+export type GatewayRefusalReason = typeof GatewayRefusalReasonSchema.Type;
+const refusalReason = { reason: Schema.optionalKey(GatewayRefusalReasonSchema) };
+
 export const GatewayAuthenticationRequiredProblemSchema = Schema.TaggedStruct('GatewayAuthenticationRequiredProblem', {
   ...problemDetailsFields,
+  ...refusalReason,
   status: Schema.Literal(401),
 }).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(401));
 
@@ -636,12 +748,14 @@ export const GatewayAudienceInvalidProblemSchema = Schema.TaggedStruct('GatewayA
 
 export const GatewayReloadRequiredProblemSchema = Schema.TaggedStruct('GatewayReloadRequiredProblem', {
   ...problemDetailsFields,
+  ...refusalReason,
   reloadRequired: Schema.Literal(true),
   status: Schema.Literal(409),
 }).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(409));
 
 export const GatewayUnavailableProblemSchema = Schema.TaggedStruct('GatewayUnavailableProblem', {
   ...problemDetailsFields,
+  ...refusalReason,
   retryable: Schema.Literal(true),
   status: Schema.Literal(503),
 }).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(503));
@@ -650,8 +764,16 @@ export const GatewayInternalProblemSchema = Schema.TaggedStruct('GatewayInternal
   ...problemDetailsFields,
   status: Schema.Literal(500),
 }).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(500));
+/**
+ * The `type` of the 403 a delegated module call gets when the module it calls is not installed for the subject's
+ * tenant: absent there, switched off (`inactive`) or retired with the tenant (`archived`). Every other refusal of the
+ * call, a module suspended or quarantined for now included, is a plain `GatewayForbiddenProblem`.
+ */
+export const GATEWAY_MODULE_NOT_INSTALLED_TYPE = 'https://ontos.dev/problems/gateway-module-not-installed';
+
 export const GatewayForbiddenProblemSchema = Schema.TaggedStruct('GatewayForbiddenProblem', {
   ...problemDetailsFields,
+  ...refusalReason,
   status: Schema.Literal(403),
 }).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(403));
 export const GatewayRateLimitedProblemSchema = Schema.TaggedStruct('GatewayRateLimitedProblem', {
@@ -710,7 +832,7 @@ export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
         GatewayInternalProblemSchema,
       ],
       headers: ApiKeyGatewayHeadersSchema,
-      payload: GatewayContextRequestSchema,
+      payload: ApiKeyGatewayContextRequestSchema,
       success: GatewayContextResponseSchema,
     }),
   )
@@ -731,14 +853,42 @@ export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
     }),
   );
 
-export const GatewayContextApi = HttpApi.make('shellGatewayContextApi').add(GatewayContextApiGroup);
+/**
+ * Demo divergence: the API-key read relay. A server credential (storefront server, agent) sends one owner read
+ * through the Shell instead of minting a gateway assertion first. It lives in its own group so main's gateway issuer
+ * group keeps exactly its three issuing endpoints, which main's Shell gateway database proof requires. Route,
+ * request, response and admission are unchanged; group names are not part of the HTTP path.
+ */
+export const ApiKeyGatewayReadApiGroup = HttpApiGroup.make('apiKeyGatewayRead').add(
+  HttpApiEndpoint.post('readWithApiKeyGatewayContext', '/auth/api-key/gateway-read', {
+    error: [
+      BadRequestNoContent,
+      GatewayAuthenticationRequiredProblemSchema,
+      GatewayAudienceInvalidProblemSchema,
+      GatewayReloadRequiredProblemSchema,
+      GatewayForbiddenProblemSchema,
+      GatewayRateLimitedProblemSchema,
+      GatewayUnavailableProblemSchema,
+      GatewayInternalProblemSchema,
+    ],
+    headers: ApiKeyGatewayHeadersSchema,
+    payload: ApiKeyGatewayReadRequestSchema,
+    success: ApiKeyGatewayReadResponseSchema,
+  }),
+);
+
+export const GatewayContextApi = HttpApi.make('shellGatewayContextApi')
+  .add(GatewayContextApiGroup)
+  .add(ApiKeyGatewayReadApiGroup);
 
 export const shellGatewayContextContract = {
   apiPrefix: '/shell-super-app-api',
   issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context',
   issueDelegatedGatewayContextPath: '/shell-super-app-api/auth/delegated/gateway-context',
+  issueDocumentGatewayContextsPath: '/shell-super-app-api/auth/gateway-contexts',
   issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context',
   ownerId: 'shell-super-app',
+  readWithApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-read',
 } as const;
 
 export const gatewayContextAuthorizationEntrypoints = [
@@ -764,6 +914,30 @@ export const gatewayContextAuthorizationEntrypoints = [
     entrypointKey: 'shell.gateway-context.issue.api-key',
     owner: shellGatewayContextContract.ownerId,
     path: shellGatewayContextContract.issueApiKeyGatewayContextPath,
+    surface: 'capability_issuance',
+  },
+] as const;
+
+/**
+ * Demo divergence: capability issuers the demo adds beside main's three gateway issuers: the API-key read relay and
+ * the Shell document's session issuers. Kept apart so main's exact-three issuer rule holds; the entrypoint checker
+ * classifies, mount-checks and inventories these the same way (demo exception 6).
+ */
+export const demoCapabilityIssuerEntrypoints = [
+  {
+    authorization: { credential: 'api_key', kind: 'capability_issuance' },
+    deployment: shellGatewayContextContract.ownerId,
+    entrypointKey: 'shell.gateway-read.issue.api-key',
+    owner: shellGatewayContextContract.ownerId,
+    path: shellGatewayContextContract.readWithApiKeyGatewayContextPath,
+    surface: 'capability_issuance',
+  },
+  {
+    authorization: { credential: 'session', kind: 'capability_issuance' },
+    deployment: shellGatewayContextContract.ownerId,
+    entrypointKey: 'shell.gateway-contexts.issue.session',
+    owner: shellGatewayContextContract.ownerId,
+    path: shellGatewayContextContract.issueDocumentGatewayContextsPath,
     surface: 'capability_issuance',
   },
 ] as const;

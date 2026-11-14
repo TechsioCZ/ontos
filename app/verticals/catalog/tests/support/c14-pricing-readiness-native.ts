@@ -38,6 +38,9 @@ import {
 import { catalogSelectionCurrentBasisForScope } from '../../src/persistence/catalog-selection-current-basis.ts';
 import { categoryPersistenceForScope } from '../../src/persistence/category-persistence.ts';
 import { axisFreeCombinationKey } from '../../src/persistence/variant-current-basis.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 export class InternalC14CatalogPricingReadinessUnavailable extends Schema.TaggedError<InternalC14CatalogPricingReadinessUnavailable>()(
   'InternalC14CatalogPricingReadinessUnavailable',
@@ -450,12 +453,15 @@ export const bootstrapInternalC14CatalogPricingReadiness = Effect.fn('InternalC1
           ) {
             return yield* unavailable('Expected the actual non-superuser runtime clone');
           }
-          const scoped = yield* installOperationalScope(transaction, scope);
+          const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
           const identity = yield* makePrincipalResolver(
             { executor: database },
             { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
           ).resolveBetterAuthUserForTenant(input.operatorProviderUserId, input.tenantId);
-          const persisted = yield* makeOperationalScopeRepository({ executor: transaction }).load(scope);
+          const persisted = yield* makeOperationalScopeRepository(
+            { executor: transaction },
+            FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          ).load(scope);
           if (
             identity.principalId !== input.operatorPrincipalId ||
             identity.principalKind !== 'human' ||

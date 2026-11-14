@@ -16,7 +16,7 @@ it.live(
     Effect.scoped(
       Effect.gen(function* durableReplay() {
         const connections = yield* loadDatabaseConnectionPair();
-        const config = { connectionString: connections.runtime.connectionString };
+        const config = connections.runtime;
         const first = yield* makeAuthDatabase(config);
         const second = yield* makeAuthDatabase(config);
         const sourceJti = randomUUID();
@@ -71,7 +71,7 @@ it.live('retains a consumed slot throughout source clock skew and cleans only fu
   Effect.scoped(
     Effect.gen(function* expiryWindow() {
       const connections = yield* loadDatabaseConnectionPair();
-      const config = { connectionString: connections.runtime.connectionString };
+      const config = connections.runtime;
       const database = yield* makeAuthDatabase(config);
       const sourceJti = randomUUID();
       yield* Effect.addFinalizer(() =>
@@ -135,7 +135,7 @@ it.live('returns a typed unavailable outcome for a real PostgreSQL write failure
   Effect.scoped(
     Effect.gen(function* databaseFailure() {
       const connections = yield* loadDatabaseConnectionPair();
-      const database = yield* makeAuthDatabase({ connectionString: connections.runtime.connectionString });
+      const database = yield* makeAuthDatabase(connections.runtime);
       const now = yield* Clock.currentTimeMillis;
       const sourceJti = randomUUID();
       const failure = yield* Effect.flip(

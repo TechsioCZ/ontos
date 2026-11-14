@@ -20,6 +20,8 @@ export const storefrontRegistryRegistration = defineVerticalRuntimeRegistration(
     api: {
       // <generated-module-registration-apis>
       'current-storefront-application': () => import('./src/api/current-storefront-application-client.ts'),
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
+      'storefront-applications': () => import('./src/api/storefront-applications-client.ts'),
       'verify-current-storefront-application-v1': () =>
         import('./src/api/verify-current-storefront-application-v1-client.ts'),
       // </generated-module-registration-apis>

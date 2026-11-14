@@ -1,12 +1,6 @@
 import { fileURLToPath } from 'node:url';
 
-import {
-  loadDatabaseConfig,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
-  ReadRuntime,
-  runAction,
-  TrustedPrincipalContextSchema,
-} from '@app/core-runtime';
+import { loadDatabaseConfig, ReadRuntime, runAction, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
@@ -32,6 +26,10 @@ import {
   makePartyReconciliationGateway,
   preparePartyReconciliationNative,
 } from '../support/party-reconciliation-native.fixture.ts';
+import {
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '@app/party-registry-identity-contracts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -101,7 +99,9 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
           actionKeys: [addPartyOfficialIdentifierAction.descriptor.actionKey],
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+          bootstrapConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
           compositionRevision: snapshot.composition.revision,
+          databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
           ownerRegistration: partyRegistryBackendRegistration,
           runtimeConnectionString: Redacted.make(ownedRequestUrl.href),
         }),

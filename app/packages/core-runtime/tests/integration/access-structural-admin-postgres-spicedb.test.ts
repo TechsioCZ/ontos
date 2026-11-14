@@ -31,6 +31,7 @@ import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
 import { newSpiceDbGrpcClient, openSpiceDbGrpcRpc } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 /*
  * O81's structural branch on real intent: PostgreSQL holds the memberships, owners and delegations,
@@ -208,11 +209,13 @@ const structuralIntent = Effect.gen(function* structuralIntentEffect() {
   yield* seed(admin);
   const runtime = yield* makeTestPgClient(replaceDatabase(connections.runtime, name), { maxConnections: 2 });
   const database = yield* makeTestDatabaseFromClient(runtime, coreRelations);
-  const loader = makeTenantIntentLoader({ executor: database });
+  const loader = makeTenantIntentLoader({ enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT, executor: database });
   // The suite excludes the test services, so every read here uses the real clock: the membership
   // windows are seeded relative to it and each decision passes the same instant as `now`.
   const reads: AccessIntentReads = {
     loadAuthorityCells: (scope, query) => loader.loadAuthorityCells(scope, query),
+    loadAuthorityCellsMany: (scope, queries) => loader.loadAuthorityCellsMany(scope, queries),
+    loadCompanyOwnership: (scope, query) => loader.loadCompanyOwnership(scope, query),
     loadConfigureBases: (scope, query) => loader.loadConfigureBases(scope, query),
     loadConnection: (scope, query) => loader.loadConnection(scope, query),
     loadScope: (scope, query) => loader.loadScope(scope, query),

@@ -20,6 +20,12 @@ import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
 import type { HttpClientResponse } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import {
+  collectFixtureDiagnostics,
+  describeFixtureDiagnostics,
+  encodeFixtureOwnerDiagnostics,
+  fixtureDiagnosticTail,
+} from './fixture-diagnostics.mts';
+import {
   bindCustomerFixtureProviderKey as bindProviderKey,
   customerFixtureUuid as uuid,
   seedCustomerFixtureProviderPrincipal as seedPrincipal,
@@ -30,14 +36,7 @@ import {
   CustomerNativeProfileInvocationSchema,
   issueCustomerProfileFixtureRecovery,
 } from './symmy-c14-customer-recovery.mts';
-import {
-  customerFixtureWorkloads,
-  customerIntakeContext,
-  customerOwnerRelaySources,
-  customerRecoveryRules,
-  customerWorkerKey,
-  customerWorkerRules,
-} from './symmy-c14-customer-rules.mts';
+import { customerFixtureWorkloads, customerIntakeContext, customerWorkerKey } from './symmy-c14-customer-rules.mts';
 import {
   SymmyC14ProductFixtureUnavailable,
   buildProductOwner,
@@ -48,6 +47,7 @@ import {
   startProductOwner,
   startProductWorker,
 } from './symmy-c14-product-runtime.mts';
+import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../../database/identity-enrollment.ts';
 
 export const customerFixtureServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -103,93 +103,11 @@ export const observeCustomerFixtureUntil = <Value, Failure, Requirements>(
   });
 
 const assignmentAction = 'commerce.customer-context.assign-customer-price-group';
-const assignmentReceipt = 'commerce.customer-context.api.customer-price-group-assignment-receipt';
-const assignmentRules = [
-  {
-    audience: commerceApp,
-    declarationKey: 'commerce.customer-context.customer-price-group.assign',
-    entrypointKey: assignmentAction,
-    jobKey: customerWorkerKey,
-    legalEntityScope: 'required',
-    schemaVersion: '1',
-    workerKey: customerWorkerKey,
-    workloadKey: 'commerce.customer-context.source-write',
-  },
-  {
-    allowHistoricalDeliveryRecovery: true,
-    audience: commerceApp,
-    declarationKey: 'commerce.customer-context.customer-price-group-assignment-receipt.read',
-    entrypointKey: assignmentReceipt,
-    jobKey: customerWorkerKey,
-    legalEntityScope: 'required',
-    recoveryOf: { actionKey: assignmentAction, jobKey: customerWorkerKey },
-    schemaVersion: '1',
-    workerKey: customerWorkerKey,
-    workloadKey: 'commerce.customer-context.source-read',
-  },
-  {
-    audience: priceGroupApp,
-    declarationKey: 'pricing.price-group-catalog.price-group.create',
-    entrypointKey: priceGroupCreateAction,
-    jobKey: customerWorkerKey,
-    legalEntityScope: 'forbidden',
-    schemaVersion: '1',
-    workerKey: customerWorkerKey,
-    workloadKey: 'pricing.price-group-catalog.source-write',
-  },
-  {
-    allowHistoricalDeliveryRecovery: true,
-    audience: priceGroupApp,
-    declarationKey: 'pricing.price-group-catalog.price-group-result-lookup.read',
-    entrypointKey: 'pricing.price-group-catalog.api.price-group-result-lookup',
-    jobKey: customerWorkerKey,
-    legalEntityScope: 'forbidden',
-    recoveryOf: { actionKey: priceGroupCreateAction, jobKey: customerWorkerKey },
-    schemaVersion: '1',
-    workerKey: customerWorkerKey,
-    workloadKey: priceGroupReadWorkload,
-  },
-  {
-    audience: 'privacy',
-    declarationKey: 'privacy.core.source-processing-eligibility.read',
-    entrypointKey: 'privacy.core.api.source-processing-eligibility',
-    jobKey: customerWorkerKey,
-    legalEntityScope: 'required',
-    schemaVersion: '1',
-    workerKey: customerWorkerKey,
-    workloadKey: 'privacy.core.source-processing-check',
-  },
-] as const;
-const assignmentOwnerRelaySources = [
-  ...customerOwnerRelaySources.map((source) =>
-    source.sourceAppId === commerceApp
-      ? ({
-          ...source,
-          registeredWorkloads: [
-            ...source.registeredWorkloads,
-            {
-              audience: priceGroupApp,
-              declarationKey: 'pricing.price-group-catalog.price-group.read.compatibility',
-              entrypointKey: 'pricing.price-group-catalog.api.validate-price-group-compatibility',
-              jobKey: customerWorkerKey,
-              legalEntityScope: 'forbidden' as const,
-              schemaVersion: '1',
-              sourceWorkloadKey: 'commerce.customer-context.source-write',
-              workloadKey: priceGroupReadWorkload,
-            },
-          ],
-        } as const)
-      : source,
-  ),
-  { registeredWorkloads: [], sourceAppId: priceGroupApp } as const,
-];
-
-type ShellFixtureOptions = Parameters<typeof makeApiKeyGatewayNativeFixture>[0];
-type RelaySource = NonNullable<ShellFixtureOptions['additionalRelaySources']>[number];
 export interface SymmyC14CustomerFixtureScopeInput {
   readonly admin: PgClient.PgClient;
   readonly legalEntityId: string;
   readonly principalId: string;
+  readonly runtime: PgClient.PgClient;
   readonly tenantId: string;
 }
 export interface SymmyC14CustomerFixtureOptions<Failure = never, Requirements = never> {
@@ -200,9 +118,7 @@ export interface SymmyC14CustomerFixtureOptions<Failure = never, Requirements = 
   }[];
   readonly includePriceGroup?: boolean;
   readonly initializeScopes: (input: SymmyC14CustomerFixtureScopeInput) => Effect.Effect<void, Failure, Requirements>;
-  readonly ownerRelaySources?: readonly RelaySource[];
   readonly verifyPausedIntake?: boolean;
-  readonly workerRules?: NonNullable<NonNullable<ShellFixtureOptions['relaySource']>['registeredWorkloads']>;
   readonly workloads?: readonly string[];
 }
 
@@ -298,18 +214,6 @@ const verifyPausedCustomerIntake = Effect.fn('SymmyC14CustomerFixture.verifyPaus
   );
 });
 
-const mergeRelaySources = (baseline: readonly RelaySource[], additions: readonly RelaySource[]) => {
-  const byOwner = new Map<string, RelaySource>(baseline.map((source) => [source.sourceAppId, source]));
-  for (const source of additions) {
-    const current = byOwner.get(source.sourceAppId);
-    byOwner.set(source.sourceAppId, {
-      ...source,
-      registeredWorkloads: [...(current?.registeredWorkloads ?? []), ...(source.registeredWorkloads ?? [])],
-    });
-  }
-  return [...byOwner.values()];
-};
-
 const customerFixtureConfiguration = (options: Omit<SymmyC14CustomerFixtureOptions, 'initializeScopes'>) => ({
   allowedOwnerOperations: [
     ...(options.includePriceGroup === true
@@ -326,16 +230,6 @@ const customerFixtureConfiguration = (options: Omit<SymmyC14CustomerFixtureOptio
   ] as const,
   expectedEffects: options.includePriceGroup === true ? 3 : 2,
   includePriceGroup: options.includePriceGroup === true,
-  relaySources: mergeRelaySources(
-    options.includePriceGroup === true ? assignmentOwnerRelaySources : customerOwnerRelaySources,
-    options.ownerRelaySources ?? [],
-  ),
-  workerRules: [
-    ...customerWorkerRules,
-    ...customerRecoveryRules,
-    ...(options.includePriceGroup === true ? assignmentRules : []),
-    ...(options.workerRules ?? []),
-  ],
   workloads: [
     ...customerFixtureWorkloads,
     customerWorkerKey,
@@ -363,18 +257,18 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
     );
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: snapshot,
+      databaseIdentities: APP_DATABASE_IDENTITY_ENROLLMENT,
       mode: 'schema-only',
       purpose: 'implementation-1096-registered-workload-gateway',
     });
     const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
+    const runtime = yield* PgClient.make({ url: Redacted.make(isolated.connections.runtime.connectionString) });
+    const ownerAppIds = appIds.filter((appId) => appId !== symmyAppId);
     const shell = yield* makeApiKeyGatewayNativeFixture({
-      additionalRelaySources: configuration.relaySources,
+      additionalRelaySources: ownerAppIds.map((sourceAppId) => ({ sourceAppId })),
       ownedDatabase: isolated,
       productionGate: true,
-      relaySource: {
-        registeredWorkloads: configuration.workerRules,
-        sourceAppId: symmyAppId,
-      },
+      relaySource: { sourceAppId: symmyAppId },
       snapshotJson: yield* encodeProductComposition(snapshot),
     });
     const tenantId = yield* uuid;
@@ -385,8 +279,6 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
     yield* admin`insert into core.legal_entities(legal_entity_id,tenant_id,legal_name,registration_country,registration_number,status)
           values(${legalEntityId},${tenantId},'INTERNAL_C14 selling legal entity','CZ','INTERNAL_C14_ONLY','active')`;
     const integration = yield* seedPrincipal(admin, tenantId, 'integration', shell.providerUserId);
-    assert.isOk(shell.relaySourceProviderUserId);
-    const symmyPrincipal = yield* seedPrincipal(admin, tenantId, 'service', shell.relaySourceProviderUserId);
     const systemId = yield* uuid;
     const governancePrincipalId = yield* uuid;
     yield* admin`insert into core.principals(principal_id,tenant_id,kind,status,display_name)
@@ -395,31 +287,24 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
     for (const module of snapshot.composition.modules) {
       yield* admin`insert into core.tenant_module_states(tenant_id,module_key,state) values(${tenantId},${module.moduleId},'active')`;
     }
-    yield* options.initializeScopes({ admin, legalEntityId, principalId: governancePrincipalId, tenantId });
+    yield* options.initializeScopes({ admin, legalEntityId, principalId: governancePrincipalId, runtime, tenantId });
     for (const principalId of [integration.principalId, systemId]) {
       for (const workload of configuration.workloads) {
         const bindingId = yield* uuid;
         const incarnation = yield* uuid;
         yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status)
               values(${bindingId},${incarnation},${tenantId},${principalId},${workload},'active')`;
+        yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+              values(${yield* uuid},${yield* uuid},${tenantId},${bindingId},${legalEntityId},'active')`;
       }
     }
     const key = yield* shell.issueFixtureProviderKey(integration);
     yield* bindProviderKey(admin, integration, key.providerKeyId);
     yield* key.acknowledgeBinding;
-    const symmyKey = yield* shell.issueFixtureRelaySourceProviderKey(symmyPrincipal);
-    yield* bindProviderKey(admin, symmyPrincipal, symmyKey.providerKeyId);
-    yield* symmyKey.acknowledgeBinding;
-    const moduleKeys = new Map<string, string>([[symmyAppId, Redacted.value(symmyKey.secret)]]);
-    for (const provider of shell.additionalRelaySourceProviderUsers) {
-      const principal = yield* seedPrincipal(admin, tenantId, 'service', provider.providerUserId);
-      const moduleKey = yield* shell.issueFixtureModuleProviderKey({
-        ...principal,
-        sourceAppId: provider.sourceAppId,
-      });
-      yield* bindProviderKey(admin, principal, moduleKey.providerKeyId);
-      yield* moduleKey.acknowledgeBinding;
-      moduleKeys.set(provider.sourceAppId, Redacted.value(moduleKey.secret));
+    // Each owner's own module key, provisioned by the platform for its module principal as on every environment.
+    const moduleKeys = new Map<string, Redacted.Redacted>([[symmyAppId, (yield* shell.provisionRelaySource()).secret]]);
+    for (const appId of ownerAppIds) {
+      moduleKeys.set(appId, (yield* shell.provisionModuleSource(appId)).secret);
     }
 
     const sourceRouteId = yield* uuid;
@@ -614,7 +499,7 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       {
         artifacts: Effect.Success<ReturnType<typeof buildProductOwner>>;
         contract: (typeof contracts)[number];
-        moduleKey: string;
+        moduleKey: Redacted.Redacted;
         port: number;
         receiver: Effect.Success<ReturnType<typeof startProductOwner>>;
       }
@@ -635,7 +520,8 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       const receiver = yield* startProductOwner({
         artifacts,
         contract,
-        environment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: moduleKey },
+        environment,
+        moduleKey,
         port,
         prefix: prefixes[appId],
       });
@@ -667,7 +553,14 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       Effect.gen(function* submitCustomer() {
         const response = yield* submitResponse(idempotencyKey, submittedPlan);
         if (response.status !== 202) {
-          return yield* unavailable(`Actual customer admission returned ${response.status}: ${yield* response.text}`);
+          const problem = fixtureDiagnosticTail(yield* response.text);
+          const owners = yield* collectFixtureDiagnostics(ownerDiagnostics).pipe(
+            Effect.flatMap(encodeFixtureOwnerDiagnostics),
+          );
+          const gateway = yield* describeFixtureDiagnostics(shell.gatewayDiagnostics());
+          return yield* unavailable(
+            `Actual customer admission returned ${response.status}: ${problem}; owners: ${owners}; gateway: ${gateway}`,
+          );
         }
         return yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema)));
       });
@@ -681,33 +574,36 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       identity: { legalEntityId, observedAt, sourceRouteId, tenantId },
       submit: submitResponse,
     });
-    const worker = yield* startProductWorker(workerArtifact, {
-      ...environment,
-      ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_NATIVE_WORKER',
-      ONTOS_GATEWAY_MODULE_API_KEY: moduleKey,
-    });
+    const worker = yield* startProductWorker(
+      workerArtifact,
+      { ...environment, ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_NATIVE_WORKER' },
+      moduleKey,
+    );
     const ledger =
       admin`select effect_id,effect_key,owner_invocation_id,owner_receipt,state from symmy_integration.job_effects where job_id=${accepted.jobId}`.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),
       );
-    const dependencyDiagnostics = Effect.all([
-      worker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
-      shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-      ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
-        diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
-      ),
-      admin`select effect_key,state,outcome->>'status' as outcome_status from symmy_integration.job_effects where job_id=${accepted.jobId}`.pipe(
-        Effect.flatMap(Effect.logError),
-      ),
-      admin`select
+    const dependencyDiagnostics = Effect.all(
+      [
+        worker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
+        shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+        ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
+          diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
+        ),
+        admin`select effect_key,state,outcome->>'status' as outcome_status from symmy_integration.job_effects where job_id=${accepted.jobId}`.pipe(
+          Effect.flatMap(Effect.logError),
+        ),
+        admin`select
                 (select count(*)::integer from party.parties where tenant_id=${tenantId}) as parties,
                 (select count(*)::integer from commerce_customer_context.customer_profiles where tenant_id=${tenantId}) as profiles`.pipe(
-        Effect.flatMap(Effect.logError),
-      ),
-      admin`select action_key,status,count(*)::integer as count from core.action_invocations
+          Effect.flatMap(Effect.logError),
+        ),
+        admin`select action_key,status,count(*)::integer as count from core.action_invocations
                 where tenant_id=${tenantId} and action_key in ('party.registry.create-party','commerce.customer-context.ensure-retail-customer-profile')
                 group by action_key,status`.pipe(Effect.flatMap(Effect.logError)),
-    ]);
+      ],
+      { concurrency: 1 },
+    );
     const completed = yield* observeCustomerFixtureUntil(
       ledger.pipe(
         Effect.flatMap((rows) =>
@@ -794,7 +690,7 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       deliveryId,
       expectedReadPrincipalId: systemId,
       legalEntityId,
-      moduleApiKey: Redacted.make(moduleKey),
+      moduleApiKey: moduleKey,
       nativeAction: nativeProfile,
       operationRequirementKey: profileRecoveryRequirement.key,
       request: {

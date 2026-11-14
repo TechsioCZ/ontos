@@ -1,7 +1,13 @@
+import {
+  ReadHandlerUnavailable,
+  TrustedPrincipalContextSchema,
+  trustVerifiedGatewayPrincipalContext,
+} from '@app/core-runtime';
+import { Effect, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Option, Schema } from 'effect';
 import { QuotationVerificationRequestSchema } from '@app/pricing-contracts/quotation-verification';
 import {
+  validatePreapprovalQuotationReader,
   preapprovalIssuerPrincipalIdFor,
   preapprovalQuotationActorMatches,
   preapprovalQuotationWindowIsCurrent,
@@ -54,3 +60,39 @@ it('requires an exact preapproval basis and original invocation instead of claim
     ),
   ).toBe(true);
 });
+
+it.effect('requires the exact verified caller provenance and preserves the subject identity', () =>
+  Effect.gen(function* verifiedReader() {
+    const subject = {
+      ...(yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+        authBindingId: '33333333-3333-4333-8333-333333333333',
+        authContextRef: 'session:preapproval-reader',
+        authMethod: 'session',
+        legalEntityId: '44444444-4444-4444-8444-444444444444',
+        principalId,
+        tenantId: '55555555-5555-4555-8555-555555555555',
+      })),
+      correlationId: 'preapproval-reader',
+    };
+    const assertion = { assertion: Redacted.make('verified-preapproval-test-assertion'), audience: 'pricing' };
+    const actor = {
+      appId: 'commerce-customer-context',
+      buildMarker: 'ccc-preapproval-test',
+      principalId: '66666666-6666-4666-8666-666666666666',
+    };
+    const trusted = trustVerifiedGatewayPrincipalContext(subject, 'a'.repeat(64), assertion, actor);
+    yield* validatePreapprovalQuotationReader(trusted);
+    expect(trusted.principalId).toBe(principalId);
+    for (const refused of [
+      { ...trusted },
+      trustVerifiedGatewayPrincipalContext({ ...subject }, 'a'.repeat(64), assertion),
+      trustVerifiedGatewayPrincipalContext({ ...subject }, 'a'.repeat(64), assertion, {
+        ...actor,
+        appId: 'commerce-order',
+      }),
+    ]) {
+      const failure = yield* validatePreapprovalQuotationReader(refused).pipe(Effect.flip);
+      expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
+    }
+  }),
+);
