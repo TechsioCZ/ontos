@@ -203,8 +203,11 @@ const recordInspection = Effect.fn('FacilityOperations.Security.recordInspection
   if (value.nextInspectionDate !== undefined && value.nextInspectionDate <= value.inspectionDate) {
     return yield* opsConflict('Další kontrola musí být po datu provedené kontroly.');
   }
+  if (device.lastInspectionDate !== undefined && value.inspectionDate < device.lastInspectionDate) {
+    return yield* opsConflict('Starší kontrolu připojte jako protokol; datum poslední kontroly nelze posunout zpět.');
+  }
   const next: SecurityDevice = {
-    ...auditUpdated(device, input),
+    ...auditUpdated(Struct.omit(device, ['nextInspectionDate']), input),
     lastInspectionDate: value.inspectionDate,
     ...optionalField('nextInspectionDate', value.nextInspectionDate),
   };

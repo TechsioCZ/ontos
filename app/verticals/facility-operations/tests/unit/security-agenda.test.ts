@@ -203,6 +203,44 @@ it.effect('records inspections, attaches files once and clears optional fields',
   }),
 );
 
+it.effect('clears the previous deadline when an inspection has no replacement deadline', () =>
+  Effect.gen(function* clearInspectionDeadline() {
+    const created = yield* withCamera;
+    const inspected = yield* apply(created.state, {
+      _tag: 'SecurityDeviceRecordInspection',
+      deviceId: 'device-1',
+      inspectionDate: '2026-10-20',
+    });
+    const device = inspected.state.devices[0];
+    expect(device?.lastInspectionDate).toBe('2026-10-20');
+    expect(device?.nextInspectionDate).toBeUndefined();
+    expect(device === undefined ? true : isInspectionOverdue(device, '2026-10-21')).toBe(false);
+    expect(device?.history?.at(-1)?.event).toBe('inspection');
+  }),
+);
+
+it.effect('refuses backdated inspections rather than replacing the latest dates or evidence', () =>
+  Effect.gen(function* refuseOlderInspection() {
+    const created = yield* withCamera;
+    const inspected = yield* apply(created.state, {
+      _tag: 'SecurityDeviceRecordInspection',
+      deviceId: 'device-1',
+      inspectionDate: '2026-10-20',
+      nextInspectionDate: '2027-10-20',
+    });
+    const refused = yield* apply(inspected.state, {
+      _tag: 'SecurityDeviceRecordInspection',
+      deviceId: 'device-1',
+      inspectionDate: '2025-10-20',
+      nextInspectionDate: '2026-10-20',
+    }).pipe(Effect.flip);
+    expect(Schema.is(FacilityOperationsLifecycleConflict)(refused)).toBe(true);
+    expect(inspected.state.devices[0]?.lastInspectionDate).toBe('2026-10-20');
+    expect(inspected.state.devices[0]?.nextInspectionDate).toBe('2027-10-20');
+    expect(inspected.state.devices[0]?.history).toHaveLength(2);
+  }),
+);
+
 it.effect('the demo seed decodes and keeps device states consistent with open incidents', () =>
   Effect.gen(function* seedIsValid() {
     const state = yield* Schema.decodeUnknownEffect(SecurityStateSchema)(seedSecurityState());
