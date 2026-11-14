@@ -13,7 +13,7 @@
 import { applicationCompositionContentRevision } from '@app/core-runtime';
 import { NodeChildProcessSpawner, NodeServices } from '@effect/platform-node';
 import { and, eq, sql } from 'drizzle-orm';
-import { Clock, Crypto, DateTime, Deferred, Duration, Effect, Fiber, Layer, Option, Ref, Schema } from 'effect';
+import { Clock, Crypto, DateTime, Deferred, Duration, Effect, Exit, Fiber, Layer, Option, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CoreDatabase, makeCoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
@@ -1158,7 +1158,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
           'objects',
         )
         .pipe(Effect.exit);
-      expect(forged._tag).toBe('Failure');
+      expect(Exit.isFailure(forged)).toBe(true);
       expect(yield* authorityRow(f.runtime)).toMatchObject({ phase: 'sealed' });
       return yield* Effect.void;
     }),
@@ -1175,7 +1175,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
         .update(applicationCompositionAuthority)
         .set({ phase: 'active' })
         .pipe(Effect.exit);
-      expect(handWritten._tag).toBe('Failure');
+      expect(Exit.isFailure(handWritten)).toBe(true);
       // A different revision and malformed input are refused before anything changes.
       const otherRevision = yield* abandonDrainAsOperator(operatorFlags('f'.repeat(64))).pipe(
         Effect.provide(f.layer),
