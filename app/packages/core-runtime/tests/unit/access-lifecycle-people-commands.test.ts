@@ -4,7 +4,7 @@ import { TestClock } from 'effect/testing';
 
 import type { AccessScopeId, PrincipalId } from '../../src/access/ids.ts';
 import { HolderSchema } from '../../src/access/model.ts';
-import { RecordKeySchema } from '../../src/access/ids.ts';
+import { PrincipalIdSchema, RecordKeySchema } from '../../src/access/ids.ts';
 import {
   combinePeopleChangePlans,
   membershipIsLive,
@@ -1387,7 +1387,7 @@ it.effect('admits a newcomer to the tenant and the company in one plan, behind t
       PeopleIntentWriteSchema.make({
         _tag: 'RequireDirectoryMember',
         legalEntityId: ADMITTED_COMPANY,
-        principalId: ids.agent(7),
+        principalId: PrincipalIdSchema.make(ids.agent(7)),
         principalKind: 'agent',
       }),
     );
