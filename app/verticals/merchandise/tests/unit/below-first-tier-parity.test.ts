@@ -32,6 +32,12 @@ type Tiers = NonNullable<Product['priceTiers']>;
 const BASE = { minimumQuantity: 1, priceExcludingVatMinor: 1000, priceMinor: 1210 };
 const DISCOUNT = { minimumQuantity: 10, priceExcludingVatMinor: 900, priceMinor: 1089 };
 const SURCHARGE = { minimumQuantity: 1, priceExcludingVatMinor: 1100, priceMinor: 1331 };
+/** The storefront contract's historical inline leaf: two tiers from 1 and a break from 2 (net 50, 124). */
+const HISTORICAL_TIERS = [
+  { minimumQuantity: 1, priceExcludingVatMinor: 91, priceMinor: 121 },
+  { minimumQuantity: 1, priceExcludingVatMinor: 70, priceMinor: 122 },
+  { minimumQuantity: 2, priceExcludingVatMinor: 50, priceMinor: 124 },
+];
 
 interface Pricing {
   /** A gross entered with the net price, when the unit has one. */
@@ -61,6 +67,8 @@ const PRICINGS: readonly Pricing[] = [
   // Sold in packages of 4 from 1: the smallest order is 4 (base); in packages of 10 it is 10 (the discount).
   { minimum: 1, name: 'packages of 4 below the discount', package: 4, tiers: [BASE, DISCOUNT] },
   { minimum: 1, name: 'packages of 10 reaching the discount', package: 10, tiers: [BASE, DISCOUNT] },
+  // The historical inline leaf of the storefront contract: minimum 3 in packages of 2 orders 4, the break from 2.
+  { minimum: 3, name: 'historical inline tiers, minimum 3 in packages of 2', package: 2, tiers: HISTORICAL_TIERS },
 ];
 
 /** The unit priced as `pricing` says: its own gross (if any), minimum and tiers on top of the stored unit. */
@@ -213,6 +221,13 @@ it.effect('below, at and just under a break each quantity is charged as the pric
     return yield* Effect.void;
   }),
 );
+
+it('the historical inline leaf shows and charges the break its smallest order reaches', () => {
+  const leaf = { minimumQuantity: 3, packageQuantity: 2, priceTiers: HISTORICAL_TIERS };
+  expect(firstOrderableQuantity(leaf)).toBe(4);
+  expect(shownGrossOf(leaf, 100, 21)).toBe(124);
+  expect(grossForQuantity(leaf, 100, 21, 4)).toBe(124);
+});
 
 it("a base tier is accepted only at the unit's own net and the rate it sells at, and never at a net of 0", () => {
   const akros = { minimumQuantity: 0.5, priceTiers: [BASE] };
