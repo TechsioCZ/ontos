@@ -9,7 +9,7 @@
     "dev": "next dev --webpack --hostname 127.0.0.1 --port 3071",
     "build": "next build --webpack",
     "start": "next start --hostname 127.0.0.1 --port 3071",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && pnpm --dir .. exec ultramodern-create ultramodern typecheck --project n1-storefront/tsconfig.json",
     "test": "rstest --config rstest.config.ts --pool.maxWorkers 1",
     "lint": "pnpm --dir .. exec effect-tsgo --tsrs-lint oxlint --react-plugin --jsx-a11y-plugin --nextjs-plugin --vitest-plugin n1-storefront/src n1-storefront/tests",
     "format:check": "oxfmt --check ."

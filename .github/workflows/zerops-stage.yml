@@ -6,8 +6,9 @@ name: Zerops Stage Deploy
 # ontos-stage-shop). The N1 e-shop (`n1`, ontos-stage-n1) is its own Next storefront with its own setup and service.
 # Each storefront service holds its own key, tenant and brand in its service variables
 # (ONTOS_AKROS_STOREFRONT_API_KEY, STOREFRONT_BRAND, ONTOS_STOREFRONT_APP_ID, ONTOS_STOREFRONT_LEGAL_ENTITY_ID).
-# Zerops builds them from app/zerops.yaml. The app container runs the owner migrations and publishes the Application
-# Composition itself when it starts, and Zerops switches traffic only after /_host/ready answers.
+# Zerops builds the app from app/zerops.yaml; the storefronts arrive built from the runner (build_storefronts). The app
+# container runs the owner migrations and publishes the Application Composition itself when it starts, and Zerops
+# switches traffic only after /_host/ready answers.
 # Cloudflare stays in front of stage only as DNS, WAF and Access.
 on:
   push:
@@ -187,15 +188,121 @@ jobs:
           retention-days: 3
 
   # Preparing secrets and storefront deployment does not wait for unrelated app unit shards.
-  # STOREFRONT RUNNER PREBUILD INTEGRATION POINT (lane STOREFRONT)
-  # Add build_storefronts here, gated by plan.outputs.storefront/shop/n1, alongside the unit shards.
-  # Inputs: this exact github.sha, the frozen app/pnpm-lock.yaml + workspace/catalog/patch policy,
-  # the selected service/setup, and every build-time public origin/image-host/brand value from zerops.yaml.
-  # Outputs: immutable per-setup .next/standalone + .next/static + public archives, with relative symlinks,
-  # a source/input digest and the Node/Alpine architecture identity. No secrets or node_modules from macOS.
-  # deploy_storefront/deploy_shop/deploy_n1 consume only their named artifact; app artifacts stay separate.
-  # A missing/mismatched artifact fails closed or takes the existing provider build, never a stale bundle.
-  # Extend the selected deploy job's needs/download steps, not verify's dependencies or the verified ledger gate.
+  # STOREFRONT RUNNER PREBUILD (lane STOREFRONT). Each selected storefront is built once here, beside the unit shards:
+  # tsrs typecheck, then `next build` with the build-time environment its zerops.yaml setup declares. The Zerops
+  # `storefront` and `n1` setups only check and unpack this archive (app/zerops.yaml); they never install or build.
+  # deploy_storefront and deploy_shop take `zerops-storefront-storefront` (one AKROS build: brand, key and app id are
+  # runtime service variables), deploy_n1 takes `zerops-storefront-n1`. A storefront the plan keeps is not rebuilt.
+  # A missing archive, or one from another revision or setup, fails that deploy job before any push.
+  build_storefronts:
+    name: Build ${{ matrix.package }} on the runner
+    needs: [plan]
+    if: >-
+      needs.plan.outputs.storefront == 'true' || needs.plan.outputs.shop == 'true' || needs.plan.outputs.n1 == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      # One storefront's failure must not cancel the other's build: each deploy job needs only its own archive.
+      fail-fast: false
+      matrix:
+        include: >-
+          ${{ fromJSON(format('[{0}{1}{2}]',
+          (needs.plan.outputs.storefront == 'true' || needs.plan.outputs.shop == 'true') && '{"setup":"storefront","package":"akros-storefront"}' || '',
+          (needs.plan.outputs.storefront == 'true' || needs.plan.outputs.shop == 'true') && needs.plan.outputs.n1 == 'true' && ',' || '',
+          needs.plan.outputs.n1 == 'true' && '{"setup":"n1","package":"n1-storefront"}' || '')) }}
+    env:
+      PKG: ${{ matrix.package }}
+      SETUP: ${{ matrix.setup }}
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+        with:
+          install-args: --trust-lockfile
+
+      # Webpack's compiler cache only speeds the build; its contents never decide what ships.
+      - name: Restore Next's compiler cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: app/${{ matrix.package }}/.next/cache
+          key: next-cache-v1-${{ matrix.package }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}-${{ github.sha }}
+          restore-keys: |
+            next-cache-v1-${{ matrix.package }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}-
+            next-cache-v1-${{ matrix.package }}-
+
+      # `next typegen`, then tsrs over Next's tsconfig.json with the generated route types. The build below skips
+      # Next's own type step (typescript.ignoreBuildErrors), so this is where a deploy proves the storefront's types.
+      - name: Typecheck with tsrs
+        working-directory: app
+        run: mise exec -- pnpm --filter "$PKG" run typecheck
+
+      # The build-time environment of the setup, as zerops.yaml declared it while Zerops built: AKROS reads
+      # STOREFRONT_IMAGE_HOSTS (empty) in next.config.ts; N1 reads nothing at build. No secret is present.
+      - name: Build the standalone server
+        working-directory: app
+        run: |
+          if [ "$PKG" = akros-storefront ]; then export STOREFRONT_IMAGE_HOSTS=''; fi
+          mise exec -- pnpm --filter "$PKG" run build
+
+      - name: Save Next's compiler cache
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: app/${{ matrix.package }}/.next/cache
+          key: next-cache-v1-${{ matrix.package }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}-${{ github.sha }}
+
+      # The archive unpacks to app/.zerops/runtime/<package> on Zerops, where `start` runs <package>/server.js.
+      # Zerops runs Alpine (musl) and this runner is glibc: a native addon would load on neither side safely, so any
+      # `.node` file fails here. Symlinks must stay relative so they resolve after the move.
+      - name: Pack the standalone server with its manifest
+        run: |
+          out="$RUNNER_TEMP/storefront-runtime"
+          dist="$RUNNER_TEMP/storefront-dist"
+          mkdir -p "$out" "$dist"
+          mv "app/$PKG/.next/standalone" "$out/$PKG"
+          cp -a "app/$PKG/.next/static" "$out/$PKG/$PKG/.next/static"
+          cp -a "app/$PKG/public" "$out/$PKG/$PKG/public"
+          test -f "$out/$PKG/$PKG/server.js"
+          native="$(find "$out" -name '*.node' -print)"
+          if [ -n "$native" ]; then echo "::error::native addons in the standalone server:"; echo "$native"; exit 1; fi
+          absolute="$(find "$out" -type l -lname '/*' -print)"
+          if [ -n "$absolute" ]; then echo "::error::absolute symlinks in the standalone server:"; echo "$absolute"; exit 1; fi
+          tar --create --gzip --sort=name --owner=0 --group=0 --numeric-owner \
+            --file "$dist/.zerops-storefront.tar.gz" -C "$out" "$PKG"
+          # The committed inputs of this build: the storefront, the workspace sources N1 imports, and the install.
+          case "$PKG" in
+            akros-storefront) inputs=(app/akros-storefront) ;;
+            n1-storefront) inputs=(app/n1-storefront app/apps app/packages app/verticals app/tsconfig.json app/tsconfig.base.json) ;;
+          esac
+          inputs+=(app/package.json app/pnpm-lock.yaml app/pnpm-workspace.yaml app/patches app/.mise.toml)
+          input_digest="$(git ls-files -s -- "${inputs[@]}" | sha256sum | cut -d' ' -f1)"
+          jq -n --arg setup "$SETUP" --arg package "$PKG" --arg sourceRevision "$GITHUB_SHA" \
+            --arg inputDigest "$input_digest" \
+            --arg archiveSha256 "$(sha256sum "$dist/.zerops-storefront.tar.gz" | cut -d' ' -f1)" \
+            --arg node "$(cd app && mise exec -- node -p process.versions.node)" \
+            --arg arch "$(cd app && mise exec -- node -p process.arch)" \
+            '{setup: $setup, package: $package, sourceRevision: $sourceRevision, inputDigest: $inputDigest,
+              archiveSha256: $archiveSha256, node: $node, arch: $arch, platform: "linux", builtLibc: "glibc",
+              nativeAddons: 0}' >"$dist/.zerops-storefront.json"
+          ls -lh "$dist"
+          cat "$dist/.zerops-storefront.json"
+
+      - name: Upload the storefront archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zerops-storefront-${{ matrix.setup }}
+          path: ${{ runner.temp }}/storefront-dist/
+          include-hidden-files: true
+          if-no-files-found: error
+          compression-level: 0
+          overwrite: true
+          retention-days: 3
+
   deploy:
     name: Prepare independent service deployments
     needs: [plan]
@@ -362,8 +469,13 @@ jobs:
 
   deploy_storefront:
     name: Deploy and check storefront
-    needs: [plan, deploy]
-    if: always() && needs.deploy.result == 'success' && needs.plan.outputs.any == 'true'
+    needs: [plan, deploy, build_storefronts]
+    # A kept service deploys nothing and only re-verifies; a selected one needs build_storefronts to have run. Its
+    # own archive is then the gate: a failed build leaves none, and the download below fails before any push.
+    if: >-
+      always() && needs.deploy.result == 'success' && needs.plan.outputs.any == 'true' &&
+      (needs.plan.outputs.storefront != 'true' || needs.build_storefronts.result == 'success' ||
+      needs.build_storefronts.result == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 75
     environment:
@@ -386,6 +498,19 @@ jobs:
         with:
           name: zerops-delivery-plan
           path: ${{ runner.temp }}/zerops-delivery
+      - name: Take the storefront archive built on the runner
+        if: needs.plan.outputs.storefront == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: zerops-storefront-storefront
+          path: app
+      # Never a stale or foreign build: the manifest must name this commit and this setup, and the archive its digest.
+      - name: Refuse an archive from another revision or setup
+        if: needs.plan.outputs.storefront == 'true'
+        run: |
+          jq -e --arg sha "$GITHUB_SHA" --arg setup 'storefront' \
+            '.sourceRevision == $sha and .setup == $setup and .nativeAddons == 0' app/.zerops-storefront.json
+          echo "$(jq -r .archiveSha256 app/.zerops-storefront.json)  app/.zerops-storefront.tar.gz" | sha256sum -c -
       - name: Push only services whose inputs changed
         if: needs.plan.outputs.storefront == 'true'
         env:
@@ -406,8 +531,13 @@ jobs:
 
   deploy_shop:
     name: Deploy and check shop
-    needs: [plan, deploy]
-    if: always() && needs.deploy.result == 'success' && needs.plan.outputs.any == 'true'
+    needs: [plan, deploy, build_storefronts]
+    # A kept service deploys nothing and only re-verifies; a selected one needs build_storefronts to have run. Its
+    # own archive is then the gate: a failed build leaves none, and the download below fails before any push.
+    if: >-
+      always() && needs.deploy.result == 'success' && needs.plan.outputs.any == 'true' &&
+      (needs.plan.outputs.shop != 'true' || needs.build_storefronts.result == 'success' ||
+      needs.build_storefronts.result == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 75
     environment:
@@ -430,6 +560,19 @@ jobs:
         with:
           name: zerops-delivery-plan
           path: ${{ runner.temp }}/zerops-delivery
+      - name: Take the storefront archive built on the runner
+        if: needs.plan.outputs.shop == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: zerops-storefront-storefront
+          path: app
+      # Never a stale or foreign build: the manifest must name this commit and this setup, and the archive its digest.
+      - name: Refuse an archive from another revision or setup
+        if: needs.plan.outputs.shop == 'true'
+        run: |
+          jq -e --arg sha "$GITHUB_SHA" --arg setup 'storefront' \
+            '.sourceRevision == $sha and .setup == $setup and .nativeAddons == 0' app/.zerops-storefront.json
+          echo "$(jq -r .archiveSha256 app/.zerops-storefront.json)  app/.zerops-storefront.tar.gz" | sha256sum -c -
       - name: Push only services whose inputs changed
         if: needs.plan.outputs.shop == 'true'
         env:
@@ -450,8 +593,13 @@ jobs:
 
   deploy_n1:
     name: Deploy and check n1
-    needs: [plan, deploy]
-    if: always() && needs.deploy.result == 'success' && needs.plan.outputs.any == 'true'
+    needs: [plan, deploy, build_storefronts]
+    # A kept service deploys nothing and only re-verifies; a selected one needs build_storefronts to have run. Its
+    # own archive is then the gate: a failed build leaves none, and the download below fails before any push.
+    if: >-
+      always() && needs.deploy.result == 'success' && needs.plan.outputs.any == 'true' &&
+      (needs.plan.outputs.n1 != 'true' || needs.build_storefronts.result == 'success' ||
+      needs.build_storefronts.result == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 75
     environment:
@@ -474,6 +622,19 @@ jobs:
         with:
           name: zerops-delivery-plan
           path: ${{ runner.temp }}/zerops-delivery
+      - name: Take the n1 archive built on the runner
+        if: needs.plan.outputs.n1 == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: zerops-storefront-n1
+          path: app
+      # Never a stale or foreign build: the manifest must name this commit and this setup, and the archive its digest.
+      - name: Refuse an archive from another revision or setup
+        if: needs.plan.outputs.n1 == 'true'
+        run: |
+          jq -e --arg sha "$GITHUB_SHA" --arg setup 'n1' \
+            '.sourceRevision == $sha and .setup == $setup and .nativeAddons == 0' app/.zerops-storefront.json
+          echo "$(jq -r .archiveSha256 app/.zerops-storefront.json)  app/.zerops-storefront.tar.gz" | sha256sum -c -
       - name: Push only services whose inputs changed
         if: needs.plan.outputs.n1 == 'true'
         env:

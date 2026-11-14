@@ -9,7 +9,7 @@
     "catalog:generate": "node scripts/generate-akros-catalog.mjs",
     "start": "next start",
     "check:browser-bundle": "node scripts/check-browser-bundle.mjs",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && pnpm --dir .. exec ultramodern-create ultramodern typecheck --project akros-storefront/tsconfig.json",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
     "test:component": "vitest run tests/component",

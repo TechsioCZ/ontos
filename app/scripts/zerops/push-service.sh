@@ -5,6 +5,9 @@
 #
 #   ZEROPS_TOKEN=… [PUSH_EXCLUDE=<path>] push-service.sh <service-id> <setup> <version-name>   (from the repository root)
 #
+# The `storefront` and `n1` setups ship only app/zerops.yaml and the storefront the runner built (zerops-stage.yml,
+# build_storefronts): app/.zerops-storefront.tar.gz and its manifest app/.zerops-storefront.json. Zerops unpacks it.
+#
 # Diagnostics of the upload (no secret reaches the log):
 #   PUSH_PROJECT_HOSTS="<host> …"   the project's public hostnames; each attempt says whether the upload host resolves to
 #                                   the same address, i.e. whether the upload enters through the project's own balancer.
@@ -44,35 +47,48 @@ log_error() { log "$@" >&2; }
 # dirty, and every release identity then reads as `workspace`. Patterns are anchored at the member name, and `*`
 # spans directories.
 # Member names carry no './' prefix, as zcli writes them; Zerops cannot identify an archive of './…' members.
-# Stage a service-specific checkout, never mutate the runner's shared Git index.
-# Keep manifests/configs for the frozen workspace install, and all owner sources for N1's workspace imports.
-exclude=(--exclude='*/node_modules' --exclude='*/.output' --exclude='*.map'
-  --exclude='*/tests' --exclude='docs' --exclude='app/docs' --exclude='*/.codex'
-  --exclude='app/.zerops' --exclude='*/.next' --exclude='*/.cache'
-  --exclude="${PUSH_EXCLUDE:-}")
-case "$setup" in
-  app)
-    exclude+=(--exclude='app/akros-storefront/src' --exclude='app/akros-storefront/public'
-      --exclude='app/n1-storefront/src' --exclude='app/n1-storefront/public') ;;
-  storefront)
-    exclude+=(--exclude='app/n1-storefront/src' --exclude='app/n1-storefront/public') ;;
-  n1)
-    exclude+=(--exclude='app/akros-storefront/src' --exclude='app/akros-storefront/public') ;;
-esac
+# Stage a service-specific package, never mutate the runner's shared Git index.
 mkdir -p "$work/source"
-mapfile -t entries < <(find . -mindepth 1 -maxdepth 1 -printf '%P\n' | sort)
-tar --format=pax --anchored "${exclude[@]}" -cf - -- "${entries[@]}" | tar -xf - -C "$work/source"
-# Merchandise's catalog operator reads these JSON inputs directly, even in the app workspace.
-if [ "$setup" != storefront ] && [ -d app/akros-storefront/src/catalog-import ]; then
-  mkdir -p "$work/source/app/akros-storefront/src"
-  cp -a app/akros-storefront/src/catalog-import "$work/source/app/akros-storefront/src/"
-fi
-if [ -d "$work/source/.git" ]; then
-  # Omitted tracked files must not turn every release identity into `workspace`. Git objects remain available
-  # to the committed-input planner; skip-worktree affects only the service package's working-tree presence.
-  git -C "$work/source" ls-files --deleted -z |
-    git -C "$work/source" update-index --skip-worktree -z --stdin
-fi
+case "$setup" in
+  storefront | n1)
+    # A storefront setup builds nothing on Zerops: the package is its zerops.yaml and the runner's archive. No source,
+    # no Git history and no other service's files travel with it.
+    for file in app/zerops.yaml app/.zerops-storefront.tar.gz app/.zerops-storefront.json; do
+      if [ ! -f "$file" ]; then
+        log_error "the $setup push needs $file (the build_storefronts artifact)"
+        exit 1
+      fi
+    done
+    mkdir -p "$work/source/app"
+    cp app/zerops.yaml app/.zerops-storefront.tar.gz app/.zerops-storefront.json "$work/source/app/"
+    ;;
+  app)
+    # Keep manifests/configs for the frozen workspace install. A storefront archive in the checkout never ships here.
+    exclude=(--exclude='*/node_modules' --exclude='*/.output' --exclude='*.map'
+      --exclude='*/tests' --exclude='docs' --exclude='app/docs' --exclude='*/.codex'
+      --exclude='app/.zerops' --exclude='*/.next' --exclude='*/.cache' --exclude='app/.zerops-storefront.*'
+      --exclude='app/akros-storefront/src' --exclude='app/akros-storefront/public'
+      --exclude='app/n1-storefront/src' --exclude='app/n1-storefront/public'
+      --exclude="${PUSH_EXCLUDE:-}")
+    mapfile -t entries < <(find . -mindepth 1 -maxdepth 1 -printf '%P\n' | sort)
+    tar --format=pax --anchored "${exclude[@]}" -cf - -- "${entries[@]}" | tar -xf - -C "$work/source"
+    # Merchandise's catalog operator reads these JSON inputs directly, even in the app workspace.
+    if [ -d app/akros-storefront/src/catalog-import ]; then
+      mkdir -p "$work/source/app/akros-storefront/src"
+      cp -a app/akros-storefront/src/catalog-import "$work/source/app/akros-storefront/src/"
+    fi
+    if [ -d "$work/source/.git" ]; then
+      # Omitted tracked files must not turn every release identity into `workspace`. Git objects remain available
+      # to the committed-input planner; skip-worktree affects only the service package's working-tree presence.
+      git -C "$work/source" ls-files --deleted -z |
+        git -C "$work/source" update-index --skip-worktree -z --stdin
+    fi
+    ;;
+  *)
+    log_error "unknown zerops.yaml setup: $setup"
+    exit 1
+    ;;
+esac
 mapfile -t entries < <(find "$work/source" -mindepth 1 -maxdepth 1 -printf '%P\n' | sort)
 tar --format=pax -C "$work/source" -czf "$work/package.tar.gz" -- "${entries[@]}"
 log "package: $(du -h "$work/package.tar.gz" | cut -f1) ($(wc -c <"$work/package.tar.gz" | tr -d ' ') bytes)"

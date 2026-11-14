@@ -13,10 +13,11 @@ const extraImageHosts = (process.env.STOREFRONT_IMAGE_HOSTS ?? "")
 const nextConfig: NextConfig = {
   agentRules: false,
   output: "standalone",
-  // Build-only tooling the workspace hoists next to Next.js; the server never loads it.
+  // Build-only tooling the workspace hoists next to Next.js; the server never loads it. Native
+  // binaries (@next/swc, sharp) also stay out: the runner builds on glibc, Zerops runs musl.
   outputFileTracingExcludes: {
     "*": [
-      "**/node_modules/.pnpm/{webpack,minimizer-webpack-plugin,cssnano*,postcss-*,clean-css,csso,css-tree,html-minifier-terser,terser,svgo,sass,lightningcss*,esbuild,@esbuild+*,@swc+core*,sharp,@img+*}@*/**",
+      "**/node_modules/.pnpm/{webpack,minimizer-webpack-plugin,cssnano*,postcss-*,clean-css,csso,css-tree,html-minifier-terser,terser,svgo,sass,lightningcss*,esbuild,@esbuild+*,@swc+core*,@next+swc-*,sharp,@img+*}@*/**",
     ],
   },
   // Preserve loopback IP origins so the exact-origin request guard matches the browser.
@@ -39,6 +40,10 @@ const nextConfig: NextConfig = {
     ],
   },
   reactStrictMode: true,
+  // Types are proven by tsrs before this build: the workspace `pnpm typecheck` gate (root
+  // tsconfig.json references tsconfig.typecheck.json) and `pnpm typecheck` here. Next's own type
+  // step (tsc) checked the same files again.
+  typescript: { ignoreBuildErrors: true },
   // Catalog responses already have a strict ten-second owner-read window. Never extend it in the router.
   experimental: { staleTimes: { static: 0, dynamic: 0 } },
   async headers() {
