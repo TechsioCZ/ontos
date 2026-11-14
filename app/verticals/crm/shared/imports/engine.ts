@@ -1,5 +1,4 @@
 import { DateTime, Schema } from 'effect';
-import csImports from '../../locales/cs/crm-imports.json';
 import { ShortTextSchema } from '../domain/common.ts';
 import type { EntityId, PrincipalId } from '../domain/common.ts';
 // AREA: imports (C03, C04) — owned by the crm-imports lane.
@@ -28,6 +27,7 @@ import type {
 
 import { ORDERS_CSV_FORMAT } from './csv.ts';
 import type { ParsedCsv, ParsedOrderRow } from './csv.ts';
+import { czechCsvProblemMessage } from './csv-problem.ts';
 
 export interface ImportMeta {
   readonly batchId: EntityId;
@@ -184,10 +184,18 @@ const fillMoney = (existing: ImportedOrder, row: ParsedOrderRow): MonetaryEnrich
   const existingHasAmount =
     existing.amount !== undefined || existing.lines?.some((line) => line.amount !== undefined) === true;
   if (existing.currency === undefined && existingHasAmount) {
-    return { fields: preserved, reviewReason: csImports.imports.incompleteMoney };
+    return {
+      fields: preserved,
+      reviewReason:
+        'Sloupce Částka, Měna a Položky: uložená částka nemá měnu. Novou měnu nelze bezpečně přiřadit ke staré částce. Ověřte původní peněžní údaje.',
+    };
   }
   if (existing.currency !== undefined && row.currency !== undefined && existing.currency !== row.currency) {
-    return { fields: preserved, reviewReason: csImports.imports.moneyConflict };
+    return {
+      fields: preserved,
+      reviewReason:
+        'Sloupce Částka, Měna a Položky: měna se liší od uložené objednávky. Částky ani měna nebyly doplněny. Ověřte měnu ve zdroji a import opakujte.',
+    };
   }
   return {
     fields: definedEntries({
@@ -402,7 +410,9 @@ export const importOrders = (
     const resultReviewReason = reviewReason ?? correlationReason;
     return resultReviewReason === undefined
       ? {
-          message: addEvent ? `Stav ${existing.rawStatus} → ${event.rawStatus}` : csImports.imports.orderEnriched,
+          message: addEvent
+            ? `Stav ${existing.rawStatus} → ${event.rawStatus}`
+            : 'Doplněny chybějící údaje objednávky; potvrzený stav zůstává beze změny.',
           orderId: existing.id,
           outcome: 'updated' as const,
         }
@@ -412,8 +422,9 @@ export const importOrders = (
   for (const parsedRow of parsed.rows) {
     if (parsedRow.kind === 'error') {
       const result: ImportRowResult = {
-        message: parsedRow.message,
+        message: czechCsvProblemMessage(parsedRow.problem),
         outcome: 'error',
+        problem: parsedRow.problem,
         row: parsedRow.row,
       };
       if (parsedRow.externalId !== undefined) {
@@ -450,9 +461,11 @@ export const importOrders = (
     created,
     duplicates,
     errors: [
-      ...(parsed.fileError === undefined ? [] : [{ message: parsed.fileError, row: 1 }]),
-      ...results.flatMap((result) =>
-        result.outcome === 'error' ? [{ message: result.message, row: result.row }] : [],
+      ...(parsed.fileError === undefined
+        ? []
+        : [{ message: czechCsvProblemMessage(parsed.fileError), problem: parsed.fileError, row: 1 }]),
+      ...results.flatMap(({ message, outcome, problem, row }) =>
+        outcome === 'error' ? [problem === undefined ? { message, row } : { message, problem, row }] : [],
       ),
     ],
     fileName: meta.fileName,

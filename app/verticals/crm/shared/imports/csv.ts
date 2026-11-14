@@ -2,20 +2,15 @@
 // Pure parser of the documented CRM order CSV template (crm-orders-csv-v1). The browser uses it for the preview,
 // the server re-parses the same text inside the ImportOrdersCsv command, so the preview and the stored result match.
 import { DateTime, Option, Result, Schema } from 'effect';
-import csImports from '../../locales/cs/crm-imports.json';
-import enImports from '../../locales/en/crm-imports.json';
 import { IsoTimeSchema, ShortTextSchema } from '../domain/common.ts';
-import { OrderDateSchema, OrderLineSchema } from '../domain/imports.ts';
+import { CSV_TEXT_MAX_LENGTH, CsvColumnKeySchema, OrderDateSchema, OrderLineSchema } from '../domain/imports.ts';
+import type { CsvColumnKey, CsvProblem } from '../domain/imports.ts';
 
 export const ORDERS_CSV_FORMAT = 'crm-orders-csv-v1';
 
-const COLUMN_PLACEHOLDER = '{{column}}';
-const ROW_PLACEHOLDER = '{{row}}';
-const ITEM_PLACEHOLDER = '{{item}}';
-
 export interface CsvColumn {
   readonly example: string;
-  readonly key: string;
+  readonly key: CsvColumnKey;
   readonly label: string;
   readonly required: boolean;
 }
@@ -121,11 +116,11 @@ export interface ParsedOrderRow {
 
 export type ParsedRow =
   | { readonly kind: 'ok'; readonly value: ParsedOrderRow }
-  | { readonly externalId?: string; readonly kind: 'error'; readonly message: string; readonly row: number };
+  | { readonly externalId?: string; readonly kind: 'error'; readonly problem: CsvProblem; readonly row: number };
 
 export interface ParsedCsv {
   /** Set when the file as a whole cannot be read (no header, missing required columns). */
-  readonly fileError?: string;
+  readonly fileError?: CsvProblem;
   readonly rows: readonly ParsedRow[];
   readonly unknownColumns: readonly string[];
 }
@@ -153,7 +148,7 @@ interface RawRecord {
 }
 
 interface UnclosedCell {
-  readonly column: number;
+  readonly position: number;
   readonly row: number;
 }
 
@@ -205,7 +200,7 @@ const tokenize = (text: string, delimiter: string): Result.Result<RawRecord[], U
     }
   }
   if (quoted) {
-    return Result.fail({ column: cells.length + 1, row: recordLine });
+    return Result.fail({ position: cells.length + 1, row: recordLine });
   }
   if (cell !== '' || cells.length > 0) {
     cells.push(cell);
@@ -304,7 +299,8 @@ export const parseCsvTime = (value: string, asInstant: boolean): string | undefi
   return local;
 };
 
-const parseLines = (value: string, invalidLine: string): readonly ParsedOrderLine[] | string => {
+/** Fails with the 1-based number of the first unusable item. */
+const parseLines = (value: string): Result.Result<readonly ParsedOrderLine[], number> => {
   const entries = value
     .split('|')
     .map((entry) => entry.trim())
@@ -313,16 +309,16 @@ const parseLines = (value: string, invalidLine: string): readonly ParsedOrderLin
   for (const [index, entry] of entries.entries()) {
     const fields = entry.split(':').map((field) => field.trim());
     if (fields.length < 3 || fields.length > 4) {
-      return invalidLine.replace(ITEM_PLACEHOLDER, String(index + 1));
+      return Result.fail(index + 1);
     }
     const [sku = '', name = '', quantityText = '', amountText] = fields;
     const quantity = normalizeDecimal(quantityText);
     if (name === '' || quantity === undefined) {
-      return invalidLine.replace(ITEM_PLACEHOLDER, String(index + 1));
+      return Result.fail(index + 1);
     }
     const amount = amountText === undefined || amountText === '' ? undefined : normalizeDecimal(amountText);
     if (amountText !== undefined && amountText !== '' && amount === undefined) {
-      return invalidLine.replace(ITEM_PLACEHOLDER, String(index + 1));
+      return Result.fail(index + 1);
     }
     const line: ParsedOrderLine = { name, quantity: quantity.replace(/\.00$/u, '') };
     if (sku !== '') {
@@ -332,11 +328,11 @@ const parseLines = (value: string, invalidLine: string): readonly ParsedOrderLin
       Object.assign(line, { amount });
     }
     if (!Schema.is(OrderLineSchema)(line)) {
-      return invalidLine.replace(ITEM_PLACEHOLDER, String(index + 1));
+      return Result.fail(index + 1);
     }
     lines.push(line);
   }
-  return lines;
+  return Result.succeed(lines);
 };
 
 const optional = (value: string | undefined) => {
@@ -350,19 +346,19 @@ interface ParsedMoney {
 }
 
 /** Preserve the source error priority: amount, currency spelling, then a missing currency. */
-const parseMoney = (get: (key: string) => string | undefined): Result.Result<ParsedMoney, string> => {
+const parseMoney = (get: (key: string) => string | undefined, row: number): Result.Result<ParsedMoney, CsvProblem> => {
   const amountText = optional(get('castka'));
   const amount = amountText === undefined ? undefined : normalizeDecimal(amountText);
   if (amountText !== undefined && amount === undefined) {
-    return Result.fail(`Částka „${amountText}“ není platné desetinné číslo`);
+    return Result.fail({ _tag: 'InvalidAmount', row, value: amountText });
   }
   const currencyText = optional(get('mena'));
   const currency = currencyText?.toUpperCase();
-  if (currency !== undefined && !/^[A-Z]{3}$/u.test(currency)) {
-    return Result.fail(`Měna „${currencyText ?? ''}“ není kód ISO 4217 (např. CZK, EUR)`);
+  if (currencyText !== undefined && currency !== undefined && !/^[A-Z]{3}$/u.test(currency)) {
+    return Result.fail({ _tag: 'InvalidCurrency', row, value: currencyText });
   }
   if (amount !== undefined && currency === undefined) {
-    return Result.fail('Částka bez měny: doplňte sloupec mena');
+    return Result.fail({ _tag: 'AmountWithoutCurrency', row });
   }
   return Result.succeed({ amount, currency });
 };
@@ -373,17 +369,14 @@ interface ParsedTimes {
 }
 
 /** An order may supply a civil day; an event supplies an instant. Do not mix these contracts. */
-const parseTimes = (
-  get: (key: string) => string | undefined,
-  invalidTime: string,
-): Result.Result<ParsedTimes, string> => {
+const parseTimes = (get: (key: string) => string | undefined, row: number): Result.Result<ParsedTimes, CsvProblem> => {
   const orderedText = optional(get('datum_objednavky'));
   const orderedAt =
     orderedText === undefined
       ? undefined
       : Option.getOrUndefined(Schema.decodeUnknownOption(OrderDateSchema)(parseCsvTime(orderedText, false)));
   if (orderedText !== undefined && orderedAt === undefined) {
-    return Result.fail(invalidTime.replace(COLUMN_PLACEHOLDER, 'datum_objednavky'));
+    return Result.fail({ _tag: 'InvalidTime', column: 'datum_objednavky', row });
   }
   const eventText = optional(get('cas_udalosti'));
   const eventAt =
@@ -391,24 +384,29 @@ const parseTimes = (
       ? undefined
       : Option.getOrUndefined(Schema.decodeUnknownOption(IsoTimeSchema)(parseCsvTime(eventText, true)));
   if (eventText !== undefined && eventAt === undefined) {
-    return Result.fail(invalidTime.replace(COLUMN_PLACEHOLDER, 'cas_udalosti'));
+    return Result.fail({ _tag: 'InvalidTime', column: 'cas_udalosti', row });
   }
   return Result.succeed({ eventAt, orderedAt });
 };
 
-const parseRecord = (input: {
-  readonly copy: { readonly invalidLine: string; readonly invalidText: string; readonly invalidTime: string };
-  readonly get: (key: string) => string | undefined;
-  readonly line: number;
-}): ParsedRow => {
-  const { copy, get, line } = input;
+/** Every text cell except the item list must fit the stored short text; items are checked one by one. */
+const overlongColumn = (get: (key: string) => string | undefined) =>
+  ordersCsvColumns.find((column) => {
+    if (column.key === 'polozky') {
+      return false;
+    }
+    const text = optional(get(column.key));
+    return text !== undefined && !Schema.is(ShortTextSchema)(text);
+  });
+
+const parseRecord = (line: number, get: (key: string) => string | undefined): ParsedRow => {
   const source = optional(get('zdroj'));
   const externalId = optional(get('id_objednavky'));
   const rawStatus = optional(get('stav'));
-  const fail = (message: string): ParsedRow => {
+  const fail = (problem: CsvProblem): ParsedRow => {
     const result: ParsedRow = {
       kind: 'error',
-      message,
+      problem,
       row: line,
     };
     if (Schema.is(ShortTextSchema)(externalId)) {
@@ -416,42 +414,38 @@ const parseRecord = (input: {
     }
     return result;
   };
-  const invalidColumn = ordersCsvColumns.find((column) => {
-    if (column.key === 'polozky') {
-      return false;
-    }
-    const text = optional(get(column.key));
-    return text !== undefined && !Schema.is(ShortTextSchema)(text);
-  });
+  const invalidColumn = overlongColumn(get);
   if (invalidColumn !== undefined) {
-    return fail(copy.invalidText.replace(ROW_PLACEHOLDER, String(line)).replace(COLUMN_PLACEHOLDER, invalidColumn.key));
+    return fail({ _tag: 'InvalidText', column: invalidColumn.key, maxLength: CSV_TEXT_MAX_LENGTH, row: line });
   }
+  const missingValue = (column: CsvColumnKey) => fail({ _tag: 'MissingValue', column, row: line });
   if (source === undefined) {
-    return fail('Chybí zdrojový systém (sloupec zdroj)');
+    return missingValue('zdroj');
   }
   if (externalId === undefined) {
-    return fail('Chybí ID objednávky ve zdroji (sloupec id_objednavky)');
+    return missingValue('id_objednavky');
   }
   if (rawStatus === undefined) {
-    return fail('Chybí stav objednávky (sloupec stav)');
+    return missingValue('stav');
   }
-  const money = parseMoney(get);
+  const money = parseMoney(get, line);
   if (Result.isFailure(money)) {
     return fail(money.failure);
   }
   const { amount, currency } = money.success;
-  const times = parseTimes(get, copy.invalidTime);
+  const times = parseTimes(get, line);
   if (Result.isFailure(times)) {
     return fail(times.failure);
   }
   const { eventAt, orderedAt } = times.success;
   const linesText = optional(get('polozky'));
-  const lines = linesText === undefined ? undefined : parseLines(linesText, copy.invalidLine);
-  if (Schema.is(Schema.String)(lines)) {
-    return fail(lines);
+  const parsedLines = linesText === undefined ? undefined : parseLines(linesText);
+  if (parsedLines !== undefined && Result.isFailure(parsedLines)) {
+    return fail({ _tag: 'InvalidLine', item: parsedLines.failure, maxLength: CSV_TEXT_MAX_LENGTH, row: line });
   }
+  const lines = parsedLines?.success;
   if (currency === undefined && lines?.some((entry) => entry.amount !== undefined) === true) {
-    return fail('Částka položky bez měny: doplňte sloupec mena');
+    return fail({ _tag: 'LineAmountWithoutCurrency', row: line });
   }
   const value: ParsedOrderRow = {
     externalId,
@@ -477,28 +471,28 @@ const parseRecord = (input: {
     Object.assign(value, { lines });
   }
   if (value.customerEmail !== undefined && !Schema.is(ShortTextSchema)(value.customerEmail)) {
-    return fail(copy.invalidText.replace(ROW_PLACEHOLDER, String(line)).replace(COLUMN_PLACEHOLDER, 'email_zakaznika'));
+    return fail({ _tag: 'InvalidText', column: 'email_zakaznika', maxLength: CSV_TEXT_MAX_LENGTH, row: line });
   }
   return { kind: 'ok', value };
 };
 
-/** Parses CSV text of the crm-orders-csv-v1 template into validated rows and readable per-row errors. */
-export const parseOrdersCsv = (text: string, locale: 'cs' | 'en' = 'cs'): ParsedCsv => {
-  const copy = (locale === 'en' ? enImports : csImports).imports.csv;
+const fileFailure = (fileError: CsvProblem, unknownColumns: readonly string[] = []): ParsedCsv => ({
+  fileError,
+  rows: [],
+  unknownColumns,
+});
+
+/** Parses CSV text of the crm-orders-csv-v1 template into validated rows and per-row problem codes. */
+export const parseOrdersCsv = (text: string): ParsedCsv => {
   const firstLine = text.split(/\r?\n/u, 1)[0] ?? '';
   const records = tokenize(text, detectDelimiter(firstLine));
   if (Result.isFailure(records)) {
-    return {
-      fileError: copy.unterminatedQuote
-        .replace(ROW_PLACEHOLDER, String(records.failure.row))
-        .replace(COLUMN_PLACEHOLDER, String(records.failure.column)),
-      rows: [],
-      unknownColumns: [],
-    };
+    const { position, row } = records.failure;
+    return fileFailure({ _tag: 'UnterminatedQuote', position, row });
   }
   const [header, ...data] = records.success;
   if (header === undefined) {
-    return { fileError: 'Soubor je prázdný', rows: [], unknownColumns: [] };
+    return fileFailure({ _tag: 'EmptyFile' });
   }
   const keys = header.cells.map((cell) => {
     const folded = foldHeader(cell);
@@ -506,47 +500,29 @@ export const parseOrdersCsv = (text: string, locale: 'cs' | 'en' = 'cs'): Parsed
   });
   const invalidHeader = keys.findIndex((key) => key !== '' && !Schema.is(ShortTextSchema)(key));
   if (invalidHeader !== -1) {
-    return {
-      fileError: copy.invalidText.replace(ROW_PLACEHOLDER, '1').replace(COLUMN_PLACEHOLDER, String(invalidHeader + 1)),
-      rows: [],
-      unknownColumns: [],
-    };
+    return fileFailure({ _tag: 'InvalidHeaderCell', maxLength: CSV_TEXT_MAX_LENGTH, position: invalidHeader + 1 });
   }
-  const known = new Set(ordersCsvColumns.map((column) => column.key));
+  const isColumnKey = Schema.is(CsvColumnKeySchema);
   const missing = ordersCsvColumns.filter((column) => column.required && !keys.includes(column.key));
-  const unknownColumns = keys.filter((key) => key !== '' && !known.has(key));
-  const duplicate = keys.find((key, index) => known.has(key) && keys.indexOf(key) !== index);
+  const unknownColumns = keys.filter((key) => key !== '' && !isColumnKey(key));
+  const duplicate = keys.filter(isColumnKey).find((key, index, known) => known.indexOf(key) !== index);
   if (duplicate !== undefined) {
-    return {
-      fileError: copy.duplicateHeader.replace(COLUMN_PLACEHOLDER, duplicate),
-      rows: [],
-      unknownColumns,
-    };
+    return fileFailure({ _tag: 'DuplicateHeader', column: duplicate }, unknownColumns);
   }
   if (missing.length > 0) {
-    return {
-      fileError: `V hlavičce chybí povinné sloupce: ${missing.map((column) => column.key).join(', ')}`,
-      rows: [],
-      unknownColumns,
-    };
+    return fileFailure({ _tag: 'MissingColumns', columns: missing.map((column) => column.key) }, unknownColumns);
   }
   const rows = data.map((record): ParsedRow => {
     if (record.cells.length > keys.length) {
       return {
         kind: 'error',
-        message: copy.surplusCells
-          .replace(ROW_PLACEHOLDER, String(record.line))
-          .replace(COLUMN_PLACEHOLDER, String(keys.length)),
+        problem: { _tag: 'SurplusCells', position: keys.length, row: record.line },
         row: record.line,
       };
     }
-    return parseRecord({
-      copy,
-      get: (key) => {
-        const index = keys.indexOf(key);
-        return index === -1 ? undefined : record.cells[index];
-      },
-      line: record.line,
+    return parseRecord(record.line, (key) => {
+      const index = keys.indexOf(key);
+      return index === -1 ? undefined : record.cells[index];
     });
   });
   return { rows, unknownColumns };
