@@ -13,6 +13,7 @@ import {
   ordersCsv,
   reportStatusMeaning,
   ReportPeriodSchema,
+  toCsv,
   unitsToDecimal,
 } from '../../shared/domain/reports.ts';
 import type { CrmState } from '../../shared/domain/state.ts';
@@ -93,6 +94,23 @@ const repA = Schema.decodeUnknownSync(CrmViewerSchema)({
 });
 
 describe('CRM sales report (C05)', () => {
+  it('neutralizes formula-leading text, including headers, before escaping CSV', () => {
+    for (const prefix of ['=', '+', '-', '@', '\t', '\r']) {
+      const text = `${prefix}SUM(1;2)"`;
+      expect(toCsv([text], [[text]])).toBe(`"'${prefix}SUM(1;2)"""\r\n"'${prefix}SUM(1;2)"""`);
+    }
+    expect(toCsv(['Value'], [[-12.5], [0], ['ordinary']])).toBe('Value\r\n-12.5\r\n0\r\nordinary');
+  });
+
+  it('keeps negative exact-decimal amounts numeric rather than treating them as formulas', () => {
+    const state = base([
+      order({ amount: '-123456789012345.1234', clientId: 'x', currency: 'CZK', pairing: 'paired' }),
+    ]);
+    const report = buildSalesReport(state);
+    expect(ordersCsv(report)).toContain(';-123456789012345,1234;CZK');
+    expect(groupsCsv('Klient', report.byClient, report.currencies)).toContain(';-123456789012345,1234;0');
+  });
+
   for (const { day, instant, previousDay } of [
     { day: '2026-11-01', instant: '2026-11-01T00:30:00+01:00', previousDay: '2026-10-31' },
     { day: '2026-07-01', instant: '2026-07-01T00:30:00+02:00', previousDay: '2026-06-30' },
