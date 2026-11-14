@@ -8,7 +8,7 @@ import type { EntityId, PrincipalId } from '../domain/common.ts';
 //
 // Rules (CRM spec C03/C04):
 //  - an order is identified by source + external id; a later row for it adds a status event, never a second order;
-//  - an identical event (same event id, or same raw status + event time) is a duplicate and changes nothing;
+//  - an identical event never adds status history; newly supplied source details may still fill missing fields;
 //  - an event older than the last applied one, without an event time, or a different status at the same time is
 //    kept in the history, flagged "vyžaduje kontrolu" and NOT applied;
 //  - a new order is paired only through an approved external customer link; IČO / e-mail / name matches are only
@@ -215,6 +215,33 @@ const enrichmentFields = [
   'orderedAt',
 ] as const;
 
+const fillOrderDetails = (existing: ImportedOrder, row: ParsedOrderRow) =>
+  definedEntries({
+    customerEmail: existing.customerEmail ?? row.customerEmail,
+    customerName: existing.customerName ?? row.customerName,
+    customerRegNo: existing.customerRegNo ?? row.customerRegNo,
+    externalCustomerId: existing.externalCustomerId ?? row.externalCustomerId,
+    number: existing.number ?? row.number,
+    orderedAt: existing.orderedAt ?? row.orderedAt,
+  });
+
+const appendStatusEvent = (
+  order: ImportedOrder,
+  event: OrderStatusEvent,
+  reviewReason: string | undefined,
+): ImportedOrder =>
+  reviewReason === undefined
+    ? {
+        ...order,
+        lastEventAt: event.eventAt ?? order.lastEventAt ?? event.importedAt,
+        rawStatus: event.rawStatus,
+        statusHistory: [...order.statusHistory, event],
+      }
+    : {
+        ...order,
+        statusHistory: [...order.statusHistory, { ...event, review: true, reviewReason }],
+      };
+
 /** Applies parsed rows to the slice. Pure; the caller persists the returned slice. */
 export const importOrders = (
   slice: ImportsSlice,
@@ -346,13 +373,8 @@ export const importOrders = (
     const twin = existing.number === undefined ? crossSourceTwin(orders.values(), row) : undefined;
     const correlationReason = twin === undefined ? undefined : duplicateReason(twin, row.number);
     const filled = definedEntries({
+      ...fillOrderDetails(existing, row),
       ...money.fields,
-      customerEmail: existing.customerEmail ?? row.customerEmail,
-      customerName: existing.customerName ?? row.customerName,
-      customerRegNo: existing.customerRegNo ?? row.customerRegNo,
-      externalCustomerId: existing.externalCustomerId ?? row.externalCustomerId,
-      number: existing.number ?? row.number,
-      orderedAt: existing.orderedAt ?? row.orderedAt,
       duplicateOf: existing.duplicateOf ?? twin?.id,
       reviewReason: correlationReason ?? existing.reviewReason,
     });
@@ -369,17 +391,7 @@ export const importOrders = (
     }
     const reviewReason =
       money.reviewReason ?? (repeated === undefined ? eventReviewReason(existing, event) : undefined);
-    const eventFields =
-      reviewReason === undefined
-        ? {
-            lastEventAt: event.eventAt ?? existing.lastEventAt ?? meta.now,
-            rawStatus: event.rawStatus,
-            statusHistory: [...existing.statusHistory, event],
-          }
-        : {
-            statusHistory: [...existing.statusHistory, { ...event, review: true, reviewReason }],
-          };
-    const next: ImportedOrder = addEvent ? { ...enriched, ...eventFields } : enriched;
+    const next = addEvent ? appendStatusEvent(enriched, event, reviewReason) : enriched;
     orders.set(orderKey(existing.source, existing.externalId), next);
     touched.add(existing.id);
     const resultReviewReason = reviewReason ?? correlationReason;

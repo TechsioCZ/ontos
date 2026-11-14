@@ -367,6 +367,64 @@ describe('CRM order import (C03)', () => {
       return yield* Effect.void;
     }),
   );
+  it.effect('resolves late links to the current Counterparty holder and preserves a manual unpairing', () =>
+    Effect.gen(function* lateLinkOwnership() {
+      const holder = 'zlata-husa';
+      const linked = Schema.decodeUnknownSync(CrmStateSchema)({
+        ...Schema.encodeSync(CrmStateSchema)(base),
+        clients: {
+          ...Schema.encodeSync(CrmStateSchema)(base).clients,
+          items: Schema.encodeSync(CrmStateSchema)(base).clients.items.map((entry) =>
+            entry.id === holder
+              ? { ...entry, partyRef: { counterpartyId: 'current-counterparty', partyId: 'current-party' } }
+              : entry,
+          ),
+        },
+        imports: {
+          ...Schema.encodeSync(CrmStateSchema)(base).imports,
+          customerLinks: [
+            {
+              clientId: 'pekarna-mala',
+              counterpartyId: 'current-counterparty',
+              createdAt: at,
+              createdBy: 'p-lead',
+              externalCustomerId: 'moved-customer',
+              source: 'E-shop',
+            },
+          ],
+        },
+      });
+      const header = 'source;order_id;customer_id;status;event_time\n';
+      const first = yield* runOk(linked, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;current-holder;;nova;2026-10-19T09:00:00Z\nE-shop;unpaired-manually;;nova;2026-10-19T09:00:00Z\n`,
+        fileName: 'holder-first.csv',
+      });
+      const paired = yield* runOk(first, {
+        _tag: 'PairOrder',
+        clientId: holder,
+        orderId: order(first, 'unpaired-manually').id,
+        reason: 'Ověřené ruční přiřazení',
+      });
+      const manual = yield* runOk(paired, {
+        _tag: 'UnpairOrder',
+        orderId: order(paired, 'unpaired-manually').id,
+        reason: 'Ověřené ruční odebrání',
+      });
+      const next = yield* runOk(manual, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;current-holder;moved-customer;paid;2026-10-19T10:00:00Z\nE-shop;unpaired-manually;moved-customer;paid;2026-10-19T10:00:00Z\n`,
+        fileName: 'holder-next.csv',
+      });
+      expect(order(next, 'current-holder').clientId).toBe(holder);
+      expect(order(next, 'unpaired-manually').clientId).toBeUndefined();
+      expect(order(next, 'unpaired-manually').pairing).toBe('unpaired');
+      expect(
+        next.imports.pairingHistory.filter((change) => change.orderId === order(next, 'current-holder').id),
+      ).toMatchObject([{ toClientId: holder, via: 'customer_link' }]);
+      return yield* Effect.void;
+    }),
+  );
   it.effect('rechecks cross-source duplicates when an existing order first receives its number', () =>
     Effect.gen(function* enrichedNumberCorrelation() {
       const header = 'source;order_id;number;status;event_time\n';
@@ -404,9 +462,11 @@ describe('CRM order import (C03)', () => {
   it.effect('fills missing monetary snapshots only when their currencies agree, including priced lines', () =>
     Effect.gen(function* monetarySnapshots() {
       const header = 'source;order_id;status;event_time;amount;currency;lines\n';
-      for (const { currency, review } of [
-        { currency: 'CZK', review: false },
-        { currency: 'EUR', review: true },
+      for (const { amount, currency, review } of [
+        { amount: '25.00', currency: 'CZK', review: false },
+        { amount: '25.00', currency: 'EUR', review: true },
+        { amount: '', currency: 'CZK', review: false },
+        { amount: '', currency: 'EUR', review: true },
       ]) {
         const first = yield* runOk(base, {
           _tag: 'ImportOrdersCsv',
@@ -415,12 +475,12 @@ describe('CRM order import (C03)', () => {
         });
         const next = yield* runOk(first, {
           _tag: 'ImportOrdersCsv',
-          csv: `${header}E-shop;money;paid;2026-10-19T10:00:00Z;25.00;${currency};SKU:Name:1:25.00\n`,
+          csv: `${header}E-shop;money;paid;2026-10-19T10:00:00Z;${amount};${currency};SKU:Name:1:25.00\n`,
           fileName: 'money-next.csv',
         });
         const imported = order(next, 'money');
         expect(imported.currency).toBe('CZK');
-        expect(imported.amount).toBe(review ? undefined : '25.00');
+        expect(imported.amount).toBe(review || amount === '' ? undefined : '25.00');
         expect(imported.lines?.[0]?.amount).toBe(review ? undefined : '25.00');
         expect(imported.rawStatus).toBe(review ? 'nova' : 'paid');
         expect(needsReview(imported)).toBe(review);
