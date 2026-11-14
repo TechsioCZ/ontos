@@ -19,6 +19,7 @@ rstest.mock('../../src/api/records-consumer.ts');
 rstest.mock('../../src/routes/[lang]/provoz/produkty/product-reads.ts', () => ({
   SEARCH_DEBOUNCE: '0 millis',
   searchCategoryTrails: rstest.fn(),
+  loadProductRecord: rstest.fn(),
 }));
 rstest.mock('../../src/api/manage-catalog-action-client.ts');
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({

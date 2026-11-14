@@ -27,6 +27,8 @@ rstest.mock('../../src/routes/[lang]/provoz/produkty/product-search.tsx', () => 
     createElement('button', { onClick: () => props.onSelect(picked.current), type: 'button' }, 'pick product'),
 }));
 rstest.mock('../../src/routes/[lang]/provoz/produkty/product-reads.ts', () => ({
+  SEARCH_DEBOUNCE: '0 millis',
+  searchCategoryTrails: () => Effect.succeed({ matches: [], total: 0 }),
   loadProductRecord: (_productId: string, answer: (record: ProductRecordState) => void) => {
     reads.push(answer);
   },
