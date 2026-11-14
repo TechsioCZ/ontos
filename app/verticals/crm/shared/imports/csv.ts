@@ -4,8 +4,8 @@
 import { DateTime, Option, Result, Schema } from 'effect';
 import csImports from '../../locales/cs/crm-imports.json';
 import enImports from '../../locales/en/crm-imports.json';
-import { IsoTimeSchema } from '../domain/common.ts';
-import { OrderDateSchema } from '../domain/imports.ts';
+import { IsoTimeSchema, ShortTextSchema } from '../domain/common.ts';
+import { OrderDateSchema, OrderLineSchema } from '../domain/imports.ts';
 
 export const ORDERS_CSV_FORMAT = 'crm-orders-csv-v1';
 
@@ -299,7 +299,7 @@ export const parseCsvTime = (value: string, asInstant: boolean): string | undefi
   return local;
 };
 
-const parseLines = (value: string): readonly ParsedOrderLine[] | string => {
+const parseLines = (value: string, invalidLine: string): readonly ParsedOrderLine[] | string => {
   const entries = value
     .split('|')
     .map((entry) => entry.trim())
@@ -308,16 +308,16 @@ const parseLines = (value: string): readonly ParsedOrderLine[] | string => {
   for (const [index, entry] of entries.entries()) {
     const fields = entry.split(':').map((field) => field.trim());
     if (fields.length < 3 || fields.length > 4) {
-      return `Položka ${index + 1}: očekávám SKU:název:množství:částka`;
+      return invalidLine.replace('{{item}}', String(index + 1));
     }
     const [sku = '', name = '', quantityText = '', amountText] = fields;
     const quantity = normalizeDecimal(quantityText);
     if (name === '' || quantity === undefined) {
-      return `Položka ${index + 1}: chybí název nebo množství není číslo`;
+      return invalidLine.replace('{{item}}', String(index + 1));
     }
     const amount = amountText === undefined || amountText === '' ? undefined : normalizeDecimal(amountText);
     if (amountText !== undefined && amountText !== '' && amount === undefined) {
-      return `Položka ${index + 1}: částka „${amountText}“ není číslo`;
+      return invalidLine.replace('{{item}}', String(index + 1));
     }
     const line: ParsedOrderLine = { name, quantity: quantity.replace(/\.00$/u, '') };
     if (sku !== '') {
@@ -325,6 +325,9 @@ const parseLines = (value: string): readonly ParsedOrderLine[] | string => {
     }
     if (amount !== undefined) {
       Object.assign(line, { amount });
+    }
+    if (!Schema.is(OrderLineSchema)(line)) {
+      return invalidLine.replace('{{item}}', String(index + 1));
     }
     lines.push(line);
   }
@@ -385,7 +388,12 @@ const parseTimes = (get: (key: string) => string | undefined): Result.Result<Par
   return Result.succeed({ eventAt, orderedAt });
 };
 
-const parseRecord = (line: number, get: (key: string) => string | undefined): ParsedRow => {
+const parseRecord = (input: {
+  readonly copy: { readonly invalidLine: string; readonly invalidText: string };
+  readonly get: (key: string) => string | undefined;
+  readonly line: number;
+}): ParsedRow => {
+  const { copy, get, line } = input;
   const source = optional(get('zdroj'));
   const externalId = optional(get('id_objednavky'));
   const rawStatus = optional(get('stav'));
@@ -395,11 +403,21 @@ const parseRecord = (line: number, get: (key: string) => string | undefined): Pa
       message,
       row: line,
     };
-    if (externalId !== undefined) {
+    if (Schema.is(ShortTextSchema)(externalId)) {
       Object.assign(result, { externalId });
     }
     return result;
   };
+  const invalidColumn = ordersCsvColumns.find((column) => {
+    if (column.key === 'polozky') {
+      return false;
+    }
+    const text = optional(get(column.key));
+    return text !== undefined && !Schema.is(ShortTextSchema)(text);
+  });
+  if (invalidColumn !== undefined) {
+    return fail(copy.invalidText.replace('{{row}}', String(line)).replace('{{column}}', invalidColumn.key));
+  }
   if (source === undefined) {
     return fail('Chybí zdrojový systém (sloupec zdroj)');
   }
@@ -420,7 +438,7 @@ const parseRecord = (line: number, get: (key: string) => string | undefined): Pa
   }
   const { eventAt, orderedAt } = times.success;
   const linesText = optional(get('polozky'));
-  const lines = linesText === undefined ? undefined : parseLines(linesText);
+  const lines = linesText === undefined ? undefined : parseLines(linesText, copy.invalidLine);
   if (Schema.is(Schema.String)(lines)) {
     return fail(lines);
   }
@@ -450,6 +468,9 @@ const parseRecord = (line: number, get: (key: string) => string | undefined): Pa
   if (lines !== undefined && lines.length > 0) {
     Object.assign(value, { lines });
   }
+  if (value.customerEmail !== undefined && !Schema.is(ShortTextSchema)(value.customerEmail)) {
+    return fail(copy.invalidText.replace('{{row}}', String(line)).replace('{{column}}', 'email_zakaznika'));
+  }
   return { kind: 'ok', value };
 };
 
@@ -475,6 +496,14 @@ export const parseOrdersCsv = (text: string, locale: 'cs' | 'en' = 'cs'): Parsed
     const folded = foldHeader(cell);
     return aliases.get(folded) ?? folded;
   });
+  const invalidHeader = keys.findIndex((key) => key !== '' && !Schema.is(ShortTextSchema)(key));
+  if (invalidHeader !== -1) {
+    return {
+      fileError: copy.invalidText.replace('{{row}}', '1').replace('{{column}}', String(invalidHeader + 1)),
+      rows: [],
+      unknownColumns: [],
+    };
+  }
   const known = new Set(ordersCsvColumns.map((column) => column.key));
   const missing = ordersCsvColumns.filter((column) => column.required && !keys.includes(column.key));
   const unknownColumns = keys.filter((key) => key !== '' && !known.has(key));
@@ -501,9 +530,13 @@ export const parseOrdersCsv = (text: string, locale: 'cs' | 'en' = 'cs'): Parsed
         row: record.line,
       };
     }
-    return parseRecord(record.line, (key) => {
-      const index = keys.indexOf(key);
-      return index === -1 ? undefined : record.cells[index];
+    return parseRecord({
+      copy,
+      get: (key) => {
+        const index = keys.indexOf(key);
+        return index === -1 ? undefined : record.cells[index];
+      },
+      line: record.line,
     });
   });
   return { rows, unknownColumns };

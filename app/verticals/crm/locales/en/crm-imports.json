@@ -3,7 +3,9 @@
     "csv": {
       "unterminatedQuote": "Row {{row}}, column {{column}}: missing closing quote. Correct the CSV and import it again.",
       "surplusCells": "Row {{row}}: extra values follow the last column {{column}}. Correct the delimiters or quotes.",
-      "duplicateHeader": "Row 1, column {{column}} appears more than once (including aliases). Keep it only once."
+      "duplicateHeader": "Row 1, column {{column}} appears more than once (including aliases). Keep it only once.",
+      "invalidText": "Row {{row}}, column {{column}}: text must contain 1 to 200 characters.",
+      "invalidLine": "Column polozky, item {{item}}: check the name and SKU (at most 200 characters), decimal quantity and amount."
     }
   }
 }

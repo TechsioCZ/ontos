@@ -3,7 +3,9 @@
     "csv": {
       "unterminatedQuote": "Řádek {{row}}, sloupec {{column}}: chybí uzavírací uvozovka. Opravte CSV a import opakujte.",
       "surplusCells": "Řádek {{row}}: za posledním sloupcem {{column}} jsou další hodnoty. Opravte oddělovače nebo uvozovky.",
-      "duplicateHeader": "Řádek 1, sloupec {{column}} je uveden vícekrát (i pod jiným názvem). Ponechte jej jen jednou."
+      "duplicateHeader": "Řádek 1, sloupec {{column}} je uveden vícekrát (i pod jiným názvem). Ponechte jej jen jednou.",
+      "invalidText": "Řádek {{row}}, sloupec {{column}}: text musí mít 1 až 200 znaků.",
+      "invalidLine": "Sloupec polozky, položka {{item}}: zkontrolujte název a SKU (nejvýše 200 znaků) a desetinné množství a částku."
     }
   }
 }

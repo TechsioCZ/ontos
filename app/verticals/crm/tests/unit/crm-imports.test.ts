@@ -120,6 +120,58 @@ const order = (state: CrmState, externalId: string, source = 'E-shop') => {
 };
 
 describe('CRM order CSV parser', () => {
+  it('rejects every overlong destination text field with a bounded column error', () => {
+    const columns = [
+      'zdroj',
+      'id_objednavky',
+      'stav',
+      'cislo_objednavky',
+      'id_zakaznika',
+      'nazev_zakaznika',
+      'ico_zakaznika',
+      'email_zakaznika',
+      'id_udalosti',
+    ];
+    for (const column of columns) {
+      const header = [...new Set(['zdroj', 'id_objednavky', 'stav', column])];
+      const cells = header.map((key) => (key === column ? 'x'.repeat(4001) : 'valid'));
+      const parsed = parseOrdersCsv(`${header.join(';')}\n${cells.join(';')}\n`);
+      const rejected = parsed.rows[0];
+      expect(rejected).toMatchObject({ kind: 'error', row: 2 });
+      if (rejected?.kind === 'error') {
+        expect(rejected.message).toContain(column);
+        expect(rejected.message.length).toBeLessThan(300);
+        expect(rejected.externalId).not.toBe('x'.repeat(4001));
+      }
+    }
+  });
+  it('rejects overlong line names and SKUs without echoing their contents', () => {
+    for (const line of [`SKU:${'x'.repeat(4001)}:1`, `${'x'.repeat(4001)}:Name:1`]) {
+      const parsed = parseOrdersCsv(`source;order_id;status;lines\nE-shop;1;nova;${line}\n`);
+      expect(parsed.rows[0]).toMatchObject({ kind: 'error', row: 2 });
+      const rejected = parsed.rows[0];
+      expect(rejected?.kind === 'error' ? rejected.message : '').toContain('polozky');
+      expect(rejected?.kind === 'error' ? rejected.message.length : 0).toBeLessThan(300);
+    }
+  });
+  it.effect('persists valid boundary-length rows beside rejected rows without corrupting CRM state', () =>
+    Effect.gen(function* boundedRowValidation() {
+      const name = 'x'.repeat(200);
+      const state = yield* runOk(base, {
+        _tag: 'ImportOrdersCsv',
+        csv: `source;order_id;status;customer_name;lines\nE-shop;valid;nova;${name};SKU:${name}:1\nE-shop;bad;nova;${name}x;\n`,
+        fileName: 'text-boundaries.csv',
+      });
+      const persisted = yield* Schema.encodeEffect(CrmStateSchema)(state).pipe(
+        Effect.flatMap(Schema.decodeEffect(CrmStateSchema)),
+      );
+      expect(persisted.imports.batches[0]).toMatchObject({ accepted: 1, rejected: 1 });
+      expect(persisted.imports.orders).toHaveLength(1);
+      expect(order(persisted, 'valid').customerName).toBe(name);
+      expect(order(persisted, 'valid').lines?.[0]?.name).toBe(name);
+      return yield* Effect.void;
+    }),
+  );
   it('refuses an unterminated quote instead of absorbing later orders', () => {
     const parsed = parseOrdersCsv('zdroj;id_objednavky;stav\nE-shop;1;"nova\nE-shop;2;paid\n');
     expect(parsed.fileError).toContain('Řádek 2, sloupec 3');
