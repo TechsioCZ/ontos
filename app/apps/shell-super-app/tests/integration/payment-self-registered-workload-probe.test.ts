@@ -206,6 +206,10 @@ const paymentContract = (options: { readonly a8Operation: boolean; readonly self
                 entrypoint: actionEntrypoint(a8Key),
                 operationKey: a8OperationKey,
                 schemaVersion: '1',
+                workloadCarrier: {
+                  declarationKey: a8AccessDeclaration.key,
+                  workloads: a8AccessWorkload.workloads,
+                },
               },
             ]
           : [],
