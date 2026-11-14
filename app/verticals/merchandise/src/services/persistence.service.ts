@@ -1670,7 +1670,12 @@ const editedOrderLines = Effect.fn('Merchandise.editedOrderLines')(function* edi
   incoming: readonly EditLineRequest[],
   input: MerchandiseCommandInput,
 ) {
-  const previous = new Map(existing.lines.map((line) => [lineKey(line), line] as const));
+  const previous = new Map<string, OrderLine>();
+  for (const line of existing.lines) {
+    const key = lineKey(line);
+    const quantity = (previous.get(key)?.quantity ?? 0) + line.quantity;
+    previous.set(key, { ...line, quantity });
+  }
   const seen = new Set<string>();
   return yield* Effect.forEach(
     incoming,

@@ -575,3 +575,42 @@ it.effect('uses the stored base gross below the first discount break for product
     }
   }),
 );
+
+it.effect('sums duplicate original lines for the edit stock allowance without allowing overselling', () =>
+  Effect.gen(function* duplicateEditAllowance() {
+    const stocked = yield* seeded;
+    const placed = yield* apply(stocked, guestOrder(), 'duplicate-order');
+    const duplicated: MerchandiseState = {
+      ...placed.state,
+      orders: placed.state.orders.map((order) => ({
+        ...order,
+        lines: order.lines.flatMap((line) => [
+          { ...line, quantity: 1 },
+          { ...line, quantity: 1 },
+        ]),
+      })),
+    };
+    const edited = yield* apply(
+      duplicated,
+      {
+        _tag: 'EditOrder',
+        id: 'duplicate-order',
+        lines: [{ productId: 'p1', quantity: 10, variantId: 'u1-v1' }],
+      },
+      'use-full-stock',
+    );
+    expect(edited.state.orders[0]?.lines).toHaveLength(1);
+    expect(edited.state.orders[0]?.lines[0]?.quantity).toBe(10);
+    expect(edited.state.movements.at(-1)?.delta).toBe(-8);
+    const refused = yield* apply(
+      duplicated,
+      {
+        _tag: 'EditOrder',
+        id: 'duplicate-order',
+        lines: [{ productId: 'p1', quantity: 11, variantId: 'u1-v1' }],
+      },
+      'exceed-full-stock',
+    ).pipe(Effect.flip);
+    expect(isConflict(refused)).toBe(true);
+  }),
+);
