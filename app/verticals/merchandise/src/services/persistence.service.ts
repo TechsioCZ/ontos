@@ -142,6 +142,7 @@ import type {
   TaxRatesDecision,
 } from './tax-rates.ts';
 import { baseGrossOf, grossForQuantity } from '../../shared/domain/unit-price.ts';
+import type { BasePriced } from '../../shared/domain/unit-price.ts';
 import { CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import { realVariantsOf, stockLevelsOf, stockOnHandOf, toProductRecord, variantStockOf } from './stock-levels.ts';
@@ -1698,6 +1699,23 @@ const validateEditedStorefrontQuantity = Effect.fn('Merchandise.validateEditedSt
   },
 );
 
+/**
+ * The CZK gross a line staff add to a gross-priced order is charged: what the storefront sells this quantity at (the
+ * break it reaches, else the base gross; an untiered unit without a stored gross is its net plus VAT at the line's
+ * rate). It refuses exactly where the storefront refuses: a tiered unit with no price for this quantity.
+ */
+const addedLineGrossOf = (priced: BasePriced, net: number, rate: number, quantity: number, sku: string) => {
+  const gross = grossForQuantity(priced, net, rate, quantity);
+  return gross === undefined
+    ? Effect.fail(
+        new MerchandiseLifecycleConflict({
+          code: 'merchandise_lifecycle_conflict',
+          reason: `Produkt ${sku} nemá pro množství ${String(quantity)} cenu s DPH.`,
+        }),
+      )
+    : Effect.succeed(gross);
+};
+
 /** A line an order edit adds, priced as a new line of this order (and checked against the price the editor offered). */
 const addedOrderLine = Effect.fn('Merchandise.addedOrderLine')(function* addedOrderLine(
   state: MerchandiseState,
@@ -1712,12 +1730,10 @@ const addedOrderLine = Effect.fn('Merchandise.addedOrderLine')(function* addedOr
   }
   const tax = yield* lineTaxOf(input, product);
   const netPrice = variant?.priceMinor ?? product.currentPriceMinor;
-  // A gross-priced order takes the price the storefront sells this quantity at (the break it reaches, else the base
-  // gross); only a unit without either is priced from its net at the line's rate, as the editor offered it.
+  const sku = variant?.sku ?? product.sku;
   const czkPrice =
     existing.pricesIncludeVat === true
-      ? (grossForQuantity(variant ?? product, netPrice, tax.vatRate, request.quantity) ??
-        grossUnitPriceMinor(netPrice, tax.vatRate))
+      ? yield* addedLineGrossOf(variant ?? product, netPrice, tax.vatRate, request.quantity, sku)
       : netPrice;
   // A market order keeps its own price list (snapshot on the order) for lines added later.
   const currentPrice = existing.market === undefined ? czkPrice : convertGrossMinor(czkPrice, existing.market);
@@ -1729,14 +1745,14 @@ const addedOrderLine = Effect.fn('Merchandise.addedOrderLine')(function* addedOr
   ) {
     return yield* new MerchandiseLifecycleConflict({
       code: 'merchandise_offered_price_changed',
-      reason: `Cena produktu ${variant?.sku ?? product.sku} se mezitím změnila; uložte řádek s aktuální cenou.`,
+      reason: `Cena produktu ${sku} se mezitím změnila; uložte řádek s aktuální cenou.`,
     });
   }
   return {
     productId: product.id,
     productName: product.name,
     quantity: normalizeQuantity(request.quantity),
-    sku: variant?.sku ?? product.sku,
+    sku,
     unitPriceMinor: request.unitPriceMinor ?? currentPrice,
     ...variantFields(variant?.id, variant?.name),
     ...tax,

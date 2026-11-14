@@ -119,6 +119,8 @@
           "productsFailed": "Produkty se nepodařilo načíst.",
           "variant": "Varianta",
           "variantPlaceholder": "Vyberte variantu",
+          "noPriceForQuantity": "Pro toto množství produkt nemá cenu s DPH. Zadejte množství, od kterého platí jeho množstevní cena.",
+          "noPriceAtMinimum": "Produkt nemá cenu s DPH pro nejmenší prodejní množství, proto ho do objednávky s cenami s DPH nelze přidat.",
           "errorVariant": "Vyberte variantu produktu.",
           "productLoading": "Načítám produkt…",
           "productFailed": "Produkt se nepodařilo načíst. Vyberte ho znovu."

@@ -119,6 +119,8 @@
           "productsFailed": "Products could not be loaded.",
           "variant": "Variant",
           "variantPlaceholder": "Choose a variant",
+          "noPriceForQuantity": "The product has no price including VAT for this quantity. Enter a quantity from which its quantity price applies.",
+          "noPriceAtMinimum": "The product has no price including VAT for its smallest sales quantity, so it cannot be added to an order priced with VAT.",
           "errorVariant": "Choose the product variant.",
           "productLoading": "Loading the product…",
           "productFailed": "The product could not be loaded. Pick it again."

@@ -184,6 +184,39 @@ it.effect('an added gross-priced line takes the quantity break it reaches, as th
   }),
 );
 
+it.effect('an added gross-priced line is refused exactly where the storefront has no price for its quantity', () =>
+  Effect.gen(function* unpricedBelowBreak() {
+    const state = yield* seeded;
+    // The mug sold only from ten (no price of its own, no tier from one): the storefront refuses nine, so does staff.
+    const breakOnly: MerchandiseState = {
+      ...state,
+      products: state.products.map((product) => {
+        if (product.id !== 'p2') {
+          return product;
+        }
+        const { grossPriceMinor: _entered, ...unpriced } = product;
+        void _entered;
+        return {
+          ...unpriced,
+          priceTiers: [{ minimumQuantity: 10, priceExcludingVatMinor: 10_744, priceMinor: 13_000 }],
+        };
+      }),
+    };
+    const refused = yield* editOf(
+      breakOnly,
+      [existingLine, { offeredUnitPriceMinor: 12_100, productId: 'p2', quantity: 9 }],
+      'edit-unpriced',
+    ).pipe(Effect.flip);
+    expect(Schema.is(MerchandiseLifecycleConflict)(refused)).toBe(true);
+    const atBreak = yield* editOf(
+      breakOnly,
+      [existingLine, { offeredUnitPriceMinor: 13_000, productId: 'p2', quantity: 10 }],
+      'edit-at-break',
+    );
+    expect(linesOf(atBreak.state)?.[1]).toEqual(['MUG', 13_000, 21]);
+  }),
+);
+
 it.effect('a price that changed between picking and saving refuses the edit instead of storing another price', () =>
   Effect.gen(function* changed() {
     const state = yield* seeded;
