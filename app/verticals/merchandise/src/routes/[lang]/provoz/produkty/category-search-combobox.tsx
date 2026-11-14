@@ -28,6 +28,8 @@ export interface CategorySearchComboboxProps {
   /** An extra first option that picks no category (the list filter's „all categories“). */
   readonly allLabel?: string;
   readonly errorMessage: string;
+  /** A field message (a form's validation) shown under the field instead of the „more matches“ hint. */
+  readonly helpText?: string;
   /** The label is for assistive tech only (filter rows whose controls carry no visible label). */
   readonly hiddenLabel?: boolean;
   readonly id: string;
@@ -38,10 +40,12 @@ export interface CategorySearchComboboxProps {
   readonly noResultsMessage: string;
   readonly onSelect: (category: CategoryTrail | null) => void;
   readonly placeholder: string;
+  readonly required?: boolean;
   readonly retryLabel: string;
   /** The picked category, so the closed field keeps showing its path. */
   readonly selected: CategoryTrail | null;
   readonly size?: 'sm';
+  readonly validateStatus?: 'default' | 'error';
 }
 
 const categoryItems = (
@@ -56,6 +60,18 @@ const categoryItems = (
     : [{ id: selected.id, label: selected.trail, value: selected.id }]),
   ...found.map((category) => ({ id: category.id, label: category.trail, value: category.id })),
 ];
+
+/** What the open list shows for the newest search: loading, failed, or its matches (kept while a newer one runs). */
+const searchView = (answer: SearchAnswer | null, request: string, open: boolean) => {
+  const loading = open && answer?.request !== request;
+  const ready = answer?.status === 'ready' ? answer : undefined;
+  return {
+    failed: !loading && answer?.status === 'error',
+    found: ready?.matches ?? NO_MATCHES,
+    loading,
+    total: ready?.total ?? 0,
+  };
+};
 
 const categoryValue = (selected: CategoryTrail | null, allLabel: string | undefined) => {
   if (selected !== null) {
@@ -72,6 +88,7 @@ const categoryValue = (selected: CategoryTrail | null, allLabel: string | undefi
 export const CategorySearchCombobox = ({
   allLabel,
   errorMessage,
+  helpText,
   hiddenLabel = false,
   id,
   label,
@@ -80,9 +97,11 @@ export const CategorySearchCombobox = ({
   noResultsMessage,
   onSelect,
   placeholder,
+  required,
   retryLabel,
   selected,
   size,
+  validateStatus = 'default',
 }: CategorySearchComboboxProps) => {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState('');
@@ -110,12 +129,9 @@ export const CategorySearchCombobox = ({
     };
   }, [open, query, request]);
 
-  const loading = open && answer?.request !== request;
-  const failed = !loading && answer?.status === 'error';
-  // While a newer search runs, the previous matches stay listed.
-  const found = answer?.status === 'ready' ? answer.matches : NO_MATCHES;
-  const total = answer?.status === 'ready' ? answer.total : 0;
+  const { failed, found, loading, total } = searchView(answer, request, open);
   const items = categoryItems(allLabel, selected, found);
+  const hint = helpText ?? (total > found.length ? moreMessage(found.length, total) : undefined);
 
   return (
     <>
@@ -129,7 +145,7 @@ export const CategorySearchCombobox = ({
         clearable={false}
         error={failed ? errorMessage : undefined}
         filterBehavior="external"
-        {...(total > found.length ? { helpText: moreMessage(found.length, total) } : {})}
+        {...(hint === undefined ? {} : { helpText: hint })}
         id={id}
         items={items}
         {...(hiddenLabel ? {} : { label })}
@@ -153,9 +169,11 @@ export const CategorySearchCombobox = ({
         onRetry={() => setAttempt((current) => current + 1)}
         openOnClick
         placeholder={placeholder}
+        required={required === true}
         retryLabel={retryLabel}
         {...(size === undefined ? {} : { size })}
         translations={comboboxTranslations}
+        validateStatus={validateStatus}
         value={categoryValue(selected, allLabel)}
       />
     </>

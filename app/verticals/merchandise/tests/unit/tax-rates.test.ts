@@ -26,7 +26,7 @@ import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 
 import { TaxRuleRevisionIdSchema } from '../../shared/domain/merchandise-model.ts';
-import { grossPriceOf } from '../../src/services/stock-levels.ts';
+import { baseGrossOf } from '../../shared/domain/unit-price.ts';
 import {
   TaxRateSource,
   TaxRatesFailure,
@@ -162,21 +162,22 @@ it('other modules apply the same rule to the staff response', () => {
 
 it('a stored gross price is the price; it is derived from the net only when nothing is stored', () => {
   // As on stage: off by one, off by a lot, and 0 beside a net price. A rate never moves any of them.
-  expect(grossPriceOf({ grossPriceMinor: 1211 }, 1000, 21)).toBe(1211);
-  expect(grossPriceOf({ grossPriceMinor: 1_062_380 }, 1_878_000, 21)).toBe(1_062_380);
-  expect(grossPriceOf({ grossPriceMinor: 0 }, 500, 21)).toBe(0);
-  // The first tier wins over the stored gross; with nothing stored the net gets VAT at the rate given.
+  expect(baseGrossOf({ grossPriceMinor: 1211 }, 1000, 21)).toBe(1211);
+  expect(baseGrossOf({ grossPriceMinor: 1_062_380 }, 1_878_000, 21)).toBe(1_062_380);
+  expect(baseGrossOf({ grossPriceMinor: 0 }, 500, 21)).toBe(0);
+  // The gross entered with the net is the price below the first break, whatever a tier says (a tier at the
+  // minimum is charged as that tier); with nothing stored the net gets VAT at the rate given.
   expect(
-    grossPriceOf(
+    baseGrossOf(
       { grossPriceMinor: 999, priceTiers: [{ minimumQuantity: 1, priceExcludingVatMinor: 1000, priceMinor: 1210 }] },
       1000,
       21,
     ),
-  ).toBe(1210);
-  expect(grossPriceOf({}, 49_000, 12)).toBe(54_880);
+  ).toBe(999);
+  expect(baseGrossOf({}, 49_000, 12)).toBe(54_880);
   // A classification without a rule has no rate: nothing stored, no price, never one at 0 %.
   const noRule = sellableRatesAt(testTaxBook({}), NOW)['cz.vat.standard'];
-  expect(grossPriceOf({}, 49_000, noRule)).toBeUndefined();
+  expect(baseGrossOf({}, 49_000, noRule)).toBeUndefined();
 });
 
 const scopeOf = (tenantId: string): OperationalScope => ({

@@ -31,8 +31,13 @@ type ProblemOf<Tag extends ManageCatalogActionProblem['_tag']> = Extract<
 type DomainProblemIdentity =
   | {
       readonly code:
+        | 'merchandise_category_slug_taken'
         | 'merchandise_lifecycle_conflict'
         | 'merchandise_offered_price_changed'
+        | 'merchandise_stock_reconciliation_required'
+        | 'merchandise_tier_base_price_required'
+        | 'merchandise_variant_bulk_price_unsupported'
+        | 'merchandise_variant_sku_required'
         | 'merchandise_revision_conflict';
       readonly kind: 'conflict';
     }
@@ -59,8 +64,13 @@ const problemStatus = {
 } as const;
 
 const merchandiseLifecycleConflictProblemByCode = {
+  merchandise_category_slug_taken: { code: 'merchandise_category_slug_taken', kind: 'conflict' },
   merchandise_lifecycle_conflict: { code: 'merchandise_lifecycle_conflict', kind: 'conflict' },
   merchandise_offered_price_changed: { code: 'merchandise_offered_price_changed', kind: 'conflict' },
+  merchandise_stock_reconciliation_required: { code: 'merchandise_stock_reconciliation_required', kind: 'conflict' },
+  merchandise_tier_base_price_required: { code: 'merchandise_tier_base_price_required', kind: 'conflict' },
+  merchandise_variant_bulk_price_unsupported: { code: 'merchandise_variant_bulk_price_unsupported', kind: 'conflict' },
+  merchandise_variant_sku_required: { code: 'merchandise_variant_sku_required', kind: 'conflict' },
 } as const satisfies Record<
   Extract<DomainError, { readonly _tag: 'MerchandiseLifecycleConflict' }>['code'],
   DomainProblemIdentity

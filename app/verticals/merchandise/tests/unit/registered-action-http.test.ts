@@ -1,3 +1,5 @@
+import { MerchandiseLifecycleConflict } from '../../shared/errors/merchandise-lifecycle-conflict.ts';
+import { ManageCatalogActionConflictProblemSchema } from '../../shared/apis/manage-catalog-action.ts';
 import { mapReviewOrderChangesActionProblem } from '../../api/review-order-changes-action-problems.ts';
 import { mapProposeOrderChangesActionProblem } from '../../api/propose-order-changes-action-problems.ts';
 import { mapPlaceStorefrontOrderActionProblem } from '../../api/place-storefront-order-action-problems.ts';
@@ -132,3 +134,20 @@ it('all actual Merchandise domain problem mappers retain the declared 503 withou
     expect(problem.detail).not.toContain('unsafe');
   }
 });
+
+for (const code of [
+  'merchandise_stock_reconciliation_required',
+  'merchandise_variant_bulk_price_unsupported',
+  'merchandise_variant_sku_required',
+  'merchandise_category_slug_taken',
+  'merchandise_tier_base_price_required',
+] as const) {
+  it(`preserves the actionable ${code} refusal across the typed HTTP problem boundary`, () => {
+    const failure = new MerchandiseLifecycleConflict({ code, reason: 'private owner detail' });
+    expect(Schema.is(MerchandiseLifecycleConflict)(failure)).toBe(true);
+    const problem = mapManageCatalogActionProblem(failure);
+    expect(Schema.is(ManageCatalogActionConflictProblemSchema)(problem)).toBe(true);
+    expect(problem).toMatchObject({ code, status: 409 });
+    expect(problem.detail).not.toContain(failure.reason);
+  });
+}

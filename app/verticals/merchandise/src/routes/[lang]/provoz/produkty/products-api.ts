@@ -52,6 +52,11 @@ const FailureReasonSchema = Schema.Literals([
   'invalid',
   'not-found',
   'rejected',
+  'stock-reconciliation-required',
+  'variant-bulk-price-unsupported',
+  'variant-sku-required',
+  'category-slug-taken',
+  'tier-base-price-required',
   RELOAD_REQUIRED,
   'unavailable',
 ]);
@@ -112,7 +117,24 @@ const commandReason = (error: CommandFailure): FailureReason =>
       'CleanupDemoActionConflictProblem',
       'ChangeProductImagesActionConflictProblem',
       'RecordStockMovementActionConflictProblem',
-      (problem): FailureReason => (problem.code === 'merchandise_lifecycle_conflict' ? 'rejected' : 'conflict'),
+      (problem): FailureReason => {
+        if (problem.code === 'merchandise_tier_base_price_required') {
+          return 'tier-base-price-required';
+        }
+        if (problem.code === 'merchandise_category_slug_taken') {
+          return 'category-slug-taken';
+        }
+        if (problem.code === 'merchandise_variant_sku_required') {
+          return 'variant-sku-required';
+        }
+        if (problem.code === 'merchandise_variant_bulk_price_unsupported') {
+          return 'variant-bulk-price-unsupported';
+        }
+        if (problem.code === 'merchandise_stock_reconciliation_required') {
+          return 'stock-reconciliation-required';
+        }
+        return problem.code === 'merchandise_lifecycle_conflict' ? 'rejected' : 'conflict';
+      },
     ),
     Match.tag(
       'ApplyCommandActionIneligibleProblem',

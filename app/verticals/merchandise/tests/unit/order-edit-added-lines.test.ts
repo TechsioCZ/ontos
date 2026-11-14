@@ -1,7 +1,7 @@
 // A line an order edit adds, priced by the server exactly as the editor offered it: the edit carries the offered price,
 // the server prices the line as new and stores that price, and it refuses the edit when the price changed between
-// picking the product and saving. Covered for a variant, a tiered (first-tier) price, a market order's own currency,
-// a price staff typed over and then restored, and a line removed and added again in the same edit.
+// picking the product and saving. Covered for a variant, a tiered price (the break the quantity reaches), a market
+// order's own currency, a price staff typed over and then restored, and a line removed and added again in the same edit.
 import { DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -161,6 +161,62 @@ it.effect('an added variant and an added tiered product keep the price the edito
   }),
 );
 
+it.effect('an added gross-priced line takes the quantity break it reaches, as the storefront would charge it', () =>
+  Effect.gen(function* addedAtBreak() {
+    const state = yield* seeded;
+    for (const [quantity, price] of [
+      [9, 15_000],
+      [10, 13_000],
+    ] as const) {
+      const edited = yield* editOf(
+        state,
+        [existingLine, { offeredUnitPriceMinor: price, productId: 'p2', quantity }],
+        `edit-break-${String(quantity)}`,
+      );
+      expect(linesOf(edited.state)?.[1]).toEqual(['MUG', price, 21]);
+    }
+    // The first tier's price offered for ten mugs is no longer what they cost.
+    expect(
+      yield* conflictReason(
+        editOf(state, [existingLine, { offeredUnitPriceMinor: 15_000, productId: 'p2', quantity: 10 }], 'edit-stale'),
+      ),
+    ).toContain('Cena produktu MUG se mezitím změnila');
+  }),
+);
+
+it.effect('an added gross-priced line is refused exactly where the storefront has no price for its quantity', () =>
+  Effect.gen(function* unpricedBelowBreak() {
+    const state = yield* seeded;
+    // The mug sold only from ten (no price of its own, no tier from one): the storefront refuses nine, so does staff.
+    const breakOnly: MerchandiseState = {
+      ...state,
+      products: state.products.map((product) => {
+        if (product.id !== 'p2') {
+          return product;
+        }
+        const { grossPriceMinor: _entered, ...unpriced } = product;
+        void _entered;
+        return {
+          ...unpriced,
+          priceTiers: [{ minimumQuantity: 10, priceExcludingVatMinor: 10_744, priceMinor: 13_000 }],
+        };
+      }),
+    };
+    const refused = yield* editOf(
+      breakOnly,
+      [existingLine, { offeredUnitPriceMinor: 12_100, productId: 'p2', quantity: 9 }],
+      'edit-unpriced',
+    ).pipe(Effect.flip);
+    expect(Schema.is(MerchandiseLifecycleConflict)(refused)).toBe(true);
+    const atBreak = yield* editOf(
+      breakOnly,
+      [existingLine, { offeredUnitPriceMinor: 13_000, productId: 'p2', quantity: 10 }],
+      'edit-at-break',
+    );
+    expect(linesOf(atBreak.state)?.[1]).toEqual(['MUG', 13_000, 21]);
+  }),
+);
+
 it.effect('a price that changed between picking and saving refuses the edit instead of storing another price', () =>
   Effect.gen(function* changed() {
     const state = yield* seeded;
@@ -303,5 +359,54 @@ it.effect('a line added back with the same quantity and price still takes the VA
     const [line] = edited.state.orders[0]?.lines ?? [];
     expect([line?.unitPriceMinor, line?.vatRate, line?.taxClassificationCode]).toEqual([28_900, 12, 'cz.vat.reduced']);
     expect(edited.state.orders[0]?.history?.at(-1)?.after).toContain('DPH 12 %');
+  }),
+);
+
+it.effect('replaces a same-named variant at the same price and reconciles its own stock', () =>
+  Effect.gen(function* sameDescriptionReplacement() {
+    const current = yield* seeded;
+    const sameNames: MerchandiseState = {
+      ...current,
+      products: current.products.map((product) => ({
+        ...product,
+        variants: product.variants?.map((variant) => ({ ...variant, name: '250 g' })),
+      })),
+    };
+    const edited = yield* editOf(
+      sameNames,
+      [{ productId: 'p1', quantity: 2, unitPriceMinor: 28_900, variantId: 'u1-v2' }],
+      'replace-same-description',
+    );
+    expect(edited.state.orders[0]?.lines[0]?.variantId).toBe('u1-v2');
+    expect(edited.state.movements.slice(-2).map((movement) => [movement.variantId, movement.delta])).toEqual([
+      ['u1-v1', 2],
+      ['u1-v2', -2],
+    ]);
+    const unchanged = yield* editOf(
+      edited.state,
+      [{ productId: 'p1', quantity: 2, variantId: 'u1-v2' }],
+      'repeat-same-lines',
+    );
+    expect(unchanged.state).toBe(edited.state);
+  }),
+);
+
+it.effect('retains a refreshed Tax rule even when the displayed VAT rate stays the same', () =>
+  Effect.gen(function* sameRateNewRevision() {
+    const current = yield* seeded;
+    const withoutRevision: MerchandiseState = {
+      ...current,
+      orders: current.orders.map((order) => ({
+        ...order,
+        lines: order.lines.map(({ taxRuleRevisionId: _oldRevision, ...line }) => line),
+      })),
+    };
+    const edited = yield* editOf(
+      withoutRevision,
+      [{ ...existingLine, offeredUnitPriceMinor: 28_900 }],
+      'refresh-rule-only',
+    );
+    expect(edited.state.orders[0]?.lines[0]?.taxRuleRevisionId).toBeDefined();
+    expect(edited.state.orders[0]?.history?.at(-1)?.kind).toBe('LINES');
   }),
 );

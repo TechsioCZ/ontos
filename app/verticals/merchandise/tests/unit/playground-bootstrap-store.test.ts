@@ -247,3 +247,22 @@ it.effect('rejects malformed native products and opening movements as typed boot
     }
   }),
 );
+
+it.effect('normalizes native product and variant stock columns with the same precision as the ledger', () =>
+  Effect.gen(function* nativeStockPrecision() {
+    const product = Schema.decodeUnknownSync(ProductSchema)(variantProduct);
+    const projected = yield* productRowsOf(
+      scope,
+      product,
+      {
+        total: 0.3 - 0.1,
+        variants: new Map([['variant-m6', 0.3 - 0.1]]),
+      },
+      TEST_RATES,
+      {},
+    );
+    expect(projected.row.stockOnHand).toBe(0.2);
+    expect(projected.variants[0]?.stockOnHand).toBe(0.2);
+    return yield* Effect.void;
+  }),
+);
