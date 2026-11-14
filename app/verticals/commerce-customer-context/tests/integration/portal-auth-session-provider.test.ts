@@ -22,7 +22,7 @@ import { TestClock } from 'effect/testing';
 import { randomUUID } from 'node:crypto';
 
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
-import type { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import type { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database-service.ts';
 import { rateLimit, session, user, verification } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import { portalAuthAuditEvent } from '../../src/portal-auth/audit/audit-tables.ts';
 import { makeCommercePortalAuth } from '../../api/portal-auth/provider/auth.ts';

@@ -45,10 +45,8 @@ import {
   commerceEnrollmentOwnerAttemptStoreForRun,
 } from '../../src/enrollment/orchestration/owner-transition-production.ts';
 import { CommercePortalAuthAccountLookupLive } from '../../src/portal-auth/persistence/portal-auth-account-lookup.ts';
-import {
-  CommercePortalAuthDatabase,
-  makeCommercePortalAuthDatabase,
-} from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database-service.ts';
 import { user } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import { portalEnrollmentAttempts, portalEnrollmentOwnerOperations } from '../../src/database/schema.ts';
 import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';

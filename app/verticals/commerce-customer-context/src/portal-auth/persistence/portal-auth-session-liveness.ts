@@ -4,7 +4,7 @@ import { Hex } from 'effect/encoding';
 
 import { CommercePortalAuthSessionReadUnavailable } from '../../../api/portal-auth/provider/session-read-unavailable.ts';
 import { encodeCommerceSessionReference } from '../../../api/portal-auth/provider/session-reference.ts';
-import { CommercePortalAuthDatabase } from './portal-auth-database.ts';
+import { CommercePortalAuthDatabase } from './portal-auth-database-service.ts';
 import { session, user } from './portal-auth-tables.ts';
 
 /**

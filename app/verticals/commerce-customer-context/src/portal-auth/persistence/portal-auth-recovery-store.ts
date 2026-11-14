@@ -22,7 +22,7 @@ import type { CommercePortalAuthAuditEvent } from '../audit/audit-contracts.ts';
 import type { CommercePortalAuthDatabaseTransaction } from '../audit/audit-transaction.ts';
 import { writeCommercePortalAuthAuditRow } from '../audit/audit-transaction.ts';
 import { CommercePortalAuthAuditUnavailable } from '../audit/audit-unavailable.ts';
-import { CommercePortalAuthDatabase } from './portal-auth-database.ts';
+import { CommercePortalAuthDatabase } from './portal-auth-database-service.ts';
 import type { CommercePortalAuthDatabaseExecutor } from './portal-auth-database-types.ts';
 import { rateLimit, recoveryReconciliation, recoveryResetLedger, user, verification } from './portal-auth-tables.ts';
 

@@ -44,10 +44,8 @@ import {
 } from '../../api/portal-auth/session/lifecycle.ts';
 import { makeCommercePortalAuthSessionProvider } from '../../api/portal-auth/session/provider.ts';
 import { CommercePortalAuthAudit, unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
-import {
-  makeCommercePortalAuthDatabase,
-  CommercePortalAuthDatabase,
-} from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database-service.ts';
 import { CommercePortalAuthAccountLookupLive } from '../../src/portal-auth/persistence/portal-auth-account-lookup.ts';
 import { makeCommercePortalAuthSessionStore } from '../../src/portal-auth/persistence/portal-auth-session-store.ts';
 import { user, verification } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
