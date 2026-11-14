@@ -11,6 +11,7 @@ import { Reactivity } from 'effect/reactivity';
 
 import { accessReleaseActivationArguments } from './access-release-activation-child.mts';
 import { OwnerMigrationPlanner, OwnerMigrationPlannerLive } from './application-migration-pending.mts';
+import { timedBootStage } from './zerops/boot-stage-timing.mts';
 import { loadOptionalCommercePortalAuthDatabaseConfig } from '../verticals/commerce-customer-context/scripts/portal-auth-database-config.mts';
 
 const appDirectory = fileURLToPath(new URL('../', import.meta.url));
@@ -217,6 +218,7 @@ const activateAccessRelease = Effect.scoped(
       `ACCESS CATALOG RELEASE ACTIVATION FAILED (${error.message}); authorization stays at the previous release until the next activation`,
     ),
   ),
+  timedBootStage('migrator.access-release-activation'),
 );
 
 const ownerMigrations = Effect.gen(function* ownerMigrationsEffect() {
@@ -262,16 +264,20 @@ const ownerMigrations = Effect.gen(function* ownerMigrationsEffect() {
 const migrations = Effect.gen(function* migrationsEffect() {
   // Validate the optional owner's complete configuration before any migration writes.
   const portalAuthDatabase = yield* loadOptionalCommercePortalAuthDatabaseConfig();
-  yield* runAppScript('scripts/postgres/bootstrap-spicedb-database.mts');
-  yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
-  yield* ownerMigrations;
-  yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
+  yield* runAppScript('scripts/postgres/bootstrap-spicedb-database.mts').pipe(
+    timedBootStage('migrator.spicedb-database-bootstrap'),
+  );
+  yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts').pipe(timedBootStage('migrator.runtime-role'));
+  yield* ownerMigrations.pipe(timedBootStage('migrator.owner-migrations'));
+  yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts').pipe(
+    timedBootStage('migrator.runtime-role-after-migrations'),
+  );
   if (Option.isSome(portalAuthDatabase)) {
     yield* Effect.gen(function* portalAuthDatabaseEffect() {
       yield* migrate('verticals/commerce-customer-context', 'drizzle.portal-auth.config.ts');
       yield* runAppScript('verticals/commerce-customer-context/scripts/bootstrap-portal-auth-runtime-role.mts');
       yield* runAppScript('verticals/commerce-customer-context/scripts/verify-portal-auth-db-schema.mts');
-    });
+    }).pipe(timedBootStage('migrator.portal-auth'));
   }
   return yield* Effect.void;
 }).pipe(Effect.provide(OwnerMigrationPlannerLive(appDirectory).pipe(Layer.provide(Reactivity.layer))));
@@ -284,16 +290,23 @@ const migrations = Effect.gen(function* migrationsEffect() {
  * before anything is published and with the same message as before; the activation is then stopped like any child.
  */
 const verificationAndActivation = Effect.gen(function* verificationAndActivationEffect() {
-  yield* runAppScript(VERIFY_APPLICATION_DATABASE, ['--part=foundation']);
-  return yield* Effect.all([runAppScript(VERIFY_APPLICATION_DATABASE, ['--part=owners']), activateAccessRelease], {
-    concurrency: 2,
-    discard: true,
-  });
+  yield* runAppScript(VERIFY_APPLICATION_DATABASE, ['--part=foundation']).pipe(
+    timedBootStage('migrator.schema-verification-foundation'),
+  );
+  return yield* Effect.all(
+    [
+      runAppScript(VERIFY_APPLICATION_DATABASE, ['--part=owners']).pipe(
+        timedBootStage('migrator.schema-verification-owners'),
+      ),
+      activateAccessRelease,
+    ],
+    { concurrency: 2, discard: true },
+  );
 });
 
 const main = Effect.scoped(
   Effect.gen(function* migratorEffect() {
-    yield* Effect.andThen(migrations, verificationAndActivation);
+    yield* Effect.andThen(migrations, verificationAndActivation).pipe(timedBootStage('migrator.total'));
     if (!(yield* migrateOnce)) {
       yield* serveReadiness(yield* migratorPort);
     }

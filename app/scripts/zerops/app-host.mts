@@ -45,6 +45,7 @@ import {
 } from './supersede-drain.mts';
 import type { DrainPeer, SupersedeDrain } from './supersede-drain.mts';
 import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
+import { bootTimingLine, timedBootStage } from './boot-stage-timing.mts';
 import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
 import {
   earliestExpiryOf,
@@ -1878,6 +1879,7 @@ const recordReleaseAccessStatus = (status: Omit<Parameters<typeof recordReleaseA
 // Host
 
 export const runAppHost = Effect.gen(function* runAppHost() {
+  const hostStarted = yield* Clock.monotonicTimeNanos;
   yield* startProcessObservability('supervisor');
   // First thing: a restart inside this container must know when the container first booted (restartMayPublish).
   const boot = yield* Config.String('ONTOS_APP_HOST_BOOT_MARKER').pipe(
@@ -2187,15 +2189,20 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     yield* withOutboxDeadStartupGate(
       startupDeadOutboxInventory(coreSchemaExists, listDeadOutboxDeliveries(database.executor, { limit: 10 })),
       Effect.void,
-    ).pipe(Effect.mapError((problem) => failure(problem.reason)));
+    ).pipe(
+      Effect.mapError((problem) => failure(problem.reason)),
+      timedBootStage('host.dead-outbox-gate'),
+    );
     yield* Effect.all(
       [
-        runChild('migrator', node, ['scripts/run-zerops-migrator.mjs'], workspaceRoot, { MIGRATOR_ONCE: 'true' }),
-        waitForUnits(units),
+        runChild('migrator', node, ['scripts/run-zerops-migrator.mjs'], workspaceRoot, {
+          MIGRATOR_ONCE: 'true',
+        }).pipe(timedBootStage('host.migrator')),
+        waitForUnits(units).pipe(timedBootStage('host.units-serving')),
       ],
       { concurrency: 'unbounded' },
     );
-    const releaseSnapshot = yield* observeOwners(units, publicOrigin);
+    const releaseSnapshot = yield* observeOwners(units, publicOrigin).pipe(timedBootStage('host.observe-owners'));
     // A process restarted inside a container that a newer release superseded never publishes its old release again.
     const holder = Option.map(EffectArray.head(yield* readAuthority), ({ activatedAtMillis, revision }) => ({
       activatedAtMillis,
@@ -2212,22 +2219,31 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     const release = hostReleaseOf(releaseSnapshot);
     // Keys can only be issued for registrations that exist: the platform registers every module's declared internal
     // workloads first (per tenant and company), so the boot's provisioning keys them in the same pass.
-    yield* registerInternalWorkloads(release);
+    yield* registerInternalWorkloads(release).pipe(timedBootStage('host.register-internal-workloads'));
     // The release access proof and the key issuing run side by side. The proof reads every Tenant that serves people
     // (intent in PostgreSQL, the projection in SpiceDB) after the registrations above, and writes nothing; the issuing
     // writes only the Shell's key store and the platform tenant's module principals, which the proof never reads, and
     // no relationship. The proof's outcome is held until the keys are handed over, as they were before it ran, and a
     // refusal then stops this boot here, before publication, with the same failure.
     const [, releaseAccessProof] = yield* Effect.all(
-      [provisionForRelease(release), Effect.exit(verifyReleaseAccessIntent(releaseSnapshot))],
+      [
+        provisionForRelease(release).pipe(timedBootStage('host.module-credentials')),
+        Effect.exit(
+          verifyReleaseAccessIntent(releaseSnapshot).pipe(timedBootStage('host.release-access-verification')),
+        ),
+      ],
       { concurrency: 2 },
     );
     yield* releaseAccessProof;
-    const revision = yield* publishSnapshot(releaseSnapshot);
+    const revision = yield* publishSnapshot(releaseSnapshot).pipe(timedBootStage('host.publish'));
     // From this commit on Core refuses the old release's governed requests, and the old host relays its public
     // traffic here until the balancer moved (supersede-drain.mts); this one serves at once and reports ready.
-    yield* openPublicPort;
+    yield* openPublicPort.pipe(timedBootStage('host.open-public-port'));
     yield* Ref.set(published, true);
+    const servingAt = yield* Clock.monotonicTimeNanos;
+    yield* Console.log(
+      bootTimingLine('host.start-to-serving', Duration.toMillis(Duration.nanos(servingAt - hostStarted)), 'ok'),
+    );
     yield* drainWhenSuperseded(revision).pipe(Effect.forkChild);
     // Once in-flight delegated calls had time to finish, this host retires its own earlier boots' keys and, as it holds
     // the authority now, the credentials its release superseded. The provisioning program checks the authority row
