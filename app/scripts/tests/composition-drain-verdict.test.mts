@@ -2,11 +2,16 @@
  * The operator's pre-flight verdict and the publisher's give-up message must say what really happens in each
  * authority phase, because an operator acts on them before or during a deploy.
  */
+import { Effect, Fiber, Ref, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
 import { publicationVerdict } from '../../packages/core-runtime/src/outbox/drain-preflight.ts';
 import type { PublicationVerdictInput } from '../../packages/core-runtime/src/outbox/drain-preflight.ts';
-import { abandonedTransitionMessage } from '../application-composition-authority-publication.mts';
+import {
+  abandonedTransitionMessage,
+  retryWhileLockNotAvailable,
+} from '../application-composition-authority-publication.mts';
 
 const noBlockers = { deliveries: 0, durable: 0, unmatched: 0 } as const;
 const quiet = {
@@ -74,4 +79,58 @@ describe('abandoned drained transition message', () => {
     expect(message).not.toContain('draining');
     expect(message).toContain('stays migrated');
   });
+});
+
+/** A refusal carrying a PostgreSQL SQLSTATE, the shape the restore's failure finder reads. */
+class SqlStateRefusal extends Schema.TaggedError<SqlStateRefusal>()('SqlStateRefusal', { code: Schema.String }) {}
+
+const LOCK_NOT_AVAILABLE = new SqlStateRefusal({ code: '55P03' });
+
+/** A restore that is refused `refusals` times with `refusal`, then succeeds; counts its attempts. */
+const refusedRestore = (
+  attempts: Ref.Ref<number>,
+  options: { readonly refusal: SqlStateRefusal; readonly refusals: number },
+) =>
+  Ref.updateAndGet(attempts, (count) => count + 1).pipe(
+    Effect.flatMap((attempt) =>
+      attempt <= options.refusals ? Effect.fail(options.refusal) : Effect.succeed('restored'),
+    ),
+  );
+
+describe('restore of a draining authority while a lock is busy', () => {
+  it.effect('tries the restore again while it only waited for a lock, and then restores', () =>
+    Effect.gen(function* retriesBusyLock() {
+      const attempts = yield* Ref.make(0);
+      const restore = yield* retryWhileLockNotAvailable(
+        refusedRestore(attempts, { refusal: LOCK_NOT_AVAILABLE, refusals: 2 }),
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust('1 minute');
+      expect(yield* Fiber.join(restore)).toBe('restored');
+      expect(yield* Ref.get(attempts)).toBe(3);
+    }),
+  );
+
+  it.effect('gives up after a bounded number of attempts and still reports the lock refusal', () =>
+    Effect.gen(function* boundsBusyLock() {
+      const attempts = yield* Ref.make(0);
+      const restore = yield* retryWhileLockNotAvailable(
+        refusedRestore(attempts, { refusal: LOCK_NOT_AVAILABLE, refusals: 100 }),
+      ).pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust('10 minutes');
+      expect(yield* Fiber.join(restore)).toBe(LOCK_NOT_AVAILABLE);
+      expect(yield* Ref.get(attempts)).toBe(5);
+    }),
+  );
+
+  it.effect('does not retry any other refusal', () =>
+    Effect.gen(function* refusesOnce() {
+      const attempts = yield* Ref.make(0);
+      const unique = new SqlStateRefusal({ code: '23505' });
+      const failure = yield* retryWhileLockNotAvailable(
+        refusedRestore(attempts, { refusal: unique, refusals: 1 }),
+      ).pipe(Effect.flip);
+      expect(failure).toBe(unique);
+      expect(yield* Ref.get(attempts)).toBe(1);
+    }),
+  );
 });

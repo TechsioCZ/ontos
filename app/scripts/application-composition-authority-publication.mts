@@ -20,6 +20,7 @@ import {
 } from 'effect';
 import { isSqlError } from 'effect/sql/SqlError';
 
+import { findPostgresFailure } from '../packages/core-runtime/src/database/postgres-failure.ts';
 import { CoreDatabase, CoreDatabaseLive } from '../packages/core-runtime/src/db/client.ts';
 import type { CoreTransaction } from '../packages/core-runtime/src/db/types.ts';
 import { DatabaseConfig, parseDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
@@ -628,6 +629,29 @@ const failureReason = <Failure,>(failure: Failure): string => {
   return Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : 'The publication failed';
 };
 
+/** PostgreSQL's `lock_not_available`: the restore's `lock_timeout` expired while another session held a lock. */
+const LOCK_NOT_AVAILABLE = '55P03';
+
+/** Four more attempts after the first, from 250 ms apart and doubling: with the 5 s lock timeout, about 30 s at most. */
+const RESTORE_LOCK_RETRIES = 4;
+
+/**
+ * Tries `restore` again while PostgreSQL refuses it only because a lock was not available in time (`55P03`), a bounded
+ * number of times with a short backoff; any other failure, or the last lock refusal, passes through unchanged. Each
+ * attempt is one whole transaction that commits or rolls back, so a retried restore still records its abandonment
+ * exactly once. A caller lifts a SQL error that arrives as a defect into the failure channel first.
+ */
+export const retryWhileLockNotAvailable = <Value, Failure, Requirements>(
+  restore: Effect.Effect<Value, Failure, Requirements>,
+) =>
+  restore.pipe(
+    Effect.retry({
+      schedule: Schedule.exponential('250 millis').pipe(Schedule.upTo({ times: RESTORE_LOCK_RETRIES })),
+      while: (failure: Failure) =>
+        Option.isSome(findPostgresFailure(failure, ({ code }) => code === LOCK_NOT_AVAILABLE)),
+    }),
+  );
+
 const restoreFailed = (why: string): DrainRestoreOutcome => ({
   authorityPhase: 'unknown',
   description: `The authority could not be returned to active (${why}): run \`pnpm composition:abandon-drain\` as described in docs/architecture/DEPLOYMENT.md.`,
@@ -687,10 +711,13 @@ const restoreAfterFailedDrain = Effect.fn('ApplicationCompositionAuthority.resto
         }),
       )
       .pipe(
-        Effect.catch((error) => Effect.succeed(restoreFailed(failureReason(error)))),
-        // A SQL error can arrive as a defect; the restore must still report instead of dying.
-        Effect.catchDefect((defect) =>
-          isSqlError(defect) ? Effect.succeed(restoreFailed('the database refused the restore')) : Effect.die(defect),
+        // A SQL error can arrive as a defect; the restore must still retry or report instead of dying.
+        Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
+        // A lock held a moment too long is no reason to leave the release refusing reads: try the whole transaction
+        // again. Only a committed attempt reports `active`, and only it leaves a ledger row.
+        retryWhileLockNotAvailable,
+        Effect.catch((error) =>
+          Effect.succeed(restoreFailed(isSqlError(error) ? 'the database refused the restore' : failureReason(error))),
         ),
       );
   },
