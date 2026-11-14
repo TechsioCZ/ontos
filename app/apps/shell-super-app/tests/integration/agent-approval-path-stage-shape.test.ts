@@ -1000,6 +1000,33 @@ const stepReport = (input: {
 
 type StepReport = ReturnType<typeof stepReport>;
 
+const connectedRoleFingerprint = fingerprintOf('select current_user::text as role');
+// installActualRole uses this split installation; installOperationalScopeAt includes operation_at and checks the
+// role in its existing statement instead, so it must not earn an allowance for a separate role query.
+const splitScopeInstallationFingerprint = fingerprintOf(
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id",
+);
+const assertOriginalStatementBudget = Effect.fn('test.assertOriginalStatementBudget')(
+  function* assertOriginalStatementBudget(label: string, steps: readonly StepReport[], originalBudget: number) {
+    const fingerprints = steps.flatMap((step) => step.fingerprints);
+    const count = (statement: string) =>
+      fingerprints.reduce((sum, entry) => sum + (entry.statement === statement ? entry.count : 0), 0);
+    const roleQueries = count(connectedRoleFingerprint);
+    const splitScopeInstallations = count(splitScopeInstallationFingerprint);
+    const statements = steps.reduce((sum, step) => sum + step.statements, 0);
+    yield* Effect.logInfo('Stage-shape scope cost', {
+      label,
+      originalBudget,
+      roleQueries,
+      splitScopeInstallations,
+      statements,
+    });
+    expect({ label, roleQueries }).toEqual({ label, roleQueries: splitScopeInstallations });
+    expect(statements - roleQueries).toBeLessThanOrEqual(originalBudget);
+    return roleQueries;
+  },
+);
+
 const measureStep = <A, E, R>(input: {
   readonly admin: PgClient.PgClient;
   readonly authorityCalls: Ref.Ref<readonly AuthorityCall[]>;
@@ -1321,11 +1348,8 @@ const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* meas
     );
   }
   // The counts are written first, so a run that breaks a bound still leaves its numbers.
-  // Scope setup now reads the connected role before installing scope. Only that one extra query per transaction
-  // is allowed above the old budgets; extra owner, authorization or evidence queries still break the fence.
-  const statementsPerScope = 2;
-  const previousStatementsPerScope = 1;
-  const scopeSetupIncrease = (transactions: number) => transactions * (statementsPerScope - previousStatementsPerScope);
+  // Count the actual role queries, not transactions: one transaction may install scope more than once.
+  // After removing only those queries, every route must still meet its original cost fence.
   expect([totalOf(queue, 'transactions'), totalOf(decide, 'transactions'), totalOf(approve, 'transactions')]).toEqual([
     38, 50, 105,
   ]);
@@ -1348,9 +1372,9 @@ const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* meas
   // Q1 asks each carrier and each Action; Q3 asks the Actions again. Q2 is authenticated-only.
   // The merge adds six Customer Context Actions and Party's legacy-IČO fence: 7 × 3 = 21 extra rows.
   expect(totalOf(queue, 'evidenceRows')).toBe(carrierRows + 2 * actionRows);
-  expect(totalOf(queue, 'statements')).toBeLessThanOrEqual(184 + scopeSetupIncrease(38));
-  expect(totalOf(decide, 'statements')).toBeLessThanOrEqual(220 + scopeSetupIncrease(50));
-  expect(totalOf(approve, 'statements')).toBeLessThanOrEqual(463 + scopeSetupIncrease(105));
+  yield* assertOriginalStatementBudget('queue', queue, 184);
+  yield* assertOriginalStatementBudget('decide', decide, 220);
+  yield* assertOriginalStatementBudget('approve', approve, 463);
   // Every step checks a connection out only for its statements: none is held while the request waits on SpiceDB, a
   // module owner or the composition source, and no request holds more than two at once (the gate reads two scopes of
   // a batch side by side, never more), so six connections queue only behind other requests.
@@ -1542,17 +1566,14 @@ const measurePeopleSearch = Effect.fn('test.measurePeopleSearch')(function* meas
   }
   // The counts are written first, so a run that breaks a bound still leaves its numbers. One People search for one
   // surname: three gate decisions (the Shell's admission, the read's list right, the People list right), each with
-  // its own evidence row, two scope resolutions, the index query, the read and its evidence. Each of the 22 scoped
-  // transactions adds only its connected-role query to the old 71 statements and 115 PostgreSQL messages.
-  const scopedTransactions = 22;
-  const additionalStatementsPerScope = 2 - 1;
-  const connectedRoleQueries = scopedTransactions * additionalStatementsPerScope;
+  // its own evidence row, two scope resolutions, the index query, the read and its evidence. Only the observed
+  // connected-role queries are excluded from the original 71 statements and 115 PostgreSQL messages.
   expect(warm.report.pool.heldAcrossRemoteCalls).toEqual([]);
   expect(warm.report.pool.maxConcurrent).toBe(1);
   expect([warm.report.transactions, warm.report.spicedb.calls, warm.report.evidenceRows]).toEqual([22, 5, 3]);
-  expect(warm.report.statements).toBeLessThanOrEqual(71 + connectedRoleQueries);
+  const connectedRoleQueries = yield* assertOriginalStatementBudget('people', [warm.report], 71);
   expect(warm.report.pool.leases).toBeLessThanOrEqual(24);
-  expect(warm.report.pool.roundTrips).toBeLessThanOrEqual(115 + connectedRoleQueries);
+  expect(warm.report.pool.roundTrips - connectedRoleQueries).toBeLessThanOrEqual(115);
   // Ten times the hits, the same work: no question is asked, and no row read, per person found.
   expect([
     many.report.statements,
