@@ -29,7 +29,7 @@ import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
-import { Effect, Option, Predicate, Random, Result, Schema, pipe } from 'effect';
+import { Effect, Option, Predicate, Random, Result, Schema } from 'effect';
 import { useEffect, useId, useRef, useState } from 'react';
 import { canInvoiceSalesOrder, salesRemainder } from '../../../../../shared/commands/sales.ts';
 import type {
@@ -941,24 +941,22 @@ const prepareSalesInvoice = Effect.fn('FacilityOperations.Purchasing.prepareSale
       return yield* Effect.succeed(current);
     }
     const choices = yield* readFinanceVatChoices(issueDate);
-    const lines = yield* pipe(
+    const lines = yield* Effect.forEach(
       order.lines,
-      Effect.forEach(
-        (line) =>
-          salesLineVat({ choices, issueDate, vatRate: line.vatRate }).pipe(
-            Option.match({
-              onNone: () => Effect.fail(new SalesInvoiceVatUnresolved({ orderId: order.id })),
-              onSome: (vat) =>
-                Effect.succeed({
-                  description: line.description,
-                  quantity: line.quantity,
-                  unitPriceMinor: line.unitPriceMinor,
-                  ...vat,
-                }),
-            }),
-          ),
-        { concurrency: 1 },
-      ),
+      (line) =>
+        salesLineVat({ choices, issueDate, vatRate: line.vatRate }).pipe(
+          Option.match({
+            onNone: () => Effect.fail(new SalesInvoiceVatUnresolved({ orderId: order.id })),
+            onSome: (vat) =>
+              Effect.succeed({
+                description: line.description,
+                quantity: line.quantity,
+                unitPriceMinor: line.unitPriceMinor,
+                ...vat,
+              }),
+          }),
+        ),
+      { concurrency: 1 },
     );
     const referenceCredentials = yield* makeReferenceGatewayCredentials(['party-registry']);
     const parts = yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt], { concurrency: 1 });
@@ -1023,7 +1021,7 @@ const invoiceNotCreated = (failure?: InvoiceIssueOutcome['failure']): InvoiceIss
  */
 export interface RetainedSalesInvoices {
   readonly get: (orderId: string) => FinanceInvoiceView | undefined;
-  readonly set: (orderId: string, invoice: FinanceInvoiceView) => unknown;
+  readonly set: (orderId: string, invoice: FinanceInvoiceView) => void;
 }
 
 const SalesInvoiceDatesSchema = Schema.Struct({ dueDate: IsoDateSchema, issueDate: IsoDateSchema });

@@ -8,11 +8,11 @@ import {
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
+import { FormInput } from '@app/admin-ui/form-controls';
 import { withNativeLabels } from '@app/admin-ui/select-template';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import { Effect, Match, Option } from 'effect';
 import { useRef, useState } from 'react';
