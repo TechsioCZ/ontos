@@ -812,6 +812,12 @@ jobs:
   # packages' suites always finished last, so the heaviest packages get a job each: a PR waits for the
   # slowest job, not for the sum of the packages a single job used to run one after another.
   #
+  # Seeding is decided by file, not by job: the files that migrate or recover their own job database from empty
+  # (ci-matrices.json "fresh-database-tests", the seed model's inventory) run only in the Fresh Database rows, from
+  # the complete fresh preparation; the seeded Root, Core Runtime, Party Registry and Customer Context rows leave them
+  # out. Every other integration test uses the job database as it is or derives its own databases from it (a
+  # schema-only clone or an empty database it migrates itself), so the restored seed serves it identically.
+  #
   # Sharding is set by what a package's own files cost, not by package size, aiming at about 6 minutes of tests
   # per row. Weighted shards deal files by the measured seconds in ci-matrices.json "test-weights", so the parts of
   # a split giant file spread over the shards; an unsplit file cannot be balanced below its own length. The rows
@@ -909,6 +915,7 @@ jobs:
           PACKAGE_FILTERS: ${{ matrix.package-filters }}
           ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
           ROOT_SUITE: ${{ matrix.root-suite || false }}
+          RSTEST_PROJECTS: ${{ matrix.rstest-projects || 'integration' }}
           RSTEST_SHARD: ${{ matrix.rstest-shard }}
           SPICEDB_DATABASE_PASSWORD: spicedb
         run: |
@@ -920,7 +927,9 @@ jobs:
           fi
           for directory in $(sed -E 's/--filter +//g; s#\./##g' <<<"$PACKAGE_FILTERS"); do
             if [[ -n "$RSTEST_SHARD" ]]; then
-              listed+="$(cd "$directory" && RSTEST_WEIGHTED_SHARD_LIST_ONLY=1 mise exec -- bash "$GITHUB_WORKSPACE/app/scripts/ci/rstest-weighted-shard.sh" "$RSTEST_SHARD" integration)"$'\n'
+              for project in $RSTEST_PROJECTS; do
+                listed+="$(cd "$directory" && RSTEST_WEIGHTED_SHARD_LIST_ONLY=1 mise exec -- bash "$GITHUB_WORKSPACE/app/scripts/ci/rstest-weighted-shard.sh" "$RSTEST_SHARD" "$project")"$'\n'
+              done
             else
               listed+="$(git ls-files -- "$directory/tests/integration" | grep -E '\.test\.[cm]?[jt]sx?$' || true)"$'\n'
             fi
@@ -1058,6 +1067,9 @@ jobs:
           RSTEST_SHARD: ${{ matrix.rstest-shard }}
           # Two Rstest file workers only on rows whose suites were reviewed safe in parallel; every other row runs one.
           RSTEST_WORKERS: ${{ matrix.rstest-workers || 1 }}
+          RSTEST_PROJECTS: ${{ matrix.rstest-projects || 'integration' }}
+          # skip on seeded weighted rows, only on the Fresh Database rows (scripts/ci/rstest-weighted-shard.sh).
+          FRESH_DATABASE_TESTS: ${{ matrix.fresh-database-tests }}
         # Same commands as `pnpm test:integration`. The root suite and a large package (one package per row, whose
         # test:integration script is exactly `rstest --project integration`) run as duration-weighted shards that deal
         # the files of a split giant test family across the shards (scripts/ci/rstest-weighted-shard.sh).
@@ -1071,8 +1083,11 @@ jobs:
             mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 || status=$?
           fi
           if [[ -n "$PACKAGE_FILTERS" && -n "$RSTEST_SHARD" ]]; then
-            # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
-            mise exec -- pnpm $PACKAGE_FILTERS exec bash "$PWD/scripts/ci/rstest-weighted-shard.sh" "$RSTEST_SHARD" integration --pool.maxWorkers "$RSTEST_WORKERS" || status=$?
+            # One package after another, each project after the other (Party Registry's two projects share one database).
+            for project in $RSTEST_PROJECTS; do
+              # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
+              mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 $PACKAGE_FILTERS exec bash "$PWD/scripts/ci/rstest-weighted-shard.sh" "$RSTEST_SHARD" "$project" --pool.maxWorkers "$RSTEST_WORKERS" || status=$?
+            done
           elif [[ -n "$PACKAGE_FILTERS" ]]; then
             # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
             mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 || status=$?

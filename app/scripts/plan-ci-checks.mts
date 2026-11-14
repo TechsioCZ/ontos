@@ -24,6 +24,10 @@ const IntegrationEntrySchema = Schema.Struct({
   'rstest-shard': Schema.optionalKey(Schema.String),
   /** Rstest file workers; 2 only for suites reviewed safe in parallel (unique template databases, UUID tenants). */
   'rstest-workers': Schema.optionalKey(Schema.Literals([1, 2])),
+  /** skip: leave out, only: run just the files that must migrate their own database (rstest-weighted-shard.sh). */
+  'fresh-database-tests': Schema.optionalKey(Schema.Literals(['skip', 'only'])),
+  /** Rstest projects a weighted package row runs one after another; `integration` when absent. */
+  'rstest-projects': Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[a-z-]+(?: [a-z-]+)*$/u))),
   /** The row may restore the cached seed database (scripts/ci/integration-seed.mts) instead of migrating its own. */
   seed: Schema.optionalKey(Schema.Boolean),
   suite: Schema.Literals(['integration', 'browser']),
@@ -43,6 +47,8 @@ const IntegrationEntrySchema = Schema.Struct({
   ),
 );
 export const CiTemplatesSchema = Schema.Struct({
+  /** Test files that must migrate or recover their job's database; the seed model refuses exactly these. */
+  'fresh-database-tests': Schema.optionalKey(Schema.Array(Schema.String)),
   integration: Schema.Array(IntegrationEntrySchema),
   source: Schema.Array(CommandEntrySchema),
   /** Measured seconds of a test-file family by file-name prefix; scripts/ci/rstest-weighted-shard.sh deals by it. */

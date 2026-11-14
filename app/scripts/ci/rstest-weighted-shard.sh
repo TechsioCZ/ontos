@@ -10,6 +10,10 @@
 # family, shared equally by the family's files) or CI_DEFAULT_TEST_SECONDS, and deals the files heaviest first to
 # the lightest shard. Every shard computes the same deal from the same list, so together the shards run every file
 # exactly once. An empty shard passes; a failed listing fails.
+#
+# FRESH_DATABASE_TESTS=skip leaves out, and FRESH_DATABASE_TESTS=only keeps just, the test files that must migrate or
+# recover their job's database from a fresh preparation ("fresh-database-tests" in scripts/ci-matrices.json and the
+# seed model's name rule), so a row that restores the integration seed never runs them.
 set -euo pipefail
 
 shard="${1:?the shard as <index>/<count> is required}"
@@ -23,6 +27,16 @@ index="${BASH_REMATCH[1]}"
 count="${BASH_REMATCH[2]}"
 script_directory="$(cd "$(dirname "$0")" && pwd)"
 weights="$(jq -c '."test-weights" // {}' "$script_directory/../ci-matrices.json")"
+fresh_tests="$(jq -c '."fresh-database-tests" // []' "$script_directory/../ci-matrices.json")"
+fresh_mode="${FRESH_DATABASE_TESTS:-}"
+case "$fresh_mode" in
+  '' | skip | only) ;;
+  *)
+    echo "FRESH_DATABASE_TESTS must be skip, only or empty, not $fresh_mode." >&2
+    exit 2
+    ;;
+esac
+app_root="$(cd "$script_directory/../.." && pwd)"
 listing="$(mktemp)"
 trap 'rm -f "$listing"' EXIT
 
@@ -33,7 +47,8 @@ pnpm exec rstest list --project "$project" --filesOnly --json "$listing" >&2
 total="$(jq -r '(if type == "array" then . else .items end) | length' "$listing")"
 deal="$(
   jq -r --argjson weights "$weights" --argjson count "$count" --argjson index "$index" \
-    --argjson fallback "${CI_DEFAULT_TEST_SECONDS:-20}" -f "$script_directory/rstest-weighted-shard.jq" "$listing"
+    --argjson fallback "${CI_DEFAULT_TEST_SECONDS:-20}" --argjson fresh "$fresh_tests" --arg freshMode "$fresh_mode" \
+    --arg appRoot "$app_root/" -f "$script_directory/rstest-weighted-shard.jq" "$listing"
 )"
 if [ "$total" -eq 0 ]; then
   echo "Rstest lists no files for project $project here." >&2

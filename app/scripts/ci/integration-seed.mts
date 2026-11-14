@@ -25,14 +25,14 @@
  * It never leaves a migrator, fixture server or worker process running. Node outputs/composition,
  * TLS private keys and gateway/auth secrets are NOT in this seed and stay consumer-local.
  *
- * NEVER seed Database, Migration, RLS, Authorization, and Outbox Integration; Root Integration
- * (all shards); Core Runtime Integration; Party Registry Integration;
- * Commerce Customer Context Integration (all shards);
- * or any migration/recovery test in MUST_MIGRATE_TESTS (integration-seed-model.mts).
+ * NEVER seed Database, Migration, RLS, Authorization, and Outbox Integration, the Fresh Database Integration
+ * rows, or any job that runs a migration/recovery test in MUST_MIGRATE_TESTS (integration-seed-model.mts):
+ * those run only in the Fresh Database rows, from today's complete fresh preparation. Root, Core Runtime,
+ * Party Registry and Customer Context rows seed once their weighted shards leave those files out
+ * (scripts/ci/rstest-weighted-shard.sh, FRESH_DATABASE_TESTS=skip) and name every file they run.
  * Native-preproposal MUST still create/migrate its disposable source databases; never restore there.
- * Retain today's fresh setup for these jobs. They must exercise their own migration/recovery path.
  * Restore requires --purpose ordinary-tests and refuses --purpose migration-proof/recovery-proof/
- * fresh-database, root-suite=true and excluded job/file names. No migrations fallback exists.
+ * fresh-database, a root suite without its file list and excluded job/file names. No migrations fallback exists.
  *
  * Contents: all three non-template databases (POSTGRES_DB, postgres, spicedb), schema+data+owners+
  * grants+extensions+journals, non-builtin role attributes/memberships and reviewed role/db settings,

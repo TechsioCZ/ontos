@@ -26,6 +26,26 @@
     "price-group-effective-period-postgres.history": 86,
     "price-group-effective-period-postgres.resolution": 86
   },
+  "fresh-database-tests": [
+    "scripts/integration/migration-equivalence.test.mts",
+    "scripts/integration/migrator-runtime-owner-access.test.mts",
+    "scripts/integration/stage-recovery-lifecycle.test.mts",
+    "scripts/integration/vat-deploy-sequence.test.mts",
+    "packages/core-runtime/tests/integration/action-authority-v2-migration.test.ts",
+    "packages/core-runtime/tests/integration/application-composition-authority-migration.test.ts",
+    "packages/core-runtime/tests/integration/application-composition-durable-work-migration.test.ts",
+    "packages/core-runtime/tests/integration/auth-namespace-migration.test.ts",
+    "packages/core-runtime/tests/integration/contacts-identity-migration.test.ts",
+    "packages/core-runtime/tests/integration/search-v2-cutover-migration.test.ts",
+    "verticals/commerce-customer-context/tests/integration/stage-recovery-lane15-lifecycle.test.ts",
+    "verticals/commerce-customer-context/tests/integration/organization-profile-ico-migration-postgres.test.ts",
+    "verticals/work-tasks/tests/integration/assignment-migration.test.mts",
+    "verticals/merchandise/tests/integration/tax-classification-migration-postgres.test.ts",
+    "verticals/finance-billing/tests/integration/vat-classification-migration-postgres.test.ts",
+    "verticals/party-registry/tests/integration/official-identifier-original-input-migration.test.ts",
+    "verticals/party-registry/tests/integration/organization-migration-fixture.test.ts",
+    "verticals/party-registry/tests/integration/verification-removal-migration.test.ts"
+  ],
   "source": [
     {
       "name": "Typecheck, Effect Rule Implementation, and OntOS API Boundary Rules",
@@ -102,28 +122,36 @@
       "name": "Commerce Customer Context Integration (1/4)",
       "package-filters": "--filter ./verticals/commerce-customer-context",
       "rstest-shard": "1/4",
-      "rstest-workers": 2
+      "rstest-workers": 2,
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
       "name": "Commerce Customer Context Integration (2/4)",
       "package-filters": "--filter ./verticals/commerce-customer-context",
       "rstest-shard": "2/4",
-      "rstest-workers": 2
+      "rstest-workers": 2,
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
       "name": "Commerce Customer Context Integration (3/4)",
       "package-filters": "--filter ./verticals/commerce-customer-context",
       "rstest-shard": "3/4",
-      "rstest-workers": 2
+      "rstest-workers": 2,
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
       "name": "Commerce Customer Context Integration (4/4)",
       "package-filters": "--filter ./verticals/commerce-customer-context",
       "rstest-shard": "4/4",
-      "rstest-workers": 2
+      "rstest-workers": 2,
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
@@ -162,28 +190,36 @@
       "name": "Root Integration (1/4)",
       "native-composition": true,
       "root-suite": true,
-      "root-rstest-shard": "1/4"
+      "root-rstest-shard": "1/4",
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
       "name": "Root Integration (2/4)",
       "native-composition": true,
       "root-suite": true,
-      "root-rstest-shard": "2/4"
+      "root-rstest-shard": "2/4",
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
       "name": "Root Integration (3/4)",
       "native-composition": true,
       "root-suite": true,
-      "root-rstest-shard": "3/4"
+      "root-rstest-shard": "3/4",
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
       "name": "Root Integration (4/4)",
       "native-composition": true,
       "root-suite": true,
-      "root-rstest-shard": "4/4"
+      "root-rstest-shard": "4/4",
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
@@ -210,18 +246,26 @@
       "suite": "integration",
       "name": "Core Runtime Integration (1/2)",
       "package-filters": "--filter ./packages/core-runtime",
-      "rstest-shard": "1/2"
+      "rstest-shard": "1/2",
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
       "name": "Core Runtime Integration (2/2)",
       "package-filters": "--filter ./packages/core-runtime",
-      "rstest-shard": "2/2"
+      "rstest-shard": "2/2",
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
       "name": "Party Registry Integration",
-      "package-filters": "--filter ./verticals/party-registry"
+      "package-filters": "--filter ./verticals/party-registry",
+      "rstest-shard": "1/1",
+      "rstest-projects": "integration integration-worker-cycle",
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
@@ -256,6 +300,26 @@
         "@app/pricing",
         "@app/commerce-customer-context"
       ]
+    },
+    {
+      "suite": "integration",
+      "name": "Fresh Database Integration (1/2)",
+      "native-composition": true,
+      "root-suite": true,
+      "root-rstest-shard": "1/2",
+      "package-filters": "--filter ./packages/core-runtime --filter ./verticals/commerce-customer-context --filter ./verticals/party-registry",
+      "rstest-shard": "1/2",
+      "fresh-database-tests": "only"
+    },
+    {
+      "suite": "integration",
+      "name": "Fresh Database Integration (2/2)",
+      "native-composition": true,
+      "root-suite": true,
+      "root-rstest-shard": "2/2",
+      "package-filters": "--filter ./packages/core-runtime --filter ./verticals/commerce-customer-context --filter ./verticals/party-registry",
+      "rstest-shard": "2/2",
+      "fresh-database-tests": "only"
     },
     {
       "suite": "integration",
