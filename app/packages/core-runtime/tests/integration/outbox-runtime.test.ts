@@ -105,10 +105,12 @@ const publishAuthority = Effect.fn(function* publishAuthority(
     updatedAt: now,
     validUntil: options.validUntil ?? advanceDate(now, 3_600_000),
   };
-  yield* database.insert(applicationCompositionAuthority).values(values).onConflictDoUpdate({
-    set: values,
-    target: applicationCompositionAuthority.authorityKey,
-  });
+  // Fixture state is replaced, never transitioned: an update from a draining row of the same revision back to
+  // active is refused unless a drain abandonment is recorded.
+  yield* database
+    .delete(applicationCompositionAuthority)
+    .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+  yield* database.insert(applicationCompositionAuthority).values(values);
   return fixture;
 });
 const insertTenant = (database: CoreDatabaseExecutor) =>
