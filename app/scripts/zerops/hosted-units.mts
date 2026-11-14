@@ -29,7 +29,7 @@ const TopologySchema = Schema.fromJsonString(
   }),
 );
 export type Topology = typeof TopologySchema.Type;
-const ReleaseIntentSchema = Schema.fromJsonString(
+export const ReleaseIntentSchema = Schema.fromJsonString(
   Schema.Struct({ modules: Schema.Array(Schema.Struct({ appId: OntosDeploymentAppIdSchema })) }),
 );
 export type ReleaseIntent = typeof ReleaseIntentSchema.Type;

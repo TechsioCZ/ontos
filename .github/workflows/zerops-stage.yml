@@ -114,6 +114,8 @@ jobs:
   # The units build on GitHub runners, a shard each, in parallel: the Zerops build container holds only two unit
   # builds at a time. A unit whose committed inputs are unchanged reuses its last build from the Actions cache
   # (scripts/zerops/build-app.sh), and Zerops then keeps every unit the push carries.
+  # The Shell builds alone in shard 0, so the push no longer waits for the Shell plus three modules; the modules are
+  # dealt over shards 1-6 by scripts/zerops/build-shard-units.mts, which keeps each module in its cached shard.
   build:
     name: Build units (shard ${{ matrix.shard }})
     needs: [plan]
@@ -156,14 +158,18 @@ jobs:
         env:
           # Outside the checkout: an untracked file in the tree makes every release identity `workspace`.
           UNIT_CACHE_DIR: ${{ runner.temp }}/zerops-unit-cache
+          SHARD: ${{ matrix.shard }}
         run: |
-          units="$(node -e '
-            const ids = ["shell-super-app", ...require("./topology/application-release-intent.json").modules.map((m) => m.appId)];
-            console.log(ids.filter((_, index) => index % Number(process.env.SHARDS) === Number(process.argv[1])).join(" "));
-          ' "${{ matrix.shard }}")"
+          units="$(mise exec -- node scripts/zerops/build-shard-units.mts "$SHARD" "$SHARDS")"
+          test -n "$units"
           echo "units: $units"
           # shellcheck disable=SC2086
           BUILD_JOBS=2 mise exec -- sh scripts/zerops/build-app.sh $units
+          # The saved cache holds only this shard's units, so a unit that moved shards does not ride along forever.
+          for cached in "$UNIT_CACHE_DIR"/*; do
+            [ -e "$cached" ] || continue
+            case " $units " in *" $(basename "$cached") "*) ;; *) rm -rf -- "$cached" ;; esac
+          done
           dirs=""
           for unit in $units; do
             [ "$unit" = shell-super-app ] && dirs="$dirs apps/shell-super-app/dist" || dirs="$dirs verticals/$unit/dist"
