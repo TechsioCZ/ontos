@@ -2,8 +2,8 @@
 // The expand step's triggers exist for the old release's writes: they classify what it writes and hold a product the old
 // release prices at 10 % (`products_tax_classification`, `orders_tax_classification`). They act only on documents (and
 // order lines) without the classification key, which only the old release writes, so every write of this release passes
-// through them as a no-op. Each write this release can make (create, rename, price change,
-// variant add / edit / remove, tier change, bulk change, market offer, storefront order, order edit and status change,
+// through them as a no-op. Each write this release can make (create, rename, price change, bulk change, stock
+// adjustment, variant add / edit / remove, tier change, market offer, storefront order, order edit and status change,
 // a held product reclassified to standard and a standard one to reduced;
 // an AI-approved change is one of those order operations, persisted the same way) runs on two identical companies:
 // once as the deploy's runtime role with the triggers in force, once with them bypassed. The classification column,
@@ -75,9 +75,9 @@ const BOOK_IT_MONTHLY = { attributes: 'Licence: měsíční', id: 'monthly', nam
 
 /**
  * Every write this release can make on its orders and catalogue, in order (the storefront order first, while its
- * expected prices still hold); `orderId` names the placed order.
+ * expected prices still hold); `orderId` names the placed order and `bookItStock` BOOK-IT's own stock on hand.
  */
-const writes = (orderId: () => string): readonly (() => Schema.Json)[] => [
+const writes = (orderId: () => string, bookItStock: () => number): readonly (() => Schema.Json)[] => [
   () => ({ ...fixture.order.command.command, clientRequestId: 'triggers-order' }),
   () => ({
     _tag: 'EditOrder',
@@ -103,6 +103,12 @@ const writes = (orderId: () => string): readonly (() => Schema.Json)[] => [
   () => ({ _tag: 'UpdateProduct', id: 'book-it', patch: { name: 'BOOK-IT přejmenováno' } }),
   () => ({ _tag: 'UpdateProduct', id: 'p-imported', patch: { name: 'Káva dovozová' } }),
   () => ({ _tag: 'ChangePrice', id: 'p-reduced', priceMinor: 30_000 }),
+  // The bulk change runs while the held BOOK-IT is still priced by itself: a selection with sellable variants is
+  // refused, so after its variants exist BOOK-IT could not take one.
+  () => ({ _tag: 'BulkUpdateProducts', ids: ['book-it', 'p-reduced', 'p2'], patch: { priceChangePercent: 5 } }),
+  // A stock adjustment, which also reconciles BOOK-IT's own stock: its first sellable variant is refused while the
+  // product itself still holds stock.
+  () => ({ _tag: 'RecordStockMovement', delta: -bookItStock(), productId: 'book-it', reason: 'ADJUSTMENT' }),
   () => ({
     _tag: 'UpdateProduct',
     id: 'book-it',
@@ -135,7 +141,6 @@ const writes = (orderId: () => string): readonly (() => Schema.Json)[] => [
       ],
     },
   }),
-  () => ({ _tag: 'BulkUpdateProducts', ids: ['book-it', 'p-reduced', 'p2'], patch: { priceChangePercent: 5 } }),
   () => ({ _tag: 'SetProductMarketOffer', marketId: MARKET_ID, offered: false, productId: 'p2' }),
   // A person reclassifies: the held BOOK-IT to standard (its hold goes with it), a standard product to reduced.
   () => ({ _tag: 'UpdateProduct', id: 'book-it', patch: { taxClassificationCode: 'cz.vat.standard' } }),
@@ -233,6 +238,16 @@ const storedOf = (admin: AdminClient, company: Company) =>
       scopeOf(company),
     ),
   });
+
+/** BOOK-IT's own stock on hand as the company's row holds it. */
+const bookItStockOf = (admin: AdminClient, company: Company) =>
+  admin
+    .unsafe<{ readonly stock: number }>(
+      `select stock_on_hand::float8 as stock from demo_merchandise.products
+        where tenant_id = $1 and legal_entity_id = $2 and id = 'book-it'`,
+      scopeOf(company),
+    )
+    .pipe(Effect.map(([row]) => row?.stock ?? 0));
 
 const heldOf = (admin: AdminClient, company: Company) =>
   admin
@@ -388,12 +403,20 @@ it.layer(nativeServices, { excludeTestServices: true })('the window triggers and
           [migrated, migratedBypassed, 'migrated'],
           [taxed, taxedBypassed, 'Tax-priced'],
         ] as const) {
-          for (const step of writes(() => '').keys()) {
+          for (const step of writes(
+            () => '',
+            () => 0,
+          ).keys()) {
             for (const [company, isBypassed] of [
               [inForce, false],
               [bypassed, true],
             ] as const) {
-              const command = writes(() => orderIds.get(company) ?? '')[step]?.() ?? null;
+              const bookItStock = yield* bookItStockOf(admin, company);
+              const command =
+                writes(
+                  () => orderIds.get(company) ?? '',
+                  () => bookItStock,
+                )[step]?.() ?? null;
               const result = yield* apply(database, company, isBypassed, command);
               const placed = Predicate.hasProperty(result, 'storefrontOrder') ? result.storefrontOrder : undefined;
               if (Predicate.hasProperty(placed, 'orderId')) {
