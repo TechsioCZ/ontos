@@ -432,23 +432,27 @@ const withProduct = (state: MerchandiseState, updated: Product): MerchandiseStat
 export const percentChangedPriceMinor = (currentMinor: number, percent: number): number =>
   Math.round((currentMinor * (100 + percent)) / 10_000) * 100;
 
-/** Preserve source discount breaks while a staff edit changes the base unit price. */
 const tierRepricingRefusal = () =>
   new MerchandiseLifecycleConflict({
     code: 'merchandise_tier_base_price_required',
     reason:
-      'Množstevní ceny nelze přepočítat bez původní základní ceny a platné ceny s DPH. Ověřte sazbu DPH a zadejte nové množstevní ceny nebo je nejprve odeberte.',
+      'Množstevní ceny nelze přepočítat: chybí původní cena nebo platná sazba DPH. Zkontrolujte klasifikaci DPH produktu a uložte cenu znovu.',
   });
+/**
+ * Preserve source discount breaks while a staff edit changes the base unit price: net tiers scale by the net ratio,
+ * gross tiers by the ratio of the actual old and new base gross. Without both base grosses the tiers are refused,
+ * never guessed.
+ */
 const repriceTiers = (
   tiers: NonNullable<Product['priceTiers']>,
   base: {
-    readonly oldNet: number | undefined;
     readonly newNet: number | undefined;
     readonly oldGross: number | undefined;
+    readonly oldNet: number | undefined;
     readonly rate: number | undefined;
   },
 ) => {
-  const { oldNet, newNet, oldGross, rate } = base;
+  const { newNet, oldGross, oldNet, rate } = base;
   if (tiers.length === 0 || oldNet === newNet || newNet === undefined) {
     return Effect.succeed(tiers);
   }
@@ -512,15 +516,15 @@ const repriced = Effect.fn('Merchandise.repriced')(function* repricedProduct(
   input: MerchandiseCommandInput,
 ) {
   if (product.currentPriceMinor === priceMinor) {
-    return yield* Effect.succeed(product);
+    return product;
   }
   const priceTiers =
     product.priceTiers === undefined
       ? undefined
       : yield* repriceTiers(product.priceTiers, {
-          oldNet: product.currentPriceMinor,
           newNet: priceMinor,
           oldGross: product.grossPriceMinor,
+          oldNet: product.currentPriceMinor,
           rate: enteredRateOf(input.tax, product),
         });
   const updated = {
@@ -537,7 +541,7 @@ const repriced = Effect.fn('Merchandise.repriced')(function* repricedProduct(
     ],
     updatedAt: input.now,
   } satisfies Product;
-  return yield* Effect.succeed(priceTiers === undefined ? updated : { ...updated, priceTiers });
+  return priceTiers === undefined ? updated : { ...updated, priceTiers };
 });
 
 /** The storefront finds a product by slug, so two products with one slug would hide one of them. */
@@ -660,9 +664,9 @@ const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* n
           ? {
               ...withGross,
               priceTiers: yield* repriceTiers(previous.priceTiers, {
-                oldNet: previous.priceMinor,
                 newNet: variant.priceMinor,
                 oldGross: previous.grossPriceMinor,
+                oldNet: previous.priceMinor,
                 rate: enteredRateOf(input.tax, product),
               }),
             }
@@ -692,8 +696,10 @@ const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
   if (value.slug !== undefined && slugTaken(state.products, value.slug, id)) {
     return yield* conflict('Another product already uses this storefront slug');
   }
-  const { _tag, additionalCategoryIds, priceMinor, variants, ...fields } = value;
+  // categoryPathIds is server-derived from categoryId and the stored category tree, never taken from the request.
+  const { _tag, additionalCategoryIds, categoryPathIds: _clientPath, priceMinor, variants, ...fields } = value;
   void _tag;
+  void _clientPath;
   // A product priced through its variants stores no gross of its own; each priced variant stores its gross.
   const pricedByVariants = variants?.some((variant) => variant.priceMinor !== undefined) === true;
   const base: Product = {
@@ -745,6 +751,18 @@ const requireReconciledVariantStock = Effect.fn('Merchandise.requireReconciledVa
   },
 );
 
+/** The normalized replacement variants of `product`, refused while they would strand recorded stock. */
+const reconciledVariants = Effect.fn('Merchandise.reconciledVariants')(function* reconciledVariants(
+  state: MerchandiseState,
+  product: Product,
+  incoming: readonly ProductVariant[],
+  input: MerchandiseCommandInput,
+) {
+  const variants = yield* normalizeVariants(product, incoming, input);
+  yield* requireReconciledVariantStock(state, product, variants);
+  return variants;
+});
+
 const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updateProduct(
   state: MerchandiseState,
   value: CommandOf<'UpdateProduct'>,
@@ -774,10 +792,7 @@ const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updatePro
   } = value.patch;
   void _clientPath;
   const variants =
-    patchVariants === undefined ? product.variants : yield* normalizeVariants(product, patchVariants, input);
-  if (patchVariants !== undefined && variants !== undefined) {
-    yield* requireReconciledVariantStock(state, product, variants);
-  }
+    patchVariants === undefined ? product.variants : yield* reconciledVariants(state, product, patchVariants, input);
   const patched = { ...product, ...patch, updatedAt: input.now } satisfies Product;
   const merged: Product = patch.images === undefined ? patched : { ...patched, imageSrc: patch.images[0] ?? '' };
   let categorized: Product = merged;
@@ -827,9 +842,9 @@ const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
     variant.priceTiers === undefined
       ? undefined
       : yield* repriceTiers(variant.priceTiers, {
-          oldNet: variant.priceMinor,
           newNet: value.priceMinor,
           oldGross: variant.grossPriceMinor,
+          oldNet: variant.priceMinor,
           rate: enteredRateOf(input.tax, product),
         });
   const variants = (product.variants ?? []).map((entry) => {
@@ -2203,11 +2218,11 @@ export const workingSetRequestOf = (
       ChangePrice: (value): WorkingSetRequest => ({ productIds: [value.id] }),
       ChangeProductImages: (value): WorkingSetRequest => ({ productIds: [value.id] }),
       CreateCategory: (value): WorkingSetRequest => ({
-        categorySlug: value.slug,
         categoryIds: Option.match(value.parentId, {
           onNone: () => [value.id],
           onSome: (parentId) => [value.id, parentId],
         }),
+        categorySlug: value.slug,
       }),
       CreateOrder: (value): WorkingSetRequest => ({
         lastOrderNumber: true,
