@@ -30,7 +30,8 @@ const invoice = (id: string, overrides: Partial<Invoice> = {}): Invoice => ({
   createdAt: now,
   currency: 'CZK',
   direction: 'OUTGOING',
-  documentNumber: id,
+  // A number an accounting system accepts: POHODA refuses anything over 32 characters.
+  documentNumber: `FV-${id.slice(-12)}`,
   dueDate: '2026-10-30',
   issueDate: '2026-10-01',
   paidMinor: 0,
