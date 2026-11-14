@@ -1,4 +1,5 @@
 import { makeOperationalScopeRepository, makePrincipalResolver, parseDatabaseConfig } from '@app/core-runtime';
+import type { OperationalScope } from '@app/core-runtime';
 import { TenantIdSchema, LegalEntityIdSchema, PrincipalIdSchema } from '@app/core-runtime/access/ids';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { stageScopeOf } from '@app/core-runtime/install/stage-context-bootstrap';
@@ -52,6 +53,52 @@ interface ConnectionFacts extends Record<string, unknown> {
   readonly database: string;
   readonly roleName: string;
 }
+type FixtureDatabase = Effect.Success<typeof testCoreDatabase>;
+type FixtureTransaction = Parameters<Parameters<FixtureDatabase['transaction']>[0]>[0];
+
+const inspectRuntimeScope = Effect.fn('CustomerGroupSourceAuthorityFixture.inspectRuntimeScope')(
+  function* inspectRuntimeScope(
+    inspection: FixtureTransaction,
+    input: {
+      readonly operatorPrincipalId: string;
+      readonly operatorProviderUserId: string;
+      readonly operatorScope: OperationalScope;
+      readonly targetScope: OperationalScope;
+      readonly tenantId: string;
+    },
+  ) {
+    yield* installOperationalScope(inspection, input.operatorScope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
+    const identity = yield* makePrincipalResolver(
+      { executor: inspection },
+      { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
+    ).resolveBetterAuthUserForTenant(input.operatorProviderUserId, input.tenantId);
+    if (
+      identity.principalId !== input.operatorPrincipalId ||
+      identity.principalKind !== 'human' ||
+      identity.tenantId !== input.tenantId
+    ) {
+      return yield* unavailable();
+    }
+    const repository = makeOperationalScopeRepository({ executor: inspection }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
+    return yield* Effect.forEach(
+      [input.operatorScope, input.targetScope],
+      Effect.fn('CustomerGroupSourceAuthorityFixture.verifyScope')(function* verifyScope(inspectionScope) {
+        const persisted = yield* repository.load(inspectionScope);
+        if (
+          persisted.tenantStatus !== 'active' ||
+          persisted.principalStatus !== 'active' ||
+          persisted.principalTenantId !== input.tenantId ||
+          persisted.legalEntityStatus !== 'active' ||
+          persisted.legalEntityTenantId !== input.tenantId
+        ) {
+          return yield* unavailable();
+        }
+        return yield* Effect.void;
+      }),
+      { concurrency: 1, discard: true },
+    );
+  },
+);
 
 /** Configures one explicit route in an active owned clone after verifying its actual human operator.
  * It creates no Group, definition, credentials, grants, or execution proof. */
@@ -94,7 +141,7 @@ export const seedCustomerGroupSourceAuthority = Effect.fn('CustomerGroupSourceAu
       Effect.provideService(PgClient.PgClient, runtimeClient),
       Effect.mapError(unavailable),
     );
-    yield* database
+    return yield* database
       .transaction(
         Effect.fn('CustomerGroupSourceAuthorityFixture.store')(function* storeRoute(transaction) {
           const [connection] = yield* transaction.execute<ConnectionFacts>(
@@ -109,40 +156,12 @@ export const seedCustomerGroupSourceAuthority = Effect.fn('CustomerGroupSourceAu
             return yield* unavailable();
           }
           yield* runtimeDatabase.transaction((inspection) =>
-            Effect.gen(function* inspectRuntimeScope() {
-              yield* installOperationalScope(inspection, operatorScope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
-              const identity = yield* makePrincipalResolver(
-                { executor: inspection },
-                { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
-              ).resolveBetterAuthUserForTenant(input.operatorProviderUserId, route.tenantId);
-              if (
-                identity.principalId !== input.operatorPrincipalId ||
-                identity.principalKind !== 'human' ||
-                identity.tenantId !== route.tenantId
-              ) {
-                return yield* unavailable();
-              }
-              const repository = makeOperationalScopeRepository(
-                { executor: inspection },
-                FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
-              );
-              yield* Effect.forEach(
-                [operatorScope, targetScope],
-                Effect.fn('CustomerGroupSourceAuthorityFixture.verifyScope')(function* verifyScope(inspectionScope) {
-                  const persisted = yield* repository.load(inspectionScope);
-                  if (
-                    persisted.tenantStatus !== 'active' ||
-                    persisted.principalStatus !== 'active' ||
-                    persisted.principalTenantId !== route.tenantId ||
-                    persisted.legalEntityStatus !== 'active' ||
-                    persisted.legalEntityTenantId !== route.tenantId
-                  ) {
-                    return yield* unavailable();
-                  }
-                  return yield* Effect.void;
-                }),
-                { concurrency: 1, discard: true },
-              );
+            inspectRuntimeScope(inspection, {
+              operatorPrincipalId: input.operatorPrincipalId,
+              operatorProviderUserId: input.operatorProviderUserId,
+              operatorScope,
+              targetScope,
+              tenantId: route.tenantId,
             }),
           );
           yield* requireOwnedNativeDatabaseFixture(input.fixture, {
