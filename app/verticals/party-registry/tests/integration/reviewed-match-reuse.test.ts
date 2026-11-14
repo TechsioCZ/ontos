@@ -93,31 +93,54 @@ import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/iso
 const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const emptyContext = Context.makeUnsafe<unknown>(new Map());
 
-// Read only named scalar data properties: never hand an error, its cause or a function to structural logging.
-const failureField = (error: unknown, key: string, limit = 400): string => {
-  if ((typeof error !== 'object' || error === null) && typeof error !== 'function') {
-    return 'unavailable';
-  }
-  const property = Object.getOwnPropertyDescriptor(error, key);
-  return property !== undefined && 'value' in property && typeof property.value === 'string'
-    ? property.value.slice(0, limit)
-    : 'unavailable';
-};
-const sourceCauseDescription = (cause: Cause.Cause<unknown>): string =>
-  cause.reasons
+const unavailableSourceFailureField = 'unavailable';
+const sourceCreateSucceeded = 'succeeded';
+const decodeSourceFailure = Schema.decodeUnknownOption(
+  Schema.Struct({
+    _tag: Schema.optional(Schema.String),
+    code: Schema.optional(Schema.String),
+    reason: Schema.optional(Schema.String),
+  }),
+);
+const sourceCauseDescription = <E>(cause: Cause.Cause<E>): string => {
+  const failures = cause.reasons
+    .filter(Cause.isFailReason)
     .slice(0, 4)
-    .map((reason) => {
-      if (Cause.isFailReason(reason)) {
-        return `failure _tag=${failureField(reason.error, '_tag')} code=${failureField(reason.error, 'code')} reason=${failureField(reason.error, 'reason')}`;
-      }
-      if (Cause.isDieReason(reason)) {
-        const stack = failureField(reason.defect, 'stack', 2_000).split('\n').slice(0, 5).join('\n');
-        return `defect ${String(reason.defect).slice(0, 400)}\n${stack}`;
-      }
-      return 'interrupted';
-    })
-    .join('\n')
-    .slice(0, 2_000);
+    .flatMap(({ error }) =>
+      Option.match(decodeSourceFailure(error), {
+        onNone: () => [],
+        onSome: (fields) => [
+          `failure _tag=${fields._tag ?? unavailableSourceFailureField} code=${fields.code ?? unavailableSourceFailureField} reason=${fields.reason ?? unavailableSourceFailureField}`,
+        ],
+      }),
+    );
+  return `${failures.join('\n').slice(0, 1_024)}\n${Cause.pretty(cause).slice(0, 3_072)}`.slice(0, 4_096);
+};
+
+const createSourceConcurrently = Effect.fn('ReviewedMatchReuse.createSourceConcurrently')(
+  function* createSourceConcurrently<A, E, R>(createSource: Effect.Effect<A, E, R>) {
+    const [createdExit, replayedExit] = yield* Effect.all(
+      [Effect.exit(createSource), Effect.exit(createSource)],
+      { concurrency: 2 },
+    );
+    if (Exit.isFailure(createdExit) || Exit.isFailure(replayedExit)) {
+      const createdDescription = Exit.isFailure(createdExit)
+        ? sourceCauseDescription(createdExit.cause)
+        : sourceCreateSucceeded;
+      const replayedDescription = Exit.isFailure(replayedExit)
+        ? sourceCauseDescription(replayedExit.cause)
+        : sourceCreateSucceeded;
+      yield* Effect.logError(`1316 source-create first: ${createdDescription}`);
+      yield* Effect.logError(`1316 source-create replay: ${replayedDescription}`);
+      return yield* Effect.die(
+        new Error(
+          `Concurrent source-create failed: first=${Exit.isFailure(createdExit) ? 'failed' : sourceCreateSucceeded}, replay=${Exit.isFailure(replayedExit) ? 'failed' : sourceCreateSucceeded}; bounded causes are logged above`,
+        ),
+      );
+    }
+    return yield* Effect.succeed([createdExit.value, replayedExit.value] as const);
+  },
+);
 
 it.layer(
   NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer), Layer.provideMerge(NodeCrypto.layer)),
@@ -749,23 +772,7 @@ it.layer(
       const originalCreateHash = computeActionRequestHash({ ...sourceCreateIdentity, principal });
       const beforeSource = yield* ownerSnapshot();
       const beforeSourceEvidence = yield* fixture.evidence(coreEvidenceExecutor);
-      const [createdExit, replayedExit] = yield* Effect.all(
-        [Effect.exit(createSource()), Effect.exit(createSource())],
-        { concurrency: 2 },
-      );
-      if (Exit.isFailure(createdExit) || Exit.isFailure(replayedExit)) {
-        const created = Exit.isFailure(createdExit) ? sourceCauseDescription(createdExit.cause) : 'succeeded';
-        const replayed = Exit.isFailure(replayedExit) ? sourceCauseDescription(replayedExit.cause) : 'succeeded';
-        yield* Effect.logError(`1316 source-create first: ${created}`);
-        yield* Effect.logError(`1316 source-create replay: ${replayed}`);
-        return yield* Effect.die(
-          new Error(
-            `Concurrent source-create failed: first=${Exit.isFailure(createdExit) ? 'failed' : 'succeeded'}, replay=${Exit.isFailure(replayedExit) ? 'failed' : 'succeeded'}; bounded causes are logged above`,
-          ),
-        );
-      }
-      const sourceCreated = createdExit.value;
-      const sourceReplayed = replayedExit.value;
+      const [sourceCreated, sourceReplayed] = yield* createSourceConcurrently(createSource());
       assert.isOk(sourceCreated.outcome === 'CREATED');
       expect(sourceReplayed).toEqual(sourceCreated);
       const sourceReceipts = yield* admin

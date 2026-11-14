@@ -1006,13 +1006,14 @@ const connectedRoleFingerprint = fingerprintOf('select current_user::text as rol
 const splitScopeInstallationFingerprint = fingerprintOf(
   "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id",
 );
+const countFingerprint = (steps: readonly StepReport[], statement: string) =>
+  steps
+    .flatMap((step) => step.fingerprints)
+    .reduce((sum, entry) => sum + (entry.statement === statement ? entry.count : 0), 0);
 const assertOriginalStatementBudget = Effect.fn('test.assertOriginalStatementBudget')(
   function* assertOriginalStatementBudget(label: string, steps: readonly StepReport[], originalBudget: number) {
-    const fingerprints = steps.flatMap((step) => step.fingerprints);
-    const count = (statement: string) =>
-      fingerprints.reduce((sum, entry) => sum + (entry.statement === statement ? entry.count : 0), 0);
-    const roleQueries = count(connectedRoleFingerprint);
-    const splitScopeInstallations = count(splitScopeInstallationFingerprint);
+    const roleQueries = countFingerprint(steps, connectedRoleFingerprint);
+    const splitScopeInstallations = countFingerprint(steps, splitScopeInstallationFingerprint);
     const statements = steps.reduce((sum, step) => sum + step.statements, 0);
     yield* Effect.logInfo('Stage-shape scope cost', {
       label,
@@ -1166,11 +1167,10 @@ const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* meas
   const batches = yield* Effect.forEach(['warm-up', 'reject', 'approve'], (name) => seedPendingBatch(stageCase, name), {
     concurrency: 1,
   });
-  const [warmUp, rejected, approved] = yield* Effect.all([
-    present(batches[0]),
-    present(batches[1]),
-    present(batches[2]),
-  ]);
+  const [warmUp, rejected, approved] = yield* Effect.all(
+    [present(batches[0]), present(batches[1]), present(batches[2])],
+    { concurrency: 1 },
+  );
 
   // Warm-up, measured as the first use in this process (pools, the SpiceDB channel, the composition cache and code
   // never run before): the queue's three reads once, then one reject (its batch read and the reject Action).
@@ -1178,11 +1178,14 @@ const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* meas
   const coldQueue = yield* measure(
     'cold queue',
     'warm-up',
-    Effect.all([
-      callerModuleAccess(warm),
-      principalNames(warm.principal, readTransport('warm-up')),
-      listCompanyProposalPage(warm.principal, {}),
-    ]).pipe(Effect.provideService(AgentReadRequestIdentity, readTransport('warm-up'))),
+    Effect.all(
+      [
+        callerModuleAccess(warm),
+        principalNames(warm.principal, readTransport('warm-up')),
+        listCompanyProposalPage(warm.principal, {}),
+      ],
+      { concurrency: 1 },
+    ).pipe(Effect.provideService(AgentReadRequestIdentity, readTransport('warm-up'))),
   );
   const warmReject = yield* actionTransport('warm-up-reject');
   const coldReject = yield* measure(
@@ -1353,11 +1356,7 @@ const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* meas
   expect([totalOf(queue, 'transactions'), totalOf(decide, 'transactions'), totalOf(approve, 'transactions')]).toEqual([
     38, 50, 105,
   ]);
-  const installed = yield* inShell(
-    Effect.gen(function* admittedCatalog() {
-      return yield* (yield* ShellInstalledModuleCatalog).load;
-    }),
-  );
+  const installed = yield* inShell(ShellInstalledModuleCatalog.use((catalog) => catalog.load));
   const carrierRows = moduleCarriers(installed).filter(
     ({ declaration, moduleId }) => admittedModule(moduleId) && leavesEvidence(declaration),
   ).length;
@@ -1430,6 +1429,7 @@ const seedPeople = Effect.fn('test.seedPeople')(function* seedPeople(stageCase: 
           tenantId,
         })),
       ),
+    { concurrency: 1 },
   );
   yield* admin.unsafe(
     `insert into core.principals (principal_id, tenant_id, kind, display_name, status)
