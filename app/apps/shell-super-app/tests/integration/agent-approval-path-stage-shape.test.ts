@@ -93,8 +93,8 @@ import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/perm
 import { spiceDbTransport } from '../../../../packages/core-runtime/src/permissions/spicedb-transport.node.ts';
 import { makeTestPgClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { deriveOntosModuleDeploymentContract } from '../../../../scripts/generate-ontos-module-contract.mts';
-import { callerModuleAccess } from '../../api/agent-platform/caller.ts';
-import type { AgentPlatformCaller } from '../../api/agent-platform/caller.ts';
+import { callerModuleAccess, moduleCarriers } from '../../api/agent-platform/caller.ts';
+import type { AgentPlatformCaller, ModuleCarrier } from '../../api/agent-platform/caller.ts';
 import {
   claimForApproval,
   listCompanyProposalPage,
@@ -109,7 +109,10 @@ import { AgentActionRequestIdentity } from '../../api/auth/agent-action-request-
 import { AgentReadRequestIdentity } from '../../api/auth/agent-request-identity.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from '../../api/auth/authentication-namespace-registry.ts';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
-import { ShellInstalledModuleCatalogLive } from '../../api/modules/installed-module-catalog.ts';
+import {
+  ShellInstalledModuleCatalog,
+  ShellInstalledModuleCatalogLive,
+} from '../../api/modules/installed-module-catalog.ts';
 import { ShellPeopleSystemSearchLive, ShellSystemSearch } from '../../api/modules/shell-system-search.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
@@ -1311,16 +1314,41 @@ const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* meas
     );
   }
   // The counts are written first, so a run that breaks a bound still leaves its numbers.
-  // Each transaction installs and checks the request's scope in one statement, never two, and the queue asks only
-  // the Actions of modules the tenant runs: the same transactions, SpiceDB calls and reject/approve evidence as before;
-  // queue was 220 statements and 487 evidence rows, reject 274 statements, approve's Core parts 576.
+  // Scope setup now reads the connected role before installing scope. Only that one extra query per transaction
+  // is allowed above the old budgets; extra owner, authorization or evidence queries still break the fence.
+  const statementsPerScope = 2;
+  const previousStatementsPerScope = 1;
+  const scopeSetupIncrease = (transactions: number) =>
+    transactions * (statementsPerScope - previousStatementsPerScope);
   expect([totalOf(queue, 'transactions'), totalOf(decide, 'transactions'), totalOf(approve, 'transactions')]).toEqual([
     38, 50, 105,
   ]);
-  expect(totalOf(queue, 'evidenceRows')).toBe(374);
-  expect(totalOf(queue, 'statements')).toBeLessThanOrEqual(184);
-  expect(totalOf(decide, 'statements')).toBeLessThanOrEqual(220);
-  expect(totalOf(approve, 'statements')).toBeLessThanOrEqual(463);
+  const installed = yield* inShell(
+    Effect.gen(function* admittedCatalog() {
+      return yield* (yield* ShellInstalledModuleCatalog).load;
+    }),
+  );
+  const admittedModule = (moduleId: string) => moduleId.startsWith('core.') || N1_MODULES.includes(moduleId);
+  // The owner is allowed in run mode. Routine allows leave no row; a mode refusal still does.
+  const leavesEvidence = (declaration: ModuleCarrier['declaration']) =>
+    declaration !== undefined && (declaration.risk !== 'routine' || !declaration.modes.includes('run'));
+  const carrierRows = moduleCarriers(installed).filter(
+    ({ declaration, moduleId }) => admittedModule(moduleId) && leavesEvidence(declaration),
+  ).length;
+  const actionRows = installed.contracts.flatMap(({ manifest }) =>
+    manifest.publicSurface.actions.filter(
+      (action) =>
+        admittedModule(action.owningModuleId) &&
+        action.legalEntityScope !== 'forbidden' &&
+        leavesEvidence(action.accessDeclaration),
+    ),
+  ).length;
+  // Q1 asks each carrier and each Action; Q3 asks the Actions again. Q2 is authenticated-only.
+  // The merge adds six Customer Context Actions and Party's legacy-IČO fence: 7 × 3 = 21 extra rows.
+  expect(totalOf(queue, 'evidenceRows')).toBe(carrierRows + 2 * actionRows);
+  expect(totalOf(queue, 'statements')).toBeLessThanOrEqual(184 + scopeSetupIncrease(38));
+  expect(totalOf(decide, 'statements')).toBeLessThanOrEqual(220 + scopeSetupIncrease(50));
+  expect(totalOf(approve, 'statements')).toBeLessThanOrEqual(463 + scopeSetupIncrease(105));
   // Every step checks a connection out only for its statements: none is held while the request waits on SpiceDB, a
   // module owner or the composition source, and no request holds more than two at once (the gate reads two scopes of
   // a batch side by side, never more), so six connections queue only behind other requests.
@@ -1512,14 +1540,17 @@ const measurePeopleSearch = Effect.fn('test.measurePeopleSearch')(function* meas
   }
   // The counts are written first, so a run that breaks a bound still leaves its numbers. One People search for one
   // surname: three gate decisions (the Shell's admission, the read's list right, the People list right), each with
-  // its own evidence row, two scope resolutions, the index query, the read and its evidence: 24 checkouts, 115
-  // messages to PostgreSQL, every connection back in the pool before each SpiceDB call.
+  // its own evidence row, two scope resolutions, the index query, the read and its evidence. Each of the 22 scoped
+  // transactions adds only its connected-role query to the old 71 statements and 115 PostgreSQL messages.
+  const scopedTransactions = 22;
+  const additionalStatementsPerScope = 2 - 1;
+  const connectedRoleQueries = scopedTransactions * additionalStatementsPerScope;
   expect(warm.report.pool.heldAcrossRemoteCalls).toEqual([]);
   expect(warm.report.pool.maxConcurrent).toBe(1);
   expect([warm.report.transactions, warm.report.spicedb.calls, warm.report.evidenceRows]).toEqual([22, 5, 3]);
-  expect(warm.report.statements).toBeLessThanOrEqual(71);
+  expect(warm.report.statements).toBeLessThanOrEqual(71 + connectedRoleQueries);
   expect(warm.report.pool.leases).toBeLessThanOrEqual(24);
-  expect(warm.report.pool.roundTrips).toBeLessThanOrEqual(115);
+  expect(warm.report.pool.roundTrips).toBeLessThanOrEqual(115 + connectedRoleQueries);
   // Ten times the hits, the same work: no question is asked, and no row read, per person found.
   expect([
     many.report.statements,
