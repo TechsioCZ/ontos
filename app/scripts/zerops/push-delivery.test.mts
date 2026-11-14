@@ -48,6 +48,7 @@ const fixture = (services: readonly DeliveryService[]) =>
       GITHUB_SHA: HEAD,
       RUNNER_TEMP: directory,
       ZEROPS_APP_SERVICE_ID: 'app-id',
+      ZEROPS_N1_STOREFRONT_SERVICE_ID: 'n1-id',
       ZEROPS_SHOP_STOREFRONT_SERVICE_ID: 'shop-id',
       ZEROPS_STOREFRONT_SERVICE_ID: 'storefront-id',
     };
@@ -57,6 +58,7 @@ for (const services of [
   ['app'],
   ['storefront', 'shop'],
   ['app', 'storefront', 'shop'],
+  ['app', 'storefront', 'shop', 'n1'],
 ] satisfies (readonly DeliveryService[])[]) {
   it.effect(`pushes only the selected services ${services.join(',')}`, () =>
     Effect.gen(function* selectivePush() {
@@ -68,9 +70,9 @@ for (const services of [
       expect(result.status).toBe(0);
       const calls = (yield* fs.readFileString(path.join(context.directory, 'calls'))).trim().split('\n');
       expect(calls).toEqual(
-        services.map(
+        ['n1', 'app', 'storefront', 'shop'].filter((service) => services.some((selected) => selected === service)).map(
           (service) =>
-            `${service}-id|${service === 'app' ? 'app' : 'storefront'}|${HEAD}|${service === 'app' ? 'none' : 'app/.zerops-prebuilt.tar.zst'}`,
+            `${service}-id|${service === 'n1' ? 'n1' : service === 'app' ? 'app' : 'storefront'}|${HEAD}|${service === 'app' ? 'none' : 'app/.zerops-prebuilt.tar.zst'}`,
         ),
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
