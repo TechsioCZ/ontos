@@ -1286,6 +1286,12 @@ const SEED_KEY_INPUTS = [
   "'app/database/**'",
   "'app/scripts/postgres/**'",
   "'app/scripts/run-zerops-migrator.mjs'",
+  // Everything the migrator runs that writes the seeded database, not only the migrations themselves.
+  "'app/scripts/activate-access-catalog-release.mts'",
+  "'app/scripts/application-migration-pending.mts'",
+  "'app/verticals/commerce-customer-context/scripts/**'",
+  "'app/packages/core-runtime/src/access/**'",
+  "'app/packages/core-runtime/src/permissions/**'",
   "'app/scripts/ci/integration-seed*.mts'",
   "'app/packages/core-runtime/spicedb/**'",
   "'app/topology/**'",

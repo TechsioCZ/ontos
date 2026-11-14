@@ -131,12 +131,13 @@ jobs:
       # The migrated integration database changes only with these inputs: every Drizzle migration and config, the
       # database identity, role and grant scripts, the stage migrator and its activation and convergence scripts, the
       # verifier and trust audit, the seed tool itself, SpiceDB's bootstrap schema, the topology and authorization
-      # catalogue the migrator activates, the PostgreSQL and SpiceDB image digests (docker-compose.yml), and the
+      # catalogue the migrator activates and the Core access and permission code that activation runs, the migrator's
+      # pending-migration planner and the Commerce portal realm scripts it starts, the PostgreSQL and SpiceDB image digests (docker-compose.yml), and the
       # toolchain and lockfile. A change to any of them names a new seed; nothing else can reuse an old one.
       # Hashed before the install, so no node_modules file is read.
       - name: Name the integration seed cache
         id: seed-key
-        run: echo "key=integration-seed-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/**/drizzle*/**', 'app/**/drizzle*.config.ts', 'app/database/**', 'app/scripts/postgres/**', 'app/scripts/run-zerops-migrator.mjs', 'app/scripts/migration-convergence*', 'app/scripts/access-release-activation*', 'app/scripts/run-optional-commerce-portal-auth-db.mts', 'app/scripts/verify-application-db-schema.mts', 'app/scripts/audit-database-trust-boundaries.mts', 'app/scripts/prove-zerops-migrator-artifact.sh', 'app/scripts/ci/integration-seed*.mts', 'app/packages/core-runtime/spicedb/**', 'app/packages/core-runtime/src/install/**', 'app/packages/core-runtime/src/db/**', 'app/topology/**', 'app/docker-compose.yml', 'app/zerops.yaml', 'app/package.json', 'app/pnpm-lock.yaml', 'app/.mise.toml', '!app/**/node_modules/**', '!app/tools/**') }}" >>"$GITHUB_OUTPUT"
+        run: echo "key=integration-seed-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/**/drizzle*/**', 'app/**/drizzle*.config.ts', 'app/database/**', 'app/scripts/postgres/**', 'app/scripts/run-zerops-migrator.mjs', 'app/scripts/migration-convergence*', 'app/scripts/access-release-activation*', 'app/scripts/activate-access-catalog-release.mts', 'app/scripts/application-migration-pending.mts', 'app/verticals/commerce-customer-context/scripts/**', 'app/scripts/run-optional-commerce-portal-auth-db.mts', 'app/scripts/verify-application-db-schema.mts', 'app/scripts/audit-database-trust-boundaries.mts', 'app/scripts/prove-zerops-migrator-artifact.sh', 'app/scripts/ci/integration-seed*.mts', 'app/packages/core-runtime/spicedb/**', 'app/packages/core-runtime/src/install/**', 'app/packages/core-runtime/src/access/**', 'app/packages/core-runtime/src/permissions/**', 'app/packages/core-runtime/src/db/**', 'app/topology/**', 'app/docker-compose.yml', 'app/zerops.yaml', 'app/package.json', 'app/pnpm-lock.yaml', 'app/.mise.toml', '!app/**/node_modules/**', '!app/tools/**') }}" >>"$GITHUB_OUTPUT"
       - name: Classify the complete diff without app dependencies
         id: changes
         env:
