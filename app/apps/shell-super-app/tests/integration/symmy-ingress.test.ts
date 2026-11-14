@@ -44,12 +44,52 @@ import type { SymmyIngressAdmission, SymmyIngressRequest } from '../../api/symmy
 import { ShellAuthenticationApi } from '../../shared/api.ts';
 import { encodeSymmySourceSelector } from '@app/symmy-integration/symmy-source-selector';
 import { SymmyInternalPriceListsProjectionSchema } from '../../api/symmy/read-projection-contracts.ts';
+import { SymmyInternalRegionsProjectionSchema } from '../../api/symmy/regions-projection-contract.ts';
 
 const host = 'https://shell.example.test';
 const shellPrefix = '/shell-super-app-api';
 const fixtureId = 'internal-c14-fixture';
 const groupCode = 'fixture-group';
 const jobId = '10000000-0000-4000-8000-000000000001';
+const regionsMarketRef = {
+  moduleId: 'commerce.market-catalog',
+  resourceId: '33333333-3333-4333-8333-333333333333',
+  resourceType: 'commerce.market-catalog.market',
+  tenantId: '11111111-1111-4111-8111-111111111111',
+} as const;
+const regionsProjection = Schema.decodeUnknownSync(SymmyInternalRegionsProjectionSchema)({
+  contractVersion: 'INTERNAL_C14',
+  count: 2,
+  limit: 50,
+  offset: 0,
+  projection: 'regions',
+  regions: [
+    {
+      country_codes: ['CZ'],
+      currency_code: 'CZK',
+      id: `~c14r1.${'a'.repeat(43)}`,
+      market_code: 'CZ_NATIVE',
+      marketRef: regionsMarketRef,
+      source_record_id: 'source-region-a',
+    },
+  ],
+  unsupported_fields: ['name', 'tax_rate', 'tax_included', 'payment_providers'],
+});
+const publicRegionsBody = {
+  count: 2,
+  limit: 50,
+  offset: 0,
+  regions: [
+    {
+      countryCodes: ['CZ'],
+      currencyCode: 'CZK',
+      id: `~c14r1.${'a'.repeat(43)}`,
+      marketCode: 'CZ_NATIVE',
+      marketRef: regionsMarketRef,
+      sourceRecordId: 'source-region-a',
+    },
+  ],
+};
 const idempotencyKey = 'fixture-job-attempt';
 const validKey = 'fedcba9876543210fedcba9876543210';
 const wrongKindKey = 'synthetic-other-kind-key';
@@ -1058,7 +1098,7 @@ it.effect('uses each approved route’s declared success status for internal fix
               request.id === admittedJobId
                 ? Effect.succeed({ items, phase: 'completed' })
                 : Effect.fail(symmyFixtureJobNotFoundProblem),
-            read: ({ request }) => Effect.succeed(request.route === 'adminRegions' ? [] : references),
+            read: ({ request }) => Effect.succeed(request.route === 'adminRegions' ? regionsProjection : references),
             submit: () => Effect.succeed(admittedJobId),
           },
           observe: (request) => {
@@ -1087,7 +1127,7 @@ it.effect('uses each approved route’s declared success status for internal fix
       expect(response.headers.get('cache-control')).toBe('no-store');
       const body = yield* Effect.promise(() => response.json());
       const expectedBodies = {
-        business_read: { references: path === SYMMY_ROUTES.adminRegions.path ? [] : references },
+        business_read: path === SYMMY_ROUTES.adminRegions.path ? publicRegionsBody : { references },
         durable_job: { jobId, status: 'queued' },
         item_results: { items: expectedItems },
         job_read: { items: expectedItems, jobId, status: 'indeterminate' },
@@ -1099,7 +1139,7 @@ it.effect('uses each approved route’s declared success status for internal fix
     expect(forwarded).toEqual([
       { query: {}, route: 'adminCustomers' },
       { query: {}, route: 'adminProducts' },
-      { query: {}, route: 'adminRegions' },
+      { query: { contractVersion: 'INTERNAL_C14' }, route: 'adminRegions' },
       { code: groupCode, fixtureId, idempotencyKey, route: 'customerGroupCustomersBatch' },
       { fixtureId, route: 'customerGroupsBatch' },
       { fixtureId, idempotencyKey, route: 'customersBatch' },
@@ -1110,6 +1150,111 @@ it.effect('uses each approved route’s declared success status for internal fix
       { fixtureId, idempotencyKey, route: 'priceListsBatchUpsert' },
       { fixtureId, idempotencyKey, route: 'productsBatch' },
     ]);
+  }),
+);
+
+it.effect('serves the public regions body from its own query', () =>
+  Effect.gen(function* servesPublicRegions() {
+    const forwarded: SymmyIngressRequest[] = [];
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        start({
+          dispatch: {
+            apply: () => Effect.fail(symmyUnavailableProblem),
+            poll: () => Effect.fail(symmyUnavailableProblem),
+            read: () => Effect.succeed(regionsProjection),
+            submit: () => Effect.fail(symmyUnavailableProblem),
+          },
+          observe: (request) => {
+            forwarded.push(request);
+          },
+        }),
+      ),
+      (fixture) => Effect.promise(fixture.dispose),
+    );
+    const get = (query: string) =>
+      Effect.promise(() =>
+        server.request(`${SYMMY_ROUTES.adminRegions.path}${query}`, {
+          headers: { 'x-api-key': validKey },
+          method: 'GET',
+        }),
+      );
+    const [region] = publicRegionsBody.regions;
+    const rejected = [
+      'code=a',
+      'sourceRecordId=a',
+      'afterRecordId=a',
+      'priceLimit=1',
+      'priceOffset=0',
+      'contractVersion=INTERNAL_C14',
+      'order=name',
+      'unknown=1',
+      'limit=0',
+      'limit=101',
+      'limit=abc',
+      'offset=-1',
+      'offset=abc',
+      'q=',
+      'q=%20%20',
+      `q=${'a'.repeat(201)}`,
+      'fields=nope',
+      'fields=marketCode,',
+      'fields=%2BmarketCode',
+      'fields=',
+      'fields=marketCode,%20id',
+    ];
+    for (const query of rejected) {
+      const response = yield* get(`?${query}`);
+      expect(response.status, query).toBe(400);
+      expect(response.headers.get('content-type')).toContain('application/problem+json');
+    }
+    expect(forwarded).toEqual([]);
+
+    const plain = yield* get('');
+    expect(plain.status).toBe(200);
+    expect(yield* Effect.promise(() => plain.json())).toEqual(publicRegionsBody);
+    const paged = yield* get('?limit=1&offset=1&q=%20cz%20');
+    expect(paged.status).toBe(200);
+    expect(forwarded).toEqual([
+      { query: { contractVersion: 'INTERNAL_C14' }, route: 'adminRegions' },
+      { query: { contractVersion: 'INTERNAL_C14', limit: 1, offset: 1, q: 'cz' }, route: 'adminRegions' },
+    ]);
+
+    const selected = yield* get('?fields=marketCode,marketCode,id');
+    expect(selected.status).toBe(200);
+    expect(yield* Effect.promise(() => selected.json())).toEqual({
+      count: 2,
+      limit: 50,
+      offset: 0,
+      regions: [{ id: region?.id, marketCode: 'CZ_NATIVE' }],
+    });
+    expect(forwarded.at(-1)).toEqual({ query: { contractVersion: 'INTERNAL_C14' }, route: 'adminRegions' });
+
+    const reflected = yield* get(`?q=${validKey}`);
+    expect(reflected.status).toBe(400);
+  }),
+);
+
+it.effect('never answers the regions read with anything but the public body', () =>
+  Effect.gen(function* refusesNonProjection() {
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        start({
+          dispatch: {
+            apply: () => Effect.fail(symmyUnavailableProblem),
+            poll: () => Effect.fail(symmyUnavailableProblem),
+            read: () => Effect.succeed(['10000000-0000-4000-8000-000000000001']),
+            submit: () => Effect.fail(symmyUnavailableProblem),
+          },
+        }),
+      ),
+      (fixture) => Effect.promise(fixture.dispose),
+    );
+    const response = yield* Effect.promise(() =>
+      server.request(SYMMY_ROUTES.adminRegions.path, { headers: { 'x-api-key': validKey }, method: 'GET' }),
+    );
+    expect(response.status).toBe(503);
+    expect(yield* Effect.promise(() => response.text())).not.toContain('references');
   }),
 );
 

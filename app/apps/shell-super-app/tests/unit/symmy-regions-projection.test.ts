@@ -211,17 +211,26 @@ const fixture = (mode: Mode = 'current') => {
   return { acquire, acquisitions, crypto, fakeFetch, requests };
 };
 
-const runProjection = (current: ReturnType<typeof fixture>, selected = configuration, selectedScope = scope) =>
+const runProjectionPage = (
+  current: ReturnType<typeof fixture>,
+  page: { readonly limit: number; readonly offset: number; readonly q?: string },
+  selected = configuration,
+  selectedScope = scope,
+) =>
   TestClock.setTime(0).pipe(
     Effect.andThen(
       projectSymmyRegions(
-        { compositionRevision, configuration: selected, page: { limit: 1, offset: 0 }, scope: selectedScope },
+        { compositionRevision, configuration: selected, page, scope: selectedScope },
         current.acquire,
       ),
     ),
     Effect.provideService(Crypto.Crypto, current.crypto),
     Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch),
   );
+const runProjection = (current: ReturnType<typeof fixture>, selected = configuration, selectedScope = scope) =>
+  runProjectionPage(current, { limit: 1, offset: 0 }, selected, selectedScope);
+const searchRegions = (q: string, limit = 50, offset = 0, mode: Mode = 'current') =>
+  runProjectionPage(fixture(mode), { limit, offset, q });
 
 describe('Symmy internal CZ region projection', () => {
   it.effect('uses fresh public owner assertions and stable issuer-scoped source identities with truthful paging', () =>
@@ -292,6 +301,39 @@ describe('Symmy internal CZ region projection', () => {
       expect(primary.regions[0]?.id).not.toBe(secondary.regions[0]?.id);
       expect(primary.regions[0]).toHaveProperty('source_record_id', 'source-region-a');
       expect(secondary.regions[0]).toHaveProperty('source_record_id', 'source-region-a');
+    }),
+  );
+
+  it.effect('keeps only the Regions whose source key, Market code or currency contains q, before paging', () =>
+    Effect.gen(function* regionSearch() {
+      const byKey = yield* searchRegions('region-b');
+      expect(byKey.count).toBe(1);
+      expect(byKey.regions.map(({ source_record_id }) => source_record_id)).toEqual(['source-region-b']);
+      const otherCase = yield* searchRegions('SOURCE-REGION-A');
+      expect(otherCase.regions.map(({ source_record_id }) => source_record_id)).toEqual(['source-region-a']);
+      const byMarket = yield* searchRegions('cz_native', 1, 1);
+      expect(byMarket.count).toBe(2);
+      expect(byMarket.regions.map(({ source_record_id }) => source_record_id)).toEqual(['source-region-b']);
+      const byCurrency = yield* searchRegions('czk');
+      expect(byCurrency.count).toBe(2);
+      const none = yield* searchRegions('no-such-region');
+      expect(none.count).toBe(0);
+      expect(none.regions).toEqual([]);
+      const pastTheEnd = yield* searchRegions('region', 50, 2);
+      expect(pastTheEnd.count).toBe(2);
+      expect(pastTheEnd.regions).toEqual([]);
+    }),
+  );
+  it.effect('treats q as a plain substring, not a pattern', () =>
+    Effect.gen(function* regionSearchIsLiteral() {
+      const result = yield* searchRegions('.*');
+      expect(result.count).toBe(0);
+    }),
+  );
+  it.effect('fails a broken mapping even when q would exclude it', () =>
+    Effect.gen(function* regionSearchDoesNotHideMappingFailures() {
+      const error = yield* searchRegions('no-such-region', 50, 0, 'market_missing').pipe(Effect.flip);
+      expect(error).toMatchObject({ reason: 'market_missing' });
     }),
   );
 

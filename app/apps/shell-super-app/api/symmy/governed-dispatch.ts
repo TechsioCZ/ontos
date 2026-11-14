@@ -356,7 +356,7 @@ export const makeSymmyGovernedDispatch = (
         {
           compositionRevision: admission.compositionRevision,
           configuration,
-          page: { limit: query.limit ?? 50, offset: query.offset ?? 0 },
+          page: { limit: query.limit ?? 50, offset: query.offset ?? 0, q: query.q },
           scope,
         },
         ({ audience, legalEntityId }) => acquireSymmyReadAssertion(admission, audience, legalEntityId),
