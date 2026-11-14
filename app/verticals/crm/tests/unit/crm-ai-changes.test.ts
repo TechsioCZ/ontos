@@ -155,6 +155,50 @@ const twoEdits = () =>
   ).pipe(Effect.map((change) => change.state));
 
 describe('AI level C governed pending batches', () => {
+  it.effect('returns committed client targets for Party intake, never proposal or contact ids', () =>
+    Effect.gen(function* approvedClientTargets() {
+      const pending = (yield* proposal(base, {
+        _tag: 'CreateClient',
+        contacts: [{ name: 'Contact created with client' }],
+        kind: 'organization',
+        name: 'New approved client',
+      })).state;
+      const proposedId = pending.aiChanges?.changes[0]?.id;
+      const applied = yield* approve(pending);
+      const created = applied.state.clients.items.find((entry) => entry.name === 'New approved client');
+      expect(created).toBeDefined();
+      expect(applied.entityIds).toEqual([created?.id]);
+      expect(applied.entityIds).not.toContain(proposedId);
+      expect(applied.entityIds).not.toContain(applied.state.clients.contacts[0]?.id);
+      expect(applied.state.aiChanges?.changes[0]?.target.id).toBe(created?.id);
+      return yield* Effect.void;
+    }),
+  );
+  it.effect('returns no Party intake targets for rejected creations or non-creation approvals', () =>
+    Effect.gen(function* decisionsWithoutCreatedClients() {
+      const pending = (yield* proposal(base, {
+        _tag: 'CreateClient',
+        kind: 'organization',
+        name: 'Rejected client',
+      })).state;
+      const rejected = yield* ok(pending, {
+        _tag: 'AiDecideChanges',
+        changeIds: pending.aiChanges?.changes.map((entry) => entry.id) ?? [],
+        decision: 'reject',
+      });
+      expect(rejected.entityIds).toEqual([]);
+      expect(rejected.state.clients.items).toEqual(base.clients.items);
+      const edit = (yield* proposal(base, {
+        _tag: 'UpdateClient',
+        id: 'c1',
+        patch: { phone: '+420 777 888 999' },
+      })).state;
+      const approved = yield* approve(edit);
+      expect(approved.entityIds).toEqual([]);
+      expect(approved.state.clients.items[0]?.phone).toBe('+420 777 888 999');
+      return yield* Effect.void;
+    }),
+  );
   it.effect('never auto-applies even low-risk contact additions; human applies and whole batch reverts', () =>
     Effect.gen(function* effectGenerator2() {
       const pending = (yield* proposal(base, {
