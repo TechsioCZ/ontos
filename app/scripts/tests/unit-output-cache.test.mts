@@ -1,10 +1,14 @@
-import { Effect, Schema } from 'effect';
+import path from 'node:path';
+
+import { NodeServices } from '@effect/platform-node';
+import { Effect, Exit, FileSystem, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
   CacheReceiptSchema,
   firstOutputMismatch,
   gatesInputDigest,
+  inventory,
   planOutputCache,
   requiredOutputMismatch,
   typeBundleMismatch,
@@ -212,3 +216,53 @@ it('decodes receipts with Schema and rejects missing, truncated or invalid JSON 
     expect(() => Schema.decodeUnknownSync(codec)(corrupt)).toThrow();
   }
 });
+
+/** A unit output whose .output/node_modules links an npm alias to the package it names, as Modern.js deploy does. */
+const ALIAS = '@modern-js/contracts';
+const ALIAS_LINK = `.output/node_modules/${ALIAS}`;
+const linkedOutput = Effect.gen(function* linkedOutputFixture() {
+  const fs = yield* FileSystem.FileSystem;
+  const root = yield* fs.makeTempDirectoryScoped();
+  const modules = path.join(root, '.output/node_modules');
+  yield* fs.makeDirectory(path.join(root, 'dist'), { recursive: true });
+  yield* fs.makeDirectory(path.join(modules, '@bleedingdev/contracts'), { recursive: true });
+  yield* fs.makeDirectory(path.join(modules, '@modern-js'), { recursive: true });
+  yield* fs.writeFileString(path.join(modules, '@bleedingdev/contracts/package.json'), '{"name":"contracts"}');
+  yield* fs.symlink('../@bleedingdev/contracts', path.join(modules, ALIAS));
+  return { fs, modules, root };
+});
+
+it.effect('keeps an in-output symlink as a link, and its target change rebuilds the unit', () =>
+  Effect.gen(function* inOutputLink() {
+    const { fs, modules, root } = yield* linkedOutput;
+    const linked = yield* inventory(root);
+    const link = linked.find((file) => file.path === ALIAS_LINK);
+    expect(link?.link).toBe('../@bleedingdev/contracts');
+    // The linked package is inventoried once, at its own path, not again through the link.
+    expect(linked.filter((file) => file.path.endsWith('contracts/package.json')).map((file) => file.path)).toEqual([
+      '.output/node_modules/@bleedingdev/contracts/package.json',
+    ]);
+    const cached = { ...receipt, files: linked };
+    yield* fs.makeDirectory(path.join(modules, '@bleedingdev/other'));
+    yield* fs.remove(path.join(modules, ALIAS));
+    yield* fs.symlink('../@bleedingdev/other', path.join(modules, ALIAS));
+    const changed = yield* inventory(root);
+    expect(
+      firstOutputMismatch({ digest: receipt.digest, files: changed, identity, receipt: cached, unit: UNIT }),
+    ).toContain(ALIAS_LINK);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+for (const [name, target] of [
+  ['absolute', '/etc'],
+  ['escaping', '../../../../outside'],
+  ['dangling', '../@bleedingdev/missing'],
+] as const) {
+  it.effect(`rejects an ${name} symlink in a unit output`, () =>
+    Effect.gen(function* rejectedLink() {
+      const { fs, modules, root } = yield* linkedOutput;
+      yield* fs.symlink(target, path.join(modules, '@modern-js/rejected'));
+      expect(Exit.isFailure(yield* Effect.exit(inventory(root)))).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}

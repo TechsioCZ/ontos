@@ -121,6 +121,8 @@ export const CacheProfileSchema = Schema.Struct({
 });
 export type CacheProfile = typeof CacheProfileSchema.Type;
 export const OutputFileSchema = Schema.Struct({
+  /** A relative symlink's target, kept as a link: its sha256 and size describe the target text. */
+  link: Schema.optionalKey(NONEMPTY),
   mode: Schema.Number,
   path: NONEMPTY,
   sha256: DIGEST,
@@ -283,7 +285,29 @@ const expectedDigest = (context: Context, unit: CacheUnit) =>
     units: context.units.map((entry) => ({ directory: `app/${entry.path}`, id: entry.id })),
   });
 
-/** Walk every byte, not just entrypoints. Reject symlinks and special files rather than trust outside bytes. */
+/**
+ * A symlink is kept as a link when its target is relative and stays inside the output root it sits in: Modern.js
+ * deploy links each npm alias in .output/node_modules to the package it names, and the packaged server needs those
+ * links. A link that is absolute, leaves its output root or dangles fails, so no outside byte is ever trusted.
+ */
+const outputLink = (root: string, relative: string) =>
+  Effect.gen(function* inventoryLink() {
+    const fs = yield* FileSystem.FileSystem;
+    const filename = path.join(root, relative);
+    const target = yield* fs.readLink(filename);
+    const outputRoot = path.join(root, relative.split('/')[0] ?? relative);
+    const inside = path.relative(outputRoot, path.resolve(path.dirname(filename), target));
+    if (path.isAbsolute(target) || inside === '' || inside.startsWith('..') || path.isAbsolute(inside)) {
+      return yield* invalid(root, `symlink at ${relative} leaves its output: ${target}`);
+    }
+    if (!(yield* fs.exists(filename))) {
+      return yield* invalid(root, `dangling symlink at ${relative}: ${target}`);
+    }
+    const bytes = new TextEncoder().encode(target);
+    return [{ link: target, mode: 0o777, path: relative, sha256: hash(bytes), size: bytes.byteLength }];
+  });
+
+/** Walk every byte, not just entrypoints. Keep in-output symlinks as links; reject escaping links and special files. */
 const walkOutput = (
   root: string,
   relative: string,
@@ -300,6 +324,9 @@ const walkOutput = (
       );
       return yield* Effect.succeed(children.flat());
     }
+    if (info.type === 'SymbolicLink') {
+      return yield* outputLink(root, relative);
+    }
     if (info.type !== 'File') {
       return yield* invalid(root, `unsupported output type at ${relative}: ${info.type}`);
     }
@@ -311,7 +338,7 @@ const walkOutput = (
       { mode: info.mode % 0o1000, path: relative, sha256: hash(bytes), size: bytes.byteLength },
     ]);
   });
-const inventory = (root: string) =>
+export const inventory = (root: string) =>
   Effect.forEach(OUTPUT_ROOTS, (directory) => walkOutput(root, directory), { concurrency: 1 }).pipe(
     Effect.map((files) => files.flat().toSorted((left, right) => left.path.localeCompare(right.path))),
   );
@@ -343,7 +370,12 @@ export const firstOutputMismatch = (input: {
     if (previous === undefined || previous.path !== file.path) {
       return `output path mismatch: ${file.path}`;
     }
-    if (previous.size !== file.size || previous.sha256 !== file.sha256 || previous.mode !== file.mode) {
+    if (
+      previous.size !== file.size ||
+      previous.sha256 !== file.sha256 ||
+      previous.mode !== file.mode ||
+      previous.link !== file.link
+    ) {
       return `output bytes or mode mismatch: ${file.path}`;
     }
   }
