@@ -137,6 +137,7 @@ export const observeAcceptedEffectIdNativeFixture = Effect.fn('SymmyAcceptedEffe
               return yield* unavailable();
             }
             yield* ownership;
+            return yield* Effect.void;
           }),
         );
         return yield* storage.transaction(

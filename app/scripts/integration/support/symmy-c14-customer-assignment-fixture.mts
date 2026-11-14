@@ -22,6 +22,7 @@ import { Reactivity } from 'effect/reactivity';
 import {
   collectFixtureDiagnostics,
   describeFixtureDiagnostics,
+  encodeFixtureOwnerDiagnostics,
   fixtureDiagnosticTail,
 } from './fixture-diagnostics.mts';
 import {
@@ -551,10 +552,12 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
         const response = yield* submitResponse(idempotencyKey, submittedPlan);
         if (response.status !== 202) {
           const problem = fixtureDiagnosticTail(yield* response.text);
-          const owners = yield* collectFixtureDiagnostics(ownerDiagnostics);
+          const owners = yield* collectFixtureDiagnostics(ownerDiagnostics).pipe(
+            Effect.flatMap(encodeFixtureOwnerDiagnostics),
+          );
           const gateway = yield* describeFixtureDiagnostics(shell.gatewayDiagnostics());
           return yield* unavailable(
-            `Actual customer admission returned ${response.status}: ${problem}; owners: ${JSON.stringify(owners)}; gateway: ${gateway}`,
+            `Actual customer admission returned ${response.status}: ${problem}; owners: ${owners}; gateway: ${gateway}`,
           );
         }
         return yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema)));
@@ -595,7 +598,7 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       admin`select action_key,status,count(*)::integer as count from core.action_invocations
                 where tenant_id=${tenantId} and action_key in ('party.registry.create-party','commerce.customer-context.ensure-retail-customer-profile')
                 group by action_key,status`.pipe(Effect.flatMap(Effect.logError)),
-    ]);
+    ], { concurrency: 1 });
     const completed = yield* observeCustomerFixtureUntil(
       ledger.pipe(
         Effect.flatMap((rows) =>

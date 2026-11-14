@@ -32,6 +32,7 @@ import { Reactivity } from 'effect/reactivity';
 import {
   collectFixtureDiagnostics,
   describeFixtureDiagnostics,
+  encodeFixtureOwnerDiagnostics,
   fixtureDiagnosticTail,
 } from './support/fixture-diagnostics.mts';
 import {
@@ -469,10 +470,12 @@ it.live(
             });
             if (response.status !== 202) {
               const problem = fixtureDiagnosticTail(yield* response.text);
-              const owners = yield* collectFixtureDiagnostics(ownerDiagnostics);
+              const owners = yield* collectFixtureDiagnostics(ownerDiagnostics).pipe(
+                Effect.flatMap(encodeFixtureOwnerDiagnostics),
+              );
               const gateway = yield* describeFixtureDiagnostics(shell.gatewayDiagnostics());
               return yield* unavailable(
-                `Actual customer admission returned ${response.status}: ${problem}; owners: ${JSON.stringify(owners)}; gateway: ${gateway}`,
+                `Actual customer admission returned ${response.status}: ${problem}; owners: ${owners}; gateway: ${gateway}`,
               );
             }
             return yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema)));
@@ -528,7 +531,7 @@ it.live(
               admin`select action_key,status,count(*)::integer as count from core.action_invocations
                 where tenant_id=${tenantId} and action_key in ('party.registry.create-party','commerce.customer-context.ensure-retail-customer-profile')
                 group by action_key,status`.pipe(Effect.flatMap(Effect.logError)),
-            ]),
+            ], { concurrency: 1 }),
           ),
         );
         expect(completed.map(({ effect_key }) => effect_key)).toContain('party-create');
@@ -760,7 +763,7 @@ it.live(
               ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
                 diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
               ),
-            ]),
+            ], { concurrency: 1 }),
           ),
         );
         expect(dataPrivacy.personAdmission.partyRef).toEqual(partyReceipt.partyRef);
@@ -848,7 +851,7 @@ it.live(
               ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
                 diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
               ),
-            ]),
+            ], { concurrency: 1 }),
           ),
         );
         expect(revisionEffects.every(({ owner_invocation_id }) => Option.isSome(owner_invocation_id))).toBe(true);
@@ -905,7 +908,7 @@ it.live(
                     ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
                       diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
                     ),
-                  ]),
+                  ], { concurrency: 1 }),
             ),
           );
         expect(customerReadbackResponse.status).toBe(200);
@@ -944,6 +947,7 @@ it.live(
             },
           ],
           (wrongRoute) => Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)(wrongRoute),
+          { concurrency: 1 },
         );
         yield* Effect.forEach(
           wrongReadRoutes,
@@ -1014,7 +1018,7 @@ it.live(
               ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
                 diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
               ),
-            ]),
+            ], { concurrency: 1 }),
           ),
         );
         expect(roundTripEffects.every(({ owner_invocation_id }) => Option.isSome(owner_invocation_id))).toBe(true);
