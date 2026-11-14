@@ -919,7 +919,7 @@ const recordStockMovement = Effect.fn('Merchandise.recordStockMovement')(functio
   }
   const base: StockMovement = {
     at: input.now,
-    delta: value.delta,
+    delta: normalizeQuantity(value.delta),
     id: yield* movementIdOf(input.resourceId),
     productId: product.id,
     reason: value.reason,
@@ -963,7 +963,7 @@ const addOrderLine = Effect.fn('Merchandise.addOrderLine')(function* addOrderLin
   const line: OrderLine = {
     productId: product.id,
     productName: product.name,
-    quantity: request.quantity,
+    quantity: normalizeQuantity(request.quantity),
     sku: variant?.sku ?? product.sku,
     unitPriceMinor: variant?.priceMinor ?? product.currentPriceMinor,
     ...variantFields(variant?.id, variant?.name),
@@ -971,7 +971,7 @@ const addOrderLine = Effect.fn('Merchandise.addOrderLine')(function* addOrderLin
   };
   const movement: StockMovement = {
     at: context.input.now,
-    delta: -request.quantity,
+    delta: -normalizeQuantity(request.quantity),
     id: yield* movementIdOf(context.input.resourceId, build.lines.length),
     productId: product.id,
     reason: 'ORDER',
@@ -1130,7 +1130,7 @@ const storefrontLines = (order: Pick<Order, 'lines' | 'pricesIncludeVat'>): Stor
     lineTotalMinor: lineGrossMinor(line, order.pricesIncludeVat),
     name: line.productName,
     productId: line.productId,
-    quantity: line.quantity,
+    quantity: normalizeQuantity(line.quantity),
     sku: line.sku,
     unitPriceMinor: line.unitPriceMinor,
     ...variantFields(line.variantId, line.variantName),
@@ -1483,7 +1483,7 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
       const priced = {
         productId: product.id,
         productName: product.name,
-        quantity: line.quantity,
+        quantity: normalizeQuantity(line.quantity),
         sku: unit.sku,
         unitPriceMinor: unit.grossPriceMinor,
         ...tax,
@@ -1561,7 +1561,7 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
       movementIdOf(input.resourceId, index).pipe(
         Effect.map((movementId): StockMovement => ({
           at: input.now,
-          delta: -line.quantity,
+          delta: -normalizeQuantity(line.quantity),
           id: movementId,
           note: `Objednávka ${number} z e-shopu`,
           productId: line.productId,
@@ -1700,7 +1700,7 @@ const addedOrderLine = Effect.fn('Merchandise.addedOrderLine')(function* addedOr
   return {
     productId: product.id,
     productName: product.name,
-    quantity: request.quantity,
+    quantity: normalizeQuantity(request.quantity),
     sku: variant?.sku ?? product.sku,
     unitPriceMinor: request.unitPriceMinor ?? currentPrice,
     ...variantFields(variant?.id, variant?.name),
@@ -1736,7 +1736,7 @@ const editedOrderLines = Effect.fn('Merchandise.editedOrderLines')(function* edi
       if (kept !== undefined) {
         return {
           ...kept,
-          quantity: request.quantity,
+          quantity: normalizeQuantity(request.quantity),
           unitPriceMinor: request.unitPriceMinor ?? kept.unitPriceMinor,
         };
       }

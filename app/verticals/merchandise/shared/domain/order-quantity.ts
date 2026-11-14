@@ -4,7 +4,10 @@ export const MAX_QUANTITY = 1_000_000;
 const quantityScale = 10 ** QUANTITY_DECIMAL_PLACES;
 export const MIN_STOCK_QUANTITY = 1 / quantityScale;
 
-export const normalizeQuantity = (quantity: number): number => Math.round(quantity * quantityScale) / quantityScale;
+export const normalizeQuantity = (quantity: number): number => {
+  const scaled = Math.round(quantity * quantityScale);
+  return scaled === 0 ? 0 : scaled / quantityScale;
+};
 export const hasQuantityPrecision = (quantity: number): boolean =>
   Number.isFinite(quantity) &&
   Math.abs(quantity - normalizeQuantity(quantity)) <= Number.EPSILON * Math.max(1, Math.abs(quantity));

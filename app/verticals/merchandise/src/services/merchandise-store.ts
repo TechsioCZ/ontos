@@ -343,7 +343,7 @@ export const productRowsOf = Effect.fn('MerchandiseStore.productRowsOf')(functio
       priceMinor: variant.priceMinor ?? null,
       productId: product.id,
       sku: variant.sku ?? null,
-      stockOnHand: variant.id === undefined ? 0 : (stock.variants.get(variant.id) ?? 0),
+      stockOnHand: variant.id === undefined ? 0 : normalizeQuantity(stock.variants.get(variant.id) ?? 0),
       unit: variant.unit ?? variant.sourceUnit ?? product.unit,
       variantId: variant.id ?? null,
     };

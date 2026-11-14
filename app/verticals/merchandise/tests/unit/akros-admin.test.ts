@@ -2,7 +2,7 @@ import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { MerchandiseCommandSchema, MerchandiseLifecycleConflict } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
-import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
+import { isOrderQuantityValid, normalizeQuantity, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
 import { formatDelta } from '../../src/routes/[lang]/provoz/produkty/products-format.ts';
 import { TEST_TAX } from '../support/tax-fixtures.ts';
@@ -122,4 +122,12 @@ it('preserves fractional-length packages and does not invent an integer package 
 it('shows every supported fractional stock digit rather than a rounded zero movement', () => {
   expect(formatDelta(0.000001)).toBe('+0,000001');
   expect(formatDelta(-0.123456)).toBe('-0,123456');
+});
+
+it('normalizes legacy negative residues to zero and preserves genuine shortages', () => {
+  expect(normalizeQuantity(-0.00000000001)).toBe(0);
+  expect(normalizeQuantity(0.3 - 0.1)).toBe(0.2);
+  const rules = orderQuantityRules({ minimumQuantity: 0.1, stockOnHand: 0.3 - 0.1 });
+  expect(isOrderQuantityValid(0.2, rules)).toBe(true);
+  expect(isOrderQuantityValid(0.200001, rules)).toBe(false);
 });

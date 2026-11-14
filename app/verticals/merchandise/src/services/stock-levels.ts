@@ -79,10 +79,11 @@ export const availabilityOf = (input: {
   if (!input.stockTracked) {
     return 'UNKNOWN';
   }
-  if (input.stock <= 0) {
+  const stock = normalizeQuantity(input.stock);
+  if (stock <= 0) {
     return 'OUT_OF_STOCK';
   }
-  return input.stock <= input.threshold ? 'LOW_STOCK' : 'IN_STOCK';
+  return stock <= input.threshold ? 'LOW_STOCK' : 'IN_STOCK';
 };
 
 const availabilityRank = {
@@ -189,7 +190,7 @@ export const toProductRecord = (
       best = variant.availability;
     }
   }
-  const variantStock = sumOf(variants, (variant) => variant.stockOnHand);
+  const variantStock = normalizeQuantity(sumOf(variants, (variant) => variant.stockOnHand));
   const grossPrices = (sellable.length > 0 ? sellable : variants).flatMap((variant) =>
     variant.grossPriceMinor === undefined ? [] : [variant.grossPriceMinor],
   );
@@ -204,7 +205,7 @@ export const toProductRecord = (
     stockOnHand,
     stockValueMinor: Math.round(
       sumOf(variants, (variant) => variant.stockOnHand * variant.priceMinor) +
-        (stockOnHand - variantStock) * product.currentPriceMinor,
+        normalizeQuantity(stockOnHand - variantStock) * product.currentPriceMinor,
     ),
     variantRecords: variants,
   };
