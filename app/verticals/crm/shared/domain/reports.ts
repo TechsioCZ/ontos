@@ -671,7 +671,17 @@ const csvDecimal = (value: string | undefined): CsvNumber | undefined =>
 
 export const ordersCsv = (report: SalesReport) =>
   toCsv(
-    ['Datum objednávky', 'Číslo objednávky', 'Zdroj', 'Klient', 'Obchodník', 'Význam stavu', 'Částka', 'Měna'],
+    [
+      'Datum objednávky',
+      'Číslo objednávky',
+      'Zdroj',
+      'Klient',
+      'Obchodník',
+      'Stav ze zdroje',
+      'Význam stavu',
+      'Částka',
+      'Měna',
+    ],
     report.rows.map((row) => {
       const money = orderMoney(row.order);
       return [
@@ -680,7 +690,8 @@ export const ordersCsv = (report: SalesReport) =>
         row.order.source,
         row.clientName,
         row.salespersonName ?? 'Nepřiděleno',
-        statusMeaningLabels[row.meaning],
+        row.order.rawStatus,
+        report.mappingApproved && row.meaning !== 'unmapped' ? statusMeaningLabels[row.meaning] : undefined,
         money === undefined ? 'údaj neposkytnut' : csvDecimal(unitsToDecimal(money.units)),
         money?.currency ?? '',
       ];

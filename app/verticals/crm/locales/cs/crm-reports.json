@@ -1,5 +1,7 @@
 {
   "reports": {
+    "csvRawStatus": "Stav ze zdroje",
+    "csvStatusMeaning": "Význam stavu",
     "customPeriod": "Vlastní období",
     "dateFrom": "Od",
     "dateTo": "Do",

@@ -1,5 +1,7 @@
 {
   "reports": {
+    "csvRawStatus": "Source status",
+    "csvStatusMeaning": "Status meaning",
     "customPeriod": "Custom period",
     "dateFrom": "From",
     "dateTo": "To",
