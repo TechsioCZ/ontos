@@ -333,8 +333,11 @@ it.live(
           'privacy.core.source-processing-check',
           'party.registry.source-read',
         ]) {
+          const bindingId = yield* uuid;
           yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status)
-            values(${yield* uuid},${yield* uuid},${tenantId},${recoveryReaderId},${workload},'active')`;
+            values(${bindingId},${yield* uuid},${tenantId},${recoveryReaderId},${workload},'active')`;
+          yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+            values(${yield* uuid},${yield* uuid},${tenantId},${bindingId},${legalEntityId},'active')`;
         }
         yield* admin`update core.access_workload_bindings set status='revoked',revoked_at=now()
           where tenant_id=${tenantId} and ((principal_id=${systemId} and workload_key in
