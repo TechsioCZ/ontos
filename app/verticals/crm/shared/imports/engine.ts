@@ -193,6 +193,16 @@ const fillMoney = (existing: ImportedOrder, row: ParsedOrderRow) => {
   };
 };
 
+const crossSourceTwin = (orders: Iterable<ImportedOrder>, row: ParsedOrderRow) =>
+  row.number === undefined
+    ? undefined
+    : [...orders].find(
+        (order) => order.source !== row.source && order.number === row.number && order.duplicateOf === undefined,
+      );
+
+const duplicateReason = (twin: ImportedOrder, number: string | undefined) =>
+  `Stejné číslo objednávky ${number ?? ''} už přišlo ze zdroje ${twin.source}. Bez potvrzené korelace se nezapočítává do potvrzených souhrnů.`;
+
 /** Applies parsed rows to the slice. Pure; the caller persists the returned slice. */
 export const importOrders = (
   slice: ImportsSlice,
@@ -218,12 +228,7 @@ export const importOrders = (
         : slice.customerLinks.find(
             (entry) => entry.source === row.source && entry.externalCustomerId === row.externalCustomerId,
           );
-    const twin =
-      row.number === undefined
-        ? undefined
-        : [...orders.values()].find(
-            (order) => order.source !== row.source && order.number === row.number && order.duplicateOf === undefined,
-          );
+    const twin = crossSourceTwin(orders.values(), row);
     const candidates = link === undefined ? pairingCandidates(clients, row) : [];
     let pairing: ImportedOrder['pairing'] = 'paired';
     if (link === undefined) {
@@ -251,10 +256,7 @@ export const importOrders = (
         lines: row.lines,
         number: row.number,
         orderedAt: row.orderedAt,
-        reviewReason:
-          twin === undefined
-            ? undefined
-            : `Stejné číslo objednávky ${row.number ?? ''} už přišlo ze zdroje ${twin.source}. Bez potvrzené korelace se nezapočítává do potvrzených souhrnů.`,
+        reviewReason: twin === undefined ? undefined : duplicateReason(twin, row.number),
       }),
     };
     orders.set(orderKey(row.source, row.externalId), order);
@@ -303,6 +305,8 @@ export const importOrders = (
       };
     }
     const reviewReason = money.reviewReason ?? eventReviewReason(existing, event);
+    const twin = existing.number === undefined ? crossSourceTwin(orders.values(), row) : undefined;
+    const correlationReason = twin === undefined ? undefined : duplicateReason(twin, row.number);
     const filled = definedEntries({
       ...money.fields,
       customerEmail: existing.customerEmail ?? row.customerEmail,
@@ -311,6 +315,8 @@ export const importOrders = (
       externalCustomerId: existing.externalCustomerId ?? row.externalCustomerId,
       number: existing.number ?? row.number,
       orderedAt: existing.orderedAt ?? row.orderedAt,
+      duplicateOf: existing.duplicateOf ?? twin?.id,
+      reviewReason: correlationReason ?? existing.reviewReason,
     });
     const next: ImportedOrder =
       reviewReason === undefined
@@ -328,13 +334,14 @@ export const importOrders = (
           };
     orders.set(orderKey(existing.source, existing.externalId), next);
     touched.add(existing.id);
-    return reviewReason === undefined
+    const resultReviewReason = reviewReason ?? correlationReason;
+    return resultReviewReason === undefined
       ? {
           message: `Stav ${existing.rawStatus} → ${event.rawStatus}`,
           orderId: existing.id,
           outcome: 'updated' as const,
         }
-      : { message: `Vyžaduje kontrolu: ${reviewReason}`, orderId: existing.id, outcome: 'review' as const };
+      : { message: `Vyžaduje kontrolu: ${resultReviewReason}`, orderId: existing.id, outcome: 'review' as const };
   };
 
   for (const parsedRow of parsed.rows) {

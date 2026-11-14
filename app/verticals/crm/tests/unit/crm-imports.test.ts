@@ -13,6 +13,7 @@ import { CrmStateSchema, initialCrmState, projectCrmState } from '../../shared/d
 import { parseOrdersCsv } from '../../shared/imports/csv.ts';
 import { seedImports } from '../../shared/imports/demo-seed.ts';
 import { ordersCsvSamples } from '../../shared/imports/samples.ts';
+import { buildSalesReport } from '../../shared/domain/reports.ts';
 
 const at = '2026-10-20T08:00:00.000Z';
 const client = (
@@ -245,6 +246,40 @@ describe('CRM order CSV parser', () => {
 });
 
 describe('CRM order import (C03)', () => {
+  it.effect('rechecks cross-source duplicates when an existing order first receives its number', () =>
+    Effect.gen(function* enrichedNumberCorrelation() {
+      const header = 'source;order_id;number;status;event_time\n';
+      const first = yield* runOk(base, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;original;SHARED;nova;2026-10-19T09:00:00Z\nAccounting;late-number;;nova;2026-10-19T09:00:00Z\nAccounting;distinct;;nova;2026-10-19T09:00:00Z\n`,
+        fileName: 'numbers-first.csv',
+      });
+      const next = yield* runOk(first, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}Accounting;late-number;SHARED;paid;2026-10-19T10:00:00Z\nAccounting;distinct;UNIQUE;paid;2026-10-19T10:00:00Z\n`,
+        fileName: 'numbers-next.csv',
+      });
+      const duplicate = order(next, 'late-number', 'Accounting');
+      expect(duplicate).toMatchObject({ duplicateOf: order(next, 'original').id, number: 'SHARED' });
+      expect(needsReview(duplicate)).toBe(true);
+      expect(order(next, 'distinct', 'Accounting').duplicateOf).toBeUndefined();
+      expect(next.imports.batches[0]).toMatchObject({ review: 1, updated: 1 });
+      const paired = Schema.decodeUnknownSync(CrmStateSchema)({
+        ...Schema.encodeSync(CrmStateSchema)(next),
+        imports: {
+          ...Schema.encodeSync(CrmStateSchema)(next).imports,
+          orders: Schema.encodeSync(CrmStateSchema)(next).imports.orders.map((entry) => ({
+            ...entry,
+            clientId: 'pekarna-mala',
+            pairing: 'paired',
+          })),
+        },
+      });
+      expect(buildSalesReport(paired).count).toBe(2);
+      expect(buildSalesReport(paired).excluded).toEqual([{ count: 1, reason: 'duplicate' }]);
+      return yield* Effect.void;
+    }),
+  );
   it.effect('fills missing monetary snapshots only when their currencies agree, including priced lines', () =>
     Effect.gen(function* monetarySnapshots() {
       const header = 'source;order_id;status;event_time;amount;currency;lines\n';
