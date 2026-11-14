@@ -2,7 +2,7 @@ import { ActionRuntime, ReadRuntime } from '@app/core-runtime';
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import type { ActionRegistration, DomainEventContractMap } from '@app/core-runtime';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import { Config, Match, Redacted, Schema } from 'effect';
+import { Config, Redacted, Schema } from 'effect';
 import type { HttpServerRequest } from 'effect/http';
 
 import { partyCommandResultRead } from '../src/api/party-command-result.read.ts';
@@ -257,12 +257,10 @@ const resolvePartyCommandCommit = Effect.fn('PartyCommandServer.resolvePartyComm
         transport: { correlationId },
       })
       .pipe(
-        Effect.mapError((cause) =>
-          Match.value(cause).pipe(
-            Match.tag('ReadPermissionDenied', partyCommandProblem.unavailable),
-            Match.orElse((failure) => Object.assign(partyCommandProblem.unavailable(), { cause: failure })),
-          ),
-        ),
+        // Every refusal or failure of the owned result (a denied current source Privacy included) answers the one
+        // data-only 503 problem, as main's governed read servers do. A failure value must stay data: attaching the
+        // read's failure chain let Effect structurally hash runtime objects when it merged causes.
+        Effect.catch(() => failPartyCommandProblem(partyCommandProblem.unavailable())),
       );
     const result = { _tag: 'PartyCommandCommitResolution' as const, ...commitResolution };
     return createResult === undefined ? result : { ...result, createResult };
