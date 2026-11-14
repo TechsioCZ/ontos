@@ -1747,7 +1747,14 @@ const optionalStateParts = (state: FinanceState, selected: ReadonlySet<string>, 
       | 'reminders'
     >
   > = {};
-  const accountingExports = unfiltered ? state.accountingExports : undefined;
+  // A filtered read keeps the handover evidence of its own invoices: each package that contains one of them, narrowed
+  // to those invoices and without the file, which also lists invoices outside this read.
+  const accountingExports = unfiltered
+    ? state.accountingExports
+    : state.accountingExports?.flatMap((entry) => {
+        const [first, ...rest] = entry.invoiceResourceIds.filter((id) => selected.has(id));
+        return first === undefined ? [] : [{ ...entry, content: '', invoiceResourceIds: [first, ...rest] }];
+      });
   if (accountingExports !== undefined) {
     parts = { ...parts, accountingExports };
   }

@@ -178,6 +178,25 @@ describe('S08 export issuer identity', () => {
     }),
   );
 
+  it.effect('a filtered read keeps the handover of its own invoices, without other invoices or the file', () =>
+    Effect.gen(function* filteredHandover() {
+      const created = yield* run(
+        { ...empty, invoices: [invoice('a'), invoice('b')] },
+        { _tag: 'CreateAccountingExport', format: 'CSV', invoiceResourceIds: ['a', 'b'] },
+      );
+      const exportId = created.state.accountingExports?.[0]?.id ?? '';
+      const handedOver = yield* run(created.state, { _tag: 'HandOverAccountingExport', exportId });
+      const onlyA = projectFinanceRecords(handedOver.state, 2, { resourceId: 'a' });
+      expect(onlyA.state.accountingExports).toHaveLength(1);
+      const [entry] = onlyA.state.accountingExports ?? [];
+      expect(entry).toMatchObject({ id: exportId, invoiceResourceIds: ['a'], status: 'HANDED_OVER' });
+      expect(entry?.content).toBe('');
+      // An invoice that was never handed over gets no package at all.
+      const unrelated = { ...handedOver.state, invoices: [...handedOver.state.invoices, invoice('c')] };
+      expect(projectFinanceRecords(unrelated, 3, { resourceId: 'c' }).state.accountingExports).toEqual([]);
+    }),
+  );
+
   it.effect('read-only principals see the handover history without the file body', () =>
     Effect.gen(function* readOnly() {
       const created = yield* run(
