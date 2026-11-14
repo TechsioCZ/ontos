@@ -58,7 +58,15 @@ const AnchorFields = {
 };
 
 export const FinanceCommandSchema = Schema.Union([
-  Schema.TaggedStruct('CreateInvoiceDraft', { ...InvoiceDraftCommandFields, ...DraftExtras }),
+  /**
+   * Our own (outgoing) invoice takes the next number of the company's series, allocated by Finance from the complete
+   * ledger; `documentNumber` is only for a caller's own reference or a supplier's number, never a series guess.
+   */
+  Schema.TaggedStruct('CreateInvoiceDraft', {
+    ...InvoiceDraftCommandFields,
+    ...DraftExtras,
+    documentNumber: Schema.optionalKey(InvoiceDraftCommandFields.documentNumber),
+  }),
   Schema.TaggedStruct('UpdateInvoiceDraft', {
     ...InvoiceDraftCommandFields,
     ...DraftExtras,

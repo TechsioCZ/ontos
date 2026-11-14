@@ -28,7 +28,8 @@ type OpportunityStageChangedEvent = (typeof opportunityStageChangedDomainEvents)
 
 /**
  * Snapshot line. The frozen contract requires a catalog `productId`, so free-text lines are left out of the
- * snapshot; `amountMinor` still reports the full opportunity amount.
+ * snapshot; `amountMinor` still reports the full opportunity amount, which is how consumers see that the lines are
+ * incomplete (Finance then drafts no invoice instead of billing only part of the sale).
  */
 const snapshotLine = (line: OpportunityLine): readonly OpportunityStageChangedLine[] =>
   line.productId === undefined

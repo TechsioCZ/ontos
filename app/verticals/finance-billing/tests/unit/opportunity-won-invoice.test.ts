@@ -3,7 +3,10 @@ import { OutboxPayloadSchema } from '@app/sales-pipeline/outbox/opportunity-stag
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Option, Schema } from 'effect';
 import { FinanceCommandSchema } from '../../shared/actions/apply-command.ts';
-import { opportunityWonInvoiceCommand } from '../../shared/outbox-consumers/opportunity-won-invoice.ts';
+import {
+  opportunityWonInvoiceCommand,
+  wonOpportunityLinesIncomplete,
+} from '../../shared/outbox-consumers/opportunity-won-invoice.ts';
 
 const opportunityId = 'c0000000-0000-4000-8000-000000000001';
 const partyId = 'a0000000-0000-4000-8000-000000000012';
@@ -78,6 +81,20 @@ describe('opportunityWonInvoiceCommand', () => {
     Effect.gen(function* emptyWon() {
       const payload = yield* stageChanged('WON');
       expect(Option.isNone(opportunityWonInvoiceCommand({ ...payload, lines: [] }))).toBe(true);
+    }),
+  );
+
+  it.effect('reports a WON message whose catalog lines bill less than the won amount as incomplete', () =>
+    Effect.gen(function* incompleteLines() {
+      const payload = yield* stageChanged('WON');
+      expect(wonOpportunityLinesIncomplete(payload)).toBe(false);
+      // A free-text line of 120 000 is left out of the message; the amount still includes it.
+      expect(wonOpportunityLinesIncomplete({ ...payload, amountMinor: 370_000 })).toBe(true);
+      expect(wonOpportunityLinesIncomplete({ ...payload, lines: [] })).toBe(true);
+      expect(wonOpportunityLinesIncomplete({ ...payload, amountMinor: 0, lines: [] })).toBe(false);
+      expect(wonOpportunityLinesIncomplete({ ...(yield* stageChanged('NEGOTIATION')), amountMinor: 370_000 })).toBe(
+        false,
+      );
     }),
   );
 

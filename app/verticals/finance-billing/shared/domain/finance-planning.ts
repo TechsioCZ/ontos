@@ -16,6 +16,7 @@ import {
   IssuerVatIdSchema,
 } from '../apis/records.ts';
 import { buildPohodaDataPack } from './pohoda-xml.ts';
+import type { PohodaExportRefused } from './pohoda-xml.ts';
 
 const pragueDateFormatter = new Intl.DateTimeFormat('en-CA', {
   day: '2-digit',
@@ -130,8 +131,16 @@ export const budgetVariance = (plannedMinor: number, actualMinor: number) => ({
 });
 
 /**
- * Invoice actual for a budget line: confirmed invoices of that month, category and direction; a budget for a
- * property, unit or středisko only counts invoices assigned to that same object.
+ * What an invoice adds to budget actuals: its total without the earlier advances or partial invoices it takes into
+ * account, since those documents are confirmed invoices of their own and already count where they were issued.
+ */
+const ownActualMinor = (invoice: Pick<Invoice, 'priorSettlement' | 'totalMinor'>): number =>
+  invoice.totalMinor - (invoice.priorSettlement?.entries ?? []).reduce((sum, entry) => sum + entry.amountMinor, 0);
+
+/**
+ * Invoice actual for a budget line: confirmed invoices of that month, category and direction, each without what an
+ * earlier advance already counted; a budget for a property, unit or středisko only counts invoices assigned to that
+ * same object.
  */
 export const invoiceActualMinor = (
   budget: Pick<BudgetLine, 'category' | 'kind' | 'period'> &
@@ -149,7 +158,7 @@ export const invoiceActualMinor = (
         (budget.unitRef === undefined || invoice.unitRef?.resourceId === budget.unitRef.resourceId) &&
         (budget.costCenter === undefined || invoice.costCenter === budget.costCenter),
     )
-    .reduce((sum, invoice) => sum + invoice.totalMinor, 0);
+    .reduce((sum, invoice) => sum + ownActualMinor(invoice), 0);
 
 /** The manual actual wins when entered; otherwise the matching confirmed invoices are the actual. */
 export const budgetActualMinor = (budget: BudgetLine, invoices: readonly Invoice[]) =>
@@ -279,10 +288,38 @@ export const cashFlowMonths = (
   });
 };
 
+/** Months the cash-flow view shows: the previous month, the current one and four ahead. */
+const FORECAST_WINDOW_MONTHS = 6;
+const monthIndex = (month: string) => Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7)) - 1;
+
+/**
+ * The cash-flow view's months: from the previous month through four months ahead of `businessDate`. The forecast
+ * balance accumulates every month from the opening balance up to there, so an opening set long ago still carries
+ * all later payments and obligations instead of the view stopping six months after the opening.
+ */
+export const cashFlowForecast = (
+  state: Parameters<typeof cashFlowMonths>[0],
+  businessDate: string,
+): readonly CashFlowMonth[] => {
+  const windowStart = addMonths(monthOf(businessDate), -1);
+  const openingDate = state.cashFlowOpening?.openingDate;
+  const openingMonth = openingDate === undefined ? windowStart : monthOf(openingDate);
+  const fromMonth = openingMonth < windowStart ? openingMonth : windowStart;
+  const months = monthIndex(windowStart) - monthIndex(fromMonth) + FORECAST_WINDOW_MONTHS;
+  return cashFlowMonths(state, { businessDate, fromMonth, months }).filter((entry) => entry.month >= windowStart);
+};
+
 const csvCell = (value: string | number | undefined) => {
   const text = value === undefined ? '' : String(value);
   return /[";\n\r]/u.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 };
+
+/**
+ * A spreadsheet runs a text cell that starts with `=`, `+`, `-`, `@`, a tab or a carriage return as a formula.
+ * Text from users and other modules is therefore prefixed with an apostrophe, so it always opens as plain text;
+ * amounts and the batch version are written by OntOS itself and stay numeric.
+ */
+const csvTextCell = (value: string) => csvCell(/^[=+\-@\t\r]/u.test(value) ? `'${value}` : value);
 
 const amount = (minor: number | undefined) => (minor === undefined ? '' : (minor / 100).toFixed(2));
 
@@ -377,7 +414,7 @@ export const buildAccountingExport = Effect.fn('Finance.buildAccountingExport')(
   readonly format: AccountingExportFormat;
   readonly meta: ExportMeta;
   readonly rows: readonly ExportRow[];
-}): Effect.fn.Return<string, Schema.SchemaError> {
+}): Effect.fn.Return<string, PohodaExportRefused | Schema.SchemaError> {
   if (format === 'CSV') {
     const header = [
       'schema_version',
@@ -402,28 +439,26 @@ export const buildAccountingExport = Effect.fn('Finance.buildAccountingExport')(
     ];
     const lines = rows.map(({ counterpartyName, documentLink, invoice }) =>
       [
-        ACCOUNTING_EXPORT_SCHEMA_VERSION,
-        meta.batchNumber,
-        meta.version,
-        invoice.ref.resourceId,
-        invoice.number ?? invoice.documentNumber,
-        invoice.documentKind ?? 'STANDARD',
-        invoice.direction === 'OUTGOING' ? 'VYDANA' : 'PRIJATA',
-        counterpartyName,
-        invoice.counterpartyRef.resourceId,
-        invoice.issueDate,
-        invoice.dueDate,
-        invoice.currency,
-        amount(invoice.subtotalMinor),
-        amount(invoice.vatMinor),
-        amount(invoice.totalMinor),
-        amount(invoice.paidMinor),
-        invoice.paymentState,
-        objectLabel(invoice),
-        documentLink,
-      ]
-        .map(csvCell)
-        .join(';'),
+        csvCell(ACCOUNTING_EXPORT_SCHEMA_VERSION),
+        csvTextCell(meta.batchNumber),
+        csvCell(meta.version),
+        csvTextCell(invoice.ref.resourceId),
+        csvTextCell(invoice.number ?? invoice.documentNumber),
+        csvTextCell(invoice.documentKind ?? 'STANDARD'),
+        csvTextCell(invoice.direction === 'OUTGOING' ? 'VYDANA' : 'PRIJATA'),
+        csvTextCell(counterpartyName),
+        csvTextCell(invoice.counterpartyRef.resourceId),
+        csvTextCell(invoice.issueDate),
+        csvTextCell(invoice.dueDate),
+        csvTextCell(invoice.currency),
+        csvCell(amount(invoice.subtotalMinor)),
+        csvCell(amount(invoice.vatMinor)),
+        csvCell(amount(invoice.totalMinor)),
+        csvCell(amount(invoice.paidMinor)),
+        csvTextCell(invoice.paymentState),
+        csvTextCell(objectLabel(invoice)),
+        csvTextCell(documentLink),
+      ].join(';'),
     );
     return `﻿${[header.join(';'), ...lines].join('\r\n')}\r\n`;
   }
@@ -457,7 +492,7 @@ export const buildAccountingExport = Effect.fn('Finance.buildAccountingExport')(
     const content = yield* Schema.encodeUnknownEffect(AccountingExportDocumentJsonSchema)(document);
     return `${content}\n`;
   }
-  return buildPohodaDataPack(rows, meta);
+  return yield* buildPohodaDataPack(rows, meta);
 });
 
 const czk = (minor: number) => `${czkNumberFormatter.format(minor / 100)} Kč`;

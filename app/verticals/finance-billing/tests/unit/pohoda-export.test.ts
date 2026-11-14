@@ -5,7 +5,12 @@ import { expect, it } from 'effect-rstest';
 import type { Invoice } from '../../shared/apis/records.ts';
 import { buildAccountingExport, exportFileName } from '../../shared/domain/finance-planning.ts';
 import type { ExportMeta, ExportRow } from '../../shared/domain/finance-planning.ts';
-import { POHODA_NO_VAT_BREAKDOWN_NOTE, pohodaVatRate, variableSymbol } from '../../shared/domain/pohoda-xml.ts';
+import {
+  POHODA_NO_VAT_BREAKDOWN_NOTE,
+  buildPohodaDataPack,
+  pohodaVatRate,
+  variableSymbol,
+} from '../../shared/domain/pohoda-xml.ts';
 import { validatePohodaXml } from '../support/pohoda-xsd.ts';
 
 const tenantId = 'a0000000-0000-4000-8000-000000000001';
@@ -160,6 +165,110 @@ it.layer(NodeServices.layer)('POHODA XML export (STORMWARE dataPack 2.0)', (test
       expect(xml).toContain('<typ:company>Obchodní firma</typ:company>');
       expect(xml).not.toContain('SIMULACE');
       yield* validatePohodaXml(xml);
+    }),
+  );
+
+  test.effect('writes formula-leading CSV text as plain text and keeps amounts numeric', () =>
+    Effect.gen(function* formulaCsv() {
+      const csv = yield* buildAccountingExport({
+        format: 'CSV',
+        meta: siampark,
+        rows: [
+          {
+            counterpartyName: '=HYPERLINK("http://attacker.invalid","Klikni")',
+            documentLink: link('out-1'),
+            invoice: invoice('csv-1', { budgetCategory: '@SUM(A1:A9)', documentNumber: '+420', totalMinor: 100_000 }),
+          },
+          { counterpartyName: '-2+3', documentLink: link('csv-2'), invoice: invoice('csv-2') },
+        ],
+      });
+      const [, first, second] = csv.split('\r\n');
+      expect(first).toContain(`;"'=HYPERLINK(""http://attacker.invalid"",""Klikni"")";`);
+      expect(first).toContain(";'+420;");
+      expect(first).toContain(";'@SUM(A1:A9);");
+      expect(first).toContain(';1000.00;');
+      expect(second).toContain(";'-2+3;");
+      expect(csv).not.toMatch(/;[=+\-@]/u);
+    }),
+  );
+
+  test.effect('refuses a document number POHODA would cut instead of truncating the identity', () =>
+    Effect.gen(function* overlongNumber() {
+      const supplierNumber = 'DOD-2026-0000000000000000000000001';
+      const refusal = yield* Effect.flip(
+        buildPohodaDataPack(
+          [
+            {
+              counterpartyName: 'Dodavatel',
+              documentLink: link('in-2'),
+              invoice: invoice('in-2', { direction: 'INCOMING', documentNumber: supplierNumber }),
+            },
+          ],
+          siampark,
+        ),
+      );
+      expect(refusal.problem).toBe('pohoda_document_number_too_long');
+      expect(refusal.documentNumber).toBe(supplierNumber);
+      const exactly32 = 'FV-2026-000000000000000000000001';
+      expect([...exactly32]).toHaveLength(32);
+      const xml = yield* buildPohodaDataPack(
+        [
+          {
+            counterpartyName: 'Odběratel',
+            documentLink: link('out-3'),
+            invoice: invoice('out-3', { documentNumber: exactly32 }),
+          },
+        ],
+        siampark,
+      );
+      expect(xml).toContain(`<typ:numberRequested>${exactly32}</typ:numberRequested>`);
+    }),
+  );
+
+  test.effect('refuses a VAT rate POHODA has no summary column for instead of reporting it as zero', () =>
+    Effect.gen(function* unsupportedRate() {
+      const refusal = yield* Effect.flip(
+        buildPohodaDataPack(
+          [
+            {
+              counterpartyName: 'Odběratel',
+              documentLink: link('out-15'),
+              invoice: invoice('out-15', {
+                documentNumber: 'FV-2026-0015',
+                lines: [{ description: 'Služba', quantity: 1, unitPriceMinor: 100_000, vatRate: 15 }],
+                vatRecap: [{ baseMinor: 100_000, rate: 15, vatMinor: 15_000 }],
+              }),
+            },
+          ],
+          siampark,
+        ),
+      );
+      expect(refusal.problem).toBe('pohoda_vat_rate_unsupported');
+      expect(refusal.documentNumber).toBe('FV-2026-0015');
+    }),
+  );
+
+  test.effect('refuses text XML cannot carry and names the invoice instead of writing an unparsable file', () =>
+    Effect.gen(function* forbiddenCharacter() {
+      const refusal = yield* Effect.flip(
+        buildPohodaDataPack(
+          [
+            {
+              counterpartyName: `Nájemce${String.fromCodePoint(0x1b)}`,
+              documentLink: link('out-ctl'),
+              invoice: invoice('out-ctl', { documentNumber: 'FV-2026-0099' }),
+            },
+          ],
+          siampark,
+        ),
+      );
+      expect(refusal.problem).toBe('pohoda_text_has_forbidden_character');
+      expect(refusal.documentNumber).toBe('FV-2026-0099');
+      const batch = yield* Effect.flip(
+        buildPohodaDataPack(rows, { ...siampark, createdBy: `Finance${String.fromCodePoint(0)}` }),
+      );
+      expect(batch.problem).toBe('pohoda_text_has_forbidden_character');
+      expect(batch.documentNumber).toBeUndefined();
     }),
   );
 
