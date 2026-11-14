@@ -213,6 +213,39 @@ for (const [audience, role, gatewayGrant] of [
   }
 }
 
+// The connected role, not the assertion's audience, picks the issuing-company source. Shell revalidates a Party
+// assertion on the shared runtime login, which may not execute the attestation routine; only the dedicated
+// gateway-grant role, which cannot read the audit evidence, uses it.
+for (const [connectedRole, gatewayGrant] of [
+  ['ontos_runtime', false],
+  [FIXTURE_REQUEST_IDENTITY.role, true],
+] as const) {
+  it.effect(`a party-registry assertion on ${connectedRole} reads the issuing company its role is granted`, () =>
+    Effect.gen(function* connectedRoleChoosesIssuingCompanySource() {
+      const statements: { readonly params: readonly unknown[]; readonly sql: string }[] = [];
+      const executor = yield* makeTestDatabase(
+        (statement, params) => {
+          statements.push({ params, sql: statement });
+          return Effect.succeed(
+            statement.includes('from "core"."tenants"')
+              ? []
+              : [{ legal_entity_id: '', role: connectedRole, tenant_id: scopedPrincipal.tenantId }],
+          );
+        },
+        { currentRole: connectedRole },
+      );
+
+      yield* makeOperationalScopeRepository({ executor }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).load(scopedPrincipal);
+
+      expect(statements.map(({ sql: statementSql }) => statementSql).slice(0, -2)).toEqual(
+        gatewayGrant ? ['BEGIN', establishGatewayScopeSql, readGatewayScopeSql] : ['BEGIN', installAndReadScopeSql],
+      );
+      expectScopeLookup(statements.at(-2), scopedPrincipal, gatewayGrant);
+      expect(statements.at(-1)?.sql).toBe('COMMIT');
+    }),
+  );
+}
+
 for (const boundary of ['context', 'evidence'] as const) {
   const run = (
     executor: CoreDatabaseExecutor,
