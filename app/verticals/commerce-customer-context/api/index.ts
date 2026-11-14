@@ -1159,6 +1159,17 @@ export const makeCommerceCustomerContextApiRuntime = (
     Layer.provide(governedActionRuntimeLive),
   );
   /**
+   * The v2 gate the handler groups preflight on, over the database configuration this deployment passes rather than
+   * the process configuration, so building the root never reads a database URL the deployment did not give it.
+   */
+  const handlerAccessEnforcementLive = AccessDecisionLive.pipe(
+    Layer.provideMerge(AccessEnforcementPortsLive),
+    Layer.provide(TenantIntentLoaderLive),
+    Layer.provide(CorePersistenceLive),
+    Layer.provide(databaseConfiguration),
+    Layer.provide(commercePortalAuthPlatformCryptoLive),
+  );
+  /**
    * Owner services the portal groups read beside the realm: enrollment convergence, continuation and
    * account lookup, the customer authority, and the owner transaction runner the invitation claim and
    * enrollment start dispatch their governed Actions through.
@@ -1373,8 +1384,9 @@ export const makeCommerceCustomerContextApiRuntime = (
         // The portal enrolment routes and the `start-portal-enrollment` and
         // `claim-portal-enrollment-transition` Actions preflight on the v2 gate (D6), so the gate is
         // on every handler group's composition path. It is provided here, once, so the generated
-        // Action mounts keep their exact generated shape.
-        accessEnforcementLive,
+        // Action mounts keep their exact generated shape, and over the deployment's own database
+        // configuration, so a root whose deployment configures none still builds.
+        handlerAccessEnforcementLive,
       ),
     ),
   );
