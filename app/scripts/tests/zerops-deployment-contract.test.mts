@@ -556,8 +556,8 @@ it('binds the attempted delivery to the current run and persists it before any r
 });
 
 it('keeps the worker only with its closure, all hosted identities, materializer inputs and flags proved', () => {
-  const script = readFileSync(new URL('../zerops/build-app.sh', import.meta.url), 'utf8');
-  const digest = readFileSync(new URL('../zerops/outbox-build-digest.mjs', import.meta.url), 'utf8');
+  const script = readFileSync(new URL('../zerops/build-app.sh', import.meta.url), 'utf-8');
+  const digest = readFileSync(new URL('../zerops/outbox-build-digest.mjs', import.meta.url), 'utf-8');
   expect(script).toContain("echo 'kept outbox-worker-host (inputs unchanged)'");
   expect(script).toContain('worker_cache/node_modules');
   expect(digest).toContain('artifact.sourceInputs');

@@ -18,7 +18,9 @@ const fixture = Effect.gen(function* workerDigestFixture() {
     fs
       .makeDirectory(path.dirname(path.join(root, file)), { recursive: true })
       .pipe(Effect.andThen(fs.writeFileString(path.join(root, file), content)));
-  for (const file of OUTBOX_BUILD_TOOLS) yield* write(file, 'input');
+  for (const file of OUTBOX_BUILD_TOOLS) {
+    yield* write(file, 'input');
+  }
   for (const file of [
     'apps/shell-super-app/package.json',
     'verticals/example/package.json',
@@ -61,11 +63,15 @@ for (const doubt of ['missing closure', 'changed identity', 'missing owner', 'un
   it.effect(`fails closed on ${doubt}`, () =>
     Effect.gen(function* incompleteWorkerProof() {
       const context = yield* fixture;
-      if (doubt === 'missing closure') yield* context.fs.remove(path.join(context.root, closure));
+      if (doubt === 'missing closure') {
+        yield* context.fs.remove(path.join(context.root, closure));
+      }
       if (doubt === 'changed identity') {
         yield* context.write(marker, JSON.stringify({ deliveryUnit: { ...identity, sourceRevision: 'd'.repeat(40) } }));
       }
-      if (doubt === 'missing owner') yield* context.write('digests', 'another-owner\tinvalid\n');
+      if (doubt === 'missing owner') {
+        yield* context.write('digests', 'another-owner\tinvalid\n');
+      }
       if (doubt === 'unknown virtual input') {
         yield* context.write(
           'runtime/worker-artifact.json',

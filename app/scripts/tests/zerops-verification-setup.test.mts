@@ -25,8 +25,8 @@ const Step = Schema.Struct({
 const Workflow = Schema.Struct({
   jobs: Schema.Struct({
     deploy: Schema.Struct({ steps: Schema.Array(Step) }),
-    record: Schema.Struct({ if: Schema.String, steps: Schema.Array(Step) }),
     newsletter: Schema.Struct({ steps: Schema.Array(Step) }),
+    record: Schema.Struct({ if: Schema.String, steps: Schema.Array(Step) }),
     verify: Schema.Struct({
       if: Schema.String,
       steps: Schema.Array(Step),

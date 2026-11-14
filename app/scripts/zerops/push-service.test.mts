@@ -12,6 +12,7 @@ import { collectToolingProcess } from '../tests/tooling-process-fixture.mts';
 
 const ZEROPS_API_ORIGIN = 'https://api.app-prg1.zerops.io';
 const SERVICE_ID = 'service-under-test';
+const PUSH_SERVICE_SCRIPT = 'push-service.sh';
 
 /**
  * The real `curl` against a local stand-in for the Zerops API: the shim only points the script's fixed API origin at
@@ -134,7 +135,7 @@ const runPush = (
       const result = yield* collectToolingProcess(
         ChildProcess.make(
           'bash',
-          [path.join(import.meta.dirname, 'push-service.sh'), SERVICE_ID, pushCheckout.setup ?? 'app', 'version'],
+          [path.join(import.meta.dirname, PUSH_SERVICE_SCRIPT), SERVICE_ID, pushCheckout.setup ?? 'app', 'version'],
           {
             cwd: checkout,
             env: {
@@ -284,14 +285,14 @@ it.live('a deploy still running at its deadline fails and names the service', ()
 );
 
 it('omits non-build inputs per service without mutating the runner index or weakening the upload guard', () => {
-  const source = readFileSync(new URL('./push-service.sh', import.meta.url), 'utf8');
+  const source = readFileSync(new URL(PUSH_SERVICE_SCRIPT, import.meta.url), 'utf-8');
   for (const exclusion of ['*/tests', 'docs', 'app/docs', '*/.codex', '*/.next']) {
     expect(source).toContain(`--exclude='${exclusion}'`);
   }
   expect(source).toContain('app/n1-storefront/src');
   expect(source).toContain('app/akros-storefront/src');
   expect(source).toContain('git -C "$work/source" update-index --skip-worktree -z --stdin');
-  expect(source).toContain('upload_limit_seconds="${UPLOAD_LIMIT_SECONDS:-25}"');
+  expect(source).toContain(`upload_limit_seconds="\${UPLOAD_LIMIT_SECONDS:-25}"`);
   expect(source).toContain('((took <= upload_limit_seconds)) && break');
 });
 
@@ -349,7 +350,7 @@ it.live('an unknown setup fails before any Zerops call', () =>
 );
 
 it('never ships a storefront archive in the app package', () => {
-  const source = readFileSync(new URL('./push-service.sh', import.meta.url), 'utf8');
+  const source = readFileSync(new URL(PUSH_SERVICE_SCRIPT, import.meta.url), 'utf-8');
   expect(source).toContain("--exclude='app/.zerops-storefront.*'");
   expect(source).toContain('cp app/zerops.yaml app/.zerops-storefront.tar.gz app/.zerops-storefront.json');
 });

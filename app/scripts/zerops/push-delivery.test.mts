@@ -10,6 +10,9 @@ import { collectToolingProcess } from '../tests/tooling-process-fixture.mts';
 import { DeliveryPlanSchema } from './delivery-plan.mts';
 import type { DeliveryService } from './delivery-plan.mts';
 
+/** The Zerops setup a pushed service deploys from; both AKROS services share the storefront setup. */
+const setupOf = (service: string) => (service === 'app' || service === 'n1' ? service : 'storefront');
+
 const HEAD = 'b'.repeat(40);
 const fakePush = `#!/usr/bin/env bash
 printf '%s|%s|%s|%s\\n' "$1" "$2" "$3" "\${PUSH_EXCLUDE:-none}" >>"$RUNNER_TEMP/calls"
@@ -72,10 +75,7 @@ for (const services of [
       expect(calls).toEqual(
         ['n1', 'app', 'storefront', 'shop']
           .filter((service) => services.some((selected) => selected === service))
-          .map(
-            (service) =>
-              `${service}-id|${service === 'n1' ? 'n1' : service === 'app' ? 'app' : 'storefront'}|${HEAD}|none`,
-          ),
+          .map((service) => `${service}-id|${setupOf(service)}|${HEAD}|none`),
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -123,6 +123,8 @@ it.effect('reports a failed service and still waits for all already started depl
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+const KEEP_APP_CONDITION = "needs.plan.outputs.app == 'true'";
+
 const WorkflowSchema = Schema.Struct({
   jobs: Schema.Record(
     Schema.String,
@@ -140,6 +142,60 @@ const WorkflowSchema = Schema.Struct({
   ),
   permissions: Schema.Struct({ contents: Schema.Literal('read') }),
 });
+type StageWorkflow = typeof WorkflowSchema.Type;
+
+/** A storefront deploy job: kept storefronts only re-verify; selected ones push their own checked runner archive. */
+const expectStorefrontDeployJob = (workflow: StageWorkflow, service: string) => {
+  const job = workflow.jobs[`deploy_${service}`];
+  expect(job?.needs).toEqual(['plan', 'deploy', 'build_storefronts']);
+  // A kept storefront only re-verifies; a selected one deploys only after the runner build ran.
+  expect(job?.if).toContain(`needs.plan.outputs.${service} != 'true'`);
+  expect(job?.if).toContain("needs.build_storefronts.result == 'success'");
+  expect(workflow.jobs.record?.if).toContain(`needs.deploy_${service}.result == 'success'`);
+  // Its own archive, checked against this commit and setup, before the push mutates anything.
+  const steps = job?.steps ?? [];
+  const index = (name: string) => steps.findIndex((step) => step.name === name);
+  const setup = service === 'n1' ? 'n1' : 'storefront';
+  const refuse = steps[index('Refuse an archive from another revision or setup')];
+  expect(refuse?.if).toBe(`needs.plan.outputs.${service} == 'true'`);
+  expect(refuse?.run).toContain(`--arg setup '${setup}'`);
+  expect(refuse?.run).toContain('.sourceRevision == $sha and .setup == $setup');
+  expect(refuse?.run).toContain('sha256sum -c -');
+  expect(index(`Take the ${setup} archive built on the runner`)).toBeGreaterThan(-1);
+  expect(index(`Take the ${setup} archive built on the runner`)).toBeLessThan(index(refuse?.name ?? ''));
+  expect(index(refuse?.name ?? '')).toBeLessThan(index('Push only services whose inputs changed'));
+};
+
+/** The storefront runner build waits only for the plan and packs exactly what the deploy jobs check. */
+const expectStorefrontRunnerBuild = (workflow: StageWorkflow, source: string) => {
+  // The runner build depends only on the plan, never on the app shards, and builds only selected storefronts.
+  expect(workflow.jobs.build_storefronts?.needs).toEqual(['plan']);
+  expect(workflow.jobs.build_storefronts?.if).toContain("needs.plan.outputs.n1 == 'true'");
+  expect(workflow.jobs.build_storefronts?.if).toContain("needs.plan.outputs.shop == 'true'");
+  expect(workflow.jobs.deploy_app?.needs).not.toContain('build_storefronts');
+  expect(workflow.jobs.verify?.needs).not.toContain('build_storefronts');
+  const storefrontBuild = workflow.jobs.build_storefronts?.steps ?? [];
+  expect(storefrontBuild.map((step) => step.name)).toEqual([
+    'Checkout',
+    'Install the app workspace',
+    "Restore Next's compiler cache",
+    'Typecheck with tsrs',
+    'Build the standalone server',
+    "Save Next's compiler cache",
+    'Pack the standalone server with its manifest',
+    'Upload the storefront archive',
+  ]);
+  const pack = storefrontBuild.find((step) => step.name === 'Pack the standalone server with its manifest');
+  expect(pack?.run).toContain("-name '*.node' -print");
+  expect(pack?.run).toContain("-type l -lname '/*' -print");
+  expect(pack?.run).toContain('sourceRevision: $sourceRevision');
+  expect(source).toContain(`name: zerops-storefront-\${{ matrix.setup }}`);
+  expect(source).toContain('zerops-verified-delivery');
+  expect(source).toContain('fetch-depth: 0');
+  expect(source).toContain('STOREFRONT RUNNER PREBUILD (lane STOREFRONT)');
+  expect(source).toContain(`ZEROPS_FORCE_BUILD: \${{ needs.plan.outputs.full }}`);
+};
+
 it.effect('keeps verification mandatory for changed services and records sources only after successful proof', () =>
   Effect.gen(function* workflowGates() {
     const fs = yield* FileSystem.FileSystem;
@@ -147,18 +203,16 @@ it.effect('keeps verification mandatory for changed services and records sources
       path.resolve(import.meta.dirname, '../../../.github/workflows/zerops-stage.yml'),
     );
     const workflow = yield* Schema.decodeUnknownEffect(WorkflowSchema)(parse(source));
-    expect(workflow.jobs.build?.if).toBe("needs.plan.outputs.app == 'true'");
+    expect(workflow.jobs.build?.if).toBe(KEEP_APP_CONDITION);
     expect(workflow.jobs.verify?.needs).toEqual(['plan', 'deploy', 'deploy_app']);
     expect(workflow.jobs.verify?.if).toContain("needs.deploy_app.result == 'success'");
     expect(workflow.jobs.record?.if).toContain("needs.verify.result == 'success'");
     for (const name of ['Download the unit builds', 'Pack the unit builds for the push']) {
-      expect(workflow.jobs.deploy_app?.steps.find((step) => step.name === name)?.if).toBe(
-        "needs.plan.outputs.app == 'true'",
-      );
+      expect(workflow.jobs.deploy_app?.steps.find((step) => step.name === name)?.if).toBe(KEEP_APP_CONDITION);
     }
     expect(
       workflow.jobs.deploy?.steps.find((step) => step.name === 'Sync the owner secret bundle to the app service')?.if,
-    ).toBe("needs.plan.outputs.app == 'true'");
+    ).toBe(KEEP_APP_CONDITION);
     expect(workflow.jobs.deploy?.needs).toEqual(['plan']);
     expect(workflow.jobs.deploy_app?.needs).toEqual(['plan', 'deploy', 'build']);
     expect(workflow.jobs.verify?.steps.some((step) => step.run?.includes('verify-service.mjs app') === true)).toBe(
@@ -166,51 +220,9 @@ it.effect('keeps verification mandatory for changed services and records sources
     );
     expect(workflow.jobs.verify?.steps.some((step) => step.run?.includes('prove-mcp-oauth.mts') === true)).toBe(true);
     for (const service of ['storefront', 'shop', 'n1']) {
-      const job = workflow.jobs[`deploy_${service}`];
-      expect(job?.needs).toEqual(['plan', 'deploy', 'build_storefronts']);
-      // A kept storefront only re-verifies; a selected one deploys only after the runner build ran.
-      expect(job?.if).toContain(`needs.plan.outputs.${service} != 'true'`);
-      expect(job?.if).toContain("needs.build_storefronts.result == 'success'");
-      expect(workflow.jobs.record?.if).toContain(`needs.deploy_${service}.result == 'success'`);
-      // Its own archive, checked against this commit and setup, before the push mutates anything.
-      const steps = job?.steps ?? [];
-      const index = (name: string) => steps.findIndex((step) => step.name === name);
-      const setup = service === 'n1' ? 'n1' : 'storefront';
-      const refuse = steps[index('Refuse an archive from another revision or setup')];
-      expect(refuse?.if).toBe(`needs.plan.outputs.${service} == 'true'`);
-      expect(refuse?.run).toContain(`--arg setup '${setup}'`);
-      expect(refuse?.run).toContain('.sourceRevision == $sha and .setup == $setup');
-      expect(refuse?.run).toContain('sha256sum -c -');
-      expect(index(`Take the ${setup} archive built on the runner`)).toBeGreaterThan(-1);
-      expect(index(`Take the ${setup} archive built on the runner`)).toBeLessThan(index(refuse?.name ?? ''));
-      expect(index(refuse?.name ?? '')).toBeLessThan(index('Push only services whose inputs changed'));
+      expectStorefrontDeployJob(workflow, service);
     }
-    // The runner build depends only on the plan, never on the app shards, and builds only selected storefronts.
-    expect(workflow.jobs.build_storefronts?.needs).toEqual(['plan']);
-    expect(workflow.jobs.build_storefronts?.if).toContain("needs.plan.outputs.n1 == 'true'");
-    expect(workflow.jobs.build_storefronts?.if).toContain("needs.plan.outputs.shop == 'true'");
-    expect(workflow.jobs.deploy_app?.needs).not.toContain('build_storefronts');
-    expect(workflow.jobs.verify?.needs).not.toContain('build_storefronts');
-    const storefrontBuild = workflow.jobs.build_storefronts?.steps ?? [];
-    expect(storefrontBuild.map((step) => step.name)).toEqual([
-      'Checkout',
-      'Install the app workspace',
-      "Restore Next's compiler cache",
-      'Typecheck with tsrs',
-      'Build the standalone server',
-      "Save Next's compiler cache",
-      'Pack the standalone server with its manifest',
-      'Upload the storefront archive',
-    ]);
-    const pack = storefrontBuild.find((step) => step.name === 'Pack the standalone server with its manifest');
-    expect(pack?.run).toContain("-name '*.node' -print");
-    expect(pack?.run).toContain("-type l -lname '/*' -print");
-    expect(pack?.run).toContain('sourceRevision: $sourceRevision');
-    expect(source).toContain(`name: zerops-storefront-\${{ matrix.setup }}`);
-    expect(source).toContain('zerops-verified-delivery');
-    expect(source).toContain('fetch-depth: 0');
-    expect(source).toContain('STOREFRONT RUNNER PREBUILD (lane STOREFRONT)');
-    expect(source).toContain(`ZEROPS_FORCE_BUILD: \${{ needs.plan.outputs.full }}`);
+    expectStorefrontRunnerBuild(workflow, source);
     const buildScript = yield* fs.readFileString(path.join(import.meta.dirname, 'build-app.sh'));
     expect(buildScript).toContain('node "$root/scripts/zerops/delivery-plan-cli.mts" digests >"$ZEROPS_UNIT_DIGESTS"');
     expect(buildScript).toContain('export ZEROPS_UNIT_DIGESTS');

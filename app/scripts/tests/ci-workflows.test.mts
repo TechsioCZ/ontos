@@ -38,6 +38,7 @@ const WORKSPACE_GATE_JOB = 'workspace-gate';
 const WEIGHTED_SHARD_SCRIPT = 'scripts/ci/rstest-weighted-shard.sh';
 const WORKSPACE_GATES_JOB = 'workspace-gates';
 const DOWNLOAD_ARTIFACT_ACTION = 'actions/download-artifact@';
+const ASSEMBLED_MIGRATOR_STEP = 'Run the assembled stage migrator artifact against the fresh database';
 
 const MatrixRowsSchema = Schema.Array(Schema.Record(Schema.String, Schema.Unknown));
 const MatricesFileSchema = Schema.Struct({
@@ -1068,9 +1069,7 @@ it('gives every CI database tool a separate login per runtime identity and audit
   const start = steps.findIndex(({ name }) => name === 'Start fresh PostgreSQL and SpiceDB services');
   const initialize = steps.findIndex(({ name }) => name === 'Initialize fresh local database login identities');
   const removeRuntime = steps.findIndex(({ name }) => name.startsWith('Remove the pre-seeded runtime role'));
-  const stageMigrator = steps.findIndex(
-    ({ name }) => name === 'Run the assembled stage migrator artifact against the fresh database',
-  );
+  const stageMigrator = steps.findIndex(({ name }) => name === ASSEMBLED_MIGRATOR_STEP);
   expect(start).toBeGreaterThanOrEqual(0);
   expect(initialize).toBeGreaterThan(start);
   expect(initialize).toBeLessThan(removeRuntime);
@@ -1234,7 +1233,7 @@ it('proves the fresh-database preparation once and restores it only in rows that
   const names = seeded.steps.map(({ name }) => name);
   for (const replaced of [
     'Initialize fresh local database login identities',
-    'Run the assembled stage migrator artifact against the fresh database',
+    ASSEMBLED_MIGRATOR_STEP,
     'Apply and verify Core, Auth, and Contacts migrations, plus Party Registry',
     AUDIT_STEP,
     'Build and run the Outbox Worker host artifact against the fresh database',
@@ -1346,7 +1345,7 @@ it('ships a runnable fresh-database proof for the actual app artifact without ov
   });
   const { jobs } = Schema.decodeUnknownSync(ProofJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
   for (const [job, proofStep] of [
-    [SERVICE_INTEGRATION_JOB, 'Run the assembled stage migrator artifact against the fresh database'],
+    [SERVICE_INTEGRATION_JOB, ASSEMBLED_MIGRATOR_STEP],
     [INTEGRATION_SEED_PROOF_JOB, 'Prove the fresh-database preparation and dump the seed'],
   ] as const) {
     const steps = jobs[job]?.steps ?? [];
