@@ -830,6 +830,11 @@ const restoreAfterFailedDrain = Effect.fn('ApplicationCompositionAuthority.resto
   },
 );
 
+/** Whether `withRestoreOutcome` can append the restore's outcome to this failure's own message. */
+const carriesRestoreOutcome = <Failure,>(failure: Failure) =>
+  Schema.is(ApplicationCompositionPublicationTimeout)(failure) ||
+  Schema.is(ApplicationCompositionAuthorityError)(failure);
+
 /** The original failure with the restore's outcome appended, so the operator sees both. */
 const withRestoreOutcome = <Failure,>(failure: Failure, outcome: DrainRestoreOutcome) => {
   if (outcome.description === '') {
@@ -870,6 +875,13 @@ const restoringAuthorityOnFailure =
       Effect.matchEffect({
         onFailure: (error) =>
           restoreAfterFailedDrain(revision, failureReason(error)).pipe(
+            // Only an authority refusal or a timeout carries the outcome in its own words; any other failure (a
+            // refused legacy owner evidence) keeps them, so the outcome is logged instead of lost.
+            Effect.tap((outcome) =>
+              outcome.description === '' || carriesRestoreOutcome(error)
+                ? Effect.void
+                : Effect.logWarning(`Application Composition publication failed. ${outcome.description}`),
+            ),
             Effect.flatMap((outcome) => Effect.fail(withRestoreOutcome(error, outcome))),
           ),
         onSuccess: Effect.succeed,
