@@ -18,6 +18,10 @@
       "commands": "pnpm test:scripts --shard 3/3\n"
     },
     {
+      "name": "Storefront Typecheck (AKROS and N1)",
+      "commands": "pnpm --filter akros-storefront --filter n1-storefront run typecheck\n"
+    },
+    {
       "name": "Module Entrypoint and Codesmith Generation Tests",
       "commands": "pnpm shell:ui-candidates:check\npnpm module-entrypoints:check\npnpm test:generation\n"
     }

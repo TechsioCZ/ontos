@@ -193,12 +193,37 @@ jobs:
           compression-level: 0
           retention-days: 3
 
+  # The storefronts' `next build` only compiles (next.config.ts `typescript.ignoreBuildErrors`); their types are
+  # checked here, on a runner and in parallel with the unit builds, and a type error stops the deploy.
+  storefront-typecheck:
+    name: Type-check the storefronts
+    needs: [plan]
+    if: needs.plan.outputs.storefront == 'true' || needs.plan.outputs.shop == 'true' || needs.plan.outputs.n1 == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+        with:
+          install-args: --trust-lockfile
+
+      - name: Type-check AKROS and N1
+        working-directory: app
+        run: mise exec -- pnpm --filter akros-storefront --filter n1-storefront run typecheck
+
   deploy:
     name: Build and deploy on Zerops
-    needs: [plan, build]
+    needs: [plan, build, storefront-typecheck]
     if: >-
       always() && needs.plan.result == 'success' && needs.plan.outputs.any == 'true' &&
-      (needs.plan.outputs.app == 'false' || needs.build.result == 'success')
+      (needs.plan.outputs.app == 'false' || needs.build.result == 'success') &&
+      (needs.storefront-typecheck.result == 'success' || needs.storefront-typecheck.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 75
     # Reading the cache index before the deploy needs `actions: read`; the deploy itself still needs only
