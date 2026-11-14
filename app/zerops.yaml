@@ -42,6 +42,8 @@ zerops:
       prepareCommands:
         - sudo npm install --global pnpm@12.16.1
       buildCommands:
+        # Zerops restores the build cache below as root; the build user must own it before pnpm and Next write to it.
+        - sudo chown -R "$(id -u):$(id -g)" app
         - cd app && pnpm install --frozen-lockfile --filter 'akros-storefront...'
         - cd app && pnpm --filter akros-storefront run build
         - mkdir -p 'app/.zerops/runtime' && mv 'app/akros-storefront/.next/standalone' 'app/.zerops/runtime/akros-storefront'
@@ -49,6 +51,12 @@ zerops:
         - cp -a 'app/akros-storefront/public' 'app/.zerops/runtime/akros-storefront/akros-storefront/public'
       deployFiles:
         - app/.zerops/runtime/akros-storefront
+      # A repeated build relinks the restored dependencies instead of installing them again, and Next's webpack cache
+      # recompiles only what changed. The pnpm store lives outside the build tree, so the installed tree is what we keep.
+      cache:
+        - app/node_modules
+        - app/akros-storefront/node_modules
+        - app/akros-storefront/.next/cache
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -87,6 +95,8 @@ zerops:
       prepareCommands:
         - sudo npm install --global pnpm@12.16.1
       buildCommands:
+        # Zerops restores the build cache below as root; the build user must own it before pnpm and Next write to it.
+        - sudo chown -R "$(id -u):$(id -g)" app
         - cd app && pnpm install --frozen-lockfile --filter 'n1-storefront...'
         - cd app && pnpm --filter n1-storefront run build
         - mkdir -p 'app/.zerops/runtime' && mv 'app/n1-storefront/.next/standalone' 'app/.zerops/runtime/n1-storefront'
@@ -94,6 +104,15 @@ zerops:
         - cp -a 'app/n1-storefront/public' 'app/.zerops/runtime/n1-storefront/n1-storefront/public'
       deployFiles:
         - app/.zerops/runtime/n1-storefront
+      # A repeated build relinks the restored dependencies of N1's 40 workspace projects instead of installing them
+      # again, and Next's webpack cache recompiles only what changed.
+      cache:
+        - app/node_modules
+        - app/n1-storefront/node_modules
+        - app/apps/*/node_modules
+        - app/packages/*/node_modules
+        - app/verticals/*/node_modules
+        - app/n1-storefront/.next/cache
     deploy:
       temporaryShutdown: false
       readinessCheck:
