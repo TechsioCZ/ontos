@@ -13,7 +13,6 @@ export const quoteLiteral = (value: string) => `'${value.replaceAll("'", "''")}'
 export const SEAL_TABLE = 'trust.scope_sealing_keys';
 export const COMMERCE_URL_KEY = 'INTEGRATION_SEED_COMMERCE_AUTH_DATABASE_URL';
 export const MANIFEST_FILE = 'manifest.json';
-export const WORKER_RUNTIME = '.zerops/runtime/outbox-worker-host';
 export const FRESH_JOB = 'Database, Migration, RLS, Authorization, and Outbox Integration';
 
 /** These tests must retain their own empty/historical database and migration/recovery path. */

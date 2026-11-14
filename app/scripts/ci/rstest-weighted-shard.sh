@@ -26,7 +26,8 @@ weights="$(jq -c '."test-weights" // {}' "$script_directory/../ci-matrices.json"
 listing="$(mktemp)"
 trap 'rm -f "$listing"' EXIT
 
-pnpm exec rstest list --project "$project" --filesOnly --json "$listing" >/dev/null
+# Rstest's own output goes to stderr, so the list-only mode below prints nothing but file paths.
+pnpm exec rstest list --project "$project" --filesOnly --json "$listing" >&2
 
 # A failed listing or deal fails here (set -e on the assignment), never as an empty, passing shard.
 total="$(jq -r '(if type == "array" then . else .items end) | length' "$listing")"
@@ -43,6 +44,13 @@ while IFS= read -r file; do
   [ -n "$file" ] && files+=("$file")
 done <<<"$deal"
 
+# RSTEST_WEIGHTED_SHARD_LIST_ONLY=1 prints the shard's files, one per line, and runs nothing (the seed check reads it).
+if [ "${RSTEST_WEIGHTED_SHARD_LIST_ONLY:-}" = 1 ]; then
+  if [ "${#files[@]}" -gt 0 ]; then
+    printf '%s\n' "${files[@]}"
+  fi
+  exit 0
+fi
 echo "Rstest project $project, weighted shard $index/$count: ${#files[@]} files"
 if [ "${#files[@]}" -eq 0 ]; then
   exit 0
