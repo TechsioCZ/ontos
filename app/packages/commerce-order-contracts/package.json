@@ -15,7 +15,7 @@
     "./prepared-order-approval-binding/client": "./src/api/prepared-order-approval-binding-client.ts"
   },
   "scripts": {
-    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
+    "typecheck": "node ../../scripts/typecheck.mjs --build tsconfig.json"
   },
   "dependencies": {
     "@app/core-runtime": "workspace:*",

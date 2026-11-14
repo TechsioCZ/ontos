@@ -20,7 +20,7 @@
     "./Route": "./src/federation-entry.tsx"
   },
   "scripts": {
-    "build": "pnpm --dir ../.. exec ultramodern-create ultramodern routes-generate --app finance-billing --manifest-only && modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical finance-billing --target dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app finance-billing --target dist && modern deploy --skip-build --deploy-target node",
+    "build": "pnpm --dir ../.. exec ultramodern-create ultramodern routes-generate --app finance-billing --manifest-only && cross-env ULTRAMODERN_SKIP_SERVER_TYPECHECK=1 modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical finance-billing --target dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app finance-billing --target dist && modern deploy --skip-build --deploy-target node",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
@@ -31,7 +31,7 @@
     "serve": "modern serve",
     "test:integration": "rstest --config rstest.config.ts --project integration",
     "test:unit": "rstest --config rstest.config.ts --project unit",
-    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
+    "typecheck": "node ../../scripts/typecheck.mjs --build tsconfig.typecheck.json",
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },
   "dependencies": {

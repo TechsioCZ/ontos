@@ -13,7 +13,7 @@
   },
   "scripts": {
     "test:unit": "rstest --project unit",
-    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
+    "typecheck": "node ../../scripts/typecheck.mjs --build tsconfig.typecheck.json"
   },
   "dependencies": {
     "@app/shared-contracts": "workspace:*",

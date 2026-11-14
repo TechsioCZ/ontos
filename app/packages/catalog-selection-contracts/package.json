@@ -14,7 +14,7 @@
   },
   "scripts": {
     "test:unit": "rstest --project unit",
-    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
+    "typecheck": "node ../../scripts/typecheck.mjs --build tsconfig.json"
   },
   "dependencies": {
     "effect": "4.0.7"

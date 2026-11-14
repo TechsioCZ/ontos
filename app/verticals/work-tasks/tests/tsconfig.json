@@ -3,5 +3,20 @@
   "include": [
     "**/*.ts",
     "**/*.mts"
+  ],
+  "exclude": [
+    "**/node_modules/**"
+  ],
+  "compilerOptions": {
+    "skipLibCheck": true,
+    "disableSourceOfProjectReferenceRedirect": true
+  },
+  "references": [
+    {
+      "path": "../../../tsconfig.sources.json"
+    },
+    {
+      "path": "../../../tsconfig.tooling-declarations.json"
+    }
   ]
 }

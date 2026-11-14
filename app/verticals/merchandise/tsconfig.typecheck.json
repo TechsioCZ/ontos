@@ -1,0 +1,29 @@
+{
+  "extends": "../../tsconfig.lint-defaults.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": true,
+    "tsBuildInfoFile": "../../node_modules/.cache/tsrs/verticals__merchandise__typecheck.tsbuildinfo",
+    "disableSourceOfProjectReferenceRedirect": true
+  },
+  "include": [
+    "*.mts",
+    "*.ts",
+    "*.tsx",
+    "scripts",
+    "tests"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    ".output",
+    ".modern",
+    ".modernjs",
+    "**/node_modules/**"
+  ],
+  "references": [
+    {
+      "path": "../../tsconfig.sources.json"
+    }
+  ]
+}

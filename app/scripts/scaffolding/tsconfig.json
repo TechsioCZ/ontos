@@ -1,7 +1,22 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "extends": "../../tsconfig.node-tooling.json",
   "compilerOptions": {
-    "types": ["node"]
+    "types": [
+      "node"
+    ],
+    "incremental": true,
+    "tsBuildInfoFile": "../../node_modules/.cache/tsrs/scripts__scaffolding__tsconfig.tsbuildinfo",
+    "disableSourceOfProjectReferenceRedirect": true
   },
-  "include": ["./**/*.mts"]
+  "include": [
+    "./**/*.mts"
+  ],
+  "exclude": [
+    "**/node_modules/**"
+  ],
+  "references": [
+    {
+      "path": "../../tsconfig.sources.json"
+    }
+  ]
 }

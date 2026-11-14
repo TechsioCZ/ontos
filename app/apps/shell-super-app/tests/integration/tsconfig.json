@@ -1,8 +1,25 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": {
-    "customConditions": ["node"]
+    "customConditions": [
+      "node"
+    ],
+    "skipLibCheck": true,
+    "disableSourceOfProjectReferenceRedirect": true
   },
-  "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": []
+  "include": [
+    "**/*.ts",
+    "**/*.tsx"
+  ],
+  "exclude": [
+    "**/node_modules/**"
+  ],
+  "references": [
+    {
+      "path": "../../../../tsconfig.sources.json"
+    },
+    {
+      "path": "../../../../tsconfig.tooling-declarations.json"
+    }
+  ]
 }

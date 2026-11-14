@@ -1,8 +1,23 @@
 {
-  "extends": "../../../tsconfig.base.json",
+  "extends": "../../../tsconfig.node-tooling.json",
   "compilerOptions": {
     "noEmit": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ],
+    "incremental": true,
+    "tsBuildInfoFile": "../../../node_modules/.cache/tsrs/packages__shared-contracts__tooling__tsconfig.tsbuildinfo",
+    "disableSourceOfProjectReferenceRedirect": true
   },
-  "include": ["**/*.ts"]
+  "include": [
+    "**/*.ts"
+  ],
+  "exclude": [
+    "**/node_modules/**"
+  ],
+  "references": [
+    {
+      "path": "../../../tsconfig.sources.json"
+    }
+  ]
 }

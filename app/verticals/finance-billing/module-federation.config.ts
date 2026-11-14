@@ -4,8 +4,9 @@ import runtimeMetadata from '@modern-js/runtime/package.json';
 import reactMetadata from 'react/package.json';
 import reactDomMetadata from 'react-dom/package.json';
 
-import { resolveEffectTsgoCompiler } from '@modern-js/app-tools-extensions/config';
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
+
+import { resolveDeclarationCompiler } from '../../scripts/typecheck-compiler.mjs';
 
 import { dependencies } from './package.json';
 
@@ -15,7 +16,7 @@ const runtimeVersion = runtimeMetadata.version;
 const reactVersion = reactMetadata.version;
 const reactDomVersion = reactDomMetadata.version;
 
-const tsgoCompilerInstance = resolveEffectTsgoCompiler({ from: import.meta.url });
+const tsgoCompilerInstance = resolveDeclarationCompiler({ from: import.meta.url });
 
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] = createModuleFederationConfig({
   bridge: {

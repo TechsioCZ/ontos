@@ -18,9 +18,9 @@
     "./outbox-worker-host": "./src/worker-host/entry.ts"
   },
   "scripts": {
-    "build": "ultramodern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical commerce-order --target dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app commerce-order --target dist && ultramodern deploy --skip-build --deploy-target node",
-    "cloudflare:build": "ultramodern build --deploy-target cloudflare && node ../../scripts/generate-ontos-module-contract.mts --vertical commerce-order --target cloudflare-dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app commerce-order --target cloudflare-dist && ultramodern deploy --skip-build --deploy-target cloudflare && ultramodern-create ultramodern cloudflare-output-verify --app commerce-order",
-    "cloudflare:deploy": "ultramodern build --deploy-target cloudflare && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app commerce-order --target cloudflare-dist --require-public-origin && ultramodern deploy --skip-build --deploy-target cloudflare && ultramodern-create ultramodern cloudflare-output-verify --app commerce-order --require-public-urls && wrangler deploy --config .output/wrangler.json",
+    "build": "cross-env ULTRAMODERN_SKIP_SERVER_TYPECHECK=1 ultramodern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical commerce-order --target dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app commerce-order --target dist && ultramodern deploy --skip-build --deploy-target node",
+    "cloudflare:build": "cross-env ULTRAMODERN_SKIP_SERVER_TYPECHECK=1 ultramodern build --deploy-target cloudflare && node ../../scripts/generate-ontos-module-contract.mts --vertical commerce-order --target cloudflare-dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app commerce-order --target cloudflare-dist && ultramodern deploy --skip-build --deploy-target cloudflare && ultramodern-create ultramodern cloudflare-output-verify --app commerce-order",
+    "cloudflare:deploy": "cross-env ULTRAMODERN_SKIP_SERVER_TYPECHECK=1 ultramodern build --deploy-target cloudflare && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app commerce-order --target cloudflare-dist --require-public-origin && ultramodern deploy --skip-build --deploy-target cloudflare && ultramodern-create ultramodern cloudflare-output-verify --app commerce-order --require-public-urls && wrangler deploy --config .output/wrangler.json",
     "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
     "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app commerce-order",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
@@ -31,7 +31,7 @@
     "serve": "ultramodern serve",
     "test:integration": "rstest run tests/integration",
     "test:unit": "rstest run tests/unit",
-    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
+    "typecheck": "node ../../scripts/typecheck.mjs --build tsconfig.typecheck.json",
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },
   "dependencies": {

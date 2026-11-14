@@ -27,7 +27,7 @@
   },
   "scripts": {
     "dev": "node ../../scripts/prepare-dev-module-contract.mts price-group-catalog && modern dev",
-    "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical price-group-catalog --target dist && ultramodern-create ultramodern public-surface --app price-group-catalog --target dist && modern deploy --skip-build --deploy-target node",
+    "build": "cross-env ULTRAMODERN_SKIP_SERVER_TYPECHECK=1 modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical price-group-catalog --target dist && ultramodern-create ultramodern public-surface --app price-group-catalog --target dist && modern deploy --skip-build --deploy-target node",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
@@ -36,7 +36,7 @@
     "serve": "modern serve",
     "test:integration": "rstest --project integration",
     "test:unit": "rstest --project unit",
-    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
+    "typecheck": "node ../../scripts/typecheck.mjs --build tsconfig.typecheck.json"
   },
   "dependencies": {
     "@app/core-runtime": "workspace:*",
