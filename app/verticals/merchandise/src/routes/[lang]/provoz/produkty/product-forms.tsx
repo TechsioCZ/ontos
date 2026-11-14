@@ -439,11 +439,8 @@ export const CreateProductDialog = ({
   );
 };
 
-/** Goods receipt: pick a product, enter a positive quantity, record RECEIPT with a positive delta. */
-export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revision }: FormDialogProps) => {
-  const k = useProductLabel();
-  const { t } = useModernI18n();
-  const failure = useCommandFailure();
+/** A receipt always resolves the full selected product before it can choose a stock identity. */
+const useReceiptSelection = () => {
   const [product, setProduct] = useState<ProductRecord | null>(null);
   const productId = product?.id ?? null;
   const [variantId, setVariantId] = useState('');
@@ -469,6 +466,38 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
   const variants = fullProduct?.variantRecords ?? [];
   const variant = variants.find((entry) => entry.id === variantId);
   const variantMissing = variants.length > 0 && variant === undefined;
+  const clearSelection = () => {
+    setProduct(null);
+    setRecord(null);
+    setVariantId('');
+  };
+  const selectProduct = (picked: ProductRecord | null) => {
+    setProduct(picked);
+    setVariantId('');
+  };
+  return {
+    clearSelection,
+    failed: loaded?.status === 'error',
+    fullProduct,
+    product,
+    productId,
+    retry: () => setReadAttempt((attempt) => attempt + 1),
+    selectProduct,
+    selectVariant: setVariantId,
+    variant,
+    variantId,
+    variantMissing,
+    variants,
+  };
+};
+
+/** Goods receipt: pick a product, enter a positive quantity, record RECEIPT with a positive delta. */
+export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revision }: FormDialogProps) => {
+  const k = useProductLabel();
+  const { t } = useModernI18n();
+  const failure = useCommandFailure();
+  const selection = useReceiptSelection();
+  const { product, productId, fullProduct, variants, variant, variantId, variantMissing } = selection;
   const [quantity, setQuantity] = useState(1);
   const [quantityText, setQuantityText] = useState('1');
   const [note, setNote] = useState('');
@@ -488,9 +517,7 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
     noteError === undefined;
 
   const clearForm = () => {
-    setProduct(null);
-    setRecord(null);
-    setVariantId('');
+    selection.clearSelection();
     setQuantity(1);
     setQuantityText('1');
     setNote('');
@@ -574,22 +601,19 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
             label={k('fields.product')}
             loadingMessage={t('merchandise.loading')}
             noResultsMessage={k('states.noResults')}
-            onSelect={(picked) => {
-              setProduct(picked);
-              setVariantId('');
-            }}
+            onSelect={selection.selectProduct}
             placeholder={k('filters.search')}
             retryLabel={k('common.retry')}
             selected={product}
             {...fieldError(submitted, productError)}
           />
           {productId !== null && fullProduct === undefined && (
-            <StatusText status={loaded?.status === 'error' ? 'error' : 'info'}>
-              {loaded?.status === 'error' ? k('states.error') : t('merchandise.loading')}
+            <StatusText status={selection.failed ? 'error' : 'info'}>
+              {selection.failed ? k('states.error') : t('merchandise.loading')}
             </StatusText>
           )}
-          {loaded?.status === 'error' && (
-            <Button onClick={() => setReadAttempt((attempt) => attempt + 1)} type="button">
+          {selection.failed && (
+            <Button onClick={selection.retry} type="button">
               {k('common.retry')}
             </Button>
           )}
@@ -599,7 +623,7 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
               items={variants.map((entry) => selectItem(entry.id, `${entry.name} (${entry.sku})`))}
               label={t('merchandise.ui.variant')}
               name="receiptVariant"
-              onValueChange={(details) => setVariantId(details.value[0] ?? '')}
+              onValueChange={(details) => selection.selectVariant(details.value[0] ?? '')}
               placeholder={t('merchandise.ui.selectVariant')}
               required
               value={variantId === '' ? [] : [variantId]}

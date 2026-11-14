@@ -249,3 +249,41 @@ it.effect('does not permit a receipt when the selected product record cannot be 
     expect(rstest.mocked(executeRecordStockMovement).mock.calls).toHaveLength(0);
   }),
 );
+
+it.effect('ignores a stale product response and permits a variant-free receipt only after its own read', () =>
+  Effect.gen(function* staleReceiptSelection() {
+    picked.current = receiptProduct;
+    yield* mount;
+    yield* click(button('pick product'));
+    const plain = Schema.decodeSync(ProductRecordSchema)({
+      ...Schema.encodeSync(ProductRecordSchema)(receiptProduct),
+      id: 'plain-receipt-product',
+      variantRecords: [],
+    });
+    picked.current = plain;
+    yield* click(button('pick product'));
+    yield* Effect.promise(() =>
+      act(async () => {
+        reads[0]?.({ product: receiptProduct, status: 'ready' });
+        await settle();
+      }),
+    );
+    expect(button(copy.submit).disabled).toBe(true);
+    yield* Effect.promise(() =>
+      act(async () => {
+        reads[1]?.({ product: plain, status: 'ready' });
+        await settle();
+      }),
+    );
+    expect(button(copy.submit).disabled).toBe(false);
+    expect(buttons('pick variant')).toHaveLength(0);
+    yield* click(button(copy.submit));
+    expect(rstest.mocked(executeRecordStockMovement).mock.calls[0]?.[0].command).toEqual({
+      _tag: 'RecordStockMovement',
+      delta: 1,
+      productId: plain.id,
+      reason: 'RECEIPT',
+    });
+    return yield* Effect.void;
+  }),
+);
