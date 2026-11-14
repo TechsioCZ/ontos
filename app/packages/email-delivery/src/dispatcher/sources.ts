@@ -1,7 +1,7 @@
 // Committed-state readers. Which e-mails are due is decided once, by demo_email.pending_deliveries() (ids only, the
 // dispatcher's sole cross-tenant read). Content is read here, only inside inDeliveryScope (RLS) and only for those ids.
 import { PgClient } from '@effect/sql-pg';
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Match, Option, Schema } from 'effect';
 import type { AgendaRecipientInput, EmailDeliverySource, RentReminderInput } from './contract.ts';
 import {
   AKROS_LEGAL_ENTITY_ID,
@@ -47,13 +47,23 @@ export const readPendingDeliveries = Effect.gen(function* readPendingDeliveries(
     from demo_email.pending_deliveries(${PENDING_PAGE_SIZE}, ${DEMO_TENANT_ID}::uuid, ${AKROS_LEGAL_ENTITY_ID}::uuid)`;
 });
 
-export interface ParsedDeliveryId {
-  readonly source: EmailDeliverySource;
-  /** Order id, reminder id or the agenda recipient's principal id. */
-  readonly subjectId: string;
-}
+export type ParsedDeliveryId =
+  | { readonly source: Exclude<EmailDeliverySource, 'facility-agenda'>; readonly subjectId: string }
+  | { readonly source: 'facility-agenda'; readonly subjectId: string; readonly scope: DeliveryScope };
 
-/** `akros-order:<order id>:<event>`, `rent-reminder:<id>`, `facility-agenda:<principal id>:<batch instant>`. */
+const parseAgendaDeliveryId = (rest: string): ParsedDeliveryId | null => {
+  const [tenantId, legalEntityId, subjectId, ...instant] = rest.split(':');
+  if (tenantId === undefined || legalEntityId === undefined || subjectId === undefined) {
+    return null;
+  }
+  if (tenantId === '' || legalEntityId === '' || subjectId === '') {
+    return null;
+  }
+  const createdAt = Schema.decodeUnknownOption(Schema.DateTimeUtcFromString)(instant.join(':'));
+  return Option.isNone(createdAt) ? null : { scope: { legalEntityId, tenantId }, source: 'facility-agenda', subjectId };
+};
+
+/** Agenda keys are `facility-agenda:<tenant id>:<company id>:<principal id>:<batch instant>`. */
 export const parseDeliveryId = (deliveryId: string): ParsedDeliveryId | null => {
   const separator = deliveryId.indexOf(':');
   const source = deliveryId.slice(0, separator);
@@ -73,10 +83,7 @@ export const parseDeliveryId = (deliveryId: string): ParsedDeliveryId | null => 
       const end = rest.lastIndexOf(':');
       return end <= 0 ? null : { source: kind, subjectId: rest.slice(0, end) };
     }),
-    Match.when('facility-agenda', (kind) => {
-      const end = rest.indexOf(':');
-      return end <= 0 ? null : { source: kind, subjectId: rest.slice(0, end) };
-    }),
+    Match.when('facility-agenda', () => parseAgendaDeliveryId(rest)),
     Match.exhaustive,
   );
 };
