@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime/modules/active-application-composition';
 import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Exit, Fiber, Redacted, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
@@ -57,10 +58,22 @@ const SESSION_REF = 'session-reference';
 /** What Better Auth answers: the change, a refusal with its code, or a verdict that is still on its way. */
 interface Provider {
   readonly allowed?: boolean;
+  /**
+   * The active composition, built before a test that moves the clock forks its run. Building it lazily inside the run
+   * races that test's `TestClock.adjust`: its validation has a time budget and does real asynchronous hashing, so a
+   * slower machine is still validating when virtual time jumps past the budget.
+   */
+  readonly composition?: ActiveApplicationCompositionSnapshot;
   /** Better Auth itself, when a test drives its answer (a verdict that arrives late). */
   readonly service?: typeof CommercePortalAuthService.Service;
   readonly verdict?: 'changed' | 'wrong-current';
 }
+
+/** The composition snapshot this suite's owner registration runs under. */
+const compositionSnapshot = makeApplicationCompositionSnapshotFixture(
+  ['commerce-customer-context'],
+  ultramodernApiMarker.buildMarker,
+);
 
 const providerAnswer = (provider: Provider) =>
   provider.verdict === 'wrong-current'
@@ -100,10 +113,7 @@ const portal =
       // The late verdict of a change that completes past the call budget does reach a composition read, so this
       // service answers with a real snapshot and the test needs no composition snapshot in the environment.
       Effect.provideService(ActiveApplicationCompositionService, {
-        load: makeApplicationCompositionSnapshotFixture(
-          ['commerce-customer-context'],
-          ultramodernApiMarker.buildMarker,
-        ),
+        load: provider.composition === undefined ? compositionSnapshot : Effect.succeed(provider.composition),
       }),
       Effect.provideService(CommerceEnrollmentOwnerTransactionRunner, Schema.decodeUnknownSync(Schema.Any)({})),
       Effect.provide(NodeCrypto.layer),
@@ -127,19 +137,32 @@ const tieOf = (
   };
 };
 
-const runPassword = Effect.fn('AuditTie.password')(function* runPassword(provider: Provider) {
+/**
+ * Everything a password change validates before it runs: the harness (with the composition it builds) and the payload.
+ * A test that moves the clock prepares in its own fiber and forks only `run`, because composition validation has a
+ * time budget and does real asynchronous hashing, so preparing inside the forked run races `TestClock.adjust`.
+ */
+const preparePassword = Effect.fn('AuditTie.preparePassword')(function* preparePassword(provider: Provider) {
   const events: CommercePortalAuthAuditEvent[] = [];
   const harness = yield* harnessFor([bindActionTestServices(changeOwnCustomerPasswordAction, {})]);
   const payload = yield* Schema.decodeUnknownEffect(ChangeOwnCustomerPasswordPayloadSchema)({ session });
-  const exit = yield* harness.runtime
+  const run = harness.runtime
     .runAction({
       payload,
       principal: workloadPrincipal,
       registration: changeOwnCustomerPasswordAction,
       transport: { correlationId: 'audit-tie-password', idempotencyKey: 'audit-tie-password' },
     })
-    .pipe(portal(events, provider), Effect.exit);
-  return { events, exit, harness };
+    .pipe(
+      portal(events, provider),
+      Effect.exit,
+      Effect.map((exit) => ({ events, exit, harness })),
+    );
+  return { run };
+});
+
+const runPassword = Effect.fn('AuditTie.password')(function* runPassword(provider: Provider) {
+  return yield* (yield* preparePassword(provider)).run;
 });
 
 it.effect('password: the authorized row and the changed row share one invocation', () =>
@@ -182,7 +205,10 @@ it.effect('password: past the call budget the change may still complete, and its
         changePassword: () => once(provider, 'answer'),
       }),
     };
-    const run = yield* Effect.forkChild(runPassword({ service }));
+    // Prepared before the run is forked, so moving the clock below cannot race a composition validation.
+    const composition = yield* compositionSnapshot;
+    const prepared = yield* preparePassword({ composition, service });
+    const run = yield* Effect.forkChild(prepared.run);
     // Past the provider call budget (5 s), with the provider still silent.
     yield* Effect.yieldNow.pipe(Effect.repeat({ times: 20 }));
     yield* TestClock.adjust('6 seconds');
@@ -218,7 +244,11 @@ it.effect(
           },
         }),
       };
-      const runs = yield* Effect.forEach(Array.from({ length: 32 }), () => Effect.forkChild(runPassword({ service })));
+      const composition = yield* compositionSnapshot;
+      const prepared = yield* Effect.forEach(Array.from({ length: 32 }), () =>
+        preparePassword({ composition, service }),
+      );
+      const runs = yield* Effect.all(prepared.map(({ run }) => Effect.forkChild(run)));
       yield* Effect.yieldNow.pipe(Effect.repeat({ times: 50 }));
       yield* TestClock.adjust('6 seconds');
       yield* Effect.forEach(runs, (run) => Fiber.join(run), { discard: true });
