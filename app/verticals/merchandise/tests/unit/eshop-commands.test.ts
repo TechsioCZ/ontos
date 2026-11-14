@@ -508,3 +508,23 @@ it.effect('UpdateProduct and CreateProduct refuse a storefront slug another prod
     expect(same.state.products[0]?.slug).toBe('etiopie');
   }),
 );
+
+
+it.effect('refuses a removed variant even after the final variant disappears', () =>
+  Effect.gen(function* removedVariant() {
+    const current = yield* seeded;
+    const withoutVariants: MerchandiseState = {
+      ...current,
+      products: current.products.map((product) => ({ ...product, variants: [] })),
+    };
+    const refused = yield* apply(withoutVariants, guestOrder(), 'removed-variant-order');
+    expect(refused.storefrontOrder?.issues[0]?.code).toBe('VARIANT_REQUIRED');
+    expect(refused.state).toBe(withoutVariants);
+    const baseOrder = guestOrder({
+      lines: [{ expectedUnitPriceMinor: 28_900, productId: 'p1', quantity: 2 }],
+    });
+    const accepted = yield* apply(withoutVariants, baseOrder, 'base-product-order');
+    expect(accepted.storefrontOrder?.outcome).toBe('PLACED');
+    expect(accepted.state.orders[0]?.lines[0]?.variantId).toBeUndefined();
+  }),
+);

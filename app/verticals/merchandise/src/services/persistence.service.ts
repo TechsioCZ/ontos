@@ -1143,7 +1143,7 @@ const sellableUnitOf = (
   const { tax } = taxed;
   const record = toProductRecord(product, stockLevelsOf(movements, product.id), input.tax.rates, input.tax.held);
   const variants = record.variantRecords ?? [];
-  if (variants.length > 0) {
+  if (variants.length > 0 || line.variantId !== undefined) {
     const variant = variants.find((entry) => entry.id === line.variantId);
     if (variant === undefined) {
       return {
