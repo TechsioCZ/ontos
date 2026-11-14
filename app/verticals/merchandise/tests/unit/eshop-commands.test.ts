@@ -692,3 +692,27 @@ it.effect('refuses below-tier checkout when the tiered catalog has no authoritat
     return yield* Effect.void;
   }),
 );
+
+it.effect('owner checkout uses variant-only minimum and package constraints, independently of the parent', () =>
+  Effect.gen(function* variantOnlyPurchaseConstraints() {
+    const current = yield* seeded;
+    const parentConstrained: MerchandiseState = {
+      ...current,
+      products: current.products.map((product) => ({ ...product, minimumQuantity: 10, packageQuantity: 10 })),
+    };
+    const accepted = yield* apply(parentConstrained, guestOrder(), 'variant-own-rules');
+    expect(accepted.storefrontOrder?.outcome).toBe('PLACED');
+    expect(accepted.state.orders[0]?.lines[0]?.quantity).toBe(2);
+    const variantConstrained: MerchandiseState = {
+      ...parentConstrained,
+      products: parentConstrained.products.map((product) => ({
+        ...product,
+        variants: product.variants?.map((variant) => ({ ...variant, minimumQuantity: 3, packageQuantity: 3 })),
+      })),
+    };
+    const refused = yield* apply(variantConstrained, guestOrder(), 'variant-explicit-rules');
+    expect(refused.storefrontOrder?.issues[0]?.code).toBe('MINIMUM_QUANTITY');
+    expect(refused.state).toBe(variantConstrained);
+    return yield* Effect.void;
+  }),
+);
