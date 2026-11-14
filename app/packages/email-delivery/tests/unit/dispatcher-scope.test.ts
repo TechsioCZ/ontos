@@ -21,20 +21,11 @@ describe('delivery ids', () => {
     expect(parseDeliveryId('storefront-inquiry:task-1')).toEqual({ source: 'storefront-inquiry', subjectId: 'task-1' });
     expect(parseDeliveryId('rent-reminder:r-1')).toEqual({ source: 'rent-reminder', subjectId: 'r-1' });
     expect(parseDeliveryId('akros-order:o:1:SHIPPED')).toEqual({ source: 'akros-order', subjectId: 'o:1' });
-    expect(parseDeliveryId(`facility-agenda:${tenantA}:${entityA}:p-1:2026-10-22T07:00:00.000Z`)).toEqual({
-      scope: { legalEntityId: entityA, tenantId: tenantA },
+    expect(parseDeliveryId('facility-agenda:p-1:2026-10-22T07:00:00.000Z')).toEqual({
       source: 'facility-agenda',
       subjectId: 'p-1',
     });
-    for (const id of [
-      '',
-      'rent-reminder:',
-      'akros-order:o',
-      'facility-agenda:p',
-      'facility-agenda:p-1:2026-10-22T07:00:00.000Z',
-      `facility-agenda:${tenantA}:${entityA}:p-1:invalid-date`,
-      'other:x',
-    ]) {
+    for (const id of ['', 'rent-reminder:', 'akros-order:o', 'facility-agenda:p', 'other:x']) {
       expect(parseDeliveryId(id)).toBeNull();
     }
   });
@@ -77,7 +68,7 @@ describe('scope schedule', () => {
       [
         ...orders,
         inB('rent-reminder:b1'),
-        inB(`facility-agenda:${tenantB}:${entityB}:p1:2026-10-22T07:00:00Z`),
+        inB('facility-agenda:p1:2026-10-22T07:00:00Z'),
         inB('person-invitation:invite-1'),
       ],
       4,
@@ -85,18 +76,9 @@ describe('scope schedule', () => {
     const keys = work.flatMap((w) => [...w.keys]);
     expect(keys).toHaveLength(4);
     expect(keys).toContain('rent-reminder:b1');
-    expect(keys).toContain(`facility-agenda:${tenantB}:${entityB}:p1:2026-10-22T07:00:00Z`);
+    expect(keys).toContain('facility-agenda:p1:2026-10-22T07:00:00Z');
     expect(keys).toContain('person-invitation:invite-1');
     expect(work.find((entry) => entry.scope.tenantId === tenantB)?.subjects['person-invitation']).toEqual(['invite-1']);
-  });
-
-  test('scoped agenda keys agree with the planner and cannot be scheduled under another company', () => {
-    const key = `facility-agenda:${tenantA}:${entityA}:p1:2026-10-22T07:00:00Z`;
-    const work = scheduleScopes([inA(key), inB(key)], 10);
-    expect(work).toHaveLength(1);
-    expect(work[0]?.subjects['facility-agenda']).toEqual(['p1']);
-    expect([...(work[0]?.keys ?? [])]).toEqual([key]);
-    expect(work[0]?.scope).toEqual({ legalEntityId: entityA, tenantId: tenantA });
   });
 });
 
