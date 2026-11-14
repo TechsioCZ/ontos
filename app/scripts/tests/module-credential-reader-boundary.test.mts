@@ -103,12 +103,14 @@ it('lets only the host programs reach a built bundle claim, and no host load an 
     'scripts/zerops/serve-units.mts',
   ]);
   // The backend federation remote carries a copy no host claims: only its build configuration names it, no runtime.
+  // The gates' unit output cache names it too, only to require that a cached build still has the file; it never loads it.
   expect(
     production.filter(
       (file) =>
         read(file).includes('backendRemoteEntry') &&
         !file.endsWith('/backend-federation.config.ts') &&
-        file !== 'scripts/zerops/hosted-credential-claim.mts',
+        file !== 'scripts/zerops/hosted-credential-claim.mts' &&
+        file !== 'scripts/ci/unit-output-cache.mts',
     ),
   ).toEqual([]);
 });

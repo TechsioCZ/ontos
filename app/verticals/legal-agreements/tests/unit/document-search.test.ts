@@ -45,7 +45,8 @@ const otherCompany = '30000000-0000-4000-8000-000000000002';
 const contractId = '40000000-0000-4000-8000-000000000001';
 const documentId = '40000000-0000-4000-8000-000000000002';
 const otherDocumentId = '40000000-0000-4000-8000-000000000003';
-const serialize = Schema.encodeSync(Schema.toCodecJson(Schema.Unknown));
+// A JSON string, so `not.toContain` searches the projected text (an encoded object is no searchable value).
+const serialize = Schema.encodeSync(Schema.fromJsonString(Schema.toCodecJson(Schema.Unknown)));
 const contractRef = {
   moduleId: 'legal.agreements',
   resourceId: contractId,
