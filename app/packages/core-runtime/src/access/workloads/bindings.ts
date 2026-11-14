@@ -1,7 +1,4 @@
-import {
-  readVerifiedGatewayActor,
-  readVerifiedGatewayWorkload,
-} from '../../auth/system-principal-context-provenance.ts';
+import { readVerifiedGatewayWorkload } from '../../auth/system-principal-context-provenance.ts';
 import { and, eq, sql } from 'drizzle-orm';
 import { Effect, Layer } from 'effect';
 
@@ -136,17 +133,8 @@ export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindin
           activeCompanyIds.add(LegalEntityIdSchema.make(row.legalEntityId));
         }
       }
-      // A system workload holds one tenant-local binding, so it registers no company of its own. As the subject of a
-      // module call it acts in exactly the one company its Shell-sealed context names, which the Shell signed only after
-      // admitting the original registered binding (and which the provenance pins to this request's company); never in
-      // any other, and never on a direct call, which still needs a registration.
-      if (
-        workload?.legalEntityId !== undefined &&
-        readVerifiedGatewayActor(query.scope) !== undefined &&
-        workloadKeys.size > 0
-      ) {
-        activeCompanyIds.add(LegalEntityIdSchema.make(workload.legalEntityId));
-      }
+      // A workload, including a C14 system workload, acts in a company only through an active company registration.
+      // Without one, the company gate answers deny.workload_unbound.
       return { activeCompanyIds, workloadKeys };
     },
   ),
