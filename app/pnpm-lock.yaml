@@ -458,6 +458,9 @@ importers:
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
+      '@app/inventory':
+        specifier: workspace:*
+        version: link:../../verticals/inventory
       '@app/party-registry':
         specifier: workspace:*
         version: link:../../verticals/party-registry
