@@ -301,7 +301,7 @@ describe('Pricing Current Market evidence owner boundary', () => {
       const transactionService: OperationalScopeTransactionService = {
         delete: unusedDatabaseOperation,
         insert: unusedDatabaseOperation,
-        install: () => Effect.void,
+        install: () => Effect.succeed('session_setting' as const),
         scopedRoutineInvoker: () => ({
           invoke: (routine, values) => {
             ({ routineKey } = routine);

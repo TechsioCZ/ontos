@@ -39,6 +39,7 @@ const permissionUnavailable = (cause: unknown) =>
       ? 'The current Retail Party owner evidence is unavailable'
       : 'The Retail Party preflight input or approved composition is unavailable',
   });
+const notApplicable = { outcome: 'not_applicable' } as const;
 const sameScope = (
   left: PartyRegistryRetailPartyResolverFactoryInput,
   right: PartyRegistryRetailPartyResolverFactoryInput,
@@ -93,7 +94,7 @@ export const preparedRetailPartyResolution: Effect.Effect<
       prepare: Effect.fn('RetailPartyResolution.prepare')(function* prepare(input) {
         prepared = null;
         if (input.actionKey !== 'commerce.customer-context.ensure-retail-customer-profile') {
-          return { outcome: 'not_applicable' } as const;
+          return notApplicable;
         }
         const payload = yield* Schema.decodeUnknownEffect(EnsureRetailCustomerProfilePayloadSchema, {
           onExcessProperty: 'error',
@@ -110,6 +111,11 @@ export const preparedRetailPartyResolution: Effect.Effect<
           payload.subject.sellingLegalEntityRef.resourceId !== legalEntityId
         ) {
           return { outcome: 'denied' } as const;
+        }
+        // A source Ensure proves its Party through the source PERSON admission in the owner transaction (bound to the
+        // workload's own principal), never through this actor-bound Retail read, so it prepares no Party evidence.
+        if (payload.source !== undefined) {
+          return notApplicable;
         }
         const active = yield* compositions.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
         const scope = {
@@ -136,7 +142,7 @@ export const preparedRetailPartyResolution: Effect.Effect<
         const result = yield* ownerRead.make(scope, execute)(request);
         prepared = { request, result, scope };
         // Owner evidence is not a grant: ordinary native Action authorization still applies.
-        return { outcome: 'not_applicable' } as const;
+        return notApplicable;
       }, Effect.mapError(permissionUnavailable)),
     },
   };

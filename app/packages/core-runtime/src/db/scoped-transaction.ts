@@ -21,8 +21,16 @@ const scopedTransaction: unique symbol = Symbol('@app/core-runtime/db/scoped-tra
 type ScopedRoutineRawRow = Record<string, never>;
 type OperationalScopeRawTransaction = Pick<CoreTransaction, 'delete' | 'execute' | 'insert' | 'select' | 'update'>;
 
+/** The authority a connected role installed its scope with; a role without scope authority never installs one. */
+export type InstalledOperationalScopeAuthority = Exclude<DatabaseScopeAuthority, 'none'>;
+
 /** Private owner-factory capability. It is never supplied to an Action or read handler. */
 export interface ScopedTransactionExecutor extends ScopedRoutineInvoker {
+  /**
+   * How the connected database role installed this scope, decided from `current_user` and the enrolled identities,
+   * never from the request. Statements whose grants differ by role choose their variant from this.
+   */
+  readonly authority: InstalledOperationalScopeAuthority;
   readonly delete: CoreTransaction['delete'];
   readonly insert: CoreTransaction['insert'];
   /**
@@ -51,7 +59,10 @@ interface SettingRow extends Record<string, unknown> {
 export interface OperationalScopeTransactionService {
   readonly delete: CoreTransaction['delete'];
   readonly insert: CoreTransaction['insert'];
-  readonly install: (scope: OperationalScope) => Effect.Effect<void, OperationContextUnavailable>;
+  /** Installs the scope with the connected role's authority and answers which authority that was. */
+  readonly install: (
+    scope: OperationalScope,
+  ) => Effect.Effect<InstalledOperationalScopeAuthority, OperationContextUnavailable>;
   readonly scopedRoutineInvoker: (scope: OperationalScope) => ScopedRoutineInvoker;
   readonly select: CoreTransaction['select'];
   readonly update: CoreTransaction['update'];
@@ -78,6 +89,7 @@ const operationContextUnavailable = (cause?: unknown) => {
 };
 
 interface OperationalScopeAuthority {
+  readonly authority: InstalledOperationalScopeAuthority;
   readonly install: (scope: OperationalScope) => Effect.Effect<void, OperationContextUnavailable>;
   readonly verify: Effect.Effect<Option.Option<SettingRow>, OperationContextUnavailable>;
 }
@@ -104,7 +116,7 @@ const readSettingRow = (statement: SQL, transaction: OperationalScopeRawTransact
 const readVerifiedScope = (
   statement: SQL,
   transaction: OperationalScopeRawTransaction,
-  authority: Exclude<DatabaseScopeAuthority, 'none'>,
+  authority: InstalledOperationalScopeAuthority,
   enrollment: DatabaseIdentityEnrollment,
   expectedRole?: string,
 ) =>
@@ -142,6 +154,7 @@ const sessionSettingScopeAuthority = (
       : Effect.fail(operationContextUnavailable());
   };
   return {
+    authority: 'session_setting',
     install: (scope) =>
       transaction
         .execute<ScopeVerificationRow>(
@@ -189,6 +202,7 @@ const gatewayGrantScopeAuthority = (
   enrollment: DatabaseIdentityEnrollment,
   expectedRole: string,
 ): OperationalScopeAuthority => ({
+  authority: 'gateway_grant',
   install: () =>
     readSettingRow(establishGatewayScopeStatement(scopeAssertion.assertion), transaction).pipe(Effect.asVoid),
   verify: readVerifiedScope(
@@ -207,8 +221,10 @@ const scopedTransactionExecutor = (
   transaction: Pick<CoreTransaction, 'delete' | 'insert' | 'select' | 'update'>,
   routineInvoker: ScopedRoutineInvoker,
   scope: OperationalScope,
+  authority: InstalledOperationalScopeAuthority,
 ): ScopedTransactionExecutor =>
   Object.freeze({
+    authority,
     delete: transaction.delete.bind(transaction),
     insert: transaction.insert.bind(transaction),
     invoke: routineInvoker.invoke,
@@ -275,6 +291,7 @@ const operationalScopeTransactionFromCoreTransaction = (
       const authority = yield* operationalScopeAuthority(transaction, scope, enrollment);
       yield* authority.install(requestedScope);
       installedAuthority = authority;
+      return authority.authority;
     }),
     scopedRoutineInvoker: (routineScope) =>
       scopedRoutineInvokerFromTransaction(
@@ -292,12 +309,12 @@ const operationalScopeTransactionFromCoreTransaction = (
 export const installOperationalScopeFromTransactionService = Effect.fn('installOperationalScopeFromTransactionService')(
   function* installOperationalScopeFromTransactionServiceEffect(scope: OperationalScope) {
     const transaction = yield* OperationalScopeTransaction;
-    yield* transaction.install(scope);
+    const authority = yield* transaction.install(scope);
     const setting = yield* transaction.verify;
     if (Option.isNone(setting) || !installedScopeMatches(setting.value, scope)) {
       return yield* operationContextUnavailable();
     }
-    return scopedTransactionExecutor(transaction, transaction.scopedRoutineInvoker(scope), scope);
+    return scopedTransactionExecutor(transaction, transaction.scopedRoutineInvoker(scope), scope, authority);
   },
 );
 
@@ -358,7 +375,12 @@ export const installOperationalScopeAt = Effect.fn('installOperationalScopeAt')(
     );
     return {
       operationAt: DateTime.fromDateUnsafe(installed.operation_at),
-      scoped: scopedTransactionExecutor(transaction, routineInvoker, scope),
+      scoped: scopedTransactionExecutor(
+        transaction,
+        routineInvoker,
+        scope,
+        gatewayGrant ? 'gateway_grant' : 'session_setting',
+      ),
     };
   },
 );

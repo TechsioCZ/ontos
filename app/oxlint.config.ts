@@ -1509,7 +1509,11 @@ export default defineConfig({
     {
       // Test doubles: the routine-only scoped executor and the operation-requirement catalog fake expose just
       // the members Price Group persistence and the requirement check read, as main's Assortment owner tests do.
-      files: ['verticals/commerce-customer-context/tests/unit/price-group-action-preparation.test.ts'],
+      // Party's Create recovery requirement test uses the same catalog fake.
+      files: [
+        'verticals/commerce-customer-context/tests/unit/price-group-action-preparation.test.ts',
+        'verticals/party-registry/tests/unit/party-command-result-source-privacy-requirement.test.ts',
+      ],
       rules: {
         'anti-slop/no-chained-type-assertions': 'off',
         'typescript/no-unsafe-type-assertion': 'off',
