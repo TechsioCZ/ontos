@@ -25,6 +25,7 @@ import { PgClient } from '@effect/sql-pg';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq } from 'drizzle-orm';
 import {
+  Cause,
   ConfigProvider,
   Context,
   Crypto,
@@ -91,6 +92,32 @@ import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/iso
 
 const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const emptyContext = Context.makeUnsafe<unknown>(new Map());
+
+// Read only named scalar data properties: never hand an error, its cause or a function to structural logging.
+const failureField = (error: unknown, key: string, limit = 400): string => {
+  if ((typeof error !== 'object' || error === null) && typeof error !== 'function') {
+    return 'unavailable';
+  }
+  const property = Object.getOwnPropertyDescriptor(error, key);
+  return property !== undefined && 'value' in property && typeof property.value === 'string'
+    ? property.value.slice(0, limit)
+    : 'unavailable';
+};
+const sourceCauseDescription = (cause: Cause.Cause<unknown>): string =>
+  cause.reasons
+    .slice(0, 4)
+    .map((reason) => {
+      if (Cause.isFailReason(reason)) {
+        return `failure _tag=${failureField(reason.error, '_tag')} code=${failureField(reason.error, 'code')} reason=${failureField(reason.error, 'reason')}`;
+      }
+      if (Cause.isDieReason(reason)) {
+        const stack = failureField(reason.defect, 'stack', 2_000).split('\n').slice(0, 5).join('\n');
+        return `defect ${String(reason.defect).slice(0, 400)}\n${stack}`;
+      }
+      return 'interrupted';
+    })
+    .join('\n')
+    .slice(0, 2_000);
 
 it.layer(
   NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer), Layer.provideMerge(NodeCrypto.layer)),
@@ -715,13 +742,30 @@ it.layer(
           );
         });
       yield* Effect.logInfo('1316 stage source-create');
+      yield* Effect.logInfo('1316 stage source-create request-identity');
       const sourceCreateIdentity = yield* createPartyRequestIdentity(
         yield* Schema.encodeEffect(CreatePartyPayloadSchema)({ candidate: sourceCandidate }),
       );
       const originalCreateHash = computeActionRequestHash({ ...sourceCreateIdentity, principal });
       const beforeSource = yield* ownerSnapshot();
       const beforeSourceEvidence = yield* fixture.evidence(coreEvidenceExecutor);
-      const [sourceCreated, sourceReplayed] = yield* Effect.all([createSource(), createSource()], { concurrency: 2 });
+      const [createdExit, replayedExit] = yield* Effect.all(
+        [Effect.exit(createSource()), Effect.exit(createSource())],
+        { concurrency: 2 },
+      );
+      if (Exit.isFailure(createdExit) || Exit.isFailure(replayedExit)) {
+        const created = Exit.isFailure(createdExit) ? sourceCauseDescription(createdExit.cause) : 'succeeded';
+        const replayed = Exit.isFailure(replayedExit) ? sourceCauseDescription(replayedExit.cause) : 'succeeded';
+        yield* Effect.logError(`1316 source-create first: ${created}`);
+        yield* Effect.logError(`1316 source-create replay: ${replayed}`);
+        return yield* Effect.die(
+          new Error(
+            `Concurrent source-create failed: first=${Exit.isFailure(createdExit) ? 'failed' : 'succeeded'}, replay=${Exit.isFailure(replayedExit) ? 'failed' : 'succeeded'}; bounded causes are logged above`,
+          ),
+        );
+      }
+      const sourceCreated = createdExit.value;
+      const sourceReplayed = replayedExit.value;
       assert.isOk(sourceCreated.outcome === 'CREATED');
       expect(sourceReplayed).toEqual(sourceCreated);
       const sourceReceipts = yield* admin
