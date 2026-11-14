@@ -30,6 +30,11 @@ import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
 import {
+  collectFixtureDiagnostics,
+  describeFixtureDiagnostics,
+  fixtureDiagnosticTail,
+} from './support/fixture-diagnostics.mts';
+import {
   bindCustomerFixtureProviderKey as bindProviderKey,
   customerFixtureUuid as uuid,
   seedCustomerFixtureProviderPrincipal as seedPrincipal,
@@ -463,8 +468,11 @@ it.live(
               headers: { ...headers, 'idempotency-key': idempotencyKey },
             });
             if (response.status !== 202) {
+              const problem = fixtureDiagnosticTail(yield* response.text);
+              const owners = yield* collectFixtureDiagnostics(ownerDiagnostics);
+              const gateway = yield* describeFixtureDiagnostics(shell.gatewayDiagnostics());
               return yield* unavailable(
-                `Actual customer admission returned ${response.status}: ${yield* response.text}`,
+                `Actual customer admission returned ${response.status}: ${problem}; owners: ${JSON.stringify(owners)}; gateway: ${gateway}`,
               );
             }
             return yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema)));

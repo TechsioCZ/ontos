@@ -15,7 +15,8 @@ import { ORGANIZATION_PROFILE_ICO_FIELDS } from '@app/commerce-customer-context/
 import { executeRecordPrivacyApplicabilityWithAuthorization } from '@app/privacy/api/client';
 import { makeApiKeyGatewayNativeFixture } from '@app/shell-super-app/testing/api-key-gateway-native';
 import { PgClient } from '@effect/sql-pg';
-import { Config, Effect, FileSystem, Option, Redacted, Schema } from 'effect';
+import { Config, Effect, Option, Redacted, Schema } from 'effect';
+import { describeFixtureDiagnostics, logFixtureDiagnostics } from './fixture-diagnostics.mts';
 import {
   bindCustomerFixtureProviderKey,
   seedCustomerFixtureProviderPrincipal,
@@ -269,16 +270,17 @@ export const makeOrganizationProfileIcoOwnerFixture = Effect.fn('OrganizationPro
           Effect.flatMap(Schema.decodeUnknownEffect(PrivacyApplicabilityDecisionSchema)),
           Effect.tapError(() =>
             Effect.gen(function* recordFailureDiagnostics() {
-              for (const [appId, diagnostic] of diagnostics) {
-                const fs = yield* FileSystem.FileSystem;
-                yield* fs.writeFileString(`/tmp/commerce-org-http-${appId}.diag.log`, yield* diagnostic);
-                yield* Effect.logError({ appId, diagnosticFile: `/tmp/commerce-org-http-${appId}.diag.log` });
-              }
-              yield* Effect.logError({ gateway: yield* shell.gatewayDiagnostics() });
+              yield* logFixtureDiagnostics(diagnostics);
+              yield* Effect.logError({
+                gateway: yield* describeFixtureDiagnostics(shell.gatewayDiagnostics()),
+              });
             }),
           ),
-          Effect.mapError(() =>
-            unavailable('Actual public RecordPrivacyApplicability failed with current owner facts'),
+          Effect.mapError((cause) =>
+            new SymmyC14ProductFixtureUnavailable({
+              cause: Redacted.make(cause),
+              message: 'Actual public RecordPrivacyApplicability failed with current owner facts',
+            }),
           ),
         );
         decisions.push(decision);

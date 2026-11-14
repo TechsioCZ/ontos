@@ -169,8 +169,11 @@ export const makePrivacyDispatchNativeFixture = Effect.fn('PrivacyDispatchNative
     [system.principalId, workerKey],
     [system.principalId, importWorkload],
   ]) {
+    const bindingId = randomUUID();
     yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status)
-      values(${randomUUID()},${randomUUID()},${tenantId},${principalId},${workload},'active')`;
+      values(${bindingId},${randomUUID()},${tenantId},${principalId},${workload},'active')`;
+    yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+      values(${randomUUID()},${randomUUID()},${tenantId},${bindingId},${legalEntityId},'active')`;
   }
   const sourceKey = yield* shell.issueFixtureProviderKey({ ...integration, issuerPrincipalId: human.principalId });
   yield* bindKey(admin, integration, sourceKey.providerKeyId);

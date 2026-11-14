@@ -19,12 +19,13 @@ import { MigrateOrganizationCustomerProfileIcoResultSchema } from '@app/commerce
 import { executeFenceLegacyIcoAuthorityWithAuthorization } from '@app/party-registry/actions/fence-legacy-ico-authority/client';
 import { executeLegacyIcoInventoryWithAuthorization } from '@app/party-registry/apis/legacy-ico-inventory/client';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
-import { Context, DateTime, Effect, Exit, FileSystem, Layer, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect, it } from 'effect-rstest';
 import { SymmyC14ProductFixtureUnavailable } from './support/symmy-c14-product-runtime.mts';
 import { makeOrganizationProfileIcoOwnerFixture } from './support/organization-profile-ico-owner-fixture.mts';
+import { logFixtureDiagnostics } from './support/fixture-diagnostics.mts';
 
 import type { CompanyGovernorInitialization } from './support/organization-profile-ico-owner-fixture.mts';
 
@@ -303,14 +304,7 @@ it.live(
             assertStoredClassification(prepared, yield* prepared.observe());
           }
         }).pipe(
-          Effect.tapError(() =>
-            Effect.gen(function* protocolDiagnostics() {
-              const fs = yield* FileSystem.FileSystem;
-              for (const [appId, diagnostic] of fixture.diagnostics) {
-                yield* fs.writeFileString(`/tmp/commerce-org-http-${appId}.diag.log`, yield* diagnostic);
-              }
-            }),
-          ),
+          Effect.tapError(() => logFixtureDiagnostics(fixture.diagnostics)),
           Effect.mapError((cause) => {
             const problem = Schema.decodeUnknownOption(
               Schema.Struct({
@@ -321,6 +315,7 @@ it.live(
             )(cause);
             const classification = Option.isSome(problem) ? JSON.stringify(problem.value) : 'typed-failure';
             return new SymmyC14ProductFixtureUnavailable({
+              cause: Redacted.make(cause),
               message: `Company ICO HTTP phase ${phase}: ${classification}`,
             });
           }),

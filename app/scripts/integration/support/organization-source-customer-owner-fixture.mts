@@ -203,10 +203,16 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
         PRICE_READ_WORKLOAD,
         PROFILE_FACTS_WORKLOAD,
       ]) {
-        yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status) values(${randomUUID()},${randomUUID()},${tenantId},${principalId},${workload},'active')`;
+        const bindingId = randomUUID();
+        yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status) values(${bindingId},${randomUUID()},${tenantId},${principalId},${workload},'active')`;
+        yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+          values(${randomUUID()},${randomUUID()},${tenantId},${bindingId},${legalEntityId},'active')`;
       }
     }
-    yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status) values(${randomUUID()},${randomUUID()},${tenantId},${integration.principalId},'privacy.core.source-processing-check','active')`;
+    const privacyBindingId = randomUUID();
+    yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status) values(${privacyBindingId},${randomUUID()},${tenantId},${integration.principalId},'privacy.core.source-processing-check','active')`;
+    yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+      values(${randomUUID()},${randomUUID()},${tenantId},${privacyBindingId},${legalEntityId},'active')`;
     const key = yield* shell.issueFixtureProviderKey(integration);
     yield* bindCustomerFixtureProviderKey(admin, integration, key.providerKeyId);
     yield* key.acknowledgeBinding;

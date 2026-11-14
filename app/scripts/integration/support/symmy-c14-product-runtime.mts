@@ -31,6 +31,7 @@ export const c14AppRoot = fileURLToPath(new URL('../../../', import.meta.url));
 export class SymmyC14ProductFixtureUnavailable extends Schema.TaggedError<SymmyC14ProductFixtureUnavailable>()(
   'SymmyC14ProductFixtureUnavailable',
   {
+    cause: Schema.optionalKey(Schema.Redacted(Schema.Defect())),
     message: Schema.String,
   },
 ) {}
