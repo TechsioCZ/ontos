@@ -130,6 +130,13 @@ export const SymmyInternalReadQuerySchema = Schema.Struct({
   priceOffset: Schema.optionalKey(Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),
   sourceRecordId: Schema.optionalKey(Schema.toEncoded(SymmySourceRecordKeySchema.fields.sourceRecordId)),
 });
+/** The public `GET /price-lists` query. Neither `code` nor `contractVersion` is a parameter. */
+export const SymmyPriceListsReadQuerySchema = Schema.Struct({
+  limit: Schema.optionalKey(symmyReadLimitSchema),
+  offset: Schema.optionalKey(symmyReadOffsetSchema),
+  priceLimit: Schema.optionalKey(symmyReadLimitSchema),
+  priceOffset: Schema.optionalKey(symmyReadOffsetSchema),
+});
 const SymmyRegionFieldNameSchema = Schema.Literals([
   'countryCodes',
   'currencyCode',

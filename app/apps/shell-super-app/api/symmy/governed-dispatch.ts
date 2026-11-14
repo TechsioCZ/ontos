@@ -18,7 +18,6 @@ import {
   symmyUnsupportedProblem,
   SymmyInternalPlanPayloadSchema,
 } from './contract.ts';
-import type { SymmyInternalReadQuerySchema } from './contract.ts';
 import type { SymmyIngressDispatch, SymmyIngressAdmission, SymmyOwnerAssertion } from './transport.ts';
 import {
   acquireSymmyReadAssertion,
@@ -110,19 +109,6 @@ const verifySelectedSource = (
     Match.tag('Qualified', (qualified) => verifyQualifiedSource(qualified, route, kind)),
     Match.exhaustive,
   );
-
-const priceListSourceQuery = Effect.fn('SymmyGovernedDispatch.priceListSourceQuery')(function* normalize(
-  query: typeof SymmyInternalReadQuerySchema.Type,
-) {
-  if (query.sourceRecordId !== undefined && query.code !== undefined) {
-    return yield* Effect.fail(symmyInvalidProblem);
-  }
-  if (query.sourceRecordId === undefined && query.code?.startsWith('~c14s1.') === true) {
-    return yield* Effect.fail(symmyUnsupportedProblem('filter_not_supported'));
-  }
-  const { sourceRecordId, ...otherQuery } = query;
-  return sourceRecordId === undefined ? otherQuery : { ...otherQuery, code: sourceRecordId };
-});
 
 const resolveRelayBase = (path: string) => resolveSymmyOwnerReleaseBase(path, symmyAudience);
 
@@ -288,7 +274,7 @@ export const makeSymmyGovernedDispatch = (
     request,
   }: Parameters<SymmyIngressDispatch['read']>[0]) {
     const query = request.query ?? {};
-    if (request.route !== 'priceLists' && query.sourceRecordId !== undefined) {
+    if (query.sourceRecordId !== undefined) {
       return yield* Effect.fail(symmyInvalidProblem);
     }
     if (query.contractVersion !== 'INTERNAL_C14') {
@@ -318,8 +304,7 @@ export const makeSymmyGovernedDispatch = (
         'pricing.price-group-catalog',
         'pricing.price-group-catalog.api.price-group-definition',
       );
-      const sourceQuery = yield* priceListSourceQuery(query);
-      return yield* projectSymmySourcePriceLists(route, sourceQuery, admission, newRequestIdentifier);
+      return yield* projectSymmySourcePriceLists(route, query, admission, newRequestIdentifier);
     }
     if (request.route === 'adminRegions') {
       if (projectRegions === undefined) {

@@ -675,6 +675,7 @@ const projectPriceList = Effect.fn('SymmyReadProjection.priceList')(function* pr
       association.priceGroupRef.resourceId,
     ),
     name: definition.definition.displayName,
+    priceGroupRef: association.priceGroupRef,
     source_record_id: association.sourceCorrelation.recordKey,
     starts_at: definition.definition.effectivePeriod.effectiveFrom,
   };

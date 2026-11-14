@@ -675,7 +675,7 @@ describe('Symmy source-qualified public owner read projections', () => {
             groupRef.resourceId,
           ),
         ).toBe(recordKey);
-        expect(item).not.toHaveProperty('priceGroupRef');
+        expect(item.priceGroupRef).toEqual(groupRef);
       }
     }),
   );
@@ -1370,7 +1370,7 @@ describe('Symmy source-qualified public owner read projections', () => {
         expect(result.count).toBe(1);
         const [first] = result.price_lists;
         expect(first).toBeDefined();
-        expect(first).not.toHaveProperty('priceGroupRef');
+        expect(first?.priceGroupRef).toEqual(groupRef);
         const encoded = yield* Effect.fromNullishOr(first?.id).pipe(Effect.orDie);
         expect(
           yield* verifySymmySourceSelector(
