@@ -9,6 +9,10 @@ import { OrderDateSchema, OrderLineSchema } from '../domain/imports.ts';
 
 export const ORDERS_CSV_FORMAT = 'crm-orders-csv-v1';
 
+const COLUMN_PLACEHOLDER = '{{column}}';
+const ROW_PLACEHOLDER = '{{row}}';
+const ITEM_PLACEHOLDER = '{{item}}';
+
 export interface CsvColumn {
   readonly example: string;
   readonly key: string;
@@ -309,16 +313,16 @@ const parseLines = (value: string, invalidLine: string): readonly ParsedOrderLin
   for (const [index, entry] of entries.entries()) {
     const fields = entry.split(':').map((field) => field.trim());
     if (fields.length < 3 || fields.length > 4) {
-      return invalidLine.replace('{{item}}', String(index + 1));
+      return invalidLine.replace(ITEM_PLACEHOLDER, String(index + 1));
     }
     const [sku = '', name = '', quantityText = '', amountText] = fields;
     const quantity = normalizeDecimal(quantityText);
     if (name === '' || quantity === undefined) {
-      return invalidLine.replace('{{item}}', String(index + 1));
+      return invalidLine.replace(ITEM_PLACEHOLDER, String(index + 1));
     }
     const amount = amountText === undefined || amountText === '' ? undefined : normalizeDecimal(amountText);
     if (amountText !== undefined && amountText !== '' && amount === undefined) {
-      return invalidLine.replace('{{item}}', String(index + 1));
+      return invalidLine.replace(ITEM_PLACEHOLDER, String(index + 1));
     }
     const line: ParsedOrderLine = { name, quantity: quantity.replace(/\.00$/u, '') };
     if (sku !== '') {
@@ -328,7 +332,7 @@ const parseLines = (value: string, invalidLine: string): readonly ParsedOrderLin
       Object.assign(line, { amount });
     }
     if (!Schema.is(OrderLineSchema)(line)) {
-      return invalidLine.replace('{{item}}', String(index + 1));
+      return invalidLine.replace(ITEM_PLACEHOLDER, String(index + 1));
     }
     lines.push(line);
   }
@@ -379,7 +383,7 @@ const parseTimes = (
       ? undefined
       : Option.getOrUndefined(Schema.decodeUnknownOption(OrderDateSchema)(parseCsvTime(orderedText, false)));
   if (orderedText !== undefined && orderedAt === undefined) {
-    return Result.fail(invalidTime.replace('{{column}}', 'datum_objednavky'));
+    return Result.fail(invalidTime.replace(COLUMN_PLACEHOLDER, 'datum_objednavky'));
   }
   const eventText = optional(get('cas_udalosti'));
   const eventAt =
@@ -387,7 +391,7 @@ const parseTimes = (
       ? undefined
       : Option.getOrUndefined(Schema.decodeUnknownOption(IsoTimeSchema)(parseCsvTime(eventText, true)));
   if (eventText !== undefined && eventAt === undefined) {
-    return Result.fail(invalidTime.replace('{{column}}', 'cas_udalosti'));
+    return Result.fail(invalidTime.replace(COLUMN_PLACEHOLDER, 'cas_udalosti'));
   }
   return Result.succeed({ eventAt, orderedAt });
 };
@@ -420,7 +424,7 @@ const parseRecord = (input: {
     return text !== undefined && !Schema.is(ShortTextSchema)(text);
   });
   if (invalidColumn !== undefined) {
-    return fail(copy.invalidText.replace('{{row}}', String(line)).replace('{{column}}', invalidColumn.key));
+    return fail(copy.invalidText.replace(ROW_PLACEHOLDER, String(line)).replace(COLUMN_PLACEHOLDER, invalidColumn.key));
   }
   if (source === undefined) {
     return fail('Chybí zdrojový systém (sloupec zdroj)');
@@ -473,7 +477,7 @@ const parseRecord = (input: {
     Object.assign(value, { lines });
   }
   if (value.customerEmail !== undefined && !Schema.is(ShortTextSchema)(value.customerEmail)) {
-    return fail(copy.invalidText.replace('{{row}}', String(line)).replace('{{column}}', 'email_zakaznika'));
+    return fail(copy.invalidText.replace(ROW_PLACEHOLDER, String(line)).replace(COLUMN_PLACEHOLDER, 'email_zakaznika'));
   }
   return { kind: 'ok', value };
 };
@@ -486,8 +490,8 @@ export const parseOrdersCsv = (text: string, locale: 'cs' | 'en' = 'cs'): Parsed
   if (Result.isFailure(records)) {
     return {
       fileError: copy.unterminatedQuote
-        .replace('{{row}}', String(records.failure.row))
-        .replace('{{column}}', String(records.failure.column)),
+        .replace(ROW_PLACEHOLDER, String(records.failure.row))
+        .replace(COLUMN_PLACEHOLDER, String(records.failure.column)),
       rows: [],
       unknownColumns: [],
     };
@@ -503,7 +507,7 @@ export const parseOrdersCsv = (text: string, locale: 'cs' | 'en' = 'cs'): Parsed
   const invalidHeader = keys.findIndex((key) => key !== '' && !Schema.is(ShortTextSchema)(key));
   if (invalidHeader !== -1) {
     return {
-      fileError: copy.invalidText.replace('{{row}}', '1').replace('{{column}}', String(invalidHeader + 1)),
+      fileError: copy.invalidText.replace(ROW_PLACEHOLDER, '1').replace(COLUMN_PLACEHOLDER, String(invalidHeader + 1)),
       rows: [],
       unknownColumns: [],
     };
@@ -514,7 +518,7 @@ export const parseOrdersCsv = (text: string, locale: 'cs' | 'en' = 'cs'): Parsed
   const duplicate = keys.find((key, index) => known.has(key) && keys.indexOf(key) !== index);
   if (duplicate !== undefined) {
     return {
-      fileError: copy.duplicateHeader.replace('{{column}}', duplicate),
+      fileError: copy.duplicateHeader.replace(COLUMN_PLACEHOLDER, duplicate),
       rows: [],
       unknownColumns,
     };
@@ -530,7 +534,9 @@ export const parseOrdersCsv = (text: string, locale: 'cs' | 'en' = 'cs'): Parsed
     if (record.cells.length > keys.length) {
       return {
         kind: 'error',
-        message: copy.surplusCells.replace('{{row}}', String(record.line)).replace('{{column}}', String(keys.length)),
+        message: copy.surplusCells
+          .replace(ROW_PLACEHOLDER, String(record.line))
+          .replace(COLUMN_PLACEHOLDER, String(keys.length)),
         row: record.line,
       };
     }
