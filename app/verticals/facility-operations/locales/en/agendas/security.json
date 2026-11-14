@@ -141,6 +141,8 @@
   },
   "inspection": {
     "title": "Record inspection",
+    "noteLimit": "The full note is retained, up to {{limit}} characters. Attach longer records as an inspection report.",
+    "noteTooLong": "Shorten the note to {{limit}} characters and attach the full record as an inspection report. Nothing was saved.",
     "submit": "Save inspection"
   },
   "resolveDialog": {

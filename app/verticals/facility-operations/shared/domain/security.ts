@@ -8,6 +8,8 @@ import { StoredFileRefSchema } from './documents.ts';
 
 export const SecurityDeviceIdSchema = OpsIdSchema.pipe(Schema.brand('FacilitySecurityDeviceId'));
 export const SecurityIncidentIdSchema = OpsIdSchema.pipe(Schema.brand('FacilitySecurityIncidentId'));
+export const securityHistorySummaryLimit = 500;
+export const inspectionNoteLimit = securityHistorySummaryLimit - 'Kontrola provedena YYYY-MM-DD: '.length;
 
 /** S11: camera / access control / alarm / other. */
 export const SecurityDeviceTypeSchema = Schema.Literals(['camera', 'access', 'alarm', 'other']);
@@ -52,7 +54,7 @@ export const SecurityHistoryEntrySchema = Schema.Struct({
     'task_linked',
     'state_changed',
   ]),
-  summary: TextSchema(500),
+  summary: TextSchema(securityHistorySummaryLimit),
 });
 export type SecurityHistoryEntry = typeof SecurityHistoryEntrySchema.Type;
 
