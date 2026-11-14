@@ -30,7 +30,7 @@ import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { Effect, Predicate, Random, Result, Schema } from 'effect';
 import { useEffect, useId, useRef, useState } from 'react';
-import { salesRemainder } from '../../../../../shared/commands/sales.ts';
+import { canInvoiceSalesOrder, salesRemainder } from '../../../../../shared/commands/sales.ts';
 import type {
   PurchasingState,
   SalesCustomer,
@@ -913,6 +913,9 @@ export const SalesQuotePanel = ({
 /** Creates the issued invoice draft in Finance from a snapshot of the order, then links it back to the order. */
 const prepareSalesInvoice = Effect.fn('FacilityOperations.Purchasing.prepareSalesInvoice')(
   function* prepareSalesInvoice(order: SalesOrder, issueDate: string, dueDate: string) {
+    if (!canInvoiceSalesOrder(order)) {
+      return yield* new SalesInvoicePreparationDenied({ orderId: order.id });
+    }
     const parts = yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt], { concurrency: 1 });
     const idempotencyKey = `sales-invoice:${order.id}:${parts.join(':')}`;
     const snapshot = yield* readFinance('facility-operations.sales-invoice.read');
@@ -1159,7 +1162,7 @@ const salesOrderCapabilities = (
     deliverable: (order.status === 'ordered' || order.status === 'partially_delivered') && remainingCount > 0,
     hasRemaining: remainingCount > 0 && persisted,
     invoiceReadOnly: canWrite && financeReadOnly && persisted,
-    invoiceWritable: canWrite && financeWritable && persisted,
+    invoiceWritable: canWrite && financeWritable && canInvoiceSalesOrder(order),
   };
 };
 
