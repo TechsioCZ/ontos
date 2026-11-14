@@ -3,8 +3,8 @@
 // - a variant or product with no gross in its column nor its document gets one at the rate its classification sells
 //   at now; a held product (BOOK-IT, 10 %) gets its held rate, its variants too;
 // - a stored gross is never touched, however unrelated to its net, nor one only its document carries;
-// - a tiered price without a stored gross (the AKROS shape) is priced from its tiers, and one its tiers leave without a
-//   price below the first break keeps an empty column: the backfill never derives it from the net.
+// - a tiered price without a stored gross (the AKROS shape) is filled with what its record shows (`shownGrossOf`), and
+//   one the shared function leaves without a price keeps an empty column, which the probe does not report.
 import { NodeCrypto } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
 import { Effect } from 'effect';
@@ -260,6 +260,16 @@ it.live('a tiered price without a stored gross shows its tiers, and one without 
       expect(yield* storeMissingGrossPrices(admin, company, TEST_RATES, {})).toBe(0);
       expect(yield* productGross('discount-only')).toBeNull();
       expect(yield* variantGross).toBeNull();
+      // A tiered price whose column was dropped gets back exactly what its record shows (its base tier, 1210), never
+      // its net plus VAT, and the probe is quiet again afterwards.
+      yield* admin
+        .update(products)
+        .set({ grossPriceMinor: null })
+        .where(and(whereScope(products, company), eq(products.id, 'akros')));
+      expect(yield* missingGrossPricesExist(admin, company, TEST_RATES, {})).toBe(true);
+      expect(yield* storeMissingGrossPrices(admin, company, TEST_RATES, {})).toBe(1);
+      expect(yield* productGross('akros')).toBe(1210);
+      expect(yield* missingGrossPricesExist(admin, company, TEST_RATES, {})).toBe(false);
       // Read back, no gross is taken from a column as if it had been entered; the record shows the tiers' price.
       const loaded = yield* loadProducts(admin, company, undefined, { variants: true });
       const shown = Object.fromEntries(
