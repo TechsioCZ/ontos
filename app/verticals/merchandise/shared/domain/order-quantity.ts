@@ -1,3 +1,15 @@
+/** Quantities are stored and compared to six decimal places, independently of money rounding. */
+export const QUANTITY_DECIMAL_PLACES = 6;
+export const MAX_QUANTITY = 1_000_000;
+const quantityScale = 10 ** QUANTITY_DECIMAL_PLACES;
+
+export const normalizeQuantity = (quantity: number): number => Math.round(quantity * quantityScale) / quantityScale;
+export const hasQuantityPrecision = (quantity: number): boolean =>
+  Number.isFinite(quantity) &&
+  Math.abs(quantity - normalizeQuantity(quantity)) <= Number.EPSILON * Math.max(1, Math.abs(quantity));
+export const isQuantityMultipleOf = (quantity: number, step: number): boolean =>
+  normalizeQuantity(quantity - Math.round(quantity / step) * step) === 0;
+
 /** The same catalog minimum/package/stock rules apply to changed staff quantities and storefront purchases.
  * Existing snapshots remain editable even after stock or packaging rules have changed. No reservation is made.
  */
@@ -16,13 +28,13 @@ export const orderQuantityRules = (
   },
   alreadyDebitedQuantity = 0,
 ): OrderQuantityRules => ({
-  maximum: Math.min(1_000_000, Math.max(0, unit.stockOnHand + alreadyDebitedQuantity)),
+  maximum: Math.min(MAX_QUANTITY, Math.max(0, normalizeQuantity(unit.stockOnHand + alreadyDebitedQuantity))),
   minimum: unit.minimumQuantity ?? 1,
   packageRequired: unit.packageQuantity !== undefined && unit.packageQuantity > 0,
   step: unit.packageQuantity !== undefined && unit.packageQuantity > 0 ? unit.packageQuantity : 1,
 });
 export const isOrderQuantityValid = (quantity: number, rules: OrderQuantityRules): boolean =>
-  Number.isFinite(quantity) &&
-  quantity >= rules.minimum &&
-  quantity <= rules.maximum &&
-  (!rules.packageRequired || Math.abs(quantity / rules.step - Math.round(quantity / rules.step)) <= 1e-6);
+  hasQuantityPrecision(quantity) &&
+  normalizeQuantity(quantity) >= normalizeQuantity(rules.minimum) &&
+  normalizeQuantity(quantity) <= normalizeQuantity(rules.maximum) &&
+  (!rules.packageRequired || isQuantityMultipleOf(quantity, rules.step));

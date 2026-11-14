@@ -1,3 +1,4 @@
+import { normalizeQuantity } from '../../shared/domain/order-quantity.ts';
 import type { AgentHistoryRequest } from '@app/shared-contracts/agent-proposals';
 // Row mapping between the merchandise domain values and the normalized tables (src/database/schema.ts), plus the
 // three write paths: replace a company snapshot (seeds, demo reset), load a command's working set, and persist
@@ -437,10 +438,10 @@ const hydrateStoredProduct = Effect.fn('MerchandiseStore.hydrateProduct')(functi
   const levels = new Map<string, number>();
   for (const variant of variants) {
     if (variant.variantId !== null) {
-      levels.set(variant.variantId, variant.stockOnHand);
+      levels.set(variant.variantId, normalizeQuantity(variant.stockOnHand));
     }
   }
-  return { product, stock: { total: row.stockOnHand, variants: levels } };
+  return { product, stock: { total: normalizeQuantity(row.stockOnHand), variants: levels } };
 });
 
 /** Products from their rows (variants/tiers grouped by product). Rows of other products are ignored. */
@@ -1519,9 +1520,12 @@ const stockChangesOf = (working: WorkingSet, after: MerchandiseState) => {
   const deltas = new Map<string, { total: number; variants: Map<string, number> }>();
   for (const movement of newMovements) {
     const entry = deltas.get(movement.productId) ?? { total: 0, variants: new Map<string, number>() };
-    entry.total += movement.delta;
+    entry.total = normalizeQuantity(entry.total + movement.delta);
     if (movement.variantId !== undefined) {
-      entry.variants.set(movement.variantId, (entry.variants.get(movement.variantId) ?? 0) + movement.delta);
+      entry.variants.set(
+        movement.variantId,
+        normalizeQuantity((entry.variants.get(movement.variantId) ?? 0) + movement.delta),
+      );
     }
     deltas.set(movement.productId, entry);
   }
@@ -1533,9 +1537,9 @@ const stockChangesOf = (working: WorkingSet, after: MerchandiseState) => {
     }
     const variants = new Map(stored.variants);
     for (const [variantId, change] of delta.variants) {
-      variants.set(variantId, (variants.get(variantId) ?? 0) + change);
+      variants.set(variantId, normalizeQuantity((variants.get(variantId) ?? 0) + change));
     }
-    return { total: stored.total + delta.total, variants };
+    return { total: normalizeQuantity(stored.total + delta.total), variants };
   };
   const changedProducts = changedEntities(before.products, after.products);
   const changedIds = new Set(changedProducts.map((product) => product.id));

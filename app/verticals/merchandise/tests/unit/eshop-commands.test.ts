@@ -614,3 +614,61 @@ it.effect('sums duplicate original lines for the edit stock allowance without al
     expect(isConflict(refused)).toBe(true);
   }),
 );
+
+it.effect('consumes exact remaining fractional stock and cancels without a floating residue', () =>
+  Effect.gen(function* exactFractionalStock() {
+    const current = yield* seeded;
+    const fractional: MerchandiseState = {
+      ...current,
+      movements: current.movements.map((movement) => ({ ...movement, delta: 0.3 })),
+      products: current.products.map((product) => ({
+        ...product,
+        variants: product.variants?.map((variant) => ({ ...variant, minimumQuantity: 0.1, packageQuantity: 0.1 })),
+      })),
+    };
+    const first = yield* apply(
+      fractional,
+      guestOrder({
+        clientRequestId: 'fraction-first',
+        lines: [{ expectedUnitPriceMinor: 28_900, productId: 'p1', quantity: 0.1, variantId: 'u1-v1' }],
+      }),
+      'fraction-1',
+    );
+    expect(first.storefrontOrder?.outcome).toBe('PLACED');
+    expect(recordOf(first.state.products[0], first.state.movements).variantRecords?.[0]?.stockOnHand).toBe(0.2);
+    const second = yield* apply(
+      first.state,
+      guestOrder({
+        clientRequestId: 'fraction-second',
+        lines: [{ expectedUnitPriceMinor: 28_900, productId: 'p1', quantity: 0.2, variantId: 'u1-v1' }],
+      }),
+      'fraction-2',
+    );
+    expect(second.storefrontOrder?.outcome).toBe('PLACED');
+    expect(recordOf(second.state.products[0], second.state.movements).variantRecords?.[0]?.stockOnHand).toBe(0);
+    const refused = yield* apply(
+      second.state,
+      guestOrder({
+        clientRequestId: 'fraction-excess',
+        lines: [{ expectedUnitPriceMinor: 28_900, productId: 'p1', quantity: 0.1, variantId: 'u1-v1' }],
+      }),
+      'fraction-3',
+    );
+    expect(refused.storefrontOrder?.outcome).toBe('REJECTED');
+    expect(refused.state).toBe(second.state);
+    const cancelled = yield* apply(
+      second.state,
+      { _tag: 'ChangeOrderStatus', id: 'fraction-2', status: 'CANCELLED' },
+      'fraction-return',
+    );
+    expect(recordOf(cancelled.state.products[0], cancelled.state.movements).variantRecords?.[0]?.stockOnHand).toBe(0.2);
+  }),
+);
+
+it('refuses order quantities with more precision than the ledger can retain', () => {
+  expect(Schema.is(MerchandiseCommandSchema)(decodeCommand(guestOrder()))).toBe(true);
+  const encoded = guestOrder({
+    lines: [{ expectedUnitPriceMinor: 28_900, productId: 'p1', quantity: 0.1234567, variantId: 'u1-v1' }],
+  });
+  expect(Schema.is(Schema.toEncoded(MerchandiseCommandSchema))(encoded)).toBe(false);
+});

@@ -74,7 +74,12 @@ import { fullOrderTotals, lineGrossMinor, nextOrderNumber, orderTotals } from '.
 import { AKROS_LEGAL_ENTITY_ID, isAkrosCompany, isStorefrontServiceKey } from '../../shared/actions/command-guard.ts';
 import { resetToAkrosBaseline } from './akros-demo-reset.ts';
 import { applyMerchandiseAiCommand, isMerchandiseAiCommand } from './ai-changes.ts';
-import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
+import {
+  isOrderQuantityValid,
+  isQuantityMultipleOf,
+  normalizeQuantity,
+  orderQuantityRules,
+} from '../../shared/domain/order-quantity.ts';
 import { storefrontBrandOf } from '../../shared/domain/storefront-brand.ts';
 import {
   assignCategory,
@@ -882,7 +887,7 @@ const recordStockMovement = Effect.fn('Merchandise.recordStockMovement')(functio
     value.variantId === undefined
       ? stockOnHandOf(state.movements, product.id)
       : variantStockOf(state.movements, product.id, value.variantId);
-  if (current + value.delta < 0) {
+  if (normalizeQuantity(current + value.delta) < 0) {
     return yield* conflict('Stock cannot go below zero');
   }
   const base: StockMovement = {
@@ -925,7 +930,7 @@ const addOrderLine = Effect.fn('Merchandise.addOrderLine')(function* addOrderLin
     variant === undefined
       ? stockOnHandOf(build.movements, product.id)
       : variantStockOf(build.movements, product.id, variant.id);
-  if (available < request.quantity) {
+  if (available < normalizeQuantity(request.quantity)) {
     return yield* conflict(`Insufficient stock for ${variant?.sku ?? product.sku}`);
   }
   const line: OrderLine = {
@@ -1020,7 +1025,7 @@ const returnOrderStock = (state: MerchandiseState, order: Order, input: Merchand
     balances.set(key, {
       productId: movement.productId,
       ...stockVariantFields(movement.variantId),
-      delta: (previous?.delta ?? 0) + movement.delta,
+      delta: normalizeQuantity((previous?.delta ?? 0) + movement.delta),
     });
   }
   return Effect.forEach(
@@ -1232,7 +1237,7 @@ const checkedStorefrontUnit = (
   const { product, unit } = resolved;
   const ids = { productId: product.id, ...stockVariantFields(unit.variantId) };
   const key = `${product.id}|${unit.variantId ?? ''}`;
-  const quantity = (requested.get(key) ?? 0) + line.quantity;
+  const quantity = normalizeQuantity((requested.get(key) ?? 0) + line.quantity);
   requested.set(key, quantity);
   const label = unit.variantName === undefined ? unit.name : `${unit.name} (${unit.variantName})`;
   // A zero or missing owner price is never sellable, whatever price the storefront claims it saw.
@@ -1245,7 +1250,7 @@ const checkedStorefrontUnit = (
       },
     };
   }
-  if (line.quantity < (unit.minimumQuantity ?? 1)) {
+  if (normalizeQuantity(line.quantity) < normalizeQuantity(unit.minimumQuantity ?? 1)) {
     return {
       issue: {
         ...ids,
@@ -1257,7 +1262,7 @@ const checkedStorefrontUnit = (
   if (
     unit.packageQuantity !== undefined &&
     unit.packageQuantity > 0 &&
-    Math.abs(line.quantity / unit.packageQuantity - Math.round(line.quantity / unit.packageQuantity)) > 0.000001
+    !isQuantityMultipleOf(line.quantity, unit.packageQuantity)
   ) {
     return {
       issue: {
@@ -1673,7 +1678,7 @@ const editedOrderLines = Effect.fn('Merchandise.editedOrderLines')(function* edi
   const previous = new Map<string, OrderLine>();
   for (const line of existing.lines) {
     const key = lineKey(line);
-    const quantity = (previous.get(key)?.quantity ?? 0) + line.quantity;
+    const quantity = normalizeQuantity((previous.get(key)?.quantity ?? 0) + line.quantity);
     previous.set(key, { ...line, quantity });
   }
   const seen = new Set<string>();
@@ -1712,11 +1717,11 @@ const reconciledOrderMovements = Effect.fn('Merchandise.reconcileOrderMovements'
   for (const line of existing.lines) {
     const key = lineKey(line);
     const entry = quantities.get(key);
-    quantities.set(key, { delta: (entry?.delta ?? 0) + line.quantity, line });
+    quantities.set(key, { delta: normalizeQuantity((entry?.delta ?? 0) + line.quantity), line });
   }
   for (const line of nextLines) {
     const entry = quantities.get(lineKey(line));
-    quantities.set(lineKey(line), { delta: (entry?.delta ?? 0) - line.quantity, line });
+    quantities.set(lineKey(line), { delta: normalizeQuantity((entry?.delta ?? 0) - line.quantity), line });
   }
   const changed = [...quantities.values()].filter(({ delta }) => delta !== 0);
   const added = yield* Effect.forEach(
@@ -1729,7 +1734,7 @@ const reconciledOrderMovements = Effect.fn('Merchandise.reconcileOrderMovements'
         line.variantId === undefined
           ? stockOnHandOf(state.movements, line.productId)
           : variantStockOf(state.movements, line.productId, line.variantId);
-      if (stock + delta < 0) {
+      if (normalizeQuantity(stock + delta) < 0) {
         return yield* conflict(`Insufficient stock for ${line.sku}`);
       }
       return {
