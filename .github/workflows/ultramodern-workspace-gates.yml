@@ -798,8 +798,9 @@ jobs:
       contents: read
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
     runs-on: ubuntu-latest
-    # The Shell alone builds for about 11 minutes, and the proving shard also waits for its siblings.
-    timeout-minutes: 30
+    # The Shell alone builds for about 11 minutes (24 on a busy runner), and the proving shard also waits for its
+    # siblings before it proves the artifacts.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -919,7 +920,7 @@ jobs:
       - name: Wait for every other Node build shard to upload its outputs
         if: matrix.proof != 'none'
         working-directory: app
-        timeout-minutes: 15
+        timeout-minutes: 25
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 5 'Build node artifacts (${{ matrix.shard }}/5)'

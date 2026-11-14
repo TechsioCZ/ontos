@@ -337,7 +337,7 @@ it('builds every delivery unit of the topology in exactly one build shard of eac
 it('gives each Node build shard room for the Shell build and the proving shard its wait for the siblings', () => {
   const job = Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(readGateWorkflow()).jobs[NODE_ARTIFACT_BUILD_JOB];
   // The Shell alone builds for about 11 minutes; at 20 minutes the Shell's shard and the proving shard were cancelled.
-  expect(job['timeout-minutes']).toBe(30);
+  expect(job['timeout-minutes']).toBe(45);
   // The two heaviest units never share a shard.
   const shellShard = job.strategy.matrix.include.find(({ units }) =>
     units.split(/\s+/u).includes('apps/shell-super-app'),
