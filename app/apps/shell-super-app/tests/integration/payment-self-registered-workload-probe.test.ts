@@ -454,8 +454,11 @@ it.live(
         const gate = makeAccessDecisionService({
           authorityFor: () => ({
             readCells: unavailableHumanPort,
-            // Every company this fixture names is the fixture Tenant's own.
-            readCompanyOwnership: () => Effect.succeed(true),
+            // The three companies this fixture inserts are its Tenant's own; any other Tenant owns none of them.
+            readCompanyOwnership: ({ legalEntityId: company, tenantId: owner }) =>
+              Effect.succeed(
+                owner === tenantId && [legalEntityId, siblingLegalEntityId, suspendedLegalEntityId].includes(company),
+              ),
             readConnection: unavailableHumanPort,
             readScope: unavailableHumanPort,
             readTeamIds: unavailableHumanPort,
