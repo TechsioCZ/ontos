@@ -675,11 +675,11 @@ Before a publication closes durable admission it asks what the drain would wait 
 
 The consumer and tenant terms are the Outbox claim's own predicates, so the drain cannot wait for work the claim would refuse for those reasons. Two of the claim's terms cannot be asked without a running host — whether each worker's intrinsic provider modules are active for the tenant, and whether any live host registers the worker key at all — and those are what the age catch-all covers: nothing has picked the row up for a whole budget, whatever the cause. Work that is genuinely in flight — claimed, or retrying inside the budget with a live consumer — is not reported and still drains.
 
-The pre-flight fails closed: if it cannot read the outstanding Outbox work, the drain is not started (`its pre-flight could not read the outstanding Outbox work`) and the authority stays `active` with admission unchanged. A core-system delivery counts as having a live consumer only where it carries over: nothing in the authority row says whether the retiring release can claim core-system work (releases before the claim-eligibility fix never do), so a pending core-system row that does not carry over — attempted, redriven, or under a descriptor that changed — is refused as `no-eligible-consumer` rather than waited for. On a retiring release that does claim it, that refusal is transient: its host finishes the row and the next deploy proceeds.
+The pre-flight fails closed: if it cannot read the outstanding Outbox work, the drain is not started (`its pre-flight could not read the outstanding Outbox work`) and the authority stays `active` with admission unchanged. A core-system delivery counts as having a live consumer only where it carries over: nothing in the authority row says whether the retiring release can claim core-system work (releases before the claim-eligibility fix never do), so a pending core-system row whose worker key's descriptor CHANGED between the releases is refused as `no-eligible-consumer` rather than waited for. A key whose descriptor is identical keeps its consumer: its attempted or redriven rows do not carry over, but they are drained like any other in-flight work. On a retiring release that does claim core-system work, the refusal for a changed descriptor is transient: its host finishes the row and the next deploy proceeds.
 
-The pre-flight is a point in time, so the check runs again at the enter-draining fence, under the exclusive authority lock where the matcher cannot move it. The publisher first waits up to 30 seconds for the running matcher to take freshly written messages; a message still unmatched at the fence, or any delivery that arrived since the pre-flight and could never drain, refuses the drain there. Durable admission, already closed by then, is reopened for the same revision, so the authority is exactly as it was before the publication began.
+The pre-flight is a point in time, so the check runs again at the enter-draining fence, under the exclusive authority lock where the matcher cannot move it. The publisher first waits up to 10 seconds for the running matcher to take freshly written messages; a message still unmatched at the fence, or any delivery that arrived since the pre-flight and could never drain, refuses the drain there. Durable admission, already closed by then, is reopened for the same revision, so the authority is exactly as it was before the publication began.
 
-Once drained, a promote or a seal re-drains if a live host of the retiring release claimed a carried-over row in the meantime. All of those re-drains share one deadline — at most one drain budget, and never past the retiring lease less 30 seconds — and after the last refused attempt the publisher gives up with a message naming the phase the authority is left in.
+Once drained, a promote or a seal re-drains if a live host of the retiring release claimed a carried-over row in the meantime. All of those re-drains share one deadline — at most one drain budget, and never past the retiring lease less 75 seconds — and after the last refused attempt the publisher gives up with a message naming the phase the authority is left in.
 
 An `unclaimed-longer-than-budget` refusal means no process is taking that worker key: check which host should serve it. For a core-system key (`core.authorization.*`, `core.identity.*`) that is the app container's Outbox Worker host, which always serves the Shell's core entry; for a tenant module's key it is that owner's worker in the same host. Compare the key against `ONTOS_OUTBOX_HOST_SERVED_UNITS` at build time and the authority's `subscriptions_json`, and check whether the worker's intrinsic provider modules are active in that tenant (an inactive provider holds its work back without ever attempting it). The refusal clears by itself as soon as something claims the row — re-run `composition:drain-preflight` to confirm — and there is no override: the budget cannot be argued with, only the missing consumer fixed.
 
@@ -693,9 +693,9 @@ The descriptor equivalence proves the topic and the entrypoint — not the paylo
 
 The first deploy of a release with this pre-flight refuses to start its drain, leaving the running release serving,
 on any of: a `dead` delivery; a `pending` delivery with no eligible consumer (consumer module not background-eligible
-in its tenant, or tenant not active); a `pending` core-system delivery that does not carry over (attempted, redriven,
-or under a changed descriptor) — this refusal can be transient, since a retiring release that claims core-system work
-finishes the row and the next deploy proceeds; a delivery due after the drain's deadline, including one its owner
+in its tenant, or tenant not active); a `pending` core-system delivery whose worker key's descriptor changed between the releases (a key with an
+identical descriptor stays eligible, even for an attempted or redriven row) — this refusal can be transient, since a
+retiring release that claims core-system work finishes the row and the next deploy proceeds; a delivery due after the drain's deadline, including one its owner
 deferred (the refusal says `deferred by its owner until …`); a delivery nothing has picked up for longer than a whole
 drain budget; and an Outbox message unmatched for longer than a whole drain budget. Before pushing, run the read-only
 check below, `pnpm composition:drain-preflight`, against the target environment.
@@ -721,16 +721,24 @@ message ends with `The authority was returned to active with durable admission o
 interruption is recorded in the ledger as one. The restore is bounded by the database (`lock_timeout` 5 s,
 `statement_timeout` 10 s) and commits whole or not at all. When it fails only because a lock was not available in time
 (SQLSTATE `55P03`), it tries the whole transaction again, up to four more times with a doubling backoff from 250 ms.
-One attempt can wait on two locks in turn — the publication lock, then the authority row — each for just under 5 s,
-so all five attempts take about 55 s at most; a rolled-back attempt leaves no ledger row, so a restore that succeeds is
-recorded once, and one that never succeeds reports that the authority could not be returned.
+One attempt can wait on two locks in turn — the exclusive authority advisory lock
+(`ontos.application-composition-authority`), then the authority row — each for just under 5 s, so all five attempts
+take about 55 s at most; a rolled-back attempt leaves no ledger row, so a restore that succeeds is recorded once, and
+one that never succeeds reports that the authority could not be returned. Every drain and re-drain therefore ends at
+least 75 seconds before the retiring lease expires (and a drain does not start on a lease with less than that left):
+an expired lease is never returned to `active`, so a restore that outlived it would leave the authority `draining`.
 
-A drain also ends early on its own when it meets Outbox work it could never finish. Each poll of the Outbox wait asks
-the pre-flight's questions again, against what is left of the drain's budget: a delivery that died during the drain,
-or one deferred or backed off past the drain's deadline, stops the wait at once (`The Application Composition drain
-was stopped: …`, naming the rows), and the restore above runs then rather than when the budget expires. The
-pre-flight, the fence and every poll measure that deadline from the same moment, when the drain's budget clock
-started.
+A drain also ends early on its own when it meets Outbox work it could never finish. Each poll of the Outbox wait that
+finds work outstanding asks what of it can never finish before the drain's deadline: a delivery that died during the
+drain, one deferred or backed off past the deadline, or one with no consumer at all stops the wait at once (`The
+Application Composition drain was stopped: …`, naming the rows), and the restore above runs then rather than when the
+budget expires. The poll asks less than the pre-flight, so a healthy drain is never stopped: it counts every
+core-system key the retiring authority approved as consumed (a changed-descriptor row the retiring host claimed and
+then retries is still in flight), and it never stops on age alone (a row that has waited long may still be claimed
+before the deadline; if it is not, the deadline ends the drain as before). If that extra check cannot be read, the
+poll keeps waiting and logs it once per kind of failure. The pre-flight, the fence and every poll measure the deadline
+from the same moment, when the drain's budget clock started; stalled work is always aged by one whole standard drain
+budget (300 s), never by what is left of a migration's budget.
 
 What it cannot cover is a process that never runs its exit hook: a `SIGKILL`, an out-of-memory kill, a lost
 container, or a database the publisher can no longer reach. Then the authority stays `draining` and an operator
@@ -828,7 +836,10 @@ there aborts the block with nothing written.
 
 Cancelling the block (Ctrl-C), or a statement stopped by its `lock_timeout`, is always safe: each statement is its own
 transaction, the insert writes its ledger row and moves the authority together or not at all, and closing the session
-releases the publication lock. Read the authority row and run the block again.
+releases the publication lock. Read the authority row and run the block again. If you ran it interactively (`\i` or
+pasted into `psql`) and it stopped on an error, the session is still open and still holds the publication lock, so
+every publisher and this command now see `A publisher is alive`: quit `psql` (`\q`), or release it in that session
+with `select pg_advisory_unlock_all();`, before anything else.
 
 If it refuses because the lease has expired, **renew first, then run the command again**:
 
@@ -862,9 +873,25 @@ an operator does, and only under this precondition: **the container that holds t
        and l.objid = (k.key & 4294967295)::oid;
    ```
 
-2. Confirm its container is gone: no running container of the project has its `client_addr` (check the service's
-   containers in Zerops), and no deploy or publication is in progress. If the address belongs to a running container,
-   that is a live publisher: stop, and let it finish and restore the authority itself.
+2. Confirm its container is gone. `client_addr` alone is not proof — a connection pooler, NAT or the VPN can show the
+   same address for a live container — so require all of these:
+   - no running container of the project has that `client_addr` (check the service's containers in Zerops), and no
+     deploy or publication is in progress;
+   - the session is `idle` with an old `state_change` (minutes, not seconds), AND no other session from the same
+     `client_addr` and `application_name` changed state recently. The holder alone proves little: a live publisher
+     holds the lock on a reserved session that stays idle while it works on its other connections, and those
+     change state every few seconds as it polls (`select pid, state, state_change from pg_stat_activity where
+client_addr = '<addr>'`);
+   - its `application_name` and `backend_start` match the vanished container: it connected when that container's
+     publication started, and no running container started then.
+
+   If any of these fails, treat it as a live publisher: stop, and let it finish and restore the authority itself.
+
 3. End that one session: `select pg_terminate_backend(<pid>);`. Its open transaction, if any, rolls back, and the
-   lock is released.
+   lock is released. Terminating a LIVE publisher by mistake is recoverable: it fails that deploy, its own restore
+   or the next step here returns the authority, and the database-enforced abandonment rules keep the authority
+   consistent whichever runs first.
 4. Run `composition:abandon-drain` (or the plain-SQL block) again.
+
+Without server keepalive settings (`tcp_keepalives_idle` and friends at their defaults), PostgreSQL may not notice a
+vanished client for about two hours, so a stale session can hold the lock that long if no one ends it.
