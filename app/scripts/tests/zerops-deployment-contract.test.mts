@@ -120,6 +120,7 @@ it('runs the whole application in the app container through native Node, from th
   }
   expect(app.getIn(['run', 'healthCheck', 'httpGet', 'path'])).toBe('/_host/live');
   expect(app.getIn(['deploy', 'readinessCheck', 'httpGet', 'path'])).toBe('/_host/ready');
+  expect(app.getIn(['deploy', 'readinessCheck', 'retryPeriod'])).toBe('2s');
 });
 
 it('starts the storefront from its standalone bundle and keeps the Shell URL in-project', () => {

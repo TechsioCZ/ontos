@@ -168,7 +168,7 @@ zerops:
           port: 3001
           path: /_host/ready
         failureTimeout: 15m
-        retryPeriod: 10s
+        retryPeriod: 2s
     run:
       base: alpine/nodejs@26
       ports:
