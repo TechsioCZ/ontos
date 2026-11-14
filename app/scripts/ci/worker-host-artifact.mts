@@ -21,6 +21,8 @@ import path from 'node:path';
 
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Effect, FileSystem, Layer, Option, Schema } from 'effect';
+
+import { OpsShellLive } from '../ops/ops-shell.mts';
 import { Command, Flag } from 'effect/cli';
 
 import { MANIFEST_FILE, WORKER_RUNTIME, seedFailure } from './integration-seed-model.mts';
@@ -37,10 +39,10 @@ const ARCHIVE = 'runtime.tar';
 const ENTRY = 'worker.mjs';
 const HOST_METADATA = 'worker-artifact.json';
 export class WorkerArtifactManifest extends Schema.Class<WorkerArtifactManifest>('WorkerArtifactManifest')({
-  version: Schema.Literal(1),
-  sourceRevision: Schema.String,
-  workflowRun: Schema.String,
   digest: Schema.String,
+  sourceRevision: Schema.String,
+  version: Schema.Literal(1),
+  workflowRun: Schema.String,
 }) {}
 export const workerArtifactJson = Schema.fromJsonString(WorkerArtifactManifest, { space: 2 });
 const metadataJson = Schema.fromJsonString(Schema.Struct({ sourceRevision: Schema.String }));
@@ -48,9 +50,9 @@ const metadataJson = Schema.fromJsonString(Schema.Struct({ sourceRevision: Schem
 export const assertWorkerArtifact = (
   manifest: WorkerArtifactManifest,
   expected: {
-    readonly workflowRun: string;
-    readonly sourceRevision: string;
     readonly digest: string;
+    readonly sourceRevision: string;
+    readonly workflowRun: string;
   },
 ) =>
   manifest.workflowRun === expected.workflowRun &&
@@ -125,10 +127,10 @@ const buildArtifact = (directory: string, proof: Option.Option<string>) =>
     yield* runSeedCommand('tar', ['-cf', path.join(directory, ARCHIVE), '-C', runtime, '.']);
     const manifest = yield* Schema.encodeEffect(workerArtifactJson)(
       new WorkerArtifactManifest({
-        version: 1,
-        sourceRevision: revision,
-        workflowRun: yield* requiredEnvironment('GITHUB_RUN_ID'),
         digest: yield* readDigest(directory),
+        sourceRevision: revision,
+        version: 1,
+        workflowRun: yield* requiredEnvironment('GITHUB_RUN_ID'),
       }),
     );
     return yield* fs.writeFileString(path.join(directory, MANIFEST_FILE), manifest);
@@ -143,9 +145,9 @@ const useArtifact = (directory: string) =>
       );
       const revision = yield* readSourceRevision();
       yield* assertWorkerArtifact(manifest, {
-        workflowRun: yield* requiredEnvironment('GITHUB_RUN_ID'),
-        sourceRevision: revision,
         digest: yield* readDigest(directory),
+        sourceRevision: revision,
+        workflowRun: yield* requiredEnvironment('GITHUB_RUN_ID'),
       });
       const destination = path.join(APP_DIRECTORY, WORKER_RUNTIME);
       if (yield* fs.exists(destination)) {
@@ -175,7 +177,10 @@ const cli = Command.make('worker-host-artifact').pipe(Command.withSubcommands([b
 if (import.meta.main) {
   NodeRuntime.runMain(
     Layer.build(
-      Layer.effectDiscard(Command.run(cli, { version: '1.0.0' })).pipe(Layer.provide(NodeServices.layer)),
+      Layer.effectDiscard(Command.run(cli, { version: '1.0.0' })).pipe(
+        Layer.provide(OpsShellLive),
+        Layer.provide(NodeServices.layer),
+      ),
     ).pipe(Effect.scoped),
   );
 }

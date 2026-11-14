@@ -29,14 +29,14 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
-import { Console, Effect, FileSystem, Layer, Option, Predicate, Schema } from 'effect';
+import { Clock, Console, Effect, FileSystem, Layer, Option, Predicate, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 import { Argument, Command } from 'effect/cli';
 import { parseSync, Visitor } from 'oxc-parser';
 
 import { PACKAGED_DIRECTORY, WORKSPACE_PACKAGE_SCOPE } from './materialize-packaged-workspace-packages.mts';
 import {
-  makePackagedDependencyResolver,
+  openPackagedDependencyResolver,
   memoizeDependencyRead,
   PackagedNodeDependencyError,
 } from './packaged-node-dependency-resolver.mts';
@@ -70,15 +70,7 @@ const PackageManifestSchema = Schema.StructWithRest(
   }),
   [Schema.Record(Schema.String, Schema.Unknown)],
 );
-interface PackageManifest {
-  readonly dependencies?: Readonly<Record<string, unknown>>;
-  readonly exports?: Schema.Json;
-  readonly name: string;
-  readonly optionalDependencies?: Readonly<Record<string, unknown>>;
-  readonly peerDependencies?: Readonly<Record<string, unknown>>;
-  readonly type?: string;
-  readonly version: string;
-}
+type PackageManifest = typeof PackageManifestSchema.Type;
 const packageManifestCodec = Schema.fromJsonString(PackageManifestSchema);
 
 export interface NodeDependencyCompletionOptions {
@@ -97,23 +89,23 @@ export interface NodeDependencyCompletion {
 }
 
 interface CompletionMetrics {
+  canonicalReads: number;
+  edges: number;
+  followMs: number;
+  manifestReads: number;
+  resolveMs: number;
+  resolverBatches: number;
+  resolverCacheHits: number;
+  resolverRequests: number;
   rootsMs: number;
   scanMs: number;
-  resolveMs: number;
-  followMs: number;
-  verifyMs: number;
-  totalMs: number;
-  waves: number;
   scannedFiles: number;
-  edges: number;
-  manifestReads: number;
-  canonicalReads: number;
   sourceResolutions: number;
-  verifiedPackages: number;
+  totalMs: number;
   verifiedFiles: number;
-  resolverBatches: number;
-  resolverRequests: number;
-  resolverCacheHits: number;
+  verifiedPackages: number;
+  verifyMs: number;
+  waves: number;
 }
 
 interface DependencyReads {
@@ -121,8 +113,8 @@ interface DependencyReads {
   readonly manifest: (
     file: string,
   ) => Effect.Effect<PackageManifest, PackagedNodeDependencyError, FileSystem.FileSystem>;
-  readonly sources: Map<string, ResolvedSource>;
   readonly metrics: CompletionMetrics;
+  readonly sources: Map<string, ResolvedSource>;
 }
 
 interface ResolvedSource {
@@ -154,11 +146,11 @@ interface Edge {
 interface CompletionContext {
   readonly copied: string[];
   readonly output: string;
+  readonly reads: DependencyReads;
   readonly sources: Map<string, VerifiedSource>;
   readonly targets: Map<string, string | null>;
   readonly unit: string;
   readonly unitOwner: DeclaringOwner;
-  readonly reads: DependencyReads;
 }
 
 const isInside = (directory: string, candidate: string): boolean => {
@@ -201,25 +193,37 @@ const canonicalPath = Effect.fn('CompletePackagedNodeDependencies.canonicalPath'
   return yield* Effect.succeed(path.join(yield* fs.realPath(existing), ...missing));
 });
 
+const readManifest = Effect.fn('CompletePackagedNodeDependencies.readManifest')(function* readManifest(
+  manifestPath: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const text = yield* fs
+    .readFileString(manifestPath)
+    .pipe(Effect.mapError(() => failed(`${manifestPath}: the package manifest cannot be read`)));
+  return yield* Schema.decodeUnknownEffect(packageManifestCodec)(text).pipe(
+    Effect.mapError((cause) => failed(`${manifestPath}: ${String(cause)}`)),
+  );
+});
+
 const makeDependencyReads = (): DependencyReads => {
   const metrics: CompletionMetrics = {
+    canonicalReads: 0,
+    edges: 0,
+    followMs: 0,
+    manifestReads: 0,
+    resolveMs: 0,
+    resolverBatches: 0,
+    resolverCacheHits: 0,
+    resolverRequests: 0,
     rootsMs: 0,
     scanMs: 0,
-    resolveMs: 0,
-    followMs: 0,
-    verifyMs: 0,
-    totalMs: 0,
-    waves: 0,
     scannedFiles: 0,
-    edges: 0,
-    manifestReads: 0,
-    canonicalReads: 0,
     sourceResolutions: 0,
-    verifiedPackages: 0,
+    totalMs: 0,
     verifiedFiles: 0,
-    resolverBatches: 0,
-    resolverRequests: 0,
-    resolverCacheHits: 0,
+    verifiedPackages: 0,
+    verifyMs: 0,
+    waves: 0,
   };
   return {
     canonical: memoizeDependencyRead((file) => {
@@ -234,18 +238,6 @@ const makeDependencyReads = (): DependencyReads => {
     sources: new Map(),
   };
 };
-
-const readManifest = Effect.fn('CompletePackagedNodeDependencies.readManifest')(function* readManifest(
-  manifestPath: string,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const text = yield* fs
-    .readFileString(manifestPath)
-    .pipe(Effect.mapError(() => failed(`${manifestPath}: the package manifest cannot be read`)));
-  return yield* Schema.decodeUnknownEffect(packageManifestCodec)(text).pipe(
-    Effect.mapError((cause) => failed(`${manifestPath}: ${String(cause)}`)),
-  );
-});
 
 const directoryEntries = Effect.fn('CompletePackagedNodeDependencies.directoryEntries')(function* directoryEntries(
   directory: string,
@@ -266,7 +258,7 @@ const directoryEntries = Effect.fn('CompletePackagedNodeDependencies.directoryEn
 const walkFiles = (directory: string, skip: (name: string) => boolean) =>
   Effect.gen(function* collectFiles() {
     const files: string[] = [];
-    const visit = (current: string): Effect.Effect<void, PlatformError> =>
+    const visit = (current: string): Effect.Effect<void, PlatformError, FileSystem.FileSystem> =>
       Effect.gen(function* visitDirectory() {
         for (const entry of yield* directoryEntries(current, skip)) {
           if (entry.type === 'Directory') {
@@ -445,13 +437,13 @@ const verifyCarriedFile = Effect.fn('CompletePackagedNodeDependencies.verifyCarr
 
 const verifyCarriedFiles = Effect.fn('CompletePackagedNodeDependencies.verifyCarriedFiles')(
   function* verifyCarriedFiles(reads: DependencyReads, packageRoot: string, sourceDirectory: string) {
-    const started = performance.now();
+    const started = yield* Clock.currentTimeMillis;
     yield* Effect.forEach(
       yield* walkFiles(packageRoot, isNodeModulesName),
       (file) => verifyCarriedFile(reads, packageRoot, sourceDirectory, file),
       { concurrency: FILE_CONCURRENCY, discard: true },
     );
-    reads.metrics.verifyMs += performance.now() - started;
+    reads.metrics.verifyMs += (yield* Clock.currentTimeMillis) - started;
     return yield* Effect.void;
   },
 );
@@ -629,7 +621,7 @@ const followEdge = Effect.fn('CompletePackagedNodeDependencies.followEdge')(func
  */
 export const completePackagedNodeDependencies = Effect.fn('CompletePackagedNodeDependencies.complete')(
   function* completePackagedNodeDependencies(unitDirectory: string, options: NodeDependencyCompletionOptions = {}) {
-    const started = performance.now();
+    const started = yield* Clock.currentTimeMillis;
     const reads = makeDependencyReads();
     const fs = yield* FileSystem.FileSystem;
     // Canonical from the start: every path this step compares, reports, or writes is a real path, as Node sees it.
@@ -642,8 +634,8 @@ export const completePackagedNodeDependencies = Effect.fn('CompletePackagedNodeD
     const unitManifest = yield* reads.manifest(path.join(unit, PACKAGE_MANIFEST));
     const context: CompletionContext = {
       copied: [],
-      reads,
       output,
+      reads,
       sources: new Map(),
       targets: new Map(),
       unit,
@@ -677,17 +669,17 @@ export const completePackagedNodeDependencies = Effect.fn('CompletePackagedNodeD
       }
     }
 
-    reads.metrics.rootsMs = performance.now() - started;
-    const resolverStarted = performance.now();
-    const resolver = yield* makePackagedDependencyResolver(output);
-    reads.metrics.resolveMs += performance.now() - resolverStarted;
+    reads.metrics.rootsMs = (yield* Clock.currentTimeMillis) - started;
+    const resolverStarted = yield* Clock.currentTimeMillis;
+    const resolver = yield* openPackagedDependencyResolver(output);
+    reads.metrics.resolveMs += (yield* Clock.currentTimeMillis) - resolverStarted;
     const visited = new Set<string>();
     let wave = [...new Set(roots)];
     while (wave.length > 0) {
       const files = [...new Set(wave)].filter((file) => !visited.has(file));
       reads.metrics.waves += 1;
       reads.metrics.scannedFiles += files.length;
-      const scanStarted = performance.now();
+      const scanStarted = yield* Clock.currentTimeMillis;
       for (const file of files) {
         visited.add(file);
       }
@@ -698,17 +690,17 @@ export const completePackagedNodeDependencies = Effect.fn('CompletePackagedNodeD
           edges.push({ importer: file, owner, specifier });
         }
       }
-      reads.metrics.scanMs += performance.now() - scanStarted;
+      reads.metrics.scanMs += (yield* Clock.currentTimeMillis) - scanStarted;
       reads.metrics.edges += edges.length;
       if (edges.length === 0) {
         break;
       }
-      const resolveStarted = performance.now();
+      const resolveStarted = yield* Clock.currentTimeMillis;
       const results = yield* resolver.resolve(
         edges.map((edge) => ({ parent: pathToFileURL(edge.importer).href, specifier: edge.specifier })),
       );
-      reads.metrics.resolveMs += performance.now() - resolveStarted;
-      const followStarted = performance.now();
+      reads.metrics.resolveMs += (yield* Clock.currentTimeMillis) - resolveStarted;
+      const followStarted = yield* Clock.currentTimeMillis;
       const next: string[] = [];
       for (const [index, edge] of edges.entries()) {
         const result = results[index];
@@ -722,14 +714,14 @@ export const completePackagedNodeDependencies = Effect.fn('CompletePackagedNodeD
           next.push(scan);
         }
       }
-      reads.metrics.followMs += performance.now() - followStarted;
+      reads.metrics.followMs += (yield* Clock.currentTimeMillis) - followStarted;
       wave = next;
     }
     yield* resolver.close;
     reads.metrics.resolverBatches = resolver.stats.batches;
     reads.metrics.resolverRequests = resolver.stats.requests;
     reads.metrics.resolverCacheHits = resolver.stats.cacheHits;
-    reads.metrics.totalMs = performance.now() - started;
+    reads.metrics.totalMs = (yield* Clock.currentTimeMillis) - started;
     return yield* Effect.succeed({
       copied: context.copied.toSorted(),
       metrics: reads.metrics,

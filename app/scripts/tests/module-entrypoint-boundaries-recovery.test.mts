@@ -28,7 +28,7 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
           `${owner}/src`,
           'packages/customer-market-retirement-contracts',
           'packages/customer-payment-term-contracts',
-        ].map((folder) => Effect.promise(() => readPricingSourceTree(root, folder))),
+        ].map((folder) => readPricingSourceTree(root, folder)),
       ),
       Effect.all(
         [

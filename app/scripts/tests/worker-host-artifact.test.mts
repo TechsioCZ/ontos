@@ -3,7 +3,7 @@ import { expect, it } from 'effect-rstest';
 
 import { WorkerArtifactManifest, assertWorkerArtifact, workerArtifactJson } from '../ci/worker-host-artifact.mts';
 
-const expected = { workflowRun: '100', sourceRevision: 'a'.repeat(40), digest: 'b'.repeat(64) };
+const expected = { digest: 'b'.repeat(64), sourceRevision: 'a'.repeat(40), workflowRun: '100' };
 const manifest = new WorkerArtifactManifest({ version: 1, ...expected });
 
 it.effect('round-trips the portable worker manifest and accepts only the same-run artifact', () =>

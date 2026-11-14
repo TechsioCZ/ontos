@@ -195,8 +195,8 @@ const entrypoint = defineTenantModuleEntrypoint({ access: 'background', authoriz
 export const write = (root: string, file: string, source: string) =>
   Effect.gen(function* testEffect1() {
     const target = path.join(root, file);
-    yield* Effect.tryPromise(() => mkdir(path.dirname(target), { recursive: true }));
-    yield* Effect.tryPromise(() => writeFile(target, source, 'utf-8'));
+    yield* Effect.tryPromise(async () => await mkdir(path.dirname(target), { recursive: true }));
+    yield* Effect.tryPromise(async () => await writeFile(target, source, 'utf-8'));
   });
 
 export const governedClientFixture = (options: {
@@ -349,8 +349,8 @@ export const makeFixture = Effect.fn(function* mergedScenario1(
   initialize: (root: string) => Effect.Effect<void, unknown> = () => Effect.void,
 ) {
   const root = yield* Effect.acquireRelease(
-    Effect.promise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-module-entrypoints-'))),
-    (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    Effect.promise(async () => await mkdtemp(path.join(os.tmpdir(), 'ontos-module-entrypoints-'))),
+    (directory) => Effect.promise(async () => await rm(directory, { force: true, recursive: true })),
   );
   yield* initialize(root);
   yield* write(
@@ -464,7 +464,9 @@ export const writeEngagementLifecycleFixture = Effect.fn(function* mergedScenari
       ...ENGAGEMENT_ACTIONS.map((action) => `${ENGAGEMENT_ACTION_DIRECTORY}/${action}.action.ts`),
     ].map(
       Effect.fn(function* mergedScenario1(file) {
-        const source = yield* Effect.promise(() => readFile(path.resolve(import.meta.dirname, '../..', file), 'utf-8'));
+        const source = yield* Effect.promise(
+          async () => await readFile(path.resolve(import.meta.dirname, '../..', file), 'utf-8'),
+        );
         yield* write(root, file, source);
       }),
     ),
@@ -804,6 +806,7 @@ export const EARLY_FAILURE = 'early failure';
 
 export const PARTIAL_FAILURE = 'partial failure';
 
+/** The sources of one workspace folder as `[relative path, text]` pairs, for byte-for-byte tree comparisons. */
 export const readPricingSourceTree = (root: string, folder: string) => {
   const excluded = new Set([
     'node_modules',
@@ -831,7 +834,7 @@ export const readPricingSourceTree = (root: string, folder: string) => {
     );
     return children.flat();
   };
-  return readSources(path.join(root, folder));
+  return Effect.promise(async () => await readSources(path.join(root, folder)));
 };
 
 export const PROTECTED_READ_AUTHORIZATION = "  authorization: { kind: 'protected' },";
@@ -900,9 +903,14 @@ export const makeResolvedOwnerFixture = Effect.fn(function* resolvedOwnerFixture
     "export { executePrivate } from '../src/handlers/private.ts';\nexport type { PrivateInput } from '../src/handlers/private.ts';\n",
   );
   yield* write(root, 'verticals/party-registry/shared/resources/party.ts', partyResourceSource);
-  yield* Effect.tryPromise(() => mkdir(path.join(root, 'node_modules/@contracts'), { recursive: true }));
-  yield* Effect.tryPromise(() =>
-    symlink(path.join(root, PARTY_VERTICAL_PATH), path.join(root, 'node_modules', RENAMED_CONTRACTS_PACKAGE), 'dir'),
+  yield* Effect.tryPromise(async () => await mkdir(path.join(root, 'node_modules/@contracts'), { recursive: true }));
+  yield* Effect.tryPromise(
+    async () =>
+      await symlink(
+        path.join(root, PARTY_VERTICAL_PATH),
+        path.join(root, 'node_modules', RENAMED_CONTRACTS_PACKAGE),
+        'dir',
+      ),
   );
   return root;
 });
@@ -928,8 +936,9 @@ export const makeSelectedInventoryFixture = Effect.fn(function* selectedInventor
     SHELL_PACKAGE_JSON_PATH,
     JSON.stringify({ dependencies: { '@app/inventory': WORKSPACE_DEPENDENCY_VERSION }, name: SHELL_PACKAGE_SPECIFIER }),
   );
-  const manifest = yield* Effect.promise(() =>
-    readFile(path.resolve(import.meta.dirname, '../../verticals/inventory/vertical.manifest.ts'), 'utf-8'),
+  const manifest = yield* Effect.promise(
+    async () =>
+      await readFile(path.resolve(import.meta.dirname, '../../verticals/inventory/vertical.manifest.ts'), 'utf-8'),
   );
   yield* write(root, 'verticals/inventory/vertical.manifest.ts', `${manifest.split('\n').slice(0, 3).join('\n')}\n`);
   const pending = [INVENTORY_BACKEND_CONTRACT, 'verticals/inventory/package.json'];
@@ -939,7 +948,9 @@ export const makeSelectedInventoryFixture = Effect.fn(function* selectedInventor
       continue;
     }
     copied.add(file);
-    const source = yield* Effect.promise(() => readFile(path.resolve(import.meta.dirname, '../..', file), 'utf-8'));
+    const source = yield* Effect.promise(
+      async () => await readFile(path.resolve(import.meta.dirname, '../..', file), 'utf-8'),
+    );
     yield* write(root, file, source);
     for (const match of source.matchAll(/\bfrom\s*['"](?<specifier>\.[^'"]+)['"]/gu)) {
       const specifier = match.groups?.specifier;
@@ -948,9 +959,10 @@ export const makeSelectedInventoryFixture = Effect.fn(function* selectedInventor
       }
     }
   }
-  yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
-  yield* Effect.promise(() =>
-    symlink(path.join(root, 'verticals/inventory'), path.join(root, 'node_modules/@app/inventory'), 'dir'),
+  yield* Effect.promise(async () => await mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
+  yield* Effect.promise(
+    async () =>
+      await symlink(path.join(root, 'verticals/inventory'), path.join(root, 'node_modules/@app/inventory'), 'dir'),
   );
   return root;
 });
@@ -991,17 +1003,17 @@ export const makePortalPublicRoleFixture = Effect.fn(function* portalPublicRoleF
     yield* write(
       root,
       file,
-      yield* Effect.promise(() => readFile(path.resolve(import.meta.dirname, '../..', file), 'utf-8')),
+      yield* Effect.promise(async () => await readFile(path.resolve(import.meta.dirname, '../..', file), 'utf-8')),
     );
   }
-  yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
+  yield* Effect.promise(async () => await mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
   for (const [name, target] of [
     ['core-runtime', 'packages/core-runtime'],
     [SHARED_CONTRACTS_WORKSPACE_NAME, SHARED_CONTRACTS_WORKSPACE_PATH],
     [CUSTOMER_CONTEXT_DEPLOYMENT_ID, CUSTOMER_CONTEXT_VERTICAL_PATH],
   ] as const) {
-    yield* Effect.promise(() =>
-      symlink(path.join(root, target), path.join(root, APP_PACKAGE_LINK_DIRECTORY, name), 'dir'),
+    yield* Effect.promise(
+      async () => await symlink(path.join(root, target), path.join(root, APP_PACKAGE_LINK_DIRECTORY, name), 'dir'),
     );
   }
   yield* write(
@@ -1035,8 +1047,8 @@ export const makeActualCatalogSelectionFixture = Effect.fn(function* actualCatal
     JSON.stringify({ dependencies: { '@app/catalog': WORKSPACE_DEPENDENCY_VERSION }, name: SHELL_PACKAGE_SPECIFIER }),
   );
   const workspace = path.resolve(import.meta.dirname, '../..');
-  const manifest = yield* Effect.promise(() =>
-    readFile(path.join(workspace, 'verticals/catalog/vertical.manifest.ts'), 'utf-8'),
+  const manifest = yield* Effect.promise(
+    async () => await readFile(path.join(workspace, 'verticals/catalog/vertical.manifest.ts'), 'utf-8'),
   );
   yield* write(root, 'verticals/catalog/vertical.manifest.ts', `${manifest.split('\n').slice(0, 3).join('\n')}\n`);
   const pending = [
@@ -1053,7 +1065,7 @@ export const makeActualCatalogSelectionFixture = Effect.fn(function* actualCatal
       continue;
     }
     copied.add(file);
-    const source = yield* Effect.promise(() => readFile(path.join(workspace, file), 'utf-8'));
+    const source = yield* Effect.promise(async () => await readFile(path.join(workspace, file), 'utf-8'));
     yield* write(root, file, source);
     for (const match of source.matchAll(/\bfrom\s*['"](?<specifier>\.[^'"]+)['"]/gu)) {
       const specifier = match.groups?.specifier;
@@ -1062,13 +1074,11 @@ export const makeActualCatalogSelectionFixture = Effect.fn(function* actualCatal
       }
     }
   }
-  const kernel = yield* Effect.promise(() =>
-    readPricingSourceTree(workspace, 'packages/catalog-selection-contracts/src'),
-  );
+  const kernel = yield* readPricingSourceTree(workspace, 'packages/catalog-selection-contracts/src');
   for (const [file, source] of kernel) {
     yield* write(root, file, source);
   }
-  yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
+  yield* Effect.promise(async () => await mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
   for (const [name, target] of [
     ['catalog', CATALOG_VERTICAL_PATH],
     ['catalog-selection-contracts', 'packages/catalog-selection-contracts'],
@@ -1076,8 +1086,8 @@ export const makeActualCatalogSelectionFixture = Effect.fn(function* actualCatal
       ? []
       : ([[SHARED_CONTRACTS_WORKSPACE_NAME, SHARED_CONTRACTS_WORKSPACE_PATH]] as const)),
   ] as const) {
-    yield* Effect.promise(() =>
-      symlink(path.join(root, target), path.join(root, APP_PACKAGE_LINK_DIRECTORY, name), 'dir'),
+    yield* Effect.promise(
+      async () => await symlink(path.join(root, target), path.join(root, APP_PACKAGE_LINK_DIRECTORY, name), 'dir'),
     );
   }
   return root;
@@ -1098,7 +1108,7 @@ export const makeActualPartyClientFixture = Effect.fn(function* actualPartyClien
       ],
     }),
   );
-  const sources = yield* Effect.promise(() => readPricingSourceTree(workspace, PARTY_VERTICAL_PATH));
+  const sources = yield* readPricingSourceTree(workspace, PARTY_VERTICAL_PATH);
   for (const [file, source] of sources) {
     yield* write(root, file, source);
   }
@@ -1107,7 +1117,7 @@ export const makeActualPartyClientFixture = Effect.fn(function* actualPartyClien
     SHARED_PROBLEM_DETAILS_SOURCE_PATH,
     SHARED_CLIENT_RUNTIME_SOURCE_PATH,
   ]) {
-    yield* write(root, file, yield* Effect.promise(() => readFile(path.join(workspace, file), 'utf-8')));
+    yield* write(root, file, yield* Effect.promise(async () => await readFile(path.join(workspace, file), 'utf-8')));
   }
   yield* write(
     root,
@@ -1118,12 +1128,18 @@ export const makeActualPartyClientFixture = Effect.fn(function* actualPartyClien
     }),
   );
   yield* write(root, SHELL_TSCONFIG_PATH, JSON.stringify({ references: [] }));
-  yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
-  yield* Effect.promise(() =>
-    symlink(path.join(root, PARTY_VERTICAL_PATH), path.join(root, 'node_modules/@app/party-registry'), 'dir'),
+  yield* Effect.promise(async () => await mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
+  yield* Effect.promise(
+    async () =>
+      await symlink(path.join(root, PARTY_VERTICAL_PATH), path.join(root, 'node_modules/@app/party-registry'), 'dir'),
   );
-  yield* Effect.promise(() =>
-    symlink(path.join(root, SHARED_CONTRACTS_WORKSPACE_PATH), path.join(root, SHARED_CONTRACTS_LINK_PATH), 'dir'),
+  yield* Effect.promise(
+    async () =>
+      await symlink(
+        path.join(root, SHARED_CONTRACTS_WORKSPACE_PATH),
+        path.join(root, SHARED_CONTRACTS_LINK_PATH),
+        'dir',
+      ),
   );
   return root;
 });
@@ -1131,7 +1147,7 @@ export const makeActualPartyClientFixture = Effect.fn(function* actualPartyClien
 export const makeActualQuantityClientFixture = Effect.fn(function* actualQuantityClientFixture() {
   const root = yield* makeActualCatalogSelectionFixture();
   const workspace = path.resolve(import.meta.dirname, '../..');
-  const sources = yield* Effect.promise(() => readPricingSourceTree(workspace, CATALOG_VERTICAL_PATH));
+  const sources = yield* readPricingSourceTree(workspace, CATALOG_VERTICAL_PATH);
   for (const [file, source] of sources) {
     yield* write(root, file, source);
   }
@@ -1140,10 +1156,15 @@ export const makeActualQuantityClientFixture = Effect.fn(function* actualQuantit
     SHARED_PROBLEM_DETAILS_SOURCE_PATH,
     SHARED_CLIENT_RUNTIME_SOURCE_PATH,
   ]) {
-    yield* write(root, file, yield* Effect.promise(() => readFile(path.join(workspace, file), 'utf-8')));
+    yield* write(root, file, yield* Effect.promise(async () => await readFile(path.join(workspace, file), 'utf-8')));
   }
-  yield* Effect.promise(() =>
-    symlink(path.join(root, SHARED_CONTRACTS_WORKSPACE_PATH), path.join(root, SHARED_CONTRACTS_LINK_PATH), 'dir'),
+  yield* Effect.promise(
+    async () =>
+      await symlink(
+        path.join(root, SHARED_CONTRACTS_WORKSPACE_PATH),
+        path.join(root, SHARED_CONTRACTS_LINK_PATH),
+        'dir',
+      ),
   );
   return root;
 });
@@ -1164,7 +1185,7 @@ export const makeActualMarketClientFixture = Effect.fn(function* actualMarketCli
       ],
     }),
   );
-  for (const [file, source] of yield* Effect.promise(() => readPricingSourceTree(workspace, owner))) {
+  for (const [file, source] of yield* readPricingSourceTree(workspace, owner)) {
     yield* write(root, file, source);
   }
   for (const file of [
@@ -1172,7 +1193,7 @@ export const makeActualMarketClientFixture = Effect.fn(function* actualMarketCli
     SHARED_PROBLEM_DETAILS_SOURCE_PATH,
     SHARED_CLIENT_RUNTIME_SOURCE_PATH,
   ]) {
-    yield* write(root, file, yield* Effect.promise(() => readFile(path.join(workspace, file), 'utf-8')));
+    yield* write(root, file, yield* Effect.promise(async () => await readFile(path.join(workspace, file), 'utf-8')));
   }
   yield* write(
     root,
@@ -1182,13 +1203,13 @@ export const makeActualMarketClientFixture = Effect.fn(function* actualMarketCli
       name: SHELL_PACKAGE_SPECIFIER,
     }),
   );
-  yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
+  yield* Effect.promise(async () => await mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
   for (const [name, directory] of [
     [MARKET_DEPLOYMENT_ID, owner],
     [SHARED_CONTRACTS_WORKSPACE_NAME, SHARED_CONTRACTS_WORKSPACE_PATH],
   ] as const) {
-    yield* Effect.promise(() =>
-      symlink(path.join(root, directory), path.join(root, APP_PACKAGE_LINK_DIRECTORY, name), 'dir'),
+    yield* Effect.promise(
+      async () => await symlink(path.join(root, directory), path.join(root, APP_PACKAGE_LINK_DIRECTORY, name), 'dir'),
     );
   }
   return root;
@@ -1209,7 +1230,7 @@ export const makeActualPrivacyClientFixture = Effect.fn(function* actualPrivacyC
       ],
     }),
   );
-  const sources = yield* Effect.promise(() => readPricingSourceTree(workspace, PRIVACY_VERTICAL_PATH));
+  const sources = yield* readPricingSourceTree(workspace, PRIVACY_VERTICAL_PATH);
   for (const [file, source] of sources) {
     yield* write(root, file, source);
   }
@@ -1218,7 +1239,7 @@ export const makeActualPrivacyClientFixture = Effect.fn(function* actualPrivacyC
     SHARED_PROBLEM_DETAILS_SOURCE_PATH,
     SHARED_CLIENT_RUNTIME_SOURCE_PATH,
   ]) {
-    yield* write(root, file, yield* Effect.promise(() => readFile(path.join(workspace, file), 'utf-8')));
+    yield* write(root, file, yield* Effect.promise(async () => await readFile(path.join(workspace, file), 'utf-8')));
   }
   yield* write(
     root,
@@ -1226,12 +1247,18 @@ export const makeActualPrivacyClientFixture = Effect.fn(function* actualPrivacyC
     JSON.stringify({ dependencies: { '@app/privacy': WORKSPACE_DEPENDENCY_VERSION }, name: SHELL_PACKAGE_SPECIFIER }),
   );
   yield* write(root, SHELL_TSCONFIG_PATH, JSON.stringify({ references: [] }));
-  yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
-  yield* Effect.promise(() =>
-    symlink(path.join(root, PRIVACY_VERTICAL_PATH), path.join(root, 'node_modules/@app/privacy'), 'dir'),
+  yield* Effect.promise(async () => await mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
+  yield* Effect.promise(
+    async () =>
+      await symlink(path.join(root, PRIVACY_VERTICAL_PATH), path.join(root, 'node_modules/@app/privacy'), 'dir'),
   );
-  yield* Effect.promise(() =>
-    symlink(path.join(root, SHARED_CONTRACTS_WORKSPACE_PATH), path.join(root, SHARED_CONTRACTS_LINK_PATH), 'dir'),
+  yield* Effect.promise(
+    async () =>
+      await symlink(
+        path.join(root, SHARED_CONTRACTS_WORKSPACE_PATH),
+        path.join(root, SHARED_CONTRACTS_LINK_PATH),
+        'dir',
+      ),
   );
   return root;
 });
@@ -1251,7 +1278,7 @@ export const makeActualTaxClientFixture = Effect.fn(function* actualTaxClientFix
       ],
     }),
   );
-  const sources = yield* Effect.promise(() => readPricingSourceTree(workspace, TAX_VERTICAL_PATH));
+  const sources = yield* readPricingSourceTree(workspace, TAX_VERTICAL_PATH);
   for (const [file, source] of sources) {
     yield* write(root, file, source);
   }
@@ -1260,7 +1287,7 @@ export const makeActualTaxClientFixture = Effect.fn(function* actualTaxClientFix
     SHARED_PROBLEM_DETAILS_SOURCE_PATH,
     SHARED_CLIENT_RUNTIME_SOURCE_PATH,
   ]) {
-    yield* write(root, file, yield* Effect.promise(() => readFile(path.join(workspace, file), 'utf-8')));
+    yield* write(root, file, yield* Effect.promise(async () => await readFile(path.join(workspace, file), 'utf-8')));
   }
   yield* write(
     root,
@@ -1268,12 +1295,17 @@ export const makeActualTaxClientFixture = Effect.fn(function* actualTaxClientFix
     JSON.stringify({ dependencies: { '@app/tax': WORKSPACE_DEPENDENCY_VERSION }, name: SHELL_PACKAGE_SPECIFIER }),
   );
   yield* write(root, SHELL_TSCONFIG_PATH, JSON.stringify({ references: [] }));
-  yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
-  yield* Effect.promise(() =>
-    symlink(path.join(root, TAX_VERTICAL_PATH), path.join(root, 'node_modules/@app/tax'), 'dir'),
+  yield* Effect.promise(async () => await mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
+  yield* Effect.promise(
+    async () => await symlink(path.join(root, TAX_VERTICAL_PATH), path.join(root, 'node_modules/@app/tax'), 'dir'),
   );
-  yield* Effect.promise(() =>
-    symlink(path.join(root, SHARED_CONTRACTS_WORKSPACE_PATH), path.join(root, SHARED_CONTRACTS_LINK_PATH), 'dir'),
+  yield* Effect.promise(
+    async () =>
+      await symlink(
+        path.join(root, SHARED_CONTRACTS_WORKSPACE_PATH),
+        path.join(root, SHARED_CONTRACTS_LINK_PATH),
+        'dir',
+      ),
   );
   return root;
 });
@@ -1287,7 +1319,7 @@ export const makeActualCustomerContextAggregateFixture = Effect.fn(function* act
   yield* write(
     root,
     identityClient,
-    yield* Effect.promise(() => readFile(path.join(workspace, identityClient), 'utf-8')),
+    yield* Effect.promise(async () => await readFile(path.join(workspace, identityClient), 'utf-8')),
   );
   for (const folder of [
     CUSTOMER_CONTEXT_VERTICAL_PATH,
@@ -1296,7 +1328,7 @@ export const makeActualCustomerContextAggregateFixture = Effect.fn(function* act
     'packages/payment-term-catalog-contracts',
     'packages/catalog-selection-contracts',
   ]) {
-    const sources = yield* Effect.promise(() => readPricingSourceTree(workspace, folder));
+    const sources = yield* readPricingSourceTree(workspace, folder);
     for (const [file, source] of sources) {
       yield* write(root, file, source);
     }

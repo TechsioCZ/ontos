@@ -1,25 +1,23 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
-import { Effect, FileSystem, Schema } from 'effect';
+import { DateTime, Effect, FileSystem, Option, Schema } from 'effect';
 
 import {
   COMMERCE_URL_KEY,
-  DatabaseEvidence,
   REGENERATE_SEAL_SQL,
   SEAL_TABLE,
-  SeedDatabase,
-  SeedJournal,
-  SeedMembership,
-  SeedRole,
-  SeedSetting,
+  SeedJournalSchema,
+  SeedMembershipSchema,
+  SeedRoleSchema,
+  SeedSettingSchema,
   assertDatabaseEvidence,
   quoteIdentifier,
   quoteLiteral,
   schemaFingerprint,
   seedFailure,
 } from './integration-seed-model.mts';
-import type { SeedManifest } from './integration-seed-model.mts';
+import type { DatabaseEvidence, SeedDatabase, SeedManifest, SeedRole, SeedSetting } from './integration-seed-model.mts';
 import { postgresCommand, requiredEnvironment, runSeedCommand, seedSql } from './integration-seed-process.mts';
 
 const MAINTENANCE_DB = 'template1';
@@ -31,7 +29,7 @@ const POSTGRES_USER_KEY = 'POSTGRES_USER';
 const ROLES_QUERY = `select coalesce(json_agg(r order by name), '[]') from (
   select rolname as name, rolsuper as superuser, rolinherit as inherit, rolcreaterole as "createRole",
     rolcreatedb as "createDb", rolcanlogin as login, rolreplication as replication, rolbypassrls as "bypassRls",
-    rolconnlimit as "connectionLimit", rolvaliduntil::text as "validUntil"
+    rolconnlimit as "connectionLimit", to_char(rolvaliduntil at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as "validUntil"
   from pg_roles where rolname !~ '^pg_') r`;
 const MEMBERS_QUERY = `select coalesce(json_agg(m order by role, member, grantor), '[]') from (
   select pg_get_userbyid(roleid) as role, pg_get_userbyid(member) as member,
@@ -68,9 +66,9 @@ const queryJson = <A, I>(database: string, query: string, schema: Schema.Codec<A
     Effect.mapError(() => seedFailure('PostgreSQL seed catalog did not match its JSON schema')),
   );
 
-export const readRoles = () => queryJson(MAINTENANCE_DB, ROLES_QUERY, Schema.Array(SeedRole));
-export const readMemberships = () => queryJson(MAINTENANCE_DB, MEMBERS_QUERY, Schema.Array(SeedMembership));
-export const readSettings = () => queryJson(MAINTENANCE_DB, SETTINGS_QUERY, Schema.Array(SeedSetting));
+export const readRoles = () => queryJson(MAINTENANCE_DB, ROLES_QUERY, Schema.Array(SeedRoleSchema));
+export const readMemberships = () => queryJson(MAINTENANCE_DB, MEMBERS_QUERY, Schema.Array(SeedMembershipSchema));
+export const readSettings = () => queryJson(MAINTENANCE_DB, SETTINGS_QUERY, Schema.Array(SeedSettingSchema));
 export const readDatabases = () => queryJson(MAINTENANCE_DB, DATABASES_QUERY, Schema.Array(Schema.String));
 
 export const assertDatabaseNames = (names: readonly string[]) =>
@@ -110,11 +108,13 @@ export const databaseEvidence = (database: string) =>
         : yield* queryJson(
             database,
             `select json_agg(j order by "table") from (${queries.join(' union all ')}) j`,
-            Schema.Array(SeedJournal),
+            Schema.Array(SeedJournalSchema),
           );
-    return yield* Effect.succeed(
-      new DatabaseEvidence({ name: database, fingerprint: schemaFingerprint(schema), journals }),
-    );
+    return yield* Effect.succeed({
+      fingerprint: schemaFingerprint(schema),
+      journals,
+      name: database,
+    } satisfies DatabaseEvidence);
   });
 
 const archiveDigest = (filename: string) =>
@@ -131,7 +131,7 @@ const archiveDigest = (filename: string) =>
 export const withPostgresFiles = <A, E, R>(body: (directory: string) => Effect.Effect<A, E, R>) =>
   Effect.scoped(
     Effect.gen(function* ownedPostgresDirectory() {
-      const directory = (yield* postgresCommand('mktemp', ['-d', '/tmp/ontos-ci-seed.XXXXXXXX'])).trim();
+      const directory = (yield* postgresCommand('mktemp', ['-d', '-t', 'ontos-ci-seed.XXXXXXXX'])).trim();
       if (!/^\/tmp\/ontos-ci-seed\.[A-Za-z0-9]+$/u.test(directory)) {
         return yield* seedFailure('PostgreSQL temporary directory was not operation-owned');
       }
@@ -158,13 +158,11 @@ export const dumpDatabase = (database: string, index: number, directory: string,
       source,
     ]);
     yield* runSeedCommand('docker', ['compose', 'cp', `${PG_SERVICE}:${source}`, path.join(directory, archive)]);
-    return yield* Effect.succeed(
-      new SeedDatabase({
-        archive,
-        digest: yield* archiveDigest(path.join(directory, archive)),
-        evidence: yield* databaseEvidence(database),
-      }),
-    );
+    return yield* Effect.succeed({
+      archive,
+      digest: yield* archiveDigest(path.join(directory, archive)),
+      evidence: yield* databaseEvidence(database),
+    } satisfies SeedDatabase);
   });
 
 export const validateArchive = (database: SeedDatabase, directory: string) =>
@@ -185,7 +183,10 @@ const roleAttributes = (role: SeedRole) =>
     role.replication ? 'REPLICATION' : 'NOREPLICATION',
     role.bypassRls ? 'BYPASSRLS' : 'NOBYPASSRLS',
     `CONNECTION LIMIT ${role.connectionLimit}`,
-    role.validUntil === null ? '' : `VALID UNTIL ${quoteLiteral(role.validUntil)}`,
+    Option.match(role.validUntil, {
+      onNone: () => '',
+      onSome: (instant) => `VALID UNTIL ${quoteLiteral(DateTime.formatIso(instant))}`,
+    }),
   ].join(' ');
 
 /** Credentials are reconstructed only from the consumer environment, never role names or artifact SQL. */
@@ -217,8 +218,8 @@ export const rolePasswords = () =>
         return yield* seedFailure(`Expected a local consumer PostgreSQL URL without routing overrides in ${key}`);
       }
       const { name, password } = yield* Effect.try({
-        try: () => ({ name: decodeURIComponent(url.username), password: decodeURIComponent(url.password) }),
         catch: () => seedFailure(`Invalid percent-encoded consumer credentials in ${key}`),
+        try: () => ({ name: decodeURIComponent(url.username), password: decodeURIComponent(url.password) }),
       });
       if (password.length === 0 || (result.has(name) && result.get(name) !== password)) {
         return yield* seedFailure(`Missing or conflicting consumer credentials in ${key}`);
@@ -308,8 +309,11 @@ export const restoreSettings = (settings: readonly SeedSetting[]) =>
       const separator = setting.value.indexOf('=');
       const key = quoteIdentifier(setting.value.slice(0, separator));
       const value = quoteLiteral(setting.value.slice(separator + 1));
-      const target = setting.role === null ? 'ALL' : quoteIdentifier(setting.role);
-      const inDatabase = setting.database === null ? '' : ` IN DATABASE ${quoteIdentifier(setting.database)}`;
+      const target = Option.match(setting.role, { onNone: () => 'ALL', onSome: quoteIdentifier });
+      const inDatabase = Option.match(setting.database, {
+        onNone: () => '',
+        onSome: (database) => ` IN DATABASE ${quoteIdentifier(database)}`,
+      });
       yield* seedSql(MAINTENANCE_DB, `ALTER ROLE ${target}${inDatabase} SET ${key} TO ${value}`);
     }
     return yield* Effect.void;
@@ -337,9 +341,9 @@ export const assertEmptyDatabases = () =>
 /** Passwords are deliberately absent from both sides of this cluster-equivalence check. */
 export const assertClusterEvidence = (manifest: SeedManifest) =>
   Effect.gen(function* verifyRestoredCluster() {
-    const roleJson = Schema.fromJsonString(Schema.Array(SeedRole));
-    const membershipJson = Schema.fromJsonString(Schema.Array(SeedMembership));
-    const settingJson = Schema.fromJsonString(Schema.Array(SeedSetting));
+    const roleJson = Schema.fromJsonString(Schema.Array(SeedRoleSchema));
+    const membershipJson = Schema.fromJsonString(Schema.Array(SeedMembershipSchema));
+    const settingJson = Schema.fromJsonString(Schema.Array(SeedSettingSchema));
     const rolesMatch =
       (yield* Schema.encodeEffect(roleJson)(manifest.roles)) ===
       (yield* Schema.encodeEffect(roleJson)(yield* readRoles()));

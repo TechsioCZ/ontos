@@ -36,6 +36,8 @@ const INTEGRATION_SEED_PROOF_JOB = 'integration-seed-proof';
 const BROWSER_INTEGRATION_JOB = 'browser-integration';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
 const WEIGHTED_SHARD_SCRIPT = 'scripts/ci/rstest-weighted-shard.sh';
+const WORKSPACE_GATES_JOB = 'workspace-gates';
+const DOWNLOAD_ARTIFACT_ACTION = 'actions/download-artifact@';
 
 const MatrixRowsSchema = Schema.Array(Schema.Record(Schema.String, Schema.Unknown));
 const MatricesFileSchema = Schema.Struct({
@@ -134,7 +136,7 @@ const TargetWorkflowSchema = Schema.Struct({
       permissions: Schema.Record(Schema.String, Schema.String),
       steps: Schema.Array(WorkflowStepSchema),
     }),
-    'workspace-gates': Schema.Struct({
+    [WORKSPACE_GATES_JOB]: Schema.Struct({
       if: Schema.String,
       name: Schema.String,
       needs: Schema.Array(Schema.String),
@@ -172,12 +174,12 @@ const ROOT_GATE_JOBS = [
 /** Every gate job; the Node proof is a gate job of its own that no test job waits for. */
 const GATE_JOBS = ROOT_GATE_JOBS;
 /** Gate jobs that read this run's built outputs: they wait for the build shards and nothing else. */
-const ARTIFACT_CONSUMER_JOBS: readonly string[] = [
+const ARTIFACT_CONSUMER_JOBS: ReadonlySet<string> = new Set([
   WORKSPACE_UNIT_ARTIFACTS_JOB,
   SERVICE_INTEGRATION_JOB,
   INTEGRATION_SEED_PROOF_JOB,
   NODE_ARTIFACT_PROOF_JOB,
-];
+]);
 const GatedJobsSchema = Schema.Struct({
   env: Schema.Record(Schema.String, Schema.String),
   jobs: Schema.Record(
@@ -219,7 +221,7 @@ it('selects work before gates and starts source checks without waiting for artif
     ),
   );
   for (const gate of ROOT_GATE_JOBS.filter((job) => job !== SEEDED_INTEGRATION_JOB)) {
-    const needsNodeArtifacts = ARTIFACT_CONSUMER_JOBS.includes(gate);
+    const needsNodeArtifacts = ARTIFACT_CONSUMER_JOBS.has(gate);
     expect(jobs[gate]?.needs).toEqual(needsNodeArtifacts ? [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB] : [CI_PLAN_JOB]);
     expect(jobs[gate]?.if).toBe(
       expression(
@@ -235,7 +237,7 @@ it('classifies documentation before installation and schedules full regression w
   const schema = Schema.Struct({
     jobs: Schema.Struct({
       [CI_PLAN_JOB]: Schema.Struct({ steps: Schema.Array(WorkflowStepSchema) }),
-      'workspace-gates': Schema.Struct({ permissions: Schema.Record(Schema.String, Schema.String) }),
+      [WORKSPACE_GATES_JOB]: Schema.Struct({ permissions: Schema.Record(Schema.String, Schema.String) }),
     }),
     on: Schema.Struct({
       schedule: Schema.Array(Schema.Struct({ cron: Schema.String })),
@@ -243,7 +245,7 @@ it('classifies documentation before installation and schedules full regression w
   });
   const workflow = Schema.decodeUnknownSync(schema)(readGateWorkflow());
   expect(workflow.on.schedule).toEqual([{ cron: '30 2 * * *' }]);
-  expect(workflow.jobs['workspace-gates'].permissions).toEqual({ contents: 'read' });
+  expect(workflow.jobs[WORKSPACE_GATES_JOB].permissions).toEqual({ contents: 'read' });
   const { steps } = workflow.jobs[CI_PLAN_JOB];
   const classify = steps.findIndex(({ id }) => id === 'changes');
   const install = steps.findIndex(({ name }) => name === 'Install the app workspace for code impact analysis');
@@ -293,7 +295,7 @@ it('runs one candidate at a time without changing main, pull request or merge qu
 });
 
 it('requires the exact CI plan and rejects missing, failed or unplanned skipped gates', () => {
-  const gates = readTargetWorkflow().jobs['workspace-gates'];
+  const gates = readTargetWorkflow().jobs[WORKSPACE_GATES_JOB];
   expect(gates.name).toBe('Workspace gates');
   expect(gates.if).toBe(expression('always()'));
   expect(gates.needs).toEqual([QUEUE_PROOF_JOB, CI_PLAN_JOB, ...GATE_JOBS]);
@@ -384,7 +386,7 @@ it('runs every job after the gates even when a merge-queue-proven run skipped th
   // A skipped ancestor skips a job whose `if` relies on the implicit success(), so every job that the
   // skipped gates precede must decide with !cancelled() (or always()) and check its own needs' results.
   const afterGates = Object.keys(jobs).filter((job) => GATE_JOBS.some((gate) => ancestors(job).has(gate)));
-  expect(afterGates).toContain('workspace-gates');
+  expect(afterGates).toContain(WORKSPACE_GATES_JOB);
   // The deploy chain stays out of the gates: no deployment job may reappear here.
   expect(Object.keys(jobs)).not.toContain('deploy-zerops');
   expect(Object.keys(jobs)).not.toContain('deploy-cloudflare');
@@ -455,22 +457,6 @@ it('builds every delivery unit of the topology in exactly one build shard, with 
   expect(buildStep()).toBeDefined();
 });
 
-it('builds in the stage deploy mode because the typecheck gate proves the types', () => {
-  const job = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
-  expect(job['timeout-minutes']).toBe(30);
-  expect(job.env).toMatchObject({
-    BUILD_JOBS: '2',
-    ULTRAMODERN_DISABLE_BUILD_TS_CHECKER: '1',
-    ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1',
-  });
-  // No public origin is baked into the gate artifacts, unlike the stage deploy.
-  expect(Object.keys(job.env).some((key) => key.startsWith('ULTRAMODERN_PUBLIC_URL_'))).toBe(false);
-  expect(job.env.ONTOS_PUBLIC_ORIGIN).toBeUndefined();
-  expect(buildStep()?.run).toContain('xargs -P "$BUILD_JOBS" -n 1');
-  // The typecheck gate that makes the build-time checkers redundant is still a source gate.
-  expect(gateCommands().flat()).toContain('pnpm typecheck');
-});
-
 it('writes the app host entry of every served unit it builds, after its build, as the app host build does', () => {
   const build = buildStep()?.run ?? '';
   // The native hosted-owner fixtures start an owner only from its dist/zerops-entry.mjs, from these same artifacts.
@@ -517,13 +503,13 @@ it('only builds on the shards and proves every unit together in its own job that
   expect(build.needs).toEqual([CI_PLAN_JOB]);
   expect(build.services).toBeUndefined();
   expect(build.permissions).toBeUndefined();
-  expect(build.steps.some(({ uses }) => uses?.startsWith('actions/download-artifact@') === true)).toBe(false);
+  expect(build.steps.some(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true)).toBe(false);
   expect(build.steps.some(({ run }) => run?.includes('node:proof') === true)).toBe(false);
   expect(build.steps.at(-1)?.uses).toMatch(/^actions\/upload-artifact@[a-f0-9]{40}$/u);
   expect(build.steps.at(-1)?.with?.name).toBe(`node-units-${expression('matrix.shard')}`);
   const proof = jobs[NODE_ARTIFACT_PROOF_JOB];
   expect(proof.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]);
-  const download = proof.steps.findIndex(({ uses }) => uses?.startsWith('actions/download-artifact@') === true);
+  const download = proof.steps.findIndex(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true);
   const unpack = proof.steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
   const nodeProof = proof.steps.findIndex(({ run }) => run === 'mise exec -- pnpm node:proof');
   expect(proof.steps[download]?.with?.pattern).toBe(NODE_BUILD_ARTIFACT_PATTERN);
@@ -533,7 +519,7 @@ it('only builds on the shards and proves every unit together in its own job that
   // No gate job waits for the proof except the required check.
   const { jobs: all } = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow());
   const waiting = Object.keys(all).filter((job) => all[job]?.needs?.includes(NODE_ARTIFACT_PROOF_JOB) === true);
-  expect(waiting).toEqual(['workspace-gates']);
+  expect(waiting).toEqual([WORKSPACE_GATES_JOB]);
 });
 
 /** Runs the weighted shard runner with a `pnpm` whose `rstest list` reports these files, and records the run. */
@@ -545,8 +531,9 @@ const weightedShard = (shard: string, files: readonly string[]) => {
       pnpm,
       [
         '#!/bin/bash',
-        'if [ "$3" = list ]; then printf %s "$FAKE_LIST" >"${@: -1}"; exit "${FAKE_LIST_STATUS:-0}"; fi',
-        'printf "%s\\n" "$@" >"$RUN_ARGUMENTS"',
+        // The listing file is the last argument; an unset status is 0 in shell arithmetic.
+        'if [ "$3" = list ]; then for last; do :; done; printf %s "$FAKE_LIST" >"$last"; exit "$((FAKE_LIST_STATUS))"; fi',
+        String.raw`printf "%s\n" "$@" >"$RUN_ARGUMENTS"`,
         '',
       ].join('\n'),
     );
@@ -578,7 +565,7 @@ const weightedShard = (shard: string, files: readonly string[]) => {
 
 it('deals the files of a split giant test family over the weighted shards and runs every file exactly once', () => {
   const family = ['consumption', 'expiry', 'identity', 'order', 'reconciliation', 'scope'].map(
-    (group) => `/w/tests/integration/purchase-approval-fresh-proof-postgres.${group}.test.ts`,
+    (group) => `/w/tests/integration/purchase-approval-fresh-proof-postgres-${group}.test.ts`,
   );
   const files = [...Array.from({ length: 12 }, (_, index) => `/w/tests/integration/file-${index}.test.ts`), ...family];
   const shards = ['1/6', '2/6', '3/6', '4/6', '5/6', '6/6'].map((shard) => weightedShard(shard, files));
@@ -633,7 +620,7 @@ const GateCommandsWorkflowSchema = Schema.Struct({
         }),
       }),
     }),
-    [WORKSPACE_UNIT_JOB]: Schema.Struct({
+    [WORKSPACE_UNIT_ARTIFACTS_JOB]: Schema.Struct({
       steps: Schema.Array(GateCommandStepSchema),
       strategy: Schema.Struct({
         matrix: Schema.Struct({
@@ -647,7 +634,7 @@ const GateCommandsWorkflowSchema = Schema.Struct({
         }),
       }),
     }),
-    [WORKSPACE_UNIT_ARTIFACTS_JOB]: Schema.Struct({
+    [WORKSPACE_UNIT_JOB]: Schema.Struct({
       steps: Schema.Array(GateCommandStepSchema),
       strategy: Schema.Struct({
         matrix: Schema.Struct({
@@ -676,6 +663,22 @@ const gateCommands = () => {
     jobs[job].strategy.matrix.include.map(({ commands }) => commands.split('\n').filter(Boolean)),
   );
 };
+
+it('builds in the stage deploy mode because the typecheck gate proves the types', () => {
+  const job = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
+  expect(job['timeout-minutes']).toBe(30);
+  expect(job.env).toMatchObject({
+    BUILD_JOBS: '2',
+    ULTRAMODERN_DISABLE_BUILD_TS_CHECKER: '1',
+    ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1',
+  });
+  // No public origin is baked into the gate artifacts, unlike the stage deploy.
+  expect(Object.keys(job.env).some((key) => key.startsWith('ULTRAMODERN_PUBLIC_URL_'))).toBe(false);
+  expect(job.env.ONTOS_PUBLIC_ORIGIN).toBeUndefined();
+  expect(buildStep()?.run).toContain('xargs -P "$BUILD_JOBS" -n 1');
+  // The typecheck gate that makes the build-time checkers redundant is still a source gate.
+  expect(gateCommands().flat()).toContain('pnpm typecheck');
+});
 
 it('runs every workspace gate check in some workspace-gate entry', () => {
   const commands = gateCommands().flat();
@@ -720,7 +723,7 @@ it('restores same-run Node metadata only for unit rows that execute public contr
   // Rows that read no built output start after planning, without downloading anything.
   const plain = jobs[WORKSPACE_UNIT_JOB];
   expect(plain.strategy.matrix.include.some((entry) => entry['node-artifacts'] === true)).toBe(false);
-  expect(plain.steps.some(({ uses }) => uses?.startsWith('actions/download-artifact@') === true)).toBe(false);
+  expect(plain.steps.some(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true)).toBe(false);
   const job = jobs[WORKSPACE_UNIT_ARTIFACTS_JOB];
   expect(job.strategy.matrix.include.map(({ name }) => name)).toEqual([
     'Unit Tests (Shell 1/2)',
@@ -901,7 +904,7 @@ it('runs the root integration suite once and every package integration suite in 
     SEEDED_INTEGRATION_JOB
   ];
   // Seeded rows run the very same test step; together both jobs cover every package once.
-  expect(seededJob.steps.find(({ env }) => env?.PACKAGE_FILTERS !== undefined)).toEqual(run);
+  expect(seededJob.steps.find(({ name }) => name === run?.name)).toEqual(run);
   const shards = [...job.strategy.matrix.include, ...seededJob.strategy.matrix.include].filter(
     ({ suite }) => suite === 'integration',
   );
@@ -1169,7 +1172,7 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   )(source).jobs[BROWSER_INTEGRATION_JOB];
   expect(browser.needs).toEqual([CI_PLAN_JOB]);
   expect(browser.strategy.matrix.include.map(({ suite }) => suite)).toEqual(['browser']);
-  expect(browser.steps.some(({ uses }) => uses?.startsWith('actions/download-artifact@') === true)).toBe(false);
+  expect(browser.steps.some(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true)).toBe(false);
   expect(browser.steps.some(({ run }) => run === 'mise exec -- pnpm --filter @app/shell-super-app test:e2e')).toBe(
     true,
   );
@@ -1243,7 +1246,7 @@ it('proves the fresh-database preparation once and restores it only in rows that
   const tests = seeded.steps.findIndex(
     ({ env }) => env?.PACKAGE_FILTERS !== undefined && env.ROOT_RSTEST_SHARD !== undefined,
   );
-  expect(restore > -1 && restore < worker && worker < tests).toBe(true);
+  expect(restore !== -1 && restore < worker && worker < tests).toBe(true);
   expect(seeded.steps[restore]?.run).toContain('--purpose ordinary-tests --job-name "$CI_MATRIX_NAME"');
   expect(seeded.steps[restore]?.run).toContain('--test-files "$CI_TEST_FILES"');
   const producer = Schema.decodeUnknownSync(
@@ -1255,7 +1258,7 @@ it('proves the fresh-database preparation once and restores it only in rows that
       'mise exec -- node scripts/ci/integration-seed.mts produce --directory "$RUNNER_TEMP/integration-seed" --disposable',
   );
   const build = producer.steps.findIndex(({ run }) => run?.includes('worker-host-artifact.mts build') === true);
-  expect(produce > -1 && produce < build).toBe(true);
+  expect(produce !== -1 && produce < build).toBe(true);
   expect(producer.env?.INTEGRATION_SEED_COMMERCE_AUTH_DATABASE_URL).toBe(
     'postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci',
   );
@@ -1378,7 +1381,7 @@ it('keeps deployment out of the workspace gates and guards Action transaction I/
   expect(env.ONTOS_ACTION_TRANSACTION_IO_GUARD).toBe('true');
   // The retired deploy chain stays out of the gates: the workflow only plans and runs checks.
   expect(sorted(Object.keys(jobs))).toEqual(
-    sorted([QUEUE_PROOF_JOB, CI_PLAN_JOB, 'warm-caches', ...GATE_JOBS, 'workspace-gates']),
+    sorted([QUEUE_PROOF_JOB, CI_PLAN_JOB, 'warm-caches', ...GATE_JOBS, WORKSPACE_GATES_JOB]),
   );
 });
 

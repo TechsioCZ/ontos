@@ -12,7 +12,7 @@ import { expect, it } from 'effect-rstest';
 import { completePackagedNodeDependencies } from '../complete-packaged-node-dependencies.mts';
 import { PACKAGED_DIRECTORY } from '../materialize-packaged-workspace-packages.mts';
 import {
-  makePackagedDependencyResolver,
+  openPackagedDependencyResolver,
   memoizeDependencyRead,
   PackagedNodeDependencyError,
 } from '../packaged-node-dependency-resolver.mts';
@@ -35,13 +35,13 @@ const APP_SOURCE = {
   core: "import { instance, value } from 'dep-lib';\nexport const core = value;\nexport const coreInstance = instance;\n",
   other: "import { instance } from 'dep-lib';\nexport const otherInstance = instance;\n",
 } as const;
-type AppName = 'core' | 'other';
+type AppName = keyof typeof APP_SOURCE;
 
 const ENTRY_SOURCE = [
   "import { createRequire } from 'node:module';",
   "import { core } from '@app/core';",
   'const load = createRequire(import.meta.url);',
-  "process.stdout.write(`${core}:${load('dep-lib').value}`);",
+  "process.stdout.write(core + ':' + load('dep-lib').value);",
   '',
 ].join('\n');
 
@@ -341,13 +341,13 @@ it.effect('batches a synthetic graph exactly like fresh single-request hosts and
       { parent, specifier: './missing.mjs' },
       { parent, specifier: 'not-installed' },
     ];
-    const resolver = yield* makePackagedDependencyResolver(fixture.output);
+    const resolver = yield* openPackagedDependencyResolver(fixture.output);
     const batched = yield* resolver.resolve(requests);
     const singles = yield* Effect.forEach(
       requests,
       (request) =>
         Effect.gen(function* singleRequest() {
-          const single = yield* makePackagedDependencyResolver(fixture.output);
+          const single = yield* openPackagedDependencyResolver(fixture.output);
           const [answer] = yield* single.resolve([request]);
           yield* single.close;
           return yield* Effect.succeed(answer);
@@ -355,7 +355,7 @@ it.effect('batches a synthetic graph exactly like fresh single-request hosts and
       { concurrency: 1 },
     );
     expect(batched).toEqual(singles);
-    expect(batched[3]?.url).toBe(new URL('./missing.mjs', parent).href);
+    expect(batched[3]?.url).toBe(new URL('missing.mjs', parent).href);
     expect(batched[4]?.code).toBe('ERR_MODULE_NOT_FOUND');
     expect(yield* resolver.resolve(requests)).toEqual(batched);
     expect(resolver.stats).toEqual({ batches: 1, cacheHits: requests.length, requests: requests.length });

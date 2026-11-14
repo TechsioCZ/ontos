@@ -258,30 +258,21 @@ export const planCiChecks = (input: {
     unitArtifacts: unit.filter((entry) => entry['node-artifacts'] === true),
     unitPlain: unit.filter((entry) => entry['node-artifacts'] !== true),
   };
-  const rows = (gate: (typeof gateIds)[number]) => {
-    switch (gate) {
-      case 'browser-integration': {
-        return jobs.browser.length;
-      }
-      case 'service-integration': {
-        return jobs.services.length;
-      }
-      case 'integration-seed-proof':
-      case 'seeded-integration': {
-        return jobs.seeded.length;
-      }
-      case 'workspace-unit': {
-        return jobs.unitPlain.length;
-      }
-      case 'workspace-unit-artifacts': {
-        return jobs.unitArtifacts.length;
-      }
-      default: {
-        return 1;
-      }
-    }
-  };
-  const expected = Object.fromEntries(gateIds.map((gate) => [gate, rows(gate) === 0 ? 'skipped' : 'success']));
+  // Every gate names its row count; gates without a matrix always run one row.
+  const rows = {
+    'browser-integration': jobs.browser.length,
+    'format-and-lint': 1,
+    'integration-seed-proof': jobs.seeded.length,
+    'node-artifact-build': 1,
+    'node-artifact-proof': 1,
+    'seeded-integration': jobs.seeded.length,
+    'service-integration': jobs.services.length,
+    'static-contracts': 1,
+    'workspace-gate': 1,
+    'workspace-unit': jobs.unitPlain.length,
+    'workspace-unit-artifacts': jobs.unitArtifacts.length,
+  } satisfies Readonly<Record<(typeof gateIds)[number], number>>;
+  const expected = Object.fromEntries(gateIds.map((gate) => [gate, rows[gate] === 0 ? 'skipped' : 'success']));
   let reason = 'Shared, sensitive, unknown or explicitly full impact requires the complete suite.';
   if (!broad && (effectiveMode === 'affected' || !input.applyAffected)) {
     reason = input.applyAffected

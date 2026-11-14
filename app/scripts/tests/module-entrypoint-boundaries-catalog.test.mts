@@ -23,7 +23,7 @@ for (const owner of [CATALOG_VERTICAL_PATH]) {
       const root = path.resolve(import.meta.dirname, '../..');
       const trees = yield* Effect.all(
         [`${owner}/api`, `${owner}/shared`, `${owner}/src`, 'packages'].map((folder) =>
-          Effect.promise(() => readPricingSourceTree(root, folder)),
+          readPricingSourceTree(root, folder),
         ),
       );
       const runtimeDeclarationFile = `${owner}/vertical.runtime-declaration.ts`;

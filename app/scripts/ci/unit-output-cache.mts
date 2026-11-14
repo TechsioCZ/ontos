@@ -95,7 +95,7 @@ const UnitSchema = Schema.Struct({
 const TopologySchema = Schema.Struct({ shell: UnitSchema, verticals: Schema.Array(UnitSchema) });
 export type CacheUnit = typeof UnitSchema.Type;
 const IdentitySchema = Schema.Struct({
-  appId: NONEMPTY,
+  appId: NONEMPTY.pipe(Schema.brand('UnitOutputAppId'), Schema.decodeTo(Schema.String)),
   build: NONEMPTY,
   buildMarker: NONEMPTY,
   sourceRevision: REVISION,
@@ -135,18 +135,20 @@ export const CacheReceiptSchema = Schema.Struct({
   unit: NONEMPTY,
 });
 export type CacheReceipt = typeof CacheReceiptSchema.Type;
-const JsonObject = Schema.Record(Schema.String, Schema.Json);
+/** A Modern.js route document: this check owns only that it is a parsed JSON object, not its route model. */
+const RouteDocument = Schema.Record(Schema.String, Schema.Unknown);
+const PlainSourceMapSchema = Schema.Struct({
+  mappings: Schema.String,
+  names: Schema.Array(Schema.String),
+  sources: Schema.Array(Schema.String),
+  version: Schema.Literal(3),
+});
 const SourceMapSchema = Schema.Union([
-  Schema.Struct({
-    mappings: Schema.String,
-    names: Schema.Array(Schema.String),
-    sources: Schema.Array(Schema.String),
-    version: Schema.Literal(3),
-  }),
+  PlainSourceMapSchema,
   Schema.Struct({
     sections: Schema.Array(
       Schema.Struct({
-        map: JsonObject,
+        map: PlainSourceMapSchema,
         offset: Schema.Struct({ column: Schema.Number, line: Schema.Number }),
       }),
     ),
@@ -159,7 +161,7 @@ const PackageManifest = Schema.Struct({
 });
 const FederationManifest = Schema.Struct({
   exposes: Schema.Array(Schema.Unknown),
-  metaData: JsonObject,
+  metaData: Schema.Struct({ name: NONEMPTY }),
   name: NONEMPTY,
 });
 const BackendManifest = Schema.Struct({ backendFederation: Schema.Struct({ deliveryUnit: IdentitySchema }) });
@@ -213,18 +215,24 @@ const git = (args: readonly string[]) => run('git', args);
 const identityOverride = /^(?:ULTRAMODERN_SOURCE_REVISION|ULTRAMODERN_BUILD_MARKER)$/u;
 const buildVariable =
   /^(?:MODERN_|ULTRAMODERN_|PUBLIC_|ONTOS_.*ORIGIN|NODE_(?:ENV|OPTIONS|PATH)$|BABEL_ENV$|RSPACK_|RSBUILD_|BROWSERSLIST|TZ$|LANG$|LC_|SOURCE_DATE_EPOCH$|CI$)/u;
+/** `name=value` pairs of the environment every build child inherits, NUL-separated so values may hold newlines. */
+const inheritedEnvironment = run('env', ['-0']).pipe(
+  Effect.map((listing) =>
+    listing.split('\0').flatMap((pair): [string, string][] => {
+      const separator = pair.indexOf('=');
+      return separator > 0 ? [[pair.slice(0, separator), pair.slice(separator + 1)]] : [];
+    }),
+  ),
+);
 const readProfile = Effect.gen(function* readBuildProfile() {
-  const environment = Object.entries(process.env)
-    .filter(
-      (entry): entry is [string, string] =>
-        entry[1] !== undefined && buildVariable.test(entry[0]) && !identityOverride.test(entry[0]),
-    )
+  const environment = (yield* inheritedEnvironment)
+    .filter(([name]) => buildVariable.test(name) && !identityOverride.test(name))
     .toSorted(([left], [right]) => left.localeCompare(right));
   return yield* Schema.decodeUnknownEffect(CacheProfileSchema)({
     architecture: process.arch,
     command: 'pnpm run build (modern build + modern deploy --skip-build --deploy-target node)',
     environment,
-    mode: process.env.NODE_ENV ?? 'production',
+    mode: yield* Config.String('NODE_ENV').pipe(Config.withDefault('production')),
     node: process.version,
     platform: process.platform,
     pnpm: yield* run('pnpm', ['--version']),
@@ -258,7 +266,7 @@ const loadContext = Effect.gen(function* readCacheContext() {
     units,
   });
 });
-type Context = Effect.Effect.Success<typeof loadContext>;
+type Context = Effect.Success<typeof loadContext>;
 const selectUnits = (context: Context, names: readonly string[]) =>
   Effect.forEach(
     names,
@@ -300,7 +308,7 @@ const walkOutput = (
     }
     const bytes = yield* fs.readFile(filename);
     return yield* Effect.succeed([
-      { mode: info.mode & 0o777, path: relative, sha256: hash(bytes), size: bytes.byteLength },
+      { mode: info.mode % 0o1000, path: relative, sha256: hash(bytes), size: bytes.byteLength },
     ]);
   });
 const inventory = (root: string) =>
@@ -345,7 +353,7 @@ export const firstOutputMismatch = (input: {
   return undefined;
 };
 export const planOutputCache = (
-  checks: readonly { readonly unit: string; readonly mismatch: string | undefined }[],
+  checks: readonly { readonly mismatch?: string | undefined; readonly unit: string }[],
 ) => ({
   build: checks.filter((check) => check.mismatch !== undefined).map((check) => check.unit),
   keep: checks.filter((check) => check.mismatch === undefined).map((check) => check.unit),
@@ -356,11 +364,11 @@ export const requiredOutputMismatch = (files: readonly OutputFile[], filename: s
 /** Type bundles are ordinary ZIPs; reject truncation before trusting a newly built bundle. */
 export const typeBundleMismatch = (bytes: Uint8Array): string | undefined => {
   const zip = Buffer.from(bytes);
-  if (zip.length < 22 || zip.readUInt32LE(0) !== 0x04034b50) {
+  if (zip.length < 22 || zip.readUInt32LE(0) !== 0x04_03_4b_50) {
     return 'invalid type-bundle ZIP header';
   }
-  for (let offset = zip.length - 22; offset >= Math.max(0, zip.length - 65557); offset -= 1) {
-    if (zip.readUInt32LE(offset) !== 0x06054b50) {
+  for (let offset = zip.length - 22; offset >= Math.max(0, zip.length - 65_557); offset -= 1) {
+    if (zip.readUInt32LE(offset) !== 0x06_05_4b_50) {
       continue;
     }
     const end = offset + 22 + zip.readUInt16LE(offset + 20);
@@ -370,7 +378,7 @@ export const typeBundleMismatch = (bytes: Uint8Array): string | undefined => {
       end === zip.length &&
       centralSize >= 46 &&
       centralStart + centralSize === offset &&
-      zip.readUInt32LE(centralStart) === 0x02014b50
+      zip.readUInt32LE(centralStart) === 0x02_01_4b_50
     ) {
       return undefined;
     }
@@ -383,6 +391,11 @@ const requireFile = (files: readonly OutputFile[], filename: string, unit: strin
 };
 const readMetadata = (root: string, directory: string) =>
   readJson(path.join(root, directory, BUILD_METADATA), MetadataSchema);
+/** Every surface an artifact declares carries the build's own identity. */
+const surfacesMatch = (
+  identity: CacheIdentity,
+  surfaces: { readonly api: CacheIdentity; readonly ui?: CacheIdentity },
+) => sameIdentity(identity, surfaces.api) && (surfaces.ui === undefined || sameIdentity(identity, surfaces.ui));
 const validateStructure = (unit: CacheUnit, files: readonly OutputFile[], served: readonly string[]) =>
   Effect.gen(function* validateRequiredOutputs() {
     const fs = yield* FileSystem.FileSystem;
@@ -414,13 +427,8 @@ const validateStructure = (unit: CacheUnit, files: readonly OutputFile[], served
     ) {
       return yield* invalid(unit.id, 'dist/.output build identity mismatch');
     }
-    for (const artifact of [built, packaged]) {
-      if (
-        !sameIdentity(identity, artifact.surfaces.api) ||
-        (artifact.surfaces.ui !== undefined && !sameIdentity(identity, artifact.surfaces.ui))
-      ) {
-        return yield* invalid(unit.id, 'surface identity mismatch');
-      }
+    if (![built, packaged].every((artifact) => surfacesMatch(identity, artifact.surfaces))) {
+      return yield* invalid(unit.id, 'surface identity mismatch');
     }
     const backend = yield* readJson(path.join(root, DIST, BACKEND_MANIFEST), BackendManifest);
     if (!sameIdentity(identity, backend.backendFederation.deliveryUnit)) {
@@ -439,7 +447,7 @@ const validateStructure = (unit: CacheUnit, files: readonly OutputFile[], served
     if (unit.surfaceProfile !== 'api-only') {
       for (const filename of ['route.json', 'routes-manifest.json']) {
         yield* requireFile(files, `${DIST}/${filename}`, unit.id);
-        yield* readJson(path.join(root, DIST, filename), JsonObject);
+        yield* readJson(path.join(root, DIST, filename), RouteDocument);
       }
       const manifest = yield* readJson(path.join(root, DIST, 'mf-manifest.json'), FederationManifest);
       if (manifest.exposes.length > 0) {
@@ -457,11 +465,7 @@ const validateStructure = (unit: CacheUnit, files: readonly OutputFile[], served
     );
     for (const file of documents) {
       const filename = path.join(root, file.path);
-      if (file.path.endsWith('.map')) {
-        yield* readJson(filename, SourceMapSchema);
-      } else {
-        yield* readJson(filename, Schema.Json);
-      }
+      yield* file.path.endsWith('.map') ? readJson(filename, SourceMapSchema) : readJson(filename, Schema.Json);
     }
     return yield* Effect.succeed(identity);
   });
@@ -510,7 +514,7 @@ const inspectUnit = (context: Context, unit: CacheUnit) =>
   checkUnit(context, unit).pipe(
     Effect.match({
       onFailure: (error) => ({ mismatch: error.message, unit: unit.id }),
-      onSuccess: () => ({ mismatch: undefined, unit: unit.id }),
+      onSuccess: () => ({ unit: unit.id }),
     }),
   );
 const digestCommand = Command.make('digest', { unit: Flag.String('unit').pipe(Flag.atLeast(1)) }, ({ unit }) =>

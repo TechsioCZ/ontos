@@ -101,7 +101,7 @@ it.live('checks actual Party typed client foreign API contamination', () =>
   Effect.gen(function* foreignApiInPartyDelegate() {
     const root = yield* makeActualPartyClientFixture();
     const workspace = path.resolve(import.meta.dirname, '../..');
-    const privacy = yield* Effect.promise(() => readPricingSourceTree(workspace, PRIVACY_VERTICAL_PATH));
+    const privacy = yield* readPricingSourceTree(workspace, PRIVACY_VERTICAL_PATH);
     for (const [file, source] of privacy) {
       yield* write(root, file, source);
     }
@@ -257,7 +257,7 @@ it.live('binds actual published-package Read clients back to the enrolled owner 
       }),
     );
     for (const folder of [owner, contractPackage, SHARED_CONTRACTS_WORKSPACE_PATH]) {
-      const sources = yield* Effect.promise(() => readPricingSourceTree(workspace, folder));
+      const sources = yield* readPricingSourceTree(workspace, folder);
       for (const [file, source] of sources) {
         yield* write(root, file, source);
       }

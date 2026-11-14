@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import type { Cause } from 'effect';
 import { Effect, Fiber, Queue, Schema, Stream } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
@@ -20,26 +21,27 @@ const RESULT_FIELDS = {
 };
 const requestCodec = Schema.fromJsonString(Schema.Struct({ requests: Schema.Array(Schema.Struct(REQUEST_FIELDS)) }));
 const responseCodec = Schema.fromJsonString(Schema.Struct({ results: Schema.Array(Schema.Struct(RESULT_FIELDS)) }));
-const literal = Schema.encodeSync(Schema.fromJsonString(Schema.String));
+const moduleLiteral = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 
 /**
  * One line is one wave's batch. Node keeps its native resolution caches between waves.
  * Use the tooling install's Schema, never a package in the output being verified.
  */
-const RESOLVER_HOST = [
-  `import { Schema } from ${literal(pathToFileURL(createRequire(import.meta.url).resolve('effect')).href)};`,
-  "import { createInterface } from 'node:readline';",
-  'const request = Schema.fromJsonString(Schema.Struct({ requests: Schema.Array(Schema.Struct({ parent: Schema.String, specifier: Schema.String })) }));',
-  'const response = Schema.fromJsonString(Schema.Struct({ results: Schema.Array(Schema.Struct({ code: Schema.optionalKey(Schema.String), message: Schema.optionalKey(Schema.String), url: Schema.optionalKey(Schema.String) })) }));',
-  'for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {',
-  '  const { requests } = Schema.decodeUnknownSync(request)(line);',
-  '  const results = requests.map(({ parent, specifier }) => {',
-  '    try { return { url: import.meta.resolve(specifier, parent) }; }',
-  "    catch (error) { return { code: String(error?.code ?? 'ERR_UNKNOWN'), message: String(error?.message ?? error) }; }",
-  '  });',
-  "  process.stdout.write(Schema.encodeSync(response)({ results }) + '\\n');",
-  '}',
-].join('\n');
+const resolverHost = (effectModule: string) =>
+  [
+    `import { Schema } from ${effectModule};`,
+    "import { createInterface } from 'node:readline';",
+    'const request = Schema.fromJsonString(Schema.Struct({ requests: Schema.Array(Schema.Struct({ parent: Schema.String, specifier: Schema.String })) }));',
+    'const response = Schema.fromJsonString(Schema.Struct({ results: Schema.Array(Schema.Struct({ code: Schema.optionalKey(Schema.String), message: Schema.optionalKey(Schema.String), url: Schema.optionalKey(Schema.String) })) }));',
+    'for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {',
+    '  const { requests } = Schema.decodeUnknownSync(request)(line);',
+    '  const results = requests.map(({ parent, specifier }) => {',
+    '    try { return { url: import.meta.resolve(specifier, parent) }; }',
+    "    catch (error) { return { code: String(error?.code ?? 'ERR_UNKNOWN'), message: String(error?.message ?? error) }; }",
+    '  });',
+    String.raw`  process.stdout.write(Schema.encodeSync(response)({ results }) + '\n');`,
+    '}',
+  ].join('\n');
 
 export interface ResolverRequest {
   readonly parent: string;
@@ -67,15 +69,18 @@ export const memoizeDependencyRead = <A, E, R>(read: (key: string) => Effect.Eff
 };
 
 /** Scoped, sequential request stream: stdout, stderr and stdin are all drained concurrently. */
-export const makePackagedDependencyResolver = Effect.fn('CompletePackagedNodeDependencies.makeResolver')(
-  function* makeResolver(output: string) {
+export const openPackagedDependencyResolver = Effect.fn('CompletePackagedNodeDependencies.openResolver')(
+  function* openResolver(output: string) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const input = yield* Queue.unbounded<Uint8Array>();
+    const effectModule = yield* moduleLiteral(
+      pathToFileURL(createRequire(import.meta.url).resolve('effect')).href,
+    ).pipe(Effect.mapError(() => failed('the tooling Effect module URL cannot be written as a module specifier')));
+    const input = yield* Queue.unbounded<Uint8Array, Cause.Done>();
     const handle = yield* spawner.spawn(
       ChildProcess.make(
         process.execPath,
-        ['--experimental-import-meta-resolve', '--input-type=module', '--eval', RESOLVER_HOST],
-        { cwd: output, env: {}, stdin: Stream.fromQueue(input), stdout: 'pipe', stderr: 'pipe' },
+        ['--experimental-import-meta-resolve', '--input-type=module', '--eval', resolverHost(effectModule)],
+        { cwd: output, env: {}, stderr: 'pipe', stdin: Stream.fromQueue(input), stdout: 'pipe' },
       ),
     );
     const lines = yield* handle.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.toQueue({ capacity: 1 }));

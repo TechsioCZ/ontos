@@ -55,11 +55,13 @@ import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Effect, FileSystem, Layer, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
+import { OpsShellLive } from '../ops/ops-shell.mts';
+
+import type { SeedManifest } from './integration-seed-model.mts';
 import {
   COMMERCE_URL_KEY,
   MANIFEST_FILE,
   SEAL_TABLE,
-  SeedManifest,
   assertSeedConsumer,
   manifestJson,
   seedFailure,
@@ -94,10 +96,10 @@ import { restoreSpiceDb, snapshotSpiceDb } from './integration-seed-spicedb.mts'
 const PNPM = 'pnpm';
 const VERSION_QUERY = "select current_setting('server_version')";
 const MIGRATOR_ENVIRONMENT = {
+  MIGRATOR_PORT: '8080',
   NODE_ENV: 'production',
   ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
   ULTRAMODERN_ZEROPS_SERVICE: 'migrator',
-  MIGRATOR_PORT: '8080',
 };
 
 const runFullProof = (proofDirectory: string) =>
@@ -155,19 +157,19 @@ const produce = (directory: string, disposable: boolean) =>
           concurrency: 1,
         }),
       );
-      const manifest = new SeedManifest({
-        version: 1,
-        sourceRevision: yield* readSourceRevision(),
-        workflowRun: yield* requiredEnvironment('GITHUB_RUN_ID'),
-        postgresVersion: (yield* seedSql('template1', VERSION_QUERY)).trim(),
-        roles: yield* readRoles(),
-        memberships: yield* readMemberships(),
-        settings,
+      const manifest: SeedManifest = {
         databases,
-        spiceSchema: yield* snapshotSpiceDb(),
-        spiceRelationships: [],
+        memberships: yield* readMemberships(),
+        postgresVersion: (yield* seedSql('template1', VERSION_QUERY)).trim(),
         regeneratedTables: [SEAL_TABLE],
-      });
+        roles: yield* readRoles(),
+        settings,
+        sourceRevision: yield* readSourceRevision(),
+        spiceRelationships: [],
+        spiceSchema: yield* snapshotSpiceDb(),
+        version: 1,
+        workflowRun: yield* requiredEnvironment('GITHUB_RUN_ID'),
+      };
       const fs = yield* FileSystem.FileSystem;
       // The completion marker is written last; failed production cannot yield a usable artifact.
       return yield* fs.writeFileString(
@@ -180,17 +182,17 @@ const produce = (directory: string, disposable: boolean) =>
 const restore = (input: {
   readonly directory: string;
   readonly disposable: boolean;
-  readonly purpose: string;
   readonly jobName: string;
+  readonly jobs: number;
+  readonly purpose: string;
   readonly rootSuite: string;
   readonly testFiles: string;
-  readonly jobs: number;
 }) =>
   Effect.scoped(
     Effect.gen(function* restoreSeed() {
       yield* assertSeedConsumer({
-        purpose: input.purpose,
         jobName: input.jobName,
+        purpose: input.purpose,
         rootSuite: input.rootSuite !== 'false',
         testFiles: input.testFiles.split(',').filter((file) => file !== ''),
       });
@@ -249,11 +251,11 @@ const restoreCommand = Command.make(
   {
     directory: directoryFlag,
     disposable: disposableFlag,
-    purpose: Flag.Literals('purpose', ['ordinary-tests', 'migration-proof', 'recovery-proof', 'fresh-database']),
     jobName: Flag.String('job-name'),
+    jobs: Flag.Int('jobs').pipe(Flag.withDefault(4)),
+    purpose: Flag.Literals('purpose', ['ordinary-tests', 'migration-proof', 'recovery-proof', 'fresh-database']),
     rootSuite: Flag.Literals('root-suite', ['true', 'false']),
     testFiles: Flag.String('test-files'),
-    jobs: Flag.Int('jobs').pipe(Flag.withDefault(4)),
   },
   (input) => restore({ ...input, directory: path.resolve(input.directory) }),
 );
@@ -261,7 +263,10 @@ const cli = Command.make('integration-seed').pipe(Command.withSubcommands([produ
 if (import.meta.main) {
   NodeRuntime.runMain(
     Layer.build(
-      Layer.effectDiscard(Command.run(cli, { version: '1.0.0' })).pipe(Layer.provide(NodeServices.layer)),
+      Layer.effectDiscard(Command.run(cli, { version: '1.0.0' })).pipe(
+        Layer.provide(OpsShellLive),
+        Layer.provide(NodeServices.layer),
+      ),
     ).pipe(Effect.scoped),
   );
 }

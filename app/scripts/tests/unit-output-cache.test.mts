@@ -12,6 +12,8 @@ import {
 import type { CacheIdentity, CacheProfile, CacheReceipt, OutputFile } from '../ci/unit-output-cache.mts';
 import type { GitEntry } from '../zerops/delivery-plan.mts';
 
+const STAGE_ORIGIN = 'https://stage.example.test';
+
 const UNIT = 'catalog';
 const DIRECTORY = `app/verticals/${UNIT}`;
 const DEPENDENCY = 'app/packages/catalog-contracts';
@@ -118,7 +120,7 @@ it.effect('separates targets, modes, flags, origins, commands, policies and actu
       { mode: 'development' },
       { command: 'modern build --no-types' },
       { environment: [['ULTRAMODERN_DISABLE_BUILD_TS_CHECKER', '1']] },
-      { environment: [['MODERN_PUBLIC_SITE_URL', 'https://stage.example.test']] },
+      { environment: [['MODERN_PUBLIC_SITE_URL', STAGE_ORIGIN]] },
       { policy: 'no maps' },
       { node: 'v27.0.0' },
       { pnpm: '13.0.0' },
@@ -130,9 +132,7 @@ it.effect('separates targets, modes, flags, origins, commands, policies and actu
       expect(yield* gatesInputDigest({ ...inputs, profile: { ...profile, ...change } })).not.toBe(expected);
     }
     for (const index of [0, 1, 2]) {
-      const origins = inputs.origins.map((origin, position) =>
-        position === index ? 'https://stage.example.test' : origin,
-      );
+      const origins = inputs.origins.map((origin, position) => (position === index ? STAGE_ORIGIN : origin));
       expect(yield* gatesInputDigest({ ...inputs, origins })).not.toBe(expected);
     }
     return yield* Effect.void;
@@ -174,12 +174,12 @@ it('requires nonempty entrypoints independently of a matching receipt', () => {
 it('rejects empty and truncated type bundles', () => {
   expect(typeBundleMismatch(new Uint8Array())).toContain('header');
   const truncated = Buffer.alloc(40);
-  truncated.writeUInt32LE(0x04034b50, 0);
+  truncated.writeUInt32LE(0x04_03_4b_50, 0);
   expect(typeBundleMismatch(truncated)).toContain('truncated');
   const complete = Buffer.alloc(98);
-  complete.writeUInt32LE(0x04034b50, 0);
-  complete.writeUInt32LE(0x02014b50, 30);
-  complete.writeUInt32LE(0x06054b50, 76);
+  complete.writeUInt32LE(0x04_03_4b_50, 0);
+  complete.writeUInt32LE(0x02_01_4b_50, 30);
+  complete.writeUInt32LE(0x06_05_4b_50, 76);
   complete.writeUInt32LE(46, 88);
   complete.writeUInt32LE(30, 92);
   expect(typeBundleMismatch(complete)).toBeUndefined();
@@ -190,7 +190,7 @@ it.effect('rejects a receipt from another target or origin even when the output 
     const original = yield* gatesInputDigest(inputs);
     const cached = { ...receipt, digest: original };
     const target = yield* gatesInputDigest({ ...inputs, profile: { ...profile, target: 'cloudflare' } });
-    const origin = yield* gatesInputDigest({ ...inputs, origins: ['https://stage.example.test'] });
+    const origin = yield* gatesInputDigest({ ...inputs, origins: [STAGE_ORIGIN] });
     expect(check({ digest: target, receipt: cached })).toContain('input digest');
     expect(check({ digest: origin, receipt: cached })).toContain('input digest');
     return yield* Effect.void;

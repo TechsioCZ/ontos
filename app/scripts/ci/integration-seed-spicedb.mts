@@ -15,8 +15,8 @@ export const openSeedSpiceDb = () =>
     }
     return yield* Effect.acquireRelease(
       Effect.try({
-        try: () => v1.NewClientWithCustomCert(key, endpoint, Buffer.from(certificate)),
         catch: () => seedFailure('Unable to open the disposable SpiceDB TLS channel'),
+        try: () => v1.NewClientWithCustomCert(key, endpoint, Buffer.from(certificate)),
       }),
       (client) => Effect.sync(() => client.close()),
     );
@@ -26,23 +26,23 @@ export const snapshotSpiceDb = () =>
   Effect.gen(function* readSeedSpiceDb() {
     const client = yield* openSeedSpiceDb();
     const schema = yield* Effect.tryPromise({
-      try: () => client.promises.readSchema(v1.ReadSchemaRequest.create({})),
       catch: () => seedFailure('Unable to read SpiceDB seed schema'),
+      try: async () => await client.promises.readSchema(v1.ReadSchemaRequest.create({})),
     });
-    const definitions = [...schema.schemaText.matchAll(/\bdefinition\s+([a-zA-Z0-9_/]+)\s*\{/gu)].map(
-      (match) => match[1],
+    const definitions = [...schema.schemaText.matchAll(/\bdefinition\s+(?<resourceType>[a-zA-Z0-9_/]+)\s*\{/gu)].map(
+      (match) => match.groups?.resourceType,
     );
     for (const resourceType of definitions) {
       const relationships = yield* Effect.tryPromise({
-        try: () =>
-          client.promises.readRelationships(
+        catch: () => seedFailure('Unable to verify empty SpiceDB bootstrap relationships'),
+        try: async () =>
+          await client.promises.readRelationships(
             v1.ReadRelationshipsRequest.create({
-              consistency: { requirement: { oneofKind: 'fullyConsistent', fullyConsistent: true } },
-              relationshipFilter: { resourceType },
+              consistency: { requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } },
               optionalLimit: 1,
+              relationshipFilter: { resourceType },
             }),
           ),
-        catch: () => seedFailure('Unable to verify empty SpiceDB bootstrap relationships'),
       });
       if (relationships.length !== 0) {
         return yield* seedFailure(
@@ -59,8 +59,8 @@ export const restoreSpiceDb = (schemaText: string) =>
     yield* snapshotSpiceDb();
     const client = yield* openSeedSpiceDb();
     yield* Effect.tryPromise({
-      try: () => client.promises.writeSchema(v1.WriteSchemaRequest.create({ schema: schemaText })),
       catch: () => seedFailure('Unable to restore SpiceDB seed schema'),
+      try: async () => await client.promises.writeSchema(v1.WriteSchemaRequest.create({ schema: schemaText })),
     });
     if ((yield* snapshotSpiceDb()) !== schemaText) {
       return yield* seedFailure('SpiceDB schema readback differs from the seed');

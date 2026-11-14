@@ -39,7 +39,6 @@ import {
   bootstrapByteBudgetScenario,
   decodeChildDiagnosticStage,
   executorDeniedScenario,
-  fail,
   observe,
   preservedReadResultFailure,
   temporalArtifactsLayer,

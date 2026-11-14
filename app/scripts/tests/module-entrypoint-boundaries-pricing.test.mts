@@ -24,9 +24,7 @@ it.live('counts the actual published Pricing read shim in exact owner inventory 
   Effect.gen(function* actualPublishedPricingInventory() {
     const root = path.resolve(import.meta.dirname, '../..');
     const trees = yield* Effect.all(
-      ['verticals/pricing', 'packages/pricing-contracts'].map((folder) =>
-        Effect.promise(() => readPricingSourceTree(root, folder)),
-      ),
+      ['verticals/pricing', 'packages/pricing-contracts'].map((folder) => readPricingSourceTree(root, folder)),
     );
     const sources = new Map(trees.flat());
     const shared = PRICING_SHARED_API_PATH;
@@ -222,7 +220,7 @@ it.live('counts the actual published Pricing read shim in exact owner inventory 
 it.live('accepts the reviewed Privacy notice-presentation GET companion only as its exact pinned text', () =>
   Effect.gen(function* actualPrivacyNoticePresentationCompanion() {
     const root = path.resolve(import.meta.dirname, '../..');
-    const sources = new Map(yield* Effect.promise(() => readPricingSourceTree(root, PRIVACY_VERTICAL_PATH)));
+    const sources = new Map(yield* readPricingSourceTree(root, PRIVACY_VERTICAL_PATH));
     const shared = 'verticals/privacy/shared/api.ts';
     const contractFile = 'verticals/privacy/shared/apis/notice-presentation.ts';
     const serverFile = 'verticals/privacy/api/notice-presentation-read-server.ts';

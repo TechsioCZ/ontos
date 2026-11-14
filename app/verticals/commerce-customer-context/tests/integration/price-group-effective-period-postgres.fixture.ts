@@ -40,6 +40,7 @@ import {
 } from '@app/shared-contracts';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
+import type { SchemaIssue } from 'effect';
 import {
   Clock,
   Config,
@@ -57,7 +58,6 @@ import {
   Redacted,
   Result,
   Schema,
-  SchemaIssue,
   Stream,
 } from 'effect';
 import { ChildProcess } from 'effect/process';

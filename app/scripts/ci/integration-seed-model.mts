@@ -39,8 +39,8 @@ export const MUST_MIGRATE_TESTS = [
 ];
 
 export const assertSeedConsumer = (input: {
-  readonly purpose: string;
   readonly jobName: string;
+  readonly purpose: string;
   readonly rootSuite: boolean;
   readonly testFiles: readonly string[];
 }) => {
@@ -62,60 +62,70 @@ export const assertSeedConsumer = (input: {
     : Effect.void;
 };
 
-export class SeedRole extends Schema.Class<SeedRole>('SeedRole')({
-  name: Schema.NonEmptyString,
-  superuser: Schema.Boolean,
-  inherit: Schema.Boolean,
-  createRole: Schema.Boolean,
-  createDb: Schema.Boolean,
-  login: Schema.Boolean,
-  replication: Schema.Boolean,
+export const SeedRoleSchema = Schema.Struct({
   bypassRls: Schema.Boolean,
   connectionLimit: Schema.Int,
-  validUntil: Schema.NullOr(Schema.String),
-}) {}
-
-export class SeedMembership extends Schema.Class<SeedMembership>('SeedMembership')({
-  role: Schema.String,
-  member: Schema.String,
-  grantor: Schema.String,
-  admin: Schema.Boolean,
+  createDb: Schema.Boolean,
+  createRole: Schema.Boolean,
   inherit: Schema.Boolean,
-  set: Schema.Boolean,
-}) {}
-export class SeedSetting extends Schema.Class<SeedSetting>('SeedSetting')({
-  role: Schema.NullOr(Schema.String),
-  database: Schema.NullOr(Schema.String),
-  value: Schema.String,
-}) {}
-export class SeedJournal extends Schema.Class<SeedJournal>('SeedJournal')({
-  table: Schema.String,
-  rows: Schema.Int,
-}) {}
-export class DatabaseEvidence extends Schema.Class<DatabaseEvidence>('DatabaseEvidence')({
+  login: Schema.Boolean,
   name: Schema.NonEmptyString,
+  replication: Schema.Boolean,
+  superuser: Schema.Boolean,
+  /** PostgreSQL's VALID UNTIL; absent when the role never expires. */
+  validUntil: Schema.OptionFromNullOr(Schema.DateTimeUtcFromString),
+});
+export type SeedRole = typeof SeedRoleSchema.Type;
+
+export const SeedMembershipSchema = Schema.Struct({
+  admin: Schema.Boolean,
+  grantor: Schema.String,
+  inherit: Schema.Boolean,
+  member: Schema.String,
+  role: Schema.String,
+  set: Schema.Boolean,
+});
+export type SeedMembership = typeof SeedMembershipSchema.Type;
+export const SeedSettingSchema = Schema.Struct({
+  /** Absent for a setting that applies in every database. */
+  database: Schema.OptionFromNullOr(Schema.String),
+  /** Absent for a setting that applies to every role. */
+  role: Schema.OptionFromNullOr(Schema.String),
+  value: Schema.String,
+});
+export type SeedSetting = typeof SeedSettingSchema.Type;
+export const SeedJournalSchema = Schema.Struct({
+  rows: Schema.Int,
+  table: Schema.String,
+});
+export type SeedJournal = typeof SeedJournalSchema.Type;
+export const DatabaseEvidenceSchema = Schema.Struct({
   fingerprint: Schema.String,
-  journals: Schema.Array(SeedJournal),
-}) {}
-export class SeedDatabase extends Schema.Class<SeedDatabase>('SeedDatabase')({
-  evidence: DatabaseEvidence,
+  journals: Schema.Array(SeedJournalSchema),
+  name: Schema.NonEmptyString,
+});
+export type DatabaseEvidence = typeof DatabaseEvidenceSchema.Type;
+export const SeedDatabaseSchema = Schema.Struct({
   archive: Schema.String.check(Schema.isPattern(/^database-[0-9]+\.dump$/u)),
   digest: Schema.String,
-}) {}
-export class SeedManifest extends Schema.Class<SeedManifest>('SeedManifest')({
-  version: Schema.Literal(1),
-  sourceRevision: Schema.String,
-  workflowRun: Schema.String,
+  evidence: DatabaseEvidenceSchema,
+});
+export type SeedDatabase = typeof SeedDatabaseSchema.Type;
+export const SeedManifestSchema = Schema.Struct({
+  databases: Schema.Array(SeedDatabaseSchema),
+  memberships: Schema.Array(SeedMembershipSchema),
   postgresVersion: Schema.String,
-  roles: Schema.Array(SeedRole),
-  memberships: Schema.Array(SeedMembership),
-  settings: Schema.Array(SeedSetting),
-  databases: Schema.Array(SeedDatabase),
-  spiceSchema: Schema.String,
-  spiceRelationships: Schema.Array(Schema.Never),
   regeneratedTables: Schema.Array(Schema.Literal(SEAL_TABLE)),
-}) {}
-export const manifestJson = Schema.fromJsonString(SeedManifest, { space: 2 });
+  roles: Schema.Array(SeedRoleSchema),
+  settings: Schema.Array(SeedSettingSchema),
+  sourceRevision: Schema.String,
+  spiceRelationships: Schema.Array(Schema.Never),
+  spiceSchema: Schema.String,
+  version: Schema.Literal(1),
+  workflowRun: Schema.String,
+});
+export type SeedManifest = typeof SeedManifestSchema.Type;
+export const manifestJson = Schema.fromJsonString(SeedManifestSchema, { space: 2 });
 
 export const assertDatabaseEvidence = (expected: DatabaseEvidence, actual: DatabaseEvidence) => {
   if (actual.name !== expected.name || actual.fingerprint !== expected.fingerprint) {
@@ -135,7 +145,7 @@ export const assertDatabaseEvidence = (expected: DatabaseEvidence, actual: Datab
 };
 
 /** pg_dump adds random restrict keys; everything else, including owners/ACLs/policies, is hashed. */
-export const schemaFingerprint = (dump: string) => sha256(dump.replace(/^\\(?:un)?restrict .*\n/gmu, ''));
+export const schemaFingerprint = (dump: string) => sha256(dump.replaceAll(/^\\(?:un)?restrict .*\n/gmu, ''));
 
 /** Exactly the migration's HMAC pad construction, but fresh in each consumer. Never export the pads. */
 export const REGENERATE_SEAL_SQL = `DO $$

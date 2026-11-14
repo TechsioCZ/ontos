@@ -779,6 +779,20 @@ export default defineConfig({
       },
     },
     {
+      // The shared fixtures of split giant integration tests hold the test bodies their single test file used to hold,
+      // so they keep that file's test-data and test-composition policy: repeated scenario literals and test factories.
+      files: [
+        'apps/shell-super-app/tests/integration/access-admin-people-writes.fixture.ts',
+        'apps/shell-super-app/tests/integration/agent-caller-authority-full-catalog.fixture.ts',
+        'verticals/commerce-customer-context/tests/integration/price-group-effective-period-postgres.fixture.ts',
+        'verticals/commerce-customer-context/tests/integration/purchase-approval-fresh-proof-postgres.fixture.ts',
+      ],
+      rules: {
+        'anti-slop-effect/no-service-constructor-imports': 'off',
+        'sonarjs/no-duplicate-string': 'off',
+      },
+    },
+    {
       // Route metadata is declarative data: extracting repeated values into code constants
       // would obscure the independently consumable records without reducing executable duplication.
       files: ['**/route.meta.ts', 'verticals/party-registry/vertical.manifest.ts'],
