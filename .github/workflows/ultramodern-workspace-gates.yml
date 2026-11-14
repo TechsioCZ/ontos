@@ -768,8 +768,8 @@ jobs:
   # so one job runs every file. The separate Typecheck gate keeps the authoritative TS-Go check of the whole workspace,
   # and runs the Effect diagnostics, which tsgolint's type check does not emit, for the test and tooling tsconfigs
   # outside its project graph (`pnpm lint:effect-diagnostics`).
-  # Every diagnostic class still runs: formatting and the Shell UI candidate check through the hook, then every lint
-  # rule including the type-aware ones in one run, over every file.
+  # Every diagnostic class still runs: formatting, every lint rule including the type-aware ones, and the Shell UI
+  # candidate check, over every file.
   format-and-lint:
     name: Format and Lint through the pre-commit hook (${{ matrix.shard }}/1)
     needs: [ci-plan]
@@ -807,17 +807,9 @@ jobs:
             fi
             index=$((index + 1))
           done >"$RUNNER_TEMP/shard-files"
-          mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install --job shell-ui-candidates --job format' \
+          mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install' \
             <"$RUNNER_TEMP/shard-files"
           git diff --exit-code HEAD
-
-      # The hook's lint job over every tracked file: the same files its globs select (`pnpm lint:oxlint` names them),
-      # in two Oxlint runs, the verticals and the rest. Through the hook, lefthook split a file list that long into seven
-      # command lines run one after another, each loading the type programs again (970 s); one run over every file
-      # held them all at once and the runner was shut down. Each half peaks below 9 GB (measured locally: 7.2 and 8.6).
-      - name: Lint every file in one run
-        working-directory: app
-        run: mise exec -- pnpm lint:oxlint
 
   # Suites on fresh services, run side by side: the stage-shaped migrator and Outbox Worker host artifacts
   # followed by the integration tests. The authenticated browser tests run in browser-integration on their own

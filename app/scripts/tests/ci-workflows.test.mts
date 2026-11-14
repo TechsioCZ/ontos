@@ -1023,12 +1023,6 @@ it('runs the root integration suite once and every package integration suite in 
   }
 });
 
-const LefthookSchema = Schema.Struct({
-  'pre-commit': Schema.Struct({
-    jobs: Schema.Array(Schema.Struct({ glob: Schema.optional(Schema.Array(Schema.String)), name: Schema.String })),
-  }),
-});
-
 it('formats and lints every tracked file in exactly one pre-commit hook shard', () => {
   const lint = readGateCommandJobs()[FORMAT_AND_LINT_JOB];
   const step = lint.steps.find(({ run }) => run?.includes('--files-from-stdin') === true);
@@ -1038,24 +1032,6 @@ it('formats and lints every tracked file in exactly one pre-commit hook shard', 
   // The hook sees its shard's files, and a file it fixes fails the gate.
   expect(run).toContain('lefthook run pre-commit --files-from-stdin --no-auto-install');
   expect(run.trimEnd().endsWith('git diff --exit-code HEAD')).toBe(true);
-  // Every hook job but lint runs through the hook; lint runs once over the files the hook's lint globs select, because
-  // lefthook splits a list of every tracked file into several command lines that each load the type programs again.
-  const hook = Schema.decodeUnknownSync(LefthookSchema)(
-    parse(readFileSync(new URL('../../../lefthook.yml', import.meta.url), 'utf-8')),
-  );
-  const hookJobs = hook['pre-commit'].jobs.map(({ name }) => name);
-  expect(hookJobs.toSorted()).toEqual(['format', 'lint', 'shell-ui-candidates']);
-  for (const name of hookJobs.filter((job) => job !== 'lint')) {
-    expect(run).toContain(`--job ${name}`);
-  }
-  expect(run).not.toContain('--job lint');
-  expect(lint.steps.some((candidate) => candidate.run === 'mise exec -- pnpm lint:oxlint')).toBe(true);
-  const lintGlobs = hook['pre-commit'].jobs.find(({ name }) => name === 'lint')?.glob ?? [];
-  expect(lintGlobs).toContain('app/{apps,verticals,packages,scripts}/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}');
-  // Two runs, so each loads about half the type programs: one run over every file needed more memory than a runner has.
-  expect(readRootScripts().scripts['lint:oxlint']).toBe(
-    'effect-tsgo oxlint verticals && effect-tsgo oxlint apps packages scripts tools/oxlint/effect-native/tests/*.test.mts',
-  );
   const select = run.slice(0, run.indexOf('mise exec'));
   const sourceRepository = fileURLToPath(new URL('../../../', import.meta.url));
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lint-shards-'));
