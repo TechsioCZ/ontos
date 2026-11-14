@@ -435,6 +435,11 @@ const issue = Effect.fn('FacilityOperations.Purchasing.issue')(function* issue(
   if (planned !== undefined && planned.itemId !== item.id) {
     return yield* opsConflict('The planned issue belongs to another stock item');
   }
+  if (planned !== undefined && planned.quantity !== value.quantity) {
+    return yield* opsConflict(
+      'Issue the full planned quantity, or change the planned quantity before recording this issue.',
+    );
+  }
   const id = yield* mintId(StockMovementIdSchema, input.resourceId);
   const movement = movementOf(input, id, {
     date: value.date,
