@@ -15,7 +15,16 @@ import {
   makeApplicationCompositionSnapshotFixture,
 } from '@app/core-runtime/testing/module-contract';
 import type { ActiveApplicationCompositionSnapshot, OntosModuleDeploymentContract } from '@app/core-runtime';
-import { Array as EffectArray, ConfigProvider, Effect, Layer, Order, Schema } from 'effect';
+import {
+  Array as EffectArray,
+  ConfigProvider,
+  Effect,
+  Layer,
+  Order,
+  Predicate,
+  Record as EffectRecord,
+  Schema,
+} from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { HttpApi } from 'effect/http-api';
 
@@ -25,8 +34,9 @@ import { commerceCustomerContextManifest } from '../../vertical.manifest.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 
 type CompositionModule = ActiveApplicationCompositionSnapshot['composition']['modules'][number];
-/** Carries every request other than the composition source. */
-type OwnerFetch = (request: Request) => Promise<Response>;
+
+/** Keeps only the members that are present, so an optional contract key is omitted rather than sent as `undefined`. */
+const presentMembers = EffectRecord.filter(Predicate.isNotUndefined);
 
 /** Compiled inputs are read relative to the app workspace root (`app/`). */
 const appRoot = new URL('../../../../', import.meta.url);
@@ -184,11 +194,12 @@ const ownerContract = Effect.fn('EnrollmentTests.ownerContract')(function* owner
     resourceTypes: publicSurface.resourceTypes,
     search: publicSurface.search,
     shellContributions: owner.shellContributions,
-    ...(publicSurface.apiCookieTransport === undefined ? {} : { apiCookieTransport: publicSurface.apiCookieTransport }),
-    ...(publicSurface.externalIdentityProviders === undefined
-      ? {}
-      : { externalIdentityProviders: publicSurface.externalIdentityProviders }),
-    ...(mcp === undefined ? {} : { mcp: mcp.contribution }),
+    // Absent optional members are omitted, not sent as `undefined`: the contract's optional keys are exact.
+    ...presentMembers({
+      apiCookieTransport: publicSurface.apiCookieTransport,
+      externalIdentityProviders: publicSurface.externalIdentityProviders,
+      mcp: mcp?.contribution,
+    }),
   };
   return yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)({
     deployment: { appId: ultramodernApiMarker.appId, buildMarker },
@@ -197,10 +208,10 @@ const ownerContract = Effect.fn('EnrollmentTests.ownerContract')(function* owner
       module: manifest.module,
       originatorActions: manifest.originatorActions ?? [],
       publicSurface: authoredPublicSurface,
-      ...(owner.requirements === undefined ? {} : { requirements: owner.requirements }),
-      ...(manifest.registeredWorkloadCalls === undefined
-        ? {}
-        : { registeredWorkloadCalls: manifest.registeredWorkloadCalls }),
+      ...presentMembers({
+        registeredWorkloadCalls: manifest.registeredWorkloadCalls,
+        requirements: owner.requirements,
+      }),
     },
     runtime: { outboxSubscriptions: owner.outboxSubscriptions },
     schemaVersion: '2',
@@ -370,7 +381,7 @@ const compositionSourceUrl = 'https://composition.enrollment-acceptance.test/act
 export const enrollmentApplicationCompositionVerificationLayer = (
   snapshot: ActiveApplicationCompositionSnapshot,
   gatewayConfiguration: Readonly<Record<string, string>> = {},
-  ownerFetch: OwnerFetch = fetch,
+  ownerFetch: typeof globalThis.fetch = fetch,
 ) =>
   Layer.mergeAll(
     ConfigProvider.layer(
