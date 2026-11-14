@@ -199,6 +199,31 @@ describe('stage-accounts-bootstrap', () => {
         const sdkStarted = Deferred.makeUnsafe<null>();
         const sdkSettlement = Promise.withResolvers<null>();
         const sdkAdapter = memoryAdapter(store);
+        // The SDK's user write starts, then waits for the test. Better Auth 1.7.23 writes through the adapter a
+        // transaction hands its work, earlier versions through the adapter itself, so both are delayed.
+        const delayUserCreate = (target: Pick<ReturnType<typeof sdkAdapter>, 'create'>) => {
+          const create = target.create.bind(target);
+          rstest.spyOn(target, 'create').mockImplementation((input: Parameters<typeof create>[0]) => {
+            if (input.model === 'user') {
+              Deferred.doneUnsafe(sdkStarted, Effect.succeed(null));
+              return sdkSettlement.promise.then(() => create(input));
+            }
+            return create(input);
+          });
+        };
+        type TransactionWork = Parameters<ReturnType<typeof sdkAdapter>['transaction']>[0];
+        const delayedWork =
+          (work: TransactionWork): TransactionWork =>
+          async (transactionAdapter) => {
+            delayUserCreate(transactionAdapter);
+            return await work(transactionAdapter);
+          };
+        const delayTransactionUserCreate = (adapter: ReturnType<typeof sdkAdapter>) => {
+          const transaction = adapter.transaction.bind(adapter);
+          rstest
+            .spyOn(adapter, 'transaction')
+            .mockImplementation(async (work: TransactionWork) => await transaction(delayedWork(work)));
+        };
         let databaseClosed = false;
         const configuration = yield* loadAuthConfig();
         const program = Effect.scoped(
@@ -220,15 +245,8 @@ describe('stage-accounts-bootstrap', () => {
               Effect.provideService(AuthDatabase, {
                 adapter: (options) => {
                   const adapter = sdkAdapter(options);
-                  const create = adapter.create.bind(adapter);
-                  rstest.spyOn(adapter, 'create').mockImplementation((input: Parameters<typeof create>[0]) => {
-                    if (input.model === 'user') {
-                      Deferred.doneUnsafe(sdkStarted, Effect.succeed(null));
-                      // oxlint-disable-next-line sonarjs/no-nested-functions -- SDK settlement continuation stays inside its adapter mock.
-                      return sdkSettlement.promise.then(() => create(input));
-                    }
-                    return create(input);
-                  });
+                  delayUserCreate(adapter);
+                  delayTransactionUserCreate(adapter);
                   return adapter;
                 },
                 executor: database.executor,
