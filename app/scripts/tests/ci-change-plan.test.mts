@@ -98,7 +98,13 @@ it('gives each matrix job only its own rows and plans a job without rows as skip
   const full = planCiChecks({ applyAffected: false, changedPaths: [CATALOG_SOURCE], packages, templates });
   expect(full.jobs.browser.map(({ suite }) => suite)).toEqual(['browser']);
   expect(full.jobs.services.every(({ suite }) => suite === 'integration')).toBe(true);
-  expect(full.jobs.services.length + full.jobs.browser.length).toBe(templates.integration.length);
+  expect(full.jobs.services.length + full.jobs.seeded.length + full.jobs.browser.length).toBe(
+    templates.integration.length,
+  );
+  // Only a full run restores the seed; its rows never cover migration or recovery behaviour.
+  expect(full.jobs.seeded.length).toBeGreaterThan(0);
+  expect(full.jobs.seeded.every((entry) => entry.seed === true && entry['root-suite'] !== true)).toBe(true);
+  expect(full.jobs.services.some((entry) => entry.seed === true)).toBe(false);
   expect(full.jobs.unitArtifacts.every((entry) => entry['node-artifacts'] === true)).toBe(true);
   expect(full.jobs.unitPlain.some((entry) => entry['node-artifacts'] === true)).toBe(false);
   expect(full.jobs.unitArtifacts.length + full.jobs.unitPlain.length).toBe(templates.unit.length);
@@ -109,6 +115,11 @@ it('gives each matrix job only its own rows and plans a job without rows as skip
   expect(affected.expected['browser-integration']).toBe('skipped');
   expect(affected.expected['node-artifact-proof']).toBe('success');
   expect(affected.expected['node-artifact-build']).toBe('success');
+  // An affected round prepares its own databases instead of waiting for the seed producer.
+  expect(affected.jobs.seeded).toEqual([]);
+  expect(affected.expected['integration-seed-proof']).toBe('skipped');
+  expect(affected.expected['seeded-integration']).toBe('skipped');
+  expect(affected.jobs.services.map(({ name }) => name)).toContain('Catalog Integration');
   // A sharded single-package row whose package is affected runs exactly as planned.
   const shell = planCiChecks({
     applyAffected: true,
