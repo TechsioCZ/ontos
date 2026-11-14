@@ -1167,6 +1167,13 @@ export const tierPriceForQuantity = (tiers: Product['priceTiers'], quantity: num
   tiers?.filter((tier) => tier.minimumQuantity <= quantity).toSorted((a, b) => b.minimumQuantity - a.minimumQuantity)[0]
     ?.priceMinor;
 
+/** A tiered catalog needs an actual base gross; a discount is not evidence of the price below its break. */
+const baseGrossForCheckout = (
+  priced: { readonly grossPriceMinor?: number; readonly priceTiers?: Product['priceTiers'] },
+  net: number,
+  rate: number,
+) => priced.grossPriceMinor ?? ((priced.priceTiers?.length ?? 0) === 0 ? grossUnitPriceMinor(net, rate) : 0);
+
 /** Resolves the sellable unit (product or variant) of one storefront line, or the issue blocking it. */
 const sellableUnitOf = (
   products: readonly Product[],
@@ -1210,8 +1217,11 @@ const sellableUnitOf = (
         availability: variant.availability,
         grossPriceMinor:
           tierPriceForQuantity(variant.priceTiers, line.quantity) ??
-          product.variants?.find((entry) => entry.id === variant.id)?.grossPriceMinor ??
-          grossUnitPriceMinor(variant.priceMinor, tax.vatRate),
+          baseGrossForCheckout(
+            product.variants?.find((entry) => entry.id === variant.id) ?? variant,
+            variant.priceMinor,
+            tax.vatRate,
+          ),
         minimumQuantity: variant.minimumQuantity ?? 1,
         name: product.name,
         packageQuantity: variant.packageQuantity,
@@ -1231,8 +1241,7 @@ const sellableUnitOf = (
       // A missing gross price is refused below as PRICE_UNAVAILABLE, never sold at 0 %.
       grossPriceMinor:
         tierPriceForQuantity(product.priceTiers, line.quantity) ??
-        product.grossPriceMinor ??
-        grossUnitPriceMinor(product.currentPriceMinor, tax.vatRate),
+        baseGrossForCheckout(product, product.currentPriceMinor, tax.vatRate),
       minimumQuantity: product.minimumQuantity ?? 1,
       name: product.name,
       packageQuantity: product.packageQuantity,

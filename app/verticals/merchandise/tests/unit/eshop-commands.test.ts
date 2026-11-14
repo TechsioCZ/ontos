@@ -672,3 +672,23 @@ it('refuses order quantities with more precision than the ledger can retain', ()
   });
   expect(Schema.is(Schema.toEncoded(MerchandiseCommandSchema))(encoded)).toBe(false);
 });
+
+it.effect('refuses below-tier checkout when the tiered catalog has no authoritative base gross', () =>
+  Effect.gen(function* missingBaseGross() {
+    const current = yield* seeded;
+    const noBase: MerchandiseState = {
+      ...current,
+      products: current.products.map((product) => ({
+        ...product,
+        variants: product.variants?.map(({ grossPriceMinor: _missing, ...variant }) => ({
+          ...variant,
+          priceTiers: [{ minimumQuantity: 10, priceExcludingVatMinor: 20_000, priceMinor: 22_400 }],
+        })),
+      })),
+    };
+    const refused = yield* apply(noBase, guestOrder(), 'missing-base-price');
+    expect(refused.storefrontOrder?.issues[0]?.code).toBe('PRICE_UNAVAILABLE');
+    expect(refused.state).toBe(noBase);
+    return yield* Effect.void;
+  }),
+);
