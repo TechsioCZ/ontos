@@ -304,6 +304,7 @@ const ArtifactBuildJobSchema = Schema.Struct({
       shard: Schema.Array(Schema.Number),
     }),
   }),
+  'timeout-minutes': Schema.Number,
 });
 const ArtifactBuildWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
@@ -331,6 +332,17 @@ it('builds every delivery unit of the topology in exactly one build shard of eac
     expect(sorted(built)).toEqual(sorted(units));
     expect(steps.some(({ run }) => run?.includes(`"\${filters[@]}" run build\n`) === true)).toBe(true);
   }
+});
+
+it('gives each Node build shard room for the Shell build and the proving shard its wait for the siblings', () => {
+  const job = Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(readGateWorkflow()).jobs[NODE_ARTIFACT_BUILD_JOB];
+  // The Shell alone builds for about 11 minutes; at 20 minutes the Shell's shard and the proving shard were cancelled.
+  expect(job['timeout-minutes']).toBe(30);
+  // The two heaviest units never share a shard.
+  const shellShard = job.strategy.matrix.include.find(({ units }) =>
+    units.split(/\s+/u).includes('apps/shell-super-app'),
+  );
+  expect(shellShard?.units.split(/\s+/u)).not.toContain('verticals/party-registry');
 });
 
 const readArtifactBuildJobs = () => Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(readGateWorkflow()).jobs;
