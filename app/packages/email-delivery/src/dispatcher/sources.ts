@@ -51,12 +51,13 @@ export type ParsedDeliveryId =
   | { readonly source: Exclude<EmailDeliverySource, 'facility-agenda'>; readonly subjectId: string }
   | { readonly source: 'facility-agenda'; readonly subjectId: string; readonly scope: DeliveryScope };
 
+const ScopeIdSchema = Schema.String.check(Schema.isUUID());
 const parseAgendaDeliveryId = (rest: string): ParsedDeliveryId | null => {
   const [tenantId, legalEntityId, subjectId, ...instant] = rest.split(':');
   if (tenantId === undefined || legalEntityId === undefined || subjectId === undefined) {
     return null;
   }
-  if (tenantId === '' || legalEntityId === '' || subjectId === '') {
+  if (!Schema.is(ScopeIdSchema)(tenantId) || !Schema.is(ScopeIdSchema)(legalEntityId) || subjectId === '') {
     return null;
   }
   const createdAt = Schema.decodeUnknownOption(Schema.DateTimeUtcFromString)(instant.join(':'));
