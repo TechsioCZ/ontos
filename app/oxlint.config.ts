@@ -1,3 +1,4 @@
+import { Predicate } from 'effect';
 import { defineConfig } from 'oxlint';
 import core from 'ultracite/oxlint/core';
 import { jsPluginSettings, selectJsPlugins } from 'ultracite/oxlint/js-plugins';
@@ -39,12 +40,17 @@ const verticalsPartyRegistryTestsIntegrationCustomerAresLookupBffTestTsPath =
   'verticals/party-registry/tests/integration/customer-ares-lookup-bff.test.ts';
 
 const selectedJsPlugins = selectJsPlugins(['github', 'sonarjs', 'react-doctor']);
+if (!selectedJsPlugins.jsPlugins) {
+  throw new Error('Ultracite must provide the selected JavaScript plugins');
+}
 const jsPlugins = {
   ...selectedJsPlugins,
   // Load GitHub's published rule-only entrypoint, not its ESLint configuration aggregator.
   // The aggregator eagerly imports eslint-plugin-import and the ESLint runner; the rules do not.
   jsPlugins: selectedJsPlugins.jsPlugins.map((plugin) =>
-    plugin.name === 'github' ? { ...plugin, specifier: 'eslint-plugin-github/lib/plugin.js' } : plugin,
+    Predicate.isString(plugin) || plugin.name !== 'github'
+      ? plugin
+      : { ...plugin, specifier: 'eslint-plugin-github/lib/plugin.js' },
   ),
 };
 
@@ -64,11 +70,11 @@ const antiSlopRules = {
   'anti-slop/no-unsafe-dictionary-type': 'error',
   'anti-slop/no-widen-then-assert': 'error',
   'anti-slop/require-safety-comment-for-type-assertion': 'error',
-};
+} as const satisfies NonNullable<Parameters<typeof defineConfig>[0]['rules']>;
 
 const antiSlopEffectRules = {
   'anti-slop-effect/no-service-constructor-imports': 'error',
-};
+} as const satisfies NonNullable<Parameters<typeof defineConfig>[0]['rules']>;
 
 // Only a top-level call can use this exact value import without a nested binding
 // shadowing it. Aliases and nested calls fail closed. The second argument alone
@@ -84,7 +90,7 @@ const coreReadPipelineSelector = [
 
 // Effect-native architecture rules derived from docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md.
 // Each rule cites the audit finding it enforces; see tools/oxlint/effect-native/README.md.
-const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']> = {
+const effectNativeRules = {
   'effect-native/no-ad-hoc-argv-in-scripts': 'error',
   'effect-native/no-ambient-date': 'error',
   'effect-native/no-ambient-process-env': 'error',
@@ -243,7 +249,7 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
   'effect-native/require-timeout-on-external-effect': 'error',
   // Required admin fields read the required text in the page language; see packages/admin-ui/src/form-controls.tsx.
   'effect-native/ui-kit-required-label': 'error',
-} as const;
+} as const satisfies NonNullable<Parameters<typeof defineConfig>[0]['rules']>;
 
 export default defineConfig({
   categories: {
