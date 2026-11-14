@@ -19,6 +19,7 @@ import {
 import type { AccessProjectionTransport } from '../../src/access/compiler/spice-db-compiler.ts';
 import { DecisionCheck } from '../../src/access/decision/engine.ts';
 import type { AccessCheckItem } from '../../src/access/decision/engine.ts';
+import { SPICEDB_V2_SUBJECT_TYPES } from '../../src/access/decision/spicedb-check-port.ts';
 import type { AccessDecision } from '../../src/access/decision/contract.ts';
 import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
 import { AccessDecisionLive } from '../../src/access/enforcement/service.ts';
@@ -105,7 +106,10 @@ const noteTypes = (named: NamedTypes, call: NamedTypes['calls'][number], types: 
     }
   });
 
-/** The real engine port, recording the resource and subject type of every item the gate asks it. */
+/**
+ * The real engine port, recording the SpiceDB object types of every item the gate asks it: the resource type as sent, and
+ * the subject type through the very map the check transport sends it with (the engine's `principal` is `access_human`).
+ */
 const recordingDecisionCheck = (named: NamedTypes) =>
   Layer.effect(
     DecisionCheck,
@@ -116,7 +120,7 @@ const recordingDecisionCheck = (named: NamedTypes) =>
           noteTypes(
             named,
             'check',
-            items.flatMap((item) => [item.resource.type, item.subject.type]),
+            items.flatMap((item) => [item.resource.type, SPICEDB_V2_SUBJECT_TYPES[item.subject.type]]),
           ).pipe(Effect.andThen(engine.checkBulk(items))),
       };
     }),
