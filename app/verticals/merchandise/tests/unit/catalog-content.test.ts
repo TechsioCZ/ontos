@@ -1,8 +1,9 @@
 import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
 import { PgClient } from '@effect/sql-pg';
+import { getTableColumns } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Reactivity } from 'effect/reactivity';
-import { merchandiseRelations } from '../../src/database/schema.ts';
+import { categories as categoryTable, merchandiseRelations } from '../../src/database/schema.ts';
 import {
   categoryRowOf,
   EMPTY_CATALOG_HEAD,
@@ -309,6 +310,7 @@ it.effect('CreateProduct derives primary category ancestry without additional ca
       Effect.flip,
     );
     expect(Schema.is(MerchandiseLifecycleConflict)(refused)).toBe(true);
+    return yield* Effect.void;
   }),
 );
 
@@ -335,7 +337,7 @@ it.effect('rejects a category slug already used elsewhere in the company, includ
 it.effect('a category-only working set already renames all stored primary-category labels transactionally', () =>
   Effect.scoped(
     Effect.gen(function* persistedCategoryRename() {
-      const statements: { readonly sql: string; readonly params: readonly unknown[] }[] = [];
+      const statements: { readonly params: readonly unknown[]; readonly sql: string }[] = [];
       const services = yield* Layer.build(
         scriptedPgClientLayer(
           Effect.succeed(
@@ -352,7 +354,7 @@ it.effect('a category-only working set already renames all stored primary-catego
       const db = yield* makeWithDefaults({ relations: merchandiseRelations }).pipe(
         Effect.provideService(PgClient.PgClient, Context.get(services, PgClient.PgClient)),
       );
-      const scope = { tenantId: actor.tenantId, legalEntityId: '30000000-0000-4000-8000-000000000001' };
+      const scope = { legalEntityId: '30000000-0000-4000-8000-000000000001', tenantId: actor.tenantId };
       const categoryOnly = { ...state, products: [] };
       const change = yield* updateCategoryCommand(
         categoryOnly,
@@ -393,8 +395,10 @@ it.effect('a category-only working set already renames all stored primary-catego
 it.effect('loads a scoped slug collision even when its category id is absent from the create request', () =>
   Effect.scoped(
     Effect.gen(function* scopedCategoryCollisionRead() {
-      const scope = { tenantId: actor.tenantId, legalEntityId: '30000000-0000-4000-8000-000000000001' };
-      const stored = yield* categoryRowOf(scope, rootCategory);
+      const scope = { legalEntityId: '30000000-0000-4000-8000-000000000001', tenantId: actor.tenantId };
+      const encoded = new Map(Object.entries({ ...(yield* categoryRowOf(scope, rootCategory)), ordinal: 1 }));
+      // The scripted connection answers selects positionally, so the stored row follows the table's column order.
+      const stored = Object.keys(getTableColumns(categoryTable)).map((column) => [column, encoded.get(column)]);
       const services = yield* Layer.build(
         scriptedPgClientLayer(
           Effect.succeed(
@@ -404,7 +408,7 @@ it.effect('loads a scoped slug collision even when its category id is absent fro
                 expect(params).toContain(rootCategory.slug);
                 return Effect.succeed([{ id: rootCategory.id }]);
               }
-              return Effect.succeed(params.includes(rootCategory.id) ? [{ ...stored, ordinal: 1 }] : []);
+              return Effect.succeed(params.includes(rootCategory.id) ? [Object.fromEntries(stored)] : []);
             }),
           ),
         ).pipe(Layer.provide(Reactivity.layer)),
