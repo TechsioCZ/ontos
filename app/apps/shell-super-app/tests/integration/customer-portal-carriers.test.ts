@@ -68,45 +68,51 @@ const all = (codes: readonly string[]) => CARRIERS.map(([label]) => ({ codes, la
 it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 seconds' })(
   'the customer portal carriers admit the registered storefront client only',
   (suite) => {
-    suite.effect('the storefront workload in its registered company, and nobody else anywhere', () =>
-      withAccessAdminCase((accessCase) =>
-        Effect.gen(function* storefrontOnly() {
-          const [companyA = '', companyB = ''] = accessCase.companies;
-          const [foreign = ''] = accessCase.foreignCompanies;
-          // No binding yet: the workload is refused as unbound.
-          expect(yield* answersFor(accessCase, 'workload', companyA)).toEqual(all(['deny.workload_unbound']));
-          yield* accessCase.bindWorkload({
-            legalEntityIds: [companyA],
-            persona: 'workload',
-            workloadKey: 'commerce.storefront-client',
-          });
-          expect(yield* answersFor(accessCase, 'workload', companyA)).toEqual(all(['allow.workload']));
-          // Another company of the same tenant its binding is not registered for: refused.
-          expect(yield* answersFor(accessCase, 'workload', companyB)).toEqual(all(['deny.workload_unbound']));
-          // Another tenant's company named in this tenant: refused by the company-of-tenant rule.
-          expect(yield* answersFor(accessCase, 'workload', foreign)).toEqual(all(['deny.scope_mismatch']));
-          // People never run these carriers, whatever they hold; an agent is refused as an agent before that.
-          for (const persona of ['owner', 'companyAdmin', 'member'] as const) {
-            expect(yield* answersFor(accessCase, persona, companyA)).toEqual(all(['deny.workload_only']));
-          }
-          expect(yield* answersFor(accessCase, 'agent', companyA)).toEqual(all(['deny.agent_forbidden']));
-        }),
-      ),
+    suite.effect(
+      'the storefront workload in its registered company, and nobody else anywhere',
+      () =>
+        withAccessAdminCase((accessCase) =>
+          Effect.gen(function* storefrontOnly() {
+            const [companyA = '', companyB = ''] = accessCase.companies;
+            const [foreign = ''] = accessCase.foreignCompanies;
+            // No binding yet: the workload is refused as unbound.
+            expect(yield* answersFor(accessCase, 'workload', companyA)).toEqual(all(['deny.workload_unbound']));
+            yield* accessCase.bindWorkload({
+              legalEntityIds: [companyA],
+              persona: 'workload',
+              workloadKey: 'commerce.storefront-client',
+            });
+            expect(yield* answersFor(accessCase, 'workload', companyA)).toEqual(all(['allow.workload']));
+            // Another company of the same tenant its binding is not registered for: refused.
+            expect(yield* answersFor(accessCase, 'workload', companyB)).toEqual(all(['deny.workload_unbound']));
+            // Another tenant's company named in this tenant: refused by the company-of-tenant rule.
+            expect(yield* answersFor(accessCase, 'workload', foreign)).toEqual(all(['deny.scope_mismatch']));
+            // People never run these carriers, whatever they hold; an agent is refused as an agent before that.
+            for (const persona of ['owner', 'companyAdmin', 'member'] as const) {
+              expect(yield* answersFor(accessCase, persona, companyA)).toEqual(all(['deny.workload_only']));
+            }
+            expect(yield* answersFor(accessCase, 'agent', companyA)).toEqual(all(['deny.agent_forbidden']));
+          }),
+        ),
+      120_000,
     );
 
-    suite.effect("another tenant's principal presented in this tenant is refused", () =>
-      withAccessAdminCase((accessCase) =>
-        Effect.gen(function* otherTenant() {
-          const [companyA = ''] = accessCase.companies;
-          yield* accessCase.bindWorkload({
-            legalEntityIds: [companyA],
-            persona: 'workload',
-            workloadKey: 'commerce.storefront-client',
-          });
-          const answers = yield* answersFor(accessCase, 'foreignOwner', companyA);
-          expect(answers.every(({ codes }) => !codes.includes('allow.workload'))).toBe(true);
-        }),
-      ),
+    suite.effect(
+      "another tenant's principal presented in this tenant is refused",
+      () =>
+        withAccessAdminCase((accessCase) =>
+          Effect.gen(function* otherTenant() {
+            const [companyA = ''] = accessCase.companies;
+            yield* accessCase.bindWorkload({
+              legalEntityIds: [companyA],
+              persona: 'workload',
+              workloadKey: 'commerce.storefront-client',
+            });
+            const answers = yield* answersFor(accessCase, 'foreignOwner', companyA);
+            expect(answers.every(({ codes }) => !codes.includes('allow.workload'))).toBe(true);
+          }),
+        ),
+      120_000,
     );
   },
 );

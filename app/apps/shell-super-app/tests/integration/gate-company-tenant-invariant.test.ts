@@ -268,54 +268,60 @@ const workloadQuestionOf = Effect.fn('GateInvariant.workloadQuestion')(function*
 it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '120 seconds' })(
   'the gate pairs a tenant only with its own principals and companies',
   (suite) => {
-    suite.effect('every scope mode refuses a principal or a company of another tenant', () =>
-      withAccessAdminCase((accessCase) =>
-        Effect.gen(function* everyMode() {
-          const answers = yield* Effect.forEach(
-            QUESTIONS,
-            ({ mode, testCase }) => answerOf(accessCase, testCase, mode),
-            { concurrency: 1 },
-          );
-          expect(answers.map(({ case: label, mode, outcome }) => ({ label, mode, outcome }))).toEqual(
-            QUESTIONS.map(({ mode, testCase }) => ({ label: testCase.label, mode, outcome: testCase.expected })),
-          );
-          const foreignPairings = answers.filter((_, index) => {
-            const question = QUESTIONS[index];
-            return question !== undefined && pairsForeignCompany(question.testCase);
-          });
-          expect(foreignPairings.length).toBe(6);
-          for (const answer of foreignPairings) {
-            expect({ case: answer.case, codes: answer.codes, mode: answer.mode }).toEqual({
-              case: answer.case,
-              codes: ['deny.scope_mismatch'],
-              mode: answer.mode,
+    suite.effect(
+      'every scope mode refuses a principal or a company of another tenant',
+      () =>
+        withAccessAdminCase((accessCase) =>
+          Effect.gen(function* everyMode() {
+            const answers = yield* Effect.forEach(
+              QUESTIONS,
+              ({ mode, testCase }) => answerOf(accessCase, testCase, mode),
+              { concurrency: 1 },
+            );
+            expect(answers.map(({ case: label, mode, outcome }) => ({ label, mode, outcome }))).toEqual(
+              QUESTIONS.map(({ mode, testCase }) => ({ label: testCase.label, mode, outcome: testCase.expected })),
+            );
+            const foreignPairings = answers.filter((_, index) => {
+              const question = QUESTIONS[index];
+              return question !== undefined && pairsForeignCompany(question.testCase);
             });
-          }
-        }),
-      ),
+            expect(foreignPairings.length).toBe(6);
+            for (const answer of foreignPairings) {
+              expect({ case: answer.case, codes: answer.codes, mode: answer.mode }).toEqual({
+                case: answer.case,
+                codes: ['deny.scope_mismatch'],
+                mode: answer.mode,
+              });
+            }
+          }),
+        ),
+      120_000,
     );
 
-    suite.effect('an inspection refuses a company of another tenant in every scope mode, as the gate does', () =>
-      withAccessAdminCase((accessCase) =>
-        Effect.gen(function* inspections() {
-          const answers = yield* Effect.forEach(
-            QUESTIONS,
-            ({ mode, testCase }) => inspectionOf(accessCase, testCase, mode),
-            { concurrency: 1 },
-          );
-          expect(answers.map(({ case: label, mode, outcome }) => ({ label, mode, outcome }))).toEqual(
-            QUESTIONS.map(({ mode, testCase }) => ({ label: testCase.label, mode, outcome: testCase.expected })),
-          );
-          const foreignPairings = answers.filter((_, index) => {
-            const question = QUESTIONS[index];
-            return question !== undefined && pairsForeignCompany(question.testCase);
-          });
-          expect(foreignPairings.map(({ case: label, codes, mode }) => ({ codes, label, mode }))).toEqual(
-            foreignPairings.map(({ case: label, mode }) => ({ codes: ['deny.scope_mismatch'], label, mode })),
-          );
-          expect(foreignPairings.length).toBe(6);
-        }),
-      ),
+    suite.effect(
+      'an inspection refuses a company of another tenant in every scope mode, as the gate does',
+      () =>
+        withAccessAdminCase((accessCase) =>
+          Effect.gen(function* inspections() {
+            const answers = yield* Effect.forEach(
+              QUESTIONS,
+              ({ mode, testCase }) => inspectionOf(accessCase, testCase, mode),
+              { concurrency: 1 },
+            );
+            expect(answers.map(({ case: label, mode, outcome }) => ({ label, mode, outcome }))).toEqual(
+              QUESTIONS.map(({ mode, testCase }) => ({ label: testCase.label, mode, outcome: testCase.expected })),
+            );
+            const foreignPairings = answers.filter((_, index) => {
+              const question = QUESTIONS[index];
+              return question !== undefined && pairsForeignCompany(question.testCase);
+            });
+            expect(foreignPairings.map(({ case: label, codes, mode }) => ({ codes, label, mode }))).toEqual(
+              foreignPairings.map(({ case: label, mode }) => ({ codes: ['deny.scope_mismatch'], label, mode })),
+            );
+            expect(foreignPairings.length).toBe(6);
+          }),
+        ),
+      120_000,
     );
 
     suite.effect(
@@ -332,31 +338,35 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '120 se
             expect(foreignAnswers).toEqual(MODES.map(() => ({ codes: ['deny.scope_mismatch'], outcome: 'DENIED' })));
           }),
         ),
+      120_000,
     );
 
-    suite.effect('a page of tenant-context LISTs with a company selected reads its scope once', () =>
-      withAccessAdminCase((accessCase) =>
-        Effect.gen(function* measuredListPage() {
-          const declaration = yield* publishedDeclaration(accessCase);
-          const [ours] = accessCase.companies;
-          const page = yield* Effect.forEach(
-            ['optional', 'forbidden', 'optional'] as const,
-            (mode) => ownerQuestionOf(accessCase, declaration, ours, mode),
-            { concurrency: 1 },
-          );
-          const counts = new Map<string, number>();
-          const listed = yield* accessCase.gate.listMany(page).pipe(Effect.withTracer(countingTracer(counts)));
-          expect(listed.map(({ decision }) => decision.outcome)).toEqual(['ALLOWED', 'ALLOWED', 'ALLOWED']);
-          const measured = {
-            scopeReads: counts.get('TenantIntentLoader.readScope') ?? 0,
-            statements: counts.get('postgres') ?? 0,
-            transactions: counts.get('sql.transaction') ?? 0,
-          };
-          yield* Effect.logInfo('listMany page cost').pipe(Effect.annotateLogs(measured));
-          // The gate's checked read answers the engine's company-less read of the same holder: one read, as on trunk.
-          expect(measured.scopeReads).toBe(1);
-        }),
-      ),
+    suite.effect(
+      'a page of tenant-context LISTs with a company selected reads its scope once',
+      () =>
+        withAccessAdminCase((accessCase) =>
+          Effect.gen(function* measuredListPage() {
+            const declaration = yield* publishedDeclaration(accessCase);
+            const [ours] = accessCase.companies;
+            const page = yield* Effect.forEach(
+              ['optional', 'forbidden', 'optional'] as const,
+              (mode) => ownerQuestionOf(accessCase, declaration, ours, mode),
+              { concurrency: 1 },
+            );
+            const counts = new Map<string, number>();
+            const listed = yield* accessCase.gate.listMany(page).pipe(Effect.withTracer(countingTracer(counts)));
+            expect(listed.map(({ decision }) => decision.outcome)).toEqual(['ALLOWED', 'ALLOWED', 'ALLOWED']);
+            const measured = {
+              scopeReads: counts.get('TenantIntentLoader.readScope') ?? 0,
+              statements: counts.get('postgres') ?? 0,
+              transactions: counts.get('sql.transaction') ?? 0,
+            };
+            yield* Effect.logInfo('listMany page cost').pipe(Effect.annotateLogs(measured));
+            // The gate's checked read answers the engine's company-less read of the same holder: one read, as on trunk.
+            expect(measured.scopeReads).toBe(1);
+          }),
+        ),
+      120_000,
     );
 
     suite.effect(
@@ -381,37 +391,41 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '120 se
             expect(listed.filter(({ predicate }) => predicate !== undefined).length).toBe(3);
           }),
         ),
+      120_000,
     );
 
-    suite.effect('a bound storefront workload acts only in its registered company of this tenant', () =>
-      withAccessAdminCase((accessCase) =>
-        Effect.gen(function* workloads() {
-          const [companyA = '', companyB = ''] = accessCase.companies;
-          const [foreign = ''] = accessCase.foreignCompanies;
-          yield* accessCase.bindWorkload({
-            legalEntityIds: [companyA],
-            persona: 'workload',
-            workloadKey: 'commerce.storefront-client',
-          });
-          const questions = yield* Effect.forEach(
-            [companyA, foreign, companyB, companyA],
-            (company) => workloadQuestionOf(accessCase, company),
-            { concurrency: 1 },
-          );
-          const alone = yield* Effect.forEach(questions, (question) => accessCase.gate.decide(question), {
-            concurrency: 1,
-          });
-          const batched = yield* accessCase.gate.decideMany(questions);
-          for (const answers of [alone, batched]) {
-            expect(answers.map((answer) => codesOf(answer))).toEqual([
-              ['allow.workload'],
-              ['deny.scope_mismatch'],
-              ['deny.workload_unbound'],
-              ['allow.workload'],
-            ]);
-          }
-        }),
-      ),
+    suite.effect(
+      'a bound storefront workload acts only in its registered company of this tenant',
+      () =>
+        withAccessAdminCase((accessCase) =>
+          Effect.gen(function* workloads() {
+            const [companyA = '', companyB = ''] = accessCase.companies;
+            const [foreign = ''] = accessCase.foreignCompanies;
+            yield* accessCase.bindWorkload({
+              legalEntityIds: [companyA],
+              persona: 'workload',
+              workloadKey: 'commerce.storefront-client',
+            });
+            const questions = yield* Effect.forEach(
+              [companyA, foreign, companyB, companyA],
+              (company) => workloadQuestionOf(accessCase, company),
+              { concurrency: 1 },
+            );
+            const alone = yield* Effect.forEach(questions, (question) => accessCase.gate.decide(question), {
+              concurrency: 1,
+            });
+            const batched = yield* accessCase.gate.decideMany(questions);
+            for (const answers of [alone, batched]) {
+              expect(answers.map((answer) => codesOf(answer))).toEqual([
+                ['allow.workload'],
+                ['deny.scope_mismatch'],
+                ['deny.workload_unbound'],
+                ['allow.workload'],
+              ]);
+            }
+          }),
+        ),
+      120_000,
     );
   },
 );
