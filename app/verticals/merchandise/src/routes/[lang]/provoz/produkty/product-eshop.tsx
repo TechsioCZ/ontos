@@ -298,12 +298,16 @@ const variantsInvalid = (drafts: readonly VariantDraft[]) =>
 const variantsOf = (drafts: readonly VariantDraft[], product: ProductRecord): ProductVariant[] => [
   ...drafts.map((draft): ProductVariant => {
     const original = (product.variants ?? []).find((variant) => variant.id !== undefined && variant.id === draft.id);
+    const priceMinor = parseCzk(draft.priceText) ?? 0;
+    const { priceTiers: inheritedTiers, ...originalFields } = original ?? {};
+    const kept = original?.priceMinor === priceMinor ? original : originalFields;
+    void inheritedTiers;
     const variant = {
-      ...original,
+      ...kept,
       active: draft.active,
       attributes: draft.attributes.trim(),
       name: draft.name.trim(),
-      priceMinor: parseCzk(draft.priceText) ?? 0,
+      priceMinor,
       sku: draft.sku.trim(),
     } satisfies ProductVariant;
     return draft.id === undefined ? variant : { ...variant, id: draft.id };

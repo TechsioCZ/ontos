@@ -519,3 +519,30 @@ describe('the variants tab', () => {
     }),
   );
 });
+
+it.effect('variant base-price editing omits inherited tiers while metadata-only editing keeps them', () =>
+  Effect.gen(function* variantTierSubmission() {
+    const tier = { minimumQuantity: 10, priceExcludingVatMinor: 800, priceMinor: 968 };
+    const original = withVariants([
+      ['v1', 1000, 1210],
+      ['v2', 1000, 1210],
+    ]);
+    shown = {
+      ...original,
+      variants: original.variants?.map((variant) => ({ ...variant, priceTiers: [tier] })),
+    };
+    shownTab = 'variants';
+    yield* Effect.promise(mount);
+    yield* Effect.promise(() => typeInto('variant-price-v1', '20'));
+    yield* Effect.promise(() => typeInto('variant-label-v2', 'Renamed'));
+    yield* Effect.promise(() => click(button('Uložit')));
+    yield* Effect.promise(() => waitUntil(() => rstest.mocked(executeManageCatalog).mock.calls.length === 1));
+    const command = rstest.mocked(executeManageCatalog).mock.calls[0]?.[0].command;
+    expect(Predicate.isTagged(command, 'UpdateProduct')).toBe(true);
+    if (Predicate.isTagged(command, 'UpdateProduct')) {
+      expect(command.patch.variants?.[0]?.priceMinor).toBe(2000);
+      expect(command.patch.variants?.[0]).not.toHaveProperty('priceTiers');
+      expect(command.patch.variants?.[1]?.priceTiers).toEqual([tier]);
+    }
+  }),
+);
