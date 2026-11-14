@@ -335,6 +335,10 @@ it.live(
             yield* insert(
               sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${bindingId}::uuid,${tenantId}::uuid,${principalId}::uuid,${workloadKey},${incarnation ?? (yield* crypto.randomUUIDv4())}::uuid,'active')`,
             );
+            // Register only the fixture's own company; sibling and foreign scopes gain no workload authority.
+            yield* insert(
+              sql`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status) values(${yield* crypto.randomUUIDv4()}::uuid,${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${bindingId}::uuid,${legalEntityId}::uuid,'active')`,
+            );
             return bindingId;
           });
         const revoke = (bindingId: string) =>
