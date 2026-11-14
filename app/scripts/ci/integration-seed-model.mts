@@ -13,7 +13,6 @@ export const quoteLiteral = (value: string) => `'${value.replaceAll("'", "''")}'
 export const SEAL_TABLE = 'trust.scope_sealing_keys';
 export const COMMERCE_URL_KEY = 'INTEGRATION_SEED_COMMERCE_AUTH_DATABASE_URL';
 export const MANIFEST_FILE = 'manifest.json';
-export const WORKER_RUNTIME = '.zerops/runtime/outbox-worker-host';
 export const FRESH_JOB = 'Database, Migration, RLS, Authorization, and Outbox Integration';
 
 /** These tests must retain their own empty/historical database and migration/recovery path. */
@@ -38,6 +37,17 @@ export const MUST_MIGRATE_TESTS = [
   'verticals/party-registry/tests/integration/verification-removal-migration.test.ts',
 ];
 
+/** Rows that run the files above, from their own fresh database preparation; they never restore a seed. */
+export const FRESH_DATABASE_JOB = /^Fresh Database Integration\b/u;
+
+/**
+ * A test file must keep the job's own fresh preparation only when it migrates or recovers that database itself
+ * (MUST_MIGRATE_TESTS and the name rule below). Every other integration test either uses the job database as it is
+ * or derives its own databases from it: a schema-only clone (makeIsolatedNativeDatabaseFixture) or an empty
+ * database it migrates itself. For those the restored seed is the same database: its roles, grants, owners,
+ * schema fingerprints and journals are checked on restore. So the refusal is by file, never by job: a job that runs
+ * the root suite or a large owner's suite may seed once it names exactly the files it runs.
+ */
 export const assertSeedConsumer = (input: {
   readonly jobName: string;
   readonly purpose: string;
@@ -51,13 +61,10 @@ export const assertSeedConsumer = (input: {
       .replace(/^app\//u, '');
     return MUST_MIGRATE_TESTS.includes(relative) || /(?:migration|stage-recovery|fresh-database)/u.test(relative);
   });
-  // Root shards contain migration-equivalence and recovery tests; do not guess Rstest's shard assignment.
-  const excludedJob =
-    input.jobName === FRESH_JOB ||
-    /Root Integration|Commerce Customer Context Integration|Core Runtime Integration|Party Registry Integration/u.test(
-      input.jobName,
-    );
-  return input.purpose !== 'ordinary-tests' || input.rootSuite || excludedJob || forbidden !== undefined
+  // A root-suite job must name its files: the root suite carries migration-equivalence and recovery tests.
+  const unnamedRootSuite = input.rootSuite && input.testFiles.length === 0;
+  const excludedJob = input.jobName === FRESH_JOB || FRESH_DATABASE_JOB.test(input.jobName);
+  return input.purpose !== 'ordinary-tests' || unnamedRootSuite || excludedJob || forbidden !== undefined
     ? Effect.fail(seedFailure(`Seed restore forbidden for migration/recovery coverage: ${forbidden ?? input.jobName}`))
     : Effect.void;
 };

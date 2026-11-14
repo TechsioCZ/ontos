@@ -10,13 +10,13 @@ jq -e '
   ($plan.outputs.expected | fromjson) as $expected |
   [
     "workspace-gate", "workspace-unit", "workspace-unit-artifacts", "static-contracts", "format-and-lint",
-    "service-integration", "seeded-integration", "integration-seed-proof", "browser-integration",
+    "service-integration", "integration-seed-proof", "browser-integration",
     "node-artifact-build", "node-artifact-proof"
   ] as $gates |
-  # Test matrices an affected plan may leave without rows, and the seed producer of seeded rows (seeding is a
-  # full-run optimization); every other gate always runs outside a no-op plan.
-  ["workspace-unit", "workspace-unit-artifacts", "service-integration", "seeded-integration",
-    "integration-seed-proof", "browser-integration"] as $optional |
+  # Test matrices an affected plan may leave without rows, and the seed producer, which runs exactly when an
+  # integration row does; every other gate always runs outside a no-op plan.
+  ["workspace-unit", "workspace-unit-artifacts", "service-integration", "integration-seed-proof",
+    "browser-integration"] as $optional |
   ($proof.result == "success" or $proof.result == "skipped") and
   $plan.result == "success" and
   (($expected | keys | sort) == ($gates | sort)) and

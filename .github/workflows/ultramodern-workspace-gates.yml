@@ -100,7 +100,7 @@ jobs:
       unit: ${{ steps.selection.outputs.unit || steps.changes.outputs.unit }}
       unit-artifacts: ${{ steps.selection.outputs.unit-artifacts || steps.changes.outputs.unit-artifacts }}
       integration: ${{ steps.selection.outputs.integration || steps.changes.outputs.integration }}
-      seeded-integration: ${{ steps.selection.outputs.seeded-integration || steps.changes.outputs.seeded-integration }}
+      seed-key: ${{ steps.seed-key.outputs.key }}
       browser: ${{ steps.selection.outputs.browser || steps.changes.outputs.browser }}
     steps:
       - name: Harden Runner
@@ -128,6 +128,15 @@ jobs:
           else
             echo "::warning title=Complete suite::origin/$BASE_REF has no merge base with this commit; every gate runs."
           fi
+      # The migrated integration database changes only with these inputs: every Drizzle migration and config, the
+      # database identity, role and grant scripts, the stage migrator and its activation and convergence scripts, the
+      # verifier and trust audit, the seed tool itself, SpiceDB's bootstrap schema, the topology and authorization
+      # catalogue the migrator activates, the PostgreSQL and SpiceDB image digests (docker-compose.yml), and the
+      # toolchain and lockfile. A change to any of them names a new seed; nothing else can reuse an old one.
+      # Hashed before the install, so no node_modules file is read.
+      - name: Name the integration seed cache
+        id: seed-key
+        run: echo "key=integration-seed-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/**/drizzle*/**', 'app/**/drizzle*.config.ts', 'app/database/**', 'app/scripts/postgres/**', 'app/scripts/run-zerops-migrator.mjs', 'app/scripts/migration-convergence*', 'app/scripts/access-release-activation*', 'app/scripts/run-optional-commerce-portal-auth-db.mts', 'app/scripts/verify-application-db-schema.mts', 'app/scripts/audit-database-trust-boundaries.mts', 'app/scripts/prove-zerops-migrator-artifact.sh', 'app/scripts/ci/integration-seed*.mts', 'app/packages/core-runtime/spicedb/**', 'app/packages/core-runtime/src/install/**', 'app/packages/core-runtime/src/db/**', 'app/topology/**', 'app/docker-compose.yml', 'app/zerops.yaml', 'app/package.json', 'app/pnpm-lock.yaml', 'app/.mise.toml', '!app/**/node_modules/**', '!app/tools/**') }}" >>"$GITHUB_OUTPUT"
       - name: Classify the complete diff without app dependencies
         id: changes
         env:
@@ -437,6 +446,33 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # Rows that prepare their services before they need the build outputs start after this lease, not after the
+  # builds. The lease ends once every build shard has a runner, so waiting rows can never hold all 20 runners while
+  # a shard is still queued. It proves nothing and only gates the start of those rows.
+  build-lease:
+    name: Wait until every build shard has a runner
+    needs: [ci-plan]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout the wait script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: app/scripts/wait-for-build-shards.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Wait until every build shard started
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WAIT_FOR_BUILD_SHARDS_INTERVAL: '5'
+        run: bash app/scripts/wait-for-build-shards.sh started 'Build node artifacts (' 6
+
   # Source checks start immediately after planning; they do not wait for Node artifacts.
   workspace-gate:
     name: ${{ matrix.name }}
@@ -723,11 +759,14 @@ jobs:
         run: mise exec -- pnpm authorization:catalog:artifact:check
 
   # The pre-commit hook is the format and lint gate, run from the git root exactly as a commit runs it,
-  # over every tracked file. Type-aware lint of the whole tree took over four minutes on one runner, so
-  # each shard runs the hook over every other tracked file (`--all-files` is `git ls-files`): together
-  # they cover every file once, and the hook's own globs still choose what each tool checks.
+  # over every tracked file (`--all-files` is `git ls-files`); the hook's own globs choose what each tool checks.
+  # Since tsrs 0.23 a type-aware lint run checks the whole program of every tsconfig its files touch, so two
+  # shards paid that check twice; one job pays it once. TSRS_FAST=1 is tsrs' fast whole-program mode, which still
+  # reports type errors; the separate Typecheck gate keeps the authoritative TS-Go check of the whole workspace.
+  # Every diagnostic class still runs: formatting, every lint rule including the type-aware ones, and the Shell UI
+  # candidate check, over every file.
   format-and-lint:
-    name: Format and Lint through the pre-commit hook (${{ matrix.shard }}/2)
+    name: Format and Lint through the pre-commit hook (${{ matrix.shard }}/1)
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['format-and-lint'] == 'success' }}
     runs-on: ubuntu-latest
@@ -735,7 +774,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1]
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -754,7 +793,8 @@ jobs:
       - name: Format and Lint the shard's files through the pre-commit hook
         env:
           SHARD: ${{ matrix.shard }}
-          SHARDS: 2
+          SHARDS: 1
+          TSRS_FAST: '1'
         run: |
           index=0
           git ls-files -z | while IFS= read -r -d '' file; do
@@ -776,14 +816,24 @@ jobs:
   # packages' suites always finished last, so the heaviest packages get a job each: a PR waits for the
   # slowest job, not for the sum of the packages a single job used to run one after another.
   #
+  # Seeding is decided by file, not by job: the files that migrate or recover their own job database from empty
+  # (ci-matrices.json "fresh-database-tests", the seed model's inventory) run only in the Fresh Database rows, from
+  # the complete fresh preparation; the seeded Root, Core Runtime, Party Registry and Customer Context rows leave them
+  # out. Every other integration test uses the job database as it is or derives its own databases from it (a
+  # schema-only clone or an empty database it migrates itself), so the restored seed serves it identically.
+  #
   # Sharding is set by what a package's own files cost, not by package size, aiming at about 6 minutes of tests
   # per row. Weighted shards deal files by the measured seconds in ci-matrices.json "test-weights", so the parts of
   # a split giant file spread over the shards; an unsplit file cannot be balanced below its own length. The rows
   # are listed heaviest first, so on a full run the longest jobs take the first free runners.
   service-integration:
     name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
+    needs: [ci-plan, build-lease]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.build-lease.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
+    # The build wait reads this run's job results.
+    permissions:
+      actions: read
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -812,6 +862,9 @@ jobs:
       SPICEDB_GRPC_PORT: '50051'
       SPICEDB_HTTP_PORT: '8443'
       SPICEDB_PRESHARED_KEY: ontos-ci-spicedb-key
+      # The seed tool connects the Commerce portal realm's runtime role with this local development-only password;
+      # the seed itself carries no credentials.
+      INTEGRATION_SEED_COMMERCE_AUTH_DATABASE_URL: postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -826,6 +879,136 @@ jobs:
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
+
+      - name: Create the local SpiceDB TLS certificate
+        working-directory: app
+        # SpiceDB serves TLS only; every client pins this certificate as SPICEDB_CA_CERT.
+        run: |
+          mise exec -- pnpm spicedb:tls:local
+          {
+            echo 'SPICEDB_CA_CERT<<SPICEDB_CA_CERT_EOF'
+            cat .spicedb-tls/cert.pem
+            echo 'SPICEDB_CA_CERT_EOF'
+          } >> "$GITHUB_ENV"
+
+      - name: Start fresh PostgreSQL and SpiceDB services
+        working-directory: app
+        run: |
+          docker compose down --volumes --remove-orphans
+          docker compose up --detach --wait --wait-timeout 120
+
+      # An eligible row (`seed: true`) restores the cached seed: the database exactly as the complete fresh preparation
+      # left it, roles, grants, owners and journals included, checked against its fingerprints and then by db:verify
+      # against this checkout's migrations. Before restoring, the seed model checks the row's name and every test file
+      # the row will run. A miss falls back to the complete fresh preparation below; no row ever waits for a producer.
+      - name: Restore the cached integration seed
+        id: seed-cache
+        if: matrix.seed == true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/integration-seed
+          key: ${{ needs.ci-plan.outputs.seed-key }}
+
+      - name: Restore the proven seed databases
+        if: steps.seed-cache.outputs.cache-hit == 'true'
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+          CI_MATRIX_NAME: ${{ matrix.name }}
+          FRESH_DATABASE_TESTS: ${{ matrix.fresh-database-tests }}
+          PACKAGE_FILTERS: ${{ matrix.package-filters }}
+          ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
+          ROOT_SUITE: ${{ matrix.root-suite || false }}
+          RSTEST_PROJECTS: ${{ matrix.rstest-projects || 'integration' }}
+          RSTEST_SHARD: ${{ matrix.rstest-shard }}
+          SPICEDB_DATABASE_PASSWORD: spicedb
+        run: |
+          # Exactly the files this row runs: a weighted shard lists its own deal; a whole package lists its tracked
+          # integration test files. A failed listing fails the step instead of passing an empty list.
+          listed=''
+          if [[ "$ROOT_SUITE" == true ]]; then
+            listed+="$(RSTEST_WEIGHTED_SHARD_LIST_ONLY=1 mise exec -- bash scripts/ci/rstest-weighted-shard.sh "${ROOT_RSTEST_SHARD:-1/1}" integration)"$'\n'
+          fi
+          for directory in $(sed -E 's/--filter +//g; s#\./##g' <<<"$PACKAGE_FILTERS"); do
+            if [[ -n "$RSTEST_SHARD" ]]; then
+              for project in $RSTEST_PROJECTS; do
+                listed+="$(cd "$directory" && RSTEST_WEIGHTED_SHARD_LIST_ONLY=1 mise exec -- bash "$GITHUB_WORKSPACE/app/scripts/ci/rstest-weighted-shard.sh" "$RSTEST_SHARD" "$project")"$'\n'
+              done
+            else
+              listed+="$(git ls-files -- "$directory/tests/integration" | grep -E '\.test\.[cm]?[jt]sx?$' || true)"$'\n'
+            fi
+          done
+          CI_TEST_FILES="$(grep -v '^$' <<<"$listed" | paste -sd, - || true)"
+          echo "Seed check over $(grep -c . <<<"$listed" || true) test files."
+          mise exec -- node scripts/ci/integration-seed.mts restore --directory "$RUNNER_TEMP/integration-seed" \
+            --disposable --purpose ordinary-tests --job-name "$CI_MATRIX_NAME" --root-suite "$ROOT_SUITE" \
+            --test-files "$CI_TEST_FILES" --jobs 4
+          mise exec -- pnpm db:verify
+
+      - name: Initialize fresh local database login identities
+        if: steps.seed-cache.outputs.cache-hit != 'true'
+        working-directory: app
+        env:
+          DATABASE_LOGIN_ROLE_POLICY: initialize-local
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: development
+        run: mise exec -- pnpm db:bootstrap-runtime-role
+
+      - name: Remove the pre-seeded runtime role to prove deployment bootstrap ordering
+        if: matrix.suite == 'integration' && steps.seed-cache.outputs.cache-hit != 'true'
+        working-directory: app
+        run: |
+          docker compose exec --no-TTY ontos-db psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --set ON_ERROR_STOP=1 <<'SQL'
+          DROP OWNED BY ontos_runtime;
+          DROP ROLE ontos_runtime;
+          SQL
+
+      - name: Run the assembled stage migrator artifact against the fresh database
+        if: matrix.suite == 'integration' && steps.seed-cache.outputs.cache-hit != 'true'
+        working-directory: app
+        # Stage-shaped: the migrator ships only its zerops.yaml deployFiles, runs its real start entry
+        # point, bootstraps SpiceDB's database, and opts into the Commerce portal realm with its own
+        # provider runtime role that nothing pre-creates — exactly what the stage migrator receives.
+        env:
+          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
+          COMMERCE_PORTAL_AUTH_DATABASE_URL: postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci
+          MIGRATOR_PORT: '8080'
+          NODE_ENV: production
+          SPICEDB_DATABASE_PASSWORD: spicedb
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+          ULTRAMODERN_ZEROPS_SERVICE: migrator
+        run: mise exec -- sh scripts/prove-zerops-migrator-artifact.sh "$RUNNER_TEMP/zerops-migrator-artifact"
+
+      - name: Apply and verify Core, Auth, and Contacts migrations, plus Party Registry
+        if: steps.seed-cache.outputs.cache-hit != 'true'
+        working-directory: app
+        # The Commerce portal authentication realm is optional and owns its own Drizzle
+        # configuration, migration journal and runtime role. Naming its database pair here is what
+        # opts this workspace in, so `db:migrate` applies the `commerce_auth` migrations, grants the
+        # provider runtime role and verifies the realm — the schema the portal-auth provider
+        # integration tests read. Development-only values, exactly as the primary database above.
+        # The pair stays scoped to this step: a realm is opted into completely or not at all, and no
+        # later step should see a half-named one.
+        env:
+          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
+          COMMERCE_PORTAL_AUTH_DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_ci
+        run: |
+          mise exec -- pnpm db:migrate
+          mise exec -- pnpm db:verify
+
+      # Every runtime login role must hold exactly the grants the checked-in manifest assigns it.
+      - name: Audit runtime database identities against the checked-in grant manifest
+        if: matrix.suite == 'integration' && steps.seed-cache.outputs.cache-hit != 'true'
+        working-directory: app
+        run: mise exec -- pnpm database-trust:audit
+
+      # The services and the fresh database are ready before the build outputs are needed: this row started right after
+      # planning (via build-lease), so its preparation ran while the build shards built. It now needs those outputs.
+      - name: Wait for this run's Node build shards
+        working-directory: app
+        timeout-minutes: 25
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/wait-for-build-shards.sh finished 'Build node artifacts (' 6
 
       # Native receiving fixtures and Inventory workers use genuine published owner metadata.
       # Restore this run's outputs instead of rebuilding or substituting synthetic build identities.
@@ -864,82 +1047,11 @@ jobs:
           APP_ENV_PATH: /dev/null
         run: mise exec -- pnpm zerops:materialize --app outbox-worker-host --package app --package-dir . --worker
 
-      - name: Create the local SpiceDB TLS certificate
-        working-directory: app
-        # SpiceDB serves TLS only; every client pins this certificate as SPICEDB_CA_CERT.
-        run: |
-          mise exec -- pnpm spicedb:tls:local
-          {
-            echo 'SPICEDB_CA_CERT<<SPICEDB_CA_CERT_EOF'
-            cat .spicedb-tls/cert.pem
-            echo 'SPICEDB_CA_CERT_EOF'
-          } >> "$GITHUB_ENV"
-
-      - name: Start fresh PostgreSQL and SpiceDB services
-        working-directory: app
-        run: |
-          docker compose down --volumes --remove-orphans
-          docker compose up --detach --wait --wait-timeout 120
-
-      - name: Initialize fresh local database login identities
-        working-directory: app
-        env:
-          DATABASE_LOGIN_ROLE_POLICY: initialize-local
-          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: development
-        run: mise exec -- pnpm db:bootstrap-runtime-role
-
-      - name: Remove the pre-seeded runtime role to prove deployment bootstrap ordering
-        if: matrix.suite == 'integration'
-        working-directory: app
-        run: |
-          docker compose exec --no-TTY ontos-db psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --set ON_ERROR_STOP=1 <<'SQL'
-          DROP OWNED BY ontos_runtime;
-          DROP ROLE ontos_runtime;
-          SQL
-
-      - name: Run the assembled stage migrator artifact against the fresh database
-        if: matrix.suite == 'integration'
-        working-directory: app
-        # Stage-shaped: the migrator ships only its zerops.yaml deployFiles, runs its real start entry
-        # point, bootstraps SpiceDB's database, and opts into the Commerce portal realm with its own
-        # provider runtime role that nothing pre-creates — exactly what the stage migrator receives.
-        env:
-          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
-          COMMERCE_PORTAL_AUTH_DATABASE_URL: postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci
-          MIGRATOR_PORT: '8080'
-          NODE_ENV: production
-          SPICEDB_DATABASE_PASSWORD: spicedb
-          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
-          ULTRAMODERN_ZEROPS_SERVICE: migrator
-        run: mise exec -- sh scripts/prove-zerops-migrator-artifact.sh "$RUNNER_TEMP/zerops-migrator-artifact"
-
-      - name: Apply and verify Core, Auth, and Contacts migrations, plus Party Registry
-        working-directory: app
-        # The Commerce portal authentication realm is optional and owns its own Drizzle
-        # configuration, migration journal and runtime role. Naming its database pair here is what
-        # opts this workspace in, so `db:migrate` applies the `commerce_auth` migrations, grants the
-        # provider runtime role and verifies the realm — the schema the portal-auth provider
-        # integration tests read. Development-only values, exactly as the primary database above.
-        # The pair stays scoped to this step: a realm is opted into completely or not at all, and no
-        # later step should see a half-named one.
-        env:
-          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
-          COMMERCE_PORTAL_AUTH_DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_ci
-        run: |
-          mise exec -- pnpm db:migrate
-          mise exec -- pnpm db:verify
-
-      # Every runtime login role must hold exactly the grants the checked-in manifest assigns it.
-      - name: Audit runtime database identities against the checked-in grant manifest
-        if: matrix.suite == 'integration'
-        working-directory: app
-        run: mise exec -- pnpm database-trust:audit
-
       # Stage-shaped on the Cloudflare target: the host is materialized by its zerops.yaml build command,
       # ships only its deployFiles, polls every hosted owner's outbox against the freshly migrated
       # database until /ready, then drains on SIGTERM.
       - name: Build and run the Outbox Worker host artifact against the fresh database
-        if: matrix.suite == 'integration'
+        if: matrix.suite == 'integration' && steps.seed-cache.outputs.cache-hit != 'true'
         working-directory: app
         run: mise exec -- sh scripts/prove-outbox-worker-host-artifact.sh "$RUNNER_TEMP/outbox-worker-host-artifact"
 
@@ -959,6 +1071,9 @@ jobs:
           RSTEST_SHARD: ${{ matrix.rstest-shard }}
           # Two Rstest file workers only on rows whose suites were reviewed safe in parallel; every other row runs one.
           RSTEST_WORKERS: ${{ matrix.rstest-workers || 1 }}
+          RSTEST_PROJECTS: ${{ matrix.rstest-projects || 'integration' }}
+          # skip on seeded weighted rows, only on the Fresh Database rows (scripts/ci/rstest-weighted-shard.sh).
+          FRESH_DATABASE_TESTS: ${{ matrix.fresh-database-tests }}
         # Same commands as `pnpm test:integration`. The root suite and a large package (one package per row, whose
         # test:integration script is exactly `rstest --project integration`) run as duration-weighted shards that deal
         # the files of a split giant test family across the shards (scripts/ci/rstest-weighted-shard.sh).
@@ -972,8 +1087,11 @@ jobs:
             mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 || status=$?
           fi
           if [[ -n "$PACKAGE_FILTERS" && -n "$RSTEST_SHARD" ]]; then
-            # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
-            mise exec -- pnpm $PACKAGE_FILTERS exec bash "$PWD/scripts/ci/rstest-weighted-shard.sh" "$RSTEST_SHARD" integration --pool.maxWorkers "$RSTEST_WORKERS" || status=$?
+            # One package after another, each project after the other (Party Registry's two projects share one database).
+            for project in $RSTEST_PROJECTS; do
+              # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
+              mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 $PACKAGE_FILTERS exec bash "$PWD/scripts/ci/rstest-weighted-shard.sh" "$RSTEST_SHARD" "$project" --pool.maxWorkers "$RSTEST_WORKERS" || status=$?
+            done
           elif [[ -n "$PACKAGE_FILTERS" ]]; then
             # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
             mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 || status=$?
@@ -1001,12 +1119,17 @@ jobs:
         working-directory: app
         run: docker compose down --volumes --remove-orphans
 
-  # Runs today's complete fresh-database preparation once, with every proof it carries (login initialization, the
-  # removed runtime role, the assembled stage migrator, migrations and verification, the grant audit and the Outbox
-  # Worker host build-and-run proof), then publishes the migrated databases and the built worker host to this run's
-  # seeded rows (scripts/ci/integration-seed.mts, scripts/ci/worker-host-artifact.mts). Only full runs plan it.
+  # The seed producer. It never gates a row: rows restore the cached seed when it exists and prepare their own
+  # database otherwise, so no row waits for this job.
+  # INVARIANT: every full run runs the complete fresh-database proof here (login initialization, the removed runtime
+  # role, the assembled stage migrator, migrations and verification, the grant audit and the Outbox Worker host
+  # build-and-run proof), whatever the cache holds. A narrow round with a cached seed skips only the fresh-migration
+  # part, and only while the seed's inputs (ci-plan's seed-key) are unchanged: a change to any migration input names
+  # a new key, misses, and runs the full proof here. It always proves the worker host on the restored seed.
+  # Saves the seed only on a miss, under this run's ref scope: a candidate/* run reads its own ref's and main's
+  # saves, so a fix round that keeps one candidate ref reuses the seed its first run saved.
   integration-seed-proof:
-    name: Prove and publish the integration seed database
+    name: Prove and cache the integration seed database
     needs: [ci-plan, node-artifact-build]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['integration-seed-proof'] == 'success' }}
     runs-on: ubuntu-latest
@@ -1053,9 +1176,14 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
-      # Native receiving fixtures and Inventory workers use genuine published owner metadata.
-      # Restore this run's outputs instead of rebuilding or substituting synthetic build identities.
-      - name: Download the same-run Node artifacts for native owner fixtures
+      - name: Restore the cached integration seed
+        id: seed-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/integration-seed
+          key: ${{ needs.ci-plan.outputs.seed-key }}
+
+      - name: Download the same-run Node artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: node-units-*
@@ -1083,220 +1211,32 @@ jobs:
           docker compose up --detach --wait --wait-timeout 120
 
       - name: Prove the fresh-database preparation and dump the seed
+        if: needs.ci-plan.outputs.mode == 'full' || steps.seed-cache.outputs.cache-hit != 'true'
         working-directory: app
-        run: mise exec -- node scripts/ci/integration-seed.mts produce --directory "$RUNNER_TEMP/integration-seed" --disposable
+        run: mise exec -- node scripts/ci/integration-seed.mts produce --directory "$RUNNER_TEMP/integration-seed-fresh" --disposable
 
-      - name: Package the proven Outbox Worker host
-        working-directory: app
-        run: >-
-          mise exec -- node scripts/ci/worker-host-artifact.mts build --directory "$RUNNER_TEMP/worker-host"
-          --from-proof "$RUNNER_TEMP/integration-seed-proof/outbox-worker-host-artifact"
-
-      # The proof directory holds logs and is never uploaded.
-      - name: Upload the integration seed
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: integration-seed-${{ github.run_id }}
-          path: ${{ runner.temp }}/integration-seed
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Upload the Outbox Worker host
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: integration-worker-host-${{ github.run_id }}
-          path: ${{ runner.temp }}/worker-host
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Show bounded service diagnostics after failure
-        if: failure()
+      - name: Prove the Outbox Worker host on the cached seed
+        if: needs.ci-plan.outputs.mode != 'full' && steps.seed-cache.outputs.cache-hit == 'true'
         working-directory: app
         run: |
-          docker compose ps
-          docker compose logs --no-color --tail 200
-
-      - name: Remove isolated service containers and volumes
-        if: always()
-        working-directory: app
-        run: docker compose down --volumes --remove-orphans
-
-  # Rows whose suites need only an ordinary migrated database restore the seed this run's producer proved, instead
-  # of repeating its preparation; the producer keeps every proof. The seed model refuses migration and recovery
-  # coverage: the Database aggregate, Root, Core Runtime, Party Registry and Customer Context rows never seed.
-  seeded-integration:
-    name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build, integration-seed-proof]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.integration-seed-proof.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['seeded-integration'] == 'success' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.ci-plan.outputs.seeded-integration) }}
-    env:
-      BETTER_AUTH_SECRET: ontos-ci-better-auth-secret-at-least-32-characters
-      BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3020,http://127.0.0.1:3020
-      BETTER_AUTH_URL: http://localhost:3020
-      DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
-      DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_ci
-      ONTOS_GATEWAY_ISSUER: http://localhost:3020
-      ONTOS_GATEWAY_PRIVATE_JWK: '{"crv":"Ed25519","d":"UoaeSCRqtNBHKhIQ-gzuhaTWwch5wyr5JUp0NOV_zR0","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}'
-      ONTOS_GATEWAY_PUBLIC_JWKS: '{"keys":[{"crv":"Ed25519","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}]}'
-      ONTOS_RUNTIME_DB_PASSWORD: ontos_runtime
-      # One login per runtime database identity, each with its own development-only password.
-      PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:party_registry_runtime@localhost:5433/ontos_ci
-      PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:party_registry_worker@localhost:5433/ontos_ci
-      POSTGRES_DB: ontos_ci
-      POSTGRES_PASSWORD: ontos_ci_admin
-      POSTGRES_PORT: '5433'
-      POSTGRES_USER: ontos_ci_admin
-      SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:shell_gateway_issuer@localhost:5433/ontos_ci
-      SPICEDB_ENDPOINT: localhost:50051
-      SPICEDB_GRPC_PORT: '50051'
-      SPICEDB_HTTP_PORT: '8443'
-      SPICEDB_PRESHARED_KEY: ontos-ci-spicedb-key
-      # The seed producer and its consumers connect the Commerce portal realm's runtime role with this local
-      # development-only password; the seed itself carries no credentials.
-      INTEGRATION_SEED_COMMERCE_AUTH_DATABASE_URL: postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
-        with:
-          egress-policy: audit
-
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Install the app workspace
-        uses: ./.github/actions/install-app
-
-      # Native receiving fixtures and Inventory workers use genuine published owner metadata.
-      # Restore this run's outputs instead of rebuilding or substituting synthetic build identities.
-      - name: Download the same-run Node artifacts for native owner fixtures
-        if: matrix.suite == 'integration'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: node-units-*
-          path: ${{ runner.temp }}/native-composition-units
-
-      # The stage migrator, the Outbox Worker host and the derived Composition read every unit, so a row names a
-      # smaller `artifact-units` set only when none of those run on it; without it every unit is required.
-      - name: Unpack the Node artifacts for native owner fixtures
-        if: matrix.suite == 'integration'
-        working-directory: app
-        env:
-          REQUIRED_UNITS: ${{ matrix.artifact-units }}
-        # shellcheck disable=SC2086 # REQUIRED_UNITS is a list of separate unit paths.
-        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output $REQUIRED_UNITS
-
-      # The native owner fixtures (Inventory's confirmation-protection suite) read the Composition these exact built
-      # artifacts form; the path is exported only after the derivation decoded it as consumers decode it.
-      - name: Derive the fresh built Composition for native owner fixtures
-        if: matrix.native-composition == true
-        working-directory: app
-        env:
-          APP_ENV_PATH: /dev/null
-        run: |
-          mise exec -- node scripts/derive-built-application-composition.mts --snapshot-output "$RUNNER_TEMP/native-composition-snapshot.json"
-          echo "NATIVE_1290_COMPOSITION_SNAPSHOT_PATH=$RUNNER_TEMP/native-composition-snapshot.json" >> "$GITHUB_ENV"
-
-      - name: Create the local SpiceDB TLS certificate
-        working-directory: app
-        # SpiceDB serves TLS only; every client pins this certificate as SPICEDB_CA_CERT.
-        run: |
-          mise exec -- pnpm spicedb:tls:local
-          {
-            echo 'SPICEDB_CA_CERT<<SPICEDB_CA_CERT_EOF'
-            cat .spicedb-tls/cert.pem
-            echo 'SPICEDB_CA_CERT_EOF'
-          } >> "$GITHUB_ENV"
-
-      - name: Start fresh PostgreSQL and SpiceDB services
-        working-directory: app
-        run: |
-          docker compose down --volumes --remove-orphans
-          docker compose up --detach --wait --wait-timeout 120
-
-      - name: Download the integration seed
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: integration-seed-${{ github.run_id }}
-          path: ${{ runner.temp }}/integration-seed
-
-      - name: Download the Outbox Worker host
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: integration-worker-host-${{ github.run_id }}
-          path: ${{ runner.temp }}/worker-host
-
-      # The seed model checks the row's name and every integration test file it may run before it restores.
-      - name: Restore the proven seed databases
-        working-directory: app
-        env:
-          APP_ENV_PATH: /dev/null
-          CI_MATRIX_NAME: ${{ matrix.name }}
-          PACKAGE_FILTERS: ${{ matrix.package-filters }}
-          ROOT_SUITE: ${{ matrix.root-suite || false }}
-          SPICEDB_DATABASE_PASSWORD: spicedb
-        run: |
-          files=()
-          for directory in $(sed -E 's/--filter +//g; s#\./##g' <<<"$PACKAGE_FILTERS"); do
-            while IFS= read -r file; do
-              files+=("$file")
-            done < <(git ls-files -- "$directory/tests/integration" | grep -E '\.test\.[cm]?[jt]sx?$')
-          done
-          CI_TEST_FILES="$(IFS=,; echo "${files[*]}")"
-          echo "Seed check over ${#files[@]} integration test files."
           mise exec -- node scripts/ci/integration-seed.mts restore --directory "$RUNNER_TEMP/integration-seed" \
-            --disposable --purpose ordinary-tests --job-name "$CI_MATRIX_NAME" --root-suite "$ROOT_SUITE" \
-            --test-files "$CI_TEST_FILES" --jobs 4
+            --disposable --purpose ordinary-tests --job-name 'Prove and cache the integration seed database' \
+            --root-suite false --test-files '' --jobs 4
+          mise exec -- pnpm db:verify
+          mise exec -- pnpm database-trust:audit
+          mise exec -- sh scripts/prove-outbox-worker-host-artifact.sh "$RUNNER_TEMP/outbox-worker-host-artifact"
 
-      - name: Install the proven Outbox Worker host
-        working-directory: app
-        env:
-          APP_ENV_PATH: /dev/null
-        run: mise exec -- node scripts/ci/worker-host-artifact.mts use --directory "$RUNNER_TEMP/worker-host"
+      # The proof directory holds logs and is never cached.
+      - name: Move the new seed to the cached path
+        if: steps.seed-cache.outputs.cache-hit != 'true'
+        run: mv "$RUNNER_TEMP/integration-seed-fresh" "$RUNNER_TEMP/integration-seed"
 
-      - name: Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests, including Party Registry
-        if: matrix.suite == 'integration'
-        working-directory: app
-        # The job environment above is the whole configuration. Native fixtures refuse to start unless
-        # dotenv discovery is closed, so no workspace .env file can leak into an owned test database.
-        env:
-          APP_ENV_PATH: /dev/null
-          MIGRATION_EQUIVALENCE_TEST_DATABASE_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/postgres
-          MIGRATION_EQUIVALENCE_TEST_SANDBOX: owned-postgres18
-          SPICEDB_DATABASE_PASSWORD: spicedb
-          PACKAGE_FILTERS: ${{ matrix.package-filters }}
-          ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
-          ROOT_SUITE: ${{ matrix.root-suite }}
-          RSTEST_SHARD: ${{ matrix.rstest-shard }}
-          # Two Rstest file workers only on rows whose suites were reviewed safe in parallel; every other row runs one.
-          RSTEST_WORKERS: ${{ matrix.rstest-workers || 1 }}
-        # Same commands as `pnpm test:integration`. The root suite and a large package (one package per row, whose
-        # test:integration script is exactly `rstest --project integration`) run as duration-weighted shards that deal
-        # the files of a split giant test family across the shards (scripts/ci/rstest-weighted-shard.sh).
-        # Every suite runs even when an earlier one fails (--no-bail; the root suite's failure is kept, not fatal), so
-        # one package's failure never hides another's; the step fails at the end if any of them failed.
-        run: |
-          status=0
-          if [[ "$ROOT_SUITE" == true && -n "$ROOT_RSTEST_SHARD" ]]; then
-            mise exec -- bash scripts/ci/rstest-weighted-shard.sh "$ROOT_RSTEST_SHARD" integration --pool.maxWorkers 1 || status=$?
-          elif [[ "$ROOT_SUITE" == true ]]; then
-            mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 || status=$?
-          fi
-          if [[ -n "$PACKAGE_FILTERS" && -n "$RSTEST_SHARD" ]]; then
-            # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
-            mise exec -- pnpm $PACKAGE_FILTERS exec bash "$PWD/scripts/ci/rstest-weighted-shard.sh" "$RSTEST_SHARD" integration --pool.maxWorkers "$RSTEST_WORKERS" || status=$?
-          elif [[ -n "$PACKAGE_FILTERS" ]]; then
-            # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
-            mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 || status=$?
-          fi
-          exit "$status"
+      - name: Cache the new seed for later rows and runs
+        if: steps.seed-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/integration-seed
+          key: ${{ needs.ci-plan.outputs.seed-key }}
 
       - name: Show bounded service diagnostics after failure
         if: failure()
@@ -1344,6 +1284,7 @@ jobs:
       SPICEDB_GRPC_PORT: '50051'
       SPICEDB_HTTP_PORT: '8443'
       SPICEDB_PRESHARED_KEY: ontos-ci-spicedb-key
+      INTEGRATION_SEED_COMMERCE_AUTH_DATABASE_URL: postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -1422,7 +1363,30 @@ jobs:
           docker compose down --volumes --remove-orphans
           docker compose up --detach --wait --wait-timeout 120
 
+      # The browser suite restores the cached seed like an eligible integration row and migrates its own database on a
+      # miss; it never waits for the seed producer.
+      - name: Restore the cached integration seed
+        id: seed-cache
+        if: matrix.seed == true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/integration-seed
+          key: ${{ needs.ci-plan.outputs.seed-key }}
+
+      - name: Restore the proven seed databases
+        if: steps.seed-cache.outputs.cache-hit == 'true'
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+          CI_MATRIX_NAME: ${{ matrix.name }}
+          SPICEDB_DATABASE_PASSWORD: spicedb
+        run: |
+          mise exec -- node scripts/ci/integration-seed.mts restore --directory "$RUNNER_TEMP/integration-seed" \
+            --disposable --purpose ordinary-tests --job-name "$CI_MATRIX_NAME" --root-suite false --test-files '' --jobs 4
+          mise exec -- pnpm db:verify
+
       - name: Initialize fresh local database login identities
+        if: steps.seed-cache.outputs.cache-hit != 'true'
         working-directory: app
         env:
           DATABASE_LOGIN_ROLE_POLICY: initialize-local
@@ -1430,6 +1394,7 @@ jobs:
         run: mise exec -- pnpm db:bootstrap-runtime-role
 
       - name: Apply and verify Core, Auth, and Contacts migrations, plus Party Registry
+        if: steps.seed-cache.outputs.cache-hit != 'true'
         working-directory: app
         # The Commerce portal authentication realm is optional and owns its own Drizzle
         # configuration, migration journal and runtime role. Naming its database pair here is what
@@ -1578,7 +1543,6 @@ jobs:
         static-contracts,
         format-and-lint,
         service-integration,
-        seeded-integration,
         integration-seed-proof,
         browser-integration,
         node-artifact-build,

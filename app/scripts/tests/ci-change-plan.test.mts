@@ -98,13 +98,11 @@ it('gives each matrix job only its own rows and plans a job without rows as skip
   const full = planCiChecks({ applyAffected: false, changedPaths: [CATALOG_SOURCE], packages, templates });
   expect(full.jobs.browser.map(({ suite }) => suite)).toEqual(['browser']);
   expect(full.jobs.services.every(({ suite }) => suite === 'integration')).toBe(true);
-  expect(full.jobs.services.length + full.jobs.seeded.length + full.jobs.browser.length).toBe(
-    templates.integration.length,
-  );
-  // Only a full run restores the seed; its rows never cover migration or recovery behaviour.
-  expect(full.jobs.seeded.length).toBeGreaterThan(0);
-  expect(full.jobs.seeded.every((entry) => entry.seed === true && entry['root-suite'] !== true)).toBe(true);
-  expect(full.jobs.services.some((entry) => entry.seed === true)).toBe(false);
+  expect(full.jobs.services.length + full.jobs.browser.length).toBe(templates.integration.length);
+  // The Fresh Database rows run the files that migrate their own database and never restore the seed.
+  const fresh = full.jobs.services.filter((entry) => entry['fresh-database-tests'] === 'only');
+  expect(fresh.length).toBeGreaterThan(0);
+  expect(fresh.some((entry) => entry.seed === true)).toBe(false);
   expect(full.jobs.unitArtifacts.every((entry) => entry['node-artifacts'] === true)).toBe(true);
   expect(full.jobs.unitPlain.some((entry) => entry['node-artifacts'] === true)).toBe(false);
   expect(full.jobs.unitArtifacts.length + full.jobs.unitPlain.length).toBe(templates.unit.length);
@@ -115,10 +113,8 @@ it('gives each matrix job only its own rows and plans a job without rows as skip
   expect(affected.expected['browser-integration']).toBe('skipped');
   expect(affected.expected['node-artifact-proof']).toBe('success');
   expect(affected.expected['node-artifact-build']).toBe('success');
-  // An affected round prepares its own databases instead of waiting for the seed producer.
-  expect(affected.jobs.seeded).toEqual([]);
-  expect(affected.expected['integration-seed-proof']).toBe('skipped');
-  expect(affected.expected['seeded-integration']).toBe('skipped');
+  // The seed producer runs whenever an integration row does, also on an affected round; no row waits for it.
+  expect(affected.expected['integration-seed-proof']).toBe('success');
   expect(affected.jobs.services.map(({ name }) => name)).toContain('Catalog Integration');
   // A sharded single-package row whose package is affected runs exactly as planned.
   const shell = planCiChecks({
@@ -218,7 +214,9 @@ it('selects browser checks, all root integration shards and every Shell shard wh
     templates,
   });
   expect(plan.integration.some(({ suite }) => suite === 'browser')).toBe(true);
-  const roots = plan.integration.filter((entry) => entry['root-suite'] === true);
+  const roots = plan.integration.filter(
+    (entry) => entry['root-suite'] === true && entry['fresh-database-tests'] !== 'only',
+  );
   expect(roots.map((entry) => entry['root-rstest-shard'])).toEqual(['1/4', '2/4', '3/4', '4/4']);
   expect(roots.every((entry) => entry['package-filters'] === '')).toBe(true);
   // The Shell suite runs in its own shards, so the root-suite shard names no package here.
@@ -227,7 +225,7 @@ it('selects browser checks, all root integration shards and every Shell shard wh
     plan.integration
       .filter((entry) => entry['package-filters'] === '--filter ./apps/shell-super-app')
       .map((entry) => entry['rstest-shard']),
-  ).toEqual(['1/4', '2/4', '3/4', '4/4']);
+  ).toEqual(['1/5', '2/5', '3/5', '4/5', '5/5']);
 });
 
 it('keeps a root-only integration shard empty of package filters rather than selecting every package', () => {
@@ -305,8 +303,12 @@ it('uses every customer-context shard for any selected customer-context package 
     templates,
   });
   expect(
-    plan.integration.filter((entry) => entry['rstest-shard'] !== undefined).map((entry) => entry['rstest-shard']),
-  ).toEqual(['1/4', '2/4', '3/4', '4/4']);
+    plan.integration
+      .filter((entry) => entry['rstest-shard'] !== undefined && entry['fresh-database-tests'] !== 'only')
+      .map((entry) => entry['rstest-shard']),
+  ).toEqual(['1/5', '2/5', '3/5', '4/5', '5/5']);
+  // Its files that migrate their own database still run, in the Fresh Database rows.
+  expect(plan.integration.filter((entry) => entry['fresh-database-tests'] === 'only')).toHaveLength(2);
   expect(plan.integration.some((entry) => entry['native-preproposal'] === true)).toBe(true);
 });
 

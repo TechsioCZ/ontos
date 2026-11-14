@@ -24,7 +24,11 @@ const IntegrationEntrySchema = Schema.Struct({
   'rstest-shard': Schema.optionalKey(Schema.String),
   /** Rstest file workers; 2 only for suites reviewed safe in parallel (unique template databases, UUID tenants). */
   'rstest-workers': Schema.optionalKey(Schema.Literals([1, 2])),
-  /** The row may restore the same-run seed database (scripts/ci/integration-seed.mts) instead of migrating its own. */
+  /** skip: leave out, only: run just the files that must migrate their own database (rstest-weighted-shard.sh). */
+  'fresh-database-tests': Schema.optionalKey(Schema.Literals(['skip', 'only'])),
+  /** Rstest projects a weighted package row runs one after another; `integration` when absent. */
+  'rstest-projects': Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[a-z-]+(?: [a-z-]+)*$/u))),
+  /** The row may restore the cached seed database (scripts/ci/integration-seed.mts) instead of migrating its own. */
   seed: Schema.optionalKey(Schema.Boolean),
   suite: Schema.Literals(['integration', 'browser']),
 }).check(
@@ -43,6 +47,8 @@ const IntegrationEntrySchema = Schema.Struct({
   ),
 );
 export const CiTemplatesSchema = Schema.Struct({
+  /** Test files that must migrate or recover their job's database; the seed model refuses exactly these. */
+  'fresh-database-tests': Schema.optionalKey(Schema.Array(Schema.String)),
   integration: Schema.Array(IntegrationEntrySchema),
   source: Schema.Array(CommandEntrySchema),
   /** Measured seconds of a test-file family by file-name prefix; scripts/ci/rstest-weighted-shard.sh deals by it. */
@@ -117,7 +123,6 @@ const gateIds = [
   'static-contracts',
   'format-and-lint',
   'service-integration',
-  'seeded-integration',
   'integration-seed-proof',
   'browser-integration',
   'node-artifact-build',
@@ -248,24 +253,22 @@ export const planCiChecks = (input: {
   const unit = effectiveMode === 'full' ? templates.unit : selectedUnit;
   // Each matrix job gets only its own rows: artifact consumers wait for the build shards, every other row starts
   // right after planning. A matrix job with no row is planned as skipped instead of failing on an empty matrix.
-  // Seed restoring saves runner minutes but waits for the seed producer, so it pays off only on a full run that
-  // fills every runner; an affected round lets each row prepare its own database right after the builds.
-  const seeded = (entry: IntegrationEntry) => effectiveMode === 'full' && entry.seed === true;
+  // Eligible rows restore the cached seed when it exists and prepare their own database otherwise; the seed
+  // producer runs whenever an integration row does, to prove and refresh it.
   const jobs = {
     browser: integration.filter(({ suite }) => suite === 'browser'),
-    seeded: integration.filter((entry) => entry.suite === 'integration' && seeded(entry)),
-    services: integration.filter((entry) => entry.suite === 'integration' && !seeded(entry)),
+    services: integration.filter(({ suite }) => suite === 'integration'),
     unitArtifacts: unit.filter((entry) => entry['node-artifacts'] === true),
     unitPlain: unit.filter((entry) => entry['node-artifacts'] !== true),
   };
-  // Every gate names its row count; gates without a matrix always run one row.
+  // Every gate names its row count; gates without a matrix always run one row. The seed producer runs whenever an
+  // integration row does.
   const rows = {
     'browser-integration': jobs.browser.length,
     'format-and-lint': 1,
-    'integration-seed-proof': jobs.seeded.length,
+    'integration-seed-proof': jobs.services.length,
     'node-artifact-build': 1,
     'node-artifact-proof': 1,
-    'seeded-integration': jobs.seeded.length,
     'service-integration': jobs.services.length,
     'static-contracts': 1,
     'workspace-gate': 1,
@@ -403,7 +406,6 @@ const cli = Command.make(
         browser: encode(plan.jobs.browser),
         expected: encode(plan.expected),
         integration: encode(plan.jobs.services),
-        'seeded-integration': encode(plan.jobs.seeded),
         source: encode(plan.source),
         unit: encode(plan.jobs.unitPlain),
         'unit-artifacts': encode(plan.jobs.unitArtifacts),

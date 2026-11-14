@@ -1,8 +1,12 @@
 # The files of one weighted shard, from an `rstest list --filesOnly --json` listing (see rstest-weighted-shard.sh).
-# Arguments: $weights (file-name prefix -> seconds of the family), $count, $index, $fallback (seconds per other file).
+# Arguments: $weights (file-name prefix -> seconds of the family), $count, $index, $fallback (seconds per other file),
+# $fresh (app-relative files that must migrate their own database), $freshMode ("skip", "only" or ""), $appRoot.
 def name: split("/") | last;
+def fresh: (if startswith($appRoot) then .[($appRoot | length):] else . end) as $relative
+  | ($fresh | index($relative)) != null or ($relative | test("migration|stage-recovery|fresh-database"));
 
 [(if type == "array" then . else .items end)[] | .file] | unique
+| map(select(if $freshMode == "skip" then (fresh | not) elif $freshMode == "only" then fresh else true end))
 | . as $files
 | ($weights | to_entries | map(
     .key as $prefix

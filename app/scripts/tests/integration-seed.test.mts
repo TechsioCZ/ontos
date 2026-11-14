@@ -66,16 +66,36 @@ it.effect('allows ordinary tests and refuses every must-migrate file before rest
     for (const purpose of ['migration-proof', 'recovery-proof', 'fresh-database']) {
       expect(Exit.isFailure(yield* assertSeedConsumer({ ...consumer, purpose }).pipe(Effect.exit))).toBe(true);
     }
-    for (const jobName of [
-      FRESH_JOB,
-      'Root Integration (1/3)',
-      'Commerce Customer Context Integration (1/6)',
-      'Core Runtime Integration',
-      'Party Registry Integration',
-    ]) {
+    for (const jobName of [FRESH_JOB, 'Fresh Database Integration (1/2)']) {
       expect(Exit.isFailure(yield* assertSeedConsumer({ ...consumer, jobName }).pipe(Effect.exit))).toBe(true);
     }
+    // A root-suite job seeds only when it names exactly the files it runs, none of them a must-migrate file.
     expect(Exit.isFailure(yield* assertSeedConsumer({ ...consumer, rootSuite: true }).pipe(Effect.exit))).toBe(true);
+    const rootFile =
+      '/home/runner/work/ontos/ontos/app/scripts/integration/application-composition-native-upgrade.test.mts';
+    yield* assertSeedConsumer({
+      ...consumer,
+      jobName: 'Root Integration (1/4)',
+      rootSuite: true,
+      testFiles: [rootFile],
+    });
+    for (const jobName of [
+      'Commerce Customer Context Integration (1/5)',
+      'Core Runtime Integration (1/2)',
+      'Party Registry Integration',
+    ]) {
+      yield* assertSeedConsumer({ ...consumer, jobName });
+    }
+    expect(
+      Exit.isFailure(
+        yield* assertSeedConsumer({
+          ...consumer,
+          jobName: 'Root Integration (2/4)',
+          rootSuite: true,
+          testFiles: [rootFile, '/w/app/scripts/integration/migration-equivalence.test.mts'],
+        }).pipe(Effect.exit),
+      ),
+    ).toBe(true);
     return yield* Effect.void;
   }),
 );

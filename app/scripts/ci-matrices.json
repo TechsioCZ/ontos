@@ -26,6 +26,26 @@
     "price-group-effective-period-postgres-history": 86,
     "price-group-effective-period-postgres-resolution": 86
   },
+  "fresh-database-tests": [
+    "scripts/integration/migration-equivalence.test.mts",
+    "scripts/integration/migrator-runtime-owner-access.test.mts",
+    "scripts/integration/stage-recovery-lifecycle.test.mts",
+    "scripts/integration/vat-deploy-sequence.test.mts",
+    "packages/core-runtime/tests/integration/action-authority-v2-migration.test.ts",
+    "packages/core-runtime/tests/integration/application-composition-authority-migration.test.ts",
+    "packages/core-runtime/tests/integration/application-composition-durable-work-migration.test.ts",
+    "packages/core-runtime/tests/integration/auth-namespace-migration.test.ts",
+    "packages/core-runtime/tests/integration/contacts-identity-migration.test.ts",
+    "packages/core-runtime/tests/integration/search-v2-cutover-migration.test.ts",
+    "verticals/commerce-customer-context/tests/integration/stage-recovery-lane15-lifecycle.test.ts",
+    "verticals/commerce-customer-context/tests/integration/organization-profile-ico-migration-postgres.test.ts",
+    "verticals/work-tasks/tests/integration/assignment-migration.test.mts",
+    "verticals/merchandise/tests/integration/tax-classification-migration-postgres.test.ts",
+    "verticals/finance-billing/tests/integration/vat-classification-migration-postgres.test.ts",
+    "verticals/party-registry/tests/integration/official-identifier-original-input-migration.test.ts",
+    "verticals/party-registry/tests/integration/organization-migration-fixture.test.ts",
+    "verticals/party-registry/tests/integration/verification-removal-migration.test.ts"
+  ],
   "source": [
     {
       "name": "Typecheck, Effect Rule Implementation, and OntOS API Boundary Rules",
@@ -33,20 +53,16 @@
       "commands": "pnpm typecheck\npnpm typecheck:lint-rules\npnpm test:lint-rules\npnpm lint:repository-policy\npnpm api:check:ontos\npnpm handler-services:check\n"
     },
     {
-      "name": "Repository Tooling Tests (1/4)",
-      "commands": "bash scripts/ci/rstest-weighted-shard.sh 1/4 scripts --pool.maxWorkers 2\n"
+      "name": "Repository Tooling Tests (1/3)",
+      "commands": "bash scripts/ci/rstest-weighted-shard.sh 1/3 scripts --pool.maxWorkers 2\n"
     },
     {
-      "name": "Repository Tooling Tests (2/4)",
-      "commands": "bash scripts/ci/rstest-weighted-shard.sh 2/4 scripts --pool.maxWorkers 2\n"
+      "name": "Repository Tooling Tests (2/3)",
+      "commands": "bash scripts/ci/rstest-weighted-shard.sh 2/3 scripts --pool.maxWorkers 2\n"
     },
     {
-      "name": "Repository Tooling Tests (3/4)",
-      "commands": "bash scripts/ci/rstest-weighted-shard.sh 3/4 scripts --pool.maxWorkers 2\n"
-    },
-    {
-      "name": "Repository Tooling Tests (4/4)",
-      "commands": "bash scripts/ci/rstest-weighted-shard.sh 4/4 scripts --pool.maxWorkers 2\n"
+      "name": "Repository Tooling Tests (3/3)",
+      "commands": "bash scripts/ci/rstest-weighted-shard.sh 3/3 scripts --pool.maxWorkers 2\n"
     },
     {
       "name": "Module Entrypoint and Codesmith Generation Tests",
@@ -99,61 +115,86 @@
   "integration": [
     {
       "suite": "integration",
-      "name": "Commerce Customer Context Integration (1/4)",
+      "name": "Commerce Customer Context Integration (1/5)",
       "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "1/4",
-      "rstest-workers": 2
+      "rstest-shard": "1/5",
+      "rstest-workers": 2,
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
-      "name": "Commerce Customer Context Integration (2/4)",
+      "name": "Commerce Customer Context Integration (2/5)",
       "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "2/4",
-      "rstest-workers": 2
+      "rstest-shard": "2/5",
+      "rstest-workers": 2,
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
-      "name": "Commerce Customer Context Integration (3/4)",
+      "name": "Commerce Customer Context Integration (3/5)",
       "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "3/4",
-      "rstest-workers": 2
+      "rstest-shard": "3/5",
+      "rstest-workers": 2,
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
-      "name": "Commerce Customer Context Integration (4/4)",
+      "name": "Commerce Customer Context Integration (4/5)",
       "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "4/4",
-      "rstest-workers": 2
+      "rstest-shard": "4/5",
+      "rstest-workers": 2,
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
-      "name": "Shell Integration (1/4)",
+      "name": "Commerce Customer Context Integration (5/5)",
+      "package-filters": "--filter ./verticals/commerce-customer-context",
+      "rstest-shard": "5/5",
+      "rstest-workers": 2,
+      "seed": true,
+      "fresh-database-tests": "skip"
+    },
+    {
+      "suite": "integration",
+      "name": "Shell Integration (1/5)",
       "package-filters": "--filter ./apps/shell-super-app",
-      "rstest-shard": "1/4",
+      "rstest-shard": "1/5",
       "rstest-workers": 2,
       "seed": true
     },
     {
       "suite": "integration",
-      "name": "Shell Integration (2/4)",
+      "name": "Shell Integration (2/5)",
       "package-filters": "--filter ./apps/shell-super-app",
-      "rstest-shard": "2/4",
+      "rstest-shard": "2/5",
       "rstest-workers": 2,
       "seed": true
     },
     {
       "suite": "integration",
-      "name": "Shell Integration (3/4)",
+      "name": "Shell Integration (3/5)",
       "package-filters": "--filter ./apps/shell-super-app",
-      "rstest-shard": "3/4",
+      "rstest-shard": "3/5",
       "rstest-workers": 2,
       "seed": true
     },
     {
       "suite": "integration",
-      "name": "Shell Integration (4/4)",
+      "name": "Shell Integration (4/5)",
       "package-filters": "--filter ./apps/shell-super-app",
-      "rstest-shard": "4/4",
+      "rstest-shard": "4/5",
+      "rstest-workers": 2,
+      "seed": true
+    },
+    {
+      "suite": "integration",
+      "name": "Shell Integration (5/5)",
+      "package-filters": "--filter ./apps/shell-super-app",
+      "rstest-shard": "5/5",
       "rstest-workers": 2,
       "seed": true
     },
@@ -162,66 +203,89 @@
       "name": "Root Integration (1/4)",
       "native-composition": true,
       "root-suite": true,
-      "root-rstest-shard": "1/4"
+      "root-rstest-shard": "1/4",
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
       "name": "Root Integration (2/4)",
       "native-composition": true,
       "root-suite": true,
-      "root-rstest-shard": "2/4"
+      "root-rstest-shard": "2/4",
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
       "name": "Root Integration (3/4)",
       "native-composition": true,
       "root-suite": true,
-      "root-rstest-shard": "3/4"
+      "root-rstest-shard": "3/4",
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
       "name": "Root Integration (4/4)",
       "native-composition": true,
       "root-suite": true,
-      "root-rstest-shard": "4/4"
+      "root-rstest-shard": "4/4",
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
-      "name": "Privacy Integration (1/3)",
+      "name": "Privacy Integration (1/4)",
       "package-filters": "--filter ./verticals/privacy",
-      "rstest-shard": "1/3",
+      "rstest-shard": "1/4",
       "seed": true
     },
     {
       "suite": "integration",
-      "name": "Privacy Integration (2/3)",
+      "name": "Privacy Integration (2/4)",
       "package-filters": "--filter ./verticals/privacy",
-      "rstest-shard": "2/3",
+      "rstest-shard": "2/4",
       "seed": true
     },
     {
       "suite": "integration",
-      "name": "Privacy Integration (3/3)",
+      "name": "Privacy Integration (3/4)",
       "package-filters": "--filter ./verticals/privacy",
-      "rstest-shard": "3/3",
+      "rstest-shard": "3/4",
+      "seed": true
+    },
+    {
+      "suite": "integration",
+      "name": "Privacy Integration (4/4)",
+      "package-filters": "--filter ./verticals/privacy",
+      "rstest-shard": "4/4",
       "seed": true
     },
     {
       "suite": "integration",
       "name": "Core Runtime Integration (1/2)",
       "package-filters": "--filter ./packages/core-runtime",
-      "rstest-shard": "1/2"
+      "rstest-shard": "1/2",
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
       "name": "Core Runtime Integration (2/2)",
       "package-filters": "--filter ./packages/core-runtime",
-      "rstest-shard": "2/2"
+      "rstest-shard": "2/2",
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
       "name": "Party Registry Integration",
-      "package-filters": "--filter ./verticals/party-registry"
+      "package-filters": "--filter ./verticals/party-registry",
+      "rstest-shard": "1/1",
+      "rstest-projects": "integration integration-worker-cycle",
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
@@ -259,13 +323,34 @@
     },
     {
       "suite": "integration",
+      "name": "Fresh Database Integration (1/2)",
+      "native-composition": true,
+      "root-suite": true,
+      "root-rstest-shard": "1/2",
+      "package-filters": "--filter ./packages/core-runtime --filter ./verticals/commerce-customer-context --filter ./verticals/party-registry",
+      "rstest-shard": "1/2",
+      "fresh-database-tests": "only"
+    },
+    {
+      "suite": "integration",
+      "name": "Fresh Database Integration (2/2)",
+      "native-composition": true,
+      "root-suite": true,
+      "root-rstest-shard": "2/2",
+      "package-filters": "--filter ./packages/core-runtime --filter ./verticals/commerce-customer-context --filter ./verticals/party-registry",
+      "rstest-shard": "2/2",
+      "fresh-database-tests": "only"
+    },
+    {
+      "suite": "integration",
       "name": "Database, Migration, RLS, Authorization, and Outbox Integration",
       "native-composition": true,
       "package-filters": "--filter !. --filter !./verticals/commerce-customer-context --filter !./apps/shell-super-app --filter !./verticals/privacy --filter !./packages/core-runtime --filter !./verticals/party-registry --filter !./verticals/pricing --filter !./verticals/inventory --filter !./verticals/catalog --filter !./verticals/commerce-market-catalog --filter !./verticals/commerce-order --filter !./verticals/payment --filter !./verticals/payment-term-catalog --filter !./verticals/price-group-catalog --filter !./verticals/storefront-registry"
     },
     {
       "suite": "browser",
-      "name": "Authenticated Browser Tests"
+      "name": "Authenticated Browser Tests",
+      "seed": true
     }
   ]
 }
