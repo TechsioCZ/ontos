@@ -8,6 +8,15 @@
     "**/node_modules/**"
   ],
   "compilerOptions": {
-    "skipLibCheck": true
-  }
+    "skipLibCheck": true,
+    "disableSourceOfProjectReferenceRedirect": true
+  },
+  "references": [
+    {
+      "path": "../../../tsconfig.sources.json"
+    },
+    {
+      "path": "../../../tsconfig.tooling-declarations.json"
+    }
+  ]
 }

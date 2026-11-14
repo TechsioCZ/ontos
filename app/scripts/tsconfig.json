@@ -13,6 +13,12 @@
   ],
   "compilerOptions": {
     "incremental": true,
-    "tsBuildInfoFile": "../node_modules/.cache/tsrs/scripts.tsbuildinfo"
-  }
+    "tsBuildInfoFile": "../node_modules/.cache/tsrs/scripts.tsbuildinfo",
+    "disableSourceOfProjectReferenceRedirect": true
+  },
+  "references": [
+    {
+      "path": "../tsconfig.sources.json"
+    }
+  ]
 }

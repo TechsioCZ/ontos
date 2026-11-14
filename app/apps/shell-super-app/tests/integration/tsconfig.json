@@ -4,7 +4,8 @@
     "customConditions": [
       "node"
     ],
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "disableSourceOfProjectReferenceRedirect": true
   },
   "include": [
     "**/*.ts",
@@ -12,5 +13,13 @@
   ],
   "exclude": [
     "**/node_modules/**"
+  ],
+  "references": [
+    {
+      "path": "../../../../tsconfig.sources.json"
+    },
+    {
+      "path": "../../../../tsconfig.tooling-declarations.json"
+    }
   ]
 }

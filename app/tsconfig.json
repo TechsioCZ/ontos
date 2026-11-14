@@ -2,148 +2,10 @@
   "files": [],
   "references": [
     {
-      "path": "packages/core-runtime"
+      "path": "./tsconfig.sources.json"
     },
     {
-      "path": "packages/gateway-principal-verifier"
-    },
-    {
-      "path": "packages/better-auth-effect-drizzle"
-    },
-    {
-      "path": "packages/customer-payment-term-contracts"
-    },
-    {
-      "path": "packages/payment-term-catalog-contracts"
-    },
-    {
-      "path": "packages/shared-contracts"
-    },
-    {
-      "path": "packages/shared-design-tokens"
-    },
-    {
-      "path": "packages/admin-ui"
-    },
-    {
-      "path": "apps/shell-super-app"
-    },
-    {
-      "path": "verticals/party-registry"
-    },
-    {
-      "path": "verticals/commerce-customer-context"
-    },
-    {
-      "path": "verticals/commerce-market-catalog"
-    },
-    {
-      "path": "verticals/payment-term-catalog"
-    },
-    {
-      "path": "verticals/payment"
-    },
-    {
-      "path": "verticals/catalog"
-    },
-    {
-      "path": "verticals/pricing"
-    },
-    {
-      "path": "verticals/storefront-registry"
-    },
-    {
-      "path": "packages/email-delivery"
-    },
-    {
-      "path": "packages/price-group-catalog-contracts"
-    },
-    {
-      "path": "verticals/price-group-catalog"
-    },
-    {
-      "path": "verticals/assortment"
-    },
-    {
-      "path": "verticals/inventory"
-    },
-    {
-      "path": "verticals/availability"
-    },
-    {
-      "path": "verticals/tax"
-    },
-    {
-      "path": "verticals/privacy"
-    },
-    {
-      "path": "verticals/property-portfolio"
-    },
-    {
-      "path": "verticals/property-leasing"
-    },
-    {
-      "path": "verticals/legal-agreements"
-    },
-    {
-      "path": "verticals/work-tasks"
-    },
-    {
-      "path": "verticals/workforce"
-    },
-    {
-      "path": "verticals/tagging"
-    },
-    {
-      "path": "verticals/crm"
-    },
-    {
-      "path": "verticals/sales-pipeline"
-    },
-    {
-      "path": "verticals/merchandise"
-    },
-    {
-      "path": "verticals/facility-operations"
-    },
-    {
-      "path": "verticals/sales-insights"
-    },
-    {
-      "path": "verticals/finance-billing"
-    },
-    {
-      "path": "verticals/crm-activities"
-    },
-    {
-      "path": "./verticals/projects"
-    },
-    {
-      "path": "packages/catalog-selection-contracts"
-    },
-    {
-      "path": "packages/commerce-cart-contracts"
-    },
-    {
-      "path": "verticals/commerce-cart"
-    },
-    {
-      "path": "packages/commerce-cart-finalization-contracts"
-    },
-    {
-      "path": "packages/commerce-order-contracts"
-    },
-    {
-      "path": "verticals/commerce-order"
-    },
-    {
-      "path": "packages/party-registry-identity-contracts"
-    },
-    {
-      "path": "verticals/promotion"
-    },
-    {
-      "path": "verticals/symmy-integration"
+      "path": "./tsconfig.tooling-declarations.json"
     },
     {
       "path": "apps/shell-super-app/tsconfig.typecheck.json"
@@ -248,13 +110,7 @@
       "path": "packages/admin-ui/tsconfig.typecheck.json"
     },
     {
-      "path": "packages/consent-authority-contracts"
-    },
-    {
       "path": "packages/core-runtime/tsconfig.typecheck.json"
-    },
-    {
-      "path": "packages/customer-market-retirement-contracts"
     },
     {
       "path": "packages/customer-market-retirement-contracts/tsconfig.typecheck.json"
@@ -275,16 +131,10 @@
       "path": "packages/price-group-catalog-contracts/tsconfig.typecheck.json"
     },
     {
-      "path": "packages/pricing-contracts"
-    },
-    {
       "path": "packages/pricing-contracts/tsconfig.typecheck.json"
     },
     {
       "path": "packages/shared-contracts/tsconfig.typecheck.json"
-    },
-    {
-      "path": "packages/storefront-registry-contracts"
     },
     {
       "path": "packages/storefront-registry-contracts/tsconfig.typecheck.json"

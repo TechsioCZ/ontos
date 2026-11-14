@@ -5,12 +5,18 @@
       "node"
     ],
     "incremental": true,
-    "tsBuildInfoFile": "../../node_modules/.cache/tsrs/scripts__scaffolding__tsconfig.tsbuildinfo"
+    "tsBuildInfoFile": "../../node_modules/.cache/tsrs/scripts__scaffolding__tsconfig.tsbuildinfo",
+    "disableSourceOfProjectReferenceRedirect": true
   },
   "include": [
     "./**/*.mts"
   ],
   "exclude": [
     "**/node_modules/**"
+  ],
+  "references": [
+    {
+      "path": "../../tsconfig.sources.json"
+    }
   ]
 }

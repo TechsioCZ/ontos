@@ -6,12 +6,18 @@
       "node"
     ],
     "incremental": true,
-    "tsBuildInfoFile": "../../../node_modules/.cache/tsrs/packages__shared-contracts__tooling__tsconfig.tsbuildinfo"
+    "tsBuildInfoFile": "../../../node_modules/.cache/tsrs/packages__shared-contracts__tooling__tsconfig.tsbuildinfo",
+    "disableSourceOfProjectReferenceRedirect": true
   },
   "include": [
     "**/*.ts"
   ],
   "exclude": [
     "**/node_modules/**"
+  ],
+  "references": [
+    {
+      "path": "../../../tsconfig.sources.json"
+    }
   ]
 }

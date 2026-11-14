@@ -7,9 +7,15 @@
   ],
   "compilerOptions": {
     "incremental": true,
-    "tsBuildInfoFile": "../../node_modules/.cache/tsrs/tools__oxlint__tsconfig.tsbuildinfo"
+    "tsBuildInfoFile": "../../node_modules/.cache/tsrs/tools__oxlint__tsconfig.tsbuildinfo",
+    "disableSourceOfProjectReferenceRedirect": true
   },
   "exclude": [
     "**/node_modules/**"
+  ],
+  "references": [
+    {
+      "path": "../../tsconfig.sources.json"
+    }
   ]
 }

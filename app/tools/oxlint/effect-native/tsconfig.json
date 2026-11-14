@@ -11,7 +11,8 @@
       "node"
     ],
     "incremental": true,
-    "tsBuildInfoFile": "../../../node_modules/.cache/tsrs/tools__oxlint__effect-native.tsbuildinfo"
+    "tsBuildInfoFile": "../../../node_modules/.cache/tsrs/tools__oxlint__effect-native.tsbuildinfo",
+    "disableSourceOfProjectReferenceRedirect": true
   },
   "include": [
     "**/*.ts",
@@ -21,5 +22,10 @@
   "exclude": [
     "tests/fixtures",
     "**/node_modules/**"
+  ],
+  "references": [
+    {
+      "path": "../../../tsconfig.sources.json"
+    }
   ]
 }

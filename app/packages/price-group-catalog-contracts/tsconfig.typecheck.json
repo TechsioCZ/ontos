@@ -3,7 +3,8 @@
   "compilerOptions": {
     "noEmit": true,
     "incremental": true,
-    "tsBuildInfoFile": "../../node_modules/.cache/tsrs/packages__price-group-catalog-contracts__typecheck.tsbuildinfo"
+    "tsBuildInfoFile": "../../node_modules/.cache/tsrs/packages__price-group-catalog-contracts__typecheck.tsbuildinfo",
+    "disableSourceOfProjectReferenceRedirect": true
   },
   "include": [
     "*.mts",
@@ -21,7 +22,7 @@
   ],
   "references": [
     {
-      "path": "./tsconfig.json"
+      "path": "../../tsconfig.sources.json"
     }
   ]
 }
