@@ -129,8 +129,9 @@ it.layer(NodeServices.layer)((suite) => {
             .toSorted((left, right) => left.name.localeCompare(right.name));
         });
         const preExtraction = yield* corePolicies('20261024223832_gateway-identity-attestation');
-        // Keep the historical policies exact while including the current intent and prepared-authority policies.
-        const current = yield* corePolicies('20261109185619_workload-company-bindings');
+        // Keep the historical policies exact while including the current intent and prepared-authority policies, and
+        // the runtime's read-only policy on the drain abandonment ledger.
+        const current = yield* corePolicies('20261114011916_application-composition-drain-abandonment');
         const actual = [
           ...Object.values(coreDatabaseSchema).flatMap((table) =>
             getTableConfig(table).policies.map((policy) => renderPolicy({ policy, table })),
@@ -140,7 +141,7 @@ it.layer(NodeServices.layer)((suite) => {
 
         expect(preExtraction).toHaveLength(59);
         expect(actual).toEqual(expect.arrayContaining(preExtraction));
-        expect(current).toHaveLength(179);
+        expect(current).toHaveLength(180);
         expect(actual).toEqual(current);
       }),
   );
