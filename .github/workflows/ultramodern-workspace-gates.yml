@@ -6,7 +6,7 @@ on:
     branches:
       - main
     paths-ignore:
-      - "docs/**"
+      - 'docs/**'
       - CONTEXT-MAP.md
       - README.md
       - AGENTS.md
@@ -19,7 +19,7 @@ on:
     types:
       - checks_requested
   schedule:
-    - cron: "30 2 * * *"
+    - cron: '30 2 * * *'
   workflow_dispatch:
     inputs:
       force-ci-full:
@@ -41,7 +41,7 @@ permissions:
   contents: read
 
 env:
-  ONTOS_ACTION_TRANSACTION_IO_GUARD: "true"
+  ONTOS_ACTION_TRANSACTION_IO_GUARD: 'true'
 
 defaults:
   run:
@@ -184,8 +184,8 @@ jobs:
         id: install
         uses: ./.github/actions/install-app
         with:
-          restore-typescript-build: "true"
-          save-store: "true"
+          restore-typescript-build: 'true'
+          save-store: 'true'
 
       - name: Typecheck the workspace incrementally
         working-directory: app
@@ -296,10 +296,10 @@ jobs:
               units: verticals/symmy-integration verticals/finance-billing verticals/sales-pipeline verticals/privacy verticals/work-tasks verticals/property-portfolio verticals/tax,
             }
     env:
-      BUILD_JOBS: "2"
+      BUILD_JOBS: '2'
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
-      ULTRAMODERN_DISABLE_BUILD_TS_CHECKER: "1"
-      ULTRAMODERN_SKIP_SERVER_TYPECHECK: "1"
+      ULTRAMODERN_DISABLE_BUILD_TS_CHECKER: '1'
+      ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
     steps:
       - name: Harden Runner
@@ -805,12 +805,12 @@ jobs:
       PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:party_registry_worker@localhost:5433/ontos_ci
       POSTGRES_DB: ontos_ci
       POSTGRES_PASSWORD: ontos_ci_admin
-      POSTGRES_PORT: "5433"
+      POSTGRES_PORT: '5433'
       POSTGRES_USER: ontos_ci_admin
       SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:shell_gateway_issuer@localhost:5433/ontos_ci
       SPICEDB_ENDPOINT: localhost:50051
-      SPICEDB_GRPC_PORT: "50051"
-      SPICEDB_HTTP_PORT: "8443"
+      SPICEDB_GRPC_PORT: '50051'
+      SPICEDB_HTTP_PORT: '8443'
       SPICEDB_PRESHARED_KEY: ontos-ci-spicedb-key
     steps:
       - name: Harden Runner
@@ -923,7 +923,7 @@ jobs:
         env:
           COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
           COMMERCE_PORTAL_AUTH_DATABASE_URL: postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci
-          MIGRATOR_PORT: "8080"
+          MIGRATOR_PORT: '8080'
           NODE_ENV: production
           SPICEDB_DATABASE_PASSWORD: spicedb
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
@@ -1043,12 +1043,12 @@ jobs:
       PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:party_registry_worker@localhost:5433/ontos_ci
       POSTGRES_DB: ontos_ci
       POSTGRES_PASSWORD: ontos_ci_admin
-      POSTGRES_PORT: "5433"
+      POSTGRES_PORT: '5433'
       POSTGRES_USER: ontos_ci_admin
       SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:shell_gateway_issuer@localhost:5433/ontos_ci
       SPICEDB_ENDPOINT: localhost:50051
-      SPICEDB_GRPC_PORT: "50051"
-      SPICEDB_HTTP_PORT: "8443"
+      SPICEDB_GRPC_PORT: '50051'
+      SPICEDB_HTTP_PORT: '8443'
       APP_ENV_PATH: /dev/null
       SPICEDB_DATABASE_PASSWORD: spicedb
       SPICEDB_PRESHARED_KEY: ontos-ci-spicedb-key
@@ -1182,12 +1182,12 @@ jobs:
       PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:party_registry_worker@localhost:5433/ontos_ci
       POSTGRES_DB: ontos_ci
       POSTGRES_PASSWORD: ontos_ci_admin
-      POSTGRES_PORT: "5433"
+      POSTGRES_PORT: '5433'
       POSTGRES_USER: ontos_ci_admin
       SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:shell_gateway_issuer@localhost:5433/ontos_ci
       SPICEDB_ENDPOINT: localhost:50051
-      SPICEDB_GRPC_PORT: "50051"
-      SPICEDB_HTTP_PORT: "8443"
+      SPICEDB_GRPC_PORT: '50051'
+      SPICEDB_HTTP_PORT: '8443'
       SPICEDB_PRESHARED_KEY: ontos-ci-spicedb-key
       # The seed producer and its consumers connect the Commerce portal realm's runtime role with this local
       # development-only password; the seed itself carries no credentials.
@@ -1370,12 +1370,12 @@ jobs:
       PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:party_registry_worker@localhost:5433/ontos_ci
       POSTGRES_DB: ontos_ci
       POSTGRES_PASSWORD: ontos_ci_admin
-      POSTGRES_PORT: "5433"
+      POSTGRES_PORT: '5433'
       POSTGRES_USER: ontos_ci_admin
       SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:shell_gateway_issuer@localhost:5433/ontos_ci
       SPICEDB_ENDPOINT: localhost:50051
-      SPICEDB_GRPC_PORT: "50051"
-      SPICEDB_HTTP_PORT: "8443"
+      SPICEDB_GRPC_PORT: '50051'
+      SPICEDB_HTTP_PORT: '8443'
       SPICEDB_PRESHARED_KEY: ontos-ci-spicedb-key
     steps:
       - name: Harden Runner
@@ -1490,7 +1490,7 @@ jobs:
         if: matrix.suite == 'browser'
         working-directory: app
         env:
-          ONTOS_E2E_RETAINED_PARTY_R2: "true"
+          ONTOS_E2E_RETAINED_PARTY_R2: 'true'
         run: >-
           mise exec -- pnpm --filter @app/shell-super-app exec playwright test
           tests/e2e/login.spec.ts --grep 'reloads failed Contacts into a genuinely published R2'

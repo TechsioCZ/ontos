@@ -399,7 +399,6 @@ jobs:
           name: zerops-delivery-plan
           path: ${{ runner.temp }}/zerops-delivery
 
-
   deploy_app:
     name: Deploy and check app
     needs: [plan, deploy, build]

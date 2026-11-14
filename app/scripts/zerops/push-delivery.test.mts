@@ -70,10 +70,12 @@ for (const services of [
       expect(result.status).toBe(0);
       const calls = (yield* fs.readFileString(path.join(context.directory, 'calls'))).trim().split('\n');
       expect(calls).toEqual(
-        ['n1', 'app', 'storefront', 'shop'].filter((service) => services.some((selected) => selected === service)).map(
-          (service) =>
-            `${service}-id|${service === 'n1' ? 'n1' : service === 'app' ? 'app' : 'storefront'}|${HEAD}|none`,
-        ),
+        ['n1', 'app', 'storefront', 'shop']
+          .filter((service) => services.some((selected) => selected === service))
+          .map(
+            (service) =>
+              `${service}-id|${service === 'n1' ? 'n1' : service === 'app' ? 'app' : 'storefront'}|${HEAD}|none`,
+          ),
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -154,12 +156,14 @@ it.effect('keeps verification mandatory for changed services and records sources
         "needs.plan.outputs.app == 'true'",
       );
     }
-    expect(workflow.jobs.deploy?.steps.find((step) => step.name === 'Sync the owner secret bundle to the app service')?.if).toBe(
-      "needs.plan.outputs.app == 'true'",
-    );
+    expect(
+      workflow.jobs.deploy?.steps.find((step) => step.name === 'Sync the owner secret bundle to the app service')?.if,
+    ).toBe("needs.plan.outputs.app == 'true'");
     expect(workflow.jobs.deploy?.needs).toEqual(['plan']);
     expect(workflow.jobs.deploy_app?.needs).toEqual(['plan', 'deploy', 'build']);
-    expect(workflow.jobs.verify?.steps.some((step) => step.run?.includes('verify-service.mjs app') === true)).toBe(true);
+    expect(workflow.jobs.verify?.steps.some((step) => step.run?.includes('verify-service.mjs app') === true)).toBe(
+      true,
+    );
     expect(workflow.jobs.verify?.steps.some((step) => step.run?.includes('prove-mcp-oauth.mts') === true)).toBe(true);
     for (const service of ['storefront', 'shop', 'n1']) {
       const job = workflow.jobs[`deploy_${service}`];

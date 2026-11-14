@@ -50,7 +50,15 @@ for (const owner of [
     expect(migration).toBeGreaterThan(-1);
     expect(verification).toBeGreaterThan(migration);
     // The application container runs the migrator from the whole workspace, so every owner ships with it.
-    for (const runtime of ['app/node_modules', 'app/apps', 'app/verticals', 'app/packages', 'app/scripts', 'app/database', 'app/topology']) {
+    for (const runtime of [
+      'app/node_modules',
+      'app/apps',
+      'app/verticals',
+      'app/packages',
+      'app/scripts',
+      'app/database',
+      'app/topology',
+    ]) {
       expect(appDeployment?.build?.deployFiles).toContain(runtime);
     }
   });

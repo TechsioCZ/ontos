@@ -205,7 +205,13 @@ const digests = Command.make('digests', {}, () =>
       (name) => Config.String(name),
     );
     for (const unit of workspace.units) {
-      const value = yield* unitInputDigest(unit.directory, workspace.packages, workspace.units, workspace.entries, origins);
+      const value = yield* unitInputDigest(
+        unit.directory,
+        workspace.packages,
+        workspace.units,
+        workspace.entries,
+        origins,
+      );
       yield* Console.log(`${unit.id}\t${value}`);
     }
   }),

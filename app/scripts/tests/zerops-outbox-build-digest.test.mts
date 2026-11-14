@@ -15,11 +15,15 @@ const fixture = Effect.gen(function* workerDigestFixture() {
   const fs = yield* FileSystem.FileSystem;
   const root = yield* fs.makeTempDirectoryScoped();
   const write = (file: string, content: string) =>
-    fs.makeDirectory(path.dirname(path.join(root, file)), { recursive: true }).pipe(
-      Effect.andThen(fs.writeFileString(path.join(root, file), content)),
-    );
+    fs
+      .makeDirectory(path.dirname(path.join(root, file)), { recursive: true })
+      .pipe(Effect.andThen(fs.writeFileString(path.join(root, file), content)));
   for (const file of OUTBOX_BUILD_TOOLS) yield* write(file, 'input');
-  for (const file of ['apps/shell-super-app/package.json', 'verticals/example/package.json', 'packages/core-runtime/package.json']) {
+  for (const file of [
+    'apps/shell-super-app/package.json',
+    'verticals/example/package.json',
+    'packages/core-runtime/package.json',
+  ]) {
     yield* write(file, '{}');
   }
   yield* write(entry, "import { worker } from '@app/shell-super-app/outbox-worker-host';");
@@ -36,7 +40,13 @@ const fixture = Effect.gen(function* workerDigestFixture() {
   return { artifact, digest, fs, root, write };
 });
 
-for (const changed of [closure, 'scripts/materialize-outbox-worker.mjs', 'pnpm-lock.yaml', 'verticals/example/package.json', 'digests']) {
+for (const changed of [
+  closure,
+  'scripts/materialize-outbox-worker.mjs',
+  'pnpm-lock.yaml',
+  'verticals/example/package.json',
+  'digests',
+]) {
   it.effect(`invalidates the worker when ${changed} changes`, () =>
     Effect.gen(function* changedWorkerInput() {
       const context = yield* fixture;
@@ -57,7 +67,10 @@ for (const doubt of ['missing closure', 'changed identity', 'missing owner', 'un
       }
       if (doubt === 'missing owner') yield* context.write('digests', 'another-owner\tinvalid\n');
       if (doubt === 'unknown virtual input') {
-        yield* context.write('runtime/worker-artifact.json', JSON.stringify({ ...context.artifact, sourceInputs: ['unknown:module'] }));
+        yield* context.write(
+          'runtime/worker-artifact.json',
+          JSON.stringify({ ...context.artifact, sourceInputs: ['unknown:module'] }),
+        );
       }
       expect(context.digest).toThrow();
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

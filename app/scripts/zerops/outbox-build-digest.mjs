@@ -19,13 +19,20 @@ export const OUTBOX_BUILD_TOOLS = [
   'topology/reference-topology.json',
   'topology/application-release-intent.json',
   'topology/local-overlays/development.json',
-  'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml',
+  'package.json',
+  'pnpm-lock.yaml',
+  'pnpm-workspace.yaml',
 ];
 /** @param {string} root App workspace. @param {string} runtime Candidate worker runtime. @param {string} table Unit digest table. */
 export const outboxBuildDigest = (root, runtime, table) => {
   const artifact = JSON.parse(readFileSync(path.join(runtime, 'worker-artifact.json'), 'utf8'));
-  if (artifact.schemaVersion !== 4 || !Array.isArray(artifact.sourceInputs) || artifact.sourceInputs.length === 0 ||
-      !Array.isArray(artifact.ownerBuildIdentities) || artifact.ownerBuildIdentities.length === 0) {
+  if (
+    artifact.schemaVersion !== 4 ||
+    !Array.isArray(artifact.sourceInputs) ||
+    artifact.sourceInputs.length === 0 ||
+    !Array.isArray(artifact.ownerBuildIdentities) ||
+    artifact.ownerBuildIdentities.length === 0
+  ) {
     throw new Error('Unknown worker artifact');
   }
   const hash = createHash('sha256').update(MATERIALIZE_FLAGS);
@@ -44,11 +51,23 @@ export const outboxBuildDigest = (root, runtime, table) => {
     files.add(input);
   }
   for (const file of [...files].sort()) {
-    hash.update(file).update('\0').update(readFileSync(path.join(root, file))).update('\0');
+    hash
+      .update(file)
+      .update('\0')
+      .update(readFileSync(path.join(root, file)))
+      .update('\0');
   }
-  const digests = new Map(readFileSync(table, 'utf8').trim().split('\n').map((line) => line.split('\t')));
-  const owners = [...readFileSync(path.join(root, 'scripts/outbox-worker-host.generated.mts'), 'utf8')
-    .matchAll(/from '@app\/([a-z-]+)\/outbox-worker-host'/gu)].map((match) => match[1]);
+  const digests = new Map(
+    readFileSync(table, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => line.split('\t')),
+  );
+  const owners = [
+    ...readFileSync(path.join(root, 'scripts/outbox-worker-host.generated.mts'), 'utf8').matchAll(
+      /from '@app\/([a-z-]+)\/outbox-worker-host'/gu,
+    ),
+  ].map((match) => match[1]);
   if (new Set(owners).size !== owners.length || owners.length !== artifact.ownerBuildIdentities.length) {
     throw new Error('Worker owner inventory changed');
   }
@@ -56,10 +75,16 @@ export const outboxBuildDigest = (root, runtime, table) => {
     const digest = digests.get(owner);
     if (!digest || !/^[a-f0-9]{64}$/u.test(digest)) throw new Error('Missing owner digest');
     const directory = owner === 'shell-super-app' ? 'apps/shell-super-app' : `verticals/${owner}`;
-    const identity = JSON.parse(readFileSync(path.join(root, directory, 'dist/ultramodern-build.json'), 'utf8')).deliveryUnit;
+    const identity = JSON.parse(
+      readFileSync(path.join(root, directory, 'dist/ultramodern-build.json'), 'utf8'),
+    ).deliveryUnit;
     const previous = artifact.ownerBuildIdentities.find((candidate) => candidate.appId === owner);
-    if (!previous || !identity || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(identity.sourceRevision) ||
-        ['sourceRevision', 'unitId', 'buildMarker'].some((key) => identity[key] !== previous[key])) {
+    if (
+      !previous ||
+      !identity ||
+      !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(identity.sourceRevision) ||
+      ['sourceRevision', 'unitId', 'buildMarker'].some((key) => identity[key] !== previous[key])
+    ) {
       throw new Error('Worker owner build identity changed');
     }
     hash.update(owner).update(digest).update(JSON.stringify(identity));
