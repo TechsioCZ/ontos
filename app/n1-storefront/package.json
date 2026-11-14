@@ -23,7 +23,7 @@
     "@techsio/ui-kit": "catalog:",
     "@zag-js/dom-query": "1.47.0",
     "effect": "4.0.7",
-    "next": "16.3.8",
+    "next": "16.4.6",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "server-only": "0.0.1"
