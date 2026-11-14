@@ -1,23 +1,45 @@
 import {
   ActiveApplicationCompositionService,
-  canonicalizeApplicationComposition,
+  ActiveApplicationCompositionUnavailableError,
+  OntosShellRuntimeContractSchema,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
 import {
-  makeApplicationCompositionSnapshotFixture,
   makeOwnerApplicationCompositionFixture,
+  makePublishedApplicationCompositionSnapshotFixture,
 } from '@app/core-runtime/testing/module-contract';
-import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
-import { sha256 as sha256Bytes } from '@noble/hashes/sha2.js';
-import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { ConfigProvider, Effect, Layer } from 'effect';
-import { Hex } from 'effect/encoding';
+import type { ActiveApplicationCompositionSnapshot, OntosModuleDeploymentContract } from '@app/core-runtime';
+import { NodeChildProcessSpawner, NodeServices } from '@effect/platform-node';
+import { ConfigProvider, Effect, Layer, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
+import { deriveOntosModuleDeploymentContract } from '../../../../scripts/generate-ontos-module-contract.mts';
 
-const digest = (document: string): string => Hex.encode(sha256Bytes(utf8ToBytes(document)));
+const publishedContracts = new Map<string, OntosModuleDeploymentContract>();
+const contractPlatform = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+const unavailable = (cause: unknown) =>
+  new ActiveApplicationCompositionUnavailableError({
+    cause,
+    reason: "The enrollment fixture could not derive a dependency owner's published contract",
+  });
+
+/** One dependency owner's real published contract, derived once per test process. */
+const publishedDependencyContract = Effect.fn('EnrollmentTests.publishedDependencyContract')(
+  function* publishedDependencyContract(appId: string) {
+    const cached = publishedContracts.get(appId);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const contract = yield* deriveOntosModuleDeploymentContract({ vertical: appId }).pipe(
+      Effect.provide(contractPlatform),
+      Effect.mapError(unavailable),
+    );
+    publishedContracts.set(appId, contract);
+    return contract;
+  },
+);
 
 /** The real owner's identity, embedded document, and content-addressed release are validated together. */
 export const makeEnrollmentApplicationCompositionSnapshot = Effect.fn('EnrollmentTests.makeApplicationComposition')(
@@ -27,16 +49,25 @@ export const makeEnrollmentApplicationCompositionSnapshot = Effect.fn('Enrollmen
       buildMarker,
       ownerRegistration: commerceCustomerContextRegistration,
     });
-    const additional = yield* makeApplicationCompositionSnapshotFixture(additionalAppIds, buildMarker);
-    const composition = {
-      ...snapshot.composition,
-      modules: [...snapshot.composition.modules, ...additional.composition.modules],
-      revision: '0'.repeat(64),
-    };
-    return yield* validateActiveApplicationCompositionSnapshot({
-      ...snapshot,
-      composition: { ...composition, revision: digest(canonicalizeApplicationComposition(composition)) },
-    });
+    if (additionalAppIds.length === 0) {
+      return snapshot;
+    }
+    // Derive the real public contracts without importing another owner's private registration.
+    const contracts = yield* Effect.forEach(additionalAppIds, publishedDependencyContract, { concurrency: 1 });
+    const shellDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))({
+      contributionAbi: snapshot.composition.shell.contributionAbi,
+      coreCapabilities: snapshot.composition.shell.coreCapabilities,
+      deployment: snapshot.composition.shell.deployment,
+      schemaVersion: '2',
+    }).pipe(Effect.mapError(unavailable));
+    return yield* makePublishedApplicationCompositionSnapshotFixture({
+      contractInputs: [...snapshot.composition.modules.map(({ contractDocument }) => contractDocument), ...contracts],
+      publishedShellRuntime: {
+        document: shellDocument,
+        receiverDeployment: snapshot.composition.shell.deployment,
+      },
+      validityMs: 300_000,
+    }).pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot), Effect.mapError(unavailable));
   },
 );
 
