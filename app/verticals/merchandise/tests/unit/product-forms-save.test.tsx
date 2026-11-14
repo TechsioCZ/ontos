@@ -243,3 +243,24 @@ it.effect('reads the required text of a required field in Czech', () =>
     expect(document.body.textContent).not.toContain('(required)');
   }),
 );
+
+it.effect('a refused variant bulk price edit shows its actionable message instead of a revision conflict', () =>
+  Effect.gen(function* actionableBulkRefusal() {
+    const refused: Extract<ManageCatalogFailure, { readonly _tag: 'ManageCatalogActionConflictProblem' }> = {
+      _tag: 'ManageCatalogActionConflictProblem',
+      code: 'merchandise_variant_bulk_price_unsupported',
+      detail: 'The Action conflicts with current state.',
+      status: 409,
+      title: 'Action conflict',
+      type: 'https://ontos.dev/problems/action-conflict',
+    };
+    rstest.mocked(executeManageCatalog).mockReturnValue(Effect.fail(refused));
+    yield* Effect.promise(() => mount(<PriceChangeDialog {...dialogProps} />));
+    yield* click(saveButton());
+    const message = 'merchandise.pages.products.messages.variantBulkPriceUnsupported';
+    yield* Effect.promise(() => waitUntil(() => document.body.textContent?.includes(message) === true));
+    expect(document.body.textContent).not.toContain('merchandise.pages.products.messages.conflict');
+    expect(committed).toEqual([]);
+    return yield* Effect.void;
+  }),
+);
