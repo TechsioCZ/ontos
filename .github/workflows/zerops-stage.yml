@@ -187,6 +187,15 @@ jobs:
           retention-days: 3
 
   # Preparing secrets and storefront deployment does not wait for unrelated app unit shards.
+  # STOREFRONT RUNNER PREBUILD INTEGRATION POINT (lane STOREFRONT)
+  # Add build_storefronts here, gated by plan.outputs.storefront/shop/n1, alongside the unit shards.
+  # Inputs: this exact github.sha, the frozen app/pnpm-lock.yaml + workspace/catalog/patch policy,
+  # the selected service/setup, and every build-time public origin/image-host/brand value from zerops.yaml.
+  # Outputs: immutable per-setup .next/standalone + .next/static + public archives, with relative symlinks,
+  # a source/input digest and the Node/Alpine architecture identity. No secrets or node_modules from macOS.
+  # deploy_storefront/deploy_shop/deploy_n1 consume only their named artifact; app artifacts stay separate.
+  # A missing/mismatched artifact fails closed or takes the existing provider build, never a stale bundle.
+  # Extend the selected deploy job's needs/download steps, not verify's dependencies or the verified ledger gate.
   deploy:
     name: Prepare independent service deployments
     needs: [plan]

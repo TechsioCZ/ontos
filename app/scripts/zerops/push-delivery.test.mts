@@ -167,6 +167,8 @@ it.effect('keeps verification mandatory for changed services and records sources
     }
     expect(source).toContain('zerops-verified-delivery');
     expect(source).toContain('fetch-depth: 0');
+    expect(source).toContain('STOREFRONT RUNNER PREBUILD INTEGRATION POINT');
+    expect(source).toContain('deploy_storefront/deploy_shop/deploy_n1 consume only their named artifact');
     expect(source).toContain(`ZEROPS_FORCE_BUILD: \${{ needs.plan.outputs.full }}`);
     const buildScript = yield* fs.readFileString(path.join(import.meta.dirname, 'build-app.sh'));
     expect(buildScript).toContain('node "$root/scripts/zerops/delivery-plan-cli.mts" digests >"$ZEROPS_UNIT_DIGESTS"');
