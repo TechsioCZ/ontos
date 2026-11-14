@@ -127,13 +127,13 @@ const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(function*
       { baseUrl: partyTarget.apiBaseUrl, compositionRevision: partyTarget.compositionRevision },
     ).pipe(Effect.mapError(unavailable));
     const roleType = invoice.direction === 'INCOMING' ? 'SUPPLIER' : 'CUSTOMER';
-    // The role must be usable today (real clock), so customers added during the demo can be invoiced at once.
-    const today = DateTime.formatIsoDateUtc(yield* DateTime.now);
+    // The role must be usable now (real clock), so customers added during the demo can be invoiced at once.
+    const now = yield* DateTime.now;
     if (
       !matchesFinanceRef(party.counterpartyRef, invoice.counterpartyRef) ||
       party.legalEntityRef.resourceId !== legalEntityId ||
       party.party.archived ||
-      !hasUsableRole(party.currentRoles, roleType, today)
+      !hasUsableRole(party.currentRoles, roleType, now)
     ) {
       return yield* rejected('counterparty_role_not_usable');
     }
