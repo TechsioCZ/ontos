@@ -10,6 +10,7 @@ import {
   gatesInputDigest,
   inventory,
   planOutputCache,
+  requiredOutputs,
   requiredOutputMismatch,
   typeBundleMismatch,
 } from '../ci/unit-output-cache.mts';
@@ -31,6 +32,7 @@ const HASH = 'c'.repeat(64);
 const OTHER_HASH = 'd'.repeat(64);
 const BUILD = 'e'.repeat(64);
 const FILE = 'dist/api/index.js';
+const OUTPUT_ENTRY = '.output/index.js';
 const ORIGIN = 'http://localhost:8080';
 const profile: CacheProfile = {
   architecture: 'x64',
@@ -172,7 +174,7 @@ it('requires nonempty entrypoints independently of a matching receipt', () => {
       FILE,
     ),
   ).toContain(FILE);
-  expect(requiredOutputMismatch(files, '.output/index.js')).toContain('.output/index.js');
+  expect(requiredOutputMismatch(files, OUTPUT_ENTRY)).toContain(OUTPUT_ENTRY);
 });
 
 it('rejects empty and truncated type bundles', () => {
@@ -266,3 +268,9 @@ for (const [name, target] of [
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 }
+
+it('requires the backend federation remote of every module, and none of the Shell that hosts them', () => {
+  expect(requiredOutputs(UNIT)).toContain('dist/backend-mf-manifest.json');
+  expect(requiredOutputs(UNIT)).toContain('dist/backendRemoteEntry.cjs');
+  expect(requiredOutputs('shell-super-app')).toEqual([OUTPUT_ENTRY, '.output/package.json', FILE]);
+});

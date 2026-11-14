@@ -428,20 +428,23 @@ const surfacesMatch = (
   identity: CacheIdentity,
   surfaces: { readonly api: CacheIdentity; readonly ui?: CacheIdentity },
 ) => sameIdentity(identity, surfaces.api) && (surfaces.ui === undefined || sameIdentity(identity, surfaces.ui));
+/** Every module is a backend federation remote; the Shell hosts those remotes and emits no remote of its own. */
+const isBackendRemote = (unit: string) => unit !== SHELL;
+/** The files a unit's cached build must still hold before anything is kept. */
+export const requiredOutputs = (unit: string): readonly string[] => [
+  `${OUTPUT}/index.js`,
+  `${OUTPUT}/${PACKAGE_JSON}`,
+  `${DIST}/api/index.js`,
+  ...(isBackendRemote(unit) ? [`${DIST}/${BACKEND_MANIFEST}`, `${DIST}/backendRemoteEntry.cjs`] : []),
+];
 const validateStructure = (unit: CacheUnit, files: readonly OutputFile[], served: readonly string[]) =>
   Effect.gen(function* validateRequiredOutputs() {
     const fs = yield* FileSystem.FileSystem;
     const root = path.join(APP_ROOT, unit.path);
     // Unpack consumes .output; hosted-owner fixtures consume dist/zerops-entry.mjs and both
     // build identities; derive-built-application-composition consumes the public contracts + MF manifest.
-    const required = [
-      `${OUTPUT}/index.js`,
-      `${OUTPUT}/${PACKAGE_JSON}`,
-      `${DIST}/api/index.js`,
-      `${DIST}/${BACKEND_MANIFEST}`,
-      `${DIST}/backendRemoteEntry.cjs`,
-    ];
-    for (const filename of required) {
+    const remote = isBackendRemote(unit.id);
+    for (const filename of requiredOutputs(unit.id)) {
       yield* requireFile(files, filename, unit.id);
     }
     if (served.includes(unit.id)) {
@@ -462,9 +465,11 @@ const validateStructure = (unit: CacheUnit, files: readonly OutputFile[], served
     if (![built, packaged].every((artifact) => surfacesMatch(identity, artifact.surfaces))) {
       return yield* invalid(unit.id, 'surface identity mismatch');
     }
-    const backend = yield* readJson(path.join(root, DIST, BACKEND_MANIFEST), BackendManifest);
-    if (!sameIdentity(identity, backend.backendFederation.deliveryUnit)) {
-      return yield* invalid(unit.id, 'backend federation identity mismatch');
+    if (remote) {
+      const backend = yield* readJson(path.join(root, DIST, BACKEND_MANIFEST), BackendManifest);
+      if (!sameIdentity(identity, backend.backendFederation.deliveryUnit)) {
+        return yield* invalid(unit.id, 'backend federation identity mismatch');
+      }
     }
     const contract = unit.id === SHELL ? 'ontos-shell-runtime.json' : 'ontos-module-manifest.json';
     yield* requireFile(files, `${DIST}/public/.well-known/${contract}`, unit.id);
