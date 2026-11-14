@@ -678,9 +678,9 @@ const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
     return yield* conflict(missingPrimaryCategoryReason);
   }
   const categorized: Product =
-    additionalCategoryIds === undefined || value.categoryId === undefined
+    value.categoryId === undefined
       ? priced
-      : yield* assignCategoryMemberships(priced, value.categoryId, additionalCategoryIds, state.categories);
+      : yield* assignCategoryMemberships(priced, value.categoryId, additionalCategoryIds ?? [], state.categories);
   const product: Product =
     variants === undefined
       ? categorized
@@ -2179,13 +2179,13 @@ export const workingSetRequestOf = (
               : { slug: value.slug }),
           },
         } satisfies WorkingSetRequest;
-        return value.additionalCategoryIds === undefined
+        return value.categoryId === undefined && value.additionalCategoryIds === undefined
           ? request
           : {
               ...request,
               categoryIds: [
                 ...(value.categoryId === undefined ? [] : [value.categoryId]),
-                ...value.additionalCategoryIds,
+                ...(value.additionalCategoryIds ?? []),
               ],
             };
       },

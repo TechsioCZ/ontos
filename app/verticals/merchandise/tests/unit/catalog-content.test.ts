@@ -1,6 +1,11 @@
+import { evolveMerchandiseState, workingSetRequestOf } from '../../src/services/persistence.service.ts';
 import { DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { MerchandiseLifecycleConflict, MerchandiseNotFound } from '../../shared/actions/apply-command.ts';
+import {
+  MerchandiseCommandSchema,
+  MerchandiseLifecycleConflict,
+  MerchandiseNotFound,
+} from '../../shared/actions/apply-command.ts';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import {
   CatalogCategoryIdSchema,
@@ -260,5 +265,35 @@ it.effect('membership derivation rejects unknown direct ids, missing ancestors a
     const cycle = { ...childCategory, parentId: Option.some(childCategory.id) };
     const cyclic = yield* Effect.flip(assignCategoryMemberships(p1, 'c', [], [cycle]));
     expect(Schema.is(MerchandiseLifecycleConflict)(cyclic)).toBe(true);
+  }),
+);
+
+it.effect('CreateProduct derives primary category ancestry without additional category ids', () =>
+  Effect.gen(function* primaryCategoryOnCreation() {
+    const command = Schema.decodeUnknownSync(MerchandiseCommandSchema)({
+      _tag: 'CreateProduct',
+      active: true,
+      category: 'Untrusted label',
+      categoryId: 'c',
+      categoryPathIds: ['wrong-path'],
+      lowStockThreshold: 0,
+      name: 'Category product',
+      priceMinor: 100,
+      sku: 'CATEGORY-PRODUCT',
+      taxClassificationCode: 'cz.vat.standard',
+      unit: 'ks',
+    });
+    expect(workingSetRequestOf(command, 'category-product').categoryIds).toEqual(['c']);
+    const created = yield* evolveMerchandiseState(state, command, { ...input, resourceId: 'category-product' });
+    expect(created.state.products.at(-1)).toMatchObject({
+      category: 'Metrické',
+      categoryId: 'c',
+      categoryPathIds: ['c', 'r'],
+    });
+    const incomplete = { ...state, categories: [childCategory] };
+    const refused = yield* evolveMerchandiseState(incomplete, command, { ...input, resourceId: 'orphan-product' }).pipe(
+      Effect.flip,
+    );
+    expect(Schema.is(MerchandiseLifecycleConflict)(refused)).toBe(true);
   }),
 );
