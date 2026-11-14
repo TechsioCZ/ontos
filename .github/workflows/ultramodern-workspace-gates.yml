@@ -996,44 +996,41 @@ jobs:
   # TS checker and no server typecheck or server declaration pass, because the typecheck gate proves the types of the
   # whole workspace with TS-Go. The `.output` contract is unchanged: the same `build` script of every unit runs and
   # owner-entry writes dist/zerops-entry.mjs. Unlike the deploy, no public origin is baked in.
-  # The Shell builds alone in shard 1; the verticals are balanced by their measured build seconds (about 480 s of
+  # The Shell builds alone in shard 1; the verticals are balanced by their measured build seconds (about 580 s of
   # one-at-a-time work per shard) and listed heaviest first, so two build lanes finish together.
   node-artifact-build:
-    name: Build node artifacts (${{ matrix.shard }}/7)
+    name: Build node artifacts (${{ matrix.shard }}/6)
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
     runs-on: ubuntu-latest
-    # The Shell alone builds for about 13 minutes, 9 of them completing its packaged dependencies.
+    # The Shell builds for about 5 minutes since its packaged-dependency completion was rewritten (13 before); it
+    # stays alone in its shard until a run confirms that. A vertical shard holds about 300 s of build work per lane.
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7]
+        shard: [1, 2, 3, 4, 5, 6]
         include:
           - { shard: 1, units: apps/shell-super-app }
           - {
               shard: 2,
-              units: verticals/commerce-customer-context verticals/sales-pipeline verticals/pricing verticals/legal-agreements verticals/availability,
+              units: verticals/commerce-customer-context verticals/facility-operations verticals/tagging verticals/projects verticals/promotion verticals/availability,
             }
           - {
               shard: 3,
-              units: verticals/party-registry verticals/crm-activities verticals/commerce-market-catalog verticals/storefront-registry verticals/price-group-catalog,
+              units: verticals/party-registry verticals/crm verticals/sales-insights verticals/assortment verticals/legal-agreements verticals/price-group-catalog,
             }
           - {
               shard: 4,
-              units: verticals/inventory verticals/facility-operations verticals/privacy verticals/payment verticals/payment-term-catalog,
+              units: verticals/inventory verticals/catalog verticals/commerce-order verticals/pricing verticals/storefront-registry verticals/payment-term-catalog,
             }
           - {
               shard: 5,
-              units: verticals/merchandise verticals/crm verticals/sales-insights verticals/work-tasks verticals/promotion verticals/commerce-cart,
+              units: verticals/merchandise verticals/workforce verticals/crm-activities verticals/commerce-market-catalog verticals/payment verticals/property-leasing verticals/commerce-cart,
             }
           - {
               shard: 6,
-              units: verticals/symmy-integration verticals/catalog verticals/commerce-order verticals/projects verticals/property-leasing verticals/tax,
-            }
-          - {
-              shard: 7,
-              units: verticals/finance-billing verticals/workforce verticals/tagging verticals/assortment verticals/property-portfolio,
+              units: verticals/symmy-integration verticals/finance-billing verticals/sales-pipeline verticals/privacy verticals/work-tasks verticals/property-portfolio verticals/tax,
             }
     env:
       BUILD_JOBS: '2'
