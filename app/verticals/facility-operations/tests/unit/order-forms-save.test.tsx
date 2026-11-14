@@ -183,8 +183,8 @@ describe('purchase order forms', () => {
           documentNumber: 'SUP-2026-118',
           lines: [
             expect.objectContaining({
-              vatClassification: CZ_VAT_STANDARD,
               taxRuleRevisionRef: expect.objectContaining({ resourceId: 'revision-1' }),
+              vatClassification: CZ_VAT_STANDARD,
               vatRate: 21,
             }),
           ],

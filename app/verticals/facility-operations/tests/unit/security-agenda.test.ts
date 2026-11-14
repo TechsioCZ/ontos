@@ -211,7 +211,7 @@ it.effect('clears the previous deadline when an inspection has no replacement de
       deviceId: 'device-1',
       inspectionDate: '2026-10-20',
     });
-    const device = inspected.state.devices[0];
+    const [device] = inspected.state.devices;
     expect(device?.lastInspectionDate).toBe('2026-10-20');
     expect(device?.nextInspectionDate).toBeUndefined();
     expect(device === undefined ? true : isInspectionOverdue(device, '2026-10-21')).toBe(false);

@@ -1,13 +1,14 @@
 // @rstest-environment happy-dom
 import { DateTime, Effect, Predicate, Schema } from 'effect';
 import { beforeEach, expect, it, rstest } from 'effect-rstest';
+import type * as SharedContracts from '@app/shared-contracts';
 import { CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
 import { SalesOrderSchema } from '../../shared/domain/purchasing.ts';
 import { issueSalesInvoice } from '../../src/routes/[lang]/provoz/nakupy/sales-tab.tsx';
 import type { FinanceInvoiceView } from '../../src/ui/finance-reads.ts';
 import { recordingRunner } from './form-save-fixture.ts';
 
-const { create, read, vat, credentials } = rstest.hoisted(() => ({
+const { create, credentials, read, vat } = rstest.hoisted(() => ({
   create: rstest.fn(),
   credentials: rstest.fn(),
   read: rstest.fn(),
@@ -16,7 +17,7 @@ const { create, read, vat, credentials } = rstest.hoisted(() => ({
 rstest.mock('@app/finance-billing/clients/apply-command', () => ({ executeApplyCommand: create }));
 rstest.mock('../../src/ui/finance-reads.ts', () => ({ readFinance: read, readFinanceVatChoices: vat }));
 rstest.mock('@app/shared-contracts', () => ({
-  ...rstest.requireActual<Record<string, unknown>>('@app/shared-contracts'),
+  ...rstest.requireActual<typeof SharedContracts>('@app/shared-contracts'),
   makeReferenceGatewayCredentials: credentials,
 }));
 

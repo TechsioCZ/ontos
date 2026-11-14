@@ -10,7 +10,7 @@ import { Option, Schema, SchemaGetter } from 'effect';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import type { FinanceInvoiceView } from '../../../../ui/finance-reads.ts';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import type { RunCommand } from './purchasing-model.ts';
@@ -29,6 +29,7 @@ import { OrderPanel, OrdersTab } from './orders-tab.tsx';
 import { MovementsTab, QuotePanel, QuotesTab, ReplenishTab, SuppliersTab } from './other-tabs.tsx';
 import { formatAmount, todayIso, usePurchasingT } from './purchasing-model.ts';
 import { SalesOrderPanel, SalesQuoteEditPanel, SalesQuotePanel, SalesTab } from './sales-tab.tsx';
+import type { RetainedSalesInvoices } from './sales-tab.tsx';
 import { ItemPanel, StockTab } from './stock-tab.tsx';
 
 const tabs = ['stock', 'replenish', 'orders', 'quotes', 'sales', 'movements', 'suppliers'] as const;
@@ -194,14 +195,13 @@ const PurchasingTabs = ({
 };
 
 interface PurchasingPanelsProps extends PurchasingNavigationProps {
-  readonly pendingSalesInvoices: Map<string, FinanceInvoiceView>;
   readonly close: () => void;
   readonly onInvoiceCreated: () => void;
   readonly panel: Panel | undefined;
+  readonly pendingSalesInvoices: RetainedSalesInvoices;
   readonly run: RunCommand;
 }
 const PurchasingPanels = ({
-  pendingSalesInvoices,
   canWrite,
   close,
   me,
@@ -210,6 +210,7 @@ const PurchasingPanels = ({
   openOrder,
   openQuote,
   panel,
+  pendingSalesInvoices,
   run,
   setPanel,
   state,
@@ -346,8 +347,17 @@ const PurchasingView = () => {
   const k = usePurchasingT();
   const { t } = useModernI18n();
   const ops = useAgendaRecords(['purchasing']);
-  // A conflict reload temporarily unmounts the detail panel. Its created invoices must survive that reload.
-  const pendingSalesInvoices = useRef(new Map<string, FinanceInvoiceView>());
+  // A conflict reload or closing the order panel unmounts it. Invoices Finance created whose link to their order
+  // failed are kept here, so the next Uložit links the same invoice and the panel says it is waiting.
+  const [retainedSalesInvoices, setRetainedSalesInvoices] = useState<ReadonlyMap<string, FinanceInvoiceView>>(
+    () => new Map(),
+  );
+  const pendingSalesInvoices: RetainedSalesInvoices = {
+    get: (orderId) => retainedSalesInvoices.get(orderId),
+    set: (orderId, invoice) => {
+      setRetainedSalesInvoices((current) => new Map(current).set(orderId, invoice));
+    },
+  };
   const envelope = ops.data?.agendas.purchasing;
   const state = envelope?.state;
   const canWrite = envelope?.canWrite === true;
@@ -454,7 +464,7 @@ const PurchasingView = () => {
               openOrder={openOrder}
               openQuote={openQuote}
               panel={panel}
-              pendingSalesInvoices={pendingSalesInvoices.current}
+              pendingSalesInvoices={pendingSalesInvoices}
               run={ops.run}
               setPanel={setPanel}
               state={state}
