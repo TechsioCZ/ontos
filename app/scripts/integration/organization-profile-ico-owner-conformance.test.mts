@@ -49,6 +49,13 @@ const publicJwksSchema = Schema.Struct({
 const [MigrationRequiredSchema, PresentSchema] = OrganizationCustomerProfileIcoResponseSchema.members;
 const isPresent = Schema.is(PresentSchema);
 const isMigrationRequired = Schema.is(MigrationRequiredSchema);
+const encodePublicResponse = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Json));
+const failureSummarySchema = Schema.Struct({
+  _tag: Schema.optionalKey(Schema.String),
+  code: Schema.optionalKey(Schema.String),
+  status: Schema.optionalKey(Schema.Number),
+});
+const encodeFailureSummary = Schema.encodeSync(Schema.fromJsonString(failureSummarySchema));
 const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
@@ -241,7 +248,7 @@ it.live(
           );
           expect(new Set(forms)).toEqual(new Set(['KNOWN', 'UNKNOWN']));
           for (const value of [initial, second, report, cutover]) {
-            const encoded = JSON.stringify(value);
+            const encoded = yield* encodePublicResponse(value);
             expect(encoded).not.toContain('actorPrincipalId');
             expect(encoded).not.toContain('acceptedByPrincipalId');
             expect(encoded).not.toContain('"reason"');
@@ -306,14 +313,8 @@ it.live(
         }).pipe(
           Effect.tapError(() => logFixtureDiagnostics(fixture.diagnostics)),
           Effect.mapError((cause) => {
-            const problem = Schema.decodeUnknownOption(
-              Schema.Struct({
-                _tag: Schema.optionalKey(Schema.String),
-                code: Schema.optionalKey(Schema.String),
-                status: Schema.optionalKey(Schema.Number),
-              }),
-            )(cause);
-            const classification = Option.isSome(problem) ? JSON.stringify(problem.value) : 'typed-failure';
+            const problem = Schema.decodeUnknownOption(failureSummarySchema)(cause);
+            const classification = Option.isSome(problem) ? encodeFailureSummary(problem.value) : 'typed-failure';
             return new SymmyC14ProductFixtureUnavailable({
               cause: Redacted.make(cause),
               message: `Company ICO HTTP phase ${phase}: ${classification}`,
