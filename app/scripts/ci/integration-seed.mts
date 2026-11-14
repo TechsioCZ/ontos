@@ -44,7 +44,7 @@
 import path from 'node:path';
 
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
-import { Effect, FileSystem, Layer, Schema } from 'effect';
+import { Console, Effect, FileSystem, Layer, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
 import { OpsShellLive } from '../ops/ops-shell.mts';
@@ -57,6 +57,7 @@ import {
   assertSeedConsumer,
   manifestJson,
   seedFailure,
+  seedRestoreRefusal,
 } from './integration-seed-model.mts';
 import {
   assertClusterEvidence,
@@ -196,15 +197,15 @@ const restore = (input: {
       const manifest = yield* Schema.decodeEffect(manifestJson)(
         yield* fs.readFileString(path.join(input.directory, MANIFEST_FILE)),
       );
-      const revision = yield* readSourceRevision();
-      const postgresVersion = (yield* seedSql('template1', VERSION_QUERY)).trim();
-      if (
-        manifest.sourceRevision !== revision ||
-        manifest.workflowRun !== (yield* requiredEnvironment('GITHUB_RUN_ID')) ||
-        manifest.postgresVersion !== postgresVersion
-      ) {
-        return yield* seedFailure('Seed source/run/PostgreSQL version mismatch; rebuild the seed in this workflow');
+      const refusal = seedRestoreRefusal(manifest, {
+        postgresVersion: (yield* seedSql('template1', VERSION_QUERY)).trim(),
+      });
+      if (refusal !== undefined) {
+        return yield* seedFailure(refusal);
       }
+      yield* Console.log(
+        `Restoring the seed run ${manifest.workflowRun} produced at ${manifest.sourceRevision} (same cache key)`,
+      );
       yield* assertDatabaseNames(manifest.databases.map(({ evidence }) => evidence.name));
       yield* validateSettings(manifest.settings);
       yield* Effect.forEach(manifest.databases, (database) => validateArchive(database, input.directory), {

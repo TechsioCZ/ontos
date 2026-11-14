@@ -139,6 +139,19 @@ export const SeedManifestSchema = Schema.Struct({
 export type SeedManifest = typeof SeedManifestSchema.Type;
 export const manifestJson = Schema.fromJsonString(SeedManifestSchema, { space: 2 });
 
+/**
+ * Why a cached seed cannot be restored on this server, if it cannot. The cache key already names every input of the
+ * migrated database, so a seed produced by another run or revision under the same key is the same database; only the
+ * PostgreSQL server that restores it must be the one that dumped it.
+ */
+export const seedRestoreRefusal = (
+  manifest: Pick<SeedManifest, 'postgresVersion'>,
+  server: { readonly postgresVersion: string },
+): string | undefined =>
+  manifest.postgresVersion === server.postgresVersion
+    ? undefined
+    : `Seed was dumped by PostgreSQL ${manifest.postgresVersion}, not this server's ${server.postgresVersion}; rebuild the seed`;
+
 export const assertDatabaseEvidence = (expected: DatabaseEvidence, actual: DatabaseEvidence) => {
   if (actual.name !== expected.name || actual.fingerprint !== expected.fingerprint) {
     return Effect.fail(

@@ -3,6 +3,7 @@ import { expect, it } from 'effect-rstest';
 
 import {
   seedFailure,
+  seedRestoreRefusal,
   FRESH_JOB,
   MUST_MIGRATE_TESTS,
   SEAL_TABLE,
@@ -131,4 +132,11 @@ it('names the failed seed step in the error message, so the log shows which step
   const failure = seedFailure('pnpm CI seed operation failed; child diagnostics withheld to protect credentials');
   expect(failure.message).toBe('pnpm CI seed operation failed; child diagnostics withheld to protect credentials');
   expect(String(failure)).toContain('pnpm CI seed operation failed');
+});
+
+it('restores a seed from another run or revision under the same key, never one another PostgreSQL dumped', () => {
+  const dumped = { postgresVersion: '18.6', sourceRevision: 'a'.repeat(40), workflowRun: '1' };
+  // The cache key names every input of the migrated database; a later run on a later commit reuses it.
+  expect(seedRestoreRefusal(dumped, { postgresVersion: '18.6' })).toBeUndefined();
+  expect(seedRestoreRefusal(dumped, { postgresVersion: '18.7' })).toContain('PostgreSQL 18.6');
 });
