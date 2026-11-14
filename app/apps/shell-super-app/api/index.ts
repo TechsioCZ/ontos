@@ -1,3 +1,4 @@
+import { moduleTargetSourceHeader, moduleTargetSourcePathHeader } from '../shared/module-target-diagnostics.ts';
 import { PeopleSearchReadLive } from '@app/core-runtime/people/search';
 import { ShellPeopleSystemSearchLive } from './modules/shell-system-search.ts';
 import { requestPeopleSearchRebuild } from './people-search-rebuild.ts';

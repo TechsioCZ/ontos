@@ -127,15 +127,15 @@ interface DelegationCase {
   readonly principal?: Partial<typeof GatewayTrustedPrincipalContextSchema.Type>;
   readonly providerKeyId?: string;
   /**
-   * Resolve the scope with Core's own resolver over the real decision gate, for a Storefront client registered for
-   * exactly these companies (D6), instead of the scripted resolver.
-   */
-  readonly registeredCompanies?: readonly string[];
-  /**
    * A subject of main's registered and finite delegation instead of `Assertion`/`Originator`: a registered workload
    * assertion, an admission, a Privacy dispatch or an Organization governance Read.
    */
   readonly registered?: 'assertion' | 'admission' | 'privacy-dispatch' | 'governance-read';
+  /**
+   * Resolve the scope with Core's own resolver over the real decision gate, for a Storefront client registered for
+   * exactly these companies (D6), instead of the scripted resolver.
+   */
+  readonly registeredCompanies?: readonly string[];
   readonly signerUnavailable?: boolean;
   readonly source?: Omit<Partial<typeof GatewayContextV2ClaimsSchema.Encoded>, 'ver'> & {
     readonly act?: unknown;

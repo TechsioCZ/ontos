@@ -5,6 +5,39 @@ import react from 'ultracite/oxlint/react';
 
 import { testRestrictedImports } from './tools/oxlint/effect-native/shared/test-restricted-imports.ts';
 
+const packagesCoreRuntimeSrcOutboxProcessTsPath = 'packages/core-runtime/src/outbox/process.ts';
+const packagesCoreRuntimeSrcActionsRepositoryTsPath = 'packages/core-runtime/src/actions/repository.ts';
+const packagesCoreRuntimeSrcReadsRuntimeTsPath = 'packages/core-runtime/src/reads/runtime.ts';
+const packagesCoreRuntimeSrcOutboxRepositoryTsPath = 'packages/core-runtime/src/outbox/repository.ts';
+const verticalsPricingSrcActionsManageQuotationActionTsPath =
+  'verticals/pricing/src/actions/manage-quotation.action.ts';
+const verticalsPricingSrcServicesCurrentPricingDecisionEvaluationServiceTsPath =
+  'verticals/pricing/src/services/current-pricing-decision-evaluation.service.ts';
+const verticalsPricingSrcServicesExactPriceResolutionServiceTsPath =
+  'verticals/pricing/src/services/exact-price-resolution.service.ts';
+const verticalsPricingSrcIntegrationsBrokenExplicitInputObservationTsPath =
+  'verticals/pricing/src/integrations/broken-explicit-input-observation.ts';
+const verticalsPricingSrcServicesCurrentPricingDecisionWholeEvaluationServiceTsPath =
+  'verticals/pricing/src/services/current-pricing-decision-whole-evaluation.service.ts';
+const verticalsPricingSrcIntegrationsCurrentPricingDecisionExternalOwnerEvidenceTsPath =
+  'verticals/pricing/src/integrations/current-pricing-decision-external-owner-evidence.ts';
+const verticalsPricingSrcServicesOrdinaryCurrentPricingEvaluationServiceTsPath =
+  'verticals/pricing/src/services/ordinary-current-pricing-evaluation.service.ts';
+const verticalsPricingSrcServicesPriceGroupInterpretationServiceTsPath =
+  'verticals/pricing/src/services/price-group-interpretation.service.ts';
+const packagesPricingContractsSrcDomainMaterialEvidenceTsPath =
+  'packages/pricing-contracts/src/domain/material-evidence.ts';
+const appsShellSuperAppApiIndexTsPath = 'apps/shell-super-app/api/index.ts';
+const appsShellSuperAppApiAuthImpersonationServiceTsPath = 'apps/shell-super-app/api/auth/impersonation-service.ts';
+const appsShellSuperAppApiAuthServiceTsPath = 'apps/shell-super-app/api/auth/service.ts';
+const packagesCoreRuntimeSrcActionsRuntimeTsPath = 'packages/core-runtime/src/actions/runtime.ts';
+const packagesCoreRuntimeSrcOutboxRuntimeTsPath = 'packages/core-runtime/src/outbox/runtime.ts';
+const packagesCoreRuntimeTestsIntegrationActionRuntimeTestTsPath =
+  'packages/core-runtime/tests/integration/action-runtime.test.ts';
+const appsShellSuperAppModernConfigTsPath = 'apps/shell-super-app/modern.config.ts';
+const verticalsPartyRegistryTestsIntegrationCustomerAresLookupBffTestTsPath =
+  'verticals/party-registry/tests/integration/customer-ares-lookup-bff.test.ts';
+
 const selectedJsPlugins = selectJsPlugins(['github', 'sonarjs', 'react-doctor']);
 const jsPlugins = {
   ...selectedJsPlugins,
@@ -62,7 +95,7 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
       adapterFiles: [
         'apps/*/api/index.ts',
         'verticals/*/api/index.ts',
-        'packages/core-runtime/src/outbox/process.ts',
+        packagesCoreRuntimeSrcOutboxProcessTsPath,
         // The Shell calls a remote's `preloadPage` as a Promise (ModulePagePreload); modulePagePreload is that
         // one Promise adapter over requirement-free preload steps whose loads fork on each page data's own runtime.
         'packages/shared-contracts/src/page-data.ts',
@@ -91,7 +124,7 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
       rootFiles: [
         'apps/*/api/index.ts',
         'verticals/*/api/index.ts',
-        'packages/core-runtime/src/outbox/process.ts',
+        packagesCoreRuntimeSrcOutboxProcessTsPath,
         'packages/core-runtime/src/db/client.ts',
         // The workerd SpiceDB transport binds the Workers VPC fetcher to the Effect HttpClient.
         'packages/core-runtime/src/permissions/spicedb-transport.workerd.ts',
@@ -142,14 +175,14 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
         'verticals/payment-term-catalog/src/auth/gateway-assertion-redemption-runtime.ts',
         'verticals/storefront-registry/src/auth/gateway-assertion-redemption-runtime.ts',
         'packages/core-runtime/src/http/governed-read.ts',
-        'packages/core-runtime/src/actions/repository.ts',
-        'packages/core-runtime/src/reads/runtime.ts',
-        'packages/core-runtime/src/outbox/repository.ts',
+        packagesCoreRuntimeSrcActionsRepositoryTsPath,
+        packagesCoreRuntimeSrcReadsRuntimeTsPath,
+        packagesCoreRuntimeSrcOutboxRepositoryTsPath,
         'packages/core-runtime/src/search/persistence.ts',
         'packages/core-runtime/src/search/worker-snapshot.ts',
         'packages/core-runtime/src/install/stage-context-bootstrap.ts',
         // The Outbox Worker process exit seam names a failed exit by tag, defect, or interruption.
-        'packages/core-runtime/src/outbox/process.ts',
+        packagesCoreRuntimeSrcOutboxProcessTsPath,
       ],
     },
   ],
@@ -398,11 +431,11 @@ export default defineConfig({
     {
       // These exact Pricing composition roots construct owner-local services behind Context-backed exports; the test support file only builds deterministic evidence.
       files: [
-        'verticals/pricing/src/actions/manage-quotation.action.ts',
+        verticalsPricingSrcActionsManageQuotationActionTsPath,
         'verticals/pricing/src/integrations/current-pricing-decision-external-owner-evidence-live.ts',
         'verticals/pricing/src/integrations/current-pricing-decision-whole-evaluation-adapters.ts',
-        'verticals/pricing/src/services/current-pricing-decision-evaluation.service.ts',
-        'verticals/pricing/src/services/exact-price-resolution.service.ts',
+        verticalsPricingSrcServicesCurrentPricingDecisionEvaluationServiceTsPath,
+        verticalsPricingSrcServicesExactPriceResolutionServiceTsPath,
         'verticals/pricing/tests/unit/support/issue-788-confirmation.fixture.ts',
       ],
       rules: {
@@ -423,7 +456,7 @@ export default defineConfig({
     {
       // These owner adapters accept raw JSONB or observation payloads only at an immediate Schema decode boundary.
       files: [
-        'verticals/pricing/src/integrations/broken-explicit-input-observation.ts',
+        verticalsPricingSrcIntegrationsBrokenExplicitInputObservationTsPath,
         'verticals/pricing/src/persistence/currency-support-persistence.ts',
       ],
       rules: {
@@ -440,7 +473,7 @@ export default defineConfig({
     {
       // These two evidence fixtures are closed domain matrices whose branches must remain visible as one coherent proof.
       files: [
-        'verticals/pricing/src/services/current-pricing-decision-whole-evaluation.service.ts',
+        verticalsPricingSrcServicesCurrentPricingDecisionWholeEvaluationServiceTsPath,
         'verticals/pricing/tests/unit/support/issue-779-line-value.fixture.ts',
       ],
       rules: {
@@ -450,19 +483,19 @@ export default defineConfig({
     {
       // These exact deterministic Pricing constructors have matching Context-backed production composition and do not leak collaborators through public service methods.
       files: [
-        'verticals/pricing/src/actions/manage-quotation.action.ts',
-        'verticals/pricing/src/integrations/broken-explicit-input-observation.ts',
+        verticalsPricingSrcActionsManageQuotationActionTsPath,
+        verticalsPricingSrcIntegrationsBrokenExplicitInputObservationTsPath,
         'verticals/pricing/src/integrations/current-pricing-decision-external-owner-evidence-live.ts',
-        'verticals/pricing/src/integrations/current-pricing-decision-external-owner-evidence.ts',
+        verticalsPricingSrcIntegrationsCurrentPricingDecisionExternalOwnerEvidenceTsPath,
         'verticals/pricing/src/integrations/customer-context-subject-authority.ts',
         'verticals/pricing/src/services/commitment-confirmation-renewal.service.ts',
         'verticals/pricing/src/services/current-backed-accepted-handoff.service.ts',
         'verticals/pricing/src/services/current-backed-confirmation-issuance.service.ts',
-        'verticals/pricing/src/services/current-pricing-decision-evaluation.service.ts',
-        'verticals/pricing/src/services/current-pricing-decision-whole-evaluation.service.ts',
-        'verticals/pricing/src/services/exact-price-resolution.service.ts',
-        'verticals/pricing/src/services/ordinary-current-pricing-evaluation.service.ts',
-        'verticals/pricing/src/services/price-group-interpretation.service.ts',
+        verticalsPricingSrcServicesCurrentPricingDecisionEvaluationServiceTsPath,
+        verticalsPricingSrcServicesCurrentPricingDecisionWholeEvaluationServiceTsPath,
+        verticalsPricingSrcServicesExactPriceResolutionServiceTsPath,
+        verticalsPricingSrcServicesOrdinaryCurrentPricingEvaluationServiceTsPath,
+        verticalsPricingSrcServicesPriceGroupInterpretationServiceTsPath,
         'verticals/pricing/src/services/pricing-authority-selection.service.ts',
         'verticals/pricing/src/services/quotation-backed-confirmation-issuance.service.ts',
         'verticals/pricing/src/services/quotation-revalidation.service.ts',
@@ -474,13 +507,13 @@ export default defineConfig({
     {
       // These exact files are owner composition roots that capture request- or transaction-scoped services behind exported Layers and ports.
       files: [
-        'verticals/pricing/src/actions/manage-quotation.action.ts',
+        verticalsPricingSrcActionsManageQuotationActionTsPath,
         'verticals/pricing/src/auth/gateway-assertion-redemption-runtime.ts',
         'verticals/catalog/src/auth/gateway-assertion-redemption-runtime.ts',
         'verticals/commerce-market-catalog/src/auth/gateway-assertion-redemption-runtime.ts',
         'verticals/payment-term-catalog/src/auth/gateway-assertion-redemption-runtime.ts',
         'verticals/storefront-registry/src/auth/gateway-assertion-redemption-runtime.ts',
-        'verticals/pricing/src/services/current-pricing-decision-evaluation.service.ts',
+        verticalsPricingSrcServicesCurrentPricingDecisionEvaluationServiceTsPath,
       ],
       rules: {
         'effect-native/no-effect-provide-in-library': 'off',
@@ -500,7 +533,7 @@ export default defineConfig({
         'packages/pricing-contracts/src/domain/commercial-total.ts',
         'packages/pricing-contracts/src/domain/commitment-confirmation.ts',
         'packages/pricing-contracts/src/domain/line-composition.ts',
-        'packages/pricing-contracts/src/domain/material-evidence.ts',
+        packagesPricingContractsSrcDomainMaterialEvidenceTsPath,
         'packages/pricing-contracts/src/domain/quotation.ts',
         'packages/pricing-contracts/src/domain/rounding-boundary.ts',
         'packages/pricing-contracts/src/domain/unit-price-calculation.ts',
@@ -522,7 +555,7 @@ export default defineConfig({
         'packages/pricing-contracts/src/domain/commercial-fee.ts',
         'packages/pricing-contracts/src/domain/currency-support.ts',
         'packages/pricing-contracts/src/domain/discount.ts',
-        'packages/pricing-contracts/src/domain/material-evidence.ts',
+        packagesPricingContractsSrcDomainMaterialEvidenceTsPath,
         'packages/pricing-contracts/src/domain/price-group-interpretation.ts',
         'packages/pricing-contracts/src/domain/price-schedule.ts',
         'packages/pricing-contracts/src/domain/quantity-tier.ts',
@@ -538,7 +571,7 @@ export default defineConfig({
     },
     {
       // Canonical encoding must succeed before replay-state lookup, so these yields are intentionally ordered.
-      files: ['verticals/pricing/src/actions/manage-quotation.action.ts'],
+      files: [verticalsPricingSrcActionsManageQuotationActionTsPath],
       rules: {
         'effect-native/no-sequential-independent-yields': 'off',
       },
@@ -553,14 +586,14 @@ export default defineConfig({
     {
       // These exact deterministic constructors expose owner-local test seams; matching production Layers acquire collaborators from Context.
       files: [
-        'verticals/pricing/src/actions/manage-quotation.action.ts',
-        'verticals/pricing/src/integrations/broken-explicit-input-observation.ts',
-        'verticals/pricing/src/integrations/current-pricing-decision-external-owner-evidence.ts',
+        verticalsPricingSrcActionsManageQuotationActionTsPath,
+        verticalsPricingSrcIntegrationsBrokenExplicitInputObservationTsPath,
+        verticalsPricingSrcIntegrationsCurrentPricingDecisionExternalOwnerEvidenceTsPath,
         'verticals/pricing/src/services/commitment-confirmation-renewal.service.ts',
         'verticals/pricing/src/services/current-backed-confirmation-issuance.service.ts',
-        'verticals/pricing/src/services/exact-price-resolution.service.ts',
-        'verticals/pricing/src/services/ordinary-current-pricing-evaluation.service.ts',
-        'verticals/pricing/src/services/price-group-interpretation.service.ts',
+        verticalsPricingSrcServicesExactPriceResolutionServiceTsPath,
+        verticalsPricingSrcServicesOrdinaryCurrentPricingEvaluationServiceTsPath,
+        verticalsPricingSrcServicesPriceGroupInterpretationServiceTsPath,
         'verticals/pricing/src/services/pricing-authority-selection.service.ts',
         'verticals/pricing/src/services/quotation-backed-confirmation-issuance.service.ts',
         'verticals/pricing/src/services/quotation-revalidation.service.ts',
@@ -583,10 +616,10 @@ export default defineConfig({
       // These exact action and evidence functions encode closed fail-closed lifecycle decision tables whose branches must remain colocated.
       files: [
         'verticals/pricing/src/actions/manage-quantity-tier.action.ts',
-        'verticals/pricing/src/actions/manage-quotation.action.ts',
+        verticalsPricingSrcActionsManageQuotationActionTsPath,
         'verticals/pricing/src/actions/revise-commercial-fee.action.ts',
         'verticals/pricing/src/actions/revise-price.action.ts',
-        'verticals/pricing/src/integrations/current-pricing-decision-external-owner-evidence.ts',
+        verticalsPricingSrcIntegrationsCurrentPricingDecisionExternalOwnerEvidenceTsPath,
         'verticals/pricing/src/services/price-source-provenance.service.ts',
         'verticals/pricing/src/services/zero-floor-authorization-administration.service.ts',
       ],
@@ -598,13 +631,13 @@ export default defineConfig({
       // These files own cohesive Effect tagged-error vocabularies; splitting the classes would separate each error from its single boundary contract.
       files: [
         'packages/pricing-contracts/src/domain/exact-decimal.ts',
-        'packages/pricing-contracts/src/domain/material-evidence.ts',
+        packagesPricingContractsSrcDomainMaterialEvidenceTsPath,
         'packages/pricing-contracts/src/domain/unit-price-calculation.ts',
         'verticals/pricing/src/actions/define-commercial-fee.action.ts',
         'verticals/pricing/src/actions/manage-commitment-confirmation.action.ts',
         'verticals/pricing/src/actions/manage-contractual-discount.action.ts',
         'verticals/pricing/src/actions/manage-quantity-tier.action.ts',
-        'verticals/pricing/src/actions/manage-quotation.action.ts',
+        verticalsPricingSrcActionsManageQuotationActionTsPath,
         'verticals/pricing/src/actions/manage-zero-floor-authorization.action.ts',
         'verticals/pricing/src/actions/revise-commercial-fee.action.ts',
         'verticals/pricing/src/actions/revise-price.action.ts',
@@ -639,13 +672,13 @@ export default defineConfig({
       // These files own cohesive Context service/failure vocabularies for one atomic owner boundary.
       files: [
         'verticals/commerce-customer-context/src/services/pricing-purchase-context-owner-authority.ts',
-        'verticals/pricing/src/services/current-pricing-decision-evaluation.service.ts',
+        verticalsPricingSrcServicesCurrentPricingDecisionEvaluationServiceTsPath,
         'verticals/pricing/src/services/current-pricing-decision-subject-authority.service.ts',
-        'verticals/pricing/src/services/current-pricing-decision-whole-evaluation.service.ts',
+        verticalsPricingSrcServicesCurrentPricingDecisionWholeEvaluationServiceTsPath,
         'verticals/pricing/src/services/external-owner-evidence-validation.service.ts',
         'verticals/pricing/src/services/material-evidence-final-validation.service.ts',
-        'verticals/pricing/src/services/ordinary-current-pricing-evaluation.service.ts',
-        'verticals/pricing/src/services/price-group-interpretation.service.ts',
+        verticalsPricingSrcServicesOrdinaryCurrentPricingEvaluationServiceTsPath,
+        verticalsPricingSrcServicesPriceGroupInterpretationServiceTsPath,
       ],
       rules: {
         'max-classes-per-file': 'off',
@@ -793,12 +826,12 @@ export default defineConfig({
       // Governed descriptors intentionally repeat owner, action, policy, and problem literals so
       // each serialized/audited record is complete; shared constants would hide contract evidence.
       files: [
-        'apps/shell-super-app/api/index.ts',
+        appsShellSuperAppApiIndexTsPath,
         'apps/shell-super-app/api/modules/shell-governed-reads.ts',
         'apps/shell-super-app/src/routes/use-shell-controls.ts',
         'apps/shell-super-app/tests/integration/generated-owner-fixture.ts',
         'packages/core-runtime/scripts/verify-db-schema.mts',
-        'packages/core-runtime/src/actions/repository.ts',
+        packagesCoreRuntimeSrcActionsRepositoryTsPath,
         'packages/core-runtime/src/auth/principal-administration-reads.ts',
         'packages/core-runtime/src/modules/actions/*.action.ts',
         'packages/core-runtime/src/modules/module-state-gate.ts',
@@ -819,16 +852,16 @@ export default defineConfig({
       // operation whose typed channel they close; hoisting them would split one atomic workflow.
       files: [
         'apps/shell-super-app/api/auth/identity-lifecycle.ts',
-        'apps/shell-super-app/api/auth/impersonation-service.ts',
-        'apps/shell-super-app/api/auth/service.ts',
-        'apps/shell-super-app/api/index.ts',
+        appsShellSuperAppApiAuthImpersonationServiceTsPath,
+        appsShellSuperAppApiAuthServiceTsPath,
+        appsShellSuperAppApiIndexTsPath,
         'apps/shell-super-app/api/modules/shell-composition.ts',
         'apps/shell-super-app/api/modules/shell-resources.ts',
         'apps/shell-super-app/src/routes/**/modules/**/page.tsx',
         'packages/core-runtime/src/actions/collector.ts',
-        'packages/core-runtime/src/actions/runtime.ts',
-        'packages/core-runtime/src/outbox/repository.ts',
-        'packages/core-runtime/src/reads/runtime.ts',
+        packagesCoreRuntimeSrcActionsRuntimeTsPath,
+        packagesCoreRuntimeSrcOutboxRepositoryTsPath,
+        packagesCoreRuntimeSrcReadsRuntimeTsPath,
         'verticals/party-registry/src/auth/gateway-assertion-redemption-runtime.ts',
         'verticals/party-registry/tests/integration/customer-contact-operations.test.ts',
         'verticals/party-registry/tests/unit/customer-contact-persistence.service.test.ts',
@@ -841,14 +874,14 @@ export default defineConfig({
       // `Error` is the conventional Effect error-channel type parameter, not a runtime override
       // of the global Error constructor. SonarJS does not distinguish type and value namespaces.
       files: [
-        'apps/shell-super-app/api/index.ts',
-        'packages/core-runtime/src/actions/runtime.ts',
+        appsShellSuperAppApiIndexTsPath,
+        packagesCoreRuntimeSrcActionsRuntimeTsPath,
         'packages/core-runtime/src/outbox/definition.ts',
-        'packages/core-runtime/src/outbox/runtime.ts',
+        packagesCoreRuntimeSrcOutboxRuntimeTsPath,
         'packages/core-runtime/src/permissions/client.ts',
         'packages/core-runtime/src/reads/definition.ts',
         'packages/core-runtime/tests/integration/action-permission.test.ts',
-        'packages/core-runtime/tests/integration/action-runtime.test.ts',
+        packagesCoreRuntimeTestsIntegrationActionRuntimeTestTsPath,
         'packages/core-runtime/tests/integration/module-state-gate.test.ts',
         'packages/core-runtime/tests/integration/tenant-module-state.test.ts',
       ],
@@ -862,9 +895,9 @@ export default defineConfig({
       files: [
         'apps/shell-super-app/api/modules/installed-module-catalog.ts',
         'apps/shell-super-app/tests/unit/stage-accounts-bootstrap.test.ts',
-        'packages/core-runtime/src/actions/runtime.ts',
+        packagesCoreRuntimeSrcActionsRuntimeTsPath,
         'packages/core-runtime/tests/integration/action-permission.test.ts',
-        'packages/core-runtime/tests/integration/action-runtime.test.ts',
+        packagesCoreRuntimeTestsIntegrationActionRuntimeTestTsPath,
         'packages/core-runtime/tests/unit/action-collector.test.ts',
         'packages/core-runtime/tests/unit/action-runtime.test.ts',
         'packages/core-runtime/tests/unit/read-definition.test.ts',
@@ -1062,13 +1095,13 @@ export default defineConfig({
     {
       // Dynamic Modern.js cache paths contain `.js-${appId}` but are filesystem paths,
       // not CSS class names; the GitHub rule cannot distinguish those string domains.
-      files: ['apps/shell-super-app/modern.config.ts', 'verticals/party-registry/modern.config.ts'],
+      files: [appsShellSuperAppModernConfigTsPath, 'verticals/party-registry/modern.config.ts'],
       rules: {
         'github/js-class-name': 'off',
       },
     },
     {
-      // React Doctor currently emits its internal computed-property lowering TODO for this
+      // React Doctor currently emits its internal computed-property lowering placeholder for this
       // typed form-error update; the code is valid and the dedicated compiler rules stay active.
       files: ['verticals/party-registry/src/features/customers/customer-form.tsx'],
       rules: {
@@ -1086,7 +1119,7 @@ export default defineConfig({
     {
       // These aliases name stable domain boundaries even when their current representation is
       // identical to another type; removing the names would couple public/runtime APIs to storage.
-      files: ['apps/shell-super-app/src/api/auth-client.ts', 'packages/core-runtime/src/actions/runtime.ts'],
+      files: ['apps/shell-super-app/src/api/auth-client.ts', packagesCoreRuntimeSrcActionsRuntimeTsPath],
       rules: {
         'sonarjs/redundant-type-aliases': 'off',
       },
@@ -1095,11 +1128,11 @@ export default defineConfig({
       // Effect's typed rollback/control-flow sentinels deliberately do not extend native Error;
       // the language-service policy forbids native Error inheritance for these domain failures.
       files: [
-        'apps/shell-super-app/api/auth/service.ts',
-        'packages/core-runtime/src/actions/repository.ts',
-        'packages/core-runtime/src/actions/runtime.ts',
-        'packages/core-runtime/src/reads/runtime.ts',
-        'packages/core-runtime/tests/integration/action-runtime.test.ts',
+        appsShellSuperAppApiAuthServiceTsPath,
+        packagesCoreRuntimeSrcActionsRepositoryTsPath,
+        packagesCoreRuntimeSrcActionsRuntimeTsPath,
+        packagesCoreRuntimeSrcReadsRuntimeTsPath,
+        packagesCoreRuntimeTestsIntegrationActionRuntimeTestTsPath,
         'packages/core-runtime/tests/unit/action-runtime.test.ts',
         'packages/shared-contracts/src/index.ts',
       ],
@@ -1114,15 +1147,15 @@ export default defineConfig({
         'apps/shell-super-app/tests/integration/module-catalog-runtime.test.ts',
         'apps/shell-super-app/tests/unit/layout.test.tsx',
         'apps/shell-super-app/tests/unit/shell-composition.test.ts',
-        'packages/core-runtime/src/outbox/process.ts',
-        'packages/core-runtime/tests/integration/action-runtime.test.ts',
+        packagesCoreRuntimeSrcOutboxProcessTsPath,
+        packagesCoreRuntimeTestsIntegrationActionRuntimeTestTsPath,
         'packages/core-runtime/tests/unit/module-manifest.test.ts',
         'packages/core-runtime/tests/unit/outbox-runtime.test.ts',
         'packages/core-runtime/tests/unit/read-runtime.test.ts',
         'verticals/party-registry/tests/components/contact-form.test.tsx',
         'verticals/party-registry/tests/components/customer-ares-loader.test.tsx',
         'verticals/party-registry/tests/components/customer-form.test.tsx',
-        'verticals/party-registry/tests/integration/customer-ares-lookup-bff.test.ts',
+        verticalsPartyRegistryTestsIntegrationCustomerAresLookupBffTestTsPath,
         'verticals/party-registry/tests/integration/customer-contact-bff.test.ts',
         'verticals/party-registry/vertical.manifest.ts',
       ],
@@ -1134,12 +1167,12 @@ export default defineConfig({
       // Effect generators terminate through `return yield*` failures, React effects optionally
       // return cleanup functions, and route matching legitimately returns an optional result.
       files: [
-        'apps/shell-super-app/api/auth/impersonation-service.ts',
+        appsShellSuperAppApiAuthImpersonationServiceTsPath,
         'apps/shell-super-app/src/routes/**/modules/**/page.tsx',
         'apps/shell-super-app/src/routes/ultramodern-route-head.tsx',
         'packages/core-runtime/src/auth/principal-management.ts',
         'packages/core-runtime/src/modules/module-state-gate.ts',
-        'packages/core-runtime/src/outbox/runtime.ts',
+        packagesCoreRuntimeSrcOutboxRuntimeTsPath,
         'verticals/party-registry/src/routes/ultramodern-route-head.tsx',
         'verticals/party-registry/tests/unit/action-principal.test.ts',
       ],
@@ -1151,8 +1184,8 @@ export default defineConfig({
       // The receiver remains intact at each call site; the references only test an optional
       // Headers method or proxy a database method through a receiver-preserving getter.
       files: [
-        'apps/shell-super-app/api/auth/impersonation-service.ts',
-        'apps/shell-super-app/api/auth/service.ts',
+        appsShellSuperAppApiAuthImpersonationServiceTsPath,
+        appsShellSuperAppApiAuthServiceTsPath,
         'packages/core-runtime/tests/integration/module-state-gate.test.ts',
       ],
       rules: {
@@ -1163,7 +1196,7 @@ export default defineConfig({
       // Empty environment variables intentionally mean "unset" in deployment configuration;
       // replacing || with ?? changes fallback behavior, and those strings are validated later.
       files: [
-        'apps/shell-super-app/modern.config.ts',
+        appsShellSuperAppModernConfigTsPath,
         'apps/shell-super-app/playwright.config.ts',
         'packages/core-runtime/src/outbox/poller.ts',
         'verticals/party-registry/modern.config.ts',
@@ -1188,7 +1221,7 @@ export default defineConfig({
       // Node HTTP invokes these async request adapters as void callbacks; the tests await server
       // responses and close the exact server, so the promise lifecycle is observed at the boundary.
       files: [
-        'verticals/party-registry/tests/integration/customer-ares-lookup-bff.test.ts',
+        verticalsPartyRegistryTestsIntegrationCustomerAresLookupBffTestTsPath,
         'verticals/party-registry/tests/integration/customer-contact-bff.test.ts',
       ],
       rules: {
@@ -1199,7 +1232,7 @@ export default defineConfig({
     {
       // Promise.finally observes the async runtime disposer even though TSGo currently models its
       // callback as void-only; keeping the promise return is what makes process cleanup awaitable.
-      files: ['packages/core-runtime/src/outbox/process.ts'],
+      files: [packagesCoreRuntimeSrcOutboxProcessTsPath],
       rules: {
         'typescript/no-misused-promises': 'off',
       },
@@ -1219,7 +1252,7 @@ export default defineConfig({
     {
       // Outbox matching and marking are intentionally serialized within one locked transaction;
       // Promise.all would violate ordering and may race the shared transaction executor.
-      files: ['packages/core-runtime/src/outbox/repository.ts'],
+      files: [packagesCoreRuntimeSrcOutboxRepositoryTsPath],
       rules: {
         'react-doctor/async-await-in-loop': 'off',
       },
@@ -1239,7 +1272,7 @@ export default defineConfig({
     {
       // The outbox cycle uses one break for queue exhaustion and continues for two terminal
       // delivery stages; flattening those branches would obscure mutually exclusive outcomes.
-      files: ['packages/core-runtime/src/outbox/runtime.ts'],
+      files: [packagesCoreRuntimeSrcOutboxRuntimeTsPath],
       rules: {
         'sonarjs/too-many-break-or-continue-in-loop': 'off',
       },
@@ -1281,7 +1314,7 @@ export default defineConfig({
       // policy descriptors even though the referenced TSGo build preserves their exact types.
       files: [
         'packages/core-runtime/src/actions/definition.ts',
-        'packages/core-runtime/src/actions/repository.ts',
+        packagesCoreRuntimeSrcActionsRepositoryTsPath,
         'packages/core-runtime/src/modules/runtime-registration.ts',
         'packages/core-runtime/src/reads/definition.ts',
       ],
@@ -1340,7 +1373,7 @@ export default defineConfig({
     {
       // This Proxy preserves the real Drizzle executor type while replacing two methods in a live
       // integration fixture. Reflect.get is required to preserve the original receiver.
-      files: ['verticals/party-registry/tests/integration/customer-ares-lookup-bff.test.ts'],
+      files: [verticalsPartyRegistryTestsIntegrationCustomerAresLookupBffTestTsPath],
       rules: {
         'anti-slop/no-reflect-get': 'off',
       },
@@ -1359,7 +1392,7 @@ export default defineConfig({
     {
       // Modern.js's preset mismatch loses the Rspack-chain type after the compiler-suppressed
       // framework seam; keep unsafe inference exceptions limited to that one config callback.
-      files: ['apps/shell-super-app/modern.config.ts'],
+      files: [appsShellSuperAppModernConfigTsPath],
       rules: {
         'typescript/no-unsafe-call': 'off',
         'typescript/no-unsafe-member-access': 'off',

@@ -3,6 +3,7 @@ import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
 import type { AccessScopeId, PrincipalId } from '../../src/access/ids.ts';
+import { HolderSchema } from '../../src/access/model.ts';
 import { RecordKeySchema } from '../../src/access/ids.ts';
 import {
   combinePeopleChangePlans,
@@ -259,10 +260,12 @@ it.effect('admits one live membership and refuses a duplicate, an agent and a mi
       membershipId: membershipId(13),
       memberships: [],
     });
-    expect(Option.getOrThrow(membershipIn(agentMember.writes[0])).holder).toEqual({
-      _tag: 'Agent',
-      agentId: ids.agent(1),
-    });
+    expect(Option.getOrThrow(membershipIn(agentMember.writes[0])).holder).toEqual(
+      HolderSchema.make({
+        _tag: 'Agent',
+        agentId: ids.agent(1),
+      }),
+    );
     // ... but never administration: owner and access_admin stay people's (O46, D2).
     const agentOwner = yield* Effect.flip(
       planMembershipGrant({
@@ -1380,12 +1383,14 @@ it.effect('admits a newcomer to the tenant and the company in one plan, behind t
     expect(live.code).toBe('people_membership_already_active');
     // An agent is admitted like a person, its directory precondition naming its own kind.
     const agent = yield* admission({ holder: { _tag: 'Agent', agentId: ids.agent(7) } });
-    expect(agent.writes[0]).toEqual({
-      _tag: 'RequireDirectoryMember',
-      legalEntityId: ADMITTED_COMPANY,
-      principalId: ids.agent(7),
-      principalKind: 'agent',
-    });
+    expect(agent.writes[0]).toEqual(
+      PeopleIntentWriteSchema.make({
+        _tag: 'RequireDirectoryMember',
+        legalEntityId: ADMITTED_COMPANY,
+        principalId: ids.agent(7),
+        principalKind: 'agent',
+      }),
+    );
     expect(recordedIn(agent)).toEqual([
       { id: membershipId(40), scopeId: tenantScope },
       { id: membershipId(41), scopeId: companyScope },
@@ -1613,7 +1618,7 @@ it.effect('assigns a role to an agent on its own agent side, only while the agen
       holder: agentHolder,
     });
     expect(writeTags(assigned)).toEqual(['RecordAssignment']);
-    expect(Option.getOrThrow(assignmentIn(assigned.writes[0])).holder).toEqual(agentHolder);
+    expect(Option.getOrThrow(assignmentIn(assigned.writes[0])).holder).toEqual(HolderSchema.make(agentHolder));
 
     // A role that runs a critical capability is never an agent's: it may only propose it (O48a).
     const critical = yield* Effect.flip(

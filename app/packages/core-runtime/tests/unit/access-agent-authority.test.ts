@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Match, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -81,6 +81,13 @@ describe('what an agent can use of its roles', () => {
       'work.tasks.create run',
       'finance.invoices.void propose',
     ]);
-    expect(everything.cells.every(({ selector }) => selector._tag === 'all')).toBe(true);
+    expect(
+      everything.cells.every(({ selector }) =>
+        Match.value(selector).pipe(
+          Match.tag('all', () => true),
+          Match.orElse(() => false),
+        ),
+      ),
+    ).toBe(true);
   });
 });

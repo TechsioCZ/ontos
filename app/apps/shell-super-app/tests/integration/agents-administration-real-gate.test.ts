@@ -1,7 +1,6 @@
-import { NodeServices } from '@effect/platform-node';
-import { OntosDeploymentAppIdSchema, ONTOS_SHELL_CONTRIBUTION_ABI } from '@app/core-runtime';
+import { installedReleaseComposition } from '../support/installed-release-composition.ts';
 import { AgentEntityOverviewSchema } from '@app/shared-contracts/agent-access';
-import { Effect, FileSystem, Option, Path, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -11,10 +10,6 @@ import {
   withAccessAdminCase,
 } from '../support/access-admin-real-gate-fixture.ts';
 import type { AccessAdminCase, Persona } from '../support/access-admin-real-gate-fixture.ts';
-import { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '../../../../packages/core-runtime/src/modules/module-dependency-contracts.ts';
-import { deriveOntosModuleDeploymentContract } from '../../../../scripts/generate-ontos-module-contract.mts';
-import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
-import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 
 /*
  * The Agents administration page, end to end on a v2-only tenant (real SpiceDB, no legacy tuples): its list endpoint
@@ -23,36 +18,6 @@ import { makeCompositionSnapshot } from '../fixtures/application-composition.ts'
  * not define, so every caller got 503. Now each person gets exactly the page gate's decision: 200 when it admits them,
  * a refusal otherwise, and never 503.
  */
-
-const releaseIntentPath = new URL('../../../../topology/application-release-intent.json', import.meta.url);
-const ReleaseIntentSchema = Schema.fromJsonString(
-  Schema.Struct({ modules: Schema.Array(Schema.Struct({ appId: OntosDeploymentAppIdSchema })) }),
-);
-
-/**
- * The approved composition of every module the release installs, with this Shell as its receiver: what a deployed
- * Shell loads as its installed module catalog. Built from the release intent and each module's derived contract.
- */
-const installedReleaseComposition = Effect.gen(function* installedReleaseComposition() {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const intent = yield* Schema.decodeUnknownEffect(ReleaseIntentSchema)(
-    yield* fileSystem.readFileString(yield* path.fromFileUrl(releaseIntentPath)),
-  );
-  const contracts = yield* Effect.forEach(
-    intent.modules,
-    ({ appId }) => deriveOntosModuleDeploymentContract({ vertical: appId }),
-    { concurrency: 4 },
-  );
-  const receiverDeployment = { appId: 'shell-super-app', buildMarker: ultramodernDeliveryUnit.buildMarker } as const;
-  const document = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
-    contributionAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
-    coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
-    deployment: receiverDeployment,
-    schemaVersion: '2',
-  });
-  return yield* makeCompositionSnapshot(contracts, 600_000, { document, receiverDeployment });
-}).pipe(Effect.provide(NodeServices.layer), Effect.orDie);
 
 const AGENTS_DECLARATION = 'shell-super-app.access-admin.agents';
 const LIST_PATH = '/auth/identity/agent-entities/list';

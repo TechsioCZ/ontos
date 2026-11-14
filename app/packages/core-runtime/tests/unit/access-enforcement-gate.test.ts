@@ -2,6 +2,7 @@ import { organizationProcessingReadPrincipal } from '../support/organization-pro
 import { organizationGovernanceReadPrincipal } from '../support/organization-governance-read-principal.ts';
 import { privacyDispatchPrincipal } from '../support/privacy-dispatch-principal.ts';
 import { preserveSystemPrincipalContextTrust } from '../../src/auth/system-principal-context-provenance.ts';
+import { ActorContextSchema } from '../../src/access/model.ts';
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -321,13 +322,15 @@ it.effect('decides an agent on its credential-bound connection as the agent, on 
     const decision = yield* gate.decide(gateOf({ legalEntityScope: 'required', scope }));
     expect(decision.outcome).toBe('NEEDS_APPROVAL');
     // The evidence names the agent, the operator and the connection: the gate decided AS the agent (O46).
-    expect(state.entries[0]?.actor).toEqual({
-      _tag: 'Agent',
-      agentId: agent,
-      connectionId,
-      consentRevision: 1,
-      principalId: person,
-    });
+    expect(state.entries[0]?.actor).toEqual(
+      ActorContextSchema.make({
+        _tag: 'Agent',
+        agentId: agent,
+        connectionId,
+        consentRevision: 1,
+        principalId: person,
+      }),
+    );
   }),
 );
 

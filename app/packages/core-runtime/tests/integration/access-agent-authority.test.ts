@@ -33,6 +33,7 @@ import {
   TenantIdSchema,
 } from '../../src/access/ids.ts';
 import type { LegalEntityId, PrincipalId, RoleId, RoleRevisionId, TenantId } from '../../src/access/ids.ts';
+import { AgentConnectionRefused } from '../../src/access/intent/agent-connection-refused.ts';
 import type { CatalogSnapshot, Cell } from '../../src/access/model.ts';
 import {
   agentConnectionIdOfGrant,
@@ -720,7 +721,8 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('an agent on authori
             validUntil: connectionEnd,
           }),
         );
-        expect(notOperator).toMatchObject({ _tag: 'AgentConnectionRefused', code: 'agent_connection_not_operator' });
+        expect(Schema.is(AgentConnectionRefused)(notOperator)).toBe(true);
+        expect(notOperator).toMatchObject({ code: 'agent_connection_not_operator' });
         // The operator is removed: they can no longer connect, and the live facts say so on the next request.
         yield* seedOperators(tenant.admin, tenant.tenantId, [bystander], 2);
         const removed = yield* Effect.flip(connect(tenant, operator, [TASK_READ]));

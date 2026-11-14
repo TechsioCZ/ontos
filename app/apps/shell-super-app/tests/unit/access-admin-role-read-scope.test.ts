@@ -3,7 +3,7 @@ import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/access/chan
 import type { AccessDecision } from '@app/core-runtime/access/decision/contract';
 import type { AccessDecisionService, GateInput } from '@app/core-runtime/access/enforcement';
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
-import { Effect } from 'effect';
+import { Match, Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { accessPeopleDeclarations } from '../../api/access-admin/people.ts';
@@ -115,7 +115,12 @@ for (const unreadable of ['tenant', uuid(11), uuid(13)] as const) {
       );
       const gate = scriptedGate(answers);
       const failure = yield* Effect.flip(readScope(gate.service));
-      expect(failure).toMatchObject({ _tag: 'AccessAdminUnavailable', status: 503 });
+      expect(
+        Match.value(failure).pipe(
+          Match.tag('AccessAdminUnavailable', ({ status }) => status),
+          Match.orElse(() => undefined),
+        ),
+      ).toBe(503);
     }),
   );
 }
@@ -128,6 +133,11 @@ it.effect('refuses as unavailable when the gate answers fewer questions than it 
       decideMany: (inputs) => Effect.succeed(inputs.slice(1).map(() => decision('ALLOWED'))),
     };
     const failure = yield* Effect.flip(readScope(short));
-    expect(failure).toMatchObject({ _tag: 'AccessAdminUnavailable' });
+    expect(
+      Match.value(failure).pipe(
+        Match.tag('AccessAdminUnavailable', () => true),
+        Match.orElse(() => false),
+      ),
+    ).toBe(true);
   }),
 );
