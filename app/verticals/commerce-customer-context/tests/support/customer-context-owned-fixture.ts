@@ -70,6 +70,33 @@ export const withVerifiedCustomerContextFixture = <A, E, R>(
         url: Redacted.make(input.ownedDatabase.connections.runtime.connectionString),
       }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity));
       const runtimeDatabase = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, runtimeClient));
+      const inspectRuntimeScope = Effect.fn('CustomerContextOwnedFixture.inspectRuntimeScope')(
+        function* inspectRuntimeScope(inspection: FixtureTransaction, owned: FixtureTransaction) {
+          yield* installOperationalScope(inspection, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
+          const actor = yield* makePrincipalResolver(
+            { executor: inspection },
+            { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
+          ).resolveBetterAuthUserForTenant(input.operatorProviderUserId, input.tenantId);
+          const persisted = yield* makeOperationalScopeRepository(
+            { executor: inspection },
+            FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          ).load(scope);
+          if (
+            actor.principalId !== input.operatorPrincipalId ||
+            actor.principalKind !== 'human' ||
+            actor.tenantId !== input.tenantId ||
+            persisted.tenantStatus !== 'active' ||
+            persisted.principalStatus !== 'active' ||
+            persisted.principalTenantId !== input.tenantId ||
+            persisted.legalEntityStatus !== 'active' ||
+            persisted.legalEntityTenantId !== input.tenantId
+          ) {
+            return yield* unavailable();
+          }
+          yield* ownership;
+          return yield* work(owned, database, scope, inspection);
+        },
+      );
       return yield* database.transaction(
         Effect.fn('CustomerContextOwnedFixture.transaction')(function* transaction(owned) {
           yield* ownership;
@@ -80,33 +107,7 @@ export const withVerifiedCustomerContextFixture = <A, E, R>(
           if (connection?.database !== configuration.database || connection.roleName !== configuration.user) {
             return yield* unavailable();
           }
-          return yield* runtimeDatabase.transaction((inspection) =>
-            Effect.gen(function* inspectRuntimeScope() {
-              yield* installOperationalScope(inspection, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
-              const actor = yield* makePrincipalResolver(
-                { executor: inspection },
-                { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
-              ).resolveBetterAuthUserForTenant(input.operatorProviderUserId, input.tenantId);
-              const persisted = yield* makeOperationalScopeRepository(
-                { executor: inspection },
-                FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
-              ).load(scope);
-              if (
-                actor.principalId !== input.operatorPrincipalId ||
-                actor.principalKind !== 'human' ||
-                actor.tenantId !== input.tenantId ||
-                persisted.tenantStatus !== 'active' ||
-                persisted.principalStatus !== 'active' ||
-                persisted.principalTenantId !== input.tenantId ||
-                persisted.legalEntityStatus !== 'active' ||
-                persisted.legalEntityTenantId !== input.tenantId
-              ) {
-                return yield* unavailable();
-              }
-              yield* ownership;
-              return yield* work(owned, database, scope, inspection);
-            }),
-          );
+          return yield* runtimeDatabase.transaction((inspection) => inspectRuntimeScope(inspection, owned));
         }),
       );
     }),
