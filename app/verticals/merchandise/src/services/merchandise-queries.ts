@@ -593,8 +593,9 @@ const storefrontFilters = (
     ? undefined
     : or(eq(products.categoryId, categoryId), sql`${products.categoryPathIds} @> array[${categoryId}]::text[]`),
   catalog.label === undefined ? undefined : labelFilter(catalog.label),
-  catalog.minMinor === undefined ? undefined : sql`coalesce(${products.grossPriceMinor}, 0) >= ${catalog.minMinor}`,
-  catalog.maxMinor === undefined ? undefined : sql`coalesce(${products.grossPriceMinor}, 0) <= ${catalog.maxMinor}`,
+  // A product without a price (an empty column) matches no price bound, never one as if it cost 0.
+  catalog.minMinor === undefined ? undefined : sql`${products.grossPriceMinor} >= ${catalog.minMinor}`,
+  catalog.maxMinor === undefined ? undefined : sql`${products.grossPriceMinor} <= ${catalog.maxMinor}`,
   catalog.availability === 'in-stock' ? inArray(products.availability, IN_STOCK) : undefined,
   catalog.availability === 'out-of-stock' ? sql`${products.availability} not in ('IN_STOCK', 'LOW_STOCK')` : undefined,
 ];

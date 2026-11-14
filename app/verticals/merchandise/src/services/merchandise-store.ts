@@ -970,13 +970,47 @@ const pricedGroups = (db: MerchandiseDb, scope: StoreScope, rates: SellableVatRa
   return [...byClassification, ...byHeldRate];
 };
 
+/**
+ * Whether a price has quantity tiers (rows, or the inline array of an older document). Its gross comes from the tiers
+ * (`shownGrossOf`): an empty column is its "no price", never a gross to derive from the net.
+ */
+const productTiered = sql`(exists (select 1 from ${priceTiers}
+    where ${priceTiers.tenantId} = ${products.tenantId}
+      and ${priceTiers.legalEntityId} = ${products.legalEntityId}
+      and ${priceTiers.productId} = ${products.id}
+      and ${priceTiers.variantPosition} = -1)
+  or (jsonb_typeof(${products.document} -> 'priceTiers') = 'array'
+      and jsonb_array_length(${products.document} -> 'priceTiers') > 0))`;
+const variantTiered = sql`(exists (select 1 from ${priceTiers}
+    where ${priceTiers.tenantId} = ${productVariants.tenantId}
+      and ${priceTiers.legalEntityId} = ${productVariants.legalEntityId}
+      and ${priceTiers.productId} = ${productVariants.productId}
+      and ${priceTiers.variantPosition} = ${productVariants.position})
+  or (jsonb_typeof(${productVariants.document} -> 'priceTiers') = 'array'
+      and jsonb_array_length(${productVariants.document} -> 'priceTiers') > 0))`;
+
 /** No gross stored for this price: neither in its column nor in its document (older documents carry it only there). */
 const productGrossMissing = and(isNull(products.grossPriceMinor), sql`not (${products.document} ? 'grossPriceMinor')`);
+/** A variant price stored without its gross that has no tiers, so its gross is its net plus VAT. */
 const variantGrossMissing = and(
   isNull(productVariants.grossPriceMinor),
   sql`not (${productVariants.document} ? 'grossPriceMinor')`,
   isNotNull(productVariants.priceMinor),
+  sql`not ${variantTiered}`,
 );
+/** A product without real variants, stored without its gross and without tiers. */
+const plainProductGrossMissing = (realVariants: RealVariants) =>
+  and(productGrossMissing, notInArray(products.id, realVariants), sql`not ${productTiered}`);
+/** A product with real variants stored without its gross while one of its variants has one. */
+const variantProductGrossMissing = (realVariants: RealVariants) =>
+  and(productGrossMissing, inArray(products.id, realVariants), sql`${lowestVariantGross(anyVariant)} is not null`);
+/** The real variants of the company's products. */
+const realVariantsIn = (db: MerchandiseDb, scope: StoreScope) =>
+  db
+    .select({ productId: productVariants.productId })
+    .from(productVariants)
+    .where(and(whereScope(productVariants, scope), isNotNull(productVariants.variantId)));
+type RealVariants = ReturnType<typeof realVariantsIn>;
 
 /**
  * Whether any price that can be priced now is stored without its gross: one indexed probe per group, so callers run
@@ -989,6 +1023,7 @@ export const missingGrossPricesExist = Effect.fn('MerchandiseStore.missingGrossP
     rates: SellableVatRates,
     held: HeldRates = {},
   ) {
+    const realVariants = realVariantsIn(db, scope);
     const found = yield* Effect.forEach(
       pricedGroups(db, scope, rates, held),
       ({ ids }) =>
@@ -998,7 +1033,13 @@ export const missingGrossPricesExist = Effect.fn('MerchandiseStore.missingGrossP
               db
                 .select({ id: products.id })
                 .from(products)
-                .where(and(whereScope(products, scope), inArray(products.id, ids), productGrossMissing))
+                .where(
+                  and(
+                    whereScope(products, scope),
+                    inArray(products.id, ids),
+                    or(plainProductGrossMissing(realVariants), variantProductGrossMissing(realVariants)),
+                  ),
+                )
                 .limit(1),
               'Missing gross prices could not be read',
             ),
@@ -1022,8 +1063,9 @@ export const missingGrossPricesExist = Effect.fn('MerchandiseStore.missingGrossP
 );
 
 /**
- * Stores the first gross of every price stored without one: product and variant prices with no gross in their column
- * nor in their document, at the rate their group enters it at (a held product at its held rate, any other at the rate
+ * Stores the first gross of every untiered price stored without one: product and variant prices with no gross in their
+ * column nor in their document and no quantity tiers (a tiered price's empty column is its "no price"), at the rate
+ * their group enters it at (a held product at its held rate, any other at the rate
  * its classification sells at now), and a product with variants whose own gross is missing takes its variants' lowest.
  * Never touches a price that has a stored gross, however unrelated to its net. Idempotent; returns how many rows it
  * filled.
@@ -1035,10 +1077,7 @@ export const storeMissingGrossPrices = Effect.fn('MerchandiseStore.storeMissingG
     rates: SellableVatRates,
     held: HeldRates = {},
   ) {
-    const realVariants = db
-      .select({ productId: productVariants.productId })
-      .from(productVariants)
-      .where(and(whereScope(productVariants, scope), isNotNull(productVariants.variantId)));
+    const realVariants = realVariantsIn(db, scope);
     const filled = yield* Effect.forEach(
       pricedGroups(db, scope, rates, held),
       ({ ids, rate }) =>
@@ -1059,12 +1098,7 @@ export const storeMissingGrossPrices = Effect.fn('MerchandiseStore.storeMissingG
                 .update(products)
                 .set({ grossPriceMinor: grossOfNet(products.currentPriceMinor, rate) })
                 .where(
-                  and(
-                    whereScope(products, scope),
-                    inArray(products.id, ids),
-                    productGrossMissing,
-                    notInArray(products.id, realVariants),
-                  ),
+                  and(whereScope(products, scope), inArray(products.id, ids), plainProductGrossMissing(realVariants)),
                 )
                 .returning({ id: products.id }),
               'Product gross prices could not be stored',
@@ -1076,12 +1110,7 @@ export const storeMissingGrossPrices = Effect.fn('MerchandiseStore.storeMissingG
                   grossPriceMinor: sql`coalesce(${lowestVariantGross(activeVariant)}, ${lowestVariantGross(anyVariant)})`,
                 })
                 .where(
-                  and(
-                    whereScope(products, scope),
-                    inArray(products.id, ids),
-                    productGrossMissing,
-                    inArray(products.id, realVariants),
-                  ),
+                  and(whereScope(products, scope), inArray(products.id, ids), variantProductGrossMissing(realVariants)),
                 )
                 .returning({ id: products.id }),
               'Product gross prices could not be stored',
