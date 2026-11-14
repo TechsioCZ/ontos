@@ -4,6 +4,7 @@ import { Effect, Schema } from 'effect';
 
 import { ActionInvocationIdSchema } from '../../shared/domain/correction-contracts.ts';
 import { PartyCreateOutcomeSchema } from '../../shared/domain/identity-contracts.ts';
+import { withPartyClientSourcePrivacyRequirement } from '../services/party-client-source-privacy.service.ts';
 import { findPartyCreateContinuation } from '../services/party-matching-persistence.service.ts';
 
 export interface PartyCommandResultServices {
@@ -56,6 +57,10 @@ export const partyCommandResultRead = defineRead(
     ),
   (transaction, scope) =>
     Effect.succeed({
-      find: (invocationId: string) => findPartyCreateContinuation(transaction, scope.tenantId, invocationId),
+      // A source-created result recovers only through its exact source receipt and current source Privacy.
+      find: (invocationId: string) =>
+        findPartyCreateContinuation(transaction, scope.tenantId, invocationId, scope).pipe(
+          withPartyClientSourcePrivacyRequirement('party.registry.api.owned-command-result'),
+        ),
     }),
 );
