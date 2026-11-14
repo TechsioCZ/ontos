@@ -1,12 +1,12 @@
 import { withOptional } from '../access/decision/optional.ts';
-import { Effect, Schema } from 'effect';
+import { Clock, Context, Duration, Effect, Result, Schema } from 'effect';
 
-import { isFenceBusy } from '../access/intent/projection-writer.ts';
-import { AccessProjectionWriteError } from '../access/intent/projection-write-error.ts';
+import type { OperationalScope } from '../operations/context.ts';
 
 import { projectPeopleLifecycleSearch, rebuildPeopleSearch } from '../people/people-search-workers.ts';
 import { ActionAuthorizationLifecycle } from '../permissions/action-authorization-lifecycle.ts';
 import { ActionAuthorizationLifecycleError } from '../permissions/action-authorization-lifecycle-error.ts';
+import { TenantProjectionBusyError } from '../permissions/tenant-projection-busy-error.ts';
 import { outboxWorkerTenantScope } from './core-authorization-projection.ts';
 import { OutboxPayloadSchema as PrincipalBindingPayloadSchema } from './core-identity-principal-binding-activated-v1.ts';
 import { OutboxPayloadSchema as PrincipalLifecyclePayloadSchema } from './core-identity-principal-lifecycle-changed-v1.ts';
@@ -42,6 +42,55 @@ const coreWorkerRetryPolicy = { initialBackoffMs: 1000, maxAttempts: 20, maxBack
 const unattestedClaim = (reason: string) => new ActionAuthorizationLifecycleError({ reason });
 
 /**
+ * How one attempt waits while another writer holds the tenant's fence: at most `budget` in total, trying again
+ * every `spacing`. The budget stays well inside the worker's 60-second claim lease, so a waiting attempt does not
+ * lose its claim to a second host. Tests running under `TestClock` provide a zero spacing.
+ */
+export const CoreWorkerFenceWait = Context.Reference<{
+  readonly budget: Duration.Duration;
+  readonly spacing: Duration.Duration;
+}>('@app/core-runtime/outbox/core-system-worker-entry/CoreWorkerFenceWait', {
+  defaultValue: () => ({ budget: Duration.seconds(30), spacing: Duration.seconds(2) }),
+});
+
+/**
+ * Reconcile the tenant, and while another writer holds its fence (`isFenceBusy`), run the reconcile again every two
+ * seconds within the attempt's budget — the rule the release activation follows. Nothing here ever settles a
+ * wake-up it did not reconcile itself: every retry re-reads the tenant's current intent, so it projects the change
+ * behind this message however that change committed. (Not every producer of this topic serialises its intent write
+ * with the fence — person invitation acceptance commits memberships without it — so "another writer is projecting"
+ * is not proof that this change will be projected.) A fence still held when the budget runs out fails the attempt
+ * as before, and the Outbox retries it. At a switch-over, where the new host's release steps project every tenant
+ * while its Outbox host starts, short contention no longer spends attempts.
+ */
+const reconcileWhenFenceFree = Effect.fn('CoreSystemWorker.reconcileWhenFenceFree')(
+  function* reconcileWhenFenceFreeEffect(
+    scope: OperationalScope,
+    waitUntil: number,
+  ): Effect.fn.Return<void, ActionAuthorizationLifecycleError, ActionAuthorizationLifecycle> {
+    const lifecycle = yield* ActionAuthorizationLifecycle;
+    const written = yield* Effect.result(lifecycle.reconcileTenant(scope));
+    if (Result.isSuccess(written)) {
+      return yield* Effect.void;
+    }
+    const { failure } = written;
+    if (!Schema.is(TenantProjectionBusyError)(failure)) {
+      return yield* failure;
+    }
+    const { spacing } = yield* CoreWorkerFenceWait;
+    if ((yield* Clock.currentTimeMillis) + Duration.toMillis(spacing) > waitUntil) {
+      // The fence stayed held for the attempt's whole budget: this attempt fails and the Outbox retries it.
+      return yield* new ActionAuthorizationLifecycleError({
+        reason: `Another writer held the tenant's fence for the whole waiting budget: ${failure.reason}`,
+      });
+    }
+    yield* Effect.logInfo('Another writer is projecting this tenant; reconciling again once its fence is free');
+    yield* Effect.sleep(spacing);
+    return yield* reconcileWhenFenceFree(scope, waitUntil);
+  },
+);
+
+/**
  * The one reconcile of a Core lifecycle wake-up (D9, D24). Every wake-up — an installation, a principal
  * change, a binding activation — reconciles the whole tenant: authorization v2 projects the graph from
  * PostgreSQL intent, so there is no per-principal, per-role or per-Action writer left to drive, and a
@@ -65,26 +114,8 @@ const reconcileTenantFromClaim = Effect.fn('CoreSystemWorker.reconcileTenant')(f
       context.actorPrincipalId,
     ),
   ).pipe(Effect.mapError((cause) => new ActionAuthorizationLifecycleError({ cause, reason: cause.reason })));
-  const lifecycle = yield* ActionAuthorizationLifecycle;
-  return yield* lifecycle.reconcileTenant(scope).pipe(
-    Effect.asVoid,
-    // Another operation holds the tenant's fence, or projected the tenant since this reconcile pinned it: somebody
-    // is projecting this tenant right now, so the wake-up is already being served (the same rule as the fence sweep
-    // and the release activation, `isFenceBusy`). This is sound because of how intent and the fence interlock: the
-    // change that emitted this message committed its intent while the fence was `Ready`, holding the fence's lock,
-    // so no fence take could complete across that commit. Any hold present now was therefore taken after it, and a
-    // holder reads the intent again once it holds the fence, so it projects this change; if it fails part-way, the
-    // fence stays closed and its take-over projects fresh intent. Counting this as a failure only burned retries:
-    // a switch-over, where the new host's release steps project every tenant while its Outbox host starts, saw a
-    // carried-over delivery declare three failures before it ran.
-    Effect.catchIf(
-      (error) => Schema.is(AccessProjectionWriteError)(error.cause) && isFenceBusy(error.cause),
-      () =>
-        Effect.logInfo('Core lifecycle wake-up left to the writer already projecting the tenant').pipe(
-          Effect.annotateLogs({ tenantId: scope.tenantId }),
-        ),
-    ),
-  );
+  const { budget } = yield* CoreWorkerFenceWait;
+  return yield* reconcileWhenFenceFree(scope, (yield* Clock.currentTimeMillis) + Duration.toMillis(budget));
 });
 
 const installationWorker = defineOutboxWorker(
