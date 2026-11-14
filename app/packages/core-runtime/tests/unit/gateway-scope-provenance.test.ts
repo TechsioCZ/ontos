@@ -138,6 +138,43 @@ it('trusts only the exact carrier: copies and forged provenance properties carry
   expect(isVerifiedGatewayPrincipalContext(system)).toBe(false);
 });
 
+it('carries the redeemed assertion of an OAuth connection context only on its exact carrier', () => {
+  const grantId = '30000000-0000-4000-8000-000000000001';
+  const oauthContext = Schema.decodeSync(TrustedPrincipalContextSchema)({
+    authBindingId: '40000000-0000-4000-8000-000000000002',
+    authContextRef: `oauth-grant:${grantId}`,
+    authMethod: 'oauth_connection',
+    connection: {
+      clientId: 'https://claude.ai/oauth/claude-code-client-metadata',
+      clientName: 'Claude Code',
+      grantId,
+      modules: [{ access: 'read', moduleId: 'party.registry' }],
+      writePolicy: 'approval',
+    },
+    delegatedByPrincipalId: '10000000-0000-4000-8000-000000000003',
+    legalEntityId: '71000000-0000-4000-8000-000000000021',
+    principalId: '10000000-0000-4000-8000-000000000004',
+    tenantId: '20000000-0000-4000-8000-000000000001',
+  });
+  const trusted = trustVerifiedGatewayPrincipalContext(oauthContext, compositionRevision, {
+    assertion: Redacted.make(assertionValue),
+    audience: 'party-registry',
+  });
+
+  expect(isVerifiedGatewayPrincipalContext(trusted)).toBe(true);
+  expect(Schema.is(VerifiedGatewayPrincipalContextSchema)(trusted)).toBe(true);
+  const scopeAssertion = readVerifiedGatewayScopeAssertion(trusted);
+  expect(scopeAssertion?.audience).toBe('party-registry');
+  expect(scopeAssertion === undefined ? undefined : Redacted.value(scopeAssertion.assertion)).toBe(assertionValue);
+  expect(readVerifiedGatewayCompositionRevision(trusted)).toBe(compositionRevision);
+  expect(encodeJson(trusted)).not.toContain(assertionValue);
+
+  for (const forgery of [{ ...trusted }, structuredClone({ ...trusted })]) {
+    expect(isVerifiedGatewayPrincipalContext(forgery)).toBe(false);
+    expect(readVerifiedGatewayScopeAssertion(forgery)).toBeUndefined();
+  }
+});
+
 it.effect('rejects transplanted gateway seals before and after decoding or explicit preservation', () =>
   Effect.gen(function* gatewayDescriptorTransplant() {
     const trusted = trustVerifiedGatewayPrincipalContext(context, compositionRevision, {

@@ -1134,10 +1134,17 @@ it.live(
         const sourceDocument = yield* Schema.encodeEffect(
           Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
         )(test.snapshot);
-        const compositionLayer = ActiveApplicationCompositionConfigLive.pipe(
-          Layer.provide(ActiveApplicationCompositionSourceLive.pipe(Layer.provide(FetchHttpClient.layer))),
-          Layer.provide(ConfigProvider.layer(environment)),
-        );
+        // The composition source pins its fetch when its layer is built, so each call's fetch is provided there.
+        const compositionLayer = (sourceFetch: typeof globalThis.fetch) =>
+          ActiveApplicationCompositionConfigLive.pipe(
+            Layer.provide(
+              ActiveApplicationCompositionSourceLive.pipe(
+                Layer.provide(FetchHttpClient.layer),
+                Layer.provide(Layer.succeed(FetchHttpClient.Fetch, sourceFetch)),
+              ),
+            ),
+            Layer.provide(ConfigProvider.layer(environment)),
+          );
         const requests: Request[] = [];
         const buyer = test.owner.fixture.manager;
         const orderForBuyer = { calledBy: 'commerce-order', subject: buyer };
@@ -1201,7 +1208,7 @@ it.live(
               })
               .pipe(
                 Effect.provideService(FetchHttpClient.Fetch, fetch),
-                Effect.provide(compositionLayer),
+                Effect.provide(compositionLayer(fetch)),
                 Effect.provide(FetchHttpClient.layer),
                 Effect.provideService(ConfigProvider.ConfigProvider, environment),
                 Effect.provideContext(test.context),
