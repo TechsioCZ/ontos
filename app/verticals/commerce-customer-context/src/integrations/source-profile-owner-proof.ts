@@ -21,6 +21,7 @@ import type {
 import { commerceSourceDelegationSubject } from './source-delegation-subject.ts';
 import { ProfilePersistenceDependencyFailure } from '../persistence/profile-persistence.ts';
 import type { CounterpartyRoleEligibility } from '../persistence/profile-persistence.ts';
+import { commerceCustomerContextEvidenceCall } from '../declared-evidence-calls.ts';
 
 const ownerProofFailure = (cause: unknown) =>
   Object.defineProperty(
@@ -78,6 +79,7 @@ export const commerceSourceProfileOwnerProofLive = Layer.effect(
             },
             sourceReference: partySourceReference,
           }).pipe(Effect.mapError(ownerProofFailure));
+          // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
           const issued = yield* acquireDelegatedGatewayContext(
             {
               audience: 'party-registry',
@@ -92,13 +94,13 @@ export const commerceSourceProfileOwnerProofLive = Layer.effect(
               ),
             },
             crypto,
-          ).pipe(Effect.mapError(ownerProofFailure));
+          ).pipe(commerceCustomerContextEvidenceCall('sourceCounterpartyAdmission'), Effect.mapError(ownerProofFailure));
           const response = yield* executeSourceCounterpartyAdmissionWithAuthorization(
             request,
             issued.authorization,
             scope.correlationId,
             { baseUrl: new URL(issued.apiBaseUrl), compositionRevision: issued.compositionRevision },
-          ).pipe(Effect.mapError(ownerProofFailure));
+          ).pipe(commerceCustomerContextEvidenceCall('sourceCounterpartyAdmission'), Effect.mapError(ownerProofFailure));
           const result = yield* Schema.decodeUnknownEffect(SourceCounterpartyAdmissionResponseSchema)(response).pipe(
             Effect.mapError(ownerProofFailure),
           );
@@ -142,13 +144,13 @@ export const commerceSourceProfileOwnerProofLive = Layer.effect(
               ),
             },
             crypto,
-          ).pipe(Effect.mapError(ownerProofFailure));
+          ).pipe(commerceCustomerContextEvidenceCall('sourcePersonAdmission'), Effect.mapError(ownerProofFailure));
           const response = yield* executeSourcePersonAdmissionWithAuthorization(
             request,
             issued.authorization,
             scope.correlationId,
             { baseUrl: new URL(issued.apiBaseUrl), compositionRevision: issued.compositionRevision },
-          ).pipe(Effect.mapError(ownerProofFailure));
+          ).pipe(commerceCustomerContextEvidenceCall('sourcePersonAdmission'), Effect.mapError(ownerProofFailure));
           const result = yield* Schema.decodeUnknownEffect(SourcePersonAdmissionResponseSchema)(response).pipe(
             Effect.mapError(ownerProofFailure),
           );

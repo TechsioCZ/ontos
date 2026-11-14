@@ -13,6 +13,7 @@ import {
   OrganizationProfileIcoRejected,
 } from '../../shared/domain/organization-profile-ico.ts';
 import { commerceSourceDelegationSubject } from './source-delegation-subject.ts';
+import { commerceCustomerContextEvidenceCall } from '../declared-evidence-calls.ts';
 
 const [allowed] = OrganizationProfileIcoApplicabilityResponseSchema.members;
 export type OrganizationProfileIcoAuthority = typeof allowed.Type;
@@ -48,6 +49,7 @@ export const commerceOrganizationProfileIcoEligibilityLive = Layer.effect(
           ...input,
           fields: ORGANIZATION_PROFILE_ICO_FIELDS,
         }).pipe(Effect.mapError(unavailable));
+        // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
         const issued = yield* acquireDelegatedGatewayContext(
           {
             audience: 'privacy',
@@ -62,13 +64,13 @@ export const commerceOrganizationProfileIcoEligibilityLive = Layer.effect(
             ),
           },
           crypto,
-        ).pipe(Effect.mapError(unavailable));
+        ).pipe(commerceCustomerContextEvidenceCall('organizationProfileIcoEligibility'), Effect.mapError(unavailable));
         const raw = yield* executeOrganizationProfileIcoApplicabilityWithAuthorization(
           request,
           issued.authorization,
           scope.correlationId,
           { baseUrl: new URL(issued.apiBaseUrl), compositionRevision: issued.compositionRevision },
-        ).pipe(Effect.mapError(unavailable));
+        ).pipe(commerceCustomerContextEvidenceCall('organizationProfileIcoEligibility'), Effect.mapError(unavailable));
         const response = yield* Schema.decodeUnknownEffect(OrganizationProfileIcoApplicabilityResponseSchema)(raw).pipe(
           Effect.mapError(unavailable),
         );
