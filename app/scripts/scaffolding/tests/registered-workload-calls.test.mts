@@ -24,7 +24,14 @@ const callers = {
   privacy: 9,
   'symmy-integration': 50,
 } as const;
-const receivers = ['catalog', 'commerce-market-catalog', 'inventory', 'price-group-catalog', 'storefront-registry'];
+const receivers = [
+  'catalog',
+  'commerce-market-catalog',
+  'inventory',
+  'price-group-catalog',
+  'storefront-registry',
+  'tax',
+];
 type Contract = Parameters<typeof assertRegisteredWorkloadCallsReceived>[0][number];
 type Call = NonNullable<Contract['manifest']['registeredWorkloadCalls']>[number];
 
