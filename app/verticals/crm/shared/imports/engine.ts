@@ -294,6 +294,39 @@ export const importOrders = (
     };
   };
 
+  const applyNewCustomerLink = (existing: ImportedOrder, row: ParsedOrderRow): ImportedOrder => {
+    if (
+      existing.externalCustomerId !== undefined ||
+      row.externalCustomerId === undefined ||
+      existing.clientId !== undefined ||
+      existing.pairing === 'paired'
+    ) {
+      return existing;
+    }
+    const lastPairing = pairingHistory.findLast((change) => change.orderId === existing.id);
+    if (lastPairing?.via === 'manual') {
+      return existing;
+    }
+    const link = slice.customerLinks.find(
+      (entry) => entry.source === row.source && entry.externalCustomerId === row.externalCustomerId,
+    );
+    if (link === undefined) {
+      return existing;
+    }
+    const clientId = linkTargetClientId(clients.items, link);
+    pairingHistory.push({
+      at: meta.now,
+      by: meta.by,
+      id: meta.newId(`p${row.row}`),
+      orderId: existing.id,
+      reason: `Schválená vazba zákazníka (${link.source})`,
+      toClientId: clientId,
+      via: 'customer_link',
+    });
+    const { candidates: _candidates, ...rest } = existing;
+    return { ...rest, clientId, pairing: 'paired' };
+  };
+
   const updateOrder = (existing: ImportedOrder, row: ParsedOrderRow, event: OrderStatusEvent) => {
     const money = fillMoney(existing, row);
     const repeated = existing.statusHistory.find((entry) => sameEvent(entry, event));
@@ -305,6 +338,7 @@ export const importOrders = (
       };
     }
     const reviewReason = money.reviewReason ?? eventReviewReason(existing, event);
+    const linked = applyNewCustomerLink(existing, row);
     const twin = existing.number === undefined ? crossSourceTwin(orders.values(), row) : undefined;
     const correlationReason = twin === undefined ? undefined : duplicateReason(twin, row.number);
     const filled = definedEntries({
@@ -321,14 +355,14 @@ export const importOrders = (
     const next: ImportedOrder =
       reviewReason === undefined
         ? {
-            ...existing,
+            ...linked,
             ...filled,
             lastEventAt: event.eventAt ?? existing.lastEventAt ?? meta.now,
             rawStatus: event.rawStatus,
             statusHistory: [...existing.statusHistory, event],
           }
         : {
-            ...existing,
+            ...linked,
             ...filled,
             statusHistory: [...existing.statusHistory, { ...event, review: true, reviewReason }],
           };

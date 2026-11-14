@@ -246,6 +246,44 @@ describe('CRM order CSV parser', () => {
 });
 
 describe('CRM order import (C03)', () => {
+  it.effect('uses an approved link when customer identity arrives later, without overwriting manual pairing', () =>
+    Effect.gen(function* lateCustomerLink() {
+      const linked = yield* runOk(base, {
+        _tag: 'LinkExternalCustomer',
+        clientId: 'pekarna-mala',
+        externalCustomerId: 'approved-customer',
+        source: 'E-shop',
+      });
+      const header = 'source;order_id;customer_id;status;event_time;customer_name\n';
+      const imported = yield* runOk(linked, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;late-customer;;nova;2026-10-19T09:00:00Z;pekarna-mala\nE-shop;manual-customer;;nova;2026-10-19T09:00:00Z;\n`,
+        fileName: 'customers-first.csv',
+      });
+      const manual = yield* runOk(imported, {
+        _tag: 'PairOrder',
+        clientId: 'zlata-husa',
+        orderId: order(imported, 'manual-customer').id,
+        reason: 'Ručně ověřený zákazník',
+      });
+      const next = yield* runOk(manual, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;late-customer;approved-customer;paid;2026-10-19T10:00:00Z;\nE-shop;manual-customer;approved-customer;paid;2026-10-19T10:00:00Z;\n`,
+        fileName: 'customers-next.csv',
+      });
+      const paired = order(next, 'late-customer');
+      expect(paired).toMatchObject({ clientId: 'pekarna-mala', pairing: 'paired' });
+      expect(paired.candidates).toBeUndefined();
+      expect(next.imports.pairingHistory.filter((change) => change.orderId === paired.id)).toMatchObject([
+        { at: DateTime.makeUnsafe(at), by: 'p-lead', toClientId: 'pekarna-mala', via: 'customer_link' },
+      ]);
+      expect(order(next, 'manual-customer')).toMatchObject({ clientId: 'zlata-husa', pairing: 'paired' });
+      expect(
+        next.imports.pairingHistory.filter((change) => change.orderId === order(next, 'manual-customer').id),
+      ).toHaveLength(1);
+      return yield* Effect.void;
+    }),
+  );
   it.effect('rechecks cross-source duplicates when an existing order first receives its number', () =>
     Effect.gen(function* enrichedNumberCorrelation() {
       const header = 'source;order_id;number;status;event_time\n';
