@@ -1195,7 +1195,10 @@ const sellableUnitOf = (
       tax,
       unit: {
         availability: variant.availability,
-        grossPriceMinor: tierPriceForQuantity(variant.priceTiers, line.quantity) ?? variant.grossPriceMinor ?? 0,
+        grossPriceMinor:
+          tierPriceForQuantity(variant.priceTiers, line.quantity) ??
+          product.variants?.find((entry) => entry.id === variant.id)?.grossPriceMinor ??
+          grossUnitPriceMinor(variant.priceMinor, tax.vatRate),
         minimumQuantity: variant.minimumQuantity ?? 1,
         name: product.name,
         packageQuantity: variant.packageQuantity,
@@ -1213,7 +1216,10 @@ const sellableUnitOf = (
     unit: {
       availability: record.availability ?? 'UNKNOWN',
       // A missing gross price is refused below as PRICE_UNAVAILABLE, never sold at 0 %.
-      grossPriceMinor: tierPriceForQuantity(product.priceTiers, line.quantity) ?? record.grossPriceMinor ?? 0,
+      grossPriceMinor:
+        tierPriceForQuantity(product.priceTiers, line.quantity) ??
+        product.grossPriceMinor ??
+        grossUnitPriceMinor(product.currentPriceMinor, tax.vatRate),
       minimumQuantity: product.minimumQuantity ?? 1,
       name: product.name,
       packageQuantity: product.packageQuantity,

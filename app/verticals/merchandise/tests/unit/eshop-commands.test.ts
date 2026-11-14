@@ -527,3 +527,51 @@ it.effect('refuses a removed variant even after the final variant disappears', (
     expect(accepted.state.orders[0]?.lines[0]?.variantId).toBeUndefined();
   }),
 );
+
+it.effect('uses the stored base gross below the first discount break for products and variants', () =>
+  Effect.gen(function* belowFirstTier() {
+    const current = yield* seeded;
+    for (const variantProduct of [true, false]) {
+      const tier = { minimumQuantity: 10, priceExcludingVatMinor: 20_000, priceMinor: 22_400 };
+      const tiered: MerchandiseState = {
+        ...current,
+        products: current.products.map((product) => ({
+          ...product,
+          grossPriceMinor: 28_900,
+          priceTiers: [tier],
+          variants: variantProduct
+            ? product.variants?.map((variant) => ({ ...variant, grossPriceMinor: 28_900, priceTiers: [tier] }))
+            : [],
+        })),
+      };
+      const identity = variantProduct ? { variantId: 'u1-v1' } : {};
+      const accepted = yield* apply(
+        tiered,
+        guestOrder({
+          lines: [{ expectedUnitPriceMinor: 28_900, productId: 'p1', quantity: 2, ...identity }],
+        }),
+        'base-price-order',
+      );
+      expect(accepted.storefrontOrder?.outcome).toBe('PLACED');
+      expect(accepted.state.orders[0]?.lines[0]?.unitPriceMinor).toBe(28_900);
+      const refused = yield* apply(
+        tiered,
+        guestOrder({
+          lines: [{ expectedUnitPriceMinor: 22_400, productId: 'p1', quantity: 2, ...identity }],
+        }),
+        'discount-too-early',
+      );
+      expect(refused.storefrontOrder?.issues[0]?.code).toBe('PRICE_CHANGED');
+      expect(refused.state).toBe(tiered);
+      const discounted = yield* apply(
+        tiered,
+        guestOrder({
+          lines: [{ expectedUnitPriceMinor: 22_400, productId: 'p1', quantity: 10, ...identity }],
+        }),
+        'discount-at-break',
+      );
+      expect(discounted.storefrontOrder?.outcome).toBe('PLACED');
+      expect(discounted.state.orders[0]?.lines[0]?.unitPriceMinor).toBe(22_400);
+    }
+  }),
+);
