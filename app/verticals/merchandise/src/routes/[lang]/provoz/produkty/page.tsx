@@ -567,8 +567,12 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
               onReload={reload}
               open={dialog === 'price'}
               revision={revision}
+              variantProducts={products.filter(
+                (product) => (product.variantCount ?? 0) > 0 && selectedIds.includes(product.id),
+              )}
             />
             <CategoryDialog
+              hasTree={byTree}
               ids={selectedIds}
               onCommitted={clearSelectionThen}
               onOpenChange={closeDialog}

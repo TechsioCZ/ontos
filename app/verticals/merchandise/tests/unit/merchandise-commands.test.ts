@@ -765,3 +765,257 @@ it.effect('Bulk native assignment rejects mixed display fields and any invalid p
     expect(Schema.encodeSync(MerchandiseStateSchema)(bulkMembershipState)).toEqual(before);
   }),
 );
+
+it.effect('requires product stock reconciliation before adding the first sellable variant', () =>
+  Effect.gen(function* firstVariantWithStock() {
+    const created = yield* addProduct(empty, 'stocked-parent', 'PARENT', 100);
+    const stocked = yield* receive(created.state, 'stocked-parent', 3, 'parent-stock');
+    const command: CommandInput = {
+      _tag: 'UpdateProduct',
+      id: 'stocked-parent',
+      patch: { variants: [{ attributes: '', id: 'new-variant', name: 'New', priceMinor: 100 }] },
+    };
+    const refused = yield* apply(stocked.state, command, 'add-first-variant').pipe(Effect.flip);
+    expect(isConflict(refused)).toBe(true);
+    expect(onHand(stocked.state, 'stocked-parent')).toBe(3);
+    const reconciled = yield* apply(
+      stocked.state,
+      { _tag: 'RecordStockMovement', delta: -3, productId: 'stocked-parent', reason: 'ADJUSTMENT' },
+      'reconcile-parent',
+    );
+    const accepted = yield* apply(reconciled.state, command, 'add-after-reconciliation');
+    expect(accepted.state.products[0]?.variants?.[0]?.id).toBe('new-variant');
+  }),
+);
+
+it.effect('refuses to remove a stocked variant even while another variant remains', () =>
+  Effect.gen(function* removingStockedVariant() {
+    const created = yield* addProduct(empty, 'variant-stock', 'VARIANT-STOCK', 100);
+    const first = { attributes: '', id: 'stocked-variant', name: 'Stocked', priceMinor: 100 };
+    const second = { attributes: '', id: 'empty-variant', name: 'Empty', priceMinor: 200 };
+    const variants = yield* apply(
+      created.state,
+      { _tag: 'UpdateProduct', id: 'variant-stock', patch: { variants: [first, second] } },
+      'add-variants',
+    );
+    const stocked = yield* apply(
+      variants.state,
+      { _tag: 'RecordStockMovement', delta: 3, productId: 'variant-stock', reason: 'RECEIPT', variantId: first.id },
+      'stock-variant',
+    );
+    for (const remaining of [[], [second], [{ attributes: '', id: first.id, name: first.name }]]) {
+      const refused = yield* apply(
+        stocked.state,
+        { _tag: 'UpdateProduct', id: 'variant-stock', patch: { variants: remaining } },
+        'remove-stocked',
+      ).pipe(Effect.flip);
+      expect(isConflict(refused)).toBe(true);
+    }
+    const accepted = yield* apply(
+      stocked.state,
+      { _tag: 'UpdateProduct', id: 'variant-stock', patch: { variants: [first] } },
+      'remove-empty',
+    );
+    expect(accepted.state.products[0]?.variants).toHaveLength(1);
+    expect(accepted.state.movements).toBe(stocked.state.movements);
+  }),
+);
+
+it.effect('refuses a bulk price selection containing sellable variants instead of changing unused parent prices', () =>
+  Effect.gen(function* bulkVariantPriceRefusal() {
+    const parent = yield* addProduct(empty, 'bulk-plain', 'PLAIN', 1000);
+    const created = yield* addProduct(parent.state, 'bulk-variant', 'VARIANT', 2000);
+    const variants = yield* apply(
+      created.state,
+      {
+        _tag: 'UpdateProduct',
+        id: 'bulk-variant',
+        patch: {
+          variants: [{ attributes: '', id: 'bulk-v1', name: 'Sellable', priceMinor: 3000 }],
+        },
+      },
+      'bulk-variants',
+    );
+    const refused = yield* apply(
+      variants.state,
+      { _tag: 'BulkUpdateProducts', ids: ['bulk-plain', 'bulk-variant'], patch: { priceChangePercent: 10 } },
+      'bulk-price-change',
+    ).pipe(Effect.flip);
+    expect(isConflict(refused)).toBe(true);
+    expect(variants.state.products.map((product) => product.currentPriceMinor)).toEqual([1000, 2000]);
+    const accepted = yield* apply(
+      variants.state,
+      { _tag: 'BulkUpdateProducts', ids: ['bulk-plain'], patch: { priceChangePercent: 10 } },
+      'plain-price-change',
+    );
+    expect(accepted.state.products[0]?.currentPriceMinor).toBe(1100);
+    expect(accepted.state.products[1]).toBe(variants.state.products[1]);
+  }),
+);
+
+it.effect('scales gross and net discount tiers by their respective base price ratios', () =>
+  Effect.gen(function* discountedTierRepricing() {
+    const created = yield* addProduct(empty, 'tiered-base', 'TIERED', 1000);
+    const tier = { minimumQuantity: 10, priceExcludingVatMinor: 800, priceMinor: 968 };
+    const tiered: MerchandiseState = {
+      ...created.state,
+      products: created.state.products.map((product) => ({ ...product, priceTiers: [tier] })),
+    };
+    const repriced = yield* apply(tiered, { _tag: 'ChangePrice', id: 'tiered-base', priceMinor: 2000 }, 'tier-reprice');
+    expect(repriced.state.products[0]?.priceTiers).toEqual([
+      { minimumQuantity: 10, priceExcludingVatMinor: 1600, priceMinor: 1936 },
+    ]);
+    expect(repriced.state.products[0]?.priceTiers?.[0]?.priceMinor).not.toBe(2420);
+    const historicalGross: MerchandiseState = {
+      ...created.state,
+      products: created.state.products.map((product) => ({
+        ...product,
+        grossPriceMinor: 1100,
+        priceTiers: [{ ...tier, priceMinor: 880 }],
+      })),
+    };
+    const currentGross = yield* apply(
+      historicalGross,
+      { _tag: 'ChangePrice', id: 'tiered-base', priceMinor: 2000 },
+      'reprice-historical-gross',
+    );
+    expect(currentGross.state.products[0]?.priceTiers?.[0]).toMatchObject({
+      priceExcludingVatMinor: 1600,
+      priceMinor: 1936,
+    });
+    const variant = yield* apply(
+      created.state,
+      {
+        _tag: 'UpdateProduct',
+        id: 'tiered-base',
+        patch: {
+          variants: [{ attributes: '', id: 'tier-v1', name: 'Tiered', priceMinor: 1000, priceTiers: [tier] }],
+        },
+      },
+      'add-tier-variant',
+    );
+    const changedVariant = yield* apply(
+      variant.state,
+      {
+        _tag: 'ChangePrice',
+        id: 'tiered-base',
+        priceMinor: 2000,
+        variantId: 'tier-v1',
+      },
+      'variant-tier-reprice',
+    );
+    expect(changedVariant.state.products[0]?.variants?.[0]?.priceTiers).toEqual([
+      { minimumQuantity: 10, priceExcludingVatMinor: 1600, priceMinor: 1936 },
+    ]);
+  }),
+);
+
+it.effect('records fractional manual receipts and issues without rounding the quantity', () =>
+  Effect.gen(function* fractionalManualMovements() {
+    const created = yield* addProduct(empty, 'fraction-product', 'FRACTION', 1000);
+    const received = yield* receive(created.state, 'fraction-product', 0.3, 'fraction-receipt');
+    const first = yield* apply(
+      received.state,
+      {
+        _tag: 'RecordStockMovement',
+        delta: -0.1,
+        productId: 'fraction-product',
+        reason: 'ISSUE',
+      },
+      'fraction-issue-1',
+    );
+    const second = yield* apply(
+      first.state,
+      {
+        _tag: 'RecordStockMovement',
+        delta: -0.2,
+        productId: 'fraction-product',
+        reason: 'ISSUE',
+      },
+      'fraction-issue-2',
+    );
+    expect(second.state.movements.map((movement) => movement.delta)).toEqual([0.3, -0.1, -0.2]);
+    expect(onHand(second.state, 'fraction-product')).toBe(0);
+    const refused = yield* apply(
+      second.state,
+      {
+        _tag: 'RecordStockMovement',
+        delta: -0.001,
+        productId: 'fraction-product',
+        reason: 'ISSUE',
+      },
+      'fraction-overdraw',
+    ).pipe(Effect.flip);
+    expect(isConflict(refused)).toBe(true);
+  }),
+);
+
+it('rejects manual movements that are non-finite, unbounded or more precise than stock', () => {
+  const encodedCommand = Schema.is(Schema.toEncoded(MerchandiseCommandSchema));
+  const command = { _tag: 'RecordStockMovement', productId: 'fraction-product', reason: 'RECEIPT' } as const;
+  expect(encodedCommand({ ...command, delta: 0.125 })).toBe(true);
+  for (const delta of [Number.NaN, Number.POSITIVE_INFINITY, 1_000_001, -1_000_001, 0.0000001]) {
+    expect(encodedCommand({ ...command, delta })).toBe(false);
+  }
+});
+
+it.effect('requires an explicit bounded SKU when a generated variant SKU would exceed the order contract', () =>
+  Effect.gen(function* boundedVariantSku() {
+    const created = yield* addProduct(empty, 'long-sku-product', 'P'.repeat(64), 1000);
+    const variant = { attributes: '', id: 'V'.repeat(300), name: 'Long identity', priceMinor: 1000 };
+    const command: CommandInput = { _tag: 'UpdateProduct', id: 'long-sku-product', patch: { variants: [variant] } };
+    const refused = yield* apply(created.state, command, 'too-long-generated-sku').pipe(Effect.flip);
+    expect(isConflict(refused)).toBe(true);
+    const accepted = yield* apply(
+      created.state,
+      {
+        _tag: 'UpdateProduct',
+        id: 'long-sku-product',
+        patch: { variants: [{ ...variant, sku: 'S'.repeat(64) }] },
+      },
+      'explicit-bounded-sku',
+    );
+    expect(accepted.state.products[0]?.variants?.[0]?.sku).toHaveLength(64);
+    const stocked = yield* apply(
+      accepted.state,
+      {
+        _tag: 'RecordStockMovement',
+        delta: 1,
+        productId: 'long-sku-product',
+        reason: 'RECEIPT',
+        variantId: variant.id,
+      },
+      'bounded-sku-stock',
+    );
+    const ordered = yield* apply(
+      stocked.state,
+      {
+        _tag: 'CreateOrder',
+        id: 'bounded-sku-order',
+        lines: [{ productId: 'long-sku-product', quantity: 1, variantId: variant.id }],
+        partyId: 'party-1',
+      },
+      'bounded-sku-order',
+    );
+    expect(Schema.is(MerchandiseStateSchema)(ordered.state)).toBe(true);
+    expect(ordered.state.orders[0]?.lines[0]?.sku).toHaveLength(64);
+  }),
+);
+
+it.effect('refuses tier repricing without a usable old base price instead of inventing tier prices', () =>
+  Effect.gen(function* noBaseForTierRatio() {
+    const created = yield* addProduct(empty, 'zero-tier-base', 'ZERO-TIER', 0);
+    const tier = { minimumQuantity: 10, priceExcludingVatMinor: 0, priceMinor: 0 };
+    const tiered: MerchandiseState = {
+      ...created.state,
+      products: created.state.products.map((product) => ({ ...product, priceTiers: [tier] })),
+    };
+    const refused = yield* apply(
+      tiered,
+      { _tag: 'ChangePrice', id: 'zero-tier-base', priceMinor: 1000 },
+      'zero-ratio',
+    ).pipe(Effect.flip);
+    expect(isConflict(refused)).toBe(true);
+    expect(tiered.products[0]?.priceTiers).toEqual([tier]);
+  }),
+);

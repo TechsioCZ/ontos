@@ -1,4 +1,4 @@
-import { Match } from 'effect';
+import { DateTime, Match, Option } from 'effect';
 import type { FinanceCommand } from '../actions/apply-command.ts';
 import type { Invoice, RecurringTemplate } from '../apis/records.ts';
 
@@ -106,16 +106,25 @@ interface CounterpartyRolePeriod {
   readonly validTo: string | null;
 }
 
-/** Whether the counterparty holds an active role of the given type on the calendar date `on` (YYYY-MM-DD). */
+/**
+ * Whether the counterparty holds an active role of the given type at the instant `at`. The registry publishes role
+ * validity to the instant, so a role that ends at 10:00 is no longer usable at 11:00 the same day; a validity that does
+ * not parse makes the role unusable.
+ */
 export const hasUsableRole = (
   roles: readonly CounterpartyRolePeriod[],
   roleType: 'CUSTOMER' | 'SUPPLIER',
-  on: string,
+  at: DateTime.Utc,
 ): boolean =>
-  roles.some(
-    (role) =>
-      role.roleType === roleType &&
-      role.state === 'ACTIVE' &&
-      role.validFrom.slice(0, 10) <= on &&
-      (role.validTo === null || role.validTo.slice(0, 10) > on),
-  );
+  roles.some((role) => {
+    if (role.roleType !== roleType || role.state !== 'ACTIVE') {
+      return false;
+    }
+    const startsBy = DateTime.make(role.validFrom).pipe(
+      Option.exists((validFrom) => DateTime.isLessThanOrEqualTo(validFrom, at)),
+    );
+    const endsAfter =
+      role.validTo === null ||
+      DateTime.make(role.validTo).pipe(Option.exists((validTo) => DateTime.isGreaterThan(validTo, at)));
+    return startsBy && endsAfter;
+  });

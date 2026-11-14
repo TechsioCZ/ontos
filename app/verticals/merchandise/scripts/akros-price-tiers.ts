@@ -19,7 +19,9 @@ interface PricedProduct extends Priced {
 
 /**
  * The rate the seeded gross tiers include: AKROS goods are all standard-rated, at the rate the Tax baseline seeds
- * for the company. A different rule in Tax reprices these tiers from net on the company's next sync.
+ * for the company. Tiers keep the gross stored with them: a later rule in Tax reprices no tier (only a staff price
+ * change rescales them), and a tier whose gross no longer matches its net at the unit's rate is not used as a base price
+ * below the first break (`baseGrossOf`).
  */
 export const AKROS_SEED_STANDARD_RATE = 21;
 

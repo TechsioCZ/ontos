@@ -420,6 +420,36 @@ it.layer(NodeCrypto.layer)('Won opportunity priced exactly as the invoice form p
     }),
   );
 
+  suite.effect('a company that is not a VAT payer issues 0 % and 10 % lines without VAT too, never a refusal', () =>
+    Effect.gen(function* nonPayerUnclassifiedRates() {
+      const { invoices, scope } = makeLedger();
+      const choices = baselineVatChoices(tenantId, '2026-11-02', 'NON_PAYER');
+      const message = wonMessage(10);
+      const zeroRated = {
+        productId: '41000000-0000-4000-8000-000000000005',
+        productName: 'Vratná záloha',
+        quantity: 1,
+        unitPriceMinor: 50_000,
+        vatRate: 0,
+      };
+      yield* deliver(
+        scope,
+        taxAnswering(() => choices),
+        yield* Schema.decodeEffect(OutboxPayloadSchema)({
+          ...message,
+          amountMinor: 150_000,
+          lines: [...message.lines, zeroRated],
+        }),
+      );
+      const [invoice] = invoices();
+      expect((invoice?.lines ?? []).map((line) => vatOf(line))).toEqual([
+        { vatRate: 0, vatTreatment: 'NON_PAYER' },
+        { vatRate: 0, vatTreatment: 'NON_PAYER' },
+      ]);
+      expect(invoice?.totalMinor).toBe(150_000);
+    }),
+  );
+
   suite.effect('each opportunity is priced by the regime on its own won date', () =>
     Effect.gen(function* regimeChange() {
       const { invoices, scope } = makeLedger();
@@ -846,6 +876,22 @@ it.layer(NodeCrypto.layer)('Business outcomes complete the delivery; only system
           makeLedger().scope,
           taxAnswering(() => baselineVatChoices(tenantId, '2026-11-02')),
           yield* wonPayload(10),
+        ],
+        [
+          // A payer's 0 % line may be exempt or reverse charge: Finance refuses rather than guess which.
+          'FINANCE_REJECTED',
+          'WARN',
+          makeLedger().scope,
+          taxAnswering(() => baselineVatChoices(tenantId, '2026-11-02')),
+          yield* wonPayload(0),
+        ],
+        [
+          // A free-text line is not in the message, so its lines bill less than the won amount: nothing is drafted.
+          'OPPORTUNITY_LINES_INCOMPLETE',
+          'WARN',
+          makeLedger().scope,
+          taxNeverAsked().tax,
+          { ...(yield* wonPayload(21)), amountMinor: 150_000 },
         ],
         [
           'OPPORTUNITY_COMPANY_WITHOUT_LEDGER',

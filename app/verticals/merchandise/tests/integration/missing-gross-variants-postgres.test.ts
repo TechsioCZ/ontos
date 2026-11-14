@@ -2,7 +2,9 @@
 // whose gross is unrelated to their net), filled on PostgreSQL by the backfill a read or a write runs:
 // - a variant or product with no gross in its column nor its document gets one at the rate its classification sells
 //   at now; a held product (BOOK-IT, 10 %) gets its held rate, its variants too;
-// - a stored gross is never touched, however unrelated to its net, nor one only its document carries.
+// - a stored gross is never touched, however unrelated to its net, nor one only its document carries;
+// - a tiered price without a stored gross (the AKROS shape) is filled with what its record shows (`shownGrossOf`), and
+//   one the shared function leaves without a price keeps an empty column, which the probe does not report.
 import { NodeCrypto } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
 import { Effect } from 'effect';
@@ -24,13 +26,29 @@ import {
   stockMovements,
 } from '../../src/database/schema.ts';
 import {
+  loadProducts,
   missingGrossPricesExist,
   replaceSnapshot,
   storeMissingGrossPrices,
   whereScope,
 } from '../../src/services/merchandise-store.ts';
+import { toProductRecord } from '../../src/services/stock-levels.ts';
 import { TEST_PRICING, TEST_RATES } from '../support/tax-fixtures.ts';
 import { at, decodeState } from './support/merchandise-database.ts';
+
+type AdminDb = Effect.Success<ReturnType<typeof makeTestDatabaseFromClient<typeof merchandiseRelations>>>;
+
+/** The stored gross column of one product of `company`. */
+const productGrossOf = (
+  admin: AdminDb,
+  company: { readonly legalEntityId: string; readonly tenantId: string },
+  id: string,
+) =>
+  admin
+    .select({ gross: products.grossPriceMinor })
+    .from(products)
+    .where(and(whereScope(products, company), eq(products.id, id)))
+    .pipe(Effect.map(([row]) => row?.gross));
 
 const base = {
   active: true,
@@ -136,12 +154,7 @@ it.live('a missing gross is entered at its rate, a held product at its held rate
           .from(productVariants)
           .where(and(whereScope(productVariants, company), eq(productVariants.variantId, id)))
           .pipe(Effect.map(([row]) => row?.gross));
-      const productGross = (id: string) =>
-        admin
-          .select({ gross: products.grossPriceMinor })
-          .from(products)
-          .where(and(whereScope(products, company), eq(products.id, id)))
-          .pipe(Effect.map(([row]) => row?.gross));
+      const productGross = (id: string) => productGrossOf(admin, company, id);
       const held = { held: 10, 'held-variants': 10 };
 
       expect(yield* missingGrossPricesExist(admin, company, TEST_RATES, held)).toBe(true);
@@ -159,6 +172,114 @@ it.live('a missing gross is entered at its rate, a held product at its held rate
       expect(yield* variantGross('document-only')).toBeNull();
       // Running again fills nothing: the backfill is idempotent.
       expect(yield* storeMissingGrossPrices(admin, company, TEST_RATES, held)).toBe(0);
+    }),
+  ).pipe(Effect.provide(NodeCrypto.layer)),
+);
+
+/** Net 1000 at 21 %: the base tier as AKROS imports it (1210), and a discount break from 10 (net 900, 1089). */
+const BASE_TIER = { minimumQuantity: 1, priceExcludingVatMinor: 1000, priceMinor: 1210 };
+const DISCOUNT_TIER = { minimumQuantity: 10, priceExcludingVatMinor: 900, priceMinor: 1089 };
+
+/** Tiered prices with no stored gross anywhere, as AKROS stores them (no `withStoredGross`). */
+const tieredState = decodeState({
+  categories: [],
+  movements: [],
+  orders: [],
+  products: [
+    {
+      ...base,
+      currentPriceMinor: 1000,
+      id: 'akros',
+      minimumQuantity: 0.5,
+      name: 'Šroub od 0,5',
+      priceTiers: [BASE_TIER],
+      sku: 'AKROS',
+      taxClassificationCode: 'cz.vat.standard',
+    },
+    {
+      ...base,
+      currentPriceMinor: 1000,
+      id: 'discount-only',
+      name: 'Jen množstevní cena',
+      priceTiers: [DISCOUNT_TIER],
+      sku: 'DISCOUNT',
+      taxClassificationCode: 'cz.vat.standard',
+    },
+    {
+      ...base,
+      currentPriceMinor: 1000,
+      id: 'discount-variants',
+      name: 'Varianta jen s množstevní cenou',
+      sku: 'DISCOUNT-V',
+      taxClassificationCode: 'cz.vat.standard',
+      variants: [
+        {
+          attributes: '',
+          id: 'discount-variant',
+          name: 'M8',
+          priceMinor: 1000,
+          priceTiers: [DISCOUNT_TIER],
+          sku: 'D-M8',
+        },
+      ],
+    },
+  ],
+});
+
+it.live('a tiered price without a stored gross shows its tiers, and one without a base keeps no price', () =>
+  Effect.scoped(
+    Effect.gen(function* tieredWithoutGross() {
+      const connections = yield* loadDatabaseConnectionPair();
+      const admin = yield* makeTestDatabaseFromClient(
+        yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 }),
+        merchandiseRelations,
+      );
+      const company = { legalEntityId: randomUUID(), tenantId: randomUUID() };
+      yield* Effect.addFinalizer(() =>
+        Effect.all(
+          [priceTiers, productVariants, stockMovements, products, catalogHeads].map((table) =>
+            admin.delete(table).where(whereScope(table, company)),
+          ),
+          { concurrency: 1 },
+        ).pipe(Effect.orDie),
+      );
+      yield* admin.transaction((tx) => replaceSnapshot(tx, company, tieredState, TEST_PRICING));
+      const productGross = (id: string) => productGrossOf(admin, company, id);
+      const variantGross = admin
+        .select({ gross: productVariants.grossPriceMinor })
+        .from(productVariants)
+        .where(and(whereScope(productVariants, company), eq(productVariants.variantId, 'discount-variant')))
+        .pipe(Effect.map(([row]) => row?.gross));
+      // The columns cards, summaries, sorting and price filters read: the base tier's price, or no price at all.
+      expect(yield* productGross('akros')).toBe(1210);
+      expect(yield* productGross('discount-only')).toBeNull();
+      expect(yield* productGross('discount-variants')).toBeNull();
+      expect(yield* variantGross).toBeNull();
+      // Nothing to fill: an empty column of a tiered price is its "no price", never net plus VAT.
+      expect(yield* missingGrossPricesExist(admin, company, TEST_RATES, {})).toBe(false);
+      expect(yield* storeMissingGrossPrices(admin, company, TEST_RATES, {})).toBe(0);
+      expect(yield* productGross('discount-only')).toBeNull();
+      expect(yield* variantGross).toBeNull();
+      // A tiered price whose column was dropped gets back exactly what its record shows (its base tier, 1210), never
+      // its net plus VAT, and the probe is quiet again afterwards.
+      yield* admin
+        .update(products)
+        .set({ grossPriceMinor: null })
+        .where(and(whereScope(products, company), eq(products.id, 'akros')));
+      expect(yield* missingGrossPricesExist(admin, company, TEST_RATES, {})).toBe(true);
+      expect(yield* storeMissingGrossPrices(admin, company, TEST_RATES, {})).toBe(1);
+      expect(yield* productGross('akros')).toBe(1210);
+      expect(yield* missingGrossPricesExist(admin, company, TEST_RATES, {})).toBe(false);
+      // Read back, no gross is taken from a column as if it had been entered; the record shows the tiers' price.
+      const loaded = yield* loadProducts(admin, company, undefined, { variants: true });
+      const shown = Object.fromEntries(
+        loaded.map(({ product, stock }) => {
+          expect([product.id, product.grossPriceMinor]).toEqual([product.id, undefined]);
+          const record = toProductRecord(product, stock, TEST_RATES, {});
+          return [product.id, record.grossPriceMinor ?? null];
+        }),
+      );
+      expect(shown).toEqual({ akros: 1210, 'discount-only': null, 'discount-variants': null });
     }),
   ).pipe(Effect.provide(NodeCrypto.layer)),
 );

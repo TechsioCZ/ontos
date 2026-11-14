@@ -6,10 +6,13 @@ import { CoreDatabase } from '../packages/core-runtime/src/db/client.ts';
 import { ApplicationCompositionAuthorityError } from '../packages/core-runtime/src/modules/application-composition-authority.ts';
 
 // Compatible opt-in Core expansions, in journal order. The dead-delivery resolution ledger must exist while
-// the old release drains, because an operator may need it to redrive or release a dead tracked delivery.
+// the old release drains, because an operator may need it to redrive or release a dead tracked delivery. The drain
+// abandonment ledger must exist then too: it is what returns a draining authority to active when the drain fails.
+// Drizzle picks pending migrations by name, so applying these ahead of older ones never makes it skip any.
 const additiveMigrations = [
   '20261019161320_outbox-composition-completion',
   '20261029194254_outbox-delivery-resolution',
+  '20261114011916_application-composition-drain-abandonment',
 ] as const;
 const unavailable = (cause: unknown) =>
   new ApplicationCompositionAuthorityError({

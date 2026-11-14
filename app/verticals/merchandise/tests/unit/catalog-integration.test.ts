@@ -181,30 +181,35 @@ it.effect('same-primary secondary edits derive paths, preserve on a move, and re
   }),
 );
 
-it.effect('legacy CreateProduct retains its trusted category fields without adding memberships', () =>
-  Effect.gen(function* legacyCreateCategoryCompatibility() {
-    const created = yield* evolveMerchandiseState(
-      state,
-      command({
-        _tag: 'CreateProduct',
-        active: true,
-        category: 'Trusted display',
-        categoryId: 'trusted-id',
-        categoryPathIds: ['trusted-id', 'trusted-root'],
-        lowStockThreshold: 0,
-        name: 'Trusted',
-        priceMinor: 100,
-        sku: 'TRUSTED',
-        taxClassificationCode: 'cz.vat.standard',
-        unit: 'ks',
-      }),
-      input,
-    );
+it.effect('CreateProduct derives its category fields from the stored tree, never from the request', () =>
+  Effect.gen(function* createCategoryFromTree() {
+    const fields = {
+      _tag: 'CreateProduct',
+      active: true,
+      category: 'Client display',
+      categoryPathIds: ['forged-id', 'forged-root'],
+      lowStockThreshold: 0,
+      name: 'Derived',
+      priceMinor: 100,
+      sku: 'DERIVED',
+      taxClassificationCode: 'cz.vat.standard',
+      unit: 'ks',
+    };
+    const created = yield* evolveMerchandiseState(state, command({ ...fields, categoryId: 'c' }), input);
     const product = created.state.products.at(-1);
-    expect(product?.category).toBe('Trusted display');
-    expect(product?.categoryId).toBe('trusted-id');
-    expect(product?.categoryPathIds).toEqual(['trusted-id', 'trusted-root']);
-    expect(product?.additionalCategoryIds).toBeUndefined();
+    expect(product?.category).toBe('Metrické');
+    expect(product?.categoryId).toBe('c');
+    expect(product?.categoryPathIds).toEqual(['c', 'r']);
+    expect(product?.additionalCategoryIds).toEqual([]);
+    const unproved = yield* Effect.flip(
+      evolveMerchandiseState(state, command({ ...fields, categoryId: 'forged-id' }), input),
+    );
+    expect(Schema.is(MerchandiseLifecycleConflict)(unproved)).toBe(true);
+    const uncategorized = yield* evolveMerchandiseState(state, command(fields), input);
+    const plain = uncategorized.state.products.at(-1);
+    expect(plain?.category).toBe('Client display');
+    expect(plain?.categoryId).toBeUndefined();
+    expect(plain?.categoryPathIds).toBeUndefined();
   }),
 );
 

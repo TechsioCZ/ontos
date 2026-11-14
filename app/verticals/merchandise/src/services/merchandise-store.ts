@@ -1,3 +1,4 @@
+import { normalizeQuantity } from '../../shared/domain/order-quantity.ts';
 import type { AgentHistoryRequest } from '@app/shared-contracts/agent-proposals';
 // Row mapping between the merchandise domain values and the normalized tables (src/database/schema.ts), plus the
 // three write paths: replace a company snapshot (seeds, demo reset), load a command's working set, and persist
@@ -32,7 +33,8 @@ import {
   products,
   stockMovements,
 } from '../database/schema.ts';
-import { grossPriceOf, productRateOf, realVariantsOf, stockLevelsOf, toProductRecord } from './stock-levels.ts';
+import { shownGrossOf } from '../../shared/domain/unit-price.ts';
+import { productRateOf, realVariantsOf, stockLevelsOf, toProductRecord } from './stock-levels.ts';
 import type { StockLevels } from './stock-levels.ts';
 import { CompanyTaxRatesSchema, heldRatesOf, sellableRatesOf } from './tax-rates.ts';
 import type { CompanyTaxRates, HeldProductRates, SellableVatRates } from './tax-rates.ts';
@@ -254,10 +256,10 @@ const ROLLBACK_RATES = { [CZ_VAT_REDUCED]: [10, 12], [CZ_VAT_STANDARD]: [21] } a
 
 /**
  * Every price the release before classifications computes from the document's `vatRate`, with what this release
- * charges for it now: each real variant, or the product itself when it has none. That release sells a tiered price at
- * its first tier on the storefront, but a line staff add to a VAT-inclusive order it prices from net + `vatRate`,
- * ignoring tiers; this release charges the first tier's price for both (`storedGrossOf`). So a tiered price counts too,
- * compared with its first tier.
+ * charges for it now below the first quantity break: each real variant, or the product itself when it has none. That
+ * release prices a line staff add to a VAT-inclusive order from net + `vatRate`, ignoring tiers; this release charges
+ * the gross its record shows there (`shownGrossOf`), so a tiered price counts too, compared with that base. A unit without a
+ * base gross is sold by this release only at its breaks and adds no comparison.
  */
 const recomputedPricesOf = (product: Product, rate: number | undefined) => {
   const variants = realVariantsOf(product);
@@ -266,7 +268,7 @@ const recomputedPricesOf = (product: Product, rate: number | undefined) => {
       ? variants.map((variant) => ({ net: variant.priceMinor, priced: variant }))
       : [{ net: product.currentPriceMinor, priced: product }];
   return entries.flatMap(({ net, priced }) => {
-    const charged = grossPriceOf(priced, net, rate);
+    const charged = shownGrossOf(priced, net, rate);
     return charged === undefined ? [] : [{ charged, net }];
   });
 };
@@ -336,13 +338,13 @@ export const productRowsOf = Effect.fn('MerchandiseStore.productRowsOf')(functio
       active: variant.active !== false,
       document: variantDocument,
       grossPriceMinor:
-        variant.priceMinor === undefined ? null : (grossPriceOf(variant, variant.priceMinor, rate) ?? null),
+        variant.priceMinor === undefined ? null : (shownGrossOf(variant, variant.priceMinor, rate) ?? null),
       name: variant.name,
       position,
       priceMinor: variant.priceMinor ?? null,
       productId: product.id,
       sku: variant.sku ?? null,
-      stockOnHand: variant.id === undefined ? 0 : (stock.variants.get(variant.id) ?? 0),
+      stockOnHand: variant.id === undefined ? 0 : normalizeQuantity(stock.variants.get(variant.id) ?? 0),
       unit: variant.unit ?? variant.sourceUnit ?? product.unit,
       variantId: variant.id ?? null,
     };
@@ -381,31 +383,41 @@ const tiersFor = (tiers: ReadonlyMap<string, readonly StoredTier[]>, productId: 
   (tiers.get(`${productId}|${position}`) ?? []).toSorted((a, b) => a.position - b.position).map(tierValue);
 
 // Relational rows replace only the document fields they own. Without replacement rows, legacy inline arrays remain.
-const decodeStoredProduct = (row: StoredProduct, keepVariants: boolean, keepTiers: boolean) => {
-  if (keepVariants) {
-    return keepTiers
-      ? Schema.decodeUnknownEffect(fullProductDocumentSchema)(row.document)
-      : Schema.decodeUnknownEffect(productDocumentWithVariantsSchema)(row.document);
+// A tiered price's gross column projects the gross its record shows (`shownGrossOf`), never one entered with
+// its net price, so only an untiered document may take its base gross from the column.
+const hasTiers = (document: { readonly priceTiers?: readonly unknown[] | undefined }) =>
+  (document.priceTiers?.length ?? 0) > 0;
+const decodeStoredProduct = Effect.fn('MerchandiseStore.decodeStoredProduct')(function* decodeStoredProduct(
+  row: StoredProduct,
+  keepVariants: boolean,
+  keepTiers: boolean,
+) {
+  if (!keepTiers) {
+    const document = keepVariants
+      ? yield* Schema.decodeUnknownEffect(productDocumentWithVariantsSchema)(row.document)
+      : yield* Schema.decodeUnknownEffect(productDocumentSchema)(row.document);
+    return { document, tiered: true };
   }
-  return keepTiers
-    ? Schema.decodeUnknownEffect(productDocumentWithTiersSchema)(row.document)
-    : Schema.decodeUnknownEffect(productDocumentSchema)(row.document);
-};
+  const document = keepVariants
+    ? yield* Schema.decodeUnknownEffect(fullProductDocumentSchema)(row.document)
+    : yield* Schema.decodeUnknownEffect(productDocumentWithTiersSchema)(row.document);
+  return { document, tiered: hasTiers(document) };
+});
 const hydrateStoredVariant = Effect.fn('MerchandiseStore.hydrateVariant')(function* hydrateVariant(
   variant: StoredVariant,
   tiers: ReadonlyMap<string, readonly StoredTier[]>,
 ) {
   const variantTiers = tiersFor(tiers, variant.productId, variant.position);
-  const decoded = yield* Schema.decodeUnknownEffect(
-    variantTiers.length === 0 ? fullVariantDocumentSchema : variantDocumentSchema,
-  )(variant.document);
+  if (variantTiers.length > 0) {
+    const decoded = yield* Schema.decodeUnknownEffect(variantDocumentSchema)(variant.document);
+    return { ...decoded, priceTiers: variantTiers };
+  }
+  const decoded = yield* Schema.decodeUnknownEffect(fullVariantDocumentSchema)(variant.document);
   // The stored gross column is the variant's price as it was entered; documents written before stored gross carry it
   // only there.
-  const document =
-    decoded.grossPriceMinor === undefined && variant.grossPriceMinor !== null
-      ? { ...decoded, grossPriceMinor: variant.grossPriceMinor }
-      : decoded;
-  return variantTiers.length === 0 ? document : { ...document, priceTiers: variantTiers };
+  return decoded.grossPriceMinor === undefined && variant.grossPriceMinor !== null && !hasTiers(decoded)
+    ? { ...decoded, grossPriceMinor: variant.grossPriceMinor }
+    : decoded;
 });
 const hydrateStoredProduct = Effect.fn('MerchandiseStore.hydrateProduct')(function* hydrateProduct(
   row: StoredProduct,
@@ -414,12 +426,17 @@ const hydrateStoredProduct = Effect.fn('MerchandiseStore.hydrateProduct')(functi
 ) {
   const variants = (variantRows.get(row.id) ?? []).toSorted((a, b) => a.position - b.position);
   const productTiers = tiersFor(tiers, row.id, -1);
-  const decoded = yield* decodeStoredProduct(row, variants.length === 0, productTiers.length === 0);
+  const { document: decoded, tiered } = yield* decodeStoredProduct(
+    row,
+    variants.length === 0,
+    productTiers.length === 0,
+  );
   // A product without real variants: its stored gross column is its price as entered (with real variants the column
   // is their lowest price, never the product's own).
   const stored =
     decoded.grossPriceMinor === undefined &&
     row.grossPriceMinor !== null &&
+    !tiered &&
     !variants.some((variant) => variant.variantId !== null)
       ? { ...decoded, grossPriceMinor: row.grossPriceMinor }
       : decoded;
@@ -437,10 +454,10 @@ const hydrateStoredProduct = Effect.fn('MerchandiseStore.hydrateProduct')(functi
   const levels = new Map<string, number>();
   for (const variant of variants) {
     if (variant.variantId !== null) {
-      levels.set(variant.variantId, variant.stockOnHand);
+      levels.set(variant.variantId, normalizeQuantity(variant.stockOnHand));
     }
   }
-  return { product, stock: { total: row.stockOnHand, variants: levels } };
+  return { product, stock: { total: normalizeQuantity(row.stockOnHand), variants: levels } };
 });
 
 /** Products from their rows (variants/tiers grouped by product). Rows of other products are ignored. */
@@ -953,13 +970,164 @@ const pricedGroups = (db: MerchandiseDb, scope: StoreScope, rates: SellableVatRa
   return [...byClassification, ...byHeldRate];
 };
 
+/** Whether `document` still carries an inline tier array (an older document); never NULL, so `not` stays exact. */
+const inlineTiersIn = (document: AnyPgColumn) =>
+  sql`(case when jsonb_typeof(${document} -> 'priceTiers') = 'array'
+    then jsonb_array_length(${document} -> 'priceTiers') > 0 else false end)`;
+/**
+ * Whether a price has quantity tiers (rows, or the inline array of an older document). Its missing gross is what its
+ * record shows (`shownGrossOf` through {@link productRowsOf}), not its net plus VAT ({@link tieredGrossFills}).
+ */
+const productTiered = sql`(exists (select 1 from ${priceTiers}
+    where ${priceTiers.tenantId} = ${products.tenantId}
+      and ${priceTiers.legalEntityId} = ${products.legalEntityId}
+      and ${priceTiers.productId} = ${products.id}
+      and ${priceTiers.variantPosition} = -1)
+  or ${inlineTiersIn(products.document)})`;
+const variantTiered = sql`(exists (select 1 from ${priceTiers}
+    where ${priceTiers.tenantId} = ${productVariants.tenantId}
+      and ${priceTiers.legalEntityId} = ${productVariants.legalEntityId}
+      and ${priceTiers.productId} = ${productVariants.productId}
+      and ${priceTiers.variantPosition} = ${productVariants.position})
+  or ${inlineTiersIn(productVariants.document)})`;
+
 /** No gross stored for this price: neither in its column nor in its document (older documents carry it only there). */
 const productGrossMissing = and(isNull(products.grossPriceMinor), sql`not (${products.document} ? 'grossPriceMinor')`);
-const variantGrossMissing = and(
+/** A variant price stored without its gross: neither in its column nor in its document. */
+const variantGrossUnstored = and(
   isNull(productVariants.grossPriceMinor),
   sql`not (${productVariants.document} ? 'grossPriceMinor')`,
   isNotNull(productVariants.priceMinor),
 );
+/** An untiered variant price stored without its gross: its gross is its net plus VAT. */
+const variantGrossMissing = and(variantGrossUnstored, sql`not ${variantTiered}`);
+/** A product without real variants stored without its gross. */
+const productWithoutVariantsGrossMissing = (realVariants: RealVariants) =>
+  and(productGrossMissing, notInArray(products.id, realVariants));
+/** An untiered product without real variants, stored without its gross: its gross is its net plus VAT. */
+const plainProductGrossMissing = (realVariants: RealVariants) =>
+  and(productWithoutVariantsGrossMissing(realVariants), sql`not ${productTiered}`);
+/** A product with real variants stored without its gross while one of its variants has one. */
+const variantProductGrossMissing = (realVariants: RealVariants) =>
+  and(productGrossMissing, inArray(products.id, realVariants), sql`${lowestVariantGross(anyVariant)} is not null`);
+/** The real variants of the company's products. */
+const realVariantsIn = (db: MerchandiseDb, scope: StoreScope) =>
+  db
+    .select({ productId: productVariants.productId })
+    .from(productVariants)
+    .where(and(whereScope(productVariants, scope), isNotNull(productVariants.variantId)));
+type RealVariants = ReturnType<typeof realVariantsIn>;
+
+interface TieredGrossFill {
+  readonly gross: number;
+  /** The variant's position, or none for the product's own price. */
+  readonly position?: number;
+  readonly productId: string;
+}
+
+/**
+ * The gross every tiered price stored without one gets: exactly what its record shows, computed by the row writer every
+ * write uses ({@link productRowsOf}: `shownGrossOf` at the rate the price sells at, a held one included). A price the
+ * shared function leaves without one (no base below the first break) gets none and is no fill.
+ */
+/** The fills one product's freshly computed rows give its empty columns (its own and the listed variant slots). */
+const fillsOfRows = (
+  rows: { readonly row: ProductRow; readonly variants: readonly VariantRow[] },
+  productId: string,
+  ownMissing: boolean,
+  slots: readonly { readonly position: number; readonly productId: string }[],
+): TieredGrossFill[] => {
+  const own = rows.row.grossPriceMinor;
+  const ownFill = ownMissing && own !== null && own !== undefined ? [{ gross: own, productId }] : [];
+  const variantFills = slots.flatMap((slot) => {
+    const gross =
+      slot.productId === productId
+        ? rows.variants.find((variant) => variant.position === slot.position)?.grossPriceMinor
+        : undefined;
+    return gross === null || gross === undefined ? [] : [{ gross, position: slot.position, productId }];
+  });
+  return [...ownFill, ...variantFills];
+};
+
+const PRODUCT_GROSS_NOT_STORED = 'Product gross prices could not be stored';
+const VARIANT_GROSS_NOT_STORED = 'Variant gross prices could not be stored';
+
+const tieredGrossFills = Effect.fn('MerchandiseStore.tieredGrossFills')(function* tieredGrossFills(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  rates: SellableVatRates,
+  held: HeldRates,
+) {
+  const realVariants = realVariantsIn(db, scope);
+  const [productIds, variantSlots] = yield* Effect.all(
+    [
+      query(
+        db
+          .select({ id: products.id })
+          .from(products)
+          .where(and(whereScope(products, scope), productWithoutVariantsGrossMissing(realVariants), productTiered)),
+        'Tiered prices without a gross could not be read',
+      ),
+      query(
+        db
+          .select({ position: productVariants.position, productId: productVariants.productId })
+          .from(productVariants)
+          .where(and(whereScope(productVariants, scope), variantGrossUnstored, variantTiered)),
+        'Tiered prices without a gross could not be read',
+      ),
+    ],
+    { concurrency: 1 },
+  );
+  const ids = [...new Set([...productIds.map(({ id }) => id), ...variantSlots.map(({ productId }) => productId)])];
+  if (ids.length === 0) {
+    return [];
+  }
+  const ownMissing = new Set(productIds.map(({ id }) => id));
+  const loaded = yield* loadProducts(db, scope, inArray(products.id, ids), { variants: true });
+  const perProduct = yield* Effect.forEach(
+    loaded,
+    ({ product, stock }) =>
+      productRowsOf(scope, product, stock, rates, held).pipe(
+        Effect.map((rows) => fillsOfRows(rows, product.id, ownMissing.has(product.id), variantSlots)),
+      ),
+    { concurrency: 1 },
+  );
+  return perProduct.flat();
+});
+
+/** Stores the tiered fills: each column gets its own gross, and only while it is still empty. */
+const storeTieredGrossFills = (db: MerchandiseDb, scope: StoreScope, fills: readonly TieredGrossFill[]) =>
+  Effect.forEach(
+    fills,
+    (fill) =>
+      fill.position === undefined
+        ? query(
+            db
+              .update(products)
+              .set({ grossPriceMinor: fill.gross })
+              .where(
+                and(whereScope(products, scope), eq(products.id, fill.productId), isNull(products.grossPriceMinor)),
+              )
+              .returning({ id: products.id }),
+            PRODUCT_GROSS_NOT_STORED,
+          )
+        : query(
+            db
+              .update(productVariants)
+              .set({ grossPriceMinor: fill.gross })
+              .where(
+                and(
+                  whereScope(productVariants, scope),
+                  eq(productVariants.productId, fill.productId),
+                  eq(productVariants.position, fill.position),
+                  isNull(productVariants.grossPriceMinor),
+                ),
+              )
+              .returning({ id: productVariants.productId }),
+            VARIANT_GROSS_NOT_STORED,
+          ),
+    { concurrency: 1 },
+  ).pipe(Effect.map((rows) => rows.reduce((total, changed) => total + changed.length, 0)));
 
 /**
  * Whether any price that can be priced now is stored without its gross: one indexed probe per group, so callers run
@@ -972,6 +1140,7 @@ export const missingGrossPricesExist = Effect.fn('MerchandiseStore.missingGrossP
     rates: SellableVatRates,
     held: HeldRates = {},
   ) {
+    const realVariants = realVariantsIn(db, scope);
     const found = yield* Effect.forEach(
       pricedGroups(db, scope, rates, held),
       ({ ids }) =>
@@ -981,7 +1150,13 @@ export const missingGrossPricesExist = Effect.fn('MerchandiseStore.missingGrossP
               db
                 .select({ id: products.id })
                 .from(products)
-                .where(and(whereScope(products, scope), inArray(products.id, ids), productGrossMissing))
+                .where(
+                  and(
+                    whereScope(products, scope),
+                    inArray(products.id, ids),
+                    or(plainProductGrossMissing(realVariants), variantProductGrossMissing(realVariants)),
+                  ),
+                )
                 .limit(1),
               'Missing gross prices could not be read',
             ),
@@ -1000,13 +1175,14 @@ export const missingGrossPricesExist = Effect.fn('MerchandiseStore.missingGrossP
         ).pipe(Effect.map(([product, variant]) => product.length > 0 || variant.length > 0)),
       { concurrency: 1 },
     );
-    return found.some(Boolean);
+    return found.some(Boolean) || (yield* tieredGrossFills(db, scope, rates, held)).length > 0;
   },
 );
 
 /**
- * Stores the first gross of every price stored without one: product and variant prices with no gross in their column
- * nor in their document, at the rate their group enters it at (a held product at its held rate, any other at the rate
+ * Stores the first gross of every price stored without one, the gross its record shows: a tiered price through
+ * {@link tieredGrossFills} (none when the shared function gives it no price), an untiered one, with no gross in its
+ * column nor in its document, as its net plus VAT at the rate its group enters it at (a held product at its held rate, any other at the rate
  * its classification sells at now), and a product with variants whose own gross is missing takes its variants' lowest.
  * Never touches a price that has a stored gross, however unrelated to its net. Idempotent; returns how many rows it
  * filled.
@@ -1018,10 +1194,9 @@ export const storeMissingGrossPrices = Effect.fn('MerchandiseStore.storeMissingG
     rates: SellableVatRates,
     held: HeldRates = {},
   ) {
-    const realVariants = db
-      .select({ productId: productVariants.productId })
-      .from(productVariants)
-      .where(and(whereScope(productVariants, scope), isNotNull(productVariants.variantId)));
+    const realVariants = realVariantsIn(db, scope);
+    // Tiered prices first, so a product with variants below can take its variants' lowest gross from them.
+    const tiered = yield* storeTieredGrossFills(db, scope, yield* tieredGrossFills(db, scope, rates, held));
     const filled = yield* Effect.forEach(
       pricedGroups(db, scope, rates, held),
       ({ ids, rate }) =>
@@ -1035,22 +1210,17 @@ export const storeMissingGrossPrices = Effect.fn('MerchandiseStore.storeMissingG
                   and(whereScope(productVariants, scope), inArray(productVariants.productId, ids), variantGrossMissing),
                 )
                 .returning({ id: productVariants.productId }),
-              'Variant gross prices could not be stored',
+              VARIANT_GROSS_NOT_STORED,
             ),
             query(
               db
                 .update(products)
                 .set({ grossPriceMinor: grossOfNet(products.currentPriceMinor, rate) })
                 .where(
-                  and(
-                    whereScope(products, scope),
-                    inArray(products.id, ids),
-                    productGrossMissing,
-                    notInArray(products.id, realVariants),
-                  ),
+                  and(whereScope(products, scope), inArray(products.id, ids), plainProductGrossMissing(realVariants)),
                 )
                 .returning({ id: products.id }),
-              'Product gross prices could not be stored',
+              PRODUCT_GROSS_NOT_STORED,
             ),
             query(
               db
@@ -1059,22 +1229,17 @@ export const storeMissingGrossPrices = Effect.fn('MerchandiseStore.storeMissingG
                   grossPriceMinor: sql`coalesce(${lowestVariantGross(activeVariant)}, ${lowestVariantGross(anyVariant)})`,
                 })
                 .where(
-                  and(
-                    whereScope(products, scope),
-                    inArray(products.id, ids),
-                    productGrossMissing,
-                    inArray(products.id, realVariants),
-                  ),
+                  and(whereScope(products, scope), inArray(products.id, ids), variantProductGrossMissing(realVariants)),
                 )
                 .returning({ id: products.id }),
-              'Product gross prices could not be stored',
+              PRODUCT_GROSS_NOT_STORED,
             ),
           ],
           { concurrency: 1 },
         ).pipe(Effect.map((rows) => rows.reduce((total, changed) => total + changed.length, 0))),
       { concurrency: 1 },
     );
-    return filled.reduce((total, count) => total + count, 0);
+    return tiered + filled.reduce((total, count) => total + count, 0);
   },
 );
 
@@ -1244,6 +1409,8 @@ export interface WorkingSetRequest {
   readonly aiChanges?: boolean;
   /** Category rows by id, each with its ancestor chain (category path of a product move). */
   readonly categoryIds?: readonly string[];
+  /** Load scoped category slug collisions before creation. */
+  readonly categorySlug?: string;
   readonly lastOrderNumber?: boolean;
   /** Load every movement of the loaded products (stock checks and order ledgers). */
   readonly movements?: boolean;
@@ -1350,6 +1517,27 @@ const categoryIdsForWorkingSet = (request: WorkingSetRequest, loadedProducts: re
   ];
 };
 
+/** The categories a working set loads: those `request` names plus any scoped holder of the slug being created. */
+const workingSetCategoryIds = Effect.fn('MerchandiseStore.workingSetCategoryIds')(function* workingSetCategoryIds(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  request: WorkingSetRequest,
+  loadedProducts: readonly Product[],
+) {
+  const named = categoryIdsForWorkingSet(request, loadedProducts);
+  if (request.categorySlug === undefined) {
+    return named;
+  }
+  const holders = yield* query(
+    db
+      .select({ id: categories.id })
+      .from(categories)
+      .where(and(whereScope(categories, scope), eq(categories.slug, request.categorySlug))),
+    'Category slug collisions could not be read',
+  );
+  return [...(named ?? []), ...holders.map((category) => category.id)];
+});
+
 /** Loads the rows `request` names under the locked head row. */
 /** The lines of one order as stored; none when the company has no such order. */
 export const loadOrderLines = Effect.fn('MerchandiseStore.loadOrderLines')(function* loadOrderLines(
@@ -1443,7 +1631,9 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
           'Stock movements could not be read',
         )
       : [];
-  const categoryIds = categoryIdsForWorkingSet(
+  const categoryIds = yield* workingSetCategoryIds(
+    db,
+    scope,
     request,
     loaded.map(({ product }) => product),
   );
@@ -1519,9 +1709,12 @@ const stockChangesOf = (working: WorkingSet, after: MerchandiseState) => {
   const deltas = new Map<string, { total: number; variants: Map<string, number> }>();
   for (const movement of newMovements) {
     const entry = deltas.get(movement.productId) ?? { total: 0, variants: new Map<string, number>() };
-    entry.total += movement.delta;
+    entry.total = normalizeQuantity(entry.total + movement.delta);
     if (movement.variantId !== undefined) {
-      entry.variants.set(movement.variantId, (entry.variants.get(movement.variantId) ?? 0) + movement.delta);
+      entry.variants.set(
+        movement.variantId,
+        normalizeQuantity((entry.variants.get(movement.variantId) ?? 0) + movement.delta),
+      );
     }
     deltas.set(movement.productId, entry);
   }
@@ -1533,9 +1726,9 @@ const stockChangesOf = (working: WorkingSet, after: MerchandiseState) => {
     }
     const variants = new Map(stored.variants);
     for (const [variantId, change] of delta.variants) {
-      variants.set(variantId, (variants.get(variantId) ?? 0) + change);
+      variants.set(variantId, normalizeQuantity((variants.get(variantId) ?? 0) + change));
     }
-    return { total: stored.total + delta.total, variants };
+    return { total: normalizeQuantity(stored.total + delta.total), variants };
   };
   const changedProducts = changedEntities(before.products, after.products);
   const changedIds = new Set(changedProducts.map((product) => product.id));

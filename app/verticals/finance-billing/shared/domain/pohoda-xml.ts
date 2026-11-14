@@ -1,3 +1,4 @@
+import { Effect, Schema } from 'effect';
 import type { Invoice, InvoiceLine, VatRate, VatRecapEntry } from '../apis/records.ts';
 import { POHODA_DATAPACK_VERSION } from '../apis/records.ts';
 import type { ExportIssuer, ExportMeta, ExportPartnerIdentity, ExportRow } from './finance-planning.ts';
@@ -20,6 +21,57 @@ const text = (value: string, maxLength: number) => {
   const codePoints = value.trim()[Symbol.iterator]();
   return xmlEscape([...codePoints].slice(0, maxLength).join(''));
 };
+
+/** Why a handover cannot be written as a POHODA file without changing what the accountant would import. */
+const PohodaExportProblemSchema = Schema.Literals([
+  'pohoda_document_number_too_long',
+  'pohoda_text_has_forbidden_character',
+  'pohoda_vat_rate_unsupported',
+]);
+type PohodaExportProblem = typeof PohodaExportProblemSchema.Type;
+const FORBIDDEN_CHARACTER: PohodaExportProblem = 'pohoda_text_has_forbidden_character';
+
+/** The POHODA file was not written; `documentNumber` names the invoice to correct, absent for the batch itself. */
+export class PohodaExportRefused extends Schema.TaggedError<PohodaExportRefused>()('PohodaExportRefused', {
+  documentNumber: Schema.optionalKey(Schema.String),
+  problem: PohodaExportProblemSchema,
+}) {}
+
+/** POHODA `numberRequested` and `originalDocument` hold at most 32 characters. */
+const POHODA_DOCUMENT_NUMBER_MAX_LENGTH = 32;
+/** The rates POHODA's invoice summary has columns for: none, third (10 %), low (12 %) and high (21 %). */
+const POHODA_VAT_RATES: ReadonlySet<number> = new Set([0, 10, 12, 21]);
+
+/** The Unicode code points of `value` in order: POHODA's length limits and XML legality both count code points. */
+const codePointsOf = (value: string): readonly number[] => {
+  const points: number[] = [];
+  for (const character of value) {
+    const point = character.codePointAt(0);
+    if (point !== undefined) {
+      points.push(point);
+    }
+  }
+  return points;
+};
+
+/**
+ * The XML 1.0 `Char` production: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]. Anything else
+ * makes the whole file unparsable, even when escaped.
+ */
+const isXmlCharacter = (point: number): boolean =>
+  point === 9 ||
+  point === 10 ||
+  point === 13 ||
+  (point >= 32 && point <= 55_295) ||
+  (point >= 57_344 && point <= 65_533) ||
+  (point >= 65_536 && point <= 1_114_111);
+
+const hasForbiddenXmlCharacter = (value: string): boolean =>
+  !codePointsOf(value).every((point) => isXmlCharacter(point));
+
+/** The identity POHODA imports the invoice under: our number when issued, the supplier's number when received. */
+const pohodaDocumentNumber = (invoice: Invoice) =>
+  invoice.direction === 'OUTGOING' ? (invoice.number ?? invoice.documentNumber) : invoice.documentNumber;
 
 /** Haléře → "1234.50" (POHODA amounts use a dot and two decimals). */
 const money = (minor: number) => (minor / 100).toFixed(2);
@@ -263,30 +315,58 @@ ${detail}${summaryXml(invoice, recap)}
       </inv:invoice>`;
 };
 
+/** What would make this invoice import differently from OntOS; checked on the written XML, so no field is missed. */
+const pohodaRowProblem = (row: ExportRow, xml: string): PohodaExportProblem | undefined => {
+  const { invoice } = row;
+  if (codePointsOf(pohodaDocumentNumber(invoice).trim()).length > POHODA_DOCUMENT_NUMBER_MAX_LENGTH) {
+    return 'pohoda_document_number_too_long';
+  }
+  const rates = [
+    ...(invoice.lines ?? []).map((line) => line.vatRate),
+    ...(vatRecapOf(invoice) ?? []).map((entry) => entry.rate),
+  ];
+  if (rates.some((rate) => !POHODA_VAT_RATES.has(rate))) {
+    return 'pohoda_vat_rate_unsupported';
+  }
+  return hasForbiddenXmlCharacter(xml) ? FORBIDDEN_CHARACTER : undefined;
+};
+
 /**
  * STORMWARE POHODA XML import file: one `dat:dataPack` (version 2.0) with one `inv:invoice` per row, issued
  * (OUTGOING) and received (INCOMING) invoices, amounts in CZK. Validates against the official XSD
- * (data.xsd, version_2). Import and posting are done by the accountant in POHODA, never by OntOS.
+ * (data.xsd, version_2). Import and posting are done by the accountant in POHODA, never by OntOS. A document
+ * number POHODA would cut, a VAT rate it has no column for, or text XML cannot carry refuses the whole file and
+ * names the invoice, instead of handing over a file that imports something else or not at all.
  */
-export const buildPohodaDataPack = (rows: readonly ExportRow[], meta: ExportMeta): string => {
+export const buildPohodaDataPack = Effect.fn('Finance.buildPohodaDataPack')(function* buildPohodaDataPack(
+  rows: readonly ExportRow[],
+  meta: ExportMeta,
+): Effect.fn.Return<string, PohodaExportRefused> {
   const packId = `${meta.batchNumber}-v${meta.version}`;
   const { issuer } = meta;
   const icoAttribute = issuer?.ico === undefined ? '' : ` ico="${xmlEscape(issuer.ico)}"`;
   const note = `Předávací balíček ${meta.batchNumber}, verze ${meta.version}, vytvořil ${meta.createdBy}, ${meta.createdAt}`;
-  const items = rows
-    .map((row, index) => {
-      const itemId = `${packId}-${String(index + 1).padStart(3, '0')}`;
-      return `  <dat:dataPackItem version="${POHODA_DATAPACK_VERSION}" id="${text(itemId, 64)}">
-${invoiceXml(row, issuer, meta)}
-  </dat:dataPackItem>`;
-    })
-    .join('\n');
+  if (hasForbiddenXmlCharacter(`${packId}${icoAttribute}${note}`)) {
+    return yield* new PohodaExportRefused({ problem: FORBIDDEN_CHARACTER });
+  }
+  const items: string[] = [];
+  for (const [index, row] of rows.entries()) {
+    const xml = invoiceXml(row, issuer, meta);
+    const problem = pohodaRowProblem(row, xml);
+    if (problem !== undefined) {
+      return yield* new PohodaExportRefused({ documentNumber: pohodaDocumentNumber(row.invoice), problem });
+    }
+    const itemId = `${packId}-${String(index + 1).padStart(3, '0')}`;
+    items.push(`  <dat:dataPackItem version="${POHODA_DATAPACK_VERSION}" id="${text(itemId, 64)}">
+${xml}
+  </dat:dataPackItem>`);
+  }
   // The root declares the official STORMWARE namespaces of POHODA XML version 2
   // (https://www.stormware.cz/xml/schema/version_2/). Namespace names are opaque identifiers matched by exact
   // characters and never dereferenced, so they stay part of the fixed document text.
   return `<?xml version="1.0" encoding="UTF-8"?>
 <dat:dataPack xmlns:dat="http://www.stormware.cz/schema/version_2/data.xsd" xmlns:inv="http://www.stormware.cz/schema/version_2/invoice.xsd" xmlns:typ="http://www.stormware.cz/schema/version_2/type.xsd" version="${POHODA_DATAPACK_VERSION}" id="${text(packId, 64)}"${icoAttribute} application="OntOS" note="${text(note, 4000)}">
-${items}
+${items.join('\n')}
 </dat:dataPack>
 `;
-};
+});

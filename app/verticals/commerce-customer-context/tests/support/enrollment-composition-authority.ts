@@ -4,6 +4,9 @@ import { Context, Effect, Layer, Redacted, Schema, Scope } from 'effect';
 
 import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
+/** Fixture state is replaced, never transitioned (see the restore below). */
+const DELETE_AUTHORITY = "delete from core.application_composition_authority where authority_key = 'active'";
+
 export const ENROLLMENT_TEST_COMPOSITION_REVISION = 'a'.repeat(64);
 
 /** Serialize only this dedicated fixture authority and restore its exact prior release. */
@@ -33,15 +36,16 @@ const acquireEnrollmentTestAuthority = Effect.fn('EnrollmentTests.acquireAuthori
               "select pg_advisory_xact_lock(hashtextextended('ontos.application-composition-authority', 0))",
             );
             if (previous === undefined) {
-              yield* session.unsafe(
-                "delete from core.application_composition_authority where authority_key = 'active'",
-              );
+              yield* session.unsafe(DELETE_AUTHORITY);
             } else {
               const subscriptions = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
                 previous.subscriptions_json,
               );
+              // Fixture state is replaced, never transitioned: an update from a draining row of the same revision
+              // back to active is refused unless a drain abandonment is recorded.
+              yield* session.unsafe(DELETE_AUTHORITY);
               yield* session.unsafe(
-                "insert into core.application_composition_authority (authority_key, revision, phase, durable_work_admission, valid_until, subscriptions_json, updated_at) values ('active', $1, $2, $3, $4::timestamptz, $5::jsonb, $6::timestamptz) on conflict (authority_key) do update set revision = excluded.revision, phase = excluded.phase, durable_work_admission = excluded.durable_work_admission, valid_until = excluded.valid_until, subscriptions_json = excluded.subscriptions_json, updated_at = excluded.updated_at",
+                "insert into core.application_composition_authority (authority_key, revision, phase, durable_work_admission, valid_until, subscriptions_json, updated_at) values ('active', $1, $2, $3, $4::timestamptz, $5::jsonb, $6::timestamptz)",
                 [
                   previous.revision,
                   previous.phase,
@@ -63,8 +67,10 @@ const acquireEnrollmentTestAuthority = Effect.fn('EnrollmentTests.acquireAuthori
           yield* session.unsafe(
             "select pg_advisory_xact_lock(hashtextextended('ontos.application-composition-authority', 0))",
           );
+          // Replaced, never transitioned (see the restore above).
+          yield* session.unsafe(DELETE_AUTHORITY);
           yield* session.unsafe(
-            "insert into core.application_composition_authority (authority_key, revision, phase, durable_work_admission, valid_until, subscriptions_json) values ('active', $1, $2, 'open', clock_timestamp() + interval '1 hour', '[]'::jsonb) on conflict (authority_key) do update set revision = excluded.revision, phase = excluded.phase, durable_work_admission = excluded.durable_work_admission, valid_until = excluded.valid_until, subscriptions_json = excluded.subscriptions_json",
+            "insert into core.application_composition_authority (authority_key, revision, phase, durable_work_admission, valid_until, subscriptions_json) values ('active', $1, $2, 'open', clock_timestamp() + interval '1 hour', '[]'::jsonb)",
             [selectedRevision, phase],
           );
         }),

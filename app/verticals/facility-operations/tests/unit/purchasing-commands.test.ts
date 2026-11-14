@@ -359,6 +359,23 @@ it.effect('StockIssue fulfills the matching open plan and retains its references
       },
       'p1',
     );
+    for (const quantity of [3, 5]) {
+      const refused = yield* apply(
+        planned.state,
+        {
+          _tag: 'StockIssue',
+          date: '2026-10-20',
+          itemId: 'item',
+          plannedIssueId: 'p1',
+          quantity,
+          reason: 'Nesouhlasící množství',
+        },
+        'unequal-issue',
+      ).pipe(Effect.flip);
+      expect(isConflict(refused)).toBe(true);
+      expect(onHandOf(planned.state, itemId('item'))).toBe(10);
+      expect(planned.state.plannedIssues[0]?.status).toBe('planned');
+    }
     const issued = yield* apply(
       planned.state,
       {

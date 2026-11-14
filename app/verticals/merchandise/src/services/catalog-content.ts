@@ -267,6 +267,12 @@ export const createCategoryCommand = Effect.fn('Merchandise.createCategoryComman
       reason: 'Kategorie s tímto identifikátorem už existuje',
     });
   }
+  if (categories.some((category) => category.slug === value.slug)) {
+    return yield* new MerchandiseLifecycleConflict({
+      code: 'merchandise_category_slug_taken',
+      reason: 'Tuto adresu v e-shopu už používá jiná kategorie. Zvolte jinou adresu.',
+    });
+  }
   const parentId = Option.getOrNull(value.parentId);
   const parent = parentId === null ? undefined : categories.find((category) => category.id === parentId);
   if (parentId !== null && parent === undefined) {

@@ -310,6 +310,55 @@ it.effect('service records feed the upcoming-due list (newest record per kind an
   }),
 );
 
+it.effect('a future plan cannot hide a completed service or restore its superseded deadline', () =>
+  Effect.gen(function* completedServiceWins() {
+    const state = yield* withAsset;
+    const scheduled = yield* apply(
+      state,
+      { _tag: 'AssetServiceRecord', assetId: 'asset-1', kind: 'revision', nextDueOn: '2028-11-01', title: 'Revize' },
+      'scheduled-service',
+    );
+    const completed = yield* apply(
+      scheduled.state,
+      {
+        _tag: 'AssetServiceRecord',
+        assetId: 'asset-1',
+        kind: 'revision',
+        nextDueOn: '2027-11-01',
+        performedOn: '2026-10-20',
+        title: 'Revize',
+      },
+      'completed-service',
+    );
+    expect(upcomingServiceDue(completed.state).map((entry) => entry.nextDueOn)).toEqual(['2027-11-01']);
+    const withoutDeadline = yield* apply(
+      completed.state,
+      {
+        _tag: 'AssetServiceRecord',
+        assetId: 'asset-1',
+        kind: 'revision',
+        performedOn: '2026-10-21',
+        title: 'Revize',
+      },
+      'completed-without-deadline',
+    );
+    expect(upcomingServiceDue(withoutDeadline.state)).toEqual([]);
+    const backfilled = yield* apply(
+      withoutDeadline.state,
+      {
+        _tag: 'AssetServiceRecord',
+        assetId: 'asset-1',
+        kind: 'revision',
+        nextDueOn: '2029-11-01',
+        performedOn: '2025-10-20',
+        title: 'Revize',
+      },
+      'backfilled-service',
+    );
+    expect(upcomingServiceDue(backfilled.state)).toEqual([]);
+  }),
+);
+
 it('indicative schedule spreads the base and ends exactly on it', () => {
   const rows = indicativeSchedule({ baseMinor: 10_000_000, interval: 'yearly', startDate: '2024-04-01', years: 3 });
   expect(rows.map((row) => row.period)).toEqual(['2024', '2025', '2026']);

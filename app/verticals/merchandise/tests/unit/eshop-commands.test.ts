@@ -508,3 +508,211 @@ it.effect('UpdateProduct and CreateProduct refuse a storefront slug another prod
     expect(same.state.products[0]?.slug).toBe('etiopie');
   }),
 );
+
+it.effect('refuses a removed variant even after the final variant disappears', () =>
+  Effect.gen(function* removedVariant() {
+    const current = yield* seeded;
+    const withoutVariants: MerchandiseState = {
+      ...current,
+      products: current.products.map((product) => ({ ...product, variants: [] })),
+    };
+    const refused = yield* apply(withoutVariants, guestOrder(), 'removed-variant-order');
+    expect(refused.storefrontOrder?.issues[0]?.code).toBe('VARIANT_REQUIRED');
+    expect(refused.state).toBe(withoutVariants);
+    const baseOrder = guestOrder({
+      lines: [{ expectedUnitPriceMinor: 28_900, productId: 'p1', quantity: 2 }],
+    });
+    const accepted = yield* apply(withoutVariants, baseOrder, 'base-product-order');
+    expect(accepted.storefrontOrder?.outcome).toBe('PLACED');
+    expect(accepted.state.orders[0]?.lines[0]?.variantId).toBeUndefined();
+  }),
+);
+
+it.effect('uses the stored base gross below the first discount break for products and variants', () =>
+  Effect.gen(function* belowFirstTier() {
+    const current = yield* seeded;
+    for (const variantProduct of [true, false]) {
+      const tier = { minimumQuantity: 10, priceExcludingVatMinor: 20_000, priceMinor: 22_400 };
+      const tiered: MerchandiseState = {
+        ...current,
+        products: current.products.map((product) => ({
+          ...product,
+          grossPriceMinor: 28_900,
+          priceTiers: [tier],
+          variants: variantProduct
+            ? product.variants?.map((variant) => ({ ...variant, grossPriceMinor: 28_900, priceTiers: [tier] }))
+            : [],
+        })),
+      };
+      const identity = variantProduct ? { variantId: 'u1-v1' } : {};
+      const accepted = yield* apply(
+        tiered,
+        guestOrder({
+          lines: [{ expectedUnitPriceMinor: 28_900, productId: 'p1', quantity: 2, ...identity }],
+        }),
+        'base-price-order',
+      );
+      expect(accepted.storefrontOrder?.outcome).toBe('PLACED');
+      expect(accepted.state.orders[0]?.lines[0]?.unitPriceMinor).toBe(28_900);
+      const refused = yield* apply(
+        tiered,
+        guestOrder({
+          lines: [{ expectedUnitPriceMinor: 22_400, productId: 'p1', quantity: 2, ...identity }],
+        }),
+        'discount-too-early',
+      );
+      expect(refused.storefrontOrder?.issues[0]?.code).toBe('PRICE_CHANGED');
+      expect(refused.state).toBe(tiered);
+      const discounted = yield* apply(
+        tiered,
+        guestOrder({
+          lines: [{ expectedUnitPriceMinor: 22_400, productId: 'p1', quantity: 10, ...identity }],
+        }),
+        'discount-at-break',
+      );
+      expect(discounted.storefrontOrder?.outcome).toBe('PLACED');
+      expect(discounted.state.orders[0]?.lines[0]?.unitPriceMinor).toBe(22_400);
+    }
+  }),
+);
+
+it.effect('sums duplicate original lines for the edit stock allowance without allowing overselling', () =>
+  Effect.gen(function* duplicateEditAllowance() {
+    const stocked = yield* seeded;
+    const placed = yield* apply(stocked, guestOrder(), 'duplicate-order');
+    const duplicated: MerchandiseState = {
+      ...placed.state,
+      orders: placed.state.orders.map((order) => ({
+        ...order,
+        lines: order.lines.flatMap((line) => [
+          { ...line, quantity: 1 },
+          { ...line, quantity: 1 },
+        ]),
+      })),
+    };
+    const edited = yield* apply(
+      duplicated,
+      {
+        _tag: 'EditOrder',
+        id: 'duplicate-order',
+        lines: [{ productId: 'p1', quantity: 10, variantId: 'u1-v1' }],
+      },
+      'use-full-stock',
+    );
+    expect(edited.state.orders[0]?.lines).toHaveLength(1);
+    expect(edited.state.orders[0]?.lines[0]?.quantity).toBe(10);
+    expect(edited.state.movements.at(-1)?.delta).toBe(-8);
+    const refused = yield* apply(
+      duplicated,
+      {
+        _tag: 'EditOrder',
+        id: 'duplicate-order',
+        lines: [{ productId: 'p1', quantity: 11, variantId: 'u1-v1' }],
+      },
+      'exceed-full-stock',
+    ).pipe(Effect.flip);
+    expect(isConflict(refused)).toBe(true);
+  }),
+);
+
+it.effect('consumes exact remaining fractional stock and cancels without a floating residue', () =>
+  Effect.gen(function* exactFractionalStock() {
+    const current = yield* seeded;
+    const fractional: MerchandiseState = {
+      ...current,
+      movements: current.movements.map((movement) => ({ ...movement, delta: 0.3 })),
+      products: current.products.map((product) => ({
+        ...product,
+        variants: product.variants?.map((variant) => ({ ...variant, minimumQuantity: 0.1, packageQuantity: 0.1 })),
+      })),
+    };
+    const first = yield* apply(
+      fractional,
+      guestOrder({
+        clientRequestId: 'fraction-first',
+        lines: [{ expectedUnitPriceMinor: 28_900, productId: 'p1', quantity: 0.1, variantId: 'u1-v1' }],
+      }),
+      'fraction-1',
+    );
+    expect(first.storefrontOrder?.outcome).toBe('PLACED');
+    expect(recordOf(first.state.products[0], first.state.movements).variantRecords?.[0]?.stockOnHand).toBe(0.2);
+    const second = yield* apply(
+      first.state,
+      guestOrder({
+        clientRequestId: 'fraction-second',
+        lines: [{ expectedUnitPriceMinor: 28_900, productId: 'p1', quantity: 0.2, variantId: 'u1-v1' }],
+      }),
+      'fraction-2',
+    );
+    expect(second.storefrontOrder?.outcome).toBe('PLACED');
+    expect(recordOf(second.state.products[0], second.state.movements).variantRecords?.[0]?.stockOnHand).toBe(0);
+    const refused = yield* apply(
+      second.state,
+      guestOrder({
+        clientRequestId: 'fraction-excess',
+        lines: [{ expectedUnitPriceMinor: 28_900, productId: 'p1', quantity: 0.1, variantId: 'u1-v1' }],
+      }),
+      'fraction-3',
+    );
+    expect(refused.storefrontOrder?.outcome).toBe('REJECTED');
+    expect(refused.state).toBe(second.state);
+    const cancelled = yield* apply(
+      second.state,
+      { _tag: 'ChangeOrderStatus', id: 'fraction-2', status: 'CANCELLED' },
+      'fraction-return',
+    );
+    expect(recordOf(cancelled.state.products[0], cancelled.state.movements).variantRecords?.[0]?.stockOnHand).toBe(0.2);
+  }),
+);
+
+it('refuses order quantities with more precision than the ledger can retain', () => {
+  expect(Schema.is(MerchandiseCommandSchema)(decodeCommand(guestOrder()))).toBe(true);
+  const encoded = guestOrder({
+    lines: [{ expectedUnitPriceMinor: 28_900, productId: 'p1', quantity: 0.1234567, variantId: 'u1-v1' }],
+  });
+  expect(Schema.is(Schema.toEncoded(MerchandiseCommandSchema))(encoded)).toBe(false);
+});
+
+it.effect('refuses below-tier checkout when the tiered catalog has no authoritative base gross', () =>
+  Effect.gen(function* missingBaseGross() {
+    const current = yield* seeded;
+    const noBase: MerchandiseState = {
+      ...current,
+      products: current.products.map((product) => ({
+        ...product,
+        variants: product.variants?.map(({ grossPriceMinor: _missing, ...variant }) => ({
+          ...variant,
+          priceTiers: [{ minimumQuantity: 10, priceExcludingVatMinor: 20_000, priceMinor: 22_400 }],
+        })),
+      })),
+    };
+    const refused = yield* apply(noBase, guestOrder(), 'missing-base-price');
+    expect(refused.storefrontOrder?.issues[0]?.code).toBe('PRICE_UNAVAILABLE');
+    expect(refused.state).toBe(noBase);
+    return yield* Effect.void;
+  }),
+);
+
+it.effect('owner checkout uses variant-only minimum and package constraints, independently of the parent', () =>
+  Effect.gen(function* variantOnlyPurchaseConstraints() {
+    const current = yield* seeded;
+    const parentConstrained: MerchandiseState = {
+      ...current,
+      products: current.products.map((product) => ({ ...product, minimumQuantity: 10, packageQuantity: 10 })),
+    };
+    const accepted = yield* apply(parentConstrained, guestOrder(), 'variant-own-rules');
+    expect(accepted.storefrontOrder?.outcome).toBe('PLACED');
+    expect(accepted.state.orders[0]?.lines[0]?.quantity).toBe(2);
+    const variantConstrained: MerchandiseState = {
+      ...parentConstrained,
+      products: parentConstrained.products.map((product) => ({
+        ...product,
+        variants: product.variants?.map((variant) => ({ ...variant, minimumQuantity: 3, packageQuantity: 3 })),
+      })),
+    };
+    const refused = yield* apply(variantConstrained, guestOrder(), 'variant-explicit-rules');
+    expect(refused.storefrontOrder?.issues[0]?.code).toBe('MINIMUM_QUANTITY');
+    expect(refused.state).toBe(variantConstrained);
+    return yield* Effect.void;
+  }),
+);

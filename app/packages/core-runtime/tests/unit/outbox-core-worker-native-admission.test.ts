@@ -1,10 +1,12 @@
 import { NodeServices } from '@effect/platform-node';
-import { Crypto, DateTime, Deferred, Effect, Fiber, Layer, Match, Option, Predicate, Schema } from 'effect';
+import { Crypto, DateTime, Deferred, Duration, Effect, Fiber, Layer, Match, Option, Predicate, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
 import { AccessOperationIdSchema, AccessScopeIdSchema, CommandDigestSchema } from '../../src/access/ids.ts';
 import { AccessProjectionWriter } from '../../src/access/intent/projection-writer.ts';
+import { projectionWriteRefusal } from '../../src/access/intent/projection-write-error.ts';
+import type { AccessProjectionWriteError } from '../../src/access/intent/projection-write-error.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
 import { refuseInsideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
 import { ActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
@@ -15,7 +17,11 @@ import type { OntosDeploymentIdentitySchema } from '../../src/modules/manifest.t
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { isGenuineCoreOutboxWorker } from '../../src/modules/module-operation-execution.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
-import { corePeopleSearchOutboxWorkers, coreSystemOutboxWorkers } from '../../src/outbox/core-system-worker-entry.ts';
+import {
+  corePeopleSearchOutboxWorkers,
+  CoreWorkerFenceWait,
+  coreSystemOutboxWorkers,
+} from '../../src/outbox/core-system-worker-entry.ts';
 import { outboxWorkerTenantScope } from '../../src/outbox/core-authorization-projection.ts';
 import { CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS } from '../../src/outbox/core-system-subscriptions.ts';
 import { defineOutboxWorker, isVerifiedOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
@@ -73,6 +79,8 @@ interface FixtureOptions {
   readonly registrations?: readonly CoreWorker[];
   readonly selected?: CoreWorker;
   readonly sqlAuthority?: 'expired' | 'sealed' | 'stale';
+  /** The projection writer refuses with these, one per call in order, before it reconciles. */
+  readonly writerRefusals?: readonly AccessProjectionWriteError[];
 }
 
 const runEntry = Effect.fn('TestCoreOutbox.runEntry')(function* runEntry(options: FixtureOptions = {}) {
@@ -195,11 +203,18 @@ const runEntry = Effect.fn('TestCoreOutbox.runEntry')(function* runEntry(options
   const tenantScope = OutboxWorkerTenantScopeLive.pipe(
     Layer.provide(Layer.succeed(CoreDatabase, { executor: database })),
   );
+  const pendingRefusals = [...(options.writerRefusals ?? [])];
   const lifecycle = ActionAuthorizationLifecycleLive.pipe(
     Layer.provide(
       Layer.succeed(AccessProjectionWriter, {
         reconcileTenant: ({ scope }) =>
           refuseInsideDatabaseTransaction('spicedb', 'scripted-core-projection').pipe(
+            Effect.andThen(
+              Effect.suspend(() => {
+                const refusal = pendingRefusals.shift();
+                return refusal === undefined ? Effect.void : Effect.fail(refusal);
+              }),
+            ),
             Effect.andThen(
               Effect.sync(() => {
                 expect(openTransactions).toBe(0);
@@ -243,6 +258,8 @@ const runEntry = Effect.fn('TestCoreOutbox.runEntry')(function* runEntry(options
     expectedDeployment: options.deployment ?? composition.shell.deployment,
     layer: Layer.mergeAll(
       TestClock.layer(),
+      // The clock is a TestClock, so a busy-fence wait must not sleep.
+      Layer.succeed(CoreWorkerFenceWait, { budget: Duration.seconds(30), spacing: Duration.zero }),
       Layer.succeed(OutboxRuntime, observedRuntime),
       lifecycle,
       projector,
@@ -447,6 +464,44 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
       expect(lock).toBeGreaterThanOrEqual(0);
       expect(authority).toBeGreaterThan(lock);
       expect(candidates).toBeGreaterThan(authority);
+    }),
+  );
+
+  // The shipped tuple's third worker; the first case pins its key, so a reordering cannot silently test another.
+  const { 2: lifecycleWorker } = coreSystemOutboxWorkers;
+
+  suite.effect('waits for a busy tenant fence within the attempt, then reconciles the wake-up itself', () =>
+    Effect.gen(function* waitsForBusyFence() {
+      expect(lifecycleWorker.descriptor.workerKey).toBe('core.authorization.reconcile-principal-lifecycle');
+      // Another writer holds the fence on the first try. The attempt must not count that as its failure, and must
+      // not settle the wake-up on the other writer's word either: it reconciles again once the fence is free.
+      const fixture = yield* runEntry({
+        selected: lifecycleWorker,
+        writerRefusals: [
+          projectionWriteRefusal(
+            'access_projection_write_fence_refused',
+            'fence_held_by_other_operation: Scope 1 is held by operation release-modules (Changing, revision 4) whose hold has not lapsed, so nothing may write',
+          ),
+        ],
+      });
+      expect(fixture.failures).toEqual([]);
+      expect(fixture.completed).toBe(true);
+      expect(fixture.results[0]).toMatchObject({ claimed: 1, failed: 0, succeeded: 1 });
+      // The wake-up was settled by its own successful reconcile, not by the busy refusal.
+      expect(fixture.reconciled).toHaveLength(1);
+    }),
+  );
+
+  suite.effect('still fails a lifecycle wake-up whose projection was genuinely refused', () =>
+    Effect.gen(function* failsGenuineRefusal() {
+      // Only a busy fence is waited for; an engine failure is this reconcile's own and must retry through the Outbox.
+      const fixture = yield* runEntry({
+        selected: lifecycleWorker,
+        writerRefusals: [projectionWriteRefusal('access_projection_write_unavailable', 'the engine did not complete')],
+      });
+      expect(fixture.completed).toBe(false);
+      expect(fixture.reconciled).toEqual([]);
+      expect(fixture.results[0]).toMatchObject({ claimed: 1, failed: 1, succeeded: 0 });
     }),
   );
 

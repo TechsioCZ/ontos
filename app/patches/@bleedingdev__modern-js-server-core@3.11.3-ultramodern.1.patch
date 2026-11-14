@@ -1,24 +1,30 @@
 diff --git a/dist/cjs/adapters/node/plugins/resource.js b/dist/cjs/adapters/node/plugins/resource.js
-index 894a1a3..8b0d3a8 100644
+index 894a1a3f6510220f3a6033e5f105e4e63280abfc..fb85162138c13a98925312ca2f2e92afe0c7b36b 100644
 --- a/dist/cjs/adapters/node/plugins/resource.js
 +++ b/dist/cjs/adapters/node/plugins/resource.js
-@@ -82,8 +82,10 @@ function reportBundleError(filepath, error, monitors) {
+@@ -71,6 +71,7 @@ async function getHtmlTemplates(pwd, routes) {
+ function injectTemplates(pwd, routes, htmlTemplatePromise) {
+     return async (c, next)=>{
+         if (routes && !c.get('templates')) {
++            if ((0, utils_namespaceObject.isProd)()) htmlTemplatePromise ||= getHtmlTemplates(pwd, routes);
+             const templates = await (htmlTemplatePromise || getHtmlTemplates(pwd, routes));
+             c.set('templates', templates);
+         }
+@@ -82,8 +83,10 @@ function reportBundleError(filepath, error, monitors) {
      if (monitors) monitors.error(`Load ${filepath} bundle failed, error = %s`, detail);
      else console.error(`Load ${filepath} bundle failed, error = ${detail}`);
  }
 -const loadBundle = async (filepath, monitors, { required = false, failOnError = false } = {})=>{
-+const loadBundle = async (filepath, monitors, { required = false, failOnError = false, triggerPath } = {})=>{
++const loadBundle = async (filepath, monitors, { required = false, failOnError = false } = {}, triggerPath)=>{
      if (!required && !failOnError && !await utils_namespaceObject.fs.pathExists(filepath)) return;
-+    let started;
++    const started = performance.now();
 +    let outcome = 'failed';
      try {
          if (!required && failOnError) try {
              await utils_namespaceObject.fs.access(filepath);
-@@ -92,15 +94,27 @@ const loadBundle = async (filepath, monitors, { required = false, failOnError =
-             if ('ENOENT' === code || 'ENOTDIR' === code) return;
+@@ -93,14 +96,18 @@ const loadBundle = async (filepath, monitors, { required = false, failOnError =
              throw e;
          }
-+        started = performance.now();
          const module = await (0, utils_namespaceObject.compatibleRequire)(filepath, false);
 +        outcome = 'loaded';
          return module;
@@ -27,107 +33,92 @@ index 894a1a3..8b0d3a8 100644
          if (failOnError) throw e;
          return;
 +    } finally {
-+        // OntOS: a pure notification of actual bundle imports; it never changes the result or the failure.
-+        if (void 0 !== started) try {
-+            globalThis.ontosRenderBundleObserver?.({
-+                filepath,
-+                durationMs: performance.now() - started,
-+                outcome,
-+                triggerPath
-+            });
-+        } catch  {}
++        // Infrastructure telemetry must never change rendering or failure handling.
++        try { globalThis.ontosRenderBundleObserver?.({ filepath, durationMs: performance.now() - started, outcome, triggerPath }); } catch {}
      }
  };
 -async function getServerManifest(pwd, routes, monitors, { failOnError = false } = {}) {
-+async function getServerManifest(pwd, routes, monitors, { failOnError = false, triggerPath = '<startup>' } = {}) {
++async function getServerManifest(pwd, routes, monitors, { failOnError = false } = {}, triggerPath = '<startup>') {
      const loaderBundles = {};
      const renderBundles = {};
      await Promise.all(routes.filter((route)=>Boolean(route.bundle)).map(async (route)=>{
-@@ -110,10 +124,12 @@ async function getServerManifest(pwd, routes, monitors, { failOnError = false }
-         const loaderBundlePath = external_path_default().join(pwd, utils_namespaceObject.SERVER_BUNDLE_DIRECTORY, `${entryName}-server-loaders.js`);
+@@ -111,10 +118,10 @@ async function getServerManifest(pwd, routes, monitors, { failOnError = false }
          const renderBundle = await loadBundle(renderBundlePath, monitors, {
              required: failOnBundleError,
--            failOnError: failOnBundleError
-+            failOnError: failOnBundleError,
-+            triggerPath
-         });
+             failOnError: failOnBundleError
+-        });
++        }, triggerPath);
          const loaderBundle = await loadBundle(loaderBundlePath, monitors, {
--            failOnError: failOnBundleError
-+            failOnError: failOnBundleError,
-+            triggerPath
-         });
+             failOnError: failOnBundleError
+-        });
++        }, triggerPath);
          renderBundle && (renderBundles[entryName] = renderBundle);
          if (loaderBundle) try {
-@@ -190,7 +206,50 @@ const injectResourcePlugin = ()=>({
+             loaderBundles[entryName] = loaderBundle.loadModules ? await loaderBundle.loadModules() : loaderBundle;
+@@ -141,7 +148,8 @@ function injectServerManifest(pwd, routes, manifestPromise) {
+     return async (c, next)=>{
+         if (routes && !c.get('serverManifest')) {
+             const monitors = c.get('monitors');
+-            const serverManifest = await (manifestPromise || getServerManifest(pwd, routes, monitors));
++            if ((0, utils_namespaceObject.isProd)()) manifestPromise ||= getServerManifest(pwd, routes, monitors, void 0, c.req?.path || '<request>');
++            const serverManifest = await (manifestPromise || getServerManifest(pwd, routes, monitors, void 0, c.req?.path || '<request>'));
+             c.set('serverManifest', serverManifest);
+         }
+         await next();
+@@ -190,10 +198,20 @@ const injectResourcePlugin = ()=>({
          name: '@modern-js/plugin-inject-resource',
          setup (api) {
              api.onPrepare(async ()=>{
 -                const { middlewares, routes, distDirectory: pwd } = api.getServerContext();
 +                const { middlewares, renderMiddlewares, routes, distDirectory: pwd } = api.getServerContext();
-+                // OntOS: a pure notification around every request; it never answers one and never throws into it.
++                const lazy = (0, utils_namespaceObject.isProd)() && 'lazy' === process.env.MODERN_SERVER_RENDER_RESOURCES;
++                const resourceMiddlewares = lazy ? renderMiddlewares : middlewares;
 +                middlewares.unshift({
 +                    name: 'observe-owner-first-request',
 +                    handler: async (c, next)=>{
 +                        let finish;
-+                        try {
-+                            finish = globalThis.ontosOwnerRequestObserver?.(pwd, c.req.path);
-+                        } catch  {}
-+                        try {
-+                            await next();
-+                        } finally {
-+                            try {
-+                                finish?.();
-+                            } catch  {}
-+                        }
++                        try { finish = globalThis.ontosOwnerRequestObserver?.(pwd, c.req.path); } catch {}
++                        try { await next(); } finally { try { finish?.(); } catch {} }
 +                    }
 +                });
-+                // OntOS: MODERN_SERVER_RENDER_RESOURCES=lazy (production only) loads page resources once, on the first
-+                // page request, from render middlewares, so BFF, static and federation requests never load page bundles.
-+                if ((0, utils_namespaceObject.isProd)() && 'lazy' === process.env.MODERN_SERVER_RENDER_RESOURCES) {
-+                    let lazyManifest;
-+                    let lazyTemplates;
-+                    renderMiddlewares.push({
-+                        name: 'inject-server-manifest',
-+                        handler: (c, next)=>{
-+                            if (routes && !c.get('serverManifest')) lazyManifest ||= getServerManifest(pwd, routes, c.get('monitors'), {
-+                                triggerPath: c.req?.path || '<request>'
-+                            }).catch((e)=>{
-+                                lazyManifest = void 0;
-+                                throw e;
-+                            });
-+                            return injectServerManifest(pwd, routes, lazyManifest)(c, next);
-+                        }
-+                    });
-+                    renderMiddlewares.push({
-+                        name: 'inject-html',
-+                        handler: (c, next)=>{
-+                            if (routes && !c.get('templates')) lazyTemplates ||= getHtmlTemplates(pwd, routes);
-+                            return injectTemplates(pwd, routes, lazyTemplates)(c, next);
-+                        }
-+                    });
-+                    return;
-+                }
                  let htmlTemplatePromise;
                  let manifestPromise;
-                 if ((0, utils_namespaceObject.isProd)()) {
+-                if ((0, utils_namespaceObject.isProd)()) {
++                if ((0, utils_namespaceObject.isProd)() && !lazy) {
+                     const warmupRoutes = routes || [];
+                     const failOnError = warmupRoutes.some((route)=>route.isSSR && route.bundle) && !warmupRoutes.some((route)=>route.isRSC);
+                     manifestPromise = getServerManifest(pwd, warmupRoutes, void 0, {
+@@ -202,11 +220,11 @@ const injectResourcePlugin = ()=>({
+                     htmlTemplatePromise = getHtmlTemplates(pwd, routes || []);
+                     if (failOnError) await manifestPromise;
+                 }
+-                middlewares.push({
++                resourceMiddlewares.push({
+                     name: 'inject-server-manifest',
+                     handler: injectServerManifest(pwd, routes, manifestPromise)
+                 });
+-                middlewares.push({
++                resourceMiddlewares.push({
+                     name: 'inject-html',
+                     handler: injectTemplates(pwd, routes, htmlTemplatePromise)
+                 });
 diff --git a/dist/cjs/adapters/node/plugins/static.js b/dist/cjs/adapters/node/plugins/static.js
-index 8efcd1d..716e0a9 100644
+index 8efcd1dbe66424774fae9c12bba29eefb42037b4..37f7ceabb8e0fcadbd9e1dacf12d23e8b72a7fbf 100644
 --- a/dist/cjs/adapters/node/plugins/static.js
 +++ b/dist/cjs/adapters/node/plugins/static.js
-@@ -54,6 +54,21 @@ const isPathInside = (target, root)=>{
+@@ -54,6 +54,20 @@ const isPathInside = (target, root)=>{
      const relative = external_path_default().relative(external_path_default().resolve(root), external_path_default().resolve(target));
      return '' === relative || !relative.startsWith(`..${external_path_default().sep}`) && '..' !== relative && !external_path_default().isAbsolute(relative);
  };
-+// OntOS: MODERN_SERVER_IMMUTABLE_ASSETS=true (production only) remembers, for at most 8192 paths, that a release
-+// file exists. Only that fact is kept: bytes, lengths and headers are produced as before, and a miss is never kept.
++// Release files are immutable only when the host explicitly opts in. Never retain missing paths.
 +const immutableAssetStats = new Map();
-+const statStaticFile = (filename)=>{
++const getStaticAssetStat = (filename)=>{
 +    if ('production' !== process.env.NODE_ENV || 'true' !== process.env.MODERN_SERVER_IMMUTABLE_ASSETS) return utils_namespaceObject.fs.stat(filename).catch(()=>null);
 +    const cached = immutableAssetStats.get(filename);
 +    if (cached) return cached;
-+    const pending = utils_namespaceObject.fs.stat(filename).then((stat)=>stat.isFile() ? stat : null).catch(()=>null).then((stat)=>{
-+        if (!stat && immutableAssetStats.get(filename) === pending) immutableAssetStats.delete(filename);
-+        return stat;
++    const pending = utils_namespaceObject.fs.stat(filename).catch(()=>{
++        if (immutableAssetStats.get(filename) === pending) immutableAssetStats.delete(filename);
++        return null;
 +    });
 +    if (immutableAssetStats.size >= 8192) immutableAssetStats.delete(immutableAssetStats.keys().next().value);
 +    immutableAssetStats.set(filename, pending);
@@ -136,45 +127,51 @@ index 8efcd1d..716e0a9 100644
  async function serveStaticAsset(context, asset, respond) {
      let { filename } = asset;
      const { kind } = asset;
-@@ -75,7 +90,7 @@ async function serveStaticAsset(context, asset, respond) {
+@@ -75,7 +89,7 @@ async function serveStaticAsset(context, asset, respond) {
          return null;
      }
      if ('static' === kind && !asset.realpath) {
 -        const stat = await utils_namespaceObject.fs.stat(filename).catch(()=>null);
-+        const stat = await statStaticFile(filename);
++        const stat = await getStaticAssetStat(filename);
          if (!stat?.isFile()) return null;
      }
      if (respond) return respond(asset, (representation)=>serveStaticAsset(context, {
-@@ -217,7 +232,7 @@ function createStaticMiddleware(options) {
+@@ -217,7 +231,7 @@ function createStaticMiddleware(options) {
              const filepath = external_path_default().join(pwd, relativePath);
              if (!isPathInside(filepath, pwd)) return next();
              if (options.respondAsset) {
 -                const stat = await utils_namespaceObject.fs.stat(filepath).catch(()=>null);
-+                const stat = await statStaticFile(filepath);
++                const stat = await getStaticAssetStat(filepath);
                  if (!stat?.isFile()) return next();
              }
              const asset = {
 diff --git a/dist/esm-node/adapters/node/plugins/resource.mjs b/dist/esm-node/adapters/node/plugins/resource.mjs
-index da34d22..c6b8a16 100644
+index da34d22ebe38511870fd0851c69dd2cdb32932b6..77e8b0ce1a5b32c10a1a24642b8346736aa696fa 100644
 --- a/dist/esm-node/adapters/node/plugins/resource.mjs
 +++ b/dist/esm-node/adapters/node/plugins/resource.mjs
-@@ -33,8 +33,10 @@ function reportBundleError(filepath, error, monitors) {
+@@ -22,6 +22,7 @@ async function getHtmlTemplates(pwd, routes) {
+ function injectTemplates(pwd, routes, htmlTemplatePromise) {
+     return async (c, next)=>{
+         if (routes && !c.get('templates')) {
++            if (isProd()) htmlTemplatePromise ||= getHtmlTemplates(pwd, routes);
+             const templates = await (htmlTemplatePromise || getHtmlTemplates(pwd, routes));
+             c.set('templates', templates);
+         }
+@@ -33,8 +34,10 @@ function reportBundleError(filepath, error, monitors) {
      if (monitors) monitors.error(`Load ${filepath} bundle failed, error = %s`, detail);
      else console.error(`Load ${filepath} bundle failed, error = ${detail}`);
  }
 -const loadBundle = async (filepath, monitors, { required = false, failOnError = false } = {})=>{
-+const loadBundle = async (filepath, monitors, { required = false, failOnError = false, triggerPath } = {})=>{
++const loadBundle = async (filepath, monitors, { required = false, failOnError = false } = {}, triggerPath)=>{
      if (!required && !failOnError && !await fs.pathExists(filepath)) return;
-+    let started;
++    const started = performance.now();
 +    let outcome = 'failed';
      try {
          if (!required && failOnError) try {
              await fs.access(filepath);
-@@ -43,15 +45,27 @@ const loadBundle = async (filepath, monitors, { required = false, failOnError =
-             if ('ENOENT' === code || 'ENOTDIR' === code) return;
+@@ -44,14 +47,18 @@ const loadBundle = async (filepath, monitors, { required = false, failOnError =
              throw e;
          }
-+        started = performance.now();
          const module = await compatibleRequire(filepath, false);
 +        outcome = 'loaded';
          return module;
@@ -183,107 +180,92 @@ index da34d22..c6b8a16 100644
          if (failOnError) throw e;
          return;
 +    } finally {
-+        // OntOS: a pure notification of actual bundle imports; it never changes the result or the failure.
-+        if (void 0 !== started) try {
-+            globalThis.ontosRenderBundleObserver?.({
-+                filepath,
-+                durationMs: performance.now() - started,
-+                outcome,
-+                triggerPath
-+            });
-+        } catch  {}
++        // Infrastructure telemetry must never change rendering or failure handling.
++        try { globalThis.ontosRenderBundleObserver?.({ filepath, durationMs: performance.now() - started, outcome, triggerPath }); } catch {}
      }
  };
 -async function getServerManifest(pwd, routes, monitors, { failOnError = false } = {}) {
-+async function getServerManifest(pwd, routes, monitors, { failOnError = false, triggerPath = '<startup>' } = {}) {
++async function getServerManifest(pwd, routes, monitors, { failOnError = false } = {}, triggerPath = '<startup>') {
      const loaderBundles = {};
      const renderBundles = {};
      await Promise.all(routes.filter((route)=>Boolean(route.bundle)).map(async (route)=>{
-@@ -61,10 +75,12 @@ async function getServerManifest(pwd, routes, monitors, { failOnError = false }
-         const loaderBundlePath = path.join(pwd, SERVER_BUNDLE_DIRECTORY, `${entryName}-server-loaders.js`);
+@@ -62,10 +69,10 @@ async function getServerManifest(pwd, routes, monitors, { failOnError = false }
          const renderBundle = await loadBundle(renderBundlePath, monitors, {
              required: failOnBundleError,
--            failOnError: failOnBundleError
-+            failOnError: failOnBundleError,
-+            triggerPath
-         });
+             failOnError: failOnBundleError
+-        });
++        }, triggerPath);
          const loaderBundle = await loadBundle(loaderBundlePath, monitors, {
--            failOnError: failOnBundleError
-+            failOnError: failOnBundleError,
-+            triggerPath
-         });
+             failOnError: failOnBundleError
+-        });
++        }, triggerPath);
          renderBundle && (renderBundles[entryName] = renderBundle);
          if (loaderBundle) try {
-@@ -141,7 +157,50 @@ const injectResourcePlugin = ()=>({
+             loaderBundles[entryName] = loaderBundle.loadModules ? await loaderBundle.loadModules() : loaderBundle;
+@@ -92,7 +99,8 @@ function injectServerManifest(pwd, routes, manifestPromise) {
+     return async (c, next)=>{
+         if (routes && !c.get('serverManifest')) {
+             const monitors = c.get('monitors');
+-            const serverManifest = await (manifestPromise || getServerManifest(pwd, routes, monitors));
++            if (isProd()) manifestPromise ||= getServerManifest(pwd, routes, monitors, void 0, c.req?.path || '<request>');
++            const serverManifest = await (manifestPromise || getServerManifest(pwd, routes, monitors, void 0, c.req?.path || '<request>'));
+             c.set('serverManifest', serverManifest);
+         }
+         await next();
+@@ -141,10 +149,20 @@ const injectResourcePlugin = ()=>({
          name: '@modern-js/plugin-inject-resource',
          setup (api) {
              api.onPrepare(async ()=>{
 -                const { middlewares, routes, distDirectory: pwd } = api.getServerContext();
 +                const { middlewares, renderMiddlewares, routes, distDirectory: pwd } = api.getServerContext();
-+                // OntOS: a pure notification around every request; it never answers one and never throws into it.
++                const lazy = isProd() && 'lazy' === process.env.MODERN_SERVER_RENDER_RESOURCES;
++                const resourceMiddlewares = lazy ? renderMiddlewares : middlewares;
 +                middlewares.unshift({
 +                    name: 'observe-owner-first-request',
 +                    handler: async (c, next)=>{
 +                        let finish;
-+                        try {
-+                            finish = globalThis.ontosOwnerRequestObserver?.(pwd, c.req.path);
-+                        } catch  {}
-+                        try {
-+                            await next();
-+                        } finally {
-+                            try {
-+                                finish?.();
-+                            } catch  {}
-+                        }
++                        try { finish = globalThis.ontosOwnerRequestObserver?.(pwd, c.req.path); } catch {}
++                        try { await next(); } finally { try { finish?.(); } catch {} }
 +                    }
 +                });
-+                // OntOS: MODERN_SERVER_RENDER_RESOURCES=lazy (production only) loads page resources once, on the first
-+                // page request, from render middlewares, so BFF, static and federation requests never load page bundles.
-+                if (isProd() && 'lazy' === process.env.MODERN_SERVER_RENDER_RESOURCES) {
-+                    let lazyManifest;
-+                    let lazyTemplates;
-+                    renderMiddlewares.push({
-+                        name: 'inject-server-manifest',
-+                        handler: (c, next)=>{
-+                            if (routes && !c.get('serverManifest')) lazyManifest ||= getServerManifest(pwd, routes, c.get('monitors'), {
-+                                triggerPath: c.req?.path || '<request>'
-+                            }).catch((e)=>{
-+                                lazyManifest = void 0;
-+                                throw e;
-+                            });
-+                            return injectServerManifest(pwd, routes, lazyManifest)(c, next);
-+                        }
-+                    });
-+                    renderMiddlewares.push({
-+                        name: 'inject-html',
-+                        handler: (c, next)=>{
-+                            if (routes && !c.get('templates')) lazyTemplates ||= getHtmlTemplates(pwd, routes);
-+                            return injectTemplates(pwd, routes, lazyTemplates)(c, next);
-+                        }
-+                    });
-+                    return;
-+                }
                  let htmlTemplatePromise;
                  let manifestPromise;
-                 if (isProd()) {
+-                if (isProd()) {
++                if (isProd() && !lazy) {
+                     const warmupRoutes = routes || [];
+                     const failOnError = warmupRoutes.some((route)=>route.isSSR && route.bundle) && !warmupRoutes.some((route)=>route.isRSC);
+                     manifestPromise = getServerManifest(pwd, warmupRoutes, void 0, {
+@@ -153,11 +171,11 @@ const injectResourcePlugin = ()=>({
+                     htmlTemplatePromise = getHtmlTemplates(pwd, routes || []);
+                     if (failOnError) await manifestPromise;
+                 }
+-                middlewares.push({
++                resourceMiddlewares.push({
+                     name: 'inject-server-manifest',
+                     handler: injectServerManifest(pwd, routes, manifestPromise)
+                 });
+-                middlewares.push({
++                resourceMiddlewares.push({
+                     name: 'inject-html',
+                     handler: injectTemplates(pwd, routes, htmlTemplatePromise)
+                 });
 diff --git a/dist/esm-node/adapters/node/plugins/static.mjs b/dist/esm-node/adapters/node/plugins/static.mjs
-index d2ad23c..b885055 100644
+index d2ad23c4e79df38a82b6879325183969a1213b78..7d013582bed98b50358aa9e32b0453302df6000d 100644
 --- a/dist/esm-node/adapters/node/plugins/static.mjs
 +++ b/dist/esm-node/adapters/node/plugins/static.mjs
-@@ -10,6 +10,21 @@ const isPathInside = (target, root)=>{
+@@ -10,6 +10,20 @@ const isPathInside = (target, root)=>{
      const relative = path.relative(path.resolve(root), path.resolve(target));
      return '' === relative || !relative.startsWith(`..${path.sep}`) && '..' !== relative && !path.isAbsolute(relative);
  };
-+// OntOS: MODERN_SERVER_IMMUTABLE_ASSETS=true (production only) remembers, for at most 8192 paths, that a release
-+// file exists. Only that fact is kept: bytes, lengths and headers are produced as before, and a miss is never kept.
++// Release files are immutable only when the host explicitly opts in. Never retain missing paths.
 +const immutableAssetStats = new Map();
-+const statStaticFile = (filename)=>{
++const getStaticAssetStat = (filename)=>{
 +    if ('production' !== process.env.NODE_ENV || 'true' !== process.env.MODERN_SERVER_IMMUTABLE_ASSETS) return fs.stat(filename).catch(()=>null);
 +    const cached = immutableAssetStats.get(filename);
 +    if (cached) return cached;
-+    const pending = fs.stat(filename).then((stat)=>stat.isFile() ? stat : null).catch(()=>null).then((stat)=>{
-+        if (!stat && immutableAssetStats.get(filename) === pending) immutableAssetStats.delete(filename);
-+        return stat;
++    const pending = fs.stat(filename).catch(()=>{
++        if (immutableAssetStats.get(filename) === pending) immutableAssetStats.delete(filename);
++        return null;
 +    });
 +    if (immutableAssetStats.size >= 8192) immutableAssetStats.delete(immutableAssetStats.keys().next().value);
 +    immutableAssetStats.set(filename, pending);
@@ -292,45 +274,51 @@ index d2ad23c..b885055 100644
  async function serveStaticAsset(context, asset, respond) {
      let { filename } = asset;
      const { kind } = asset;
-@@ -31,7 +46,7 @@ async function serveStaticAsset(context, asset, respond) {
+@@ -31,7 +45,7 @@ async function serveStaticAsset(context, asset, respond) {
          return null;
      }
      if ('static' === kind && !asset.realpath) {
 -        const stat = await fs.stat(filename).catch(()=>null);
-+        const stat = await statStaticFile(filename);
++        const stat = await getStaticAssetStat(filename);
          if (!stat?.isFile()) return null;
      }
      if (respond) return respond(asset, (representation)=>serveStaticAsset(context, {
-@@ -173,7 +188,7 @@ function createStaticMiddleware(options) {
+@@ -173,7 +187,7 @@ function createStaticMiddleware(options) {
              const filepath = path.join(pwd, relativePath);
              if (!isPathInside(filepath, pwd)) return next();
              if (options.respondAsset) {
 -                const stat = await fs.stat(filepath).catch(()=>null);
-+                const stat = await statStaticFile(filepath);
++                const stat = await getStaticAssetStat(filepath);
                  if (!stat?.isFile()) return next();
              }
              const asset = {
 diff --git a/dist/esm/adapters/node/plugins/resource.mjs b/dist/esm/adapters/node/plugins/resource.mjs
-index 8eab99d..b4c68ae 100644
+index 8eab99df5f259341dcf8d5b64c054c005fd81f22..f14a0421d4dde8245ee128f384b69644562e0a46 100644
 --- a/dist/esm/adapters/node/plugins/resource.mjs
 +++ b/dist/esm/adapters/node/plugins/resource.mjs
-@@ -32,8 +32,10 @@ function reportBundleError(filepath, error, monitors) {
+@@ -21,6 +21,7 @@ async function getHtmlTemplates(pwd, routes) {
+ function injectTemplates(pwd, routes, htmlTemplatePromise) {
+     return async (c, next)=>{
+         if (routes && !c.get('templates')) {
++            if (isProd()) htmlTemplatePromise ||= getHtmlTemplates(pwd, routes);
+             const templates = await (htmlTemplatePromise || getHtmlTemplates(pwd, routes));
+             c.set('templates', templates);
+         }
+@@ -32,8 +33,10 @@ function reportBundleError(filepath, error, monitors) {
      if (monitors) monitors.error(`Load ${filepath} bundle failed, error = %s`, detail);
      else console.error(`Load ${filepath} bundle failed, error = ${detail}`);
  }
 -const loadBundle = async (filepath, monitors, { required = false, failOnError = false } = {})=>{
-+const loadBundle = async (filepath, monitors, { required = false, failOnError = false, triggerPath } = {})=>{
++const loadBundle = async (filepath, monitors, { required = false, failOnError = false } = {}, triggerPath)=>{
      if (!required && !failOnError && !await fs.pathExists(filepath)) return;
-+    let started;
++    const started = performance.now();
 +    let outcome = 'failed';
      try {
          if (!required && failOnError) try {
              await fs.access(filepath);
-@@ -42,15 +44,27 @@ const loadBundle = async (filepath, monitors, { required = false, failOnError =
-             if ('ENOENT' === code || 'ENOTDIR' === code) return;
+@@ -43,14 +46,18 @@ const loadBundle = async (filepath, monitors, { required = false, failOnError =
              throw e;
          }
-+        started = performance.now();
          const module = await compatibleRequire(filepath, false);
 +        outcome = 'loaded';
          return module;
@@ -339,107 +327,92 @@ index 8eab99d..b4c68ae 100644
          if (failOnError) throw e;
          return;
 +    } finally {
-+        // OntOS: a pure notification of actual bundle imports; it never changes the result or the failure.
-+        if (void 0 !== started) try {
-+            globalThis.ontosRenderBundleObserver?.({
-+                filepath,
-+                durationMs: performance.now() - started,
-+                outcome,
-+                triggerPath
-+            });
-+        } catch  {}
++        // Infrastructure telemetry must never change rendering or failure handling.
++        try { globalThis.ontosRenderBundleObserver?.({ filepath, durationMs: performance.now() - started, outcome, triggerPath }); } catch {}
      }
  };
 -async function getServerManifest(pwd, routes, monitors, { failOnError = false } = {}) {
-+async function getServerManifest(pwd, routes, monitors, { failOnError = false, triggerPath = '<startup>' } = {}) {
++async function getServerManifest(pwd, routes, monitors, { failOnError = false } = {}, triggerPath = '<startup>') {
      const loaderBundles = {};
      const renderBundles = {};
      await Promise.all(routes.filter((route)=>Boolean(route.bundle)).map(async (route)=>{
-@@ -60,10 +74,12 @@ async function getServerManifest(pwd, routes, monitors, { failOnError = false }
-         const loaderBundlePath = path.join(pwd, SERVER_BUNDLE_DIRECTORY, `${entryName}-server-loaders.js`);
+@@ -61,10 +68,10 @@ async function getServerManifest(pwd, routes, monitors, { failOnError = false }
          const renderBundle = await loadBundle(renderBundlePath, monitors, {
              required: failOnBundleError,
--            failOnError: failOnBundleError
-+            failOnError: failOnBundleError,
-+            triggerPath
-         });
+             failOnError: failOnBundleError
+-        });
++        }, triggerPath);
          const loaderBundle = await loadBundle(loaderBundlePath, monitors, {
--            failOnError: failOnBundleError
-+            failOnError: failOnBundleError,
-+            triggerPath
-         });
+             failOnError: failOnBundleError
+-        });
++        }, triggerPath);
          renderBundle && (renderBundles[entryName] = renderBundle);
          if (loaderBundle) try {
-@@ -140,7 +156,50 @@ const injectResourcePlugin = ()=>({
+             loaderBundles[entryName] = loaderBundle.loadModules ? await loaderBundle.loadModules() : loaderBundle;
+@@ -91,7 +98,8 @@ function injectServerManifest(pwd, routes, manifestPromise) {
+     return async (c, next)=>{
+         if (routes && !c.get('serverManifest')) {
+             const monitors = c.get('monitors');
+-            const serverManifest = await (manifestPromise || getServerManifest(pwd, routes, monitors));
++            if (isProd()) manifestPromise ||= getServerManifest(pwd, routes, monitors, void 0, c.req?.path || '<request>');
++            const serverManifest = await (manifestPromise || getServerManifest(pwd, routes, monitors, void 0, c.req?.path || '<request>'));
+             c.set('serverManifest', serverManifest);
+         }
+         await next();
+@@ -140,10 +148,20 @@ const injectResourcePlugin = ()=>({
          name: '@modern-js/plugin-inject-resource',
          setup (api) {
              api.onPrepare(async ()=>{
 -                const { middlewares, routes, distDirectory: pwd } = api.getServerContext();
 +                const { middlewares, renderMiddlewares, routes, distDirectory: pwd } = api.getServerContext();
-+                // OntOS: a pure notification around every request; it never answers one and never throws into it.
++                const lazy = isProd() && 'lazy' === process.env.MODERN_SERVER_RENDER_RESOURCES;
++                const resourceMiddlewares = lazy ? renderMiddlewares : middlewares;
 +                middlewares.unshift({
 +                    name: 'observe-owner-first-request',
 +                    handler: async (c, next)=>{
 +                        let finish;
-+                        try {
-+                            finish = globalThis.ontosOwnerRequestObserver?.(pwd, c.req.path);
-+                        } catch  {}
-+                        try {
-+                            await next();
-+                        } finally {
-+                            try {
-+                                finish?.();
-+                            } catch  {}
-+                        }
++                        try { finish = globalThis.ontosOwnerRequestObserver?.(pwd, c.req.path); } catch {}
++                        try { await next(); } finally { try { finish?.(); } catch {} }
 +                    }
 +                });
-+                // OntOS: MODERN_SERVER_RENDER_RESOURCES=lazy (production only) loads page resources once, on the first
-+                // page request, from render middlewares, so BFF, static and federation requests never load page bundles.
-+                if (isProd() && 'lazy' === process.env.MODERN_SERVER_RENDER_RESOURCES) {
-+                    let lazyManifest;
-+                    let lazyTemplates;
-+                    renderMiddlewares.push({
-+                        name: 'inject-server-manifest',
-+                        handler: (c, next)=>{
-+                            if (routes && !c.get('serverManifest')) lazyManifest ||= getServerManifest(pwd, routes, c.get('monitors'), {
-+                                triggerPath: c.req?.path || '<request>'
-+                            }).catch((e)=>{
-+                                lazyManifest = void 0;
-+                                throw e;
-+                            });
-+                            return injectServerManifest(pwd, routes, lazyManifest)(c, next);
-+                        }
-+                    });
-+                    renderMiddlewares.push({
-+                        name: 'inject-html',
-+                        handler: (c, next)=>{
-+                            if (routes && !c.get('templates')) lazyTemplates ||= getHtmlTemplates(pwd, routes);
-+                            return injectTemplates(pwd, routes, lazyTemplates)(c, next);
-+                        }
-+                    });
-+                    return;
-+                }
                  let htmlTemplatePromise;
                  let manifestPromise;
-                 if (isProd()) {
+-                if (isProd()) {
++                if (isProd() && !lazy) {
+                     const warmupRoutes = routes || [];
+                     const failOnError = warmupRoutes.some((route)=>route.isSSR && route.bundle) && !warmupRoutes.some((route)=>route.isRSC);
+                     manifestPromise = getServerManifest(pwd, warmupRoutes, void 0, {
+@@ -152,11 +170,11 @@ const injectResourcePlugin = ()=>({
+                     htmlTemplatePromise = getHtmlTemplates(pwd, routes || []);
+                     if (failOnError) await manifestPromise;
+                 }
+-                middlewares.push({
++                resourceMiddlewares.push({
+                     name: 'inject-server-manifest',
+                     handler: injectServerManifest(pwd, routes, manifestPromise)
+                 });
+-                middlewares.push({
++                resourceMiddlewares.push({
+                     name: 'inject-html',
+                     handler: injectTemplates(pwd, routes, htmlTemplatePromise)
+                 });
 diff --git a/dist/esm/adapters/node/plugins/static.mjs b/dist/esm/adapters/node/plugins/static.mjs
-index d43980e..4f4c91b 100644
+index d43980e682ac0ab7aebf85f64fffa1c446ddd869..cd99b9663c42ae8c1f01da64cba928cf071180c9 100644
 --- a/dist/esm/adapters/node/plugins/static.mjs
 +++ b/dist/esm/adapters/node/plugins/static.mjs
-@@ -9,6 +9,21 @@ const isPathInside = (target, root)=>{
+@@ -9,6 +9,20 @@ const isPathInside = (target, root)=>{
      const relative = path.relative(path.resolve(root), path.resolve(target));
      return '' === relative || !relative.startsWith(`..${path.sep}`) && '..' !== relative && !path.isAbsolute(relative);
  };
-+// OntOS: MODERN_SERVER_IMMUTABLE_ASSETS=true (production only) remembers, for at most 8192 paths, that a release
-+// file exists. Only that fact is kept: bytes, lengths and headers are produced as before, and a miss is never kept.
++// Release files are immutable only when the host explicitly opts in. Never retain missing paths.
 +const immutableAssetStats = new Map();
-+const statStaticFile = (filename)=>{
++const getStaticAssetStat = (filename)=>{
 +    if ('production' !== process.env.NODE_ENV || 'true' !== process.env.MODERN_SERVER_IMMUTABLE_ASSETS) return fs.stat(filename).catch(()=>null);
 +    const cached = immutableAssetStats.get(filename);
 +    if (cached) return cached;
-+    const pending = fs.stat(filename).then((stat)=>stat.isFile() ? stat : null).catch(()=>null).then((stat)=>{
-+        if (!stat && immutableAssetStats.get(filename) === pending) immutableAssetStats.delete(filename);
-+        return stat;
++    const pending = fs.stat(filename).catch(()=>{
++        if (immutableAssetStats.get(filename) === pending) immutableAssetStats.delete(filename);
++        return null;
 +    });
 +    if (immutableAssetStats.size >= 8192) immutableAssetStats.delete(immutableAssetStats.keys().next().value);
 +    immutableAssetStats.set(filename, pending);
@@ -448,21 +421,21 @@ index d43980e..4f4c91b 100644
  async function serveStaticAsset(context, asset, respond) {
      let { filename } = asset;
      const { kind } = asset;
-@@ -30,7 +45,7 @@ async function serveStaticAsset(context, asset, respond) {
+@@ -30,7 +44,7 @@ async function serveStaticAsset(context, asset, respond) {
          return null;
      }
      if ('static' === kind && !asset.realpath) {
 -        const stat = await fs.stat(filename).catch(()=>null);
-+        const stat = await statStaticFile(filename);
++        const stat = await getStaticAssetStat(filename);
          if (!stat?.isFile()) return null;
      }
      if (respond) return respond(asset, (representation)=>serveStaticAsset(context, {
-@@ -172,7 +187,7 @@ function createStaticMiddleware(options) {
+@@ -172,7 +186,7 @@ function createStaticMiddleware(options) {
              const filepath = path.join(pwd, relativePath);
              if (!isPathInside(filepath, pwd)) return next();
              if (options.respondAsset) {
 -                const stat = await fs.stat(filepath).catch(()=>null);
-+                const stat = await statStaticFile(filepath);
++                const stat = await getStaticAssetStat(filepath);
                  if (!stat?.isFile()) return next();
              }
              const asset = {

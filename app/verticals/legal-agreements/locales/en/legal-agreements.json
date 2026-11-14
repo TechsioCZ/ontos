@@ -45,6 +45,8 @@
       "choose": "Choose a record",
       "startDate": "Start",
       "endDate": "End",
+      "renewalStartHelp": "The renewal starts on {{date}} at the earliest, following the previous contract.",
+      "renewalEndInvalid": "The end must be after the start of the renewed contract.",
       "all": "All",
       "expiring": "Expiring soon",
       "lifecycle": "Lifecycle",

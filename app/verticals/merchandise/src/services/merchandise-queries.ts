@@ -593,8 +593,9 @@ const storefrontFilters = (
     ? undefined
     : or(eq(products.categoryId, categoryId), sql`${products.categoryPathIds} @> array[${categoryId}]::text[]`),
   catalog.label === undefined ? undefined : labelFilter(catalog.label),
-  catalog.minMinor === undefined ? undefined : sql`coalesce(${products.grossPriceMinor}, 0) >= ${catalog.minMinor}`,
-  catalog.maxMinor === undefined ? undefined : sql`coalesce(${products.grossPriceMinor}, 0) <= ${catalog.maxMinor}`,
+  // A product without a price (an empty column) matches no price bound, never one as if it cost 0.
+  catalog.minMinor === undefined ? undefined : sql`${products.grossPriceMinor} >= ${catalog.minMinor}`,
+  catalog.maxMinor === undefined ? undefined : sql`${products.grossPriceMinor} <= ${catalog.maxMinor}`,
   catalog.availability === 'in-stock' ? inArray(products.availability, IN_STOCK) : undefined,
   catalog.availability === 'out-of-stock' ? sql`${products.availability} not in ('IN_STOCK', 'LOW_STOCK')` : undefined,
 ];
@@ -1030,7 +1031,8 @@ const selectedSearchRows = Effect.fn('MerchandiseQueries.selectedSearchRows')(fu
           db
             .select({
               document: sql<unknown>`jsonb_strip_nulls(jsonb_build_object(
-      'active', true, 'attributes', '', 'id', legacy.value->'id',
+      'active', true, 'attributes', '',
+      'grossPriceMinor', legacy.value->'grossPriceMinor', 'id', legacy.value->'id',
       'imageSrc', legacy.value->'imageSrc',
       'minimumQuantity', legacy.value->'minimumQuantity',
       'name', legacy.value->'name',

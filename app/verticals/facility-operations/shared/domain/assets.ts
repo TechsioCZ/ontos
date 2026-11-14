@@ -3,7 +3,7 @@
 // Old JSONB rows must still decode: new top-level collections are `Schema.optionalKey(...)`.
 // Depreciation here is EVIDENCE of approved values, never a legal or tax calculation (S03 „Nedělat“).
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
-import { Schema } from 'effect';
+import { DateTime, Schema } from 'effect';
 import type { Types } from 'effect';
 import {
   AuditFieldsSchema,
@@ -309,8 +309,8 @@ export const isActiveAsset = (asset: Asset): boolean => assetStatusOf(asset) ===
 export const isArchivedAsset = (asset: Asset): boolean => asset.archive !== undefined;
 
 /**
- * Current revision / check / permit deadlines: for each asset, the newest record per (kind, title) that carries a
- * `nextDueOn`. Calendar and „Moje agenda“ may read this from the assets agenda state.
+ * Current revision / check / permit deadlines, using the latest completed occurrence per (kind, title).
+ * Until one is completed, use the latest recorded plan. A deadline is never a completion date.
  */
 export interface ServiceDue {
   readonly assetId: AssetId;
@@ -324,14 +324,19 @@ export interface ServiceDue {
   readonly title: string;
 }
 
-const serviceRank = (entry: ServiceRecord) => entry.performedOn ?? entry.nextDueOn ?? '';
+const supersedesService = (record: ServiceRecord, previous: ServiceRecord): boolean => {
+  if (record.performedOn !== undefined) {
+    return previous.performedOn === undefined || record.performedOn >= previous.performedOn;
+  }
+  return previous.performedOn === undefined && DateTime.toEpochMillis(record.at) >= DateTime.toEpochMillis(previous.at);
+};
 
 export const currentServiceRecords = (asset: Asset): readonly ServiceRecord[] => {
   const newest = new Map<string, ServiceRecord>();
   for (const record of asset.services ?? []) {
     const key = `${record.kind}:${record.title.toLowerCase()}`;
     const previous = newest.get(key);
-    if (previous === undefined || serviceRank(record) >= serviceRank(previous)) {
+    if (previous === undefined || supersedesService(record, previous)) {
       newest.set(key, record);
     }
   }

@@ -24,6 +24,7 @@ import {
 } from './errors.ts';
 import type { PersistenceFailure } from '../database/persistence-failure.ts';
 import type { OutboxClaimLostError } from './errors.ts';
+import { OUTBOX_DEFERRED_ATTEMPT_MESSAGE } from './outbox-worker-deferred.ts';
 import { OutboxRepository } from './repository.ts';
 import {
   OutboxDeclaredFailureIdentitySchema,
@@ -409,7 +410,7 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
           claim,
           settledAt,
           claimedState,
-          'Outbox Worker deferred until its durable due time',
+          OUTBOX_DEFERRED_ATTEMPT_MESSAGE,
           'deferred',
           DateTime.toDateUtc(DateTime.makeUnsafe(handlerExit.value.wakeAtMs)),
         );

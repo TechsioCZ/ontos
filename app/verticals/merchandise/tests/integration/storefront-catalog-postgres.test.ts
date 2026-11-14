@@ -1963,9 +1963,11 @@ it.live(
       Effect.gen(function* canonicalInlineFullOffer() {
         const full = yield* catalogPage(fixture, { fields: 'full', productIds: ['p1'] });
         const leaf = approvedInlineLeaf(full, 'legacy-exact');
+        // Minimum 3 in packages of 2: the smallest order is 4, which reaches the break from 2 (net 50, 124), and that
+        // is what checkout charges (`grossForQuantity`); the first stored tier (121, from 1) is a price nobody can pay.
         expect(leaf).toMatchObject({
           active: true,
-          grossPriceMinor: 121,
+          grossPriceMinor: 124,
           id: 'legacy-exact',
           imageSrc: 'media:legacy-image',
           minimumQuantity: 3,
