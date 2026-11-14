@@ -5,7 +5,7 @@ import type {
   OperationalScope,
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
-import { DateTime, Effect, Match, Option, Result, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Predicate, Result, Schema } from 'effect';
 import { AssignCustomerPriceGroupPayloadSchema } from '../../shared/actions/assign-customer-price-group.ts';
 import { AssignCounterpartyPriceGroupPayloadSchema } from '../../shared/actions/assign-counterparty-price-group.ts';
 import { MigrateCustomerPriceGroupPayloadSchema } from '../../shared/actions/migrate-customer-price-group.ts';
@@ -73,7 +73,7 @@ const AssignmentWriteSchema = Schema.Struct({
   organizationBusiness: Schema.Boolean,
   priceGroupRef: PriceGroupRefSchema,
   profile: CommerceCustomerProfileTargetSchema,
-  reason: Schema.NullOr(PriceGroupReasonSchema),
+  reason: Schema.optionalKey(PriceGroupReasonSchema),
 });
 const isAssignmentWrite = Schema.is(AssignmentWriteSchema);
 const sameAssignmentWrite = Schema.toEquivalence(AssignmentWriteSchema);
@@ -243,9 +243,9 @@ const assignmentWriteOfIntent = (payload: AssignmentPayload) => {
     organizationBusiness: Schema.is(OrganizationPriceGroupAssignmentPayloadSchema)(payload),
     priceGroupRef: payload.priceGroupRef,
     profile: payload.profile,
-    reason: payload.reason ?? null,
   };
-  const period = payload.effectiveTo === undefined ? base : { ...base, effectiveTo: payload.effectiveTo };
+  const reasoned = Predicate.isNullish(payload.reason) ? base : { ...base, reason: payload.reason };
+  const period = payload.effectiveTo === undefined ? reasoned : { ...reasoned, effectiveTo: payload.effectiveTo };
   const counterpartyRef = counterpartyForMutation(payload);
   return counterpartyRef === undefined ? period : { ...period, counterpartyRef };
 };
@@ -256,9 +256,9 @@ const assignmentWriteOfInput = (input: AssignCustomerPriceGroupStoreInput) => {
     organizationBusiness: input.organizationBusiness === true,
     priceGroupRef: input.priceGroupRef,
     profile: input.profile,
-    reason: input.reason,
   };
-  const period = input.effectiveTo === null ? base : { ...base, effectiveTo: input.effectiveTo };
+  const reasoned = Predicate.isNullish(input.reason) ? base : { ...base, reason: input.reason };
+  const period = input.effectiveTo === null ? reasoned : { ...reasoned, effectiveTo: input.effectiveTo };
   return input.counterpartyRef === undefined ? period : { ...period, counterpartyRef: input.counterpartyRef };
 };
 const migrationPayload = (input: MigrateCustomerPriceGroupStoreInput): MigrationCandidate => {
