@@ -45,7 +45,7 @@ import {
 } from './supersede-drain.mts';
 import type { DrainPeer, SupersedeDrain } from './supersede-drain.mts';
 import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
-import { bootTimingLine, timedBootStage } from './boot-stage-timing.mts';
+import { bootTimingLine, timedBootStage, timedBootStageJudged } from './boot-stage-timing.mts';
 import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
 import {
   earliestExpiryOf,
@@ -581,7 +581,7 @@ const runChild = (
 /**
  * The platform's internal workload registration (`release-internal-workloads.mts`), started with its own settings
  * only. It never holds or fails the boot: a failure is one loud line, and the registrations stay as they were until
- * the next run.
+ * the next run. It answers whether the run succeeded, so its boot timing line can say so.
  */
 export const registerInternalWorkloads = (release: { readonly compositionRevision: string }) =>
   Effect.gen(function* registerWorkloads() {
@@ -592,17 +592,18 @@ export const registerInternalWorkloads = (release: { readonly compositionRevisio
         settings[key] = value.value;
       }
     }
-    yield* runChild(
+    return yield* runChild(
       'release-internal-workloads',
       process.execPath,
       [RELEASE_INTERNAL_WORKLOADS_SCRIPT, '--run', release.compositionRevision],
       workspaceRoot,
       settings,
     ).pipe(
+      Effect.as(true),
       Effect.catchTag('AppHostError', ({ reason }) =>
         Console.error(
           `[app-host] INTERNAL WORKLOAD REGISTRATION FAILED (${reason}); the registrations stay as they were until the next run`,
-        ),
+        ).pipe(Effect.as(false)),
       ),
     );
   });
@@ -2219,7 +2220,9 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     const release = hostReleaseOf(releaseSnapshot);
     // Keys can only be issued for registrations that exist: the platform registers every module's declared internal
     // workloads first (per tenant and company), so the boot's provisioning keys them in the same pass.
-    yield* registerInternalWorkloads(release).pipe(timedBootStage('host.register-internal-workloads'));
+    yield* registerInternalWorkloads(release).pipe(
+      timedBootStageJudged('host.register-internal-workloads', (registered: boolean) => registered),
+    );
     // The release access proof and the key issuing run side by side. The proof reads every Tenant that serves people
     // (intent in PostgreSQL, the projection in SpiceDB) after the registrations above, and writes nothing; the issuing
     // writes only the Shell's key store and the platform tenant's module principals, which the proof never reads, and
@@ -2227,7 +2230,12 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     // refusal then stops this boot here, before publication, with the same failure.
     const [, releaseAccessProof] = yield* Effect.all(
       [
-        provisionForRelease(release).pipe(timedBootStage('host.module-credentials')),
+        // Provisioning reports a failed pass as callers without a key instead of failing; the line says so.
+        provisionForRelease(release).pipe(
+          timedBootStageJudged('host.module-credentials', (provisioned: ProvisioningOutput) =>
+            provisioned.failedAppIds.length === 0,
+          ),
+        ),
         Effect.exit(
           verifyReleaseAccessIntent(releaseSnapshot).pipe(timedBootStage('host.release-access-verification')),
         ),

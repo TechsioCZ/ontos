@@ -210,12 +210,13 @@ const activateAccessRelease = Effect.scoped(
     duration: ACCESS_RELEASE_ACTIVATION_BUDGET,
     orElse: () => Effect.fail(new MigratorError('the activation exceeded its time budget')),
   }),
+  // Timed before the failure is reported and let go, so a failed or overrun activation logs `outcome=failed`.
+  timedBootStage('migrator.access-release-activation'),
   Effect.catch((error) =>
     Effect.logError(
       `ACCESS CATALOG RELEASE ACTIVATION FAILED (${error.message}); authorization stays at the previous release until the next activation`,
     ),
   ),
-  timedBootStage('migrator.access-release-activation'),
 );
 
 const ownerMigrations = Effect.gen(function* ownerMigrationsEffect() {
