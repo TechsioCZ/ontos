@@ -212,11 +212,13 @@ const activateAccessRelease = Effect.scoped(
   }),
   // Timed before the failure is reported and let go, so a failed or overrun activation logs `outcome=failed`.
   timedBootStage('migrator.access-release-activation'),
-  Effect.catch((error) =>
-    Effect.logError(
-      `ACCESS CATALOG RELEASE ACTIVATION FAILED (${error.message}); authorization stays at the previous release until the next activation`,
-    ),
-  ),
+  Effect.matchEffect({
+    onFailure: (error) =>
+      Effect.logError(
+        `ACCESS CATALOG RELEASE ACTIVATION FAILED (${error.message}); authorization stays at the previous release until the next activation`,
+      ),
+    onSuccess: () => Effect.void,
+  }),
 );
 
 const ownerMigrations = Effect.gen(function* ownerMigrationsEffect() {
@@ -278,7 +280,7 @@ const migrations = Effect.gen(function* migrationsEffect() {
     }).pipe(timedBootStage('migrator.portal-auth'));
   }
   return yield* Effect.void;
-}).pipe(Effect.provide(OwnerMigrationPlannerLive(appDirectory).pipe(Layer.provide(Reactivity.layer))));
+});
 
 /**
  * Owner schema verifiers at once on stage. Each is one Node process with one or two admin connections for read-only
@@ -306,12 +308,15 @@ const main = Effect.scoped(
     if (!(yield* migrateOnce)) {
       yield* serveReadiness(yield* migratorPort);
     }
-  }).pipe(
-    Effect.provide(NodeServices.layer),
-    Effect.tapCause((cause) => Effect.logError(Cause.pretty(cause))),
-  ),
+  }).pipe(Effect.tapCause((cause) => Effect.logError(Cause.pretty(cause)))),
+);
+
+/** The migrator process's services, provided once at its executable edge. */
+const MigratorLive = Layer.mergeAll(
+  NodeServices.layer,
+  OwnerMigrationPlannerLive(appDirectory).pipe(Layer.provide(Reactivity.layer)),
 );
 
 // SIGTERM (a container stop) interrupts the migrator instead of killing it, so its running child is stopped
 // gracefully by `stopChild` rather than orphaned or killed in the middle of a projection.
-NodeRuntime.runMain(main, { disableErrorReporting: true });
+NodeRuntime.runMain(main.pipe(Effect.provide(MigratorLive)), { disableErrorReporting: true });

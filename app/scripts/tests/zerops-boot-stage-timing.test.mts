@@ -54,7 +54,7 @@ it('times every boot step before any handler that turns its failure into a succe
   );
   expect(activation.indexOf("timedBootStage('migrator.access-release-activation')")).toBeGreaterThan(-1);
   expect(activation.indexOf("timedBootStage('migrator.access-release-activation')")).toBeLessThan(
-    activation.indexOf('Effect.catch('),
+    activation.indexOf('Effect.matchEffect('),
   );
   const host = readFileSync(new URL('../zerops/app-host.mts', import.meta.url), 'utf-8');
   // The two host steps that never fail the boot judge their own result instead.

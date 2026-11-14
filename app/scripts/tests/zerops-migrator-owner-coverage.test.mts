@@ -86,5 +86,6 @@ it('the migrator asks the pending-migration planner before every native owner mi
   expect(decided).toBeGreaterThan(-1);
   expect(skipped).toBeGreaterThan(decided);
   expect(spawned).toBeGreaterThan(skipped);
-  expect(migrator).toContain('Effect.provide(OwnerMigrationPlannerLive(appDirectory)');
+  expect(migrator).toContain('OwnerMigrationPlannerLive(appDirectory).pipe(Layer.provide(Reactivity.layer))');
+  expect(migrator).toContain('NodeRuntime.runMain(main.pipe(Effect.provide(MigratorLive))');
 });

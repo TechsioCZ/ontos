@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, FileSystem } from 'effect';
+import { Effect, Exit, FileSystem } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { outboxBuildDigest, OUTBOX_BUILD_TOOLS } from '../zerops/outbox-build-digest.mjs';
@@ -52,10 +52,10 @@ for (const changed of [
   it.effect(`invalidates the worker when ${changed} changes`, () =>
     Effect.gen(function* changedWorkerInput() {
       const context = yield* fixture;
-      const before = context.digest();
-      expect(context.digest()).toBe(before);
+      const before = yield* context.digest();
+      expect(yield* context.digest()).toBe(before);
       yield* context.write(changed, changed === 'digests' ? `${owner}\t${'c'.repeat(64)}\n` : 'changed input');
-      expect(context.digest()).not.toBe(before);
+      expect(yield* context.digest()).not.toBe(before);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 }
@@ -78,7 +78,7 @@ for (const doubt of ['missing closure', 'changed identity', 'missing owner', 'un
           JSON.stringify({ ...context.artifact, sourceInputs: ['unknown:module'] }),
         );
       }
-      expect(context.digest).toThrow();
+      expect(Exit.isFailure(yield* Effect.exit(context.digest()))).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 }
