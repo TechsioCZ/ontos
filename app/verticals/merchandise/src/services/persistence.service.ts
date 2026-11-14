@@ -433,29 +433,38 @@ export const percentChangedPriceMinor = (currentMinor: number, percent: number):
   Math.round((currentMinor * (100 + percent)) / 10_000) * 100;
 
 /** Preserve source discount breaks while a staff edit changes the base unit price. */
+const tierRepricingRefusal = () =>
+  new MerchandiseLifecycleConflict({
+    code: 'merchandise_tier_base_price_required',
+    reason:
+      'Množstevní ceny nelze přepočítat bez původní základní ceny a platné ceny s DPH. Ověřte sazbu DPH a zadejte nové množstevní ceny nebo je nejprve odeberte.',
+  });
 const repriceTiers = (
   tiers: NonNullable<Product['priceTiers']>,
-  oldNet: number | undefined,
-  newNet: number | undefined,
+  base: {
+    readonly oldNet: number | undefined;
+    readonly newNet: number | undefined;
+    readonly oldGross: number | undefined;
+    readonly rate: number | undefined;
+  },
 ) => {
+  const { oldNet, newNet, oldGross, rate } = base;
   if (tiers.length === 0 || oldNet === newNet || newNet === undefined) {
     return Effect.succeed(tiers);
   }
   if (oldNet === undefined || oldNet === 0) {
-    return Effect.fail(
-      new MerchandiseLifecycleConflict({
-        code: 'merchandise_tier_base_price_required',
-        reason:
-          'Množstevní ceny nelze přepočítat z nulové nebo chybějící základní ceny. Zadejte nové množstevní ceny nebo je nejprve odeberte.',
-      }),
-    );
+    return Effect.fail(tierRepricingRefusal());
   }
-  const scale = (amount: number) => Math.round((amount * newNet) / oldNet);
+  const previousGross = oldGross ?? (rate === undefined ? undefined : grossUnitPriceMinor(oldNet, rate));
+  const nextGross = rate === undefined ? undefined : grossUnitPriceMinor(newNet, rate);
+  if (previousGross === undefined || previousGross === 0 || nextGross === undefined) {
+    return Effect.fail(tierRepricingRefusal());
+  }
   return Effect.succeed(
     tiers.map((tier) => ({
       ...tier,
-      priceExcludingVatMinor: scale(tier.priceExcludingVatMinor),
-      priceMinor: scale(tier.priceMinor),
+      priceExcludingVatMinor: Math.round((tier.priceExcludingVatMinor * newNet) / oldNet),
+      priceMinor: Math.round((tier.priceMinor * nextGross) / previousGross),
     })),
   );
 };
@@ -508,7 +517,12 @@ const repriced = Effect.fn('Merchandise.repriced')(function* repricedProduct(
   const priceTiers =
     product.priceTiers === undefined
       ? undefined
-      : yield* repriceTiers(product.priceTiers, product.currentPriceMinor, priceMinor);
+      : yield* repriceTiers(product.priceTiers, {
+          oldNet: product.currentPriceMinor,
+          newNet: priceMinor,
+          oldGross: product.grossPriceMinor,
+          rate: enteredRateOf(input.tax, product),
+        });
   const updated = {
     ...withEnteredGross(product, priceMinor, enteredRateOf(input.tax, product)),
     currentPriceMinor: priceMinor,
@@ -645,7 +659,12 @@ const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* n
         variant.priceTiers === undefined && previous?.priceTiers !== undefined
           ? {
               ...withGross,
-              priceTiers: yield* repriceTiers(previous.priceTiers, previous.priceMinor, variant.priceMinor),
+              priceTiers: yield* repriceTiers(previous.priceTiers, {
+                oldNet: previous.priceMinor,
+                newNet: variant.priceMinor,
+                oldGross: previous.grossPriceMinor,
+                rate: enteredRateOf(input.tax, product),
+              }),
             }
           : withGross;
       const withId = id === undefined ? withTiers : { ...withTiers, id };
@@ -807,7 +826,12 @@ const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
   const priceTiers =
     variant.priceTiers === undefined
       ? undefined
-      : yield* repriceTiers(variant.priceTiers, variant.priceMinor, value.priceMinor);
+      : yield* repriceTiers(variant.priceTiers, {
+          oldNet: variant.priceMinor,
+          newNet: value.priceMinor,
+          oldGross: variant.grossPriceMinor,
+          rate: enteredRateOf(input.tax, product),
+        });
   const variants = (product.variants ?? []).map((entry) => {
     if (entry.id !== variant.id) {
       return entry;

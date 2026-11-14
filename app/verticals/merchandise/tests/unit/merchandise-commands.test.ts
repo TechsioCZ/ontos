@@ -853,7 +853,7 @@ it.effect('refuses a bulk price selection containing sellable variants instead o
   }),
 );
 
-it.effect('scales gross and net discount tiers by the same base price ratio', () =>
+it.effect('scales gross and net discount tiers by their respective base price ratios', () =>
   Effect.gen(function* discountedTierRepricing() {
     const created = yield* addProduct(empty, 'tiered-base', 'TIERED', 1000);
     const tier = { minimumQuantity: 10, priceExcludingVatMinor: 800, priceMinor: 968 };
@@ -866,6 +866,23 @@ it.effect('scales gross and net discount tiers by the same base price ratio', ()
       { minimumQuantity: 10, priceExcludingVatMinor: 1600, priceMinor: 1936 },
     ]);
     expect(repriced.state.products[0]?.priceTiers?.[0]?.priceMinor).not.toBe(2420);
+    const historicalGross: MerchandiseState = {
+      ...created.state,
+      products: created.state.products.map((product) => ({
+        ...product,
+        grossPriceMinor: 1100,
+        priceTiers: [{ ...tier, priceMinor: 880 }],
+      })),
+    };
+    const currentGross = yield* apply(
+      historicalGross,
+      { _tag: 'ChangePrice', id: 'tiered-base', priceMinor: 2000 },
+      'reprice-historical-gross',
+    );
+    expect(currentGross.state.products[0]?.priceTiers?.[0]).toMatchObject({
+      priceExcludingVatMinor: 1600,
+      priceMinor: 1936,
+    });
     const variant = yield* apply(
       created.state,
       {

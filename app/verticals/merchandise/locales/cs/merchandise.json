@@ -415,7 +415,7 @@
           "movementRecorded": "Pohyb zaznamenán",
           "priceChanged": "Cena změněna",
           "receiptRecorded": "Příjem zaznamenán",
-          "tierBasePriceRequired": "Množstevní ceny nelze přepočítat z nulové nebo chybějící základní ceny. Zadejte nové množstevní ceny nebo je nejprve odeberte.",
+          "tierBasePriceRequired": "Množstevní ceny nelze přepočítat bez původní základní ceny a platné ceny s DPH. Ověřte sazbu DPH a zadejte nové množstevní ceny nebo je nejprve odeberte.",
           "categorySlugTaken": "Tuto adresu v e-shopu už používá jiná kategorie. Zvolte jinou adresu.",
           "variantSkuRequired": "Automatické SKU varianty je příliš dlouhé. Zadejte vlastní SKU varianty o délce nejvýše 64 znaků.",
           "variantBulkPriceUnsupported": "Hromadnou cenu nelze změnit u produktů s prodejními variantami. Vyberte pouze produkty bez variant, nebo změňte cenu každé varianty v detailu produktu.",

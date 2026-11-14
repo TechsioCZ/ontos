@@ -178,9 +178,9 @@ it.effect('UpdateProduct retains and reprices variant tiers only when no replace
         expect(tiers).toEqual(previousTiers);
       } else {
         expect(tiers?.map((tier) => tier.minimumQuantity)).toEqual([1, 100]);
-        expect(tiers?.[1]?.priceMinor).toBe(14);
+        expect(tiers?.[1]?.priceMinor).toBe(13);
       }
-      const placed = yield* place(100, priceMinor === 8 ? 7 : 14, changed.state);
+      const placed = yield* place(100, priceMinor === 8 ? 7 : 13, changed.state);
       expect(placed.storefrontOrder?.outcome).toBe('PLACED');
     }
   }),
