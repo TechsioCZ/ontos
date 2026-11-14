@@ -252,13 +252,13 @@ export const requireSymmyCustomerIntakePrivacy = Effect.fn('SymmyCustomerIntakeP
             subject: { _tag: 'Assertion', scope },
           },
           crypto,
-        ).pipe(symmyIntegrationEvidenceCall('customerIntakePrivacy'), Effect.mapError(unavailable));
+        ).pipe(symmyIntegrationEvidenceCall.customerIntakePrivacy, Effect.mapError(unavailable));
         const outcome = yield* executeSourceProcessingEligibilityWithAuthorization(
           request,
           gateway.authorization,
           requestCorrelation,
           { baseUrl: gateway.apiBaseUrl, compositionRevision: gateway.compositionRevision },
-        ).pipe(symmyIntegrationEvidenceCall('customerIntakePrivacy'), Effect.mapError(unavailable));
+        ).pipe(symmyIntegrationEvidenceCall.customerIntakePrivacy, Effect.mapError(unavailable));
         if (outcome.outcome === 'DENIED') {
           return yield* outcome.reason === 'AUTHORITY_NOT_CURRENT' ? unavailable() : denied();
         }

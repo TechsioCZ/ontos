@@ -216,7 +216,7 @@ const executeOrganizationPrivacy = Effect.fn('PartyClientSourcePrivacy.executeOr
     { audience: 'privacy', callingAppId: 'party-registry', legalEntityScope: 'subject', requestCorrelation, subject },
     crypto,
   ).pipe(
-    partyRegistryEvidenceCall('clientSourceOrganizationPrivacy'),
+    partyRegistryEvidenceCall.clientSourceOrganizationPrivacy,
     Effect.catch((error) => failUnavailable('delegation', error)),
   );
   const result = yield* executeOrganizationBusinessApplicabilityWithAuthorization(
@@ -225,7 +225,7 @@ const executeOrganizationPrivacy = Effect.fn('PartyClientSourcePrivacy.executeOr
     requestCorrelation,
     { baseUrl: credential.apiBaseUrl, compositionRevision: credential.compositionRevision },
   ).pipe(
-    partyRegistryEvidenceCall('clientSourceOrganizationPrivacy'),
+    partyRegistryEvidenceCall.clientSourceOrganizationPrivacy,
     Effect.catch((error) => failUnavailable('privacy-read', error)),
   );
   if (result.outcome === 'INDETERMINATE') {
@@ -778,7 +778,7 @@ export const checkPartyClientSourcePrivacy = Effect.fn('PartyClientSourcePrivacy
     },
     crypto.value,
   ).pipe(
-    partyRegistryEvidenceCall('clientSourcePrivacy'),
+    partyRegistryEvidenceCall.clientSourcePrivacy,
     Effect.catch((error) => failUnavailable('delegation', error)),
   );
   const result = yield* executeSourceProcessingEligibilityWithAuthorization(
@@ -790,7 +790,7 @@ export const checkPartyClientSourcePrivacy = Effect.fn('PartyClientSourcePrivacy
       compositionRevision: credential.compositionRevision,
     },
   ).pipe(
-    partyRegistryEvidenceCall('clientSourcePrivacy'),
+    partyRegistryEvidenceCall.clientSourcePrivacy,
     Effect.catch((error) => failUnavailable('privacy-read', error)),
   );
   return result.outcome;

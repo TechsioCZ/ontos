@@ -569,7 +569,7 @@ const sourceSubjectExists = Effect.fn('Privacy.sourceSubjectExists')(function* s
     );
     // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
     return yield* owner.resolve(partyRef, scope, true, request.partySourceReference, sourcePersonRequirement).pipe(
-      privacyEvidenceCall('sourcePersonPartyOwner'),
+      privacyEvidenceCall.sourcePersonPartyOwner,
       Effect.map(() => true),
       Effect.catchTag('PrivacyOperationPersistenceError', (cause) =>
         cause.code === 'privacy_operation_conflict' ? Effect.succeed(false) : Effect.fail(unavailable(cause)),
@@ -591,7 +591,7 @@ const sourceSubjectExists = Effect.fn('Privacy.sourceSubjectExists')(function* s
     );
     yield* owner
       .resolve(subject.subject.partyRef, scope, false, sourceReference, sourcePersonRequirement)
-      .pipe(privacyEvidenceCall('sourcePersonPartyOwner'), Effect.mapError(unavailable));
+      .pipe(privacyEvidenceCall.sourcePersonPartyOwner, Effect.mapError(unavailable));
   }
   return true;
 });

@@ -64,13 +64,13 @@ export const commerceOrganizationProfileIcoEligibilityLive = Layer.effect(
             ),
           },
           crypto,
-        ).pipe(commerceCustomerContextEvidenceCall('organizationProfileIcoEligibility'), Effect.mapError(unavailable));
+        ).pipe(commerceCustomerContextEvidenceCall.organizationProfileIcoEligibility, Effect.mapError(unavailable));
         const raw = yield* executeOrganizationProfileIcoApplicabilityWithAuthorization(
           request,
           issued.authorization,
           scope.correlationId,
           { baseUrl: new URL(issued.apiBaseUrl), compositionRevision: issued.compositionRevision },
-        ).pipe(commerceCustomerContextEvidenceCall('organizationProfileIcoEligibility'), Effect.mapError(unavailable));
+        ).pipe(commerceCustomerContextEvidenceCall.organizationProfileIcoEligibility, Effect.mapError(unavailable));
         const response = yield* Schema.decodeUnknownEffect(OrganizationProfileIcoApplicabilityResponseSchema)(raw).pipe(
           Effect.mapError(unavailable),
         );

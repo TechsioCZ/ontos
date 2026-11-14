@@ -75,7 +75,7 @@ export const commerceSourceProcessingEligibilityLive = Layer.effect(
                 compositionRevision: issued.compositionRevision,
               }),
             ),
-            commerceCustomerContextEvidenceCall('sourceProcessingEligibility'),
+            commerceCustomerContextEvidenceCall.sourceProcessingEligibility,
             Effect.mapError((cause) =>
               Object.defineProperty(
                 new CommerceSourceProcessingRejected({

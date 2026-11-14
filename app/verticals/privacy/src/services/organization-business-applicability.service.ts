@@ -389,7 +389,7 @@ const providerContext = Effect.fn('Privacy.organizationBusinessProviderContext')
       subject,
     },
     yield* Crypto.Crypto,
-  ).pipe(privacyEvidenceCall('organizationBusinessOwnerContext'), Effect.mapError(unavailable));
+  ).pipe(privacyEvidenceCall.organizationBusinessOwnerContext, Effect.mapError(unavailable));
 });
 
 const currentOrganization = (
@@ -588,7 +588,7 @@ const readSourceOwnerProof = Effect.fn('Privacy.organizationBusinessReadSource')
     scope.correlationId,
     { baseUrl: issued.apiBaseUrl, compositionRevision: issued.compositionRevision },
   ).pipe(
-    privacyEvidenceCall('organizationSourceOwnerFacts'),
+    privacyEvidenceCall.organizationSourceOwnerFacts,
     Effect.flatMap((value) => Schema.decodeUnknownEffect(SymmySourceOrganizationFactsResponseSchema)(value)),
     Effect.mapError(unavailable),
   );
@@ -622,7 +622,7 @@ export const readOrganizationProfileOwnerFacts = (
     baseUrl: issued.apiBaseUrl,
     compositionRevision: issued.compositionRevision,
   }).pipe(
-    privacyEvidenceCall('organizationProfileOwnerFacts'),
+    privacyEvidenceCall.organizationProfileOwnerFacts,
     Effect.flatMap(Schema.decodeUnknownEffect(CustomerProfileOrganizationIcoFactsResponseSchema)),
   );
 
@@ -706,7 +706,7 @@ const readPartyOwnerProof = Effect.fn('Privacy.organizationBusinessReadParty')(f
       compositionRevision: issued.compositionRevision,
     },
   ).pipe(
-    privacyEvidenceCall('organizationPartyRecordFacts'),
+    privacyEvidenceCall.organizationPartyRecordFacts,
     Effect.flatMap((value) => Schema.decodeUnknownEffect(OrganizationRecordFactsResponseSchema)(value)),
     Effect.mapError(unavailable),
     Effect.tap((value) =>
@@ -1304,7 +1304,7 @@ export const organizationBusinessApplicabilityService = Effect.fn('Privacy.organ
           onNone: () => publicOwnerFacts(context, scope, 'READ', sourceAuthority, request, asOf),
           onSome: (provider) =>
             provider.resolve(request, scope).pipe(
-              privacyEvidenceCall('organizationBusinessOwnerFacts'),
+              privacyEvidenceCall.organizationBusinessOwnerFacts,
               Effect.flatMap((proof) =>
                 Schema.decodeUnknownEffect(OrganizationBusinessApplicabilityLiveProofSchema)(proof),
               ),

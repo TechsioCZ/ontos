@@ -42,7 +42,7 @@ const acquire = Effect.fn('Privacy.customerIntakeOrganizationAuthority')(functio
       subject: { _tag: 'Assertion', scope },
     },
     crypto,
-  ).pipe(privacyEvidenceCall('customerIntakeOwnerContext'));
+  ).pipe(privacyEvidenceCall.customerIntakeOwnerContext);
 });
 
 const profileParty = Effect.fn('Privacy.customerIntakeOrganizationProfileParty')(function* profileParty(
@@ -110,7 +110,7 @@ export const hasCurrentCustomerIntakeOrganizationProof = Effect.fn('Privacy.cust
       scope.correlationId,
       { baseUrl: gateway.apiBaseUrl, compositionRevision: gateway.compositionRevision },
     ).pipe(
-      privacyEvidenceCall('organizationPartyRecordFacts'),
+      privacyEvidenceCall.organizationPartyRecordFacts,
       Effect.flatMap(Schema.decodeUnknownEffect(OrganizationRecordFactsResponseSchema)),
       Effect.mapError(unavailable),
     );

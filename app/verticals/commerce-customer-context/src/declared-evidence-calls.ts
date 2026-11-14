@@ -1,5 +1,8 @@
 import { declaredEvidenceCallInsideTransaction } from '@app/core-runtime';
 import type { DeclaredEvidenceCall } from '@app/core-runtime';
+import { Record as EffectRecord } from 'effect';
+
+const OWNER = 'commerce.customer-context';
 
 /**
  * Customer Context owner proof reads that main's source-evidence design makes from inside the owner transaction,
@@ -9,28 +12,28 @@ import type { DeclaredEvidenceCall } from '@app/core-runtime';
 export const commerceCustomerContextDeclaredEvidenceCalls = {
   counterpartyOrganizationIcoFacts: {
     evidence: 'commerce.counterparty-organization-ico-facts',
-    owner: 'commerce.customer-context',
+    owner: OWNER,
   },
-  legacyIcoInventory: { evidence: 'commerce.legacy-ico-inventory', owner: 'commerce.customer-context' },
-  migrationCorrelation: { evidence: 'commerce.counterparty-migration-correlation', owner: 'commerce.customer-context' },
+  legacyIcoInventory: { evidence: 'commerce.legacy-ico-inventory', owner: OWNER },
+  migrationCorrelation: { evidence: 'commerce.counterparty-migration-correlation', owner: OWNER },
   organizationBusinessEligibility: {
     evidence: 'commerce.organization-business-eligibility',
-    owner: 'commerce.customer-context',
+    owner: OWNER,
   },
   organizationProfileIcoEligibility: {
     evidence: 'commerce.organization-profile-ico-eligibility',
-    owner: 'commerce.customer-context',
+    owner: OWNER,
   },
   sourceCounterpartyAdmission: {
     evidence: 'commerce.source-counterparty-admission',
-    owner: 'commerce.customer-context',
+    owner: OWNER,
   },
-  sourcePersonAdmission: { evidence: 'commerce.source-person-admission', owner: 'commerce.customer-context' },
+  sourcePersonAdmission: { evidence: 'commerce.source-person-admission', owner: OWNER },
   sourceProcessingEligibility: {
     evidence: 'commerce.source-processing-eligibility',
-    owner: 'commerce.customer-context',
+    owner: OWNER,
   },
 } as const satisfies Record<string, DeclaredEvidenceCall>;
 
-export const commerceCustomerContextEvidenceCall = (name: keyof typeof commerceCustomerContextDeclaredEvidenceCalls) =>
-  declaredEvidenceCallInsideTransaction(commerceCustomerContextDeclaredEvidenceCalls[name]);
+/** One combinator per declaration; call sites use `commerceCustomerContextEvidenceCall.<name>`. */
+export const commerceCustomerContextEvidenceCall = EffectRecord.map(commerceCustomerContextDeclaredEvidenceCalls, declaredEvidenceCallInsideTransaction);

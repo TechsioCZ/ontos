@@ -119,13 +119,13 @@ export const commerceLegacyIcoInventoryLive = Layer.effect(
                   ),
                 },
                 crypto,
-              ).pipe(commerceCustomerContextEvidenceCall('counterpartyOrganizationIcoFacts'));
+              ).pipe(commerceCustomerContextEvidenceCall.counterpartyOrganizationIcoFacts);
               const raw = yield* executeCounterpartyOrganizationIcoFactsWithAuthorization(
                 request,
                 issued.authorization,
                 scope.correlationId,
                 { baseUrl: new URL(issued.apiBaseUrl), compositionRevision: issued.compositionRevision },
-              ).pipe(commerceCustomerContextEvidenceCall('counterpartyOrganizationIcoFacts'));
+              ).pipe(commerceCustomerContextEvidenceCall.counterpartyOrganizationIcoFacts);
               const result = yield* Schema.decodeUnknownEffect(CounterpartyOrganizationIcoFactsResponseSchema)(raw);
               if (
                 result.outcome !== 'CURRENT_ORGANIZATION_CUSTOMER' ||
@@ -175,13 +175,13 @@ export const commerceLegacyIcoInventoryLive = Layer.effect(
                         ),
                 },
                 crypto,
-              ).pipe(commerceCustomerContextEvidenceCall('migrationCorrelation'));
+              ).pipe(commerceCustomerContextEvidenceCall.migrationCorrelation);
               const raw = yield* executeCounterpartyMigrationCorrelationWithAuthorization(
                 request,
                 issued.authorization,
                 scope.correlationId,
                 { baseUrl: new URL(issued.apiBaseUrl), compositionRevision: issued.compositionRevision },
-              ).pipe(commerceCustomerContextEvidenceCall('migrationCorrelation'));
+              ).pipe(commerceCustomerContextEvidenceCall.migrationCorrelation);
               const result = yield* Schema.decodeUnknownEffect(CounterpartyMigrationCorrelationResponseSchema)(raw);
               return result.counterpartyRef.resourceId === ref.resourceId &&
                 result.counterpartyRef.tenantId === scope.tenantId &&
@@ -248,7 +248,7 @@ export const commerceLegacyIcoInventoryLive = Layer.effect(
               compositionRevision: issued.compositionRevision,
             }),
           ),
-          commerceCustomerContextEvidenceCall('legacyIcoInventory'),
+          commerceCustomerContextEvidenceCall.legacyIcoInventory,
           Effect.mapError((cause) =>
             Object.defineProperty(
               new CustomerProfileIcoMigrationRejected({

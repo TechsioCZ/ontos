@@ -135,13 +135,13 @@ export const customerProfileOrganizationIcoFactsServices: ReadServiceFactory<
             ),
           },
           crypto,
-        ).pipe(commerceCustomerContextEvidenceCall('counterpartyOrganizationIcoFacts'), Effect.mapError(unavailable));
+        ).pipe(commerceCustomerContextEvidenceCall.counterpartyOrganizationIcoFacts, Effect.mapError(unavailable));
         const response = yield* executeCounterpartyOrganizationIcoFactsWithAuthorization(
           request,
           issued.authorization,
           scope.correlationId,
           { baseUrl: new URL(issued.apiBaseUrl), compositionRevision: issued.compositionRevision },
-        ).pipe(commerceCustomerContextEvidenceCall('counterpartyOrganizationIcoFacts'), Effect.mapError(unavailable));
+        ).pipe(commerceCustomerContextEvidenceCall.counterpartyOrganizationIcoFacts, Effect.mapError(unavailable));
         const facts = yield* Schema.decodeUnknownEffect(CounterpartyOrganizationIcoFactsResponseSchema, {
           onExcessProperty: 'error',
         })(response).pipe(Effect.mapError(unavailable));

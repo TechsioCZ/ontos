@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Synchronous static scan of the workspace sources, like the transaction guard's own boundary tests.
+// @effect-diagnostics nodeBuiltinImport:off -- Synchronous static scan of the workspace sources, like the transaction guard's boundary tests; remove-when: the declared evidence call inventory becomes an oxlint rule.
 import { readFileSync, readdirSync } from 'node:fs';
 import nodePath from 'node:path';
 
@@ -61,13 +61,16 @@ const sourceFiles = (directory: string): string[] =>
   });
 const read = (file: string) => readFileSync(nodePath.join(appRoot, file), 'utf-8');
 
+const OWNER_DECLARATION = /^const OWNER = '(?<owner>[^']+)';$/mu;
+const EVIDENCE_DECLARATION = /evidence: '(?<evidence>[^']+)'/gu;
+const declarationsOf = (file: string): string[] => {
+  const source = read(file);
+  const owner = OWNER_DECLARATION.exec(source)?.groups?.owner ?? `missing OWNER in ${file}`;
+  return [...source.matchAll(EVIDENCE_DECLARATION)].map((match) => `${owner} ${match.groups?.evidence ?? ''}`);
+};
+
 it('pins every declared in-transaction evidence call', () => {
-  const declared = REGISTRIES.flatMap((file) =>
-    [...read(file).matchAll(/evidence: '([^']+)',\s*owner: '([^']+)'/gu)].map(
-      ([, evidence, owner]) => `${owner} ${evidence}`,
-    ),
-  ).toSorted();
-  expect(declared).toEqual(PINNED_DECLARATIONS);
+  expect(REGISTRIES.flatMap(declarationsOf).toSorted()).toEqual(PINNED_DECLARATIONS);
 });
 
 it('declares evidence calls only through the owner registries', () => {

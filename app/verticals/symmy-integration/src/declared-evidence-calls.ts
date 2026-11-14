@@ -1,5 +1,8 @@
 import { declaredEvidenceCallInsideTransaction } from '@app/core-runtime';
 import type { DeclaredEvidenceCall } from '@app/core-runtime';
+import { Record as EffectRecord } from 'effect';
+
+const OWNER = 'integration.symmy';
 
 /**
  * Symmy owner proof reads that main's source-evidence design makes from inside the owner write transaction,
@@ -7,9 +10,9 @@ import type { DeclaredEvidenceCall } from '@app/core-runtime';
  * The inventory is pinned by `scripts/tests/declared-evidence-calls-ratchet.test.mts`; only remove entries.
  */
 export const symmyIntegrationDeclaredEvidenceCalls = {
-  customerIntakePrivacy: { evidence: 'symmy.customer-intake-privacy', owner: 'integration.symmy' },
-  retentionPrivacyCurrent: { evidence: 'symmy.retention-privacy-current', owner: 'integration.symmy' },
+  customerIntakePrivacy: { evidence: 'symmy.customer-intake-privacy', owner: OWNER },
+  retentionPrivacyCurrent: { evidence: 'symmy.retention-privacy-current', owner: OWNER },
 } as const satisfies Record<string, DeclaredEvidenceCall>;
 
-export const symmyIntegrationEvidenceCall = (name: keyof typeof symmyIntegrationDeclaredEvidenceCalls) =>
-  declaredEvidenceCallInsideTransaction(symmyIntegrationDeclaredEvidenceCalls[name]);
+/** One combinator per declaration; call sites use `symmyIntegrationEvidenceCall.<name>`. */
+export const symmyIntegrationEvidenceCall = EffectRecord.map(symmyIntegrationDeclaredEvidenceCalls, declaredEvidenceCallInsideTransaction);

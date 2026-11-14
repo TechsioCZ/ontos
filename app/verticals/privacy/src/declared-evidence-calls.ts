@@ -1,5 +1,8 @@
 import { declaredEvidenceCallInsideTransaction } from '@app/core-runtime';
 import type { DeclaredEvidenceCall } from '@app/core-runtime';
+import { Record as EffectRecord } from 'effect';
+
+const OWNER = 'privacy.core';
 
 /**
  * Privacy owner proof reads that main's source-evidence design makes from inside a governed read or Action
@@ -7,16 +10,16 @@ import type { DeclaredEvidenceCall } from '@app/core-runtime';
  * evidence calls. The inventory is pinned by `scripts/tests/declared-evidence-calls-ratchet.test.mts`; only remove.
  */
 export const privacyDeclaredEvidenceCalls = {
-  customerIntakeOwnerContext: { evidence: 'privacy.customer-intake-owner-context', owner: 'privacy.core' },
-  organizationBusinessOwnerContext: { evidence: 'privacy.organization-business-owner-context', owner: 'privacy.core' },
-  organizationBusinessOwnerFacts: { evidence: 'privacy.organization-business-owner-facts', owner: 'privacy.core' },
-  organizationIcoOwnerFacts: { evidence: 'privacy.organization-ico-owner-facts', owner: 'privacy.core' },
-  organizationPartyRecordFacts: { evidence: 'privacy.organization-party-record-facts', owner: 'privacy.core' },
-  organizationProfileIcoOwnerFacts: { evidence: 'privacy.organization-profile-ico-owner-facts', owner: 'privacy.core' },
-  organizationProfileOwnerFacts: { evidence: 'privacy.organization-profile-owner-facts', owner: 'privacy.core' },
-  organizationSourceOwnerFacts: { evidence: 'privacy.organization-source-owner-facts', owner: 'privacy.core' },
-  sourcePersonPartyOwner: { evidence: 'privacy.source-person-party-owner', owner: 'privacy.core' },
+  customerIntakeOwnerContext: { evidence: 'privacy.customer-intake-owner-context', owner: OWNER },
+  organizationBusinessOwnerContext: { evidence: 'privacy.organization-business-owner-context', owner: OWNER },
+  organizationBusinessOwnerFacts: { evidence: 'privacy.organization-business-owner-facts', owner: OWNER },
+  organizationIcoOwnerFacts: { evidence: 'privacy.organization-ico-owner-facts', owner: OWNER },
+  organizationPartyRecordFacts: { evidence: 'privacy.organization-party-record-facts', owner: OWNER },
+  organizationProfileIcoOwnerFacts: { evidence: 'privacy.organization-profile-ico-owner-facts', owner: OWNER },
+  organizationProfileOwnerFacts: { evidence: 'privacy.organization-profile-owner-facts', owner: OWNER },
+  organizationSourceOwnerFacts: { evidence: 'privacy.organization-source-owner-facts', owner: OWNER },
+  sourcePersonPartyOwner: { evidence: 'privacy.source-person-party-owner', owner: OWNER },
 } as const satisfies Record<string, DeclaredEvidenceCall>;
 
-export const privacyEvidenceCall = (name: keyof typeof privacyDeclaredEvidenceCalls) =>
-  declaredEvidenceCallInsideTransaction(privacyDeclaredEvidenceCalls[name]);
+/** One combinator per declaration; call sites use `privacyEvidenceCall.<name>`. */
+export const privacyEvidenceCall = EffectRecord.map(privacyDeclaredEvidenceCalls, declaredEvidenceCallInsideTransaction);

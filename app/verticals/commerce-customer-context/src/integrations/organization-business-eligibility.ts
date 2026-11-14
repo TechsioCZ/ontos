@@ -74,13 +74,13 @@ export const commerceOrganizationBusinessEligibilityLive = Layer.effect(
               ),
             },
             crypto,
-          ).pipe(commerceCustomerContextEvidenceCall('organizationBusinessEligibility'), Effect.mapError(unavailable));
+          ).pipe(commerceCustomerContextEvidenceCall.organizationBusinessEligibility, Effect.mapError(unavailable));
           const response = yield* executeOrganizationBusinessApplicabilityWithAuthorization(
             request,
             issued.authorization,
             scope.correlationId,
             { baseUrl: new URL(issued.apiBaseUrl), compositionRevision: issued.compositionRevision },
-          ).pipe(commerceCustomerContextEvidenceCall('organizationBusinessEligibility'), Effect.mapError(unavailable));
+          ).pipe(commerceCustomerContextEvidenceCall.organizationBusinessEligibility, Effect.mapError(unavailable));
           const decoded = yield* Schema.decodeUnknownEffect(OrganizationBusinessApplicabilityResponseSchema, {
             onExcessProperty: 'error',
           })(response).pipe(Effect.mapError(unavailable));

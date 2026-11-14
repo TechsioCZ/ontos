@@ -112,7 +112,7 @@ export const symmyJobRetentionService = Effect.fn('SymmyJobRetention.forScope')(
       // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
       const authority = yield* privacy
         .current(handoff, scope)
-        .pipe(symmyIntegrationEvidenceCall('retentionPrivacyCurrent'));
+        .pipe(symmyIntegrationEvidenceCall.retentionPrivacyCurrent);
       if (authority.status === 'INDETERMINATE') {
         return yield* new SymmyJobPrivacyError({ code: 'retention_privacy_unavailable' });
       }
@@ -135,7 +135,7 @@ export const symmyJobRetentionService = Effect.fn('SymmyJobRetention.forScope')(
       // Cancellation may have waited for an existing owner transaction. Its earlier approval is not current after that wait.
       const finalAuthority = yield* privacy
         .current(handoff, scope)
-        .pipe(symmyIntegrationEvidenceCall('retentionPrivacyCurrent'), Effect.flatMap(requireRecheckedAuthority));
+        .pipe(symmyIntegrationEvidenceCall.retentionPrivacyCurrent, Effect.flatMap(requireRecheckedAuthority));
       return outcome(
         yield* store.purge({
           authority: {

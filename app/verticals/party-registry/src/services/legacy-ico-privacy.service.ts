@@ -148,7 +148,7 @@ export const checkLegacyIcoPrivacy = Effect.fn('PartyLegacyIcoPrivacy.check')(fu
         },
         crypto.value,
       ).pipe(
-        partyRegistryEvidenceCall('legacyIcoPrivacy'),
+        partyRegistryEvidenceCall.legacyIcoPrivacy,
         Effect.catch((error) => failUnavailable('delegation', error)),
       );
       const organization = organizations.find((item) => item.partyId === partyId);
@@ -167,7 +167,7 @@ export const checkLegacyIcoPrivacy = Effect.fn('PartyLegacyIcoPrivacy.check')(fu
           requestCorrelation,
           { baseUrl: credential.apiBaseUrl, compositionRevision: credential.compositionRevision },
         ).pipe(
-          partyRegistryEvidenceCall('legacyIcoPrivacy'),
+          partyRegistryEvidenceCall.legacyIcoPrivacy,
           Effect.catch((error) => failUnavailable('policy-read', error)),
         );
         if (!organizationIcoDecisionMatchesFacts(result, scope.tenantId, organization)) {
@@ -190,7 +190,7 @@ export const checkLegacyIcoPrivacy = Effect.fn('PartyLegacyIcoPrivacy.check')(fu
         requestCorrelation,
         { baseUrl: credential.apiBaseUrl, compositionRevision: credential.compositionRevision },
       ).pipe(
-        partyRegistryEvidenceCall('legacyIcoPrivacy'),
+        partyRegistryEvidenceCall.legacyIcoPrivacy,
         Effect.catch((error) => failUnavailable('policy-read', error)),
       );
       if (result.outcome !== 'ALLOWED') {

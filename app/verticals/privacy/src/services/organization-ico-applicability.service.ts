@@ -148,14 +148,14 @@ export const fetchOrganizationIcoOwnerFacts = Effect.fn('Privacy.fetchOrganizati
           : { _tag: 'Assertion', scope },
     },
     crypto,
-  ).pipe(privacyEvidenceCall('organizationIcoOwnerFacts'), Effect.mapError(unavailable));
+  ).pipe(privacyEvidenceCall.organizationIcoOwnerFacts, Effect.mapError(unavailable));
   return yield* executeOrganizationIcoFactsWithAuthorization(
     { fieldContractVersion: OrganizationIcoFieldContractVersion, partyRef: request.partyRef },
     issued.authorization,
     scope.correlationId,
     { baseUrl: issued.apiBaseUrl, compositionRevision: issued.compositionRevision },
   ).pipe(
-    privacyEvidenceCall('organizationIcoOwnerFacts'),
+    privacyEvidenceCall.organizationIcoOwnerFacts,
     Effect.flatMap((proof) => Schema.decodeUnknownEffect(OrganizationIcoFactsResponseSchema)(proof)),
     Effect.mapError(unavailable),
   );
@@ -516,7 +516,7 @@ export const organizationIcoApplicabilityService = Effect.fn('Privacy.organizati
             ),
           onSome: (provider) =>
             provider.resolve(request, scope).pipe(
-              privacyEvidenceCall('organizationIcoOwnerFacts'),
+              privacyEvidenceCall.organizationIcoOwnerFacts,
               Effect.flatMap((proof) => Schema.decodeUnknownEffect(OrganizationIcoFactsResponseSchema)(proof)),
               Effect.mapError(unavailable),
             ),

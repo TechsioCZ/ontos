@@ -8,12 +8,8 @@ import { FetchHttpClient } from 'effect/http';
  * What must never run between BEGIN and COMMIT of a governed operation: every one of them would hold the
  * transaction's pooled connection idle while it waits on something else.
  */
-export const TransactionIoSchema = Schema.Literals([
-  'module-transport',
-  'outbound-fetch',
-  'pool-acquisition',
-  'spicedb',
-]);
+const POOL_ACQUISITION = 'pool-acquisition';
+export const TransactionIoSchema = Schema.Literals(['module-transport', 'outbound-fetch', POOL_ACQUISITION, 'spicedb']);
 export type TransactionIo = typeof TransactionIoSchema.Type;
 
 /** A defect: owner code reached remote I/O or a second pooled connection inside a database transaction. */
@@ -64,23 +60,33 @@ const DeclaredEvidenceCallTransaction = Context.Reference<Option.Option<Suspende
   { defaultValue: Option.none },
 );
 
+/** The operation whose open or suspended transaction refuses `io`: a declared evidence call keeps the pool refusal. */
+const refusingOperationKey = (
+  io: TransactionIo,
+  open: Option.Option<OpenTransaction>,
+  suspended: Option.Option<SuspendedTransaction>,
+): Option.Option<string> => {
+  if (Option.isSome(open)) {
+    return Option.some(open.value.operationKey);
+  }
+  if (io === POOL_ACQUISITION && Option.isSome(suspended)) {
+    return Option.some(suspended.value.transaction.operationKey);
+  }
+  return Option.none();
+};
+
 /**
  * Dies when the fiber runs inside a marked database transaction. Every Core transport calls it first. A declared
  * evidence call lifts the remote refusals, never the pool refusal: its transaction still holds its connection.
  */
 export const refuseInsideDatabaseTransaction = (io: TransactionIo, target: string): Effect.Effect<void> =>
-  Effect.flatMap(
-    Effect.all([Effect.service(OpenDatabaseTransaction), Effect.service(DeclaredEvidenceCallTransaction)]),
-    ([open, suspended]) => {
-      const refusing = Option.isSome(open)
-        ? Option.some(open.value.operationKey)
-        : io === 'pool-acquisition'
-          ? Option.map(suspended, ({ transaction }) => transaction.operationKey)
-          : Option.none<string>();
-      return Option.isNone(refusing)
-        ? Effect.void
-        : Effect.die(new IoInsideDatabaseTransaction({ io, operationKey: refusing.value, target }));
-    },
+  Effect.flatMap(Effect.service(OpenDatabaseTransaction), (open) =>
+    Effect.flatMap(Effect.service(DeclaredEvidenceCallTransaction), (suspended) =>
+      Option.match(refusingOperationKey(io, open, suspended), {
+        onNone: () => Effect.void,
+        onSome: (operationKey) => Effect.die(new IoInsideDatabaseTransaction({ io, operationKey, target })),
+      }),
+    ),
   );
 
 const isRequest = Schema.is(Schema.instanceOf(Request));
@@ -116,26 +122,23 @@ export const insideDatabaseTransaction =
   <Value, Failure, Requirements>(
     effect: Effect.Effect<Value, Failure, Requirements>,
   ): Effect.Effect<Value, Failure, Requirements> =>
-    Effect.flatMap(
-      Effect.all([Effect.service(OpenDatabaseTransaction), Effect.service(FetchHttpClient.Fetch)]),
-      ([outer, currentFetch]) => {
-        const open: OpenTransaction = {
-          operationKey,
-          // A nested mark keeps the outermost original, never an outer mark's refusing fetch.
-          originalFetch: Option.isSome(outer) ? outer.value.originalFetch : currentFetch,
-          refusedFetches: [],
-        };
-        return effect.pipe(
-          Effect.updateService(FetchHttpClient.Fetch, () => refusingFetch(open)),
-          Effect.updateService(OpenDatabaseTransaction, () => Option.some(open)),
-          Effect.exit,
-          Effect.flatMap((exit) => {
-            const [refusal] = open.refusedFetches;
-            return refusal === undefined ? exit : Effect.die(refusal);
-          }),
-        );
-      },
-    );
+    Effect.gen(function* markDatabaseTransaction() {
+      const outer = yield* OpenDatabaseTransaction;
+      const currentFetch = yield* FetchHttpClient.Fetch;
+      const open: OpenTransaction = {
+        operationKey,
+        // A nested mark keeps the outermost original, never an outer mark's refusing fetch.
+        originalFetch: Option.isSome(outer) ? outer.value.originalFetch : currentFetch,
+        refusedFetches: [],
+      };
+      const exit = yield* effect.pipe(
+        Effect.updateService(FetchHttpClient.Fetch, () => refusingFetch(open)),
+        Effect.updateService(OpenDatabaseTransaction, () => Option.some(open)),
+        Effect.exit,
+      );
+      const [refusal] = open.refusedFetches;
+      return yield* refusal === undefined ? exit : Effect.die(refusal);
+    });
 
 /**
  * Runs one declared owner evidence call inside a marked transaction: within `effect` only, the mark reads as
@@ -221,6 +224,6 @@ export const guardPoolAcquisition = (client: PgClient.PgClient): PgClient.PgClie
     Effect.flatMap(Effect.serviceOption(client.transactionService), (connection) =>
       Option.isSome(connection)
         ? Effect.void
-        : refuseInsideDatabaseTransaction('pool-acquisition', 'PostgreSQL connection pool'),
+        : refuseInsideDatabaseTransaction(POOL_ACQUISITION, 'PostgreSQL connection pool'),
     ),
   );

@@ -95,7 +95,7 @@ export const commerceSourceProfileOwnerProofLive = Layer.effect(
             },
             crypto,
           ).pipe(
-            commerceCustomerContextEvidenceCall('sourceCounterpartyAdmission'),
+            commerceCustomerContextEvidenceCall.sourceCounterpartyAdmission,
             Effect.mapError(ownerProofFailure),
           );
           const response = yield* executeSourceCounterpartyAdmissionWithAuthorization(
@@ -104,7 +104,7 @@ export const commerceSourceProfileOwnerProofLive = Layer.effect(
             scope.correlationId,
             { baseUrl: new URL(issued.apiBaseUrl), compositionRevision: issued.compositionRevision },
           ).pipe(
-            commerceCustomerContextEvidenceCall('sourceCounterpartyAdmission'),
+            commerceCustomerContextEvidenceCall.sourceCounterpartyAdmission,
             Effect.mapError(ownerProofFailure),
           );
           const result = yield* Schema.decodeUnknownEffect(SourceCounterpartyAdmissionResponseSchema)(response).pipe(
@@ -150,13 +150,13 @@ export const commerceSourceProfileOwnerProofLive = Layer.effect(
               ),
             },
             crypto,
-          ).pipe(commerceCustomerContextEvidenceCall('sourcePersonAdmission'), Effect.mapError(ownerProofFailure));
+          ).pipe(commerceCustomerContextEvidenceCall.sourcePersonAdmission, Effect.mapError(ownerProofFailure));
           const response = yield* executeSourcePersonAdmissionWithAuthorization(
             request,
             issued.authorization,
             scope.correlationId,
             { baseUrl: new URL(issued.apiBaseUrl), compositionRevision: issued.compositionRevision },
-          ).pipe(commerceCustomerContextEvidenceCall('sourcePersonAdmission'), Effect.mapError(ownerProofFailure));
+          ).pipe(commerceCustomerContextEvidenceCall.sourcePersonAdmission, Effect.mapError(ownerProofFailure));
           const result = yield* Schema.decodeUnknownEffect(SourcePersonAdmissionResponseSchema)(response).pipe(
             Effect.mapError(ownerProofFailure),
           );
