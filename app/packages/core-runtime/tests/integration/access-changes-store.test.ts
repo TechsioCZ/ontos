@@ -2,9 +2,10 @@ import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Cause, Crypto, DateTime, Deferred, Effect, Exit, FileSystem, Option, Ref, Schema } from 'effect';
+import { Cause, Crypto, DateTime, Deferred, Effect, Exit, Fiber, FileSystem, Option, Ref, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import { expect, it } from 'effect-rstest';
+import { TestClock } from 'effect/testing';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import type { AccessDeclarationInput } from '../../src/authorization/access-declaration.ts';
@@ -270,9 +271,22 @@ const replacedDatabase = (connectionString: string, database: string): string =>
   return url.href;
 };
 
+const backendPid = (client: PgClient.PgClient) =>
+  client
+    .unsafe<{ readonly pid: number }>('select pg_backend_pid() as pid')
+    .pipe(
+      Effect.flatMap((rows) =>
+        rows[0] === undefined
+          ? Effect.die(new Error('Expected the transaction backend PID'))
+          : Effect.succeed(rows[0].pid),
+      ),
+    );
+
 interface AccessSchema {
   readonly admin: PgClient.PgClient;
+  readonly otherRuntime: PgClient.PgClient;
   readonly otherStore: AccessChangesStoreService;
+  readonly runtime: PgClient.PgClient;
   readonly scopeA: OperationalScope;
   readonly scopeB: OperationalScope;
   readonly store: AccessChangesStoreService;
@@ -319,7 +333,9 @@ const makeAccessSchema = Effect.gen(function* accessChangesSchema() {
   const otherDatabase = yield* makeTestDatabaseFromClient(otherRuntime, coreRelations);
   const schema: AccessSchema = Object.freeze({
     admin,
+    otherRuntime,
     otherStore: makeAccessChangesDrizzleStore({ executor: otherDatabase }),
+    runtime,
     scopeA: yield* scopeOf(tenantA, principalA),
     scopeB: yield* scopeOf(tenantB, principalB),
     store: makeAccessChangesDrizzleStore({ executor: runtimeDatabase }),
@@ -328,6 +344,100 @@ const makeAccessSchema = Effect.gen(function* accessChangesSchema() {
 });
 
 it.layer(NodeServices.layer)('the Access changes store', (suite) => {
+  suite.effect(
+    'publishes overlapping copies once and refuses changes to the immutable catalog identity or entries',
+    Effect.fnUntraced(function* concurrentCatalogPublication() {
+      const { admin, otherRuntime, otherStore, runtime, store } = yield* makeAccessSchema;
+      const snapshot = release(snapshot1, NOW, (yield* catalogOf([routineRead(noteKey)])).entries);
+      const superset = (yield* catalogOf([routineRead(noteKey), routineRead(commentKey)])).entries;
+      const firstParked = yield* Deferred.make<number>();
+      const secondStarted = yield* Deferred.make<number>();
+      const releaseFirst = yield* Deferred.make<null>();
+
+      const [winner, replay] = yield* Effect.gen(function* overlappingTransactions() {
+        // The Drizzle store shares this client's transaction service: its nested transaction
+        // cannot commit the snapshot or its entries while this outer transaction is parked.
+        const first = yield* Effect.forkChild(
+          runtime.withTransaction(
+            Effect.gen(function* holdCompleteCatalog() {
+              const pid = yield* backendPid(runtime);
+              const publication = yield* store.publishCatalog({ snapshot });
+              yield* Deferred.succeed(firstParked, pid);
+              yield* Deferred.await(releaseFirst);
+              return publication;
+            }),
+          ),
+        );
+        const holderPid = yield* Deferred.await(firstParked);
+        const second = yield* Effect.forkChild(
+          otherRuntime.withTransaction(
+            Effect.gen(function* publishCompetingCatalog() {
+              yield* Deferred.succeed(secondStarted, yield* backendPid(otherRuntime));
+              return yield* otherStore.publishCatalog({ snapshot });
+            }),
+          ),
+        );
+        const waiterPid = yield* Deferred.await(secondStarted);
+        // Scheduling two fibers is not overlap evidence: PostgreSQL must report this exact
+        // second backend blocked on the snapshot INSERT by the parked first backend.
+        yield* admin
+          .unsafe<{ readonly blocked: boolean }>(
+            `select $1::integer = any(pg_blocking_pids(pid)) and query like $3 as blocked
+             from pg_stat_activity where pid = $2::integer`,
+            [holderPid, waiterPid, '%insert into "core"."access_catalog_snapshots"%'],
+          )
+          .pipe(
+            Effect.repeat({ until: (rows) => rows[0]?.blocked === true }),
+            Effect.timeout('5 seconds'),
+            TestClock.withLive,
+          );
+        yield* Deferred.succeed(releaseFirst, null);
+        return yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
+      }).pipe(Effect.ensuring(Deferred.succeed(releaseFirst, null)));
+      expect([winner, replay]).toEqual([
+        { catalogSnapshotId: snapshot.id, inserted: true },
+        { catalogSnapshotId: snapshot.id, inserted: false },
+      ]);
+
+      const assertPersistedCatalog = Effect.gen(function* unchangedCompleteCatalog() {
+        expect(Option.getOrUndefined(yield* store.loadPublishedCatalog())).toEqual(snapshot);
+        expect(Option.getOrUndefined(yield* otherStore.loadPublishedCatalog())).toEqual(snapshot);
+        expect(
+          yield* admin.unsafe<{ readonly catalog_snapshot_id: string; readonly digest: string }>(
+            'select catalog_snapshot_id, digest from "core"."access_catalog_snapshots"',
+          ),
+        ).toEqual([{ catalog_snapshot_id: snapshot.id, digest: snapshot.digest }]);
+        expect(
+          yield* admin.unsafe<{
+            readonly capability_key: string;
+            readonly catalog_snapshot_id: string;
+            readonly entry_json: CatalogSnapshot['entries'][number];
+          }>(
+            `select capability_key, catalog_snapshot_id, entry_json
+             from "core"."access_catalog_entries" order by capability_key`,
+          ),
+        ).toEqual(
+          snapshot.entries.map((entry) => ({
+            capability_key: entry.key,
+            catalog_snapshot_id: snapshot.id,
+            entry_json: entry,
+          })),
+        );
+      });
+      yield* assertPersistedCatalog;
+      for (const conflicting of [
+        { ...snapshot, id: snapshotIdOf(snapshot2) },
+        { ...snapshot, digest: release(snapshot2, NOW, superset).digest },
+        // A forged superset used to append a new entry before the replay comparison.
+        { ...snapshot, entries: superset },
+      ]) {
+        const failure = yield* failureOf(otherStore.publishCatalog({ snapshot: conflicting }));
+        expect(failure?.code).toBe('access_changes_catalog_conflict');
+        yield* assertPersistedCatalog;
+      }
+    }),
+  );
+
   suite.effect(
     'publishes a release, adopts it in one batch and undoes it, and keeps each tenant to its own intent',
     Effect.fnUntraced(function* accessChangesStoreIntegration() {
