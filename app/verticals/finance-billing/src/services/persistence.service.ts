@@ -1234,14 +1234,15 @@ const handleCreateAccountingExport = Effect.fn('Finance.handleCreateAccountingEx
           ],
     ),
   }).pipe(
-    Effect.catchTag('SchemaError', (cause) => Effect.fail(constructionUnavailable(cause))),
-    Effect.catchTag('PohodaExportRefused', (refusal) =>
-      Effect.fail(
-        rejected(
-          refusal.documentNumber === undefined ? refusal.problem : `${refusal.problem}: ${refusal.documentNumber}`,
+    Effect.catchTags({
+      PohodaExportRefused: (refusal) =>
+        Effect.fail(
+          rejected(
+            refusal.documentNumber === undefined ? refusal.problem : `${refusal.problem}: ${refusal.documentNumber}`,
+          ),
         ),
-      ),
-    ),
+      SchemaError: (cause) => Effect.fail(constructionUnavailable(cause)),
+    }),
   );
   let accountingExport: NonNullable<FinanceState['accountingExports']>[number] = {
     ...(yield* actorOf(context, command.actorLabel)),
@@ -1722,6 +1723,19 @@ export const transitionFinance = (
   );
 };
 
+/**
+ * The handover evidence a filtered read keeps for its own invoices: each package that contains one of them, narrowed
+ * to those invoices and without the file, which also lists invoices outside this read.
+ */
+const handoverEvidenceOf = (
+  state: FinanceState,
+  selected: ReadonlySet<string>,
+): NonNullable<FinanceState['accountingExports']> | undefined =>
+  state.accountingExports?.flatMap((entry) => {
+    const [first, ...rest] = entry.invoiceResourceIds.filter((id) => selected.has(id));
+    return first === undefined ? [] : [{ ...entry, content: '', invoiceResourceIds: [first, ...rest] }];
+  });
+
 /** Demo-v2 parts of the state. Invoice-scoped records follow the invoice filter; ledger-wide ones only unfiltered. */
 const optionalStateParts = (state: FinanceState, selected: ReadonlySet<string>, request: RecordsRequest) => {
   const unfiltered =
@@ -1748,14 +1762,7 @@ const optionalStateParts = (state: FinanceState, selected: ReadonlySet<string>, 
       | 'reminders'
     >
   > = {};
-  // A filtered read keeps the handover evidence of its own invoices: each package that contains one of them, narrowed
-  // to those invoices and without the file, which also lists invoices outside this read.
-  const accountingExports = unfiltered
-    ? state.accountingExports
-    : state.accountingExports?.flatMap((entry) => {
-        const [first, ...rest] = entry.invoiceResourceIds.filter((id) => selected.has(id));
-        return first === undefined ? [] : [{ ...entry, content: '', invoiceResourceIds: [first, ...rest] }];
-      });
+  const accountingExports = unfiltered ? state.accountingExports : handoverEvidenceOf(state, selected);
   if (accountingExports !== undefined) {
     parts = { ...parts, accountingExports };
   }

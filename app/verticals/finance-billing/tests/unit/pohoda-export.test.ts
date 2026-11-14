@@ -210,7 +210,7 @@ it.layer(NodeServices.layer)('POHODA XML export (STORMWARE dataPack 2.0)', (test
       expect(refusal.problem).toBe('pohoda_document_number_too_long');
       expect(refusal.documentNumber).toBe(supplierNumber);
       const exactly32 = 'FV-2026-000000000000000000000001';
-      expect([...exactly32]).toHaveLength(32);
+      expect(exactly32).toHaveLength(32);
       const xml = yield* buildPohodaDataPack(
         [
           {

@@ -494,28 +494,30 @@ describe('Finance wire compatibility', () => {
   );
 });
 
-describe('Document numbers and supplier identity', () => {
-  const manualRef = { ...counterpartyRef, resourceId: MANUAL_COUNTERPARTY_ID };
-  const otherCustomerRef = { ...counterpartyRef, resourceId: 'a0000000-0000-4000-8000-000000000013' };
-  const supplierIco = Schema.decodeSync(FinanceCompanyIdSchema)('27232433');
-  const received = (documentNumber: string) => ({
-    _tag: 'RecordIncomingInvoice' as const,
-    documentNumber,
-    dueDate: '2026-10-30',
-    issueDate: '2026-10-05',
-    supplierName: 'ČEZ Prodej, a.s.',
-    totalMinor: 100_000,
-  });
-  const outgoingDraft = {
-    _tag: 'CreateInvoiceDraft',
-    counterpartyRef,
-    currency: 'CZK',
-    direction: 'OUTGOING',
-    dueDate: '2026-10-30',
-    issueDate: '2026-10-20',
-    totalMinor: 100_000,
-  } satisfies FinanceCommand;
+const manualRef = { ...counterpartyRef, resourceId: MANUAL_COUNTERPARTY_ID };
+const otherCustomerRef = { ...counterpartyRef, resourceId: 'a0000000-0000-4000-8000-000000000013' };
+const supplierIco = Schema.decodeSync(FinanceCompanyIdSchema)('27232433');
+const otherSupplierIco = Schema.decodeSync(FinanceCompanyIdSchema)('45274649');
+/** A received invoice of ČEZ typed in by hand, with the supplier's own document number. */
+const received = (documentNumber: string) => ({
+  _tag: 'RecordIncomingInvoice' as const,
+  documentNumber,
+  dueDate: '2026-10-30',
+  issueDate: '2026-10-05',
+  supplierName: 'ČEZ Prodej, a.s.',
+  totalMinor: 100_000,
+});
+const outgoingDraft = {
+  _tag: 'CreateInvoiceDraft',
+  counterpartyRef,
+  currency: 'CZK',
+  direction: 'OUTGOING',
+  dueDate: '2026-10-30',
+  issueDate: '2026-10-20',
+  totalMinor: 100_000,
+} satisfies FinanceCommand;
 
+describe('Document numbers and supplier identity', () => {
   it.effect("a supplier's number never blocks our series, and Finance allocates our number from the whole ledger", () =>
     Effect.gen(function* supplierNumberAndSeries() {
       // A supplier happens to number its invoice exactly like our next one.
@@ -602,7 +604,7 @@ describe('Document numbers and supplier identity', () => {
         // Another supplier may use the same number.
         const otherSupplier = yield* run(manual.state, {
           ...received('2026-0918774'),
-          supplierCompanyId: Schema.decodeSync(FinanceCompanyIdSchema)('45274649'),
+          supplierCompanyId: otherSupplierIco,
           supplierName: 'Pražská energetika, a.s.',
         });
         expect(otherSupplier.state.invoices.length).toBe(2);

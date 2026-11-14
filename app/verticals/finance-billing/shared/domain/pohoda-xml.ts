@@ -41,8 +41,33 @@ export class PohodaExportRefused extends Schema.TaggedError<PohodaExportRefused>
 const POHODA_DOCUMENT_NUMBER_MAX_LENGTH = 32;
 /** The rates POHODA's invoice summary has columns for: none, third (10 %), low (12 %) and high (21 %). */
 const POHODA_VAT_RATES: ReadonlySet<number> = new Set([0, 10, 12, 21]);
-/** Anything outside the XML 1.0 `Char` production makes the whole file unparsable, even when escaped. */
-const XML_FORBIDDEN_CHARACTER = /[^\u{9}\u{A}\u{D}\u{20}-\u{D7FF}\u{E000}-\u{FFFD}\u{10000}-\u{10FFFF}]/u;
+
+/** The Unicode code points of `value` in order: POHODA's length limits and XML legality both count code points. */
+const codePointsOf = (value: string): readonly number[] => {
+  const points: number[] = [];
+  for (const character of value) {
+    const point = character.codePointAt(0);
+    if (point !== undefined) {
+      points.push(point);
+    }
+  }
+  return points;
+};
+
+/**
+ * The XML 1.0 `Char` production: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]. Anything else
+ * makes the whole file unparsable, even when escaped.
+ */
+const isXmlCharacter = (point: number): boolean =>
+  point === 9 ||
+  point === 10 ||
+  point === 13 ||
+  (point >= 32 && point <= 55_295) ||
+  (point >= 57_344 && point <= 65_533) ||
+  (point >= 65_536 && point <= 1_114_111);
+
+const hasForbiddenXmlCharacter = (value: string): boolean =>
+  !codePointsOf(value).every((point) => isXmlCharacter(point));
 
 /** The identity POHODA imports the invoice under: our number when issued, the supplier's number when received. */
 const pohodaDocumentNumber = (invoice: Invoice) =>
@@ -293,7 +318,7 @@ ${detail}${summaryXml(invoice, recap)}
 /** What would make this invoice import differently from OntOS; checked on the written XML, so no field is missed. */
 const pohodaRowProblem = (row: ExportRow, xml: string): PohodaExportProblem | undefined => {
   const { invoice } = row;
-  if ([...pohodaDocumentNumber(invoice).trim()].length > POHODA_DOCUMENT_NUMBER_MAX_LENGTH) {
+  if (codePointsOf(pohodaDocumentNumber(invoice).trim()).length > POHODA_DOCUMENT_NUMBER_MAX_LENGTH) {
     return 'pohoda_document_number_too_long';
   }
   const rates = [
@@ -303,7 +328,7 @@ const pohodaRowProblem = (row: ExportRow, xml: string): PohodaExportProblem | un
   if (rates.some((rate) => !POHODA_VAT_RATES.has(rate))) {
     return 'pohoda_vat_rate_unsupported';
   }
-  return XML_FORBIDDEN_CHARACTER.test(xml) ? FORBIDDEN_CHARACTER : undefined;
+  return hasForbiddenXmlCharacter(xml) ? FORBIDDEN_CHARACTER : undefined;
 };
 
 /**
@@ -321,7 +346,7 @@ export const buildPohodaDataPack = Effect.fn('Finance.buildPohodaDataPack')(func
   const { issuer } = meta;
   const icoAttribute = issuer?.ico === undefined ? '' : ` ico="${xmlEscape(issuer.ico)}"`;
   const note = `Předávací balíček ${meta.batchNumber}, verze ${meta.version}, vytvořil ${meta.createdBy}, ${meta.createdAt}`;
-  if (XML_FORBIDDEN_CHARACTER.test(`${packId}${icoAttribute}${note}`)) {
+  if (hasForbiddenXmlCharacter(`${packId}${icoAttribute}${note}`)) {
     return yield* new PohodaExportRefused({ problem: FORBIDDEN_CHARACTER });
   }
   const items: string[] = [];
