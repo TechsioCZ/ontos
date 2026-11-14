@@ -30,6 +30,12 @@ on:
         description: On a candidate/* ref, do not let a newer candidate dispatch cancel this run, and cancel none.
         type: boolean
         default: false
+      base-ref:
+        description: >-
+          On a candidate/* ref, the branch to compare with: only owners changed since its merge base, and their
+          consumers, are tested; shared, configuration, auth and database changes still run everything.
+        type: string
+        default: demo/sales-crm
 
 permissions:
   contents: read
@@ -105,10 +111,27 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # A narrow fix round on a candidate ref compares with the merge base of its base branch. A name that is no plain
+      # branch, or a branch the checkout does not have, leaves the comparison empty, and the complete suite runs.
+      - name: Find the comparison point of a candidate dispatch
+        id: candidate
+        if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/candidate/') && inputs.force-ci-full != true
+        env:
+          BASE_REF: ${{ inputs.base-ref }}
+        run: |
+          if [[ ! "$BASE_REF" =~ ^[A-Za-z0-9._/-]+$ || "$BASE_REF" == *..* ]]; then
+            echo "::warning title=Complete suite::The base ref is no plain branch name; every gate runs."
+          elif base="$(git merge-base "refs/remotes/origin/$BASE_REF" HEAD)"; then
+            echo "base=$base" >>"$GITHUB_OUTPUT"
+            echo "Comparing with $BASE_REF at its merge base $base."
+          else
+            echo "::warning title=Complete suite::origin/$BASE_REF has no merge base with this commit; every gate runs."
+          fi
       - name: Classify the complete diff without app dependencies
         id: changes
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          BASE_SHA: ${{ steps.candidate.outputs.base || github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          CANDIDATE_DISPATCH: ${{ steps.candidate.outputs.base != '' }}
           HEAD_SHA: ${{ github.sha }}
           QUEUE_PROVEN: ${{ needs.queue-proof.outputs.proven }}
           FORCE_FULL: ${{ inputs.force-ci-full }}
@@ -127,7 +150,8 @@ jobs:
         working-directory: app
         env:
           BOOTSTRAP_MODE: ${{ steps.changes.outputs.mode }}
-          APPLY_AFFECTED: ${{ vars.CI_AFFECTED_ENABLED }}
+          # Candidate dispatches apply affected selection without the repository setting; others follow it.
+          APPLY_AFFECTED: ${{ (vars.CI_AFFECTED_ENABLED == 'true' || steps.candidate.outputs.base != '') && 'true' || 'false' }}
         run: |
           args=(--paths-file "$RUNNER_TEMP/ci-changed-paths")
           [[ "$BOOTSTRAP_MODE" != full ]] || args+=(--full)

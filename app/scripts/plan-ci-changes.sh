@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # This preflight uses only Git and jq. Documentation must not install the app to discover it needs no app checks.
+# A manual dispatch is a complete run, except a candidate/* dispatch whose workflow resolved a comparison point
+# (CANDIDATE_DISPATCH=true with BASE_SHA set): it is classified like a pull request against that point.
 set -euo pipefail
 
 paths_file="${1:?Pass the changed-paths output file}"
@@ -11,7 +13,9 @@ reason='This event requires the complete suite.'
 if [[ "${QUEUE_PROVEN:-false}" == true && "${FORCE_FULL:-false}" != true ]]; then
   mode=proven
   reason='The merge queue already proved this exact commit.'
-elif [[ "${FORCE_FULL:-false}" != true && "${GITHUB_EVENT_NAME:-}" =~ ^(pull_request|merge_group|push)$ ]]; then
+elif [[ "${FORCE_FULL:-false}" != true &&
+  ("${GITHUB_EVENT_NAME:-}" =~ ^(pull_request|merge_group|push)$ ||
+  ("${GITHUB_EVENT_NAME:-}" == workflow_dispatch && "${CANDIDATE_DISPATCH:-false}" == true)) ]]; then
   if [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ && "${HEAD_SHA:-}" =~ ^[0-9a-f]{40}$ ]] &&
     git cat-file -e "$BASE_SHA^{commit}" &&
     git cat-file -e "$HEAD_SHA^{commit}" &&
