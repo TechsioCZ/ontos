@@ -30,6 +30,7 @@ import {
   shippingMethods,
 } from '../../../../../shared/domain/merchandise-model.ts';
 import { isOrderQuantityValid, orderQuantityRules } from '../../../../../shared/domain/order-quantity.ts';
+import { tierPriceForQuantity } from '../../../../../shared/domain/unit-price.ts';
 import { fullOrderTotals, lineGrossMinor } from '../../../../../shared/domain/order-totals.ts';
 import { MONEY_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { shippingOptions } from './order-eshop.ts';
@@ -49,13 +50,15 @@ const inOrderCurrency = (order: Pick<Order, 'market'>, czkMinor: number): number
   order.market === undefined ? czkMinor : convertGrossMinor(czkMinor, order.market);
 
 interface SellableUnit {
-  /** The record's stored price including VAT (what the storefront sells it at), when it has one. */
+  /** The record's price including VAT below its first quantity break (what the storefront shows), when it has one. */
   readonly grossMinor?: number;
   readonly name: string;
   readonly netMinor: number;
   readonly productId: ProductId;
   readonly sku: string;
   readonly taxClassificationCode: DraftLine['taxClassificationCode'];
+  /** Its quantity breaks: a gross-priced order charges the break a line's quantity reaches. */
+  readonly tiers?: ProductRecord['priceTiers'];
   readonly variantId?: VariantId;
   readonly variantName?: string;
   readonly vatRate: DraftLine['vatRate'];
@@ -171,6 +174,7 @@ const sellableUnit = (
       productId: product.id,
       sku: product.sku,
       taxClassificationCode: product.taxClassificationCode,
+      tiers: product.priceTiers,
       vatRate,
     };
     return product.grossPriceMinor === undefined ? unit : { ...unit, grossMinor: product.grossPriceMinor };
@@ -185,6 +189,7 @@ const sellableUnit = (
     productId: product.id,
     sku: variant.sku,
     taxClassificationCode: product.taxClassificationCode,
+    tiers: variant.priceTiers,
     variantId: variant.id,
     variantName: variant.name,
     vatRate,
@@ -342,12 +347,17 @@ const useOrderEditForm = ({
       valid: !linesInvalid && !shippingInvalid && !addressInvalid && !contactInvalid,
     };
   };
-  /** The price an added line is offered at: what the server prices it at in this order. */
-  const offerOf = (offeredUnit: SellableUnit) =>
+  /**
+   * The price an added line of `quantity` is offered at: what the server prices it at in this order (a gross-priced
+   * order: the break the quantity reaches, else the price below the first break, else net plus VAT).
+   */
+  const offerOf = (offeredUnit: SellableUnit, quantity: number) =>
     inOrderCurrency(
       order,
       gross
-        ? (offeredUnit.grossMinor ?? grossUnitPriceMinor(offeredUnit.netMinor, offeredUnit.vatRate))
+        ? (tierPriceForQuantity(offeredUnit.tiers, quantity) ??
+            offeredUnit.grossMinor ??
+            grossUnitPriceMinor(offeredUnit.netMinor, offeredUnit.vatRate))
         : offeredUnit.netMinor,
     );
   /** An added line's offer as its product prices it now; undefined when the product cannot go on the order now. */
@@ -357,7 +367,7 @@ const useOrderEditForm = ({
       line.variantId ?? null,
       lineClassification(product, vat, DateTime.nowUnsafe())?.current?.ratePercent,
     );
-    return current === undefined ? undefined : offerOf(current);
+    return current === undefined ? undefined : offerOf(current, parseQuantity(line.quantityText) ?? 1);
   };
   // The added lines whose price changed meanwhile, with the price they carry now; shown until the next save is sent.
   const [repriced, setRepriced] = useState<readonly RepricedLine[]>([]);
@@ -388,6 +398,14 @@ const useOrderEditForm = ({
   const patch = (next: Partial<Draft>) => record.setDraft((current) => ({ ...current, ...next }));
   const patchLine = (key: string, next: Partial<DraftLine>) =>
     patch({ lines: draft.lines.map((line) => (line.key === key ? { ...line, ...next } : line)) });
+  /** A changed quantity; an added line follows the price of the quantity break it now reaches. */
+  const handleQuantityChange = (line: DraftLine, quantityText: string) => {
+    const product =
+      line.offeredPriceText === undefined ? undefined : addedProducts.find((entry) => entry.id === line.productId);
+    const next = { ...line, quantityText };
+    const offer = product === undefined ? undefined : currentOfferOf(product, next);
+    patchLine(line.key, offer === undefined ? { quantityText } : withOffer(next, offer));
+  };
   const { addressInvalid, contactInvalid, linesInvalid, parsedLines, shippingInvalid, shippingPrice } = draftValidation(
     draft,
     record.confirmed,
@@ -420,7 +438,12 @@ const useOrderEditForm = ({
       const quantity = parseQuantity(existing.quantityText) ?? 0;
       const more = { ...existing, quantityText: String(quantity + rulesFor(existing).step) };
       // A line added in this edit takes the product's price as it is now; the order's own lines keep theirs.
-      patchLine(existing.key, existing.offeredPriceText === undefined ? more : withOffer(more, offerOf(unit)));
+      patchLine(
+        existing.key,
+        existing.offeredPriceText === undefined
+          ? more
+          : withOffer(more, offerOf(unit, quantity + rulesFor(existing).step)),
+      );
       clearPick();
       return;
     }
@@ -429,15 +452,16 @@ const useOrderEditForm = ({
         ? pickedProduct
         : (pickedProduct.variantRecords?.find((entry) => entry.id === unit.variantId) ?? pickedProduct),
     );
-    // A gross-priced order (storefront) takes the stored price including VAT, exactly as the server prices the line.
-    const offered = moneyInputText(offerOf(unit) / 100);
+    // A gross-priced order (storefront) takes the price including VAT for this quantity, exactly as the server does.
+    const quantity = Math.ceil(rules.minimum / rules.step) * rules.step;
+    const offered = moneyInputText(offerOf(unit, quantity) / 100);
     const added = {
       key: `new-${sequence.current}`,
       name: unit.name,
       offeredPriceText: offered,
       priceText: offered,
       productId: unit.productId,
-      quantityText: String(Math.ceil(rules.minimum / rules.step) * rules.step),
+      quantityText: String(quantity),
       sku: unit.sku,
       taxClassificationCode: unit.taxClassificationCode,
       vatRate: unit.vatRate,
@@ -465,6 +489,7 @@ const useOrderEditForm = ({
     draft,
     gross,
     guard,
+    handleQuantityChange,
     labels: saveLabelsFor(language),
     leave,
     linesInvalid,
@@ -625,6 +650,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
     draft,
     gross,
     guard,
+    handleQuantityChange,
     labels,
     leave,
     linesInvalid,
@@ -722,7 +748,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
                           locale="cs-CZ"
                           min={rules.minimum}
                           name={`qty-${line.key}`}
-                          onValueChange={(details) => patchLine(line.key, { quantityText: details.value })}
+                          onValueChange={(details) => handleQuantityChange(line, details.value)}
                           size="sm"
                           step={rules.step}
                           value={line.quantityText}

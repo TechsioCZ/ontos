@@ -1,7 +1,7 @@
 // A line an order edit adds, priced by the server exactly as the editor offered it: the edit carries the offered price,
 // the server prices the line as new and stores that price, and it refuses the edit when the price changed between
-// picking the product and saving. Covered for a variant, a tiered (first-tier) price, a market order's own currency,
-// a price staff typed over and then restored, and a line removed and added again in the same edit.
+// picking the product and saving. Covered for a variant, a tiered price (the break the quantity reaches), a market
+// order's own currency, a price staff typed over and then restored, and a line removed and added again in the same edit.
 import { DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -158,6 +158,29 @@ it.effect('an added variant and an added tiered product keep the price the edito
       ['ETH-1KG', 98_900, 12],
       ['MUG', 15_000, 21],
     ]);
+  }),
+);
+
+it.effect('an added gross-priced line takes the quantity break it reaches, as the storefront would charge it', () =>
+  Effect.gen(function* addedAtBreak() {
+    const state = yield* seeded;
+    for (const [quantity, price] of [
+      [9, 15_000],
+      [10, 13_000],
+    ] as const) {
+      const edited = yield* editOf(
+        state,
+        [existingLine, { offeredUnitPriceMinor: price, productId: 'p2', quantity }],
+        `edit-break-${String(quantity)}`,
+      );
+      expect(linesOf(edited.state)?.[1]).toEqual(['MUG', price, 21]);
+    }
+    // The first tier's price offered for ten mugs is no longer what they cost.
+    expect(
+      yield* conflictReason(
+        editOf(state, [existingLine, { offeredUnitPriceMinor: 15_000, productId: 'p2', quantity: 10 }], 'edit-stale'),
+      ),
+    ).toContain('Cena produktu MUG se mezitím změnila');
   }),
 );
 
