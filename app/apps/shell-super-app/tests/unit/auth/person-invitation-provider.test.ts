@@ -65,7 +65,7 @@ const fixture = (crypto: Crypto.Crypto, sqlFailure?: SqlError) =>
       Effect.provideService(OperationalScopeTransaction, {
         delete: database.delete.bind(database),
         insert: database.insert.bind(database),
-        install: () => Effect.void,
+        install: () => Effect.succeed('session_setting' as const),
         scopedRoutineInvoker: () => ({ invoke: () => Effect.die('Unexpected routine invocation') }),
         select: database.select.bind(database),
         update: database.update.bind(database),

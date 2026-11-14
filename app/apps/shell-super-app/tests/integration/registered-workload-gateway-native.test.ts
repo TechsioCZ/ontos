@@ -872,6 +872,8 @@ const nativeMachineGate = (database: Effect.Success<ReturnType<typeof makeCoreDa
   makeAccessDecisionService({
     authorityFor: () => ({
       readCells: unavailableHumanPort,
+      // Every company this fixture names is the fixture Tenant's own.
+      readCompanyOwnership: () => Effect.succeed(true),
       readConnection: unavailableHumanPort,
       readScope: unavailableHumanPort,
       readTeamIds: unavailableHumanPort,
