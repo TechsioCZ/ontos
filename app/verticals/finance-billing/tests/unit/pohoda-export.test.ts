@@ -163,6 +163,30 @@ it.layer(NodeServices.layer)('POHODA XML export (STORMWARE dataPack 2.0)', (test
     }),
   );
 
+  test.effect('writes formula-leading CSV text as plain text and keeps amounts numeric', () =>
+    Effect.gen(function* formulaCsv() {
+      const csv = yield* buildAccountingExport({
+        format: 'CSV',
+        meta: siampark,
+        rows: [
+          {
+            counterpartyName: '=HYPERLINK("http://attacker.invalid","Klikni")',
+            documentLink: link('out-1'),
+            invoice: invoice('csv-1', { budgetCategory: '@SUM(A1:A9)', documentNumber: '+420', totalMinor: 100_000 }),
+          },
+          { counterpartyName: '-2+3', documentLink: link('csv-2'), invoice: invoice('csv-2') },
+        ],
+      });
+      const [, first, second] = csv.split('\r\n');
+      expect(first).toContain(`;"'=HYPERLINK(""http://attacker.invalid"",""Klikni"")";`);
+      expect(first).toContain(";'+420;");
+      expect(first).toContain(";'@SUM(A1:A9);");
+      expect(first).toContain(';1000.00;');
+      expect(second).toContain(";'-2+3;");
+      expect(csv).not.toMatch(/;[=+\-@]/u);
+    }),
+  );
+
   test('maps Czech VAT rates, variable symbols and the file name', () => {
     expect(([21, 12, 10, 0] as const).map(pohodaVatRate)).toEqual(['high', 'low', 'third', 'none']);
     expect(variableSymbol('FV-2026-0001')).toBe('20260001');

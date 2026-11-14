@@ -284,6 +284,13 @@ const csvCell = (value: string | number | undefined) => {
   return /[";\n\r]/u.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 };
 
+/**
+ * A spreadsheet runs a text cell that starts with `=`, `+`, `-`, `@`, a tab or a carriage return as a formula.
+ * Text from users and other modules is therefore prefixed with an apostrophe, so it always opens as plain text;
+ * amounts and the batch version are written by OntOS itself and stay numeric.
+ */
+const csvTextCell = (value: string) => csvCell(/^[=+\-@\t\r]/u.test(value) ? `'${value}` : value);
+
 const amount = (minor: number | undefined) => (minor === undefined ? '' : (minor / 100).toFixed(2));
 
 /** Accounting unit that issues / receives the exported invoices: the selected legal entity. */
@@ -402,28 +409,26 @@ export const buildAccountingExport = Effect.fn('Finance.buildAccountingExport')(
     ];
     const lines = rows.map(({ counterpartyName, documentLink, invoice }) =>
       [
-        ACCOUNTING_EXPORT_SCHEMA_VERSION,
-        meta.batchNumber,
-        meta.version,
-        invoice.ref.resourceId,
-        invoice.number ?? invoice.documentNumber,
-        invoice.documentKind ?? 'STANDARD',
-        invoice.direction === 'OUTGOING' ? 'VYDANA' : 'PRIJATA',
-        counterpartyName,
-        invoice.counterpartyRef.resourceId,
-        invoice.issueDate,
-        invoice.dueDate,
-        invoice.currency,
-        amount(invoice.subtotalMinor),
-        amount(invoice.vatMinor),
-        amount(invoice.totalMinor),
-        amount(invoice.paidMinor),
-        invoice.paymentState,
-        objectLabel(invoice),
-        documentLink,
-      ]
-        .map(csvCell)
-        .join(';'),
+        csvCell(ACCOUNTING_EXPORT_SCHEMA_VERSION),
+        csvTextCell(meta.batchNumber),
+        csvCell(meta.version),
+        csvTextCell(invoice.ref.resourceId),
+        csvTextCell(invoice.number ?? invoice.documentNumber),
+        csvTextCell(invoice.documentKind ?? 'STANDARD'),
+        csvTextCell(invoice.direction === 'OUTGOING' ? 'VYDANA' : 'PRIJATA'),
+        csvTextCell(counterpartyName),
+        csvTextCell(invoice.counterpartyRef.resourceId),
+        csvTextCell(invoice.issueDate),
+        csvTextCell(invoice.dueDate),
+        csvTextCell(invoice.currency),
+        csvCell(amount(invoice.subtotalMinor)),
+        csvCell(amount(invoice.vatMinor)),
+        csvCell(amount(invoice.totalMinor)),
+        csvCell(amount(invoice.paidMinor)),
+        csvTextCell(invoice.paymentState),
+        csvTextCell(objectLabel(invoice)),
+        csvTextCell(documentLink),
+      ].join(';'),
     );
     return `﻿${[header.join(';'), ...lines].join('\r\n')}\r\n`;
   }
