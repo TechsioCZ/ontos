@@ -269,6 +269,66 @@ describe('CRM order CSV parser', () => {
 });
 
 describe('CRM order import (C03)', () => {
+  it.effect(
+    'enriches replayed events, checks late numbers and links customers without duplicating status history',
+    () =>
+      Effect.gen(function* replayedEnrichment() {
+        const linked = yield* runOk(base, {
+          _tag: 'LinkExternalCustomer',
+          clientId: 'pekarna-mala',
+          externalCustomerId: 'known-replay-customer',
+          source: 'Accounting',
+        });
+        const header = 'source;order_id;number;customer_id;status;event_time;amount;currency\n';
+        const first = yield* runOk(linked, {
+          _tag: 'ImportOrdersCsv',
+          csv: `${header}E-shop;original-replay;REPLAY;;nova;2026-10-19T09:00:00Z;;\nAccounting;enriched-replay;;;nova;2026-10-19T09:00:00Z;;\n`,
+          fileName: 'replay-first.csv',
+        });
+        const command = {
+          _tag: 'ImportOrdersCsv',
+          csv: `${header}Accounting;enriched-replay;REPLAY;known-replay-customer;nova;2026-10-19T09:00:00Z;25.00;CZK\n`,
+          fileName: 'replay-enriched.csv',
+        } satisfies CrmCommandInput;
+        const next = yield* runOk(first, command);
+        expect(order(next, 'enriched-replay', 'Accounting')).toMatchObject({
+          amount: '25.00',
+          clientId: 'pekarna-mala',
+          currency: 'CZK',
+          duplicateOf: order(next, 'original-replay').id,
+          number: 'REPLAY',
+          pairing: 'paired',
+        });
+        expect(order(next, 'enriched-replay', 'Accounting').statusHistory).toHaveLength(1);
+        expect(next.imports.batches[0]).toMatchObject({ duplicates: 0, review: 1 });
+        const replay = yield* runOk(next, command);
+        expect(replay.imports.pairingHistory).toEqual(next.imports.pairingHistory);
+        expect(replay.imports.batches[0]).toMatchObject({ accepted: 0, duplicates: 1 });
+        return yield* Effect.void;
+      }),
+  );
+  it.effect('deduplicates monetary conflicts even when they reuse an already-confirmed status event', () =>
+    Effect.gen(function* replayedMonetaryConflict() {
+      const header = 'source;order_id;status;event_time;amount;currency\n';
+      const first = yield* runOk(base, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;currency-replay;nova;2026-10-19T09:00:00Z;;CZK\n`,
+        fileName: 'currency-first.csv',
+      });
+      const command = {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;currency-replay;nova;2026-10-19T09:00:00Z;25.00;EUR\n`,
+        fileName: 'currency-conflict.csv',
+      } satisfies CrmCommandInput;
+      const next = yield* runOk(first, command);
+      expect(order(next, 'currency-replay').amount).toBeUndefined();
+      expect(needsReview(order(next, 'currency-replay'))).toBe(true);
+      const replay = yield* runOk(next, command);
+      expect(order(replay, 'currency-replay').statusHistory).toHaveLength(2);
+      expect(replay.imports.batches[0]?.duplicates).toBe(1);
+      return yield* Effect.void;
+    }),
+  );
   it.effect('uses an approved link when customer identity arrives later, without overwriting manual pairing', () =>
     Effect.gen(function* lateCustomerLink() {
       const linked = yield* runOk(base, {
