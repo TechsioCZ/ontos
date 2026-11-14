@@ -59,9 +59,13 @@ const UnitModuleSchema = Schema.Struct({
   [ENTRY_CLAIM_EXPORT]: Schema.optional(UnitCredentialClaimSchema),
 });
 
+/** A module that cannot load names only modules and paths; without it a failed deploy tells nobody why. */
+const loadFailureDetail = (cause: unknown) => (Predicate.isError(cause) ? cause.message : 'no error was reported');
+
 const loadUnitModule = (unit: HostedUnit) =>
   Effect.tryPromise({
-    catch: () => new ServeUnitsError({ reason: `${unit.id} entry could not be loaded` }),
+    catch: (cause) =>
+      new ServeUnitsError({ reason: `${unit.id} entry could not be loaded: ${loadFailureDetail(cause)}` }),
     // SAFETY: a dynamically imported module namespace is opaque until Schema decodes its `start` export below.
     try: async () =>
       (await import(pathToFileURL(path.join(workspaceRoot, unit.directory, UNIT_ENTRY)).href)) as unknown,

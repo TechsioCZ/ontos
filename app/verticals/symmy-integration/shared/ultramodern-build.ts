@@ -1,5 +1,36 @@
-import buildArtifact = require('./ultramodern-build.json');
 import { resolveUltramodernBuildArtifact } from '@modern-js/backend-federation-contracts';
+
+const buildArtifact = {
+  deliveryUnit: {
+    appId: 'symmy-integration',
+    deployProfile: 'cloudflare-ssr-mf-effect-v1',
+    kind: 'microvertical-delivery-unit',
+    packageName: '@app/symmy-integration',
+    schemaVersion: 1,
+    sourceRevision: 'workspace',
+    unitId: 'app/symmy-integration',
+    version: '0.1.0',
+    buildMarker: 'd271b1bd0da558f4',
+    build: 'd271b1bd0da558f4',
+  },
+  kind: 'ultramodern-build-artifact',
+  schemaVersion: 2,
+  surfaces: {
+    api: {
+      appId: 'symmy-integration',
+      deployProfile: 'cloudflare-ssr-mf-effect-v1',
+      kind: 'microvertical-delivery-unit',
+      packageName: '@app/symmy-integration',
+      schemaVersion: 1,
+      sourceRevision: 'workspace',
+      unitId: 'app/symmy-integration',
+      version: '0.1.0',
+      buildMarker: 'd271b1bd0da558f4',
+      build: 'd271b1bd0da558f4',
+      surface: 'api',
+    },
+  },
+} as const;
 
 declare const ULTRAMODERN_BUILD_MARKER: string;
 declare const ULTRAMODERN_SOURCE_REVISION: string;
