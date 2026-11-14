@@ -99,10 +99,11 @@ describe('Finance reference credentials', () => {
   });
 });
 
+/** The instant a role check runs at. */
+const at = (instant: string) => DateTime.makeUnsafe(instant);
+
 describe('Counterparty role validity', () => {
   const role = { roleType: 'CUSTOMER', state: 'ACTIVE', validFrom: '2026-10-13T08:00:00.000Z', validTo: null };
-
-  const at = (instant: string) => DateTime.makeUnsafe(instant);
 
   it('accepts a customer whose role started earlier today', () => {
     expect(hasUsableRole([role], 'CUSTOMER', at('2026-10-13T08:00:00.000Z'))).toBe(true);
