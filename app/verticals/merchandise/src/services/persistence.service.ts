@@ -1206,12 +1206,25 @@ export const tierPriceForQuantity = (tiers: Product['priceTiers'], quantity: num
   tiers?.filter((tier) => tier.minimumQuantity <= quantity).toSorted((a, b) => b.minimumQuantity - a.minimumQuantity)[0]
     ?.priceMinor;
 
-/** A tiered catalog needs an actual base gross; a discount is not evidence of the price below its break. */
+/**
+ * A tiered catalog needs an actual base gross; a discount is not evidence of the price below its break. An imported
+ * catalog states its base price as a tier at the unit's own net price (AKROS: a tier from 1 above a 0,5 minimum), so
+ * that tier's stored gross is the base gross.
+ */
 const baseGrossForCheckout = (
   priced: { readonly grossPriceMinor?: number; readonly priceTiers?: Product['priceTiers'] },
   net: number,
   rate: number,
-) => priced.grossPriceMinor ?? ((priced.priceTiers?.length ?? 0) === 0 ? grossUnitPriceMinor(net, rate) : 0);
+) => {
+  if (priced.grossPriceMinor !== undefined) {
+    return priced.grossPriceMinor;
+  }
+  const tiers = priced.priceTiers ?? [];
+  if (tiers.length === 0) {
+    return grossUnitPriceMinor(net, rate);
+  }
+  return tiers.find((tier) => tier.priceExcludingVatMinor === net)?.priceMinor ?? 0;
+};
 
 /** Resolves the sellable unit (product or variant) of one storefront line, or the issue blocking it. */
 const sellableUnitOf = (
