@@ -4,7 +4,7 @@ import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
 import * as Schema from 'effect/Schema';
 
 import { createSharedRuntimeConfig } from '../../module-federation.shared.ts';
-import { resolveTsrsCompiler } from '../../scripts/typecheck-compiler.mjs';
+import { resolveDeclarationCompiler } from '../../scripts/typecheck-compiler.mjs';
 
 import { dependencies } from './package.json';
 
@@ -17,7 +17,7 @@ const runtimeVersion = packageVersion('@modern-js/runtime/package.json');
 const reactVersion = packageVersion('react/package.json');
 const reactDomVersion = packageVersion('react-dom/package.json');
 
-const tsgoCompilerInstance = resolveTsrsCompiler({
+const tsgoCompilerInstance = resolveDeclarationCompiler({
   from: import.meta.url,
 });
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] = createModuleFederationConfig({

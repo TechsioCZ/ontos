@@ -6,7 +6,7 @@ import pluginI18nVersionMetadata from '@modern-js/plugin-i18n/package.json' with
 
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
 
-import { resolveTsrsCompiler } from '../../scripts/typecheck-compiler.mjs';
+import { resolveDeclarationCompiler } from '../../scripts/typecheck-compiler.mjs';
 
 import { dependencies } from './package.json';
 
@@ -16,7 +16,7 @@ const runtimeVersion = runtimeVersionMetadata.version;
 const reactVersion = reactVersionMetadata.version;
 const reactDomVersion = reactDomVersionMetadata.version;
 
-const tsgoCompilerInstance = resolveTsrsCompiler({ from: import.meta.url });
+const tsgoCompilerInstance = resolveDeclarationCompiler({ from: import.meta.url });
 
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] = createModuleFederationConfig({
   bridge: {
